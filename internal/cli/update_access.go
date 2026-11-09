@@ -145,7 +145,77 @@ func (e *initEngine) syncAccess(ctx context.Context) error {
 		}
 	}
 	e.deriveAccess(node)
+	e.heldAccess(ctx)
 	return nil
+}
+
+// heldAccess reads the installation's own outputs and records the members they
+// hold, so that the review screen announces this run's lists without the grants
+// node's own additions (accessAdded).
+//
+// The node is what an installation's roles are, and the one write it accepts
+// outside this run — a hand edit, `fugaro user`'s own door, a later release's
+// — is a grant nobody at this terminal made. Without this read the derive would
+// put that member into the review screen's lists, the screen's cover would
+// accept the plan that grants them, and one `--yes` an operator passed for
+// something else would be the whole of the agreement: the review's own sentence
+// is that a plan granting anyone the screen did not list stops and asks.
+//
+// Read once per converge, before the loop's first stage, because the screen is
+// printed from the same lists the cover judges: a member the outputs hold and
+// the node does not is a revocation this run applies, which the screen says,
+// and a member the node holds and the outputs do not is the grant this is
+// about. A first run has no outputs to read and nothing to tell apart — its
+// lists are the flags it was given, which are the run's own.
+func (e *initEngine) heldAccess(ctx context.Context) {
+	if e.firstRun() {
+		return
+	}
+	spec, err := infra.Installation(e.lc, infra.InstallOptions{StateBucket: e.r.o.stateBucket})
+	if err != nil {
+		e.r.warn(accessAddsUnknown)
+		return
+	}
+	// The migration above reads these same outputs on its own path (migrateAccess),
+	// and a converge that migrates pays both reads once: what this one is for is
+	// the review, which is taken later in the run than the node's write.
+	outs, err := e.r.installationOutputs(ctx, e.lc, e.bin, spec.StateBucket)
+	if err != nil {
+		// A run that cannot read them is not a run that fails: `fugaro update`
+		// is the whole upgrade, and this read is one sentence of an
+		// installation whose state bucket the run reads again for itself a
+		// moment later. What it costs is said and not hidden — the review's
+		// lists are then the node's whole roster, additions included.
+		e.r.warn(accessAddsUnknown)
+		return
+	}
+	held := slices.Concat(outs.Launchers, outs.Operators)
+	if e.r.o.operatorsChanged {
+		held = append(held, e.r.o.operators...)
+	}
+	if e.r.o.adminsChanged {
+		held = append(held, e.r.o.admins...)
+	}
+	e.r.accessHeld, e.r.accessHeldRead = sortedMembers(held), true
+	if added := addedTo([][]string{e.spec.Launchers, e.spec.Operators}, e.r.accessHeld); len(added) > 0 {
+		e.r.warn(fmt.Sprintf(accessAdded, safetext.FieldListLine(added)))
+	}
+}
+
+// addedTo is the members of the derived lists the installation's own outputs do
+// not hold: the ones the grants node holds and this run was not told about
+// (heldAccess). Only `user:` members are read — the other forms are carried
+// from the machine's own list and are announced by the screen with it (F25).
+func addedTo(lists [][]string, held []string) []string {
+	var out []string
+	for _, l := range lists {
+		for _, m := range l {
+			if isUserMember(m) && !slices.Contains(held, m) {
+				out = append(out, m)
+			}
+		}
+	}
+	return sortedMembers(out)
 }
 
 // landFlagLists writes this run's own --operator/--admin into the grants node.
@@ -634,6 +704,21 @@ func (e *initEngine) deriveAccessAgain(ctx context.Context) (operators, admins [
 // the other door on those keys — fugaro user add and rm — writes this machine's
 // file alone, and a change written there is exactly what this sentence is about.
 const accessDropped = "this machine's list holds %s as %s, which the installation's grants node does not: the node is what an installation's roles are, so this run applies its members and those lose the role. A change to a role is written to the node by naming the whole list (fugaro update --operator, --admin)"
+
+// accessAdded is what the roles step says when the grants node holds a member
+// this installation's own outputs do not: the run's plan grants that member the
+// roles the node holds them at, and the review screen does not list them, so a
+// plan that does is not covered — the step that plans them asks for the
+// project's name typed at a real terminal, which --yes does not answer
+// (init_review.go's confirmPlanned).
+const accessAdded = "the grants node holds %s, who this installation's own outputs do not: the roles the node holds are granted by this run's plan, the review does not list them, and the step that plans them asks for the project's name typed at a terminal"
+
+// accessAddsUnknown is what a run that could not read the installation's own
+// outputs says instead. It cannot tell a member the node added from one the
+// installation held, so the review's lists are the node's whole roster — and
+// that, rather than silence, is what this sentence is for: the operator is told
+// the screen's lists are the node's and not the installation's.
+const accessAddsUnknown = "the installation's own outputs could not be read, so this run cannot tell the members the grants node added from the ones the installation held: the review's lists are the node's whole roster"
 
 // droppedUsers is the `user:` members of ran that now does not hold.
 func droppedUsers(ran, now []string) []string {

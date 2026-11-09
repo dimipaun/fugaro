@@ -765,6 +765,19 @@ var inlineAgentSites = []inlineAgentSite{
 		}
 		return ok && err == nil
 	}},
+	// askPlanned is the question a plan that grants a member the review did not
+	// announce asks (init_review.go, grantsNotAnnounced), and it carries the
+	// marker check askBanner carries for its own reason: it is the one question
+	// of the run that --yes does not answer, so a session that must confirm
+	// nothing must not answer it either.
+	{"init_review.go askPlanned", "init_review.go askPlanned (the grant the review did not announce)", func(t *testing.T, r *initRun, e *initEngine, marker string) bool {
+		ok, err := r.askPlanned("an ordinary step", []string{"user:new@example.com"})
+		var ae *initflow.AgentError
+		if marker != "" && (!errors.As(err, &ae) || ae.Marker != marker) {
+			t.Errorf("askPlanned's refusal under %s is %v, want the agent refusal", marker, err)
+		}
+		return ok && err == nil
+	}},
 	{"init_project.go canType", "init_project.go canType", func(t *testing.T, r *initRun, e *initEngine, _ string) bool {
 		return (&projectStage{e: e}).canType()
 	}},

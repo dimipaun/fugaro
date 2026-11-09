@@ -601,3 +601,101 @@ func TestRevokeIsNotUndoneByAStaleDerive(t *testing.T) {
 		t.Errorf("the apply wrote the node: %v — the derive reads it and never writes it\n%s", got, all)
 	}
 }
+
+// TestAGrantTheInstallationNeverHeldIsNotCoveredByYes: the grants node is what
+// an installation's roles are, and the one write it takes outside a run (a hand
+// edit, `fugaro user`'s own door) is a grant nobody at this terminal made
+// (update_access.go's heldAccess). The review screen does not list that member,
+// so a plan granting them is not covered — and `--yes`, which an operator
+// passes for the plan the review announced, is not an answer to this one: the
+// step asks for the project's name typed at a real terminal, and a run that
+// cannot type it applies nothing.
+//
+// The control is the same plan and the same node with the installation's own
+// outputs holding the member: the run was told about them, and the same command
+// applies the same plan.
+func TestAGrantTheInstallationNeverHeldIsNotCoveredByYes(t *testing.T) {
+	const held, extra = "user:ops@example.com", "user:new@example.com"
+	node := accessNodeDoc(projectGrant(held, accesslib.RoleOperator), projectGrant(extra, accesslib.RoleOperator))
+	t.Run("the node added a member", func(t *testing.T) {
+		r, db := accessRig(t, nil, nil, []string{held}, nil)
+		db.Set(accesslib.PathNode, node)
+		updating(t, r)
+		r.setPlanAt(t, "installation", grantChange("runs_launcher", extra, "roles/storage.objectUser", "create"))
+		fakeTerminal(t)
+		out, errOut, err := executeStdin(t, "", "update", "--yes")
+		all := accessOut(out, errOut, err)
+		if err == nil || !strings.Contains(all, "not confirmed") {
+			t.Fatalf("a plan granting a member the review did not announce was confirmed by --yes: %v\n%s", err, all)
+		}
+		if calls := subcommands(r.calls(t)); slices.Contains(calls, "apply") {
+			t.Errorf("a run whose grant was not confirmed applied the installation: %q\n%s", calls, all)
+		}
+		if !strings.Contains(all, "the grants node holds "+extra+", who this installation's own outputs do not") {
+			t.Errorf("the run does not say which member the installation's outputs do not hold:\n%s", all)
+		}
+		if !strings.Contains(all, "granting "+extra+", which the review did not announce") {
+			t.Errorf("the step does not ask about the grant itself:\n%s", all)
+		}
+		if !strings.Contains(all, "--yes does not confirm this one") {
+			t.Errorf("the run does not say --yes is not an answer here:\n%s", all)
+		}
+	})
+	t.Run("the installation held the member", func(t *testing.T) {
+		r, db := accessRig(t, nil, nil, []string{held, extra}, nil)
+		db.Set(accesslib.PathNode, node)
+		updating(t, r)
+		r.setPlanAt(t, "installation", grantChange("runs_launcher", extra, "roles/storage.objectUser", "create"))
+		fakeTerminal(t)
+		out, errOut, err := executeStdin(t, "", "update", "--yes")
+		all := accessOut(out, errOut, err)
+		if err != nil {
+			t.Fatalf("a plan granting a member the installation's own outputs hold failed: %v\n%s", err, all)
+		}
+		if len(r.ran(t, "apply")) == 0 {
+			t.Errorf("the run applied nothing:\n%s", all)
+		}
+		if strings.Contains(all, "which the review did not announce") || strings.Contains(all, "the grants node holds "+extra) {
+			t.Errorf("a member the installation's own outputs hold was treated as the node's own addition:\n%s", all)
+		}
+	})
+}
+
+// TestTheReviewAnnouncesTheInstallationsMembersNotTheNodesAdditions: the review
+// screen's lists and the cover the gate judges plans by are one answer
+// (announced), and it is the members this run was told about — the
+// installation's own outputs, and the lists the run named itself. A member only
+// the node holds is in neither, which is what makes a plan granting them
+// uncovered here and refused by a managed project's gate.
+//
+// A run that could not read the installation's outputs filters nothing and says
+// so (accessAddsUnknown): it cannot tell the node's additions from the
+// installation's members, and covering the node's whole roster is what it did
+// before this read existed.
+func TestTheReviewAnnouncesTheInstallationsMembersNotTheNodesAdditions(t *testing.T) {
+	const held, extra, flagged = "user:ops@example.com", "user:new@example.com", "user:named@example.com"
+	e := &initEngine{r: &initRun{o: &initOptions{}, accessHeld: []string{held, flagged}, accessHeldRead: true},
+		lc: &localcfg.Config{Name: "aurora", Region: "us-east5"}}
+	e.spec.Launchers = []string{extra, flagged, held}
+	e.spec.Operators = []string{held}
+	listed := e.cover().Listed
+	if slices.Contains(listed, extra) {
+		t.Errorf("the cover lists %s, a member only the grants node holds: one --yes passed for the plan the review announced would be the whole agreement about this grant\nlisted: %v", extra, listed)
+	}
+	for _, want := range []string{held, flagged} {
+		if !slices.Contains(listed, want) {
+			t.Errorf("the cover does not list %s, a member this run was told about\nlisted: %v", want, listed)
+		}
+	}
+	// The derive is not what this changes: the plan the run applies carries the
+	// node's lists, and it is the review that does not announce the addition.
+	if got := e.spec.Launchers; !slices.Equal(got, []string{extra, flagged, held}) {
+		t.Errorf("the run's launchers are %v, want the node's lists: the roles the node holds are what an installation's roles are", got)
+	}
+	// A run that could not read the outputs filters nothing.
+	blind := &initEngine{r: &initRun{o: &initOptions{}}, lc: &localcfg.Config{Name: "aurora", Region: "us-east5"}}
+	blind.spec = e.spec
+	if listed := blind.cover().Listed; !slices.Contains(listed, extra) {
+		t.Errorf("a run that could not read the installation's outputs does not cover the node's roster, which is all it knows of the installation\nlisted: %v", listed)
+	}
+}

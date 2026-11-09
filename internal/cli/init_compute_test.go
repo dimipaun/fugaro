@@ -260,7 +260,11 @@ func TestComputeStageProvisionsAfterATypedConfirmation(t *testing.T) {
 // assertions below fail.
 func TestComputeRootTakesTheLaunchersTheModuleGrants(t *testing.T) {
 	const launcher, admin = "user:run@example.com", "user:root@example.com"
-	r, db := accessRig(t, nil, nil, nil, nil)
+	// The installation's own outputs hold both, which is what an installation
+	// whose roles moved to the node looks like: the derive's two lists are the
+	// node's, and a run told about both is a run whose review announced them
+	// (update_access.go's heldAccess).
+	r, db := accessRig(t, nil, nil, []string{launcher, admin}, []string{admin})
 	// An installation whose roles have moved to the grants node: one person who
 	// starts runs, and one admin, who the installation's launcher list holds too.
 	db.Set(accesslib.PathNode, accessNodeDoc(

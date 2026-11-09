@@ -647,6 +647,17 @@ type initRun struct {
 	// whose roles step found no node.
 	accessDerive func(ctx context.Context) (operators, admins []string, ok bool, err error)
 
+	// accessHeld are the IAM members the installation's own outputs held, plus
+	// the ones this run named on its own flags: the people this terminal was
+	// told about, and the only ones the review screen announces and its one
+	// confirmation may cover. A member of the grants node that is not among
+	// them is a grant nobody here made (update_access.go's heldAccess), and
+	// accessHeldRead says whether the outputs could be read at all — a run that
+	// could not read them filters nothing, says so, and covers the node's whole
+	// roster as it did before this read existed.
+	accessHeld     []string
+	accessHeldRead bool
+
 	// landFlags writes this run's own --operator/--admin into the grants node,
 	// and it is what the installation root calls once the run is past its
 	// confirmation and about to apply (update_access.go, landFlagLists). The
@@ -2714,7 +2725,7 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 				return outs, true, nil
 			}
 			// 6. Confirm, 7. apply the plan shown.
-			if err := r.confirmOrdinary("applies "+counts.String()+r.installLabel, "nothing was applied", r.notCovered(plan, im.Keys())); err != nil {
+			if err := r.confirmPlanned("applies "+counts.String()+r.installLabel, "nothing was applied", plan, r.notCovered(plan, im.Keys())); err != nil {
 				return outs, false, err
 			}
 		}
@@ -4670,7 +4681,7 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 		if !first {
 			what += ", deploying the images just built"
 		}
-		if err := r.confirmOrdinary(what, "nothing was applied", r.notCovered(plan, im.Keys())); err != nil {
+		if err := r.confirmPlanned(what, "nothing was applied", plan, r.notCovered(plan, im.Keys())); err != nil {
 			return infra.RepoSpec{}, nil, err
 		}
 	}

@@ -172,7 +172,7 @@ func (r *initRun) applyRoot(ctx context.Context, c *infra.Clients, t *tf.TF, wd 
 			fmt.Fprintf(r.w, "--plan-only: nothing applied; the plan is %s\n", filepath.Join(wd.Root, infra.PlanFile))
 			return false, true, nil
 		}
-		if err := r.confirmOrdinary("applies "+counts.String()+" "+what, "nothing was applied", r.notCoveredFirebase(plan, imports)); err != nil {
+		if err := r.confirmPlanned("applies "+counts.String()+" "+what, "nothing was applied", plan, r.notCoveredFirebase(plan, imports)); err != nil {
 			return false, false, err
 		}
 	}

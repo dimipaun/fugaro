@@ -227,6 +227,89 @@ func (r *initRun) confirmOrdinary(what, undone, notCovered string) error {
 	return nil
 }
 
+// confirmPlanned is confirmOrdinary for a step that is about to apply a plan:
+// a plan that grants a role to a member only the grants node holds asks its own
+// confirmation, which --yes does not answer (grantsNotAnnounced).
+//
+// It is the other half of the rule this file's announced and update_access.go's
+// heldAccess hold: the member is off the review screen, so the cover refuses
+// the plan and a managed project's gate refuses it outright — and the operator
+// at an ordinary terminal is asked, in the sentence naming the member, rather
+// than stopped with a plan no cover admits and no flag to pass. --yes is not an
+// answer on purpose: the flag is the agreement to the plan the review
+// announced, and this grant is one the review did not (accessAdded says why the
+// run believes the member is not the installation's).
+func (r *initRun) confirmPlanned(what, undone string, p *tf.Plan, notCovered string) error {
+	if grants := r.grantsNotAnnounced(p); len(grants) > 0 {
+		ok, err := r.askPlanned(what, grants)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return r.notConfirmed(undone)
+		}
+		return nil
+	}
+	return r.confirmOrdinary(what, undone, notCovered)
+}
+
+// grantsNotAnnounced is the members this plan grants a role to that the review
+// screen did not announce: the `user:` members of its `*_iam_member` creates
+// that the installation's own outputs do not hold (initRun.accessHeld). Each
+// member's grant is one resource, so a member the node gained is a create.
+//
+// It is empty for a run that could not read those outputs, which is the answer
+// announced gives to the same question, and for a plan that grants no member at
+// all — a nil plan included, so a caller that has none keeps the step it had.
+func (r *initRun) grantsNotAnnounced(p *tf.Plan) []string {
+	if p == nil || !r.accessHeldRead {
+		return nil
+	}
+	var out []string
+	for _, rc := range p.ResourceChanges {
+		if !strings.HasSuffix(rc.Type, "_iam_member") || !slices.Contains(rc.Change.Actions, "create") {
+			continue
+		}
+		m, _ := rc.Change.After["member"].(string)
+		if isUserMember(m) && !slices.Contains(r.accessHeld, m) && !slices.Contains(out, m) {
+			out = append(out, m)
+		}
+	}
+	return sortedMembers(out)
+}
+
+// askPlanned is the question a grant to a member the review did not announce
+// asks: the banner naming the members, and the project's name typed at a real
+// terminal. It is askBanner's shape with the one line that matters different —
+// --yes, when it was passed, is said out loud not to be an answer — and a run
+// with no terminal is asked nothing and confirms nothing. A coding agent's
+// session confirms nothing here either, --yes included (the marker first, as
+// askOrdinary asks it).
+func (r *initRun) askPlanned(what string, grants []string) (bool, error) {
+	shown := make([]string, 0, len(grants))
+	for _, m := range grants {
+		shown = append(shown, pluginwire.Printable(m))
+	}
+	var ok bool
+	err := r.asking(func() error {
+		if m := agentMarker(os.Getenv, r.stdinTerminal()); m != "" {
+			return &initflow.AgentError{Marker: m}
+		}
+		fmt.Fprintf(r.w, "⚠ CONFIRM (project %s, GCP project %s): %s, granting %s, which the review did not announce\n",
+			r.projectName, r.gcpProject, what, strings.Join(shown, ", "))
+		if r.o.yes && !r.o.planOnly {
+			fmt.Fprintln(r.w, "  --yes does not confirm this one: the review did not announce this grant")
+		}
+		if r.o.nonInteractive || !stdinIsTerminal(r.cmd.InOrStdin()) {
+			return nil
+		}
+		var err error
+		ok, err = r.typed("Type " + r.projectName + " to grant them: ")
+		return err
+	})
+	return ok, err
+}
+
 // owner says why the project is Fugaro's own, or not: created by this run, or
 // its runs bucket (which must have the default name, so a custom or squatted
 // bucket never counts) belongs to this project (its own project number) and
@@ -282,8 +365,8 @@ func (e *initEngine) accessLists(ctx context.Context) []access {
 		return "from the local config"
 	}
 	out := []access{
-		{what: "operators", members: e.spec.Launchers, source: src(o.operatorsChanged), note: "start runs; also mint run tokens when --firebase-project's token signer is applied"},
-		{what: "admins", members: e.spec.Operators, source: src(o.adminsChanged), note: "onboard repositories and submit builds"},
+		{what: "operators", members: e.announced(e.spec.Launchers), source: src(o.operatorsChanged), note: "start runs; also mint run tokens when --firebase-project's token signer is applied"},
+		{what: "admins", members: e.announced(e.spec.Operators), source: src(o.adminsChanged), note: "onboard repositories and submit builds"},
 	}
 	if o.firebase != "" || e.lc.Terraform.BudgetBackend {
 		bs := "from the local config"
@@ -294,9 +377,35 @@ func (e *initEngine) accessLists(ctx context.Context) []access {
 		for _, a := range e.projectAdmins(ctx) {
 			out[len(out)-1].members = append(out[len(out)-1].members, a)
 		}
-		out = append(out, access{what: "budget viewers", members: slices.Concat(e.spec.Launchers, e.spec.Operators), source: "the operators and admins"})
+		out = append(out, access{what: "budget viewers", members: e.announced(slices.Concat(e.spec.Launchers, e.spec.Operators)), source: "the operators and admins"})
 	}
 	return out
+}
+
+// announced is one of the run's two lists as the review screen announces it:
+// the members the installation's own outputs hold and the ones this run named
+// itself, without the members only the grants node holds (update_access.go's
+// heldAccess).
+//
+// Such a member is a grant nobody at this terminal made, and the screen's own
+// sentence is that a plan granting anyone the screen did not list stops and
+// asks its own typed confirmation. Listing them would take that line back: the
+// screen would show the member under the local config's name, the cover would
+// accept the plan that grants them, and one `--yes` passed for something else
+// would be the whole of the agreement. Excluding them is what makes the gate
+// refuse that plan too — the gate judges the plan by the very cover this builds
+// (stepCover) — and the roles step has already said, in its own words, which
+// members they are.
+//
+// A run that could not read the outputs filters nothing: what the node holds is
+// then all this run knows of the installation (accessAddsUnknown).
+func (e *initEngine) announced(members []string) []string {
+	if !e.r.accessHeldRead {
+		return members
+	}
+	return slices.DeleteFunc(slices.Clone(members), func(m string) bool {
+		return isUserMember(m) && !slices.Contains(e.r.accessHeld, m)
+	})
 }
 
 // projectAdmins are the GCP project's owners and editors who are users or

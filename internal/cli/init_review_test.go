@@ -318,9 +318,14 @@ func TestReviewSeamRefusesAnAgentMarkerBeforeItPrintsAnything(t *testing.T) {
 // places that do, and no other file may (the project's creation and billing,
 // the Firestore location, a Cloud Build, replacing a tag, an unlisted
 // repository, a secret and the plugin wiring each keep their own).
+//
+// confirmPlanned counts with them because it is this family's own call: it is
+// what the three plan-confirmation sites ask with, and it is confirmOrdinary
+// for every plan that grants no member the review did not announce
+// (init_review.go, grantsNotAnnounced).
 func TestRunConfirmationCallSites(t *testing.T) {
 	want := map[string]int{"init.go": 7, "init_firebase.go": 2, "init_images.go": 1, "init_rules_stage.go": 1}
-	re := regexp.MustCompile(`\br\.(confirmOrdinary|askOrdinary|runCovers)\(`)
+	re := regexp.MustCompile(`\br\.(confirmOrdinary|confirmPlanned|askOrdinary|runCovers)\(`)
 	files, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatal(err)
