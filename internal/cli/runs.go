@@ -1075,14 +1075,23 @@ func runEndings(rows []runview.Row) map[task.Ref]string {
 }
 
 // repoCell is a row's REPO cell: the repository the run's task names, in the
-// column the RUN cell gave up when it became the ending. It is "-" for a run
-// whose task.json could not be read — the row's reason says so, and the RUN
-// cell still names the run by its ending.
+// column the RUN cell gave up when it became the ending. A run whose task.json
+// could not be read names no repository in the task — but its reference still
+// carries the repository's slug, which runview.Join builds into Row.Run as
+// `<slug>/<run-id>` from the ref the listing is built on, and rowRef reads it
+// back out. So the cell falls back to that slug rather than going blank: the
+// row is listed either way, the RUN cell no longer carries the slug (it is the
+// ending now), and a blank cell would leave the row naming no repository at
+// all, which the whole-ID RUN cell used to do for it.
 func repoCell(r runview.Row) string {
-	if r.Repo == "" {
+	name := r.Repo
+	if name == "" {
+		name = rowRef(r).Slug
+	}
+	if name == "" {
 		return "-"
 	}
-	return cellOneLine(clipRunes(r.Repo, maxNameCellRunes))
+	return cellOneLine(clipRunes(name, maxNameCellRunes))
 }
 
 // launcherCell is a row's BY cell: who started the run, in the short form a

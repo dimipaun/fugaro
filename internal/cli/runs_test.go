@@ -1266,6 +1266,38 @@ func TestRunsLsRUNCellResolves(t *testing.T) {
 	}
 }
 
+// TestRunsLsRepoCellFallsBackToTheSlug: the REPO column is where a listing
+// names a run's repository now that the RUN cell is the ending rather than
+// `<slug>/<run-id>`. A run whose task.json cannot be read names no repository
+// in its task, but the ref the listing is built on still carries the
+// repository's slug — Row.Run is `<slug>/<run-id>` (runview.Join) and rowRef
+// reads it back out — so the cell names that instead of going blank. A row
+// listed with a blank REPO would name no repository at all, which the
+// whole-ID RUN cell used to do for it; a run whose task reads still names the
+// task's own `owner/name`.
+func TestRunsLsRepoCellFallsBackToTheSlug(t *testing.T) {
+	f := newCloudFixture(t)
+	seedRun(t, f, recentRunID(t, 2*time.Minute, "aaaa"), "", "someone@example.com", false)
+	seedCorruptTask(t, f, recentRunID(t, time.Minute, "abcd"))
+
+	out, _, err := execute(t, "runs", "ls", "--since", "0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cells := map[string]string{}
+	for _, l := range strings.Split(out, "\n") {
+		if fields := strings.Fields(l); len(fields) > 1 {
+			cells[fields[0]] = fields[1]
+		}
+	}
+	if got := cells["abcd"]; got != appSlug {
+		t.Errorf("the REPO cell of the run whose task.json is unreadable = %q, want the repository's slug %q:\n%s", got, appSlug, out)
+	}
+	if got := cells["aaaa"]; got != "acme/app" {
+		t.Errorf("the REPO cell of a run whose task reads = %q, want the task's own repository acme/app:\n%s", got, out)
+	}
+}
+
 // TestLsIsGone: the 0.7.0 tombstone was deleted by #350 in 0.7.5 (design
 // generic-tool §5, G17, P3; the owner's 2026-10-14 ruling moved the deletion
 // from 0.8.0 to the next release, which #370 renamed 0.7.5), so there is no
