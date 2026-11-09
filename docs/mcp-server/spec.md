@@ -520,8 +520,8 @@ condition it can meet. No task in [implementation-plan.md](implementation-plan.m
 **What a later `spawn_task` design item has to answer** is written in
 [reconciliation.md](reconciliation.md) §4b (D936): no `runWithOverrides`, per-run input under a
 bucket prefix only the coordinator writes, run-token minting moved out of the public service, and an
-**argument allowlist** — no `--no-budget-check` (`internal/cli/run.go:325`), no `--token` (`:313`),
-no free-form `--run-id`, and `mode = max(requested, the token's minimum)`.
+**argument allowlist** — no `--no-budget-check` (`internal/cli/run.go:335`), no `--token` (`:322`),
+no free-form `--run-id` (`:313`), and `mode = max(requested, the token's minimum)`.
 
 **And when it is built there is one launch path, not two** (D931, the owner's answer of
 2026-11-04). `spawn_task` does not reach the run's job by a route of its own: **concurrency, rate, idempotency and the kill

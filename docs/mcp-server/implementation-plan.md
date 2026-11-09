@@ -205,8 +205,8 @@ needing `spawn_task` at all. **What a later `spawn_task` design item has to answ
 writes — with the per-launch data itself on the run's task, since the account can set no override, and
 with the identity the launch binding M11 carries); run-token minting moved out of the public service;
 an argument allowlist (no
-`--no-budget-check` at `internal/cli/run.go:325`, no `--token` at `internal/cli/run.go:313`, no
-free-form `--run-id`); and `mode = max(requested, the token's minimum)` always.
+`--no-budget-check` at `internal/cli/run.go:335`, no `--token` at `internal/cli/run.go:322`, no
+free-form `--run-id` at `internal/cli/run.go:313`); and `mode = max(requested, the token's minimum)` always.
 
 ## 2. The edges, the levels and the critical path
 

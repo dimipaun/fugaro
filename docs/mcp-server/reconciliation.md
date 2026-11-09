@@ -826,8 +826,8 @@ not a shrug:
   premise the ruling got wrong", and **D937** is the owner question that premise reopens.
 - **Run-token minting moves out of the public service**, so the service that answers strangers holds
   no signer.
-- **An argument allowlist**: no `--no-budget-check` (`internal/cli/run.go:325`), no `--token`
-  (`:313`), no free-form `--run-id`; and **always pass `mode = max(requested, the token's minimum)`**,
+- **An argument allowlist**: no `--no-budget-check` (`internal/cli/run.go:335`), no `--token`
+  (`:322`), no free-form `--run-id` (`:313`); and **always pass `mode = max(requested, the token's minimum)`**,
   so a caller cannot ask for less than its token allows.
 
 **What this moves**: M9 and the parts of M10 that depend on it leave the first slice; the shared-files
