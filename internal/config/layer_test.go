@@ -1179,11 +1179,15 @@ func TestProjectLayerSecurityIsInTheTopKeyAllowList(t *testing.T) {
 // fugaro.schema.json does: the layer's rows are judged by the rules the
 // repository's block's are (D1502, D1506).
 //
-// One asymmetry is pinned rather than left unsampled: the schema cannot refuse
-// a glob doublestar itself cannot read — a bracket class it closes wrong, an
-// alternation — because the schema has no glob matcher, and
-// sensitivity.Pattern.Validate is what says no. TestSecurityKeySchemaAgreesWithTheDecoder
-// records the same asymmetry for the repository's block.
+// Asymmetries are pinned rather than left unsampled, both of them rules a
+// schema of one row cannot state: it cannot refuse a glob doublestar itself
+// cannot read — a bracket class it closes wrong, an alternation — because it
+// has no glob matcher, and sensitivity.Pattern.Validate is what says no; and it
+// cannot refuse a name repeated inside one list, which config.validateSecurity
+// makes because it is the rule that reads the list where the schema reads one
+// row of it. TestSecurityKeySchemaAgreesWithTheDecoder records the first
+// asymmetry for the repository's block, and $defs.securityPattern's description
+// names both.
 func TestProjectLayerSecuritySchemaAgreesWithTheLayerParser(t *testing.T) {
 	sch := compileABSchema(t, "project-layer.schema.json")
 	floor := sensitivity.Floor()[0].Name
@@ -1244,6 +1248,7 @@ func TestProjectLayerSecuritySchemaAgreesWithTheLayerParser(t *testing.T) {
 	for _, tc := range []struct{ name, body, why string }{
 		{"an unreadable bracket class", rows + "    - { name: deploy, match: \"deploy/[\", category: targets }\n", "doublestar refuses a bracket class it cannot close"},
 		{"an alternation", rows + "    - { name: deploy, match: \"deploy/{a,b}/**\", category: targets }\n", "Pattern.Validate refuses an alternation for its matching cost"},
+		{"a name repeated in the list", rows + "    - { name: deploy, match: \"deploy/**\", category: targets }\n    - { name: deploy, match: \"infra/**\", category: targets }\n", "validateSecurity refuses a name repeated inside one list, which no schema of a single row can see"},
 	} {
 		t.Run("schema looser/"+tc.name, func(t *testing.T) {
 			if _, ps := ParseProjectLayer([]byte(layerHead+tc.body), testAnchor); len(ps) == 0 {

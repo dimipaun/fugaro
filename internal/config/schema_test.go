@@ -82,12 +82,13 @@ func TestCatalogSchemaAcceptsTheNewKeys(t *testing.T) {
 // The cases are the ones both surfaces can judge. Three of the decoder's
 // refusals are not expressible in JSON Schema and are named in $defs.
 // securityPattern's own description instead: a glob doublestar itself cannot
-// read, a glob holding an alternation, and a name repeated inside one list —
-// each of them a case a schema without a matcher cannot see, and each of them
-// refused by sensitivity.Pattern.Validate and the row's own index before a run
-// ever reads the file. A fourth refusal is made here as well: a name the
-// engine's own floor already carries ($defs.securityFloorName), which is a
-// list of names and so the one rule of validateSecurity this file can state —
+// read and a glob holding an alternation, both refused by
+// sensitivity.Pattern.Validate at the row's own index before a run ever reads
+// the file, and a name repeated inside one list, refused by
+// config.validateSecurity, which reads the whole list where a row's own schema
+// reads one row. A fourth refusal is made here as well: a name the engine's own
+// floor already carries ($defs.securityFloorName), which is a list of names and
+// so the one rule of validateSecurity this file can state —
 // TestSecurityFloorNamesAgreeWithGo holds that list to sensitivity.Floor.
 func TestSecurityKeySchemaAgreesWithTheDecoder(t *testing.T) {
 	sch := compileABSchema(t, "fugaro.schema.json")
