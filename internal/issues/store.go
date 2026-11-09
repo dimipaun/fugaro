@@ -124,11 +124,11 @@ func (s *Store) List() ([]Issue, error) {
 	return out, nil
 }
 
-// SetStatus records where the issue stands. A status outside the three is
+// SetStatus records where the issue stands. A status outside the four is
 // refused before the file is read.
 func (s *Store) SetStatus(ref string, status Status) error {
 	if !status.Valid() {
-		return fmt.Errorf("issues: %q is not a status, want %q, %q or %q", status, StatusPending, StatusSubmitted, StatusDismissed)
+		return fmt.Errorf("issues: %q is not a status, want %q, %q, %q or %q", status, StatusPending, StatusSubmitted, StatusDismissed, StatusResolved)
 	}
 	i, err := s.Get(ref)
 	if err != nil {

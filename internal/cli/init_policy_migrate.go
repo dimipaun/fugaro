@@ -427,44 +427,47 @@ func policyMigrationRefusal(err error) error {
 // that could assert an admission could assert it for a node nobody judged, and
 // `fugaro upgrade` — the other door into this function, and the one with no
 // gate at all — passes false and gets exactly the code that was here before.
-// The refusals that are not confirmations stay: a run in flight is refused
-// whatever admitted the write, because that refusal is about the runs that read
-// the node and not about who approved this one.
+// The answer about the runs in flight is not among the confirmations admitted
+// stands in for: it is asked before any of them and whatever admitted the
+// write, because it is about the runs that read the node and not about who
+// approved this one.
 //
 // managed is whether the project's marks say it is managed, and it is the
 // reading the rest of init makes for that question (initGate.underway, the same
 // answer askBuild's ConfirmsByGate and the gate's own stages take). It changes
-// two things, both in the owner's own session. The owner's ruling of 2026-11-06
-// is that a managed project's policy write is never refused for the runs in
-// flight, so the in-flight guard's count becomes a note and the write proceeds;
-// and it is that a person at a real terminal is not asked to type the project's
-// name to publish the node, so the typed confirmation below is replaced by a
-// note of what is written — for a node that is there and for a project's first
-// one alike, the empty-allow-list first publish above being the only write that
-// keeps the typed name. The upgrade door has no gate and passes false, so it
-// keeps both refusals exactly as they were.
+// the confirmations of the owner's own session: a person at a real terminal is
+// not asked to type the project's name to publish the node, so the typed
+// confirmation below is replaced by a note of what is written — for a node that
+// is there and for a project's first one alike, the empty-allow-list first
+// publish above being the only write that keeps the typed name. The upgrade
+// door has no gate and passes false, so it keeps that confirmation exactly as it
+// was.
+//
+// inflight is what this door does about the runs in flight over the node
+// (inflightAnswer): the update door passes inflightQuiet, because the owner's
+// ruling of 2026-11-09 is that `fugaro update` is safe while runs are in flight
+// and never tells anybody to wait, the doors that reach the stage without being
+// the update door (`fugaro setup`, `fugaro accounts add`) pass inflightManaged
+// and keep the answer of 2026-11-06, and `fugaro upgrade` passes inflightAsk
+// and keeps its refusal. It is a parameter and not a field of the migration for
+// the reason the paragraph above gives for admitted: a door is a fact of the
+// command, not of the node.
 //
 // c is the run's own conditions, the reading initRun.conditions hands every
 // other confirmation in this package (the marker and the terminal among them):
-// it is passed rather than read here so that the session the note is scoped to
-// and the session the refusals below are scoped to are one reading and cannot
-// disagree. `fugaro upgrade`, which has no initRun, passes the same two facts
-// its own agent refusal was made from.
-func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMigration, yes bool, w io.Writer, admitted, managed bool, c initflow.Conditions) error {
-	// The in-flight refusal is about the NODE this run rewrites, and it is asked
+// it is passed rather than read here so that the session the confirmations
+// below are scoped to is one reading and cannot disagree with itself. `fugaro
+// upgrade`, which has no initRun, passes the same two facts its own agent
+// refusal was made from.
+func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMigration, yes bool, w io.Writer, admitted, managed bool, c initflow.Conditions, inflight inflightAnswer) error {
+	// The in-flight answer is about the NODE this run rewrites, and it is asked
 	// before the branch below: D854's re-seed carries a pending migration with it
 	// (confirmReseed writes the re-seeded file and then the migrated node), and a
 	// re-seed that answered its own confirmation and re-seeded the operator's
 	// file before asking about the run in flight would move that file under a
 	// write this refusal exists to stop — and would ask the operator to confirm
 	// the re-seed of a run that a plain --yes cannot then finish.
-	//
-	// The marker is read once, in the run's conditions, and used twice: a coding
-	// agent's session is not widened by the managed case, so the note is the
-	// owner's own session's alone — a marker keeps the refusal below exactly as
-	// it was — and the first publish's empty-allow-list confirmation asks for
-	// the same marker further down.
-	if err := m.refuseRunsInFlight(ctx, yes, managed && c.Agent == "", w); err != nil {
+	if err := m.refuseRunsInFlight(ctx, yes, inflight, managed, c, w); err != nil {
 		return err
 	}
 	if m.generations != nil {
@@ -563,21 +566,86 @@ func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMi
 	return m.recordGeneration(ctx, cmd)
 }
 
-// refuseRunsInFlight is the guard both doors hold before a node write: a run
-// that is mid-flight read the policy this write replaces, so it is refused
-// without --yes, and --yes is the way past it once the operator has read what
-// the write does (the same reading `publish --delete` has). A run that writes no
-// node — D854's re-seed alone, or the generation record alone — asks nothing: no
-// run in flight reads this machine's file.
+// inflightAnswer is what a door does about the runs a node write finds in
+// flight over it (refuseRunsInFlight).
+type inflightAnswer int
+
+const (
+	// inflightAsk refuses the write without --yes and tells the operator to
+	// wait for the runs. It is the door that is NOT the whole upgrade —
+	// `fugaro upgrade`'s own policy step, the only caller left — where the
+	// person is in the middle of something else and a node of theirs is being
+	// published: the refusal costs them nothing the HARD RULE promises them,
+	// because the one command the upgrade is stays `fugaro update`.
+	inflightAsk inflightAnswer = iota
+	// inflightQuiet writes and says nothing about the runs. `fugaro update` is
+	// the whole upgrade, and the owner's ruling of 2026-11-09 is that it is
+	// safe while runs are in flight, always: stopping every running job to
+	// update is unacceptable for one developer and impossible for a team of ten
+	// or twenty. The audit that establishes it is
+	// docs/design/update-in-flight.md.
+	//
+	// The count is not the stage's to print either. The door prints it once,
+	// itself, before the first stage (update_in_flight.go's
+	// announceRunsInFlight) — a door line and a stage line about the same runs
+	// would be the two readings of one fact this package keeps collapsing into
+	// one, and the door's is the one that can say what the update as a whole
+	// does, which is what the person deciding whether to update now needs.
+	//
+	// It is the owner's own session's alone: a coding agent's session keeps the
+	// refusal (refuseRunsInFlight), because every ruling widens the person's
+	// session and never a marker's. And it is `fugaro update`'s alone, which is
+	// why it is not what every door into the stage passes (inflightManaged):
+	// `fugaro setup` and `fugaro accounts add` reach this stage too, and the
+	// ruling is about the one command the whole upgrade is.
+	inflightQuiet
+	// inflightManaged is the answer the doors that are not `fugaro update` had
+	// before 2026-11-09, kept for them: the owner's ruling of 2026-11-06 is
+	// that a managed project's policy write is never refused for the runs in
+	// flight — with up to twenty cloud runs running the refusal fired nearly
+	// every time and left the owner unable to apply a policy at all — so the
+	// count is printed as a note and the write proceeds. Every other session,
+	// a project that is not managed and a coding agent's session included, is
+	// refused without --yes.
+	//
+	// It is `fugaro setup`'s and `fugaro accounts add`'s: those doors converge
+	// the same stages (initStages) and neither is the update door, so neither
+	// gets the update door's answer, and the update door's own line
+	// (announceRunsInFlight) is not one of theirs. What they keep is what they
+	// had, which is this.
+	inflightManaged
+)
+
+// refuseRunsInFlight is the guard a door holds before a node write: a run that
+// is mid-flight read the policy this write replaces, so `fugaro upgrade`'s own
+// step refuses it without --yes, and --yes is the way past it once the operator
+// has read what the write does (the same reading `publish --delete` has). A run
+// that writes no node — D854's re-seed alone, or the generation record alone —
+// asks nothing: no run in flight reads this machine's file.
 //
-// A MANAGED project never refuses (the owner's ruling of 2026-11-06): with up to
-// twenty cloud runs in flight the refusal fired nearly every time and left the
-// owner unable to apply a policy at all, so the same count is printed as a note
-// and the write proceeds. note is that case, and the caller asks it because the
-// marks and the session are read there: a coding agent's session is not widened,
-// so a marker passes note=false and gets the refusal it has always had.
-func (m *policyMigration) refuseRunsInFlight(ctx context.Context, yes, note bool, w io.Writer) error {
+// The answer is the door's and not this function's (inflightAnswer): the update
+// door passes inflightQuiet, which reads no count at all and returns before the
+// write, so `fugaro update` neither refuses nor tells anybody to wait. What it
+// does instead — the one line it prints, and the one step of it that can still
+// bind a run in flight — is update_in_flight.go's. inflightManaged is the other
+// ruling (2026-11-06), kept for the doors that are not the update door: a
+// managed project's own session is told the count and writes.
+//
+// A coding agent's session is not the session any of this is about (c): every
+// ruling widens the person's own session and never a marker's, so a marker gets
+// the refusal whatever its door passes. It is the same scoping the managed
+// case's own sentence had (2026-11-06), kept after that sentence was, and the
+// gate is what a marker's update is judged by in any case — a session the gate
+// refuses never reaches this call.
+func (m *policyMigration) refuseRunsInFlight(ctx context.Context, yes bool, answer inflightAnswer, managed bool, c initflow.Conditions, w io.Writer) error {
 	if !m.writesNode() {
+		return nil
+	}
+	// inflightQuiet is the one answer that reads nothing: the update door has
+	// already read the count for its own line (announceRunsInFlight), and a
+	// count that cannot be read is silence there rather than a refusal of the
+	// one command the upgrade is.
+	if answer == inflightQuiet && c.Agent == "" {
 		return nil
 	}
 	inflight, err := runsInFlight(ctx, m.db, m.lc)
@@ -587,14 +655,14 @@ func (m *policyMigration) refuseRunsInFlight(ctx context.Context, yes, note bool
 	if inflight == 0 {
 		return nil
 	}
-	if note {
+	if answer == inflightManaged && managed && c.Agent == "" {
 		fmt.Fprintf(w, "%d run(s) are in flight and a run whose model calls go through the credentials service reads the new policy on its next call\n", inflight)
 		return nil
 	}
-	if !yes {
-		return userErr("%d run(s) are in flight: a run that is mid-flight read the policy this migration would rewrite, so it is refused without --yes; wait for them (fugaro runs ls), or pass --yes once you have read what it does", inflight)
+	if yes {
+		return nil
 	}
-	return nil
+	return userErr("%d run(s) are in flight: a run that is mid-flight read the policy this migration would rewrite, so it is refused without --yes; wait for them (fugaro runs ls), or pass --yes once you have read what it does", inflight)
 }
 
 // writesNode is whether this run's confirmation ends in a write to the published
@@ -1059,13 +1127,15 @@ func (m *policyMigration) planDetail() string {
 
 // Apply is the write. The refusals are the ones the delete path has, in the
 // same order and the same words where they are the same refusal: a coding
-// agent's session, a run in flight without --yes, no terminal (--yes is the
-// confirmation then), and the typed project name. --yes is the way past the
-// in-flight refusal once the operator has read what the migration does, which
-// is what that refusal itself tells them — the same reading
-// `fugaro project policy publish --delete` has (internal/cli/project_cmd.go) —
-// except in a managed project, where the owner's ruling of 2026-11-06 makes
-// that guard a note and the write proceeds (policyMigrationConfirm).
+// agent's session, no terminal (--yes is the confirmation then), and the typed
+// project name. The answer about the runs in flight is the door's rather than
+// the stage's (inflightAnswer, refuseRunsInFlight): `fugaro update` implies no
+// refusal and no request to wait at all — the owner's ruling of 2026-11-09,
+// the whole upgrade being this command — the doors that reach this stage
+// without being the update door (`fugaro setup`, `fugaro accounts add`) keep
+// the answer of 2026-11-06 they had before it, and it is `fugaro upgrade`'s own
+// policy step that keeps the refusal --yes is the way past, the same reading
+// `fugaro project policy publish --delete` has (internal/cli/project_cmd.go).
 func (s *policyMigrateStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outcome, error) {
 	// A managed project's gate is asked FIRST, and only this door has one: in a
 	// coding agent's session on a managed project the step that rewrites the
@@ -1112,7 +1182,7 @@ func (s *policyMigrateStage) Apply(ctx context.Context, env initflow.Env) (initf
 	// CONFIRM block nor the project's name typed under it is drawn over (G1).
 	cmd := s.e.r.cmd
 	if err := s.e.r.asking(func() error {
-		return policyMigrationConfirm(ctx, cmd, m, env.Yes, s.e.r.w, admitted, s.e.r.gateUnderway(), s.e.r.conditions())
+		return policyMigrationConfirm(ctx, cmd, m, env.Yes, s.e.r.w, admitted, s.e.r.gateUnderway(), s.e.r.conditions(), s.inflightAnswer())
 	}); err != nil {
 		return initflow.Outcome{}, err
 	}
@@ -1125,6 +1195,31 @@ func (s *policyMigrateStage) Apply(ctx context.Context, env initflow.Env) (initf
 		}
 	}
 	return initflow.Outcome{Changed: true, Detail: m.doneDetail()}, nil
+}
+
+// inflightAnswer is what the door this run was opened by does about the runs in
+// flight over the node the stage writes.
+//
+// `fugaro update`'s answer is the owner's ruling of 2026-11-09 (inflightQuiet):
+// the whole upgrade is that command, it is safe while runs are in flight, and
+// it never asks anybody to wait. That ruling is that door's, and the doors that
+// reach this stage without being it — `fugaro setup`, and `fugaro accounts
+// add` / `accounts rm`, whose stage list is built from initStages too — keep
+// the answer they had before it (inflightManaged), which is the ruling of
+// 2026-11-06 those doors' own users were given: a managed project's own session
+// writes and is told the count, every other session is refused without --yes.
+// A ruling widens the door it was made for, never every door into one stage —
+// the same scoping the coding-agent marker takes (refuseRunsInFlight).
+//
+// It is read off the door and not taken as a parameter of the stage for the
+// reason initflow.Managed gives for its own fields: a stage that could be
+// handed any answer could be handed one no door gave it, and the door is the
+// fact the answer is about.
+func (s *policyMigrateStage) inflightAnswer() inflightAnswer {
+	if s.e.r.o.doorName() == updateDoor.name {
+		return inflightQuiet
+	}
+	return inflightManaged
 }
 
 // Verify reads the node back: a write that claims a version it did not land is

@@ -162,8 +162,15 @@ func TestStoreRenameOnUpload(t *testing.T) {
 	if got.Status != StatusDismissed {
 		t.Errorf("status = %q, want %q", got.Status, StatusDismissed)
 	}
-	if err := s.SetStatus("7", "resolved"); err == nil {
-		t.Error("SetStatus accepted a status outside the three")
+	if err := s.SetStatus("7", "closed"); err == nil {
+		t.Error("SetStatus accepted a status outside the four")
+	}
+	// `resolved` is one of the four. No local command sets it — the resolver
+	// writes the shared record (the update spec's F27) — but `issue sync`
+	// brings one home, and the local store reads and writes what the shared
+	// store holds.
+	if err := s.SetStatus("7", StatusResolved); err != nil {
+		t.Errorf("SetStatus refused resolved: %v", err)
 	}
 }
 
