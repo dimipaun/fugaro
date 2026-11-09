@@ -930,6 +930,26 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		publishedCatalog = old.ImageCatalog
 	}
 	imageCatalog := lc.ImageCatalogEffective(publishedCatalog)
+	// The repo-to-image map and the bake switch are kept by that same rule
+	// (D1906, D1901), and the cost of the other reading is the catalog's: a
+	// machine whose config predates the keys — a teammate's, a CI box's — would
+	// publish a node that maps nothing and bakes nothing, so every repository
+	// the owner mapped would fall back to the catalog's default and every job
+	// of the project would clone again. A config that writes the map replaces
+	// what the node holds, and one that writes an empty map takes it away, which
+	// is how a published one is removed on purpose. The bake switch is a
+	// pointer on both sides because absent and true are one statement: a config
+	// that writes neither keeps the node's, and a node and a config that both
+	// say nothing publish no member at all, so such a node is byte for byte
+	// what it was before the key existed.
+	var publishedImageMap map[string]string
+	var publishedBake *bool
+	if old != nil {
+		publishedImageMap = old.ImageMap
+		publishedBake = old.BakeRepos
+	}
+	imageMap := lc.ImageMapEffective(publishedImageMap)
+	bakeRepos := lc.BakeReposEffective(publishedBake)
 	// The orchestrator block is kept by the same rule (D1239, D1234), with the
 	// catalog's two spellings collapsed into one: a config that states a block
 	// replaces what the node holds — the daemon's guardrails are the owner's own
@@ -981,6 +1001,8 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		ReviewFloor:          floor,
 		VerifierAccounts:     verifierAccounts,
 		ImageCatalog:         imageCatalog,
+		ImageMap:             imageMap,
+		BakeRepos:            bakeRepos,
 		Orchestrator:         orchestrator,
 	}
 	switch {
