@@ -714,6 +714,40 @@ func TestRejectsForeignIssueURL(t *testing.T) {
 			}
 		})
 	}
+
+	// The write path refuses what the read path refuses. A local record is a
+	// file a person can edit, and an upload that reported success for one no
+	// reader accepts would retire the local copy (the caller marks it uploaded)
+	// while the issue reaches no listing, and would strand the fingerprint on a
+	// record nobody can read: every later report of that bug would fail.
+	t.Run("an upload that carries one", func(t *testing.T) {
+		b := sharedBucket(t)
+		const fp = "17171717171717171717171717171717"
+		for _, tc := range []struct{ name, url, original string }{
+			{"a foreign issue", "https://github.com/attacker/fugaro/issues/7", ""},
+			{"a foreign original", "https://github.com/dimipaun/fugaro/issues/7", "https://github.com/attacker/fugaro/issues/3"},
+			{"something that is not a link at all", "not a URL", ""},
+		} {
+			bad := sharedIssue("update-20261107183012-48213", fp)
+			bad.URL, bad.OriginalURL = tc.url, tc.original
+			if _, err := Upload(ctx, b, bad); err == nil {
+				t.Errorf("uploading a record with %s (%q) was allowed", tc.name, tc.url)
+			}
+		}
+		// The refusal happens before anything is written, so the fingerprint is
+		// not stranded: the same issue uploaded with its links straightened out
+		// takes its number.
+		if _, err := readVersion(ctx, b, counterKey()); !errors.Is(err, blobx.ErrNotExist) {
+			t.Errorf("a refused upload moved the counter: %v", err)
+		}
+		if _, err := readVersion(ctx, b, fingerprintKey(fp)); !errors.Is(err, blobx.ErrNotExist) {
+			t.Errorf("a refused upload took the fingerprint: %v", err)
+		}
+		up, err := Upload(ctx, b, sharedIssue("update-20261107183012-48213", fp))
+		if err != nil || up.Number != 1 {
+			t.Fatalf("the corrected upload = %+v, %v; want issue 1", up, err)
+		}
+	})
 }
 
 // A filed issue is final: the store never moves it back, never sets it aside

@@ -237,6 +237,15 @@ func Upload(ctx context.Context, b *blobx.Bucket, i Issue) (Uploaded, error) {
 	if !fingerprintRE.MatchString(i.Fingerprint) {
 		return Uploaded{}, fmt.Errorf("issues: %q is not a fingerprint", i.Fingerprint)
 	}
+	// A local record is a file a person can edit (the local store reads what is
+	// there), so its links are checked here as well as on the way out: an
+	// upload that wrote a link a reader refuses would report success, leave the
+	// issue in no listing, and strand the fingerprint on a record nobody can
+	// read. Nothing is written before this answers, so a later upload of the
+	// corrected issue still takes its number.
+	if err := checkLinks(i); err != nil {
+		return Uploaded{}, fmt.Errorf("issues: %w", err)
+	}
 	key := fingerprintKey(i.Fingerprint)
 	entry, err := json.Marshal(numberDoc{Format: sharedFormat})
 	if err != nil {
@@ -459,13 +468,25 @@ func decodeShared(raw []byte, number int) (sharedRecord, error) {
 	if i.Number != number {
 		return sharedRecord{}, fmt.Errorf("issues: shared issue %d holds the record of issue %d", number, i.Number)
 	}
-	for _, link := range []string{i.URL, i.OriginalURL} {
-		if link != "" && !projectIssueURL(link) {
-			return sharedRecord{}, fmt.Errorf("issues: shared issue %d links to %q, which is not an issue of %s", number, link, updatecheck.Repo)
-		}
+	if err := checkLinks(i); err != nil {
+		return sharedRecord{}, fmt.Errorf("issues: shared issue %d: %w", number, err)
 	}
 	rec.Issue = i
 	return rec, nil
+}
+
+// checkLinks refuses a record whose links are not issues of this project, in
+// the words the caller prefixes with the record it is about. The check belongs
+// on the way in as much as on the way out (F28): a record a write accepts must
+// be one every reader can read, or an upload reports success for a record the
+// store will not hand back.
+func checkLinks(i Issue) error {
+	for _, link := range []string{i.URL, i.OriginalURL} {
+		if link != "" && !projectIssueURL(link) {
+			return fmt.Errorf("%q is not an issue URL of %s", link, updatecheck.Repo)
+		}
+	}
+	return nil
 }
 
 // projectIssueURL reports whether s names an issue of this project: the only
