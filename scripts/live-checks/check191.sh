@@ -646,7 +646,7 @@ step_policy() {
 }
 
 step_work_run() {
-  local task=$SCRATCH/task-work.md rid=$RUN_BASE-work row status pushed
+  local task=$SCRATCH/task-work.md rid=$RUN_BASE-work row status pushed pr
   cat >"$task" <<TASK_EOF
 You are a probe for Fugaro's Check 191, run by this repository's owner.
 
