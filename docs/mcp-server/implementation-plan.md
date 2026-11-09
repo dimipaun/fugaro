@@ -800,13 +800,17 @@ tree did not carry:
    leaked ID token leaves behind ends rather than outliving the token's hour by an unbounded amount
    (spec.md §6, §8).
 
-- **Files (8):** `ee/coordinator/mcpauth/authorize.go`, `authorize_test.go`,
+- **Files (9):** `ee/coordinator/mcpauth/authorize.go`, `authorize_test.go`,
   `ee/coordinator/mcpauth/approval.go`, `approval_test.go`, `ee/coordinator/mcpauth/store.go`,
-  `store_test.go`, and the two its own reviews reached: `ee/coordinator/mcpauth/token.go`, where a
+  `store_test.go`, and the three its own reviews reached: `ee/coordinator/mcpauth/token.go`, where a
   family past its own bounds is answered as an age rather than described as the revoke the
-  endpoint's `ErrTokenNotFound` arm describes, and `ee/coordinator/mcpauth/server_test.go`, whose
+  endpoint's `ErrTokenNotFound` arm describes; `ee/coordinator/mcpauth/server_test.go`, whose
   tripwire message names what the guard waits on and would otherwise state a fact this task
-  changed — the test's own walk and its condition are untouched.
+  changed — the test's own walk and its condition are untouched; and
+  `ee/coordinator/mcpauth/resource_test.go`, where the spent ID token presented to the resource
+  server as a bearer is pinned to the 401 that server owes a value this installation never minted,
+  rather than to the 500 it would answer if the record's missing family reached the family read as
+  an empty key.
 - **Interface:** the approve step keeps its single-use POST and its ID token in the body, and the
   **paired device's act is a request of its own** — the endpoint's name was this task's to fix, and
   it was fixed by giving the authorize endpoint's POST the two shapes rather than by adding a route:
