@@ -136,12 +136,13 @@ func definition(e config.Entry, data []byte) ([]byte, error) {
 // reads instructions whose name is ARG, ENV or ONBUILD of either, and not a
 // RUN that exports a variable itself: a credential written into an image by a
 // build step is a scan's to catch (images/scan.sh is one), and a scan of the
-// built image is the layer this one does not pretend to be. It reads the
-// definition's `\` continuations; a definition that changes the parser's
-// escape character with `# escape=` is read line by line, and a name split
-// across a backtick is not seen. All of it holds for a definition whose author
-// is not looking for the guard — an author who is can name the ARG anything,
-// which no reading of the text can prevent.
+// built image is the layer this one does not pretend to be. A heredoc body
+// (RUN <<EOF ...) is read as instructions, because the guard does not track
+// where a body ends: a body line that spells an ARG or an ENV whose name is
+// credential-shaped is refused, which errs toward refusing and says so in the
+// message. All of it holds for a definition whose author is not looking for
+// the guard — an author who is can name the ARG anything, which no reading of
+// the text can prevent.
 //
 // The refusal never repeats what it found. A URL with userinfo holds the
 // credential itself, and a refusal that echoed it would leak it into the log
@@ -191,30 +192,40 @@ func refuseCredentialNames(e config.Entry, line string) error {
 // The reading follows the parser rather than a tidier rule of its own, because
 // both ways of being wrong cost something: read the definition more loosely
 // than a build does and a name a build sets goes unchecked, more strictly and a
-// definition that carries no credential is refused. So the three things that
-// decide a joined name are the parser's own — the leading whitespace of a fresh
-// line is dropped, the leading whitespace of a continuation line is kept (the
-// halves then are not one word, which is how ARG NPM_\ over an indented TOKEN
-// becomes the harmless ARG NPM_), and a comment inside a continuation is
-// dropped with it (ARG NPM_\ over a comment over TOKEN is the one ARG
-// NPMTOKEN). A blank line inside a continuation is dropped with it too, which
-// is the same rule a comment follows. All of it was checked against BuildKit's
-// own parser.
+// definition that carries no credential is refused. So everything that decides
+// a joined name is the parser's own — the escape character, which the leading
+// comments may set with `# escape=`; the leading whitespace of a fresh line,
+// dropped; the leading whitespace of a continuation line, kept (the halves then
+// are not one word, which is how ARG NPM_\ over an indented TOKEN becomes the
+// harmless ARG NPM_); a comment or a blank line inside a continuation, dropped
+// with it (ARG NPM_\ over a comment over TOKEN is the one arg NPMTOKEN); and a
+// comment's own trailing backslash, which continues nothing, because the parser
+// skips a comment whole. All of it was checked against BuildKit's own parser.
 func dockerfileLines(data []byte) []string {
+	esc := dockerfileEscape(data)
 	var lines []string
 	var cont strings.Builder
 	joining := false
 	for _, physical := range strings.Split(string(data), "\n") {
 		line := strings.TrimSuffix(physical, "\r")
-		if joining {
-			if skipped := strings.TrimSpace(line); skipped == "" || strings.HasPrefix(skipped, "#") {
+		comment := strings.HasPrefix(strings.TrimLeft(line, " \t"), "#")
+		if comment || joining {
+			if joining && strings.TrimSpace(line) == "" {
+				continue
+			}
+			if comment {
+				// A comment is dropped whole and continues nothing, so a
+				// backslash at the end of one is text and not a join.
+				if !joining {
+					lines = append(lines, strings.TrimLeft(line, " \t"))
+				}
 				continue
 			}
 		}
 		if !joining {
 			line = strings.TrimLeft(line, " \t")
 		}
-		body, more := trimContinuation(line)
+		body, more := trimContinuation(line, esc)
 		cont.WriteString(body)
 		if more {
 			joining = true
@@ -230,16 +241,54 @@ func dockerfileLines(data []byte) []string {
 	return lines
 }
 
-// trimContinuation removes a line's continuation backslash and the blanks
-// after it, reporting whether the line carries one. A doubled backslash ends a
-// line without continuing it, which is the parser's own rule (the backslash
-// before the last one is what escapes it).
-func trimContinuation(line string) (string, bool) {
+// trimContinuation removes a line's continuation escape character and the
+// blanks after it, reporting whether the line carries one. Two rules are the
+// parser's: an escape character at the end of a line continues it even when it
+// is the line's only character, and one that another escape character precedes
+// is an escaped character rather than a continuation.
+func trimContinuation(line string, esc byte) (string, bool) {
 	line = strings.TrimRight(line, " \t")
-	if n := len(line); n >= 2 && line[n-1] == '\\' && line[n-2] != '\\' {
+	if n := len(line); n > 0 && line[n-1] == esc && (n == 1 || line[n-2] != esc) {
 		return line[:n-1], true
 	}
 	return line, false
+}
+
+// dockerfileEscape returns the character a definition continues a line with:
+// the parser's own backslash, unless the comments before its first instruction
+// set `# escape=` to the backtick. Reading a definition with the wrong one
+// joins lines a build keeps apart and splits lines it joins, and the name a
+// build sets is the one this guard has to read.
+func dockerfileEscape(data []byte) byte {
+	for _, physical := range strings.Split(string(data), "\n") {
+		line := strings.TrimSpace(strings.TrimSuffix(physical, "\r"))
+		if line == "" {
+			continue
+		}
+		if !strings.HasPrefix(line, "#") {
+			break
+		}
+		if esc, ok := escapeDirective(line[1:]); ok {
+			return esc
+		}
+	}
+	return '\\'
+}
+
+// escapeDirective reads one comment's `escape=` directive: the character it
+// names and whether the comment is that directive at all. The two characters a
+// definition may name are the parser's own, and a comment that names anything
+// else is not a directive this guard follows.
+func escapeDirective(comment string) (byte, bool) {
+	key, value, ok := strings.Cut(comment, "=")
+	if !ok || strings.TrimSpace(key) != "escape" {
+		return 0, false
+	}
+	value = strings.TrimSpace(value)
+	if len(value) != 1 || (value[0] != '\\' && value[0] != '`') {
+		return 0, false
+	}
+	return value[0], true
 }
 
 // splitInstruction cuts one logical line into its instruction and the rest:
@@ -334,9 +383,9 @@ func envValue(s string) string {
 // NPM_TOKEN through token, and a GPG_KEY is a public key as often as a private
 // one. Two entries cost something and are kept anyway: pwd is how a password is
 // written short (DB_PWD), and it refuses the shell's own PWD and OLDPWD, which
-// a definition has no reason to set and Docker maintains itself; secret
-// refuses a name a tokenizer's variables carry too, and the refusal says what
-// to do about it.
+// a definition has no reason to set and Docker maintains itself; token refuses
+// TOKENIZERS_PARALLELISM, a tokenizer's own variable, and the refusal says what
+// to do about it (rename it in the definition, or the entry needs an issue).
 var credentialMarkers = []string{
 	"token", "secret", "passwd", "password", "passphrase", "pwd",
 	"credential", "credentials", "creds",
@@ -362,7 +411,11 @@ func credentialShaped(name string) bool {
 // before the first '/' that ends in an '@'. The credential can be the password
 // (https://user:token@host) or the user name itself, which is how a GitHub
 // token is passed (https://TOKEN@host), so any userinfo is refused and the two
-// are not told apart.
+// are not told apart. The cost of not telling them apart is that a URL naming
+// only the user is refused with them (ssh://git@host, postgres://user@db),
+// which is deliberate: the userinfo is where a token is written when it is
+// written as the user name, and the two shapes cannot be told apart by reading
+// them — a refusal an operator meets once is cheaper than a token in a layer.
 //
 // The whole definition is read and not only its instructions: a comment is
 // copied into the bucket with the rest of the text, so a URL written into one

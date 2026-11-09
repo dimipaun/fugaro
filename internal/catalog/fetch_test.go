@@ -235,6 +235,15 @@ func TestDockerfileSecretArgRefused(t *testing.T) {
 		"FROM example.invalid/base\nENV GIT_\\\nTOKEN=value\n",
 		"FROM example.invalid/base\nARG NPM\\\n# a comment a build drops\nTOKEN\n",
 		"FROM example.invalid/base\nARG NPM_\\\n\nTOKEN\n",
+		// A lone continuation character continues the line it is alone on the
+		// same way.
+		"FROM example.invalid/base\nARG NPM_\\\n\\\nTOKEN\n",
+		// The parser's `# escape=` directive is honoured: a backtick continues
+		// a line, and a backslash at the end of one is text.
+		"# escape=`\nFROM example.invalid/base\nARG NPM_TOKEN`\n=x\n",
+		// A comment ends at its own line whatever it ends with, so a backslash
+		// in one continues nothing: the ARG below is read on its own.
+		"FROM example.invalid/base\n# the trailing backslash is text \\\nARG NPM_TOKEN\n",
 		// ONBUILD defers the ARG to a child image, which is the image that
 		// then carries the value.
 		"FROM example.invalid/base\nONBUILD ARG NPM_TOKEN\n",
@@ -268,6 +277,9 @@ func TestDockerfileSecretArgRefused(t *testing.T) {
 		// build argument named after a credential, so it is not refused.
 		"FROM example.invalid/base\nARG NPM_\\\n    TOKEN\n",
 		"FROM example.invalid/base\nENV NPM_\\\n    TOKEN=value\n",
+		// With the parser's escape character set to the backtick, a trailing
+		// backslash is a character in the name and not a join.
+		"# escape=`\nFROM example.invalid/base\nARG NPM_\\\nTOKEN\n",
 	} {
 		if _, err := Fetch(ctx, nil, gitprov.KindGitHub, inlineEntry(def)); err != nil {
 			t.Errorf("the definition %q was refused: %v", def, err)
