@@ -107,9 +107,11 @@ line at the latest commit, and its §7 records the eight things `main` had overt
   whose marker says **mandatory** are M3, M4, M5, M7 and M9, **with M9 keeping the marker in the
   deferred slice**, and M2, M6, M8 and M10 carry the marker without that word — and the
   two new
-  privileges this design asks for (the launch grant **the front door needs, which is M11**, and M4's
+  privileges this design asks for **as the design states them, not as the tasks that build
+  them**: the launch grant **the front door needs** (its task is M11, written after that
+  review ran) and M4's
   single binding on
-  the store D935 moves the records into). **Two SEC-marked tasks are outside that review because they
+  the store D935 moves the records into. **Two SEC-marked tasks are outside that review because they
   did not exist when it ran, and each carries its own independent reading when it is built**: **M5b**
   (the owner's ruling of 2026-11-07) and **M11** (the ruling of 2026-11-09) — §3 says so of each.
   **That review has already found something**: F32 in

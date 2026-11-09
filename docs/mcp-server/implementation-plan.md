@@ -314,8 +314,10 @@ is asked here for every task that changes who may reach what.
 [spec.md](spec.md) §8** — **run by the coordinator**, per the owner's brief — comes first: no task
 starts until it has been read and its findings answered, and its scope is §8, every **SEC**-marked
 task below (the five whose marker says **mandatory** are M3, M4, M5, M7 and M9) and the two new
-privileges this design asks for (the launch grant the front door needs, which is **M11**, and M4's single binding on the store the
-`mcpauth` records moved to). **D921's licence** is the second
+privileges this design asks for — **the privilege as the design states it, and not the task that
+builds it**: the launch grant the front door needs (the task is **M11**, written after that review
+ran and carrying its own independent reading below) and M4's single binding on the store the
+`mcpauth` records moved to. **D921's licence** is the second
 ([reconciliation.md](reconciliation.md) §6, the first owner check): it gates **M5** specifically,
 because M5 is the task that takes the dependency, and a licence that turns out to be unusable sends
 D921 back to its alternatives before any code exists rather than after. **The owner met that gate
@@ -983,10 +985,29 @@ and **nothing in the
 first slice starts a run, holds the launch grant or changes `internal/runner`**. The task is written
 here, unchanged, as the plan for when it is designed and the owner approves it.
 
-- **Files (8):** `ee/coordinator/mcpauth/tool_spawn.go`, `tool_spawn_test.go`,
+- **Files (14):** `ee/coordinator/mcpauth/tool_spawn.go`, `tool_spawn_test.go`,
   `ee/coordinator/mcpauth/tool_cancel.go`, `tool_cancel_test.go`,
   `ee/coordinator/mcpauth/launch.go`, `launch_test.go`, `internal/runner/spend.go`,
-  `internal/runner/spend_test.go`.
+  `internal/runner/spend_test.go`, and the **task-format skew** the two new
+  `task.Spec` fields need — `internal/task/task.go`, `internal/task/task_test.go`,
+  `internal/cli/recipes_skew.go`, `internal/cli/recipes_skew_test.go`,
+  `internal/cli/run.go`, `docs/release.md`.
+- **The two new task fields ship with a skew gate, and the plan names it (2026-11-09).** Moving
+  D924's channel into the run's own task means `internal/task/task.go`'s `Spec` gains the
+  ceiling and the marker, and `task.Parse` decodes with `DisallowUnknownFields`, so **every new
+  field of that struct ships with the four artifacts this repository's skew pattern has**:
+  the constant in `internal/cli/recipes_skew.go` (the release that ships the fields, as
+  `planTaskSince` and `compressionSince` do), the launch gate at `internal/cli/run.go` judged by
+  `checkImageSince` against the job image's build record `base_ref` — the launch path is shared,
+  so the front door's `launch.go` gets it by going through `fugaro run`'s own pre-launch code and
+  not a second time of its own — `internal/cli/recipes_skew_test.go`'s `…SinceHasAReleaseBullet`
+  row, and the `docs/release.md` "Before you tag" bullet. **Both failure modes are named there**:
+  a runner built from an older release **refuses the whole task at bootstrap** (the unknown field,
+  which is a launch that dies after it was paid for), and a coordinator built from an older
+  release **writes no ceiling at all**, so the run silently resolves the job's own cap and the
+  token's limit is dropped — which is why the operator order belongs in that release's
+  `### For operators`: every job image a launch carrying the ceiling can reach is rebuilt or
+  repointed at the shipping release first.
 - **Interface:** **`spawn_task`** (D931's answer of 2026-11-04 — the owner's name for the
   `submit_task` of the spec §0) starts the project's own job through `internal/backend` with the
   token's spend limit and the marker that a launch carries one written into **the run's own task in the
@@ -1091,7 +1112,7 @@ M4 alone and it is built whenever the launcher's grant is wanted, which is befor
 path to it (§2, L1). **Nothing in the first slice waits on it** — the first slice starts no run — so a
 planner who takes only the first slice takes no part of this task.
 
-- **Files (17):** `deploy/terraform/gcp/modules/installation/iam.tf` (the new custom role, whose
+- **Files (18):** `deploy/terraform/gcp/modules/installation/iam.tf` (the new custom role, whose
   permissions are exactly `run.jobs.run`, beside `google_project_iam_custom_role.job_runner` at
   `:27-34`), `deploy/terraform/gcp/modules/installation/variables.tf` (the **closed**
   `names.role_ids` object at `:61-66` gains the key — an object left open would let a plan name a role
@@ -1114,8 +1135,15 @@ planner who takes only the first slice takes no part of this task.
   `deploy/terraform/gcp/roots/installation/tests/project_job.tftest.hcl` (the binding asserted at plan
   level, where the launcher's grant already is), `deploy/terraform/gcp/roots/installation/tests/installation.tftest.hcl`
   (the pin at `:81`, which reads `keys(output.role_ids)` as exactly five names and becomes six),
-  `internal/infra/front_door_fence_test.go` (new: the convergence test and the spelling pin), and
-  `SECURITY.md`.
+  `internal/infra/front_door_fence_test.go` (new: the convergence test and the spelling pin),
+  `internal/infra/testdata/installation-*.tfvars.json` (**regenerated, never hand-edited**: the
+  seven fixtures that carry `names.role_ids` — `installation-budget`, `installation-credentials`,
+  `installation-accounts`, `installation-budget-job`, `installation-coordinator`,
+  `installation-catalog` and `installation-catalog-added`, from which `repo_root*` differs by using
+  `RepoRoleIDs` and is untouched — are byte-for-byte goldens compared by `internal/infra/firebase_test.go:29`'s
+  `checkGolden`, and the new key invalidates each one; the task runs the suite with `-update`, which
+  is where "rerun with `-update` to rewrite" in that failure message points, and **never edits them
+  by hand**, because the bytes are the assertion), and `SECURITY.md`.
 - **Interface:** a **second custom role of the installation, created with the front door's own
   opt-in** — where `fugaroJobRunner` carries
   `run.jobs.run` **and** `run.jobs.runWithOverrides` (`deploy/terraform/gcp/modules/installation/iam.tf:30`,
@@ -1255,7 +1283,9 @@ inputs (`modules/project/iam.tf`, `modules/project/variables.tf`), the two strin
 carry them (`roots/installation/main.tf`), the plan-level assertions
 (`roots/installation/tests/project_job.tftest.hcl`), the role id in the installer's own two files
 (`internal/infra/tfvars.go`, `internal/infra/spec.go`), its own tests
-(`internal/infra/front_door_fence_test.go`, the two `iam_test.go` files) — **so a planner who takes the
+(`internal/infra/front_door_fence_test.go`, the two `iam_test.go` files, and the
+`internal/infra/testdata/installation-*.tfvars.json` goldens the new key regenerates) — **so a planner
+who takes the
 first slice takes none of it**, and the only rows M11 stands in are the four above, all of them M4's or
 a later task's. `ee/coordinator/mcpauth/store_bucket.go` is M2's alone,
 and `internal/budget/rules/*` is M3's alone — the last one being the reason M3 can land at any point
