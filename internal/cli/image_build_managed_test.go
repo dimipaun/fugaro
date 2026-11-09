@@ -26,35 +26,32 @@ import (
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
 )
 
-// image_build_managed.go's tests: a person at their own terminal in a managed
-// project builds a CATALOG ENTRY without typing the project's name (NP3, the
-// owner's ruling of 2026-11-06), under the row D1206 writes for this command —
-// the entry exists in the effective catalog, the build account is the project's
-// own for that entry's source repository, and the count is within D1013's
-// max_image_builds bound, with the project's kill switch read beside it before
-// every build.
+// image_build_managed.go's tests: `fugaro image build` asks nothing in any
+// session (T4, D1540), and a managed project's own terminal is judged and
+// recorded by the row D1206 writes for this command — the entry exists in the
+// effective catalog, the build account is the project's own for that entry's
+// source repository — with the project's kill switch read beside it before
+// every build. D1543 took the count bound (max_image_builds) out of the row:
+// what bounds a build now is the lease its estimated cost is taken under
+// immediately before its submission, which is image_cost.go's and is exercised
+// by the command tests here only as far as its refusals show (image_gate_test.go
+// and image_cost_test.go own the lease itself).
 //
-// What is pinned here, and why each one is a test rather than a comment. The
-// typed prompt this door stands in for is the only thing between a person and a
-// billable Cloud Build, so "the person was asked nothing" is a claim about an
-// ABSENCE — and a command that asked and a command that did not both submit one
-// build in a test that only watched the fake's request count. Three things say
-// it instead: the reader the person's own stdin is handed to is never reached
-// (unreadStdin fails the test when anything reads it), the sentence the prompt
-// prints is nowhere in what the person read, and what the person read is the
-// gate's own line.
+// What is pinned here, and why each one is a test rather than a comment. A
+// command that asked and a command that did not both submit one build in a test
+// that only watched the fake's request count, so "nothing was asked" is said
+// three ways instead: the reader the session's own stdin is handed to is never
+// reached (unreadStdin fails the test when anything reads it), the sentence the
+// removed prompt printed is nowhere in what the session read, and what a
+// managed project's terminal read is the gate's own line about the record.
 //
-// The other half is everything that did NOT move. The derived arm — --workflow,
-// or a checkout with no catalog — is written by no row of the managed gate's,
-// and neither is the converge's own first build of a repository
-// (docs/managed-agent-converge/spec.md §3.1: a billable build's prompt is taken
-// away only where the design gave that path a document AND a bound), so a
-// person at the same managed terminal is still asked for the name there. A
-// coding agent's session is refused exactly as it was, a project that is not
-// managed is asked exactly as it always was and records nothing, a mark that
-// cannot be read is answered with the typed name rather than taken for a
-// permission, and a build the row's rules refuse is refused rather than turned
-// into a prompt.
+// The other half is what the gate is NOT. Nothing prompts, so every session the
+// door does not stand in for — a coding agent, a pipe, a project that is not
+// managed, a mark that cannot be read, a project unflagged between two reads —
+// SUBMITS its build with no judgement, no note and no record, and the tests
+// below pin each of those as its own property rather than as an absence they
+// share. A build a rule refuses is still refused: the refusal is a refusal and
+// there is no prompt left to fall back to.
 //
 // Every world below is hermetic: internal/gcpfake's Cloud Build, Secret
 // Manager, GCS, Resource Manager and RTDB fakes, t.TempDir() for every file,
@@ -79,19 +76,13 @@ type buildWorld struct {
 	s       *storage.Service
 }
 
-// managedBuildMarker is the creation fact of a managed installation that
-// records a bound on the billable builds one invocation may start: the
+// managedBuildMarker is the creation fact of a managed installation: the
 // version-3 object M5 reads (managedRefreshMarker's shape, this fixture's own
-// project), which is the only version that carries one.
+// project). The count it records is the bound D1543 retired — no rule of this
+// gate reads it any more, and the shape still carries it because the version
+// that stops carrying it is T10's migration, not this task's.
 func managedBuildMarker(bound int64) []byte {
 	return []byte(fmt.Sprintf(`{"version":3,"gcp_project":%q,"budget":{"amount":5000,"currency":"USD"},"max_image_builds":%d}`, initProject, bound))
-}
-
-// managedBuildMarkerUnknownVersion is an object written by a Fugaro newer than
-// this one: a bound no read of this program's can state, which is a build no
-// verdict can be reached about.
-func managedBuildMarkerUnknownVersion() []byte {
-	return []byte(`{"version":9,"gcp_project":"` + initProject + `","budget":{"amount":5000,"currency":"USD"},"max_image_builds":1}`)
 }
 
 // managedBuildWorld makes the fixture f an installation the marks call managed:
@@ -333,16 +324,15 @@ func stubCatalogProviderHook(t *testing.T, files map[string]string, hook func())
 	t.Cleanup(func() { openCatalogProvider = was })
 }
 
-// The red step of this task. A person at their own real terminal, in a managed
-// project, runs `fugaro image build <entry>`: nothing is typed, the sentence the
-// typed prompt prints is not printed, the verdict's own line is, one build is
-// submitted and the project's audit holds one admission of the document the
-// person read — the document that carries the entry, the bound in force and the
-// count this build was judged against.
+// A person at their own real terminal, in a managed project, runs `fugaro image
+// build <entry>`: nothing is typed, the sentence the removed prompt printed is
+// not printed, the verdict's own line is, one build is submitted and the
+// project's audit holds one admission of the document the person read — the
+// document that carries the entry and the facts the row's rules were stated
+// over.
 //
 // It failed before this task for the reason the task exists: every arm of this
-// command asked for the project's name typed at a terminal (confirmBuild), and
-// in a managed project that is the one thing the ruling says never happens.
+// command asked for the project's name typed at a terminal (confirmBuild).
 //
 // The mutations this catches are the tempting ones: a confirm that ignores the
 // gate (the prompt returns, the reader is reached, the first assertion fails), a
@@ -386,7 +376,6 @@ func TestImageBuildManagedCatalogAsksNothingAtTheTerminal(t *testing.T) {
 		"the entry is written in this project's own state (alpha names no source repository)",
 		"the build runs as this project's own build account",
 		"the project's kill switch is off",
-		"the build is within the bound the project's marker records (1 per invocation, 0 already submitted)",
 		"the build is this checkout's own repository (acme/app)",
 		"the base image is not another project's pull-through reference (b:1)",
 		"the build pushes into this installation's own registry",
@@ -408,18 +397,14 @@ func TestImageBuildManagedCatalogAsksNothingAtTheTerminal(t *testing.T) {
 	}
 }
 
-// D1206's third clause, and D1013's own count: the project's creation fact
-// records one build per invocation, so a whole-catalog build of three entries
-// submits the first, and the one after it is refused with the bound's own
-// sentence rather than submitted. The count is what makes the second entry's
-// judgement different from the first's, which is what "the count is within the
-// bound" is about.
-//
-// The two records are the other half: one admission of the build that ran and
-// one refusal of the build that did not, each of its own document — a command
-// that filed one verdict for the whole invocation would leave one record with
-// three builds behind it.
-func TestImageBuildManagedStopsAtTheRecordedBound(t *testing.T) {
+// The whole-catalog build is what the retired count used to cut short: three
+// entries were judged one after another against a per-invocation bound, so the
+// second was refused. With the bound gone (D1543) every entry is judged on its
+// own and every one is submitted, and the day holds one admission per build
+// rather than one verdict for the invocation — the catastrophic mutation this
+// catches is a gate that judges the first build and lets the rest through
+// unrecorded.
+func TestImageBuildManagedJudgesEveryEntryOfACatalog(t *testing.T) {
 	fb, _, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildThreeYAML)
 	w := managedBuildWorld(t, f, managedBuildMarker(1))
 	stubCatalogProvider(t, map[string]string{".fugaro/base.Dockerfile": catalogBuildFetched})
@@ -427,128 +412,90 @@ func TestImageBuildManagedStopsAtTheRecordedBound(t *testing.T) {
 	fakeTerminal(t)
 
 	out, errOut, err := executeStdinReader(t, &unreadStdin{}, "image", "build", "--base", "b:1")
-	if err == nil {
-		t.Fatalf("the run went past the bound the project's marker records\n%s%s", out, errOut)
-	}
-	if !strings.Contains(err.Error(), "past the bound the project's marker records") || !strings.Contains(err.Error(), "max_image_builds") {
-		t.Errorf("the refusal does not name the bound that stopped it:\n%v", err)
-	}
-	// And it names the way past it that exists: the bound is per INVOCATION,
-	// so naming the entry is what builds the next one. The two ways the
-	// sentence used to offer are not commands this program has -- nothing
-	// writes a marker with another bound, and a project that is not managed
-	// never reaches this line -- so a refusal that offered either would be a
-	// dead end.
-	if !strings.Contains(err.Error(), "one entry per invocation") {
-		t.Errorf("the refusal does not tell the person how to build the rest:\n%v", err)
-	}
-	for _, dead := range []string{"not managed", "a larger max_image_builds"} {
-		if strings.Contains(err.Error(), dead) {
-			t.Errorf("the refusal offers %q, which is no path a command can take:\n%v", dead, err)
-		}
-	}
-	if buildPosts(fb) != 1 {
-		t.Fatalf("submitted %d builds against a bound of one, want the first alone\n%s%s", buildPosts(fb), out, errOut)
+	if err != nil {
+		t.Fatalf("%v\n%s%s", err, out, errOut)
 	}
 	if !strings.Contains(errOut, initflow.GateProceeded()) {
-		t.Errorf("the admitted build did not print the gate's own sentence:\n%s", errOut)
+		t.Errorf("the admitted builds did not print the gate's own sentence:\n%s", errOut)
+	}
+	if n := buildPosts(fb); n != 3 {
+		t.Fatalf("submitted %d builds, want every entry of the catalog\n%s%s", n, out, errOut)
 	}
 	got := w.audits(t)
-	if len(got) != 2 {
-		t.Fatalf("the day holds %d records, want the admission and the refusal (%+v)", len(got), got)
+	if len(got) != 3 {
+		t.Fatalf("the day holds %d records, want one per build (%+v)", len(got), got)
 	}
-	verdicts := map[managedmode.AuditVerdict]int{}
 	for _, r := range got {
-		verdicts[r.Verdict]++
-	}
-	if verdicts[managedmode.AuditAdmitted] != 1 || verdicts[managedmode.AuditRefused] != 1 {
-		t.Errorf("the day's verdicts are %v, want one admission and one refusal", verdicts)
+		if r.Verdict != managedmode.AuditAdmitted {
+			t.Errorf("a build of the catalog left a %q record, want every one admitted", r.Verdict)
+		}
 	}
 }
 
 // The gate re-reads the marks immediately before the write it is about to make
-// (D1024), and this is what that second read is FOR: a project whose owner
-// unflags it between the door's own read and the build's admission is not a
-// managed project any more, so the gate has no verdict to give and the typed
-// question comes back exactly where it was.
+// (D1024), and this is what that second read is FOR now that nothing prompts: a
+// project whose owner unflags it between the door's own read and the build's
+// admission is not a managed project any more, so the gate has no verdict to
+// give and writes no record of one. The build is still submitted — nothing asks
+// and nothing refuses — and the admission answers nil, which is the same answer
+// an unmanaged project's own build gets.
+//
+// This is the consequence T4 leaves behind and T9's audit-only gate (D1545)
+// inherits: what the second read protects is the RECORD, not the submission. It
+// is pinned rather than assumed because the alternative reading — a gate that
+// refuses or prompts on a revoked project — is a refusal this policy does not
+// have, and a test that did not say so would let one in.
 //
 // The window is made reachable rather than assumed. The one read between the
-// bound and the gate's second look at the marks is the project's kill switch,
-// so the fake holds that request in flight (HoldNext) while the owner takes the
-// label away and then lets it go: the gate's admission is decided on marks that
-// changed inside the window, which is the case the second read exists for and
-// the case no other world in this file builds — they all leave the marks as the
-// door found them.
-//
-// The mutation this catches is the fallback answering "admitted" (returning nil
-// at the fallback): a project revoked in that window would then have its build
-// submitted with no confirmation at all, which is the one thing the second read
-// prevents — and no other test here would notice, because every other managed
-// world leaves the marks in place from the first read to the last.
-//
-// Nothing is recorded either way: the gate writes no record for a session it
-// does not stand in for, and an admission's record is written after the
-// submission (recorded), which the typed fallback has not made.
-func TestImageBuildManagedRevokedMidCommandAsksForTheTypedName(t *testing.T) {
+// door's own read and the gate's second look at the marks is the project's kill
+// switch, so the fake holds that request in flight (HoldNext) while the owner
+// takes the label away and then lets it go: the gate's admission is decided on
+// marks that changed inside the window, which is the case the second read exists
+// for and the case no other world in this file builds — they all leave the marks
+// as the door found them.
+func TestImageBuildManagedRevokedMidCommandRecordsNothingAndAsksNothing(t *testing.T) {
 	_, _, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildThreeYAML)
 	w := managedBuildWorld(t, f, managedBuildMarker(1))
 	noAgentSession(t)
 	lc := fixtureConfig(t)
+	// The world the door read: the label is put back so that revocation is the
+	// only change between the two reads.
+	labelled(w.crmFake, initProject)
+	m := catalogBuildGate(t, w, lc)
+	stamped, release := w.db.HoldNext(budget.PathKillGlobal)
+
+	cmd := gateCmd()
+	out := &strings.Builder{}
+	cmd.SetOut(out)
+	cmd.SetErr(out)
+	stdin := &unreadStdin{}
+	cmd.SetIn(stdin)
+	entry := config.Entry{Name: "alpha", Source: config.Source{Kind: config.SourceInline}}
 	plan := catalogBuildPlan(t, lc, []string{"alpha"}, "alpha")
+	done := make(chan error, 1)
+	go func() {
+		done <- m.admitEntry(t.Context(), cmd, initflow.Conditions{Terminal: true},
+			directRulesCatalog("alpha"), entry, mustSlug("bitbucket", "acme/app"), plan)
+	}()
+	select {
+	case <-stamped:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the admission never read the project's kill switch, so the door was never reached")
+	}
+	w.crmFake.SetLabels(initProject, map[string]string{managed.ProjectLabelKey: "no"})
+	release()
+	if err := <-done; err != nil {
+		t.Fatalf("a project unflagged mid-command refused the build rather than giving it no verdict: %v", err)
+	}
 
-	for _, tc := range []struct {
-		name  string
-		stdin string
-		want  string
-	}{
-		{name: "the project's name typed", stdin: initProjectName + "\n"},
-		{name: "nothing typed", stdin: "\n", want: "not confirmed"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			// The world the door read, one gate per subtest, so the revocation
-			// each case makes is the only one between the two reads.
-			labelled(w.crmFake, initProject)
-			m := catalogBuildGate(t, w, lc)
-			stamped, release := w.db.HoldNext(budget.PathKillGlobal)
-
-			cmd := gateCmd()
-			out := &strings.Builder{}
-			cmd.SetOut(out)
-			cmd.SetErr(out)
-			stdin := &readSpy{Reader: strings.NewReader(tc.stdin)}
-			cmd.SetIn(stdin)
-			done := make(chan error, 1)
-			go func() {
-				done <- m.admitEntry(t.Context(), cmd, initflow.Conditions{Terminal: true},
-					directRulesCatalog("alpha"), config.Entry{Name: "alpha", Source: config.Source{Kind: config.SourceInline}},
-					mustSlug("bitbucket", "acme/app"), plan)
-			}()
-			select {
-			case <-stamped:
-			case <-time.After(10 * time.Second):
-				t.Fatal("the admission never read the project's kill switch, so the door was never reached")
-			}
-			w.crmFake.SetLabels(initProject, map[string]string{managed.ProjectLabelKey: "no"})
-			release()
-			err := <-done
-
-			if !strings.Contains(out.String(), "Type "+initProjectName+" to submit the build: ") {
-				t.Errorf("a project whose marks were taken away mid-command was not asked for the project's name:\n%s", out)
-			}
-			if !stdin.read {
-				t.Error("the prompt was printed and nothing read the person's answer")
-			}
-			if tc.want == "" {
-				if err != nil {
-					t.Fatalf("the project's own name was typed and the build was still refused: %v", err)
-				}
-			} else if err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Errorf("a name that is not the project's left err %v, want the refusal %q", err, tc.want)
-			}
-			if got := w.audits(t); len(got) != 0 {
-				t.Errorf("a session the gate does not stand in for left %d records (%+v)", len(got), got)
-			}
-		})
+	if stdin.read {
+		t.Errorf("a project whose marks were taken away mid-command asked a question:\n%s", out)
+	}
+	if got := out.String(); strings.Contains(got, initflow.GateProceeded()) || strings.Contains(got, "Type ") {
+		t.Errorf("an admission that decided nothing printed a confirmation:\n%s", got)
+	}
+	if got := w.audits(t); len(got) != 0 {
+		t.Errorf("a project that was not managed at the second read left %d records (%+v)", len(got), got)
 	}
 }
 
@@ -642,45 +589,9 @@ func TestImageBuildManagedUnreadableKillSwitchStops(t *testing.T) {
 	}
 }
 
-// The bound's read is the one thing in D1206's row that is an error rather than
-// a refusal when it answers nothing: a creation fact this program does not
-// write is a bound no verdict can be reached about, so no document is judged,
-// no record is written, and nothing is submitted.
-//
-// The fact is replaced after the gate's read, which is the window D1013's own
-// re-read exists for: an owner who replaces the project's creation fact while a
-// command runs means the build after that to stop, and the door's read is not
-// what the next build is judged against.
-func TestImageBuildManagedUnreadableBoundStops(t *testing.T) {
-	fb, _, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildThreeYAML)
-	w := managedBuildWorld(t, f, managedBuildMarker(3))
-	noAgentSession(t)
-	lc := fixtureConfig(t)
-	m := catalogBuildGate(t, w, lc)
-	w.gcs.Put(initRunsBucket, managed.MarkerObject, managedBuildMarkerUnknownVersion())
-	plan := catalogBuildPlan(t, lc, []string{"alpha"}, "alpha")
-	cmd := gateCmd()
-	cmd.SetIn(&unreadStdin{})
-
-	err := m.admitEntry(t.Context(), cmd, initflow.Conditions{Terminal: true}, directRulesCatalog("alpha"),
-		config.Entry{Name: "alpha", Source: config.Source{Kind: config.SourceInline}}, mustSlug("bitbucket", "acme/app"), plan)
-	if err == nil {
-		t.Fatal("a build was judged against a bound nothing could read")
-	}
-	if !strings.Contains(err.Error(), "bound on this project's billable image builds was not read") {
-		t.Errorf("the run stopped without saying which read failed:\n%v", err)
-	}
-	if buildPosts(fb) != 0 {
-		t.Errorf("submitted %d builds against a bound nothing could read", buildPosts(fb))
-	}
-	if got := w.audits(t); len(got) != 0 {
-		t.Errorf("a document no verdict could be reached about left %d records (%+v)", len(got), got)
-	}
-}
-
 // directRulesCatalog is the catalog the direct-admission tests state their
 // rules over: the entry they judge is in it, so the rule that fires is the one
-// each test is about — the bound, the switch — and not the catalog's own.
+// each test is about — the switch — and not the catalog's own.
 func directRulesCatalog(name string) *config.Catalog {
 	return &config.Catalog{Entries: []config.Entry{{Name: name, Source: config.Source{Kind: config.SourceInline}}}}
 }
@@ -837,141 +748,129 @@ func TestImageBuildManagedAcceptsACanonicalRepoSpellingAtTheCommand(t *testing.T
 	oneRecord(t, w, managedmode.AuditAdmitted)
 }
 
-// A coding agent's session on the same managed project is refused exactly as it
-// has always been, before the local config, the bucket or any mark is touched:
-// the refusal this door stands beside is catalogBuildNotConfirmable's, and
-// nothing here moves a session that cannot type a project's name.
-func TestImageBuildManagedStillRefusesAnAgentSession(t *testing.T) {
+// A coding agent's session on the same managed project is the session the
+// removed refusal was written for, and its removal is the whole point of the
+// spec's §4 ("agents can run image builds"): the build is submitted, nothing is
+// asked, and the gate — which judges a person at a terminal alone — writes no
+// record of it.
+//
+// The record's absence is named rather than hidden: it is what T9's audit-only
+// gate (D1545) is about, and T4's PR body carries it as a finding. The mutation
+// this catches is the agent refusal coming back (the build is not submitted),
+// which is the behaviour the policy deletes.
+func TestImageBuildManagedBuildsInAnAgentSessionUnrecorded(t *testing.T) {
 	fb, _, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildThreeYAML)
 	w := managedBuildWorld(t, f, managedBuildMarker(1))
 	fakeTerminal(t)
 	t.Setenv(agentMarkers[0], "1")
 	stdin := &unreadStdin{}
 
-	_, _, err := executeStdinReader(t, stdin, "image", "build", "alpha", "--base", "b:1")
-	if ExitCode(err) != ExitUserError {
-		t.Fatalf("exit %d, err %v: a coding agent's session must be refused", ExitCode(err), err)
+	out, errOut, err := executeStdinReader(t, stdin, "image", "build", "alpha", "--base", "b:1")
+	if err != nil {
+		t.Fatalf("exit %d, err %v: a coding agent's session runs this build like any other session", ExitCode(err), err)
 	}
-	if !strings.Contains(err.Error(), agentMarkers[0]+" is set") {
-		t.Errorf("the refusal does not name the marker the session carries: %v", err)
-	}
-	if buildPosts(fb) != 0 {
-		t.Error("a coding agent's session submitted a build")
+	if buildPosts(fb) != 1 {
+		t.Errorf("submitted %d builds, want the one the agent asked for (%s)", buildPosts(fb), out)
 	}
 	if stdin.read {
 		t.Error("a coding agent's session was asked a question it can never answer")
 	}
+	if strings.Contains(errOut, initflow.GateProceeded()) || strings.Contains(errOut, "Type ") {
+		t.Errorf("a session the gate does not stand in for read a confirmation:\n%s", errOut)
+	}
 	if got := w.audits(t); len(got) != 0 {
-		t.Errorf("a session that was never admitted left %d records (%+v)", len(got), got)
+		t.Errorf("a session the gate does not stand in for left %d records (%+v)", len(got), got)
 	}
 }
 
-// The derived arm is the other half of the row: `--workflow`, and a checkout
-// with no catalog, are written by no row of the managed gate's (D1206 writes
-// the catalog entry alone, and the design's boundary is that a billable build's
-// prompt goes away only where that path got a document AND a bound), so the
-// person at the SAME managed terminal is asked for the project's name exactly
-// as they always were. The mutation this catches is a door opened for the whole
-// command rather than for the catalog arm: the managed world below would stop
-// asking, and the build would be submitted without a name.
-func TestImageBuildManagedDerivedArmStillAsksAtTheTerminal(t *testing.T) {
-	for _, tc := range []struct {
-		name   string
-		stdin  string
-		builds int
-	}{
-		{"the project's name typed", initProjectName + "\n", 1},
-		{"nothing typed", "", 0},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			fb, f := cloudBuildCheckout(t, false)
-			w := managedBuildWorld(t, f, managedBuildMarker(1))
-			noAgentSession(t)
-			fakeTerminal(t)
+// The derived arm — `--workflow`, and a checkout with no catalog — is written by
+// no row of the managed gate's (D1206 writes the catalog entry alone), so
+// nothing about it is judged or recorded; T4 removed the prompt this path used
+// to print, so the person at the SAME managed terminal now gets the build they
+// asked for with no note and no typed name. The mutation this catches is a
+// confirmation left in image.go's own path: the build would not be submitted
+// without a name.
+func TestImageBuildManagedDerivedArmAsksNothing(t *testing.T) {
+	fb, f := cloudBuildCheckout(t, false)
+	w := managedBuildWorld(t, f, managedBuildMarker(1))
+	noAgentSession(t)
+	fakeTerminal(t)
+	stdin := &unreadStdin{}
 
-			out, errOut, err := executeStdin(t, tc.stdin, "image", "build", "--base", "b:1")
-			if !strings.Contains(errOut, "Type "+initProjectName+" to submit the build: ") {
-				t.Fatalf("the derived arm is not a row of the managed gate's, and its person was not asked (%v):\n%s%s", err, out, errOut)
-			}
-			if strings.Contains(errOut, initflow.GateProceeded()) {
-				t.Errorf("the derived arm printed the gate's own sentence:\n%s", errOut)
-			}
-			if buildPosts(fb) != tc.builds {
-				t.Errorf("submitted %d builds, want %d\n%s%s", buildPosts(fb), tc.builds, out, errOut)
-			}
-			if tc.builds == 0 && (err == nil || !strings.Contains(err.Error(), "not confirmed")) {
-				t.Errorf("a declined build did not say so: %v", err)
-			}
-			if got := w.audits(t); len(got) != 0 {
-				t.Errorf("a build no row of the gate's covers left %d records (%+v)", len(got), got)
-			}
-		})
+	out, errOut, err := executeStdinReader(t, stdin, "image", "build", "--base", "b:1")
+	if err != nil {
+		t.Fatalf("%v\n%s%s", err, out, errOut)
+	}
+	if stdin.read {
+		t.Errorf("the derived arm asked a question:\n%s", errOut)
+	}
+	if strings.Contains(errOut, "Type ") || strings.Contains(errOut, initflow.GateProceeded()) {
+		t.Errorf("the derived arm printed a confirmation no row of the gate's covers:\n%s", errOut)
+	}
+	if buildPosts(fb) != 1 {
+		t.Errorf("submitted %d builds, want the one the person asked for\n%s%s", buildPosts(fb), out, errOut)
+	}
+	if got := w.audits(t); len(got) != 0 {
+		t.Errorf("a build no row of the gate's covers left %d records (%+v)", len(got), got)
 	}
 }
 
 // The other half of the door: an installation whose marks do not say managed is
-// not managed, and its person at the same terminal is asked exactly what this
-// command has always asked — the project's name, read from their own stdin. That
-// name submits the build and anything else declines it, and nothing is recorded
-// either way (D1025: a record is a managed project's own).
-func TestImageBuildUnmanagedStillAsksAtTheTerminal(t *testing.T) {
-	for _, tc := range []struct {
-		name   string
-		stdin  string
-		builds int
-	}{
-		{"the project's name typed", initProjectName + "\n", 1},
-		{"nothing typed", "", 0},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			fb, _, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildThreeYAML)
-			w := unmanagedBuildWorld(t, f)
-			stubCatalogProvider(t, map[string]string{".fugaro/base.Dockerfile": catalogBuildFetched})
-			noAgentSession(t)
-			fakeTerminal(t)
+// not managed, and its person at the same terminal now builds exactly what an
+// unmanaged installation's person has always built — nothing is asked, nothing
+// is judged and nothing is recorded (D1025: a record is a managed project's own).
+func TestImageBuildUnmanagedAsksNothing(t *testing.T) {
+	fb, _, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildThreeYAML)
+	w := unmanagedBuildWorld(t, f)
+	stubCatalogProvider(t, map[string]string{".fugaro/base.Dockerfile": catalogBuildFetched})
+	noAgentSession(t)
+	fakeTerminal(t)
+	stdin := &unreadStdin{}
 
-			out, errOut, err := executeStdin(t, tc.stdin, "image", "build", "alpha", "--base", "b:1")
-			if !strings.Contains(errOut, "Type "+initProjectName+" to submit the build: ") {
-				t.Fatalf("a project that is not managed did not read the prompt this command has always printed:\n%s%s", out, errOut)
-			}
-			if strings.Contains(errOut, initflow.GateProceeded()) {
-				t.Errorf("a project that is not managed read the gate's own sentence:\n%s", errOut)
-			}
-			if buildPosts(fb) != tc.builds {
-				t.Errorf("submitted %d builds, want %d\n%s%s", buildPosts(fb), tc.builds, out, errOut)
-			}
-			if tc.builds == 0 && (err == nil || !strings.Contains(err.Error(), "not confirmed")) {
-				t.Errorf("a declined build did not say so: %v", err)
-			}
-			if got := w.audits(t); len(got) != 0 {
-				t.Errorf("a project that is not managed left %d records (%+v)", len(got), got)
-			}
-		})
+	out, errOut, err := executeStdinReader(t, stdin, "image", "build", "alpha", "--base", "b:1")
+	if err != nil {
+		t.Fatalf("%v\n%s%s", err, out, errOut)
+	}
+	if stdin.read {
+		t.Errorf("a project that is not managed asked a question:\n%s", errOut)
+	}
+	if strings.Contains(errOut, "Type ") || strings.Contains(errOut, initflow.GateProceeded()) {
+		t.Errorf("a project that is not managed read a confirmation:\n%s", errOut)
+	}
+	if buildPosts(fb) != 1 {
+		t.Errorf("submitted %d builds, want the one that was asked for\n%s%s", buildPosts(fb), out, errOut)
+	}
+	if got := w.audits(t); len(got) != 0 {
+		t.Errorf("a project that is not managed left %d records (%+v)", len(got), got)
 	}
 }
 
-// A mark that cannot be read is not a permission: the read fails, the door
-// answers "the gate did not admit this", and the person is asked the question
-// they have always been asked rather than met with an error about the
-// installation. The marks are all in place — what fails is the endpoint they are
-// read through.
-func TestImageBuildManagedAnswersAMarkItCannotReadWithTheTypedName(t *testing.T) {
+// A mark that cannot be read is not a permission, and it is not a question
+// either: the read fails, the door answers "the gate did not judge this", and
+// the build is submitted with no verdict and no record rather than met with an
+// error about the installation. The marks are all in place — what fails is the
+// endpoint they are read through.
+func TestImageBuildManagedBuildsWhatAMarkItCannotRead(t *testing.T) {
 	fb, _, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildThreeYAML)
 	w := managedBuildWorld(t, f, managedBuildMarker(1))
 	stubCatalogProvider(t, map[string]string{".fugaro/base.Dockerfile": catalogBuildFetched})
 	rewriteConfig(t, "storage: "+w.gcs.URL+"/storage/v1/", "storage: "+deadEndpoint(t)+"/storage/v1/")
 	noAgentSession(t)
 	fakeTerminal(t)
+	stdin := &unreadStdin{}
 
-	out, errOut, err := executeStdin(t, initProjectName+"\n", "image", "build", "alpha", "--base", "b:1")
+	out, errOut, err := executeStdinReader(t, stdin, "image", "build", "alpha", "--base", "b:1")
 	if err != nil {
 		t.Fatalf("%v\n%s%s", err, out, errOut)
 	}
-	if !strings.Contains(errOut, "Type "+initProjectName+" to submit the build: ") {
-		t.Errorf("a mark that could not be read was taken for a permission:\n%s", errOut)
+	if stdin.read {
+		t.Errorf("a mark that could not be read was answered with a question:\n%s", errOut)
+	}
+	if strings.Contains(errOut, "Type ") || strings.Contains(errOut, initflow.GateProceeded()) {
+		t.Errorf("a gate the read never opened printed a confirmation:\n%s", errOut)
 	}
 	if buildPosts(fb) != 1 {
-		t.Errorf("the typed name did not submit the build (%d posts)", buildPosts(fb))
+		t.Errorf("the build behind a mark that could not be read was submitted %d times, want one", buildPosts(fb))
 	}
 	if got := w.audits(t); len(got) != 0 {
 		t.Errorf("a gate the read never opened left %d records (%+v)", len(got), got)
