@@ -359,3 +359,16 @@ func TestValidateWarnsWhenTheProjectLayerSetsPlanning(t *testing.T) {
 		}
 	}
 }
+
+// TestUpdateConvergesFromThePreviousVersionWithPlanningKey: an installation one
+// release behind, in a checkout whose fugaro.yaml writes planning:, reaches this
+// release with `fugaro update` alone. The gate judges the base image the
+// installation recorded (the previous release's, which is newer than
+// planningSince) and lets the run through, so the key costs no second command;
+// the point of the test is the other reading — a gate that refused here would
+// make writing the key an operator step, and `fugaro update` the one command the
+// user is told to run may not be two.
+func TestUpdateConvergesFromThePreviousVersionWithPlanningKey(t *testing.T) {
+	r := newConvergeRigYAML(t, v4Node(), refreshYAML+"planning: { decoupling: false }\n")
+	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+}
