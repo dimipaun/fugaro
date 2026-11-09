@@ -1760,8 +1760,8 @@ func consoleSpelledNumber(t *testing.T, spelled string) int {
 //     the graph plan's CG9a to thirty-two, and the managed screens' plan's CM4
 //     -- `managed.status` and `policy.show`, whose rule 6 rows CM3 had already
 //     written -- to thirty-four, and the subscriptions plan's S2.7 -- the licence
-//     screen's `licence.read` and `licence.save`, the first rows here that spawn
-//     nothing at all -- to the thirty-six rule 5 carries today.
+//     section's `licence.read` and `licence.save`, two of the eleven rows here
+//     that spawn nothing -- to the thirty-six rule 5 carries today.
 //   - **every row of spawn.ts's `SPAWN_COMMANDS` is admitted by rule 6's table**:
 //     the row's own words lead some row of the design's table **and what that row
 //     carries after them is flags, nothing else**. The second half is the whole
