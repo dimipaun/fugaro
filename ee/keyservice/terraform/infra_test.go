@@ -104,6 +104,46 @@ func tfBlocks(src, header string) []string {
 	}
 }
 
+// tfCompact removes every space, tab and newline from a file or a block. These
+// tests decide what a configuration WRITES, and terraform fmt's alignment — or
+// the absence of it — is no part of that: `member = "allUsers"` and
+// `member="allUsers"` are one grant written twice, and a check that read the
+// first spelling only would let the second through. Whitespace inside a quoted
+// string goes with the rest, which costs nothing here: every string matched
+// below is a single token and none of them spans a space.
+func tfCompact(src string) string {
+	return strings.NewReplacer(" ", "", "\t", "", "\n", "", "\r", "").Replace(src)
+}
+
+// tfHeader answers a block's first line — its kind and its name — which is what
+// the list of sanctioned grants is keyed by.
+func tfHeader(block string) string {
+	if i := strings.Index(block, "{"); i >= 0 {
+		block = block[:i]
+	}
+	return strings.TrimSpace(block)
+}
+
+// tfGrants reports whether a block hands an identity a role. It is deliberately
+// loose — an IAM resource type, or an attribute a grant is written with — and it
+// is loose in the safe direction: the sweep's other half is a list of the grants
+// this service is allowed to hold, so a block the test thinks grants something
+// and finds unlisted fails, while being wrong about a block that grants nothing
+// costs only a message. The attribute test is on the compacted body, because a
+// grant written `role="projects/x/roles/y"` and one written
+// `role = "projects/x/roles/y"` are the same grant.
+func tfGrants(header, compact string) bool {
+	if strings.Contains(header, "_iam_") {
+		return true
+	}
+	for _, attr := range []string{"member=", "members=", "role=", "role_id=", "permissions=", "policy_data="} {
+		if strings.Contains(compact, attr) {
+			return true
+		}
+	}
+	return false
+}
+
 // tfFiles lists this tree's Terraform, so that a sweep covers a file a later
 // change adds as well as the two roots there are today. Hidden directories are
 // skipped: a provider data directory belongs outside the tree (the `terraform`
@@ -196,38 +236,57 @@ func TestTheSigningKeyIsNonExportable(t *testing.T) {
 func TestOnlyTheMinterHoldsTheSignerRole(t *testing.T) {
 	src := tfSource(t, servicesMainTF)
 
-	// Every block in the tree that reaches a KMS key at all is one of the two
-	// the design names: the custom role itself (keyring/) and the one grant of
-	// it (services/). A count of grants of one resource TYPE would miss a
-	// second holder written another way — the same role granted with
-	// google_project_iam_member, or a predefined roles/cloudkms role handed to
-	// the intake — so the sweep is over the blocks' own text rather than over a
-	// resource name.
+	// Every block in the tree that grants anything at all is one of the four
+	// grants this service is allowed to hold, and the list is the whole of it.
+	// A count of grants of one resource TYPE in one file would miss a second
+	// holder written another way — the same role granted with
+	// google_project_iam_member, google_kms_key_ring_iam_binding or an
+	// `_iam_policy`, a signer role named by its literal id instead of through
+	// var.signer_role, a plain `user:` added beside the minter's account — so
+	// the discriminator is "this block grants a role" whatever it is called, and
+	// the answer for a grant nobody has reviewed is this list's absence.
+	sanctioned := map[string]string{
+		`resource "google_project_iam_custom_role" "signer"`:                        "the signer role itself (keyring/), and the whole of what signing takes",
+		`resource "google_kms_key_ring_iam_member" "minter_signs"`:                  "its one grant, to the minter's account",
+		`resource "google_cloud_run_v2_service_iam_member" "intake_public"`:         "the intake's public invoker, which reaches no key at all",
+		`resource "google_cloud_run_v2_service_iam_member" "intake_invokes_minter"`: "the intake's one reach, the authenticated call to the minter",
+	}
 	for _, rel := range tfFiles(t) {
 		for _, block := range tfBlocks(tfSource(t, rel), `resource "`) {
-			// A block grants something only if it names a role; without that,
-			// it is the API-enable, which mentions cloudkms.googleapis.com and
-			// hands nobody anything.
-			if !strings.Contains(block, "role") || (!strings.Contains(block, "cloudkms") && !strings.Contains(block, "signer_role")) {
+			header := tfHeader(block)
+			if !tfGrants(header, tfCompact(block)) {
 				continue
 			}
-			sanctioned := strings.Contains(block, `resource "google_project_iam_custom_role" "signer"`) ||
-				strings.Contains(block, `resource "google_kms_key_ring_iam_member" "minter_signs"`)
-			if !sanctioned {
-				t.Errorf("%s reaches a KMS key outside the signer role and its one grant:\n%s\nthe signer role is granted in one place, to one account, so that a reader of the plan sees every identity that can mint a licence key (Check 174)", rel, strings.TrimSpace(block))
+			if _, ok := sanctioned[header]; !ok {
+				t.Errorf("%s holds a grant that is not one of the four this service is allowed:\n%s\nthe signer role is granted in one place, to one account, so that a reader of the plan sees every identity that can mint a licence key (Check 174)", rel, strings.TrimSpace(block))
 			}
 		}
 	}
 
-	grant := tfBlock(t, src, `resource "google_kms_key_ring_iam_member" "minter_signs"`)
-	if !strings.Contains(grant, "member      = google_service_account.minter.member") {
+	grant := tfCompact(tfBlock(t, src, `resource "google_kms_key_ring_iam_member" "minter_signs"`))
+	if !strings.Contains(grant, "member=google_service_account.minter.member") {
 		t.Errorf("%s's signer grant is not the minter's account: the minter is the one service that signs (T13's split), and the grant is where that is decided — an intake here hands the signer role to the internet-facing service", servicesMainTF)
 	}
-	if !strings.Contains(grant, `role        = "projects/${var.project}/roles/${var.signer_role}"`) {
+	if !strings.Contains(grant, `role="projects/${var.project}/roles/${var.signer_role}"`) {
 		t.Errorf("%s's signer grant is not the custom role keyring/ creates: the narrowest grant that mints is one permission, cloudkms.cryptoKeyVersions.useToSign, while a predefined role also reads the public key and verifies", servicesMainTF)
 	}
-	if !strings.Contains(grant, "key_ring_id = data.google_kms_key_ring.signing.id") {
+	if !strings.Contains(grant, "key_ring_id=data.google_kms_key_ring.signing.id") {
 		t.Errorf("%s's signer grant is not on the key ring: the grant has to reach the keys keyring/ created rather than a project, and the data source is what fails the plan while S3.8's apply has not run", servicesMainTF)
+	}
+
+	// The role the grant names is the role keyring/ defines, and it is the
+	// narrowest one that mints: one permission rather than the predefined
+	// signerVerifier, which also reads the public key and verifies. Without this
+	// the pair above could name a custom role holding useToSign and
+	// useToVerify, or a role id nothing creates.
+	role := tfCompact(tfBlock(t, tfSource(t, keyringMainTF), `resource "google_project_iam_custom_role" "signer"`))
+	for _, want := range []string{
+		"role_id=var.signer_role",
+		`permissions=["cloudkms.cryptoKeyVersions.useToSign"]`,
+	} {
+		if !strings.Contains(role, want) {
+			t.Errorf("%s's signer role does not write %s: the minter signs and verifies nothing with the private half, and the grant services/ makes names this role", keyringMainTF, want)
+		}
 	}
 
 	// The other half of the same boundary, over every grant rather than the
@@ -236,11 +295,11 @@ func TestOnlyTheMinterHoldsTheSignerRole(t *testing.T) {
 	// never say out loud — a KMS role to the internet-facing account above all.
 	uses := 0
 	for _, block := range tfBlocks(src, `resource "`) {
-		if !strings.Contains(block, "google_service_account.intake.member") {
+		if !strings.Contains(tfCompact(block), "google_service_account.intake.member") {
 			continue
 		}
 		uses++
-		if !strings.Contains(block, `resource "google_cloud_run_v2_service_iam_member" "intake_invokes_minter"`) {
+		if tfHeader(block) != `resource "google_cloud_run_v2_service_iam_member" "intake_invokes_minter"` {
 			t.Errorf("%s grants the intake's account something besides the invoker role on the minter:\n%s\nthe intake holds no KMS role and reaches the signer only through the minter (Check 174)", servicesMainTF, strings.TrimSpace(block))
 		}
 	}
@@ -260,33 +319,56 @@ func TestOnlyTheMinterHoldsTheSignerRole(t *testing.T) {
 func TestTheMinterHasNoPublicInvoker(t *testing.T) {
 	src := tfSource(t, servicesMainTF)
 
-	minter := tfBlock(t, src, `resource "google_cloud_run_v2_service" "minter"`)
-	if !strings.Contains(minter, "invoker_iam_disabled = false") {
+	minter := tfCompact(tfBlock(t, src, `resource "google_cloud_run_v2_service" "minter"`))
+	if !strings.Contains(minter, "invoker_iam_disabled=false") {
 		t.Errorf("%s's minter service does not require IAM: the flag has to be stated false, because a service that stopped checking IAM answers every caller and the one invoker grant this file writes would be the only thing between the internet and the signer (Check 174)", servicesMainTF)
 	}
 
+	// The count is over the bare token in every block of the tree rather than
+	// over one spelling of one attribute: `member = "allUsers"`, a
+	// google_cloud_run_v2_service_iam_binding writing `members = ["allUsers"]`,
+	// an `_iam_policy`, a second service's binding — all of them say allUsers,
+	// and the intake's own public binding is the only one of them this service
+	// is allowed. What a policy read from a file would say is beyond a sweep over
+	// this tree, and nothing here reads one.
 	public := 0
 	for _, rel := range tfFiles(t) {
-		f := tfSource(t, rel)
-		if strings.Contains(f, "allAuthenticatedUsers") {
+		f := tfCompact(tfSource(t, rel))
+		if strings.Contains(f, `"allAuthenticatedUsers"`) {
 			t.Errorf("%s grants allAuthenticatedUsers: any Google account is not the intake's caller, and a signed-in stranger reaching the minter would sign with the key ring", rel)
 		}
-		public += strings.Count(f, `member   = "allUsers"`)
+		public += strings.Count(f, `"allUsers"`)
 	}
 	if public != 1 {
-		t.Errorf("this tree grants allUsers %d times, want exactly 1: the intake is the one public surface, and every other binding hands the internet an invoker it should not have", public)
+		t.Errorf("this tree grants allUsers %d times, want exactly 1: the intake is the one public surface, and every other binding — on the minter above all — hands the internet an invoker it should not have", public)
 	}
 
-	publicBlock := tfBlock(t, src, `resource "google_cloud_run_v2_service_iam_member" "intake_public"`)
-	if !strings.Contains(publicBlock, "google_cloud_run_v2_service.intake.") {
-		t.Errorf("%s's allUsers binding is not on the intake service", servicesMainTF)
+	publicBlock := tfCompact(tfBlock(t, src, `resource "google_cloud_run_v2_service_iam_member" "intake_public"`))
+	if !strings.Contains(publicBlock, `"allUsers"`) {
+		t.Errorf("%s's public binding is not the one that writes allUsers: the single public grant has to be this resource, so that a reader finds the internet's one door by its name", servicesMainTF)
 	}
-
-	invoker := tfBlock(t, src, `resource "google_cloud_run_v2_service_iam_member" "intake_invokes_minter"`)
+	// The service the binding NAMES is the one it opens: a block that kept the
+	// intake in its location and moved its name to the minter would open the
+	// signer's door while still mentioning the intake, which is why the two
+	// attributes are checked rather than the reference.
 	for _, want := range []string{
-		"google_cloud_run_v2_service.minter.",
-		"member   = google_service_account.intake.member",
-		`role     = "roles/run.invoker"`,
+		"name=google_cloud_run_v2_service.intake.",
+		"location=google_cloud_run_v2_service.intake.",
+	} {
+		if !strings.Contains(publicBlock, want) {
+			t.Errorf("%s's allUsers binding is not on the intake service: it does not write %s", servicesMainTF, want)
+		}
+	}
+	if !strings.Contains(publicBlock, `role="roles/run.invoker"`) {
+		t.Errorf("%s's allUsers binding is not the invoker role: any other role's public grant on a service is a reach nobody asked for", servicesMainTF)
+	}
+
+	invoker := tfCompact(tfBlock(t, src, `resource "google_cloud_run_v2_service_iam_member" "intake_invokes_minter"`))
+	for _, want := range []string{
+		"name=google_cloud_run_v2_service.minter.",
+		"location=google_cloud_run_v2_service.minter.",
+		"member=google_service_account.intake.member",
+		`role="roles/run.invoker"`,
 	} {
 		if !strings.Contains(invoker, want) {
 			t.Errorf("%s's invoker grant on the minter does not write %s: the minter has no public invoker, and the intake's ID token is what the platform checks before its container runs (D450(a))", servicesMainTF, want)

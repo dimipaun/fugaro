@@ -73,10 +73,16 @@ resource "google_kms_key_ring" "signing" {
 # because that is the algorithm the three verifiers verify (S2.1): the private
 # half is created inside the key store, is signed with through the API, and is
 # read out by nothing — not by the service, not by the owner, not by an agent.
-# Ed25519 exists at the SOFTWARE protection level only, so the level is stated
-# here rather than left to a default that would refuse the algorithm; this is
-# what closes UNVERIFIED U9, and a store that offered no Ed25519 would have been
-# this slice's red step to report rather than a file to keep.
+# Ed25519 is offered at SOFTWARE and not at HSM, so the level is stated rather
+# than left to a default that would refuse the algorithm.
+#
+# Whether Cloud KMS offers that pair is not something this tree can assert:
+# hashicorp/google types version_template.algorithm as a plain string, so
+# `terraform validate` accepts any value and the apply against the real API is
+# the measurement. The provider's own algorithm list carries EC_SIGN_ED25519 at
+# the SOFTWARE protection level of elliptic-curve signing, which is the reading
+# U9 waits on rather than a schema's word; the row that records it belongs to
+# the plan's reconciliation, not to this root.
 resource "google_kms_crypto_key" "signing" {
   for_each = var.keys
 
