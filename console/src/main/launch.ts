@@ -448,6 +448,11 @@ export interface LaunchDeps {
    * refuses or throws answers no; see `settle`. */
   readonly stillRecorded: (launch: FrozenLaunch) => Promise<boolean> | boolean
   readonly appEnv: Readonly<Record<string, string | undefined>>
+  /** licenceKey is the installation's key, read from the console's own store at
+   * the moment of the spawn (S2.7): a launch is the one child whose whole
+   * purpose needs the licence, and it is handed over in the environment and
+   * never in an argv. Absent when the installation has no key. */
+  readonly licenceKey?: ((project: string) => string | undefined) | undefined
   readonly spawner?: ChildSpawner
   readonly log?: SpawnLogWriter
   readonly timers?: Timers
@@ -882,11 +887,13 @@ export function createLaunchRunner(deps: LaunchDeps): LaunchRunner {
     // directory's* checkout is on, so a launch spawned in a checkout could take
     // its ref from whatever the operator happens to have checked out, invisibly.
     const cwd = privateWorkingDirectory({})
+    const licenceKey = deps.licenceKey?.(target.project)
     const context = {
       target: { project: target.project, configPath: target.configPath },
       binaryPath: target.binaryPath,
       directory: cwd,
       appEnv: deps.appEnv,
+      ...(licenceKey === undefined ? {} : { licenceKey }),
       runId,
     }
     const args = {

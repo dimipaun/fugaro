@@ -33,7 +33,7 @@
 // packaged console keeps those files, and it will have to pack them; until then
 // there is no packaging step to disagree with.
 
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 import { app, BrowserWindow, Menu, ipcMain, protocol, session, shell } from 'electron'
 
@@ -74,6 +74,7 @@ import { launchFingerprint } from './launchrules'
 import type { LaunchRecordFacts } from './launchrules'
 import type { InstallationsListReply } from './onboarding'
 import {
+  NO_ACTIVE_INSTALLATION,
   openPullRequestHandler,
   reducedModeHandlers,
   registerConsoleHandlers,
@@ -91,6 +92,8 @@ import {
 } from './installations'
 import type { StoredInstallation } from './installations'
 import type { ActiveInstallation } from './installations'
+import { LICENCE_FILE_NAME, createLicenceStore, refusedLicenceStore } from './licence-store'
+import type { LicenceStore } from './licence-store'
 import type { CliCompatibility } from '../shared/version'
 import { NO_INSTALLATION_SURFACE } from '../source/source'
 import type { InstallationSurface } from '../source/source'
@@ -418,6 +421,86 @@ function activeBinding(): BoundInstallation | null {
 const resolvedBinaries = new Map<string, string>()
 
 /**
+ * licenceStore is the console's own keeper of the licence key (S2.7,
+ * `src/main/licence-store.ts`), and it is built here for `storedRecord`'s
+ * reason: this is the file that knows where the app keeps its own state.
+ *
+ * **The key file is the console's own, beside its installation records and in
+ * the same directory** -- never the CLI's config directory, which is the one
+ * place the console is forbidden to write (`installationStorePath` refuses a
+ * `userData` under it, and this reuses that answer rather than composing a
+ * second path that could disagree). A console that cannot read its own records
+ * has no directory to keep a key in either: the store is then the refusing one,
+ * which answers a read with the sentence and refuses every paste, so the console
+ * starts and says what is wrong rather than failing at startup.
+ */
+function openLicenceStore(): LicenceStore {
+  try {
+    const records = installationStorePath({
+      userData: app.getPath('userData'),
+      env: process.env,
+      home: app.getPath('home'),
+    })
+    return createLicenceStore({ path: join(dirname(records), LICENCE_FILE_NAME) })
+  } catch (error) {
+    return refusedLicenceStore(
+      `this console has no place to keep a licence key (${
+        error instanceof Error ? error.message : 'unknown'
+      })`,
+    )
+  }
+}
+
+const licenceStore = openLicenceStore()
+
+/** licenceKeyFor is the hand-off's reader: the key the installation has, read at
+ * the moment of the spawn, or `undefined` when it has none or holds one that does
+ * not verify. It is a function rather than a value so a key pasted a moment ago
+ * is the one the next child is handed, and so no key text is held here between
+ * two spawns. What it answers reaches the child in its environment and never in
+ * an argv (`childEnvironment`), and the renderer never sees it: the surface's
+ * read answers the verifier's facts. */
+function licenceKeyFor(project: string): string | undefined {
+  return licenceStore.keyFor(project, new Date())
+}
+
+/** activeLicenceProject is the installation the two `licence.*` operations
+ * answer for: the active binding's project, or the console's own no-installation
+ * sentence (`NO_ACTIVE_INSTALLATION`, D13) when nothing is active. Neither
+ * operation takes an installation argument, so a renderer cannot paste a key for
+ * -- or read the key of -- an installation other than the one this console is
+ * driving. */
+function activeLicenceProject(): string {
+  const binding = activeBinding()
+  if (binding === null) throw new Error(NO_ACTIVE_INSTALLATION)
+  return binding.project
+}
+
+/** licenceRead is `licence.read`'s handler: the verifier's facts about the
+ * active installation's key, or its refusal. **The key text is not in the
+ * answer** -- what a screen draws is the claims and the state -- which is why
+ * this reads the store's `read` and not its `keyFor`. */
+function licenceRead(): unknown {
+  return licenceStore.read(activeLicenceProject(), new Date())
+}
+
+/** licenceSave is `licence.save`'s handler, and the console's third write: the
+ * key the operator pasted, verified before it is kept. A key that does not
+ * verify is a **throw**, which `registerConsoleHandlers` turns into the reply's
+ * `reason` -- the verifier's own sentence, drawn beside the box -- and the
+ * installation keeps the key it had. */
+function licenceSave(args: ValidatedArguments): unknown {
+  const key = args['key']
+  // The schema makes `key` required and its kind a string, so this is a
+  // narrowing and not a second check; a payload that somehow carried none is a
+  // refusal rather than a paste of nothing.
+  if (typeof key !== 'string') throw new Error('licence.save needs a key')
+  const saved = licenceStore.save(activeLicenceProject(), key, new Date())
+  if (!saved.ok) throw new Error(saved.reason)
+  return saved.reply
+}
+
+/**
  * boundSource is the `FugaroSource` the whole surface is built over: the real
  * `CliSource` for the active installation, built by `sourceFor` and cached by
  * the installation's binding -- its id and the three fields the child is built
@@ -442,7 +525,11 @@ const resolvedBinaries = new Map<string, string>()
  * the first read rather than here, so a console with nothing chosen -- and a
  * console in a mode that draws no screen -- drives nothing at all.
  */
-const boundSource = createBoundSource({ installation: activeBinding, appEnv: process.env })
+const boundSource = createBoundSource({
+  installation: activeBinding,
+  appEnv: process.env,
+  licenceKey: licenceKeyFor,
+})
 
 /**
  * openExternalFromShell is the surface's operation that hands over a URL it was
@@ -743,6 +830,7 @@ let launchRunner = createLaunchRunner({
   stillRecorded: launchStillRecorded,
   confirmer: DECLINING_CONFIRMER,
   appEnv: process.env,
+  licenceKey: licenceKeyFor,
   log: createSpawnLog(process.env),
 })
 
@@ -827,6 +915,18 @@ const gated: ConsoleHandlers = {
   // process fetched (`settingsedit.ts`). The argv a write spawns is the argv the
   // window drew, and the source refuses a plan that differs from it.
   'settings.edit': (args) => settingsEditRunner.edit(args),
+  // **The Licence screen's two operations** (subscriptions plan S2.7). They are
+  // joined here for the reason the four above are: neither is a read of the
+  // active installation's *source*, so `handlersFor` leaves them out
+  // (`CliBackedHandlers` in `src/source/source.ts` says so from the other side)
+  // -- `command: null` is the same fact from the table's side, and these are the
+  // only rows on it that spawn nothing at all. Both read `licenceStore`, which
+  // is built above and answers for the active installation, and both are
+  // unreachable in a reduced console's withheld views by not being on one: a
+  // lapsed installation is exactly the case in which the box that takes a
+  // renewal has to open (`docs/design/lapse-read-only.md`).
+  'licence.read': () => licenceRead(),
+  'licence.save': (args) => licenceSave(args),
 }
 
 /**
@@ -1037,6 +1137,7 @@ async function main(): Promise<void> {
     stillRecorded: launchStillRecorded,
     confirmer,
     appEnv: process.env,
+    licenceKey: licenceKeyFor,
     log: createSpawnLog(process.env),
   })
   // **The settings edit's flow, over the same window.** Its three reads are the

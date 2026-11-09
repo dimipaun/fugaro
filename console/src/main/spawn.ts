@@ -344,13 +344,31 @@ export function locationsFor(platform: string = process.platform): PlatformLocat
 }
 
 /**
+ * LICENCE_KEY_VAR is the variable the console hands the installation's licence
+ * key to the child in, and it is the CLI's own name for it (`ee/licence`'s
+ * `EnvironmentKey`): the CLI takes it out of its own environment at the
+ * registration point, in the same step as it reads it, so no grandchild of the
+ * console inherits it (subscriptions plan S2.1, S2.3).
+ *
+ * **It is the environment and never the argv**, because a key in a command line
+ * is a key every local process reads (`docs/licensing/licence-key.md`, "Storage
+ * and hand-off (F41)"), and it is **not read from the app's own environment**:
+ * `childEnvironment` writes it from the store and nothing else, so a
+ * `FUGARO_LICENCE_KEY` the console itself was started with reaches no child.
+ * The store is `src/main/licence-store.ts` and `keyFor` is its only door.
+ */
+export const LICENCE_KEY_VAR = 'FUGARO_LICENCE_KEY'
+
+/**
  * CHILD_ENV_KEYS is the whole environment the child may receive, and the order
  * is the schema's: the one key this module always writes (`PATH`, rebuilt),
  * the four the operator's own environment supplies when it has them, the five
- * `XDG_*` variables, and `FUGARO_PROJECT`, which is always the chosen
- * installation's. Anything not on this list is not passed -- there is no merge
- * with `process.env` anywhere in this file, and that is the property
- * `test/unit/spawn.test.ts` diffs the child's own report against.
+ * `XDG_*` variables, and the two the console states from its own state --
+ * `FUGARO_PROJECT`, which is always the chosen installation's, and
+ * `LICENCE_KEY_VAR`, which is the installation's key when it has one. Anything
+ * not on this list is not passed -- there is no merge with `process.env`
+ * anywhere in this file, and that is the property `test/unit/spawn.test.ts`
+ * diffs the child's own report against.
  *
  * **It is the whole list on both routes, and the WSL route adds `WSLENV_KEY` to
  * the environment `wsl.exe` is handed always and `WSL_UTF8_VAR` only when the
@@ -362,6 +380,11 @@ export function locationsFor(platform: string = process.platform): PlatformLocat
  * inherited (F20, D5(a)); `WSL_UTF8_VAR` is the console's own switch asking
  * `wsl.exe` for UTF-8 rather than the machine's console encoding, and the empty
  * share list is what keeps it out of the distribution.
+ *
+ * **The WSL route is therefore the one route a key does not travel on**, and it
+ * is `planFor` that leaves it out rather than this list that forbids it: with
+ * the share list empty the key would sit in `wsl.exe`'s own environment and
+ * reach nothing, which is a credential handed over for no reader.
  */
 export const CHILD_ENV_KEYS: readonly string[] = Object.freeze([
   'PATH',
@@ -375,6 +398,7 @@ export const CHILD_ENV_KEYS: readonly string[] = Object.freeze([
   'XDG_STATE_HOME',
   'XDG_RUNTIME_DIR',
   'FUGARO_PROJECT',
+  LICENCE_KEY_VAR,
 ])
 
 /**
@@ -2237,6 +2261,15 @@ export function parseVersionLine(text: string):
  * process at all (`src/main/wsl.ts`). Only a plan that hands `wsl.exe` a CLI to
  * run **inside** a distribution has a distribution process to state a share list
  * to, and only that plan sets this.
+ *
+ * **`licenceKey` is the installation's key, and it is written only from the
+ * store.** It is a value the caller read (`LicenceStore.keyFor`,
+ * `src/main/licence-store.ts`) and never one this process inherited: the
+ * `appEnv` loop skips `LICENCE_KEY_VAR` exactly as it skips `PATH` and
+ * `FUGARO_PROJECT`, so a key in the console's own environment is not a key any
+ * child is handed. It is absent whenever the installation has no key or holds
+ * one that does not verify (F43's no-key state), and a caller that passed an
+ * empty string gets no variable at all, because an empty variable is not a key.
  */
 export function childEnvironment(options: {
   readonly target: SpawnTarget
@@ -2258,15 +2291,26 @@ export function childEnvironment(options: {
    * own constant, and `wsl`'s empty share list is what keeps it out of the
    * distribution. */
   readonly wslUtf8?: boolean | undefined
+  /** `licenceKey` is the installation's licence key, or absent when it has none
+   * (F43). It comes from the console's own store and from nowhere else -- the
+   * app's environment is not a source of it -- and it travels in the environment
+   * rather than in an argv, which is the whole of F41's hand-off. */
+  readonly licenceKey?: string | undefined
 }): Readonly<Record<string, string>> {
   const env: Record<string, string> = Object.create(null) as Record<string, string>
   for (const key of CHILD_ENV_KEYS) {
-    if (key === 'PATH' || key === 'FUGARO_PROJECT') continue
+    if (key === 'PATH' || key === 'FUGARO_PROJECT' || key === LICENCE_KEY_VAR) continue
     const value = options.appEnv[key]
     if (typeof value === 'string' && value !== '') env[key] = value
   }
   env['PATH'] = childPath(options.binaryPath, options.platform)
   env['FUGARO_PROJECT'] = options.target.project
+  // Written from the argument and never from `appEnv`: the store is the only
+  // source of a handed-over key, so a console started with one in its own
+  // environment hands it to no child.
+  if (typeof options.licenceKey === 'string' && options.licenceKey !== '') {
+    env[LICENCE_KEY_VAR] = options.licenceKey
+  }
   // Written unconditionally, and never read from `appEnv`: the host's own
   // `WSLENV` is the operator's business and not this console's, and a value
   // carried over from it would be a share list the console did not choose.
@@ -3227,6 +3271,12 @@ export function planFor(
      * from every other row's, and it is the **only** way a layer or a phase
      * reaches an argv. */
     readonly settingsEdit?: { readonly phase: SettingsEditPhase; readonly layer: string } | undefined
+    /** `licenceKey` is the installation's key, already read from the console's
+     * store for this spawn (`LicenceStore.keyFor`), or absent when it has none.
+     * It is a value rather than a reader so this function stays a pure assembler
+     * and a caller can be held to handing over exactly what the store answered;
+     * see `childEnvironment`. */
+    readonly licenceKey?: string | undefined
   },
 ): SpawnPlan {
   const wsl = context.wsl
@@ -3283,6 +3333,12 @@ export function planFor(
         // build that ignores this switch those warnings are UTF-16LE -- which
         // is what left a NUL in front of the wrapper's line.
         wslUtf8: true,
+        // **No key on this route**, and it is the share list above that decides
+        // it: `WSLENV` is stated empty, so a key written into `wsl.exe`'s
+        // environment would reach no process at all -- a credential handed over
+        // for no reader. The CLI inside the distribution reads the key file of
+        // its own config directory instead (S2.3), which is where a Windows
+        // operator's `fugaro licence install` puts it.
       }),
       project: context.target.project,
       backoff: context.backoff ?? DEFAULT_BACKOFF,
@@ -3305,6 +3361,7 @@ export function planFor(
       target: context.target,
       binaryPath: context.binaryPath,
       appEnv: context.appEnv,
+      licenceKey: context.licenceKey,
     }),
     project: context.target.project,
     backoff: context.backoff ?? DEFAULT_BACKOFF,

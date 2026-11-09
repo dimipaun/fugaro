@@ -95,6 +95,7 @@ import type { CliCompatibility, ReducedView } from '../shared/version'
 import { APP_ENTRY_URL, APP_HOST, APP_SCHEME } from './protocol'
 import { PULL_REQUEST_PROVIDERS, pullRequestUrl, validateExternalUrl } from './window'
 import { checkLaunchPlanTask, checkLaunchTask, checkLaunchTitle } from './launchrules'
+import { MAX_LICENCE_KEY_LENGTH } from './licence'
 
 /**
  * IPC_VERSION is the version of the surface `src/preload/index.ts` exposes to
@@ -368,6 +369,18 @@ export const MAX_GRAPH_SCOPE_LENGTH = 'orchestrator:'.length + 40
  * grammar and whose *membership* is the read's own answer, which is why the two
  * checks live apart: this module refuses a spelling no scope could have, and
  * `createBoundSource` refuses an id the CLI never named.
+ *
+ * **`licenceKey` is the Licence screen's one argument** (subscriptions plan
+ * S2.7), and it is the only argument on this surface whose value is a
+ * **credential**: the key the operator pasted. Its bound is the one the key
+ * format shares with the console's store (`MAX_LICENCE_KEY_LENGTH`,
+ * `src/main/licence.ts`), and its own rule is the paste's: whitespace around a
+ * key is an artifact of copying it and is stripped, and nothing else about the
+ * value is judged here -- the format, the id and the signature are the
+ * verifier's (S2.4), whose sentence the screen shows. **It is never an argv, and
+ * this is the only kind that never becomes one at all**: the operation it
+ * belongs to spawns nothing, and what the key reaches is the child's
+ * *environment* and never a command line (S2.1's hand-off, §5.1 rule 8).
  */
 export type ArgumentKind =
   | 'repository'
@@ -393,6 +406,7 @@ export type ArgumentKind =
   | 'settingKey'
   | 'settingValue'
   | 'graphSource'
+  | 'licenceKey'
 
 /** ArgumentSpec is one field of an operation's closed argument schema. */
 export interface ArgumentSpec {
@@ -1543,6 +1557,55 @@ export const CONSOLE_OPERATIONS = [
     summary: 'the published policy node the project’s runs read, and nothing else',
     args: [],
   },
+  // **The Licence screen's two operations** (subscriptions plan S2.7; the
+  // design is `docs/licensing/licence-key.md`, "Storage and hand-off (F41)"),
+  // and they are the first two rows on this table that **spawn nothing at all**:
+  // the console keeps the key in its own store (`src/main/licence-store.ts`), so
+  // a paste is a verify and a write of a file this process owns rather than a
+  // child's argv. `command: null` is that fact, and it is also why neither row
+  // carries a flag -- there is no argv for a flag to be part of -- and why
+  // neither is on `SPAWN_COMMANDS` (`src/main/spawn.ts`).
+  //
+  // **Neither carries the key back to the renderer, and that is rule 8's own
+  // reason.** `licence.read` answers what the *verifier* sees: the claims and
+  // the state (`valid`, `grace`, `expired`), or the sentence that refuses the
+  // key. The one door the key text leaves this process by is the child's
+  // environment (`licenceKeyFor`, `src/main/index.ts`), which is S2.1's hand-off
+  // and not a document's to hold: a reply carrying the key would be a key in a
+  // renderer, and a screen that held one would draw it.
+  //
+  // **Neither names an installation.** The active one is main-process state, for
+  // `installation.current`'s reason exactly: the store answers for the
+  // installation this console is driving, so a renderer can neither paste a key
+  // for nor read the key of an installation other than that one.
+  //
+  // **The screen that draws them is never gated** (`docs/design/lapse-read-only.md`):
+  // a lapsed installation is the one state in which the operator has to be able
+  // to reach the box that takes a renewal, so these two are not on a reduced
+  // view and answer in every mode.
+  {
+    name: 'licence.read',
+    method: 'readLicence',
+    command: null,
+    flags: [],
+    summary: 'the active installation’s licence key as the verifier sees it: its claims and state, or the refusal',
+    args: [],
+  },
+  {
+    name: 'licence.save',
+    method: 'saveLicence',
+    command: null,
+    flags: [],
+    summary: 'the key the operator pasted, verified before it is kept: a key that does not verify is refused and changes nothing',
+    args: [
+      {
+        key: 'key',
+        kind: 'licenceKey',
+        required: true,
+        why: 'the pasted key — the one argument on this surface whose value is a credential, and the only one the console never answers back. It is bounded before anything decodes it and passed nowhere but the verifier; what it can reach is the child’s environment and never an argv.',
+      },
+    ],
+  },
 ] as const satisfies readonly ConsoleOperation[]
 
 /** OperationName is the closed union of the surface's operation names. */
@@ -2481,6 +2544,35 @@ function validateValue(
       return refuse(`${spec.key} must be a page size between 1 and ${RUNS_LIST_MAX_LIMIT}`)
     }
     return { ok: true, value }
+  }
+  if (spec.kind === 'licenceKey') {
+    // **Handled before the common string path, and the trim is why.** A key
+    // pasted out of a document or an email arrives with whitespace around it
+    // -- a trailing newline is the ordinary case -- and the common
+    // hidden-character rule refuses a control character, so a value checked in
+    // that order would refuse the most ordinary paste of all with a sentence
+    // about U+000A. What is judged is therefore the **trimmed** value: the
+    // whitespace a copy adds carries no meaning (the verifier trims for the
+    // same reason, `verifyLicenceKey`), and whitespace *inside* a key is still
+    // refused, by the same rule and in the same words as every other argument.
+    //
+    // **The format is deliberately not checked here.** Whether the three parts
+    // decode, whether the id is one this build holds and whether the signature
+    // covers the payload are `licence.ts`'s (`verifyLicenceKey`, S2.4), and its
+    // sentence -- "a licence key is three base64url parts" -- is the one the
+    // screen draws. A grammar here would be a second copy of the format and a
+    // second thing to drift from it.
+    if (typeof value !== 'string') return refuse(`${spec.key} must be a string`)
+    const pasted = value.trim()
+    if (pasted.length > MAX_LICENCE_KEY_LENGTH) {
+      return refuse(`${spec.key} is longer than ${MAX_LICENCE_KEY_LENGTH} characters`)
+    }
+    if (pasted === '') return refuse(`${spec.key} must be a key`)
+    const hidden = hiddenCharacterReason(pasted)
+    if (hidden !== null) return refuse(`${spec.key} carries ${hidden}`)
+    // The trimmed text, so what is verified is what is stored and what a child
+    // is handed: one spelling of the key, from the paste to the environment.
+    return { ok: true, value: pasted }
   }
   if (typeof value !== 'string') return refuse(`${spec.key} must be a string`)
   const limit = kindLimit(spec.kind)
