@@ -116,8 +116,8 @@ holds no accessor on it. Check 192 reads that, and reads the other half — a re
 ## What the block reads
 
 Check 191: `proxied` (the published policy admits the repository with `proxy: true`), `run-launch` and
-`run-outcome` (the working run reached a final status, succeeded and pushed nothing — a probe that
-pushed is one this check's own restore cannot undo), the seven refusal rows
+`run-outcome` (the working run reached a final status, succeeded, and the service served its push and
+its pull request — the branch and the number the check leaves for you), the seven refusal rows
 (`refusal-other-repository`, `refusal-other-ref`, `refusal-tag-ref`, `refusal-ref-delete`,
 `refusal-other-pull-request`, `refusal-merge`, `refusal-workspaces`), `review-run`,
 `ended-identity`, and the `restore` and `scratch-removed` rows. Each refusal row reads **three**
