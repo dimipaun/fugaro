@@ -51,6 +51,12 @@ var corpus = []struct {
 		name: "connection string",
 		in:   "postgres://app:" + strings.Repeat("Qw3", 5) + "@db.example.com:5432/app refused",
 		leak: strings.Repeat("Qw3", 5),
+		// The host has to survive for the row to pin anything: the email rule
+		// reads a value in front of an `@` as an address, so it removes this
+		// password on its own, host and all, and a row that only asks for the
+		// password to be gone passes whether or not a connection-string rule
+		// exists.
+		keep: "db.example.com:5432/app refused",
 	},
 	{
 		name: "email",
