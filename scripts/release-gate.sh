@@ -34,7 +34,7 @@ if ! [[ $version =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; the
   exit 1
 fi
 retry_read git fetch --quiet origin main
-if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+if ! git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main; then
   # The one other place a release commit may be: a maintenance branch, for a
   # patch release of a line that was itself released from main (a hotfix, docs/
   # release.md "Hotfix releases"). It is narrow on purpose, every condition
@@ -52,11 +52,22 @@ if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
   if [[ $tag =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.([1-9][0-9]*)$ ]]; then
     line="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
     branch="release/$line"
-    if retry_read git fetch --quiet origin "refs/heads/$branch:refs/remotes/origin/$branch" 2>/dev/null \
-      && git merge-base --is-ancestor "$GITHUB_SHA" "origin/$branch" \
+    # Fully qualified refs throughout: a tag named like a remote-tracking branch
+    # (`origin/release/1.2`) would otherwise be resolved first, and a commit that
+    # is not on the branch could pass for one that is.
+    if retry_read git fetch --quiet origin "refs/heads/$branch:refs/remotes/origin/$branch" \
+      && git merge-base --is-ancestor "$GITHUB_SHA" "refs/remotes/origin/$branch" \
       && first=$(git rev-parse --quiet --verify "refs/tags/v$line.0^{commit}") \
-      && git merge-base --is-ancestor "$first" origin/main \
+      && git merge-base --is-ancestor "$first" refs/remotes/origin/main \
       && git merge-base --is-ancestor "$first" "$GITHUB_SHA"; then
+      # A patch of an older line would be published as the newest release (GitHub
+      # marks a newly published release latest and the Homebrew cask follows the
+      # tag), so only the newest line may be patched this way.
+      newest=$(git tag -l 'v*' | grep -E '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' | sort -V | tail -n1)
+      if [ "${newest%.*}" != "v$line" ]; then
+        echo "::error::$tag is a patch of the line v$line, but a newer line exists ($newest): a maintenance release would be published as the latest release; only the newest line may be patched from its maintenance branch" >&2
+        exit 1
+      fi
       maintenance_ok=1
       echo "$tag ($GITHUB_SHA) is on the maintenance branch $branch, which descends from v$line.0 on main"
     fi
