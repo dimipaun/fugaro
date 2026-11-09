@@ -825,6 +825,22 @@ func (a answerReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
+// lockWorkdirs takes the terraform workdirs of project for this run, and
+// returns the function that gives them back. A run that cannot have them is
+// refused here, in the one line that says which command is running, in which
+// project, and — when the holder's lock file named one — with which pid.
+//
+// Nothing waits: a second fugaro update on one installation is not a run to
+// queue behind the first, it is the run whose PrepareWorkdir rebuilds the
+// tree the first one's terraform is planning in.
+func (r *initRun) lockWorkdirs(project string) (func(), error) {
+	lock, err := infra.LockWorkdirs(os.Getenv, project, r.o.doorProgram())
+	if err != nil {
+		return nil, userErr("%v", err)
+	}
+	return func() { _ = lock.Release() }, nil
+}
+
 func runInit(r *initRun) error {
 	cmd, o := r.cmd, r.o
 	defer func() { clear(r.appKeyMem) }()
@@ -867,6 +883,22 @@ func runInit(r *initRun) error {
 		return err
 	}
 	r.setProject(lc)
+	// The project is known and this run has touched none of its workdirs yet:
+	// it takes them for itself here, before the first PrepareWorkdir, and
+	// keeps them until it ends (the kernel gives the lock back if it does
+	// not).
+	//
+	// Decided at the door, before the loop exists, and not in a stage: a
+	// refusal raised where a workdir is prepared — or by cancelling the
+	// context so the run stops at once — is recorded as the failure of
+	// whatever stage the loop had reached, preflight first, and the cause (a
+	// second converge on this machine) is then reported as that stage's
+	// problem. Here it is one line and one exit code.
+	unlock, err := r.lockWorkdirs(lc.GCPProject)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	if err := checkFirebaseProject(o.firebase, lc.GCPProject); err != nil {
 		return err
 	}
@@ -3709,6 +3741,18 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 		return err
 	}
 	r.setProject(lc)
+	// The repository's workdir is one of the project's (RepoWorkdir is under
+	// the same directory the installation's workdir is in), so it is the same
+	// lock the converge takes — and a run that reaches here as a stage of one
+	// already holds it. Only the door takes it, for the reason
+	// runInit.lockWorkdirs states.
+	if !embedded {
+		unlock, err := r.lockWorkdirs(lc.GCPProject)
+		if err != nil {
+			return err
+		}
+		defer unlock()
+	}
 	r.noteOpenProviders(lc)
 	r.res.Repo = repo
 	if !embedded && !o.planOnly && !o.forget && !o.printVars {
