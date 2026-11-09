@@ -77,6 +77,16 @@ func tfSource(t *testing.T, rel string) string {
 // one name it was written for. The cut is the next resource header, which is
 // enough for a sweep over resources, and no block is reported twice.
 func tfBlocks(src, header string) []string {
+	return tfBlocksUntil(src, header, []string{"\nresource \""})
+}
+
+// tfBlocksUntil answers every block whose header starts with the given text and
+// whose body ends at the first of the given markers. A marker is one of
+// Terraform's own block kinds at column zero — `variable`, `resource`, `output`,
+// `provider`, `terraform` — which is where a block ends in every file of these
+// roots, so a caller that reads a `variable` block names the kinds that can follow
+// it rather than cutting at an attribute the block itself writes.
+func tfBlocksUntil(src, header string, cuts []string) []string {
 	var out []string
 	for i := 0; ; {
 		j := strings.Index(src[i:], header)
@@ -85,8 +95,10 @@ func tfBlocks(src, header string) []string {
 		}
 		start := i + j
 		rest := src[start+len(header):]
-		if k := strings.Index(rest, "\nresource \""); k >= 0 {
-			rest = rest[:k]
+		for _, cut := range cuts {
+			if k := strings.Index(rest, cut); k >= 0 {
+				rest = rest[:k]
+			}
 		}
 		out = append(out, header+rest)
 		i = start + len(header)
@@ -310,6 +322,98 @@ func tfRootBlock(t *testing.T, root, header string) string {
 	return ""
 }
 
+// tfWrite writes one file of a scratch tree, so that a case reads as the tree it
+// builds rather than as three calls to the os package.
+func tfWrite(t *testing.T, root, rel, body string) {
+	t.Helper()
+	name := filepath.Join(root, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(name), 0o755); err != nil {
+		t.Fatalf("writing %s: %v", rel, err)
+	}
+	if err := os.WriteFile(name, []byte(body), 0o644); err != nil {
+		t.Fatalf("writing %s: %v", rel, err)
+	}
+}
+
+// tfSignerDefaults are the two variables the signer grant is decided by, and the
+// literal each root has to give them. `services/`'s grant names
+// `var.signer_role` and its data source names `var.keyring`, so neither value is
+// in the block a sweep reads: they are the DECLARED DEFAULTS in the two roots'
+// variables.tf, and a default changed in either root hands the minter another
+// role — a project-level predefined one, say — or points the grant at another key
+// ring, with every block above still reading exactly as written. Both roots must
+// therefore write the same literal, and it is written here so that a change to it
+// is a change to this line too.
+var tfSignerDefaults = []struct{ name, want string }{
+	{"signer_role", `"fugaroKeySigner"`},
+	{"keyring", `"fugaro-licence"`},
+}
+
+// tfUnheldDefaults answers, sorted and named by root, every one of the two
+// variables above whose default in the tree under dir is not the literal it is
+// held to — a variable the root does not declare, or declares without a default,
+// reads as the empty string and is one of them. The tree is read through
+// tfTerraform, so a file this suite cannot read fails rather than being skipped.
+func tfUnheldDefaults(t *testing.T, dir string) []string {
+	t.Helper()
+	got := map[string]string{}
+	for _, rel := range tfTerraform(t, dir) {
+		src := tfSource(t, filepath.Join(dir, rel))
+		for _, d := range tfSignerDefaults {
+			for _, block := range tfBlocksUntil(src, `variable "`+d.name+`"`, tfVarBlockEnds) {
+				got[tfNames(path.Dir(rel), `variable "`+d.name+`"`)] = tfDefaultLiteral(block)
+			}
+		}
+	}
+	var out []string
+	for _, d := range tfSignerDefaults {
+		for _, root := range []string{keyringRoot, servicesRoot} {
+			name := tfNames(root, `variable "`+d.name+`"`)
+			if got[name] != d.want {
+				out = append(out, name+" = "+got[name])
+			}
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// tfVarBlockEnds are the markers that end a `variable` block in these roots: the
+// next variable, and the kinds of block a later change could put beside one.
+var tfVarBlockEnds = []string{"\nvariable \"", "\nresource \"", "\ndata \"", "\noutput \"", "\nprovider \"", "\nterraform {", "\nlocals {"}
+
+// tfDefaultLiteral answers a variable block's default as the quoted literal it is
+// written with, so that `default = "a"` and `default="a"` are one value. A
+// default in another shape (a number, a list, a reference) is returned as the
+// rest of the block, which no literal compared against it can equal — the shape
+// these roots use is a string, and anything else fails rather than passing
+// quietly.
+func tfDefaultLiteral(block string) string {
+	compact := tfCompact(block)
+	i := strings.Index(compact, "default=")
+	if i < 0 {
+		return ""
+	}
+	rest := compact[i+len("default="):]
+	if !strings.HasPrefix(rest, `"`) {
+		return rest
+	}
+	if j := strings.Index(rest[1:], `"`); j >= 0 {
+		return rest[:j+2]
+	}
+	return rest
+}
+
+// tfWantedDefaults renders the literals above, so that a failure names the whole
+// rule rather than only the root that drifted.
+func tfWantedDefaults() string {
+	var lines []string
+	for _, d := range tfSignerDefaults {
+		lines = append(lines, "  "+d.name+" = "+d.want)
+	}
+	return strings.Join(lines, "\n")
+}
+
 // TestTheSigningKeyIsNonExportable: the private half of a signing key exists
 // inside the key store and nowhere else — never a file, never a service's
 // memory, never a machine the owner or an agent holds (S3.3, §11, Check 174).
@@ -465,6 +569,17 @@ func TestOnlyTheMinterHoldsTheSignerRole(t *testing.T) {
 		if !strings.Contains(role, want) {
 			t.Errorf("the signer role in %s does not write %s: the minter signs and verifies nothing with the private half, and the grant services/ makes names this role", keyringRoot, want)
 		}
+	}
+
+	// And what the grant actually REACHES, which is the other half of the same
+	// pair: both blocks name a variable, so the role the minter is granted is
+	// `var.signer_role`'s default in each root and the ring it is granted on is
+	// `var.keyring`'s. A default is a `.tf` file the sweeps above read as text and
+	// never pinned, so without this the grant's meaning changes in variables.tf
+	// alone — a services/ default of a project-level role hands the minter that
+	// role, and every block above still reads as written.
+	if bad := tfUnheldDefaults(t, "."); len(bad) != 0 {
+		t.Errorf("this tree's roots do not hold the defaults the signer grant is decided by:\n  %s\nthe grant in %s names var.signer_role and its data source names var.keyring, so a default is the role the minter holds and the ring it is granted on; both roots write the same literal, and it is this suite's to hold (Check 174, S3.5). Want:\n%s", strings.Join(bad, "\n  "), servicesRoot, tfWantedDefaults())
 	}
 
 	// The other half of the same boundary, over every grant in the tree rather
@@ -719,13 +834,7 @@ func TestTheTestsReadEveryFileOfTheTree(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
 			for rel, body := range tc.write {
-				path := filepath.Join(root, filepath.FromSlash(rel))
-				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-					t.Fatalf("writing %s: %v", rel, err)
-				}
-				if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-					t.Fatalf("writing %s: %v", rel, err)
-				}
+				tfWrite(t, root, rel, body)
 			}
 
 			files, refused, err := tfTerraformFiles(root)
@@ -746,6 +855,33 @@ func TestTheTestsReadEveryFileOfTheTree(t *testing.T) {
 			}
 		})
 	}
+
+	// The defaults rule over a tree this test writes, so that it is known to bite:
+	// two roots holding the literals pass it, and one root changing its default
+	// fails it by name. Without this the rule's only evidence is the real tree,
+	// where no default has ever changed.
+	t.Run("a changed default in one root", func(t *testing.T) {
+		root := t.TempDir()
+		agreeing := map[string]string{
+			"keyring/variables.tf": "variable \"signer_role\" {\n  default = \"fugaroKeySigner\"\n}\n\n" +
+				"variable \"keyring\" {\n  default = \"fugaro-licence\"\n}\n",
+			"services/variables.tf": "variable \"signer_role\" {\n  default = \"fugaroKeySigner\"\n}\n\n" +
+				"variable \"keyring\" {\n  default = \"fugaro-licence\"\n}\n",
+		}
+		for rel, body := range agreeing {
+			tfWrite(t, root, rel, body)
+		}
+		if bad := tfUnheldDefaults(t, root); len(bad) != 0 {
+			t.Fatalf("the rule refused a tree whose two roots hold the wanted literals: %v", bad)
+		}
+
+		tfWrite(t, root, "services/variables.tf", "variable \"signer_role\" {\n  default = \"fugaroKeyAdmin\"\n}\n\n"+
+			"variable \"keyring\" {\n  default = \"fugaro-licence\"\n}\n")
+		want := []string{tfNames(servicesRoot, `variable "signer_role"`) + ` = "fugaroKeyAdmin"`}
+		if got := tfUnheldDefaults(t, root); !slices.Equal(got, want) {
+			t.Errorf("a services/ default naming another role reads as %v, want %v: the rule has to fail on the root that changed, and name it — the grant in services/ still reads roles/${var.signer_role}, so the default is the only place this is visible", got, want)
+		}
+	})
 
 	// The same rule over the tree as it is: no override, no JSON, no module, so
 	// that a mutation added to the real tree fails rather than being swept past.
