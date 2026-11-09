@@ -1,6 +1,7 @@
 package infra
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -129,6 +130,48 @@ func TestMCPServerNeedsTheCoordinator(t *testing.T) {
 		}
 		if spec.MCPServer != nil {
 			t.Errorf("%s: the spec carries a front door beside the refusal: %+v", name, spec.MCPServer)
+		}
+	}
+}
+
+// TestTheStoreIsNeverAdoptedOnTheGoSide is the second half of D935's
+// "created and never adopted", at the layer this file owns: whatever Terraform
+// does, `fugaro update` must not be able to reach the store by discovery.
+//
+// The bucket's name is a function of the project alone, so it is predictable,
+// and bucket names are global — anybody can hold `fugaro-mcpauth-<project>`
+// in another project. Terraform is what refuses that (a create against a name
+// that already exists fails the apply), and this is the other route: the
+// imports `fugaro update` writes when discovery finds something already there.
+// No kind of importTable may name the store's bucket, because an import is
+// exactly the adoption the store must never have.
+//
+// The mutation this fails on: a kind added to importTable for the store — the
+// plausible mistake, since every other bucket this installation owns (the runs
+// bucket, the log bucket) IS adopted by name — after which an installation
+// whose name somebody else holds would import that bucket and write its token
+// records into it.
+func TestTheStoreIsNeverAdoptedOnTheGoSide(t *testing.T) {
+	for kind, entry := range importTable {
+		if strings.Contains(entry.to, "mcpauth_store") || strings.Contains(entry.to, "mcpauth") {
+			t.Errorf("import kind %q adopts the store at %s: the store is created by Terraform and never imported — a bucket already held under its name must fail the apply rather than receive this installation's records (D935, 2026-11-05)", kind, entry.to)
+		}
+	}
+	// And discovery, run against a project that already holds a bucket of the
+	// store's name, adopts nothing naming it. Discovery reads the resources it
+	// knows by name (the runs bucket, the registries, the secrets), so this is
+	// the guard rather than a live hazard: it fails the day a store kind is
+	// added above, or the day discovery starts listing buckets and taking one.
+	f := newCloud(t)
+	inst := installationSpec(t)
+	f.gcs.AddBucket("fugaro-mcpauth-"+inst.Project, testProjectNumber, nil)
+	im, err := DiscoverInstallation(context.Background(), f.c, inst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, i := range im.List {
+		if strings.Contains(i.ID, "fugaro-mcpauth-") || strings.Contains(i.To, "mcpauth_store") {
+			t.Errorf("discovery adopts %s as %s: the store's name is predictable and global, and an installation that finds a bucket under it fails the update rather than storing token hashes in somebody else's bucket", i.ID, i.To)
 		}
 	}
 }
