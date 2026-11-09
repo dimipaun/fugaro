@@ -101,6 +101,7 @@ const build = manifest.build as {
   readonly electronDownload?: { readonly checksums?: Record<string, string> }
   readonly mac?: Record<string, unknown>
   readonly linux?: Record<string, unknown>
+  readonly win?: Record<string, unknown>
 }
 
 /** flips is the configuration's value per fuse, keyed by the enum, with the
@@ -685,6 +686,7 @@ describe('the packaging configuration the fuses belong to', () => {
         'npmRebuild',
         'productName',
         'publish',
+        'win',
       ].toSorted(),
     )
     for (const widening of ['asarUnpack', 'extraResources', 'extraFiles', 'mas', 'dmg', 'electronDist']) {
@@ -779,6 +781,24 @@ describe('the packaging configuration the fuses belong to', () => {
     // `build/icon.png` exists and is the 1024px source electron-builder turns
     // into the icons it installs; `icon.test.ts` reads it.
     expect(existsSync(join(CONSOLE_DIR, 'build', 'icon.png'))).toBe(true)
+  })
+
+  it('names the Windows target, its arch and its artifact name rather than inheriting them', () => {
+    // NSIS is *named*: it is electron-builder's default Windows target today,
+    // and a default is a decision nobody wrote down -- a future bump of the
+    // packer could change it without a line of this repository changing.
+    // x64 only, matching the Linux leg: an arm64 leg would cross-build an
+    // architecture nothing here has run, and there is a single pinned
+    // win32-x64 Electron archive.
+    const win = (build.win ?? {}) as Record<string, unknown>
+    expect(win['target']).toEqual(['nsis'])
+    expect(win['arch']).toEqual(['x64'])
+    // Following the Linux pattern: the name the release notes, the checksum
+    // file and the installer job all have to agree on. `${arch}` is
+    // electron-builder's own substitution, and a build that produced another
+    // architecture would produce another name rather than a mislabelled file.
+    expect(win['artifactName']).toBe('Fugaro.Console-${version}-win-${arch}.${ext}')
+    expect(win['artifactName']).not.toMatch(/\s/)
   })
 
   it('configures no signature for Linux: the owner ruled it unsigned, and signing is the owner’s', () => {
