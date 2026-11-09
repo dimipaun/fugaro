@@ -2179,12 +2179,20 @@ export const NEVER_REACHABLE: readonly NeverReachable[] = Object.freeze([
     // The one exception on this table (the graph plan's CG9b): `graph --watch
     // --json` is the graph's own stream and not a second name for another read
     // -- `fugaro graph` has no `watch` word and no other command prints the
-    // graph -- so `graph.watch` is the one operation that may carry it. Every
-    // other command's `--watch` is refused exactly as before, and the exception
-    // is one operation's: the word is matched against `operation.flags` *and*
-    // against the argv's command path (`src/main/spawn.ts`'s `assertArgvFlags`),
-    // so what is admitted is the row that builds `graph --watch --json` and
-    // nothing else.
+    // graph -- so `graph.watch` is the one operation that may carry it.
+    //
+    // **It is granted by operation name and by nothing else.** `isNeverReachable`
+    // reads this list only for a caller that says which operation it is asking
+    // about, and the one caller that does is `assertArgvFlags`, with the argv's
+    // own words -- so every other operation's `--watch` is refused exactly as
+    // before, and no value can spell the word in its place (`argvFor` refuses a
+    // value a caller could read as a flag). What keeps the exception to that one
+    // argv is the row rather than a second check here: `graph.watch` is the only
+    // operation whose **command path** carries the word, and a spawn row must
+    // begin with its operation's own command (`assertSpawnSurface`), which is
+    // also what holds the word to `graph`'s argv at startup -- the surface
+    // assertions match a flag row against an operation's declared `flags`, and
+    // `--watch` is no row's declared flag.
     except: ['graph.watch'],
   },
   {

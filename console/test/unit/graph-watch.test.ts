@@ -5,9 +5,10 @@
 //
 // Each of the plan's six claims is a case below, in the plan's own order -- the
 // fourth has a second case through `createBoundSource`, the source the app
-// builds -- and three more hold the rest of this row's contract (the scope is a
-// value and `visible` reaches no argv, one child per scope, and a stopped feed
-// is not handed back):
+// builds -- and four more hold the rest of this row's contract (the scope is a
+// value and `visible` reaches no argv, the bound source refuses a scope no answer
+// of this installation listed, one child per scope, and a stopped feed is not
+// handed back):
 //
 //   1. **The argv is exactly the declared row.** §5.1 rule 6 is a fence, not a
 //      description: what a real child is handed is `graph --watch --json`, the
@@ -48,6 +49,7 @@ import { describe, expect, it } from 'vitest'
 import { SPAWN_COMMANDS, SPAWN_FLAGS, argvFor } from '../../src/main/spawn'
 import { CliSource, GRAPH_READ_MIN_INTERVAL_MS, MAX_LIVE_FEEDS, createBoundSource } from '../../src/source/cli'
 import { handlersFor } from '../../src/source/source'
+import { NO_GRAPH_SCOPE, SourceRefusal } from '../../src/source/source'
 import type { LiveFeed, Snapshot } from '../../src/source/source'
 import { GRAPH_DOCUMENT_VERSION } from '../../src/shared/schema'
 import { installStub } from './stub'
@@ -82,6 +84,18 @@ const graphSource = (stub: Stub): Promise<CliSource> =>
  * started" is a claim about the child and not about this file's own count. */
 const graphSpawns = (stub: Stub): number =>
   stub.reports().filter((report) => report.argv[0] === 'graph' && report.argv.includes('--watch')).length
+
+/** thrownBy is the refusal a call throws, for the surface whose refusals are
+ * thrown rather than answered (`subscribeGraph` refuses before a feed exists, so
+ * there is no promise to reject -- `read('...')`'s own refusal is the handler's). */
+function thrownBy(call: () => unknown): unknown {
+  try {
+    call()
+    return null
+  } catch (error) {
+    return error
+  }
+}
 
 /** document is one stream document as `graph --watch --json` prints one: the
  * whole graph every time, with only the identity and the counter differing
@@ -306,6 +320,59 @@ describe('the graph feed’s lifetime', () => {
     expect(again, 'the stopped feed was handed back').not.toBe(feed)
     await again.current()
     await waitFor(() => graphSpawns(stub) === 2)
+    await source.close()
+    await waitFor(() => stub.kills().length === 2)
+  })
+
+  it('refuses a scope no answer of this installation listed, and starts no child for it', async () => {
+    // **F21 at the feed's own door, which is a door of its own.** The scope
+    // grammar admits an id that exists nowhere, and this row is a *child* rather
+    // than a read: one named for a scope no document ever listed would have the
+    // console open the project's cloud and hold it open, because a live feed has
+    // no deadline. So `createBoundSource` admits a scope only on what a
+    // `graph.read` of the same installation has already listed -- `all` is the
+    // selector rather than a source and is admitted with nothing listed -- and it
+    // refuses before `resolve`, so no binary is probed and no child runs.
+    //
+    // It is here rather than in `bound-source.test.ts` because the claim is about
+    // the feed: that suite drives the read's own guard, and the stub is what makes
+    // "no `graph --watch` child was started" a claim about the process rather than
+    // about this file's own count.
+    const stub = installStub(freshDirectory(), {
+      commands: {
+        version: { stdout: '1.4.2\n' },
+        // The read that teaches the surface: its answer lists `coordinator` in
+        // its own `sources[]`, which is where the admitted ids come from.
+        graph: { stdout: `${JSON.stringify(document('s1', 1))}\n` },
+        'graph --watch': aStream(document('s2', 1)),
+      },
+    })
+    const source = createBoundSource({
+      installation: () => ({ id: 'a1', project: PROJECT, binaryPath: stub.binary }),
+      create: async () =>
+        CliSource.create({ target: { project: PROJECT }, configuredBinaryPath: stub.binary, appEnv: {} }),
+    })
+
+    const refused = thrownBy(() => source.subscribeGraph({ source: 'local:o9' }))
+    expect(refused, 'a scope no answer had listed was admitted').toBeInstanceOf(SourceRefusal)
+    expect((refused as SourceRefusal).message).toBe(NO_GRAPH_SCOPE)
+    expect(graphSpawns(stub), 'the refused scope started a child after all').toBe(0)
+
+    // `all` is the selector and not a member of any document: it is admitted
+    // before anything has been listed.
+    const every = source.subscribeGraph({ source: 'all' })
+    await every.current()
+    await waitFor(() => graphSpawns(stub) === 1)
+
+    // The read is what lists the ids, and the feed admits one of them from then
+    // on -- while the id nothing listed stays refused, and spawns nothing.
+    await source.graphRead({})
+    const coordinator = source.subscribeGraph({ source: 'coordinator' })
+    await coordinator.current()
+    await waitFor(() => graphSpawns(stub) === 2)
+    expect(thrownBy(() => source.subscribeGraph({ source: 'local:o9' }))).toBeInstanceOf(SourceRefusal)
+    expect(graphSpawns(stub), 'a refused scope started a child beside the admitted ones').toBe(2)
+
     await source.close()
     await waitFor(() => stub.kills().length === 2)
   })
