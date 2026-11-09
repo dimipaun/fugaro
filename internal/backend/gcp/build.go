@@ -550,9 +550,11 @@ func retryable(ctx context.Context, err error) bool {
 var terminal = []string{"SUCCESS", "FAILURE", "INTERNAL_ERROR", "TIMEOUT", "CANCELLED", "EXPIRED"}
 
 // stepOutputs reads a finished build's step outputs: the build step's is
-// the candidate's pushed digest, and promote's says "superseded" when the
-// gate found a newer record, so latest stayed. ok is false without a
-// digest.
+// the candidate's pushed digest — for a catalog entry whose source is a
+// prebuilt image (config.SourceImage) the smoke step is the one that
+// reports, since that run has no build step — and promote's says
+// "superseded" when the gate found a newer record, so latest stayed. ok is
+// false without a digest.
 func stepOutputs(bd *cloudbuild.Build) (digest string, superseded, ok bool) {
 	if bd.Results == nil {
 		return "", false, false
@@ -567,7 +569,7 @@ func stepOutputs(bd *cloudbuild.Build) (digest string, superseded, ok bool) {
 			continue
 		}
 		switch v := strings.TrimSpace(string(data)); st.Id {
-		case "build":
+		case "build", catalogSmokeStepID:
 			if digestRE.MatchString(v) {
 				digest = v
 			}
@@ -576,6 +578,17 @@ func stepOutputs(bd *cloudbuild.Build) (digest string, superseded, ok bool) {
 		}
 	}
 	return digest, superseded, digest != ""
+}
+
+// noPush reports whether bd is a prebuilt entry's run: the smoke-only request
+// is the only one without a step that pushes an image, and promote is that
+// step. Such a run smokes a reference somebody else published — it moves no
+// tag and has no latest of its own — so the reference it names is the image
+// and appending ":latest" to it would name a different one.
+func noPush(bd *cloudbuild.Build) bool {
+	return !slices.ContainsFunc(bd.Steps, func(st *cloudbuild.BuildStep) bool {
+		return st != nil && st.Id == "promote"
+	})
 }
 
 // Wait polls build id every poll (zero means 10s) until it finishes. A
@@ -622,7 +635,7 @@ func (b *Builder) Wait(ctx context.Context, id string, poll time.Duration) (Buil
 			if digest, superseded, ok := stepOutputs(bd); ok {
 				res.Digest, res.Superseded = digest, superseded
 				res.Image = bd.Substitutions["_IMAGE"]
-				if !superseded {
+				if !superseded && !noPush(bd) {
 					res.Image += ":latest"
 				}
 			} else if bd.Results != nil && len(bd.Results.Images) > 0 {
