@@ -110,6 +110,14 @@ is only partly true (F4).
 | F25 | Gap | The person class is the operators' addresses and "not its launchers" (`internal/credsvc/auth.go`, `PersonAccounts`). Non-operator launchers cannot request a slip as it stands. **D1938** |
 | F26 | Gap | A person's ID token carries only gcloud's audience, so a token the user sends to any Cloud Run service is replayable at the intake for about an hour. **D1939** |
 | F27 | Gap | The roster is read over IAM with a database-wide grant and keyed by email; the prefix is keyed by `sub`. **D1940** |
+| F28 | Wrong | Binding a slip to slug, run and account does not fence launchers from each other: any launcher can mint any run's budget identity, read a job's environment (`run.executions.get` is in the launcher role) and share an account with it. **R8 amended, D1941** |
+| F29 | Wrong | R7 as first written reserved every bundle name, including the model token names (`anthropic-api-key`, `claude-oauth-token[-<name>]`), so R6's rotation through the intake could never happen. Only the platform kinds are reserved (R7 amended) |
+| F30 | Wrong | Secret Manager label values cannot hold an email; the owner's identity is an **annotation** (R10 amended). `secrets.list` is checked on the project, so a name-prefix condition admits nothing: list is granted unconditioned to the intake and, for matching the annotation, to the service (metadata only); Check 510 measures it |
+| F31 | Wrong | "Invoker follows the roster" is false today: the service's invoker is `var.operators` (`credentials.tf`) and nothing derives grants from the roster. Launchers need an invoker grant for the slip route and an allow-list for the launcher class (fail closed); DS2.2 and DS1.2 carry them |
+| F32 | Gap | The derived admin list must hold project-scoped admins only (roster grants carry scopes), live outside any path a launcher can write (`runs/`, `tokens/`, `issues/`), and be readable by the intake |
+| F33 | Gap | Database admins bypass the rules on `creds/slips` and can forge a slip. **D1943** |
+| F34 | Gap | Existing pools have no owner; owner-only defaults plus R9 would fail every run on one after `update`. **D1942** |
+| F35 | Gap | The managed deployer holds unconditioned `secrets.create`, so it could pre-create a `fugaro_u_*` container and block or mislabel it. The intake writes only containers it created (annotation `created_by`), and the service reads only containers carrying it (R12) |
 | F21 | Open | Workspaces (docs/workspaces W6) plan a workspace credentials service; this design is per project. Not decided here; recorded, not decided here |
 
 ## 6. Decisions
@@ -126,6 +134,9 @@ is only partly true (F4).
 | **D1938** | Who may request a slip (F25) | A new launcher caller class admitted on the grant route only; the person class stays operators-only | Operators only: members cannot launch; widen the person class: launchers gain the workspace-wide read mints | **2026-11-09: the recommendation.** |
 | **D1939** | Token replay (F26) | Accept and document in SECURITY.md; the own-prefix, no-read bounds stay | A short-lived intake-audience token: an extra IAM grant per user, outside the update-only rule | **2026-11-09: the recommendation.** |
 | **D1940** | Admin check (F27) | `update` publishes a derived admin list (email and sub) to a bucket object the intake reads; the intake never touches the database | Direct roster read: database-wide read; the service writes shared secrets: breaks its least privilege | **2026-11-09: the recommendation.** The list lags a role change until `update` runs |
+| **D1941** | Slip theft between launchers (F28) | The claim returns a claim secret kept only in the runner's memory and required on every call; the runner claims at start, not at the first model call | Document owner-only as policy, not a boundary | **2026-11-09: the recommendation.** It fences other launchers only; the agent can still read the runner's memory (F22) |
+| **D1942** | Existing pools (F34) | Migrated pools get no owner and stay usable as today (legacy-open), with a doctor line asking an admin to name one | Owner = the operator who ran `update`: silently blocks other launchers | **2026-11-09: the recommendation.** |
+| **D1943** | Slip forgery by database admins (F33) | Accept and document in SECURITY.md | MAC each slip: a signing key to hold and rotate | **2026-11-09: the recommendation.** |
 | **D1937** | Slip binding | Verified job SA plus one-time claim; execution name audit-only | Launcher-written execution ID: unverifiable | **2026-11-09: the recommendation.** F7 |
 
 No answer deviates from a recommendation, and no two answers conflict. D1938–D1940 were raised by review round 1.
@@ -142,17 +153,19 @@ No answer deviates from a recommendation, and no two answers conflict. D1938–D
 - **R3: the intake's integrity bounds.** The intake account holds create at project level (IAM cannot
   condition create), and version-add, list and delete only under a name-prefix condition. It derives the
   prefix from the verified `sub` and never from the request, refuses a name outside R1's grammar, refuses
-  `fugaro-p-` for a non-admin, and writes one audit line per call. The platform bundle and every name
+  `fugaro_p_` for a non-admin, and writes one audit line per call. The platform bundle and every name
   outside the two prefixes are out of its reach by IAM, not by code.
 - **R6: nothing moves; the service resolves in order.** The service cannot be asked to move a value
   `fugaro update` cannot read (the bundle's values are write-only to people). So a user-supplied credential
   is resolved by its per-secret name first and by its bundle entry second, and a bundle entry is replaced
   only when the owner rotates it through the intake. Every installation keeps working after `update`
   alone (HARD RULE), and nothing is deleted or re-entered.
-- **R7: reserved names and read order.** The intake refuses a `fugaro_p_` or `fugaro_u_` name equal to a bundle credential name, so a per-secret name can never shadow a platform or bundle entry. A credential name maps to its per-secret name by the one grammar function (`secretname`), and for a user credential only the slip owner's `fugaro_u_<sub>_<name>` is read; a shared `fugaro_p_<name>` is read only for a name the pool or slip lists.
-- **R8: a slip is bound to its run.** The slip records the slug, the run and the expected job account; the claim and every call require the matching verified run identity (D134) as well as the account. The slip is not a secret from the agent (F22); binding limits what a leaked one buys.
+- **R7: reserved names and read order.** The intake refuses a `fugaro_p_`/`fugaro_u_` name equal to a **platform** credential kind (GitHub App key, git token, Bitbucket token and read consumer, review-signing keys); the model token names are not reserved, so rotating one through the intake works (R6). A credential name maps to its per-secret name by the one grammar function (`secretname`), and a missing per-secret name (or one with no version) falls to the bundle, and a read error fails closed. A per-user token is always owner-only: a launcher is served only their own `fugaro_u_<sub>_<name>` secrets (a pool of per-user tokens is one person's own, as the spec's example is), and sharing is `fugaro_p_` secrets under a pool's `allowed_users` (R11).
+- **R8: a slip is bound to its run, and to a claim secret (D1941).** The slip records the slug, the run and the expected job account; the claim and every call require the matching verified run identity (D134) and account, and the claim returns a claim secret (stored only as a hash) that the runner keeps in memory and presents on every call. The slip is not a secret from the agent (F22) and run identities are mintable by any launcher (SECURITY.md), so this fences other launchers, not the agent.
 - **R9: no downgrade.** A per-user, pool-owned or shared credential is served only under a claimed slip; a call without one fails closed. The slip-less path serves only what it serves today.
-- **R10: the rest of review round 1.** The grant's max runtime is capped by a service constant. Pool `owner` and `allowed_users` are spelled by email in the policy (the roster's key) and resolved to `sub` at grant time. Each secret carries its owner's verified email as a label written by the intake, which is how offboarding finds a prefix; the invoker grant on the intake follows the same roster as the service's, and is removed by `update`. The OpenRouter upstream gets its own task. The roster is a bucket object (D1940), so the intake holds no database role.
+- **R10: the rest of review round 1.** The grant's max runtime is capped by a service constant. Pool `owner` and `allowed_users` are spelled by email in the policy (the roster's key) and resolved to `sub` at grant time. Each secret carries its owner's `sub` and verified email as an annotation written by the intake (not a label: label values cannot hold an email), which is how offboarding and pool resolution find a prefix, so the service holds `secrets.list` (metadata) beside its prefix accessor; the invoker grant on the intake follows the same roster as the service's, and is removed by `update`. The OpenRouter upstream gets its own task. The roster is a bucket object (D1940), so the intake holds no database role.
+- **R11: pools.** `allowed_users` apply to `fugaro_p_` shared tokens; `owner` is the pool's administrator; migrated pools are legacy-open (D1942). The publisher (a project admin) sets them; per-user tokens are never lent.
+- **R12: containers the intake did not create.** The intake writes only secrets whose annotation says it created them and the service reads only those, so a container pre-created by another principal (the deployer can create) is refused, not trusted.
 - **R4: the slip cache.** The slip body is cached 5 minutes per the spec; the run's liveness (the outcome)
   and the stop switches are read per call as today (F14), so the 5-minute window bounds only a change to
   the slip's own fields.
@@ -161,7 +174,7 @@ No answer deviates from a recommendation, and no two answers conflict. D1938–D
 
 ## 7. Open tensions and open items for the owner
 
-None open. One note for the owner's confirmation: D1931 reverses Q6's "not a name-prefix IAM fence" for
+None open beyond the owner's confirmation below. One note for the owner's confirmation: D1931 reverses Q6's "not a name-prefix IAM fence" for
 user-supplied credentials only, which the owner's recommended answer already accepts; the intake's
 `create` permission cannot be fenced by IAM, which R3 states plainly.
 
