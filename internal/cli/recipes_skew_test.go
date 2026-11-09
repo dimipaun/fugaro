@@ -7,11 +7,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
@@ -379,12 +381,16 @@ func TestRecipesSkewRefusesReviewLevelsOnOldImage(t *testing.T) {
 }
 
 // TestRecipesSkewRefusesReviewJobOnAnOldImage is E6: a review launch is gated
-// on reviewJobSince, the release that deploys the review-only job variant and
-// whose runner reads the launch's marker. An older image has no variant beside
-// its coding job and no runner that would branch on the marker, so a review it
-// accepted in silence would run the coder's own job, with the App key the
-// review container exists to be without — the one failure this gate's wording
-// has to make impossible to mistake.
+// on reviewJobSince, the release whose runner can serve one — the variant
+// deployed beside the coding job, the marker the launch sets, and (CSR13) the
+// model path a tokenless container needs to reach a model at all. The two
+// failures are not the same image: below the variant's release there is no job
+// beside the coding one, so a review it accepted would run the coder's own
+// job, with the App key the review container exists to be without; on a 0.19.0
+// image the variant is there and the model path is not, so the launch starts
+// and dies in the job. Both are why 0.19.0 is a refused base here and not an
+// admitted one — it was the admitted row until CSR11's flip made this gate the
+// only thing standing between a launch and a runner that cannot serve it.
 func TestRecipesSkewRefusesReviewJobOnAnOldImage(t *testing.T) {
 	f := newCloudFixture(t)
 	env := fileEnv(t, f)
@@ -396,10 +402,10 @@ func TestRecipesSkewRefusesReviewJobOnAnOldImage(t *testing.T) {
 		err := checkReviewJobImage(context.Background(), env, appSlug, spec, "base", &warn)
 		return warn.String(), err
 	}
-	for _, baseRef := range []string{"ghcr.io/dimipaun/fugaro-base:0.15.0", "ghcr.io/dimipaun/fugaro-base:0.18.9"} {
+	for _, baseRef := range []string{"ghcr.io/dimipaun/fugaro-base:0.15.0", "ghcr.io/dimipaun/fugaro-base:0.18.9", "ghcr.io/dimipaun/fugaro-base:0.19.0"} {
 		warn, err := check(baseRef)
 		if err == nil || ExitCode(err) != ExitUserError ||
-			!strings.Contains(err.Error(), "a review launch needs a job image whose runner knows "+reviewJobKnows+" (fugaro 0.19.0 or later)") {
+			!strings.Contains(err.Error(), "a review launch needs a job image whose runner knows "+reviewJobKnows+" (fugaro 0.20.0 or later)") {
 			t.Fatalf("%s: warn = %q, err = %v", baseRef, warn, err)
 		}
 		if !strings.Contains(err.Error(), "fugaro update") {
@@ -409,8 +415,8 @@ func TestRecipesSkewRefusesReviewJobOnAnOldImage(t *testing.T) {
 			t.Errorf("%s: warning %q, want none", baseRef, warn)
 		}
 	}
-	if warn, err := check("ghcr.io/dimipaun/fugaro-base:0.19.0"); err != nil {
-		t.Fatalf("0.19.0: warn = %q, err = %v", warn, err)
+	if warn, err := check("ghcr.io/dimipaun/fugaro-base:0.20.0"); err != nil {
+		t.Fatalf("0.20.0: warn = %q, err = %v", warn, err)
 	}
 	warn, err := check("us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-1a2b3c")
 	if err != nil {
@@ -427,17 +433,169 @@ func TestRecipesSkewRefusesReviewJobOnAnOldImage(t *testing.T) {
 	var cloneWarn bytes.Buffer
 	err = checkCloneReviewJobImage(&lc, spec, &cloneWarn)
 	if err == nil || ExitCode(err) != ExitUserError ||
-		!strings.Contains(err.Error(), "a review launch needs a job image whose runner knows "+reviewJobKnows+" (fugaro 0.19.0 or later)") ||
+		!strings.Contains(err.Error(), "a review launch needs a job image whose runner knows "+reviewJobKnows+" (fugaro 0.20.0 or later)") ||
 		!strings.Contains(err.Error(), "release 0.18.0") {
 		t.Fatalf("clone 0.18.0: warn = %q, err = %v", cloneWarn.String(), err)
 	}
 	lc.BaseImages["base"] = "ghcr.io/dimipaun/fugaro-base:0.19.0"
+	if err := checkCloneReviewJobImage(&lc, spec, &bytes.Buffer{}); err == nil {
+		t.Fatalf("clone 0.19.0: the checkout's own base image was admitted, and 0.19.0's runner has no model path for a review container")
+	}
+	lc.BaseImages["base"] = "ghcr.io/dimipaun/fugaro-base:0.20.0"
 	if err := checkCloneReviewJobImage(&lc, spec, &bytes.Buffer{}); err != nil {
-		t.Fatalf("clone 0.19.0: %v", err)
+		t.Fatalf("clone 0.20.0: %v", err)
 	}
 }
 
-// TestRecipesSkewRefusesResolvedL3OnOldImage: the gate judges the run the
+// writeInstallationServiceImage writes the installation root's tfvars as
+// `fugaro update` leaves them: the block whose credentials_service.image names
+// the release that pinned it. rel is the release the reference carries, and ""
+// writes the reference an operator hand-wrote instead — a digest with no
+// release in it, which the gate reads as "not known".
+func writeInstallationServiceImage(t *testing.T, state, project, rel string) {
+	t.Helper()
+	dir, err := infra.InstallationWorkdir(func(string) string { return state }, project)
+	if err != nil {
+		t.Fatalf("the installation workdir of %s: %v", project, err)
+	}
+	path := infra.WorkdirVarsPath(dir, "installation")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	image := "us-east5-docker.pkg.dev/" + project + "/" + infra.GhcrRegistry + "/dimipaun/fugaro-credentials"
+	if rel != "" {
+		image += ":" + rel
+	}
+	image += "@sha256:" + strings.Repeat("ab", 32)
+	b, err := json.Marshal(map[string]any{"credentials_service": map[string]any{"image": image}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestRecipesSkewRefusesAReviewServiceOlderThanTheClass is the installation's
+// half of a review launch, and the half no job image shows: the image says the
+// review-only variant is deployed and can serve a launch, while the account the
+// job fetches comes from the installation's credentials service — a second
+// release, judged from the installation's own record of the image that service
+// was deployed from (the tfvars `fugaro update` pins on every installation). A
+// launch that reached a service older than the admission release starts, bills
+// and dies on its answer, which is the failure the flip of reviewJobAdmitted
+// made reachable: the gate that admits the job image names 0.20.0, and 0.20.0's
+// service does not know the class.
+func TestRecipesSkewRefusesAReviewServiceOlderThanTheClass(t *testing.T) {
+	f := newCloudFixture(t)
+	env := fileEnv(t, f)
+	lc := *env.lc
+	state := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", state)
+	check := func(rel string) (string, error) {
+		var warn bytes.Buffer
+		writeInstallationServiceImage(t, state, lc.GCPProject, rel)
+		err := checkReviewAdmission(&lc, &warn)
+		return warn.String(), err
+	}
+	for _, rel := range []string{"0.15.0", "0.20.0", "0.20.3"} {
+		warn, err := check(rel)
+		if err == nil || ExitCode(err) != ExitUserError ||
+			!strings.Contains(err.Error(), "only from fugaro "+reviewAdmissionSince+" on") {
+			t.Fatalf("service at %s: warn = %q, err = %v", rel, warn, err)
+		}
+		if !strings.Contains(err.Error(), "installation's service is "+rel) {
+			t.Errorf("service at %s: the refusal does not name the release the installation's own service records: %v", rel, err)
+		}
+		if !strings.Contains(err.Error(), "fugaro update") || !strings.Contains(err.Error(), "refused rather than started") {
+			t.Errorf("service at %s: the refusal names neither the update that is the whole upgrade nor the fact that it refuses: %v", rel, err)
+		}
+		// The way out the refusal NAMES has to work, and this one does: the
+		// table-driven `fugaro run --pr N --recipe <review-only>` spelling
+		// goes through run.go's --pr path, which sets no mode on the task
+		// (only fugaro review does, review.go's spec.Mode), so it launches
+		// the repository's ordinary coding job — a container with an account
+		// of its own — rather than the review-only variant this gate is
+		// about. Withholding it would leave the reader with no move but the
+		// update, and the review is reviewable today.
+		if !strings.Contains(err.Error(), "review the pull request in the run's own job with fugaro run --pr N --recipe "+reviewOnlyRecipe) {
+			t.Errorf("service at %s: the refusal names no way to review before the update: %v", rel, err)
+		}
+		if warn != "" {
+			t.Errorf("service at %s: warning %q, want none", rel, warn)
+		}
+	}
+	for _, rel := range []string{reviewAdmissionSince, "0.21.1"} {
+		if warn, err := check(rel); err != nil {
+			t.Fatalf("service at %s: warn = %q, err = %v", rel, warn, err)
+		}
+	}
+	// An installation whose service image cannot be read as a release — an
+	// operator's own digest, or no tfvars at all — is warned about and
+	// admitted: its release cannot then be shown, and the alternative is
+	// refusing a launch over a file this machine may simply not hold.
+	warn, err := check("")
+	if err != nil {
+		t.Fatalf("a service image with no release: %v", err)
+	}
+	if !strings.Contains(warn, "whether that service admits the review job's own caller is not checked") {
+		t.Errorf("a service image with no release: warning %q, want the not-checked note", warn)
+	}
+	t.Setenv("XDG_STATE_HOME", t.TempDir()) // a machine that holds no workdir for this project
+	warn, err = checkReviewAdmissionWarn(&lc)
+	if err != nil {
+		t.Fatalf("no installation workdir: %v", err)
+	}
+	if !strings.Contains(warn, "whether that service admits the review job's own caller is not checked") {
+		t.Errorf("no installation workdir: warning %q, want the not-checked note", warn)
+	}
+	if err := checkReviewAdmission(nil, &bytes.Buffer{}); err != nil {
+		t.Fatalf("no local config: %v", err)
+	}
+}
+
+// checkReviewAdmissionWarn is checkReviewAdmission with only its warning
+// collected, for the arms a test does not want to write a tfvars for.
+func checkReviewAdmissionWarn(lc *localcfg.Config) (string, error) {
+	var warn bytes.Buffer
+	err := checkReviewAdmission(lc, &warn)
+	return warn.String(), err
+}
+
+// TestRecipesSkewAdmitsACurrentServiceBesideAnOlderBasePin is the judge's own
+// regression (the round after this gate landed): `base_images.base` moves only
+// in an update that handles that kind at all — imagesStage.kinds names `base`
+// for --base, for a checkout's workflows, or for a catalog build, and nothing
+// else — while the credentials service is pinned on every installation. So an
+// update run outside a checkout (the common case: `fugaro update` from a
+// directory that is not a repository) moves the service and leaves the base pin
+// where the last in-checkout update put it, and a gate judging that pin would
+// refuse every review on an installation the update had already converged, with
+// a remedy that changes nothing. The judge is the service's own record, so the
+// older pin beside a current service is admitted.
+func TestRecipesSkewAdmitsACurrentServiceBesideAnOlderBasePin(t *testing.T) {
+	f := newCloudFixture(t)
+	env := fileEnv(t, f)
+	lc := *env.lc
+	state := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", state)
+	lc.BaseImages = map[string]string{"base": "ghcr.io/dimipaun/fugaro-base:0.20.3@sha256:" + strings.Repeat("ab", 32)}
+	writeInstallationServiceImage(t, state, lc.GCPProject, reviewAdmissionSince)
+	warn, err := checkReviewAdmissionWarn(&lc)
+	if err != nil {
+		t.Fatalf("a current service beside an older base pin: %v", err)
+	}
+	if warn != "" {
+		t.Errorf("warning %q, want none: the base pin is not this gate's subject", warn)
+	}
+	// And the same installation one release behind IS refused, so the arm above
+	// is the judge reading the service and not the gate having gone quiet.
+	writeInstallationServiceImage(t, state, lc.GCPProject, "0.20.3")
+	if _, err := checkReviewAdmissionWarn(&lc); err == nil {
+		t.Fatal("a 0.20.3 service beside the same older base pin was admitted")
+	}
+}
+
 // launch resolves, not only the task field. At critical the mode's own row
 // turns level 3 on with nothing in the task and nothing in fugaro.yaml
 // (L2.2), and the run inserts a first-line step in a recipe that carries none
@@ -903,6 +1061,117 @@ func TestReviewLevelsSinceHasAReleaseBullet(t *testing.T) {
 		if !strings.Contains(bullet, want) {
 			t.Errorf("docs/release.md's reviewLevelsSince bullet does not say %q", want)
 		}
+	}
+}
+
+// TestReviewJobSinceHasAReleaseBullet: reviewJobSince names 0.20.0, the release
+// whose runner can serve a review launch, and docs/release.md's Before-you-tag
+// list is the only reader that holds the constant to a release — every other
+// *Since constant has the same bullet doing the same job for it
+// (TestReviewLevelsSinceHasAReleaseBullet). Nothing else ties the number the
+// gate accepts to a runner that can serve the launch, which is what CSR11's
+// flip made decide something: while reviewJobAdmitted was false the gate was
+// never reached, which is how 0.19.0 — a release that deploys the variant and
+// has no model path to serve a launch on it — stayed the value for two
+// releases, and how the drift was invisible.
+//
+// Mutation (run, restored): leave the constant at "0.19.0" and change nothing
+// else — this fails naming the bullet, which carries 0.20.0.
+func TestReviewJobSinceHasAReleaseBullet(t *testing.T) {
+	var bullet string
+	for _, line := range strings.Split(readDoc(t, "docs/release.md"), "\n") {
+		if strings.HasPrefix(line, "- **Verify `reviewJobSince`") {
+			bullet = line
+			break
+		}
+	}
+	if bullet == "" {
+		t.Fatal("docs/release.md's Before-you-tag list has no reviewJobSince bullet: the checklist is where a release verifies the constant")
+	}
+	if !strings.Contains(bullet, "currently `\""+reviewJobSince+"\"`") {
+		t.Errorf("docs/release.md's reviewJobSince bullet does not carry the constant's release (%q): the checklist would verify a release the gate does not judge with", reviewJobSince)
+	}
+	for _, want := range []string{"0.19.0", "0.20.0", "model path"} {
+		if !strings.Contains(bullet, want) {
+			t.Errorf("docs/release.md's reviewJobSince bullet does not say %q: the bullet is what tells a release why this value and not the release that first deployed the variant", want)
+		}
+	}
+}
+
+// TestReviewAdmissionSinceHasAReleaseBullet holds the review launch's second
+// half to the same reader its sibling has: the checklist is where a release
+// verifies the constant, and this one is the release whose credentials service
+// admits the class — not the release whose runner can serve the launch, which
+// is reviewJobSince's and a different thing.
+func TestReviewAdmissionSinceHasAReleaseBullet(t *testing.T) {
+	var bullet string
+	for _, line := range strings.Split(readDoc(t, "docs/release.md"), "\n") {
+		if strings.HasPrefix(line, "- **Verify `reviewAdmissionSince`") {
+			bullet = line
+			break
+		}
+	}
+	if bullet == "" {
+		t.Fatal("docs/release.md's Before-you-tag list has no reviewAdmissionSince bullet: the checklist is where a release verifies the constant")
+	}
+	if !strings.Contains(bullet, "currently `\""+reviewAdmissionSince+"\"`") {
+		t.Errorf("docs/release.md's reviewAdmissionSince bullet does not carry the constant's release (%q): the checklist would verify a release the gate does not judge with", reviewAdmissionSince)
+	}
+	for _, want := range []string{"credentials service", "FUGARO_REVIEW_JOB_ACCOUNTS", "fugaro update", "reviewJobSince"} {
+		if !strings.Contains(bullet, want) {
+			t.Errorf("docs/release.md's reviewAdmissionSince bullet does not say %q: the bullet is what tells a release why this value is the service's release and not the job image's", want)
+		}
+	}
+}
+
+// TestReviewJobSinceCitationsPointAtItsOwnLine: the plan cites this constant by
+// line, three times, in the section that moves it — and the citation checks
+// (TestDocsCloudSeniorReviewCitationsResolve) hold a cited line only to being a
+// line of the named file, so a number that drifted with an edit above it keeps
+// passing while sending a reader to a paragraph about something else. That is
+// how this constant's own citations went stale in the change that moved it: the
+// numbers were checked, and they were wrong. A paragraph that names the
+// constant and cites one of its two homes has to cite the line that holds it.
+func TestReviewJobSinceCitationsPointAtItsOwnLine(t *testing.T) {
+	declLine := 0
+	for i, line := range strings.Split(readDoc(t, "internal/cli/recipes_skew.go"), "\n") {
+		if strings.HasPrefix(line, "const reviewJobSince ") {
+			declLine = i + 1
+			break
+		}
+	}
+	if declLine == 0 {
+		t.Fatal("internal/cli/recipes_skew.go declares no reviewJobSince: this test holds the plan's citations to the line that does")
+	}
+	bulletLine := 0
+	for i, line := range strings.Split(readDoc(t, "docs/release.md"), "\n") {
+		if strings.HasPrefix(line, "- **Verify `reviewJobSince`") {
+			bulletLine = i + 1
+			break
+		}
+	}
+	if bulletLine == 0 {
+		t.Fatal("docs/release.md's Before-you-tag list has no reviewJobSince bullet for the plan's citations to name")
+	}
+	want := map[string]int{"internal/cli/recipes_skew.go": declLine, "docs/release.md": bulletLine}
+	cited := 0
+	for _, block := range strings.Split(readDoc(t, "docs/cloud-senior-review/implementation-plan.md"), "\n\n") {
+		if !strings.Contains(block, "reviewJobSince") {
+			continue
+		}
+		for _, m := range csrCitationRE.FindAllStringSubmatch(block, -1) {
+			line, ok := want[m[1]]
+			if !ok {
+				continue
+			}
+			cited++
+			if got := strings.TrimPrefix(m[2], ":"); got != strconv.Itoa(line) {
+				t.Errorf("the plan cites %s%s in a paragraph about reviewJobSince: %s holds the constant at line %d, so the citation sends a reader to another paragraph", m[1], m[2], m[1], line)
+			}
+		}
+	}
+	if cited < 3 {
+		t.Fatalf("only %d citations into the constant's two homes were checked: the plan cited it three times when this test was written, and a paragraph that stopped citing it is a paragraph whose number this test no longer holds", cited)
 	}
 }
 

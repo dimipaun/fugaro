@@ -112,6 +112,7 @@ func Resolve(data []byte, l *ProjectLayer) (*Config, *Resolution, []Problem) {
 		repo.RepoRigorSet = setsRigor(tree)
 		repo.RepoGovernanceSet = setsGovernance(tree)
 		repo.RepoGitAuthorSet = setsGitAuthor(tree)
+		repo.RepoSecuritySet = setsSecurity(tree)
 		repo.RepoLevelsNoneModelSet = setsLevelsNoneModel(tree)
 		repo.RepoStopFractionSet = setsStopFraction(tree)
 		res := &Resolution{Sources: map[string]string{}}
@@ -160,6 +161,7 @@ func Resolve(data []byte, l *ProjectLayer) (*Config, *Resolution, []Problem) {
 	c.RepoRigorSet = setsRigor(tree)
 	c.RepoGovernanceSet = setsGovernance(tree)
 	c.RepoGitAuthorSet = setsGitAuthor(tree)
+	c.RepoSecuritySet = setsSecurity(tree)
 	c.RepoLevelsNoneModelSet = setsLevelsNoneModel(tree)
 	c.RepoStopFractionSet = setsStopFraction(tree)
 	applyDefaults(&c)
@@ -475,6 +477,26 @@ func setsStopFraction(tree map[string]any) bool {
 		return false
 	}
 	_, ok = agent["review_stop_fraction"]
+	return ok
+}
+
+// setsSecurity is setsRigor for the security: block: whether the repository's
+// text writes the key, at any value. It reads the tree and not the resolved
+// block for the same reason — a runner older than securitySince decodes the
+// file with KnownFields, so the key alone is what it refuses, and an explicit
+// null, which decodes to no block at all, is refused exactly like a full one.
+// Its answer becomes Config.RepoSecuritySet.
+//
+// It is the repository's half: the project layer's security: block (D1501) is
+// read from the layer itself (ProjectLayer.Security) and never merges into this
+// tree, which is what keeps a repository's own block from replacing the
+// project's rows — the two meet only in the union, project first (D1506). The
+// image-skew gates in internal/cli judge both halves, the way rigorSince's
+// carry both of rigor's: RepoSecuritySet for this tree, ProjectLayer's
+// SetsSecurity for the layer, because a job image older than the release that
+// reads the key decodes either file strictly and refuses it at bootstrap.
+func setsSecurity(tree map[string]any) bool {
+	_, ok := tree["security"]
 	return ok
 }
 

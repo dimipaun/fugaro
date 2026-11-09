@@ -4,11 +4,15 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/dimipaun/fugaro/internal/orchestrator/sensitivity"
 )
 
 const testLayer = `version: 1
@@ -1051,5 +1055,210 @@ func TestProjectLayerJobsIsTopLevel(t *testing.T) {
 	}
 	if (*ProjectLayer)(nil).SetsJobs() {
 		t.Error("SetsJobs = true for no layer at all")
+	}
+}
+
+// TestProjectLayerSecurityDecodesStrictly: the project layer's security: block
+// (docs/security-classification, D1501, D1502) is a top-level key of the layer
+// file, and it is the same shape a repository's own block carries — rows of
+// {name, match, category}, validated by sensitivity.Pattern.Validate — plus
+// always_level_3, which the layer's alone carries (D1517): the switch that puts
+// every run of the project at level 3, and where D1503's refused `**` pattern
+// points instead.
+//
+// The rows are the reason the block is decoded strictly rather than read out of
+// a tree: a pattern the matcher cannot read, a category outside the seven-value
+// vocabulary or a name the engine's own floor already spends is a rule that
+// would silently never fire, and it is refused here, at the row's own index,
+// rather than at the run that trusted it (F21).
+func TestProjectLayerSecurityDecodesStrictly(t *testing.T) {
+	const block = `security:
+  patterns:
+    - { name: payments, match: "internal/payments/**", category: credentials }
+    - { name: deploy, match: "deploy/terraform/**", category: targets }
+  always_level_3: true
+`
+	l := mustLayer(t, layerHead+block)
+	if l.Security == nil {
+		t.Fatal("security: decoded to no block")
+	}
+	rows := l.Security.Patterns
+	if len(rows) != 2 || rows[0].Name != "payments" || rows[0].Match != "internal/payments/**" ||
+		rows[0].Category != sensitivity.Credentials || rows[1].Name != "deploy" || rows[1].Category != sensitivity.Targets {
+		t.Fatalf("security patterns = %+v", rows)
+	}
+	if !l.Security.AlwaysLevel3 {
+		t.Error("always_level_3 = false for a layer whose text writes it true")
+	}
+
+	for _, tc := range []struct{ name, block string }{
+		{"no block", ""},
+		{"a null block", "security:\n"},
+	} {
+		if l := mustLayer(t, layerHead+tc.block); l.Security != nil {
+			t.Errorf("%s: security = %+v, want no block", tc.name, l.Security)
+		}
+	}
+	// An empty block is a layer that adds nothing and a switch that is off,
+	// which is what a project that means "the floor and my repositories' rows
+	// alone" writes.
+	if l := mustLayer(t, layerHead+"security: {}\n"); l.Security == nil || l.Security.AlwaysLevel3 || len(l.Security.Patterns) != 0 {
+		t.Errorf("security: {} = %+v, want an empty block", l.Security)
+	}
+	if l := mustLayer(t, layerHead+"security:\n  always_level_3: false\n"); l.Security == nil || l.Security.AlwaysLevel3 {
+		t.Errorf("always_level_3: false = %+v, want the switch off", l.Security)
+	}
+	if l := mustLayer(t, layerHead+block+"defaults:\n  agent:\n    review_rounds: 2\n"); len(l.Security.Patterns) != 2 {
+		t.Errorf("the block beside defaults: = %+v", l.Security)
+	}
+
+	floor := sensitivity.Floor()[0].Name
+	for _, tc := range []struct{ name, block, want string }{
+		{"an unknown key of the block", "security:\n  severity: high\n", "field severity not found"},
+		{"an unknown key of a row", "security:\n  patterns:\n    - { name: deploy, match: \"deploy/**\", category: targets, mode: pro }\n", "field mode not found"},
+		{"a category outside the vocabulary", "security:\n  patterns:\n    - { name: deploy, match: \"deploy/**\", category: deployment }\n", "category must be one of " + sensitivity.CategoryList()},
+		{"a pattern that matches everything", "security:\n  patterns:\n    - { name: all, match: \"**\", category: targets }\n", "must name a tree, not the whole repository"},
+		{"a name the engine's floor already carries", "security:\n  patterns:\n    - { name: " + floor + ", match: \"deploy/**\", category: targets }\n", "repeats the name " + strconv.Quote(floor) + " of the engine's own floor"},
+		{"a name repeated in one list", "security:\n  patterns:\n    - { name: deploy, match: \"deploy/**\", category: targets }\n    - { name: deploy, match: \"deploy/terraform/**\", category: targets }\n", "repeats the name \"deploy\""},
+		{"a glob doublestar cannot read", "security:\n  patterns:\n    - { name: deploy, match: \"deploy/[\", category: targets }\n", "is not a valid glob pattern"},
+		{"the block under defaults", "defaults:\n  security:\n    patterns:\n      - { name: deploy, match: \"deploy/**\", category: targets }\n", "field security not found"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := layerProblems(t, layerHead+tc.block); !strings.Contains(got, tc.want) {
+				t.Errorf("problems %q, want one containing %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestProjectLayerSecurityIsInTheTopKeyAllowList: `security` is a top-level key
+// of the layer file (D1501), so it has to be named in layerTopKeys, or the
+// decoder refuses the block as an unknown key — and every repository of the
+// project loses it in silence, because the refusal happens where the layer is
+// read, not where a repository's fugaro.yaml is. The list is also what the
+// refusal message prints, so a key missing from it is missing from the one
+// message an operator uses to find the spelling they wanted.
+//
+// Mutation (run, restored): drop "security" from layerTopKeys and the first
+// sample fails, the refusal naming the list without it.
+func TestProjectLayerSecurityIsInTheTopKeyAllowList(t *testing.T) {
+	if _, ps := ParseProjectLayer([]byte(layerHead+"security:\n  always_level_3: true\n"), testAnchor); len(ps) != 0 {
+		t.Errorf("a security: block at the top level was refused: %v", ps)
+	}
+	if !slices.Contains(layerTopKeys, "security") {
+		t.Error("layerTopKeys does not carry security")
+	}
+	got := layerProblems(t, layerHead+"securityy: {}\n")
+	if want := "is not a project layer key (" + strings.Join(layerTopKeys, ", ") + ")"; !strings.Contains(got, want) {
+		t.Errorf("problems %q, want one containing %q", got, want)
+	}
+	if !strings.Contains(got, "jobs, security") {
+		t.Errorf("problems %q, want the list to end with jobs, security", got)
+	}
+	// The key decides, whatever it holds: `security:` with nothing under it and
+	// an empty block are lines an older runner's KnownFields decoder refuses
+	// exactly like a populated one, so the skew gates read SetsSecurity and not
+	// Security — which cannot tell an empty block from none.
+	for _, text := range []string{"security:\n", "security: {}\n"} {
+		if l := mustLayer(t, layerHead+text); !l.SetsSecurity() {
+			t.Errorf("SetsSecurity = false for %q, and that key is what an older runner refuses", strings.TrimSpace(text))
+		}
+	}
+	if l := mustLayer(t, layerHead+"security:\n  patterns:\n    - { name: payments, match: \"internal/payments/**\", category: credentials }\n"); !l.SetsSecurity() {
+		t.Error("SetsSecurity = false for a layer that writes security: with rows")
+	}
+	if (*ProjectLayer)(nil).SetsSecurity() {
+		t.Error("SetsSecurity = true for no layer at all")
+	}
+}
+
+// TestProjectLayerSecuritySchemaAgreesWithTheLayerParser: two surfaces read
+// the layer file, the strict decoder a run uses and project-layer.schema.json
+// a repository's CI may check against, and a block one refuses while the other
+// accepts is a red check nobody can reproduce (the reason
+// TestABSchemasMatchDecoder exists for ab:). The schema carries the same
+// $defs.securityPattern, securityFloorName and securityCategory copies
+// fugaro.schema.json does: the layer's rows are judged by the rules the
+// repository's block's are (D1502, D1506).
+//
+// Asymmetries are pinned rather than left unsampled, both of them rules a
+// schema of one row cannot state: it cannot refuse a glob doublestar itself
+// cannot read — a bracket class it closes wrong, an alternation — because it
+// has no glob matcher, and sensitivity.Pattern.Validate is what says no; and it
+// cannot refuse a name repeated inside one list, which config.validateSecurity
+// makes because it is the rule that reads the list where the schema reads one
+// row of it. TestSecurityKeySchemaAgreesWithTheDecoder records the first
+// asymmetry for the repository's block, and $defs.securityPattern's description
+// names both.
+func TestProjectLayerSecuritySchemaAgreesWithTheLayerParser(t *testing.T) {
+	sch := compileABSchema(t, "project-layer.schema.json")
+	floor := sensitivity.Floor()[0].Name
+	const rows = "security:\n  patterns:\n"
+	for _, tc := range []struct {
+		name, body string
+		ok         bool
+	}{
+		{"no block", "", true},
+		{"a null block", "security:\n", true},
+		{"an empty block", "security: {}\n", true},
+		{"an empty list", "security:\n  patterns: []\n", true},
+		{"the switch alone", "security:\n  always_level_3: true\n", true},
+		{"the switch off", "security:\n  always_level_3: false\n", true},
+		{"a null list", "security:\n  patterns:\n", true},
+		{"two rows", rows + "    - { name: payments, match: \"internal/payments/**\", category: credentials }\n    - { name: deploy, match: \"deploy/**\", category: targets }\n", true},
+		// The seven categories, and every value a name or a glob may take
+		// that the two sides accept for the same reason.
+		{"all seven categories", rows + "    - { name: a, match: \"a/**\", category: credentials }\n    - { name: b, match: \"b/**\", category: guards }\n    - { name: c, match: \"c/**\", category: targets }\n    - { name: d, match: \"d/**\", category: infrastructure }\n    - { name: e, match: \"e/**\", category: prompts }\n    - { name: f, match: \"f/**\", category: CI }\n    - { name: g, match: \"g/**\", category: artifacts }\n", true},
+		{"a tree that does not exist", rows + "    - { name: search, match: \"internal/search/**\", category: guards }\n", true},
+		{"a name of 40 characters", rows + "    - { name: " + strings.Repeat("a", 40) + ", match: \"deploy/**\", category: targets }\n", true},
+		{"a name with a space and a dot", rows + "    - { name: 'deploy terraform.v2', match: \"deploy/**\", category: targets }\n", true},
+		{"a match of 200 characters", rows + "    - { name: deep, match: \"" + strings.Repeat("d", 198) + "**\", category: targets }\n", true},
+		{"an unknown key of the block", "security: { severity: high }\n", false},
+		{"an unknown key of a row", rows + "    - { name: deploy, match: \"deploy/**\", category: targets, mode: pro }\n", false},
+		{"a category outside the vocabulary", rows + "    - { name: deploy, match: \"deploy/**\", category: deployment }\n", false},
+		{"a category in the wrong case", rows + "    - { name: deploy, match: \"deploy/**\", category: Credentials }\n", false},
+		{"a row with no category", rows + "    - { name: deploy, match: \"deploy/**\" }\n", false},
+		{"a row with no name", rows + "    - { match: \"deploy/**\", category: targets }\n", false},
+		{"a row with no match", rows + "    - { name: deploy, category: targets }\n", false},
+		{"an empty name", rows + "    - { name: \"\", match: \"deploy/**\", category: targets }\n", false},
+		{"a name with a slash", rows + "    - { name: a/b, match: \"deploy/**\", category: targets }\n", false},
+		{"a name of 41 characters", rows + "    - { name: " + strings.Repeat("a", 41) + ", match: \"deploy/**\", category: targets }\n", false},
+		{"a name the engine's floor carries", rows + "    - { name: " + floor + ", match: \"deploy/**\", category: targets }\n", false},
+		{"an empty match", rows + "    - { name: deploy, match: \"\", category: targets }\n", false},
+		{"a match of *", rows + "    - { name: all, match: \"*\", category: targets }\n", false},
+		{"a match of **", rows + "    - { name: all, match: \"**\", category: targets }\n", false},
+		{"an absolute match", rows + "    - { name: etc, match: \"/etc/**\", category: targets }\n", false},
+		{"a match with a .. component", rows + "    - { name: out, match: \"../secrets/**\", category: targets }\n", false},
+		{"a match of 201 characters", rows + "    - { name: deep, match: \"" + strings.Repeat("d", 199) + "**\", category: targets }\n", false},
+		{"a switch that is not a bool", "security:\n  always_level_3: yes-please\n", false},
+		{"the block under defaults", "defaults:\n  security:\n    always_level_3: true\n", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			text := layerHead + tc.body
+			_, ps := ParseProjectLayer([]byte(text), testAnchor)
+			if got := len(ps) == 0; got != tc.ok {
+				t.Fatalf("the decoder accepted = %v, want %v (problems: %v)", got, tc.ok, ps)
+			}
+			if got := abSchemaAccepts(t, sch, text); got != tc.ok {
+				t.Errorf("project-layer.schema.json accepted = %v, want %v: the schema and the decoder disagree", got, tc.ok)
+			}
+		})
+	}
+
+	// The schema is the looser side for a glob doublestar cannot read: it
+	// states the shape of a pattern, and the reading is Pattern.Validate's.
+	for _, tc := range []struct{ name, body, why string }{
+		{"an unreadable bracket class", rows + "    - { name: deploy, match: \"deploy/[\", category: targets }\n", "doublestar refuses a bracket class it cannot close"},
+		{"an alternation", rows + "    - { name: deploy, match: \"deploy/{a,b}/**\", category: targets }\n", "Pattern.Validate refuses an alternation for its matching cost"},
+		{"a name repeated in the list", rows + "    - { name: deploy, match: \"deploy/**\", category: targets }\n    - { name: deploy, match: \"infra/**\", category: targets }\n", "validateSecurity refuses a name repeated inside one list, which no schema of a single row can see"},
+	} {
+		t.Run("schema looser/"+tc.name, func(t *testing.T) {
+			if _, ps := ParseProjectLayer([]byte(layerHead+tc.body), testAnchor); len(ps) == 0 {
+				t.Errorf("the decoder accepted it, want a refusal: %s", tc.why)
+			}
+			if !abSchemaAccepts(t, sch, layerHead+tc.body) {
+				t.Errorf("project-layer.schema.json refused it, and the schema is the looser side here: %s", tc.why)
+			}
+		})
 	}
 }

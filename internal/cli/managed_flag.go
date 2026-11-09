@@ -1,12 +1,10 @@
 package cli
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
 	"io"
 	"os"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -46,10 +44,12 @@ import (
 //   - It is per project, with the exact project ID. One invocation names one
 //     project: the argument is a GCP project ID, there is no bulk form, no
 //     wildcard and no "all projects" form, and it must be the selected
-//     installation's own gcp_project. The confirmation is the exact project ID
-//     typed at a real terminal, and nothing stands in for it: this command
-//     registers no --yes and no --non-interactive, so a pipe, a script and a
-//     flag cannot give it.
+//     installation's own gcp_project. The confirmation is that argument and
+//     nothing else: the project is named by its exact ID on the command line,
+//     which is the owner's declaration (D1541's consent by argument, the
+//     answer of 2026-11-07 — not a string typed at a prompt), and this command
+//     registers no --yes and no --non-interactive, so no flag stands in for
+//     naming the project either.
 //   - It writes through the marker's own discipline. The object is
 //     fugaro/managed.json at the runs bucket's root, written by
 //     managed.WriteFlag exactly as Task 0.1 writes the creation fact: into a
@@ -76,14 +76,14 @@ import (
 //     (fugaro allow-delete) and the recorded budget — things an ordinary
 //     project does not have — so its applies are MORE checked. What it also
 //     does is remove the typed confirmation, and the command prints that,
-//     before anything is typed, as what the owner is giving up. Against a
+//     before anything is written, as what the owner is giving up. Against a
 //     session that goes around the program it is not a boundary: a coding
 //     agent holds the operator's credentials, can write this object directly
 //     and can unset its own marker (SECURITY.md records the wider Owner/Editor
 //     bypass). The refusal below stops an agent that uses the program.
 //   - belong is never a target of any task in the plan (Global Constraint 7).
 //     This command has no batch form, and flagging belong would be the owner's
-//     own deliberate act, by its exact project ID, at their own terminal.
+//     own deliberate act, by its exact project ID as the argument.
 //
 // What it is not, stated rather than implied: it does not create or change a
 // budget alert. The amount it records is the amount the owner states, in the
@@ -108,10 +108,12 @@ confirmation, and it is normally written by the run that created the project
 (fugaro setup --create-project --managed). Flagging is the after-the-fact way,
 answered by the owner on 2026-10-16 (design D58).
 
-Run it in your own terminal, as an operator, with your own credentials, and
-type the GCP project ID it asks for. A coding agent's session is refused, and
-nothing stands in for the typed ID — not --yes, not --non-interactive, not a
-pipe.
+Run it as an operator, with your own credentials. A coding agent's session is
+refused, and so is a Fugaro run's process. The permission you give is the
+PROJECT_ID argument itself: naming the exact GCP project ID on the command line
+is the declaration that this project is managed (design D1541), and nothing is
+typed at a prompt — this command registers no --yes and no --non-interactive,
+so no flag stands in for naming the project either.
 
 PROJECT_ID must be the exact GCP project ID of the installation selected by
 --project, --config or the checkout: one invocation names one project, and
@@ -174,11 +176,40 @@ is overwritten blind.`,
 	return cmd
 }
 
+// managedFlagStatement is what flagging a project writes, what it records and
+// what it gives up, printed BEFORE the write and never after it: the answer's
+// own framing (D58) is that flagging only adds guards AND that the marker is
+// what turns the typed confirmation off, so the second half is stated rather
+// than left to be inferred. It is a statement and not a confirmation — what
+// confirms the write is the argument the command was given (D1541) — so it is
+// printed as what the write does.
+//
+// It is one function because two commands make this same write, both of them
+// the owner's own and both through the same two writers: `fugaro managed flag`
+// and `fugaro update`'s self-flag (update_selfflag.go, D1553, which makes it
+// when the run is given the budget once). A statement of what a write costs,
+// kept true in two places, goes stale in one of them — and this one names the
+// amount, the bound and the guard that is given up.
+//
+// Its last line is each caller's own, because what happens when the project
+// already records whether it is managed is not the same for the two: this
+// command replaces one object and refuses every other state, while the
+// self-flag can also finish a fact that already records the amount it was
+// given.
+func managedFlagStatement(w io.Writer, gcpProject, bucket string, amount int64, currency string) {
+	fmt.Fprintf(w, "flagging GCP project %s as managed writes gs://%s/%s\n", safetext.Field(gcpProject), safetext.Field(bucket), managed.MarkerObject)
+	fmt.Fprintf(w, "  and the label %s=%s on the project itself: a managed project carries both, and the read requires both, so the object alone would change nothing about this project's runs\n", managed.ProjectLabelKey, managed.ProjectLabelValue)
+	fmt.Fprintf(w, "  it records: this project is managed, with the budget alert amount %d %s and the bound on billable image builds (one build per invocation, D1013)\n", amount, safetext.Field(currency))
+	fmt.Fprintf(w, "  it gives up: the typed confirmation for this project's applies. From the next apply on, a plan a coding agent's session authored is applied with no human prompt when the deterministic gate admits it (D55), and what stands in the confirmation's place is the gate, the whole-project inventory, the owner's delete list (fugaro allow-delete) and the budget above.\n")
+	fmt.Fprintf(w, "  it creates nothing: no resource is created, no billing call is made, and the amount above is recorded rather than spent.\n")
+	fmt.Fprintf(w, "  it does not protect against: a coding agent's session, which holds these credentials and can write this object directly (SECURITY.md).\n")
+}
+
 // managedFlag is newManagedFlagCmd's body. The order is the answer's: who is
 // running, what is being asked for, which project it is, that the bucket is
-// that project's own — and only then the typed confirmation and the write.
-// Every refusal before the write is a hard return, and nothing is written by
-// any of them.
+// that project's own — and only then the statement of what the write does and
+// the write itself. Every refusal before the write is a hard return, and
+// nothing is written by any of them.
 func managedFlag(cmd *cobra.Command, o cloudOptions, id string, amount int64, currency string) error {
 	ctx := cmd.Context()
 	// A credential leak first, before anything opens the cloud: GODEBUG is
@@ -286,24 +317,18 @@ func managedFlag(cmd *cobra.Command, o cloudOptions, id string, amount int64, cu
 		return remote(fmt.Errorf("reading the number of GCP project %s: %s", safetext.Field(lc.GCPProject), safetext.Field(err.Error())))
 	}
 	w := cmd.OutOrStdout()
-	// What is about to be written, and what it costs, before anything is
-	// typed: the answer's own framing is that flagging only adds guards AND
-	// that the marker is what turns the confirmation off, so the second half
-	// is printed rather than left to be inferred.
-	fmt.Fprintf(w, "⚠ CONFIRM (project %s): flagging GCP project %s as managed writes gs://%s/%s\n", safetext.Field(lc.Name), safetext.Field(lc.GCPProject), safetext.Field(bucket), managed.MarkerObject)
-	fmt.Fprintf(w, "  and the label %s=%s on the project itself: a managed project carries both, and the read requires both, so the object alone would change nothing about this project's runs\n", managed.ProjectLabelKey, managed.ProjectLabelValue)
-	fmt.Fprintf(w, "  it records: this project is managed, with the budget alert amount %d %s and the bound on billable image builds (one build per invocation, D1013)\n", amount, safetext.Field(currency))
-	fmt.Fprintf(w, "  it gives up: the typed confirmation for this project's applies. From the next apply on, a plan a coding agent's session authored is applied with no human prompt when the deterministic gate admits it (D55), and what stands in the confirmation's place is the gate, the whole-project inventory, the owner's delete list (fugaro allow-delete) and the budget above.\n")
-	fmt.Fprintf(w, "  it creates nothing: no resource is created, no billing call is made, and the amount above is recorded rather than spent.\n")
-	fmt.Fprintf(w, "  it does not protect against: a coding agent's session, which holds these credentials and can write this object directly (SECURITY.md).\n")
+	managedFlagStatement(w, lc.GCPProject, bucket, amount, currency)
+	// The statement's last line is this command's own, and it is the one the
+	// self-flag answers differently: this command replaces one object and
+	// refuses every other state.
 	fmt.Fprintf(w, "  if this project already records whether it is managed: nothing is written unless its marker is the creation fact that records no amount (what `fugaro setup --create-project` without --managed leaves), which this replaces with the one above. A marker that already records an amount is refused, and so is any object this build cannot read as this project's.\n")
-	if err := confirmTypedGCPProject(cmd, lc.GCPProject); err != nil {
-		return err
-	}
 	// The write, and the read that settles it, are one step: the marker, the
 	// label and the read-back are one thing an operator either has or has not
-	// (Task 3.0). It is opened once the confirmation is answered, so no line
-	// in flight is ever drawn over the prompt (G1).
+	// (Task 3.0). It is opened after the statement above, so nothing in flight
+	// is drawn over the lines the owner has just read (G1). What confirms the
+	// write is the argument this command was given — the project ID, typed on
+	// the command line and matched against the selected installation (D1541) —
+	// and not a second typed answer at a prompt.
 	step := rep.Step("flag")
 	fail := func(err error) error {
 		step.Failed(err, nil)
@@ -323,10 +348,10 @@ func managedFlag(cmd *cobra.Command, o cloudOptions, id string, amount int64, cu
 	// the narrowing mark that completes it.
 	//
 	// The gate is this command's own and not WriteManagedLabel's: the owner
-	// typed this project's GCP project ID at a real terminal to get here, and
-	// this process is neither a coding agent's session nor a Fugaro run's
-	// (both refused above, before anything was read). WriteFlag's marker was
-	// gated on the same thing. What the label may write is unchanged: other
+	// named this project's GCP project ID as this command's argument to get
+	// here, and this process is neither a coding agent's session nor a Fugaro
+	// run's (both refused above, before anything was read). WriteFlag's marker
+	// was gated on the same thing. What the label may write is unchanged: other
 	// labels are kept, and a value someone else put there is refused rather
 	// than overwritten.
 	if err := managed.WriteManagedLabelForFlag(ctx, c.CRM, lc.GCPProject); err != nil {
@@ -345,7 +370,7 @@ func managedFlag(cmd *cobra.Command, o cloudOptions, id string, amount int64, cu
 	}
 	// Read back through the managed read itself, with its project-number
 	// check (the plan's step 3): a marker the apply would not believe, or one
-	// recording another amount than the one typed, is not a flagged project,
+	// recording another amount than the flags gave, is not a flagged project,
 	// and the command does not say it is.
 	got, ok, reason, err := managedFlagReadBack(ctx, c.Storage, c.CRM, lc.Name, lc.GCPProject)
 	if err != nil || !ok || got != budget {
@@ -409,32 +434,6 @@ func managedFlagRunMarker(getenv func(string) string) string {
 	return ""
 }
 
-// confirmTypedGCPProject is the confirmation this command takes and the only
-// one it takes: the exact GCP project ID typed at a real terminal. It is not
-// confirmTypedStrict, which asks for the Fugaro project's name, because what
-// this command decides is about a GCP project and the string that shows the
-// owner has the right one in front of them is that project's own ID (D58's
-// answer). No flag stands in for it: this command registers no --yes and no
-// --non-interactive, so a refusal here names none.
-func confirmTypedGCPProject(cmd *cobra.Command, gcpProject string) error {
-	if !stdinIsTerminal(cmd.InOrStdin()) {
-		return userErr("%s: it is confirmed by typing the GCP project ID and by nothing else — not a flag, not a pipe", initflow.NeedsTerminal("flagging a project managed"))
-	}
-	fmt.Fprintf(cmd.OutOrStdout(), "Type %s to confirm: ", safetext.Field(gcpProject))
-	line, err := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
-	if err != nil && !errors.Is(err, io.EOF) {
-		return userErr("reading the confirmation: %v", safetext.FieldErr(err))
-	}
-	// The exact ID, after the trim the other typed confirmations do: another
-	// project's ID, a prefix of this one and an empty line are all "not
-	// confirmed".
-	if strings.TrimSpace(line) != gcpProject {
-		return userErr("not confirmed (the GCP project ID was not typed exactly); nothing was written")
-	}
-	noteIDETerminalCmd(cmd, cmd.OutOrStdout())
-	return nil
-}
-
 // managedFlagErr is what the owner can do about a flag that did not happen:
 // the project already records a marker, the bucket is not that project's own,
 // credentials the bucket's root refuses, or the cloud's own answer.
@@ -447,7 +446,7 @@ func managedFlagErr(lc *localcfg.Config, bucket string, err error) error {
 		return userErr("nothing was written for %s: the marker goes into the project's own runs bucket, at gs://%s/%s, and that bucket is not %s's: check gcp_project and runs_bucket in the project config, or run fugaro project check: %s",
 			safetext.Field(lc.Name), safetext.Field(bucket), managed.MarkerObject, safetext.Field(lc.GCPProject), safetext.Field(err.Error()))
 	case isAccessDenied(err):
-		return userErr("nothing was written for %s: gs://%s/%s is at the runs bucket's root, where only an operator's own credential may write (a launcher writes only runs/ and tokens/, and no run account may write the bucket's root at all): run this as an operator, or ask one to flag the project: %s",
+		return userErr("nothing was written for %s: gs://%s/%s is at the runs bucket's root, where only an operator's own credential may write (a launcher writes only runs/, tokens/ and issues/, and no run account may write the bucket's root at all): run this as an operator, or ask one to flag the project: %s",
 			safetext.Field(lc.Name), safetext.Field(bucket), managed.MarkerObject, safetext.Field(err.Error()))
 	default:
 		// A wrapped provider error is untrusted text too: one bounded field,

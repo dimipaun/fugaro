@@ -290,14 +290,14 @@ func TestSettingsWriteRefusesASymlinkSwapInTheLayerFile(t *testing.T) {
 	}
 }
 
-// TestSettingsWriteNamesTheWideningBeforeTheTypedPrompt: the typed confirmation
-// is one block, and the sentence saying what makes this edit different from the
-// ordinary y/N is part of it — printed before the prompt, not only in the
-// refusal a session with no terminal gets (D846).
-func TestSettingsWriteNamesTheWideningBeforeTheTypedPrompt(t *testing.T) {
+// TestSettingsWriteNamesTheWideningAndAsksNothing: a widening is one block —
+// the diff, and the sentence saying what it widens — and it is the whole of
+// what the owner reads: the typed prompt that used to follow it is gone
+// (D1540), and the write reads no line at all, with a terminal or without one.
+func TestSettingsWriteNamesTheWideningAndAsksNothing(t *testing.T) {
 	path, lc := settingsEditFixture(t)
 	fakeTerminal(t)
-	const why = "this loosens a ceiling, so the project's own name is what confirms it"
+	const why = "this loosens a ceiling, so it is the owner's own step"
 	cmd := NewRootCmd()
 	var out strings.Builder
 	cmd.SetOut(&out)
@@ -310,15 +310,11 @@ func TestSettingsWriteNamesTheWideningBeforeTheTypedPrompt(t *testing.T) {
 		t.Fatalf("%v\n%s", err, out.String())
 	}
 	got := out.String()
-	named, prompted := strings.Index(got, why), strings.Index(got, "Type "+lc.Name+" to confirm: ")
-	if named < 0 {
+	if !strings.Contains(got, why) {
 		t.Fatalf("the confirmation does not name the widening:\n%s", got)
 	}
-	if prompted < 0 {
-		t.Fatalf("the confirmation prints no typed prompt:\n%s", got)
-	}
-	if named > prompted {
-		t.Errorf("the widening is named after the prompt it explains:\n%s", got)
+	if strings.Contains(got, "to confirm: ") {
+		t.Errorf("the widening still asks a question:\n%s", got)
 	}
 	if got := readFileString(t, path); got != "a: 2\n" {
 		t.Errorf("the confirmed write did not land:\n%s", got)

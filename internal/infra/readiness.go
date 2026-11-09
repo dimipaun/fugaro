@@ -463,6 +463,15 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 				built = false
 				reasons = append(reasons, gate{MissingImage, fmt.Sprintf("workflow %s's job runs the project image catalog's entry %s (%s), and no released fugaro publishes or reads the project policy's image_catalog key yet: this installation's fugaro is older than the release that does, so run fugaro update, or give the workflow an image: or dockerfile: block of its own and leave the catalog to a newer fugaro",
 					ws.Name, entry, ws.Image)})
+			} else if !imageContextShipped && ws.CatalogContext {
+				// The catalog's key is readable here, but this entry's own
+				// source carries a member no released runner reads: the job is
+				// held back rather than deployed to meet it as an unknown
+				// source key, which refuses the whole published node and fails
+				// every one of the project's runs (D1403).
+				built = false
+				reasons = append(reasons, gate{MissingImage, fmt.Sprintf("workflow %s's job runs the project image catalog's entry %s, whose source names a build context, and no released fugaro reads that key yet: this installation's job image is older than the release that does, so run fugaro update, or leave context: off the entry and let its Dockerfile clone what it needs",
+					ws.Name, entry)})
 			} else if ws.CatalogPrebuilt {
 				built = true
 			} else {
@@ -512,6 +521,9 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 						if !imageCatalogShipped {
 							what = fmt.Sprintf("workflow %s's job runs the project image catalog's entry %s, and no released fugaro reads that key yet", ws.Name, entry)
 							fix = "run fugaro update, or give the workflow an image: or dockerfile: block of its own"
+						} else if !imageContextShipped && ws.CatalogContext {
+							what = fmt.Sprintf("workflow %s's job runs the project image catalog's entry %s, whose source names a build context, and no released fugaro reads that key yet", ws.Name, entry)
+							fix = "run fugaro update, or leave context: off the entry"
 						}
 					}
 					return RepoSpec{}, nil, userErr("Cloud Run job %s exists but has no container image, and %s; %s or fix the job, then run fugaro update again",
@@ -746,6 +758,24 @@ func hasLatest(ctx context.Context, c *Clients, tg target, spec RepoSpec, image 
 	}
 	return true, nil
 }
+
+// imageContextShipped is the gate the release that first writes — and reads —
+// a catalog source carrying `context` flips (D1403, F22). False means no
+// released fugaro reads that member, so a job whose image comes from an entry
+// that names a context is not one a released fugaro can run, and readiness
+// holds it back with the fix that gives the operator one that can.
+//
+// The member is not optional the way the catalog's own key is: it sits inside
+// a node shape an older reader already accepts, so the reader does not skip it
+// and read the rest — it refuses the whole node, which fails the project's
+// runs rather than its catalog. That is why the key may not ship before the
+// gate is flipped (D1403), and why this one is false while image_catalog's is
+// true: internal/config accepting the member is not a release.
+//
+// No package may read the CLI's own release constants here — internal/cli
+// imports internal/infra, never the other way round — so the release that
+// flips this one states the version in its own notes.
+var imageContextShipped = false
 
 // imageCatalogShipped is the gate the release that publishes — and reads —
 // the project policy's image_catalog key flips (D1140, D1156). False means no

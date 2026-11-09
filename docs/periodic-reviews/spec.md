@@ -1,7 +1,7 @@
 # Periodic run reviews: the spec
 
-**Status: design answered by the owner 2026-11-04; plan only; nothing implemented; no task
-approved.**
+**Status: design answered by the owner 2026-11-04; plan only when this was written, and part of it
+has landed since — [README.md](README.md)'s status line names each task and its commit.**
 
 This is the behaviour written to the owner's answers of 2026-11-04 (D960–D971,
 [reconciliation.md](reconciliation.md) §3). The owner named three decisions in words — **D965**,

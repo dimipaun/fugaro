@@ -147,19 +147,19 @@ type closedStdinFixture struct {
 // because there the sentence is the proof the run got to the ask; elsewhere the
 // proof is the body having run at all, which the harness checks for every leaf.
 var closedStdinFixtures = map[string]closedStdinFixture{
-	// The raise is what asks: the caps are unset in the fixture's database, so
-	// setting one from nothing is a loosening.
+	// The caps are unset in the fixture's database, so the run sets one from
+	// nothing — the loosening T3's owner-session fence is about. It asks nothing
+	// now, so the sentence is the write itself rather than a banner.
 	"fugaro budget set": {args: []string{"--global", "--per-run", "50"}, reaches: "global caps per-run: not set -> $50"},
-	// The project-wide kill switch is the one that asks; a repository's is not.
-	// Its sentence is the banner itself, because the kill is the whole of what
-	// the run has said by the time it asks: T3, which removes the ask, changes
-	// this sentence to whatever the run prints instead.
-	"fugaro budget kill": {args: []string{"--all"}, reaches: "this halts every run"},
-	// A resume asks only where there is a switch to move, so the fixture's
-	// database is killed first: the ask is the subject of this run.
+	// The project-wide kill switch, which a repository's own is not: the
+	// fixture drives --all, and T3 took the ask away, so what the run says is
+	// the kill and its undo.
+	"fugaro budget kill": {args: []string{"--all"}, reaches: "Running runs halt within seconds"},
+	// A resume moves a switch, so the fixture's database is killed first: the
+	// move is the subject of this run.
 	"fugaro budget resume": {
 		args:    []string{"--all"},
-		reaches: "this lets project aurora start and continue runs again",
+		reaches: "resumed (by someone@example.com)",
 		seed: func(t *testing.T, f *budgetFixture) {
 			f.db.Set(budget.PathKillGlobal, map[string]any{"on": true, "by": "boss@example.com", "at": int64(1)})
 		},
@@ -254,36 +254,45 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 // that would do more. `fugaro review` and `fugaro pair` refuse from inside
 // their bodies, in sentences of their own, which the run's own error carries.
 var closedStdinNoFixture = map[string]string{
-	"fugaro accounts":               "is a name for its four subcommands: a bare run prints its own usage and returns",
-	"fugaro accounts ls":            "selects no project and names the two ways to (--repo, an origin remote)",
-	"fugaro backends":               "is a name for its one subcommand: a bare run prints its own usage and returns",
-	"fugaro backends ls":            "lists every backend a project may name, which needs no project",
-	"fugaro backlog add":            "stops at its own D27 field checks, which this world has no values for",
-	"fugaro backlog index":          "reads docs/backlog, which this world has no checkout to hold",
-	"fugaro backlog list":           "reads docs/backlog, which this world has no checkout to hold",
-	"fugaro budget prices":          "prints the built-in price list with no project selected",
-	"fugaro budget show":            "prints the no-project-config refusal",
-	"fugaro config example":         "prints the example fugaro.yaml",
-	"fugaro config init":            "refuses outside a git checkout, which is what the world is",
-	"fugaro config layer":           "refuses with no checkout and no selected project config",
-	"fugaro config list":            "prints that this machine holds no installation",
-	"fugaro config publish":         "refuses with no fugaro.yaml to publish",
-	"fugaro config show":            "refuses outside a git checkout, which is what the world is",
-	"fugaro coordinator":            "refuses: the edition is not in this build",
-	"fugaro credentials serve":      "refuses without FUGARO_PROJECT in its own environment",
-	"fugaro creds":                  "is a name for set and ls: a bare run prints its own usage and returns",
-	"fugaro creds ls":               "prints the no-project-config refusal",
-	"fugaro doctor":                 "runs its whole check and reports what this world lacks",
-	"fugaro graph":                  "refuses: the edition is not in this build",
-	"fugaro image build":            "refuses before the build: a billable build's confirmation needs a real terminal",
-	"fugaro image check":            "prints the no-project-config refusal",
-	"fugaro image ls":               "prints the no-project-config refusal",
-	"fugaro image refresh":          "refuses before its steps: each asks for the project's name at a real terminal",
-	"fugaro image render":           "refuses outside a git checkout, which is what the world is",
-	"fugaro image selftest":         "reads its spec from the closed stdin and returns on the EOF",
-	"fugaro image status":           "prints the no-project-config refusal",
-	"fugaro managed status":         "prints the no-project-config refusal",
-	"fugaro models ls":              "prints the built-in list with no project selected",
+	"fugaro accounts":          "is a name for its four subcommands: a bare run prints its own usage and returns",
+	"fugaro accounts ls":       "selects no project and names the two ways to (--repo, an origin remote)",
+	"fugaro backends":          "is a name for its one subcommand: a bare run prints its own usage and returns",
+	"fugaro backends ls":       "lists every backend a project may name, which needs no project",
+	"fugaro backlog add":       "stops at its own D27 field checks, which this world has no values for",
+	"fugaro backlog index":     "reads docs/backlog, which this world has no checkout to hold",
+	"fugaro backlog list":      "reads docs/backlog, which this world has no checkout to hold",
+	"fugaro budget prices":     "prints the built-in price list with no project selected",
+	"fugaro budget show":       "prints the no-project-config refusal",
+	"fugaro config example":    "prints the example fugaro.yaml",
+	"fugaro config init":       "refuses outside a git checkout, which is what the world is",
+	"fugaro config layer":      "refuses with no checkout and no selected project config",
+	"fugaro config list":       "prints that this machine holds no installation",
+	"fugaro config publish":    "refuses with no fugaro.yaml to publish",
+	"fugaro config show":       "refuses outside a git checkout, which is what the world is",
+	"fugaro coordinator":       "refuses: the edition is not in this build",
+	"fugaro craft ls":          "prints the four crafts with no project selected, on the default credential",
+	"fugaro credentials serve": "refuses without FUGARO_PROJECT in its own environment",
+	"fugaro creds":             "is a name for set and ls: a bare run prints its own usage and returns",
+	"fugaro creds ls":          "prints the no-project-config refusal",
+	"fugaro doctor":            "runs its whole check and reports what this world lacks",
+	"fugaro graph":             "refuses: the edition is not in this build",
+	"fugaro image build":       "refuses before the build: a billable build's confirmation needs a real terminal",
+	"fugaro image check":       "prints the no-project-config refusal",
+	"fugaro image ls":          "prints the no-project-config refusal",
+	"fugaro image refresh":     "refuses before its steps: each asks for the project's name at a real terminal",
+	"fugaro image render":      "refuses outside a git checkout, which is what the world is",
+	"fugaro image selftest":    "reads its spec from the closed stdin and returns on the EOF",
+	"fugaro image status":      "prints the no-project-config refusal",
+	"fugaro managed status":    "prints the no-project-config refusal",
+	"fugaro models ls":         "prints the built-in list with no project selected",
+	// The orchestrator family reads and writes the state its project's daemon
+	// keeps. state and events are driven to their read here — the fixture's
+	// database holds no node yet, which is the empty case both are written for
+	// — and patch refuses its missing -f before it selects anything, because
+	// the document it applies is the whole of what it has to be handed.
+	"fugaro orchestrator state":     "reads project aurora's state node out of the fixture's database, which holds none yet, and prints what an empty state is",
+	"fugaro orchestrator events":    "reads project aurora's audit node out of the fixture's database, which holds none yet: there are no events to print",
+	"fugaro orchestrator patch":     "refuses its missing -f: a patch document is what it applies, and the closed stdin is no document",
 	"fugaro pair":                   "refuses from inside its body: the world's project has no budget.firebase_api_key for the phone to exchange the token with",
 	"fugaro pair ls":                "prints the no-project-config refusal",
 	"fugaro plan graph":             "refuses with no graph artifact under docs/plans",
@@ -292,7 +301,7 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro project policy show":    "prints that this installation has published no policy",
 	"fugaro project repos ls":       "prints the no-project-config refusal",
 	"fugaro project show":           "prints the no-project-config refusal",
-	"fugaro project sync":           "refuses before its ask: the deployed rules here carry no policy marker",
+	"fugaro project sync":           "refuses before its write: the deployed rules this world serves carry no policy marker",
 	"fugaro reaper":                 "prints the no-project-config refusal",
 	"fugaro recipes ls":             "prints the no-project-config refusal",
 	"fugaro report":                 "refuses: the edition is not in this build",
@@ -303,6 +312,7 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro runs summary":           "prints the no-project-config refusal",
 	"fugaro secrets":                "is a name for set, ls and rm: a bare run prints its own usage and returns",
 	"fugaro secrets ls":             "prints the no-project-config refusal",
+	"fugaro security paths":         "refuses from inside its body: it answers only for the checkout it stands in, and this world's directory names no origin repository",
 	"fugaro settings":               "prints the registry's every row with no project selected, which is the whole of what a bare run does",
 	"fugaro seats":                  "reads the selected project's records for an advisory estimate, and this world selects no project",
 	"fugaro setup":                  "refuses on this world's runs bucket name before the wizard's first step",
@@ -322,16 +332,6 @@ var closedStdinNoFixture = map[string]string{
 // The list reaching empty is what the policy's first constraint looks like from
 // here.
 var closedStdinPrompts = map[string]string{
-	// A raise asks for the project's name before it loosens the budget; T3
-	// removes the ask and leaves the owner-session fence in its place.
-	"fugaro budget set": "T3",
-	// The project-wide kill switch asks the same way, and T3 owns it too. A
-	// repository's kill switch does not ask, which is why the fixture is --all.
-	"fugaro budget kill": "T3",
-	// The resume is the third of the raise forms T3 lists, and it asks with the
-	// same typed name. It reaches the ask only where a switch is set, which its
-	// fixture seeds.
-	"fugaro budget resume": "T3",
 	// The account write asks before it rewrites the project's claude_accounts
 	// block and mints the account's secret version; T5 removes the ask.
 	"fugaro accounts add": "T5",
@@ -369,24 +369,6 @@ var closedStdinUnreached = map[string]closedStdinUnreachedAsk{
 		file: "allow_delete.go", marker: "confirmTypedStrict(cmd, lc,",
 		task: "T5", why: "asks only where the write drops a read approval, which needs a managed installation this world is not",
 	},
-	// The restore refuses a session with no terminal before its banner, in a
-	// sentence of its own, so the banner is never printed here.
-	"fugaro restore": {
-		file: "restore.go", marker: "func (rr *restoreRun) confirm(cmd *cobra.Command) error {",
-		task: "T6", why: "refuses a session with no terminal before the banner it would print",
-	},
-	// Both banners stand behind the managed installation: the flag's behind the
-	// project-number read its banner carries, the unflag's behind the marker
-	// read, and both behind a runs bucket with the name a managed project's
-	// marker lives in. This world's is the project config's own.
-	"fugaro managed flag": {
-		file: "managed_flag.go", marker: "confirmTypedGCPProject(cmd, lc.GCPProject)",
-		task: "T6", why: "prints its banner after a project-number read, which needs the managed installation this world is not",
-	},
-	"fugaro managed unflag": {
-		file: "managed_unflag.go", marker: "confirmTypedGCPProject(cmd, lc.GCPProject)",
-		task: "T6", why: "prints its banner after a marker read, which needs the managed installation this world is not",
-	},
 	// managed apply asks from inside an apply: the question carries a saved
 	// plan's hash and counts, so it takes a planned root this world has none of.
 	"fugaro managed apply": {
@@ -408,12 +390,6 @@ var closedStdinUnreached = map[string]closedStdinUnreachedAsk{
 	"fugaro project policy publish": {
 		file: "project_cmd.go", marker: "confirmRemoval(cmd, lc, o.yes,",
 		task: "T7", why: "asks after a deployed-rules read, which this world refuses",
-	},
-	// An un-enrollment asks once runs are in flight, or where it drops an
-	// approval the rules already carry.
-	"fugaro project sync": {
-		file: "project_enroll.go", marker: "confirmRemovalStrict(cmd, lc,",
-		task: "T6", why: "asks where the sync drops an approval the deployed rules hold",
 	},
 	// The rules deployment asks as the owner, through the database client this
 	// world keeps out of the dev-build path.

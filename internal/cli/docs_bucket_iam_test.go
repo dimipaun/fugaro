@@ -47,9 +47,23 @@ func TestDocsLaunchersDoNotHoldObjectAdmin(t *testing.T) {
 		"on `runs/` only",
 		"launchers write only `runs/` since 0.7.0",
 		"write only `runs/`, so a launcher's publish",
+		// The shared issue store added the third clause (D1727), so the pair is
+		// stale the same way runs/ alone is: each of these states the launcher's
+		// write reach as `runs/` and `tokens/` as current fact, which this
+		// release's condition makes false. The sentence that replaces each one
+		// spells three prefixes, so a doc that keeps the pair — or a live check
+		// whose FACT tells the operator to expect it — fails here rather than
+		// being read as a pass. The historical statements (release.md's 0.9.0
+		// rollout note, bucket-iam.md's record of the two earlier forms) are not
+		// these phrasings, and bucket-iam.md is skipped by the scan below.
+		"write only `runs/` and `tokens/`",
+		"write `runs/` and `tokens/` only",
+		"on `runs/` and `tokens/` since",
+		"`runs/` **or** `tokens/` of this bucket",
+		"`runs/`+`tokens/` condition",
 	}
 	var files []string
-	for _, g := range []string{"../../docs/*.md", "../../docs/design/*.md", "../../README.md", "../../SECURITY.md", "../../plugin/skills/*/SKILL.md", "../../plugin/skills/*/reference/*.md"} {
+	for _, g := range []string{"../../docs/*.md", "../../docs/design/*.md", "../../docs/how-to/*.md", "../../README.md", "../../SECURITY.md", "../../plugin/skills/*/SKILL.md", "../../plugin/skills/*/reference/*.md"} {
 		m, _ := filepath.Glob(g)
 		files = append(files, m...)
 	}
@@ -73,19 +87,22 @@ func TestDocsLaunchersDoNotHoldObjectAdmin(t *testing.T) {
 	// error-table row for a refused publish, recipes.md's operator-only
 	// sentence, release.md's 0.7.0 section and v1.md's launcher grant. Each of
 	// those states the launcher's write reach, which the sealed budget token
-	// widened to runs/ and tokens/, so each is pinned with the widened half and
-	// the stale scan above bans the runs/-only phrasing.
+	// widened to `runs/` and `tokens/` and the shared issue store to `issues/`,
+	// so each is pinned with every prefix and the stale scan above bans the
+	// narrower phrasings.
 	required := map[string][]string{
 		// The page that carried this table was docs/gcp-setup.md, which is the
 		// short setup path now; the launcher's grant is written down in the
 		// design of record, which is the contract the code cites.
 		"../../docs/design/bucket-iam.md": {
 			"runs-bucket-iam", "add-iam-policy-binding", "DATA_WRITE",
-			"| Launcher (not an operator) | read | read | **read, write** | read |",
+			"| Launcher (not an operator) | read | read | **read, write** | read | **read, write** | **read, write** |",
+			"**No launcher command writes outside `runs/`, `tokens/` and `issues/`.**",
+			"the absence of launcher writes outside `runs/`, `tokens/` and `issues/`",
 		},
 		"../../docs/recipes.md": {
 			"It is an operator command: once an operator has applied the 0.7.0 bucket hardening",
-			"launchers read the runs bucket but write only `runs/` and `tokens/`",
+			"launchers read the runs bucket but write only `runs/`, `tokens/` and `issues/`",
 		},
 		"../../docs/release.md": {
 			"## Rolling out the 0.7.0 bucket hardening",
@@ -96,14 +113,14 @@ func TestDocsLaunchersDoNotHoldObjectAdmin(t *testing.T) {
 			"plus `objectUser` under the launcher condition",
 		},
 		"../../docs/design/watch-queued.md": {
-			"launchers write only `runs/` and, since 0.9.0, `tokens/`",
+			"launchers write only `runs/` and, since 0.9.0, `tokens/`, where a launch writes its sealed budget token, and since 0.22.0 `issues/`",
 		},
 		"../../docs/design/v1.md": {
 			// The widened half is part of the pin, not only the grant's name: a
 			// bullet trimmed back to "under the launcher condition" alone keeps
 			// the name and drops the prefixes, which is exactly the state the
 			// round-3 review found (both v1.md places said runs/ alone).
-			"`roles/storage.objectUser` under the launcher condition — `runs/` and, since 0.9.0, `tokens/`",
+			"`roles/storage.objectUser` under the launcher condition — `runs/`, `tokens/` since 0.9.0 (the sealed budget token) and `issues/` since 0.22.0 (the shared issue store)",
 		},
 	}
 	for file, wants := range required {
@@ -121,14 +138,49 @@ func TestDocsLaunchersDoNotHoldObjectAdmin(t *testing.T) {
 	// and the "Who can do what" launchers bullet — and both said runs/ alone, so
 	// a Contains over one wording would not notice the other being left behind.
 	// The count is over the widened wording, not over the grant's name: counting
-	// "under the launcher condition" alone lets both places drop `tokens/` and
+	// "under the launcher condition" alone lets both places drop a prefix and
 	// still total 2, which a planted mutation confirmed before this was
-	// tightened.
-	const v1Grant = "`roles/storage.objectUser` under the launcher condition — `runs/` and, since 0.9.0, `tokens/`"
+	// tightened (and the issues/ half is a prefix a third place could lose the
+	// same way).
+	const v1Grant = "`roles/storage.objectUser` under the launcher condition — `runs/`, `tokens/` since 0.9.0 (the sealed budget token) and `issues/` since 0.22.0 (the shared issue store)"
 	if data, err := os.ReadFile("../../docs/design/v1.md"); err != nil {
 		t.Fatal(err)
 	} else if n := strings.Count(string(data), v1Grant); n != 2 {
-		t.Errorf("../../docs/design/v1.md states the launcher's objectUser grant as `runs/` and `tokens/` under the launcher condition %d times, want 2 (the launch-IAM bullet and the \"Who can do what\" launchers bullet): the runs/-only half is back in one of them", n)
+		t.Errorf("../../docs/design/v1.md states the launcher's objectUser grant as `runs/`, `tokens/` and `issues/` under the launcher condition %d times, want 2 (the launch-IAM bullet and the \"Who can do what\" launchers bullet): one of them is missing a prefix", n)
+	}
+}
+
+// The release note is an artifact beside the claim the doc makes about it: §3's
+// dated update of 2026-11-08 ends "The 0.22.0 notes' `### For operators` entry
+// is that one command", and a sentence that names a release file is a claim
+// that the file exists and carries the entry — which is the state the reviews
+// found missing (the sentence named the next release while the file's
+// `### For operators` section carried no step for the launcher's grant). The version is
+// read off that sentence rather than typed here, so the file, the sentence and
+// the release the doctor text and the replace banner name
+// (`infra.issuesGrantRelease`) move together: the note is the step an operator
+// runs after this grant ships, and CLAUDE.md puts it in the release notes' own
+// `### For operators` section in the same PR.
+func TestDocsBucketIAMNamesTheReleaseThatCarriesTheGrant(t *testing.T) {
+	const path = "../../docs/design/bucket-iam.md"
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const claim = "The <version> notes' `### For operators` entry is that one command."
+	m := regexp.MustCompile("The ([0-9]+\\.[0-9]+\\.[0-9]+) notes' `### For operators` entry is that one command\\.").FindStringSubmatch(string(data))
+	if m == nil {
+		t.Fatalf("%s no longer ends its 2026-11-08 note with %q: the sentence names the release whose notes carry the operator step for the launcher's grant, and this test reads that version off it", path, claim)
+	}
+	notes := "../../docs/releases/v" + m[1] + ".md"
+	body, err := os.ReadFile(notes)
+	if err != nil {
+		t.Fatalf("%s points an operator at the %s notes' `### For operators` entry, and %s holds no such file: %v", path, m[1], notes, err)
+	}
+	for _, want := range []string{"### For operators", "Run `fugaro update`", "`issues/`"} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("%s lacks %q: it is the note %s names, and the entry it owes is the one command that replaces the launchers' grant with the one covering `issues/`", notes, want, path)
+		}
 	}
 }
 
@@ -146,7 +198,9 @@ func TestDocsLaunchersDoNotHoldObjectAdmin(t *testing.T) {
 //   - every launchers' clause the doc spells out, with <bucket> for the
 //     bucket name, is one the code writes for that same placeholder, and
 //     every clause the code writes is spelled out — so a doc that drops the
-//     tokens/ clause, or invents one, fails against gcp.LauncherBucketCondition;
+//     tokens/ or issues/ clause, or invents one, fails against
+//     gcp.LauncherBucketCondition (the issues/ clause is D1727's, added with
+//     the shared issue store);
 //   - §4's H1 item 2 names every prefix the code's condition writes, read off
 //     the condition itself;
 //   - the title statements are the current title, built from
@@ -177,14 +231,15 @@ func TestDocsBucketIAMStatesTheLaunchersCurrentCondition(t *testing.T) {
 		delete(spelled, m[1])
 	}
 	for p := range spelled {
-		t.Errorf("%s spells a %s/ clause, which is not one of the two gcp.LauncherBucketCondition writes", path, p)
+		t.Errorf("%s spells a %s/ clause, which is not one of the gcp.LauncherBucketCondition writes", path, p)
 	}
 
 	// §4's H1 item 2 states the grant in prose, and the prose is where a prefix
-	// went missing: it said runs/ alone after the budget token moved to
-	// tokens/. The prefixes are read off the condition, so a change on either
+	// went missing twice: it said runs/ alone after the budget token moved to
+	// tokens/, and runs/ and tokens/ alone after the shared issue store added
+	// issues/. The prefixes are read off the condition, so a change on either
 	// side — a clause added to gcp.LauncherBucketCondition, or a bullet that
-	// stops at runs/ — fails here.
+	// stops before the last prefix — fails here.
 	const h1Item = "2. `roles/storage.objectUser` with the launcher condition"
 	start := strings.Index(doc, h1Item)
 	if start < 0 {
@@ -196,11 +251,11 @@ func TestDocsBucketIAMStatesTheLaunchersCurrentCondition(t *testing.T) {
 	}
 	for _, m := range regexp.MustCompile(`/objects/([a-z]+)/"\)`).FindAllStringSubmatch(gcp.LauncherBucketCondition("bucket"), -1) {
 		if !strings.Contains(item, "`"+m[1]+"/`") {
-			t.Errorf("%s's H1 item 2 does not say the launcher condition brings access under `%s/`, which is one of the clauses gcp.LauncherBucketCondition writes: the launchers write the sealed budget token there (budget-token-channel.md §7.2, D16)", path, m[1])
+			t.Errorf("%s's H1 item 2 does not say the launcher condition brings access under `%s/`, which is one of the clauses gcp.LauncherBucketCondition writes: the launchers write the sealed budget token and their own issue there (budget-token-channel.md §7.2, D16; D1727)", path, m[1])
 		}
 	}
 	if stale := "which brings `create`, `delete`, `update` and `get` under `runs/`."; strings.Contains(item, stale) {
-		t.Errorf("%s's H1 item 2 still states the launcher's grant as runs/ alone (%q), while gcp.LauncherBucketCondition covers tokens/ too", path, stale)
+		t.Errorf("%s's H1 item 2 still states the launcher's grant as runs/ alone (%q), while gcp.LauncherBucketCondition covers tokens/ and issues/ too", path, stale)
 	}
 
 	title := gcp.LauncherBucketConditionTitle
@@ -209,10 +264,21 @@ func TestDocsBucketIAMStatesTheLaunchersCurrentCondition(t *testing.T) {
 		"| `objectUser` | person | the condition is exactly `{title: fugaro-launchers-runs, expression: LauncherBucketCondition(b)}` for a bucket `b` in `Cover.Buckets` |",
 		"| H5 | Where the condition lives | Go (`gcp.LauncherBucketCondition`), passed as a tfvar, title `fugaro-launchers-runs` | HCL-computed |",
 		// §2.2's claim about the launchers' writes, and §2.3's verification list
-		// restating it: the token moved to tokens/, which the launchers' own
-		// condition covers, so runs/ alone is no longer the reach.
+		// restating it, in each form a widening has left behind: the token moved
+		// to tokens/ (so runs/ alone is not the reach), and the shared issue
+		// store added issues/ (so neither is the runs/ and tokens/ pair).
+		// (No stale entry for §2.3's runs/-only form: its wording is a prefix of
+		// the current sentence, which spells the three prefixes, so the ban
+		// would fire on the sentence it pins. §2.2's bolded runs/-only claim
+		// below catches that state where it is stated.)
 		"**No launcher command writes outside `runs/`.**",
-		"the absence of launcher writes outside `runs/`,",
+		"**No launcher command writes outside `runs/` and `tokens/`.**",
+		"the absence of launcher writes outside `runs/` and `tokens/`,",
+		// The two title statements and the H6 person row in their 0.9.0 form:
+		// each reads as the current grant, so each is stale now.
+		"| `objectUser` | person | the condition is exactly `{title: fugaro-launchers-runs-tokens, expression: LauncherBucketCondition(b)}` for a bucket `b` in `Cover.Buckets` |",
+		"| H5 | Where the condition lives | Go (`gcp.LauncherBucketCondition`), passed as a tfvar, title `fugaro-launchers-runs-tokens` | HCL-computed |",
+		"`gcp.LauncherBucketConditionTitle` is `fugaro-launchers-runs-tokens`, with no description, as for the job grants.",
 	} {
 		if strings.Contains(doc, stale) {
 			t.Errorf("%s still states the launchers' pre-seal condition as the current one: %q", path, stale)
@@ -222,8 +288,8 @@ func TestDocsBucketIAMStatesTheLaunchersCurrentCondition(t *testing.T) {
 		"`gcp.LauncherBucketConditionTitle` is `" + title + "`",
 		"`{title: " + title + ", expression: LauncherBucketCondition(b)}`",
 		"passed as a tfvar, title `" + title + "`",
-		"**No launcher command writes outside `runs/` and `tokens/`.**",
-		"the absence of launcher writes outside `runs/` and `tokens/`",
+		"**No launcher command writes outside `runs/`, `tokens/` and `issues/`.**",
+		"the absence of launcher writes outside `runs/`, `tokens/` and `issues/`",
 	} {
 		if !strings.Contains(doc, want) {
 			t.Errorf("%s lacks %q", path, want)

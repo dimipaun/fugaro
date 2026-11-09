@@ -51,6 +51,7 @@ import {
 } from '../../src/source/cli'
 import type { FeedSilence, NoInstallationState } from '../../src/source/cli'
 import { loadFixture } from '../../src/source/fixture'
+import { shortRun } from '../../src/shared/shortid'
 import { refusalFrom } from '../../src/source/source'
 import type { JSONDoc } from '../../src/source/source'
 import { TOKEN_PLACEHOLDER } from '../../src/shared/sanitize'
@@ -584,7 +585,9 @@ test.describe('the console with nothing to read', () => {
     expect(screen.killable).toBe(0)
     expect(screen.buttons).toBe(0)
     // Two run records, one of them a subscription's and marked notional.
-    expect(screen.runIds).toEqual(['20261015-123000-bb01', '20261015-121000-bb02'])
+    // The list view names each run by its short ID (SR10): the two records are
+    // drawn whole nowhere on this screen.
+    expect(screen.runIds).toEqual([shortRun('20261015-123000-bb01'), shortRun('20261015-121000-bb02')])
     expect(screen.notionalRows).toBe(1)
     expect(screen.text).toContain('~$')
     // The row whose compute was not estimated is `n/a`, and the totals built

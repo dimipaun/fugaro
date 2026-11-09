@@ -240,7 +240,7 @@ D521's line is *the wire and the mechanism stay, the policy goes*. Below, symbol
 | `internal/agent` | `SubAgents`, `Repeats` |
 | `internal/gateway` | `StageReport`, `.Agents` |
 | `internal/digest` | the halt accounting and the two report-only flags |
-| `internal/cli` | `governanceSince` (`recipes_skew.go:510`), `refuseGovernanceSkew`, `checkGovernanceImage`, `checkCloneGovernanceImage`, `governanceImageWarnings`, `governanceLaunchSources`, the launch gates in `run.go` and `validate.go`'s call, `--tier` (T8.1b), and `diagnose.go`'s `checkpointBlock` |
+| `internal/cli` | `governanceSince` (`recipes_skew.go:521`), `refuseGovernanceSkew`, `checkGovernanceImage`, `checkCloneGovernanceImage`, `governanceImageWarnings`, `governanceLaunchSources`, the launch gates in `run.go` and `validate.go`'s call, `--tier` (T8.1b), and `diagnose.go`'s `checkpointBlock` |
 | `schemas/` | `fugaro.schema.json` and `project-layer.schema.json` (`governance`), `result.schema.json` (`calls`, `agents`, `repeats`, the five reasons, `checkpoint`, `review_scope`), `task.schema.json` (`tier`, `expected_scope`) — unchanged (R7) |
 
 Two reasons this is the line, and both are load-bearing: strict decoding means the core must know
@@ -435,8 +435,9 @@ first wins, and the checkpoint report is the core plumbing that reads `runstore.
   the enforcement a tagged binary registered. The edition is set the same way (§7).
 - **`ee/register` panics on any setter error, and only `ee/register` may call a `Set*`**
   (`internal/eeboundary/seam_test.go`'s `TestOnlyEERegisterSetsTheSeams` scans the module for
-  `SetLaunchDeclarer`, `RegisterCommand`, `SetSections`, `SetGovernance`, `SetStage` and
-  `SetEditionEE` outside `ee/register`'s non-test files, with a planted tree for the red step).
+  `SetLaunchDeclarer`, `RegisterCommand`, `SetSections`, `SetGovernance`, `SetStage`,
+  `SetEditionEE` and `SetHandoff` outside `ee/register`'s non-test files, with a planted tree for
+  the red step).
 - **A seam that switches behaviour *off* is test-only**: the `SetCore()`-style seams live in an
   `export_test.go` beside the hook, never in production code, so no core caller can turn governance
   off in a tagged binary. `export_test.go` is compiled only into that package's own tests.
@@ -498,7 +499,7 @@ configuration that sets `governance:` will silently ignore the block.
 Three things make this the right carrier rather than an OCI label.
 
 - **The gate already reads exactly this object, for exactly this question.** `checkImageSinceDev`
-  (`internal/cli/recipes_skew.go:651`) reads `imagecheck.RecordKey(slug, spec.Workflow)` out of the
+  (`internal/cli/recipes_skew.go:662`) reads `imagecheck.RecordKey(slug, spec.Workflow)` out of the
   runs bucket and judges the *job image* by `rec.BaseRef` — the base image the build ran FROM, whose
   binary the job runs. The edition belongs beside the field that answers the same question, and that
   gate gains no read, no client and no credential: it already holds `env.recordBucket`.
@@ -525,12 +526,12 @@ gets no edition warning.** That is today's behaviour, and it is what every image
 every `--image-source` mirror looks like. Only a record that says `core` against a configuration that
 sets `governance:` produces the warning. The skew half of the same sentence — *this file needs fugaro
 X or later in the job image that runs it*, which is what `governanceImageWarnings`
-(`recipes_skew.go:1217`) says today — is a statement about the file, and prints whether or not the
+(`recipes_skew.go:1228`) says today — is a statement about the file, and prints whether or not the
 image can be judged.
 
 **The one reader that has to acquire the read is `fugaro validate`, and it does so online only.**
 Every other edition warning is emitted where a `cloudEnv` is already in hand: `checkGovernanceImage`
-(`recipes_skew.go:1186`) and `refuseGovernanceSkew` reach `checkImageSinceDev`'s
+(`recipes_skew.go:1197`) and `refuseGovernanceSkew` reach `checkImageSinceDev`'s
 `env.recordBucket(ctx)` read with the launch's own env, and `--tier`'s warning
 goes through `governanceLaunchSources` (`:1236`) on that same env, which is why E1.3 needs no change
 in `run.go`. The checkout path's `checkCloneGovernanceImage` (`:1197`) has the skew half alone and no

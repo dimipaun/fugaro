@@ -201,9 +201,11 @@ const (
 	// it always did, with an empty review set, rather than refuse to bind a
 	// port. An empty set is the class's own fail-closed statement and not a
 	// gap: verifyJob answers no review class at all, every caller of it is
-	// refused, and the launcher's own gate refuses the launch before a job is
-	// started (its constant is `false` until the owner's live check). That is
-	// the same shape and the same reason FUGARO_VERIFIER_ACCOUNTS,
+	// refused, and a launch that reached such a service is refused before a job
+	// is started (checkReviewAdmission judges the release the installation's own
+	// tfvars state for its service, and warns and admits only where that record
+	// cannot be read). That is the same shape and the same reason
+	// FUGARO_VERIFIER_ACCOUNTS,
 	// FUGARO_PERSON_ACCOUNTS and FUGARO_COORDINATOR_ACCOUNT have, and it is why
 	// this name is read outside credentialsServiceEnvNames: a name inside that
 	// list is one a service REFUSES TO START without, which is the direction

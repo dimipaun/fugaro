@@ -14,6 +14,7 @@ import (
 
 	"github.com/bmatcuk/doublestar/v4"
 
+	"github.com/dimipaun/fugaro/internal/orchestrator/sensitivity"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/recipe"
@@ -210,6 +211,11 @@ func Validate(c *Config) []Problem {
 		// The repository's own block, by the same rules the project layer's
 		// is judged by: one function, two prefixes.
 		ps = append(ps, validateRigor("rigor", c.Rigor.Default, c.Rigor.Areas)...)
+	}
+	if c.Security != nil {
+		// The repository's own list, by the rules the project layer's is
+		// judged by: one function, two prefixes (D1501, D1502).
+		ps = append(ps, validateSecurity("security", c.Security.Patterns)...)
 	}
 	ps = append(ps, validateGovernance("governance", c.Governance)...)
 	// A repository's ab: block may only opt out of sampling (D556, D557):
@@ -464,6 +470,66 @@ func validateRigor(p string, mode rigor.Mode, areas []rigor.Area) []Problem {
 			continue
 		}
 		seen[a.Match] = i
+	}
+	return ps
+}
+
+// validateSecurity reports a security block's problems, each at p.patterns[i]:
+// p is "security" for either layer's block — the repository's own on
+// config.Config and the project layer's on config.ProjectLayer are both
+// top-level there (D1501) — so one function states the rules for both
+// (docs/project-layer.md §5 gives either layer the key).
+//
+// It reads sensitivity.Pattern.Validate, which is the whole point of the
+// vocabulary and the pattern rule living in internal/orchestrator/sensitivity
+// (D1502, F21): the rows a configuration may write are the rows the matcher can
+// use, so a category outside the seven-value vocabulary or a glob no matcher
+// can read is refused where it is written, rather than silently never firing
+// when a run matches its diff against the list.
+//
+// Two rows may not carry the same name (D1506's own rule, seen from below): a
+// name is a row's identity in the union of the three layers, where the first
+// writer's row keeps it, so a second row of one layer under a name already
+// taken is named by nothing and can never fire however it is written — the
+// mistake its writer has to see. Unlike validateRigor's duplicate glob this
+// does not read the glob: two rows may match overlapping paths on purpose (a
+// folder's row and the one file inside it), and the union keeps both.
+//
+// The engine's own floor is the same rule read across the layers, and the one
+// name collision this function can see from a single layer: the floor is the
+// union's first writer (sensitivity.Union, D1506), so a row named after one of
+// its rows is dropped whichever glob it carries and whichever layer writes it.
+// A repository that means "and also this tree is sensitive" therefore cannot
+// say it under a name the floor already spent — the row would be the silent
+// no-op this file exists to refuse, so it is refused at its own index, with
+// the fix the writer owns: another name.
+func validateSecurity(p string, patterns []sensitivity.Pattern) []Problem {
+	var ps []Problem
+	if len(patterns) > sensitivity.MaxPatterns {
+		ps = append(ps, Problem{Path: p + ".patterns", Message: fmt.Sprintf("must hold at most %d patterns", sensitivity.MaxPatterns)})
+	}
+	// A row already refused for its own shape is not also called a repeat: it
+	// can never reach the union for the name to matter, and the first reason is
+	// the one its writer has to fix.
+	floorNames := make(map[string]bool)
+	for _, row := range sensitivity.Floor() {
+		floorNames[row.Name] = true
+	}
+	seen := make(map[string]int, len(patterns))
+	for i, row := range patterns {
+		if msg := row.Validate(); msg != "" {
+			ps = append(ps, Problem{Path: fmt.Sprintf("%s.patterns[%d]", p, i), Message: msg})
+			continue
+		}
+		if floorNames[row.Name] {
+			ps = append(ps, Problem{Path: fmt.Sprintf("%s.patterns[%d]", p, i), Message: fmt.Sprintf("repeats the name %q of the engine's own floor: the floor is the union's first writer, so this row is dropped and the tree it matches is never escalated — give the row a name of its own", row.Name)})
+			continue
+		}
+		if j, dup := seen[row.Name]; dup {
+			ps = append(ps, Problem{Path: fmt.Sprintf("%s.patterns[%d]", p, i), Message: fmt.Sprintf("repeats the name %q of patterns[%d]: a name is a pattern's identity in the union of the three layers, and the first writer's row keeps it, so this one is named by nothing", row.Name, j)})
+			continue
+		}
+		seen[row.Name] = i
 	}
 	return ps
 }

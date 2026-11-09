@@ -177,6 +177,30 @@ const consoleBoundarySelf = "internal/cli/docs_console_boundary_test.go"
 // the routing text asks for — the fixture that holds those paths already lives
 // in that package's testdata, and a floor that could not name them would be a
 // list that cannot cover the rule it is measured against.
+//
+// The seventh is the same design's SC3: `fugaro security paths` is the reader an
+// agent calls instead of guessing what a repository treats as security-sensitive
+// (D1512), and the document it prints is part of this contract — console/docs/
+// json-contract.md §6.23, written in the same change. The test that holds the
+// command's own output to that section (internal/cli/security_test.go,
+// TestSecurityPathsNamesItsFieldsInTheContract: every key the command prints is
+// named by the section, and the section names the command's two flags and the
+// three layer words) is what reads it, as §6.21's and §6.22's own checks do from
+// the entries above. Bytes again, like the five before it: no import under
+// console/, no go:embed, nothing built against what the console holds.
+//
+// The eighth is the short-run-ids plan's SR10, and it is the first entry whose
+// read is of the console's **fixtures** rather than of a document the console
+// and the CLI both describe. The live tab follows `watch` in the three things
+// D1704 names -- the order of the rows, the short ID each row is named by, and
+// the words a state is said in -- and the plan asks for that to be a test rather
+// than a promise. The fixtures are the data the two sides share
+// (console/test/fixtures/watch-parity.json, recorded from watch's own renderers
+// over one fixed view, and the console's copy of SR1's short-ID case table),
+// and the test that regenerates the one and holds the other to the Go table is
+// internal/watch/console_parity_test.go. Bytes, like every entry above: no
+// import under console/, no go:embed, and nothing in that file is built against
+// anything the console holds -- it reads the JSON the console's own suite reads.
 var consoleBoundaryAllowList = []string{
 	"internal/cli/docs_desktop_console_test.go",
 	"ee/coordinator/cli/console_contract_test.go",
@@ -184,6 +208,8 @@ var consoleBoundaryAllowList = []string{
 	"schemas/schemas_test.go",
 	"internal/cli/settings_console_fixture_test.go",
 	"internal/orchestrator/sensitivity/floor.go",
+	"internal/cli/security_test.go",
+	"internal/watch/console_parity_test.go",
 }
 
 // consoleGoModRequireBaseline is go.mod's require block as recorded when Task
@@ -816,10 +842,14 @@ func TestConsoleIsOutsideTheGoModule(t *testing.T) {
 		// the fourth and the fifth the settings-edit plan's C4, which reads the
 		// console's settings fixture from both sides -- the schema that
 		// documents it and the write this package answers it with; the sixth is security-classification SC1's (the floor row that names the
-		// console's main process); this number is what makes a seventh one
-		// impossible to add quietly.
-		if len(consoleBoundaryAllowList) != 6 {
-			t.Errorf("consoleBoundaryAllowList carries %d entries, %v: it holds the console contract's own docs tests, the moved halves of the coordinator's and the report's commands, the two halves of the settings fixture's check and the sensitivity floor's row naming the console's main process, and a further entry is a widening of the boundary that must be argued for in the commit that adds it (plan Task 0.3 a3)", len(consoleBoundaryAllowList), consoleBoundaryAllowList)
+		// console's main process); the seventh is security-classification SC3's
+		// (the security paths read's own §6.23 check, which reads the contract
+		// document); the eighth is the short-run-ids plan's SR10 (the live tab's
+		// parity with watch, which reads the console's own fixtures -- the frame
+		// recorded from watch and the copy of SR1's case table); this number is
+		// what makes a ninth one impossible to add quietly.
+		if len(consoleBoundaryAllowList) != 8 {
+			t.Errorf("consoleBoundaryAllowList carries %d entries, %v: it holds the console contract's own docs tests, the moved halves of the coordinator's and the report's commands, the two halves of the settings fixture's check, the sensitivity floor's row naming the console's main process, the security paths read's §6.23 check and the live tab's watch-parity check, and a further entry is a widening of the boundary that must be argued for in the commit that adds it (plan Task 0.3 a3)", len(consoleBoundaryAllowList), consoleBoundaryAllowList)
 		}
 	})
 

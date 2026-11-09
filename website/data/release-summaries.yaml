@@ -1,6 +1,8 @@
 # website/data/release-summaries.yaml -- the end-user summary of every release.
 #
-# One entry per file in docs/releases/, keyed by the release's tag, and the changelog page
+# One entry per RELEASED file in docs/releases/ -- one at or below the CLI stream's current
+# version in docs/release-streams.yaml, so the notes of a release not yet cut are not held to a
+# line here -- keyed by the release's tag, and the changelog page
 # renders it under the release's heading with the release file's own Highlights collapsed
 # below it (the owner's brief of 2026-10-19: the summary under each release is a product
 # feature a reader understands, and the operator detail of docs/releases/vX.Y.Z.md is one
@@ -16,15 +18,15 @@
 #
 # Read by website/src/content.ts (loadReleaseSummaries), rendered by
 # website/src/components/Changelog.astro, and pinned by website/test/changelog-page.mjs:
-# every release file has an entry here, none is empty, and the page renders it.
+# every released file has an entry here, none is empty, and the page renders it.
 #
 # A new release adds its line here in the same commit as its docs/releases/vX.Y.Z.md: the
 # summary is written for readers who use Fugaro, from what that file says the release does.
 version: 1
 
 summaries:
-  v0.22.0: An installation's rules now carry the orchestrator's state subtree, and fugaro update deploys it and records its generation in one run.
-  v0.21.0: A run's default time budget is three hours and each stage gets one hour, so a security-reviewed task with three review levels finishes without a per-run override.
+  v0.22.0: fugaro security paths now prints the list of paths a repository's runs treat as security-sensitive and answers any path against it, an installation's rules gain the orchestrator's own state subtree that one fugaro update deploys, and an upgrade given the budget once flags that installation as managed in the same run.
+  v0.21.0: A change can now be reviewed in the cloud by its own read-only job, long tasks get a three-hour default budget so they finish without a per-run override, runs record why they failed, and a person on a managed project is never asked to type anything.
   v0.20.3: A run that reviews on your Claude subscription now starts on the job that holds its token, and a managed project's own update retires what it created.
   v0.20.2: fugaro update no longer stops at the installation step on a project that has a catalog check.
   v0.20.1: The job images the 0.20 line needs are published; 0.20.0 shipped without them because the image build broke on a CI runner change.

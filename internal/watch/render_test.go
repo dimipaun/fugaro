@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 var update = flag.Bool("update", false, "rewrite the golden frames")
@@ -142,7 +143,7 @@ func TestFrameNarrowSelectedRun(t *testing.T) {
 	sel := Cursor{Slug: "acme__app", Run: "r-aaaa11"}
 	got := frame(fixture(), 50, 0, func(o *RenderOptions) { o.Selected = sel })
 	// The row names the run by the last four characters of its id (item 1).
-	if !strings.Contains(got, "▸ "+shortRun("r-aaaa11")) {
+	if !strings.Contains(got, "▸ "+task.ShortRun("r-aaaa11")) {
 		t.Fatalf("selected run not marked at tier 1:\n%s", got)
 	}
 	if strings.Contains(got, "▸ acme/app") {
@@ -314,7 +315,7 @@ func TestWideRunesClipByWidth(t *testing.T) {
 	col := strings.Index(hdr, "STAGE")
 	var row string
 	for _, l := range strings.Split(got, "\n") {
-		if strings.Contains(l, shortRun("r-aaaa11")) {
+		if strings.Contains(l, task.ShortRun("r-aaaa11")) {
 			row = l
 		}
 	}
@@ -453,10 +454,10 @@ func TestDetailCarriesVerifyAndModels(t *testing.T) {
 	}
 }
 
-// A finished row's RUN cell is the table's short form (shortRun), the same
-// one every other row shows, not the whole id (owner request 2026-10-24). The
-// whole id stays in the run's detail and in --json, which is the form
-// `fugaro logs RUN` wants.
+// A finished row's RUN cell is the table's short form (task.ShortRun), the
+// same one every other row shows, not the whole id (owner request 2026-10-24).
+// The whole id stays in the run's detail and in --json, the surface the
+// commands that take a whole id read it from.
 func TestFinishedRowShowsTheShortRunID(t *testing.T) {
 	v := fixture()
 	full := "20261023-021512-abcd"
@@ -475,8 +476,8 @@ func TestFinishedRowShowsTheShortRunID(t *testing.T) {
 	if row == "" {
 		t.Fatalf("no finished row was drawn:\n%s", got)
 	}
-	if !strings.Contains(row, shortRun(full)) {
-		t.Fatalf("the finished row does not show the short id %q: %q", shortRun(full), row)
+	if !strings.Contains(row, task.ShortRun(full)) {
+		t.Fatalf("the finished row does not show the short id %q: %q", task.ShortRun(full), row)
 	}
 	if strings.Contains(got, full) || strings.Contains(got, "20261023") {
 		t.Fatalf("the finished row shows more than the id's tail:\n%s", got)
@@ -531,7 +532,7 @@ func TestFrameSelectedRunDetail(t *testing.T) {
 	got := frame(v, 120, 0, func(o *RenderOptions) {
 		o.Selected, o.Expanded = sel, map[Cursor]bool{sel: true}
 	})
-	if !strings.Contains(got, "▸ "+shortRun("r-aaaa11")) {
+	if !strings.Contains(got, "▸ "+task.ShortRun("r-aaaa11")) {
 		t.Fatalf("selected run not marked:\n%s", got)
 	}
 	golden(t, "detail-120", got)
@@ -619,6 +620,106 @@ func TestHelpNamesFilterToggleAndDismiss(t *testing.T) {
 			t.Fatalf("the help must name the keep flags in full at 80 columns (%q missing):\n%s", want, narrow)
 		}
 	}
+}
+
+// Two runs of one repository whose ids end in the same four characters are
+// shown with the ending the rule extends them to (task.DisplayRuns: one
+// character at a time, through the dash), and the table's RUN column widens to
+// hold it: the second column starts as many columns further right as the
+// extension added, and the widened row still ends inside the screen.
+func TestTUIShortRunCollision(t *testing.T) {
+	base := frame(fixture(), 120, 0)
+	v := fixture()
+	v.Repos[0].Runs[0].Run = "20261108-115248-3bb2"
+	v.Repos[0].Runs[1].Run = "20261107-010101-3bb2"
+	got := frame(v, 120, 0)
+	for _, want := range []string{"8-3bb2", "1-3bb2"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("the colliding ending %q is not on the screen:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "20261108") || strings.Contains(got, "20261107") {
+		t.Fatalf("the launch stamp both runs share is still shown:\n%s", got)
+	}
+	// The RUN cell grew by the two characters the extension added — the
+	// second column starts two columns further right — and the title, the
+	// elastic cell, gives them up: every column behind the RUN cell holds its
+	// place.
+	hdr, baseHdr := headerLine(t, got), headerLine(t, base)
+	wantTitle := strings.Index(baseHdr, "TITLE") + 2 // the two characters the extension added
+	if strings.Index(hdr, "TITLE") != wantTitle {
+		t.Fatalf("the RUN column did not widen by the ending's two characters: TITLE at %d, want %d\n%s",
+			strings.Index(hdr, "TITLE"), wantTitle, got)
+	}
+	if strings.Index(hdr, "STAGE") != strings.Index(baseHdr, "STAGE") {
+		t.Fatalf("the title did not give the RUN cell its two columns: STAGE at %d, want %d\n%s",
+			strings.Index(hdr, "STAGE"), strings.Index(baseHdr, "STAGE"), got)
+	}
+	for _, l := range strings.Split(got, "\n") {
+		if strings.Contains(l, "8-3bb2") || strings.Contains(l, "1-3bb2") {
+			if n := dw(stripSGR(l)); n >= 120 {
+				t.Fatalf("a widened row is %d columns, so the edge cut it off:\n%s", n, got)
+			}
+		}
+	}
+}
+
+// The collision rule is the frame's, not the block's (spec.md §3, F15/D1706):
+// the TUI draws one table per repository but one screen, and a person reads the
+// screen. Two runs of two repositories that share their last four characters
+// are therefore extended against each other, so no two rows of the frame carry
+// the same RUN cell; a per-block rule would print `3bb2` for both.
+func TestTUIShortRunCollisionAcrossRepos(t *testing.T) {
+	v := fixture()
+	v.Repos[0].Runs[0].Run = "20261108-115248-3bb2"
+	v.Repos[2].Runs[0].Run = "20261107-010101-3bb2"
+	got := frame(v, 120, 0)
+	for _, want := range []string{"8-3bb2", "1-3bb2"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("the colliding ending %q is not on the screen:\n%s", want, got)
+		}
+	}
+	if strings.Count(got, " 3bb2") != 0 {
+		t.Fatalf("two rows of one frame share the RUN cell `3bb2`:\n%s", got)
+	}
+	if strings.Contains(got, "20261108") || strings.Contains(got, "20261107") {
+		t.Fatalf("a launch stamp is still shown:\n%s", got)
+	}
+}
+
+// A run id two repositories both hold has no distinguishing ending at all, so
+// the frame shows each row as `<slug>/<ending>` (F15) — the widest RUN cell the
+// rule produces. The column takes the width of the whole cell, so the row still
+// ends inside the screen and the title, the elastic cell, is what gives the
+// columns up.
+func TestTUISameRunIDTwoRepos(t *testing.T) {
+	const id = "20261108-115248-3bb2"
+	v := fixture()
+	v.Repos[0].Runs[0].Run = id
+	v.Repos[2].Runs[0].Run = id
+	got := frame(v, 120, 0)
+	for _, want := range []string{"acme__app/3bb2", "acme__docs/3bb2"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("the ambiguous row %q is not on the screen:\n%s", want, got)
+		}
+	}
+	for _, l := range strings.Split(got, "\n") {
+		if strings.Contains(l, "/3bb2") && dw(stripSGR(l)) >= 120 {
+			t.Fatalf("the row with the repository in front of its ending is cut at the edge:\n%s", got)
+		}
+	}
+}
+
+// headerLine is the table's column header line: the one naming RUN and STAGE.
+func headerLine(t *testing.T, frame string) string {
+	t.Helper()
+	for _, l := range strings.Split(frame, "\n") {
+		if strings.Contains(l, "RUN") && strings.Contains(l, "STAGE") {
+			return l
+		}
+	}
+	t.Fatalf("no column header in the frame:\n%s", frame)
+	return ""
 }
 
 // The finished-run filter's state leads the key line and is never the part a

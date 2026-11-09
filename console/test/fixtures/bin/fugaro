@@ -110,6 +110,29 @@
 #     confirmation window showed" (plan C4): the window draws the command line
 #     word for word, `argv[0]` among them, so the record is that same list.
 #
+#   * `managed status --json --project P` -- the document in
+#     `managed-status.json` beside this script, which a spec writes there
+#     itself, with `managed-status-delay.txt` holding the seconds to sleep
+#     before it is printed when the spec is about **which section of the tab
+#     paints first**. This is the read the **Project** tab's managed-state and
+#     retirements sections make (the managed-project screens plan's CM4, CM8 and
+#     CM9, contract section 6.21): one document, two sections, and the two
+#     panels' own marks are the reason the read can be made slow on purpose.
+#     `status` is the verb and `--json` the row's fixed flag -- the console's
+#     spawn row is `managed status --json` and declares no argument of its own
+#     (`src/main/spawn.ts`'s `managed.status`) -- so any other word is refused
+#     as an unsupported command rather than answered.
+#   * `project policy show --json --project P` -- the document in
+#     `policy-show.json` beside it, likewise a spec's own, with
+#     `policy-show-delay.txt` for the same reason. This is the read the Project
+#     tab's **policy panel** makes (CM10's flip, D1481, contract section 6.22),
+#     and it is the one panel of the body that is drawn from a document rather
+#     than from `budget show`: the panel says which read has not answered until
+#     this one lands. `show` is the verb and `--json` the row's fixed flag
+#     (`policy.show`), and the two other words of the family -- `publish` and
+#     `publish --delete` -- are **writes** this console has no row for, so they
+#     are refused with the whole list rather than answered.
+#
 #   * `runs summary --json [--since=<window>] --project P` -- one document per
 #     `--since`, in `runs-summary-<window>.json` beside this script, which a
 #     spec writes there itself (the stub's directory is `CliStub.dir`), with
@@ -174,7 +197,7 @@ refuse() {
 # failing spec's message is the only place a reader learns what it would have
 # answered.
 refuse_allowlist() {
-  echo "the stub fugaro answers 'version', 'config list --json', 'plan status --json', 'coordinator status --from-store --all --json', 'doctor --json', 'watch --json', 'report --json', 'budget show --json', 'models ls --json', 'settings --json', 'settings set|unset --dry-run --json|--yes', 'runs summary --json' and 'run --task-file - --json', and was asked for '$1'" >&2
+  echo "the stub fugaro answers 'version', 'config list --json', 'plan status --json', 'coordinator status --from-store --all --json', 'doctor --json', 'watch --json', 'report --json', 'budget show --json', 'models ls --json', 'settings --json', 'settings set|unset --dry-run --json|--yes', 'managed status --json', 'project policy show --json', 'runs summary --json' and 'run --task-file - --json', and was asked for '$1'" >&2
   exit 2
 }
 
@@ -458,6 +481,70 @@ case "$command" in
     done
     if ! print_seeded "${here}/models-ls.json" "${here}/models-ls-delay.txt" 'models ls'; then
       refuse 'no models document is seeded beside this stub'
+    fi
+    ;;
+  managed)
+    # The Project tab's managed-state and retirements sections (the
+    # managed-project screens plan's CM4 and CM8, contract section 6.21): the
+    # one document both are drawn from, in `managed-status.json` beside this
+    # script, which a spec writes there itself. `status` is the verb and
+    # `--json` the row's fixed flag -- the console's own spawn row is
+    # `managed status --json` and declares no argument of its own
+    # (`src/main/spawn.ts`'s `managed.status`) -- so any other word is a
+    # console asking a question it should never have been able to ask, and this
+    # branch refuses it rather than answering it. A missing document is a
+    # refusal too: `managed status --json` on a project that is not managed
+    # prints a document saying so, and a stub that invented one would answer a
+    # question about a project nobody read.
+    if [ "${1:-}" != 'status' ] || [ "${2:-}" != '--json' ]; then
+      refuse_allowlist 'managed'
+    fi
+    shift 2
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --project | --config)
+          if [ $# -lt 2 ]; then
+            refuse "'managed status --json' was given '$1' with no value"
+          fi
+          shift 2
+          ;;
+        *)
+          refuse "'managed status --json' was asked for '$1'"
+          ;;
+      esac
+    done
+    if ! print_seeded "${here}/managed-status.json" "${here}/managed-status-delay.txt" 'managed status'; then
+      refuse 'no managed status document is seeded beside this stub'
+    fi
+    ;;
+  project)
+    # The Project tab's policy panel (CM10's flip, D1481, contract section
+    # 6.22): the published policy node, in `policy-show.json` beside this
+    # script, which a spec writes there itself. `policy show` is the read and
+    # `--json` the row's fixed flag (`src/main/spawn.ts`'s `policy.show`). The
+    # rest of the family -- `project show`, `project policy publish` and its
+    # `--delete` -- is either not on this console's surface at all or a
+    # **write**, so every one of them is refused with the whole list in the
+    # sentence rather than answered.
+    if [ "${1:-}" != 'policy' ] || [ "${2:-}" != 'show' ] || [ "${3:-}" != '--json' ]; then
+      refuse_allowlist 'project'
+    fi
+    shift 3
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --project | --config)
+          if [ $# -lt 2 ]; then
+            refuse "'project policy show --json' was given '$1' with no value"
+          fi
+          shift 2
+          ;;
+        *)
+          refuse "'project policy show --json' was asked for '$1'"
+          ;;
+      esac
+    done
+    if ! print_seeded "${here}/policy-show.json" "${here}/policy-show-delay.txt" 'policy show'; then
+      refuse 'no policy document is seeded beside this stub'
     fi
     ;;
   settings)

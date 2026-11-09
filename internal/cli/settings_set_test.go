@@ -188,29 +188,38 @@ func TestSettingsSetRepoLayerIsAllowedInAnAgentSession(t *testing.T) {
 	}
 }
 
-// TestSettingsSetLooseningACeilingAsksForTheTypedProjectName: loosening a
-// ceiling key asks for the project's name typed at a terminal. --yes answers
-// that same form outside a coding agent's session (D1107), and this is the path
-// that passes it to nothing: no terminal and no flag is still a refusal.
-func TestSettingsSetLooseningACeilingAsksForTheTypedProjectName(t *testing.T) {
+// TestCeilingLooseningRefusesInAnAgentSession: the per-run and per-day ceilings
+// are caps like the budget's, and D1552 fences their loosening exactly as D1542
+// fences a raise — the owner's own session, and no prompt anywhere. A coding
+// agent's session is refused with the command to run itself whatever --yes says,
+// and the owner's own terminal is asked nothing. The direct /config write by a
+// budget admin is not this fence's business: it stays an IAM matter.
+func TestCeilingLooseningRefusesInAnAgentSession(t *testing.T) {
 	settingsWriteHome(t)
 	path := settingsWriteCheckout(t, settingsRepoYAML("budget:\n  per_run_usd: 10\n"))
 	before := readFileString(t, path)
 
-	noTerminal(t)
-	_, _, err := execute(t, "settings", "set", "budget.per_run_usd", "50", "--layer", "repo")
+	agentSession(t)
+	_, _, err := execute(t, "settings", "set", "budget.per_run_usd", "50", "--layer", "repo", "--yes")
 	if err == nil {
-		t.Fatal("a widening with no terminal and no --yes was written")
+		t.Fatal("a coding agent's session loosened a repository's ceiling")
 	}
-	if !strings.Contains(err.Error(), "typed confirmation") {
-		t.Errorf("the refusal does not name the typed form: %v", err)
+	if !strings.Contains(err.Error(), "CLAUDECODE") {
+		t.Errorf("the refusal does not name the marker: %v", err)
+	}
+	if !strings.Contains(err.Error(), "fugaro settings set budget.per_run_usd 50 --layer repo") {
+		t.Errorf("the refusal does not print the command to run: %v", err)
 	}
 	if readFileString(t, path) != before {
 		t.Error("the refused write changed fugaro.yaml")
 	}
 
-	fakeTerminal(t)
-	out, _, err := executeStdin(t, "aurora\n", "settings", "set", "budget.per_run_usd", "50", "--layer", "repo")
+	// The owner's own terminal, with nothing typed on it: the widening lands,
+	// and the command reads no input at all (D1540: the typed project name this
+	// form used to ask for was the last prompt of a raise).
+	noAgentSession(t)
+	typed(t)
+	out, _, err := executeStdin(t, "", "settings", "set", "budget.per_run_usd", "50", "--layer", "repo")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -366,25 +375,12 @@ func TestSettingsUnsetRemovesTheKeyRatherThanWritingTheDefault(t *testing.T) {
 // same boundary as loosening (spec §4.3), so with no terminal and no --yes it
 // is refused; --yes is the other answer D1107 allows outside a coding agent's
 // session.
-func TestSettingsUnsetOfACeilingAsksForTheTypedProjectName(t *testing.T) {
+func TestSettingsUnsetOfACeilingAsksNothing(t *testing.T) {
 	settingsWriteHome(t)
 	path := settingsWriteCheckout(t, settingsRepoYAML("budget:\n  per_run_usd: 10\n"))
-	before := readFileString(t, path)
 	noTerminal(t)
-	_, _, err := execute(t, "settings", "unset", "budget.per_run_usd", "--layer", "repo")
-	if err == nil {
-		t.Fatal("removing a ceiling with no terminal and no --yes was written")
-	}
-	if !strings.Contains(err.Error(), "typed confirmation") {
-		t.Errorf("the refusal does not name the typed form: %v", err)
-	}
-	if readFileString(t, path) != before {
-		t.Error("the refused write changed fugaro.yaml")
-	}
-
-	fakeTerminal(t)
-	if out, _, err := executeStdin(t, "aurora\n", "settings", "unset", "budget.per_run_usd", "--layer", "repo"); err != nil {
-		t.Fatalf("%v\n%s", err, out)
+	if out, _, err := execute(t, "settings", "unset", "budget.per_run_usd", "--layer", "repo"); err != nil {
+		t.Fatalf("removing a ceiling with no terminal asked for an answer: %v\n%s", err, out)
 	}
 	if got := readFileString(t, path); strings.Contains(got, "per_run_usd") {
 		t.Errorf("unset left the ceiling behind:\n%s", got)
@@ -994,53 +990,29 @@ func TestSettingsLoosensTreatsAnUnknownValueFormAsAWidening(t *testing.T) {
 // TestSettingsSetLooseningAGovernanceCeilingAsksForTheTypedProjectName: the
 // other half of D846's prefix test, and the one at --layer repo — a governance
 // ratio written into a repository's own file crosses the same boundary.
-func TestSettingsSetLooseningAGovernanceCeilingAsksForTheTypedProjectName(t *testing.T) {
+func TestSettingsSetLooseningAGovernanceCeilingAsksNothing(t *testing.T) {
 	settingsWriteHome(t)
 	path := settingsWriteCheckout(t, settingsRepoYAML("governance:\n  review_ratio: 0.5\n"))
 	before := readFileString(t, path)
 	noTerminal(t)
-	_, _, err := execute(t, "settings", "set", "governance.review_ratio", "0.9", "--layer", "repo")
-	if err == nil {
-		t.Fatal("a governance ceiling with no terminal and no --yes was written")
+	if out, _, err := execute(t, "settings", "set", "governance.review_ratio", "0.9", "--layer", "repo"); err != nil {
+		t.Fatalf("a governance ceiling with no terminal asked for an answer: %v\n%s", err, out)
 	}
-	if !strings.Contains(err.Error(), "typed confirmation") {
-		t.Errorf("the refusal does not name the typed form: %v", err)
-	}
-	if readFileString(t, path) != before {
-		t.Error("the refused write changed fugaro.yaml")
-	}
-
-	fakeTerminal(t)
-	if out, _, err := executeStdin(t, "aurora\n", "settings", "set", "governance.review_ratio", "0.9", "--layer", "repo"); err != nil {
-		t.Fatalf("%v\n%s", err, out)
-	}
-	if got := readFileString(t, path); !strings.Contains(got, "review_ratio: 0.9") {
+	if got := readFileString(t, path); !strings.Contains(got, "review_ratio: 0.9") || got == before {
 		t.Errorf("fugaro.yaml does not carry the loosened ceiling:\n%s", got)
 	}
 }
 
-// TestSettingsSetTypedTheProjectLayersGovernanceBlock: the project layer's own
-// `layer.governance.*` is the same ceiling under the prefix SD14 gives it, so
-// it is typed exactly as `governance.*` is.
-func TestSettingsSetTypedTheProjectLayersGovernanceBlock(t *testing.T) {
+// TestSettingsSetLayersGovernanceBlockIsAWideningThatAsksNothing: the project
+// layer's own `layer.governance.*` is the same ceiling under the prefix SD14
+// gives it, so it is the widening direction exactly as `governance.*` is — and
+// like every widening it asks nothing for itself (D1552, D1555).
+func TestSettingsSetLayersGovernanceBlockIsAWideningThatAsksNothing(t *testing.T) {
 	settingsWriteHome(t)
 	path := settingsWriteLayerFile(t, "governance:\n  review_ratio: 0.5\n")
-	before := readFileString(t, path)
 	noTerminal(t)
-	_, _, err := execute(t, "settings", "set", "layer.governance.review_ratio", "0.9", "--layer", "project")
-	if err == nil {
-		t.Fatal("a layer ceiling with no terminal and no --yes was written")
-	}
-	if !strings.Contains(err.Error(), "typed confirmation") {
-		t.Errorf("the refusal does not name the typed form: %v", err)
-	}
-	if readFileString(t, path) != before {
-		t.Error("the refused write changed the layer file")
-	}
-
-	fakeTerminal(t)
-	if out, _, err := executeStdin(t, "aurora\n", "settings", "set", "layer.governance.review_ratio", "0.9", "--layer", "project"); err != nil {
-		t.Fatalf("%v\n%s", err, out)
+	if out, _, err := execute(t, "settings", "set", "layer.governance.review_ratio", "0.9", "--layer", "project"); err != nil {
+		t.Fatalf("a layer ceiling with no terminal asked for an answer: %v\n%s", err, out)
 	}
 	if got := readFileString(t, path); !strings.Contains(got, "review_ratio: 0.9") {
 		t.Errorf("the layer file does not carry the loosened ceiling:\n%s", got)
@@ -1055,19 +1027,18 @@ func TestSettingsSetTypedTheProjectLayersGovernanceBlock(t *testing.T) {
 func TestSettingsSetTreatsEveryBooleanSpellingAsTurningAFollowupKeyOn(t *testing.T) {
 	settingsWriteHome(t)
 	path := settingsWriteCheckout(t, settingsRepoYAML(""))
-	before := readFileString(t, path)
 	noTerminal(t)
 	for _, spelling := range []string{"true", "True", "TRUE", "yes", "Yes", "on"} {
 		t.Run(spelling, func(t *testing.T) {
+			// Each spelling lands as the widening it is, from the same
+			// no-terminal session: a widening asks nothing (D1552, D1555).
+			fresh := settingsWriteCheckout(t, settingsRepoYAML(""))
 			_, _, err := execute(t, "settings", "set", "followup.allow_public", spelling, "--layer", "repo")
-			if err == nil {
-				t.Fatalf("followup.allow_public %s was turned on with no terminal and no --yes", spelling)
+			if err != nil {
+				t.Fatalf("followup.allow_public %s was refused: %v", spelling, err)
 			}
-			if !strings.Contains(err.Error(), "typed confirmation") {
-				t.Errorf("the refusal does not name the typed form: %v", err)
-			}
-			if readFileString(t, path) != before {
-				t.Error("the refused write changed fugaro.yaml")
+			if got := readFileString(t, fresh); !strings.Contains(got, "allow_public: "+spelling) {
+				t.Errorf("fugaro.yaml does not carry the turned-on key:\n%s", got)
 			}
 		})
 	}
@@ -1091,30 +1062,30 @@ func TestSettingsSetTreatsEveryBooleanSpellingAsTurningAFollowupKeyOn(t *testing
 
 // TestSettingsSetComparesACeilingAgainstTheValueARunGets: D846 guards what a
 // run gets, not what one file says, so a write into a repository's file that
-// raises a ceiling a layer below already set is the typed form too — the file
-// it edits is not the only place the value comes from. A run gets the tighter
-// of the two, so a write that raises either one is the typed form.
+// raises a ceiling a layer below already set is a widening too — the file it
+// edits is not the only place the value comes from. A run gets the tighter of
+// the two, so a write that raises either one is the owner's own step.
 func TestSettingsSetComparesACeilingAgainstTheValueARunGets(t *testing.T) {
 	settingsWriteHomeWith(t, "budget:\n  per_run_usd: 10\n")
 	path := settingsWriteCheckout(t, settingsRepoYAML(""))
 	before := readFileString(t, path)
 
 	// The repository's file writes no cap; the layer below holds 10, so 50
-	// raises what a run gets and is the typed form.
-	noTerminal(t)
+	// raises what a run gets: the widening, which this session cannot make
+	// because it is a coding agent's (D1542, D1552) — the comparison is the
+	// reason, not the value on the command line.
+	agentSession(t)
 	_, _, err := execute(t, "settings", "set", "budget.per_run_usd", "50", "--layer", "repo")
-	if err == nil {
-		t.Fatal("a cap that raises what a run gets was written with no terminal and no --yes")
-	}
-	if !strings.Contains(err.Error(), "typed confirmation") {
-		t.Errorf("the refusal does not name the typed form: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "coding agent's session") {
+		t.Fatalf("a cap that raises what a run gets was written in an agent session: %v", err)
 	}
 	if readFileString(t, path) != before {
 		t.Error("the refused write changed fugaro.yaml")
 	}
+	noAgentSession(t)
 
 	// Tightening under the same layer is the ordinary write, which is what
-	// makes the comparison a comparison and not "always typed".
+	// makes the comparison a comparison and not "always a widening".
 	if out, _, err := execute(t, "settings", "set", "budget.per_run_usd", "5", "--layer", "repo", "--yes"); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -1126,12 +1097,10 @@ func TestSettingsSetComparesACeilingAgainstTheValueARunGets(t *testing.T) {
 	// below, so a write between the two raises the file's own ceiling even
 	// though a run still gets the layer's.
 	loose := settingsWriteCheckout(t, settingsRepoYAML("budget:\n  per_run_usd: 50\n"))
+	agentSession(t)
 	_, _, err = execute(t, "settings", "set", "budget.per_run_usd", "20", "--layer", "repo")
-	if err == nil {
-		t.Fatal("a cap that raises the file's own ceiling was written with no terminal and no --yes")
-	}
-	if !strings.Contains(err.Error(), "typed confirmation") {
-		t.Errorf("the refusal does not name the typed form: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "coding agent's session") {
+		t.Fatalf("a cap that raises the file's own ceiling was written in an agent session: %v", err)
 	}
 	if got := readFileString(t, loose); !strings.Contains(got, "per_run_usd: 50") {
 		t.Errorf("the refused write changed fugaro.yaml:\n%s", got)
@@ -1838,13 +1807,17 @@ func TestSettingsSetAddEntrySecretsMemberIsATypedWidening(t *testing.T) {
 		t.Error("the dry run changed fugaro.yaml")
 	}
 
+	// A widening asks nothing at the owner's own terminal (D1552, D1555), and
+	// an agent's session is what refuses it instead.
+	agentSession(t)
 	out, _, err := execute(t, "settings", "set", "workflows.web.secrets", "--add-entry", "name=ci-token", "--add-entry", "env=CI_TOKEN", "--layer", "repo")
 	if err == nil {
-		t.Fatalf("the widening was written with no terminal and no --yes:\n%s", out)
+		t.Fatalf("the widening was written in an agent session:\n%s", out)
 	}
 	if readFileString(t, path) != before {
 		t.Error("the refused write changed fugaro.yaml")
 	}
+	noAgentSession(t)
 
 	for _, marker := range agentMarkers {
 		t.Run(marker, func(t *testing.T) {
@@ -2009,93 +1982,55 @@ func TestSettingsSetReparsesTheRepoAndLayerDocuments(t *testing.T) {
 // ceiling's list widens it — the list is what a run may use — so --add on a
 // ceiling is the typed form (D846). --yes is the other answer to it outside a
 // coding agent's session (D1107); this is the path with no terminal and none.
-func TestSettingsSetAddOnACeilingAsksForTheTypedProjectName(t *testing.T) {
+func TestSettingsSetAddOnACeilingAsksNothing(t *testing.T) {
 	settingsWriteHome(t)
 	path := settingsWriteCheckout(t, settingsRepoYAML("budget:\n  allowed_models:\n    - claude-sonnet-5\n"))
-	before := readFileString(t, path)
 	noTerminal(t)
-	_, _, err := execute(t, "settings", "set", "budget.allowed_models", "--add", "claude-opus-5-5", "--layer", "repo")
-	if err == nil {
-		t.Fatal("a model added to a ceiling with no terminal and no --yes was written")
-	}
-	if !strings.Contains(err.Error(), "typed confirmation") {
-		t.Errorf("the refusal does not name the typed form: %v", err)
-	}
-	if readFileString(t, path) != before {
-		t.Error("the refused write changed fugaro.yaml")
-	}
-
-	fakeTerminal(t)
-	if out, _, err := executeStdin(t, "aurora\n", "settings", "set", "budget.allowed_models", "--add", "claude-opus-5-5", "--layer", "repo"); err != nil {
-		t.Fatalf("%v\n%s", err, out)
+	if out, _, err := execute(t, "settings", "set", "budget.allowed_models", "--add", "claude-opus-5-5", "--layer", "repo"); err != nil {
+		t.Fatalf("a model added to a ceiling with no terminal asked for an answer: %v\n%s", err, out)
 	}
 	if got := readFileString(t, path); !strings.Contains(got, "claude-opus-5-5") {
 		t.Errorf("fugaro.yaml does not carry the added model:\n%s", got)
 	}
 }
 
-// TestSettingsSetTurningAFollowupKeyOnAsksForTheTypedProjectName: a follow-up
-// key turned on widens who can steer a run, so the typed name confirms it. With
-// no terminal and no --yes it is refused; --yes is the second answer D1107
-// allows outside a coding agent's session.
-func TestSettingsSetTurningAFollowupKeyOnAsksForTheTypedProjectName(t *testing.T) {
+// TestSettingsSetTurningAFollowupKeyOnAsksNothing: a follow-up key turned on
+// widens who can steer a run, which makes it a widening — the owner's own step,
+// with the agent's session as its fence rather than a prompt (D1552, D1555).
+func TestSettingsSetTurningAFollowupKeyOnAsksNothing(t *testing.T) {
 	settingsWriteHome(t)
 	path := settingsWriteCheckout(t, settingsRepoYAML(""))
-	before := readFileString(t, path)
 	noTerminal(t)
-	_, _, err := execute(t, "settings", "set", "followup.allow_public", "true", "--layer", "repo")
-	if err == nil {
-		t.Fatal("a followup key was turned on with no terminal and no --yes")
-	}
-	if !strings.Contains(err.Error(), "typed confirmation") {
-		t.Errorf("the refusal does not name the typed form: %v", err)
-	}
-	if readFileString(t, path) != before {
-		t.Error("the refused write changed fugaro.yaml")
-	}
-
-	fakeTerminal(t)
-	if out, _, err := executeStdin(t, "aurora\n", "settings", "set", "followup.allow_public", "true", "--layer", "repo"); err != nil {
-		t.Fatalf("%v\n%s", err, out)
+	if out, _, err := execute(t, "settings", "set", "followup.allow_public", "true", "--layer", "repo"); err != nil {
+		t.Fatalf("a followup key turned on with no terminal asked for an answer: %v\n%s", err, out)
 	}
 	if got := readFileString(t, path); !strings.Contains(got, "allow_public: true") {
 		t.Errorf("fugaro.yaml does not carry the key:\n%s", got)
 	}
 }
 
-// TestSettingsSetTrustedAddIsTyped: a name added to followup.trusted widens who
-// can steer a run that holds the repository's credentials, so `--add` on this
-// key is the widening D846 types and not the harmless direction `--add` is on a
-// list that narrows something. `--remove` takes someone off the list, which is
-// the tightening half, and keeps the ordinary confirmation.
-func TestSettingsSetTrustedAddIsTyped(t *testing.T) {
+// TestSettingsSetTrustedAddIsAWideningThatAsksNothing: a name added to
+// followup.trusted widens who can steer a run that holds the repository's
+// credentials, so `--add` on this key is the widening D846 types — the owner's
+// own step, which asks nothing at their terminal (D1552, D1555) — and not the
+// harmless direction `--add` is on a list that narrows something. `--remove`
+// takes someone off the list, which is the tightening half, and keeps the
+// ordinary y/N.
+func TestSettingsSetTrustedAddIsAWideningThatAsksNothing(t *testing.T) {
 	settingsWriteHome(t)
 	path := settingsWriteCheckout(t, settingsRepoYAML("followup:\n  trusted:\n    - \"100000001\"\n"))
-	before := readFileString(t, path)
 	noTerminal(t)
-	_, _, err := execute(t, "settings", "set", "followup.trusted", "--add", "100000002", "--layer", "repo")
-	if err == nil {
-		t.Fatal("an account added to followup.trusted with no terminal and no --yes was written")
-	}
-	if !strings.Contains(err.Error(), "typed confirmation") {
-		t.Errorf("the refusal does not name the typed form: %v", err)
-	}
-	if readFileString(t, path) != before {
-		t.Error("the refused write changed fugaro.yaml")
-	}
-
-	fakeTerminal(t)
-	out, _, err := executeStdin(t, "aurora\n", "settings", "set", "followup.trusted", "--add", "100000002", "--layer", "repo")
+	out, _, err := execute(t, "settings", "set", "followup.trusted", "--add", "100000002", "--layer", "repo")
 	if err != nil {
-		t.Fatalf("%v\n%s", err, out)
+		t.Fatalf("an account added to followup.trusted with no terminal asked for an answer: %v\n%s", err, out)
 	}
 	if got := readFileString(t, path); !strings.Contains(got, "100000002") {
 		t.Errorf("fugaro.yaml does not carry the added account:\n%s", got)
 	}
-	// The prompt says what this edit does: it adds an account to a list, and a
-	// sentence about turning a key on names neither. The confirmation shows it
-	// before the prompt, so it is there whether the person types the name or
-	// the write is refused.
+	// The sentence says what this edit does: it adds an account to a list, and a
+	// sentence about turning a key on names neither. It is printed before the
+	// write, so the person reads what widens whether the write lands or the
+	// session is refused.
 	if !strings.Contains(out, "this widens who is trusted") {
 		t.Errorf("the confirmation does not say what adding a name widens:\n%s", out)
 	}
@@ -2104,8 +2039,8 @@ func TestSettingsSetTrustedAddIsTyped(t *testing.T) {
 	}
 
 	// Taking a name off the list narrows who can steer the run, so it is the
-	// ordinary y/N write: a terminal answering y is enough, where the typed
-	// form would refuse a y that is not the project's name.
+	// ordinary y/N write and a terminal answering y is enough.
+	fakeTerminal(t)
 	if out, _, err := executeStdin(t, "y\n", "settings", "set", "followup.trusted", "--remove", "100000001", "--layer", "repo"); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -2114,51 +2049,49 @@ func TestSettingsSetTrustedAddIsTyped(t *testing.T) {
 	}
 }
 
-// TestSettingsSetAgentBudgetRaiseIsTyped: agent.max_budget_usd is a stage's own
-// spend cap, so raising it is the widening D846 types — the file it would edit
-// decides what every run this branch starts may spend — and the comparison is
-// against what a run gets today, not against the file's own text: the project
+// TestSettingsSetAgentBudgetRaiseRefusesInAnAgentSession: agent.max_budget_usd
+// is a stage's own spend cap, so raising it is the widening D846 types — the
+// file it would edit decides what every run this branch starts may spend — and
+// its fence is the coding agent's session (D1552), the comparison being against
+// what a run gets today rather than against the file's own text: the project
 // layer's defaults and the layer file itself are ceilings of the same kind one
 // door along.
-func TestSettingsSetAgentBudgetRaiseIsTyped(t *testing.T) {
+func TestSettingsSetAgentBudgetRaiseRefusesInAnAgentSession(t *testing.T) {
 	settingsWriteHome(t)
 	path := settingsWriteCheckout(t, settingsRepoYAML("agent:\n  max_budget_usd: 30\n"))
 	before := readFileString(t, path)
-	noTerminal(t)
+	agentSession(t)
 	_, _, err := execute(t, "settings", "set", "agent.max_budget_usd", "40", "--layer", "repo")
-	if err == nil {
-		t.Fatal("a raised agent budget was written with no terminal and no --yes")
-	}
-	if !strings.Contains(err.Error(), "typed confirmation") {
-		t.Errorf("the refusal does not name the typed form: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "coding agent's session") {
+		t.Fatalf("a raised agent budget was written in an agent session: %v", err)
 	}
 	if readFileString(t, path) != before {
 		t.Error("the refused write changed fugaro.yaml")
 	}
 
-	fakeTerminal(t)
-	if out, _, err := executeStdin(t, "aurora\n", "settings", "set", "agent.max_budget_usd", "40", "--layer", "repo"); err != nil {
-		t.Fatalf("%v\n%s", err, out)
+	// The owner's own terminal is asked nothing for the same write (D1552).
+	noAgentSession(t)
+	noTerminal(t)
+	if out, _, err := execute(t, "settings", "set", "agent.max_budget_usd", "40", "--layer", "repo"); err != nil {
+		t.Fatalf("a raised agent budget asked for an answer: %v\n%s", err, out)
 	}
 	if got := readFileString(t, path); !strings.Contains(got, "max_budget_usd: 40") {
 		t.Errorf("fugaro.yaml does not carry the raised budget:\n%s", got)
 	}
 
 	// The project layer's own defaults are the same cap for every repository
-	// the layer templates, and the layer file holds one: raising it is typed.
+	// the layer templates, and the layer file holds one: raising it is the same
+	// widening under the same fence.
 	settingsWriteLayerFile(t, "defaults:\n  agent:\n    max_budget_usd: 30\n")
-	noTerminal(t)
+	agentSession(t)
 	_, _, err = execute(t, "settings", "set", "layer.defaults.agent.max_budget_usd", "40", "--layer", "project")
-	if err == nil {
-		t.Fatal("a raised layer default for the agent budget was written with no terminal and no --yes")
-	}
-	if !strings.Contains(err.Error(), "typed confirmation") {
-		t.Errorf("the refusal does not name the typed form: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "coding agent's session") {
+		t.Fatalf("a raised layer default for the agent budget was written in an agent session: %v", err)
 	}
 
 	// And what a run gets is the resolved value, not the file being edited: a
-	// repository's file that writes no cap of its own is typed too when the
-	// layer below already holds one.
+	// repository's file that writes no cap of its own is the same widening when
+	// the layer below already holds one.
 	settingsWriteCheckout(t, settingsRepoYAML(""))
 	if err := localcfg.SaveLayerCache(os.Getenv, "aurora", localcfg.SharedCacheEntry{
 		GCPProject: "aurora-gcp",
@@ -2168,45 +2101,38 @@ func TestSettingsSetAgentBudgetRaiseIsTyped(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	noTerminal(t)
 	_, _, err = execute(t, "settings", "set", "agent.max_budget_usd", "40", "--layer", "repo")
-	if err == nil {
-		t.Fatal("a budget that raises what a run gets was written with no terminal and no --yes")
-	}
-	if !strings.Contains(err.Error(), "typed confirmation") {
-		t.Errorf("the refusal does not name the typed form: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "coding agent's session") {
+		t.Fatalf("a budget that raises what a run gets was written in an agent session: %v", err)
 	}
 }
 
-// TestSettingsSetAgentTokensZeroIsTyped: agent.max_run_tokens is a whole run's
-// token ceiling, and 0 is not a small cap but no cap at all (`config.Agent`:
-// "0 is none"), so writing it is the act `unset` is under another name — the
-// typed form whatever it replaces, a file that holds no cap yet included.
-func TestSettingsSetAgentTokensZeroIsTyped(t *testing.T) {
+// TestSettingsSetAgentTokensZeroRefusesInAnAgentSession: agent.max_run_tokens
+// is a whole run's token ceiling, and 0 is not a small cap but no cap at all
+// (`config.Agent`: "0 is none"), so writing it is the act `unset` is under
+// another name — the widening whatever it replaces, a file that holds no cap
+// yet included, and a coding agent's session cannot make one (D1552).
+func TestSettingsSetAgentTokensZeroRefusesInAnAgentSession(t *testing.T) {
 	settingsWriteHome(t)
 	path := settingsWriteCheckout(t, settingsRepoYAML("agent:\n  max_run_tokens: 300000\n"))
 	before := readFileString(t, path)
-	noTerminal(t)
+	agentSession(t)
 	_, _, err := execute(t, "settings", "set", "agent.max_run_tokens", "0", "--layer", "repo")
-	if err == nil {
-		t.Fatal("a token cap was removed with no terminal and no --yes")
-	}
-	if !strings.Contains(err.Error(), "typed confirmation") {
-		t.Errorf("the refusal does not name the typed form: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "coding agent's session") {
+		t.Fatalf("a token cap was removed in an agent session: %v", err)
 	}
 	_, _, err = execute(t, "settings", "unset", "agent.max_run_tokens", "--layer", "repo")
-	if err == nil {
-		t.Fatal("a token cap was unset with no terminal and no --yes")
-	}
-	if !strings.Contains(err.Error(), "typed confirmation") {
-		t.Errorf("the refusal does not name the typed form: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "coding agent's session") {
+		t.Fatalf("a token cap was unset in an agent session: %v", err)
 	}
 	if readFileString(t, path) != before {
 		t.Error("a refused write changed fugaro.yaml")
 	}
 
-	fakeTerminal(t)
-	if out, _, err := executeStdin(t, "aurora\n", "settings", "set", "agent.max_run_tokens", "0", "--layer", "repo"); err != nil {
+	// The owner's own terminal asks nothing for either form.
+	noAgentSession(t)
+	noTerminal(t)
+	if out, _, err := execute(t, "settings", "set", "agent.max_run_tokens", "0", "--layer", "repo"); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	if got := readFileString(t, path); !strings.Contains(got, "max_run_tokens: 0") {
@@ -2214,16 +2140,13 @@ func TestSettingsSetAgentTokensZeroIsTyped(t *testing.T) {
 	}
 
 	// A file that holds no cap at all is the same act: no cap is the loosest a
-	// ceiling can be written, so a first write of 0 is typed as well.
+	// ceiling can be written, so a first write of 0 is the same widening.
 	fresh := settingsWriteCheckout(t, settingsRepoYAML(""))
 	beforeFresh := readFileString(t, fresh)
-	noTerminal(t)
+	agentSession(t)
 	_, _, err = execute(t, "settings", "set", "agent.max_run_tokens", "0", "--layer", "repo")
-	if err == nil {
-		t.Fatal("a first write of 0 was written with no terminal and no --yes")
-	}
-	if !strings.Contains(err.Error(), "typed confirmation") {
-		t.Errorf("the refusal does not name the typed form: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "coding agent's session") {
+		t.Fatalf("a first write of 0 was written in an agent session: %v", err)
 	}
 	if readFileString(t, fresh) != beforeFresh {
 		t.Error("the refused write changed fugaro.yaml")
@@ -2232,9 +2155,9 @@ func TestSettingsSetAgentTokensZeroIsTyped(t *testing.T) {
 
 // TestSettingsSetAgentBudgetLowerIsNotTyped: lowering an agent spend cap takes
 // spend away, so it is the ordinary write — a terminal answering y is enough,
-// where the typed form refuses a y that is not the project's name. It is the
-// other half of the ruling that makes a raise the typed form: the comparison is
-// a comparison and not "always typed".
+// and it is open to a coding agent's session as well. It is the other half of
+// the ruling that makes a raise the owner's own step: the comparison is a
+// comparison and not "always a widening".
 func TestSettingsSetAgentBudgetLowerIsNotTyped(t *testing.T) {
 	settingsWriteHome(t)
 	path := settingsWriteCheckout(t, settingsRepoYAML("agent:\n  max_budget_usd: 30\n"))
@@ -2255,26 +2178,23 @@ func TestSettingsSetAgentBudgetLowerIsNotTyped(t *testing.T) {
 	}
 }
 
-// TestSettingsSetAgentBudgetRaiseFromTheBuiltInDefaultIsTyped: a repository that
-// writes no budget of its own does not start without one — the agent block's
-// built-in default is config.DefaultMaxBudgetUSD, and it is a ceiling of the
-// same kind as a number written in a file. Raising what no layer has written
-// yet is therefore the widening D846 types, and the read answering "" for a key
-// whose winning layer is the default is what used to let it through as a first
-// write: an agent could name its own spend cap 40 times the one it started
-// under, from a file it may edit anyway. The layer's own spelling of the same
-// cap is filed under the same default.
-func TestSettingsSetAgentBudgetRaiseFromTheBuiltInDefaultIsTyped(t *testing.T) {
+// TestSettingsSetAgentBudgetRaiseFromTheBuiltInDefaultRefusesInAnAgentSession:
+// a repository that writes no budget of its own does not start without one —
+// the agent block's built-in default is config.DefaultMaxBudgetUSD, and it is a
+// ceiling of the same kind as a number written in a file. Raising what no layer
+// has written yet is therefore the widening D846 types, and the read answering
+// "" for a key whose winning layer is the default is what used to let it
+// through as a first write: an agent could name its own spend cap 40 times the
+// one it started under, from a file it may edit anyway. The layer's own
+// spelling of the same cap is filed under the same default.
+func TestSettingsSetAgentBudgetRaiseFromTheBuiltInDefaultRefusesInAnAgentSession(t *testing.T) {
 	settingsWriteHome(t)
 	path := settingsWriteCheckout(t, settingsRepoYAML(""))
 	before := readFileString(t, path)
-	noTerminal(t)
+	agentSession(t)
 	_, _, err := execute(t, "settings", "set", "agent.max_budget_usd", "1000", "--layer", "repo")
-	if err == nil {
-		t.Fatal("a budget raised from the built-in default was written with no terminal and no --yes")
-	}
-	if !strings.Contains(err.Error(), "typed confirmation") {
-		t.Errorf("the refusal does not name the typed form: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "coding agent's session") {
+		t.Fatalf("a budget raised from the built-in default was written in an agent session: %v", err)
 	}
 	if readFileString(t, path) != before {
 		t.Error("the refused write changed fugaro.yaml")
@@ -2283,19 +2203,16 @@ func TestSettingsSetAgentBudgetRaiseFromTheBuiltInDefaultIsTyped(t *testing.T) {
 	// The layer file's own defaults are the same cap, and a layer file that
 	// carries none is under the same built-in one.
 	settingsWriteLayerFile(t, "")
-	noTerminal(t)
 	_, _, err = execute(t, "settings", "set", "layer.defaults.agent.max_budget_usd", "1000", "--layer", "project")
-	if err == nil {
-		t.Fatal("a layer default raised from the built-in default was written with no terminal and no --yes")
-	}
-	if !strings.Contains(err.Error(), "typed confirmation") {
-		t.Errorf("the refusal does not name the typed form: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "coding agent's session") {
+		t.Fatalf("a layer default raised from the built-in default was written in an agent session: %v", err)
 	}
 
 	// Lowering below the built-in default takes spend away, so it stays the
-	// ordinary write: a terminal answering y is enough, where the typed form
-	// refuses a y that is not the project's name. The base is the default and
-	// not "", or every first write would read as a raise.
+	// ordinary write: a terminal answering y is enough. The base is the default
+	// and not "", or every first write would read as a widening.
+	noAgentSession(t)
+	fakeTerminal(t)
 	fakeTerminal(t)
 	if out, _, err := executeStdin(t, "y\n", "settings", "set", "agent.max_budget_usd", "10", "--layer", "repo"); err != nil {
 		t.Fatalf("a budget lowered below the built-in default is the ordinary write: %v\n%s", err, out)
@@ -2489,25 +2406,23 @@ func TestSettingsValueInRendersASequenceTheWayTheListComparisonReadsOne(t *testi
 // measured against is the tighter of the file's own value and what a run gets
 // today, and the file is always one of the two. Here no layer below resolves a
 // cap at all — the state a read that could not see a layer leaves behind — so
-// the file is the whole of the base: 60 raises it and is the typed form, 40
+// the file is the whole of the base: 60 raises it and is the widening, 40
 // tightens it and is the ordinary write. A base that fell back to "no layer
-// resolves one" would let the first write through untyped.
+// resolves one" would let the first write through as a tightening.
 func TestSettingsCeilingBaseIsNeverLooserThanTheFile(t *testing.T) {
 	settingsWriteHome(t)
 	path := settingsWriteCheckout(t, settingsRepoYAML("budget:\n  per_run_usd: 50\n"))
 
-	noTerminal(t)
+	agentSession(t)
 	_, _, err := execute(t, "settings", "set", "budget.per_run_usd", "60", "--layer", "repo")
-	if err == nil {
-		t.Fatal("a cap that raises the file's own ceiling was written with no terminal and no --yes")
-	}
-	if !strings.Contains(err.Error(), "typed confirmation") {
-		t.Errorf("the refusal does not name the typed form: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "coding agent's session") {
+		t.Fatalf("a cap that raises the file's own ceiling was written in an agent session: %v", err)
 	}
 	if got := readFileString(t, path); !strings.Contains(got, "per_run_usd: 50") {
 		t.Errorf("the refused write changed fugaro.yaml:\n%s", got)
 	}
 
+	noAgentSession(t)
 	if out, _, err := execute(t, "settings", "set", "budget.per_run_usd", "40", "--layer", "repo", "--yes"); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -2539,12 +2454,12 @@ func TestSettingsLoosensReadsZeroAsNoCap(t *testing.T) {
 	}
 }
 
-// TestSettingsSetTypesAWriteThatRemovesACap: the command-line half of the same
-// rule, over every ceiling key at every layer it may be written at. Writing 0
-// has exactly the effect `unset` has, and `unset` is the typed form, so a
-// write of 0 is refused without the project's own name however it is spelled,
-// so with no terminal and no --yes the file is left as it was.
-func TestSettingsSetTypesAWriteThatRemovesACap(t *testing.T) {
+// TestSettingsSetWritingZeroThatRemovesACapIsAWidening: the command-line half
+// of the same rule, over every ceiling key at every layer it may be written at.
+// Writing 0 has exactly the effect `unset` has, so it is the widening that
+// takes the fence — in a coding agent's session the file is left as it was, and
+// the owner's own terminal is asked nothing for it.
+func TestSettingsSetWritingZeroThatRemovesACapIsAWidening(t *testing.T) {
 	cases := []struct {
 		key, layer, cap string
 	}{
@@ -2574,28 +2489,27 @@ func TestSettingsSetTypesAWriteThatRemovesACap(t *testing.T) {
 			}
 
 			// A cap where no layer held one is the ordinary write: it takes
-			// nothing away, so it is not the typed form.
+			// nothing away, so it is not the widening.
 			if out, _, err := execute(t, "settings", "set", c.key, c.cap, "--layer", c.layer, "--yes"); err != nil {
 				t.Fatalf("the first write of a cap: %v\n%s", err, out)
 			}
 			before := readFileString(t, path)
 
-			noTerminal(t)
+			// The widening is refused in a coding agent's session (D1552), the
+			// fence being the session rather than a prompt (D1540).
+			agentSession(t)
 			_, _, err := execute(t, "settings", "set", c.key, "0", "--layer", c.layer)
-			if err == nil {
-				t.Fatal("a cap was removed with no terminal and no --yes")
-			}
-			if !strings.Contains(err.Error(), "typed confirmation") {
-				t.Errorf("the refusal does not name the typed form: %v", err)
+			if err == nil || !strings.Contains(err.Error(), "coding agent's session") {
+				t.Fatalf("a cap was removed in an agent session: %v", err)
 			}
 			if got := readFileString(t, path); got != before {
 				t.Errorf("the refused write changed the file:\n%s", got)
 			}
 
-			// And the typed name still does it: the refusal is a confirmation,
-			// not a wall.
-			fakeTerminal(t)
-			if out, _, err := executeStdin(t, "aurora\n", "settings", "set", c.key, "0", "--layer", c.layer); err != nil {
+			// And the owner's own hand still does it, asking nothing.
+			noAgentSession(t)
+			noTerminal(t)
+			if out, _, err := execute(t, "settings", "set", c.key, "0", "--layer", c.layer); err != nil {
 				t.Fatalf("%v\n%s", err, out)
 			}
 			if got := readFileString(t, path); !strings.Contains(got, "0") {

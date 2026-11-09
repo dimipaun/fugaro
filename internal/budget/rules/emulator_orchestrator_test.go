@@ -156,7 +156,7 @@ func TestOrchestratorSubtreeIsReadableOnlyBySignedInPeople(t *testing.T) {
 	// The reader has to be a person the rules recognise as one: an account whose
 	// device node was never written is admitted nowhere (D166), and this node is
 	// no exception.
-	h.mustReadDenied(h.unpaired(mbAlice), orchState)
+	h.mustReadDenied(h.unpaired(mbBob), orchState)
 	// A run's token and a token the launcher's minter made are not readers: the
 	// subtree is the daemon's state, not a family a run may read.
 	for _, p := range []string{PathOrchestrator, orchState, orchLease, orchAudit} {

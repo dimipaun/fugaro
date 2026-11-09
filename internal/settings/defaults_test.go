@@ -81,11 +81,28 @@ func TestRegistryDefaultsMatchApplyDefaults(t *testing.T) {
 		"max_parallel":       func() string { return strconv.Itoa(local.MaxParallel) },
 		"build.machine_type": func() string { return local.Build.MachineType },
 		"local.version":      func() string { return strconv.Itoa(local.Version) },
+		// The Issues section's two thresholds (T-IS15): the minimal local
+		// file writes neither, so each reader reads the loader's own answer
+		// back out through the accessor — the value a run gets.
+		"issues.nudge_after_days": func() string {
+			return strconv.Itoa((&localcfg.Config{}).NudgeAfterDays())
+		},
+		"issues.nudge_recurrence": func() string {
+			return strconv.Itoa((&localcfg.Config{}).NudgeRecurrence())
+		},
 		// The two schedules (R13): a layer that states nothing reads as
 		// paused, which is the default the rows claim and the direction that
 		// never starts a job by omission.
 		"layer.jobs.reports.paused":       func() string { return strconv.FormatBool((&config.ProjectLayer{}).ReportsPaused()) },
 		"layer.jobs.catalog_check.paused": func() string { return strconv.FormatBool((&config.ProjectLayer{}).CatalogCheckPaused()) },
+		// The level-3 switch (D1517, SC8): a layer with no security: block —
+		// and a block that writes no always_level_3 — forces nothing, which is
+		// the false the row claims. The reader is the one a run has: the
+		// block's field, read off a layer that has none.
+		"layer.security.always_level_3": func() string {
+			l := &config.ProjectLayer{}
+			return strconv.FormatBool(l.Security != nil && l.Security.AlwaysLevel3)
+		},
 	}
 	for _, r := range Rows() {
 		if r.Default.Value == "" {

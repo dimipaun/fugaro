@@ -47,11 +47,11 @@
     },
     "widening": {
       "type": "boolean",
-      "description": "False whenever `changed` is false: an edit that writes nothing asks for nothing. Whether the edit is one D846 reserves for the project's own hand: a loosened ceiling, a followup key turned on, a name added to a followup list. It is the value of the write path's own settingsTypedWrite call — the same call that decides whether the project's name is demanded at a terminal — so it is never a second derivation, and a key added to settingsCeilingKey or a list rule changed in settingsListSubset moves this member with no consumer edit. A consumer must not re-derive it: a rule it did not know about answers `narrowing` where the CLI answers `widening`, which is the one direction that must never be got wrong (D1106)."
+      "description": "False whenever `changed` is false: an edit that writes nothing asks for nothing. Whether the edit is one D846 reserves for the project's own hand: a loosened ceiling, a followup key turned on, a name added to a followup list. It is the value of the write path's own settingsTypedWrite call — the same call that decides that a coding agent's session is refused this edit — so it is never a second derivation, and a key added to settingsCeilingKey or a list rule changed in settingsListSubset moves this member with no consumer edit. A consumer must not re-derive it: a rule it did not know about answers `narrowing` where the CLI answers `widening`, which is the one direction that must never be got wrong (D1106)."
     },
     "why": {
       "type": "string",
-      "description": "The sentence saying why this edit is the typed form, empty when widening is false. It is the CLI's own sentence and not the consumer's: it names the project's name typed at a terminal and --yes outside a coding agent's session, and it is the sentence the confirmation prints (D1107)."
+      "description": "The sentence saying what this edit widens, empty when widening is false. It is the CLI's own sentence and not the consumer's: the write prints it, and it names no confirmation, because a widening is the owner's own step — asked nothing at their terminal and refused in a coding agent's session (D1552)."
     },
     "old": {
       "type": "string",

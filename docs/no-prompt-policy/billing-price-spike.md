@@ -298,8 +298,8 @@ What is known from the documentation and stays true:
   The estimator must **ignore** it: Fugaro cannot know how much of the month's free tier is left,
   so ignoring it keeps the number an upper bound.
 - Private-pool (worker pool) pricing is a separate table; Fugaro sets no `Options.Pool` — the request
-  carries a service account, a machine type, a logging mode and a timeout and nothing else
-  (`internal/backend/gcp/build.go:227-233`) — so it submits to the **default pool**, and the
+  carries a service account, a machine type, a logging mode, a timeout and a queue TTL and nothing
+  else (`internal/backend/gcp/build.go:227-240`) — so it submits to the **default pool**, and the
   default-pool table is the right one.
 - The two commands the owner ran on 2026-11-08 — and what T8's live check repeats — with the token in a
   `curl --config` process substitution for the reason given in §1.4:
@@ -316,7 +316,7 @@ curl -sS --config <(printf 'header = "Authorization: Bearer %s"\nheader = "X-Goo
 ## 2. Which identity launches builds, and what each would need
 
 All three paths submit through the Go Cloud Build client with the caller's Application Default
-Credentials (`internal/backend/gcp/build.go:398-410` `NewBuilder`, `:483` `Submit`, `:496` `create`),
+Credentials (`internal/backend/gcp/build.go:405-417` `NewBuilder`, `:490` `Submit`, `:503` `create`),
 and **the build always runs as the repository's own build account**, never the project default and
 never a person: `internal/backend/gcp/build.go:227` sets
 `b.ServiceAccount = projects/<p>/serviceAccounts/<s.ServiceAccount>`, and `:363` refuses any account
@@ -436,7 +436,10 @@ local config: build.machine_type   (default E2_HIGHCPU_8; internal/localcfg/loca
         │
         ▼
 internal/backend/gcp/build.go:231  b.Options.MachineType = s.MachineType
-internal/backend/gcp/build.go:233  b.Timeout = "3600s"        ← fixed, not configurable
+internal/backend/gcp/build.go:239  b.Timeout = "3600s"        ← fixed, not configurable
+internal/backend/gcp/build.go:240  b.QueueTtl = "3600s"       ← how long it may wait for a worker
+                                                              before that timeout starts; billed for
+                                                              neither, and the lease's deadline adds it
         │
         ▼
 Cloud Build machine  ──── the rate ────▶  a Cloud Billing SKU
@@ -600,7 +603,7 @@ The repository, by path and symbol:
 | --- | --- |
 | `docs/no-prompt-policy/reconciliation.md` §3 D1543/D1548/D1550, §5 T5, F5, F18, F19, F20, §6 | The decisions and the UNVERIFIED this spike answers |
 | `docs/no-prompt-policy/implementation-plan.md` T8S, T8 | The task that commissioned this spike, the T8 file list, and the condition T8S answers: *"the grant in `iam.tf` is UNVERIFIED until then"* — answered **no grant on the user path** on 2026-11-08 (§8), the job path being §9 item 1 and T8's live run |
-| `internal/backend/gcp/build.go:227,231,233,363,398-410,483,496` | The build request: service account, machine type, the fixed 3600 s timeout, the submit path |
+| `internal/backend/gcp/build.go:227,231,239,240,370,405-417,490,503` | The build request: service account, machine type, the fixed 3600 s timeout, the queue TTL the lease's deadline adds, the submit path |
 | `internal/backend/gcp/gcp.go:67-82` | ADC as the identity, and the quota-project pattern for the **user** path: `option.WithQuotaProject(o.GCPProject)` when a project is known — that backend's own builder, not a shared one, and the option it sets unconditionally (§1.2 splits it by credential) |
 | `google.golang.org/api@v0.299.0` `transport/http/dial.go:189,240-242`; `internal/creds.go:29,285-303` | The header rule the split rests on: `X-Goog-User-Project` is set whenever a quota project resolved non-empty, whatever the credential kind; with no client option the only fallbacks are `GOOGLE_CLOUD_QUOTA_PROJECT` and a `quota_project_id` in the credentials file |
 | `internal/cli/image_check_catalog.go:50,540` | The catalog check job's client, built with `gcp.Options{GCPProject: …}` — the same account, already sending the same header |
