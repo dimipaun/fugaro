@@ -332,6 +332,14 @@ func (d *orchestratorDaemon) newTick(ctx context.Context) (*orchestrator.Tick, e
 		Mint:     func(now time.Time) (string, error) { return task.NewRunID(now, crand.Reader) },
 		Caps:     caps,
 		Breaker:  &orchestrator.Breaker{},
+		// A tick has two things to say — a run it folded ended, and it
+		// committed a question (O7) — and the log sink is the channel slice 1
+		// ships, one cleaned line on this daemon's own output, which is where
+		// the person running it in the foreground reads what it did (and where
+		// the login unit collects it). Left unset, every say() in a cycle
+		// returns at its nil check: the daemon would stop a run nobody hears
+		// about and pause on a spend question nobody sees.
+		Notifier: orchestrator.LogSink{W: d.out},
 		Now:      d.db.ServerNow,
 	}, nil
 }
@@ -615,7 +623,15 @@ func (d *orchestratorDaemon) wait(ctx context.Context) error {
 	sctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	events := d.db.Stream(sctx, d.node.Path())
-	connected := true
+	// opening is true until this connection's opening put has been consumed, and
+	// it is set again by the events that end a connection: the stream
+	// reconnects on this same channel, so the put after one of them is the new
+	// connection's own snapshot of the node rather than a change, exactly as the
+	// first connection's was. A latch cleared by any event instead would stay
+	// down for the rest of the wait, and every reconnect would end it — the
+	// daemon would then cycle at the reconnects' pace, which the backoff starts
+	// at a second, rather than at the interval this wait exists to honour.
+	opening := true
 	for {
 		select {
 		case <-ctx.Done():
@@ -625,16 +641,15 @@ func (d *orchestratorDaemon) wait(ctx context.Context) error {
 				events = nil
 				continue
 			}
-			snapshot := connected
-			connected = false
 			switch ev.Type {
 			case "put", "patch":
-				if snapshot {
+				if opening {
+					opening = false
 					continue
 				}
 				return nil
-			case "keep-alive":
-				continue
+			case "error", "auth_revoked":
+				opening = true
 			}
 		case <-beats:
 			if err := d.lease.Beat(ctx); err != nil {

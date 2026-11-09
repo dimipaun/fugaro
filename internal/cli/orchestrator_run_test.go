@@ -33,6 +33,10 @@ type daemonFixture struct {
 	// now is the database's clock as the money-path tests read it once, before
 	// they move it past the claim window.
 	now time.Time
+	// out is what the daemon says. daemon() returns it too, and a test whose
+	// daemon comes through running (the crash fixtures do) reads the same
+	// builder here.
+	out *strings.Builder
 }
 
 func newDaemonFixture(t *testing.T) *daemonFixture {
@@ -72,6 +76,7 @@ func (f *daemonFixture) daemon(t *testing.T, binary string) (*orchestratorDaemon
 		t.Fatal(err)
 	}
 	var out strings.Builder
+	f.out = &out
 	d := &orchestratorDaemon{
 		lc: lc, id: id, db: db, env: env, node: node, lease: lease, holder: daemonHolder,
 		interval: time.Minute, beat: orchestrator.LeaseBeat,
@@ -369,6 +374,70 @@ func TestWaitHonoursTheInterval(t *testing.T) {
 	if elapsed := time.Since(start); elapsed < d.interval {
 		t.Errorf("the wait ended after %s with nothing changed and an interval of %s: the stream's own connect put is being read as a change", elapsed, d.interval)
 	}
+}
+
+// TestWaitPassesOverTheSnapshotAReconnectOpensWith: the stream reconnects on
+// the same channel after a drop (internal/rtdb), and a new connection opens
+// with the full put of the node again — the same event the first connection
+// opened with, and the same reason to pass it over. A wait that took it for a
+// change would end on every reconnect: a proxied connection that closes and is
+// reopened, or a credential revoked and reconnected, would take the daemon from
+// one cycle per --interval to one per reconnect (the backoff starts at a
+// second), each one a beat, a tick, a cache write and a version check, and the
+// spawn caps reached at that pace rather than at the one the person set.
+//
+// Mutation (run, restored): clear the latch on every event rather than when the
+// connection's opening put has been consumed, as the wait did before, and this
+// wait ends at the reconnect (about a second in, with an interval of four).
+func TestWaitPassesOverTheSnapshotAReconnectOpensWith(t *testing.T) {
+	f := newDaemonFixture(t)
+	d, _ := f.running(t, "")
+	d.wake = nil
+	d.interval = 4 * time.Second
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ended := make(chan time.Duration, 1)
+	go func() {
+		start := time.Now()
+		_ = d.wait(ctx)
+		ended <- time.Since(start)
+	}()
+	// The connection is up and its opening put has been passed over.
+	waitForStream(t, f, 1)
+	time.Sleep(200 * time.Millisecond)
+	// The connection goes away without a word. The stream reconnects after its
+	// own backoff and opens with the node again: that put is not news, and the
+	// wait has to sit it out.
+	f.db.DropStreams()
+	waitForStream(t, f, 1)
+	select {
+	case took := <-ended:
+		t.Fatalf("the wait ended %s in, on the put the reconnected stream opened with and not at its interval (%s): the daemon then runs a cycle per reconnect", took, d.interval)
+	case <-time.After(2 * time.Second):
+	}
+	select {
+	case took := <-ended:
+		if took < 2*time.Second {
+			t.Errorf("the wait ended %s in over a node that never moved", took)
+		}
+	case <-time.After(d.interval + 2*time.Second):
+		t.Fatal("the wait never ended: the interval no longer ends it")
+	}
+}
+
+// waitForStream waits for the fake to hold n streams, which is how a test knows
+// the daemon's connection is up (or has been re-established) before it acts on
+// it.
+func waitForStream(t *testing.T, f *daemonFixture, n int) {
+	t.Helper()
+	for i := 0; i < 300; i++ {
+		if f.db.Streams() == n {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("the daemon holds %d stream(s) and this step needs %d", f.db.Streams(), n)
 }
 
 // TestWaitEndsItsStreamAndWakesOnAChange: the two halves of the same wait. A

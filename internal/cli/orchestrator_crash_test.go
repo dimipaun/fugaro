@@ -227,6 +227,40 @@ func TestRunViewFoldsARunThePlatformHasEnded(t *testing.T) {
 	}
 }
 
+// TestDaemonTellsAPersonARunEnded: the daemon's tick is built with the channel
+// O7 ships — the log sink over the daemon's own output — so a run the cycle
+// folds reaches the person watching it. The daemon is the only thing in the
+// tree that builds a tick outside tests, and a tick built without a notifier
+// says nothing at all: every say() returns at its nil check, so both things a
+// tick has to say (a run that ended, a question the breaker committed) are
+// written on the node and told to nobody — the half of slice 1 that "writes a
+// notification when a run finishes or a decision is needed" is.
+//
+// Mutation (run, restored): drop the Notifier from newTick's tick and the cycle
+// below folds the same run with nothing on the output.
+func TestDaemonTellsAPersonARunEnded(t *testing.T) {
+	f, d, cs := crashDaemon(t, true, true)
+	// The record a run that ended leaves: what the cycle folds, and what it
+	// says afterwards.
+	if err := f.runStore(t, cs.runID).WriteRecord(context.Background(), &runstore.Record{
+		Version: 1, RunID: cs.runID, Execution: f.run.Executions()[0], Status: runstore.StatusSucceeded,
+		Stage: "finalize", StartedAt: f.now,
+	}); err != nil {
+		t.Fatalf("writing the record a run that ended leaves: %v", err)
+	}
+
+	rep, err := d.tick.Step(context.Background())
+	if err != nil {
+		t.Fatalf("a cycle over a run that ended: %v", err)
+	}
+	if rep.Folded != 1 {
+		t.Fatalf("the cycle folded %d attempt(s) over a run whose record reports an end, want one: %+v", rep.Folded, rep)
+	}
+	if said := f.out.String(); !strings.Contains(said, string(orchestrator.NotifyRunFinished)) || !strings.Contains(said, cs.runID) {
+		t.Errorf("the daemon folded run %s and told nobody: %q", cs.runID, said)
+	}
+}
+
 // reportOnExecutionRead wraps the fixture's backend so that a run's own last
 // record lands while the view is asking the platform about its execution:
 // result.json is the runner's last act and the execution ends with it, so a
