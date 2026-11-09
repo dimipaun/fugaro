@@ -568,12 +568,12 @@ func TestContractFilesBelongToTheContractAndItsChanges(t *testing.T) {
 // TestContractFileMatchingIsBounded: the contract-file rule is a product of two
 // sides that both come from the file — every contract's files against every
 // other task's patterns — so a graph well inside the artifact's own cap can
-// still ask for minutes of doublestar. Two halves: the shapes an index reads
-// cheaply (a pattern whose literal suffix no file carries) are read, and one
-// that survives every cheap test is refused rather than matched a million times.
+// still ask for minutes of work. A graph under the bound reads whatever shape
+// its pairs have; a graph past it is refused, and the pairs that leave on a
+// cheap test count towards the bound like the ones doublestar is asked, because
+// those tests are the rule's work when a graph is nothing but them.
 func TestContractFileMatchingIsBounded(t *testing.T) {
-	const files, tasks = 1100, 1100
-	build := func(pattern string) string {
+	build := func(files, tasks int, pattern string) string {
 		var b strings.Builder
 		b.WriteString(`{"schema_version":3,"plan":"p.md","nodes":[{"id":"C","title":"the contract","kind":"contract","footprint":{"prediction":true,"paths":[`)
 		for i := 0; i < files; i++ {
@@ -590,25 +590,33 @@ func TestContractFileMatchingIsBounded(t *testing.T) {
 		b.WriteString(`],"edges":[]}`)
 		return b.String()
 	}
+	// past the bound: 1500 x 1500 is 2250000 pairs, and maxFootprintPairs is
+	// 2097152.
+	const files, tasks = 1500, 1500
 
-	// Every pair is asked, and every one of them leaves on the pattern's own
-	// suffix: a graph of many contracts and many tasks reads in the time the
-	// JSON takes, which is what the index is for.
-	if _, err := Parse("graph.json", []byte(build("**/*q%04d.go"))); err != nil {
-		t.Errorf("a graph whose patterns no file can carry was refused: %v", err)
+	// A graph of many contracts and many tasks, under the bound, reads in the
+	// time the JSON takes whatever its pairs are — which is what the index is
+	// for, in both the shape that leaves on a pattern's own suffix and the shape
+	// that reaches doublestar for every pair.
+	for _, pattern := range []string{"**/*q%04d.go", "*/*/x%04d*.go"} {
+		_, err := Parse("graph.json", []byte(build(800, 800, pattern)))
+		if err != nil {
+			t.Errorf("a graph under the bound was refused: %v", err)
+		}
 	}
 
-	// These patterns carry the suffix and the element count of every file, so
-	// each of the 1100 x 1100 pairs reaches doublestar and fails there. The rule
-	// counts the matches it asks for and refuses the graph past its bound: the
-	// answer is the same refusal, and the read stays a read.
-	_, err := Parse("graph.json", []byte(build("*/*/x%04d*.go")))
-	if err == nil {
-		t.Fatal("a graph asking for more than the bound in footprint matches was read")
-	}
-	for _, want := range []string{"more than 1048576 footprint matches", "refused rather than read slowly", "F10"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("the refusal does not say %q: %v", want, err)
+	// Both halves of the count: a graph of pairs that no file can carry, and one
+	// of pairs that survive every cheap test and fail at doublestar. Neither is
+	// read past the bound, and the refusal is the same sentence either way.
+	for _, pattern := range []string{"zz%04d/**", "*/*/x%04d*.go"} {
+		_, err := Parse("graph.json", []byte(build(files, tasks, pattern)))
+		if err == nil {
+			t.Fatalf("the graph of %q pairs past the bound was read", pattern)
+		}
+		for _, want := range []string{"more than 2097152 footprint pairs", "refused rather than read slowly", "F10"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal for %q does not say %q: %v", pattern, want, err)
+			}
 		}
 	}
 }

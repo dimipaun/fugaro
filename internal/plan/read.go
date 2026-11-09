@@ -547,15 +547,15 @@ func validateSchema3(path string, doc Document) error {
 	// The rule is a product of two sides that both come from the file — every
 	// contract's files against every other task's patterns — so both sides are
 	// read once, up front, and each pattern carries the little of itself a file
-	// has to carry before doublestar is worth asking. What is left is bounded by
-	// maxFootprintMatches: a graph can be small enough for the artifact's cap and
-	// still ask for minutes of matching, and the rule refuses such a graph rather
-	// than read it slowly.
+	// has to carry before doublestar is worth asking. The pairs are counted and
+	// bounded by maxFootprintPairs, cheap ones included: a graph can be small
+	// enough for the artifact's cap and still ask for minutes of work, and the
+	// rule refuses such a graph rather than read it slowly.
 	index := make([]nodeFootprint, len(doc.Nodes))
 	for i, n := range doc.Nodes {
 		index[i] = indexFootprint(n.Footprint)
 	}
-	matches := 0
+	pairs := 0
 	for ci, n := range doc.Nodes {
 		if kindOf(n) != KindContract {
 			continue
@@ -586,13 +586,13 @@ func validateSchema3(path string, doc Document) error {
 					if covered {
 						break
 					}
+					pairs++
+					if pairs > maxFootprintPairs {
+						return refuse(path, "the graph's contracts and tasks ask for more than %d footprint pairs to check that no task's footprint covers a contract's file; a graph that large is refused rather than read slowly (F10)",
+							maxFootprintPairs)
+					}
 					if !g.couldMatch(f) {
 						continue
-					}
-					matches++
-					if matches > maxFootprintMatches {
-						return refuse(path, "the graph's contracts and tasks ask for more than %d footprint matches to check that no task's footprint covers a contract's file; a graph that large is refused rather than read slowly (F10)",
-							maxFootprintMatches)
 					}
 					if ok, err := doublestar.Match(g.pattern, f); err == nil && ok {
 						covered = true
@@ -608,14 +608,18 @@ func validateSchema3(path string, doc Document) error {
 	return nil
 }
 
-// maxFootprintMatches bounds the work the contract-file rule does on one graph.
-// Every other task's pattern is tried against every file of every contract, so a
-// graph inside the artifact's own cap can still ask for more matching than the
-// read should take — a mebibyte of distinct patterns against a mebibyte of files
-// is minutes of doublestar. Past this many matches the graph is refused: the
-// count is what makes the cost of the rule a property of the rule rather than of
-// the file, and a graph a person would write does not come near it.
-const maxFootprintMatches = 1 << 20
+// maxFootprintPairs bounds the work the contract-file rule does on one graph.
+// Every other task's pattern is tried against every file of every contract, and
+// every pair is counted here — the ones the cheap tests drop as much as the ones
+// doublestar is asked — because a graph of pairs that all leave on a prefix is
+// the shape a count of matches would not see, and those tests are the rule's
+// work when there are enough of them. A pair costs two string comparisons and
+// the pairs that survive cost a glob match, so a graph at the bound is a
+// fraction of a second of read, and one past it is refused rather than read
+// slowly. The count is what makes the cost of the rule a property of the rule
+// rather than of the file, and a graph a person would write does not come near
+// it.
+const maxFootprintPairs = 1 << 21
 
 // nodeFootprint is one node's footprint in the shape the contract-file rule asks
 // it: the paths that name a file, in a set, and the patterns that do not, each
