@@ -724,7 +724,29 @@ func (v *orchestratorRunView) Runs(ctx context.Context, runIDs []string) ([]orch
 		if done, outcome := orchestratorOutcome(rec); done {
 			rep.Finished, rep.Outcome = true, outcome
 		} else if rep.Started && v.executionOver(ctx, slug, run, launch) {
-			rep.Finished, rep.Outcome = true, orchestrator.OutcomeFailed
+			// The record said the run was still going when it was read, and
+			// the platform says the execution is over. The runner may have
+			// written its last record in between: result.json is the runner's
+			// last act and the execution ends with it, so a run that succeeded
+			// a moment after this read is a run whose record says so, and
+			// folding the ended execution over the stale read would close a
+			// successful attempt as failed — and the same cycle would start a
+			// retry under the standing approval, a second execution and a
+			// second pull request for work that is already done. So the record
+			// is read again, and only a record that still says running (or one
+			// that is gone) is the run that died without reporting.
+			fresh, err := s.ReadRecord(ctx)
+			switch {
+			case errors.Is(err, runstore.ErrNotFound):
+				fresh = nil
+			case err != nil:
+				return nil, err
+			}
+			outcome := orchestrator.OutcomeFailed
+			if done, o := orchestratorOutcome(fresh); done {
+				outcome = o
+			}
+			rep.Finished, rep.Outcome = true, outcome
 		}
 		reports = append(reports, rep)
 	}
@@ -753,6 +775,11 @@ func (v *orchestratorRunView) Runs(ctx context.Context, runIDs []string) ([]orch
 // the double spend this view exists to avoid. The read is skipped when the
 // bucket says the run never started, and then there is no execution to ask
 // about.
+//
+// An ended execution is not by itself a failed run: the runner ends the
+// execution by writing its record and returning, so the record can land between
+// the view's own read of it and this question, and the caller reads it again
+// before it folds anything.
 func (v *orchestratorRunView) executionOver(ctx context.Context, slug, runID string, l *runstore.Launch) bool {
 	if l == nil || l.Execution == "" {
 		return false

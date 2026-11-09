@@ -227,6 +227,75 @@ func TestRunViewFoldsARunThePlatformHasEnded(t *testing.T) {
 	}
 }
 
+// reportOnExecutionRead wraps the fixture's backend so that a run's own last
+// record lands while the view is asking the platform about its execution:
+// result.json is the runner's last act and the execution ends with it, so a
+// record that lands between the view's read of it and that question is the real
+// sequence, made deterministic instead of raced.
+type reportOnExecutionRead struct {
+	backend.Backend
+	report func()
+}
+
+func (r reportOnExecutionRead) Execution(ctx context.Context, name string) (backend.Execution, error) {
+	e, err := r.Backend.Execution(ctx, name)
+	r.report()
+	return e, err
+}
+
+// TestRunViewFoldsTheRecordThatLandsAsTheExecutionEnds: the record is read
+// before the platform is asked about the execution, and a run that succeeded in
+// between is a run whose record says so by the time the question is answered.
+// Folding the ended execution over the read that still said running would close
+// a successful attempt as failed, and the same cycle would start a retry under
+// the standing approval: a second execution and a second pull request for work
+// that is already done.
+//
+// Mutation (run, restored): fold failed on the ended execution without reading
+// the record again — the test finds the attempt closed as failed, the item
+// failed, and a second execution started in the same cycle.
+func TestRunViewFoldsTheRecordThatLandsAsTheExecutionEnds(t *testing.T) {
+	f, d, cs := crashDaemon(t, true, true)
+	ctx := context.Background()
+	exec := f.run.Executions()[0]
+	// The platform has ended the execution the launch recorded, and what the
+	// runner left is the record it writes as it begins.
+	f.run.SetState(exec, backend.StateSucceeded)
+	s := f.runStore(t, cs.runID)
+	if err := s.WriteRecord(ctx, &runstore.Record{
+		Version: 1, RunID: cs.runID, Execution: exec, Status: runstore.StatusRunning,
+		Stage: "bootstrap", Outcome: runstore.OutcomeNone, StartedAt: f.now,
+	}); err != nil {
+		t.Fatalf("writing the record a run in flight carries: %v", err)
+	}
+	d.env.be = reportOnExecutionRead{d.env.be, func() {
+		if err := s.WriteRecord(ctx, &runstore.Record{
+			Version: 1, RunID: cs.runID, Execution: exec, Status: runstore.StatusSucceeded,
+			Outcome: runstore.OutcomeNone, Gate: "clean", Stage: "writeback",
+		}); err != nil {
+			t.Errorf("writing the record the runner ended with: %v", err)
+		}
+	}}
+
+	rep, err := d.tick.Step(ctx)
+	if err != nil {
+		t.Fatalf("a cycle over a run that reported as its execution ended: %v", err)
+	}
+	if rep.Folded != 1 || rep.Carried != 0 {
+		t.Fatalf("the cycle folded %d attempt(s) and carried %d action(s) over a run that succeeded, want one fold and nothing carried: a successful run is not a failure and nothing may start behind it: %+v", rep.Folded, rep.Carried, rep)
+	}
+	it := f.intent(t, orchestrator.IntentID(cs.item.ID, 1))
+	if it.Outcome != orchestrator.OutcomeSucceeded {
+		t.Errorf("the attempt whose run succeeded carries %q, and a record that says so is not a run that died without reporting", it.Outcome)
+	}
+	if after := f.item(t, cs.item.ID); after.Phase != orchestrator.PhaseDone {
+		t.Errorf("the item is %q under a run that succeeded, want done", after.Phase)
+	}
+	if execs := f.run.Executions(); len(execs) != 1 {
+		t.Errorf("a run that succeeded was answered with %d execution(s) in all, want the one it is: %v", len(execs), execs)
+	}
+}
+
 // TestRunViewFoldsAHaltedRunAsRefused: a run a spend cap, the kill switch or a
 // governance tripwire halted got as far as starting and was then refused the
 // work. A refusal is not a failure (G4): the design never retries one, and the
