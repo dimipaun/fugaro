@@ -1117,3 +1117,49 @@ func TestDigestRunTableShortID(t *testing.T) {
 		t.Errorf("the report prints a run ID's launch stamp:\n%s", out)
 	}
 }
+
+// TestDigestFailureExampleOffTheRunTableShortID: the failures table names a run
+// the run table need not show -- its example is picked over every run of the
+// period, and the cap drops rows afterwards -- so markdownCore computes its
+// endings over the report's rows *and* its examples together (printed). The
+// example below is one of the rows the cap drops, and it shares its four
+// characters with a row the cap keeps: its cell carries the ending that tells
+// the two apart, and the kept row carries it too. Computed over the shown rows
+// alone, the cell would be empty and the kept row short by two characters.
+func TestDigestFailureExampleOffTheRunTableShortID(t *testing.T) {
+	p := week43(t)
+	recs := []runstore.Record{
+		flaggedRun(t, "20261021-080001-aaaa", 0.01),
+		flaggedRun(t, "20261021-080002-bbbb", 0.02),
+	}
+	// A period long enough that the table holds four unflagged rows -- MinDear's
+	// three and the share's fourth -- because the cap drops the three cheapest of
+	// them (the note a drop adds costs about three rows, TestDigestSizeCap): a row
+	// is still shown beside the example it drops.
+	for i := 1; i <= 20; i++ {
+		recs = append(recs, run(t, fmt.Sprintf("20261021-0900%02d-0000", i), "2026-10-21T09:00:00Z", float64(i), 0))
+	}
+	// The dearest two of the table, sharing their four characters: the cap keeps
+	// one and drops the other, which is the failures table's own example.
+	recs = append(recs,
+		run(t, "20261021-100000-a1b2", "2026-10-21T09:00:00Z", 22, 0),
+		failing(t, "20261021-100001-a1b2", 21, failure.InfraError, "the stage timed out"),
+	)
+	small := Build(recs, p)
+	got := capTo(small, len(markdownCore(small))-1)
+	shown := map[string]bool{}
+	for _, r := range got.Runs {
+		shown[r.ID] = true
+	}
+	if got.Dropped == 0 || !shown["20261021-100000-a1b2"] || shown["20261021-100001-a1b2"] {
+		t.Fatalf("the cap left %v shown and dropped %d: want the failing example dropped and the row it collides with kept",
+			got.Runs, got.Dropped)
+	}
+	out := string(Markdown(got))
+	if want := fmt.Sprintf("| `%s` | 1 | $21.00 | `1-a1b2` |", failure.InfraError); !strings.Contains(out, want) {
+		t.Errorf("the failures table lacks %q, the example the run table no longer shows:\n%s", want, out)
+	}
+	if want := "| `0-a1b2` | succeeded |"; !strings.Contains(out, want) {
+		t.Errorf("the run table lacks %q, the row the off-table example collides with:\n%s", want, out)
+	}
+}
