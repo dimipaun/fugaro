@@ -103,6 +103,18 @@ func (l *orchestratorLauncher) prepare(ctx context.Context, spec orchestrator.Sp
 	// no execution behind.
 	compression, _ := compressionRequested(ctx, l.env, ts)
 	s := runstore.Open(l.env.bucket.Bucket, slug, ts.RunID)
+	// A re-issued intent whose earlier attempt stored a task but died before
+	// the start: the runner reads the stored task and its layer, whatever this
+	// tick just re-resolved (createTask keeps it), so the gates below must
+	// judge that layer rather than a project layer republished in between. The
+	// alternative is a document the run never reads deciding the launch: a
+	// spurious refusal that leaves the attempt stuck with a failing cycle
+	// every tick, or a gate that passes for a task carrying fields the
+	// deployed image cannot parse. `fugaro run` adopts the stored layer in
+	// this same place and for this same case (finishLaunch).
+	if err := adoptStoredProjectLayer(ctx, s, ts); err != nil {
+		return "", nil, err
+	}
 	if _, err := freshLaunchGates(ctx, l.env, o, slug, s, ts, compression || ts.CompressionOff, l.stderr, false); err != nil {
 		return "", nil, err
 	}

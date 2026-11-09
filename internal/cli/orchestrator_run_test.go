@@ -674,7 +674,13 @@ func TestDaemonSeesTheGuardrailsMoveUnderIt(t *testing.T) {
 // daemon starting anything at all, so the database refusing the read — of the
 // switch itself, and of the policy the caps come from — is exactly when the
 // daemon cannot tell, and the cycle plans nothing rather than reading the
-// refusal as a switch that is open.
+// refusal as a switch that is open. The switch is read as off immediately
+// before the failing read that is pinned here, because a switch already on from
+// the cycle above would make the assertion hold for the wrong reason.
+//
+// Mutation (run, restored): drop `caps.KillSwitch = true` from refreshCaps —
+// the policy half of this test fails, finding the daemon holding a switch that
+// is off under guardrails it cannot read.
 func TestDaemonStartsNothingWhenItsGuardrailsCannotBeRead(t *testing.T) {
 	f := newDaemonFixture(t)
 	d, out := f.running(t, "")
@@ -704,16 +710,24 @@ func TestDaemonStartsNothingWhenItsGuardrailsCannotBeRead(t *testing.T) {
 
 	// And the policy the caps are read from cannot be read either: the read is
 	// this cycle's, so the caps the daemon already has stay and the switch goes
-	// on, rather than either of them becoming a gate that is open.
-	f.db.DenyRead("")
+	// on, rather than either of them becoming a gate that is open. The switch
+	// is read as *off* first, and that is the point of this half: the cycle
+	// above left it on with a read that failed, so a switch that is simply
+	// still on from before would prove nothing about the failed read that is
+	// being pinned here.
+	f.db.DenyRead("") // the empty path lifts every DenyRead, the switch's included
+	d.refreshCaps(context.Background())
+	if d.tick.Caps.KillSwitch {
+		t.Fatalf("the kill switch read fine as off, and the daemon holds it on: %+v", d.tick.Caps)
+	}
+	lastRead := d.tick.Caps
 	f.db.DenyRead(projectpolicy.PathRulesMarker())
-	before := d.tick.Caps
 	d.refreshCaps(context.Background())
 	if !d.tick.Caps.KillSwitch {
-		t.Error("an unreadable policy left the kill switch off")
+		t.Error("an unreadable policy left the kill switch off, and a guardrail that cannot be read is not one that is off")
 	}
-	if d.tick.Caps.MaxRunning != before.MaxRunning || d.tick.Caps.MaxPerCycle != before.MaxPerCycle {
-		t.Errorf("an unreadable policy replaced the caps the daemon had with %+v, want %+v", d.tick.Caps, before)
+	if d.tick.Caps.MaxRunning != lastRead.MaxRunning || d.tick.Caps.MaxPerCycle != lastRead.MaxPerCycle {
+		t.Errorf("an unreadable policy replaced the caps the daemon had with %+v, want %+v", d.tick.Caps, lastRead)
 	}
 	if !strings.Contains(out.String(), "the guardrails could not be read") {
 		t.Errorf("a guardrail read that failed said nothing: %q", out.String())

@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"io"
+	"reflect"
 	"strings"
 	"testing"
 
 	"gocloud.dev/blob"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/orchestrator"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -362,5 +364,72 @@ func TestRunLauncherPassesTheCommandsLaunchGates(t *testing.T) {
 				t.Errorf("executions = %v, want the %d the gate left running", execs, ran)
 			}
 		})
+	}
+}
+
+// TestRunLauncherGatesAReIssueOnTheStoredProjectLayer: a daemon that dies
+// between storing the task and starting the run leaves a task the next tick
+// finishes, and the runner reads that stored task — its project layer included,
+// which createTask keeps however the layer was re-resolved since (repeatTaskBytes
+// excludes the layer from "is this the same task"). So the gates of the
+// re-issue must judge the layer the stored task carries and not a project layer
+// republished in between, the way `fugaro run` does for the same case. Judging
+// the republished one is a document the runner never reads deciding the launch:
+// here it is a spurious refusal — the published layer switches a review level
+// off with `model: none`, which the stored task's layer does not say — and the
+// attempt would sit there failing a cycle every tick, with the image the job
+// actually runs never in question.
+//
+// Mutation (run, restored): drop the adoptStoredProjectLayer call from the
+// launcher's prepare — the re-issue below is refused by the none-model gate and
+// fails.
+func TestRunLauncherGatesAReIssueOnTheStoredProjectLayer(t *testing.T) {
+	f := newLauncherFixture(t)
+	// Below noneModelSince, so the gate on a level whose model is none has
+	// something to refuse; the layer's own level is the whole of the ask here.
+	writeBuildRecord(t, f.cloudFixture, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+shiftRelease(t, noneModelSince, -1))
+	publishedLayer(t, f.cloudFixture, testProjectLayer)
+	ctx := context.Background()
+	l := f.launcher(t)
+	spec := orchestrator.Spec{ItemID: "wi-1", Title: "land the daemon", Repo: "acme/app", Recipe: "standard", Brief: "Start the run this attempt recorded."}
+	const runID = "20261109-101500-abcd"
+
+	// The crash: the task is stored and the start never happened.
+	if _, _, err := l.prepare(ctx, spec, runID); err != nil {
+		t.Fatalf("storing the task of the attempt that crashed: %v", err)
+	}
+	stored, err := f.runStore(t, runID).ReadTask(ctx)
+	if err != nil {
+		t.Fatalf("the task the crash left: %v", err)
+	}
+	if stored.ProjectLayer == nil {
+		t.Fatal("the stored task carries no project layer, so this test proves nothing about the layer the runner reads")
+	}
+	if strings.Contains(stored.ProjectLayer.YAML, "model: none") {
+		t.Fatalf("the stored layer is not the one this test is about:\n%s", stored.ProjectLayer.YAML)
+	}
+
+	// The project layer is republished before the next tick.
+	withNone := strings.Replace(testProjectLayer, "  agent: { auth: api-key }\n",
+		"  agent: { auth: api-key, levels: { l2: { model: none } } }\n", 1)
+	if withNone == testProjectLayer {
+		t.Fatal("the project layer fixture no longer carries the agent line this test rewrites")
+	}
+	// writeBucketFile rather than publishedLayer: the bucket name is already
+	// the default one, and publishing again is a second write of the layer key.
+	writeBucketFile(t, f.cloudFixture, config.LayerKey, withNone)
+
+	if _, err := l.Launch(ctx, spec, runID); err != nil {
+		t.Fatalf("the re-issue of an attempt whose stored task carries the layer the image reads: %v", err)
+	}
+	if execs := f.run.Executions(); len(execs) != 1 {
+		t.Fatalf("the re-issue started %d execution(s), want the one it finishes: %v", len(execs), execs)
+	}
+	after, err := f.runStore(t, runID).ReadTask(ctx)
+	if err != nil {
+		t.Fatalf("the task after the re-issue: %v", err)
+	}
+	if !reflect.DeepEqual(after.ProjectLayer, stored.ProjectLayer) {
+		t.Errorf("the task on record now carries a different layer than the one the re-issue was gated on:\nafter  %+v\nstored %+v", after.ProjectLayer, stored.ProjectLayer)
 	}
 }

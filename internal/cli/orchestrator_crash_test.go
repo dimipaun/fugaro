@@ -265,6 +265,71 @@ func TestRunViewFoldsAHaltedRunAsRefused(t *testing.T) {
 	}
 }
 
+// TestRunViewLeavesARunOpenWhenItsExecutionCannotBeRead: the platform's word on
+// the execution is what tells a run the runner never reported on from one that
+// is still spending, and a read that fails is not that word. An execution this
+// installation cannot read — its name is in another region, a backend that
+// answered with an error — is "not known here", the same answer as an execution
+// the platform no longer holds: the cycle folds nothing, the item stays running
+// under its run and nothing is carried. Folding it as failed would close the
+// attempt and have the next cycle start a second run for the same approval
+// while the first one is still spending, which is the double spend this view
+// exists to avoid.
+//
+// Mutation (run, restored): return true from executionOver's error branch — the
+// test fails, finding the attempt folded over a read that failed.
+func TestRunViewLeavesARunOpenWhenItsExecutionCannotBeRead(t *testing.T) {
+	f, d, cs := crashDaemon(t, true, true)
+	ctx := context.Background()
+	s := f.runStore(t, cs.runID)
+	l, err := s.ReadLaunch(ctx)
+	if err != nil {
+		t.Fatalf("the launch the crash recorded: %v", err)
+	}
+	other := strings.Replace(l.Execution, "/locations/"+f.run.Region+"/", "/locations/us-central1/", 1)
+	if other == l.Execution {
+		t.Fatalf("the launch's execution %q names no region this test can move it out of", l.Execution)
+	}
+	l.Execution = other
+	data, err := json.Marshal(l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// launch.json is written once, so the rewrite goes under the run's own
+	// object key, the way a repair would.
+	if err := s.PutFile(ctx, "launch.json", data, "application/json"); err != nil {
+		t.Fatalf("rewriting the launch record: %v", err)
+	}
+	rec := &runstore.Record{
+		Version: 1, RunID: cs.runID, Execution: "exec-1", Status: runstore.StatusRunning,
+		Stage: "bootstrap", Outcome: runstore.OutcomeNone, StartedAt: f.now,
+	}
+	if err := s.WriteRecord(ctx, rec); err != nil {
+		t.Fatalf("writing the record a run in flight carries: %v", err)
+	}
+
+	rep, err := d.tick.Step(ctx)
+	if err != nil {
+		t.Fatalf("a cycle over a run whose execution cannot be read: %v", err)
+	}
+	if rep.Folded != 0 {
+		t.Errorf("the cycle folded %d attempt(s) over a read that failed: a read that failed is not the platform saying the run ended: %+v", rep.Folded, rep)
+	}
+	if rep.Carried != 0 {
+		t.Errorf("the cycle carried %d action(s) for an attempt whose run may still be spending", rep.Carried)
+	}
+	after := f.item(t, cs.item.ID)
+	if after.Phase != orchestrator.PhaseRunning || after.RunID != cs.runID {
+		t.Errorf("the item is %q under run %q, and the run it waits on is %q", after.Phase, after.RunID, cs.runID)
+	}
+	if it := f.intent(t, orchestrator.IntentID(cs.item.ID, 1)); it.Outcome != "" {
+		t.Errorf("the attempt was closed with %q while the state of its run is unknown", it.Outcome)
+	}
+	if execs := f.run.Executions(); len(execs) != 1 {
+		t.Errorf("a run whose execution could not be read was answered with %d execution(s) in all, want the one it is: %v", len(execs), execs)
+	}
+}
+
 // TestRecoveryBeforeTaskJSONAfterAnEditAbandonsTheIntent: a person edited the
 // item after the crash and before the task existed, so the spec the intent was
 // committed for is not the item's any more. Nothing may start under it: the
