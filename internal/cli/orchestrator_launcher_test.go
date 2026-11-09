@@ -238,21 +238,70 @@ func launchLauncher(t *testing.T, f *launcherFixture, runID string) error {
 	return err
 }
 
-// launcherCascadeCheckout lays down the checkout of acme/app a daemon stands
-// in when its repository asks for the cascade: one commit on the default
-// branch and nothing else, since a daemon's launch names no ref. cascadeCLI is
-// the file such a repository writes.
-func launcherCascadeCheckout(t *testing.T) {
-	t.Helper()
+// TestRunLauncherResolvesThePlanWithoutACheckout: a daemon's working directory
+// is whatever its unit was started from, so the plan it resolves must not read
+// a checkout at all. The case that matters is a person's own checkout of the
+// item's repository: the branch they left checked out there is a branch origin
+// has, and newRunRef takes such a branch as the run's ref — a ref the approval's
+// digest does not cover, and one that moves under the daemon when the person
+// switches branches (between a crash and the re-issue it would rebuild a spec
+// whose task.json differs from the one already stored, and createTask refuses
+// "already holds a different task" every tick). The file in that checkout is
+// read for the base branch too. Launched from this directory, the run is cut
+// from the base branch the layers resolve and from nothing else, exactly as
+// `fugaro run` from outside a checkout is.
+//
+// Mutation (run, restored): drop the withoutCheckout(ctx) line at the top of
+// prepare — the task below is then cut from ref feature-x, the branch the
+// directory has checked out, and the launch warns that it named it.
+func TestRunLauncherResolvesThePlanWithoutACheckout(t *testing.T) {
+	f := newLauncherFixture(t)
+	// The person's checkout of the item's repository: a different base branch
+	// in its file, and feature-x checked out with a remote-tracking ref, which
+	// is what makes it a ref newRunRef would take.
 	testutil.IsolateGit(t)
 	dir := t.TempDir()
 	testutil.Git(t, dir, "init", "-q")
 	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/app.git")
-	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": cascadeCLI})
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": "version: 1\nproject: aurora\ngit: { provider: github, base_branch: develop }\n"})
 	testutil.Git(t, dir, "add", "fugaro.yaml")
-	testutil.Git(t, dir, "commit", "-q", "-m", "the repository asks for the cascade")
+	testutil.Git(t, dir, "commit", "-q", "-m", "the checkout's own file")
 	testutil.Git(t, dir, "update-ref", "refs/remotes/origin/main", "HEAD")
+	testutil.Git(t, dir, "update-ref", "refs/remotes/origin/develop", "HEAD")
+	testutil.Git(t, dir, "checkout", "-q", "-b", "feature-x")
+	testutil.Git(t, dir, "update-ref", "refs/remotes/origin/feature-x", "HEAD")
 	t.Chdir(dir)
+
+	l := f.launcher(t)
+	var warn strings.Builder
+	l.stderr = &warn
+	spec := orchestrator.Spec{ItemID: "wi-1", Title: "land the daemon", Repo: "acme/app", Recipe: "standard", Brief: "Start the run this attempt recorded."}
+	const runID = "20261109-101500-abcd"
+	if _, err := l.Launch(context.Background(), spec, runID); err != nil {
+		t.Fatalf("launching from a checkout of the item's repository: %v", err)
+	}
+	ts, err := f.runStore(t, runID).ReadTask(context.Background())
+	if err != nil {
+		t.Fatalf("reading the task the launch stored: %v", err)
+	}
+	if ts.Ref != "main" {
+		t.Errorf("the run is cut from %q, and a launch with no checkout is cut from the base branch the daemon's own layers resolve (main)", ts.Ref)
+	}
+	if ts.Ref == "feature-x" {
+		t.Errorf("the run is cut from the branch the working directory has checked out (%q), which the item's approval does not cover", ts.Ref)
+	}
+	// The spec writes the default base branch as the empty field, so the
+	// checkout file's develop — the base a launch that read the directory
+	// would resolve — cannot appear here either.
+	if ts.BaseBranch != "" {
+		t.Errorf("the run's base branch is %q, and the daemon's own layers leave it at the default (the empty field); the checkout's file, which names develop, is not the daemon's to read", ts.BaseBranch)
+	}
+	if strings.Contains(warn.String(), "--ref") {
+		t.Errorf("the launch named the working directory's branch: %q", warn.String())
+	}
+	if execs := f.run.Executions(); len(execs) != 1 {
+		t.Fatalf("the launch started %d execution(s): %v", len(execs), execs)
+	}
 }
 
 // TestRunLauncherPassesTheCommandsLaunchGates: the daemon's launch is `fugaro
@@ -269,8 +318,12 @@ func launcherCascadeCheckout(t *testing.T) {
 // attaches nothing), the named-token and plan-task field gates (no work item
 // carries either), the mode: artifact and mode: review gates (the daemon
 // starts neither), the proxy gate (nothing here brokers Bitbucket), the
-// checkout: clone and checkout: shared gates, and the per-field gates of the
-// configuration the command reads from a checkout.
+// checkout: clone and checkout: shared gates, and every gate that judges a
+// document only a checkout of the repository holds — the repository's own
+// fugaro.yaml above all, which is where the cascade's gate and the per-field
+// config gates read from (the daemon resolves without a checkout,
+// TestRunLauncherResolvesThePlanWithoutACheckout, and a run's own bootstrap
+// refuses what a launch could not read).
 //
 // Mutation (run, restored): drop the freshLaunchGates call from the launcher's
 // prepare — every subtest below launches and fails.
@@ -284,11 +337,6 @@ func TestRunLauncherPassesTheCommandsLaunchGates(t *testing.T) {
 		holding bool
 		want    []string
 	}{
-		{
-			name:    "the cascade's own gate, first of all",
-			prepare: func(t *testing.T, f *launcherFixture) { launcherCascadeCheckout(t) },
-			want:    []string{"agent.auth: cascade cannot run here", "published no policy"},
-		},
 		{
 			name: "the job title's own field gate",
 			prepare: func(t *testing.T, f *launcherFixture) {

@@ -69,6 +69,18 @@ func (l *orchestratorLauncher) Launch(ctx context.Context, spec orchestrator.Spe
 // the run is the one the next tick has to finish rather than start over. What
 // it returns is what launchRun needs and nothing else.
 func (l *orchestratorLauncher) prepare(ctx context.Context, spec orchestrator.Spec, runID string) (string, *task.Spec, error) {
+	// The launch reads no checkout, and never the one the daemon happens to
+	// run in: a daemon's working directory is whatever its unit was started
+	// from, and a checkout of the item's repository there would make the plan
+	// — the ref above all (newRunRef) — depend on the branch a person left
+	// checked out. That ref is not the one the approval's digest covers, and
+	// it moves under the daemon: a person switching branches between a crash
+	// and the re-issue would rebuild a spec whose task.json differs from the
+	// one already stored, and createTask would refuse the attempt every tick.
+	// So the switch covers this whole function — the plan, the project layer
+	// the task carries and every gate — and the launch resolves the way
+	// `fugaro run` does from outside a checkout.
+	ctx = withoutCheckout(ctx)
 	// The item's rigor_tier is the expectation tier (trivial to large) and not
 	// the rigor mode: a daemon declares no paths and asks for no mode, so the
 	// run resolves its rigor from the configuration alone, which is what a
