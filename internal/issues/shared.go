@@ -261,10 +261,9 @@ func Upload(ctx context.Context, b *blobx.Bucket, i Issue) (Uploaded, error) {
 	if err := checkLinks(i); err != nil {
 		return Uploaded{}, fmt.Errorf("issues: %w", err)
 	}
-	// Same reason, the other way a record nobody can read would be written: a
-	// record past what a reader's cap takes back is in no listing, and the
-	// fingerprint that names it is stranded. Nothing is written before this
-	// answers either.
+	// The other way a record nobody can read would be written: past what a
+	// reader's cap takes back, it is in no listing, and the fingerprint that
+	// names it is stranded. Nothing is written before this answers either.
 	if err := checkRecordSize(i); err != nil {
 		return Uploaded{}, err
 	}
