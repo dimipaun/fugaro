@@ -90,6 +90,12 @@
         through the display sanitizer like a row's. It is a section of its own
         with its own read and its own line for a machine where `wsl.exe` cannot
         answer at all -- that answer is not an empty list.
+
+        The container is declared on every host and **filled on Windows alone**:
+        `wsl.exe` is a Windows program, so a console elsewhere draws no distro
+        section and sends no distro read (`src/renderer/installations.ts`,
+        `isWindowsPlatform`). An empty container draws nothing -- this document
+        styles its `h2` and its `li` and not the section itself.
       -->
       <section id="picker-distros"></section>
     </main>

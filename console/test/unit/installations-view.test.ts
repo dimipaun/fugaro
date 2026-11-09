@@ -51,6 +51,7 @@ import {
   NO_INSTALLATION_STATUS,
   ONBOARDING_COPY,
   UNDRAWABLE,
+  isWindowsPlatform,
   mountPicker,
   rowText,
   viewOf,
@@ -307,11 +308,15 @@ const ONBOARD_CLI: OnboardingState = {
 const ONBOARD_FIRST: OnboardingState = { kind: 'first-installation', command: 'fugaro setup' }
 
 /** mount builds the view over a fresh fake document, and returns the pieces a
- * test needs. Every test starts here. */
-async function mount(options: Parameters<typeof fakeBridge>[0] = {}) {
+ * test needs. Every test starts here.
+ *
+ * `windows` is the host the view is told it is on, and it defaults to the one
+ * this suite is about: almost every case here is a Windows console, which is the
+ * only host that draws a distro section (`isWindowsPlatform`, T-G3). */
+async function mount(options: Parameters<typeof fakeBridge>[0] = {}, windows = true) {
   const document = fakeDocument()
   const { bridge, recording } = fakeBridge(options)
-  const view = mountPicker(document, bridge)
+  const view = mountPicker(document, bridge, windows)
   await view.refresh()
   return { document, recording, view, element: (id: string): FakeElement => document.byId.get(id) as FakeElement }
 }
@@ -540,11 +545,56 @@ describe('the picker’s document and its view', () => {
     expect(DISTROS_READING).not.toBe(NO_DISTROS)
     const pending = pendingDocument()
     const { bridge } = fakeBridge({})
-    const done = mountPicker(pending.document, { ...bridge, distros: () => pending.held }).refresh()
+    const done = mountPicker(pending.document, { ...bridge, distros: () => pending.held }, true).refresh()
     expect(pending.holding()).toBe(DISTROS_READING)
     pending.settle()
     await done
     expect(pending.holding()).toBe(NO_DISTROS)
+  })
+
+  it('draws no distro section and asks for none on a machine that is not Windows', async () => {
+    // `wsl.exe` is a Windows program, so a console on macOS or Linux that asked
+    // would be answered by a spawn failure -- and would draw
+    // "spawn C:\Windows\System32\wsl.exe ENOENT" under a heading that says the
+    // window is showing *this* machine's distributions: a false statement about
+    // the operator's machine, and one that costs a child to make. Off Windows
+    // the section is not drawn at all: no heading, no line, no names.
+    const { element, recording } = await mount(
+      {
+        rows: [row()],
+        distros: { kind: 'listed', distributions: [{ name: 'Ubuntu', isDefault: true }] },
+      },
+      false,
+    )
+
+    // No read was sent, which is the half a drawn-only assertion could not
+    // catch: the bridge is never asked, so nothing can spawn and nothing can
+    // answer a Windows read failure.
+    expect(recording.distros).toEqual([])
+    expect(recording.calls).toEqual(['list'])
+
+    // The container the document declares is left empty, so the heading, the
+    // busy line and the three answers are all absent -- and the rest of the
+    // window is drawn as usual, which is what says the section is gated rather
+    // than the page.
+    expect(element('picker-distros').children).toEqual([])
+    expect(element('picker-list').children).toHaveLength(1)
+  })
+
+  it('asks the machine’s distributions of a Windows host and of no other', async () => {
+    // `isWindowsPlatform` is the one place the window's platform is asked about,
+    // and these are the spellings it reads: the modern hints first, the
+    // deprecated `navigator.platform` when the modern one is missing **or
+    // blank**, and `false` for a scope with no navigator at all -- which is the
+    // "not Windows" half and never an exception, because a window that could not
+    // tell must draw no section rather than a Windows read failure.
+    expect(isWindowsPlatform({ userAgentData: { platform: 'Windows' } })).toBe(true)
+    expect(isWindowsPlatform({ userAgentData: { platform: '' }, platform: 'Win32' })).toBe(true)
+    expect(isWindowsPlatform({ platform: 'Win32' })).toBe(true)
+    expect(isWindowsPlatform({ userAgentData: { platform: '' }, platform: '' })).toBe(false)
+    expect(isWindowsPlatform({ userAgentData: { platform: 'macOS' }, platform: 'Win32' })).toBe(false)
+    expect(isWindowsPlatform({})).toBe(false)
+    expect(isWindowsPlatform(undefined)).toBe(false)
   })
 
   it('offers only the checkouts the CLI listed, and one button to stop using one', async () => {
@@ -748,7 +798,7 @@ describe('the picker’s document and its view', () => {
         return original(args)
       },
     }
-    const view = mountPicker(document, held)
+    const view = mountPicker(document, held, true)
     await view.refresh()
     const list = document.byId.get('picker-list') as FakeElement
     const [first, second] = list.children as FakeElement[]

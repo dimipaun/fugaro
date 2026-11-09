@@ -1136,6 +1136,13 @@ export const INSTALLATION_OPERATIONS: readonly InstallationOperation[] = Object.
   // name a distribution, a path or a command for it. It is not a second way to
   // reach a spawn: the children are `wsl.exe` itself, under the same program the
   // WSL route already runs.
+  //
+  // **The row is answered on Windows only** (`src/main/picker.ts`): `wsl.exe` is
+  // a Windows program, so off Windows it refuses with `DISTROS_NOT_WINDOWS`
+  // instead of running a Windows path and drawing the spawn failure as a fact
+  // about the operator's machine. The row is here on every host for the reason
+  // the table is one frozen list a preload mirrors: a surface that changed shape
+  // with the machine would be a surface two platforms do not share.
   { name: 'distros', method: 'distros', args: [] },
 ] satisfies readonly InstallationOperation[]).map(
   (row): InstallationOperation => Object.freeze({ ...row, args: Object.freeze(row.args.map((arg) => Object.freeze(arg))) }),

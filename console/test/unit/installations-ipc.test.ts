@@ -53,6 +53,7 @@ import { UPDATES_SWITCH_UNWRITTEN, createUpdateSettings, nodeUpdatesFs, readUpda
 import type { UpdateController } from '../../src/main/updates'
 import { TEMP_ROOTS } from '../../src/main/installationstate'
 import {
+  DISTROS_NOT_WINDOWS,
   INSTALLATIONS_MENU_LABEL,
   OPEN_EXTERNAL_FAILED,
   PICKER_ENTRY_URL,
@@ -208,6 +209,11 @@ function pickerOver(
     /** wslPath is the `wsl.exe` the distro list's read runs -- the fake (T-A1),
      * handed to the picker the way the WSL route's own seams are. */
     readonly wslPath?: string
+    /** platform is the host the console is standing on. Every case that does not
+     * name one is the machine this suite runs on, which is what the shipped app
+     * is; the distro cases name `win32`, because `wsl.exe` is a Windows program
+     * and the row is answered on Windows alone (T-G3). */
+    readonly platform?: string
     readonly updateMenu?: UpdateMenuOptions
     readonly crashMenu?: CrashMenuOptions
   } = {},
@@ -265,6 +271,7 @@ function pickerOver(
     appPath: '/work/repo/console',
     appEnv: options.appEnv ?? {},
     ...(options.wslPath === undefined ? {} : { wslPath: options.wslPath }),
+    ...(options.platform === undefined ? {} : { platform: options.platform }),
     ...(options.onChosen === undefined ? {} : { onChosen: options.onChosen }),
     ...(options.onRemoved === undefined ? {} : { onRemoved: options.onRemoved }),
     ...(options.onRecordRemoved === undefined ? {} : { onRecordRemoved: options.onRecordRemoved }),
@@ -1313,7 +1320,7 @@ describe('the picker’s distro list', () => {
     // picker invented -- which is what keeps the default a fact of `--status`
     // rather than of a row's position (D2(a)).
     const wsl = installWslStub(freshDirectory(), { distros: TWO_DISTROS })
-    const { picker, ipcMain } = pickerOver({ wslPath: wsl.binary })
+    const { picker, ipcMain } = pickerOver({ wslPath: wsl.binary, platform: 'win32' })
     void picker
     expect(await answer(ipcMain, 'distros')).toEqual({
       ok: true,
@@ -1334,7 +1341,7 @@ describe('the picker’s distro list', () => {
     // drew "no distributions" for it would send the operator to install one on a
     // machine where WSL itself is missing.
     const wsl = installWslStub(freshDirectory(), { distros: NO_WSL })
-    const { picker, ipcMain } = pickerOver({ wslPath: wsl.binary })
+    const { picker, ipcMain } = pickerOver({ wslPath: wsl.binary, platform: 'win32' })
     void picker
     const reply = await answer(ipcMain, 'distros')
     expect(reply.ok).toBe(true)
@@ -1346,7 +1353,7 @@ describe('the picker’s distro list', () => {
 
   it('answers a machine with no distributions as an empty list, which is an answer', async () => {
     const wsl = installWslStub(freshDirectory(), { distros: { list: '', status: '' } })
-    const { picker, ipcMain } = pickerOver({ wslPath: wsl.binary })
+    const { picker, ipcMain } = pickerOver({ wslPath: wsl.binary, platform: 'win32' })
     void picker
     expect(await answer(ipcMain, 'distros')).toEqual({
       ok: true,
@@ -1361,7 +1368,7 @@ describe('the picker’s distro list', () => {
     // inside a distribution to enumerate them, would be answering a different
     // question (and would need a distribution already chosen to ask it).
     const wsl = installWslStub(freshDirectory(), { distros: TWO_DISTROS })
-    const { picker, ipcMain } = pickerOver({ wslPath: wsl.binary })
+    const { picker, ipcMain } = pickerOver({ wslPath: wsl.binary, platform: 'win32' })
     void picker
     await answer(ipcMain, 'distros')
     expect(wsl.calls()).toBe(2)
@@ -1371,11 +1378,31 @@ describe('the picker’s distro list', () => {
 
   it('takes no arguments, so a frame cannot name a distribution, a path or a command', async () => {
     const wsl = installWslStub(freshDirectory(), { distros: TWO_DISTROS })
-    const { picker, ipcMain } = pickerOver({ wslPath: wsl.binary })
+    const { picker, ipcMain } = pickerOver({ wslPath: wsl.binary, platform: 'win32' })
     void picker
     expect(INSTALLATION_OPERATIONS.find((row) => row.name === 'distros')?.args).toEqual([])
     const refused = (await answer(ipcMain, 'distros', { distro: 'Ubuntu' })) as ConsoleReply
     expect(refused).toEqual({ ok: false, reason: 'unknown argument: distro' })
+  })
+
+  it('refuses on a host that has no wsl.exe, and starts no child to find out', async () => {
+    // `wsl.exe` is a Windows program at a Windows path, so a console on macOS or
+    // Linux that ran it would answer a spawn failure -- "spawn
+    // C:\Windows\System32\wsl.exe ENOENT" -- and the window would draw that under
+    // a heading claiming to show *this* machine's distributions: a false
+    // statement about the operator's machine, and one that costs a child to make.
+    // Off Windows the row refuses with the console's own sentence, and **nothing
+    // is spawned**: the fake stands in for `wsl.exe` and is never reached.
+    const wsl = installWslStub(freshDirectory(), { distros: TWO_DISTROS })
+    const { picker, ipcMain } = pickerOver({ wslPath: wsl.binary, platform: 'darwin' })
+    void picker
+    expect(await answer(ipcMain, 'distros')).toEqual({ ok: false, reason: DISTROS_NOT_WINDOWS })
+    expect(wsl.calls()).toBe(0)
+    expect(wsl.childCalls()).toBe(0)
+    // The refusal is the console's and not a child's: no spelling of a Windows
+    // path or of a spawn failure reaches the renderer.
+    expect(DISTROS_NOT_WINDOWS).not.toContain('ENOENT')
+    expect(DISTROS_NOT_WINDOWS).not.toContain('wsl.exe')
   })
 })
 

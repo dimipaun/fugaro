@@ -28,7 +28,9 @@
 //   4. the WSL distributions **this machine** has (Part G, T-G3): a read-only
 //      list of the names `wsl.exe` reports, which is the one thing in this
 //      window that is not this console's record of anything -- see
-//      `DISTROS_TITLE`.
+//      `DISTROS_TITLE`. It is the one part of this window that is **drawn on
+//      Windows alone**: `wsl.exe` is a Windows program, so off Windows there is
+//      nothing to ask and the section is not drawn (`isWindowsPlatform`).
 //
 // `mountPicker` is the whole behaviour: it is handed the document and the bridge
 // and returns a `refresh`, so every step below is a unit test's to drive.
@@ -429,6 +431,40 @@ export interface PickerMount {
 }
 
 /**
+ * isWindowsPlatform answers whether this window is on Windows, which is the
+ * whole of what the distro section needs to know about the machine.
+ *
+ * **It gates the section, and not the reading of its answer.** `wsl.exe` is a
+ * Windows program at a Windows path, so a console on macOS or Linux that asked
+ * would be answered by a spawn failure -- "spawn C:\Windows\System32\wsl.exe
+ * ENOENT" -- and would draw it under a heading that claims to be about this
+ * machine: a false statement, and one that costs a child process to make. Off
+ * Windows the section is not drawn and `distros()` is never sent (the main
+ * process refuses the row as well, because a frame is not this view).
+ *
+ * It is read exactly the way `isMacPlatform` is (`src/renderer/entry.ts`), for
+ * the same reasons: the modern spelling is `navigator.userAgentData.platform`,
+ * whose value can be an **empty string** where the hints are unavailable or
+ * reduced, so the deprecated `navigator.platform` -- answering `Win32` on
+ * Windows -- is read when the modern one is missing *or blank*, and a scope with
+ * no navigator at all (a `vm` realm, a unit test) answers `false`. `false` is
+ * the safe half here as it is there: a window that could not tell would draw no
+ * section rather than a Windows read failure.
+ */
+export function isWindowsPlatform(navigator: unknown): boolean {
+  const scope = navigator as
+    | {
+        readonly userAgentData?: { readonly platform?: unknown }
+        readonly platform?: unknown
+      }
+    | null
+    | undefined
+  const spelled = (value: unknown): string => (typeof value === 'string' ? value : '')
+  const name = spelled(scope?.userAgentData?.platform) || spelled(scope?.platform)
+  return /^win/i.test(name)
+}
+
+/**
  * mountPicker wires the picker document to the bridge and returns its
  * `refresh`. Nothing here decides anything: it draws what a reply says, sends
  * back what the operator clicked, and re-reads. The rules it does hold are the
@@ -446,13 +482,24 @@ export interface PickerMount {
  *     takes no arguments, so the address the operating system opens is the main
  *     process's own constant (`GETTING_STARTED_URL`), checked against its host
  *     allow-list on the way out.
+ *
+ * `windows` is the host, and it is what the distro section is gated on: a
+ * section about this machine's `wsl.exe` is drawn on the machine that has one,
+ * and the safe half of not knowing is drawing none (`isWindowsPlatform`).
  */
-export function mountPicker(document: PickerDocument, bridge: PickerBridge): PickerMount {
+export function mountPicker(document: PickerDocument, bridge: PickerBridge, windows: boolean): PickerMount {
   const status = document.getElementById('picker-status')
   const list = document.getElementById('picker-list')
   const warnings = document.getElementById('picker-warnings')
   const onboarding = document.getElementById('picker-onboarding')
-  const distros = document.getElementById('picker-distros')
+  // The distro section is this machine's, and this machine is the one the
+  // window is running on: off Windows there is no `wsl.exe` to ask, so the
+  // section is not looked up at all -- the document's container stays empty and
+  // `refreshDistros` below returns before it sends anything. `windows` is a
+  // parameter rather than a read here for the reason `shortcutRow`'s `mac` is:
+  // `isWindowsPlatform` is the one place the platform is asked about, and the
+  // mount stays a wiring a unit test can drive both ways.
+  const distros = windows ? document.getElementById('picker-distros') : null
 
   const say = (sentence: string): void => {
     // Every sentence here is the main process's, and it is drawn through the
@@ -674,7 +721,12 @@ export function mountPicker(document: PickerDocument, bridge: PickerBridge): Pic
    * refusal, so a `wsl.exe` that cannot answer never takes the installation list
    * down with it -- and it is redrawn on every refresh for the reason the list
    * is, that a distribution added or renamed outside this console is a fact this
-   * window should not hold a stale copy of. */
+   * window should not hold a stale copy of.
+   *
+   * A `distros` of `null` is the host that is not Windows, and the early return
+   * is where that machine's **no read at all** is kept: nothing is sent, so
+   * nothing can be answered with a Windows read failure, and the section this
+   * document declares is left empty rather than drawn with a heading over it. */
   const refreshDistros = async (): Promise<void> => {
     if (distros === null) return
     distros.replaceChildren(own('h2', DISTROS_TITLE), own('p', DISTROS_READING))
@@ -706,7 +758,11 @@ export function mountPicker(document: PickerDocument, bridge: PickerBridge): Pic
  * the DOM it uses, so it reads `globalThis` through its own interface rather
  * than through `lib.dom`'s.
  */
-const scope = globalThis as { readonly document?: unknown; readonly fugaroInstallations?: unknown }
+const scope = globalThis as {
+  readonly document?: unknown
+  readonly fugaroInstallations?: unknown
+  readonly navigator?: unknown
+}
 
 if (scope.document !== undefined && scope.fugaroInstallations !== undefined) {
   // The two assertions are where the declared slice meets the real page: this
@@ -715,5 +771,9 @@ if (scope.document !== undefined && scope.fugaroInstallations !== undefined) {
   // the scope rather than `PickerDocument`/`PickerBridge` is what keeps the cast
   // honest -- `lib.dom`'s `Document` is not this interface, and a cast that
   // claimed it was would be the compiler agreeing with a lie.
-  void mountPicker(scope.document as PickerDocument, scope.fugaroInstallations as PickerBridge).refresh()
+  void mountPicker(
+    scope.document as PickerDocument,
+    scope.fugaroInstallations as PickerBridge,
+    isWindowsPlatform(scope.navigator),
+  ).refresh()
 }
