@@ -1579,6 +1579,34 @@ func TestPolicyWriteAsksNoTypedNameOfAPersonOnAManagedProject(t *testing.T) {
 			t.Error("the warned publish wrote no node")
 		}
 	})
+	// The two rows the review of T7 raised: --yes says "the ordinary steps",
+	// and this is the write that stops every run of the project, while
+	// --non-interactive and --json say nobody is reading. Before T7 this step
+	// took a typed name, and neither session could type one, so each was
+	// refused — and each is refused again, at a real terminal included, or a
+	// converge nobody is watching publishes a policy that admits nothing.
+	for _, row := range []struct {
+		name string
+		o    *initOptions
+	}{
+		{"--yes --non-interactive", &initOptions{yes: true, nonInteractive: true}},
+		{"--yes --json", &initOptions{yes: true, asJSON: true}},
+	} {
+		t.Run("a managed project with no node and no repository listed, "+row.name, func(t *testing.T) {
+			h, f, err := firstPublishRigErr(t, "no-repos", true, row.o)
+			if err == nil {
+				t.Fatalf("%s wrote a node that admits nothing:\n%s", row.name, h.out)
+			}
+			for _, want := range []string{"needs a real terminal", "every run stops before it starts", "fugaro project repos add provider/owner/name"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal does not say %q: %v", want, err)
+				}
+			}
+			if f.db.Value(projectpolicy.PathShared()) != nil {
+				t.Errorf("%s wrote the node", row.name)
+			}
+		})
+	}
 	// The note is the person's, so a first publish reached without one keeps
 	// the typed confirmation like every other write here.
 	t.Run("a managed project with no node and nobody at the terminal", func(t *testing.T) {
@@ -1597,14 +1625,28 @@ func TestPolicyWriteAsksNoTypedNameOfAPersonOnAManagedProject(t *testing.T) {
 // publish rather than nothing to do — and runs the tail over it: managed, a
 // person at the terminal unless terminal is false, and nothing on stdin. extra
 // "no-repos" rewrites the config so the node it would write admits no
-// repository, which is the first publish that warns before it writes.
+// repository, which is the first publish that warns before it writes. Its own
+// error is logged: firstPublishRigErr is the same rig for the rows a refusal is
+// the subject of.
 func firstPublishRig(t *testing.T, extra string, terminal bool) (*migrationRig, *projectFixture) {
+	t.Helper()
+	h, f, err := firstPublishRigErr(t, extra, terminal, &initOptions{})
+	if err != nil {
+		t.Logf("the tail refused the first publish: %v", err)
+	}
+	return h, f
+}
+
+// firstPublishRigErr is firstPublishRig over the run's own options, with the
+// tail's error handed back: the rows that are about a refusal need it, and the
+// rows that write do not.
+func firstPublishRigErr(t *testing.T, extra string, terminal bool, o *initOptions) (*migrationRig, *projectFixture, error) {
 	t.Helper()
 	f := newProjectFixture(t, catalogConfigYAML)
 	if extra == "no-repos" {
 		setCatalogConfigWithNoRepos(t, f)
 	}
-	h := newMigrationRig(t, f, &initOptions{})
+	h := newMigrationRig(t, f, o)
 	if terminal {
 		fakeTerminal(t)
 	} else {
@@ -1618,8 +1660,5 @@ func firstPublishRig(t *testing.T, extra string, terminal bool) (*migrationRig, 
 	if !m.firstPublish {
 		t.Fatalf("the rig planned a publish of a node that is there, so this is not the first node")
 	}
-	if err := policyMigrationConfirm(context.Background(), h.cmd, m, false, h.out, false, true, h.s.e.r.conditions()); err != nil {
-		t.Logf("the tail refused the first publish: %v", err)
-	}
-	return h, f
+	return h, f, policyMigrationConfirm(context.Background(), h.cmd, m, false, h.out, false, true, h.s.e.r.conditions())
 }

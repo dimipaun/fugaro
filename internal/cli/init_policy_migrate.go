@@ -500,10 +500,10 @@ func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMi
 		// worded a second time, and the same one the explicit door asks
 		// (#1674). It replaces the confirmations below rather than joining
 		// them: it is the stricter of the two (only --ask puts the question
-		// back, and a session with no terminal or a coding agent's is refused),
-		// and a document this node's confirmation already covers needs no
-		// second question.
-		if err := confirmEmptyAllowList(cmd, m.lc, c.Agent); err != nil {
+		// back, and a session with no terminal, a coding agent's, or
+		// --non-interactive or --json is refused), and a document this node's
+		// confirmation already covers needs no second question.
+		if err := confirmEmptyAllowList(cmd, m.lc, c); err != nil {
 			return err
 		}
 	} else if managed && initflow.PersonAtTheTerminal(c) && !admitted {

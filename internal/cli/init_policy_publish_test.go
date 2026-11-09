@@ -1995,18 +1995,62 @@ func setConfigWithNoRepos(t *testing.T, f *projectFixture) {
 // directly: no route of the publish reaches it from a coding agent's session
 // today (a managed project keeps the published allow-list), so a later route
 // that did would otherwise accept a name the session piped into stdin.
+//
+// The session has a terminal and a name waiting on it, and is still refused:
+// the marker is what decides, not the pty an agent can give itself.
 func TestConfirmEmptyAllowListRefusesAnAgentSessionBeforeAnyPrompt(t *testing.T) {
 	typed(t)
 	cmd := &cobra.Command{}
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetIn(strings.NewReader("aurora\n"))
-	err := confirmEmptyAllowList(cmd, &localcfg.Config{Name: "aurora"}, "CLAUDECODE")
+	err := confirmEmptyAllowList(cmd, &localcfg.Config{Name: "aurora"}, initflow.Conditions{Terminal: true, Agent: "CLAUDECODE"})
 	if err == nil {
 		t.Fatal("an agent session's typed name confirmed an empty allow-list")
 	}
-	if strings.Contains(out.String(), "Type ") {
-		t.Errorf("the session was prompted for the name:\n%s", out.String())
+	if strings.Contains(out.String(), "Type ") || strings.Contains(out.String(), "[y/N]") {
+		t.Errorf("the session was prompted:\n%s", out.String())
+	}
+}
+
+// TestConfirmEmptyAllowListNeedsSomebodyWhoCanReadIt is the same guard over the
+// whole product of what a run says about who is there, which is the matrix the
+// two doors pass here (initRun.conditions in the converge, askConditions in the
+// explicit door): the warning is answered by a person at the terminal or by
+// --ask, and by nothing else. --yes is not a route — the flag stands for the
+// ordinary steps, and a node that admits no repository stops every run of the
+// project — and --non-interactive and --json are refused because nobody is
+// reading, whatever terminal the session has.
+func TestConfirmEmptyAllowListNeedsSomebodyWhoCanReadIt(t *testing.T) {
+	for _, c := range conditions() {
+		t.Run(c.name, func(t *testing.T) {
+			r, spy, out := c.run(t, "")
+			conds := r.conditions()
+			err := confirmEmptyAllowList(r.cmd, &localcfg.Config{Name: "aurora"}, conds)
+			if !initflow.PersonAtTheTerminal(conds) {
+				if err == nil {
+					t.Fatalf("an empty allow-list was written by a session that cannot read the consequence:\n%s", out)
+				}
+				for _, want := range []string{"needs a real terminal", "every run stops before it starts"} {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("the refusal does not say %q: %v", want, err)
+					}
+				}
+				if spy.read {
+					t.Errorf("the refused session read stdin:\n%s", out)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("a person at the terminal was refused: %v", err)
+			}
+			if !strings.Contains(out.String(), "⚠ CONFIRM (project aurora)") {
+				t.Errorf("the warning was not shown:\n%s", out)
+			}
+			if spy.read {
+				t.Errorf("the confirmation read stdin, and nothing is typed at one (T7):\n%s", out)
+			}
+		})
 	}
 }
 

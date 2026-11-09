@@ -292,13 +292,16 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 		// and the diff that shows the empty list prints only after the write, so
 		// it would announce the consequence only once it was in force. It is
 		// said here, before the first write, and the person at the terminal is
-		// what answers it: no flag stands in, nothing is typed (T7,
-		// docs/no-prompt-policy), and a session with no terminal — a script's,
-		// or a coding agent's — is refused (#1674). Asked once across the
+		// what answers it: no flag stands in (this door takes no --json or
+		// --non-interactive, and confirmEmptyAllowList refuses them and a
+		// coding agent's marker where a command that does carries them),
+		// nothing is typed (T7, docs/no-prompt-policy), and a session with no
+		// terminal — a script's, or a coding agent's — is refused (#1674).
+		// Asked once across the
 		// retries below, because it is a decision about the document and not
 		// about the attempt.
 		if len(pol.AllowRepos) == 0 && !emptyAllowListConfirmed {
-			if err := confirmEmptyAllowList(cmd, lc, agent); err != nil {
+			if err := confirmEmptyAllowList(cmd, lc, askConditions(cmd, boolFlag(cmd, "json"), boolFlag(cmd, "non-interactive"))); err != nil {
 				return publishFailure(err, narrowedSoFar)
 			}
 			emptyAllowListConfirmed = true
