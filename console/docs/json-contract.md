@@ -1317,9 +1317,9 @@ one entry of `nodes`:
 | `run` | string | never | **yes** | the run this task belongs to; null when it belongs to none |
 | `version` | string | never | **yes** | the target version; null when the plan does not say. In a **v2** artifact it is `MAJOR.MINOR` or `MAJOR.MINOR.PATCH` — `0.10`, or the patch box `0.10.1` a release such as 0.10.1 is — and anything else is **refused**; a v1 artifact's version is free text and is read as written |
 | `footprint` | object | never | never | the expected paths, below |
-| `kind` | string | **yes** | never | what this node is: `task` (the default, and every node of a v1 or v2 artifact), `contract`, `integration` or `contract_change`. A **schema-3** field, and a value outside those four is **refused**. A `contract` node carries the stubs and the literal files the graph holds every other task against; an `integration` node is the one that depends on both sides of a broken edge |
+| `kind` | string | **yes** | never | what this node is: `task` (the default, and every node of a v1 or v2 artifact), `contract`, `integration` or `contract_change`. A **schema-3** field; it is absent from the document this build emits when the node is a plain task, and a **non-empty** value outside those four is **refused** — an empty string means the default. A `contract` node carries the stubs and the literal files the graph holds every other task against; an `integration` node is the one that depends on both sides of a broken edge |
 | `size` | number | **yes** | **yes** | the task's weight relative to the others, greater than `0`; absent or null means `1`. A **schema-3** field, and the figure the accepted/refused comparison of a break is weighed with rather than a task count. `0` or a negative number is **refused** |
-| `stubs` | array of strings | **yes** | never | the whole files a `contract` node leaves for its dependents to compile against, each a literal repository-relative path — never a glob, never absolute, never with a `..` element, never carrying a character that does not print, and each one named **literally** in that node's own `footprint.paths`. A **schema-3** field, on a `contract` node and nowhere else; anything else is **refused** |
+| `stubs` | array of strings | **yes** | never | the whole files a `contract` node leaves for its dependents to compile against, each a literal repository-relative path — never a glob, never absolute, never with a `..` element, never carrying a character that does not print, and each one named **literally** in that node's own `footprint.paths`. A **schema-3** field, on a `contract` node and nowhere else: a **non-empty** list on any other node is **refused**, and absent, null or an empty list is a node that leaves no stub behind — the key is absent from the document this build emits |
 | `level` | number | never | never | the longest chain of dependencies *ending* at this task: `0` for a task that waits on nothing, otherwise one more than the deepest task it waits for |
 | `done` | bool | never | never | the task is in the `--done` set the read was given. **A fact the caller stated, not one the CLI derived**: a finished run is not the same claim as a done task (see below) |
 | `ready` | bool | never | never | the task is not done and **every task it needs is done**. This is the field a launch may act on (design F7) |
@@ -1378,7 +1378,7 @@ one entry of `contract_changes` (schema 3):
 | `contract` | string | never | never | the id of the `contract` node the change is against |
 | `raised_by` | string | never | never | the id of the node that found the change |
 | `reason` | string | never | never | what has to change and why; an entry with no reason is refused |
-| `affects` | array of strings | never | never | the ids of the tasks the change reaches, each a node of this graph |
+| `affects` | array of strings | never | never | the ids of the tasks the change reaches, each a node of this graph. An entry that reaches none is emitted as `[]` and never as a null, so a null here is a document no reader has to allow for (§1) |
 
 **Four refusals, and they are refusals rather than partial renders:** a document
 from a schema version this build does not read (the message names both
@@ -1389,7 +1389,9 @@ is no document at all: the command exits non-zero and prints nothing to stdout,
 so a renderer never has half a graph to draw.
 
 Schema 3 refuses the same way over what it added, because it is untrusted plan
-text: a `kind` outside the four, a `size` of `0` or less, a `stub` that is a
+text: a **non-empty** `kind` outside the four — an absent or empty one is the
+default `task` — a `size` of `0` or less, a **non-empty** `stub` list on a node
+that is not a contract, a `stub` that is a
 glob or that the contract's own footprint does not name, a `contract` node whose
 footprint names no literal file — a contract's files are whole files it names
 one by one, so a **pattern** in a contract's footprint is refused rather than

@@ -531,6 +531,43 @@ func TestContractFilesBelongToTheContractAndItsChanges(t *testing.T) {
 	})
 }
 
+// TestChangeRequestAffectsIsAlwaysAnArray: `affects` is written without
+// omitempty, so the key is in every document this build emits — and the console
+// reads a null as "the CLI did not say" rather than "reaches none", which is
+// the availability rule the footprint's own paths are written under (§1). An
+// entry that omits the key, or writes it null, therefore reaches no task, and
+// that is what the read emits: an empty array, never a null.
+func TestChangeRequestAffectsIsAlwaysAnArray(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{"omitted", v3Doc(t, `, "affects": ["B"]`, ``)},
+		{"null", v3Doc(t, `"affects": ["B"]`, `"affects": null`)},
+		{"empty", v3Doc(t, `"affects": ["B"]`, `"affects": []`)},
+	} {
+		t.Run("a change request whose affects is "+tc.name, func(t *testing.T) {
+			doc := parseDoc(t, tc.body)
+			if len(doc.ContractChanges) != 1 {
+				t.Fatalf("the document carries %d change requests, want the one it shows", len(doc.ContractChanges))
+			}
+			if doc.ContractChanges[0].Affects == nil {
+				t.Error("the read carries a nil affects, so the key prints as null")
+			}
+			body, err := json.Marshal(doc)
+			if err != nil {
+				t.Fatalf("Marshal: %v", err)
+			}
+			if strings.Contains(string(body), `"affects":null`) {
+				t.Errorf("the document this build emits carries a null affects:\n%s", body)
+			}
+			if !strings.Contains(string(body), `"affects":[]`) {
+				t.Errorf("the document this build emits carries no empty affects:\n%s", body)
+			}
+		})
+	}
+}
+
 // TestGraphV3SpellsTargetVersions: the shape a target version has became a
 // promise with the second schema, and it is checked at every schema from there
 // on — so a v3 graph's versions are held to it too rather than read as free

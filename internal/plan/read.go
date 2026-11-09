@@ -230,6 +230,18 @@ func Normalize(path string, doc Document) (Document, error) {
 		}
 	}
 
+	// The change requests carry the rule a footprint's paths carry, and for the
+	// same reason: `affects` is written without omitempty, so a change request
+	// that reaches no task has to say so with an empty array. An entry omitting
+	// the key, or writing it null, reaches none — and the console reads a null
+	// as "the CLI did not say", which is a different answer from "reaches none"
+	// (§1's availability rule).
+	for i := range doc.ContractChanges {
+		if doc.ContractChanges[i].Affects == nil {
+			doc.ContractChanges[i].Affects = []string{}
+		}
+	}
+
 	if cycle := findCycle(doc); cycle != nil {
 		return Document{}, refuse(path, "the graph has a cycle (%s); every ready and blocked answer is a function of this graph, so a cyclic one has none to give",
 			strings.Join(cycle, " -> "))
