@@ -468,42 +468,88 @@ func TestFingerprintWithoutNumberIsCompleted(t *testing.T) {
 // names. The refusal is one attempt only, so the retry that follows it succeeds
 // (F28).
 func TestRefusedNamingLeavesNoIssueBehind(t *testing.T) {
-	ctx := context.Background()
-	g := gcpfake.NewGCS(t)
-	b := g.Bucket(t, "fugaro-issues")
-	fp := fingerprint("31")
-	race(t, fingerprintKey(fp), func() { g.FailObjectWrites("fugaro-issues", fingerprintKey(fp), 1) })
+	// The entry is there and names nothing, so it is what the retry completes.
+	t.Run("an entry that names nothing", func(t *testing.T) {
+		ctx := context.Background()
+		g := gcpfake.NewGCS(t)
+		b := g.Bucket(t, "fugaro-issues")
+		fp := fingerprint("31")
+		race(t, fingerprintKey(fp), func() { g.FailObjectWrites("fugaro-issues", fingerprintKey(fp), 1) })
 
-	issue := sharedIssue("update-20261107183012-48213", fp)
-	_, err := Upload(ctx, b, issue)
-	if err == nil {
-		t.Fatal("an upload reported success for a naming write the store refused")
-	}
-	if errors.Is(err, blobx.ErrConflict) {
-		t.Fatalf("the refused write read as a lost race: %v", err)
-	}
-	if rows, err := ListShared(ctx, b); err != nil || len(rows) != 0 {
-		t.Errorf("the listing after a refused naming = %+v, %v; want nothing", rows, err)
-	}
-	// The entry names nothing, so the fingerprint is not stranded either: it is
-	// what the retry completes.
-	v, err := readVersion(ctx, b, fingerprintKey(fp))
-	if err != nil {
-		t.Fatalf("reading the fingerprint's entry: %v", err)
-	}
-	if doc, err := decodeNumber(v.raw, fingerprintKey(fp)); err != nil || doc.Number != 0 {
-		t.Errorf("the fingerprint's entry = %+v, %v; want no number", doc, err)
-	}
-	// The retry takes the next number — the counter is not rolled back — and the
-	// store holds the bug once.
-	up, err := Upload(ctx, b, issue)
-	if err != nil || up.Number != 2 || up.Attached {
-		t.Fatalf("the retry = %+v, %v; want issue 2", up, err)
-	}
-	rows, err := ListShared(ctx, b)
-	if err != nil || len(rows) != 1 || rows[0].Number != up.Number {
-		t.Errorf("the listing after the retry = %+v, %v; want issue %d once", rows, err, up.Number)
-	}
+		issue := sharedIssue("update-20261107183012-48213", fp)
+		_, err := Upload(ctx, b, issue)
+		if err == nil {
+			t.Fatal("an upload reported success for a naming write the store refused")
+		}
+		if errors.Is(err, blobx.ErrConflict) {
+			t.Fatalf("the refused write read as a lost race: %v", err)
+		}
+		if rows, err := ListShared(ctx, b); err != nil || len(rows) != 0 {
+			t.Errorf("the listing after a refused naming = %+v, %v; want nothing", rows, err)
+		}
+		// The entry names nothing, so the fingerprint is not stranded either: it
+		// is what the retry completes.
+		v, err := readVersion(ctx, b, fingerprintKey(fp))
+		if err != nil {
+			t.Fatalf("reading the fingerprint's entry: %v", err)
+		}
+		if doc, err := decodeNumber(v.raw, fingerprintKey(fp)); err != nil || doc.Number != 0 {
+			t.Errorf("the fingerprint's entry = %+v, %v; want no number", doc, err)
+		}
+		// The retry takes the next number — the counter is not rolled back — and
+		// the store holds the bug once.
+		up, err := Upload(ctx, b, issue)
+		if err != nil || up.Number != 2 || up.Attached {
+			t.Fatalf("the retry = %+v, %v; want issue 2", up, err)
+		}
+		rows, err := ListShared(ctx, b)
+		if err != nil || len(rows) != 1 || rows[0].Number != up.Number {
+			t.Errorf("the listing after the retry = %+v, %v; want issue %d once", rows, err, up.Number)
+		}
+	})
+
+	// The entry itself goes away inside the naming window: a launcher can
+	// delete any object under the prefix (F24). An entry that is not there
+	// names no number either, and must be read as that rather than as
+	// "unknown": a record left for it is an issue no fingerprint names, listed
+	// as an ordinary pending issue that anybody can claim and file as a
+	// duplicate of the retry's.
+	t.Run("an entry that went away", func(t *testing.T) {
+		ctx := context.Background()
+		g := gcpfake.NewGCS(t)
+		b := g.Bucket(t, "fugaro-issues")
+		fp := fingerprint("33")
+		race(t, fingerprintKey(fp), func() {
+			v, err := readVersion(ctx, b, fingerprintKey(fp))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := b.DeleteIf(ctx, fingerprintKey(fp), v.gen, v.raw); err != nil {
+				t.Fatal(err)
+			}
+			g.FailObjectWrites("fugaro-issues", fingerprintKey(fp), 1)
+		})
+
+		issue := sharedIssue("update-20261107183012-48213", fp)
+		if _, err := Upload(ctx, b, issue); err == nil {
+			t.Fatal("an upload reported success for a naming write the store refused")
+		}
+		if rows, err := ListShared(ctx, b); err != nil || len(rows) != 0 {
+			t.Errorf("the listing after the naming = %+v, %v; want nothing", rows, err)
+		}
+		if _, err := readVersion(ctx, b, fingerprintKey(fp)); !errors.Is(err, blobx.ErrNotExist) {
+			t.Errorf("the fingerprint's entry after the naming = %v; want it still gone", err)
+		}
+		// The retry takes the next number and the store holds the bug once.
+		up, err := Upload(ctx, b, issue)
+		if err != nil || up.Number != 2 || up.Attached {
+			t.Fatalf("the retry = %+v, %v; want issue 2", up, err)
+		}
+		rows, err := ListShared(ctx, b)
+		if err != nil || len(rows) != 1 || rows[0].Number != up.Number {
+			t.Errorf("the listing after the retry = %+v, %v; want issue %d once", rows, err, up.Number)
+		}
+	})
 }
 
 // A naming write that landed before its answer was lost is the case the entry

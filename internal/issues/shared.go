@@ -235,8 +235,11 @@ func occurrenceKey(number int, occ Occurrence) string {
 // one more occurrence of the issue that fingerprint names (D1724, F21).
 //
 // i is the record as the local store has it: no number yet, and not uploaded.
-// An error means nothing was written under a number this upload took, so a
-// caller may retry the whole call.
+// An error means no issue of this upload's is left in the store under a number
+// it took, so a caller may retry the whole call — bar one case: when the
+// fingerprint's own entry cannot be read back at all, the record is left where
+// it is, because deleting it could strand a fingerprint on an issue the store
+// does not have, and there a retry that meets the record attaches to it.
 func Upload(ctx context.Context, b *blobx.Bucket, i Issue) (Uploaded, error) {
 	if err := i.Validate(); err != nil {
 		return Uploaded{}, err
@@ -344,10 +347,11 @@ func Upload(ctx context.Context, b *blobx.Bucket, i Issue) (Uploaded, error) {
 			// — the upload is done, and only its answer went missing. It names
 			// nothing or somebody else — the issue this attempt wrote is an
 			// orphan, and dropping it is what keeps the retry a caller makes
-			// from leaving a second issue of one fingerprint behind. A read that
-			// fails leaves the record alone: debris a later upload meets is
-			// recoverable, a fingerprint the entry names with no issue under it
-			// is not.
+			// from leaving a second issue of one fingerprint behind. The entry
+			// gone counts as naming nothing, which is what it is. A read that
+			// fails for any other reason leaves the record alone: debris a
+			// later upload meets is recoverable, a fingerprint the entry names
+			// with no issue under it is not.
 			holds, rerr := entryNames(ctx, b, key, number)
 			if rerr == nil && holds {
 				return Uploaded{Number: number}, nil
@@ -561,9 +565,15 @@ func decodeNumber(raw []byte, key string) (numberDoc, error) {
 
 // entryNames reports whether a fingerprint's entry names a number. The entry is
 // the truth about a fingerprint (F21), so it decides what a write that failed
-// on its way back left behind.
+// on its way back left behind. An entry that is not there names no number: a
+// launcher can delete it inside any window (F24), and a caller that read the
+// missing entry as "unknown" would leave the issue it wrote in the store as one
+// no fingerprint names, which the retry that follows takes a second number for.
 func entryNames(ctx context.Context, b *blobx.Bucket, key string, number int) (bool, error) {
 	v, err := readVersion(ctx, b, key)
+	if errors.Is(err, blobx.ErrNotExist) {
+		return false, nil
+	}
 	if err != nil {
 		return false, err
 	}
