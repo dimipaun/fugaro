@@ -1050,12 +1050,12 @@ is untouched by anything here.
     review run's own task**, whose `agent.oauth_token` (`internal/task/task.go:169`) *is* that account and
     whose **absence is the default** — the field may never spell `default` itself
     (`internal/task/task.go:1094`) — so the fix-round launcher reads the review run's task with
-    `ReadTask` (`internal/runstore/runstore.go:1283`, which validates what it reads), maps "" through the
+    `ReadTask` (`internal/runstore/runstore.go:1549`, which validates what it reads), maps "" through the
     rule the launch already prints with (`reviewAccount`, `internal/cli/review.go:198`), and puts
     `config.DefaultClaudeAccount` on the wire: `readVerifyRequest` refuses an empty account as a bad
     **call**, not as a `valid:false` about an artifact.
     **`oauth_account` in the run's record is deliberately not that source**
-    (`internal/runstore/runstore.go:656`): it is documented as informational, never read by anything that
+    (`internal/runstore/runstore.go:852`): it is documented as informational, never read by anything that
     makes a security decision, and the **job** writes it itself from the credential name the service
     answered with (`recordCredential`, `internal/runner/runner.go:808`) — so it may be "" or a credential
     name, and a value that is neither the account nor always there cannot key a verify call.
@@ -1187,7 +1187,7 @@ that is still the check's step 3.
   and the three places the installation half below made false: `run.go`'s refusal, `docs/recipes.md`'s
   review paragraph and the working skill's sentence about a service that does not admit the caller).
 - **The gate the flip made load-bearing, and the value it moved with it.** `reviewJobSince`
-  (`internal/cli/recipes_skew.go:420`) named `"0.19.0"` — the release that deploys the review-only
+  (`internal/cli/recipes_skew.go:467`) named `"0.19.0"` — the release that deploys the review-only
   variant — and no launch ever reached it while `reviewJobAdmitted` was `false`; the flip is what makes
   the value decide anything, and a `"0.19.0"` value then admits an image that **cannot serve the
   launch**: the variant is there and the review run's own model path (CSR13, PR #1777, first tagged in
@@ -1197,7 +1197,7 @@ that is still the check's step 3.
   (§2's rule, §6.4's note): the constant and its comment, `TestRecipesSkewRefusesReviewJobOnAnOldImage`
   (whose `0.19.0` row is a refused one now and whose admitted row is `"0.20.0"`, derived image and clone
   alike), two new tests — `TestReviewJobSinceHasAReleaseBullet`, the reader this constant never had,
-  since `docs/release.md:225`'s checklist bullet is what holds it to a release and every sibling
+  since `docs/release.md:227`'s checklist bullet is what holds it to a release and every sibling
   `…Since` constant has that test and this one did not, and `TestReviewJobSinceCitationsPointAtItsOwnLine`,
   because the citation checks resolve a line against its file and never against its subject, which is
   how this constant's own citations here went stale in the change that moved it — the same file's
@@ -2252,7 +2252,7 @@ one writer per level is what keeps the two reviews apart.
 `internal/cli/validate.go` remain **CSR6's** (§2), and no task here books them: CSR8–CSR16 add **no
 `fugaro.yaml`, task, recipe or wire key**, so the `…Since` rule (E6) gives them nothing to gate. The one
 constant whose *value* the release slot decides — `reviewJobSince`
-(`internal/cli/recipes_skew.go:420`, `"0.20.0"` since CSR11's flip of 2026-11-08) — is **not** moved by
+(`internal/cli/recipes_skew.go:467`, `"0.20.0"` since CSR11's flip of 2026-11-08) — is **not** moved by
 CSR8–CSR16: it is the release slot's consequence, and **Open item 3's answer of 2026-11-05 is 0.20.0
 "Quokka"**, so the value names that release — and **CSR11's flip of 2026-11-08 is the change that moved
 it**, taking that file alone under §2's rule: 0.20.0's own change had nothing to move while every launch
@@ -2412,8 +2412,8 @@ recommendation). **Why, in one line:** the 0.19.0 release in flight carries none
 release that carries the flip has to carry the tasks that make the flip work — the placement, the
 registration, the verifier and the switch's own removal. Two consequences, settled together as the item
 said: the release note's `### For operators` sentence is written for that release (§6.5), and
-**`reviewJobSince` is `"0.20.0"`** — `docs/release.md:225`'s bullet verifies it against the release
-whose runner can serve the launch, `internal/cli/recipes_skew.go:420` holds it, and a wrong value refuses
+**`reviewJobSince` is `"0.20.0"`** — `docs/release.md:227`'s bullet verifies it against the release
+whose runner can serve the launch, `internal/cli/recipes_skew.go:467` holds it, and a wrong value refuses
 too late (a launch names a variant the installation has not deployed, or a runner that cannot serve one)
 or too early (an installation that holds both stays blocked). **The move waited for CSR11's flip**:
 0.20.0's own change did not take it, because while `reviewJobAdmitted` was `false` this gate was never

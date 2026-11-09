@@ -295,8 +295,9 @@ func TestManagedFlagSaysWhichHalfIsMissingWhenTheLabelIsRefused(t *testing.T) {
 
 // TestManagedFlagFailsClosedOnAnUnreadableProjectNumber: the number is what
 // proves the runs bucket is the project's own, and it comes from the cloud. A
-// project the caller cannot read is refused before the confirmation is asked
-// for, and nothing is written — an unreadable number is never a match.
+// project the caller cannot read is refused before anything is said to have
+// been agreed to, and nothing is written — an unreadable number is never a
+// match.
 func TestManagedFlagFailsClosedOnAnUnreadableProjectNumber(t *testing.T) {
 	r := managedFlagRig(t)
 	r.crm.DenyGet(initProject)
@@ -305,8 +306,8 @@ func TestManagedFlagFailsClosedOnAnUnreadableProjectNumber(t *testing.T) {
 	if err == nil {
 		t.Fatalf("the flag was written with no project number read:\n%s", out)
 	}
-	if strings.Contains(out, "Type "+initProject) {
-		t.Errorf("the confirmation was asked for with no project number read:\n%s", out)
+	if strings.Contains(out, "flagging GCP project") {
+		t.Errorf("the statement of what flagging writes was printed with no project number read:\n%s", out)
 	}
 	if got, ok := managedFlagAt(t, r.gcs, initRunsBucket); ok {
 		t.Errorf("a refused run wrote gs://%s/%s = %s", initRunsBucket, managed.MarkerObject, got)
@@ -456,10 +457,11 @@ func TestManagedFlagRefusesEveryCodingAgentMarker(t *testing.T) {
 
 // TestManagedFlagAcceptsTheIDETerminal is the accepted half of the marker
 // above: a person running this in the Claude Code IDE extension's own terminal
-// carries CLAUDE_CODE_SSE_PORT alone, and it is their terminal — so the typed
-// GCP project ID confirms the flag as it does with no marker set, and the run
-// says once which terminal it read the confirmation from. The person still
-// types the ID: the acceptance removes a false refusal and nothing else.
+// carries CLAUDE_CODE_SSE_PORT alone, and it is their terminal — so the flag
+// runs there as it does with no marker set, and the run says once which
+// terminal the session was read as. The acceptance removes a false refusal and
+// nothing else: the ID is still the argument, and the argument is still the
+// whole of what this command takes.
 func TestManagedFlagAcceptsTheIDETerminal(t *testing.T) {
 	r := managedFlagRig(t)
 	terminal(t, true)
@@ -469,69 +471,68 @@ func TestManagedFlagAcceptsTheIDETerminal(t *testing.T) {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	if _, ok := managedFlagAt(t, r.gcs, initRunsBucket); !ok {
-		t.Fatalf("the marker of gs://%s is not there after the IDE terminal typed the ID:\n%s", initRunsBucket, out)
+		t.Fatalf("the marker of gs://%s is not there after the IDE terminal ran the flag:\n%s", initRunsBucket, out)
 	}
-	if n := strings.Count(out, ideNotice); n != 1 {
-		t.Errorf("the IDE-terminal line is printed %d times, want 1:\n%s", n, out)
-	}
-	// The ID typed is still what confirms it: the same session with the wrong
-	// line writes nothing.
+	// The same session with no terminal is a tool call and is refused: the
+	// acceptance is the terminal's, and the argument alone does not carry it.
 	r2 := managedFlagRig(t)
-	terminal(t, true)
+	noTerminal(t)
 	t.Setenv(agentenv.IDEMarker, "1")
-	if out, _, err := executeStdin(t, "proj-9999\n", managedFlagArgs()...); err == nil {
-		t.Fatalf("a wrong line confirmed the flag from an IDE terminal:\n%s", out)
+	if out, _, err := execute(t, managedFlagArgs()...); err == nil {
+		t.Fatalf("the flag ran from the IDE marker with no terminal:\n%s", out)
 	}
 	if _, ok := managedFlagAt(t, r2.gcs, initRunsBucket); ok {
 		t.Errorf("a refused run wrote gs://%s/%s", initRunsBucket, managed.MarkerObject)
 	}
 }
 
-// TestManagedFlagNeedsTheExactProjectIDTyped: the confirmation is a typed
-// string and the string is the GCP project ID — the whole boundary D58's
-// answer has, since the marker is what turns the confirmation off. Without a
-// terminal there is no confirmation at all, and anything but the exact ID —
-// another project's, a prefix of this one, the same ID in another case — is
-// not it. Nothing is written by any of them.
-func TestManagedFlagNeedsTheExactProjectIDTyped(t *testing.T) {
-	r := managedFlagRig(t)
-	// No terminal: refused, and the refusal names no flag that would stand in
-	// for the typed ID.
-	out, _, err := execute(t, managedFlagArgs()...)
-	if err == nil {
-		t.Fatalf("the flag ran with no terminal:\n%s", out)
-	}
-	if ExitCode(err) != ExitUserError {
-		t.Errorf("exit %d, want %d", ExitCode(err), ExitUserError)
-	}
-	if !strings.Contains(err.Error(), "needs a real terminal") {
-		t.Errorf("the refusal does not say a terminal is needed: %v", err)
-	}
-	assertNamesNoFlagItLacks(t, newManagedFlagCmd(), err)
-	terminal(t, true)
-	for name, typed := range map[string]string{
-		"nothing typed":            "\n",
-		"another project":          "proj-9999\n",
-		"a prefix of this project": "proj-123\n",
-		"the same ID uppercased":   "PROJ-1234\n",
-		"the ID with a space":      " proj-1234 extra\n",
-	} {
-		t.Run(name, func(t *testing.T) {
-			out, _, err := executeStdin(t, typed, managedFlagArgs()...)
-			if err == nil {
-				t.Fatalf("the flag was written with %q typed:\n%s", typed, out)
-			}
-			if ExitCode(err) != ExitUserError {
-				t.Errorf("exit %d, want %d", ExitCode(err), ExitUserError)
-			}
-			if !strings.Contains(err.Error(), "not confirmed") {
-				t.Errorf("the refusal does not say the confirmation was not given: %v", err)
-			}
-			if got, ok := managedFlagAt(t, r.gcs, initRunsBucket); ok {
-				t.Errorf("a refused run wrote gs://%s/%s = %s", initRunsBucket, managed.MarkerObject, got)
-			}
-		})
-	}
+// TestFlagTakesTheProjectIDAsAnArgument is D1541's shape for this command, and
+// the property that makes consent by argument what it is: the GCP project ID
+// on the command line is the whole of the permission, so there is no terminal
+// to be at and no line to type — the invocation that was run is what was
+// agreed to, and it is the shell's own record of it (design D1541: consent by
+// argument, not typing at a prompt). The other direction is the same rule: an
+// ID that is not this installation's is refused as an argument, and no flag
+// stands in for naming the project.
+func TestFlagTakesTheProjectIDAsAnArgument(t *testing.T) {
+	t.Run("the exact ID as the argument writes, with no terminal and no stdin", func(t *testing.T) {
+		r := managedFlagRig(t)
+		noTerminal(t)
+		out, _, err := executeStdin(t, "", managedFlagArgs()...)
+		if err != nil {
+			t.Fatalf("the ID as the argument did not flag the project: %v\n%s", err, out)
+		}
+		if _, ok := managedFlagAt(t, r.gcs, initRunsBucket); !ok {
+			t.Fatalf("the ID as the argument wrote no gs://%s/%s:\n%s", initRunsBucket, managed.MarkerObject, out)
+		}
+		// The real read the apply gate takes, so what is pinned is a managed
+		// project and not one fake map.
+		if !managedFlagIsManaged(t, r) {
+			t.Error("the managed read does not believe the marker the argument wrote")
+		}
+	})
+
+	t.Run("another project's ID is refused, and no flag stands in for the argument", func(t *testing.T) {
+		r := managedFlagRig(t)
+		noTerminal(t)
+		// The installation's own ID typed on stdin, which is what the
+		// confirmation used to take and now confirms nothing: the argument is
+		// the declaration, and this one names another project.
+		out, _, err := executeStdin(t, initProject+"\n", "managed", "flag", "proj-9999", "--budget", "50", "--budget-currency", "USD")
+		if err == nil {
+			t.Fatalf("the flag ran for an ID the installation is not in:\n%s", out)
+		}
+		if ExitCode(err) != ExitUserError {
+			t.Errorf("exit %d, want %d", ExitCode(err), ExitUserError)
+		}
+		if !strings.Contains(err.Error(), "proj-9999") {
+			t.Errorf("the refusal does not name the argument it refused: %v", err)
+		}
+		assertNamesNoFlagItLacks(t, newManagedFlagCmd(), err)
+		if got, ok := managedFlagAt(t, r.gcs, initRunsBucket); ok {
+			t.Errorf("a refused run wrote gs://%s/%s = %s", initRunsBucket, managed.MarkerObject, got)
+		}
+	})
 }
 
 // TestManagedFlagNamesOneProjectAndNoOther: the command is per project with
@@ -825,15 +826,15 @@ func TestManagedFlagRefusesAProjectThatAlreadyRecordsAnAmount(t *testing.T) {
 	}
 }
 
-// TestManagedFlagOffersNoWayAroundTheTypedID: the confirmation is the whole
-// boundary D58's answer has, so nothing stands in for it — no --yes, no
-// --non-interactive, and no flag naming more than one project. This is the
-// assertion a later change that added one would break.
-func TestManagedFlagOffersNoWayAroundTheTypedID(t *testing.T) {
+// TestManagedFlagOffersNoWayAroundTheArgument: the PROJECT_ID argument is the
+// whole boundary D1541 gives this command, so nothing stands in for it — no
+// --yes, no --non-interactive, and no flag naming more than one project. This
+// is the assertion a later change that added one would break.
+func TestManagedFlagOffersNoWayAroundTheArgument(t *testing.T) {
 	cmd := newManagedFlagCmd()
 	for _, name := range []string{"yes", "non-interactive", "all", "projects", "force", "allow-delete"} {
 		if cmd.Flags().Lookup(name) != nil || cmd.PersistentFlags().Lookup(name) != nil {
-			t.Errorf("fugaro managed flag defines --%s: the typed GCP project ID is the only confirmation it takes", name)
+			t.Errorf("fugaro managed flag defines --%s: the exact GCP project ID as the argument is the only consent it takes", name)
 		}
 	}
 	// What it does define: the cloud flags, and the required budget pair.
@@ -893,9 +894,10 @@ func TestManagedFlagRefusesWhenTheRunsBucketRootRefusesTheWrite(t *testing.T) {
 		t.Errorf("exit %d, want %d (a user error: run this as an operator)", ExitCode(err), ExitUserError)
 	}
 	// The reach it names is the launcher condition's (gcp.LauncherBucketCondition):
-	// runs/ and, since 0.9.0's sealed budget token, tokens/.
-	if !strings.Contains(err.Error(), "a launcher writes only runs/ and tokens/") {
-		t.Errorf("the refusal does not name the launcher's write reach as runs/ and tokens/: %v", err)
+	// runs/, tokens/ since 0.9.0's sealed budget token, and issues/ since the
+	// shared issue store.
+	if !strings.Contains(err.Error(), "a launcher writes only runs/, tokens/ and issues/") {
+		t.Errorf("the refusal does not name the launcher's write reach as runs/, tokens/ and issues/: %v", err)
 	}
 	if got, ok := managedFlagAt(t, r.gcs, initRunsBucket); ok {
 		t.Errorf("a refused run wrote gs://%s/%s = %s", initRunsBucket, managed.MarkerObject, got)

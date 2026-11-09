@@ -889,6 +889,11 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 			if err := checkCloneJobsImage(ctx, env, spec, warn); err != nil {
 				return launchResult{}, err
 			}
+			// The security: block, the same shape as the rigor: gate above
+			// and for the same reason: see checkSecurityImage.
+			if err := checkCloneSecurityImage(ctx, env, spec, warn); err != nil {
+				return launchResult{}, err
+			}
 			// The run's own rigor request, gated on the field the same way:
 			// a runner older than rigorRequestSince refuses a task carrying
 			// rigor or paths outright (task.Parse decodes with
@@ -1001,6 +1006,11 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 			if err := checkJobsImage(ctx, env, slug, spec, kind, warn); err != nil {
 				return launchResult{}, err
 			}
+			// The security: block, the same shape as the rigor: gate above and
+			// for the same reason: see checkSecurityImage.
+			if err := checkSecurityImage(ctx, env, slug, spec, kind, warn); err != nil {
+				return launchResult{}, err
+			}
 			// The same gate as the clone branch's above, and for the same
 			// reason: the request is a new task field, and a runner that
 			// predates it refuses the whole spec at bootstrap — bytes in the
@@ -1109,6 +1119,15 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 		// parses without echoing and reads the token for. Judged here, before
 		// the claim, the mint or the object, like the gates above.
 		if err := env.sealGate(ctx, slug, spec, kind, clone, warn); err != nil {
+			return launchResult{}, err
+		}
+		// The proxy's gate (G14): a run of a repository whose Bitbucket
+		// access is brokered is launched neither onto a job image whose
+		// runner predates the proxy nor on the Batch backend. Judged beside
+		// the seal's, from the same build record and the same local config,
+		// and before the claim and the task like every gate here — a launch
+		// that is not proxied is not judged at all (G9).
+		if err := env.proxyGate(ctx, slug, spec, kind, clone, warn); err != nil {
 			return launchResult{}, err
 		}
 		if err := checkMaxParallel(ctx, env); err != nil {
@@ -3923,49 +3942,16 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 	}
 	// The credentials service, when its switch is on for this repository and
 	// this execution is a repository's own job (job is the shared project job
-	// otherwise, and the service refuses that caller: see the helper). The auth
-	// the switch is judged with is the one the RUN will read — the ref's
-	// fugaro.yaml, else this machine's checkout of it (launchFileConfig, the
-	// same document cascadeLaunchRefusal judged a moment ago) — and never a
-	// copy stored when the record was written: an edit to it takes effect
-	// without another update, so a repository moved back to an auth the
-	// service does not serve is withheld at once. The record's own half
-	// carries the auth the apply that wrote it was built for, so the other
-	// direction needs no edit at all: a root applied before its owner
-	// committed the cascade is recorded held off, the job keeps the mounts
-	// that apply kept, and the address is never handed to an account that
-	// holds no roles/run.invoker to knock with.
+	// otherwise, and the service refuses that caller: see the helper). The
+	// pair the switch is judged with is repoServiceAuth's, read the same way
+	// by the proxy gate that has to know whether this launch is a proxied one
+	// (proxiedRepo) — one reader, because a gate reading the published node
+	// alone would refuse a launch whose run holds the repository's own token.
 	jobName := ""
 	if job != nil {
 		jobName = job.Name
 	}
-	// The read is skipped where there is no block to switch to: the answer is
-	// the same nil, and an installation with no service pays nothing for the
-	// gate it cannot pass.
-	//
-	// A document this launcher cannot read at all — `fugaro run --repo X` from
-	// a directory that holds no checkout of X, where launchFileConfig finds
-	// neither the run's ref in an object database nor a working tree to fall
-	// back to — leaves the auth unknown, and the switch's third condition
-	// cannot be judged here. The repository's own record stands in for it then,
-	// and this machine's tfvars of the repository root are the second answer
-	// (credentialsServiceLaunchEnv). Withholding the address instead would
-	// start a `cascade` run whose job mounts no model credential and halt at
-	// the service's door (D143) — the state every launch from outside a
-	// checkout was in before the switch was written down, and the one the
-	// desktop console's own launches would be in on every machine that did not
-	// apply the root itself: it spawns from a private empty directory, so
-	// launchFileConfig never answers there.
-	svcAuth, deployed := "", false
-	if env.lc != nil && env.lc.CredentialsService != nil {
-		svcAuth = checkoutAgentAuth(launchFileConfig(ctx, env, spec))
-		if svcAuth == "" {
-			var err error
-			if deployed, err = deployedRepoCredentialsService(env.lc, spec.Repo); err != nil {
-				fmt.Fprintf(launchWarn, "warning: whether %s's repository root carries the credentials service could not be read from this machine's tfvars (%s): the launch decides from the repository's record alone\n", spec.Repo, oneLineCLI(err.Error()))
-			}
-		}
-	}
+	svcAuth, deployed := env.repoServiceAuth(ctx, spec, launchWarn)
 	lspec.Env = credentialsServiceLaunchEnv(env.lc, jobName, spec.Repo, svcAuth, deployed)
 	if reviewJob {
 		// The marker is the whole fact (internal/runner's EnvReviewJob): the
@@ -4016,6 +4002,61 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		return res, remote(fmt.Errorf("launched %s but could not record launch.json (fugaro run --retry %s records it from result.json): %w", ref.Name, res.Run, err))
 	}
 	return done(l, "launched") // the claim stays in place for good
+}
+
+// repoServiceAuth is the pair credentialsServiceLaunchEnv judges the switch's
+// third condition with, read the same way by its two callers: the launch that
+// writes the variable onto the execution, and the proxy gate that has to know
+// whether the run it starts is a proxied one (proxiedRepo). One reader,
+// because the two answers have to be one: a gate that judged proxiedness from
+// the published node alone refuses, as brokered, a launch whose run is handed
+// no service and holds the repository's ordinary Bitbucket token.
+//
+// The auth is the one the RUN will read — the ref's fugaro.yaml, else this
+// machine's checkout of it (launchFileConfig, the same document
+// cascadeLaunchRefusal judged a moment ago) — and never a copy stored when the
+// record was written: an edit to it takes effect without another update, so a
+// repository moved back to an auth the service does not serve is withheld at
+// once. The record's own half carries the auth the apply that wrote it was
+// built for, so the other direction needs no edit at all: a root applied
+// before its owner committed the cascade is recorded held off, the job keeps
+// the mounts that apply kept, and the address is never handed to an account
+// that holds no roles/run.invoker to knock with.
+//
+// The read is skipped where there is no block to switch to: the answer is the
+// same nil, and an installation with no service pays nothing for the gate it
+// cannot pass.
+//
+// A document this launcher cannot read at all — `fugaro run --repo X` from a
+// directory that holds no checkout of X, where launchFileConfig finds neither
+// the run's ref in an object database nor a working tree to fall back to —
+// leaves the auth unknown, and the switch's third condition cannot be judged
+// here. The repository's own record stands in for it then, and this machine's
+// tfvars of the repository root are the second answer
+// (deployedRepoCredentialsService). Withholding the address instead would
+// start a `cascade` run whose job mounts no model credential and halt at the
+// service's door (D143) — the state every launch from outside a checkout was
+// in before the switch was written down, and the one the desktop console's own
+// launches would be in on every machine that did not apply the root itself: it
+// spawns from a private empty directory, so launchFileConfig never answers
+// there.
+//
+// warn is where the one failure this read can report goes. The launch passes
+// the launch's own writer; the gate passes io.Discard, because it is the same
+// read of the same documents and the launch words the warning once.
+func (e *cloudEnv) repoServiceAuth(ctx context.Context, spec *task.Spec, warn io.Writer) (string, bool) {
+	if e.lc == nil || e.lc.CredentialsService == nil {
+		return "", false
+	}
+	auth := checkoutAgentAuth(launchFileConfig(ctx, e, spec))
+	if auth != "" {
+		return auth, false
+	}
+	deployed, err := deployedRepoCredentialsService(e.lc, spec.Repo)
+	if err != nil {
+		fmt.Fprintf(warn, "warning: whether %s's repository root carries the credentials service could not be read from this machine's tfvars (%s): the launch decides from the repository's record alone\n", spec.Repo, oneLineCLI(err.Error()))
+	}
+	return "", deployed
 }
 
 // credentialsServiceLaunchEnv is what this launch puts on the execution's
@@ -4078,6 +4119,11 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 // answer for a different reason -- there is no address to hand a job, and the
 // service's revision does not exist yet (fillCredentialsAudience writes it on
 // the apply after the one that created the service).
+//
+// The gate that judges whether a run is a proxied one asks this same function
+// — a job it writes the variable onto is a proxied run's job and no other's
+// (proxiedRepo) — so the two answers cannot drift apart.
+//
 // deployed is this machine's record of the repository root itself, read only
 // where the document could not be (see the call site): the tfvars the last
 // apply of that root was built from, which carry the service exactly when that

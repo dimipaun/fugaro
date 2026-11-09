@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"gocloud.dev/blob"
@@ -185,5 +184,5 @@ func (b BucketFacts) Facts(ctx context.Context, from, to int64) (map[int64][]Run
 // about. Anything else — the bucket refused the read — is the day's.
 func fatalRead(err error) bool {
 	return err != nil && !errors.Is(err, runstore.ErrNotFound) &&
-		!errors.Is(err, runstore.ErrTooLarge) && !strings.HasPrefix(err.Error(), "decoding result.json")
+		!errors.Is(err, runstore.ErrTooLarge) && !errors.Is(err, runstore.ErrCorrupt)
 }

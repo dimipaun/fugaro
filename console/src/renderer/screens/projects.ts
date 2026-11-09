@@ -13,14 +13,20 @@
 // (`read`, `unavailable`, `not-built`) and -- when the state is not `read` --
 // the sentence that says why. A panel has a count only when a document was read
 // (`count === null` means no measurement exists), which is what makes "not built"
-// impossible to draw as a zero: there is no number for a screen to draw. Two of
-// the seven have no command behind them on this tree at all:
+// impossible to draw as a zero: there is no number for a screen to draw. One of
+// the seven has no command behind it on this tree at all:
 //
-//   - **the policy object** -- `fugaro project show --json` ships with
-//     project-centric phase 1 (PR #390), which is not in this tree, so the panel
-//     draws the *not readable with this CLI* state the design asks for **from
-//     its first commit** rather than waiting for the command to exist;
 //   - **the enrollment allow-list** -- project-centric phase 1 and 4.
+//
+// **The policy panel stopped being a not-built one** (the managed-project
+// screens plan's CM10). It read `fugaro project show --json` -- a command this
+// tree has never had -- and it reads `fugaro project policy show --json` now
+// (`policy.show`, CM4's row, D1481): `{project, policy}`, drawn by CM7's
+// section, which is why `ProjectsInputs` carries that document and doctor's
+// checks and `ProjectsModel` carries `policy`. Its source line is
+// `PROJECTS_SOURCE_LINES`'s own row and **not** the fallback: an operation named
+// `policy.show` with no row would draw `fugaro policy.show`, an argv no CLI
+// answers.
 //
 // **The run list is gone, and the panels derived from it went with it.** The
 // jobs table and the two repository claims that needed `runs ls` (the
@@ -93,6 +99,8 @@ import { putReading, putText } from '../app'
 import type { ElementLike } from '../app'
 import { BUSY_SLOT_CLASS } from '../section'
 import { disabledWrite } from '../writes'
+import { POLICY_NODE_SOURCE, POLICY_NODE_SHAPE, buildPolicyNotes, policyNotesBody } from './policynotes'
+import type { PolicyNotesModel } from './policynotes'
 
 // ---------------------------------------------------------------------------
 // The source lines, and the panels.
@@ -111,15 +119,15 @@ export const PROJECTS_SOURCE_LINES: Readonly<Record<string, string>> = Object.fr
   'secrets.inventory': 'fugaro secrets ls --json',
   'models.list': 'fugaro models ls --json',
   'settings.read': 'fugaro settings --json',
+  // CM10's own row, and it is settled **here** rather than left to the
+  // constructors' fallback: `policy.show` is the operation the flipped policy
+  // panel reads, and `\`fugaro ${operation}\`` would spell `fugaro policy.show`
+  // -- an argv no CLI answers. The string is the one CM7's own module draws
+  // (`POLICY_NODE_SOURCE`), quoted once as the command a person can run rather
+  // than as the argv the console spawns (`--json` and the two project flags are
+  // `src/main/spawn.ts`'s).
+  'policy.show': POLICY_NODE_SOURCE,
 })
-
-/**
- * POLICY_SOURCE_LINE is the command the policy panel *would* read, quoted from
- * the design's own sentence about it (section 6.2 screen 3). No operation in
- * `CONSOLE_OPERATIONS` carries it, and the panel's `operation` is null: the
- * screen says what it cannot read rather than claiming a read it never made.
- */
-export const POLICY_SOURCE_LINE = 'fugaro project show --json'
 
 /** ENROLLMENT_SOURCE_LINE is the same honesty for the allow-list: there is no
  * command on this tree, so the panel names the phase it ships with. */
@@ -323,11 +331,22 @@ export interface ProjectSecrets {
  * sentence for a read that was refused, keyed by operation, which is design
  * section 6.3's rule that a refused read shows the CLI's text rather than an
  * apology this console invented.
+ *
+ * **`policy` and `doctor` are the policy panel's two documents** (CM10): the
+ * panel is a member of the seven this builder draws, and its reads are later
+ * ones, so the entry hands them here and redraws the body when either lands.
+ * They are `unknown` on the same terms as the three above, and `null` is the
+ * same "no document arrived" -- including the case of a read that has not
+ * answered yet, which is the sentence the panel's own node block draws beside
+ * it (`policynotes.ts`'s `POLICY_NODE_ABSENT`, and the same string `absent`
+ * builds from the source line).
  */
 export interface ProjectsInputs {
   readonly budget: unknown
   readonly accounts: unknown
   readonly secrets: unknown
+  readonly policy: unknown
+  readonly doctor: unknown
   readonly sentences?: Partial<Record<OperationName, string>> | undefined
 }
 
@@ -343,6 +362,10 @@ export interface ProjectsModel {
   readonly repositories: ProjectRepositories
   readonly accounts: ProjectAccounts
   readonly secrets: ProjectSecrets
+  /** The policy section's own model (CM7's `policynotes.ts`), built from the two
+   * documents `ProjectsInputs` carries and drawn by the policy panel's body: the
+   * panel is the frame, and this is what is under it (CM10). */
+  readonly policy: PolicyNotesModel
   readonly warnings: readonly string[]
 }
 
@@ -606,12 +629,11 @@ function notBuiltPanel(key: ProjectsPanelKey, title: string, source: string, bec
   }
 }
 
-/** POLICY_BECAUSE and ENROLLMENT_BECAUSE are the two not-built reasons, in the
- * console's own words. They both begin with the design's phrase for this state
- * -- *not readable with this CLI* -- so that a reader (and a test) can find it. */
-const POLICY_BECAUSE =
-  'not readable with this CLI: the policy object ships with project-centric phase 1 (`fugaro project show --json`, PR #390), so there is no document to draw'
-
+/** ENROLLMENT_BECAUSE is the not-built reason, in the console's own words. It
+ * begins with the design's phrase for this state -- *not readable with this CLI*
+ * -- so that a reader (and a test) can find it. The policy panel's own reason
+ * went with its not-built state (CM10): the panel reads, so its reason is the
+ * CLI's refusal or the sentence naming the read (`absent`). */
 const ENROLLMENT_BECAUSE =
   'not readable with this CLI: the enrollment allow-list ships with project-centric phase 1 and phase 4; the repositories below are the ones the CLI reports, not the ones the project admits'
 
@@ -769,6 +791,12 @@ export function buildProjectsModel(inputs: ProjectsInputs): ProjectsModel {
     ]
   })
 
+  // The policy notes (CM10): CM7's section, built from the policy panel's own
+  // document and from doctor's checks. The builder is pure, so the panel's state
+  // is decided here and the body under it is drawn from the same model.
+  const policyNotes = buildPolicyNotes({ document: inputs.policy, doctor: inputs.doctor })
+  const policyNodeState = policyNotes.node.state
+
   const panels: ProjectsPanel[] = [
     budget === null
       ? unavailablePanel('caps', 'caps', 'budget.show', absent('budget.show', inputs.sentences))
@@ -806,7 +834,23 @@ export function buildProjectsModel(inputs: ProjectsInputs): ProjectsModel {
     secretList === null
       ? unavailablePanel('secrets', 'secrets inventory', 'secrets.inventory', absent('secrets.inventory', inputs.sentences))
       : readPanel('secrets', 'secrets inventory', 'secrets.inventory', secretEntries.length),
-    notBuiltPanel('policy', 'policy', POLICY_SOURCE_LINE, POLICY_BECAUSE),
+    // The policy panel reads now (CM10). `read` is the design's "a document
+    // arrived and the panel is drawn from it", and the node's two answering
+    // states are both that: a published node, and the read's own answer that
+    // none is published (`"policy": null` -- a fact about the project, and one
+    // the panel's body words). The count is the node's allow-list, which is the
+    // one figure the panel measures -- zero where the node admits nobody, which
+    // is a **measured** zero and not the unbuilt zero the plan forbids.
+    policyNodeState === 'read' || policyNodeState === 'no-policy'
+      ? readPanel('policy', 'policy', 'policy.show', policyNotes.node.allowRepos.length)
+      : unavailablePanel(
+          'policy',
+          'policy',
+          'policy.show',
+          policyNodeState === 'shape'
+            ? POLICY_NODE_SHAPE
+            : absent('policy.show', inputs.sentences),
+        ),
     notBuiltPanel('enrollment', 'enrollment allow-list', ENROLLMENT_SOURCE_LINE, ENROLLMENT_BECAUSE),
   ]
 
@@ -821,6 +865,7 @@ export function buildProjectsModel(inputs: ProjectsInputs): ProjectsModel {
     repositories,
     accounts: projectAccounts,
     secrets: { entries: secretEntries, note: SECRETS_ARRAY_NOTE },
+    policy: policyNotes,
     warnings,
   }
 }
@@ -1534,9 +1579,13 @@ const PANEL_BODIES: Readonly<Record<ProjectsPanelKey, (factory: ScreenFactory, m
     repositories: (factory, model) => repositoriesPanel(factory, model.repositories),
     accounts: (factory, model) => accountsPanel(factory, model.accounts),
     secrets: (factory, model) => secretsPanel(factory, model.secrets),
-    // The two not-built panels draw nothing but their frame: no body, no list,
-    // no count. Their reason is the frame's own `because`.
-    policy: () => null,
+    // The policy panel's body is CM7's section (CM10): the node's block and the
+    // checks' block, drawn from the model the two documents above built. The
+    // panel's frame is this file's, which is what the flip changed -- the panel
+    // is still a member of `PROJECT_PANEL_KEYS` and still drawn by `fillProjects`.
+    policy: (factory, model) => policyNotesBody(factory, model.policy),
+    // The not-built panel draws nothing but its frame: no body, no list, no
+    // count. Its reason is the frame's own `because`.
     enrollment: () => null,
     // The eighth panel is this screen's **second read's**, and it is not drawn
     // from a `ProjectsModel` at all: `fillProjectsModels` draws it into a host
@@ -1851,9 +1900,37 @@ export const PROJECTS_SETTINGS_BUSY = 'Reading the project’s settings…'
  * `section.projects`, for `PROJECTS_MODELS_CLASS`'s reason. */
 export const PROJECTS_SETTINGS_CLASS = 'projects-settings'
 
+/** PROJECTS_MANAGED_CLASS, PROJECTS_ACCOUNT_KEYS_CLASS,
+ * PROJECTS_RETIREMENTS_CLASS and PROJECTS_CREDENTIALS_SERVICE_CLASS are the
+ * hosts CM10's four later sections are filled into -- the fourth, fifth, sixth
+ * and seventh siblings of `projects-body`, drawn for `PROJECTS_MODELS_CLASS`'s
+ * reason: one element wearing two reads' claims would have whichever landed
+ * first take the other's claim down. **The tab owns the frame and the section's
+ * own module owns what is inside it**, which is why the host's class is this
+ * file's and not the module's (`policy-notes`'s own note one task over): the
+ * module's `MANAGED_CLASS` and its three siblings are the panels' hooks. */
+export const PROJECTS_MANAGED_CLASS = 'projects-managed-section'
+export const PROJECTS_ACCOUNT_KEYS_CLASS = 'projects-account-keys-section'
+export const PROJECTS_RETIREMENTS_CLASS = 'projects-retirements-section'
+export const PROJECTS_CREDENTIALS_SERVICE_CLASS = 'projects-credentials-service-section'
+
+/** PROJECTS_LICENCE_CLASS is the host the licence key is drawn into (the
+ * subscriptions plan's S2.7): the eighth sibling of `projects-body`, drawn for
+ * `PROJECTS_MODELS_CLASS`'s reason. Its read is the one this tab makes that
+ * spawns no child at all -- `licence.read` is the console's own store
+ * (`src/main/licence-store.ts`) -- so the panel is a section of this tab for the
+ * same reason the others are, and not because it reads a command: an operator
+ * looks for the key their installation runs under where their installations
+ * are. */
+export const PROJECTS_LICENCE_CLASS = 'projects-licence-section'
+
 /** DrawnProjectsFrame is the screen with nothing in it: the root, the section a
- * read fills, and the slot the entry's busy mark goes in. `models` and
- * `modelsSlot` are the second section's pair, drawn the same way. */
+ * read fills, and the slot the entry's busy mark goes in. Every later section is
+ * a `host`/`slot` pair of its own, drawn the same way -- `models` and `settings`
+ * from the tab's second and third reads, and `managed`, `accountKeys`,
+ * `retirements` and `credentialsService` from the three CM10 added, two of which
+ * feed two sections apiece (the account keys the settings read, the retirements
+ * the managed state's). */
 export interface DrawnProjectsFrame {
   readonly root: ScreenElement
   readonly body: ScreenElement
@@ -1862,6 +1939,16 @@ export interface DrawnProjectsFrame {
   readonly modelsSlot: ScreenElement
   readonly settings: ScreenElement
   readonly settingsSlot: ScreenElement
+  readonly managed: ScreenElement
+  readonly managedSlot: ScreenElement
+  readonly accountKeys: ScreenElement
+  readonly accountKeysSlot: ScreenElement
+  readonly retirements: ScreenElement
+  readonly retirementsSlot: ScreenElement
+  readonly credentialsService: ScreenElement
+  readonly credentialsServiceSlot: ScreenElement
+  readonly licence: ScreenElement
+  readonly licenceSlot: ScreenElement
 }
 
 /**
@@ -1896,10 +1983,49 @@ export function renderProjectsFrame(factory: ScreenFactory, theme: ProjectsTheme
   // another's claim down.
   const settings = make(factory, 'div', PROJECTS_SETTINGS_CLASS)
   const settingsSlot = cell(settings, factory, 'div', BUSY_SLOT_CLASS)
+  // CM10's four, in the order the plan names them: the managed state, the
+  // account keys, the retirements and the credentials service. Each is a sibling
+  // of the three above and of the others, for the same reason.
+  const managed = make(factory, 'div', PROJECTS_MANAGED_CLASS)
+  const managedSlot = cell(managed, factory, 'div', BUSY_SLOT_CLASS)
+  const accountKeys = make(factory, 'div', PROJECTS_ACCOUNT_KEYS_CLASS)
+  const accountKeysSlot = cell(accountKeys, factory, 'div', BUSY_SLOT_CLASS)
+  const retirements = make(factory, 'div', PROJECTS_RETIREMENTS_CLASS)
+  const retirementsSlot = cell(retirements, factory, 'div', BUSY_SLOT_CLASS)
+  const credentialsService = make(factory, 'div', PROJECTS_CREDENTIALS_SERVICE_CLASS)
+  const credentialsServiceSlot = cell(credentialsService, factory, 'div', BUSY_SLOT_CLASS)
+  // The licence key (S2.7), the last of them: it reads no command -- the
+  // console keeps the key itself -- and it is a section of this tab because the
+  // key belongs to an installation, which is what this tab is about.
+  const licence = make(factory, 'div', PROJECTS_LICENCE_CLASS)
+  const licenceSlot = cell(licence, factory, 'div', BUSY_SLOT_CLASS)
   root.append(body)
   root.append(models)
   root.append(settings)
-  return { root, body, slot, models, modelsSlot, settings, settingsSlot }
+  root.append(managed)
+  root.append(accountKeys)
+  root.append(retirements)
+  root.append(credentialsService)
+  root.append(licence)
+  return {
+    root,
+    body,
+    slot,
+    models,
+    modelsSlot,
+    settings,
+    settingsSlot,
+    managed,
+    managedSlot,
+    accountKeys,
+    accountKeysSlot,
+    retirements,
+    retirementsSlot,
+    credentialsService,
+    credentialsServiceSlot,
+    licence,
+    licenceSlot,
+  }
 }
 
 /**

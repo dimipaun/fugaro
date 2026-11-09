@@ -2081,3 +2081,122 @@ func TestProjectPolicyPublishWarnsBeforeAnEmptyAllowList(t *testing.T) {
 		t.Fatal("an agent session wrote the node")
 	}
 }
+
+// contextCatalogYAML is the local config's image catalog with one entry whose
+// source names a build context: the shape CB1's grammar accepts and no released
+// runner reads yet, which is the member policyContextRefusal is about. The
+// second constant is the same catalog with the member left off, so a test can
+// tell the member's refusal from a refusal of catalogs.
+const contextCatalogYAML = "image_catalog:\n" +
+	"  entries:\n" +
+	"    - name: tools\n" +
+	"      tags: [node]\n" +
+	"      source: { kind: dockerfile, repo: acme/app, path: ci/Dockerfile, context: ci/ }\n"
+
+const noContextCatalogYAML = "image_catalog:\n" +
+	"  entries:\n" +
+	"    - name: tools\n" +
+	"      tags: [node]\n" +
+	"      source: { kind: dockerfile, repo: acme/app, path: ci/Dockerfile }\n"
+
+// contextCatalogPolicy is that catalog as a node: the member is judged on the
+// node about to be published and not on the config that states it, so a test
+// has to be able to hand one in directly — that is the state a machine whose
+// config says nothing about the catalog meets when the published node carries
+// it.
+func contextCatalogPolicy(context string) *projectpolicy.Policy {
+	return &projectpolicy.Policy{ImageCatalog: &config.Catalog{Entries: []config.Entry{{
+		Name: "tools",
+		Tags: []string{"node"},
+		Source: config.Source{
+			Kind: config.SourceDockerfile, Repo: "acme/app", Path: "ci/Dockerfile", Context: context,
+		},
+	}}}}
+}
+
+// TestPolicyContextRefusalHoldsTheGateBothWays asks the guard directly, the way
+// the skew gates' tests ask theirs: while imageContextShipped is false an entry
+// naming a context is refused with the member and the entry named, an entry
+// naming none is not (the gate is the member, not catalogs), and once the
+// release that reads the member ships (shipped true) the same node publishes.
+//
+// A guard that only refused, or only admitted, would pass half of this and lose
+// the other: the refusal is what keeps D1403's failure out of a published node,
+// and the two admissions are what keep this from becoming a gate on the
+// catalog.
+func TestPolicyContextRefusalHoldsTheGateBothWays(t *testing.T) {
+	if imageContextShipped {
+		t.Fatal("imageContextShipped is true: this test is written for the release that does not read the member yet, and the flip's own commit rewrites it")
+	}
+	withContext := contextCatalogPolicy("ci/")
+	withoutContext := contextCatalogPolicy("")
+	if err := policyContextRefusal(nil, imageContextShipped); err != nil {
+		t.Errorf("a project with no catalog at all: %v, want no refusal", err)
+	}
+	if err := policyContextRefusal(withoutContext, imageContextShipped); err != nil {
+		t.Errorf("an entry naming no context: %v, want no refusal (the member is what the gate is about)", err)
+	}
+	err := policyContextRefusal(withContext, imageContextShipped)
+	if err == nil {
+		t.Fatal("an entry naming a context was published while no release reads the member: every run of the project would fail on the older runner's strict decode of the node")
+	}
+	for _, want := range []string{"tools", "context", "no fugaro release reads that key yet", "Leave context: off the entry"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if err := policyContextRefusal(withContext, true); err != nil {
+		t.Errorf("the release that reads the member still refuses it: %v", err)
+	}
+}
+
+// TestPolicyPublishRefusesACatalogContextMember is the door's own half: the
+// node both publish doors build is refused while the member is unread, whether
+// the config is where the member came from or the published node it replaces —
+// a config silent about the catalog keeps the node's, so both sides reach these
+// bytes. Without the call policyNodeForPublish makes, this test fails: the
+// publish returns a body and nothing else in the package asks about the member.
+func TestPolicyPublishRefusesACatalogContextMember(t *testing.T) {
+	f := newProjectFixture(t, contextCatalogYAML)
+	lc, err := localcfg.Load(f.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _, _, err := policyNodeForPublish(t.Context(), lc, &projectpolicy.Policy{}, nil, false, false, false)
+	if err == nil {
+		t.Fatalf("the publish built the node from a config naming a context: %s", body)
+	}
+	for _, want := range []string{"tools", "context", "no fugaro release reads that key yet"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+
+	// The same member reaching the node from the other side: this machine's
+	// config states no catalog, so the node about to be published is the one it
+	// replaces — and the operator's older runner reads that node.
+	g := newProjectFixture(t, "")
+	lc, err = localcfg.Load(g.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	carried := contextCatalogPolicy("ci/")
+	body, _, _, err = policyNodeForPublish(t.Context(), lc, carried, nil, false, false, false)
+	if err == nil {
+		t.Fatalf("the publish kept a node carrying a context member: %s", body)
+	}
+	if !strings.Contains(err.Error(), "no fugaro release reads that key yet") {
+		t.Errorf("the refusal of a carried member does not name the gate: %v", err)
+	}
+
+	// The control: the same catalog without the member publishes, so the gate is
+	// the member and not the catalog.
+	h := newProjectFixture(t, noContextCatalogYAML)
+	lc, err = localcfg.Load(h.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := policyNodeForPublish(t.Context(), lc, &projectpolicy.Policy{}, nil, false, false, false); err != nil {
+		t.Fatalf("the same catalog with no context member was refused: %v", err)
+	}
+}

@@ -100,6 +100,18 @@ import (
 //     task of the plan removes this read — so it is sanctioned with its reason
 //     like the other three. None of them is a confirmation: they are how a value
 //     is entered.
+//
+//     pickRun (cloud.go) is the sixth, and the odd one out: it is neither a
+//     value nor a confirmation of a write. It asks WHICH of several runs a name
+//     means — the last four or more characters of a run ID that more than one
+//     run ends with, docs/short-run-ids D1700 — and every candidate it offers is
+//     a run the lookup itself found and confirmed in the bucket. No task of this
+//     plan removes it: the policy's subject is the confirmation that stands
+//     before a write, and this read stands before no write at all, because a
+//     command that would ACT on the answer is never given one (D1710: the
+//     reading of an ending a destructive command gets is the list, not a run).
+//     The other reading of the same ambiguity is the refusal, which is what every
+//     surface without a person at it gets.
 //   - dataReadSites: the reads F1 names as neither confirmations nor values
 //     (`--task-file -`, `--review-levels -`, the exec task file, the
 //     credentials bundle). These are asserted NOT to be found, so a data read
@@ -669,6 +681,7 @@ var sanctionedSites = map[string]string{
 	"restore.go:readConfirmLine":   "the line read both sanctioned helpers read through: a value's line is read here, and T6 deletes restore's confirmations, not this",
 	"secrets.go:readHiddenLine":    "the hidden read of the value entry's hidden path, readValue to readHidden to here (D1540; T7 changes its door, not its hiding)",
 	"initsecrets.go:readHiddenPEM": "the multi-line shape of the same value entry: a PEM cannot be typed on one line, and the one-line helper cannot take it (D1540 keeps value entry; T12 owns this file)",
+	"cloud.go:pickRun":             "which of several runs an ending names, at a person's terminal and only for a reading that acts on nothing (docs/short-run-ids D1700, D1710): not a value and not a confirmation of a write",
 }
 
 // dataReadSites is neither a confirmation nor a value: a read that fails on
@@ -703,18 +716,18 @@ var notADecisionSites = map[string]string{
 // `confirmTypedStrict` and `askTyped`, so their entries are the helpers' own
 // sites in `budget.go` and `init.go` — the read is what the lint holds.
 var pendingSites = map[string]string{
-	"accounts.go:accountsClear":              "T5",
-	"budget.go:confirmTyped":                 "T3",
-	"budget.go:confirmTypedStrict":           "T3",
-	"budget.go:runBudgetKill":                "T3",
-	"budget.go:runBudgetSet":                 "T3",
-	"image.go:confirmBuild":                  "T4",
-	"managed_apply.go:managedAsk":            "T9",
-	"managed_flag.go:confirmTypedGCPProject": "T6",
-	"project_cmd.go:confirmRemoval":          "T6",
-	"project_enroll.go:runProjectSync":       "T6",
-	"restore.go:anchor":                      "T6",
-	"restore.go:confirm":                     "T6",
+	"accounts.go:accountsClear":    "T5",
+	"budget.go:confirmTyped":       "T3",
+	"budget.go:confirmTypedStrict": "T3",
+	"image.go:confirmBuild":        "T4",
+	"managed_apply.go:managedAsk":  "T9",
+	// T6 removed every read of this command family it could remove. This one
+	// stays because its callers do not: confirmRemoval is defined in a file T6
+	// owns, but upgrade.go (T5), init_layer_stage.go and init_policy_migrate.go
+	// (T7) and update_workspace.go (T15) still call it, so the entry outlives T6
+	// and belongs to the task that removes the last caller. Deleting it here
+	// would not compile.
+	"project_cmd.go:confirmRemoval":          "T6's file, whose callers T5, T7 and T15 remove",
 	"settings_write.go:confirmSettingsWrite": "T5",
 }
 

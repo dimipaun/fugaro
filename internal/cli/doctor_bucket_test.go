@@ -77,6 +77,37 @@ func TestDoctorRunsBucketIAMOldGrantWarns(t *testing.T) {
 	}
 }
 
+// An installation one release behind this one: its launchers hold the runs/
+// and tokens/ condition 0.9.0 wrote, which cannot upload an issue (D1727).
+// Doctor names the update that widens the grant, and never the removal command
+// the catch-all for a condition that is not the launchers' own prints — the
+// member holds the grant it is supposed to hold, and removing it would leave
+// the installation unable to launch anything.
+func TestDoctorRunsBucketIAMNamesTheIssuesGrantUpdate(t *testing.T) {
+	r, g := newDoctorRig(t), gcpfake.NewGCS(t)
+	r.withRunsBucket(t, g, dbLists,
+		gcpfake.Binding{Role: "roles/storage.objectAdmin", Members: []string{"user:o@example.com"}},
+		gcpfake.Binding{Role: "roles/storage.objectViewer", Members: []string{"user:a@example.com"}},
+		gcpfake.Binding{Role: "roles/storage.objectUser", Members: []string{"user:a@example.com"},
+			Condition: &gcpfake.IAMCondition{Title: gcp.LegacyLauncherBucketConditionTitle, Expression: gcp.LegacyLauncherBucketCondition(dbBucket)}})
+	o := r.runDoctorJSON(t)
+	var issues bool
+	for _, c := range o.Checks {
+		if !strings.HasPrefix(c.ID, "runs-bucket-iam") || !strings.Contains(c.Problem, "user:a@example.com") {
+			continue
+		}
+		if strings.Contains(c.Fix, "remove-iam-policy-binding") {
+			t.Errorf("doctor tells an operator to remove the launcher's own grant: %+v", c)
+		}
+		if strings.Contains(c.Problem, "cannot upload an issue") && strings.Contains(c.Fix, "fugaro update") {
+			issues = true
+		}
+	}
+	if !issues {
+		t.Fatalf("doctor does not report the launcher's grant as one that cannot upload an issue: %+v", o.Checks)
+	}
+}
+
 func TestDoctorRunsBucketIAMSelfTest(t *testing.T) {
 	for _, tc := range []struct {
 		name, user string

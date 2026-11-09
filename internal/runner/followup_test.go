@@ -286,7 +286,8 @@ func TestFollowUpUpdatesSamePR(t *testing.T) {
 		t.Fatalf("posted = %q", posted)
 	}
 	report := posted[1]
-	if id, ok := gitprov.FugaroRun(report); !ok || id != followID || !strings.Contains(report, "Follow-up") || !strings.Contains(report, runID) {
+	if id, ok := gitprov.FugaroRun(report); !ok || id != followID || !strings.Contains(report, "Follow-up") ||
+		!strings.Contains(report, "**Previous run:** `"+task.ShortRun(runID)+"`") {
 		t.Fatalf("report:\n%s", report)
 	}
 	if rec.Branch != "fugaro/"+runID || rec.PR == nil || rec.PR.Number != 1 || h.remoteTip(t) != rec.HeadSHA || rec.PushedHead != rec.HeadSHA {

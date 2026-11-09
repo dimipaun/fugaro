@@ -51,6 +51,60 @@ func call(t *testing.T, dir string, args ...string) (stdout, stderr string, code
 	return string(out), string(e), code
 }
 
+// A -var-file that is not there is refused with terraform's own error and
+// exit 1, before the script's answer: the CLI writes the root's tfvars into
+// the directory it plans in (Workdir.WriteVars, and tf.Plan's one relative
+// -var-file), and a fake that answered 0 for a missing one would let a workdir
+// rebuilt between the write and the plan pass as a converged run — which is
+// the failure this check exists to make a test see, so the check has a test
+// of its own: every other suite stays green without it.
+//
+// Both forms terraform accepts are read, and the script's own answer is not
+// printed: terraform fails while it reads its variables, before it plans.
+func TestAMissingVarFileIsRefusedInBothForms(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "terraform.tfvars.json")
+	f := fakeRun(t, `{"plan": {"exit": 2, "stdout": "CHANGES"}}`)
+	for _, args := range [][]string{
+		{"plan", "-var-file=" + missing},
+		{"plan", "-var-file", missing},
+	} {
+		out, stderr, code := f(args...)
+		if code != 1 {
+			t.Errorf("%q: exit %d, want 1 (what terraform exits with)", args, code)
+		}
+		if out != "" {
+			t.Errorf("%q printed %q on stdout, want nothing", args, out)
+		}
+		want := "Error: Failed to read variables file\n\nGiven variables file " + missing + " does not exist.\n"
+		if stderr != want {
+			t.Errorf("%q stderr = %q, want terraform's own %q", args, stderr, want)
+		}
+	}
+}
+
+// A -var-file that IS there is the script's answer, in both forms: the check
+// refuses a missing file and never the flag.
+func TestAVarFileThatIsThereIsTheScriptsAnswer(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "terraform.tfvars.json")
+	if err := os.WriteFile(path, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The CLI's own plan reads a path relative to the directory it runs in, so
+	// the file is looked up from there too.
+	t.Chdir(filepath.Dir(path))
+	f := fakeRun(t, `{"plan": {"exit": 2, "stdout": "CHANGES"}}`)
+	for _, args := range [][]string{
+		{"plan", "-var-file=" + path},
+		{"plan", "-var-file", path},
+		{"plan", "-var-file=" + filepath.Base(path)},
+	} {
+		out, stderr, code := f(args...)
+		if out != "CHANGES" || stderr != "" || code != 2 {
+			t.Errorf("%q: printed %q / %q, exit %d; want the script's answer", args, out, stderr, code)
+		}
+	}
+}
+
 // The state a retirement reads is `show -json` with no plan file, and the
 // plan is `show -json <planfile>`: one script answers them differently, so a
 // test can pin what the run did with the state it read before the plan.

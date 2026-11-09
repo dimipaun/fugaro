@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -383,5 +384,132 @@ entries:
 `)
 	if ps := ValidateCatalog("image_catalog", c); len(ps) > 0 {
 		t.Fatalf("unexpected problems: %v", ps)
+	}
+}
+
+// catalogContextYAML is one dockerfile entry whose source carries the given
+// context, spelled as a document rather than as a value: the red step this
+// test carries is the strict decode's, and only a document reaches it. The
+// value is quoted, so a context holding a control character is written where a
+// reader can see what it is.
+func catalogContextYAML(context string) string {
+	return "entries:\n  - name: backend\n    source:\n      kind: dockerfile\n      repo: acme/api\n      path: docker/agent.Dockerfile\n      context: " + strconv.Quote(context) + "\n"
+}
+
+// TestCatalogContextIsADirectoryPath pins the context grammar (D1391, D1392):
+// the key names a directory of the source's own repository, so it is held to
+// the path's rules, with the two exceptions naming a directory makes — the
+// repository root is a legitimate context and a file has no root to name, and a
+// directory is written with its own trailing slash and a file is not. The keys
+// therefore disagree about those two values and about nothing else, and both
+// sides of both disagreements are pinned here: the shared rules below are the
+// path's own, cleanliness included.
+func TestCatalogContextIsADirectoryPath(t *testing.T) {
+	// The issue's own example value, and a directory of the repository spelled
+	// the way a directory is written.
+	for _, context := range []string{".", "ci/", "docker/context"} {
+		if ps := ValidateCatalog("image_catalog", catalogOf(t, catalogContextYAML(context))); len(ps) > 0 {
+			t.Errorf("context %q: unexpected problems: %v", context, ps)
+		}
+	}
+	// The sibling key still refuses the two values a directory is allowed: a
+	// context that reused its message would refuse the issue's own example
+	// value, and one that dropped the path's cleanliness with it would take the
+	// trailing slash as a licence for `a//b`.
+	for _, f := range []string{".", "ci/"} {
+		if msg := catalogPathMessage(f); msg == "" {
+			t.Fatalf("catalogPathMessage accepts %q, so the two keys no longer disagree about it", f)
+		}
+	}
+	const ctlMsg = "must hold no control character"
+	const lenMsg = "must be at most 200 characters"
+	const absMsg = "must be a relative path inside the repository"
+	const dotdotMsg = "must not hold a .. segment: the context is read inside the repository it names"
+	const cleanMsg = "must be a clean path: no // and no . segment"
+	for _, tc := range []struct{ name, context, msg string }{
+		{"a .. segment", "ci/../../etc", dotdotMsg},
+		{"an absolute path", "/ci", absMsg},
+		{"a control character", "ci\nDockerfile", ctlMsg},
+		{"an escape sequence", "docker/\x1b[31mcontext", ctlMsg},
+		{"over the length bound", strings.Repeat("a", maxCatalogPathLen+1), lenMsg},
+		// The path's clean rule, held here too: the trailing slash a directory
+		// is spelled with is the only part of it this key may drop.
+		{"a . segment", "./ci", cleanMsg},
+		{"an empty segment", "ci//maven", cleanMsg},
+		{"two trailing slashes", "ci//", cleanMsg},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ps := ValidateCatalog("image_catalog", catalogOf(t, catalogContextYAML(tc.context)))
+			if !hasProblem(ps, "image_catalog.entries[0].source.context", tc.msg, 0) {
+				t.Fatalf("problems = %v, want one at image_catalog.entries[0].source.context: %s", ps, tc.msg)
+			}
+			for _, p := range ps {
+				if strings.Contains(p.Message, "\x1b") {
+					t.Fatalf("the refusal echoes the value: %q", p.Message)
+				}
+			}
+		})
+	}
+}
+
+// TestCatalogContextBelongsToADockerfileSource: a context is read inside the
+// repository the Dockerfile is in (D1393), so it is a dockerfile source's field
+// and a source of another kind carrying one is refused rather than built
+// without it.
+func TestCatalogContextBelongsToADockerfileSource(t *testing.T) {
+	for _, tc := range []struct{ name, source string }{
+		{"inline", "      kind: inline\n      inline: \"FROM node:24\\n\"\n      context: ci\n"},
+		{"image", "      kind: image\n      image: example.invalid/backend:1\n      context: ci\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := catalogOf(t, "entries:\n  - name: backend\n    source:\n"+tc.source)
+			msg := "belongs to the dockerfile source; this source is " + tc.name
+			if ps := ValidateCatalog("image_catalog", c); !hasProblem(ps, "image_catalog.entries[0].source.context", msg, 0) {
+				t.Fatalf("problems = %v, want one at image_catalog.entries[0].source.context: %s", ps, msg)
+			}
+		})
+	}
+	if ps := ValidateCatalog("image_catalog", catalogOf(t, catalogContextYAML("ci"))); len(ps) > 0 {
+		t.Errorf("a dockerfile source carrying a context: unexpected problems: %v", ps)
+	}
+}
+
+// TestCatalogContextKeyRefusesANameOutsideTheGrammar: the two keys a context
+// entry stages its objects under are built from an entry's name, so they refuse
+// a name the Dockerfile's own key refuses — a name outside the grammar would
+// name an object outside builds/catalog/<entry>/, which is the prefix the build
+// and check accounts' grants are conditioned on.
+func TestCatalogContextKeyRefusesANameOutsideTheGrammar(t *testing.T) {
+	for _, name := range []string{"", "agent/../../etc", "../agent", "Agent", "agent.", strings.Repeat("a", 41)} {
+		if _, err := CatalogDockerfileKey(name); err == nil {
+			t.Fatalf("CatalogDockerfileKey(%q) was accepted, so the fixture is not a name outside the grammar", name)
+		}
+		for _, key := range []struct {
+			what string
+			f    func(string) (string, error)
+		}{
+			{"CatalogContextCommitKey", CatalogContextCommitKey},
+			{"CatalogContextHashKey", CatalogContextHashKey},
+		} {
+			if _, err := key.f(name); err == nil {
+				t.Errorf("%s(%q) was accepted, and CatalogDockerfileKey refuses it", key.what, name)
+			}
+		}
+	}
+	for _, tc := range []struct {
+		what string
+		f    func(string) (string, error)
+		want string
+	}{
+		{"CatalogContextCommitKey", CatalogContextCommitKey, "builds/catalog/agent/source-commit"},
+		{"CatalogContextHashKey", CatalogContextHashKey, "builds/catalog/agent/context-sha256"},
+	} {
+		got, err := tc.f("agent")
+		if err != nil {
+			t.Fatalf("%s(agent): %v", tc.what, err)
+		}
+		if got != tc.want {
+			t.Errorf("%s(agent) = %q, want %q", tc.what, got, tc.want)
+		}
 	}
 }
