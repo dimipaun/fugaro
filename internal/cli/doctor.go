@@ -483,6 +483,10 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	// this backend, and Task 10 is what turns these into the enable's gate.
 	o.Checks = append(o.Checks, doctorBatchChecks(ctx, lc, crmSvc)...)
 	o.Checks = append(o.Checks, doctorPolicyChecks(ctx, lc, doctorRoutingLayerOf(ctx, rf))...)
+	// What bounds a billable image build now that the count is gone and no
+	// step asks a person (D1543, D1548, plan T4): the database's mode, read
+	// beside the policy and rules checks for the same project.
+	o.Checks = append(o.Checks, doctorBuildBudget(ctx, lc)...)
 
 	if lc.Budget != nil && lc.Budget.FirebaseProject != "" {
 		iamSvc, err := iam.NewService(ctx, doctorAPIOpts(lc, lc.Endpoints.IAM)...)
