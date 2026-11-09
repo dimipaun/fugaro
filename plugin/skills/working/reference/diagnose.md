@@ -15,7 +15,7 @@ Ground rules:
 
 ## 1. Collect
 
-Take the run from the conversation or `fugaro runs ls --json` (the rows that are not `succeeded`). Then:
+Take the run from the conversation or `fugaro runs ls --json` (the rows that are not `succeeded`). When the question is a window's failures and not one run's, `fugaro runs ls --group-by failure_class` counts that window's runs per cause. Then:
 
 ```bash
 fugaro diagnose <run> --json
