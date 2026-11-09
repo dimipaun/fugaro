@@ -1452,3 +1452,107 @@ func changedLine(t *testing.T, before, after string) int {
 	}
 	return line
 }
+
+// TestUpsertSeqItemListByKeyWritesAndReplacesTheList holds the one operation
+// whose field is a list of its own — a pool's members — to the three things a
+// caller needs it to do: write an item the sequence does not have, write the
+// list beside the fields an item already has, and replace the list of an item
+// that already carries one without touching its other fields.
+func TestUpsertSeqItemListByKeyWritesAndReplacesTheList(t *testing.T) {
+	const doc = `# A project's pools.
+pools:
+  - name: acme
+    strategy: failover
+    members:
+      - acme-one
+      - acme-two
+`
+	got, err := yamledit.UpsertSeqItemListByKey([]byte(doc), []string{"pools"}, "name", "beta",
+		"members", []string{"beta-one", "beta-two"})
+	if err != nil {
+		t.Fatalf("UpsertSeqItemListByKey: %v", err)
+	}
+	want := doc + `  - name: beta
+    members:
+      - beta-one
+      - beta-two
+`
+	if string(got) != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+	}
+
+	got, err = yamledit.UpsertSeqItemListByKey([]byte(doc), []string{"pools"}, "name", "acme",
+		"members", []string{"acme-three"})
+	if err != nil {
+		t.Fatalf("UpsertSeqItemListByKey: %v", err)
+	}
+	want = `# A project's pools.
+pools:
+  - name: acme
+    strategy: failover
+    members:
+      - acme-three
+`
+	if string(got) != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+	}
+
+	// The key the sequence hangs from is written when the document has none,
+	// the way every other edit here writes the mappings on its way.
+	got, err = yamledit.UpsertSeqItemListByKey([]byte("other: 1\n"), []string{"pools"}, "name", "acme",
+		"members", []string{"acme-one"})
+	if err != nil {
+		t.Fatalf("UpsertSeqItemListByKey: %v", err)
+	}
+	if want := "other: 1\npools:\n  - name: acme\n    members:\n      - acme-one\n"; string(got) != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+// TestUpsertSeqItemListByKeyIsANoOpWhenNothingChanges pins the other half of
+// every edit here: the same list written twice leaves the document byte for
+// byte as it was.
+func TestUpsertSeqItemListByKeyIsANoOpWhenNothingChanges(t *testing.T) {
+	const doc = "pools:\n  - name: acme\n    members:\n      - acme-one\n"
+	got, err := yamledit.UpsertSeqItemListByKey([]byte(doc), []string{"pools"}, "name", "acme",
+		"members", []string{"acme-one"})
+	if err != nil {
+		t.Fatalf("UpsertSeqItemListByKey: %v", err)
+	}
+	if !bytes.Equal(got, []byte(doc)) {
+		t.Fatalf("a repeat of the same upsert rewrote the document:\n%s", got)
+	}
+}
+
+// TestUpsertSeqItemListByKeyRefusesWhatItCannotWriteSafely pins the refusals:
+// the shapes this operation has no bytes for (a flow collection it would have
+// to splice a block into, a sequence item that is not a mapping), and the
+// arguments that name nothing.
+func TestUpsertSeqItemListByKeyRefusesWhatItCannotWriteSafely(t *testing.T) {
+	for _, tc := range []struct {
+		name, doc, keyField, keyValue, field string
+		values                               []string
+		path                                 []string
+		reason                               yamledit.Reason
+	}{
+		{"no path", "a: 1\n", "name", "x", "members", []string{"m"}, nil, yamledit.ReasonEmptyPath},
+		{"no key field", "a: 1\n", "", "x", "members", []string{"m"}, []string{"pools"}, yamledit.ReasonEmptyField},
+		{"no field", "a: 1\n", "name", "x", "", []string{"m"}, []string{"pools"}, yamledit.ReasonEmptyField},
+		{"the field is the key field", "a: 1\n", "name", "x", "name", []string{"m"}, []string{"pools"}, yamledit.ReasonFieldIsKeyField},
+		{"no values", "a: 1\n", "name", "x", "members", nil, []string{"pools"}, yamledit.ReasonEmptyList},
+		{"a flow item", "pools:\n  - {name: acme, strategy: failover}\n", "name", "acme", "members", []string{"m"}, []string{"pools"}, yamledit.ReasonFlowCollection},
+		{"a flow list", "pools:\n  - name: acme\n    members: [one]\n", "name", "acme", "members", []string{"m"}, []string{"pools"}, yamledit.ReasonFlowCollection},
+		{"a scalar item", "pools:\n  - acme\n", "name", "acme", "members", []string{"m"}, []string{"pools"}, yamledit.ReasonNotAMapping},
+		{"a path that crosses a scalar", "a: 1\n", "name", "x", "members", []string{"m"}, []string{"a", "pools"}, yamledit.ReasonNotAMapping},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := yamledit.UpsertSeqItemListByKey([]byte(tc.doc), tc.path, tc.keyField, tc.keyValue, tc.field, tc.values)
+			if r := yamledit.ReasonOf(err); r != tc.reason {
+				t.Fatalf("reason = %q, want %q (got %q, %v)", r, tc.reason, got, err)
+			}
+			if !bytes.Equal(got, []byte(tc.doc)) {
+				t.Fatalf("a refusal returned changed bytes: %q", got)
+			}
+		})
+	}
+}

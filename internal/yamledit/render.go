@@ -195,6 +195,34 @@ func itemLeaf(keyField, keyValue string, fields map[string]string) leafOf {
 	}
 }
 
+// itemListLines is one sequence item — the keyField first, the list under it —
+// at the indentation the item holds its own keys at.
+func itemListLines(indent, step int, keyField, keyValue, field string, values []string) []string {
+	lines := []string{indentOf(indent) + "- " + renderKey(keyField) + ": " + renderValue(keyValue, 0)}
+	return append(lines, listLines(indent+2, step, field, values)...)
+}
+
+// listLines is a list-valued field as a block sequence: the key on its own line
+// and one item per line under it.
+func listLines(indent, step int, field string, values []string) []string {
+	lines := []string{indentOf(indent) + renderKey(field) + ":"}
+	for _, v := range values {
+		lines = append(lines, indentOf(indent+step)+"- "+renderValue(v, 0))
+	}
+	return lines
+}
+
+// listItemLeaf renders `key:` with one sequence item under it, that item a
+// mapping whose keyField comes first and whose field is a block sequence of its
+// own, one item per line -- the shape itemLeaf writes for scalar fields, with the
+// list under the last of them.
+func listItemLeaf(keyField, keyValue, field string, values []string) leafOf {
+	return func(key string, indent, step int) []string {
+		lines := []string{indentOf(indent) + renderKey(key) + ":"}
+		return append(lines, itemListLines(indent+step, step, keyField, keyValue, field, values)...)
+	}
+}
+
 // chain renders a path as a block of nested mappings, calling leaf for its last
 // element. The intermediate keys are written empty, which is how a document
 // grows a level a hand-written file did not have yet.
