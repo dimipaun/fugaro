@@ -1,12 +1,13 @@
 # The hosted MCP server: reconciliation and decisions
 
 **Status: design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are built and
-merged on `main`; M5 is built except the paired device M-a asks for, which is M5b and is a hard
-prerequisite before any binary links the front door (the owner's ruling of 2026-11-07); M7 is built
-except the reading of the installation's published state its lists come from, which no task of this
-plan carries; M10 is built except the store's own bucket and its one grant, which are M4's store
-half and not started; M8 is built except the wiring that would serve its four read tools, which is
-the task M5b gates; M9 is not started; this folder approves no task.**
+merged on `main`; M5 is built and M5b is built with it — the paired-device approval the owner ruled
+a task of its own on 2026-11-07, so the approval this front door takes is the paired device's; M7 is
+built except the reading of the installation's published state its lists come from, which no task of
+this plan carries; M10 is built except the store's own bucket and its one grant, which are M4's
+store half and not started; M8 is built except the wiring that would serve its four read tools,
+which no binary has and no task of this plan carries; M9 is not started; this folder approves no
+task.**
 
 What the owner's spec ([spec.md](spec.md) §0) says, checked one claim at a time against the code as
 it is at this work's base, and then the decisions the planning found.
@@ -189,10 +190,10 @@ tree carries is the owner's and no other.
 gate file: the licence confirmation this branch's runs reported before the owner's ruling was not a
 file, a signature or a review comment this tree could show, and the check's own text is what stood —
 **M5 does not start until the licence is settled and a person has written the gate file.** Both
-halves are now there, so **M5 may merge and the licence holds nothing back**; what the clearance does
-not do is put the front door on a binary, because **M5 merges dormant: M5b is a hard prerequisite
-before any binary links it** (§4a, the ruling of 2026-11-07). Had the licence turned out to be
-unusable, it would still send D921 back to its own alternatives, with the library out of `go.mod` and
+halves are now there, so **M5 may merge and the licence holds nothing back**; what the clearance did
+not do is put the front door on a binary, because **M5 merged dormant: M5b was a hard prerequisite
+before any binary links it** (§4a, the ruling of 2026-11-07), **and M5b is built**. Had the licence
+turned out to be unusable, it would still send D921 back to its own alternatives, with the library out of `go.mod` and
 M5 rebuilt against them, rather than a dependency landing ahead of its gate. **The transitive set the
 clearance covers is named here for that reason**: `zitadel/schema`, `muhlemmer/gu` and `kr/text`,
 which are
@@ -205,16 +206,17 @@ The
 took up that day — **design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are
 built and merged on `main`; M5 is built except the paired device M-a asks for, which is pending the
 owner; the rest is not started; this folder approves no task.** **That quotation is the line as it
-stood on 2026-11-04**: the clause after "asks for" was replaced on 2026-11-07, and the line every
-file carries today reads "...which is M5b and is a hard prerequisite before any binary links the
-front door (the owner's ruling of 2026-11-07); M7 is built except the reading of the installation's
-published state its lists come from, which no task of this plan carries; M10 is built except the
-store's own bucket and its one grant, which are M4's store half and not started; M8 is built except
-the wiring that would serve its four read tools, which is the task M5b gates; M9 is not started" —
-**the clauses moving as each task lands** (§4a), each exception added with its own landing because
-the task builds the seam and not the half behind it: M7's reading of the published state, M8's four
-read tools registered on no binary, which is the wiring task M5b gates, and M10's bucket and its one
-grant, which are M4's.
+stood on 2026-11-04**: the clause after "asks for" was replaced on 2026-11-07 and closed when M5b
+landed, and the line every file carries today reads "...M5 is built and M5b is built with it — the
+paired-device approval the owner ruled a task of its own on 2026-11-07, so the approval this front
+door takes is the paired device's; M7 is built except the reading of the installation's published
+state its lists come from, which no task of this plan carries; M10 is built except the store's own
+bucket and its one grant, which are M4's store half and not started; M8 is built except the wiring
+that would serve its four read tools, which no binary has and no task of this plan carries; M9 is
+not started" — **the clauses moving as each task lands** (§4a), each exception added with its own
+landing because the task builds the seam and not the half behind it: M7's reading of the published
+state, M8's four read tools registered on no binary, which the wiring task would serve, and M10's
+bucket and its one grant, which are M4's.
 
 ### The answer of 2026-11-05
 
@@ -347,8 +349,8 @@ claim is the library's own and this container cannot check it, and the answer ma
 that he would clear the set by reading one table, and he read it and cleared the set the same day**:
 [licence-table.md](licence-table.md) is the table, **"Cleared: all permissive"** is his answer, and
 [licence-gate.md](licence-gate.md) is the gate file the check describes. **Counsel was never asked**,
-so the clearance is the owner's alone, and **the check no longer gates anything**: what keeps M5
-dormant is **M5b**, the paired device M-a asks for. The review settles the library's *behaviour*
+so the clearance is the owner's alone, and **the check no longer gates anything**: what kept M5
+dormant was **M5b**, the paired device M-a asks for, **and M5b is built**. The review settles the library's *behaviour*
 against this design, which is the paragraph below, and not its licence.
 
 The review also found that **the library's defaults are the opposite of this design's rules**, and
@@ -437,21 +439,21 @@ a phone**, where a person cannot see which machine is asking. The owner's answer
   URL**;
 - **nothing is pushed without a person starting it.**
 
-**M5 and M6 build three of those four, and the first is built only as far as the page.** The approve
+**M5 and M6 built three of those four, and the first was built only as far as the page.** The approve
 step is a single-use POST on a named endpoint, an ID token never travels in a GET URL, nothing is
 pushed unstarted, and the page shows the client unverified beside the redirect host. But **the number
-is rendered on the same page and posted back by the same form**: the paired device never sees it, so
-a page rendering a flow of its own displays its own number and collects the number and the ID token
-together from whoever fills that form — which is the approval this check is meant to tell apart from
+was rendered on the same page and posted back by the same form**: the paired device never saw it, so
+a page rendering a flow of its own displayed its own number and collected the number and the ID token
+together from whoever filled that form — which is the approval this check is meant to tell apart from
 the real one. **A check on the page is therefore not M-a's device-side approval**, and the half that
 would be — the number shown on, or entered into, the paired device, so the approval is bound there —
-**is not built**: it was raised as a finding rather than added by a task that did not ask for it, and
-**the owner answered it on 2026-11-07 — it is M5b, a task of its own and a hard prerequisite before
-anything wires the front door** (§4a, "The owner's ruling of 2026-11-07"). The token has the same kind
-of limit beside it: nothing spends an ID token, so one that leaks approves flows until it expires —
-and the **refresh family each of those approvals mints has no expiry of its own** (spec.md §8), so the
-exposure the ID token's hour bounds is one approval and not what that approval leaves behind. **Both
-of those limits are M5b's to close**, as its second and fourth requirements.
+**was not built by M5**: it was raised as a finding rather than added by a task that did not ask for
+it, and **the owner answered it on 2026-11-07 — it is M5b, a task of its own and a hard prerequisite
+before anything wires the front door** (§4a, "The owner's ruling of 2026-11-07"). **M5b is built, and
+the two limits the token had beside it are closed with it**: the approval is the paired device's own
+POST, the ID token is spent before a code is minted, so a replay of one is refused instead of
+approving a second flow, and the **refresh family an approval mints has two lifetimes of its own**
+(spec.md §6, §8) rather than outliving the ID token's hour by an unbounded amount.
 
 ### D924 — amended (finding M-b)
 
@@ -598,8 +600,8 @@ pair` (`docs/workspaces/spec.md:217-219`, its D923). Both agree with §3 and §1
   (`deploy/terraform/gcp/modules/installation/coordinator.tf:320`, `:382`, `:527`) — **because the
   owner approved them one at a time, which is what "may continue" turned into.** **M5 is built** —
   the two metadata documents, the four endpoints and
-  the approve step, **except the paired device M-a asks for**, which is **M5b** and is a task of its
-  own since the owner's ruling of 2026-11-07 — **M7 is built** (the resource server and the tool
+  the approve step — **and so is M5b**, the paired device M-a asks for, a task of its own since the
+  owner's ruling of 2026-11-07, so the approval the approve step takes is the paired device's — **M7 is built** (the resource server and the tool
   registry, dormant with the rest of the door) **except the reading of the installation's published
   state its lists come from**: `identity.go` holds the `Roster` seam D933's answer goes through and
   **nothing in the tree implements it over that state, because no task of the plan carries the
@@ -607,7 +609,8 @@ pair` (`docs/workspaces/spec.md:217-219`, its D923). Both agree with §3 and §1
   revocation from a person's own surface, dormant with the rest of the door) **except the store its
   records are at rest in**, whose bucket and one grant are M4's store half — **M8 is built** (the
   four read tools, over the project's own runs and redacted through `internal/safetext`) **except the
-  wiring that would serve them**: no binary registers them, which is the wiring M5b gates — **and the
+  wiring that would serve them**: no binary registers them, which is the wiring no task of this plan
+  carries — **and the
   rest is not**: M4's store half (`mcpauth_store.tf`, the bucket
   and its one grant) and M9; **M3's node is in with its parity test while the comment D935 asks
   for above it is not written**; and **what merged as M6 is the draft M-a predates** — no approve-step
@@ -615,7 +618,7 @@ pair` (`docs/workspaces/spec.md:217-219`, its D923). Both agree with §3 and §1
   built after M6 rather than with it. **And one row of an already-merged task
   is not in the tree either**: M2's entry, and §6's second barrier below, state the **keyed** hash and
   the **MAC over every record** as what the store does, while the store hashes with a plain unkeyed
-  sha256 (`ee/coordinator/mcpauth/store.go:398`) and writes no MAC at all — so a reader who is not the
+  sha256 (`ee/coordinator/mcpauth/store.go:494`) and writes no MAC at all — so a reader who is not the
   store's member reads an identity in the clear, and a record written by anybody else is not refused
   by a mark. That barrier is M2's own row, it is on `main` already and not in this branch, and it is
   raised as a finding rather than closed by an edit here.
@@ -638,9 +641,10 @@ registration that never stops being a client. The red step such a task would car
 `TestRegistrationIsRateLimitedPerSource` and `TestARegisteredClientIsExpiredAndSwept`. **What keeps
 the exposure latent rather than reachable is a guard M5 does carry, and it is a test rather than a
 behaviour**: `TestNoBinaryLinksTheFrontDoorYet` fails if any file a binary builds names this package,
-so the task that wires the front door is the task that carries the two bounds, carries **M5b** (the
-owner's ruling of 2026-11-07) and deletes the guard, and no release mounts an open registration
-endpoint because a wiring arrived unnoticed.
+so the task that wires the front door is the task that carries the two bounds and deletes the guard,
+and no release mounts an open registration endpoint because a wiring arrived unnoticed. **M5b was the
+other thing that task was to carry** (the owner's ruling of 2026-11-07) **and is built**, so the
+guard is the only thing still holding the door.
 
 ### The owner's ruling of 2026-11-07: M5b, and the licence table
 
@@ -657,8 +661,12 @@ relaxed by building M5b and not by deleting its message**, which now names the t
 written as a task in [implementation-plan.md](implementation-plan.md) §3 with its four requirements:
 the approval happens on the paired device, the ID token is spent, the approval is bound to the flow,
 and a refresh family ages. **It is a task and not a change to anything merged**: the code that would
-carry it does not exist yet, and the two limits beside the approve step (a token nothing spends, a
-family with no expiry of its own) are its second and fourth requirements.
+carry it did not exist when the ruling was written, and the two limits beside the approve step (a
+token nothing spends, a family with no expiry of its own) were its second and fourth requirements.
+**M5b is built**: the approval is the paired device's own POST — the flow's id, the number the page
+shows and the ID token of that device's session — the token is spent before a code is minted, and
+the family an approval mints carries the two bounds ([implementation-plan.md](implementation-plan.md)
+§3).
 
 **2. The licence gate is cleared by a table the owner read, and the gate is met.** §6 check 1's
 second half is D921's licence, and the owner ruled that he would clear the dependency set by reading
@@ -769,9 +777,9 @@ code task starts:
    permissive"** ([licence-gate.md](licence-gate.md), the gate file this check describes). **Counsel
    was never asked about the transitive set and has cleared nothing**, so the clearance the tree
    carries is the owner's own and the check is **met**: the gate was never a note, and what met it is
-   an artifact rather than a run's word. **What that does not do is wire the front door** — M5 merges
-   dormant, because the paired device M-a asks for is **M5b** and M5b is a hard prerequisite before
-   any binary links it (§4a) — and D921's alternatives, with the library taken out of `go.mod` and M5
+   an artifact rather than a run's word. **What that did not do was wire the front door** — M5 merged
+   dormant, because the paired device M-a asks for is **M5b** and M5b was a hard prerequisite before
+   any binary links it (§4a), **and M5b is built** — and D921's alternatives, with the library taken out of `go.mod` and M5
    rebuilt against them, remain the answer to a licence that would not have been cleared.
 2. **The endpoint really is reachable from the public internet** once D920's answer says so: a
    request from outside the project reaches the handler and gets the 401, rather than being refused

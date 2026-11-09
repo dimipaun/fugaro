@@ -1,12 +1,13 @@
 # The hosted MCP server: the dependency licence table
 
 **Status: design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are built and
-merged on `main`; M5 is built except the paired device M-a asks for, which is M5b and is a hard
-prerequisite before any binary links the front door (the owner's ruling of 2026-11-07); M7 is built
-except the reading of the installation's published state its lists come from, which no task of this
-plan carries; M10 is built except the store's own bucket and its one grant, which are M4's store
-half and not started; M8 is built except the wiring that would serve its four read tools, which is
-the task M5b gates; M9 is not started; this folder approves no task.**
+merged on `main`; M5 is built and M5b is built with it — the paired-device approval the owner ruled
+a task of its own on 2026-11-07, so the approval this front door takes is the paired device's; M7 is
+built except the reading of the installation's published state its lists come from, which no task of
+this plan carries; M10 is built except the store's own bucket and its one grant, which are M4's
+store half and not started; M8 is built except the wiring that would serve its four read tools,
+which no binary has and no task of this plan carries; M9 is not started; this folder approves no
+task.**
 
 **This file is a table, and it is not a gate.** The owner ruled on 2026-11-07 that he would clear the
 `zitadel/oidc` dependency set by reading one table, and this is it: he read it and cleared the set
