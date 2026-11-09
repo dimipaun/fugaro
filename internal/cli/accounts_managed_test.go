@@ -525,3 +525,109 @@ func TestAccountsAddManagedOwnerTerminalReadsTheGate(t *testing.T) {
 		})
 	}
 }
+
+// The widening at the owner's own terminal, which is the door it has. A
+// widening is a step only the owner may make (accountsAddOwnerOnly), and the
+// gate's answer to one is the refusal it keeps for a session — so reading the
+// marks at that terminal hands the person standing at the door the refusal and
+// leaves the declaration written only by --yes, which is not the door D1552 and
+// D1555 name. Nothing is read there, so nothing is filed (D1025).
+//
+// The second case is the other half of the same rule, and the half the fix may
+// not open: a coding agent's session reaches the gate through its marker even
+// with no terminal and no --yes (settingsGateAsks), and the widening is refused
+// there by the gate's own rule and recorded like every other refusal.
+//
+// The mutations caught: reading the marks at the owner's own terminal for every
+// class (the first case is refused with the gate's widening sentence, and
+// writes nothing); the marker term dropped from settingsGateAsks, or the fence
+// dropped, so a session's widening is written (the second case).
+func TestAccountsAddManagedOwnerTerminalWidensTheDeclaration(t *testing.T) {
+	for _, tc := range []struct {
+		what    string
+		session func(*testing.T)
+		writes  bool
+	}{
+		{
+			what:    "the owner's own terminal",
+			session: func(t *testing.T) { noAgentSession(t); fakeTerminal(t) },
+			writes:  true,
+		},
+		{
+			what: "a coding agent's session",
+			// No terminal and no --yes, which is the session whose answer the
+			// gate's read is made for: settingsGateReads says nothing, and the
+			// marker is what asks (settingsGateAsks).
+			session: func(t *testing.T) { t.Setenv(accountsAddAgent, "1"); noTerminal(t) },
+		},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			// The profile admits a second repository, so the declaration this
+			// run makes is a widening at all.
+			r := newManagedAddRig(t, managedAddLocalWide(t), addMarksManaged)
+			r.secretWrites(t)
+			before := readFileString(t, r.cfg)
+			tc.session(t)
+
+			out, errOut, err := executeStdin(t, addToken()+"\n", "accounts", "add", "team-a", "--repos", "owner/repo-a,acme/other")
+			if tc.writes {
+				if err != nil {
+					t.Fatalf("the owner's own terminal was refused the widening it is the door to: %v\nstdout:\n%s\nstderr:\n%s", err, out, errOut)
+				}
+				lc := r.addLocal(t)
+				if got := lc.ClaudeAccounts["team-a"].AllowDataTo; !slices.Equal(got, []string{"owner/repo-a", "acme/other"}) {
+					t.Errorf("claude_accounts.team-a.allow_data_to = %v, want the declaration this run asked for", got)
+				}
+				if !strings.Contains(out, "a launcher that may start a run on acme/other") {
+					t.Errorf("the sentence does not say which repository the token may now be sent to:\n%s", out)
+				}
+				assertNoPrompt(t, out)
+				if recs := r.audits(t); len(recs) != 0 {
+					t.Errorf("a step no rule was read for filed %+v", recs)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("a coding agent's session widened the declaration:\n%s", out)
+			}
+			if !errors.Is(err, managedmode.ErrNotConverged) || !strings.Contains(err.Error(), "acme/other") {
+				t.Errorf("the session's widening was not refused by the gate's own rule: %v", err)
+			}
+			if after := readFileString(t, r.cfg); after != before {
+				t.Errorf("the file changed under a refused widening:\n%s", after)
+			}
+			recs := r.audits(t)
+			if len(recs) != 1 || recs[0].Verdict != managedmode.AuditRefused {
+				t.Fatalf("the refusal left %+v, want exactly one refused record", recs)
+			}
+		})
+	}
+}
+
+// The second class the owner-only term covers is the token entry: --claude runs
+// a login and then reads a token, which is the step no plan gate admits
+// (accountsAddRules), so in a managed project the flag has to work at the
+// owner's own terminal — and it works there only if the marks are not read,
+// because the read is what refuses it. The control is the same call in a coding
+// agent's session, which the gate refuses before the login is screened and
+// leaves a refused record behind (TestAccountsAddManagedRefusesClaudeByTheGate).
+func TestAccountsAddManagedOwnerTerminalRunsTheClaudeLogin(t *testing.T) {
+	r := newManagedAddRig(t, addRigLocal, addMarksManaged)
+	lc := r.addLocal(t)
+	noAgentSession(t)
+	fakeTerminal(t)
+
+	m, _, err := accountsAddGate(t.Context(), gateCmd(), lc, accountsAddOptions{claude: true}, "team-a", "standard", nil, []byte("version: 1\n"))
+	if err != nil {
+		t.Fatalf("--claude at the owner's own terminal was refused: %v", err)
+	}
+	if m != (initflow.Managed{}) {
+		t.Errorf("--claude at the owner's own terminal was answered %+v, want the zero value: the token entry is the owner's own step, and no gate admits one", m)
+	}
+	if reqs := r.gcs.Requests(); len(reqs) != 0 {
+		t.Errorf("--claude at the owner's own terminal paid %d calls to read marks it is the door of:\n%v", len(reqs), reqs)
+	}
+	if recs := r.audits(t); len(recs) != 0 {
+		t.Errorf("--claude at the owner's own terminal filed %+v", recs)
+	}
+}

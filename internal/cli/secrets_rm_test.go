@@ -64,6 +64,29 @@ func TestSecretsRmRemovesTheVersionAndTheEntry(t *testing.T) {
 	}
 }
 
+// TestSecretsRmAsksNothing: the removal takes a container and a config entry
+// away, and it does it with neither --yes nor a terminal (D1540) — the
+// sentence naming both halves and the diff are printed before either goes, and
+// nothing waits on an answer to them.
+func TestSecretsRmAsksNothing(t *testing.T) {
+	sm, id, path := secretsRmFixture(t)
+
+	out, errOut, err := execute(t, "secrets", "rm", "bitbucket-token")
+	if err != nil {
+		t.Fatalf("secrets rm: %v\nstdout %s\nstderr %s", err, out, errOut)
+	}
+	assertNoPrompt(t, out+errOut)
+	if !strings.Contains(out, "delete the Secret Manager container "+id) {
+		t.Errorf("the run does not name the container it deletes:\n%s", out)
+	}
+	if got := sm.Deleted(); len(got) != 1 || got[0] != id {
+		t.Errorf("deleted %v, want %s", got, id)
+	}
+	if after := readFileString(t, path); strings.Contains(after, "bitbucket-token") {
+		t.Errorf("the config entry is still there:\n%s", after)
+	}
+}
+
 // TestSecretsRmPutsTheEntryBackWhenTheDeleteFails: the removal is one change
 // made of two halves, and the half this command writes first is the half it can
 // undo. A delete that fails — the refusal a member with secretVersionAdder and

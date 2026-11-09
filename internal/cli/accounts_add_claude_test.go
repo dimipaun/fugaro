@@ -187,41 +187,51 @@ func TestAccountsAddClaudeWritesTheValueNowhere(t *testing.T) {
 	}
 }
 
-// TestAccountsAddClaudeNoAtTheConfirmationMintsNothing is the owner's ruling
-// of 2026-11-02: the whole block is shown and answered ONCE, before the login
-// runs, so "n" is answered before anything has been minted, declared or
-// stored — the login never runs, the local config is untouched and the
-// account's secret holds nothing. An implementation that ran the login first
-// and asked afterwards fails here on the login's own marker file.
-func TestAccountsAddClaudeNoAtTheConfirmationMintsNothing(t *testing.T) {
+// TestAccountsAddClaudeRunsTheLoginWithoutAsking is the owner's ruling of
+// 2026-11-02 as D1540 leaves it: the whole block is shown ONCE, before the
+// login runs, so a person reads what is about to happen — including the
+// resolved claude path it names — but nothing waits on an answer to it any
+// more, and the run goes on to the login and the paste. The terminal here is a
+// real one and neither --ask nor --yes is passed: a confirmation that was
+// still asked for would leave this run sitting at it, and the deadline in
+// waitTerminal is what would fail first.
+func TestAccountsAddClaudeRunsTheLoginWithoutAsking(t *testing.T) {
 	r := newAddRig(t)
 	unsetClaudeLoginCredentials(t)
 	loginFindable(t)
 	login := loginStubOnPath(t, loginPrint(), 0)
-	before := readFileString(t, r.cfg)
 	tty := newTTY(t)
 
 	done := runOnTerminal(t, tty, "accounts", "add", "team-a", "--repos", "owner/repo-a", "--claude")
-	waitTerminal(t, tty, "Write this to")
-	if _, err := tty.master.WriteString("n\n"); err != nil {
-		t.Fatal(err)
+	waitTerminal(t, tty, loginPrint())
+	pasteAtThePrompt(t, tty, config.ClaudeAccountSecret("team-a"), addToken())
+	if err := waitCommand(t, done); err != nil {
+		t.Fatalf("accounts add --claude: %v\nterminal:\n%s", err, tty.displayed())
 	}
-	err := waitCommand(t, done)
-	if err == nil {
-		t.Fatalf("the command went ahead without its confirmation:\n%s", tty.displayed())
+	if _, statErr := os.Stat(login.marker); statErr != nil {
+		t.Fatalf("the login did not run: %v", statErr)
 	}
-	if ExitCode(err) != ExitUserError {
-		t.Errorf("exit %d, want a user error: %v", ExitCode(err), err)
+	if got := string(r.sm.Latest(accountSecretID("team-a"))); got != addToken() {
+		t.Errorf("the account's secret holds %q, want the token pasted at the hidden prompt", got)
 	}
-	if _, statErr := os.Stat(login.marker); statErr == nil {
-		t.Error("answering n ran the login: the confirmation comes before it, and n mints nothing")
+	shown := tty.displayed()
+	// The block names the program it is about to run, at the path it resolved
+	// to (spec §3.1 step 1), and it is printed before the child starts: a
+	// person reads which program runs even though nobody is asked about it.
+	naming, running := strings.Index(shown, login.bin), strings.Index(shown, "running: "+login.bin)
+	if naming < 0 {
+		t.Errorf("the run never names the resolved claude path %q, so a person reads about a program it does not identify:\n%s", login.bin, shown)
+	} else if running < 0 || naming > running {
+		t.Errorf("the resolved claude path is not named before the login starts (%d, %d):\n%s", naming, running, shown)
 	}
-	if got := r.sm.Latest(accountSecretID("team-a")); len(got) != 0 {
-		t.Errorf("the account's secret holds %d bytes, want none: nothing was confirmed", len(got))
+	// The command's own half of the transcript is everything above the child it
+	// starts, and that half asks nothing: the converge's stages below it are
+	// their own readers (their blocks are not this command's, and T7 is where
+	// they lose theirs).
+	if running < 0 {
+		t.Fatalf("the login never started:\n%s", shown)
 	}
-	if after := readFileString(t, r.cfg); after != before {
-		t.Errorf("answering n wrote the local config:\n%s", after)
-	}
+	assertNoPrompt(t, shown[:running])
 }
 
 // TestAccountsAddClaudeYesRunsTheLogin: --yes is the same single answer
@@ -248,49 +258,13 @@ func TestAccountsAddClaudeYesRunsTheLogin(t *testing.T) {
 	}
 }
 
-// TestAccountsAddClaudeTheOneConfirmationNamesTheResolvedLogin is the owner's
-// ruling again: the block a person answers names the resolved claude path, so
-// they answer for the program that is about to run rather than for a sentence
-// about it — and it is the confirmation's own text that names it, before the
-// login has run at all (spec §3.1 step 1).
-func TestAccountsAddClaudeTheOneConfirmationNamesTheResolvedLogin(t *testing.T) {
-	newAddRig(t)
-	unsetClaudeLoginCredentials(t)
-	loginFindable(t)
-	login := loginStubOnPath(t, loginPrint(), 0)
-	tty := newTTY(t)
-
-	done := runOnTerminal(t, tty, "accounts", "add", "team-a", "--repos", "owner/repo-a", "--claude")
-	waitTerminal(t, tty, "Write this to")
-	if _, err := tty.master.WriteString("n\n"); err != nil {
-		t.Fatal(err)
-	}
-	if err := waitCommand(t, done); err == nil {
-		t.Fatalf("the command went ahead without its confirmation:\n%s", tty.displayed())
-	}
-	block := tty.displayed()
-	if i := strings.Index(block, "⚠ CONFIRM"); i >= 0 {
-		block = block[i:]
-	} else {
-		t.Fatalf("the confirmation block was never shown:\n%s", tty.displayed())
-	}
-	if i := strings.Index(block, "Write this to"); i >= 0 {
-		block = block[:i]
-	}
-	if !strings.Contains(block, login.bin) {
-		t.Errorf("the confirmation does not name the resolved claude path %q, so a person answers without knowing which program runs:\n%s", login.bin, block)
-	}
-	if _, statErr := os.Stat(login.marker); statErr == nil {
-		t.Error("the login ran: the path is named before it starts, and n mints nothing")
-	}
-}
-
-// TestAccountsAddClaudeAsksExactlyOnePrompt is the other half of the same
-// ruling: one confirmation for the whole command, before the login, and no
-// second one after it. The run below answers the prompt by hand — no --yes —
-// and goes all the way to the stored secret, so a second confirmation anywhere
-// on the path shows up here.
-func TestAccountsAddClaudeAsksExactlyOnePrompt(t *testing.T) {
+// TestAccountsAddClaudeAsksOnlyForThePaste: the command's own question is gone
+// (D1540), and the one thing left that stops a run at a terminal is the value
+// entry — the hidden paste that is the only token path (§3.2). The run below
+// answers nothing by hand and goes all the way to the stored secret, so a
+// confirmation anywhere on the path would show up here as a prompt nobody
+// answered — and the paste is asserted to be asked for exactly once.
+func TestAccountsAddClaudeAsksOnlyForThePaste(t *testing.T) {
 	r := newAddRig(t)
 	unsetClaudeLoginCredentials(t)
 	loginFindable(t)
@@ -298,10 +272,6 @@ func TestAccountsAddClaudeAsksExactlyOnePrompt(t *testing.T) {
 	tty := newTTY(t)
 
 	done := runOnTerminal(t, tty, "accounts", "add", "team-a", "--repos", "owner/repo-a", "--claude")
-	waitTerminal(t, tty, "Write this to")
-	if _, err := tty.master.WriteString("y\n"); err != nil {
-		t.Fatal(err)
-	}
 	waitTerminal(t, tty, loginPrint())
 	pasteAtThePrompt(t, tty, config.ClaudeAccountSecret("team-a"), addToken())
 	if err := waitCommand(t, done); err != nil {
@@ -310,15 +280,17 @@ func TestAccountsAddClaudeAsksExactlyOnePrompt(t *testing.T) {
 	if got := string(r.sm.Latest(accountSecretID("team-a"))); got != addToken() {
 		t.Errorf("the account's secret holds %q, want the token pasted at the hidden prompt", got)
 	}
-	// The stages the converge invokes are answered by the run's own
-	// confirmation and print their blocks as "confirmed by --yes", so the count
-	// that matters is the command's own block and the question it asks: exactly
-	// one of each on a run that goes all the way to the stored secret.
-	if n := strings.Count(tty.displayed(), "⚠ CONFIRM (project aurora): declare claude_accounts.team-a"); n != 1 {
-		t.Errorf("the command's confirmation appears %d times, want exactly one for the whole command:\n%s", n, tty.displayed())
+	// What the command itself asks, above the stages it converges, is nothing;
+	// the one thing left at a terminal that stops a run is the value entry
+	// below it, and it is asked for exactly once.
+	shown := tty.displayed()
+	running := strings.Index(shown, "running: ")
+	if running < 0 {
+		t.Fatalf("the login never started:\n%s", shown)
 	}
-	if n := strings.Count(tty.displayed(), "Write this to"); n != 1 {
-		t.Errorf("the terminal asks %d times, want once:\n%s", n, tty.displayed())
+	assertNoPrompt(t, shown[:running])
+	if n := strings.Count(shown, "Paste the value for "+config.ClaudeAccountSecret("team-a")); n != 1 {
+		t.Errorf("the terminal asks for the token %d times, want once:\n%s", n, shown)
 	}
 }
 

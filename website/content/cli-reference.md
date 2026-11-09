@@ -110,7 +110,7 @@ every repository on it: an account that covers less is refused before the file
 is touched, naming the repositories it is missing, because widening the account
 silently is what that rule exists to prevent.
 
-Then it converges, in one command and behind the one confirmation above: the
+Then it converges, in one command and behind the one sentence it prints: the
 token is stored project-wide as a new version of the account's own secret, the
 account's broken mark is cleared, and the publisher, the job set and this
 checkout's repository root are converged — the same stages fugaro update runs,
@@ -167,9 +167,9 @@ could take off a hold a newer release placed.
 The write is one node — creds/marks/NAME, in this installation's own database —
 and it is conditional on the value read (PutIfMatch), so a mark the service
 changed at the same moment is not lost: the write re-reads the mark and clears
-it only while its state is still the one the confirmation named, so a 401 the
+it only while its state is still the one this run announced, so a 401 the
 service recorded while you were reading is left for its own decision rather
-than taken off with the hold you confirmed.
+than taken off with the hold you asked for.
 
 NAME is "default" (the repository's own unnamed claude-oauth-token secret), a
 claude_accounts name of the selected project config, or an account the database
@@ -288,12 +288,12 @@ Removing the declaration also deletes the secret claude-oauth-token-<name>
 through Secret Manager's own delete. That delete cannot be undone — Secret
 Manager keeps no grace period for a secret — and the copy of the credential
 left behind is the token at the provider. The secret's ID is named in the
-confirmation before it goes, and the command says plainly that deleting the
+sentence this run prints before it goes, and the command says plainly that deleting the
 secret does not revoke the token at the provider: it stays valid until it
 expires or you revoke it in Anthropic's own console, which no command here
 reaches.
 
-Then it converges, in the same command and behind the same confirmation: the
+Then it converges, in the same command and after that one sentence: the
 policy node the account was published in, the job set and this checkout's
 repository root, through the stages fugaro update runs.
 
