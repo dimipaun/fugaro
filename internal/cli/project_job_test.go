@@ -1892,10 +1892,11 @@ func TestProviderKeyIsNotAClaudeAccount(t *testing.T) {
 				t.Errorf("the refusal names %q: %v — the account lookup's sentence prescribes an entry config.ValidateClaudeAccounts refuses, so it is a remedy nobody can carry out", banned, err)
 			}
 		}
-		for _, want := range []string{config.ProviderKeyAccount, "drop the key"} {
-			if !strings.Contains(err.Error(), want) {
-				t.Errorf("the refusal does not name %q: %v", want, err)
-			}
+		// The value itself is not echoed: it is a file's own text, and the
+		// loader's sentences never print one (config.ValidClaudeAccountRef's own
+		// rule). What the refusal must say is the move that works.
+		if !strings.Contains(err.Error(), "drop the key") {
+			t.Errorf("the refusal does not name the move that works (dropping the key): %v", err)
 		}
 	})
 }

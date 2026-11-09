@@ -2158,31 +2158,32 @@ func claudeAccountFor(ctx context.Context, env *cloudEnv, repo, flag, stage, ref
 	// sentinel here is config.DefaultClaudeAccount — the spelling a repeated
 	// launch's stored task uses for "no account chosen", which is not a name of
 	// the run's own, so it leaves the mix's account standing; the account
-	// axis's other non-account value, config.AnthropicKeyAccount, is not this
-	// case and must not be: it is what names the review class's own pairing
-	// (D1417, D1422), so the mix never takes its place, and the test below is
-	// exactly why — the sentinel is neither "" nor the default. Any other name
+	// axis's non-account values (config.AnthropicKeyAccount,
+	// config.ProviderKeyAccount) are not this case and must not be: they are
+	// what name the review class's own pairing (D1417, D1422), so the mix never
+	// takes their place, and the test below is exactly why — neither is "" nor
+	// the default. Any other name
 	// is left to the walk below, which refuses it unless it is the mix's own. A
 	// *stage* asked for is not this resolution: it has its own chain above, and
 	// the mix serves the two stages of the allow-list and no other.
 	//
-	// The sentinel and a declared mix are the one pair here that neither of
-	// those answers covers: the name is no account, so it is refused below only
-	// where the pair cannot be judged at all (claudeAccountAllowed admits it for
-	// api-key, which is the auth a mix is declared under), while the runner
-	// serves the run's review and adversarial stages out of the mix whatever the
-	// launch's own account is. Such a launch would start on the sentinel's job —
-	// the one whose account segment it is — which mounts no Claude token, and
-	// its review stages would halt for one. It is refused here instead, where
-	// the mix is known.
+	// A non-account value and a declared mix are the one pair here that neither
+	// of those answers covers: the name is no account, so it is refused below
+	// only where the pair cannot be judged at all (claudeAccountAllowed admits
+	// it for api-key, which is the auth a mix is declared under), while the
+	// runner serves the run's review and adversarial stages out of the mix
+	// whatever the launch's own account is. Such a launch would start on the
+	// value's job — the one whose account segment it is — which mounts no Claude
+	// token, and its review stages would halt for one. It is refused here
+	// instead, where the mix is known.
 	if stage == "" {
 		mix, err := mixedRunAccount(ctx, env, repo, auth, co)
 		if err != nil {
 			return "", err
 		}
-		if mix != "" && name == config.AnthropicKeyAccount {
-			return "", userErr("this launch names the project's own Anthropic API key (%s) as the run's own account, and this run declares a mix: %s serves its %s stages, and those stages read the account's token out of the runner's environment, which only the account's own job mounts — the mix is the one Claude account an api-key run may hold, and the key is not an account, so the launch would start on the key's job, whose review stages have no token to run on. Nothing was launched: no claim was taken, no budget token was minted and Cloud Run was not called. Launch without --token, which is where a mixed run starts — the mix is the run's own account — or remove the account this mix names for the %s stages",
-				config.AnthropicKeyAccount, mix, strings.Join(config.MixedAccountStages, " and "), strings.Join(config.MixedAccountStages, " and "))
+		if mix != "" && config.AxisNonAccountValue(name) {
+			return "", userErr("this launch names %s (%s) as the run's own account, and this run declares a mix: %s serves its %s stages, and those stages read the account's token out of the runner's environment, which only the account's own job mounts — the mix is the one Claude account an api-key run may hold, and this value is not an account, so the launch would start on its job, whose review stages have no token to run on. Nothing was launched: no claim was taken, no budget token was minted and Cloud Run was not called. Launch without --token, which is where a mixed run starts — the mix is the run's own account — or remove the account this mix names for the %s stages",
+				nonAccountPhrase(name), name, mix, strings.Join(config.MixedAccountStages, " and "), strings.Join(config.MixedAccountStages, " and "))
 		}
 		if mix != "" && (name == "" || name == config.DefaultClaudeAccount) {
 			name = mix
@@ -2587,10 +2588,11 @@ func checkoutAgentAuth(co *config.Config) string {
 // pre-check callers (a follow-up's inherited account, --retry's stored task)
 // depend on.
 //
-// The account axis's one non-account value is the exception, and it is the
-// membership half it is excepted from: config.AnthropicKeyAccount names the
-// project's own Anthropic API key, which no claude_accounts entry may define
-// and which the launch is judged against the profile's own list for (the arm
+// The account axis's non-account values are the exception, and it is the
+// membership half they are excepted from: config.AnthropicKeyAccount names the
+// project's own Anthropic API key and config.ProviderKeyAccount the project's
+// provider key, neither of which a claude_accounts entry may define and both of
+// which the launch is judged against the profile's own list for (the arm
 // below says the whole of it).
 func claudeAccountAllowed(env *cloudEnv, repo, name, auth string) error {
 	if name == config.DefaultClaudeAccount {
@@ -2613,30 +2615,31 @@ func claudeAccountAllowed(env *cloudEnv, repo, name, auth string) error {
 		return userErr("named Claude account %s cannot be judged against %s's agent.auth, which is %s — not a value this Fugaro knows (agent.auth is one of %s)",
 			pluginwire.Printable(name), repo, pluginwire.Printable(auth), strings.Join(config.AgentAuths, ", "))
 	}
-	// The axis's one non-account value (config.AnthropicKeyAccount) is admitted
-	// here and judged where it can be: the profile's own claude_accounts list is
-	// what deploys the job it names and its review-only variant
-	// (internal/infra's ProjectJobs and ProjectReviewJobs), and the first thing
-	// the launch does with this name is ask that list (project_job.go's
-	// projectJobAccountFor). It cannot be judged HERE, by the allow-list: the
-	// sentinel is not a Claude account and config.ValidateClaudeAccounts refuses
-	// to define it in claude_accounts, so config.AllowedClaudeAccounts — the
-	// list this function's membership half reads — can never hold it, and a
-	// refusal here would name a claude_accounts entry the operator may not write.
+	// The axis's non-account values (config.AnthropicKeyAccount,
+	// config.ProviderKeyAccount) are admitted here and judged where they can be:
+	// the profile's own claude_accounts list is what deploys the job each one
+	// names and its review-only variant (internal/infra's ProjectJobs and
+	// ProjectReviewJobs), and the first thing the launch does with such a name is
+	// ask that list (project_job.go's projectJobAccountFor). They cannot be
+	// judged HERE, by the allow-list: neither is a Claude account and
+	// config.ValidateClaudeAccounts refuses to define either in claude_accounts,
+	// so config.AllowedClaudeAccounts — the list this function's membership half
+	// reads — can never hold them, and a refusal here would name a
+	// claude_accounts entry the operator may not write.
 	//
-	// api-key is the auth it is admitted for, and "" beside it: D1417 pairs the
-	// key with a repository whose own agent.auth is api-key (the launch names the
-	// pairing with --token), which is the one auth the class serves the key
-	// under, and the pre-check callers — a follow-up's inherited account and
-	// --retry's stored task, resolved with no document to read an auth from —
-	// are held to the same rule at the launch that can read one
+	// api-key is the auth they are admitted for, and "" beside it: D1417 pairs
+	// each credential with a repository whose own agent.auth is api-key (the
+	// launch names the pairing with --token), which is the one auth the class
+	// serves it under, and the pre-check callers — a follow-up's inherited
+	// account and --retry's stored task, resolved with no document to read an
+	// auth from — are held to the same rule at the launch that can read one
 	// (projectJobAccountFor, and the runner's own checkProjectJobAccount after
 	// it). Every other auth keeps the answer it already had: an OAuth run's
-	// credential is a Claude account and this is not one, and vertex and cascade
-	// are refused by the class path itself (internal/runner's
-	// checkReviewClassModelPath), so admitting the sentinel for them would write
-	// a task the run then halts on.
-	if name == config.AnthropicKeyAccount && (auth == "api-key" || auth == "") {
+	// credential is a Claude account and neither value is one, and vertex and
+	// cascade are refused by the class path itself (internal/runner's
+	// checkReviewClassModelPath), so admitting them for those would write a task
+	// the run then halts on.
+	if config.AxisNonAccountValue(name) && (auth == "api-key" || auth == "") {
 		return nil
 	}
 	if auth != "" && auth != "oauth" {
@@ -3801,19 +3804,19 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 			return res, err
 		}
 	}
-	// The project's own Anthropic API key, named as the run's own account
-	// (claudeAccountAllowed's arm), is placed on the shared project job whose
-	// account segment is the sentinel — and on the review-only variant of it,
-	// which is the one job a review served by the key runs on (D1417, D1422).
-	// A launch the shared path resolved can be on either; a per-repository
-	// launch derives its job's name from the account segment
+	// An account-axis value that is no account, named as the run's own
+	// credential (claudeAccountAllowed's arm), is placed on the shared project
+	// job whose account segment is that value — and on the review-only variant
+	// of it, which is the one job a review served by that credential runs on
+	// (D1417, D1422, AK6a). A launch the shared path resolved can be on either;
+	// a per-repository launch derives its job's name from the account segment
 	// (gcp.WorkflowVariant), and no installation deploys a job of its own under
 	// this one. Starting it would be Cloud Run's 404 for a job this
 	// installation was never asked for; the launch stops here instead, before
 	// the claim, as the account gate's refusals do.
-	if job == nil && spec.OAuthToken == config.AnthropicKeyAccount {
-		return res, userErr("this launch names the project's own Anthropic API key (%s) as the run's own account, and this repository runs on a job of its own: the key is not a Claude account and no per-repository job holds it, so the job this launch derived from the name is one no installation was ever asked for. The key's jobs are the shared project job of a profile that lists it and that job's review-only variant, and a repository reaches them from a workflow whose checkout is clone. Nothing was launched: no claim was taken, no budget token was minted and Cloud Run was not called. Run this repository from a clone workflow, or launch without --token",
-			config.AnthropicKeyAccount)
+	if job == nil && config.AxisNonAccountValue(spec.OAuthToken) {
+		return res, userErr("this launch names %s (%s) as the run's own account, and this repository runs on a job of its own: the value is not a Claude account and no per-repository job holds it, so the job this launch derived from the name is one no installation was ever asked for. The jobs it names are the shared project job of a profile that lists it and that job's review-only variant, and a repository reaches them from a workflow whose checkout is clone. Nothing was launched: no claim was taken, no budget token was minted and Cloud Run was not called. Run this repository from a clone workflow, or launch without --token",
+			nonAccountPhrase(spec.OAuthToken), spec.OAuthToken)
 	}
 	hook(launchHooks.beforeClaim)
 	holder := claimHolder()

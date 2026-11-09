@@ -26,6 +26,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/gitprov/github"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
 const (
@@ -286,7 +287,7 @@ func TestReviewRowsCarryEachAxisValueOfItsOwn(t *testing.T) {
 			"` + config.AnthropicKeyAccount + `": {"allow_repos": ["` + testRepo + `"]},
 			"` + config.ProviderKeyAccount + `": {"allow_repos": ["` + testRepo + `"]}
 		},
-		"profiles": {"` + testReviewProfile + `": {"provider": "github", "cpu": 2, "memory": "8Gi", "timeout_class": "6h",
+		"profiles": {"` + projectpolicy.DefaultProfileName + `": {"provider": "github", "cpu": 2, "memory": "8Gi", "timeout_class": "6h",
 			"allow_repos": ["` + testRepo + `"],
 			"claude_accounts": ["` + config.AnthropicKeyAccount + `", "` + config.ProviderKeyAccount + `"]}},
 		"credentials": {"fallback": "auto"}
@@ -298,11 +299,17 @@ func TestReviewRowsCarryEachAxisValueOfItsOwn(t *testing.T) {
 	// segment shows up as the collapse it is: the two rows would be one.
 	want := []ReviewJobAccount{
 		{
-			Email:   serviceAccountEmail(ReviewServiceAccountID(testReviewProfile, "github", config.AnthropicKeyAccount), testFirebase),
+			// The profile's own no-account job, which every profile keeps and
+			// whose row the admissions spell as the default account.
+			Email:   serviceAccountEmail(ReviewServiceAccountID(projectpolicy.DefaultProfileName, "github", config.DefaultClaudeAccount), testFirebase),
+			Account: config.DefaultClaudeAccount,
+		},
+		{
+			Email:   serviceAccountEmail(ReviewServiceAccountID(projectpolicy.DefaultProfileName, "github", config.AnthropicKeyAccount), testFirebase),
 			Account: config.AnthropicKeyAccount,
 		},
 		{
-			Email:   serviceAccountEmail(ReviewServiceAccountID(testReviewProfile, "github", config.ProviderKeyAccount), testFirebase),
+			Email:   serviceAccountEmail(ReviewServiceAccountID(projectpolicy.DefaultProfileName, "github", config.ProviderKeyAccount), testFirebase),
 			Account: config.ProviderKeyAccount,
 		},
 	}
