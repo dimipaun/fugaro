@@ -267,9 +267,10 @@ func tfRootBlock(t *testing.T, root, header string) string {
 // version, and a Cloud EKM key whose material lives in another store — are
 // declared nowhere in this tree.
 //
-// The mutation this fails on: the key becoming an imported one, or an
-// external_key_uri appearing on a version, or the algorithm or protection level
-// moving off the pair the verifiers were built for.
+// The mutation this fails on: the key becoming an imported one (`import_only`
+// with `skip_initial_version_creation`, whose material an external machine would
+// generate), an external_key_uri appearing on a version, or the algorithm or
+// protection level moving off the pair the verifiers were built for.
 func TestTheSigningKeyIsNonExportable(t *testing.T) {
 	key := tfCompact(tfRootBlock(t, keyringRoot, `resource "google_kms_crypto_key" "signing"`))
 	for _, want := range []string{
@@ -278,7 +279,19 @@ func TestTheSigningKeyIsNonExportable(t *testing.T) {
 		`protection_level="SOFTWARE"`,
 	} {
 		if !strings.Contains(key, want) {
-			t.Errorf("%s's signing key does not write %s: S2.1 fixes the algorithm as Ed25519, which the three verifiers verify, and the key is signed with through the API rather than from a file", keyringRoot, want)
+			t.Errorf("the signing key in %s does not write %s: S2.1 fixes the algorithm as Ed25519, which the three verifiers verify, and the key is signed with through the API rather than from a file", keyringRoot, want)
+		}
+	}
+
+	// The key must also be one the store creates the material of: an
+	// `import_only` key takes versions whose material was generated elsewhere, and
+	// `skip_initial_version_creation` exists to create one before any import — the
+	// pair is a key whose private half lives outside the store, with no import job
+	// in this tree to import it by, because an import job is created with a
+	// command rather than by a configuration (S3.8's runbook).
+	for _, forbidden := range []string{"import_only", "skip_initial_version_creation"} {
+		if strings.Contains(key, forbidden) {
+			t.Errorf("the signing key in %s writes %s: the key's material is created inside the key store and never imported into it, or the private half exists in whatever machine generated it (S3.3, §11, Check 174)", keyringRoot, forbidden)
 		}
 	}
 
@@ -288,6 +301,9 @@ func TestTheSigningKeyIsNonExportable(t *testing.T) {
 			// An imported version: the one way material is generated outside the
 			// store and reaches it.
 			"google_kms_key_ring_import_job",
+			// A key whose versions are imported rather than created.
+			"import_only",
+			"skip_initial_version_creation",
 			// Cloud EKM: the key stays in another store entirely, which is an
 			// exportable key by another name.
 			"external_key_uri",
@@ -304,14 +320,16 @@ func TestTheSigningKeyIsNonExportable(t *testing.T) {
 }
 
 // TestOnlyTheMinterHoldsTheSignerRole: the signer role reaches exactly one
-// identity, and it is the minter's account. The intake is reachable from the
-// internet — a person's browser, the merchant's webhook, the owner's admin page
-// — so an intake that could sign would make T13's split a comment rather than a
-// boundary, and Check 174's "the intake's identity [is] refused" is this test's
-// no.
+// identity, and it is the minter's account — and that account is the one the
+// minter service RUNS as, since a service running as another identity is that
+// identity. The intake is reachable from the internet — a person's browser, the
+// merchant's webhook, the owner's admin page — so an intake that could sign
+// would make T13's split a comment rather than a boundary, and Check 174's "the
+// intake's identity [is] refused" is this test's no.
 //
-// The mutation this fails on, and the red step the plan names: the grant's
-// member spelled google_service_account.intake.member.
+// The mutations this fails on, and the red step the plan names first: the
+// grant's member spelled google_service_account.intake.member, and the intake
+// service's template.service_account set to the minter's account.
 func TestOnlyTheMinterHoldsTheSignerRole(t *testing.T) {
 	// Every block in the tree that grants anything at all is one of the four
 	// grants this service is allowed to hold, and the list is the whole of it.
@@ -342,13 +360,13 @@ func TestOnlyTheMinterHoldsTheSignerRole(t *testing.T) {
 
 	grant := tfCompact(tfRootBlock(t, servicesRoot, `resource "google_kms_key_ring_iam_member" "minter_signs"`))
 	if !strings.Contains(grant, "member=google_service_account.minter.member") {
-		t.Errorf("%s's signer grant is not the minter's account: the minter is the one service that signs (T13's split), and the grant is where that is decided — an intake here hands the signer role to the internet-facing service", servicesRoot)
+		t.Errorf("the signer grant in %s is not the minter's account: the minter is the one service that signs (T13's split), and the grant is where that is decided — an intake here hands the signer role to the internet-facing service", servicesRoot)
 	}
 	if !strings.Contains(grant, `role="projects/${var.project}/roles/${var.signer_role}"`) {
-		t.Errorf("%s's signer grant is not the custom role keyring/ creates: the narrowest grant that mints is one permission, cloudkms.cryptoKeyVersions.useToSign, while a predefined role also reads the public key and verifies", servicesRoot)
+		t.Errorf("the signer grant in %s is not the custom role keyring/ creates: the narrowest grant that mints is one permission, cloudkms.cryptoKeyVersions.useToSign, while a predefined role also reads the public key and verifies", servicesRoot)
 	}
 	if !strings.Contains(grant, "key_ring_id=data.google_kms_key_ring.signing.id") {
-		t.Errorf("%s's signer grant is not on the key ring: the grant has to reach the keys keyring/ created rather than a project, and the data source is what fails the plan while S3.8's apply has not run", servicesRoot)
+		t.Errorf("the signer grant in %s is not on the key ring: the grant has to reach the keys keyring/ created rather than a project, and the data source is what fails the plan while S3.8's apply has not run", servicesRoot)
 	}
 
 	// The role the grant names is the role keyring/ defines, and it is the
@@ -362,7 +380,7 @@ func TestOnlyTheMinterHoldsTheSignerRole(t *testing.T) {
 		`permissions=["cloudkms.cryptoKeyVersions.useToSign"]`,
 	} {
 		if !strings.Contains(role, want) {
-			t.Errorf("%s's signer role does not write %s: the minter signs and verifies nothing with the private half, and the grant services/ makes names this role", keyringRoot, want)
+			t.Errorf("the signer role in %s does not write %s: the minter signs and verifies nothing with the private half, and the grant services/ makes names this role", keyringRoot, want)
 		}
 	}
 
@@ -386,6 +404,47 @@ func TestOnlyTheMinterHoldsTheSignerRole(t *testing.T) {
 	if uses != 1 {
 		t.Errorf("this tree grants the intake's account %d times, want exactly 1: its whole reach is the authenticated call to the minter", uses)
 	}
+
+	// And the identity each service RUNS as, which is the half a grant sweep
+	// cannot see: a service that runs as another account IS that account, so an
+	// intake whose template names the minter's would hold the signer role from
+	// the internet while every grant above stayed exactly as written.
+	for _, service := range []string{"intake", "minter"} {
+		block := tfCompact(tfRootBlock(t, servicesRoot, `resource "google_cloud_run_v2_service" "`+service+`"`))
+		if want := "service_account=google_service_account." + service + ".email"; !strings.Contains(block, want) {
+			t.Errorf("the %s service does not run as its own account: it does not write %s. The split between the intake and the minter is a split of identities, so the internet-facing service must not run as the one the signer role is granted to (Check 174, D450(a))", service, want)
+		}
+	}
+
+	// The two accounts are named in exactly the blocks the design allows, so a
+	// third one has to be argued for rather than added: the minter's in its own
+	// service and the one grant, the intake's in its own service and the one
+	// invoker grant. A resource outside that list naming either account is an
+	// identity taken where it was not meant to go; the outputs name both, and a
+	// value handed out is not a reach.
+	referrers := map[string]map[string]string{
+		"google_service_account.minter.": {
+			`resource "google_cloud_run_v2_service" "minter"`:          "the service that runs as it",
+			`resource "google_kms_key_ring_iam_member" "minter_signs"`: "the one identity granted the signer role",
+		},
+		"google_service_account.intake.": {
+			`resource "google_cloud_run_v2_service" "intake"`:                           "the service that runs as it",
+			`resource "google_cloud_run_v2_service_iam_member" "intake_invokes_minter"`: "the one identity allowed to call the minter",
+		},
+	}
+	for _, rel := range tfFiles(t) {
+		for _, block := range tfBlocks(tfSource(t, rel), `resource "`) {
+			compact := tfCompact(block)
+			for account, allowed := range referrers {
+				if !strings.Contains(compact, account) {
+					continue
+				}
+				if _, ok := allowed[tfHeader(block)]; !ok {
+					t.Errorf("%s reaches %s from a block that is not one of the two the design allows:\n%s\nthe minter's account is the one identity that signs and the intake's is the one caller it has, so a third block naming either is an identity taken where it was not meant to go (Check 174)", rel, account, strings.TrimSpace(block))
+				}
+			}
+		}
+	}
 }
 
 // TestTheMinterHasNoPublicInvoker: the minter is not reachable from the
@@ -399,7 +458,7 @@ func TestOnlyTheMinterHoldsTheSignerRole(t *testing.T) {
 func TestTheMinterHasNoPublicInvoker(t *testing.T) {
 	minter := tfCompact(tfRootBlock(t, servicesRoot, `resource "google_cloud_run_v2_service" "minter"`))
 	if !strings.Contains(minter, "invoker_iam_disabled=false") {
-		t.Errorf("%s's minter service does not require IAM: the flag has to be stated false, because a service that stopped checking IAM answers every caller and the one invoker grant this root writes would be the only thing between the internet and the signer (Check 174)", servicesRoot)
+		t.Errorf("the minter service in %s does not require IAM: the flag has to be stated false, because a service that stopped checking IAM answers every caller and the one invoker grant this root writes would be the only thing between the internet and the signer (Check 174)", servicesRoot)
 	}
 
 	// The count is over the bare token in every block of the tree rather than
@@ -423,7 +482,7 @@ func TestTheMinterHasNoPublicInvoker(t *testing.T) {
 
 	publicBlock := tfCompact(tfRootBlock(t, servicesRoot, `resource "google_cloud_run_v2_service_iam_member" "intake_public"`))
 	if !strings.Contains(publicBlock, `"allUsers"`) {
-		t.Errorf("%s's public binding is not the one that writes allUsers: the single public grant has to be this resource, so that a reader finds the internet's one door by its name", servicesRoot)
+		t.Errorf("the public binding in %s is not the one that writes allUsers: the single public grant has to be this resource, so that a reader finds the internet's one door by its name", servicesRoot)
 	}
 	// The service the binding NAMES is the one it opens: a block that kept the
 	// intake in its location and moved its name to the minter would open the
@@ -434,11 +493,11 @@ func TestTheMinterHasNoPublicInvoker(t *testing.T) {
 		"location=google_cloud_run_v2_service.intake.",
 	} {
 		if !strings.Contains(publicBlock, want) {
-			t.Errorf("%s's allUsers binding is not on the intake service: it does not write %s", servicesRoot, want)
+			t.Errorf("the allUsers binding in %s is not on the intake service: it does not write %s", servicesRoot, want)
 		}
 	}
 	if !strings.Contains(publicBlock, `role="roles/run.invoker"`) {
-		t.Errorf("%s's allUsers binding is not the invoker role: any other role's public grant on a service is a reach nobody asked for", servicesRoot)
+		t.Errorf("the allUsers binding in %s is not the invoker role: any other role's public grant on a service is a reach nobody asked for", servicesRoot)
 	}
 
 	invoker := tfCompact(tfRootBlock(t, servicesRoot, `resource "google_cloud_run_v2_service_iam_member" "intake_invokes_minter"`))
@@ -449,7 +508,7 @@ func TestTheMinterHasNoPublicInvoker(t *testing.T) {
 		`role="roles/run.invoker"`,
 	} {
 		if !strings.Contains(invoker, want) {
-			t.Errorf("%s's invoker grant on the minter does not write %s: the minter has no public invoker, and the intake's ID token is what the platform checks before its container runs (D450(a))", servicesRoot, want)
+			t.Errorf("the invoker grant on the minter in %s does not write %s: the minter has no public invoker, and the intake's ID token is what the platform checks before its container runs (D450(a))", servicesRoot, want)
 		}
 	}
 }
