@@ -1,8 +1,11 @@
 package diagnoseagent
 
 import (
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/issues"
 )
 
 func testEvidence() Evidence {
@@ -41,6 +44,36 @@ func TestPromptStatesTheFourOutcomes(t *testing.T) {
 	}
 	if !strings.Contains(body, OutcomeField) {
 		t.Errorf("the prompt's block does not say which line states the outcome (%q)", OutcomeField)
+	}
+}
+
+func TestOutcomesAreTheLabelsIssuesAccepts(t *testing.T) {
+	// The block offers the agent "one of" this list and internal/issues refuses an
+	// outcome outside its own four labels, so the two lists are one contract
+	// written in two packages (F1) and nothing in either ties them together: a
+	// label dropped here alone is a finding the agent can never state — an
+	// unsettled answer is forced into `bug` or `configuration` — and a label
+	// added here alone is offered and then refused at the verdict's gate.
+	if len(Outcomes) != 4 {
+		t.Fatalf("Outcomes holds %d labels, want the four internal/issues reads: %v", len(Outcomes), Outcomes)
+	}
+	for _, o := range Outcomes {
+		if !issues.Outcome(o).Valid() {
+			t.Errorf("the prompt offers the outcome %q, which internal/issues.Outcome refuses", o)
+		}
+	}
+	// And the other direction, over the reader's own constants rather than a
+	// copied list of strings: a label renamed there fails to compile against this
+	// test instead of drifting out of the prompt's list.
+	for _, o := range []issues.Outcome{
+		issues.OutcomeConfiguration,
+		issues.OutcomeBug,
+		issues.OutcomeFixedInNewerRelease,
+		issues.OutcomeUnclear,
+	} {
+		if !slices.Contains(Outcomes, string(o)) {
+			t.Errorf("internal/issues reads %q as an outcome and the prompt never offers it", o)
+		}
 	}
 }
 

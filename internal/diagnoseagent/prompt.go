@@ -52,8 +52,10 @@ const (
 )
 
 // Outcomes is every label, in the order the prompt lists them. They are the
-// four labels internal/issues' Outcome reads (F1), and a saved finding is
-// matched by the SignatureField line under the one it states.
+// four labels internal/issues' Outcome reads (F1), and
+// TestOutcomesAreTheLabelsIssuesAccepts is what keeps the two lists from
+// drifting apart. A saved finding is matched by the SignatureField line under
+// the one it states.
 var Outcomes = []string{OutcomeConfiguration, OutcomeBug, OutcomeFixedInNewerRelease, OutcomeUnclear}
 
 // NewNonce returns 16 random hex digits for one diagnosis's fences. It is
