@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/localcfg"
 )
@@ -35,6 +36,13 @@ const (
 // atomic and every file and the folder itself are the user's alone.
 type Store struct {
 	dir string
+	// Installation names the project this store's issues belong to: the digest
+	// of the runs bucket URL (F8b). Save stamps it on every record it writes,
+	// so a machine that serves two projects never leaves one project's issue
+	// where the other's `sync` would upload it or the other's `mine` would
+	// print it. Empty is a store opened with no project to name, which stamps
+	// nothing and leaves whatever the record already carried.
+	Installation string
 }
 
 // OpenStore places the store in the state directory the CLI keeps:
@@ -51,8 +59,14 @@ func OpenStore(getenv func(string) string, goos string) (*Store, error) {
 // Dir is the folder the store keeps its issues in.
 func (s *Store) Dir() string { return s.dir }
 
-// Save writes the issue under the name its number and stem give it.
+// Save writes the issue under the name its number and stem give it, stamped
+// with the installation this store holds: an issue is saved by the project
+// whose command failed, and the file outlives that command (F8b). A store with
+// no installation stamps nothing, so a record keeps the one it was saved with.
 func (s *Store) Save(i Issue) error {
+	if s.Installation != "" {
+		i.Installation = s.Installation
+	}
 	name, err := i.FileName()
 	if err != nil {
 		return err
@@ -126,13 +140,23 @@ func (s *Store) List() ([]Issue, error) {
 
 // SetStatus records where the issue stands. A status outside the four is
 // refused before the file is read.
-func (s *Store) SetStatus(ref string, status Status) error {
+//
+// Setting an issue aside stamps when it was set aside, from the caller's clock:
+// this machine's own copy of the record is the only one an issue dismissed
+// before it was uploaded ever gets, and the retirement of a finished issue
+// needs the date (D1781, F4). Setting aside an issue that is already set aside
+// keeps the stamp it has, because the date says when the issue was set aside
+// and not when the command was run again.
+func (s *Store) SetStatus(ref string, status Status, now time.Time) error {
 	if !status.Valid() {
 		return fmt.Errorf("issues: %q is not a status, want %q, %q, %q or %q", status, StatusPending, StatusSubmitted, StatusDismissed, StatusResolved)
 	}
 	i, err := s.Get(ref)
 	if err != nil {
 		return err
+	}
+	if status == StatusDismissed && i.Status != StatusDismissed {
+		i.DismissedAt = stamp(now)
 	}
 	i.Status = status
 	return s.Save(i)

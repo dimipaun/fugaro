@@ -1,6 +1,7 @@
 package issues
 
 import (
+	"bytes"
 	"errors"
 	"io/fs"
 	"os"
@@ -8,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 // issueState makes a state directory and the environment that names it, which
@@ -152,7 +154,7 @@ func TestStoreRenameOnUpload(t *testing.T) {
 	if err := s.MarkUploaded(local.LocalID, 7, url); err != nil {
 		t.Fatalf("marking uploaded twice: %v", err)
 	}
-	if err := s.SetStatus("7", StatusDismissed); err != nil {
+	if err := s.SetStatus("7", StatusDismissed, issueAt); err != nil {
 		t.Fatalf("dismissing: %v", err)
 	}
 	got, err = s.Get("7")
@@ -162,15 +164,169 @@ func TestStoreRenameOnUpload(t *testing.T) {
 	if got.Status != StatusDismissed {
 		t.Errorf("status = %q, want %q", got.Status, StatusDismissed)
 	}
-	if err := s.SetStatus("7", "closed"); err == nil {
+	if err := s.SetStatus("7", "closed", issueAt); err == nil {
 		t.Error("SetStatus accepted a status outside the four")
 	}
 	// `resolved` is one of the four. No local command sets it — the resolver
 	// writes the shared record (the update spec's F27) — but `issue sync`
 	// brings one home, and the local store reads and writes what the shared
 	// store holds.
-	if err := s.SetStatus("7", StatusResolved); err != nil {
+	if err := s.SetStatus("7", StatusResolved, issueAt); err != nil {
 		t.Errorf("SetStatus refused resolved: %v", err)
+	}
+}
+
+// TestSavedIssueCarriesInstallation covers F8b: the store stamps the project
+// its issues belong to — the digest of the runs bucket URL — on every record
+// it saves, so a machine that serves two projects never files one project's
+// issue into the other's list.
+func TestSavedIssueCarriesInstallation(t *testing.T) {
+	_, env := issueState(t)
+	s := issueStore(t, env)
+	s.Installation = issueInstallation
+	local := issueLocal()
+	local.Installation = ""
+	if err := s.Save(local); err != nil {
+		t.Fatalf("saving: %v", err)
+	}
+	got, err := s.Get(local.LocalID)
+	if err != nil {
+		t.Fatalf("getting the saved issue: %v", err)
+	}
+	if got.Installation != issueInstallation {
+		t.Errorf("the saved record names the installation %q, want %q", got.Installation, issueInstallation)
+	}
+	// A store with no project to name stamps nothing rather than clearing the
+	// field: the record that came home from the shared store through `issue
+	// sync` was filed in an installation, and a store that does not know its
+	// own is not the one that unsays it.
+	plain := issueStore(t, env)
+	if err := plain.Save(got); err != nil {
+		t.Fatalf("saving with no installation: %v", err)
+	}
+	if again, err := plain.Get(local.LocalID); err != nil {
+		t.Fatalf("getting the record back: %v", err)
+	} else if again.Installation != issueInstallation {
+		t.Errorf("a store with no installation rewrote it as %q", again.Installation)
+	}
+
+	// A record saved before there was a field to stamp is a record no project
+	// claims, and reading it leaves it that way: the field is one the reader
+	// supplies as empty, not one an old file is rewritten to grow.
+	old := issueStore(t, env)
+	old.Installation = issueInstallation
+	data, err := Marshal(issueLocal())
+	if err != nil {
+		t.Fatalf("marshalling: %v", err)
+	}
+	head, body := issueHeaderAndBody(t, data)
+	path := filepath.Join(old.Dir(), "local-"+issueLocal().Run+".md")
+	stripped := []byte(withoutHeaderLine(t, head, "installation") + "\n---\n" + body)
+	if err := os.WriteFile(path, stripped, 0o600); err != nil {
+		t.Fatalf("seeding a record from before the field: %v", err)
+	}
+	ancient, err := old.Get(issueLocal().LocalID)
+	if err != nil {
+		t.Fatalf("reading an issue saved before the field: %v", err)
+	}
+	if ancient.Installation != "" {
+		t.Errorf("a record with no installation read back as %q, want empty", ancient.Installation)
+	}
+	if b, err := os.ReadFile(path); err != nil {
+		t.Fatalf("reading the old record back: %v", err)
+	} else if !bytes.Equal(b, stripped) {
+		t.Error("reading an issue saved before the field rewrote its file")
+	}
+
+	// The installation is part of the record, so a value that is not a digest
+	// is refused by the record's own rules and nothing is written: a store that
+	// built the field from something else — a URL, a path — would save a record
+	// whose reader, in another installation, hides the issue as another
+	// project's.
+	bad := issueStore(t, env)
+	bad.Installation = "not a digest"
+	err = bad.Save(issueSample())
+	if err == nil {
+		t.Fatal("Save wrote an installation that is not a digest")
+	}
+	if !strings.Contains(err.Error(), "installation") {
+		t.Errorf("Save refused it for another reason: %v", err)
+	}
+	entries, err := os.ReadDir(bad.Dir())
+	if err != nil {
+		t.Fatalf("reading the store directory: %v", err)
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "0007-") {
+			t.Errorf("Save wrote %s although the record was refused", e.Name())
+		}
+	}
+}
+
+// TestLocalDismissStampsDismissedAt covers this machine's half of D1781: the
+// write that sets an issue aside is the one that stamps when, from the clock
+// the caller passes, and the date it writes is UTC to the second. The date a
+// record carries is when the issue was set aside — the retirement of a
+// finished issue reads it (F4) — so a later write never moves it.
+func TestLocalDismissStampsDismissedAt(t *testing.T) {
+	_, env := issueState(t)
+	s := issueStore(t, env)
+	if err := s.Save(issueLocal()); err != nil {
+		t.Fatalf("saving: %v", err)
+	}
+	// The clock is in another zone and carries sub-second precision, which a
+	// record's field does not: both are the store's to settle, so a caller may
+	// pass the clock it has.
+	when := issueAt.In(time.FixedZone("EET", 2*60*60)).Add(1234 * time.Millisecond)
+	want := issueAt.Add(time.Second)
+	if err := s.SetStatus(issueLocal().LocalID, StatusDismissed, when); err != nil {
+		t.Fatalf("dismissing: %v", err)
+	}
+	got, err := s.Get(issueLocal().LocalID)
+	if err != nil {
+		t.Fatalf("getting the dismissed issue: %v", err)
+	}
+	if got.DismissedAt == nil {
+		t.Fatal("dismissing wrote no date")
+	}
+	if !got.DismissedAt.Equal(want) {
+		t.Errorf("the dismiss date is %v, want %v", got.DismissedAt, want)
+	}
+	if got.DismissedAt.Location() != time.UTC {
+		t.Errorf("the dismiss date is in %v, want UTC", got.DismissedAt.Location())
+	}
+	// Dismissing again keeps the first date: the field says when the issue was
+	// set aside, and the second run is the same fact observed twice.
+	when = issueAt.Add(72 * time.Hour)
+	if err := s.SetStatus(issueLocal().LocalID, StatusDismissed, when); err != nil {
+		t.Fatalf("dismissing twice: %v", err)
+	}
+	if again, err := s.Get(issueLocal().LocalID); err != nil {
+		t.Fatalf("getting the issue back: %v", err)
+	} else if !again.DismissedAt.Equal(want) {
+		t.Errorf("a second dismiss moved the date to %v, want %v", again.DismissedAt, want)
+	}
+
+	// No other status stamps it: `resolved` is a transition of its own, and the
+	// date it carries is the resolver's, written on the shared record and
+	// brought home by `issue sync` — a machine that merely marks its own copy
+	// resolved has not been told when that happened, and a date it made up
+	// there would be the day it synced.
+	other := issueStore(t, env)
+	resolved := issueLocal()
+	resolved.Run, resolved.LocalID = "update-20261109120000-5150", "local-update-20261109120000-5150"
+	if err := other.Save(resolved); err != nil {
+		t.Fatalf("saving the second issue: %v", err)
+	}
+	if err := other.SetStatus(resolved.LocalID, StatusResolved, issueAt); err != nil {
+		t.Fatalf("setting the status: %v", err)
+	}
+	got, err = other.Get(resolved.LocalID)
+	if err != nil {
+		t.Fatalf("getting the issue back: %v", err)
+	}
+	if got.DismissedAt != nil {
+		t.Errorf("marking an issue resolved stamped a dismiss date: %v", got.DismissedAt)
 	}
 }
 
