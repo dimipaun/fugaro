@@ -1,6 +1,7 @@
 // The coordinator's front door, held at the plan's own level: it is a Cloud
 // Run SERVICE the module creates for an opt-in of its own, reachable by
-// everyone (D920) and running as the coordinator's own account, and it must
+// everyone (D920) and running as the front door's own account `mcp_server` —
+// not the coordinator's — and it must
 // carry no credential of any kind (the MCP server's design, spec.md §2 and §8,
 // implementation-plan.md M4).
 //
@@ -278,7 +279,7 @@ func TestCoordinatorServiceHasItsOwnAccount(t *testing.T) {
 		{"the front door's opt-in", `(?m)^\s*count\s*=\s*local\.mcp_server_on\b`},
 	} {
 		if !regexp.MustCompile(want.re).MatchString(grant) {
-			t.Errorf("%s: the front door's account's one grant sets no %s (D932: the tools behind the port answer with a run's recorded artefacts, and that read is the account's whole reach):\n%s", coordinatorTF, want.what, grant)
+			t.Errorf("%s: the front door's runs-bucket grant sets no %s (D932: the tools behind the port answer with a run's recorded artefacts, and this read is one of the account's two grants, the other being the store's in %s):\n%s", coordinatorTF, want.what, mcpauthStoreTF, grant)
 		}
 	}
 	if strings.Contains(code, "roles/firebasedatabase.admin") {

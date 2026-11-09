@@ -303,10 +303,11 @@ resource "google_cloud_scheduler_job" "coordinator_sweep" {
 # private key, a Bitbucket read at the credentials service and
 # firebasedatabase.admin over the FP, and an identity holding any of those
 # behind a public endpoint would make spec.md §8's "there is no credential to
-# reach" false the day the front door is turned on. This one holds one grant —
-# the runs bucket's read, below — and nothing else in this tree or the Firebase
-# root grants it anything: no secret, no database, no actAs, which is the
-# narrowest account the design names for M4.
+# reach" false the day the front door is turned on. This one holds two grants —
+# the runs bucket's read, below, and the store's objects, in mcpauth_store.tf —
+# and nothing else in this tree or the Firebase root grants it anything: no
+# secret, no database, no actAs, which is the narrowest account the design names
+# for M4.
 #
 # It is created with the front door's own opt-in and not with the coordinator's:
 # an installation that opted into the coordinator for its read-only view
@@ -330,7 +331,8 @@ resource "google_service_account" "mcp_server" {
   depends_on = [google_project_service.this]
 }
 
-# The runs bucket, read-only, and the account's one grant: a run's recorded
+# The runs bucket, read-only, and one of the account's two grants: a run's
+# recorded
 # artefacts — its logs and its diff — are what the tools behind this port
 # answer with (D932), and the answer the owner did not choose (streaming Cloud
 # Logging live) is the reason it is the whole of the read: objectViewer on this
@@ -373,9 +375,10 @@ resource "google_storage_bucket_iam_member" "mcp_server_runs_reader" {
 # no credential-shaped environment name, which
 # coordinator_service_test.go's TestCoordinatorServiceIsPublicAndCarriesNoCredential
 # holds against this very block — and the identity behind the port is an
-# account whose whole reach is the runs bucket's read, so a stolen access token
-# reaches the tools its scopes name and nothing else (spec.md §8, "What a
-# stolen access token reaches": there is no credential to reach).
+# account whose whole reach is the runs bucket's read and the store it writes
+# its own records to, so a stolen access token reaches the tools its scopes
+# name and nothing else (spec.md §8, "What a stolen access token reaches":
+# there is no credential to reach).
 #
 # M9's launch grant is deliberately absent, and the absence is the design:
 # spawn_task is the one privilege this work adds, it belongs to M9's own

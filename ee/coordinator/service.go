@@ -22,7 +22,8 @@ import (
 // front door runs (mcp-server plan task M4), and the surface every route of the
 // front door is mounted on. The Terraform that creates it lives in
 // deploy/terraform/gcp/modules/installation/coordinator.tf — one Cloud Run
-// service, running as the coordinator's own account, admitted to by anyone
+// service, running as the front door's own account (`mcp_server`, which is
+// deliberately not the coordinator's), admitted to by anyone
 // (D920) — and this type is the Go half: what that revision answers with.
 //
 // It is deliberately thin. M4 creates the service and nothing that answers on

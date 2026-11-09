@@ -1905,11 +1905,11 @@ var runAccountGrants = setOf(
 	// not the coordinator's, whose account holds the App key, a Bitbucket
 	// read at the credentials service and the FP's database admin, none of
 	// which may sit behind a public endpoint. That account's whole grant list
-	// is the runs bucket's read pinned in the entry below — one row, no
-	// secret, no project role and no database role — so the container behind
-	// the port reaches the bucket and nothing else. The process itself holds
-	// no model credential and no forge credential, which is asserted at both
-	// layers (modules/installation/coordinator_service_test.go and
+	// is the two rows below, the runs bucket's read and its own store's
+	// objectAdmin — no secret, no project role and no database role — so the
+	// container behind the port reaches those two buckets and nothing else. The
+	// process itself holds no model credential and no forge credential, which is
+	// asserted at both layers (modules/installation/coordinator_service_test.go and
 	// ee/coordinator/service.go's own refusal), and every path behind the
 	// port is refused without a bearer token this service mints (spec.md §8).
 	// The endpoint exists only on an installation whose owner asked for it
