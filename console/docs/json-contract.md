@@ -1306,6 +1306,7 @@ The document:
 | `edges` | array | never | never | the dependencies; `[]` is a plan with no dependencies yet |
 | `decoupling` | array | **yes** | never | one entry per edge the contract-first decoupling pass broke, below. A **schema-3** field, absent when the planner broke nothing — so a v1 or v2 artifact, and a v3 one whose plan kept every edge, prints no such key. Every entry is checked against the graph: the contract is a `contract` node, the integration is an `integration` node that depends on both endpoints of the edge the entry records, and that edge is **not** still in `edges` |
 | `contract_changes` | array | **yes** | never | the change requests raised against contracts that have already merged, below. A **schema-3** field, absent when there are none |
+| `gain` | object | **yes** | never | what the decoupling pass bought, below. **Computed by the read and never written by a planner**: it is the before graph rebuilt from the recorded `was` edges, the sizes and the node kinds, measured by the CLI, so a planner that writes the key is **refused** as an unknown field. Absent from a v1 or v2 artifact and from a v3 one that broke no edge — a gain of zero would be noise where no pass ran |
 | `levels` | number | never | never | how many levels the plan has — the longest chain of dependencies plus one; `0` for a plan with no tasks |
 | `critical_path` | object | never | never | the longest chain of tasks in the plan, below |
 | `bottleneck` | string | never | **yes** | the task the critical path runs through; null only when the plan has no tasks |
@@ -1328,6 +1329,7 @@ one entry of `nodes`:
 | `blocked` | bool | never | never | the task is not done and at least one task it needs is not done |
 | `critical_path_length` | number | never | never | the longest chain of tasks *starting* at this one, counting it: `1` for a task nothing waits on |
 | `downstream` | number | never | never | how many tasks wait on this one, directly or through others; the raw count D26 keeps as the cheap fallback beside the critical path |
+| `stubs_present` | array of strings | **yes** | never | the contract's own `stubs` that still exist under the checkout the graph was read in, in the contract's own order: the whole files the integration task has not deleted yet (D1815). **Computed by the read**, set on a `contract` node that names stubs and on no other, and **absent when none of them remains** — an absent key beside a non-empty `stubs` is "none remain", not "the CLI did not say" |
 
 **A task is done, ready or blocked — exactly one of the three, always.** The
 three are fields rather than a rule a screen applies, so two screens colour one
@@ -1381,6 +1383,28 @@ one entry of `contract_changes` (schema 3):
 | `raised_by` | string | never | never | the id of the node that found the change |
 | `reason` | string | never | never | what has to change and why; an entry with no reason is refused |
 | `affects` | array of strings | never | never | the ids of the tasks the change reaches, each a node of this graph. An entry that reaches none is emitted as `[]` and never as a null, so a null here is a document no reader has to allow for (§1) |
+
+the `gain` object (computed; the read's, not the artifact's):
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `broken` | number | never | never | how many edges the pass broke: one per entry of `decoupling` |
+| `kept` | number | never | never | how many dependencies the pass left alone: the edges of this graph that join two tasks, neither of them a `contract`, an `integration` or a `contract_change` node. An edge onto one of the pass's own nodes is its scaffolding rather than a dependency the plan had before it, so it is in neither figure — `broken` and `kept` are the two halves of what the pass decided |
+| `added_tasks` | number | never | never | how many tasks the pass added: every `contract`, `integration` and `contract_change` node of this graph. The figure the added spend is stated in (D1820), and the difference between the two plans' task counts |
+| `before` | object | never | never | the plan as it stood before the pass, below |
+| `after` | object | never | never | the plan as this document states it, below |
+| `improves` | bool | never | never | whether the break paid: `after.weight` is **below** `before.weight`. The **weighted** path and not the task count — breaking one edge adds two tasks, so counting tasks reports a loss for the simplest break (F5), and a plan whose break lengthens the weighted path says so here instead of reporting a gain nobody got |
+
+the `before` and the `after` object (**one shape, the plan's critical path measured both ways**):
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `tasks` | number | never | never | the longest chain of dependencies, **in tasks**: the same figure as `critical_path.length`, which `after` equals and `before` answers for the plan that stood before the pass |
+| `weight` | number | never | never | the same chain weighed: every task on it counted as its `size`, a task carrying none counting as `1`. It is **not** the chain under `tasks` when the tasks along it are not all large — the two are measured independently, and that is the point of reporting both |
+
+**The before graph is rebuilt, and it is the only one the document admits.** Every `contract`, `integration` and `contract_change` node is the pass's own and comes out; the recorded `was` edges go back in beside the edges that were kept; and an edge that ran **through** a removed `integration` node is rewritten onto the endpoints of the edges that node re-joins — a task that waited on the integration node waited on both sides of the break, because the integration node is the task that runs them together. A record whose `was` edge names a node of the pass itself is **refused**: the before graph has nowhere to restore it, and dropping it quietly would report the gain of a plan nobody wrote. So is a document whose recorded breaks **restore a cycle** — the before graph is a reconstruction rather than a graph the CLI validated, and a cyclic one has no critical path to measure.
+
+**`stubs_present` is the one answer that opens a tree, and it opens the right one.** A stub path is untrusted plan text, so it is resolved through a root: a symlink leaving the checkout — in the stub's own last element or in a directory above it — is **not** followed, and the path is reported as not there, which is what a stub the integration task has to delete in a checkout it cannot reach is. The tree is **the git top level of the working directory**, and a graph that names stubs and was read from **outside** that checkout is **refused** rather than answered: every checkout of a repository has the same stub paths, so a read that resolved them against whatever tree it happened to stand in would say "this stub is gone" about a repository the plan does not describe. A working directory in no checkout at all is refused the same way. A graph that names **no** stubs opens no tree and takes no such decision, which is why a v2 artifact's read is byte-for-byte what it was.
 
 **Four refusals, and they are refusals rather than partial renders:** a document
 from a schema version this build does not read (the message names both
@@ -1437,8 +1461,9 @@ match — and **refuses a graph past the bound** rather than read it slowly. The
 console shows the CLI's sentence in each case, like every other refusal here.
 
 **What the read computes, and why the done set is passed in.** `level`, `done`,
-`ready`, `blocked`, `critical_path_length`, `downstream`, `levels`,
-`critical_path` and `bottleneck` are **not in the artifact**: the planner cannot
+`ready`, `blocked`, `critical_path_length`, `downstream`, `stubs_present`,
+`levels`, `critical_path`, `bottleneck` and `gain` are **not in the artifact**:
+the planner cannot
 know them, and a planner that guessed them would be a second answer to a
 question the CLI already answers (design F7). They are computed in Go, beside
 the read, so two consoles reading the same graph and the same facts get the same
@@ -1484,7 +1509,7 @@ number exists for.
 
 **The computed fields are additive, and they are not the artifact's.** They are
 fields of the *read's* document and not of the artifact: the artifact carries the
-field set above and nothing else — the nine computed keys are not among them, and
+field set above and nothing else — the eleven computed keys are not among them, and
 a planner that wrote one would be refused by name — so `--done` is a flag on the
 read rather than a field a planner writes. A console built before
 these keys existed ignores them and draws the graph it drew before; a console
