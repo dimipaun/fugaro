@@ -781,15 +781,18 @@ func (r *run) sectionLines(head string, parts ...string) string {
 	}
 	line := strings.Join(kept, " · ")
 	// The section names the run by its short ID, the form spec.md §1 settles on
-	// (D1701), and the command it tells a reader to paste takes that form: the
-	// lookup resolves an ending once SR14 wires it (resolveRun).
+	// (D1701). The command it tells a reader to paste names the run exactly:
+	// the CLI resolves an ending only once a lookup accepts one (resolveRun,
+	// wired at SR14), and a hint that refuses its own argument is worse than a
+	// longer line -- a full run ID is what every version of the CLI takes.
 	id := inlineText(task.ShortRun(r.rec.RunID))
 	out := line + "\n"
 	out += r.ownerPart()
 	if r.rec.DraftFallback {
 		out += "This host has no draft pull requests: this is a normal pull request marked [DRAFT], so reviews may already have been requested.\n"
 	}
-	return out + fmt.Sprintf("Run `%s` (a stale time here means the run died: `fugaro diagnose %s`)", id, id)
+	return out + fmt.Sprintf("Run `%s` (a stale time here means the run died: `fugaro diagnose %s`)",
+		id, inlineText(r.rec.RunID))
 }
 
 // ownerWaiting reports whether the run ended waiting on the owner's decisions

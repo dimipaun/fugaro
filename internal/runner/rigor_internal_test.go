@@ -510,7 +510,7 @@ func TestFinalSectionWithoutAFindingToTolerateIsUnchanged(t *testing.T) {
 	section := r.finalSection(true, "", nil)
 
 	const want = "**Ready for review** · rigor: startup (repo) · no test run yet · senior review: ship in round 2 · model cost $0.00 · finished 2026-10-24 12:00Z\n" +
-		"Run `abcd` (a stale time here means the run died: `fugaro diagnose abcd`)"
+		"Run `abcd` (a stale time here means the run died: `fugaro diagnose 20261024-120000-abcd`)"
 	if section != want {
 		t.Errorf("the status section of a run with nothing to tolerate:\n got %q\nwant %q", section, want)
 	}
