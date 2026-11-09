@@ -133,19 +133,20 @@ func TestFindingsAreBoundedAndQuoted(t *testing.T) {
 }
 
 // TestPromptsCarryShortIDRule: the standing instructions name a run the way a
-// person reads it — its short ID, the last four characters of the run ID — and
-// a plan task by its plan name (D1703), while the commands that need the full
-// ID are told to pass it (F11, D1705). The rule is one of the always-on
-// instructions, so a follow-up carries it too; the point of pinning the
-// full-ID commands in the same sentence is that the rule never reads as "keep
-// the ID to yourself" for a command that needs one.
+// person reads it — its short ID, the last four characters of the run ID,
+// extended a character at a time while another run named beside it shares them
+// (task.DisplayRuns, D1706) — and a plan task by its plan name (D1703), and
+// they never print the full ID in what an agent writes for a person.
 //
-// It sends an agent to the command's own help for the form RUN takes rather
-// than naming a command as taking a short ID: no command resolves an ending on
-// this tree (SR3's resolveRun has no caller until SR14 wires `logs`, `diagnose`
-// and `artifacts` to it), so a rule that named one would send the agent to a
-// command that refuses the ID it was told to pass. internal/cli's
-// TestShortIDRuleNamesOnlyCommandsThatTakeOne is what holds the rule to that.
+// The job prompt names no command here, unlike the plugin skills, where the
+// same rule sits beside "never launch, cancel or follow up without the user's
+// go-ahead". This prompt drives an unattended stage: nobody gives a go-ahead,
+// the container can reach the run's own service account, and `--review-run` is
+// a flag the CLI hides, so a list of run commands here would be instructions
+// for cancelling or relaunching runs rather than for naming one. The form a
+// command takes belongs to that command's own help, and internal/cli's
+// TestShortIDRuleNamesOnlyCommandsThatTakeOne is what holds any text that does
+// name one to a command that really takes it.
 func TestPromptsCarryShortIDRule(t *testing.T) {
 	for _, d := range []runner.PromptData{
 		{Branch: "fugaro/x", Base: "main", StateDir: "/s"},
@@ -153,13 +154,17 @@ func TestPromptsCarryShortIDRule(t *testing.T) {
 	} {
 		got := runner.SystemPrompt(d, "")
 		for _, want := range []string{
-			"Refer to runs only by their short ID, the last 4 characters of the run ID; refer to plan tasks by their plan name.",
-			"A command is given the run ID its own help asks for",
-			"`cancel`, `run --retry`, `--review-run`, `review show` and `--run-id` take the full ID, which `--json` output carries",
+			"Refer to runs only by their short ID — the last 4 characters of the run ID, and one character more for as long as another run you name shares them",
+			"and to plan tasks by their plan name",
 			"never print the full run ID in anything you write for a person",
 		} {
 			if !strings.Contains(got, want) {
 				t.Errorf("the prompt %+v lacks %q:\n%s", d, want, got)
+			}
+		}
+		for _, named := range []string{"`cancel`", "`run --retry`", "`--review-run`", "`review show`", "`--run-id`"} {
+			if strings.Contains(got, named) {
+				t.Errorf("the prompt %+v names %s: an unattended stage has no command that takes a run, and naming one reads as how to cancel or relaunch a run from inside the job", d, named)
 			}
 		}
 	}
