@@ -586,8 +586,15 @@ func TestSecurityMdStatesTheBitbucketGitProxy(t *testing.T) {
 		// O6: only this run's repository is fetched.
 		"fetches only its own repository",
 		"submodule",
-		// R2: names only, one line per request.
+		// R2: names only, and what is actually recorded -- one line per act
+		// and nothing for a call refused before its identity verified, which
+		// is what internal/credsvc does (server.go's refuseIdentity answers
+		// through refuse, not refuseCall; forwardBitbucket writes its line
+		// once, after bitbucket.org answered).
 		"names only",
+		"one line per **act**",
+		"once the caller's identity is verified",
+		"not recorded",
 	} {
 		if !strings.Contains(section, want) {
 			t.Errorf("the `%s` section never says %q: a proxied run's reach and the credential it no longer reads are what this section is for", heading, want)
@@ -611,6 +618,12 @@ func TestSecurityMdStatesTheBitbucketGitProxy(t *testing.T) {
 		"no real token in reach",
 		"instead of holding a token",
 		"that reach ends **for that repository**",
+		// The audit claim that was false on this tree: a call refused before
+		// its identity verified writes no line at all (server.go's
+		// refuseIdentity answers through refuse, not refuseCall), and a git
+		// command is several proxied requests.
+		"every refusal is audited with **names only**, one line per proxied request",
+		"one line per proxied request",
 	} {
 		if strings.Contains(flattenDoc(s), banned) {
 			t.Errorf("SECURITY.md says %q: the proxy narrows the run, and the flip that takes the mount has not landed on this tree", banned)
