@@ -27,6 +27,11 @@
 // Every invocation appends one JSON line (argv, environment and working
 // directory) to FAKE_TERRAFORM_LOG, and an -out=<file> argument makes it write
 // a plan file holding PlanMarker.
+//
+// A -var-file argument that does not exist is refused with the error terraform
+// itself prints and exit 1 (the CLI writes the root's tfvars into the
+// directory it plans in, and a run whose plan does not find them is a failure
+// however healthy the fake's script is).
 package main
 
 import (
@@ -98,6 +103,20 @@ func run(args []string) int {
 		st = step{Stdout: `{"terraform_version":"1.16.4","platform":"linux_amd64","provider_selections":{},"terraform_outdated":false}`}
 	}
 
+	// A -var-file that is not there is terraform's own failure, and the fake
+	// makes it too: the CLI writes the tfvars into the working directory it
+	// plans in, and a fake that answered 0 for a missing one would let a
+	// workdir rebuilt between the write and the plan pass as a converged run.
+	for _, a := range args {
+		path, found := strings.CutPrefix(a, "-var-file=")
+		if !found {
+			continue
+		}
+		if _, err := os.Stat(path); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: Failed to read variables file\n\nGiven variables file %s does not exist.\n", path)
+			return 1
+		}
+	}
 	for _, a := range args {
 		if out, found := strings.CutPrefix(a, "-out="); found {
 			if err := os.WriteFile(out, []byte(PlanMarker), 0o600); err != nil {
