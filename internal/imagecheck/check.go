@@ -241,9 +241,18 @@ const ReasonCatalogDefinition = "catalog-definition"
 // image it produced. Its field names are the record's JSON keys, and the
 // ones whose meaning matches a workflow Record's are spelled the same.
 type CatalogRecordState struct {
-	Version              int       `json:"version"`
-	Entry                string    `json:"entry"`
+	Version int    `json:"version"`
+	Entry   string `json:"entry"`
+	// SourceCommit is the commit the copy took the Dockerfile from;
+	// ContextCommit and ContextSHA256 are the build context's own identity —
+	// the commit the entry's repository was checked out at and the sha256 of
+	// the tree — and both are "" for an entry that names no build context.
+	// They are new fields rather than a reuse of source_commit (D1400): a
+	// reader that knows that field already would read a context's commit as
+	// the commit the definition came from.
 	SourceCommit         string    `json:"source_commit"`
+	ContextCommit        string    `json:"context_commit"`
+	ContextSHA256        string    `json:"context_sha256"`
 	DefinitionGeneration int64     `json:"definition_generation"`
 	DefinitionSHA256     string    `json:"definition_sha256"`
 	BaseRef              string    `json:"base_ref"`

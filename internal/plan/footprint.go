@@ -1,6 +1,11 @@
 package plan
 
-import "github.com/bmatcuk/doublestar/v4"
+import (
+	"path"
+	"strings"
+
+	"github.com/bmatcuk/doublestar/v4"
+)
 
 // Footprint is a task's expected set of paths — what the planner thinks this
 // task will touch, before anything has run.
@@ -52,13 +57,39 @@ func NewFootprint(patterns []string) Footprint {
 // relative to the checkout's root, never an absolute one and never a filesystem
 // path, which is the other reason this package takes no filesystem walk: the
 // console compares two documents, and neither of them has a tree.
-func (f Footprint) Matches(path string) bool {
+//
+// Two spellings of one file are one file, so the path being asked about is read
+// the way a checkout reads it (`repoPath`): "./internal/a.go",
+// "internal//a.go", "internal/b/../a.go" and a backslash-separated
+// "internal\a.go" all name internal/a.go and all match a pattern naming it.
+// The patterns are only cleaned, and the asymmetry is the point: in a pattern a
+// backslash is doublestar's **escape character**, not a separator, so
+// `types\.go` is a pattern for types.go and rewriting it to `types/.go` would
+// turn a matching pattern into one that matches nothing. A graph whose
+// footprint carries a backslash is refused by the artifact's own rules for
+// that reason.
+//
+// This matters beyond tidiness — the one refusal that turns on this question is
+// F10's rule that a merged contract's files belong to the contract, and a check
+// that read only the literal spelling would let a task name a contract's file
+// simply by spelling it differently.
+func (f Footprint) Matches(p string) bool {
+	p = repoPath(p)
 	for _, pattern := range f.Paths {
-		if ok, err := doublestar.Match(pattern, path); err == nil && ok {
+		if ok, err := doublestar.Match(path.Clean(pattern), p); err == nil && ok {
 			return true
 		}
 	}
 	return false
+}
+
+// repoPath is a path as a checkout reads it: a backslash is a separator, "."
+// and ".." elements collapse and a repeated slash is one slash. It is not a
+// filesystem call — nothing is stat'd and no tree is opened — so a path that
+// steps outside the checkout stays one this package compares as written rather
+// than one it resolves.
+func repoPath(p string) string {
+	return path.Clean(strings.ReplaceAll(p, `\`, "/"))
 }
 
 // validateFootprint refuses a footprint whose patterns are not globs this

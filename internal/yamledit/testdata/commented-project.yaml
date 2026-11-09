@@ -16,6 +16,13 @@ rigor:
     - name: one
       path: internal/one/**
       mode: critical
+    - name: two
+      path: internal/two/**
+      # what this rule may reach
+      allow_data_to:
+        - owner/repo-a
+        - owner/repo-b   # and its sibling
+      mode: standard
 
 # Pointed at a person, not at a group.
 followup:

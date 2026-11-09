@@ -245,12 +245,14 @@ Commit: `console: pin the win32-x64 Electron archive against the lockfile's own 
 **T-B4 — `build.win`, named rather than inherited.**
 Files: `console/package.json`, `console/test/unit/fuses.test.ts`.
 Red step: the manifest test's platform-table half (the one that asserts `build.mac` and `build.linux`)
-gains the `win` block's shape: `target: ['nsis']`, `arch: ['x64']`, and
-`artifactName: Fugaro.Console-${version}-win-${arch}.${ext}` following the Linux pattern. Fails on the
-absent block.
+gains the `win` block's shape: `target: [{target: 'nsis', arch: ['x64']}]` (the Linux leg's nested
+form, and **not** a top-level `win.arch`: `WindowsConfiguration` is `additionalProperties: false` and
+has no `arch`, so that spelling is a configuration electron-builder refuses outright, on every
+platform), and `artifactName: Fugaro.Console-${version}-win-${arch}.${ext}` following the Linux
+pattern. Fails on the absent block.
 NSIS is **named** rather than left to the default: the default Windows target is NSIS today, and a
-default is a decision nobody wrote down. `x64` only, matching the Linux leg and T-B3's single pinned
-archive.
+default is a decision nobody wrote down. `x64` only, matching the Linux leg and T-B3's pinned
+archive, which has yet to land.
 Verification: `[unit]`, `[types]`. Tier A. Depends on: nothing.
 Commit: `console: a win block that names its target, its arch and its artifact name`
 

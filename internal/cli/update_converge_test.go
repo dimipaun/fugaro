@@ -136,9 +136,14 @@ func newConvergeRigYAML(t *testing.T, node map[string]any, yaml string) *converg
 	putWorkflowRecordFrom("app", convergePrev, pinnedRef("base", convergePrev))
 	putWorkflowRecordFrom("api", convergePrev, pinnedRef("base", convergePrev))
 
+	// The marketplace an installation one release old has on the machine is the
+	// unpinned one a previous fugaro declared, so the plugin step clears it and
+	// declares it at this release's tag: the clear takes the older install with
+	// it (claude's own record of the removal), and the install that follows the
+	// pinned add is the one that leaves this release's version.
 	f := testutil.NewClaudePluginFake(t, ourMarket, userInstall(convergePrev))
-	f.On(t, "plugins", userInstall(convergeRelease), argsUpdMarket...)
-	f.On(t, "plugins", userInstall(convergeRelease), argsUpdUser...)
+	f.On(t, "plugins", "[]", argsRemove...)
+	f.On(t, "plugins", userInstall(convergeRelease), argsInstall...)
 	useFakeClaude(t, f)
 
 	seedAppSecret(t, r.initRig, "github-app-key")
@@ -231,7 +236,11 @@ func converge(t *testing.T, node map[string]any, stale []string) {
 // a test that has to look at the database the run left behind — the rules it
 // deployed, the markers it wrote — reaches it through here rather than building
 // a rig of its own and then running the door against another one.
-func convergeOn(t *testing.T, r *convergeRig, stale []string) {
+//
+// It returns the run's own stdout, so a test that is about what the door SAID —
+// the line it prints about the runs in flight — reads the transcript the person
+// read rather than running the door a second time.
+func convergeOn(t *testing.T, r *convergeRig, stale []string) string {
 	t.Helper()
 	currentRelease(t)
 
@@ -275,6 +284,7 @@ func convergeOn(t *testing.T, r *convergeRig, stale []string) {
 	if !strings.Contains(out, convergeRelease) {
 		t.Errorf("the run never names the release it converged to:\n%s", out)
 	}
+	return out
 }
 
 // TestUpdateConvergesTheOrchestratorRulesFromThePreviousGeneration: an

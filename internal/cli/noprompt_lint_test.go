@@ -714,7 +714,6 @@ var notADecisionSites = map[string]string{}
 // `confirmTypedStrict` and `askTyped`, so their entries are the helpers' own
 // sites in `budget.go` and `init.go` — the read is what the lint holds.
 var pendingSites = map[string]string{
-	"accounts.go:accountsClear":        "T5",
 	"billing_prompt.go:billingAPIOff":  "T7",
 	"budget.go:confirmTyped":           "T3",
 	"budget.go:confirmTypedStrict":     "T3",
@@ -733,12 +732,12 @@ var pendingSites = map[string]string{
 	"pair.go:pairReadCode":             "T7",
 	// T6 removed every read of this command family it could remove. This one
 	// stays because its callers do not: confirmRemoval is defined in a file T6
-	// owns, but upgrade.go (T5), init_layer_stage.go and init_policy_migrate.go
-	// (T7) and update_workspace.go (T15) still call it, so the entry outlives T6
-	// and belongs to the task that removes the last caller. Deleting it here
-	// would not compile.
-	"project_cmd.go:confirmRemoval":          "T6's file, whose callers T5, T7 and T15 remove",
-	"settings_write.go:confirmSettingsWrite": "T5",
+	// owns, but init_layer_stage.go and init_policy_migrate.go (T7),
+	// project_enroll.go (T6) and update_workspace.go (T15) still call it —
+	// upgrade.go's own caller went with T5 — so the entry outlives T6 and
+	// belongs to the task that removes the last caller. Deleting it here would
+	// not compile.
+	"project_cmd.go:confirmRemoval": "T6's file, whose callers T7 and T15 remove",
 }
 
 // forms is the shapes found at one site, in a stable order, for a failure's

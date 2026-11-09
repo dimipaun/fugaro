@@ -25,24 +25,44 @@ func settingsEditFixture(t *testing.T) (path string, lc *localcfg.Config) {
 	return path, cfg
 }
 
-// TestSettingsWriteRefusesWithNoTerminalAndNoYes: the ordinary confirmation is
-// a terminal's, so a session with neither a terminal nor --yes refuses and
-// leaves the file alone.
-func TestSettingsWriteRefusesWithNoTerminalAndNoYes(t *testing.T) {
-	path, lc := settingsEditFixture(t)
-	noTerminal(t)
-	cmd := NewRootCmd()
-	var out strings.Builder
-	cmd.SetOut(&out)
-	err := applySettingsEdit(cmd, lc, settingsEdit{
-		Path: path, Old: []byte("a: 1\n"), New: []byte("a: 2\n"),
-		What: "write a", Command: "fugaro settings set a 2 --layer local",
-	})
-	if err == nil {
-		t.Fatal("the write ran with no terminal and no --yes")
-	}
-	if got := readFileString(t, path); got != "a: 1\n" {
-		t.Errorf("the refused write changed the file:\n%s", got)
+// TestSettingsWriteAsksNothing: no settings write asks anything any more
+// (D1540). What a person reads is the sentence naming the change — the whole of
+// what the y/N confirmation showed, minus the prompt itself — and the write
+// lands, with a terminal on stdin and with none: there is no line to answer,
+// so neither session has to be refused for want of one. The one question left
+// in this path belongs to --ask (D1544) and to askConfirm, which asks it only
+// where the flag is registered; nothing here reads stdin on its own, which the
+// unread lines below would show.
+func TestSettingsWriteAsksNothing(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		terminal bool
+	}{
+		{"no terminal", false},
+		{"a terminal", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path, lc := settingsEditFixture(t)
+			terminal(t, tc.terminal)
+			cmd := NewRootCmd()
+			var out strings.Builder
+			cmd.SetOut(&out)
+			cmd.SetIn(strings.NewReader("n\nno\ny\n"))
+			if err := applySettingsEdit(cmd, lc, settingsEdit{
+				Path: path, Old: []byte("a: 1\n"), New: []byte("a: 2\n"),
+				What: "write a", Command: "fugaro settings set a 2 --layer local",
+			}); err != nil {
+				t.Fatalf("%v\n%s", err, out.String())
+			}
+			got := out.String()
+			if !strings.Contains(got, "write a") {
+				t.Errorf("the write does not print the sentence naming it:\n%s", got)
+			}
+			assertNoPrompt(t, got)
+			if after := readFileString(t, path); after != "a: 2\n" {
+				t.Errorf("the write did not land:\n%s", after)
+			}
+		})
 	}
 }
 
@@ -144,54 +164,6 @@ func TestSettingsWriteInsideRepoRunsInAnAgentSession(t *testing.T) {
 	if got := readFileString(t, path); got != "a: 2\n" {
 		t.Errorf("the file holds %q, want the new bytes", got)
 	}
-}
-
-// TestSettingsWriteAnsweringNoWritesNothing: the y/N confirmation is a
-// confirmation, so every answer but y/yes is a refusal with nothing written —
-// no backup, no bytes moved. `y` is the other half: the same prompt, answered,
-// writes.
-func TestSettingsWriteAnsweringNoWritesNothing(t *testing.T) {
-	path, lc := settingsEditFixture(t)
-	fakeTerminal(t)
-	for _, answer := range []string{"n", "no", "", "yep", "yes please"} {
-		t.Run(answer, func(t *testing.T) {
-			cmd := NewRootCmd()
-			var out strings.Builder
-			cmd.SetOut(&out)
-			cmd.SetIn(strings.NewReader(answer + "\n"))
-			err := applySettingsEdit(cmd, lc, settingsEdit{
-				Path: path, Old: []byte("a: 1\n"), New: []byte("a: 2\n"),
-				What: "write a", Command: "fugaro settings set a 2 --layer local",
-			})
-			if err == nil {
-				t.Fatalf("the write ran on the answer %q", answer)
-			}
-			if !strings.Contains(err.Error(), "not confirmed") {
-				t.Errorf("the refusal does not say nothing was written: %v", err)
-			}
-			if got := readFileString(t, path); got != "a: 1\n" {
-				t.Errorf("the refused write changed the file:\n%s", got)
-			}
-			if backups, _ := filepath.Glob(path + ".bak-*"); len(backups) != 0 {
-				t.Errorf("%d backups for a refused write, want none", len(backups))
-			}
-		})
-	}
-	t.Run("y", func(t *testing.T) {
-		cmd := NewRootCmd()
-		var out strings.Builder
-		cmd.SetOut(&out)
-		cmd.SetIn(strings.NewReader("y\n"))
-		if err := applySettingsEdit(cmd, lc, settingsEdit{
-			Path: path, Old: []byte("a: 1\n"), New: []byte("a: 2\n"),
-			What: "write a", Command: "fugaro settings set a 2 --layer local",
-		}); err != nil {
-			t.Fatalf("%v\n%s", err, out.String())
-		}
-		if got := readFileString(t, path); got != "a: 2\n" {
-			t.Errorf("the confirmed write did not land:\n%s", got)
-		}
-	})
 }
 
 // TestSettingsWriteRefusesAFileThatChangedSinceItWasRead: the bytes an edit was
