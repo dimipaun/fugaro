@@ -169,13 +169,23 @@ func TestFollowupInstructionsNameTheContractFile(t *testing.T) {
 		}
 	}
 
-	// The section a planner reads first carries the go-ahead rule, so its
-	// enumeration of what the yes covers has to be the whole of it: a kind of run
-	// the rule leaves out is one launched on a yes that never covered it, and the
-	// independent review is a paid job like the rest.
-	skill := parallelismSkillFiles(t)[parallelismSkillPath]
-	if section := decouplingSection(skill); !strings.Contains(section, "independent review") {
-		t.Errorf("%s's decoupling section lists the runs it proposes without the independent review a security-relevant contract gets, so that launch reads as one the user's yes already covered", parallelismSkillPath)
+	// The go-ahead rule is read here on the section alone, never on the section
+	// joined with the reference: both files carry a copy of the rule, so a pin
+	// against the joined text stays green with the section's own copy gone —
+	// which is the copy the planner reads first, and the only one a planner who
+	// stops at the section ever sees. The section's enumeration then has to be
+	// the whole of what the yes covers: a kind of run it leaves out is one
+	// launched on a yes that never covered it, and the independent review is a
+	// paid job like the rest.
+	section := decouplingSection(parallelismSkillFiles(t)[parallelismSkillPath])
+	for _, want := range []string{
+		"proposes and never launches",
+		"until the user says yes",
+		"independent review",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("%s's decoupling section never says %q, so the section a planner reads first no longer carries the go-ahead rule in full: a contract task, an integration task, an independent review or a follow-up can be launched on text the section never gated", parallelismSkillPath, want)
+		}
 	}
 }
 
