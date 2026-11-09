@@ -98,7 +98,10 @@ func byID(g Graph) map[string]NodeState {
 // the diamond, and the base is its bottleneck.
 func TestPlanReadsTheDiamondFixture(t *testing.T) {
 	g := analyzeFixture(t, "diamond.json")
-	if g.SchemaVersion != SchemaVersion || len(g.Nodes) != 4 || len(g.Edges) != 4 {
+	// diamond.json is a v2 fixture, so the read carries that forward rather
+	// than the current schema's number: a fixture is written to the schema it
+	// is the fixture of, and the read echoes what it read.
+	if g.SchemaVersion != 2 || len(g.Nodes) != 4 || len(g.Edges) != 4 {
 		t.Fatalf("read %+v, want the fixture's schema version, four nodes and four edges", g)
 	}
 	nodes := byID(g)
@@ -653,14 +656,14 @@ func TestPlanAnalysisRefusesAForeignSchemaVersion(t *testing.T) {
 	nodes := []Node{{ID: "a", Title: "first", Footprint: NewFootprint(nil)}}
 	if g, err := Analyze("graph.json", Document{SchemaVersion: 9, Plan: "p.md", Nodes: nodes, Edges: []Edge{}}, nil); err == nil {
 		t.Fatalf("Analyze answered a schema version 9 document: %+v", g)
-	} else if want := "the graph artifact is schema version 9 and this build reads version 2; upgrade fugaro to read it"; !strings.Contains(err.Error(), want) {
+	} else if want := "the graph artifact is schema version 9 and this build reads version 3; upgrade fugaro to read it"; !strings.Contains(err.Error(), want) {
 		t.Errorf("refusal = %q, want it to say %q", err, want)
 	}
 	// The zero value is a document that names no version at all, which is the
 	// thing Parse refuses as "carries no schema_version".
 	if g, err := Analyze("graph.json", Document{Plan: "p.md", Nodes: nodes, Edges: []Edge{}}, nil); err == nil {
 		t.Fatalf("Analyze answered a document with no schema version: %+v", g)
-	} else if want := "the graph artifact carries no schema_version; this build reads version 2"; !strings.Contains(err.Error(), want) {
+	} else if want := "the graph artifact carries no schema_version; this build reads version 3"; !strings.Contains(err.Error(), want) {
 		t.Errorf("refusal = %q, want it to say %q", err, want)
 	}
 }

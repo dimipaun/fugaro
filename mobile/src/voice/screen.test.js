@@ -697,8 +697,14 @@ test('a final transcript goes to the spoken dialogue when the app wires one in (
     'and nothing was written: a confirmation is not a message');
 
   // The same turn without a dialogue is what P3.5 shipped: every final is a
-  // message, written by the client.
+  // message, written by the client. The phone looks first (P6.10's gate fails
+  // closed on a consumer nothing has observed, so without the poll the words are
+  // refused as unobserved rather than written), which the half above does not
+  // need: what it asserts is that a dialogue was handed the words, not that a
+  // message left the phone.
   const plain = await harness();
+  await plain.plantHeartbeat();
+  await plain.screen.poll();
   await plain.screen.start();
   plain.audioIn.speechStart();
   plain.audioIn.speechEnd();

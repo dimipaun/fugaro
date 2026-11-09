@@ -3,9 +3,9 @@
 
 # Diagnose a Fugaro run
 
-You are explaining what happened to one run from what Fugaro recorded: the stage it reached, the reason, the last test results, the review's findings, the agent's final message, a log tail, the cost and the pull request.
+You are explaining what happened to one run from what Fugaro recorded: the stage it reached, the reason, the evidence, the cost and the pull request.
 
-You are done when you have told the user what happened and why, where the work is (the branch and the pull request), and what the sensible next step is.
+You are done when you have told the user what happened and why, where the work is (the branch and the pull request), and the sensible next step.
 
 Ground rules:
 - **Read only.** The analysis changes nothing. Never run `fugaro run` or `fugaro cancel` here, and never the owner's budget commands. Say what the user could run, as an exact command, and let them choose. A follow-up is launched with `reference/followup.md`, with the user's go-ahead.
@@ -15,7 +15,7 @@ Ground rules:
 
 ## 1. Collect
 
-Take the run from the conversation or `fugaro runs ls --json` (the rows that are not `succeeded`). Then:
+Take the run from the conversation or `fugaro runs ls --json` (the rows that are not `succeeded`). When the question is a window's failures and not one run's, `fugaro runs ls --group-by failure_class` counts that window's runs per cause. Then:
 
 ```bash
 fugaro diagnose <run> --json
@@ -28,17 +28,17 @@ The JSON has:
 - `findings`: the last review's findings
 - `agent_message`: the agent's final message (clipped to 4 KiB)
 - `log_tail`: the newest 30 log lines
-- `draft_note`: a line about the run's draft pull request when it needs one (a stale draft, or a `[DRAFT]` title); `row.stale_draft`, `row.draft_fallback` and `row.pr_status_at` say the same in fields
+- `draft_note`: a line about the run's draft pull request when it needs one; `row.stale_draft`, `row.draft_fallback` and `row.pr_status_at` say the same in fields
 - `report_path`: where the run's report is stored
 - `follow_up` and `comments_path`: for a follow-up, the pull request and previous run it continues, and which comments were used
 
-Read the whole thing before concluding. `fugaro logs <run> --json` has every entry (`reference/logs.md`).
+Read it all before concluding: `fugaro logs <run> --json` has every entry (`reference/logs.md`).
 
 ## 2. The pull request
 
 A run that pushed has a branch (`fugaro/<run-id>`, or the PR's branch for a follow-up) and usually a pull request, in `row.pr_url`. A draft means the run wasn't sure of its work, or was halted or cancelled, and the work is there to read. Open the pull request and its report comment, and say what is in it. A run with `outcome` `none` pushed nothing, so there is no pull request — one exception: a PR a person closed or merged during the run stays in `row.pr_url`, and the reason says so.
 
-The draft pull request appears **early**: at the run's first checkpoint push (each commit is pushed within about a minute, unverified), while the run is still going, with a **Fugaro status** section the runner keeps current. So a run in progress, a halted one and a cancelled one can all have one. **Reviewers are requested only when the PR becomes ready**; a draft has none, so a draft nobody reviewed is not a sign nobody was told.
+The draft pull request appears **early**: at the run's first checkpoint push (a commit every minute or so, unverified), while the run is still going, with a **Fugaro status** section the runner keeps current. So a run in progress, a halted one and a cancelled one can all have one. **Reviewers are requested only when the PR becomes ready**; a draft has none, so a draft nobody reviewed is not a sign nobody was told.
 
 A stale draft: if `row.stale_draft` is true (or `draft_note` says `the run may have crashed`), the record never reached a final status and its execution is gone or its status stopped updating, so the run probably died and its draft still says `Running`; say so as an inference. The work committed up to the last checkpoint (about a minute before it died) is on the branch, unverified, and uncommitted work is lost; the sensible step is a follow-up, with the user's go-ahead. If `draft_fallback` is true, the host has no drafts: the pull request is an ordinary one with `[DRAFT]` in its title, so it can look ready; say so.
 

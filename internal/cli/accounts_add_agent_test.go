@@ -3,6 +3,7 @@
 package cli
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -69,6 +70,34 @@ func rotationLocal(t *testing.T) string {
 		"claude_accounts:\n  team-a:\n    allow_data_to:\n      - owner/repo-a\n"
 }
 
+// TestAccountsAddAsksNothing is this command's own reading of D1540: the
+// declaration, the profile entry, the secret and the converge are one
+// sentence, printed before the run makes them, and no question follows it.
+// The invocation passes neither --ask nor --yes and has no terminal, which is
+// the shape a script drives the command with — the deployment the old y/N was
+// answered for is the same one either way, and what a person gets instead of a
+// question is the sentence naming every change, printed before the first of
+// them is written.
+func TestAccountsAddAsksNothing(t *testing.T) {
+	r := newAddRig(t)
+	writes := r.secretWrites(t)
+
+	out, _, err := executeStdin(t, addToken()+"\n", "accounts", "add", "team-a", "--repos", "owner/repo-a")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	assertNoPrompt(t, out)
+	if !strings.Contains(out, "declare claude_accounts.team-a.allow_data_to = [owner/repo-a]") {
+		t.Errorf("the run does not name the declaration it writes:\n%s", out)
+	}
+	if lc := r.addLocal(t); !slices.Equal(lc.ClaudeAccounts["team-a"].AllowDataTo, []string{"owner/repo-a"}) {
+		t.Errorf("claude_accounts.team-a.allow_data_to = %v, want [owner/repo-a]", lc.ClaudeAccounts["team-a"].AllowDataTo)
+	}
+	if len(writes.created) == 0 && len(writes.added) == 0 {
+		t.Errorf("the run asked nothing and stored nothing: created %v, added %v", writes.created, writes.added)
+	}
+}
+
 // TestAccountsAddRotationRerunRefusesInAnAgentSession is B0 (spec §2.4): the
 // refusal has to stand on the path where the file does not change. A rotation
 // re-run — the account already declared, the profile already serving it, the
@@ -116,34 +145,31 @@ func TestAccountsAddRotationRerunRefusesInAnAgentSession(t *testing.T) {
 	}
 }
 
-// TestAccountsAddRotationRerunWithoutYesAsksForTheConfirmation is the other
-// half of the same path: the file unchanged and no --yes, so the change the
-// confirmation is about is the converge's — the token stored project-wide and
-// the database the mark lives in — and it is asked for rather than assumed.
-// With no terminal to ask, the command refuses instead of converging on the
-// person's behalf, and nothing is stored.
-func TestAccountsAddRotationRerunWithoutYesAsksForTheConfirmation(t *testing.T) {
+// TestAccountsAddRotationRerunAsksNothing is the other half of the same path:
+// the file unchanged, so the change this run is about is the converge's — the
+// token stored project-wide and the database the mark lives in — and the run
+// names it instead of asking about it (D1540). The invocation below passes
+// neither --ask nor --yes and has no terminal: the sentence naming the
+// converge is printed in full, nothing waits on an answer to it, and the token
+// reaches the store.
+func TestAccountsAddRotationRerunAsksNothing(t *testing.T) {
 	r := newAddRigWith(t, rotationLocal(t))
 	writes := r.secretWrites(t)
-	before := readFileString(t, r.cfg)
 
 	out, _, err := executeStdin(t, addToken()+"\n", "accounts", "add", "team-a", "--repos", "owner/repo-a")
-	if err == nil {
-		t.Fatalf("the command converged without a confirmation:\n%s", out)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
 	}
-	if ExitCode(err) != ExitUserError {
-		t.Errorf("exit %d, want a user error: %v", ExitCode(err), err)
+	assertNoPrompt(t, out)
+	// The sentence says what the file's own bytes cannot: the declaration is
+	// already there, and what this run writes is a new version of the token.
+	if !strings.Contains(out, "a rotation: the account already exists, and the token written for it replaces the one in use") {
+		t.Errorf("the run does not name the converge it is about:\n%s", out)
 	}
-	if !strings.Contains(err.Error(), "confirmation") {
-		t.Errorf("the refusal does not name the confirmation it wanted: %v", err)
+	if len(writes.created) == 0 && len(writes.added) == 0 {
+		t.Errorf("the run named a converge and stored nothing: created %v, added %v", writes.created, writes.added)
 	}
-	if len(writes.created) != 0 || len(writes.added) != 0 {
-		t.Errorf("the command stored a secret without a confirmation: created %v, added %v", writes.created, writes.added)
-	}
-	if after := readFileString(t, r.cfg); after != before {
-		t.Errorf("the file changed without a confirmation:\n%s", after)
-	}
-	if strings.Contains(out, "Nothing else to run") {
-		t.Errorf("the unconfirmed command still ended on its ready line:\n%s", out)
+	if !strings.Contains(out, "Nothing else to run") {
+		t.Errorf("the converged run does not close on its ready line:\n%s", out)
 	}
 }

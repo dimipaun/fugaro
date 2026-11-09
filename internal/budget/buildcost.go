@@ -35,14 +35,14 @@ import (
 
 const (
 	// MaxBuildSeconds is the timeout every Fugaro build is submitted with
-	// (internal/backend/gcp/build.go:239, "3600s"). It is a constant of the
+	// (internal/backend/gcp/build.go:251, "3600s"). It is a constant of the
 	// backend, not a knob: the estimate is this many seconds at the machine's
 	// rate, so a build cannot outrun what it reserved.
 	MaxBuildSeconds = 3600
 
 	// MaxBuildQueueSeconds is how long a submitted build may wait for a worker
 	// before Cloud Build starts it — the queue TTL every Fugaro build carries
-	// (internal/backend/gcp/build.go:240, "3600s", pinned equal by a test, and
+	// (internal/backend/gcp/build.go:252, "3600s", pinned equal by a test, and
 	// set rather than left to Cloud Build's own default). The timeout above
 	// starts when the build starts, so a queued build bills nothing yet and can
 	// still bill for this long after it does start: the estimate does not cover

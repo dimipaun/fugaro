@@ -177,6 +177,20 @@ min_runs: 20
 # what the test above holds them to. It is the only entry that is the site's
 # own: every other entry is a host the site LINKS to, and a host the site does
 # not link to does not belong here.
+#
+# `keys.fugaro.dev` is the key service's intake, and it is the one entry that is
+# here because the site POSTS to it rather than links to it (subscriptions plan
+# Task S3.3): a reader asks for a licence key on /keys/ and the form submits to
+# the intake, so the link check has to resolve the action's host like any other
+# address the site prints. The input list is the same list and not a second one,
+# because `origins.mjs` admits a form action only when it is this site or that
+# one host -- an entry here is not permission to load from the host, and the
+# deployed policy carries it in `form-action` alone. The page's actions are
+# derived from `canonical_url` by `website/src/lib/keys-intake.mjs` and this
+# entry is the literal the link check resolves them against, so the two are held
+# to each other: a domain change that moved the canonical URL without moving
+# this line fails the link check, and one that moved this line alone fails it
+# too.
 allowed_hosts:
   - github.com
   - raw.githubusercontent.com
@@ -184,3 +198,4 @@ allowed_hosts:
   - calendly.com
   - wa.me
   - fugaro.dev
+  - keys.fugaro.dev

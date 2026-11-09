@@ -482,6 +482,33 @@ available to all. No release before then carries a notice, a warning or a key ch
 group it with them as a standing ruling ([`../ee-reorg/spec.md`](../ee-reorg/spec.md)); the (b)
 answer and its deferral are the owner's of 2026-10-29 (D523), the date this file records.
 
+### The CSP widening the site's forms need (ruled 2026-11-07)
+
+**D451 — (F44 above) How the site's forms reach the intake under `form-action 'self'`.** The facts
+are F44's: the site serves one Content-Security-Policy and it carries `form-action 'self'`
+(`firebase.json:10`), and the site's origin gate refuses a form posting anywhere else. S3.3's own
+blocker is the same question, and the plan's task row names it — "the owner's approval of the CSP
+`form-action` change". Options: (a) the owner widens `form-action` to the intake's one exact host;
+(b) a same-origin path on the site's own host that forwards to the intake; (c) no form on the site
+at all, the request made by the CLI or by mail.
+
+**Ruled (a), 2026-11-07: the owner approved the widening when the plan's blockers were cleared for
+0.23.0** — `form-action 'self'` plus the key service's intake origin, which is `keys.` plus the
+site's own host (`https://keys.fugaro.dev` today; the design's §3.1 names it, S3.5's Terraform maps
+the custom domain onto the intake's service and S3.7 applies it), and that one host admitted in no
+other directive. S3.3 carries it: `firebase.json`'s `form-action` names the origin,
+`website/test/origins.mjs` admits a form action for this site or for that one host and for nothing
+else, and no page loads from the host. **The other half of F44 is untouched**: §7.3's notice still
+has to say that a visitor's data reaches the intake (S7.3), and `website/test/privacy.mjs` rule 5 is
+S7.3's to move.
+
+*On the date:* the approval is the owner's of 2026-11-07, given with the plan's 0.23.0 blockers;
+S3.3 landed on 2026-11-09 and is where the ruling is carried, and the design's D451 row moved from
+`open` to its Settled list with it. **It is written here because the tree is where the next task
+looks**: the plan and the design made the approval a precondition of the change, and the policy
+naming the host without the approval recorded anywhere is a change no later reader can tell was
+authorised.
+
 ### The tensions as raised (ruled 2026-10-27, kept for the record)
 
 **T10 — (D434) Future coordinator versions in the business-licensed folder.** Facts: the

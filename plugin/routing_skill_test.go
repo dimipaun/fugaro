@@ -123,3 +123,62 @@ func TestWorkingSkillStatusNamesWhoStartedEachRun(t *testing.T) {
 		t.Fatal("fugaro runs stats does not resolve in the CLI tree")
 	}
 }
+
+// TestWorkingSkillStatusNamesTheFailureClass (FC9, D1457): the status
+// reference lists the per-run keys `runs ls --json` emits, and the row gained
+// `failure_class` — the closed cause a run that did not succeed carries — so
+// the user the skill's own "Needs attention" section tells to ask why a run
+// failed is told the key, not only the `reason` it already reads.
+//
+// The pin follows the prose rather than keeping a second copy of it: it reads
+// the keys out of the sentence itself and holds each one to `runview.Row`'s own
+// json tags, so a key the skill invents or a name the CLI no longer emits is
+// red. It asks for neither completeness nor the row's order — the sentence
+// names a selection of the row's keys, and a pin written for the whole row
+// would fail on the ones the skill deliberately leaves out.
+func TestWorkingSkillStatusNamesTheFailureClass(t *testing.T) {
+	data, err := os.ReadFile("skills/working/reference/status.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sentence := runKeysSentence(t, string(data))
+
+	keys := map[string]bool{}
+	ty := reflect.TypeOf(runview.Row{})
+	for i := 0; i < ty.NumField(); i++ {
+		keys[strings.Split(ty.Field(i).Tag.Get("json"), ",")[0]] = true
+	}
+	named := 0
+	for _, m := range codeSpanRE.FindAllStringSubmatch(sentence, -1) {
+		named++
+		if !keys[m[1]] {
+			t.Errorf("skills/working/reference/status.md names %q among a run's keys: runview.Row has no such json key", m[1])
+		}
+	}
+	if named == 0 {
+		t.Fatalf("skills/working/reference/status.md's key sentence (%q) names no run key at all: the pin reads them out of it", sentence)
+	}
+
+	if !strings.Contains(sentence, "`failure_class`") {
+		t.Error("skills/working/reference/status.md's sentence that lists a run's keys never names `failure_class`: runs ls --json carries the cause of a failed run and the skill sends a user to ask why one failed")
+	}
+}
+
+// runKeysSentence returns the sentence of the working skill's status reference
+// that lists a run's json keys: from "Each run has " to the full stop that ends
+// it. The pin reads the keys out of the prose, so this is where the two have to
+// agree about what the sentence is.
+func runKeysSentence(t *testing.T, status string) string {
+	t.Helper()
+	const marker = "Each run has "
+	i := strings.Index(status, marker)
+	if i < 0 {
+		t.Fatalf("skills/working/reference/status.md no longer says %q: the pin reads a run's key list out of that sentence", marker)
+	}
+	rest := status[i+len(marker):]
+	j := strings.Index(rest, ".")
+	if j < 0 {
+		t.Fatalf("the sentence %q never ends: the pin cannot read a run's keys out of it", marker)
+	}
+	return rest[:j]
+}

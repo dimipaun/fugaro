@@ -27,7 +27,7 @@ import (
 // secret (D1260).
 //
 // The config half is the settings commands' one write path (applySettingsEdit),
-// so the diff, the confirmation, the backup and the compare-and-swap are the
+// so the diff, the sentence, the backup and the compare-and-swap are the
 // same ones every other settings write pays. The order is that half first
 // because it is the one that can be undone: a deletion that fails puts the entry
 // back where it was (secretsRmUndo), so the command cannot leave a policy
@@ -118,9 +118,9 @@ func secretsRm(cmd *cobra.Command, o secretsRmOptions, name string) error {
 			strings.Join(slices.Sorted(maps.Keys(config.ReservedSecrets)), ", "), config.SecretNameRE)
 	}
 	// --yes is passed with the other two so the pair the settings write path
-	// refuses is refused here as well: a dry run and a confirmation answer
-	// different questions, and a --yes accepted beside --dry-run would be a
-	// confirmation the person believes they gave for a removal that never ran.
+	// refuses is refused here as well: a dry run and a write's own question
+	// answer different questions, and a --yes accepted beside --dry-run would be
+	// an approval the person believes they gave for a removal that never ran.
 	if err := settingsDryRunFlags(settingsWriteOptions{dryRun: o.dryRun, jsonOut: o.asJSON, yes: o.yes}); err != nil {
 		return err
 	}
@@ -213,7 +213,7 @@ func secretsRm(cmd *cobra.Command, o secretsRmOptions, name string) error {
 	// The step covers both halves — the config entry and the container — since
 	// the command is one removal made of two: it is opened before the diff and
 	// abandoned by every path that leaves the removal unmade, which is a dry
-	// run and a declined confirmation alike (G3). It is where the run begins:
+	// run and a declined --ask alike (G3). It is where the run begins:
 	// the refusals above it are answered from what is already there and from
 	// this file, and the removal below is the first thing that changes either.
 	run := stepRunFor(cmd, "secrets-rm", cmd.OutOrStdout())
@@ -248,12 +248,14 @@ func secretsRm(cmd *cobra.Command, o secretsRmOptions, name string) error {
 		return nil
 	}
 	if !changed {
-		// applySettingsEdit returns before its confirmation when there is
-		// nothing to write, and the deletion below is the change this command
-		// is about: it is confirmed here, once, for the same reason and in the
-		// same words.
+		// applySettingsEdit returns before its own sentence when there is
+		// nothing to write, and the deletion below is the change this command is
+		// about: the sentence is printed here, in the same words and through the
+		// same door (announceSettingsWrite), which is where a question --ask
+		// would put back would be asked — this command registers no --ask, so
+		// none is, and no gate answer is passed with the sentence.
 		if err := run.ask(func() error {
-			return confirmSettingsWrite(cmd, lc, sel.Path, o.yes, what)
+			return announceSettingsWrite(cmd, false, what)
 		}); err != nil {
 			return err
 		}
@@ -332,16 +334,17 @@ func secretsRmUndo(id, path, block, name string, old, next []byte, changed bool,
 		id, failed, key)
 }
 
-// secretsRmWhat is the sentence the confirmation shows. It names both halves
-// this command removes, because the diff below it shows only one of them, and
-// it names the block the entry lives in: a confirmation that said
+// secretsRmWhat is the sentence the write prints. It names both halves this
+// command removes, because the diff below it shows only one of them, and it
+// names the block the entry lives in: a sentence that said
 // project_secrets.NAME for a workflow secret would describe a key the run does
 // not touch.
 //
-// The name reaches a prompt here and nowhere else in this command, so it is
-// wrapped the way every other message of the family wraps it: the shape check
-// above is what makes a stray control character or bidi override impossible
-// today, and this is the one sentence that would carry one if it stopped being.
+// The name reaches the person's own read here and nowhere else in this command,
+// so it is wrapped the way every other message of the family wraps it: the
+// shape check above is what makes a stray control character or bidi override
+// impossible today, and this is the one sentence that would carry one if it
+// stopped being.
 func secretsRmWhat(id, block, name string, held, changed bool) string {
 	key := block + "." + pluginwire.Printable(name)
 	switch {

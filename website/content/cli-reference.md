@@ -43,6 +43,7 @@ Subcommands:
 - `fugaro graph` -- Print the project's dependency graph
 - `fugaro help` -- Help about any command
 - `fugaro image` -- Build and inspect a workflow's derived container image
+- `fugaro issue` -- Read and dismiss the issues saved on this machine
 - `fugaro logs` -- Print a run's logs from Cloud Logging
 - `fugaro managed` -- Act on a managed project (a project created by fugaro with the coding agent's refusal removed)
 - `fugaro models` -- Show the models this project can run, and where each is served
@@ -109,7 +110,7 @@ every repository on it: an account that covers less is refused before the file
 is touched, naming the repositories it is missing, because widening the account
 silently is what that rule exists to prevent.
 
-Then it converges, in one command and behind the one confirmation above: the
+Then it converges, in one command and behind the one sentence it prints: the
 token is stored project-wide as a new version of the account's own secret, the
 account's broken mark is cleared, and the publisher, the job set and this
 checkout's repository root are converged — the same stages fugaro update runs,
@@ -124,8 +125,18 @@ only source of the value, so a login you cancelled or that failed costs one
 paste rather than the command. A login that failed stores nothing and still
 leaves you the prompt.
 
-Run it at your own terminal: this file decides where a credential may be sent,
-so a coding agent's session is refused, --yes included.
+Run it at your own terminal. This file decides where a credential may be sent
+and this command then stores the token itself, so in a project whose marks say
+it is managed the token is written for YOU and nobody else: before the token
+prompt it prints the repositories the token may be used by and says that a job
+on those repositories can read it. Nothing is asked — the terminal is what makes
+a run yours, and --yes does not stand in for one — so a pipe and a run with no
+terminal are refused before a byte is written.
+
+A coding agent's session may still declare a bounded account: the repositories
+it names are the only ones the token may be used by, and none of them is beyond
+this checkout. The token is not written for it, because a secret is the one
+step no plan admits.
 
 Usage: `fugaro accounts add NAME`
 
@@ -138,7 +149,7 @@ Flags:
 | `-h`, `--help` | bool | `false` | no | help for add |
 | `--profile` | string | "" | no | the profile whose claude_accounts gains the name (default: the only profile, when there is exactly one) |
 | `--repos` | string | "" | no | the repositories the token may be used by, as owner/name,owner/name (default: this checkout's origin) |
-| `--yes` | bool | `false` | no | confirm the write without a prompt |
+| `--yes` | bool | `false` | no | confirm the run without a prompt: it answers the converge's own questions and never makes a run the owner at their own terminal on a managed project |
 
 Subcommands:
 
@@ -166,9 +177,9 @@ could take off a hold a newer release placed.
 The write is one node — creds/marks/NAME, in this installation's own database —
 and it is conditional on the value read (PutIfMatch), so a mark the service
 changed at the same moment is not lost: the write re-reads the mark and clears
-it only while its state is still the one the confirmation named, so a 401 the
+it only while its state is still the one this run announced, so a 401 the
 service recorded while you were reading is left for its own decision rather
-than taken off with the hold you confirmed.
+than taken off with the hold you asked for.
 
 NAME is "default" (the repository's own unnamed claude-oauth-token secret), a
 claude_accounts name of the selected project config, or an account the database
@@ -287,12 +298,12 @@ Removing the declaration also deletes the secret claude-oauth-token-<name>
 through Secret Manager's own delete. That delete cannot be undone — Secret
 Manager keeps no grace period for a secret — and the copy of the credential
 left behind is the token at the provider. The secret's ID is named in the
-confirmation before it goes, and the command says plainly that deleting the
+sentence this run prints before it goes, and the command says plainly that deleting the
 secret does not revoke the token at the provider: it stays valid until it
 expires or you revoke it in Anthropic's own console, which no command here
 reaches.
 
-Then it converges, in the same command and behind the same confirmation: the
+Then it converges, in the same command and after that one sentence: the
 policy node the account was published in, the job set and this checkout's
 repository root, through the stages fugaro update runs.
 
@@ -492,8 +503,9 @@ Download a run's artifacts, verifying them against its record
 
 Download one artifact NAME, or every artifact the record lists when NAME is
 omitted, verifying each one's size and sha256 against the run's result.json as
-the bytes arrive. A mismatch is an error naming both hashes, and nothing is
-written — not even the file the download streamed into.
+the bytes arrive. RUN is a run ID, <repo-slug>/<run-id>, or the last four or
+more characters of a run ID. A mismatch is an error naming both hashes, and
+nothing is written — not even the file the download streamed into.
 
 The destination is a fresh directory this command creates,
 ./<run-id>-artifacts/ unless --out names another parent for it. A name in the
@@ -528,11 +540,12 @@ This command has no subcommands.
 
 List what a run's record says it delivered
 
-List the artifacts RUN (<repo-slug>/<run-id>, or a bare run ID) recorded in
-its result.json: name, recorded size, short sha256, recorded content type and
-the probe's verdict. The record is shown as it is — a name `get` cannot
-retrieve is listed with the reason, never filtered out, and a missing object is
-not ls's to hide: ls is the record, get is the object.
+List the artifacts RUN (a run ID, <repo-slug>/<run-id>, or the last four or
+more characters of a run ID) recorded in its result.json: name, recorded
+size, short sha256, recorded content type and the probe's verdict. The
+record is shown as it is — a name `get` cannot retrieve is listed with the
+reason, never filtered out, and a missing object is not ls's to hide: ls is
+the record, get is the object.
 
 --json prints the record's artifact list verbatim.
 
@@ -1055,7 +1068,12 @@ This command has no subcommands.
 
 Cancel a run, letting the runner open a draft PR first
 
-Cancel RUN (<repo-slug>/<run-id>, or a bare run ID).
+Cancel RUN (a full run ID, or <repo-slug>/<run-id>).
+
+cancel is the one command that acts on a run and takes no ending. Given the
+last four or more characters of a run ID it cancels nothing: it looks them up
+among the active runs, lists each one it names as <repo-slug>/<run-id> to
+paste, and exits with an error.
 
 cancel writes the run's cancel marker; the runner sees it, stops the current
 stage and finalizes a draft PR. If the execution is still in a stage after
@@ -1824,7 +1842,7 @@ NAME is a credential the service can issue, in the document's own spelling:
   claude-oauth-token-<account>       a named Claude account's OAuth token (tier A)
   anthropic-api-key                the project's Anthropic API key (tier B)
   github-app-key                  the GitHub App's private key (no tier: the mint signs with it)
-  bitbucket-token                   the upstream Bitbucket token (no tier: held for the git proxy a later release adds; a Bitbucket run's job still uses its own mounted token)
+  bitbucket-token                   the upstream Bitbucket token (no tier: the git proxy issues this entry for the repositories the published node admits with proxy: true, and every other Bitbucket run's job still uses its own mounted copy until the flip)
   bitbucket-read-consumer             the Bitbucket read consumer (no tier: the service's read mint exchanges it for a read-scoped token): a YAML mapping of key, secret and workspace, one field per line, so redirect it from a file — the hidden prompt takes one line
   claude-oauth-token--review-signing  the default account's review-signing key (no tier: the service's sign
                                      route computes a MAC with it; written by --generate below)
@@ -1919,8 +1937,9 @@ This command has no subcommands.
 
 Explain how a run went: status, tests, review findings, the agent's last word, logs
 
-Gather what is known about RUN (<repo-slug>/<run-id>, or a bare run ID): its
-status and reason, the last test run's failed and flaky tests, the last
+Gather what is known about RUN (a run ID, <repo-slug>/<run-id>, or the last
+four or more characters of a run ID): its status and reason, the last test
+run's failed and flaky tests, the last
 review's findings, the agent's final message, the newest log lines, its cost
 and its pull request. Everything printed is redacted of the credentials in
 this environment, on top of the runner's own redaction.
@@ -2492,11 +2511,130 @@ Subcommands:
 
 This command has no subcommands.
 
+## `fugaro issue`
+
+Read and dismiss the issues saved on this machine
+
+Read the issues saved on this machine.
+
+An issue is one Markdown file under the user's state directory, holding
+the whole issue: a strict header and the diagnosis' own words. `list`
+shows what is saved, `show` prints one, and `dismiss` sets one aside so
+nothing is filed for it. An issue is named by its local ID
+(`local-<run stem>`) until it has been uploaded, and by its number
+(`#0007`) from then on; `show` and `dismiss` take either.
+
+Nothing here is uploaded: the issue stays on this machine, and the text
+of a record is printed as data — it comes from log text this machine did
+not write.
+
+Usage: `fugaro issue`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for issue |
+
+Subcommands:
+
+- `fugaro issue dismiss` -- Mark an issue as not worth filing
+- `fugaro issue list` -- List the issues saved on this machine
+- `fugaro issue show` -- Print one issue: its number (#0007) or its local ID
+
+## `fugaro issue dismiss`
+
+Mark an issue as not worth filing
+
+Mark one saved issue as not worth filing.
+
+REF is the issue's number — `7`, or the `#0007` a listing prints — or
+its local ID `local-<run stem>`, the same argument `show` takes. The
+status is written in the issue's own file and nothing else changes: the
+record stays where it is, so a listing still shows what was set aside
+and who did it, and nothing is filed.
+
+An issue that has already been filed is refused: it is open on GitHub,
+and setting it aside here would not close it.
+
+A coding agent's session may not dismiss an issue: a steered diagnosis
+could otherwise bury a real bug, so a person sets one aside (D1730).
+
+Usage: `fugaro issue dismiss REF`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for dismiss |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro issue list`
+
+List the issues saved on this machine
+
+List the issues saved on this machine, one row each.
+
+A row names the issue the way `show` and `dismiss` take it —
+its number once it has been uploaded, its local ID before — with the
+class the diagnosis gave it, where it stands, and its one-line summary.
+Nothing is uploaded and nothing is filed: the listing is this machine's
+own folder, read.
+
+--json prints the records themselves, in the shape
+schemas/issue-record.schema.json describes, which is the document a
+reader outside this binary consumes.
+
+Usage: `fugaro issue list`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for list |
+| `--json` | bool | `false` | no | print machine-readable output |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro issue show`
+
+Print one issue: its number (#0007) or its local ID
+
+Print one issue the machine saved.
+
+REF is the issue's number — `7`, or the `#0007` a listing prints — or
+`local-<run stem>`, which is what it is called until it has been
+uploaded. The header a listing shows and the body a person reads are
+printed as data: the text came from a diagnosis that read log text this
+machine did not write, so no escape sequence in it reaches the terminal.
+
+--json prints the record itself, in the shape
+schemas/issue-record.schema.json describes.
+
+Usage: `fugaro issue show REF`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for show |
+| `--json` | bool | `false` | no | print machine-readable output |
+
+Subcommands:
+
+This command has no subcommands.
+
 ## `fugaro logs`
 
 Print a run's logs from Cloud Logging
 
-Print the logs of RUN (<repo-slug>/<run-id>, or a bare run ID), oldest first.
+Print the logs of RUN (a run ID, <repo-slug>/<run-id>, or the last four or
+more characters of a run ID), oldest first.
 
 With -f, keep printing until the execution ends and its logs settle. Every
 line is redacted of the credentials in this environment, on top of the
@@ -4166,7 +4304,7 @@ Flags:
 | `--ref` | string | "" | no | base branch or ref the run is cut from (default: the branch this checkout is on, when origin has it and it is not the base branch; else the base branch (fugaro.yaml git.base_branch, then the local config's, then the project's base_branch, then main)) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | repository as owner/name, or a path inside its checkout (default: this checkout's origin) |
-| `--retry` | string | "" | no | launch the stored task of RUN (<repo-slug>/<run-id> or a run ID) that never started |
+| `--retry` | string | "" | no | launch the stored task of RUN (a full run ID, or <repo-slug>/<run-id>) that never started: a run an ending names is never launched, since the bucket cannot vouch for which run an ending means |
 | `--review-levels` | string | "" | no | read the run's own review levels from this YAML file, or - for stdin: the block the task stores as review_levels (l1, l2, l3, each of model, effort, none and focus), decoded strictly, with no key on no level meaning the configuration decides it. Asking for levels needs a job image whose runner acts on them, so a launch on an older one is refused and names fugaro image refresh; without the flag the run resolves its levels from its configuration and its mode alone |
 | `--run-id` | string | "" | no | run ID to use; repeating one reports its launch instead of starting another |
 | `--task-file` | string | "" | no | read the task from this file, or - for stdin |
@@ -4328,6 +4466,14 @@ somebody asked for. Like --state it reads the runs it filters, since the
 mark is in the run's task.json; a run whose task.json is unreadable is
 left out rather than guessed in, because nothing there says it is one.
 
+--group-by failure_class adds a block to the listing: one row per class of the
+closed vocabulary, with the runs of the window that ended in it, their share
+of the window's runs, and what they cost. It groups the rows the listing has
+already read and reads nothing new, and it moves nothing: the rows and the
+totals are the ones without it, and --json gains the `groups` block beside
+them. A page of a grouped listing is a page's total, so --group-by doesn't go
+with --limit, --after or --watch.
+
 --pr N lists the runs on pull request N of one repository (the first run and
 its follow-ups), over the last 90d unless --since says otherwise; the totals
 line is then the PR's total cost.
@@ -4344,6 +4490,7 @@ Flags:
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--debt` | bool | `false` | no | only runs filed from a triage deferral (a task marked debt) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `--group-by` | string | "" | no | group the listing by one field (failure_class) |
 | `-h`, `--help` | bool | `false` | no | help for ls |
 | `--json` | bool | `false` | no | print machine-readable output |
 | `--limit` | int | `0` | no | print only the newest N rows (0, the default, is every row of the window; the totals stay the window's) |
