@@ -3250,14 +3250,23 @@ table against the live constructors.
    exceptions, and both are writes the console's own confirmation windows
    answer**: the launch (§6.14, design §5.1 rule 11), which was the console's
    **first write**, and the settings edit (§6.20, design §5.1 rule 12, the
-   settings-edit plan's C3), which is its **second write**. The allow-list is by
+   settings-edit plan's C3), which is its **second write**. **A third write
+   reads no document of this file at all**, so it neither widens nor narrows
+   this sentence: `licence.save` (design §5.1 rule 5, the subscriptions plan's
+   S2.7) keeps the licence key the operator pasted in the console's own store
+   (design §5.1 rule 10), spawns nothing, consumes none of the documents below,
+   and needs no confirmation window because there is no child and no cloud
+   object to confirm — what it writes is a file of the console's own, and what
+   it refuses is a key that does not verify. The allow-list is by
    exact argv (design §5.1 rule 6), and both are on it: `run.launch` and
-   `settings.edit` are the two operations of the surface that write (V2.5.1a,
+   `settings.edit` are the two **spawning** operations of the surface that write
+   — `licence.save` is the third that writes and spawns nothing, which is why
+   there is no row of §8 for it (V2.5.1a,
    2026-10-28/29, took the surface to twenty-four; K2a's
    `link.openPullRequest` took it to twenty-five and writes nothing, and C4c's
    `coordinator.intents` took it to twenty-six and writes nothing — **the
    counts in this parenthesis are the history up to that commit, and rule 5's
-   thirty-one is today's**), and no other argv that writes is reachable
+   thirty-six is today's**), and no other argv that writes is reachable
    from a renderer. Two further commands this file
    describes are writes, and **neither is in the console's set**: `fugaro cancel
    RUN --json` (§6.3), which is on the design's "never" table and which no v1
