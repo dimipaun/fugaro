@@ -415,7 +415,7 @@ what `ReviewJobAccountsFor` and the deployer then agree the review variant's seg
 - `TestReviewCandidateListIsExactlyOneCredential` — the list is one entry long and the cascade's
   ladder has nothing to fall to, whatever the policy's `fallback` says.
 - `TestReviewCallerIsNeverOfferedAProviderKey` — the negative that keeps this task from becoming
-  AK6: a bundle holding a provider key offers it to no review caller.
+  AK6b: a bundle holding a provider key offers it to no review caller.
 - `TestReviewCandidateListStillOffersThePairingAccount` — the second direction: a pairing that names
   a Claude account is served exactly as it is today.
 - `TestDeriveAccountsPublishesTheProjectsAnthropicKey` — the publish half, and the one the plan
@@ -548,8 +548,10 @@ an axis value, and the credential it names is AK6b's bundle key.
 **Interfaces:** the account axis gains **a second value of its own** beside
 `config.AnthropicKeyAccount` — a constant in `internal/config/claude_accounts.go`, called here the
 provider-key account, whose spelling is the task's to settle and whose one hard rule is that it is a
-value no installation spells today (`config.ValidateClaudeAccounts` accepts it as *not* a Claude
-account, exactly as it accepts the sentinel, and `config.DefaultClaudeAccount` is not it) — so that
+value no installation spells today (`config.ValidateClaudeAccounts` refuses it where a
+`claude_accounts` block would *define* it, exactly as it refuses the sentinel, and
+`config.ValidClaudeAccountRef` admits it where a profile *names* an account, exactly as it admits the
+sentinel; `config.DefaultClaudeAccount` is not it) — so that
 `projectpolicy`'s `DeriveAccounts` writes an `accounts` entry for it, `credsvc`'s `admittedAccounts`
 intersects a repository's child with it, the deployer's `ProjectJobs` builds the profile's job and its
 review-only variant for it, the launcher places it on that job, and `modules/project`'s `job.account`
