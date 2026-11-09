@@ -82,6 +82,8 @@ import { CLI_VERSION_BUILT_AGAINST, classifyCliVersion } from '../../src/shared/
 import { FUGARO_BINARY_NAME, binDirectories } from '../../src/main/spawn'
 import { installStub } from './stub'
 import type { Stub } from './stub'
+import { installWslStub } from './wslstub'
+import type { WslFixture } from './wslstub'
 
 function freshDirectory(): string {
   return mkdtempSync(join(tmpdir(), 'fugaro-picker-'))
@@ -203,6 +205,9 @@ function pickerOver(
     readonly onRecordRemoved?: Parameters<typeof createInstallationPicker>[0]['onRecordRemoved']
     readonly openExternal?: (url: string) => Promise<boolean>
     readonly reveal?: (path: string) => Promise<boolean> | boolean
+    /** wslPath is the `wsl.exe` the distro list's read runs -- the fake (T-A1),
+     * handed to the picker the way the WSL route's own seams are. */
+    readonly wslPath?: string
     readonly updateMenu?: UpdateMenuOptions
     readonly crashMenu?: CrashMenuOptions
   } = {},
@@ -259,6 +264,7 @@ function pickerOver(
       : { tempDirectory: () => tmpdir(), tempRoots: options.tempRoots }),
     appPath: '/work/repo/console',
     appEnv: options.appEnv ?? {},
+    ...(options.wslPath === undefined ? {} : { wslPath: options.wslPath }),
     ...(options.onChosen === undefined ? {} : { onChosen: options.onChosen }),
     ...(options.onRemoved === undefined ? {} : { onRemoved: options.onRemoved }),
     ...(options.onRecordRemoved === undefined ? {} : { onRecordRemoved: options.onRecordRemoved }),
@@ -376,12 +382,14 @@ function listableStub(): Stub {
 // ---------------------------------------------------------------------------
 
 describe('the picker’s allow-list', () => {
-  it('is closed, frozen, and six rows wide', () => {
-    // Six, because the form is gone (owner's ruling of 2026-10-20) and the
+  it('is closed, frozen, and seven rows wide', () => {
+    // Seven, because the form is gone (owner's ruling of 2026-10-20) and the
     // reveal affordance arrived with Part D: the list, one click that opens an
     // installation, the checkout it is used from, the removal of this console's
-    // own record, the one directory Explorer opens, and the one link. A row that
-    // came back -- `add`, `pickBinary` -- fails here by name.
+    // own record, the one directory Explorer opens, the one link, and -- the one
+    // row whose subject is the machine rather than this console -- the
+    // distributions `wsl.exe` lists (T-G3). A row that came back -- `add`,
+    // `pickBinary` -- fails here by name.
     expect(INSTALLATION_OPERATIONS.map((row) => row.name)).toEqual([
       'list',
       'choose',
@@ -389,6 +397,7 @@ describe('the picker’s allow-list', () => {
       'remove',
       'reveal',
       'openExternal',
+      'distros',
     ])
     expect(Object.isFrozen(INSTALLATION_OPERATIONS)).toBe(true)
     for (const row of INSTALLATION_OPERATIONS) expect(Object.isFrozen(row)).toBe(true)
@@ -431,7 +440,7 @@ describe('the picker’s bridge', () => {
     const keys = Object.keys(bridge).sort()
     expect(
       keys,
-    ).toEqual(['checkout', 'choose', 'list', 'openExternal', 'operations', 'remove', 'reveal', 'version'].sort())
+    ).toEqual(['checkout', 'choose', 'list', 'openExternal', 'operations', 'remove', 'reveal', 'version', 'distros'].sort())
     // The three names a bridge would have, and their absence is the design's
     // rule 5: there is no general invoker to point at a channel.
     for (const forbidden of ['invoke', 'send', 'on', 'channel']) expect(keys).not.toContain(forbidden)
@@ -1270,6 +1279,103 @@ describe('the picker’s reveal', () => {
     const { ipcMain } = pickerOver({ userData })
     const reply = await answer(ipcMain, 'reveal', { project: 'acme' })
     expect(JSON.stringify(reply)).not.toContain('wsl.localhost')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The distro list (Part G, T-G3)
+// ---------------------------------------------------------------------------
+
+/** TWO_DISTROS is what the fake `wsl.exe` lists: two distributions, the second
+ * of them the machine's default -- and **not** the first, which is the shape
+ * D2(a) forbids a console to infer. */
+const TWO_DISTROS: WslFixture = {
+  list: 'Ubuntu\r\nDebian\r\n',
+  status: 'Default Distribution: Debian\r\nDefault Version: 2\r\n',
+}
+
+/** NO_WSL is a `wsl.exe` that cannot answer at all: WSL is not installed, or the
+ * Windows feature is off. It is `absent`, and never an empty list. */
+const NO_WSL: WslFixture = {
+  list: '',
+  status: '',
+  queryFailure: {
+    status: 1,
+    stderr: 'Windows Subsystem for Linux has no installed distributions.\r\n',
+  },
+}
+
+describe('the picker’s distro list', () => {
+  it('answers the distributions wsl.exe lists, with the machine’s own default marked', async () => {
+    // The one row whose subject is the machine and not this console's record of
+    // anything: `wslDistributions` is the single enumeration of distributions
+    // (T-C4), and the channel answers with its own value rather than a shape the
+    // picker invented -- which is what keeps the default a fact of `--status`
+    // rather than of a row's position (D2(a)).
+    const wsl = installWslStub(freshDirectory(), { distros: TWO_DISTROS })
+    const { picker, ipcMain } = pickerOver({ wslPath: wsl.binary })
+    void picker
+    expect(await answer(ipcMain, 'distros')).toEqual({
+      ok: true,
+      data: {
+        kind: 'listed',
+        distributions: [
+          { name: 'Ubuntu', isDefault: false },
+          { name: 'Debian', isDefault: true },
+        ],
+      },
+    })
+  })
+
+  it('answers the absence of a list when wsl.exe cannot answer, and never an empty one', async () => {
+    // The three outcomes T-C4 exists for, at the boundary: a machine with
+    // distributions, a machine whose `wsl.exe` answered with none, and a machine
+    // where WSL is not installed. The third is not the second, and a picker that
+    // drew "no distributions" for it would send the operator to install one on a
+    // machine where WSL itself is missing.
+    const wsl = installWslStub(freshDirectory(), { distros: NO_WSL })
+    const { picker, ipcMain } = pickerOver({ wslPath: wsl.binary })
+    void picker
+    const reply = await answer(ipcMain, 'distros')
+    expect(reply.ok).toBe(true)
+    if (!reply.ok) return
+    const answer_ = reply.data as { readonly kind: string; readonly reason?: string }
+    expect(answer_.kind).toBe('absent')
+    expect(answer_.reason).toContain('Windows Subsystem for Linux has no installed distributions.')
+  })
+
+  it('answers a machine with no distributions as an empty list, which is an answer', async () => {
+    const wsl = installWslStub(freshDirectory(), { distros: { list: '', status: '' } })
+    const { picker, ipcMain } = pickerOver({ wslPath: wsl.binary })
+    void picker
+    expect(await answer(ipcMain, 'distros')).toEqual({
+      ok: true,
+      data: { kind: 'listed', distributions: [] },
+    })
+  })
+
+  it('runs wsl.exe and no CLI: the read starts nothing inside a distribution', async () => {
+    // The list is a question about the machine, so the child is `wsl.exe` itself
+    // -- two invocations (`--list --quiet`, `--status`) and no third hop. A
+    // console that resolved an installation to ask this, or that ran the CLI
+    // inside a distribution to enumerate them, would be answering a different
+    // question (and would need a distribution already chosen to ask it).
+    const wsl = installWslStub(freshDirectory(), { distros: TWO_DISTROS })
+    const { picker, ipcMain } = pickerOver({ wslPath: wsl.binary })
+    void picker
+    await answer(ipcMain, 'distros')
+    expect(wsl.calls()).toBe(2)
+    expect(wsl.childCalls()).toBe(0)
+    expect(wsl.reports().map((report) => report.kind)).toEqual(['query', 'query'])
+  })
+
+  it('takes no arguments, so a frame cannot name a distribution, a path or a command', async () => {
+    const wsl = installWslStub(freshDirectory(), { distros: TWO_DISTROS })
+    const { picker, ipcMain } = pickerOver({ wslPath: wsl.binary })
+    void picker
+    expect(INSTALLATION_OPERATIONS.find((row) => row.name === 'distros')?.args).toEqual([])
+    const refused = (await answer(ipcMain, 'distros', { distro: 'Ubuntu' })) as ConsoleReply
+    expect(refused).toEqual({ ok: false, reason: 'unknown argument: distro' })
   })
 })
 
