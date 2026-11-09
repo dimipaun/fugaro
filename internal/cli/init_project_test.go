@@ -863,8 +863,11 @@ func TestRelinkNeverHappens(t *testing.T) {
 	if n := r.bill.Attempts(); n != 0 {
 		t.Errorf("unreadable billing: %d write(s) attempted", n)
 	}
-	if ExitCode(err) != ExitUserError || !strings.Contains(out, "cannot be read") || !strings.Contains(out, "gcloud billing projects link") {
-		t.Errorf("exit %d\n%s", ExitCode(err), out)
+	// The stage's line is one clause of its reason and the log the whole of it
+	// (report.Brief): the read that failed, and the line that links.
+	whole := out + namedLog(t, out)
+	if ExitCode(err) != ExitUserError || !strings.Contains(whole, "cannot be read") || !strings.Contains(whole, "gcloud billing projects link") {
+		t.Errorf("exit %d\n%s", ExitCode(err), whole)
 	}
 
 	r = newProjectRig(t)
@@ -875,8 +878,9 @@ func TestRelinkNeverHappens(t *testing.T) {
 	if n := r.bill.Attempts(); n != 0 {
 		t.Errorf("a suspended link: %d write(s) attempted", n)
 	}
-	if ExitCode(err) != ExitUserError || !strings.Contains(out, "never replaces an existing link") {
-		t.Errorf("exit %d\n%s", ExitCode(err), out)
+	whole = out + namedLog(t, out)
+	if ExitCode(err) != ExitUserError || !strings.Contains(whole, "never replaces an existing link") {
+		t.Errorf("exit %d\n%s", ExitCode(err), whole)
 	}
 
 	r = newProjectRig(t)
@@ -1210,8 +1214,11 @@ func TestTheBillingListIsNarrow(t *testing.T) {
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d (%v), want 1: the link a project already has is the user's to change\n%s", ExitCode(err), err, out)
 	}
-	if !strings.Contains(out, "never replaces an existing link") {
-		t.Errorf("the run does not report the link it found, so this is not the path that knows about it:\n%s", out)
+	// The stage's reason is one clause on the screen and the whole of it in the
+	// log (report.Brief); the accounts' own names are looked for on the screen
+	// alone, which is the rule they are held to.
+	if whole := out + namedLog(t, out); !strings.Contains(whole, "never replaces an existing link") {
+		t.Errorf("the run does not report the link it found, so this is not the path that knows about it:\n%s", whole)
 	}
 	for _, leak := range []string{linked, offered, "billingAccounts/"} {
 		if strings.Contains(out, leak) {
