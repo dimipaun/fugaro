@@ -924,9 +924,9 @@ const gated: ConsoleHandlers = {
   // state or open a window, and these two), and these are the only two of the
   // eleven that keep a **credential**. Both read `licenceStore`, which is built
   // above and answers for the active installation, and both are unreachable in
-  // a reduced console's withheld views by not being on one: a
-  // lapsed installation is exactly the case in which the box that takes a
-  // renewal has to open (`docs/design/lapse-read-only.md`).
+  // a reduced console's withheld views by not being on one: a lapsed
+  // installation is exactly the case in which the box that takes a renewal has
+  // to open (`docs/design/lapse-read-only.md`).
   'licence.read': () => licenceRead(),
   'licence.save': (args) => licenceSave(args),
 }
