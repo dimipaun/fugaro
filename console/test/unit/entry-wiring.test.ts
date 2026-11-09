@@ -198,6 +198,7 @@ import {
   CREDENTIALS_SERVICE_BUSY,
   CREDENTIALS_SERVICE_TITLE,
 } from '../../src/renderer/screens/credentialsservice'
+import { LICENCE_BUSY, LICENCE_TITLE } from '../../src/renderer/screens/licence'
 import { MANAGED_BUSY, MANAGED_TITLE } from '../../src/renderer/screens/managed'
 import { POLICY_NODE_TITLE } from '../../src/renderer/screens/policynotes'
 import { RETIREMENTS_BUSY, RETIREMENTS_SET_TITLE } from '../../src/renderer/screens/retirements'
@@ -228,7 +229,7 @@ import {
 const CONSOLE_ROOT = join(__dirname, '..', '..')
 
 /**
- * READ_METHODS is the eighteen reads `entry.ts` may reach for (`ReadBridge`'s
+ * READ_METHODS is the nineteen reads `entry.ts` may reach for (`ReadBridge`'s
  * own list less `summaryRuns`, which `queueBridge` answers with its own
  * recorder), by the name the preload exposes. Every one of them is on the
  * fake bridge below, and every one records its call -- so "this read was never
@@ -238,8 +239,11 @@ const CONSOLE_ROOT = join(__dirname, '..', '..')
  * Graph's second scope is read through it, and a case that drove the Graph with
  * a bridge that could not answer it would be driving a console whose only
  * remaining scope is the plan's. `managedStatus`, `policyShow` and
- * `environmentReport` are the managed-project screens plan's CM4 rows, and they
- * are the last three: the Project tab's later sections read them (CM10).
+ * `environmentReport` are the managed-project screens plan's CM4 rows: the
+ * Project tab's later sections read them (CM10). `readLicence` is the
+ * subscriptions plan's S2.7 row and the last: the Project tab's licence key,
+ * which is the one read here whose answer is not a `Snapshot` around a CLI
+ * document -- that operation spawns no child at all.
  */
 const READ_METHODS = [
   'subscribeLive',
@@ -260,14 +264,15 @@ const READ_METHODS = [
   'managedStatus',
   'policyShow',
   'environmentReport',
+  'readLicence',
 ] as const
 
 /** A_REPLY is a bridge method's answer. */
 type AReply = (args: unknown) => unknown
 
 /** FakeBridge is the preload seam, recorded: the handshake, the installation,
- * and the fifteen reads (`READ_METHODS`), each answering what the case told it to
- * and appending its own call to `calls`. */
+ * and the reads (`READ_METHODS`), each answering what the case told it to and
+ * appending its own call to `calls`. */
 interface FakeBridge {
   readonly bridge: Record<string, unknown>
   readonly calls: readonly { readonly name: string; readonly args: unknown }[]
@@ -5411,6 +5416,7 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
       'managedStatus',
       'policyShow',
       'environmentReport',
+      'readLicence',
     ])
     expect(
       calls.slice(before).some((call) => call.name === 'listRuns'),
@@ -5426,11 +5432,12 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
   })
 
   it('starts the models and settings reads with the tab’s others and lets none of them wait', async () => {
-    // The three reads of this tab are independent documents: `models ls` is
-    // offline and cheap and does not wait on `budget show`, and neither waits on
-    // `settings --json` (the settings-edit plan's C1). All three go out in the
-    // click's own turn -- nothing is awaited before the second and third calls --
-    // which is what the assertion on the order says.
+    // The reads of this tab are independent documents: `models ls` is offline
+    // and cheap and does not wait on `budget show`, and neither waits on
+    // `settings --json` (the settings-edit plan's C1) nor on the licence key's
+    // own read (S2.7). All of them go out in the click's own turn -- nothing is
+    // awaited before the later calls -- which is what the assertion on the order
+    // says.
     const { bridge, calls } = fakeBridge({
       replies: {
         subscribeLive: () => snapshotReply(liveFrame()),
@@ -5442,20 +5449,28 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
     const document = await boot(bridge, new FakeDocument())
     const before = calls.length
     buttonFor(document, 'projects').click()
-    // **Nothing is awaited**: the click's own turn is where all three calls are,
-    // so a tab that serialised them would show fewer than three here.
+    // **Nothing is awaited**: the click's own turn is where all four calls are,
+    // so a tab that serialised them would show fewer than four here. The licence
+    // key's read is the fourth (S2.7) even though it is the one read here that
+    // spawns no child: it is a read of the console's own store, and it starts
+    // with the others rather than behind them.
     expect(
       calls
         .slice(before)
         .map((call) => call.name)
         .filter(
-          (name) => name === 'showBudget' || name === 'listModels' || name === 'readSettings',
+          (name) =>
+            name === 'showBudget' ||
+            name === 'listModels' ||
+            name === 'readSettings' ||
+            name === 'readLicence',
         ),
-    ).toEqual(['showBudget', 'listModels', 'readSettings'])
-    // While all seven are out, the tab says which read each of its marks is --
+    ).toEqual(['showBudget', 'listModels', 'readSettings', 'readLicence'])
+    // While all eight are out, the tab says which read each of its marks is --
     // one mark per section, on the section's own host (CM10's four siblings are
-    // the last four, and the policy panel's read wears no mark of its own: it is
-    // a member of the body's model, drawn with it).
+    // the last four, the licence key's the eighth, and the policy panel's read
+    // wears no mark of its own: it is a member of the body's model, drawn with
+    // it).
     expect(busyLabels(document)).toEqual([
       PROJECTS_BUSY,
       PROJECTS_MODELS_BUSY,
@@ -5464,6 +5479,7 @@ describe('the frame a tab answers in, and the read it does not wait for', () => 
       ACCOUNT_KEYS_BUSY,
       RETIREMENTS_BUSY,
       CREDENTIALS_SERVICE_BUSY,
+      LICENCE_BUSY,
     ])
     await flush()
     // Each section paints its own answer, and the models section paints the

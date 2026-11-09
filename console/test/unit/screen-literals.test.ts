@@ -371,6 +371,26 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
         'the parameter of the `line` helper itself; every call site passes one of this file\'s own constants, or `refusalText(...)`, which is `sanitizeRefusal`\'s own answer for a sentence main or the CLI wrote',
     },
   },
+  // The licence key's section (the subscriptions plan's S2.7). It draws the
+  // verifier's answer about the key this installation holds, and **the key text
+  // is in neither its input nor its output**: a claim set is what a key *says*,
+  // so every value beside a term goes through `putText` in the class its wire key
+  // declares, and the four entries below are what is left -- the console's own
+  // words for the states, the reason sentences (already `sanitizeRefusal`'s), the
+  // claim terms, and the sentence a save answered with.
+  'licence.ts': {
+    'model.word':
+      'the state word, and it is one of this file\'s own: `buildLicence` answers it out of `LICENCE_STATE_WORDS` (the console\'s table for the verifier\'s three states) or out of `LICENCE_NO_KEY_WORD`/`LICENCE_REFUSED_WORD`, and a state word the table does not hold draws the shape refusal instead of itself -- so a state a later CLI grew is never drawn as a word an operator would have to interpret',
+    'model.because':
+      'the section\'s one reason sentence, **through `sanitizeRefusal`** in `drawnRefusal` before it is stored on the model: this file\'s own sentence for a store that could not answer, the verifier\'s own for a key that does not verify, or the shape refusal for an answer this build does not read -- or `REFUSAL_UNREADABLE` when the sentence cannot be drawn at all, which is the same three-way door `managed.ts`\'s `model.because` keeps for the same channel',
+    'claim.term': {
+      within: 'claimLine',
+      reason:
+        'the parameter of the `claimLine` helper itself; every call site passes one of this file\'s own term constants (`LICENCE_ORGANISATION_TERM`, `LICENCE_TIER_TERM`, ... `LICENCE_FEATURES_TERM`), which are the console\'s words for what the value beside them is',
+    },
+    'read.sentence':
+      'the sentence `licenceSaveOutcomeOf` read out of one `licence.save` reply: this file\'s own word for a write that happened (`LICENCE_SAVED_WORD`), the store\'s refusal **through `sanitizeRefusal`** (the verifier\'s own sentence for a key that does not verify, which is the one thing an operator has to be able to read unparaphrased), or this file\'s `LICENCE_UNREADABLE_WORD` for a reply nobody can read -- so no string a document chose reaches the sink',
+  },
 })
 
 /** blankComments replaces every comment with spaces, keeping strings and line
@@ -855,6 +875,17 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
   'policynotes.ts': {
     "classes.join(' ')": { within: 'make', reason: 'the class list of the `make` helper; every call site passes string-literal class names' },
   },
+  // The licence key's section (S2.7) carries two hooks and no `data-*` state of
+  // its own: the operation it draws and the theme's own classes. Its one
+  // parameter is the `make` helper's class name -- the module sets no attribute
+  // from a document, a claim or a state word, and the mark of a read that is out
+  // belongs to the section helper on the entry's side (`../section.ts`).
+  'licence.ts': {
+    "classes.join(' ')": {
+      within: 'make',
+      reason: 'the class list of the `make` helper; every call site passes one of this file\'s own class constants',
+    },
+  },
 })
 
 const STRING_LITERAL = /^(?:'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*")$/
@@ -1256,6 +1287,7 @@ describe('a screen writes only its own vocabulary through literal', () => {
       'degraded.ts',
       'graph.ts',
       'launch.ts',
+      'licence.ts',
       'live.ts',
       'managed.ts',
       'nocheckout.ts',

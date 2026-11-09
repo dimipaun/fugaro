@@ -180,8 +180,11 @@ export const LICENCE_UNREADABLE_WORD =
  * LicenceClaim is one drawn line of the claim set: the term in this console's
  * words, the value as the answer carried it, and the class the value is drawn
  * through. The class travels on the row because the values are not one kind of
- * string -- an organisation is a host, a tier is a word -- and `putText` is the
- * only door a document's string has onto this screen.
+ * string -- an organisation is free text (`sentence`: a domain, a name, or an
+ * order's id, and a value that reads as a host is drawn `<host>` by that class's
+ * own rules), while a tier, a seat count, a day and the feature list are the
+ * CLI's short rendered fields (`label`) -- and `putText` is the only door a
+ * document's string has onto this screen.
  */
 export interface LicenceClaim {
   readonly term: string
@@ -290,7 +293,7 @@ function claimRows(claims: Record<string, unknown>): readonly LicenceClaim[] {
   const rows: LicenceClaim[] = []
   const organisation = textAt(claims['organisation'])
   if (organisation !== null) {
-    rows.push({ term: LICENCE_ORGANISATION_TERM, value: organisation, textClass: 'host' })
+    rows.push({ term: LICENCE_ORGANISATION_TERM, value: organisation, textClass: 'sentence' })
   }
   const tier = textAt(claims['tier'])
   if (tier !== null) rows.push({ term: LICENCE_TIER_TERM, value: tier, textClass: 'label' })
@@ -419,10 +422,12 @@ export function licenceSaveOutcomeOf(reply: unknown): LicenceSaveRead {
   return { saved: true, sentence: LICENCE_SAVED_WORD }
 }
 
-/** make is one element of a class. */
-function make(factory: ScreenFactory, tag: string, className: string): ScreenElement {
+/** make is one element of a class, in the shape every screen of this console
+ * declares it: variadic, so a call site passes this file's own class constants
+ * and nothing else. */
+function make(factory: ScreenFactory, tag: string, ...classes: string[]): ScreenElement {
   const element = factory.create(tag)
-  element.setAttribute('class', className)
+  if (classes.length > 0) element.setAttribute('class', classes.join(' '))
   return element
 }
 
