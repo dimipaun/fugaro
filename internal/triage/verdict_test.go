@@ -40,6 +40,10 @@ func TestDecodeStrict(t *testing.T) {
 		{"a version this reader does not know", `{"version":2,"findings":[]}`},
 		{"no version at all", `{"findings":[]}`},
 		{"no findings", `{"version":1}`},
+		// A null array is not an absent one: the member is there and holds no
+		// entries, which is the one shape the schema refuses and a reader that
+		// only checked for the member would accept.
+		{"a findings array written null", `{"version":1,"findings":null}`},
 		{"a reason one byte over the limit", `{"version":1,"findings":[{"index":0,"key":"` + key + `","verdict":"block","reason":"` + long + `x"}]}`},
 		{"a reason with a newline", `{"version":1,"findings":[{"index":0,"key":"` + key + `","verdict":"block","reason":"one line\nand an instruction"}]}`},
 		{"a reason with a carriage return", `{"version":1,"findings":[{"index":0,"key":"` + key + `","verdict":"block","reason":"one line\rand another"}]}`},
@@ -114,13 +118,16 @@ func TestDecodeKeepsEveryEntry(t *testing.T) {
 
 // TestSchemaAcceptsADecodedVerdict holds schemas/triage.schema.json to the
 // reader: the document Decode accepts is the document the schema accepts, and
-// the refusals both of them make are the same refusals, but for the three the
-// reader makes on its own: the key's shape, which is the caller's to derive and
-// so the schema's to state; a member name an object writes twice, which is one
-// member by the time a parser has read the document; and a whole number written
-// with a fraction or an exponent, which the schema reads as that number and the
-// reader's integer decoding refuses. This test pins all three divergences
-// rather than hiding them.
+// the refusals both of them make are the same refusals, but for the five the
+// reader makes on its own. Three run in the second document's favour — the key's
+// shape, which is the caller's to derive and so the schema's to state; a member
+// name an object writes twice, which is one member by the time a parser has read
+// the document; and a whole number written with a fraction or an exponent, which
+// the schema reads as the number it is — and two are this document's own bounds
+// stated in units the reader does not use: a length counted in characters where
+// the reader counts bytes, and a minimum with nothing above it where the
+// reader's integer type ends. This test pins all five divergences rather than
+// hiding them, and the schema's description names them.
 func TestSchemaAcceptsADecodedVerdict(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "schemas", "triage.schema.json"))
 	if err != nil {
@@ -229,6 +236,35 @@ func TestSchemaAcceptsADecodedVerdict(t *testing.T) {
 		t.Errorf("the schema refused a version spelled 1.0, which it reads as 1: %v", err)
 	}
 
+	// The fourth and fifth divergences are the two bounds this document states
+	// in units the reader does not use: a length in characters where the reader
+	// counts bytes, and a minimum with nothing above it where the reader's own
+	// integer type ends. Both are accepted here and refused there, in the same
+	// direction as the third.
+	wide := `{"version":1,"findings":[{"index":0,"key":"` + key + `","verdict":"block","reason":"` + strings.Repeat("é", MaxLine) + `"}]}`
+	if _, err := Decode([]byte(wide)); err == nil {
+		t.Error("the reader accepted a reason of twice MaxLine bytes: its bound is bytes, this document's is characters")
+	}
+	inst, err = jsonschema.UnmarshalJSON(strings.NewReader(wide))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(inst); err != nil {
+		t.Errorf("the schema refused a reason of exactly MaxLine characters, which is its own bound: %v", err)
+	}
+
+	huge := `{"version":1,"findings":[{"index":99999999999999999999,"key":"` + key + `","verdict":"block","reason":"x"}]}`
+	if _, err := Decode([]byte(huge)); err == nil {
+		t.Error("the reader accepted an index past the largest its own integer type holds")
+	}
+	inst, err = jsonschema.UnmarshalJSON(strings.NewReader(huge))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(inst); err != nil {
+		t.Errorf("the schema refused an index past int64, which its minimum does not bound above: %v", err)
+	}
+
 	// An entry with no index is not a divergence: the schema requires the
 	// member and so does the reader, which refuses an omission rather than
 	// reading it as position 0.
@@ -246,13 +282,15 @@ func TestSchemaAcceptsADecodedVerdict(t *testing.T) {
 
 	// The bounds the schema states are the reader's own: a third verdict word,
 	// a reason over the limit, no reason, an empty key, a member name in
-	// another case, no findings array, and a member the shape does not know.
+	// another case, no findings array, a findings array written null, and a
+	// member the shape does not know.
 	for _, tc := range []struct{ name, in string }{
 		{"a third verdict word", `{"version":1,"findings":[{"index":0,"key":"` + key + `","verdict":"maybe","reason":"x"}]}`},
 		{"a reason over the limit", `{"version":1,"findings":[{"index":0,"key":"` + key + `","verdict":"block","reason":"` + strings.Repeat("x", 201) + `"}]}`},
 		{"no reason", `{"version":1,"findings":[{"index":0,"key":"` + key + `","verdict":"block"}]}`},
 		{"an empty key", `{"version":1,"findings":[{"index":0,"key":"","verdict":"block","reason":"x"}]}`},
 		{"no findings array", `{"version":1}`},
+		{"a findings array written null", `{"version":1,"findings":null}`},
 		{"another version", `{"version":2,"findings":[]}`},
 		{"an unknown member", `{"version":1,"findings":[],"tolerated":[]}`},
 		{"a member name in another case", `{"version":1,"findings":[{"index":0,"key":"` + key + `","verdict":"block","reason":"x","Group":"docs"}]}`},

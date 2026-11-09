@@ -170,6 +170,14 @@ func TestPromptNamesThePersonaOfTheMode(t *testing.T) {
 	if strings.Contains(pro, startupPersonaHeading) {
 		t.Errorf("the Pro brief carries the Startup persona:\n%s", pro)
 	}
+	// A mode the stage never triages (D1851) has no persona file, and the
+	// lookup's fallback is Pro's: the strictest stance, and the default mode's
+	// (D19). A brief nothing should have built is judged by the strictest judge
+	// rather than by none.
+	poc := Prompt(rigor.POC, "g", nil)
+	if !strings.Contains(poc, proPersonaHeading) {
+		t.Errorf("a mode with no persona file does not fall back to the Pro persona:\n%s", poc)
+	}
 }
 
 // TestPromptBindsTheFloor pins the one thing the judge may not move: the floor
@@ -177,9 +185,32 @@ func TestPromptNamesThePersonaOfTheMode(t *testing.T) {
 // defer a security finding would be deciding what the table decides.
 func TestPromptBindsTheFloor(t *testing.T) {
 	p := Prompt(rigor.Startup, "g", nil)
-	for _, want := range []string{"security", "data_loss", "impact is 5", "never deferred"} {
+	for _, want := range []string{"security", "data_loss", "impact is 5", "never deferred", "only the owner can settle"} {
 		if !strings.Contains(p, want) {
 			t.Errorf("the brief does not state the floor (%q):\n%s", want, p)
+		}
+	}
+}
+
+// TestPromptShowsWhatTheTableReadOfAFinding: the floor the brief states names a
+// finding only the owner can settle, so the finding's own header has to say
+// which one that is — the flag is not on rigor.Score (F22) and a brief built
+// from scores alone could not state it — and an unscored finding's header is
+// what says the table blocks it.
+func TestPromptShowsWhatTheTableReadOfAFinding(t *testing.T) {
+	scored := rigor.Score{Likelihood: 3, Impact: 2, FixCost: 1, Class: rigor.Correctness}
+	p := Prompt(rigor.Pro, "g", []Finding{
+		{Index: 0, Key: key, Score: scored, File: "internal/runner/runner.go", Summary: "a"},
+		{Index: 1, Key: "ffffffffffffffff", Summary: "b"},
+		{Index: 2, Key: "0000000000000000", Score: scored, NeedsOwner: true, Summary: "c"},
+	})
+	for _, want := range []string{
+		"[0] " + key + " — correctness, likelihood 3, impact 2, fix cost 1, internal/runner/runner.go",
+		"[1] ffffffffffffffff — unscored, so the mode's table blocks it",
+		"[2] 0000000000000000 — correctness, likelihood 3, impact 2, fix cost 1, only the owner can settle it",
+	} {
+		if !strings.Contains(p, want) {
+			t.Errorf("the brief does not carry the finding's header %q:\n%s", want, p)
 		}
 	}
 }
