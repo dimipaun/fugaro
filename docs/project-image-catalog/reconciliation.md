@@ -108,7 +108,7 @@ The service's routes are the model path, the review sign/verify routes and the G
 **closed** — model credentials, the GitHub App key, the Bitbucket credential, the review-signing key
 (`internal/credsvc/bundle.go:30-52`). Workflow build secrets travel a **different** path today: the
 workflow's `secrets:` (`internal/config/config.go:607`) are declared in `_SECRET_ENVS`
-(`internal/backend/gcp/build.go:185`), added to `availableSecrets`/`secretEnv`, and mounted as
+(`internal/backend/gcp/build.go:192`), added to `availableSecrets`/`secretEnv`, and mounted as
 BuildKit **file** secrets (`docs/design/v1.md` §7.2; `internal/image/render.go:132`), because Cloud
 Build's docker refuses `env=` secret mounts. *Consequence:* the spec's "build secrets come from the
 project's security service" is **not** how build secrets reach a build today; the owner's answer is

@@ -110,7 +110,7 @@ same template (`:22`) and read at `internal/cli/exec.go:193` — and a catalog e
 arbitrary Dockerfile need not set it. `FUGARO_REMOTE` is written for a **prebuilt** catalog entry
 (`internal/infra/spec.go:1130-1135`) but that is the prebuilt sub-case, not a catalog marker: **a
 catalog image built from a Dockerfile is indistinguishable from a repository's own derived image.**
-`CatalogImageEntry` (`internal/backend/gcp/catalog.go:141-159`) can read an entry back out of a
+`CatalogImageEntry` (`internal/backend/gcp/catalog.go:172-190`) can read an entry back out of a
 reference, and `JobImage` (`:171-187`) can read a deployed job's image — both are **launcher-side**
 reads. Without the stamp D1371 adds, this design cannot be implemented as ruled; with it, it can.
 
@@ -124,7 +124,7 @@ is one assignment in a function that already knows the answer.
 
 **F7. A job's image is fixed when the job is deployed, so a stamp cannot drift from it.** Cloud Run
 cannot vary an image per execution, which is why the launch path reads the **deployed** job's image
-and refuses to re-run the choice (`internal/backend/gcp/catalog.go:161-170`; `internal/cli/run.go`'s
+and refuses to re-run the choice (`internal/backend/gcp/catalog.go:192-201`; `internal/cli/run.go`'s
 `catalogDockerAsk`, `:3233-3304`, and `catalogEntryOf`, `:3321-3335`). A stamp written at deploy is
 therefore a fact about the image the execution actually runs, not a guess.
 

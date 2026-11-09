@@ -285,7 +285,7 @@ func TestDocsRepoImageRemovalDecisionsAreInRange(t *testing.T) {
 // `ts` and this folder's two: `sh` and `tsv`, because the one thing a migrated
 // Dockerfile must not skip is `images/common/finalize-checkout.sh`, and the base
 // image's tool list is a `.tsv`. A pattern written for `.go` alone would leave
-// `images/derived/cloudbuild.yaml:178` and both of those unchecked while still
+// `images/derived/cloudbuild.yaml:190` and both of those unchecked while still
 // passing its own census. The leading `.` is this folder's too: the repository's
 // own config sits at the root, its base name is carried by a dozen fixtures, and
 // a shortened name that matches two files is refused rather than guessed at, so

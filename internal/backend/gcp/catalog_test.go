@@ -78,12 +78,13 @@ func stepIDs(b *cloudbuild.Build) []string {
 	return ids
 }
 
-// TestCatalogBuildReadsTheCopiedDockerfile: a catalog build has no checkout
-// and no render step, so it starts from the one object PIC3 copied —
-// builds/catalog/<entry>/Dockerfile — and its whole build context is that
-// file. The steps it does not need are not in the request at all: a catalog
-// build never clones a repository into the build, never reads a push
-// credential of its own and never gates on the workflow record.
+// TestCatalogBuildReadsTheCopiedDockerfile: a catalog build of an entry that
+// names no context has no checkout and no render step, so it starts from the
+// one object PIC3 copied — builds/catalog/<entry>/Dockerfile — and its whole
+// build context is that file. The steps it does not need are not in the
+// request at all: such a build never clones a repository into the build,
+// never reads a push credential of its own and never gates on the workflow
+// record.
 func TestCatalogBuildReadsTheCopiedDockerfile(t *testing.T) {
 	s := catalogBuildSpec(t)
 	b, err := CatalogBuildRequest("proj-1234", s)
