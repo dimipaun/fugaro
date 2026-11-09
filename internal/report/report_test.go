@@ -136,6 +136,54 @@ func TestLeftForYouIsNotATick(t *testing.T) {
 	}
 }
 
+// TestRefusedIsACrossAndNotALeftForYou: a whole point of the account is that a
+// person tells the two apart at a glance. A step left for the user is
+// something they do and carries the left-for-you marker; a step the gate
+// refused is nobody's to type past and carries the cross, in the colour a
+// failure is drawn in — while the run's own outcome stays Left, because
+// nothing was written and the run exits 1 (G3).
+func TestRefusedIsACrossAndNotALeftForYou(t *testing.T) {
+	t.Run("a terminal", func(t *testing.T) {
+		var out bytes.Buffer
+		sink := &fakeSink{path: "/state/fugaro/logs/update-20261109T040741Z-1.log"}
+		r := New(Options{Out: &out, Getenv: noEnv, IsTerminal: aTerminal, Sink: sink})
+		r.Step("Installation").Refused("the managed gate refused this step")
+		o := r.Summary()
+		got := out.String()
+		plain := stripANSI(got)
+		if !strings.Contains(plain, glyphFailed.sym+" Installation: the managed gate refused this step") {
+			t.Errorf("the refused step is not drawn with the cross:\n%q", got)
+		}
+		if strings.Contains(plain, glyphLeft.sym+" Installation") || strings.Contains(plain, glyphDone.sym) {
+			t.Errorf("the refused step reads as a step the user owes or as a tick:\n%q", got)
+		}
+		if !strings.Contains(got, "\x1b[") {
+			t.Errorf("a terminal gets no colour for the refusal: %q", got)
+		}
+		if !strings.Contains(got, "full output: "+sink.path) {
+			t.Errorf("the refusal does not say where the log is:\n%q", got)
+		}
+		if !strings.Contains(sink.String(), glyphFailed.text(false)+" Installation: the managed gate refused this step") {
+			t.Errorf("the log does not hold the step's line:\n%q", sink.String())
+		}
+		if o.State != Left {
+			t.Errorf("Summary reported %v, want Left: a refusal is exit 1 and never a done (G3)", o.State)
+		}
+	})
+
+	t.Run("NO_COLOR", func(t *testing.T) {
+		var out bytes.Buffer
+		r := New(Options{Out: &out, Getenv: envOf(map[string]string{"NO_COLOR": "1"}), IsTerminal: aTerminal})
+		r.Step("Installation").Refused("the managed gate refused this step")
+		if strings.Contains(out.String(), "\x1b[") {
+			t.Errorf("NO_COLOR drew ANSI for a refusal: %q", out.String())
+		}
+		if !strings.Contains(out.String(), glyphFailed.sym+" Installation: the managed gate refused this step") {
+			t.Errorf("NO_COLOR drew the refusal without its cross:\n%q", out.String())
+		}
+	})
+}
+
 func TestSummaryUsesTheInjectedClock(t *testing.T) {
 	now := time.Date(2026, 11, 7, 9, 0, 0, 0, time.UTC)
 	var out bytes.Buffer

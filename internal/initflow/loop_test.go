@@ -1298,6 +1298,78 @@ func TestARefusedStepIsNeverTheStagesOwnPrompt(t *testing.T) {
 	}
 }
 
+// TestARefusalBlockIsThreeShortLines: what a refusal prints is the block and
+// not the paragraph behind it — what was refused, why in a clause and what to
+// do, one line each — and none of it is Terraform's: the reason carries the
+// rule's address and no line of the block may show it, because the address is
+// in the log the step's own line names and the terminal names the thing in
+// Fugaro's words (the owner's feedback of 2026-11-09). The whole sentence
+// stays Left.Text, which is what a tool and the log read.
+func TestARefusalBlockIsThreeShortLines(t *testing.T) {
+	const address = "module.installation.google_storage_bucket_iam_member.runs_outsider[\"user:a@example.com\"]"
+	const reason = "the managed gate did not admit this step: a managed project applies the steps this gate judged and no others (D1012) — refused by cover: " + address + " — grants a member the review does not list"
+	block := func(t *testing.T, ge *GatedError) []string {
+		t.Helper()
+		var log []string
+		var out bytes.Buffer
+		f := &fake{name: Installation, log: &log, applyErr: ge}
+		o := Options{Out: &out, ManagedGate: func(string) bool { return true }, Yes: true, Agent: "CLAUDECODE"}
+		res, err := Run(context.Background(), []Stage{f}, o)
+		if err != nil || res.Failed != nil || len(res.Left) != 1 {
+			t.Fatalf("err %v res %+v", err, res)
+		}
+		lf := res.Left[0]
+		if !strings.Contains(lf.Text, address) {
+			t.Errorf("the refusal's own text is not the whole sentence: %q", lf.Text)
+		}
+		lines := strings.Split(out.String(), "\n")
+		head := "left for you (" + Installation + ", " + string(LeftRefused) + "): "
+		for i, line := range lines {
+			if !strings.HasPrefix(line, head) {
+				continue
+			}
+			got := []string{line}
+			for j := i + 1; j < len(lines) && strings.HasPrefix(lines[j], "    "); j++ {
+				got = append(got, strings.TrimSpace(lines[j]))
+			}
+			return got
+		}
+		t.Fatalf("the refusal printed no block:\n%s", out.String())
+		return nil
+	}
+
+	plan := block(t, &GatedError{Reason: reason, Err: errors.New(reason), Refusal: GateRefusedPlan,
+		Reasons: []string{"cover: grants a member the review does not list"}})
+	if len(plan) != 3 {
+		t.Errorf("the refusal's block is %d lines, want three at most: %q", len(plan), plan)
+	}
+	joined := strings.Join(plan, "\n")
+	for _, want := range []string{"refused this step and nothing was written", "refused by cover: grants a member the review does not list", "a person files an issue with this line"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("the block does not say %q: %q", want, plan)
+		}
+	}
+	for _, line := range plan {
+		if strings.Contains(line, "module.") || strings.Contains(line, "google_") {
+			t.Errorf("the block prints Terraform's own address: %q", line)
+		}
+		if n := len([]rune(line)); n > 100 {
+			t.Errorf("the block's line is %d characters long, which is the paragraph it replaced: %q", n, line)
+		}
+	}
+
+	// The unjudged refusal is the other answer and says so: no plan is blamed
+	// and no issue is filed for a run that failed.
+	unjudged := block(t, &GatedError{Reason: reason, Err: errors.New(reason), Refusal: GateRefusedUnread})
+	joined = strings.Join(unjudged, "\n")
+	if !strings.Contains(joined, "did not judge this step") || !strings.Contains(joined, "not of your plan") {
+		t.Errorf("the unjudged refusal is not the run's own failure: %q", unjudged)
+	}
+	if strings.Contains(joined, "files an issue") {
+		t.Errorf("a step the gate never judged sends the reader to file an issue: %q", unjudged)
+	}
+}
+
 func TestNoTerminalErrorDropsTheYesHintForAnAgent(t *testing.T) {
 	plain := (&NoTerminalError{Stage: "installation"}).Error()
 	if !strings.Contains(plain, "--yes") {
