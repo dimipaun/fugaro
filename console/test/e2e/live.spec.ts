@@ -118,6 +118,7 @@ const SPEC = 'live.spec.ts'
 const MODULES: readonly string[] = Object.freeze([
   'shared/availability.js',
   'shared/sanitize.js',
+  'shared/shortid.js',
   'shared/launcher.js',
   'shared/rigor.js',
   'shared/notice.js',
