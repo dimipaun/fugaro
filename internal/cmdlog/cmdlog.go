@@ -45,9 +45,10 @@ const (
 	tailBytes = 512
 )
 
-// storePath is where the logs live inside the state directory (D1351):
-// `<localcfg.UserDir state>/fugaro/logs`.
-var storePath = filepath.Join("fugaro", "logs")
+// storeParts is where the logs live inside the state directory (D1351):
+// `<localcfg.UserDir state>/fugaro/logs`, one component at a time, because
+// each of them is checked (checkStore).
+var storeParts = []string{"fugaro", "logs"}
 
 // commandRE is what a command name may be — the first half of a log's name,
 // and nothing that could be a path. It is report.OpenLog's own rule, spelled
@@ -147,12 +148,16 @@ func Latest(getenv func(string) string, failedOnly bool) (ID, error) {
 		return ID{}, ErrNoLog
 	}
 	defer root.Close()
-	ids, err := logsIn(root)
+	dir, err := checkStore(root)
+	if err != nil {
+		return ID{}, ErrNoLog
+	}
+	ids, err := logsIn(root, dir)
 	if err != nil {
 		return ID{}, ErrNoLog
 	}
 	for _, id := range ids {
-		if !failedOnly || endedBadly(root, id) {
+		if !failedOnly || endedBadly(root, dir, id) {
 			return id, nil
 		}
 	}
@@ -181,7 +186,12 @@ func Open(getenv func(string) string, id ID) (io.ReadCloser, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cmdlog: no log %s: %w", id, ErrNoLog)
 	}
-	f, err := openLog(root, id)
+	dir, err := checkStore(root)
+	if err != nil {
+		_ = root.Close()
+		return nil, fmt.Errorf("cmdlog: no log %s: %w", id, ErrNoLog)
+	}
+	f, err := openLog(root, dir, id)
 	if err != nil {
 		_ = root.Close()
 		return nil, fmt.Errorf("cmdlog: no log %s: %w", id, ErrNoLog)
@@ -200,18 +210,48 @@ func storeBase(getenv func(string) string) (string, error) {
 	return localcfg.UserDir(getenv, runtime.GOOS, localcfg.DirState)
 }
 
-// logsIn lists the IDs of the logs in the store, newest first. What it reads
-// is exactly report.OpenLog's names: `<command>-<14 digits>-<pid>.log`, a
+// checkStore is the store's name inside root, checked the way the writer
+// checks it before it writes: every component is Lstat'ed, so neither
+// `fugaro` nor `logs` may be a link, and each has to be a directory this user
+// owns.
+//
+// The path is attacker-influenced — an agent's session often points
+// XDG_STATE_HOME at a temporary directory — and it decides which run Latest
+// answers and which file Open hands the evidence a diagnosis is built from, so
+// a directory another account owns is refused rather than read: the mode the
+// writer leaves cannot defend against that (F6a, D1603), and a reader has no
+// mode of its own to leave. Nothing is created here, unlike the writer's half:
+// a store that is not there is no log, not a new empty store.
+func checkStore(root *os.Root) (string, error) {
+	dir := ""
+	for _, part := range storeParts {
+		dir = filepath.Join(dir, part)
+		fi, err := root.Lstat(dir)
+		if err != nil {
+			return "", err
+		}
+		if !fi.IsDir() {
+			return "", fmt.Errorf("cmdlog: %s is not a directory", dir)
+		}
+		if !ownedByUser(fi) {
+			return "", fmt.Errorf("cmdlog: %s is not this user's directory", dir)
+		}
+	}
+	return dir, nil
+}
+
+// logsIn lists the IDs of the logs in dir, newest first. What it reads is
+// exactly report.OpenLog's names: `<command>-<14 digits>-<pid>.log`, a
 // regular file. Everything else in the directory — another tool's notes, a
 // directory, a link at a log's name, a name whose stamp is not fourteen digits
 // — is not a log and is skipped rather than reported as one.
-func logsIn(root *os.Root) ([]ID, error) {
+func logsIn(root *os.Root, dir string) ([]ID, error) {
 	// The directory is opened through the root rather than read as an fs.FS:
 	// fs.FS names are slash-separated and a backslash in one is invalid, so
 	// root.FS() would refuse the name filepath.Join builds on Windows and the
 	// store would never be read there (the same reason the writer prunes
 	// through the root).
-	d, err := root.Open(storePath)
+	d, err := root.Open(dir)
 	if err != nil {
 		return nil, err
 	}
@@ -230,7 +270,7 @@ func logsIn(root *os.Root) ([]ID, error) {
 		if err != nil {
 			continue
 		}
-		fi, err := root.Lstat(filepath.Join(storePath, e.Name()))
+		fi, err := root.Lstat(filepath.Join(dir, e.Name()))
 		if err != nil || !fi.Mode().IsRegular() {
 			continue
 		}
@@ -249,8 +289,8 @@ func logsIn(root *os.Root) ([]ID, error) {
 // closing line is one the reporter writes for a failure or for a step left for
 // the user. A log with no closing line — no step was ever reported, or the run
 // died inside one — is not known to have failed.
-func endedBadly(root *os.Root, id ID) bool {
-	f, err := openLog(root, id)
+func endedBadly(root *os.Root, dir string, id ID) bool {
+	f, err := openLog(root, dir, id)
 	if err != nil {
 		return false
 	}
@@ -288,12 +328,12 @@ func lastLine(text string) string {
 	return ""
 }
 
-// openLog opens id's log inside root. The name is built from the ID's parts
-// and resolved through the root, so it cannot leave the store and a link at the
-// name is refused rather than followed (os.Root's rule, which is how the writer
-// creates the file with O_EXCL).
-func openLog(root *os.Root, id ID) (*os.File, error) {
-	return root.Open(filepath.Join(storePath, id.String()+logSuffix))
+// openLog opens id's log in dir, resolved through root. The name is built from
+// the ID's parts and resolved through the root, so it cannot leave the store
+// and a link at the name is refused rather than followed (os.Root's rule, which
+// is how the writer creates the file with O_EXCL).
+func openLog(root *os.Root, dir string, id ID) (*os.File, error) {
+	return root.Open(filepath.Join(dir, id.String()+logSuffix))
 }
 
 // logFile is an open log and the root it was resolved through. The root stays

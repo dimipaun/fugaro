@@ -402,6 +402,54 @@ func TestLatestReadsTheWritersClosingLine(t *testing.T) {
 	})
 }
 
+// plant leaves a file at exactly the name an ID resolves to, inside the state
+// directory: the store for a name that stays in it, and the directory the ID
+// climbs to for one that does not. A test that plants is asserting a refusal
+// that is not "no such log" — the file is there, and only the check under test
+// stands between it and a caller.
+func plant(t *testing.T, getenv func(string) string, id ID) {
+	t.Helper()
+	path := filepath.Join(store(t, getenv), id.String()+logSuffix)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("a file this ID resolves to\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestOpenRefusesACommandNameNoLogIsFiledUnder: Open checks the ID rather than
+// trusting it, and this is the half of that check which does not depend on
+// finding a log — a hand-built ID, an argument assembled by another program, a
+// name nothing here printed. A file is planted at every one of these names, so
+// what is asserted is the guard and not the absence of the file: without it
+// each of these IDs opens a file, and the evidence a diagnosis is built from
+// would be a file no run of this machine wrote.
+func TestOpenRefusesACommandNameNoLogIsFiledUnder(t *testing.T) {
+	for _, command := range []string{
+		"",
+		"./update",
+		"../secret",
+		"x/y",
+		"Update",
+		"x_y",
+		"x y",
+		strings.Repeat("a", 42),
+	} {
+		t.Run(command, func(t *testing.T) {
+			getenv := env(t)
+			id := ID{Command: command, At: logAt, PID: 48213}
+			plant(t, getenv, id)
+			rc, err := Open(getenv, id)
+			if err == nil {
+				got, _ := io.ReadAll(rc)
+				_ = rc.Close()
+				t.Errorf("Open(%q) read %q: a command name no log is filed under reached a file", id, got)
+			}
+		})
+	}
+}
+
 // TestTheStoreIsTheWriters: the store this reads is the one the writer made
 // (D1351, D1352) — the directory 0700, the log 0600 — and reading leaves it
 // exactly as it was: no second store, no second file, no loosened mode.
