@@ -416,9 +416,12 @@ func stubsPresent(path string, doc Document) (map[string][]string, error) {
 // therefore asked for by name rather than assumed from the working directory,
 // and the two are required to be one checkout: a checkout nested inside the
 // working directory's is a tree of its own, and the parent's answer about a stub
-// the plan's own checkout does not carry is exactly the wrong one. A working
-// directory, or an artifact, in no checkout at all has no tree to read them in
-// either, and is refused the same way.
+// the plan's own checkout does not carry is exactly the wrong one. The two are
+// the same tree when they resolve to it, however they are spelled: one directory
+// has more than one name on a machine with symbolic links, and a refusal over
+// which of them was written would be a refusal about this machine rather than
+// about the plan. A working directory, or an artifact, in no checkout at all has
+// no tree to read them in either, and is refused the same way.
 func stubsRoot(path string) (string, error) {
 	root := checkoutRoot(".")
 	if root == "" {
@@ -429,7 +432,16 @@ func stubsRoot(path string) (string, error) {
 		if err != nil {
 			return "", refuse(path, "the graph names stubs and its own path could not be resolved: %v", err)
 		}
-		if here := checkoutRoot(filepath.Dir(abs)); here != root {
+		// Two spellings of one directory are one directory: macOS's /var is
+		// /private/var and a workspace reached through a symbolic link is the
+		// very tree the working directory stands in, so the two roots are
+		// compared as trees where both resolve rather than as the strings they
+		// were spelled with. A read refused over the spelling would be a
+		// refusal about this machine's links rather than about the plan.
+		resolvedRoot, rootErr := filepath.EvalSymlinks(root)
+		here := checkoutRoot(filepath.Dir(abs))
+		resolvedHere, hereErr := filepath.EvalSymlinks(here)
+		if hereErr != nil || rootErr != nil || resolvedHere != resolvedRoot {
 			return "", refuse(path, "the graph names stubs and %s is outside the working directory's checkout at %s; a stub is a file of the checkout its plan is read in, and one read from another tree is refused rather than reported against the wrong one — a checkout nested inside this one included", path, root)
 		}
 	}

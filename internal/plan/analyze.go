@@ -17,14 +17,19 @@ import (
 // and the only way to guarantee that is for the answer to be computed once, in
 // Go, beside the read.
 //
-// Three things are computed, and they are one feature:
+// Five things are computed, and they are one feature:
 //
 //   - **levels**: the longest chain of dependencies ending at each task, so a
 //     view can draw a plan in waves rather than by guesswork;
 //   - **done / ready / blocked**, per task, against a done set the caller
 //     states;
 //   - **the critical path** and its length, with the raw downstream count
-//     beside it (D26).
+//     beside it (D26);
+//   - **the gain** a contract-first decoupling pass bought, measured from the
+//     breaks the graph records rather than taken from the planner's word, so a
+//     break that lengthened the plan says so (CD3, D1811, D1816);
+//   - **which stubs are still in the tree**, the one answer here that opens a
+//     checkout rather than only the document (CD3, D1815).
 //
 // The done set is an input and not an inference, and that is the one decision
 // this file takes that the design left open. A task is done when the work is

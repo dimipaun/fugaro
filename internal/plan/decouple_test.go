@@ -720,6 +720,34 @@ func TestStubsPresentDoesNotReadANestedCheckoutsParent(t *testing.T) {
 	}
 }
 
+// TestStubsPresentReadsACheckoutSpelledAnotherWay: one directory has more than
+// one name on a machine with symbolic links, and an artifact named through one
+// of them is the artifact of the checkout the working directory stands in. The
+// two roots are therefore compared as trees rather than as strings, so a plan is
+// not refused over which spelling of its own checkout was written — the refusal
+// is for another tree, and a machine's links are not another tree.
+func TestStubsPresentReadsACheckoutSpelledAnotherWay(t *testing.T) {
+	root := checkout(t)
+	written(t, root, "internal/contract/stub.go")
+	alias := filepath.Join(t.TempDir(), "the-same-tree")
+	if err := os.Symlink(root, alias); err != nil {
+		t.Fatal(err)
+	}
+	artifact := filepath.Join(alias, "docs", "plans", "decoupled.graph.json")
+	g, err := Analyze(artifact, parseDoc(t, stubGraph(t)), nil)
+	if err != nil {
+		t.Fatalf("a graph read through a link to its own checkout was refused: %v", err)
+	}
+	for _, n := range g.Nodes {
+		if n.ID != "C1" {
+			continue
+		}
+		if want := []string{"internal/contract/stub.go"}; !reflect.DeepEqual(n.StubsPresent, want) {
+			t.Errorf("stubs_present = %v, want %v: the tree is the working directory's own", n.StubsPresent, want)
+		}
+	}
+}
+
 // TestBeforeGraphEdgesAreBounded: the rewrite is a product of two sides that
 // both come from the file — every edge onto an integration node against every
 // dependency that node has — so a graph well inside the artifact's own cap can
