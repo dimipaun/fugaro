@@ -1192,13 +1192,22 @@ func TestUpdateEscapesWhatTheRecordMigrationEchoes(t *testing.T) {
 // D1017 read, which is the FIRST thing after the record is built from the
 // config and the reason it is there rather than after the node read — this
 // stage's whole work (the read, the ETag and the conditional write) lands in the
-// workspace's database, and a config naming another Firebase project whose
-// database carries another installation's mark is a database this stage must not
-// touch. Disabling the predicate publishes this record into a stranger's
-// database, over whatever node it holds; the policy stage's version of this test
-// exercises its own call and not this one.
+// workspace's database, and a database carrying another installation's mark is a
+// database this stage must not touch, whatever this config calls it. Disabling
+// the predicate publishes this record into a stranger's database, over whatever
+// node it holds; the policy stage's version of this test exercises its own call
+// and not this one.
+//
+// The installation's own Firebase project is what this rig names
+// (`updateBudgetRigFor`), and not another one: a workspace's own installation
+// whose Firebase is ANOTHER project's is refused before this stage by the one
+// before it (workspace_create.go's workspaceSplitFirebase, and
+// TestWorkspaceProjectStageRefusesAWorkspaceWhoseFirebaseIsAnotherProject), so
+// the only shape in which a workspace's own config reaches this read is one
+// whose database is its own project's — with the mark a stranger's, which is
+// what this test seeds and what the D1017 read is for.
 func TestUpdateSkipsAWorkspaceDatabaseThisInstallationDoesNotOwn(t *testing.T) {
-	r, db := updateBudgetRigFor(t, "other-project")
+	r, db := updateBudgetRigFor(t, initProject)
 	// Another installation's database: its mark names a Fugaro project and a
 	// GCP project that are not this installation's.
 	db.Set(budget.PathMark, map[string]any{"managed_by": "fugaro", "project": "workspace-a", "gcp_project": "proj-9999", "version": 1})

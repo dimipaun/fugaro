@@ -13,13 +13,14 @@
 # path — the owner's `fugaro setup` for the workspace root, then `fugaro update`
 # — but `fugaro setup`'s Identity Platform step initializes with **no provider**
 # (`IdentityPlatformStep`, internal/infra/identityplatform.go), which is right for
-# a member's project and wrong for the workspace's, and `refusePublicSignUp`
-# (internal/cli/init_firebase.go) deliberately does not police the workspace's,
-# in either direction. So the providers are enabled by YOU, and this is the check
-# that reads back what the project actually carries: a workspace whose project is
-# initialized with no provider has no one who can sign in, and a project that
-# drifted one provider further is a provider the exchange never sees but the
-# Firebase does.
+# a member's project and wrong for the workspace's. `refusePublicSignUp`
+# (internal/cli/init_firebase.go) holds a workspace's own project to the pin in
+# one direction: the pinned entries pass, and an off-pin path is refused by name.
+# It never *requires* them, so a workspace whose providers are not enabled yet
+# converges as usual — which is what this check reads back: a project initialized
+# with no provider has no one who can sign in, and a project that drifted one
+# provider further is a provider the exchange never sees but the Firebase does.
+# (`fugaro update` refuses that drift on its next run, naming the paths.)
 #
 # What it reads, once, over REST: `GET /admin/v2/projects/<project>/config` on
 # identitytoolkit.googleapis.com — the same document `infra.PublicSignUp` parses

@@ -92,10 +92,12 @@ func TestDocsCheck361IsRegistered(t *testing.T) {
 		"refuses `custom` and `anonymous`",
 		"spec §3",
 		// Why the step is the owner's at all: the installation path initializes
-		// the project with no provider, and nothing in the tree polices a
-		// workspace's, in either direction.
+		// the project with no provider, and the converge holds a workspace's
+		// own project to the pin in one direction only — off-pin paths are
+		// refused, the pinned pair is never required of the owner.
 		"identity platform is initialized there with **no sign-in provider**",
-		"does not police a workspace's providers in either direction",
+		"holds a workspace's own project to the pin in one direction",
+		"what it never does is *require* the pinned pair",
 		// The read is one GET and changes nothing, which is what makes it safe
 		// to run again.
 		"nothing is created, granted, written or deleted",

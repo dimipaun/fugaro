@@ -795,13 +795,35 @@ func refusePublicSignUp(raw []byte, fp string, workspace bool) error {
 // password create one and reach the workspace (spec §3, and check 361's own
 // reading). Everything else — anonymous, phone number, any other IdP — is off
 // the pin and refused.
+//
+// An IdP entry names its provider by RESOURCE PATH and not by the bare id:
+// PublicSignUp writes the API's own `name` field, which is
+// projects/<project>/defaultSupportedIdpConfigs/google.com — the same shape
+// scripts/live-checks/check361.sh reads, and the reason the two IdP entries
+// below are compared by their LAST path segment rather than as whole strings.
+// Compared whole, the pin's own provider would be refused on the one project
+// the pin is about — the owner has enabled google.com there, which is the state
+// spec §3 asks for — and `fugaro update` would fail on exactly the project W3
+// converges (the HARD RULE).
 func workspaceSignInPath(entry string) bool {
 	switch entry {
 	case "signIn.email.enabled",
-		"defaultSupportedIdpConfigs google.com enabled",
-		"oauthIdpConfigs google.com enabled",
 		"client.permissions.disabledUserSignup is false":
 		return true
+	}
+	for _, field := range []string{"defaultSupportedIdpConfigs ", "oauthIdpConfigs "} {
+		rest, ok := strings.CutPrefix(entry, field)
+		if !ok {
+			continue
+		}
+		name, ok := strings.CutSuffix(rest, " enabled")
+		if !ok {
+			continue
+		}
+		// The provider is the last path segment: projects/<p>/<field>/<id>.
+		if last := name[strings.LastIndex(name, "/")+1:]; last == "google.com" {
+			return true
+		}
 	}
 	return false
 }

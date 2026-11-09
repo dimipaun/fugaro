@@ -1131,12 +1131,28 @@ func TestIdentityPlatformAlreadyEnabledRaceIsOK(t *testing.T) {
 	}
 }
 
+// idpPath is an Identity Platform IdP entry's `name` as the Admin API returns
+// it: the RESOURCE PATH, projects/<project>/<field>/<id>, and not the bare
+// provider id. Every fixture below uses it, because a fixture naming `google.com`
+// alone would be a shape the API never sends — infra.PublicSignUp passes this
+// field through unchanged — and a matcher written against the bare form would
+// pass here and refuse the pin's own provider in the cloud
+// (workspaceSignInPath; scripts/live-checks/check361.sh strips the last path
+// segment for the same reason).
+func idpPath(field, id string) string { return "projects/" + fpID + "/" + field + "/" + id }
+
+// idpEntry is one enabled IdP of that shape, as `SetIdentityPlatformConfig`
+// takes it.
+func idpEntry(field, id string) map[string]any {
+	return map[string]any{"name": idpPath(field, id), "enabled": true}
+}
+
 func TestIdentityPlatformRefusesPublicSignUp(t *testing.T) {
 	for name, cfg := range map[string]map[string]any{
 		"email":     {"signIn": map[string]any{"email": map[string]any{"enabled": true}}},
 		"anonymous": {"signIn": map[string]any{"anonymous": map[string]any{"enabled": true}}},
 		"phone":     {"signIn": map[string]any{"phoneNumber": map[string]any{"enabled": true}}},
-		"idp":       {"defaultSupportedIdpConfigs": []any{map[string]any{"name": "google.com", "enabled": true}}},
+		"idp":       {"defaultSupportedIdpConfigs": []any{idpEntry("defaultSupportedIdpConfigs", "google.com")}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := newFBRig(t)
@@ -1193,7 +1209,7 @@ func TestIdentityPlatformAllowsTheWorkspacesOwnSignIn(t *testing.T) {
 			}
 			r.idt.SetIdentityPlatformConfig(map[string]any{
 				"signIn":                     map[string]any{"email": map[string]any{"enabled": true}},
-				"defaultSupportedIdpConfigs": []any{map[string]any{"name": "google.com", "enabled": true}},
+				"defaultSupportedIdpConfigs": []any{idpEntry("defaultSupportedIdpConfigs", "google.com")},
 			})
 			cmd := NewRootCmd()
 			cmd.SetOut(io.Discard)
@@ -1246,24 +1262,24 @@ func TestIdentityPlatformRefusesAWorkspacesOffPinProvider(t *testing.T) {
 		},
 		"a second IdP beside the pinned one": {
 			cfg: map[string]any{"defaultSupportedIdpConfigs": []any{
-				map[string]any{"name": "google.com", "enabled": true},
-				map[string]any{"name": "microsoft.com", "enabled": true},
+				idpEntry("defaultSupportedIdpConfigs", "google.com"),
+				idpEntry("defaultSupportedIdpConfigs", "microsoft.com"),
 			}},
-			off: "defaultSupportedIdpConfigs microsoft.com enabled",
+			off: "defaultSupportedIdpConfigs " + idpPath("defaultSupportedIdpConfigs", "microsoft.com") + " enabled",
 		},
 		"an OAuth IdP": {
-			cfg: map[string]any{"oauthIdpConfigs": []any{map[string]any{"name": "github.com", "enabled": true}}},
-			off: "oauthIdpConfigs github.com enabled",
+			cfg: map[string]any{"oauthIdpConfigs": []any{idpEntry("oauthIdpConfigs", "github.com")}},
+			off: "oauthIdpConfigs " + idpPath("oauthIdpConfigs", "github.com") + " enabled",
 		},
 		"the pinned set with email and an off-pin provider": {
 			cfg: map[string]any{
 				"signIn": map[string]any{"email": map[string]any{"enabled": true}},
 				"defaultSupportedIdpConfigs": []any{
-					map[string]any{"name": "google.com", "enabled": true},
-					map[string]any{"name": "apple.com", "enabled": true},
+					idpEntry("defaultSupportedIdpConfigs", "google.com"),
+					idpEntry("defaultSupportedIdpConfigs", "apple.com"),
 				},
 			},
-			off: "defaultSupportedIdpConfigs apple.com enabled",
+			off: "defaultSupportedIdpConfigs " + idpPath("defaultSupportedIdpConfigs", "apple.com") + " enabled",
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
