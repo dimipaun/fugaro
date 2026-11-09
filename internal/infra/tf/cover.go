@@ -1826,7 +1826,7 @@ func (c Cover) bucketCondition(rc ResourceChange, createdSAIDs, heldSAIDs map[st
 				return ""
 			}
 		}
-		return "grants objectUser on the bucket to a person under a condition that is not the launchers' runs/ and tokens/ condition"
+		return "grants objectUser on the bucket to a person under a condition that is not the launchers' runs/, tokens/ and issues/ condition"
 	case role == "roles/storage.objectUser":
 		if len(conds) == 0 {
 			return "grants objectUser on the bucket to an account with no condition"

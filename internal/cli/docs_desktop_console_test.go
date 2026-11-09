@@ -357,6 +357,12 @@ func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 	shapes := []reflect.Type{
 		reflect.TypeOf(runview.Row{}),
 		reflect.TypeOf(runview.Totals{}),
+		// §5's own document and the group inside --group-by's block (FC6):
+		// lsDoc is the shape §5 documents, and namedTypes admits exactly the
+		// types listed, so the embedded lsDoc watchDegradedDoc carries below
+		// is not walked into unless it is named here.
+		reflect.TypeOf(lsDoc{}),
+		reflect.TypeOf(lsGroup{}),
 		reflect.TypeOf(logLine{}),
 		reflect.TypeOf(secretEntry{}),
 		reflect.TypeOf(gcp.SecretInfo{}),
@@ -377,6 +383,11 @@ func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 		reflect.TypeOf(plan.Node{}),
 		reflect.TypeOf(plan.Edge{}),
 		reflect.TypeOf(plan.Footprint{}),
+		// The decoupling pass's own record (schema 3): one broken edge and one
+		// change request, and the `was` object under the first.
+		reflect.TypeOf(plan.Decoupling{}),
+		reflect.TypeOf(plan.BrokenEdge{}),
+		reflect.TypeOf(plan.ContractChange{}),
 		// The read's own document (V2.2.3): every key of what `plan graph
 		// --json` prints, so a computed field the contract does not name fails
 		// here too, not only the artifact's own.
@@ -634,6 +645,10 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 	}
 	shapes := []reflect.Type{
 		reflect.TypeOf(runview.Row{}), reflect.TypeOf(runview.Totals{}),
+		// §5's own document and the group inside --group-by's block (FC6), as
+		// in the test above: the two shapes the `groups` row of §5 is read
+		// against.
+		reflect.TypeOf(lsDoc{}), reflect.TypeOf(lsGroup{}),
 		reflect.TypeOf(logLine{}), reflect.TypeOf(secretEntry{}),
 		reflect.TypeOf(gcp.SecretInfo{}), reflect.TypeOf(accountsListDoc{}),
 		reflect.TypeOf(cancelResult{}), reflect.TypeOf(budgetShowDoc{}),
@@ -652,6 +667,9 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 		reflect.TypeOf(configListCheckout{}),
 		reflect.TypeOf(plan.Document{}), reflect.TypeOf(plan.Node{}),
 		reflect.TypeOf(plan.Edge{}), reflect.TypeOf(plan.Footprint{}),
+		// The decoupling pass's own record (schema 3), as in the test above.
+		reflect.TypeOf(plan.Decoupling{}), reflect.TypeOf(plan.BrokenEdge{}),
+		reflect.TypeOf(plan.ContractChange{}),
 		// The read's own document (V2.2.3): the artifact's shape plus what is
 		// computed where the graph is read.
 		reflect.TypeOf(plan.Graph{}), reflect.TypeOf(plan.NodeState{}),
@@ -1759,7 +1777,9 @@ func consoleSpelledNumber(t *testing.T, spelled string) int {
 //     settings-edit plan's C1 to thirty, the same plan's C3 to thirty-one, and
 //     the graph plan's CG9a to thirty-two, and the managed screens' plan's CM4
 //     -- `managed.status` and `policy.show`, whose rule 6 rows CM3 had already
-//     written -- to the thirty-four rule 5 carries today.
+//     written -- to thirty-four, and the subscriptions plan's S2.7 -- the licence
+//     section's `licence.read` and `licence.save`, two of the eleven rows here
+//     that spawn nothing -- to the thirty-six rule 5 carries today.
 //   - **every row of spawn.ts's `SPAWN_COMMANDS` is admitted by rule 6's table**:
 //     the row's own words lead some row of the design's table **and what that row
 //     carries after them is flags, nothing else**. The second half is the whole
@@ -5294,8 +5314,11 @@ func TestConsoleMVPRequiresTheRendererEntry(t *testing.T) {
 	// D768/D770 answers of 2026-10-30 (auto-update U5): C8's wording stays, as
 	// the earlier amendment, and the newer one sits beside it.
 	design := readDoc(t, "docs/design/desktop-console.md")
-	if !strings.Contains(design, "10. **The app writes the spawn log, when asked, the installations file, `updates.json` and `crash.json`, and nothing else.**") {
-		t.Error("design section 5.1 rule 10 was not amended to name the app's four writes (C8's second, D768's third, the crash switch's fourth)")
+	if !strings.Contains(design, "10. **The app writes the spawn log, when asked, the installations file, `updates.json`, `crash.json` and the licence store, and nothing else.**") {
+		t.Error("design section 5.1 rule 10 was not amended to name the app's five writes (C8's second, D768's third, the crash switch's fourth, S2.7's licence store) -- and the headline is amended in place each time, so its earlier files stay in it")
+	}
+	if !strings.Contains(design, "Amended 2026-11-09 by the subscriptions plan's S2.7: there is a fifth file, and it is the first of the five that holds anything but the operator's own choices") {
+		t.Error("design section 5.1 rule 10 lost the 2026-11-09 S2.7 amendment: the licence store is the fifth file, and a later amendment sits beside the earlier ones rather than replacing them")
 	}
 	if !strings.Contains(design, "Amended 2026-11-01: the crash-reporting switch is a fourth file, `crash.json`") {
 		t.Error("design section 5.1 rule 10 lost the 2026-11-01 amendment: the crash-reporting switch is the fourth write, and a later amendment sits beside the earlier ones rather than replacing them")
@@ -5306,8 +5329,8 @@ func TestConsoleMVPRequiresTheRendererEntry(t *testing.T) {
 	if !strings.Contains(design, "Amended 2026-10-30 by the owner's D768 and D770 answers") {
 		t.Error("design section 5.1 rule 10 lost the 2026-10-30 D768/D770 amendment")
 	}
-	if !strings.Contains(design, "**The app writes four things to disk and nothing else (§5.1 rule 10, amended 2026-10-30 by the owner's D768 and D770 answers and 2026-11-01 by his ruling of 2026-10-31)") {
-		t.Error("design section 7.4 was not amended to D768/D770's wording and the 2026-11-01 crash-switch amendment")
+	if !strings.Contains(design, "**The app writes five things to disk and nothing else (§5.1 rule 10, amended 2026-10-30 by the owner's D768 and D770 answers, 2026-11-01 by his ruling of 2026-10-31 and 2026-11-09 by the subscriptions plan's S2.7)") {
+		t.Error("design section 7.4 was not amended to D768/D770's wording, the 2026-11-01 crash-switch amendment and S2.7's licence store")
 	}
 	if !strings.Contains(design, "**No telemetry, no analytics, no update check that carries an identifier, and crash reporting only ever by the user's own opt-in.**") {
 		t.Error("design section 7.4's promise sentence was not amended: the console reports crashes to Sentry after the person turns the switch on, so the paragraph states that flow rather than promising no crash reporting")

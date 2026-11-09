@@ -194,7 +194,7 @@ readiness branches that decide between them.
 
 - **Interface.** A Dockerfile **in this repository** — `images/catalog/go/Dockerfile` — that takes
   `FROM $FUGARO_BASE`, clones `$REPO_URL` at `$FUGARO_COMMIT` with the `git-credentials` secret the build
-  mounts (`images/derived/cloudbuild.yaml:178`), runs today's `image.setup` verbatim
+  mounts (`images/derived/cloudbuild.yaml:190`), runs today's `image.setup` verbatim
   (`go mod download && go build ./...`), and **ends with** `finalize-checkout`
   (`images/derived/Dockerfile.tmpl:130`). A catalog entry in the project layer whose source is that
   Dockerfile at that path, published and **built by the owner before the pin lands**: `fugaro image add

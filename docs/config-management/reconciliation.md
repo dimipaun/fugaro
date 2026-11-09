@@ -19,15 +19,15 @@ project config** — a sentence it prints and exits on — so the figures below
 are counted from the registry in this tree through the same predicate the write path uses, which is
 what the guard at the end of this section re-runs.
 
-- **F1 — the registry is 355 rows and the generic writer carries 143 of them.** 67 by name
+- **F1 — the registry is 363 rows and the generic writer carries 144 of them.** 67 by name
   (`internal/cli/settings_set.go:81`), made of the thirteen §4.4 names (the four budget scalars,
   `base_branch`, `max_parallel`, `update_check`, `commit_name`, `commit_email`, `layer.default_profile`
   and D873's three account keys), the two budget keys D1179 hands this path, and the wildcard blocks
   D1161 gives it — a repository's 26 `workflows.*` rows and the project layer's 26 `profiles.*` ones;
   the layer's five `ab.*` rows are listed beside them, but the models family owns them, so this count
-  does not carry them — and 76 through the nine prefixes
+  does not carry them — and 77 through the nine prefixes
   (`internal/cli/settings_set.go:195`: `agent.`, `git.`, `followup.`, `governance.`, `watch.`,
-  `layer.defaults.`, `layer.governance.`, `credentials.`, `clone_urls.`). **212 rows have no generic
+  `layer.defaults.`, `layer.governance.`, `credentials.`, `clone_urls.`). **219 rows have no generic
   writer**, and the audit's whole subject is which of them are a defect and which are the
   installation's own plumbing (F13, D1182).
 - **F2 — `fugaro rigor` does not exist.** There is no `newRigorCmd` in `internal/cli`, no `rigor` cobra
@@ -44,7 +44,7 @@ what the guard at the end of this section re-runs.
   `project_secrets.*.proxy` (`internal/settings/registry.go:644`), `batch.secrets`, `bitbucket_api_roots`,
   `mailbox.keychain_item`, `verifier_accounts` (`:684`) — have no flag and no command.
 - **F5 — `accounts` has no `rm`.** The family is `ls`, `add` (`internal/cli/accounts_add.go:41`) and
-  `clear` (`internal/cli/accounts.go:25`), and `clear` writes a project-database mark rather than a
+  `clear` (`internal/cli/accounts.go:24`), and `clear` writes a project-database mark rather than a
   config. `claude_accounts.*.allow_data_to` (`internal/settings/registry.go:627`) is written by `add`
   and removable by nothing.
 - **F6 — a repository's `workflows.*` has no writer at all.** 37 keys

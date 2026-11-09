@@ -440,13 +440,13 @@ test.describe('the managed sections in the dashboard', () => {
     await expect(managed).toHaveAttribute('data-state', 'read')
     await expect(managed.locator('h2.projects-title')).toHaveText(MANAGED_TITLE)
     await expect(managed.locator('span.projects-source')).toHaveText(MANAGED_SOURCE_LINE)
-    await expect(managed.locator(`.${MANAGED_WORD_CLASS}`)).toHaveText('managed')
+    await expect(page.locator(THE_MANAGED).locator(`.${MANAGED_WORD_CLASS}`)).toHaveText('managed')
 
     const retirements = page.locator(THE_RETIREMENTS_PANEL)
     await expect(retirements).toHaveAttribute('data-state', 'read')
     await expect(retirements.locator('h2.projects-title')).toHaveText(RETIREMENTS_TITLE)
     await expect(retirements.locator('span.projects-source')).toHaveText(RETIREMENTS_SOURCE_LINE)
-    await expect(retirements.locator(`li.${RETIREMENTS_ROW_CLASS}`)).toHaveCount(RETIREMENT_ROWS)
+    await expect(page.locator(THE_RETIREMENTS).locator(`li.${RETIREMENTS_ROW_CLASS}`)).toHaveCount(RETIREMENT_ROWS)
 
     const accountKeys = page.locator(`${THE_ACCOUNT_KEYS} section.${ACCOUNT_KEYS_CLASS}`)
     await expect(accountKeys).toHaveAttribute('data-state', 'read')
@@ -568,7 +568,7 @@ test.describe('the managed sections in the dashboard', () => {
     )
     // The four are not merely present: their documents are the ones the stub
     // answered with, so the refusal beside them took nothing down.
-    await expect(page.locator(`${THE_MANAGED_PANEL} .${MANAGED_WORD_CLASS}`)).toHaveText('managed')
-    await expect(page.locator(`${THE_RETIREMENTS_PANEL} li.${RETIREMENTS_ROW_CLASS}`)).toHaveCount(RETIREMENT_ROWS)
+    await expect(page.locator(`${THE_MANAGED} .${MANAGED_WORD_CLASS}`)).toHaveText('managed')
+    await expect(page.locator(`${THE_RETIREMENTS} li.${RETIREMENTS_ROW_CLASS}`)).toHaveCount(RETIREMENT_ROWS)
   })
 })

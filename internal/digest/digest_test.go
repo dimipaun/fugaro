@@ -14,8 +14,10 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/verify"
 )
 
@@ -549,6 +551,187 @@ func mustMicros(t *testing.T, usd string) budget.Micros {
 	return m
 }
 
+// failing is a run of the period that did not succeed: its record carries
+// class, or -- for a record written before the field shipped -- the reason a
+// reader derives the class from.
+func failing(t *testing.T, id string, billed float64, class failure.Class, reason string) runstore.Record {
+	t.Helper()
+	rec := run(t, id, "2026-10-21T09:00:00Z", billed, 0)
+	rec.Status = runstore.StatusFailed
+	rec.Outcome = runstore.OutcomeDraft
+	rec.FailureClass = class
+	rec.Reason = reason
+	return rec
+}
+
+// TestDigestFailuresTableIsClosed: the Failures table is the vocabulary's, and
+// closed over it (G1): one run of every class prints the one row per class, in
+// the vocabulary's order, and the report invents no row. A record written
+// before the field shipped is counted through its own reason -- the same
+// reading `runs ls` publishes (runview.ClassOf) -- and a class from outside the
+// vocabulary is the vocabulary's own unclassified rather than a word a record
+// chose.
+func TestDigestFailuresTableIsClosed(t *testing.T) {
+	classes := failure.Classes()
+	recs := make([]runstore.Record, 0, len(classes)+2)
+	for i, class := range classes {
+		if class == failure.Unclassified {
+			continue
+		}
+		recs = append(recs, failing(t, fmt.Sprintf("20261021-0900%02d-%04x", i, i+1), 0.10, class, ""))
+	}
+	// A legacy record: no class of its own, and a reason the reader's table
+	// carries, so it is counted under the class its reason means -- not under
+	// unclassified, and not as a row of its own.
+	recs = append(recs, failing(t, "20261021-090019-ffff", 0.20, "", "the agent made no commits"))
+	// A legacy record whose reason the table does not carry: unclassified,
+	// which is the vocabulary's own answer to a cause it cannot name.
+	recs = append(recs, failing(t, "20261021-090020-eeee", 0.30, "", "the run stopped for a reason this build cannot name"))
+
+	d := Build(recs, week43(t))
+	got := make([]string, 0, len(d.Failures))
+	for _, f := range d.Failures {
+		got = append(got, string(f.Class))
+	}
+	var want []string
+	for _, class := range classes {
+		want = append(want, string(class))
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("the table's classes = %v, want the vocabulary's %v", got, want)
+	}
+	for _, f := range d.Failures {
+		runs := 1
+		if f.Class == failure.NoCommits {
+			runs = 2 // the class's own run, and the legacy record's reason
+		}
+		if f.Runs != runs {
+			t.Errorf("%s counts %d runs, want %d", f.Class, f.Runs, runs)
+		}
+		if !task.ValidRunID(f.Example) {
+			t.Errorf("%s's example run = %q, want a run ID of the period", f.Class, f.Example)
+		}
+		if f.Billed <= 0 {
+			t.Errorf("%s billed %d, want the class's own rows added up", f.Class, f.Billed)
+		}
+	}
+
+	// The rendered table carries one row per class, and the block the rules
+	// read carries the counts.
+	out := string(Markdown(d))
+	if !strings.Contains(out, "## Failures\n\n") {
+		t.Fatalf("the report carries no Failures table:\n%s", out)
+	}
+	for _, class := range classes {
+		if !strings.Contains(out, "| `"+string(class)+"` |") {
+			t.Errorf("the table has no row for %s:\n%s", class, out)
+		}
+	}
+	raw, ok := fencedBlock([]byte(out))
+	if !ok {
+		t.Fatal("the report carries no json block")
+	}
+	var block Summary
+	if err := json.Unmarshal(raw, &block); err != nil {
+		t.Fatalf("the summary block is not JSON: %v", err)
+	}
+	if block.Failures[string(failure.NoCommits)] != 2 || block.Failures[string(failure.TestsFailed)] != 1 {
+		t.Errorf("the block's failures = %v, want no_commits 2 and tests_failed 1", block.Failures)
+	}
+
+	// A class from outside the vocabulary is the vocabulary's own answer,
+	// never a row this report invents and never the record's own word.
+	forged := failing(t, "20261021-090021-dddd", 0.10, failure.Class("person-1@example.invalid"), "")
+	out = string(Markdown(Build([]runstore.Record{forged}, week43(t))))
+	if strings.Contains(out, "person-1@example.invalid") {
+		t.Errorf("the table prints a class from outside the vocabulary:\n%s", out)
+	}
+	if !strings.Contains(out, "| `"+string(failure.Unclassified)+"` | 1 |") {
+		t.Errorf("a class outside the vocabulary is not unclassified:\n%s", out)
+	}
+}
+
+// TestDigestSummaryCarriesFailures: the summary block carries the class counts
+// and nothing else about them -- the two failure-class rules read counts, and
+// money per class stays out of a block whose discipline is flat maps of exact
+// strings (design §6.2) -- and a period whose runs all succeeded carries no
+// key at all, which is not the same fact as a period of no failures (G5).
+func TestDigestSummaryCarriesFailures(t *testing.T) {
+	d := Build([]runstore.Record{
+		failing(t, "20261021-090000-aaaa", 0.10, failure.TestsFailed, ""),
+		failing(t, "20261021-090001-bbbb", 0.20, failure.TestsFailed, ""),
+		failing(t, "20261021-090002-cccc", 0.30, failure.Cancelled, ""),
+	}, week43(t))
+	s := d.Summary()
+	if len(s.Failures) != 2 || s.Failures[string(failure.TestsFailed)] != 2 || s.Failures[string(failure.Cancelled)] != 1 {
+		t.Errorf("the block's failures = %v, want tests_failed 2 and cancelled 1", s.Failures)
+	}
+	b, err := json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(b, &keys); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := keys["failures"]; !ok {
+		t.Errorf("the block carries no failures key: %s", b)
+	}
+
+	// Every run of the period succeeded: no class, no key. The two rules read
+	// the key's presence, so an empty block would be read as a period that
+	// classified nothing rather than as one written before the field shipped.
+	clean := Build([]runstore.Record{
+		run(t, "20261021-090000-aaaa", "2026-10-21T09:00:00Z", 0.10, 0),
+	}, week43(t)).Summary()
+	if clean.Failures != nil {
+		t.Errorf("a period whose runs all succeeded carries failures %v, want none", clean.Failures)
+	}
+	b, err = json.Marshal(clean)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "failures") {
+		t.Errorf("a period whose runs all succeeded prints a failures key: %s", b)
+	}
+}
+
+// TestDigestFailureExampleIsTheNewestRunOfItsClass pins the row's example: one
+// run of the class, the newest of them by its own run ID, which begins with the
+// run's start time. The figure is then the same whatever order the records
+// arrive in -- the CLI reads one order and the runner another (G3).
+func TestDigestFailureExampleIsTheNewestRunOfItsClass(t *testing.T) {
+	oldest := failing(t, "20261021-090000-aaaa", 0.10, failure.TestsFailed, "")
+	other := failing(t, "20261023-090000-cccc", 0.10, failure.Cancelled, "")
+	newest := failing(t, "20261024-090000-bbbb", 0.10, failure.TestsFailed, "")
+
+	for _, tc := range []struct {
+		name string
+		recs []runstore.Record
+	}{
+		{"oldest first", []runstore.Record{oldest, other, newest}},
+		{"newest first", []runstore.Record{newest, other, oldest}},
+	} {
+		rows := map[failure.Class]ClassCount{}
+		for _, f := range Build(tc.recs, week43(t)).Failures {
+			rows[f.Class] = f
+		}
+		for class, want := range map[failure.Class]struct {
+			runs    int
+			example string
+		}{
+			failure.TestsFailed: {2, "20261024-090000-bbbb"},
+			failure.Cancelled:   {1, "20261023-090000-cccc"},
+		} {
+			got := rows[class]
+			if got.Runs != want.runs || got.Example != want.example {
+				t.Errorf("%s: the row for %s = %d runs, example %q, want %d and %s",
+					tc.name, class, got.Runs, got.Example, want.runs, want.example)
+			}
+		}
+	}
+}
+
 // TestDigestHasNoPersonField pins the types: there is no field a person could
 // be read from, so no later change can print one without changing a type this
 // test walks (G1).
@@ -577,14 +760,20 @@ func TestDigestHasNoPersonField(t *testing.T) {
 // first, and the report says how many it left out.
 func TestDigestSizeCap(t *testing.T) {
 	p := week43(t)
-	// A budget small enough to make the rule exact.
-	small := Build([]runstore.Record{
+	recs := []runstore.Record{
 		flaggedRun(t, "20261021-090000-0001", 0.01),
 		flaggedRun(t, "20261021-090000-0002", 0.02),
-		run(t, "20261021-090000-0003", "2026-10-21T09:00:00Z", 1, 0),
-		run(t, "20261021-090000-0004", "2026-10-21T09:00:00Z", 2, 0),
-		run(t, "20261021-090000-0005", "2026-10-21T09:00:00Z", 3, 0),
-	}, p)
+	}
+	// Enough unflagged runs that the table holds four of them: the note a drop
+	// adds costs about three rows, so a table of three would lose every
+	// unflagged row and the rule would show nothing.
+	for i := 1; i <= 22; i++ {
+		recs = append(recs, run(t, fmt.Sprintf("20261021-090000-%04d", 100+i), "2026-10-21T09:00:00Z", float64(i), 0))
+	}
+	small := Build(recs, p)
+	// The rows the build chose, taken before capTo's drops shift the array the
+	// two digests share.
+	before := append([]Run(nil), small.Runs...)
 	// A budget one byte under the report's own size, so the rule is exercised
 	// exactly: which rows go, and what the report says about them. How many go
 	// is not pinned here -- the note that reports a drop costs bytes of its
@@ -610,7 +799,7 @@ func TestDigestSizeCap(t *testing.T) {
 		shown[r.ID] = r
 	}
 	dropped := 0
-	for _, r := range small.Runs {
+	for _, r := range before {
 		if _, ok := shown[r.ID]; ok {
 			continue
 		}
@@ -628,10 +817,10 @@ func TestDigestSizeCap(t *testing.T) {
 	if dropped != got.Dropped {
 		t.Errorf("capTo says it dropped %d rows, %d are gone from the table", got.Dropped, dropped)
 	}
-	if _, ok := shown["20261021-090000-0005"]; !ok {
+	if _, ok := shown["20261021-090000-0122"]; !ok {
 		t.Error("capTo dropped the dearest unflagged row")
 	}
-	if _, ok := shown["20261021-090000-0003"]; ok {
+	if _, ok := shown["20261021-090000-0119"]; ok {
 		t.Error("capTo kept the cheapest unflagged row in an over-budget report")
 	}
 
@@ -642,7 +831,7 @@ func TestDigestSizeCap(t *testing.T) {
 	for flagged < 500 && len(Markdown(Build(flaggedRuns(t, flagged+1), p))) < MaxBytes-256 {
 		flagged++
 	}
-	recs := flaggedRuns(t, flagged)
+	recs = flaggedRuns(t, flagged)
 	for i := 1; i <= 10; i++ {
 		recs = append(recs, run(t, fmt.Sprintf("20261021-1100%02d-abcd", i), "2026-10-21T09:00:00Z", float64(i), 0))
 	}
@@ -731,7 +920,7 @@ func TestDigestRendersNoRecordText(t *testing.T) {
 			if strings.Contains(out, planted) {
 				t.Errorf("the report prints %q, planted in the record's %s", planted, leaf.path)
 			}
-			if leaf.path != ".RunID" && !strings.Contains(out, id) {
+			if leaf.path != ".RunID" && !strings.Contains(out, task.ShortRun(id)) {
 				t.Errorf("the report does not show the run whose %s holds %q: the check proves nothing", leaf.path, planted)
 			}
 		}
@@ -894,5 +1083,83 @@ func fullRecord(t *testing.T) runstore.Record {
 		},
 		Backlog:       []string{"20261021-01"},
 		BacklogClosed: []string{"20261021-02"},
+	}
+}
+
+// TestDigestRunTableShortID: the report's tables name each run by its short ID
+// (spec.md §1), extended only as far as the rows printed together need
+// (spec.md §3), while the summary block keeps the figures it always had.
+//
+// The two runs below share their four hex digits and differ in the second
+// before the dash, so the shortest ending that tells them apart is six
+// characters -- the extension crosses the dash (F1) -- and the failures table
+// names the failing run by the same ending the run table shows, because both
+// tables are the one report.
+func TestDigestRunTableShortID(t *testing.T) {
+	d := Build([]runstore.Record{
+		failing(t, "20261021-090001-3bb2", 0.10, failure.InfraError, "the stage timed out"),
+		run(t, "20261021-090002-3bb2", "2026-10-21T09:00:00Z", 0.20, 0),
+	}, week43(t))
+	out := string(Markdown(d))
+	for _, want := range []string{
+		"| `1-3bb2` | failed |",
+		"| `2-3bb2` | succeeded |",
+		"| `" + string(failure.InfraError) + "` | 1 |",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the report lacks %q:\n%s", want, out)
+		}
+	}
+	if n := strings.Count(out, "`1-3bb2`"); n != 2 {
+		t.Errorf("the failing run is named `1-3bb2` %d times, want 2 -- its run-table row and the failures table's example:\n%s", n, out)
+	}
+	if strings.Contains(out, "20261021-") {
+		t.Errorf("the report prints a run ID's launch stamp:\n%s", out)
+	}
+}
+
+// TestDigestFailureExampleOffTheRunTableShortID: the failures table names a run
+// the run table need not show -- its example is picked over every run of the
+// period, and the cap drops rows afterwards -- so markdownCore computes its
+// endings over the report's rows *and* its examples together (printed). The
+// example below is one of the rows the cap drops, and it shares its four
+// characters with a row the cap keeps: its cell carries the ending that tells
+// the two apart, and the kept row carries it too. Computed over the shown rows
+// alone, the cell would be empty and the kept row short by two characters.
+func TestDigestFailureExampleOffTheRunTableShortID(t *testing.T) {
+	p := week43(t)
+	recs := []runstore.Record{
+		flaggedRun(t, "20261021-080001-aaaa", 0.01),
+		flaggedRun(t, "20261021-080002-bbbb", 0.02),
+	}
+	// A period long enough that the table holds four unflagged rows -- MinDear's
+	// three and the share's fourth -- because the cap drops the three cheapest of
+	// them (the note a drop adds costs about three rows, TestDigestSizeCap): a row
+	// is still shown beside the example it drops.
+	for i := 1; i <= 20; i++ {
+		recs = append(recs, run(t, fmt.Sprintf("20261021-0900%02d-0000", i), "2026-10-21T09:00:00Z", float64(i), 0))
+	}
+	// The dearest two of the table, sharing their four characters: the cap keeps
+	// one and drops the other, which is the failures table's own example.
+	recs = append(recs,
+		run(t, "20261021-100000-a1b2", "2026-10-21T09:00:00Z", 22, 0),
+		failing(t, "20261021-100001-a1b2", 21, failure.InfraError, "the stage timed out"),
+	)
+	small := Build(recs, p)
+	got := capTo(small, len(markdownCore(small))-1)
+	shown := map[string]bool{}
+	for _, r := range got.Runs {
+		shown[r.ID] = true
+	}
+	if got.Dropped == 0 || !shown["20261021-100000-a1b2"] || shown["20261021-100001-a1b2"] {
+		t.Fatalf("the cap left %v shown and dropped %d: want the failing example dropped and the row it collides with kept",
+			got.Runs, got.Dropped)
+	}
+	out := string(Markdown(got))
+	if want := fmt.Sprintf("| `%s` | 1 | $21.00 | `1-a1b2` |", failure.InfraError); !strings.Contains(out, want) {
+		t.Errorf("the failures table lacks %q, the example the run table no longer shows:\n%s", want, out)
+	}
+	if want := "| `0-a1b2` | succeeded |"; !strings.Contains(out, want) {
+		t.Errorf("the run table lacks %q, the row the off-table example collides with:\n%s", want, out)
 	}
 }

@@ -46,6 +46,7 @@ import { refusalFrom } from '../../src/source/source'
 import { githubToken } from '../support/fakeSecrets'
 import { ESTIMATED_MARK, UNAVAILABLE_MARK, estimated, formatReading, measured, unavailable } from '../../src/shared/availability'
 import { sanitizeRefusal, sanitizeText, TOKEN_PLACEHOLDER } from '../../src/shared/sanitize'
+import { shortRun } from '../../src/shared/shortid'
 import { decodeDocument } from '../../src/shared/schema'
 import type { CostView, DegradedDocument, LiveDocument } from '../../src/shared/schema'
 import { LIVE_BURN_MAX_SAMPLES, LIVE_STALE_AFTER_SECONDS, BurnHistory, buildLiveModel, renderLive } from '../../src/renderer/screens/live'
@@ -141,6 +142,12 @@ function one(node: ScreenElement, className: string): FakeScreen {
   const first = found[0]
   if (first === undefined) throw new Error(`no .${className}`)
   return first
+}
+
+/** texts is one class's drawn text, in document order: what each node of the
+ * class holds, and never the attribute beside it. */
+function texts(node: ScreenElement, className: string): readonly string[] {
+  return all(node, className).map((each) => each.textContent ?? '')
 }
 
 /** drawn is the whole tree's text, in document order. */
@@ -316,13 +323,69 @@ describe('the no-Firebase screen', () => {
     const document = theDegradedDocument()
     const tree = renderNoFirebase(factory, buildNoFirebaseModel(document), 'light')
     expect(all(tree, 'degraded-run')).toHaveLength(document.runs.length)
-    expect(drawn(tree)).toContain('20261015-123000-bb01')
+    // The list names each run by its short ID and by nothing longer (SR10): the
+    // whole ID is not in this screen's text at all.
+    expect(texts(tree, 'degraded-run-id')).toEqual(document.runs.map((row) => shortRun(row.runId)))
+    expect(drawn(tree)).not.toContain('20261015-')
+    expect(drawn(tree)).toContain(shortRun('20261015-123000-bb01'))
     expect(drawn(tree)).toContain('failed')
     // The subscription row's model dollars are marked notional by name, so a
     // reader cannot add them to a billed figure.
     const notionalRows = walk(tree).filter((node) => node.getAttribute('data-notional-model') === 'true')
     expect(notionalRows).toHaveLength(1)
     expect(notionalRows[0]?.getAttribute('data-notional-model')).toBe('true')
+  })
+
+  it('extends two endings that collide, and only those', () => {
+    // The collision rule is a property of the rows drawn together (spec part 3,
+    // D1706): two records of this list that share their last four characters are
+    // told apart by as many extra characters as it takes, and a third run whose
+    // four are already unique keeps its four.
+    const document = theDegradedDocument()
+    const [first, second] = document.runs
+    if (first === undefined || second === undefined) throw new Error('the fixture carries one run')
+    const ids = ['20261108-115248-3bb2', '20261107-010101-3bb2', '20261108-121500-aa01']
+    const runs = ids.map((id, at) => ({ ...(at === 2 ? first : second), run: id, runId: id }))
+    const tree = renderNoFirebase(factory, buildNoFirebaseModel({ ...document, runs }), 'light')
+    expect(texts(tree, 'degraded-run-id')).toEqual(['8-3bb2', '1-3bb2', 'aa01'])
+  })
+
+  it('cuts the ending from the id the console would draw, not from the wire text', () => {
+    // **The ending is a cut of the *sanitized* id** (`drawnRef`), the fact
+    // `live.test.ts` holds of the live tab's cell, held here of this screen
+    // (SR10). The `runId` class strips the bidi override below **before** its
+    // shape check, so the wire value is accepted and the two records still
+    // share their last four characters. Handed the raw strings, the rule would
+    // see the two endings as different and draw `3bb2` twice -- two different
+    // runs named by the same four characters, one row apart.
+    const document = theDegradedDocument()
+    const template = document.runs[0]
+    if (template === undefined) throw new Error('the fixture carries no run')
+    const runs = [
+      { ...template, run: '20261108-115248-3bb2‮', runId: '20261108-115248-3bb2‮' },
+      { ...template, run: '20261107-010101-3bb2', runId: '20261107-010101-3bb2' },
+    ]
+    const tree = renderNoFirebase(factory, buildNoFirebaseModel({ ...document, runs }), 'light')
+    expect(texts(tree, 'degraded-run-id')).toEqual(['8-3bb2', '1-3bb2'])
+  })
+
+  it('sanitizes the repository the collision rule prefixes, not only the ending', () => {
+    // The cross-repository branch of `displayRuns` draws `<repo>/<ending>`, and
+    // the repository is untrusted text too (`runs[].repo`). `drawRunId` writes
+    // its answer through `literal`, which sanitizes nothing, so the prefix is
+    // only clean because `drawnRef` cleaned it: a zero-width space in one of
+    // the two repositories would otherwise ride onto the screen in front of the
+    // ending.
+    const document = theDegradedDocument()
+    const template = document.runs[0]
+    if (template === undefined) throw new Error('the fixture carries no run')
+    const same = '20261015-123000-bb01'
+    const runs = [
+      { ...template, run: same, runId: same, repo: 'acme/ap​p' },
+      { ...template, run: same, runId: same, repo: 'acme/web' },
+    ]
+    const tree = renderNoFirebase(factory, buildNoFirebaseModel({ ...document, runs }), 'light')
+    expect(texts(tree, 'degraded-run-id')).toEqual(['acme/app/bb01', 'acme/web/bb01'])
   })
 
   it('splits a run\'s model figure on `model_notional_usd`, never on the basis', () => {

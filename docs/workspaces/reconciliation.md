@@ -236,7 +236,7 @@ the CLI has **one** helper for the four steps around a write (`internal/cli/mana
 by `fugaro config publish` (`internal/cli/config_publish_managed.go:97`), `fugaro project policy
 publish` (`internal/cli/project_policy_managed.go:513`), `fugaro image refresh`
 (`internal/cli/image_refresh_managed.go:115`) and `fugaro accounts add`
-(`internal/cli/accounts_managed.go:86`); `fugaro update` runs the same four steps through its own
+(`internal/cli/accounts_managed.go:98`); `fugaro update` runs the same four steps through its own
 path, and `fugaro settings`' writes are local config edits. Consequence for this design: **W2's
 `fugaro update` stage lands inside a gate that exists** rather than beside a design, and the
 workspace's own commands are local writes of exactly the `settings`/`models` shape — so the
@@ -267,7 +267,7 @@ stand** — with one addition: the workspace service's person class is a new sur
 
 **F25 — Three commands are on main that were not. — Exists (new).** `fugaro settings`
 (`internal/cli/settings.go:61` `newSettingsCmd`, with the writes G0–G2 added), `fugaro accounts`
-(`internal/cli/accounts.go:25` `newAccountsCmd`, with `accounts add` under the gate) and the rigor
+(`internal/cli/accounts.go:24` `newAccountsCmd`, with `accounts add` under the gate) and the rigor
 surface (`docs/rigor-command/`). All are registered in `internal/cli/root.go:191`. Consequence:
 spec §6's `fugaro workspace` family is still a free name, and the design's two rules that touch
 these — a workspace write is a **local config edit** and every write ends with `next: fugaro
@@ -276,7 +276,7 @@ rather than a rule to invent.
 
 **F26 — The project image catalog is on main, and the repo-image removal is a design beside this
 one. — Exists (new), and it changes nothing here.** The catalog is built and deployed
-(`internal/backend/gcp/catalog.go:65` `CatalogDefinition`, `:74` `CatalogBuildSpec`;
+(`internal/backend/gcp/catalog.go:78` `CatalogDefinition`, `:87` `CatalogBuildSpec`;
 `docs/project-image-catalog/`), and the design that removes the per-repository image is **#1676**,
 which holds **D1190–D1219** — the block immediately above this design's. Consequence: a workspace
 owns no image and no repository ([spec.md](spec.md) §9), so neither the catalog nor its removal
@@ -306,13 +306,13 @@ it a false one while every sentence around it stays true. **One had moved**: the
 `PerRunUSD float64`; `internal/budget/model.go:5-8` (money is µ$) and `:31` `PathCapsGlobal`;
 `internal/budget/rules/rules.json.tmpl:60` (`NEW >= OLD`); `internal/policy/merge.go:44` `Merge`;
 `internal/localcfg/localcfg.go:41` `Config`; `internal/cli/config_list.go:53` `configListDoc`;
-`internal/cli/user.go:73`, `internal/cli/settings.go:61`, `internal/cli/accounts.go:25`,
+`internal/cli/user.go:73`, `internal/cli/settings.go:61`, `internal/cli/accounts.go:24`,
 `internal/cli/root.go:191`; the managed-gate set
 (`internal/cli/managed_gate.go:181` and its four callers, `internal/managed/plan.go:217`,
 `internal/managed/budget.go:124`); `internal/runner/stray.go:24`; `internal/credsvc/auth.go:375`,
 `:890`, `:968`, `:258`, `:1072`; `internal/projectpolicy/bitbucket.go:30`, `:75-76`, `:194` and
 `internal/projectpolicy/paths.go:18-23`;
-`internal/backend/gcp/catalog.go:65`; `docs/ee-reorg/spec.md`:7 and `docs/subscriptions/spec.md`:55.
+`internal/backend/gcp/catalog.go:78`; `docs/ee-reorg/spec.md`:7 and `docs/subscriptions/spec.md`:55.
 
 **F29 — The second re-read, 2026-11-04, at `origin/main` `c2ca0aee`. — Two citations were wrong, and
 both were wrong in the same way.** A security review of [spec.md](spec.md) §5 and §8 read the grants

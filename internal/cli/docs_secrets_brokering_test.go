@@ -377,3 +377,36 @@ func TestDocsCheck190IsRegistered(t *testing.T) {
 		}
 	}
 }
+
+// TestDocsSecretReadersStatesTheBitbucketProxysState is task B1.10's pin on the
+// audit's Bitbucket rows. The proxy shipped (B1.5, B1.6, B1.7), so a reader
+// has to learn two things and not one: on a repository the published node
+// admits with `proxy: true` the job reads no `bitbucket-token` at all (the
+// runner opens its provider tokenless and the service puts the credential on
+// the wire), and the flip that takes the mount and the accessor away has NOT
+// been filled -- `config.ProxiedGitSecretNames` is empty until B1.13 part two
+// -- so E1's row still lists the token and the job still mounts it. A doc that
+// says only one of the two reads as "the proxy took the token" or as "nothing
+// changed".
+//
+// Mutation (verified, run and restored): the paragraph's "still mounts it"
+// sentence dropped fails this on that pin and on "still mounts".
+func TestDocsSecretReadersStatesTheBitbucketProxysState(t *testing.T) {
+	flat := flattenDoc(readDoc(t, secretReadersDoc))
+	for _, want := range []string{
+		// The half that moved: a proxied job reads no token.
+		"a proxied job reads no token at all",
+		// The half that has not: the flip list is empty on this tree, so the
+		// mount and the accessor stay.
+		"config.ProxiedGitSecretNames",
+		"is empty",
+		"still mounts it",
+		// And the third copy that is older than both: the build account's,
+		// which S4 ends (E3).
+		"build account keeps its own copy until S4",
+	} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("%s does not say %q: the Bitbucket rows have to state both what the proxy changed and what the flip has not yet taken", secretReadersDoc, want)
+		}
+	}
+}

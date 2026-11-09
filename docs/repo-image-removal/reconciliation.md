@@ -77,7 +77,7 @@ code. A `:line` is a **declaration** line at `777b902d`; the symbol is what to s
 - **F10: Exists. The per-repository build path: the repository's own Artifact Registry repository, its
   build account, and the API-submitted Cloud Build.** `deploy/terraform/gcp/modules/repo/registry.tf:10`
   (`google_artifact_registry_repository "images"`), `deploy/terraform/gcp/modules/repo/build.tf:5`
-  (`google_service_account "build"`), `internal/backend/gcp/build.go:169` (`BuildRequest`). There is no
+  (`google_service_account "build"`), `internal/backend/gcp/build.go:176` (`BuildRequest`). There is no
   Cloud Build **trigger** anywhere in `deploy/terraform`, so "the per-repository build path" is code
   plus IAM, not a Terraform trigger.
 
@@ -157,10 +157,10 @@ code. A `:line` is a **declaration** line at `777b902d`; the symbol is what to s
 
 - **F25: Exists, and it is what makes the migration possible at all. A catalog build hands the entry's
   Dockerfile every tool the renderer's own clone needs — the repository's URL and branch (the
-  `_REPO_URL`/`_BASE_BRANCH` substitutions, `internal/backend/gcp/catalog.go:286`), the commit the
-  copied definition was read at (the pin step writes it, `internal/backend/gcp/catalog.go:364`), and
+  `_REPO_URL`/`_BASE_BRANCH` substitutions, `internal/backend/gcp/catalog.go:325`), the commit the
+  copied definition was read at (the pin step writes it, `internal/backend/gcp/catalog.go:411`), and
   the `git-credentials` file secret on the shared build step
-  (`images/derived/cloudbuild.yaml:178`, read from `/workspace/out/source-commit`).** So a Dockerfile in
+  (`images/derived/cloudbuild.yaml:190`, read from `/workspace/out/source-commit`).** So a Dockerfile in
   a repository can `git clone "$REPO_URL"` at `$FUGARO_COMMIT` with the build's credential and bake the
   same dependency cache the renderer baked — the covered migration is not a degraded one. What the
   renderer does that a hand-written Dockerfile does not is the closing step: `finalize-checkout`
@@ -406,7 +406,7 @@ its `Recommendation` and both costs, so the answer and the price of the other re
   their grants narrowed to the **shared** registry, the base registry and the ghcr pull-through. A
   catalog entry whose source is a Dockerfile in repository X is built as **X's** build account with X's
   credential and secrets, which is what the tree already enforces
-  (`internal/backend/gcp/catalog.go:79`, `internal/cli/image_build_catalog.go:366`).
+  (`internal/backend/gcp/catalog.go:92`, `internal/cli/image_build_catalog.go:366`).
   Cost of the alternative: one installation-level build account for every catalog build would hold
   **every** repository's provider credential and every workflow's secrets in one identity, which is the
   segregation the per-repository account exists for.
@@ -474,8 +474,9 @@ its `Recommendation` and both costs, so the answer and the price of the other re
   `git clone "$REPO_URL"` at `$FUGARO_COMMIT` under the `git-credentials` secret, then the dependency
   warm-up, then `finalize-checkout` as the last step, exactly as the renderer's template does today
   (`images/derived/Dockerfile.tmpl:130`). The engine gains **no bake mode**: a catalog build keeps
-  cloning nothing of its own, which is its stated rule (`internal/backend/gcp/catalog.go:39`), and the
-  dogfood migration of R0 is written as that Dockerfile.
+  cloning nothing of its own unless its entry names a build context, which is its stated rule
+  (`internal/backend/gcp/catalog.go:51`), and the dogfood migration of R0 is written as that
+  Dockerfile.
   Cost of the alternative: an engine-side bake keyed by repository — "clone this repository at this
   commit before running the entry's Dockerfile" — re-creates a **per-repository build input inside the
   catalog**, which is the thing the owner's ruling removes, arrived at from the other side; the two

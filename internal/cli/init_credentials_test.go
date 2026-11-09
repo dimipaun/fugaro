@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -261,6 +262,141 @@ func TestUpdateSetsCredentialsServiceOnEveryInstallation(t *testing.T) {
 	if got := localConfigOf(t, r).CredentialsService; got == nil || got.URL != credentialsServiceURL {
 		t.Errorf("the project config records credentials_service = %+v, want the service's URL %s\n%s", got, credentialsServiceURL, s)
 	}
+}
+
+// TestUpdateKeepsTheVarsFileWhereTheAudiencePlanReadsIt is the report of
+// 2026-11-09 (0.21.1, a managed project, a second attempt): the installation
+// step planned, passed the managed gate and applied — the credentials service
+// among the changes — the run then wrote the local config and published the
+// shared config, and the SAME step stopped on its next plan with
+//
+//	✖ installation: terraform plan exited 1: Error: Failed to read variables file
+//	    Given variables file terraform.tfvars.json does not exist.
+//
+// That plan is fillCredentialsAudience's (init_stages.go): the module's
+// unassigned placeholder can only be replaced once Cloud Run has assigned the
+// URL the callers' ID tokens are minted for, so the step writes the URL into
+// the installation's tfvars, plans the root again and applies it. It writes
+// through the workdir (Workdir.WriteVars, whose path is Workdir.Root plus
+// VarsFile) and plans through the terraform pair the workdir was prepared
+// with (initRun.terraform builds the two together, tf.TF runs in that same
+// root), reading the ONE relative -var-file terraform is given.
+//
+// So the pair is the whole invariant, and this test is that invariant
+// arranged the report's way: the service does not exist yet, the installation
+// root's plan creates it, the outputs then carry its URL, and the audience
+// step has to rewrite the tfvars and plan a second time. Both plans must run
+// in the directory the run's own tfvars are written into — a workdir prepared
+// again between the write and the plan takes the root's tree (PrepareWorkdir
+// is the only thing that deletes it) and leaves the plan with no variables
+// file at all, and a plan run from another root reads another root's tfvars.
+//
+// The rig is not a managed one, and that is not what the report's failure
+// turned on: the run's own step passed the managed gate before it planned
+// anything (the gate judges a saved plan, and it touches no workdir), and the
+// cover tables admit the module's credentials service by the shape its plan
+// writes — the image pin, the environment and the IAM the service requires —
+// which the fake's plan for one address deliberately does not spell out. What
+// the gate guarantees of this step is untouched: gateStep still judges this
+// plan where the project is managed, and no cover table changed.
+//
+// Mutation (verified, run and restored): insert
+// `infra.PrepareWorkdir(e.wd.Dir, "installation")` between the WriteVars and
+// the Plan of fillCredentialsAudience — one workdir rebuilt for the same
+// directory, which is what init_stages.go's e.setup does at the top of every
+// stage — and the run fails with the report's own sentence, this test's
+// first assertion:
+//
+//	installation: terraform plan exited 1: Error: Failed to read variables file
+//	Given variables file terraform.tfvars.json does not exist.
+func TestUpdateKeepsTheVarsFileWhereTheAudiencePlanReadsIt(t *testing.T) {
+	r := credentialsRig(t)
+	// The rig's own state home, reached through a link: the fake records what
+	// os.Getwd() answers (every symlink followed) while the workdir the run is
+	// handed keeps the link, which is the case on any host whose state home
+	// sits under a directory that is a symlink.
+	// TestComputeStageFindsItsWorkdirThroughASymlink makes the same case real on
+	// every platform.
+	state := os.Getenv("XDG_STATE_HOME")
+	if err := os.MkdirAll(state, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "state-root")
+	if err := os.Symlink(state, link); err != nil {
+		t.Skipf("this host makes no symlink: %v", err)
+	}
+	t.Setenv("XDG_STATE_HOME", link)
+	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "create"))
+	credentialsOutputs(t, r)
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	s := out + errOut
+	if err != nil {
+		t.Fatalf("an update that creates the credentials service failed at one of the installation step's own plans: %v\n%s", err, s)
+	}
+	// The step the report points at ran, and it ran as the second plan: the URL
+	// is on the revision only because the module's output came back after the
+	// apply that created the service.
+	if want := "the credentials service's audience is its own URL: " + credentialsServiceURL; !strings.Contains(s, want) {
+		t.Fatalf("the run did not fill the service's audience, so this test is not arranged as the report is: want %q in\n%s", want, s)
+	}
+	dirs := planDirs(t, r.log)
+	if len(dirs) != 2 {
+		t.Fatalf("the installation step planned %d times, want 2 (the apply that creates the service, then the audience): %v\n%s", len(dirs), dirs, s)
+	}
+	// Both sides resolved, as computeCalls' comparison is: the fake records
+	// os.Getwd(), which answers a path with every symlink followed, while the
+	// workdir comes from $XDG_STATE_HOME -- reached through a link above, and
+	// under a symlinked $TMPDIR on macOS -- so the two spellings of one
+	// directory do not compare equal as they are (resolvedPath).
+	root := resolvedPath(r.root())
+	for i, dir := range dirs {
+		if dir != root {
+			t.Errorf("plan %d ran in %s, want %s: the workdir the run writes its %s into and the root its terraform plans in are one directory, or the plan reads variables that are not there (the report's \"Given variables file %s does not exist\")\n%s",
+				i+1, dir, root, infra.VarsFile, infra.VarsFile, s)
+		}
+	}
+	// The file the plans read is the run's own, with the URL the step wrote in
+	// it: the fake refuses a -var-file that is not there, so the two plans
+	// above could not have passed with the write lost.
+	svc := credentialsServiceEntry(t, r)
+	if got := svc["url"]; got != credentialsServiceURL {
+		t.Errorf("credentials_service.url = %v in the installation's %s, want %s\n%s", got, infra.VarsFile, credentialsServiceURL, s)
+	}
+}
+
+// planDirs are the working directories of the run's own plans, in order: the
+// directory terraform reads the relative -var-file=terraform.tfvars.json from.
+// Each is resolved (resolvedPath), because a caller compares them against a
+// workdir built from $XDG_STATE_HOME and the fake records os.Getwd(), which
+// answers a path with every symlink followed: on macOS those differ -- /var is
+// a symlink to /private/var -- and a workdir reached through a link differs
+// everywhere, as computeCalls' comment says of the same comparison.
+func planDirs(t *testing.T, log string) []string {
+	t.Helper()
+	f, err := os.Open(log)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	var out []string
+	s := bufio.NewScanner(f)
+	s.Buffer(make([]byte, 1<<20), 1<<24)
+	for s.Scan() {
+		var c struct {
+			Args []string `json:"args"`
+			Dir  string   `json:"dir"`
+		}
+		if err := json.Unmarshal(s.Bytes(), &c); err != nil {
+			t.Fatal(err)
+		}
+		if len(c.Args) > 0 && c.Args[0] == "plan" {
+			out = append(out, resolvedPath(c.Dir))
+		}
+	}
+	return out
 }
 
 // TestUpdateKeepsAnOptedInInstallationsServiceUnchanged: an installation that

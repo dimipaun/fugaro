@@ -27,6 +27,7 @@ import { describe, expect, it } from 'vitest'
 import { PLAN_STATES, decodePlanStatus } from '../../src/shared/schema'
 import type { PlanStatusView } from '../../src/shared/schema'
 import type { Sanitized } from '../../src/shared/sanitize'
+import { MIN_ENDING } from '../../src/shared/shortid'
 import { GraphLayout, crossStreamRoute, graphOf, structureHash } from '../../src/renderer/graph/layout'
 import { LayoutClient } from '../../src/renderer/graph/layout-client'
 import type { LayoutGraph, PlacedNode, Point, Positions, WorkerLike } from '../../src/renderer/graph/layout-client'
@@ -540,6 +541,12 @@ describe('the graph model', () => {
     const good = nodeOf(model(null), 'task-one')?.run
     expect(good?.ok).toBe(true)
     expect(text(good)).toBe('aa01')
+    // The four is the one short-ID rule's own number and not a second copy of it
+    // (SR10): the width is `MIN_ENDING`, so a suffix the CLI draws is read here
+    // and a longer ending -- which no `plan status` document holds -- is not.
+    expect(text(nodeOf(built(['plans', 0, 'nodes', 0, 'run'], 'a'.repeat(MIN_ENDING)), 'task-one')?.run)).toBe(
+      'a'.repeat(MIN_ENDING),
+    )
     for (const bad of ['20261025-121805-d204', 'aa0', 'aa0!', 'AA01', 'aa 1']) {
       const drawn = nodeOf(built(['plans', 0, 'nodes', 0, 'run'], bad), 'task-one')?.run
       expect(drawn?.ok, bad).toBe(false)

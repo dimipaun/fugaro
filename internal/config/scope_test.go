@@ -210,6 +210,9 @@ func TestScopesMatchDesignDoc(t *testing.T) {
 
 		"rigor.default": InProject | InRepo,
 		"rigor.areas":   InProject | InRepo,
+
+		"planning.decoupling": InProject | InRepo,
+		"security.patterns":   InProject | InRepo,
 	}
 
 	seen := make(map[string]bool, len(Scopes))

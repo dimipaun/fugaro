@@ -208,6 +208,14 @@ import {
   buildCredentialsService,
   fillCredentialsService,
 } from './screens/credentialsservice'
+import {
+  LICENCE_BUSY,
+  buildLicence,
+  fillLicence,
+  licenceSaveOutcomeOf,
+  renderLicenceOutcome,
+} from './screens/licence'
+import type { LicenceDrawn } from './screens/licence'
 import { MANAGED_BUSY, buildManagedModel, fillManaged } from './screens/managed'
 import { RETIREMENTS_BUSY, buildRetirementsModel, fillRetirements } from './screens/retirements'
 import type { OperationName } from '../main/ipc'
@@ -483,7 +491,7 @@ function methodOf(fugaro: unknown, name: string): ((args: unknown) => unknown) |
 }
 
 /**
- * ReadBridge is the nineteen reads the screens make (Task 3.4c; console L5b
+ * ReadBridge is the twenty reads the screens make (Task 3.4c; console L5b
  * added `statsRuns`, Bitbucket credentials T1.2 added `coordinatorStatus`,
  * GV2.3b added `planStatus`, coordinator v2 K3 added `coordinatorShow`, K5 added
  * `coordinatorIntents`, console 0.119.0 added `summaryRuns` -- the
@@ -492,7 +500,10 @@ function methodOf(fugaro: unknown, name: string): ((args: unknown) => unknown) |
  * tab's settings panel, and the graph plan's CG9a added `graphRead`, the Graph
  * tab's read of the versioned graph document, and the managed-project screens
  * plan's CM4 added `managedStatus`, `policyShow` and `environmentReport` -- the
- * same tab's four later sections and its policy panel's own document), named one
+ * same tab's four later sections and its policy panel's own document, and the
+ * subscriptions plan's S2.7 added `readLicence`, the licence key's own section of
+ * the same tab -- **the one read here that spawns no child at all**, because the
+ * console keeps that key itself), named one
  * by one for the reason `CompatibilityBridge` names one: this file should reach
  * for exactly the operations it draws, and a reader should be able to see which
  * those are without reading the preload.
@@ -522,9 +533,10 @@ export interface ReadBridge {
   managedStatus(args: Readonly<Record<string, unknown>>): Promise<unknown>
   policyShow(args: Readonly<Record<string, unknown>>): Promise<unknown>
   environmentReport(args: Readonly<Record<string, unknown>>): Promise<unknown>
+  readLicence(args: Readonly<Record<string, unknown>>): Promise<unknown>
 }
 
-/** readBridgeFrom is the nineteen reads over the structural bridge. A missing
+/** readBridgeFrom is the twenty reads over the structural bridge. A missing
  * member answers `null` rather than rejecting, and so does a member that fails
  * to answer -- by throwing before it returns, or by returning a promise that
  * rejects, which is what `invoke` does on a channel with nothing behind it.
@@ -566,6 +578,7 @@ export function readBridgeFrom(fugaro: unknown): ReadBridge {
     managedStatus: (args) => ask('managedStatus', args),
     policyShow: (args) => ask('policyShow', args),
     environmentReport: (args) => ask('environmentReport', args),
+    readLicence: (args) => ask('readLicence', args),
   }
 }
 
@@ -638,6 +651,36 @@ export interface SettingsBridge {
 export function settingsBridgeFrom(fugaro: unknown): SettingsBridge {
   const ask = (name: string, args: Readonly<Record<string, unknown>>): Promise<unknown> => askMember(fugaro, name, args)
   return { editSetting: (args) => ask('editSetting', args) }
+}
+
+/**
+ * LicenceBridge is the Project tab's second write: `licence.save`, the paste
+ * that keeps the licence key this installation runs under (the subscriptions
+ * plan's S2.7). It is a bridge of its own rather than a member of `ReadBridge`
+ * for `LaunchBridge`'s reason: that interface is the reads a screen is drawn
+ * from, and this one writes a credential to disk.
+ *
+ * **It carries the key and nothing else.** The object it is handed is the one
+ * argument the operation declares -- the pasted text, in this console's own
+ * `licenceKey` kind (`ipc.ts`), checked for length and for invisible characters
+ * before it is dispatched -- and never a path, a project or a flag: which
+ * installation's store the key lands in is the main process's own active
+ * installation (`main/index.ts`), so a renderer cannot name one the rail did not
+ * choose.
+ *
+ * It is answered the way the other bridges are: a member that is missing or
+ * fails to answer is `null`, and the press draws a sentence it could not read
+ * rather than claiming a write. A reply that arrived is the same licence state
+ * the read answers -- which carries no key text -- so nothing this bridge returns
+ * is the key that was pasted.
+ */
+export interface LicenceBridge {
+  saveLicence(args: Readonly<Record<string, unknown>>): Promise<unknown>
+}
+
+export function licenceBridgeFrom(fugaro: unknown): LicenceBridge {
+  const ask = (name: string, args: Readonly<Record<string, unknown>>): Promise<unknown> => askMember(fugaro, name, args)
+  return { saveLicence: (args) => ask('saveLicence', args) }
 }
 
 /** SETTINGS_EDIT_OUTCOME_KEYS is the whole key set of one `settings.edit`
@@ -2838,6 +2881,7 @@ export async function bootDashboard(scope: DashboardScope): Promise<void> {
     railBridge,
     launchBridge: launchBridgeFrom(scope.fugaro),
     settingsBridge: settingsBridgeFrom(scope.fugaro),
+    licenceBridge: licenceBridgeFrom(scope.fugaro),
     linkBridge: linkBridgeFrom(scope.fugaro),
     rows,
     railListed: listedRows !== null,
@@ -2941,6 +2985,10 @@ interface DashboardDeps {
    * settings-edit plan's C3): the console's second write, and the one that
    * changes a file on disk rather than starting a run. */
   readonly settingsBridge: SettingsBridge
+  /** licenceBridge is the Project tab's licence key (`licence.save`, S2.7): the
+   * console's third write, and the one that keeps a credential the console hands
+   * to every child it spawns. */
+  readonly licenceBridge: LicenceBridge
   /** linkBridge is the Coordinator's numbers (`link.openPullRequest`, K2a): the
    * one operation that leaves this window, and the only one handed a triple
    * rather than a document's own field. */
@@ -2970,7 +3018,7 @@ interface DashboardDeps {
  * figures in it rather than at an empty panel that fills in later.
  */
 async function mountDashboard(deps: DashboardDeps): Promise<void> {
-  const { document, surface, gate, bridge, rail, railBridge, launchBridge, settingsBridge, linkBridge, wiring, navigator, header } =
+  const { document, surface, gate, bridge, rail, railBridge, launchBridge, settingsBridge, licenceBridge, linkBridge, wiring, navigator, header } =
     deps
   const factory = surface.factory
   const theme = CONSOLE_THEME
@@ -5013,6 +5061,15 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
   const projectsAccountKeysRead = sectionRead({ factory, theme })
   const projectsCredentialsServiceRead = sectionRead({ factory, theme })
 
+  /** projectsLicenceRead is the tab's **eighth** section (the subscriptions
+   * plan's S2.7): the licence key this installation runs under, which the
+   * console keeps itself. It has a lifecycle of its own for the reason every
+   * section here has one, and it is the only one of the eight whose read spawns
+   * no child at all -- `licence.read` answers out of the console's own store
+   * (`src/main/licence-store.ts`), so it neither holds nor is held by a command
+   * line. */
+  const projectsLicenceRead = sectionRead({ factory, theme })
+
   /** leaveProjects ends those sections' busy state when the operator moves to
    * another tab: nothing is in flight for a screen nobody is looking at. */
   leaveProjects = () => {
@@ -5023,6 +5080,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     projectsRetirementsRead.end()
     projectsAccountKeysRead.end()
     projectsCredentialsServiceRead.end()
+    projectsLicenceRead.end()
   }
 
   /**
@@ -5183,6 +5241,23 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
      * makes (`settingsOut`/`settingsToken` are that read's). */
     let accountKeysOut = false
     let accountKeysToken = 0
+    /** licence, licenceSentence, licenceOut and licenceAttempt are the licence
+     * key's own read (`licence.read`, the subscriptions plan's S2.7): the state
+     * and claim set the verifier answered for this installation's key, the
+     * console's own sentence for a read it could not make, whether one is in
+     * flight and which attempt it was. The document is held **whole and
+     * unread**, for `buildAccountKeys`'s reason: the section reads its own reply.
+     */
+    let licence: unknown = null
+    let licenceSentence: string | null = null
+    let licenceOut = false
+    let licenceToken = 0
+    let licenceAttempt = 0
+    /** licenceDrawn is the panel the box is in, or null when the section holds
+     * no form -- a read that did not answer offers none, and an answer to a save
+     * is drawn only while the panel that sent it is still the one on screen
+     * (`settingsEditor`'s own rule, one section over). */
+    let licenceDrawn: LicenceDrawn | null = null
     /** bodyModel is the model the body is drawn from, or null when the body holds
      * something that is not one -- a refusal, or nothing yet. The policy and
      * doctor reads repaint the body **only** when it holds a model: a landing
@@ -5280,6 +5355,12 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
             drawn.credentialsServiceSlot,
             CREDENTIALS_SERVICE_BUSY,
           )
+        }
+        // The licence key (S2.7), the last host the frame mounts: its mark goes
+        // up on its own section like the seven above, and it is the one mark in
+        // this tab whose read is not a child process.
+        if (licenceOut) {
+          projectsLicenceRead.mark(licenceToken, drawn.licence, drawn.licenceSlot, LICENCE_BUSY)
         }
       }
       return drawn
@@ -5621,6 +5702,88 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       )
     }
 
+    /** paintLicence fills the eighth section from what `licence.read` answered.
+     * It is handed the document as it arrived, because the section reads its own
+     * reply (`buildLicence`'s note), and it keeps the handles the drawing
+     * answered so the paste's own event has box, control and outcome without
+     * walking the tree. */
+    const paintLicence = (): void => {
+      const drawn = mount(false)
+      clearSection(drawn.licence, drawn.licenceSlot)
+      const painted = fillLicence(
+        factory,
+        buildLicence({ raw: licence, because: licenceSentence }),
+        drawn.licence,
+      )
+      licenceDrawn = painted
+      wireLicence(painted)
+    }
+
+    /**
+     * wireLicence binds the paste: the one control of this section that writes
+     * anything.
+     *
+     * **The whole save is one press and one sentence.** The box's text goes to
+     * `licence.save` as it was pasted -- trimming and the shape checks belong to
+     * the surface's own argument check (`ipc.ts`'s `licenceKey` kind) and to the
+     * verifier, not to an event handler -- and what comes back is drawn in the
+     * form's outcome region. The key is never echoed into that region, into the
+     * log or into the panel: the answer carries a state, and a sentence when the
+     * save was refused.
+     *
+     * **A save that worked re-reads the section**, rather than drawing a second
+     * answer of its own: the state and the claim set the next read draws are the
+     * verifier's word on the key that was just kept, and the box is emptied --
+     * what it held is kept now, and a credential left in a text field is a
+     * credential on screen for as long as the tab is open.
+     */
+    const wireLicence = (painted: LicenceDrawn): void => {
+      const { box, submit, outcome } = painted
+      if (box === null || submit === null) return
+      let busy = false
+      /** busyNow says a save is in flight: the box and the control that sends it
+       * are disabled and the section says it is busy, so a double press cannot
+       * be two writes of one paste. */
+      const busyNow = (now: boolean): void => {
+        busy = now
+        ;(surface.nodeOf(box) as unknown as { disabled: boolean }).disabled = now
+        ;(surface.nodeOf(submit) as unknown as { disabled: boolean }).disabled = now
+        painted.root.setAttribute('aria-busy', now ? 'true' : 'false')
+      }
+      const send = async (): Promise<void> => {
+        if (busy) return
+        const key = valueOf(surface, box)
+        // An empty box is not a paste: the surface checks the same fact one
+        // layer down (`licenceKey` requires a string of at least one character),
+        // and a press that sent nothing would be answered with a sentence about
+        // an empty string.
+        if (key.trim() === '') return
+        busyNow(true)
+        let reply: unknown = null
+        try {
+          reply = await licenceBridge.saveLicence({ key })
+        } finally {
+          if (licenceDrawn === painted) busyNow(false)
+        }
+        // An answer that landed after the section was drawn again is an answer
+        // about a box that is gone (`settingsEditor`'s rule one section over).
+        if (licenceDrawn !== painted) return
+        const read = licenceSaveOutcomeOf(reply)
+        if (outcome !== null) {
+          surface
+            .nodeOf(outcome)
+            .replaceChildren(surface.nodeOf(renderLicenceOutcome(factory, read)))
+        }
+        if (read.saved) {
+          setValueOf(surface, box, '')
+          beginLicence()
+        }
+      }
+      surface.nodeOf(submit).addEventListener('click', () => {
+        void send()
+      })
+    }
+
     /** load makes the one read and draws it when it is still the latest. */
     const load = async (readToken: number): Promise<void> => {
       budgetOut = true
@@ -5784,6 +5947,41 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       repaintBody()
     }
 
+    /**
+     * loadLicence makes the licence key's read, `licence.read`, and draws the
+     * eighth section from it. The read spawns nothing -- the console's own store
+     * answers it (`src/main/licence-store.ts`) -- so it is the one read of this
+     * tab that cannot fail for want of a child, and the sentence it can be
+     * refused with is the console's own (a machine where the console may not
+     * keep records at all).
+     *
+     * A save re-reads through here as well (`wireLicence`), which is what makes
+     * the section's state after a paste the verifier's answer rather than the
+     * form's claim.
+     */
+    const loadLicence = async (attempt: number): Promise<void> => {
+      // `replyData` and not `documentOf`: these two operations spawn no child,
+      // so their `data` is the answer itself rather than a `Snapshot` wrapping a
+      // CLI document (`src/main/index.ts`'s handler map). What arrives is one
+      // `LicenceReply` -- a state word and a claim set, or a sentence -- and it
+      // is handed to the section unread, because the section reads its own
+      // reply.
+      const answer = replyData(await bridge.readLicence({}))
+      if (licenceAttempt !== attempt) return
+      if (stale(mine)) return
+      licenceOut = false
+      licence = null
+      licenceSentence = null
+      if (!answer.ok) licenceSentence = answer.sentence
+      else licence = answer.data
+      // The mark is taken down through the section helper rather than by the
+      // filler, for the models read's reason: `fillLicence` writes beside the
+      // slot, so nothing else would remove the claim from the host it was made
+      // on.
+      projectsLicenceRead.settle(licenceToken)
+      paintLicence()
+    }
+
     /** beginModels starts the second section's read and puts its mark up -- or,
      * below the floor, makes no read at all and draws the console's own sentence
      * naming the version this panel needs. It is called on every visit, the
@@ -5870,6 +6068,33 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       )
     }
 
+    /** markLicence puts the eighth section's mark up. */
+    const markLicence = (): void => {
+      if (!licenceOut || frame === null) return
+      projectsLicenceRead.mark(licenceToken, frame.licence, frame.licenceSlot, LICENCE_BUSY)
+    }
+
+    /**
+     * beginLicence starts the licence key's read and puts its mark up. It is
+     * called on every visit, the budget's own read or not, for `beginModels`'s
+     * reason: a cached budget view drawn before anything is awaited is not what
+     * keeps this section waiting.
+     *
+     * **It is also what a save re-reads through** (`wireLicence`): the section is
+     * the verifier's answer about the key this installation holds, so the one
+     * thing a paste has to do afterwards is ask the verifier again -- there is no
+     * second drawing of a save's answer, and the panel an operator is looking at
+     * becomes the state their paste produced.
+     */
+    const beginLicence = (): void => {
+      licenceAttempt += 1
+      licenceOut = true
+      licenceToken = projectsLicenceRead.start()
+      if (frame === null) mount(true)
+      else markLicence()
+      void loadLicence(licenceAttempt)
+    }
+
     /** beginSettings starts the third section's read and puts its mark up. It
      * is called on every visit, the budget's own read or not: a cached budget
      * view drawn before anything is awaited is not what keeps the settings panel
@@ -5915,6 +6140,11 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         markManaged()
         markCredentialsService()
       }
+      // The licence key's read is the fifth of them (S2.7): it is started after
+      // the frame's own marks for the reason every section's is -- it puts its
+      // own mark up, and the visit that begins the other reads begins this one
+      // too.
+      beginLicence()
       void loadManaged(managedAttempt)
       void loadPolicy(policyAttempt)
       void loadDoctor(doctorAttempt)
@@ -5948,6 +6178,13 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       doctorAttempt += 1
       doctorOut = true
       credentialsServiceToken = projectsCredentialsServiceRead.start()
+      // The licence key's read is taken with the rest (S2.7). It is started
+      // **before** the frame is mounted, so the shell's own mount puts its mark
+      // up with the others' -- the one difference being that it is the only read
+      // here that answers out of the console rather than out of a child.
+      licenceAttempt += 1
+      licenceOut = true
+      licenceToken = projectsLicenceRead.start()
       const fresh = frame === null
       const drawn = mount(true)
       if (!fresh) {
@@ -5957,6 +6194,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         markAccountKeys()
         markManaged()
         markCredentialsService()
+        markLicence()
       }
       void load(token)
       if (modelsTooOld) paintModels()
@@ -5965,6 +6203,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       void loadManaged(managedAttempt)
       void loadPolicy(policyAttempt)
       void loadDoctor(doctorAttempt)
+      void loadLicence(licenceAttempt)
     }
 
     // The view this screen opens on, if this session has already read it, is
@@ -6801,9 +7040,12 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         })
         jobsStamped = true
       }
-      const fresh = jobsListed.rows.slice(jobsDrawn)
-      if (fresh.length > 0) {
-        bindJobRows(fillCoordinatorJobs(factory, fresh, section.list))
+      if (jobsListed.rows.length > jobsDrawn) {
+        // The whole list goes in, not the page: the rows `jobsDrawn` counts are
+        // the ones already drawn into this `<ul>`, and they are the rows a
+        // reader sees beside the new page, so the endings are answered over all
+        // of them together (SR10, spec part 3).
+        bindJobRows(fillCoordinatorJobs(factory, jobsListed.rows, section.list, jobsDrawn))
         jobsDrawn = jobsListed.rows.length
       } else if (jobsListedAsked && !jobsOut && jobsListed.rows.length === 0 && jobsListed.window !== null) {
         // A page that was read and printed no row: the only state in which the

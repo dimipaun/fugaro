@@ -4,12 +4,14 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/agentenv"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/settings"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -284,6 +286,86 @@ func TestSettingsSetBacksUpAndWritesAtomically(t *testing.T) {
 	if perm := fi.Mode().Perm(); perm != 0o600 {
 		t.Errorf("the backup's mode is %o, want 600", perm)
 	}
+}
+
+// TestSettingsSetAskInAProjectThatIsNotManagedIsANoOp: rule 3 of the flag —
+// the no-op — in a write's own terms, and the same assertion update's tests
+// make: the flagged run IS the plain run with the flag's one line taken out of
+// the middle, and nothing else moved. The flag says why it does nothing here
+// (initflow.AskUnmanaged) and then changes nothing at all: no question is
+// asked, nothing is refused, and the write lands with the flag exactly as it
+// lands without it. Any other answer would be this one command's --ask
+// deciding a step in a project the flag says it leaves alone — and, where
+// nobody can answer, refusing it with a sentence about a managed project that
+// is not this one.
+func TestSettingsSetAskInAProjectThatIsNotManagedIsANoOp(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		terminal bool
+	}{
+		{"no terminal", false},
+		{"a terminal", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, localPath := settingsWriteHome(t)
+			before := readFileString(t, localPath)
+			terminal(t, tc.terminal)
+
+			plain, _, err := executeStdin(t, "", "settings", "set", "commit_name", "person-1", "--layer", "local")
+			if err != nil {
+				t.Fatalf("the run without the flag failed: %v\n%s", err, plain)
+			}
+			written := readFileString(t, localPath)
+			settingsRunAgain(t, localPath, before)
+
+			flagged, _, err := executeStdin(t, "", "settings", "set", "commit_name", "person-1", "--layer", "local", "--ask")
+			if err != nil {
+				t.Fatalf("--ask failed in a project that is not managed: %v\n%s", err, flagged)
+			}
+			if !strings.Contains(flagged, initflow.AskUnmanaged()) {
+				t.Errorf("--ask did not say what the marks answered:\n%s", flagged)
+			}
+			if strings.Contains(flagged, initflow.AskRestored()) || strings.Contains(flagged, initflow.AskRefusal(initflow.Conditions{})) {
+				t.Errorf("--ask answered as if the project were managed:\n%s", flagged)
+			}
+			assertNoPrompt(t, flagged)
+			if got := readFileString(t, localPath); got != written {
+				t.Errorf("--ask wrote a different document than the run without it:\n%s", got)
+			}
+			if stripped := strings.Replace(flagged, initflow.AskUnmanaged()+"\n", "", 1); withoutSettingsRunOwn(stripped) != withoutSettingsRunOwn(plain) {
+				t.Errorf("--ask changed the run in a project that is not managed (the flag's line stripped from the middle).\nwithout: %s\nwith:    %s", plain, flagged)
+			}
+		})
+	}
+}
+
+// settingsRunAgain puts the fixture back the way a run found it — the bytes it
+// read, and no backup of the write that followed — so one fixture can carry the
+// two runs this test compares.
+func settingsRunAgain(t *testing.T, path, text string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	backups, err := filepath.Glob(path + ".bak-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, b := range backups {
+		if err := os.Remove(b); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// settingsRunOwnRE is the one thing two runs over one fixture never agree on:
+// the second the backup of the write before them was named after.
+var settingsRunOwnRE = regexp.MustCompile(`\.bak-\d{8}T\d{6}Z(-\d+)?`)
+
+// withoutSettingsRunOwn is s with that taken out, so the two runs' outputs can
+// be compared for equality.
+func withoutSettingsRunOwn(s string) string {
+	return settingsRunOwnRE.ReplaceAllString(s, ".bak-<the run's own>")
 }
 
 // TestSettingsSetKeepsTheRestOfTheFile: the edit splices bytes, so a comment
@@ -2036,8 +2118,8 @@ func TestSettingsSetTurningAFollowupKeyOnAsksNothing(t *testing.T) {
 // credentials, so `--add` on this key is the widening D846 types — the owner's
 // own step, which asks nothing at their terminal (D1552, D1555) — and not the
 // harmless direction `--add` is on a list that narrows something. `--remove`
-// takes someone off the list, which is the tightening half, and keeps the
-// ordinary y/N.
+// takes someone off the list, which is the tightening half and the ordinary
+// edit, and it asks nothing either (D1540).
 func TestSettingsSetTrustedAddIsAWideningThatAsksNothing(t *testing.T) {
 	settingsWriteHome(t)
 	path := settingsWriteCheckout(t, settingsRepoYAML("followup:\n  trusted:\n    - \"100000001\"\n"))
@@ -2061,11 +2143,13 @@ func TestSettingsSetTrustedAddIsAWideningThatAsksNothing(t *testing.T) {
 	}
 
 	// Taking a name off the list narrows who can steer the run, so it is the
-	// ordinary y/N write and a terminal answering y is enough.
+	// ordinary write — and the ordinary write asks nothing, terminal or not.
 	fakeTerminal(t)
-	if out, _, err := executeStdin(t, "y\n", "settings", "set", "followup.trusted", "--remove", "100000001", "--layer", "repo"); err != nil {
+	out, _, err = executeStdin(t, "", "settings", "set", "followup.trusted", "--remove", "100000001", "--layer", "repo")
+	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
+	assertNoPrompt(t, out)
 	if got := readFileString(t, path); strings.Contains(got, "100000001") {
 		t.Errorf("fugaro.yaml still carries the removed account:\n%s", got)
 	}

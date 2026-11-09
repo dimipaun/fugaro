@@ -159,6 +159,13 @@ var credentialEnv = map[string][]string{
 
 var credentialSecretEnv = map[string]string{gitprov.KindBitbucket: gitTokenEnv, gitprov.KindGitHub: githubAppKeyEnv}
 
+// contextDirDefault is the directory a build builds from when nothing names
+// another: the copied definition's own directory in the template's
+// /workspace, which is where CatalogDockerfileStep leaves the Dockerfile. A
+// catalog entry that names a context builds from its checkout instead, which
+// reaches the build step as _CONTEXT_DIR.
+const contextDirDefault = "/workspace/context"
+
 // BuildRequest is the Cloud Build request for s in project: images.CloudBuild
 // with its substitutions set, the credential step's secret and env chosen
 // by provider, the provider credential's version in availableSecrets, and
@@ -217,6 +224,11 @@ func BuildRequest(project string, s BuildSpec) (*cloudbuild.Build, error) {
 		"_BUCKET":               s.Bucket,
 		"_SLUG":                 s.Slug,
 		"_PROJECT_LAYER_SHA256": s.ProjectLayerSHA256,
+		// The directory the build step builds from. A repository's own image
+		// renders its Dockerfile beside the checkout the source step made, so
+		// this is the template's default; a catalog entry that names a
+		// context sends its own directory instead.
+		"_CONTEXT_DIR": contextDirDefault,
 	}
 	switch s.GitProvider {
 	case gitprov.KindBitbucket:
@@ -230,7 +242,14 @@ func BuildRequest(project string, s BuildSpec) (*cloudbuild.Build, error) {
 	}
 	b.Options.MachineType = s.MachineType
 	b.Options.Logging = "CLOUD_LOGGING_ONLY"
+	// The timeout is what the estimator prices the build at, and it counts
+	// from the moment the build starts; the queue TTL is how long the build
+	// may wait for a worker before that, and the lease's deadline covers both
+	// (internal/budget's MaxBuildSeconds and MaxBuildQueueSeconds, each pinned
+	// equal to these two by a test). Both are set rather than left to Cloud
+	// Build's defaults, which the deadline's arithmetic would depend on.
 	b.Timeout = "3600s"
+	b.QueueTtl = "3600s"
 	return b, nil
 }
 

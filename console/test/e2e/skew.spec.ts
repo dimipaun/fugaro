@@ -77,6 +77,7 @@ const consoleDir = join(__dirname, '..', '..')
 const MODULES: readonly string[] = Object.freeze([
   'shared/availability.js',
   'shared/sanitize.js',
+  'shared/shortid.js',
   'shared/launcher.js',
   'shared/rigor.js',
   'shared/schema.js',

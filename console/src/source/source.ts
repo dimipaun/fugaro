@@ -685,7 +685,7 @@ export function handlersFor(
 }
 
 /**
- * CliBackedHandlers is the whole surface **minus the four operations that are
+ * CliBackedHandlers is the whole surface **minus the six operations that are
  * not reads of the CLI**: `startup.compatibility` (desktop-console plan Task
  * 3.3), whose answer is the handshake `src/main/index.ts` ran before it built
  * any window, `run.launch` (V2.5.1a, design section 5.1 rule 11), which is the
@@ -695,18 +695,22 @@ export function handlersFor(
  * than a `CliSource` -- `settings.edit` (the settings-edit plan's C3, rule 12),
  * which is the console's **second write** and the same shape: the window is
  * `src/main/confirm.ts`'s, the flow is `src/main/settingsedit.ts`'s, and what
- * this module answers is the two phases that flow spawns -- and
- * `link.openPullRequest` (K2a, D815), which reads no
- * CLI either: it builds a URL from three of its own arguments and hands it to
- * the console's one call to `shell.openExternal`. All four are joined in at the
- * entry point, as
+ * this module answers is the two phases that flow spawns --
+ * `link.openPullRequest` (K2a, D815), which reads no CLI either: it builds a URL
+ * from three of its own arguments and hands it to the console's one call to
+ * `shell.openExternal` -- and the licence section's two (the subscriptions
+ * plan's S2.7), which read the console's own store rather than any binary:
+ * `licence.read` answers the active installation's state and claims, and
+ * `licence.save` verifies a pasted key and writes it into that store. All six
+ * are joined in at the entry point, as
  * `{ ...handlersFor(source, deps), 'startup.compatibility': … , 'run.launch': … ,
- * 'settings.edit': … , 'link.openPullRequest': … }` with `startupCompatibility`
- * and `openPullRequestHandler` from `src/main/ipc.ts`, the launcher from
- * `src/main/launch.ts` and the editor from `src/main/settingsedit.ts`. **Nothing
- * registers the handlers until that task lands**: today `main()` serves the
- * bundle and starts the lifecycle, and no window has a preload to reach a
- * channel with.
+ * 'settings.edit': … , 'link.openPullRequest': … , 'licence.read': … ,
+ * 'licence.save': … }` with `startupCompatibility` and `openPullRequestHandler`
+ * from `src/main/ipc.ts`, the launcher from `src/main/launch.ts`, the editor
+ * from `src/main/settingsedit.ts` and the two licence handlers from
+ * `src/main/index.ts`. **Nothing registers the handlers until that task lands**:
+ * today `main()` serves the bundle and starts the lifecycle, and no window has
+ * a preload to reach a channel with.
  *
  * The `Omit` is still a *closed* type: a key typed here that is not an operation
  * is an excess property, and an operation deleted from `CONSOLE_OPERATIONS`
@@ -717,5 +721,10 @@ export function handlersFor(
  */
 export type CliBackedHandlers = Omit<
   ConsoleHandlers,
-  'startup.compatibility' | 'run.launch' | 'settings.edit' | 'link.openPullRequest'
+  | 'startup.compatibility'
+  | 'run.launch'
+  | 'settings.edit'
+  | 'link.openPullRequest'
+  | 'licence.read'
+  | 'licence.save'
 >

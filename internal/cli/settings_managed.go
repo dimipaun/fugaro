@@ -91,12 +91,13 @@ import (
 // from content the session can write (spec §1, spec §7).
 //
 // Why the class the gate judges under is YesOrTyped and not the edit's own.
-// The edit's Typed form is what the confirmation asks a PERSON for, and it
-// stays the fence's (settingsEdit.editClass): nothing here touches it. What the
+// The edit's Typed form is the class no session writes and the owner's own hand
+// keeps, and it stays the fence's (settingsEdit.editClass): nothing here
+// touches it. What the
 // gate adds is the refusal the session reads instead of the marker's own — and
 // the typed edit is refused BY A RULE of the gate (settingsOwnerOnlyRule), so
 // the session reads which declaration it tried to move rather than "run this
-// yourself". Both halves hold at once: an edit the typed confirmation reserves
+// yourself". Both halves hold at once: an edit the Typed class reserves
 // is refused by the gate, and an edit the gate admitted without noticing the
 // typed form would still be refused by the fence, because the fence decides
 // `Typed` on its own (D1026's rule is asked there and is not restated here).
@@ -113,32 +114,61 @@ import (
 // Why the OWNER's own terminal reads now, where it read nothing before. The
 // gate's second job is the owner's ruling of 2026-11-01 — a managed project
 // takes no confirmation prompt, which is the whole point of a managed project —
-// and at a terminal the thing it stands in for is this command's own y/N. So
-// the marks are read exactly where that question would be asked: a real
-// terminal, without --yes (settingsAsk). A run that asks nothing reads nothing:
-// --yes answers the edit itself, and a run with no terminal is refused before
-// the file is touched, so neither has a question for the gate to answer and
-// neither pays for the read. The aim is the question's own condition, asked
-// once, in settingsGateAsks.
+// and the write's own y/N was the question the gate stood in for. That y/N is
+// gone (D1540) and the terminal it was asked at is not, so the read is made
+// where the write is the owner's own: a real terminal, which is the condition
+// the prompt had, or --ask, which puts that one question back (D1544). A run
+// with neither writes without asking anything and has no question for the gate
+// to stand in for, so it pays for no read either. The aim is the write's own
+// condition, asked once, in settingsGateReads — which keeps the one class the
+// gate may not be read for at that terminal, the widening the typed name was
+// reserved for (settingsOwnerOnlyRule, D1026; the owner's door, D1552, D1555).
 
 // settingsGateMarker is the coding agent's session this command was run in, ""
 // for a person at a terminal. It is read once per command, here, so the two
 // places that ask "is the gate this command's business" cannot disagree.
 func settingsGateMarker(terminal bool) string { return agentMarker(os.Getenv, terminal) }
 
-// settingsAsk is the caller's half of whether this command would ask: a real
-// terminal and no --yes. It is what the gate is read for in a session that is
-// not a coding agent's, and it is read from the command the caller is already
-// holding (its own stdin), so the two answers cannot disagree.
-func settingsAsk(cmd *cobra.Command, yes bool) bool {
-	return !yes && stdinIsTerminal(cmd.InOrStdin())
+// settingsWriteOwnTerminal is the caller's half of whether the gate is read for
+// this write: a real terminal. It is read from the command the caller is
+// already holding (its own stdin), so the two answers cannot disagree.
+func settingsWriteOwnTerminal(cmd *cobra.Command) bool {
+	return stdinIsTerminal(cmd.InOrStdin())
 }
 
-// settingsGateAsks reports whether one edit is one this command would ask a
-// confirmation for — the coding agent's refusal SD9 makes, or the y/N a person
-// at a terminal is asked. applySettingsEdit reads exactly this condition, and a
-// gate consulted anywhere else would be reading marks for a write nobody would
-// have been asked about (D1025).
+// settingsGateReads is whether the gate is read for one write a command is
+// about to make: the write's own question, put once, in the one place every
+// caller asks it. It was `settingsAsk(cmd, o.yes) || o.ask` — "a real terminal
+// and no --yes", the condition the write's y/N was asked under — while that
+// y/N was the question the gate stood in for; the y/N is gone (D1540) but the
+// condition is not, because it is the same question (whose word is this step
+// made on? a person at their own terminal, or the flag that puts the question
+// back) and a read made anywhere else is one this write does not need.
+//
+// ownerOnly is the class the terminal term does not cover: the step the gate
+// refuses outright, whose door D1552 and D1555 name as the owner's own terminal
+// and no session. It is `settings set`'s `typed` (settingsOwnerOnlyRule refuses
+// every such edit, D1026) and `accounts add`'s declaration this command's own
+// rules refuse (accountsAddOwnerOnly: D868's widening, D1026's token). Reading
+// the marks for one of those at that terminal is what takes the door away: the
+// gate answers the person standing there with the refusal it keeps for a
+// session, so the step is written only by the flag that answers for it and
+// never by the terminal the two decisions name. Skipping the read opens nothing
+// to a session, which is refused at the fence whatever --yes says.
+//
+// --ask reads the marks whatever the class is: the flag's question is decided
+// where the marks are (askDecide), so the read it needs is the one this
+// function answers for, and a widening a managed project's gate refuses to the
+// flag is the refusal the flag met before this row existed.
+func settingsGateReads(cmd *cobra.Command, yes, ask, ownerOnly bool) bool {
+	return (settingsWriteOwnTerminal(cmd) && !yes && !ownerOnly) || ask
+}
+
+// settingsGateAsks reports whether one edit is one made on the owner's own
+// word — the coding agent's refusal SD9 makes, or the write a person at a
+// terminal (or one --ask) is making. applySettingsEdit reads exactly this
+// condition, and a gate consulted anywhere else would be reading marks for a
+// write this condition does not cover (D1025).
 func settingsGateAsks(marker string, asks bool, kind settingsDocKind, typed bool) bool {
 	if marker != "" {
 		return kind != settingsDocRepo || typed
@@ -244,8 +274,8 @@ func settingsWriteGate(ctx context.Context, lc *localcfg.Config, marker, subcomm
 }
 
 // settingsManagedStep is the whole of one command's call of the gate: read,
-// judge, admit. It answers the value the step's confirmation is decided under
-// (the zero value is "not managed", which keeps today's refusal), the gate
+// judge, admit. It answers the value the step is decided under (the zero value
+// is "not managed", which keeps today's refusal), the gate
 // itself — whose recorded call the caller makes after its write, and whose zero
 // value records nothing — and the gate's own refusal, in the gate's own words,
 // when the gate refused the document.
@@ -253,7 +283,8 @@ func settingsWriteGate(ctx context.Context, lc *localcfg.Config, marker, subcomm
 // It is `accounts add`'s accountsAddGate in this command's own terms, and the
 // three answers are the same three for the same reasons. What differs is when
 // it is asked at all (settingsGateAsks, read once here, over the caller's own
-// settingsAsk), which document it judges, and that it admits nothing unless
+// settingsWriteOwnTerminal), which document it judges, and that it admits
+// nothing unless
 // `selPath` is the selected project's own config file
 // (settingsConfigIsTheProjects).
 func settingsManagedStep(ctx context.Context, lc *localcfg.Config, selPath string, target settingsTarget, key string, typed bool, why string, old, newData []byte, subcommand string, asks bool) (initflow.Managed, managedGate, error) {
@@ -298,7 +329,7 @@ func settingsManagedStep(ctx context.Context, lc *localcfg.Config, selPath strin
 
 // settingsManagedVerdict judges the document one settings write would land,
 // with this command's rules, and answers the verdict the gate decides the
-// session's confirmation under.
+// session's write under.
 //
 // The document is the bytes the write would put in the file (D1022's digest is
 // taken from them), judged against the bytes the file holds now — and it is the

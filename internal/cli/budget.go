@@ -1118,6 +1118,37 @@ type nodeEdit struct {
 	raise  bool
 }
 
+// raiseWhat names the act a refused run was making, in the refusal's own words
+// (raiseOwnerOnly) and in the question --ask puts to the owner. Raising a cap
+// is what that sentence has always been about, and a run that raises one keeps
+// the words it had. Choosing the mode is the other form the fence covers — the
+// mode node and the record beside it, either of which can be the one that
+// moves — and a question about caps would have the owner answer with the wrong
+// fact in mind.
+func raiseWhat(edits []*nodeEdit) (what, question string) {
+	const (
+		capWhat  = "raising a cap"
+		capQ     = "raise a cap, so runs may spend more than before?"
+		modeWhat = "choosing the project-wide budget mode"
+		modeQ    = "choose the budget mode yourself, so no later `fugaro update` raises it?"
+	)
+	raisingCap, choosingMode := false, false
+	for _, e := range edits {
+		if !e.raise || e.noop {
+			continue
+		}
+		if e.path == budget.PathMode || e.path == budget.PathModeSet {
+			choosingMode = true
+		} else {
+			raisingCap = true
+		}
+	}
+	if choosingMode && !raisingCap {
+		return modeWhat, modeQ
+	}
+	return capWhat, capQ
+}
+
 type microField struct {
 	key, name string
 	set       *budget.Micros
@@ -1214,6 +1245,40 @@ func buildEdits(ctx context.Context, db *rtdb.Client, p *setPlan, slug string) (
 			e.raise = cur == budget.ModeEnforce && p.mode == budget.ModeObserve
 		}
 		edits = append(edits, e)
+
+		// And the record of who chose it beside the mode (D1548, task T16):
+		// `fugaro update` raises a *seeded* mode to enforce and may never touch
+		// one a person chose, so the node beside the mode says which this is. A
+		// mode given on this command line is the owner's own choice — this
+		// command is theirs — so it is recorded as such even when the mode
+		// itself does not change.
+		//
+		// Writing that record beside a mode that is not enforce is one more form
+		// for the owner alone, and the one a coding agent's session could
+		// otherwise make unopposed: the mode node is a no-op there while this
+		// node moves, and the update's raise — the step that puts the
+		// installation's builds under its caps — would never fire again. So this
+		// edit carries the same raise flag a loosened cap does. `--mode enforce`
+		// does not: it leaves the installation enforcing, the state the update
+		// wanted, and a tightening stays open to the session.
+		var curSet string
+		setEtag, setFound, err := read(budget.PathModeSet, &curSet)
+		if err != nil {
+			return nil, err
+		}
+		se := &nodeEdit{path: budget.PathModeSet, etag: setEtag, newVal: budget.ChosenByOwner,
+			raise: p.mode != budget.ModeEnforce}
+		if setFound && curSet == budget.ChosenByOwner {
+			se.noop = true
+			se.lines = []string{"mode choice: the owner's (unchanged)"}
+		} else {
+			shown := curSet
+			if !setFound {
+				shown = "not set"
+			}
+			se.lines = []string{fmt.Sprintf("mode choice: %s -> the owner's", oneLine(shown))}
+		}
+		edits = append(edits, se)
 	}
 
 	if p.reserve != nil {
@@ -1423,10 +1488,11 @@ func runBudgetSet(cmd *cobra.Command, o *budgetSetOptions) error {
 			return nil
 		}
 		if raise {
-			if err := raiseOwnerOnly(cmd, "raising a cap", ownerRaiseCommand(cmd, p.repo, lc.Name)); err != nil {
+			what, question := raiseWhat(edits)
+			if err := raiseOwnerOnly(cmd, what, ownerRaiseCommand(cmd, p.repo, lc.Name)); err != nil {
 				return err
 			}
-			ok, err := askConfirm(cmd, "raise a cap, so runs may spend more than before?")
+			ok, err := askConfirm(cmd, question)
 			if err != nil {
 				return err
 			}

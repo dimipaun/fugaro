@@ -203,8 +203,8 @@ type settingsWriteOptions struct {
 	yes     bool
 	// ask is --ask, the symmetric half of --yes (the owner's rule of
 	// 2026-11-04): in a project whose marks say it is managed, where this
-	// command would ask nothing, it asks the write's own confirmation —
-	// ordinary or typed — instead. Unmanaged, it says so and changes nothing;
+	// command would ask nothing, it asks the write's own question instead — and
+	// never one for a widening. Unmanaged, it says so and changes nothing;
 	// with no terminal, in a managed project, it refuses rather than proceeds
 	// (managed_ask.go is the whole of it). It is refused beside --yes.
 	ask    bool
@@ -1298,7 +1298,7 @@ func settingsListSubset(a, b string) bool {
 // settingsTypedWrite reports whether this write is one D846 reserves for the
 // owner's own hand, and the sentence saying what it widens: the write prints it
 // and the dry run carries it as `why`, and it no longer ends by naming a
-// confirmation, because a widening asks for none (settings_write.go, D1552).
+// question, because a widening asks none (settings_write.go, D1552).
 // mode is the edit being made: set, unset, add or remove. `remove` takes one
 // member out of a list, which narrows it, so it is never the typed form and has
 // no case below; `unset` always is, for a ceiling, because it hands the
@@ -1569,8 +1569,14 @@ func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) e
 	// place: the flag has to speak about the marks — a refusal in a managed
 	// project's session with no terminal, a sentence anywhere else — so the
 	// read it needs is made even where the edit itself would have asked
-	// nothing (--yes, or no terminal at all).
-	managed, gate, err := settingsManagedStep(cmd.Context(), lc, sel.Path, target, key, typed, why, old, newData, "settings set", settingsAsk(cmd, o.yes) || o.ask)
+	// nothing (--yes, or no terminal at all). A widening is the one class the
+	// read is skipped for at the owner's own terminal: the gate refuses every
+	// one of them (settingsOwnerOnlyRule, D1026), and a session is refused at
+	// the fence whatever --yes says, so reading the marks there would take away
+	// the one door a widening has and leave every ceiling of a managed project
+	// unwidenable. --ask still reads them: the flag puts a question back
+	// (D1544), and a question is what the read stands in for.
+	managed, gate, err := settingsManagedStep(cmd.Context(), lc, sel.Path, target, key, typed, why, old, newData, "settings set", settingsGateReads(cmd, o.yes, o.ask, typed))
 	if err != nil {
 		return err
 	}
@@ -1667,8 +1673,8 @@ func runSettingsUnset(cmd *cobra.Command, args []string, o settingsWriteOptions)
 		edit.DryRun = &settingsDryRun{key: key, layer: target.layer, oldValue: oldValue, newValue: settingsValueIn(newData, target.keyPath), jsonOut: o.jsonOut}
 	}
 	// The read and the flag's own sentence: the same pair, in the same order,
-	// as the set path above.
-	managed, gate, err := settingsManagedStep(cmd.Context(), lc, sel.Path, target, key, typed, why, old, newData, "settings unset", settingsAsk(cmd, o.yes) || o.ask)
+	// as the set path above (settingsGateReads is the condition both pass).
+	managed, gate, err := settingsManagedStep(cmd.Context(), lc, sel.Path, target, key, typed, why, old, newData, "settings unset", settingsGateReads(cmd, o.yes, o.ask, typed))
 	if err != nil {
 		return err
 	}

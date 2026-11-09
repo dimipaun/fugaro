@@ -58,7 +58,10 @@ func TestPlanGraphPrintsTheArtifact(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &doc); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if doc.SchemaVersion != plan.SchemaVersion || len(doc.Nodes) != 2 || len(doc.Edges) != 1 {
+	// planGraphDoc is a v2 document, and the read carries the version it read
+	// rather than the newest this build writes: a graph written before the
+	// current schema stays the document it is.
+	if doc.SchemaVersion != 2 || len(doc.Nodes) != 2 || len(doc.Edges) != 1 {
 		t.Fatalf("read back %+v, want the fixture's schema version, two nodes and one edge", doc)
 	}
 
@@ -171,7 +174,7 @@ func TestPlanGraphRefusesWhatItCannotRender(t *testing.T) {
 	}{
 		{"malformed", `{"schema_version": 1, "plan": "p.md", "nodes": [`, "not JSON"},
 		{"a future schema version", `{"schema_version": 9, "plan": "p.md", "nodes": [], "edges": []}`,
-			"schema version 9 and this build reads version 2"},
+			"schema version 9 and this build reads version 3"},
 		{"a cycle", `{"schema_version": 1, "plan": "p.md", "nodes": [
 			{"id": "a", "title": "one", "footprint": {"prediction": true, "paths": []}},
 			{"id": "b", "title": "two", "footprint": {"prediction": true, "paths": []}}],

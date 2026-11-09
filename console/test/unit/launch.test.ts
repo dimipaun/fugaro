@@ -76,7 +76,7 @@ import {
   launchOutcomeUnknown,
 } from '../../src/main/launch'
 import type { ConfirmView, FrozenLaunch, LaunchConfirmer, LaunchTarget, TargetLookup } from '../../src/main/launch'
-import { RUN_LAUNCH_EQUALS_FLAGS, assertArgvFlags, privateWorkingDirectory } from '../../src/main/spawn'
+import { LICENCE_KEY_VAR, RUN_LAUNCH_EQUALS_FLAGS, assertArgvFlags, privateWorkingDirectory } from '../../src/main/spawn'
 import type { ChildSpawner, SpawnOptionsLike, SpawnedChildLike, Timers } from '../../src/main/spawn'
 import type { RecordedSpawn, SpawnLogWriter } from '../../src/main/spawnlog'
 
@@ -445,6 +445,10 @@ function runner(options: {
    * default, which is the console's own shape (the target is built from the
    * name it was given). */
   readonly lookUp?: (project: string) => TargetLookup | Promise<TargetLookup>
+  /** `licenceKey` is the store's reader, as `src/main/index.ts` wires it: the
+   * one test below that is about the key a launch may hand its child. Absent
+   * everywhere else, which is a launcher with no key to hand. */
+  readonly licenceKey?: (project: string) => string | undefined
 }): ReturnType<typeof createLaunchRunner> {
   const now = options.now ?? ((): number => NOW)
   const wallClock = options.wallClock ?? now
@@ -456,6 +460,7 @@ function runner(options: {
     appEnv: { HOME: '/home/person-1' },
     ...(options.spawner === undefined ? {} : { spawner: options.spawner }),
     ...(options.log === undefined ? {} : { log: options.log }),
+    ...(options.licenceKey === undefined ? {} : { licenceKey: options.licenceKey }),
     timers: options.timers ?? neverFires(),
     now,
     wallClock,
@@ -681,6 +686,33 @@ describe('the launch, and the argv it writes', () => {
     for (const line of log.lines) {
       for (const word of line.argv) expect(word).not.toContain(marker)
     }
+  })
+
+  it('hands the store’s key to no child while no release takes it back out', async () => {
+    // The launch is the child whose whole purpose is the licence, so it is the
+    // one that would put the key into the environment of `claude -p` and of
+    // every program that run starts. `launch.ts` asks `licenceKeySupported` of
+    // the version the handshake read **before** it reads the store, and the
+    // floor is unset until a CLI release removes the variable from its own
+    // environment (`LICENCE_KEY_CLI_FLOOR`, `src/shared/version.ts`), so a key
+    // the store would hand over is handed to nobody. The target is this file's
+    // own default -- a CLI at the launch floor, 0.11.2, which no release
+    // carrying the removal can be at or below -- so the case holds however the
+    // constant moves.
+    const spawner = completingSpawner()
+    const held = runner({
+      confirmer: answeringConfirmer(true),
+      spawner,
+      licenceKey: () => 'the key the store would hand over',
+    })
+
+    const outcome = await held.launch(request())
+    expect(outcome.ok).toBe(true)
+
+    const call = spawner.calls[0] as SpawnCall
+    expect(call.options.env[LICENCE_KEY_VAR]).toBeUndefined()
+    // The hand-off itself is not what this case is about: `planFor` given a key
+    // still writes it, and `licence-store.test.ts` holds that half.
   })
 
   it('hands the task to the child on its stdin, ends the stream, and gives it no other descriptor', async () => {

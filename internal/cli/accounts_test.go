@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget"
-	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -494,8 +493,10 @@ func TestAccountsLsStateReadIsBounded(t *testing.T) {
 // TestAccountsClearMark is C1.21's clear: the operator replaces a refused
 // token, then clears the account's mark, and the mark becomes available. The
 // write is the operator's own (an admin), it is conditional (PutIfMatch, so a
-// mark the service changed under it is not lost), and it needs the project's
-// name typed — a state the service is holding is not dropped unconfirmed.
+// mark the service changed under it is not lost), and it asks nothing (D1540):
+// a state the service is holding is dropped by the operator's own run, and the
+// sentence this clear prints is what says which mark and which state it took —
+// with a terminal on stdin and without one, since neither is a question.
 func TestAccountsClearMark(t *testing.T) {
 	f := newBudgetFixture(t, "")
 	f.appendConfig(t, claudeAccountsConfig)
@@ -505,29 +506,12 @@ func TestAccountsClearMark(t *testing.T) {
 	f.db.Set(credsMarkPath("acme-overflow"), map[string]any{
 		"state": "exhausted", "until": now.Add(time.Hour).Format(time.RFC3339Nano)})
 
-	// No terminal and no --yes: refused, and nothing written.
 	noTerminal(t)
-	if _, _, err := execute(t, "accounts", "clear", "acme-personal"); err == nil || ExitCode(err) != ExitUserError {
-		t.Fatalf("err = %v, want a user error refusing without a confirmation", err)
-	}
-	if m, _ := f.db.Value(credsMarkPath("acme-personal")).(map[string]any); m["state"] != "broken" {
-		t.Fatalf("mark = %v, want it untouched", m)
-	}
-
-	// A terminal, and the wrong project name typed: still refused.
-	typed(t)
-	if _, _, err := executeStdin(t, "yes\n", "accounts", "clear", "acme-personal"); err == nil {
-		t.Fatal("a wrong project name confirmed the clear")
-	}
-	if m, _ := f.db.Value(credsMarkPath("acme-personal")).(map[string]any); m["state"] != "broken" {
-		t.Fatalf("mark = %v, want it untouched", m)
-	}
-
-	// The project's name: cleared.
-	out, _, err := executeStdin(t, "aurora\n", "accounts", "clear", "acme-personal")
+	out, _, err := execute(t, "accounts", "clear", "acme-personal")
 	if err != nil {
 		t.Fatal(err)
 	}
+	assertNoPrompt(t, out)
 	m, _ := f.db.Value(credsMarkPath("acme-personal")).(map[string]any)
 	// creds.Cleared() is the available mark and nothing else: its two zero
 	// times are the package's own wire form (Mark's fields carry omitempty,
@@ -540,12 +524,12 @@ func TestAccountsClearMark(t *testing.T) {
 		t.Fatalf("output = %q, want the account and the state that was cleared", out)
 	}
 
-	// An exhausted mark is the other state an operator clears, and --yes needs
-	// no terminal.
-	noTerminal(t)
-	if _, _, err := execute(t, "accounts", "clear", "acme-overflow", "--yes"); err != nil {
+	// An exhausted mark is the other state an operator clears.
+	out, _, err = execute(t, "accounts", "clear", "acme-overflow")
+	if err != nil {
 		t.Fatal(err)
 	}
+	assertNoPrompt(t, out)
 	if m, _ := f.db.Value(credsMarkPath("acme-overflow")).(map[string]any); m["state"] != "available" {
 		t.Fatalf("mark = %v, want available", m)
 	}
@@ -553,8 +537,30 @@ func TestAccountsClearMark(t *testing.T) {
 	// Clearing an available mark is refused rather than written: there is
 	// nothing to clear, and a write would be a change the operator did not ask
 	// for.
-	if _, _, err := execute(t, "accounts", "clear", "acme-overflow", "--yes"); err == nil {
+	if _, _, err := execute(t, "accounts", "clear", "acme-overflow"); err == nil {
 		t.Fatal("clearing an available mark was accepted")
+	}
+}
+
+// TestAccountsClearAsksNothing is the same clear at a terminal (D1540): the
+// person's own shell is stdin, and the run does not stop at a question waiting
+// for a line — the mark is cleared while the terminal's own input is still
+// unread. `accounts clear` registers no --ask, so nothing puts the question
+// back either.
+func TestAccountsClearAsksNothing(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	f.appendConfig(t, claudeAccountsConfig)
+	since := time.Now().UTC().Add(-time.Minute).Truncate(time.Second).Format(time.RFC3339Nano)
+	f.db.Set(credsMarkPath("acme-personal"), map[string]any{"state": "broken", "since": since})
+
+	terminal(t, true)
+	out, _, err := executeStdin(t, "n\nno\n", "accounts", "clear", "acme-personal")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	assertNoPrompt(t, out)
+	if m, _ := f.db.Value(credsMarkPath("acme-personal")).(map[string]any); m["state"] != "available" {
+		t.Errorf("mark = %v, want the available mark the clear writes", m)
 	}
 }
 
@@ -766,29 +772,30 @@ func TestAccountsClearRefusesNoAgentsSession(t *testing.T) {
 	}
 }
 
-// markFlip is the operator's terminal in the test below: the first time the
-// command reads the confirmation, it changes the stored mark — exactly where
-// the service marking the credential at that same moment would — and then
-// answers the confirmation with the project's name.
-type markFlip struct {
-	db   *gcpfake.RTDB
-	path string
-	mark map[string]any
-	line string
-	done bool
-}
-
-func (m *markFlip) Read(p []byte) (int, error) {
-	if !m.done {
-		m.done = true
-		m.db.Set(m.path, m.mark)
-	}
-	if m.line == "" {
-		return 0, io.EOF
-	}
-	n := copy(p, m.line)
-	m.line = m.line[n:]
-	return n, nil
+// markFlippedUnderTheRead is the service marking a credential at the exact
+// moment the command is about to write under it: the conditional read
+// (creds.RTDBStore.UpdateMark's, the one carrying the ETag) is held unanswered
+// by the fake, the new mark is stored, and only then is the read let through —
+// so the state the callback judges is the service's, not the one the run read
+// and announced a moment earlier.
+//
+// It is where the typed confirmation used to sit in these two tests: that read
+// was the moment between the command's own read and its write, and with no
+// prompt left in the command (D1540) the instant has to be made by the fake
+// rather than by a test's stdin.
+func markFlippedUnderTheRead(t *testing.T, f *budgetFixture, path string, mark map[string]any) {
+	t.Helper()
+	stamped, release := f.db.HoldNext(path)
+	t.Cleanup(release)
+	go func() {
+		select {
+		case <-stamped:
+		case <-t.Context().Done():
+			return
+		}
+		f.db.Set(path, mark)
+		release()
+	}()
 }
 
 // The clear re-decides on the value it writes under, not on the one it read
@@ -800,57 +807,58 @@ func TestAccountsClearReDecidesUnderTheWrite(t *testing.T) {
 	f := newBudgetFixture(t, "")
 	f.appendConfig(t, claudeAccountsConfig)
 	now := time.Now().UTC().Truncate(time.Second)
-	f.db.Set(credsMarkPath("acme-personal"), map[string]any{
+	mark := credsMarkPath("acme-personal")
+	f.db.Set(mark, map[string]any{
 		"state": "broken", "since": now.Add(-time.Minute).Format(time.RFC3339Nano)})
-	typed(t)
 
-	// The state the service writes while the operator is answering: one this
-	// Fugaro must not clear (a probe is what ends a backoff, C1.12).
+	// The state the service writes while the operator's run is under way: one
+	// this Fugaro must not clear (a probe is what ends a backoff, C1.12).
 	held := map[string]any{"state": "backed_off", "until": now.Add(15 * time.Minute).Format(time.RFC3339Nano)}
-	in := &markFlip{db: f.db, path: credsMarkPath("acme-personal"), mark: held, line: "aurora\n"}
-	if _, _, err := executeStdinReader(t, in, "accounts", "clear", "acme-personal"); err == nil || ExitCode(err) != ExitUserError {
-		t.Fatalf("err = %v, want a user error: the state under the write is not one to clear", err)
+	markFlippedUnderTheRead(t, f, mark, held)
+
+	out, _, err := execute(t, "accounts", "clear", "acme-personal")
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a user error: the state under the write is not one to clear\n%s", err, out)
 	}
-	if !in.done {
-		t.Fatal("the command never read the confirmation, so the mark was never changed under it")
-	}
-	m, _ := f.db.Value(credsMarkPath("acme-personal")).(map[string]any)
+	m, _ := f.db.Value(mark).(map[string]any)
 	if m["state"] != "backed_off" || m["until"] != held["until"] {
 		t.Fatalf("mark = %v, want the service's own write untouched", m)
 	}
 }
 
-// The state the write lands on must be the state the operator CONFIRMED, and
-// not merely one of the two an operator may clear. Exhausted and broken are
+// The state the write lands on must be the state the run announced, and not
+// merely one of the two an operator may clear. Exhausted and broken are
 // different holds — one ends at a reset time by itself, the other is a 401 only
 // an operator ends — and the reachable flip is exhausted to broken: creds.Break
 // is what the 401 path writes and it takes no previous mark, so an exhausted
-// mark becomes broken at any moment, including between the read the
-// confirmation was worded from and the write. (Broken to exhausted is not a
-// transition this release makes — Exhaust and ProbeFailed return a broken mark
-// unchanged, ProbeSucceeded applies only to a backed-off one — and that refusal
-// is what keeps a 429 or a probe from taking a 401 off; the guard below is the
-// same direction, not its opposite.) A clear confirmed for "exhausted until
-// 14:00" that landed on a broken mark the service recorded meanwhile would take
-// off the newer hold and put a refused token back in the cascade's rotation:
-// the same failure the test above covers, one state over, and the one the
-// confirmation's own words ("clear the exhausted mark of …") do not cover.
+// mark becomes broken at any moment, including between the read the sentence
+// was worded from and the write. (Broken to exhausted is not a transition this
+// release makes — Exhaust and ProbeFailed return a broken mark unchanged,
+// ProbeSucceeded applies only to a backed-off one — and that refusal is what
+// keeps a 429 or a probe from taking a 401 off; the guard below is the same
+// direction, not its opposite.) A clear announced for "exhausted until 14:00"
+// that landed on a broken mark the service recorded meanwhile would take off
+// the newer hold and put a refused token back in the cascade's rotation: the
+// same failure the test above covers, one state over, and the one the
+// sentence's own words ("clear the exhausted mark of …") do not cover.
 func TestAccountsClearRefusesTheOtherClearableState(t *testing.T) {
 	f := newBudgetFixture(t, "")
 	f.appendConfig(t, claudeAccountsConfig)
 	now := time.Now().UTC().Truncate(time.Second)
-	f.db.Set(credsMarkPath("acme-personal"), map[string]any{
+	mark := credsMarkPath("acme-personal")
+	f.db.Set(mark, map[string]any{
 		"state": "exhausted", "until": now.Add(time.Hour).Format(time.RFC3339Nano)})
-	typed(t)
 
-	// The 401 the service saw while the operator was reading the confirmation.
+	// The 401 the service saw while the operator's run was under way.
 	broken := map[string]any{"state": "broken", "since": now.Format(time.RFC3339Nano)}
-	in := &markFlip{db: f.db, path: credsMarkPath("acme-personal"), mark: broken, line: "aurora\n"}
-	if _, _, err := executeStdinReader(t, in, "accounts", "clear", "acme-personal"); err == nil || ExitCode(err) != ExitUserError {
-		t.Fatalf("err = %v, want a user error: the mark became broken while the operator confirmed an exhausted one", err)
+	markFlippedUnderTheRead(t, f, mark, broken)
+
+	out, _, err := execute(t, "accounts", "clear", "acme-personal")
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a user error: the mark became broken while the run announced an exhausted one\n%s", err, out)
 	}
-	if !in.done {
-		t.Fatal("the command never read the confirmation, so the mark was never changed under it")
+	if !strings.Contains(out, "exhausted") {
+		t.Errorf("the run does not say which mark it announced before the refusal:\n%s", out)
 	}
 	m, _ := f.db.Value(credsMarkPath("acme-personal")).(map[string]any)
 	if m["state"] != "broken" || m["since"] != broken["since"] {
