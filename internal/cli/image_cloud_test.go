@@ -129,6 +129,69 @@ func TestImageBuildCloudRefusedBuildWritesNoLayerCopy(t *testing.T) {
 	}
 }
 
+// An over-cap build at the command, in enforce mode: the spec's error, and
+// nothing submitted (T4, T8; D1543, D1548).
+//
+// The lease is what an over-cap build meets now that the confirmation is gone
+// and the recorded count is gone: there is no prompt to fall back to and no
+// count to stop at, so the refusal a person reads is the lease's, and it has to
+// carry the four things the spec asks for — what the build reserves at most,
+// the cap it met, what the day already counts, and the one command that raises
+// that cap — while the command exits non-zero. Enforce mode is the mode this
+// happens in: in observe the same lease comes back as an advisory and the build
+// is submitted anyway (D1548), which is why doctor has a check for it.
+//
+// The two caps that are not the difficulty here are set so the day's cap is the
+// one that binds: maxReserveMicros at $5.00 admits the $0.94 estimate, and the
+// repository's own daily cap at $0.50 has no room under a day that counts $0.00.
+//
+// Mutation (run, restore): in runImageBuildCloud, take the lease as
+// `lease, _ := reserveBuildLease(ctx, cmd, cost)` so its refusal is not acted
+// on, and this test fails — the over-cap build is submitted. Make the lease's
+// refusal return an ordinary error instead of the ExitError{ExitUserError}
+// refuse() builds, and the exit-code assertion fails.
+func TestImageBuildOverCapFailsWithTheSpecError(t *testing.T) {
+	fb, f := cloudBuildCheckout(t, false)
+	slug := mustSlug("bitbucket", "acme/app")
+	fb.AddRegistry("proj-1234", "us-east5", gcp.RegistryRepoID(slug))
+	db := gcpfake.NewRTDB(t)
+	db.Set(budget.PathMark, auroraMark())
+	db.Set(budget.PathMode, budget.ModeEnforce)
+	db.Set(budget.PathLimits, map[string]any{"maxReserveMicros": 5 * usd1})
+	db.Set(budget.PathCapsGlobal, map[string]any{"perRunMicros": 50 * usd1, "dailyMicros": 100 * usd1})
+	db.Set(budget.PathCapsRepo(slug), map[string]any{"dailyMicros": usd1 / 2})
+	f.appendConfig(t, "budget: { mode: enforce, per_run_usd: 5, firebase_project: proj-1234, rtdb_url: "+db.URL+" }\n")
+
+	_, _, err := execute(t, "image", "build", "--base", "b:1")
+	if err == nil {
+		t.Fatal("an image build over the repository's daily cap was submitted")
+	}
+	if got := ExitCode(err); got != ExitUserError {
+		t.Errorf("exit code %d, want %d: the operator can raise the cap and run it again", got, ExitUserError)
+	}
+	var over *BuildOverCapError
+	if !errors.As(err, &over) {
+		t.Fatalf("the refusal %v is not the spec's own over-cap error", err)
+	}
+	// The four facts, as one sentence the operator can act on.
+	for _, want := range []string{
+		"$0.94", // what this build reserves at most
+		"$0.50", // the cap it met
+		"$0.00", // what the day already counts
+		"fugaro budget set --repo acme/app --daily <usd>", // the one command that raises it
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not carry %q:\n%s", want, err)
+		}
+	}
+	if buildPosts(fb) != 0 {
+		t.Error("an over-cap build reached Cloud Build")
+	}
+	if got := db.Value(budget.PathBuildLeases(slug)); got != nil {
+		t.Errorf("an over-cap build left a lease behind: %v", got)
+	}
+}
+
 // A Cloud Build submission must refuse, not silently proceed, when the
 // project layer's bucket cannot be read: design §8 and decision L16
 // classify Cloud Build submission as strict ("fail when the bucket cannot
