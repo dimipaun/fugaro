@@ -213,11 +213,6 @@ func TestMintedKeyVerifies(t *testing.T) {
 // signature here but the Signer the caller hands in, which is what "never a
 // local private key file" means in code (.claude/rules/ee.md, R5).
 func TestTheToolHoldsNoWayToSignButTheSigner(t *testing.T) {
-	// The symbols that would sign, hold or derive a private half. Signing a
-	// payload and reading a private key out of a file both need one of these,
-	// and ed25519.PrivateKey is also what a conversion from raw bytes names.
-	forbidden := []string{"Sign", "SignTo", "PrivateKey", "GenerateKey", "NewKeyFromSeed"}
-
 	fset := token.NewFileSet()
 	parsed, err := parser.ParseDir(fset, ".", func(info fs.FileInfo) bool {
 		return !strings.HasSuffix(info.Name(), "_test.go")
@@ -229,28 +224,10 @@ func TestTheToolHoldsNoWayToSignButTheSigner(t *testing.T) {
 	for _, pkg := range parsed {
 		for name, file := range pkg.Files {
 			files++
-			local := localEd25519Name(file)
-			for _, spec := range file.Imports {
-				imports++
-				path := strings.Trim(spec.Path.Value, `"`)
-				if strings.HasPrefix(path, "crypto/") && path != ed25519Path {
-					t.Errorf("%s imports %s: the tool's only route to a signature is the Signer it is handed, so a second crypto package is a second route", name, path)
-				}
+			imports += len(file.Imports)
+			for _, problem := range signingRoutes(file) {
+				t.Errorf("%s %s", name, problem)
 			}
-			ast.Inspect(file, func(node ast.Node) bool {
-				selector, ok := node.(*ast.SelectorExpr)
-				if !ok {
-					return true
-				}
-				ident, ok := selector.X.(*ast.Ident)
-				if !ok || local == "" || ident.Name != local {
-					return true
-				}
-				if slices.Contains(forbidden, selector.Sel.Name) {
-					t.Errorf("%s names %s.%s: that is a signing or private-key operation, and this package must hold none", name, ident.Name, selector.Sel.Name)
-				}
-				return true
-			})
 		}
 	}
 	if files == 0 || imports == 0 {
@@ -258,16 +235,119 @@ func TestTheToolHoldsNoWayToSignButTheSigner(t *testing.T) {
 	}
 }
 
+// signingRoutes answers what one parsed file holds that could sign a payload or
+// hold a private half, and it is a function rather than a loop in the test above
+// because the scan's own reach is a thing to hold too: TestTheScanRefusesADotImport
+// parses a source it would accept and holds this to refusing it.
+//
+// Three things are refused: an import of a crypto package that is not
+// crypto/ed25519; a dot-import of that one, whose names are bare identifiers and
+// so are not selectors this scan can follow; and any of the symbols that sign,
+// hold or derive a private half, named through the binding the file gives the
+// package -- its own name or an alias, so a renamed import is caught.
+func signingRoutes(file *ast.File) []string {
+	// The symbols that would sign, hold or derive a private half. Signing a
+	// payload and reading a private key out of a file both need one of these,
+	// and ed25519.PrivateKey is also what a conversion from raw bytes names.
+	forbidden := []string{"Sign", "SignTo", "PrivateKey", "GenerateKey", "NewKeyFromSeed"}
+
+	var problems []string
+	local := localEd25519Name(file)
+	for _, spec := range file.Imports {
+		path := strings.Trim(spec.Path.Value, `"`)
+		if strings.HasPrefix(path, "crypto/") && path != ed25519Path {
+			problems = append(problems, fmt.Sprintf("imports %s: the tool's only route to a signature is the Signer it is handed, so a second crypto package is a second route", path))
+		}
+		if path == ed25519Path && spec.Name != nil && spec.Name.Name == "." {
+			problems = append(problems, fmt.Sprintf("dot-imports %s: a dot-imported name is a bare identifier and not a selector, so a signing call made through one is not something this scan could see, and the tool's only route to a signature is the Signer it is handed", path))
+		}
+	}
+	if local == "" {
+		return problems
+	}
+	ast.Inspect(file, func(node ast.Node) bool {
+		selector, ok := node.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		ident, ok := selector.X.(*ast.Ident)
+		if !ok || ident.Name != local {
+			return true
+		}
+		if slices.Contains(forbidden, selector.Sel.Name) {
+			problems = append(problems, fmt.Sprintf("names %s.%s: that is a signing or private-key operation, and this package must hold none", ident.Name, selector.Sel.Name))
+		}
+		return true
+	})
+	return problems
+}
+
+// TestTheScanRefusesADotImport holds the scan's own reach, in both directions: a
+// dot-import of crypto/ed25519 makes every name in it a bare identifier, which
+// is not an *ast.SelectorExpr and therefore nothing the scan above can follow,
+// so the import is refused rather than trusted -- and the imports the tool may
+// hold are not refused, so the rule is not simply "refuse more".
+//
+// Each source is parsed from a string: a fixture file of this package would be a
+// file the scan reads, and one of these must never exist here.
+func TestTheScanRefusesADotImport(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		source string
+		want   bool
+	}{
+		{
+			"a dot import beside a bare signing call",
+			"package main\n\nimport . \"crypto/ed25519\"\n\nfunc key(seed []byte) any { return NewKeyFromSeed(seed) }\n",
+			true,
+		},
+		{
+			"a dot import beside a bare public key",
+			"package main\n\nimport . \"crypto/ed25519\"\n\nfunc size() int { return PublicKeySize }\n",
+			true,
+		},
+		{
+			"an aliased import beside a signing call",
+			"package main\n\nimport e \"crypto/ed25519\"\n\nfunc key(seed []byte) any { return e.NewKeyFromSeed(seed) }\n",
+			true,
+		},
+		{
+			"the imports the tool may hold",
+			"package main\n\nimport \"crypto/ed25519\"\n\nfunc size() int { return ed25519.PublicKeySize }\n",
+			false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			file, err := parser.ParseFile(token.NewFileSet(), "a-file.go", tc.source, 0)
+			if err != nil {
+				t.Fatalf("parsing %q: %v", tc.source, err)
+			}
+			problems := signingRoutes(file)
+			if tc.want && len(problems) == 0 {
+				t.Errorf("%q holds no problem, want a refusal: a dot-imported name is a bare identifier, so the scan would read straight past it", tc.source)
+			}
+			if !tc.want && len(problems) > 0 {
+				t.Errorf("%q holds %v, want none: a public key is what the ring the tool checks against is made of", tc.source, problems)
+			}
+		})
+	}
+}
+
 // localEd25519Name answers what one file binds crypto/ed25519 to -- its own
 // name or the alias an import gives it -- and "" when the file does not import
 // it at all. The scan above asks by the binding rather than by the spelling
-// "ed25519", so an aliased import is caught too.
+// "ed25519", so an aliased import is caught too. A dot-binding is not a name a
+// selector reaches, so it answers "" there as well: signingRoutes refuses that
+// import instead, and there is no selector to look for.
 func localEd25519Name(file *ast.File) string {
 	for _, spec := range file.Imports {
 		if strings.Trim(spec.Path.Value, `"`) != ed25519Path {
 			continue
 		}
 		if spec.Name != nil {
+			if spec.Name.Name == "." {
+				return ""
+			}
 			return spec.Name.Name
 		}
 		return "ed25519"
@@ -467,11 +547,11 @@ func TestRunMintsAKeyTheVerifierAccepts(t *testing.T) {
 }
 
 // TestRunRefusesWhatItCannotMint holds the command to answering nothing it
-// cannot mint: a flag it needs, a term of no days, a term too long to count, a
-// term past the tier's maximum, and a public half that is not a key. What the
-// owner sees is the refusal, and stdout stays empty -- except that a term the
-// verifier bounds is refused after the signature, which is the one discarded
-// signature the tool pays for keeping the ceiling in the verifier.
+// cannot mint: a flag it needs, a term of no days, a term the arithmetic cannot
+// count, a term past the tier's maximum, and a public half that is not a key.
+// What the owner sees is the refusal, and stdout stays empty -- except that a
+// term the verifier bounds is refused after the signature, which is the one
+// discarded signature the tool pays for keeping the ceiling in the verifier.
 func TestRunRefusesWhatItCannotMint(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
@@ -481,7 +561,12 @@ func TestRunRefusesWhatItCannotMint(t *testing.T) {
 	}{
 		{"a flag that is missing", func(*fakeSigner) []string { return nil }, nil, true},
 		{"a term of no days", func(f *fakeSigner) []string { return runArgs(f, "-days", "0") }, nil, true},
-		{"a term too long to count", func(f *fakeSigner) []string { return runArgs(f, "-days", "200000") }, nil, true},
+		{"a term that wraps to a negative one", func(f *fakeSigner) []string { return runArgs(f, "-days", "200000") }, nil, true},
+		// Wrapping round is not the same as wrapping negative: 213504 days land
+		// on a positive quarter of an hour, which the verifier accepts and the
+		// state check passes, so nothing past this guard can catch it.
+		{"a term that wraps to a short one", func(f *fakeSigner) []string { return runArgs(f, "-days", "213504") }, nil, true},
+		{"a term that wraps to a 24-hour one", func(f *fakeSigner) []string { return runArgs(f, "-days", "213505") }, nil, true},
 		{"a term past the tier's maximum", func(f *fakeSigner) []string { return runArgs(f, "-days", "400") }, licence.ErrLifetime, false},
 		{"a public half that is not a key", func(f *fakeSigner) []string { return runArgs(f, "-public-key", "AA") }, nil, true},
 	} {

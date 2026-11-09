@@ -53,6 +53,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"strings"
 	"time"
@@ -66,6 +67,12 @@ func main() {
 		os.Exit(1)
 	}
 }
+
+// maxDays is the longest term the arithmetic holds: a duration this package
+// counts in nanoseconds, where one day is 86400e9 of them. It is a bound on what
+// the machine can count and not on what a tier may be given, which is the
+// verifier's rule, and it is far above any term anyone mints.
+const maxDays = math.MaxInt64 / int64(24*time.Hour)
 
 // run is main's whole body, so the flags, the claim set they build and the one
 // line that is printed are one function a reader can follow. The runner is the
@@ -116,16 +123,17 @@ func run(args []string, out io.Writer, runner Runner) error {
 	if *days <= 0 {
 		return errors.New("-days must be a positive number of days: a key that ends before it starts is not one anyone means to mint")
 	}
-	// The term is counted in nanoseconds, where a term of more than about 106751
-	// days wraps to a negative duration. That is the same already-ended key by
-	// another route, and a silent one: `expires` would land before `issued`, and
-	// the verifier's bound -- a term longer than the tier's maximum -- does not
-	// fire on a term shorter than nothing. The bound here is arithmetic and not
-	// the tier's: what a tier may be given stays the verifier's rule.
-	term := time.Duration(*days) * 24 * time.Hour
-	if term <= 0 {
-		return fmt.Errorf("-days is %d, and a term that long wraps when it is counted in nanoseconds: the longest term anyone mints is far below it, and the verifier is where that ceiling is stated", *days)
+	// The term is counted in nanoseconds, and past maxDays the product no longer
+	// fits an int64. The overflow is not always negative: 213504 days wraps to a
+	// positive quarter of an hour, which would mint a key with a 1526-second term
+	// -- inside the verifier's length bound, valid at its own `issued`, and
+	// nothing for any check after this one to catch. So the bound is on the days
+	// and not on the product. It is arithmetic and not the tier's: what a tier
+	// may be given stays the verifier's rule to state.
+	if int64(*days) > maxDays {
+		return fmt.Errorf("-days is %d, and a term that long cannot be counted: the longest term this tool can hold is %d days, and the verifier is where the ceiling anyone mints under is stated", *days, maxDays)
 	}
+	term := time.Duration(*days) * 24 * time.Hour
 
 	ring, err := ringFromPublicKey(*keyID, *publicKey)
 	if err != nil {
