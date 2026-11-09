@@ -1358,25 +1358,27 @@ owner's manual checklist's job, not a runner's.
 in `console/`, and they are not this directory's to do.**
 
 1. **Landed** (2026-11-09): `console/package.json` has the `package:win` script
-   (`npm run build && electron-builder --win --publish never`), and
-   `console/src/main/fuses.ts`'s `SUPPORTED_PLATFORMS` is
+   (`npm run build && electron-builder --win --publish never`), its `build.win`
+   block names the target, the arch and the artifact name (`nsis`, x64, the Linux
+   leg's nested form), and `console/src/main/fuses.ts`'s `SUPPORTED_PLATFORMS` is
    `['darwin','linux','win32']` with a `win32Executable` row beside the other two
    — so `afterPack`, the pack's only fuse flipper, no longer refuses the Windows
-   pack (implementation-plan.md Part B, T-B1 and T-B2;
+   pack, and the packer no longer inherits its Windows target rather than one
+   this repository decided (implementation-plan.md Part B, T-B1, T-B2 and T-B4;
    [docs/console-windows/reconciliation.md](../console-windows/reconciliation.md)
-   F35). What has **not** landed with it is the `win` block that names the target,
-   the arch and the artifact name (T-B4), so the packer still inherits its
-   Windows target rather than one this repository decided.
+   F35, F36).
 2. **Landed**: the unit suite's POSIX assumptions. `spawn.ts`'s
    `isExecutableFile` takes the platform now (on `win32`, a regular file is
    runnable), and `binDirectories` splits the app's own `PATH` on the **host's**
    separator while `childPath` keeps the child's `':'` (F4, F5, F33; Parts A
    and C).
-3. `console/package.json`'s `build.electronDownload.checksums` pins three zips —
+3. **Still outstanding, and the one that keeps this file staged.**
+   `console/package.json`'s `build.electronDownload.checksums` pins three zips —
    `darwin-arm64`, `darwin-x64`, `linux-x64` — and **no `win32-x64` one**, so the
    Electron step downloads its distribution against no pinned hash on this
-   runner. That fourth hash is a supply-chain pin and an owner-reviewable edit
-   rather than a convenience (F37, Part B T-B3).
+   runner, and `npm run package:win` fails at that step on every host rather than
+   in `afterPack`. That fourth hash is a supply-chain pin and an owner-reviewable
+   edit rather than a convenience (F37, Part B T-B3).
 
 The order the plan gives is: **stage this file, land those edits, then copy
 it in.** Staging it now is the point of this directory — the file is reviewable

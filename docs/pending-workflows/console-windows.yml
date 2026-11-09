@@ -22,27 +22,32 @@
 # DO NOT COPY THIS IN YET. Read this paragraph first, because it is not a
 # formality: **this job is red until the last edit below has landed in console/**,
 # and a red pack is worse than no pack, because it arrives at release time.
+# **Edit 3 is the only one of the three still outstanding**, and the sentence
+# above is about it rather than about all three.
 #
 #   1. **Landed** (2026-11-09): `console/package.json` has the `package:win`
-#      script (`npm run build && electron-builder --win --publish never`), and
+#      script (`npm run build && electron-builder --win --publish never`),
+#      `console/package.json`'s `build.win` names the target, the arch and the
+#      artifact name (`nsis`, x64, the Linux leg's nested form), and
 #      `console/src/main/fuses.ts`'s `SUPPORTED_PLATFORMS` is
 #      `['darwin','linux','win32']` with a `win32Executable` row beside the other
 #      two -- so `afterPack`, the pack's only fuse flipper, no longer refuses the
-#      Windows pack. What has **not** landed with it is the `win` block that
-#      names the target, the arch and the artifact name (implementation-plan.md
-#      T-B4), so the packer still inherits its Windows target rather than one
-#      this repository decided. (Part B, T-B1, T-B2 and F36.)
+#      Windows pack, and the packer no longer inherits a Windows target rather
+#      than one this repository decided. (Part B, T-B1, T-B2 and T-B4; F35,
+#      F36.)
 #   2. **Landed**: the unit suite's POSIX assumptions. `spawn.ts`'s
 #      `isExecutableFile` takes the platform now (on `win32`, a regular file is
 #      runnable), and `binDirectories` splits the app's own `PATH` on the
 #      **host's** separator while `childPath` keeps the child's `':'`. (Parts A
 #      and C.)
-#   3. `console/package.json`'s `build.electronDownload.checksums` pins three
+#   3. **Still outstanding, and the one that keeps this file staged.**
+#      `console/package.json`'s `build.electronDownload.checksums` pins three
 #      zips -- darwin-arm64, darwin-x64, linux-x64 -- and no `win32-x64` one, so
 #      the Electron step below downloads its distribution against **no pinned
-#      hash** on this runner. Adding the fourth is a supply-chain pin and
-#      therefore an owner-reviewable edit rather than a convenience. (Part B,
-#      T-B3, finding F37.)
+#      hash** on this runner, and `npm run package:win` fails at that step on
+#      every host rather than in `afterPack`. Adding the fourth is a supply-chain
+#      pin and therefore an owner-reviewable edit rather than a convenience.
+#      (Part B, T-B3, finding F37.)
 #
 # The order the plan gives is: stage this file, land those edits, then copy it
 # in. Staging it now is the point of the staging directory -- the file is
@@ -121,13 +126,14 @@
 #     of the undecided "does the installer join the release" question above. So
 #     the artifact is named `Fugaro.Console-0.0.0-win-x64.exe` (the same product
 #     name and the same arch the Linux job's artifacts carry).
-#   - x64 only. There is no `build.win.target` in console/package.json today and
-#     this file does not add one: Part B does, pinned to x64, for the reason that
-#     a second architecture would be a cross-build nothing here can launch -- the
-#     same packer on the same runner, with the same fuses. That same part must
-#     also add the `win32-x64` hash to `build.electronDownload.checksums`, which
-#     pins three zips today and no Windows one, so that the Electron step below
-#     downloads against a pinned hash rather than merely fetching (finding F37).
+#   - x64 only, and that is `console/package.json`'s own decision rather than
+#     this file's: `build.win.target` names `nsis` for x64 (Part B, T-B4), the
+#     reason being that a second architecture would be a cross-build nothing here
+#     can launch -- the same packer on the same runner, with the same fuses. What
+#     that block does **not** yet carry is the `win32-x64` hash in
+#     `build.electronDownload.checksums`, which pins three zips today and no
+#     Windows one, so the Electron step below would fetch its distribution
+#     unverified until that pin lands (finding F37, T-B3).
 
 name: console-windows
 
@@ -196,9 +202,11 @@ jobs:
       # TypeScript compiler over the whole tree with no emit, and
       # `npm run test:unit` is vitest over the 57 `.ts` files under test/unit (54
       # of them `*.test.ts`; `find console/test/unit -name '*.ts' | wc -l`), which
-      # need no display and no Electron. Both are expected to be red until the POSIX
-      # repairs this file's header names have landed; that is what the staging is
-      # for, and it is why this file is staged rather than applied.
+      # need no display and no Electron. Both are expected to pass: the POSIX
+      # repairs this file's header names landed with Parts A and C, which is what
+      # makes this job worth a runner -- it is the only place that suite ever runs
+      # on Windows. What is still red is the pack step below, and only because of
+      # the one prerequisite the header still lists.
       - name: typecheck
         run: npm run typecheck
       - name: run the unit suite
