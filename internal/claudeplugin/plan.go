@@ -38,6 +38,17 @@ const (
 	// cannot fix, and the plugin cannot be had on that machine; anything else
 	// fails the step, after the declaration a Clear removed is put back.
 	Declare
+	// Repair is an update of an install the Clear may have taken. Claude Code
+	// takes every install of a marketplace it removes, but only when the
+	// removal leaves the name undeclared: a checkout whose own settings declare
+	// the marketplace — every wired one — keeps its installs, at the versions
+	// they were installed at. The plan cannot tell which machine this is
+	// (claude's marketplace list carries no scope), so the update is planned
+	// and a failure is printed: when the clear did take that install there is
+	// none to update, and the install the plan makes is the one that applies;
+	// when it fails for any other reason the install that stands there keeps
+	// its version, and the step's own check after the calls reports that.
+	Repair
 )
 
 // Call is one claude invocation, with the kind that says how its failure is
@@ -121,10 +132,11 @@ func refNewer(ref, want string) bool {
 //   - otherwise the marketplace declared at Ref (missing, or there at another
 //     ref that is not newer, in which case the declaration it is refused by is
 //     cleared first, and Restore is what puts back what the clear takes) and
-//     refreshed, then the plugin installed at user scope — always on the
-//     cleared path, because the clear uninstalls it — or, when a Clear is not
-//     in the plan and an install applies, each stale scope updated (local,
-//     project, user).
+//     refreshed, then the plugin installed at user scope when nothing applies
+//     or a Clear is in the plan — on the cleared path it is what puts back the
+//     install the clear takes from a machine whose own settings leave the name
+//     undeclared — and each stale scope updated (local, project, user), as
+//     Repair when a Clear is in the plan.
 //
 // Every call it returns passes Allowed.
 func Decide(in Input) (Plan, error) {
@@ -183,13 +195,18 @@ func Decide(in Input) (Plan, error) {
 		p.Calls = append(p.Calls, Call{Args: slices.Clone(updateMarket)})
 	}
 	// The clear is a removal of the marketplace, and claude takes every install
-	// of it with the removal, at every scope ("To use a plugin again, add the
-	// marketplace back and reinstall the plugin"): on that path the installs
-	// read above are not the ones the calls act on, so the plugin is installed
-	// rather than updated. That install is also what puts back the one the clear
-	// took, which is why the restore is the pair and not the declaration alone —
-	// and only when an install applies: with none, the clear took the
-	// declaration alone and the declaration alone is what goes back.
+	// of it with the removal, at every scope (its own words: to use a plugin
+	// again, add the marketplace back and reinstall the plugin). So the plugin
+	// is installed at user scope on that path — that install is also what puts
+	// back the one the clear took, which is why the restore is the pair and not
+	// the declaration alone, and only when an install applies: with none, the
+	// clear took the declaration alone and the declaration alone is what goes
+	// back. An install of one that is already there does not move it, though
+	// (claude answers "already installed" and names update as the call that
+	// re-records the version), so each stale install is still updated where it
+	// stands: that is the Repair, because the clear takes the installs of a
+	// machine whose own settings leave the name undeclared, and the install
+	// above is what applies there.
 	if len(applying) == 0 || moved {
 		install := slices.Clone(installUser)
 		p.Calls = append(p.Calls, Call{Args: install})
@@ -197,11 +214,13 @@ func Decide(in Input) (Plan, error) {
 			p.Restore = append(p.Restore, install)
 		}
 	}
-	if !moved {
-		for _, s := range scopes {
-			if slices.Contains(stale, s) {
-				p.Calls = append(p.Calls, Call{Args: updatePlugin(s)})
-			}
+	kind := Change
+	if moved {
+		kind = Repair
+	}
+	for _, s := range scopes {
+		if slices.Contains(stale, s) {
+			p.Calls = append(p.Calls, Call{Args: updatePlugin(s), Kind: kind})
 		}
 	}
 	return p, nil

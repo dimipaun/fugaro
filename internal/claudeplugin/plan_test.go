@@ -62,24 +62,26 @@ func TestDecide(t *testing.T) {
 		// this binary: it is re-declared at this release's tag even when every
 		// install is current (the 0.21.1 failure of 2026-11-09). The clear comes
 		// first, because claude refuses an add of a name already declared from a
-		// different source, and the clear takes every install of the marketplace
-		// with it, so the plugin is installed rather than updated: the install
-		// is what puts back the install the clear took, which is why the restore
-		// is the declaration and the install, in that order.
+		// different source. It takes every install of the marketplace with it
+		// when it leaves the name undeclared, so the plan installs the plugin at
+		// user scope (what puts back the install the clear took, which is why
+		// the restore is the declaration and the install, in that order) and
+		// still updates every stale install where it stands, because an install
+		// of one that is already there does not move it.
 		{"unpinned marketplace, current install", unpinned, []Install{user("0.5.2")}, [][]string{rm, add, upd, inst}, "0.5.2", [][]string{back, inst}},
-		{"unpinned marketplace, install behind", unpinned, []Install{user("0.5.1")}, [][]string{rm, add, upd, inst}, "0.5.1", [][]string{back, inst}},
-		{"marketplace at an older tag", older, []Install{user("0.5.1")}, [][]string{rm, add, upd, inst}, "0.5.1", [][]string{backAt("v0.5.1"), inst}},
-		// The clear takes the project install too, so the user-scope install is
-		// the whole repair: a project-scope update of an install the clear has
-		// already removed would fail the step (claude: plugin not found).
-		{"unpinned marketplace, this checkout's project install", unpinned, []Install{project("0.5.1", root)}, [][]string{rm, add, upd, inst}, "0.5.1", [][]string{back, inst}},
+		{"unpinned marketplace, install behind", unpinned, []Install{user("0.5.1")}, [][]string{rm, add, upd, inst, updU}, "0.5.1", [][]string{back, inst}},
+		{"marketplace at an older tag", older, []Install{user("0.5.1")}, [][]string{rm, add, upd, inst, updU}, "0.5.1", [][]string{backAt("v0.5.1"), inst}},
+		// This checkout's own settings declare the marketplace too, so the clear
+		// leaves the project install standing, at the version it was installed
+		// at: it is the update at its scope that moves it.
+		{"unpinned marketplace, this checkout's project install", unpinned, []Install{project("0.5.1", root)}, [][]string{rm, add, upd, inst, updP}, "0.5.1", [][]string{back, inst}},
 		// Nothing installed, so the clear takes the declaration alone, and the
 		// declaration alone is what a failed add puts back.
 		{"unpinned marketplace, nothing installed", unpinned, nil, [][]string{rm, add, upd, inst}, "", [][]string{back}},
 		// A ref that is not a release tag is not one this binary passes to
 		// claude, so the clear puts the plain source back: what the marketplace
 		// was before any fugaro pinned it.
-		{"marketplace on a branch", at("main"), []Install{user("0.5.1")}, [][]string{rm, add, upd, inst}, "0.5.1", [][]string{back, inst}},
+		{"marketplace on a branch", at("main"), []Install{user("0.5.1")}, [][]string{rm, add, upd, inst, updU}, "0.5.1", [][]string{back, inst}},
 		// U10: a ref a newer fugaro wrote is never lowered, and a plugin that
 		// applies is left to it: nothing to do at all.
 		{"marketplace at a newer tag", newer, []Install{user("0.5.2")}, nil, "0.5.2", nil},
@@ -205,11 +207,14 @@ func TestApplyingNonexistentProjectPath(t *testing.T) {
 	}
 }
 
-// TestDecideKindsOfTheMovedPlan: the two calls that carry the pin's fate are
+// TestDecideKindsOfTheMovedPlan: the calls that carry the pin's fate are
 // distinguishable from the update's own work, because the step takes their
 // failures differently: a clear Claude Code has nothing to clear leaves the
-// plan on its way, and a declaration it refuses means the plugin cannot be had
-// on this machine at all (the step reports it instead of failing the update).
+// plan on its way, a declaration it refuses means the plugin cannot be had on
+// this machine at all (the step reports it instead of failing the update), and
+// an install's update on that path may have nothing to update, because the
+// clear takes the installs of a machine whose own settings leave the name
+// undeclared (the step prints it and lets the check after the calls decide).
 func TestDecideKindsOfTheMovedPlan(t *testing.T) {
 	ours := []Market{{Name: "fugaro", Source: "github", Repo: "dimipaun/fugaro"}}
 	p, err := Decide(Input{Root: t.TempDir(), Want: "0.5.2", Ref: "v0.5.2", Repo: "dimipaun/fugaro",
@@ -217,7 +222,7 @@ func TestDecideKindsOfTheMovedPlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []Kind{Clear, Declare, Change, Change}
+	want := []Kind{Clear, Declare, Change, Change, Repair}
 	if len(p.Calls) != len(want) {
 		t.Fatalf("calls %q, want %d", argsOf(p.Calls), len(want))
 	}

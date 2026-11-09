@@ -205,12 +205,17 @@ func TestRefusedByDeclaration(t *testing.T) {
 }
 
 func TestListsParse(t *testing.T) {
+	// The marketplace list as claude 2.1.283 prints it (an entry the add of a
+	// source with a ref wrote, `owner/repo#vX.Y.Z`), and one from before that
+	// has no ref at all: the second is what every marketplace a release before
+	// this one declared looks like, and it is what makes the step declare the
+	// name again at this release's tag.
 	f := testutil.NewClaudePluginFake(t,
-		`[{"name":"fugaro","source":"github","repo":"dimipaun/fugaro","installLocation":"/x"}]`,
+		`[{"name":"fugaro","source":"github","repo":"dimipaun/fugaro","ref":"v0.5.2","installLocation":"/x"},{"name":"other","source":"github","repo":"someone/other","installLocation":"/y"}]`,
 		`[{"id":"fugaro@fugaro","version":"0.5.1","scope":"project","enabled":true,"projectPath":"/p"}]`)
 	r, _ := runner(t, f)
 	ms, err := r.Markets(t.Context())
-	if err != nil || len(ms) != 1 || ms[0] != (Market{Name: "fugaro", Source: "github", Repo: "dimipaun/fugaro"}) {
+	if err != nil || len(ms) != 2 || ms[0] != (Market{Name: "fugaro", Source: "github", Repo: "dimipaun/fugaro", Ref: "v0.5.2"}) || ms[1] != (Market{Name: "other", Source: "github", Repo: "someone/other"}) {
 		t.Fatalf("markets %+v %v", ms, err)
 	}
 	is, err := r.Installed(t.Context())

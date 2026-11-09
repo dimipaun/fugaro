@@ -127,12 +127,120 @@ func TestUpgradePluginMovesAnUnpinnedMarketplaceToTheRelease(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	want := [][]string{argsRemove, argsAdd, argsUpdMarket, argsInstall}
+	want := [][]string{argsRemove, argsAdd, argsUpdMarket, argsInstall, argsUpdUser}
 	if !slices.EqualFunc(f.Changes(t), want, slices.Equal[[]string]) {
 		t.Fatalf("changes %q, want %q\n%s", f.Changes(t), want, out)
 	}
 	if !strings.Contains(out, "plugin: done: installed 0.5.2") {
 		t.Errorf("the plugin did not converge on this release's version:\n%s", out)
+	}
+}
+
+// TestUpgradePluginMovesAnInstallTheClearLeftStanding: claude takes every
+// install of a marketplace it removes only when the removal leaves the name
+// undeclared, and a fugaro checkout's own committed settings declare it too
+// (the pin step writes them). So on those machines the clear leaves the
+// plugin installed at the version it was installed at — an install of one that
+// is already there does not move it, claude answers "already installed" and
+// names update as the call that re-records the version — and the update at
+// that install's own scope is what converges the checkout. Without it the step
+// reads the install it started with, which is the failure of 2026-11-09 again
+// ("the installed plugin is still 0.21.0") on the machine this change is for.
+func TestUpgradePluginMovesAnInstallTheClearLeftStanding(t *testing.T) {
+	upgradeEnv(t, "0.5.2")
+	root, _ := skillCheckout(t, wiredAt("v0.5.2"))
+	project := func(v string) string {
+		return `{"id":"fugaro@fugaro","version":"` + v + `","scope":"project","projectPath":"` + root + `"}`
+	}
+	// The remove leaves every install standing (this machine's settings declare
+	// the marketplace, so claude has nothing of its own to uninstall), the
+	// install the plan makes adds the user-scope one without moving the project
+	// install claude says is "already installed", and the project-scope update is
+	// what re-records its version.
+	f := testutil.NewClaudePluginFake(t, ourMarket, "["+project("0.5.1")+"]")
+	f.On(t, "fail", refusedAdd, argsAdd...)
+	f.On(t, "rm", "fail."+testutil.ClaudePluginKey(argsAdd...), argsRemove...)
+	f.On(t, "plugins", "["+project("0.5.1")+","+userInstall("0.5.2")[1:], argsInstall...)
+	f.On(t, "plugins", "["+project("0.5.2")+","+userInstall("0.5.2")[1:], argsUpdProject...)
+	useFakeClaude(t, f)
+	out, _, err := executeStdin(t, "", "upgrade", "--local", root)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	want := [][]string{argsRemove, argsAdd, argsUpdMarket, argsInstall, argsUpdProject}
+	if !slices.EqualFunc(f.Changes(t), want, slices.Equal[[]string]) {
+		t.Fatalf("changes %q, want %q\n%s", f.Changes(t), want, out)
+	}
+	if !strings.Contains(out, "plugin: done: installed 0.5.2") {
+		t.Errorf("the plugin did not converge on this release's version:\n%s", out)
+	}
+}
+
+// TestUpgradePluginToleratesAnInstallTheClearTook: the other machine the moved
+// plan has to cover is one whose settings leave the marketplace name
+// undeclared, so the clear takes every install of it with the declaration
+// ("Also uninstalled 1 plugin from this marketplace"): the update at that
+// install's scope has nothing to update, which is not a failure of the step —
+// the install it ran is what the checkout applies — and every other failure
+// there stays reported by the check after the calls, because it leaves the
+// version where it was.
+func TestUpgradePluginToleratesAnInstallTheClearTook(t *testing.T) {
+	upgradeEnv(t, "0.5.2")
+	root, _ := skillCheckout(t, wiredAt("v0.5.2"))
+	old := `[{"id":"fugaro@fugaro","version":"0.5.1","scope":"project","projectPath":"` + root + `"}]`
+	f := testutil.NewClaudePluginFake(t, ourMarket, old)
+	f.On(t, "fail", refusedAdd, argsAdd...)
+	f.On(t, "rm", "fail."+testutil.ClaudePluginKey(argsAdd...), argsRemove...)
+	f.On(t, "plugins", "[]", argsRemove...)
+	f.On(t, "plugins", userInstall("0.5.2"), argsInstall...)
+	f.On(t, "fail", `Plugin "fugaro" not found in marketplace "fugaro".`, argsUpdProject...)
+	useFakeClaude(t, f)
+	out, _, err := executeStdin(t, "", "upgrade", "--local", root)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	want := [][]string{argsRemove, argsAdd, argsUpdMarket, argsInstall, argsUpdProject}
+	if !slices.EqualFunc(f.Changes(t), want, slices.Equal[[]string]) {
+		t.Fatalf("changes %q, want %q\n%s", f.Changes(t), want, out)
+	}
+	for _, w := range []string{"continuing without that update", "plugin: done: installed 0.5.2"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("output lacks %q:\n%s", w, out)
+		}
+	}
+}
+
+// TestUpgradePluginPutsBackWhatTheClearRemovedWhenAChangeFails: the clear runs
+// before the rest of the plan, and claude's removal took the plugin with it, so
+// a change call that fails after it — the marketplace update, or the install
+// itself — must not leave the machine without the plugin it had, which a rerun
+// would then have to find there. The declaration goes back too, best effort:
+// once this release's tag is declared for the name, claude refuses it at the
+// source it had, and the install from the declaration that stands is what puts
+// the plugin back.
+func TestUpgradePluginPutsBackWhatTheClearRemovedWhenAChangeFails(t *testing.T) {
+	upgradeEnv(t, "0.5.2")
+	f := testutil.NewClaudePluginFake(t, ourMarket, userInstall("0.5.1"))
+	f.On(t, "rm", "fail."+testutil.ClaudePluginKey(argsAdd...), argsRemove...)
+	f.On(t, "plugins", "[]", argsRemove...)
+	f.On(t, "fail", "network down\n", argsUpdMarket...)
+	f.On(t, "fail", refusedAdd, argsBack...) // the tag is declared by then: the add-back is refused
+	f.On(t, "plugins", userInstall("0.5.2"), argsInstall...)
+	useFakeClaude(t, f)
+	root, _ := skillCheckout(t, wiredAt("v0.5.2"))
+	out, _, err := executeStdin(t, "", "upgrade", "--local", root)
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("exit %d\n%s", ExitCode(err), out)
+	}
+	want := [][]string{argsRemove, argsAdd, argsUpdMarket, argsBack, argsInstall}
+	if !slices.EqualFunc(f.Changes(t), want, slices.Equal[[]string]) {
+		t.Fatalf("changes %q, want %q\n%s", f.Changes(t), want, out)
+	}
+	for _, w := range []string{"plugin: failed: claude plugin marketplace update fugaro failed: exit status 1",
+		"putting back what the clear removed failed", "claude: network down"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("output lacks %q:\n%s", w, out)
+		}
 	}
 }
 

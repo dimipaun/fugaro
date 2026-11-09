@@ -83,6 +83,24 @@ func pluginStep(ctx context.Context, u *upgradeCtx) stepResult {
 	// (a clear of a name claude has not declared fails, and then there is
 	// nothing to put back).
 	cleared := false
+	// putBack runs what the clear removed, before the step reports a stop:
+	// claude's removal takes the declaration and every install of it, and a
+	// step that stopped after the clear must not leave the machine without
+	// them. The calls are best effort and say so when they fail: once this
+	// release's tag is declared, claude refuses the name at the source it had,
+	// and the install from the declaration that stands is what puts the plugin
+	// back; and when the failure is the network, the clone that would put the
+	// declaration back fails the same way.
+	putBack := func() {
+		if !cleared {
+			return
+		}
+		for _, args := range plan.Restore {
+			if rerr := run.Change(ctx, args...); rerr != nil {
+				fmt.Fprintf(u.w, "  putting back what the clear removed failed: %v\n", rerr)
+			}
+		}
+	}
 	for _, c := range plan.Calls {
 		err := run.Change(ctx, c.Args...)
 		if err == nil {
@@ -105,21 +123,24 @@ func pluginStep(ctx context.Context, u *upgradeCtx) stepResult {
 			// stop: the step says exactly that, and hands the user the commands
 			// that do it by hand. Any other failure — a clone that failed, a
 			// network that is down — fails the step. Either way what the clear
-			// removed goes back first, so neither outcome leaves the machine
+			// removed went back above, so neither outcome leaves the machine
 			// without the marketplace and the plugin it had.
-			if cleared {
-				for _, args := range plan.Restore {
-					if rerr := run.Change(ctx, args...); rerr != nil {
-						fmt.Fprintf(u.w, "  putting back what the clear removed failed: %v\n", rerr)
-					}
-				}
-			}
+			putBack()
 			if !claudeplugin.RefusedByDeclaration(err) {
 				return fail(err)
 			}
 			return stepResult{state: stepSkipped, reason: fmt.Sprintf("claude would not declare the %s marketplace at %s (%s): in Claude Code run /plugin marketplace remove %s, then /plugin marketplace add %s#%s and /plugin install %s, then rerun; this update's other steps do not need it",
 				pluginwire.Marketplace, tag, oneLine(err.Error()), pluginwire.Marketplace, repo, tag, pluginwire.PluginID)}
+		case claudeplugin.Repair:
+			// An install the clear may have taken: claude answers that it has
+			// no such install. The install this step ran is what applies then,
+			// and every other failure here leaves the version where it was,
+			// which the check after the calls reports.
+			fmt.Fprintf(u.w, "  continuing without that update: %v\n", err)
 		default:
+			// The update's own work, after a clear: a failure here is the
+			// step's, and the machine is not left without what the clear took.
+			putBack()
 			return fail(err)
 		}
 	}
