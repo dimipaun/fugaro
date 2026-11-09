@@ -433,8 +433,11 @@ unlaunchable" — item 7's gate is lifted (the flip of 2026-11-08, **U6**) and *
 settled**: the review that exists is the folder's own author's pass, which says of itself that it is
 not the independent review the SEC tier requires — and its file table still claimed "each with its
 files (at most six)", which
-the reconciliation of 2026-11-09 made false in both directions (**AK6a** is 24 files). Fixed in the
-same docs pass as this section rather than carried as a task.
+the reconciliation of 2026-11-09 made false in both directions (**AK6a** is 24 files). Its numbers
+table read the register of 2026-11-07 as well: the Check 330 row called **290**/**291** the highest
+**written** `## Check` section and put 330 "far above" it, where the register now writes up to
+**360** and 330 sits below it, claimed by nobody else. Fixed in the same docs pass as this section
+rather than carried as a task.
 
 ## 6. UNVERIFIED
 
@@ -496,18 +499,26 @@ open pull request's head:
   written above, **every one of them is answered as recommended on 2026-11-07** (§7), and none is
   reserved unused.
 
-**The check block.** The register's highest **written** `## Check` section on `main` was **290** at
-this reading (`docs/gcp-live-checklist.md`, the mixed-credentials run), and is **291** since
-`docs/image-env`'s own check was written — the register's rule is that the task implementing a check
-writes its row and section under the number free at its merge, which is what its `## Check 291` is.
-**292 is claimed by `docs/catalog-build-context`** (merged on `main` as #1805, at its own README's
-numbers table and its implementation-plan's §6, both read for this folder's D1409 above);
-**293–299 are claimed by nobody**; `docs/stateless-orchestrator` claims **300–309** and
-`docs/cli-output-console-graph` claims **310–314**. This work takes **Check 330**, well above every
-one of them, so no renumbering is owed whichever order the claims merge in. Like every claim above
-the highest written section, it is **claimed and not reserved**: the register's rule is that a claim
-is settled at its merge, and the register's own row and section are written by the task that
-implements the check, under the number free at that merge (implementation-plan §5).
+**The check block.** The register's highest **written** `## Check` section was **290** at this
+reading (`docs/gcp-live-checklist.md`, the mixed-credentials run) and **291** once `docs/image-env`'s
+own check was written — the register's rule is that the task implementing a check writes its row and
+section under the number free at its merge. **It has moved above this folder's number since:** the
+register now writes **340** (`docs/periodic-reviews`, under its §P8), **300–305**
+(`docs/stateless-orchestrator`, task O2) and **360** (`docs/console-managed-screens`, CM12), so
+**360** is the highest written section and 330 is **below** it, in the gap between
+`docs/cli-output-console-graph`'s **310–314** and the periodic-reviews block **340–349**, where
+**315–329 are written by nobody**. The claims around it: **292** by `docs/catalog-build-context`
+(merged on `main` as #1805, at its own README's numbers table and its implementation-plan's §6, both
+read for this folder's D1409 above), **306–309** reserved by `docs/stateless-orchestrator`,
+**310–314** by `docs/cli-output-console-graph`, **341–349** by `docs/periodic-reviews` (341 and 342
+taken, 343–349 reserved), **350–359** by `docs/failure-classes`, **361–369** available to
+`docs/console-managed-screens` and **370** taken by `docs/security-classification` (371–379
+available). This work
+takes **Check 330**, which **no other document claims and which collides with nothing**, so the
+number stays this work's. Like every claim it is **claimed and not reserved**: the register's rule is
+that a claim is settled at its merge, the later of two **colliding** claims renumbers itself, and the
+register's own row and section are written by the task that implements the check, under the number
+free at that merge (implementation-plan §5).
 
 **This folder's own numbers.** Findings **F1–F27** and tasks **AK1–AK10** are this folder's, and take
 no number any other work reads. **F25–F27 and AK9–AK10 are the author's own security pass's**

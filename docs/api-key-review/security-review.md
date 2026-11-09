@@ -209,8 +209,11 @@ the very state CLAUDE.md's "`fugaro update` is the whole upgrade" rule forbids.
 … E7, not met, so those four tasks may not start and the cloud half stays unlaunchable", and its file
 table still claimed "each with its files (at most six)". Item 7's gate is lifted (the flip of
 2026-11-08), item 6 **stays open** — this pass does not discharge it (§6's last bullet) — and the
-reconciliation of 2026-11-09 made the file count false in both directions (AK6a is 24 files).
-**One-line fix:** the status, the file table and the numbers are read off the tree, as they now are.
+reconciliation of 2026-11-09 made the file count false in both directions (AK6a is 24 files). Its
+numbers table read the register of 2026-11-07 too — the Check 330 row called 290/291 the highest
+**written** `## Check` section and put 330 "far above" it, where the register now writes up to
+**360** and 330 sits below it, claimed by nobody else. **One-line fix:** the status, the file table
+and the numbers are read off the tree, as they now are.
 **Fixed in this docs pass, not a task.**
 
 **What was considered and is not a finding.** The mint's read-only set, the audit line's one-per-refusal
