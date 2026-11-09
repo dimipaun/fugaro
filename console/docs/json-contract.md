@@ -575,6 +575,7 @@ int64, none `omitempty`.
 | `project` | string | no | the Fugaro project |
 | `runs` | `[]runview.Row` | no | `[]` when none |
 | `totals` | `runview.Totals` | no | below |
+| `groups` | `[]object` | **yes** | **only under `runs ls --group-by failure_class`** (`internal/cli/runs_group.go`): the window's failures grouped, one object per class of the closed vocabulary of `docs/design/failure-classes.md` §3 that some run of the window ended in, beside the `runs` array rather than instead of it. Each group carries `class` (one of the nineteen names), `runs` (how many of the window's runs ended in it), `share` (that count's share **of the window's runs**, never of the spend — D1465) and `spend_usd` (what those runs cost). The order is the vocabulary's own (`failure.Classes()`), so two readers of one window read the same block. **`omitempty` is what keeps the phone's degraded feed alive**: the degraded watch document embeds this shape and the app refuses a key it does not know, so a block printed by a listing that never grouped would break the degraded screen (`internal/cli/watch.go`) |
 | `warnings` | `[]string` | no | the lines a human listing prints before its table |
 
 `runview.Row` (`internal/runview/runview.go`) is the run shape behind
@@ -747,8 +748,9 @@ compute is unknown: their `compute_usd` 0 means "not estimated", so the sums
 are a lower bound** — the console renders that, it does not hide it).
 
 **Flags** (`f := cmd.Flags()`, `newLsCmd`): `--repo`, `--all`, `--mine`, `--since`, `--batch`,
-`--limit`, `--after`, `--state`, `--pr`, `--watch`, `--interval` (hidden), `--json`, plus the cloud
-flags. The allow-list excludes `--watch` (it is `watch` under another name).
+`--limit`, `--after`, `--state`, `--group-by`, `--pr`, `--watch`, `--interval` (hidden), `--json`, plus the cloud
+flags. The allow-list excludes `--watch` (it is `watch` under another name); `--group-by` is no row's
+argument either, so no spawn emits it and the block it adds waits for the screen that reads it.
 
 **`--limit=N` and `--after=RUN-ID` are the page and its cursor, and they are the two
 flags the console's `runs ls` row adds to the list above** (D818, the console

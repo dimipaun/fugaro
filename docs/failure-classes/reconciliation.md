@@ -1,8 +1,8 @@
 # Reconciliation: the failure-classes design against the code on `main`
 
 **Status (2026-11-07): D1450–D1469 are answered 2026-11-07 and all tasks are approved 2026-11-07
-(owner: "All tasks approved. Jobmax"); of them, FC1–FC5 and FC7 are built on `main` and FC6, FC8 and
-FC9 are not started.**
+(owner: "All tasks approved. Jobmax"); of them, FC1–FC7 are built on `main` and FC8 and FC9 are not
+started.**
 This file reads
 [spec.md](spec.md) — a verbatim copy of `docs/design/failure-classes.md` — against the tree of `main`
 at **`56c91f66`** (2026-11-07), path by path and symbol by symbol. Everything below was resolved
@@ -29,7 +29,7 @@ of them on 2026-11-07 as this file recommended. The design's status line as **th
 carries it is the dated one — *"a design; nothing is built; no decision below is answered."* — and the
 design on `main` has moved past it: the copy's sentence speaks for the design's own decisions, which
 the design's own status now says stay the owner's, and the line records what has shipped —
-*"a design, and its FC1–FC5 and FC7 have shipped; the rest of §10 is not built."*
+*"a design, and its FC1–FC7 have shipped; the rest of §10 is not built."*
 
 ---
 
@@ -526,8 +526,9 @@ stats` and every command the design's §6.3 does not name.
 every row — put to him through `AskUserQuestion`, every option the recommended one, and he took all
 of them — and every task in [implementation-plan.md](implementation-plan.md) was approved the same day
 (owner: "All tasks approved. Jobmax"), so no gate the plan names is still open — **FC1's, FC2's and
-FC3's included, and FC4's (FC2 merged) and FC5's (FC1 and FC3 merged) with them — and FC1–FC5 and
-FC7 (FC5 merged) are the six tasks of the nine that are built and merged; FC6, FC8 and FC9 are not
+FC3's included, and FC4's (FC2 merged), FC5's (FC1 and FC3 merged) and FC6's (FC5 merged, with
+D1458 and D1465 answered), and FC7's (FC5 merged, with D1463 and D1466 answered), with them — and
+FC1–FC7 are the seven tasks of the nine that are built and merged; FC8 and FC9 are not
 started.**
 Each row states the question, what this reconciliation recommends and why, the alternative, and what
 the alternative costs. **No row re-asks one of the design's §8 D1–D9 or §9 O1–O6**; where a question
