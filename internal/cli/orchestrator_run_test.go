@@ -14,7 +14,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/orchestrator"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
 // The daemon: its start-up, its loop and the boundary it holds (O8).
@@ -574,5 +576,163 @@ func TestRunOnceTakesOneCycleAndReleasesTheLease(t *testing.T) {
 	}
 	if held.Held || held.Holder != "" {
 		t.Errorf("the lease still names %q after a --once run, and one cycle must not hold the id", held.Holder)
+	}
+}
+
+// TestDaemonSeesTheGuardrailsMoveUnderIt: the kill switch and the project's
+// caps are what decide whether a cycle plans anything, and the switch is a
+// person's. A daemon that read them once at start-up would keep committing
+// intents and starting runs for the rest of its life: a person stopping the
+// work would stop the runs already going and none of the ones to come. The
+// cycle below starts with the switch off — the fixture's own state — and a
+// switch turned on before it runs is a cycle that plans nothing at all.
+func TestDaemonSeesTheGuardrailsMoveUnderIt(t *testing.T) {
+	f := newDaemonFixture(t)
+	d, _ := f.running(t, "")
+	d.once = true
+	now := f.serverNow(t)
+	item := approvedItem("wi-1", now)
+	f.putState(t, orchestrator.State{
+		SchemaVersion: orchestrator.SchemaVersion, AgentID: "aurora", Role: orchestrator.RoleOrchestrator,
+		Goal: "keep the work moving", WorkItems: []orchestrator.WorkItem{item},
+	})
+	d.tick.Launcher = f.launcher(t)
+	if d.tick.Caps.KillSwitch {
+		t.Fatal("the fixture's daemon starts with the kill switch on, so this test proves nothing")
+	}
+	f.db.Set(budget.PathKillGlobal, map[string]any{"on": true, "by": "owner", "reason": "stop the work"})
+
+	if err := d.loop(context.Background()); err != nil {
+		t.Fatalf("a cycle over a kill switch turned on while the daemon ran: %v", err)
+	}
+	if execs := f.run.Executions(); len(execs) != 0 {
+		t.Errorf("a person's kill switch was turned on while the daemon ran and it started %d run(s): %v", len(execs), execs)
+	}
+	if intents := f.state(t).Intents; len(intents) != 0 {
+		t.Errorf("the cycle committed %d attempt(s) under a kill switch that is on: %+v", len(intents), intents)
+	}
+}
+
+// TestDaemonStartsNothingWhenItsGuardrailsCannotBeRead: a guardrail that cannot
+// be read is not a guardrail that is off. The kill switch is what stops the
+// daemon starting anything at all, so the database refusing the read — of the
+// switch itself, and of the policy the caps come from — is exactly when the
+// daemon cannot tell, and the cycle plans nothing rather than reading the
+// refusal as a switch that is open.
+func TestDaemonStartsNothingWhenItsGuardrailsCannotBeRead(t *testing.T) {
+	f := newDaemonFixture(t)
+	d, out := f.running(t, "")
+	d.once = true
+	now := f.serverNow(t)
+	item := approvedItem("wi-1", now)
+	f.putState(t, orchestrator.State{
+		SchemaVersion: orchestrator.SchemaVersion, AgentID: "aurora", Role: orchestrator.RoleOrchestrator,
+		Goal: "keep the work moving", WorkItems: []orchestrator.WorkItem{item},
+	})
+	d.tick.Launcher = f.launcher(t)
+	// The switch's own node cannot be read.
+	f.db.DenyRead(budget.PathKillGlobal)
+
+	if err := d.loop(context.Background()); err != nil {
+		t.Fatalf("a cycle over a kill switch that cannot be read: %v", err)
+	}
+	if !d.tick.Caps.KillSwitch {
+		t.Error("a switch that could not be read is being read as off, so a daemon that cannot tell starts runs nobody stopped")
+	}
+	if execs := f.run.Executions(); len(execs) != 0 {
+		t.Errorf("a daemon that cannot read its own kill switch started %d run(s): %v", len(execs), execs)
+	}
+	if intents := f.state(t).Intents; len(intents) != 0 {
+		t.Errorf("the cycle committed %d attempt(s) with its guardrails unreadable: %+v", len(intents), intents)
+	}
+
+	// And the policy the caps are read from cannot be read either: the read is
+	// this cycle's, so the caps the daemon already has stay and the switch goes
+	// on, rather than either of them becoming a gate that is open.
+	f.db.DenyRead("")
+	f.db.DenyRead(projectpolicy.PathRulesMarker())
+	before := d.tick.Caps
+	d.refreshCaps(context.Background())
+	if !d.tick.Caps.KillSwitch {
+		t.Error("an unreadable policy left the kill switch off")
+	}
+	if d.tick.Caps.MaxRunning != before.MaxRunning || d.tick.Caps.MaxPerCycle != before.MaxPerCycle {
+		t.Errorf("an unreadable policy replaced the caps the daemon had with %+v, want %+v", d.tick.Caps, before)
+	}
+	if !strings.Contains(out.String(), "the guardrails could not be read") {
+		t.Errorf("a guardrail read that failed said nothing: %q", out.String())
+	}
+}
+
+// TestRunOnceReportsAFailedCycle: --once is the one cycle a person or a harness
+// holds the daemon to, so its exit code is the answer to "did that cycle run".
+// A cycle that failed — a launch the project's policy refuses, a lease that
+// went to another machine, a node that cannot be read — exiting 0 would read as
+// one cycle done, and the line that says one cycle was taken would be a lie.
+// The lease is still released with it: a pass that failed must not keep the id
+// from the daemon that drives it.
+func TestRunOnceReportsAFailedCycle(t *testing.T) {
+	f := newDaemonFixture(t)
+	// A launch the project's policy does not admit, which is a cycle that fails
+	// after the attempt was committed and with nothing started.
+	publishPolicy(t, f.launchBudgetFixture, `{"version":4,"allow_repos":["github/acme/other"]}`)
+	now := f.serverNow(t)
+	item := approvedItem("wi-1", now)
+	f.putState(t, orchestrator.State{
+		SchemaVersion: orchestrator.SchemaVersion, AgentID: "aurora", Role: orchestrator.RoleOrchestrator,
+		Goal: "keep the work moving", WorkItems: []orchestrator.WorkItem{item},
+	})
+
+	out, _, err := execute(t, "orchestrator", "run", "--once")
+	if err == nil {
+		t.Fatalf("a --once run whose cycle could not start its run exited 0: %q", out)
+	}
+	if !strings.Contains(err.Error(), "does not admit") {
+		t.Errorf("the failure --once reported is not the cycle's own: %v", err)
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Errorf("a refused launch exits %d, and a refusal is a user error", ExitCode(err))
+	}
+	if strings.Contains(out, "one cycle as asked") {
+		t.Errorf("a pass that failed still says it took its one cycle: %q", out)
+	}
+	_, db, err := openBudget(context.Background(), cloudOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease, err := orchestrator.NewLease(db, "aurora", daemonHolder, db.ServerNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	held, err := lease.Read(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if held.Held || held.Holder != "" {
+		t.Errorf("a --once pass that failed still holds the lease as %q for the whole TTL", held.Holder)
+	}
+}
+
+// TestDaemonGivesTheLeaseBackWhenItCannotStart: the lease is taken before the
+// daemon has a tick to drive it with, and a start-up that then fails must take
+// the id with it. A lease left behind by a daemon that never drove anything is
+// not a daemon driving it: it keeps the unit's next attempt, and a person's own
+// `fugaro orchestrator run`, out for the whole TTL.
+func TestDaemonGivesTheLeaseBackWhenItCannotStart(t *testing.T) {
+	f := newDaemonFixture(t)
+	d, _ := f.daemon(t, "")
+	// The guardrails the tick is built from cannot be read: the start-up fails
+	// after the lease was taken.
+	f.db.DenyRead(projectpolicy.PathRulesMarker())
+
+	if err := d.start(f.ctx); err == nil {
+		t.Fatal("a start-up whose guardrails could not be read returned no error")
+	}
+	state, err := d.lease.Read(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Held || state.Holder != "" {
+		t.Errorf("a daemon whose start-up failed left the lease as %q, so nothing else can drive the id for the whole TTL", state.Holder)
 	}
 }

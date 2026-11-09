@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/orchestrator"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
@@ -153,6 +154,12 @@ func TestRunViewLeavesAnInFlightRunOpen(t *testing.T) {
 	if err := f.runStore(t, cs.runID).WriteRecord(context.Background(), rec); err != nil {
 		t.Fatalf("writing the record a run in flight carries: %v", err)
 	}
+	// The platform says the run is still going, which is the other half of the
+	// same answer: a run the platform has not ended is left alone, however many
+	// cycles pass over it.
+	if st := f.run.State(f.run.Executions()[0]); st.Terminal() {
+		t.Fatalf("the fixture's execution is %s, so this test proves nothing about a run still going", st)
+	}
 
 	for cycle := 1; cycle <= 2; cycle++ {
 		rep, err := d.tick.Step(context.Background())
@@ -178,6 +185,45 @@ func TestRunViewLeavesAnInFlightRunOpen(t *testing.T) {
 	}
 	if it := f.intent(t, orchestrator.IntentID(cs.item.ID, 1)); it.Outcome != "" {
 		t.Errorf("the attempt was closed with %q while its run is still going", it.Outcome)
+	}
+}
+
+// TestRunViewFoldsARunThePlatformHasEnded: the record a run in flight carries
+// is not the whole story, because the runner that writes it is not the only
+// thing that can end a run. A container the platform OOM-killed, one that hit
+// the job's timeout, one that died at start-up: the runner never writes again,
+// so result.json keeps saying running for ever. A tick that believed it would
+// leave the attempt open for good — recovery skips a run that started, the plan
+// passes over an item with an attempt that has not reported, the breaker reads
+// the node as in flight, and a person cannot close an intent — and the daemon
+// would wait for ever on a run that ended. The platform's own word on the
+// execution is what tells the two apart.
+func TestRunViewFoldsARunThePlatformHasEnded(t *testing.T) {
+	f, d, cs := crashDaemon(t, true, true)
+	// The platform has ended the execution the launch recorded, and what the
+	// runner left is the record it wrote as it began.
+	f.run.SetState(f.run.Executions()[0], backend.StateFailed)
+	rec := &runstore.Record{
+		Version: 1, RunID: cs.runID, Execution: "exec-1", Status: runstore.StatusRunning,
+		Stage: "bootstrap", Outcome: runstore.OutcomeNone, StartedAt: f.now,
+	}
+	if err := f.runStore(t, cs.runID).WriteRecord(context.Background(), rec); err != nil {
+		t.Fatalf("writing the record a run in flight carries: %v", err)
+	}
+
+	rep, err := d.tick.Step(context.Background())
+	if err != nil {
+		t.Fatalf("a cycle over a run the platform has ended: %v", err)
+	}
+	if rep.Folded == 0 {
+		t.Fatalf("the cycle folded nothing over a run whose execution the platform had already ended: %+v", rep)
+	}
+	it := f.intent(t, orchestrator.IntentID(cs.item.ID, 1))
+	if it.Outcome != orchestrator.OutcomeFailed {
+		t.Errorf("the attempt whose run the platform ended carries %q, and a run that ended without reporting failed", it.Outcome)
+	}
+	if after := f.item(t, cs.item.ID); after.RunID == cs.runID && after.Phase == orchestrator.PhaseRunning {
+		t.Error("the item is still running under a run the platform ended, so nothing will ever move it again")
 	}
 }
 

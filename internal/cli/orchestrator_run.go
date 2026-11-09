@@ -175,11 +175,11 @@ func (d *orchestratorDaemon) start(ctx context.Context) error {
 			safetext.Field(d.id), safetext.Field(state.Holder), state.At.UTC().Format(time.RFC3339))
 	}
 	if err := d.migrate(ctx); err != nil {
-		return err
+		return d.abandon(ctx, err)
 	}
 	tick, err := d.newTick(ctx)
 	if err != nil {
-		return err
+		return d.abandon(ctx, err)
 	}
 	d.tick = tick
 	fmt.Fprintf(d.out, "orchestrator %s: driving it as %s, one cycle every %s\n", safetext.Field(d.id), safetext.Field(d.holder), d.interval)
@@ -308,7 +308,7 @@ func (d *orchestratorDaemon) newTick(ctx context.Context) (*orchestrator.Tick, e
 	}
 	return &orchestrator.Tick{
 		Store:    d.node,
-		Runs:     &orchestratorRunView{bucket: d.env.bucket.Bucket},
+		Runs:     &orchestratorRunView{bucket: d.env.bucket.Bucket, env: d.env, warn: d.warn},
 		Launcher: &orchestratorLauncher{env: d.env, stderr: d.warn, started: d.launched},
 		Mint:     func(now time.Time) (string, error) { return task.NewRunID(now, crand.Reader) },
 		Caps:     caps,
@@ -318,10 +318,8 @@ func (d *orchestratorDaemon) newTick(ctx context.Context) (*orchestrator.Tick, e
 }
 
 // caps are the daemon's guardrails: the project's orchestrator block with the
-// values Fugaro ships filled in, and the kill switch. The switch is read here
-// rather than per launch because it is what stops the daemon launching
-// anything at all, and a switch that cannot be read is ON: a daemon that
-// cannot tell is a daemon that starts nothing.
+// values Fugaro ships filled in, and the kill switch. A switch that cannot be
+// read is ON: a daemon that cannot tell is a daemon that starts nothing.
 func (d *orchestratorDaemon) caps(ctx context.Context) (orchestrator.Caps, error) {
 	published, _, err := projectPolicyRead(ctx, d.lc)
 	if err != nil {
@@ -352,6 +350,29 @@ func (d *orchestratorDaemon) caps(ctx context.Context) (orchestrator.Caps, error
 	}, nil
 }
 
+// refreshCaps re-reads the daemon's guardrails before every cycle.
+//
+// They decide whether a cycle plans anything at all, and the kill switch is a
+// person's: one turned on while this daemon is running has to stop it, and a
+// daemon that read the switch once at start-up would keep committing intents
+// and starting runs for the rest of its life with nothing in the way — the
+// person's stop would be a stop of the runs already going and of none of the
+// ones to come. The project's caps move for the same reason: a limit tightened
+// on the policy server is a limit the next cycle is held to.
+//
+// A guardrail that cannot be read is not a guardrail that is off. The caps the
+// daemon already has are kept, with the switch on: what a failed read costs is
+// one cycle's launches, and the next cycle reads again.
+func (d *orchestratorDaemon) refreshCaps(ctx context.Context) {
+	caps, err := d.caps(ctx)
+	if err != nil {
+		fmt.Fprintf(d.warn, "orchestrator %s: the guardrails could not be read, so this cycle starts nothing: %s\n", safetext.Field(d.id), safetext.OneLine(err.Error()))
+		caps = d.tick.Caps
+		caps.KillSwitch = true
+	}
+	d.tick.Caps = caps
+}
+
 // loop is the daemon's life after start-up: beat, tick, write the cache, check
 // the unit's binary, wait.
 //
@@ -361,17 +382,23 @@ func (d *orchestratorDaemon) caps(ctx context.Context) (orchestrator.Caps, error
 func (d *orchestratorDaemon) loop(ctx context.Context) error {
 	for {
 		if err := d.lease.Beat(ctx); err != nil {
+			if d.once {
+				// One pass by its own contract, and a pass that could not take
+				// its lease ran nothing: exit 0 would tell the caller it did.
+				return d.oneCycle(ctx, err)
+			}
 			if errors.Is(err, orchestrator.ErrLeaseLost) {
 				fmt.Fprintf(d.out, "orchestrator %s: the lease went to another daemon, so this one is stopping without touching the node\n", safetext.Field(d.id))
 				return nil
 			}
 			return dbErr(d.lc, err, false)
 		}
+		d.refreshCaps(ctx)
 		rep, err := orchestrator.StepWithCache(ctx, d.tick, d.cache)
 		d.report(rep, err)
 		d.rearmBreaker(ctx)
 		if d.once {
-			return d.oneCycle(ctx)
+			return d.oneCycle(ctx, err)
 		}
 		if err != nil {
 			if errors.Is(err, orchestrator.ErrLeaseLost) {
@@ -437,15 +464,41 @@ func (d *orchestratorDaemon) rearmBreaker(ctx context.Context) {
 	}
 }
 
-// oneCycle ends a --once run. The lease is released with the cycle it covered:
-// one pass held at a terminal must not keep the orchestrator id from the daemon
-// that drives it for the whole TTL.
-func (d *orchestratorDaemon) oneCycle(ctx context.Context) error {
-	fmt.Fprintf(d.out, "orchestrator %s: one cycle as asked (--once); the lease is released\n", safetext.Field(d.id))
+// abandon is the daemon leaving after it has taken the lease and before it has
+// anything to drive with. The id goes back with the failure: a lease left
+// behind by a start-up that failed is not a daemon driving anything, and it
+// keeps every other daemon — the unit's next attempt, a person's `--once` —
+// out for the whole TTL.
+func (d *orchestratorDaemon) abandon(ctx context.Context, err error) error {
+	d.release(ctx)
+	return err
+}
+
+// release gives the id back, and a lease that could not be released is a
+// warning and not a failure: the TTL ends it, and the two exits that call this
+// (a clean stop and a --once pass) have already decided what they are.
+func (d *orchestratorDaemon) release(ctx context.Context) {
 	if _, err := d.lease.Release(ctx); err != nil {
 		fmt.Fprintf(d.warn, "orchestrator %s: the lease could not be released: %s\n", safetext.Field(d.id), safetext.OneLine(err.Error()))
 	}
-	return nil
+}
+
+// oneCycle ends a --once run. The lease is released with the cycle it covered:
+// one pass held at a terminal must not keep the orchestrator id from the daemon
+// that drives it for the whole TTL.
+//
+// A pass that failed is the process's failure. `--once` is the one cycle a
+// person or a harness holds the daemon to, and its exit code is what says
+// whether that cycle ran: a budget refusal, a lease that went to another
+// machine or an unreadable node that exited 0 would read as one cycle done.
+// The lease is still released first, and the line still only prints for a
+// cycle that ran.
+func (d *orchestratorDaemon) oneCycle(ctx context.Context, cycleErr error) error {
+	if cycleErr == nil {
+		fmt.Fprintf(d.out, "orchestrator %s: one cycle as asked (--once); the lease is released\n", safetext.Field(d.id))
+	}
+	d.release(ctx)
+	return cycleErr
 }
 
 // stop is the clean exit: the lease is released, so the next daemon starts at
@@ -453,9 +506,7 @@ func (d *orchestratorDaemon) oneCycle(ctx context.Context) error {
 func (d *orchestratorDaemon) stop(ctx context.Context) error {
 	fmt.Fprintf(d.out, "orchestrator %s: the binary at %s is no longer the one this process runs (%s), so this daemon is exiting cleanly for the unit to start the one at that path\n",
 		safetext.Field(d.id), safetext.Field(d.binary), safetext.Field(d.running))
-	if _, err := d.lease.Release(ctx); err != nil {
-		fmt.Fprintf(d.warn, "orchestrator %s: the lease could not be released: %s\n", safetext.Field(d.id), safetext.OneLine(err.Error()))
-	}
+	d.release(ctx)
 	return nil
 }
 
@@ -551,16 +602,21 @@ func (f *launchInFlight) busy() bool {
 
 // orchestratorRunView is the daemon's read-only view of the runs the state
 // recorded (RunViewReader, O7): the run ids the intents carry, looked up in the
-// runs bucket, and nothing else.
+// runs bucket, and — for a run that has not reported — the platform's own word
+// on the execution behind it.
 //
 // A run the bucket does not know is reported as one that never started, which
 // is what recovery acts on; a run whose task is stored but whose launch never
 // happened is the same answer, because launch.json is what says an execution
 // was started. A run that started and has not written result.json — its record
 // still says running — carries no outcome and leaves its item running, which is
-// a cycle that is still going and not an item nobody can move again.
+// a cycle that is still going and not an item nobody can move again, as long as
+// the platform agrees the run is still going: a run the platform has already
+// ended is one that died without writing anything, which executionOver reads.
 type orchestratorRunView struct {
 	bucket *blob.Bucket
+	env    *cloudEnv
+	warn   io.Writer
 }
 
 func (v *orchestratorRunView) Runs(ctx context.Context, runIDs []string) ([]orchestrator.RunReport, error) {
@@ -576,23 +632,62 @@ func (v *orchestratorRunView) Runs(ctx context.Context, runIDs []string) ([]orch
 		}
 		s := runstore.Open(v.bucket, slug, run)
 		rep := orchestrator.RunReport{RunID: id}
-		if _, err := s.ReadLaunch(ctx); err != nil {
-			if !errors.Is(err, runstore.ErrNotFound) {
-				return nil, err
-			}
-		} else {
+		launch, err := s.ReadLaunch(ctx)
+		switch {
+		case err == nil:
 			rep.Started = true
+		case !errors.Is(err, runstore.ErrNotFound):
+			return nil, err
 		}
-		if rec, err := s.ReadRecord(ctx); err != nil {
-			if !errors.Is(err, runstore.ErrNotFound) {
-				return nil, err
-			}
-		} else if done, outcome := orchestratorOutcome(rec); done {
+		rec, err := s.ReadRecord(ctx)
+		switch {
+		case errors.Is(err, runstore.ErrNotFound):
+			rec = nil
+		case err != nil:
+			return nil, err
+		}
+		if done, outcome := orchestratorOutcome(rec); done {
 			rep.Finished, rep.Outcome = true, outcome
+		} else if rep.Started && v.executionOver(ctx, slug, run, launch) {
+			rep.Finished, rep.Outcome = true, orchestrator.OutcomeFailed
 		}
 		reports = append(reports, rep)
 	}
 	return reports, nil
+}
+
+// executionOver reports whether the platform has ended the run's execution,
+// which is the one thing that can tell a run still saying it is going that it
+// is not.
+//
+// A container the platform OOM-killed, one that hit the job's timeout, one
+// whose start-up failed: the runner inside it never got to write another record
+// (result.json is the runner's last act, and a runner that was killed never
+// makes it), so the record says running for ever. Left at that, the attempt
+// stays open for good: recovery skips a run that started, the plan passes over
+// an item with an attempt that has not reported, the breaker reads the whole
+// node as in flight — so the daemon does nothing but wait on a run that is not
+// there, and a person cannot close the intent for it (an intent is the daemon's
+// to write, and a person's upsert carrying one is refused). A run the platform
+// has ended is over, and an attempt that ended without reporting failed.
+//
+// Only an execution the platform reports as ended counts. One it no longer has
+// (Cloud Run keeps them 30 days) and one whose status cannot be read are both
+// "not known here", and both leave the run open: waiting a cycle longer costs
+// nothing next to folding a run as failed while it is still spending, which is
+// the double spend this view exists to avoid. The read is skipped when the
+// bucket says the run never started, and then there is no execution to ask
+// about.
+func (v *orchestratorRunView) executionOver(ctx context.Context, slug, runID string, l *runstore.Launch) bool {
+	if l == nil || l.Execution == "" {
+		return false
+	}
+	x, err := v.env.checkExecution(ctx, nil, l.Execution, slug, runID)
+	if err != nil {
+		fmt.Fprintf(v.warn, "run %s/%s: the state of its execution could not be read: %s\n", slug, runID, safetext.OneLine(err.Error()))
+		return false
+	}
+	return x != nil && x.State.Terminal()
 }
 
 // orchestratorOutcome is what one run means to the state, and whether the run
@@ -602,12 +697,16 @@ func (v *orchestratorRunView) Runs(ctx context.Context, runIDs []string) ([]orch
 // writes as the run begins and replaces as it ends — is not a finished run:
 // folding it as anything would close the attempt that is still going, take the
 // item off it, and have the next cycle start a second run for the same approval
-// while the first one is still spending.
+// while the first one is still spending. A run with no record at all is the
+// same answer: the runner has not written its first one yet.
 //
 // A status this release cannot place, including one from a newer release, is a
 // finished failure: the attempt is over and the item must not stay running for
 // ever, and a failed attempt is the one a person looks at.
 func orchestratorOutcome(rec *runstore.Record) (bool, orchestrator.Outcome) {
+	if rec == nil {
+		return false, ""
+	}
 	switch rec.Status {
 	case runstore.StatusRunning:
 		return false, ""

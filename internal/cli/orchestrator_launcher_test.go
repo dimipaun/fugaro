@@ -126,13 +126,17 @@ func TestRunLauncherRunsThePolicyGate(t *testing.T) {
 	ctx := context.Background()
 	// A policy that admits a different repository: what refuses below is the
 	// allow-list and not the budget, which the fixture leaves enforcing.
-	publishPolicy(t, f.launchBudgetFixture, `{"version":4,"allow_repos":["acme/other"]}`)
+	publishPolicy(t, f.launchBudgetFixture, `{"version":4,"allow_repos":["github/acme/other"]}`)
 	l := f.launcher(t)
 	spec := orchestrator.Spec{ItemID: "wi-1", Title: "land the daemon", Repo: "acme/app", Recipe: "standard", Brief: "This is the launch the policy refuses."}
 	const runID = "20261109-101500-abcd"
 
-	if _, err := l.Launch(ctx, spec, runID); err == nil {
+	_, err := l.Launch(ctx, spec, runID)
+	if err == nil {
 		t.Fatal("a launch the project's policy does not admit went through")
+	}
+	if !strings.Contains(err.Error(), "does not admit") {
+		t.Fatalf("the refusal is not the allow-list's own: %v", err)
 	}
 	if execs := f.run.Executions(); len(execs) != 0 {
 		t.Fatalf("a refused launch started %d execution(s): %v", len(execs), execs)
