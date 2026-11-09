@@ -4640,15 +4640,19 @@ pinning story did not hold.
 ### The same six fuses, on the Linux executable
 
 **`src/main/fuses.ts` resolves the binary per platform in one place.**
-`fuseTarget` reads `electronPlatformName` and returns either darwin's
-`<appOutDir>/<productName>.app/Contents/MacOS/<productName>` or Linux's
+`fuseTarget` reads `electronPlatformName` and returns darwin's
+`<appOutDir>/<productName>.app/Contents/MacOS/<productName>`, Linux's
 `<appOutDir>/<executableName>` — `linuxExecutable` falls back to the packer's
 own `sanitizedName.toLowerCase()`, the name `LinuxPackager` uses when
 `executableName` is unset, and **refuses a context that names no binary at all**
-rather than guessing a path to flip. Anything that is not `darwin` or `linux` is
-**refused, naming the platform and the two this build packages**: a hook that
-skipped would ship the fuses unset, which is the one outcome it exists to
-prevent. `SUPPORTED_PLATFORMS` is that list, and it is the same list
+rather than guessing a path to flip — or Windows's
+`<appOutDir>/<productFilename>.exe` (`win32Executable`, added with the Windows
+pack described below: the packer's own `.exe` extension for `win32`, and the name
+electron-builder gives the app, so `Fugaro Console` **with the space** and not
+the sanitized `fugaro-console`). Anything that is not `darwin`, `linux` or
+`win32` is **refused, naming the platform and the three this build packages**: a
+hook that skipped would ship the fuses unset, which is the one outcome it exists
+to prevent. `SUPPORTED_PLATFORMS` is that list, and it is the same list
 `src/main/spawn.ts`'s location table is keyed on.
 
 **The fuse set does not vary by platform.** The same six flips are written into
@@ -4789,6 +4793,88 @@ the asset names carry, so a bump moves them together.
 **No Linux auto-update** (design §7.3 is Squirrel.Mac and an `electron-updater`
 feed; the AppImage has no such feed here), **no arm64 Linux build** until one can
 be built and verified on a runner that has it, **no Flatpak, snap or rpm**, **no
-Linux Homebrew cask**, **no Windows build**, and **no signature of any kind**.
+Linux Homebrew cask**, **no Windows build** (the Windows pack is staged and has
+never been run — the section below is where it is described), and **no signature
+of any kind**.
 Each is a later decision and not an oversight: this ruling is the smallest thing
 that makes "Linux is supported" true.
+
+## The Windows pack, unsigned, and not yet run
+
+**The console's Windows build runs the *Linux* `fugaro` inside a WSL
+distribution** — the console finds the CLI inside a distribution and drives it
+through `wsl.exe`, and this repository builds no Windows `fugaro.exe`
+([docs/console-windows/](../docs/console-windows/README.md), and
+`website/data/install.yaml`'s Windows sentence, which is about the CLI and stays
+as it is). What follows is the **packer** half of that work: what
+`electron-builder --win` produces, and where it stands today.
+
+### What the pack produces, and the configuration that produces it
+
+| | |
+|---|---|
+| Target | `nsis`, **x64**, pinned in `build.win.target` rather than passed on a command line — the Linux leg's nested form, and not a top-level `win.arch`, which `WindowsConfiguration` refuses outright (`additionalProperties: false`) before the packer does anything, on every platform |
+| Artifact name | `Fugaro.Console-<version>-win-x64.exe` — `build.win.artifactName` is `Fugaro.Console-${version}-win-${arch}.${ext}`, the Linux leg's pattern, so the name follows the version the pack stamps and never a file name typed into a workflow; `${arch}` is the packer's own substitution, which is the spelling `docs/release.md` uses |
+| Icon | `console/build/icon.png` — the file `build.mac.icon` and `build.linux.icon` name as well, so the platforms cannot show different marks |
+| Signing | **none**: `build.win` carries no `certificateFile`, no `certificateSubjectName`, no `signAndEditExecutable` and no timestamp server, and this package names no Authenticode identity anywhere |
+| Command | `npm run package:win` — `npm run build && electron-builder --win --publish never`, the pinned local packer, never `npx`, and never publishing |
+
+**The installer is unsigned, and that is the whole of its security story, so it
+is said rather than deduced.** There is no Authenticode identity for this project
+and none is planned, and Windows has no notarisation ticket to staple even if
+there were: the `.exe` reaches the operator with no signature at all, so Windows
+SmartScreen warns that the publisher is unknown and *More info → Run anyway* is
+the way past it. What a reader checks the download against is the SHA-256 beside
+it and nothing else — the answer the Linux pair gets too, for the same reason
+(there is nothing to sign *with*).
+
+### `electron-builder --win` cannot be run on macOS or Linux today
+
+**The fuse hook is no longer what stands in the way** — `win32` is in the table
+above, `win32Executable` names the file the packer writes, and the `win` block
+names the target — so the obstacle is the Electron archive's checksum. Run on the
+Linux host, after the `win` block and the `win32` row landed:
+
+```sh
+$ npm run package:win
+  • packaging       platform=win32 arch=x64 electron=45.2.3 appOutDir=release/win-unpacked
+  • downloaded      label=electron progress=100%
+  ⨯ No checksum found in checksum file for "electron-v45.2.3-win32-x64.zip".  failedTask=build
+```
+
+`build.electronDownload.checksums` **is** the checksum file electron-builder
+checks a download against — `@electron/get` is handed those entries as inline
+checksums, which is what makes the comparison a hash in *this* repository rather
+than one fetched from the release host at pack time — and it lists three
+archives: the two darwin ones and `electron-v<version>-linux-x64.zip`. The
+`win32-x64` archive is not among them, and an archive that is not in the file is
+**refused** rather than verified against something nobody pinned. So a `--win`
+pack stops here, before `afterPack` is ever called, and the stop is the pinning
+story working rather than a gap in it: the archive has to join that list — the
+hash copied out of the lockfile-pinned `electron` package's own `checksums.json`,
+never from a network fetch and never typed from memory — before any host, macOS,
+Linux or a Windows runner, completes the pack.
+
+### What was verified here, and what was not
+
+- **Verified in this container**: the `win32` row in `fuseTarget`, and the
+  refusal kept for a platform nobody decided (`test/unit/fuses.test.ts`); the
+  `win` block's key set, its `nsis`/`x64` target and its artifact name, and the
+  `package:win` script (the same file); and the failure above, which was run
+  rather than assumed.
+- **Not verified here, and not verifiable in this container**: **no `.exe`
+  exists.** Nothing has completed a `--win` pack, nothing has run an NSIS
+  installer, and no Windows machine has launched the console this pack would
+  produce. Every claim above about what the packer writes is a claim about its
+  configuration.
+
+### What is not here
+
+**No Windows signing** (above), **no target but `nsis` x64** — no MSI, no
+portable executable, no arm64 — and **no release asset**: the installer is the
+job's own build artifact and is **not** attached to `console-vX.Y.Z`
+(`docs/release.md`; the release carries macOS and Linux and nothing else). The
+job that produces it is staged under `docs/pending-workflows/`, runs on
+`windows-latest` **at release time only** — the release tag or a manual
+dispatch, never on a pull request — holds no secret at all, and is what the
+release checklist's by-hand dry run dispatches before a tag.
