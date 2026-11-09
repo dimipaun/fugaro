@@ -484,6 +484,19 @@ func contextPathMessage(f string) string {
 // FUGARO_COMMIT. The step writes catalogContextRoot and nothing under
 // /workspace/context: that directory holds the copied Dockerfile, which
 // stays the file the build runs and the pin step verifies (D1404).
+//
+// It refuses a context that leaves the checkout by a link. The context reaches
+// docker as the directory its path resolves to — the CLI tars what a symlinked
+// root points at, not the link — so a repository whose context is a symlink to
+// /creds, which this step mounts, would hand the build step's credential
+// volume to the entry's Dockerfile, and a Dockerfile that only says `COPY .`
+// would copy the repository's token into the shared catalog image. The step
+// resolves the context the way docker will — a cd follows the link and pwd -P
+// says where it landed — and builds only from a directory inside the checkout
+// the clone just made. The request refuses the text of such a context earlier
+// (check, contextPathMessage); a link is visible only in the tree, so this is
+// the one place it can be seen, and it is checked on the directory docker is
+// handed rather than walked through the tree.
 func catalogContextStep(s CatalogBuildSpec) *cloudbuild.BuildStep {
 	// The values reach the script through env: and are read as quoted
 	// "$$VAR" (the rule images/derived/cloudbuild.yaml states).
@@ -491,7 +504,7 @@ func catalogContextStep(s CatalogBuildSpec) *cloudbuild.BuildStep {
 		Id:         catalogContextStepID,
 		Name:       "gcr.io/cloud-builders/git",
 		Entrypoint: "bash",
-		Env:        []string{"REPO_URL=" + s.RepoURL, "COMMIT=" + s.ContextCommit},
+		Env:        []string{"REPO_URL=" + s.RepoURL, "COMMIT=" + s.ContextCommit, "CONTEXT_DIR=${_CONTEXT_DIR}"},
 		Args: []string{"-c", `set -eu
 case "$$REPO_URL" in https://*) ;; *) echo "REPO_URL must be an https URL" >&2; exit 1 ;; esac
 GIT_TERMINAL_PROMPT=0 git -c credential.helper='store --file=/creds/git-credentials' \
@@ -501,7 +514,14 @@ git cat-file -e "$$COMMIT^{commit}" 2>/dev/null \
   || GIT_TERMINAL_PROMPT=0 git -c credential.helper='store --file=/creds/git-credentials' \
        fetch --quiet origin "$$COMMIT" \
   || { echo "commit $$COMMIT is no longer reachable: the branch was force-pushed; re-run the build" >&2; exit 1; }
-git reset --quiet --hard "$$COMMIT"`},
+git reset --quiet --hard "$$COMMIT"
+root=$$(cd /workspace/src && pwd -P)
+context=$$(cd -- "$$CONTEXT_DIR" 2>/dev/null && pwd -P) \
+  || { echo "the context $$CONTEXT_DIR is not a directory of the checkout" >&2; exit 1; }
+case "$$context" in
+  "$$root"|"$$root"/*) ;;
+  *) echo "the context $$CONTEXT_DIR resolves to $$context, outside the checkout: the build step mounts the repository's credential there" >&2; exit 1 ;;
+esac`},
 		Volumes: []*cloudbuild.Volume{{Name: "fugaro-creds", Path: "/creds"}},
 	}
 }

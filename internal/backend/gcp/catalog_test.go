@@ -3,7 +3,10 @@ package gcp
 import (
 	"encoding/base64"
 	"errors"
+	"os"
+	"os/exec"
 	"path"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -13,6 +16,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // catalogSlug is the repository whose build account runs the catalog builds
@@ -601,7 +605,10 @@ func TestCatalogBuildHasACheckoutStepForAContextEntry(t *testing.T) {
 	if checkout.Name != "gcr.io/cloud-builders/git" || checkout.Entrypoint != "bash" || len(checkout.SecretEnv) != 0 {
 		t.Fatalf("the checkout step = %+v", checkout)
 	}
-	if env := checkout.Env; !slices.Equal(env, []string{"REPO_URL=" + s.RepoURL, "COMMIT=" + s.ContextCommit}) {
+	// CONTEXT_DIR is the substitution the build step builds from, so the step
+	// resolves the directory docker will open and not a second reading of the
+	// entry's context.
+	if env := checkout.Env; !slices.Equal(env, []string{"REPO_URL=" + s.RepoURL, "COMMIT=" + s.ContextCommit, "CONTEXT_DIR=${_CONTEXT_DIR}"}) {
 		t.Fatalf("the checkout step's env = %v", env)
 	}
 	script := strings.Join(checkout.Args, "\n")
@@ -813,6 +820,90 @@ func TestCatalogBuildRefusesAContextOutsideTheCheckout(t *testing.T) {
 				t.Errorf("the context %q builds from %q, which resolves outside the checkout", tc.context, dir)
 			}
 		}
+	}
+}
+
+// catalogGitStub is the git the context step runs against in the test below:
+// the clone leaves the checkout the case names at the context path — a
+// directory, or a link to whatever CTX_LINK holds — and every other subcommand
+// the step runs (cat-file, fetch, reset) succeeds.
+const catalogGitStub = `#!/bin/sh
+while [ $# -gt 0 ]; do
+  case "$1" in
+  clone)
+    for last; do :; done
+    rm -rf "$last/ci"
+    mkdir -p "$last/sub" || exit 1
+    if [ -n "$CTX_LINK" ]; then ln -s -- "$CTX_LINK" "$last/ci"; else mkdir -p "$last/ci"; fi
+    exit 0 ;;
+  esac
+  shift
+done
+exit 0
+`
+
+// TestCatalogContextStepRefusesAContextThatLeavesTheCheckoutByALink: the
+// context reaches docker as the directory its path resolves to — the CLI tars
+// what a symlinked root points at, not the link — so a repository at the pinned
+// commit whose context is a link to the credential volume would hand the build
+// step's /creds to the entry's Dockerfile, and a Dockerfile that only says
+// `COPY .` would copy the repository's token into the shared catalog image.
+// The step resolves the context the way docker will (a cd follows the link, pwd
+// -P says where it landed) and builds only from a directory inside the
+// checkout. A link to a directory of the checkout is a context like any other.
+func TestCatalogContextStepRefusesAContextThatLeavesTheCheckoutByALink(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("no bash")
+	}
+	s := catalogContextSpec(t)
+	s.Context = "ci"
+	step := catalogContextStep(s)
+	if len(step.Args) != 2 {
+		t.Fatalf("the checkout step's args = %q, want one script", step.Args)
+	}
+	for _, tc := range []struct {
+		name    string
+		target  func(ws string) string
+		refused bool
+	}{
+		{"a directory of the checkout", func(string) string { return "" }, false},
+		{"a link to the credential volume",
+			func(ws string) string { return filepath.Join(ws, "creds") }, true},
+		{"a link above the checkout", func(ws string) string { return ws }, true},
+		{"a link to a directory of the checkout",
+			func(ws string) string { return filepath.Join(ws, "src", "sub") }, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ws := t.TempDir()
+			// The credential volume the step mounts, standing where the
+			// build mounts it: a directory of its own, never a file this
+			// case would have to read.
+			creds := filepath.Join(ws, "creds")
+			if err := os.MkdirAll(creds, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			bin := filepath.Join(ws, "bin")
+			testutil.WriteFiles(t, bin, map[string]string{"git": catalogGitStub})
+			script := strings.ReplaceAll(strings.ReplaceAll(step.Args[1], "$$", "$"), "/workspace", ws)
+			cmd := exec.Command(bash, "-c", script)
+			cmd.Env = []string{
+				"PATH=" + bin + ":" + os.Getenv("PATH"),
+				"REPO_URL=" + s.RepoURL,
+				"COMMIT=" + s.ContextCommit,
+				"CONTEXT_DIR=" + filepath.Join(ws, "src", "ci"),
+				"CTX_LINK=" + tc.target(ws),
+			}
+			out, err := cmd.CombinedOutput()
+			switch {
+			case tc.refused && err == nil:
+				t.Errorf("the step builds from a context outside the checkout:\n%s", out)
+			case tc.refused && !strings.Contains(string(out), "outside the checkout"):
+				t.Errorf("the step refuses it without saying why: %v\n%s", err, out)
+			case !tc.refused && err != nil:
+				t.Errorf("the step refuses a context inside the checkout: %v\n%s", err, out)
+			}
+		})
 	}
 }
 
