@@ -252,6 +252,11 @@ func TestRunArgsIsTheReadOnlyContract(t *testing.T) {
 	if !slices.Contains(args, "--strict-mcp-config") {
 		t.Error("the child is started without --strict-mcp-config: an MCP server named by the machine's own configuration would be a tool the allow-list never named")
 	}
+	// One question, asked once: the client's own record of what the run read
+	// belongs in no store on the person's disk.
+	if !slices.Contains(args, "--no-session-persistence") {
+		t.Error("the child is started without --no-session-persistence: the client would write its session file, holding what the agent read, under the person's home")
+	}
 	// The settings payload carries the two things no flag expresses: hooks off,
 	// and the places a diagnosis never has a reason to read, named.
 	settings, ok := runFlag(args, "--settings")

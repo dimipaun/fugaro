@@ -316,16 +316,17 @@ func Run(ctx context.Context, req Request) (Diagnosis, error) {
 	if transcriptRed != nil {
 		_ = transcriptRed.Flush()
 	}
-	// A run the cap stopped is asked about first, because its result event has
-	// no answer to read: reading the block first would report "the agent wrote
-	// no block" for a run that was ended exactly as D1613 says it should be.
-	if sub := res.Subtype; found && isCapSubtype(sub) {
-		return Diagnosis{}, fmt.Errorf("the diagnosis was stopped by the cap on this run: the agent ended with %s, which is claude's own report that it reached --max-turns %d or --max-budget-usd %.2f (D1613). Raise the cap and run it again if the answer is worth the spend",
-			safetext.OneLine(sub), req.Cap.withDefaults().Turns, req.Cap.withDefaults().USD)
-	}
+	cap := req.Cap.withDefaults()
 	switch {
 	case err != nil:
 		return Diagnosis{}, fmt.Errorf("reading the diagnosis agent's output: %w", err)
+	case found && isCapSubtype(res.Subtype):
+		// A run one of the two caps stopped is asked about before the answer
+		// is read at all: its result event carries no block, so reading one
+		// first would report "the agent wrote no block" for a run that ended
+		// exactly as D1613 says a run that does not settle should end.
+		return Diagnosis{}, fmt.Errorf("the diagnosis was stopped by the cap on this run: the agent ended with %s, which is claude's own report that it reached --max-turns %d or --max-budget-usd %.2f (D1613). Raise the cap and run it again if the answer is worth the spend",
+			safetext.OneLine(res.Subtype), cap.Turns, cap.USD)
 	case !found:
 		return Diagnosis{}, fmt.Errorf("the diagnosis agent exited with code %d without a result event, so it answered nothing", code)
 	case res.IsError:
@@ -335,7 +336,7 @@ func Run(ctx context.Context, req Request) (Diagnosis, error) {
 	// client prices a run against its own estimate of the model, and a run
 	// that reports more than the cap was given did not stay inside it whatever
 	// its --max-budget-usd was set to.
-	if cap := req.Cap.withDefaults(); res.CostUSD > cap.USD {
+	if res.CostUSD > cap.USD {
 		return Diagnosis{}, fmt.Errorf("the diagnosis cost $%.2f and the cap for this run is $%.2f (D1613): the run went past the bound it was given, so its answer is not shown. Raise the cap and run it again if the answer is worth the spend", res.CostUSD, cap.USD)
 	}
 	d, err := parseAnswer(res.Text, req.Nonce)
