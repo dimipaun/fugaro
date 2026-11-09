@@ -381,13 +381,19 @@ own file choose which credential serves its review: `checkReviewClassModelPath`'
 api-key repository (**F11**) is a refusal the plan keeps, and AK5's change is to *admit the key as
 the class's own credential*, never to let the repository supply one.
 
-**F25 — Defect, wording. Four of the service's own sentences say a review call is served by a Claude
+**F25 — Defect, wording. The tree's own sentences say a review call is served by a Claude
 account, and AK4 made that inexact.** `internal/credsvc/auth.go` refuses a review job account naming
 nothing with "names no Claude account, so no call of it could be served" and a duplicate with "bound
 to two Claude accounts"; `internal/credsvc/server.go` writes the same two in its serve path, one of
-them as "no email or no Claude account"; and
+them as "no email or no Claude account"; **three more Go sites** carry the claim —
+`internal/cli/validate.go`'s `reviewJobNotes`, whose `budget.per_run_usd` note tells the operator a
+review job "runs on a Claude account" (the one of these a person actually reads), the two comments in
+`internal/cli/credentials_serve.go`, and `internal/infra/tfvars.go`'s comment for
+`FUGARO_REVIEW_JOB_ACCOUNTS`; and **both module files** say it —
 `deploy/terraform/gcp/modules/installation/variables.tf` describes `review_job_accounts` as
-"carrying the Claude account the variant's calls are served by". Since **AK4** the axis value may be
+"carrying the Claude account the variant's calls are served by" (its description and the comment above
+its validation) and `deploy/terraform/gcp/modules/installation/credentials.tf`'s
+`FUGARO_REVIEW_JOB_ACCOUNTS` block says the same. Since **AK4** the axis value may be
 `config.AnthropicKeyAccount`, which names the project's own Anthropic API key and — in
 `internal/credsvc/review.go`'s own words — **is not an account**. Found by the security review of the
 merged AK4 and AK5 ([security-review.md](security-review.md)) on **2026-11-09**; the fix is the

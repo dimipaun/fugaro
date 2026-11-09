@@ -48,13 +48,17 @@ The whole request path of the service, and every reader of the facts the two tas
 - `internal/gateway/export.go` and `gateway.go` — the helpers the service reuses, and the base it
   builds;
 - `internal/runner/routing.go` — the class's model path and its allow-list arm;
-- `internal/cli/run.go`, `internal/cli/project_job.go` and `internal/cli/creds.go` — the launch, the
-  account axis's placement and the bundle's only writer;
+- `internal/cli/run.go`, `internal/cli/project_job.go`, `internal/cli/credentials_serve.go` and
+  `internal/cli/creds.go` — the launch, the account axis's placement, the service's configuration and
+  the bundle's only writer — with `internal/cli/validate.go`'s `reviewJobNotes`, the note `fugaro
+  validate` prints;
 - `internal/projectpolicy/accounts.go` and `policy.go` — the `accounts` block and the account-choice
   members;
 - `internal/task/task.go` with `schemas/task.schema.json` — the axis value where it may reach a task;
-- `deploy/terraform/gcp/modules/installation/variables.tf` and `modules/project/variables.tf` — the
-  two validations the axis is held to;
+- `internal/infra/tfvars.go` — the document the deployer writes the review class's rows into;
+- `deploy/terraform/gcp/modules/installation/variables.tf` with `credentials.tf`, and
+  `modules/project/variables.tf` — the module's prose for the review-job document and the validations
+  the axis is held to;
 - the tests that pin the properties below, `internal/credsvc/review_test.go` and `cascade_test.go` and
   `internal/runner/routing_internal_test.go` first among them.
 
@@ -148,18 +152,29 @@ attack surface added by AK4 or AK5; the surface AK6b adds is the one §5 constra
 
 ## 4. Findings
 
-**F25 — four of the service's own sentences say a review call is served by a Claude account, and AK4
-made that inexact.** `internal/credsvc/auth.go` refuses a review job account naming nothing with
+**F25 — the service's and the launcher's own sentences say a review call is served by a Claude
+account, and AK4 made that inexact — in more places than the four refusals that first stood out.**
+The **refusals**: `internal/credsvc/auth.go` refuses a review job account naming nothing with
 "names no Claude account, so no call of it could be served" and a duplicate with "bound to two Claude
 accounts"; `internal/credsvc/server.go` writes the same two in the serve path, one of them as "no
-email or no Claude account"; and `modules/installation/variables.tf` describes `review_job_accounts`
-as "carrying the Claude account the variant's calls are served by". Since AK4 the value may be the
-sentinel, which names the project's own key and — `review.go`'s own words — **is not an account**.
-**One-line fix:** the refusal names what the value is, the **account axis** value the review job is
-served by, in all four sentences and the module's prose. **Became AK9** (SEC), written and not
-approved. **Severity: none on its own** — no behaviour changes with the words — but the sentence is
-what an operator reads when the service refuses a call, and it would send them looking for an account
-that does not exist.
+email or no Claude account". **Three more Go sites carry the same claim**: `internal/cli/validate.go`'s
+`reviewJobNotes` prints the operator a note on `budget.per_run_usd` saying a review job's model calls
+do not reach the gateway because "it runs on a Claude account" — the note `fugaro validate` writes, and
+the one an operator is most likely to read; `internal/cli/credentials_serve.go` says it twice, once
+where the service's configuration is assembled ("with the Claude account its calls are served by") and
+once on `credentialsServiceReviewJobAccounts` ("carrying the Claude account that call is served by");
+and `internal/infra/tfvars.go` writes `FUGARO_REVIEW_JOB_ACCOUNTS` with "Account is the Claude account
+the variant's calls are served by". **The module says it in both its files**:
+`modules/installation/variables.tf` describes `review_job_accounts` as "carrying the Claude account the
+variant's calls are served by" (its description and the comment under it), and
+`modules/installation/credentials.tf`'s `FUGARO_REVIEW_JOB_ACCOUNTS` block says "the Claude account the
+variant's calls are served by" and "the Claude account the pairing serves a review call by". Since AK4
+the value may be the sentinel, which names the project's own key and — `review.go`'s own words — **is
+not an account**. **One-line fix:** each sentence names what the value is, the **account axis** value
+the review job is served by, everywhere it stands. **Became AK9** (SEC), written and not approved.
+**Severity: none on its own** — no behaviour changes with the words — but the sentence is what an
+operator reads when the service refuses a call or when `fugaro validate` warns them, and it would send
+them looking for an account that does not exist.
 
 **F26 — the bundle's strictness turns a newer write into a service-wide halt.** `ParseBundle` refuses
 the **whole document** on a key it does not know (`bundleErr(ErrBundleUnknownKey, …)`), and the

@@ -151,7 +151,13 @@ could touch).
 | `internal/credsvc/auth_test.go` | — | AK9 (the same) |
 | `internal/credsvc/server.go` | — | AK9 (the same, in the serve path) |
 | `internal/credsvc/server_test.go` | — | AK9 (the same) |
+| `internal/cli/validate.go` | — | AK9 (the note `fugaro validate` prints) |
+| `internal/cli/validate_test.go` | — | AK9 (the same) |
+| `internal/cli/credentials_serve.go` | — | AK9 (the two comments that say it) |
+| `internal/cli/credentials_serve_test.go` | — | AK9 (the same) |
+| `internal/infra/tfvars.go` | — | AK9 (the comment for `FUGARO_REVIEW_JOB_ACCOUNTS`) |
 | `deploy/terraform/gcp/modules/installation/variables.tf` | — | AK9 (the same, in the module's prose) |
+| `deploy/terraform/gcp/modules/installation/credentials.tf` | — | AK9 (the same, in the module's other file) |
 | `internal/cli/creds.go` | — | AK10 (the credential write's guard) |
 | `internal/cli/creds_test.go` | — | AK10 (the same) |
 | `internal/cli/creds_skew_test.go` (new) | — | AK10 (the same) |
@@ -727,29 +733,49 @@ register.
 
 **Commit:** `docs(checklist): check 330, the api-key review`
 
-### AK9 — the service's own sentences stop saying a review is served by a Claude account (SEC)
+### AK9 — the tree's own sentences stop saying a review is served by a Claude account (SEC)
 
 **Slice:** none — **off the levels and off the critical path** (§1, §2's `—` rows). **Depends on:**
 nothing; it was found by the security review of the merged AK4 and AK5 (§7, **F25**).
 
-**Files (5):** `internal/credsvc/auth.go`, `internal/credsvc/auth_test.go`, `internal/credsvc/server.go`,
-`internal/credsvc/server_test.go`, `deploy/terraform/gcp/modules/installation/variables.tf`.
+**Files (11):** `internal/credsvc/auth.go`, `internal/credsvc/auth_test.go`, `internal/credsvc/server.go`,
+`internal/credsvc/server_test.go`, `internal/cli/validate.go`, `internal/cli/validate_test.go`,
+`internal/cli/credentials_serve.go`, `internal/cli/credentials_serve_test.go`,
+`internal/infra/tfvars.go`, `deploy/terraform/gcp/modules/installation/variables.tf`,
+`deploy/terraform/gcp/modules/installation/credentials.tf`.
 
-**Interfaces:** none. The two refusal sentences in `internal/credsvc/auth.go` ("a review job account
-names no Claude account, so no call of it could be served"; "the same review job service account is
-bound to two Claude accounts"), the two in `internal/credsvc/server.go` (the serve path's copies, one
-of which spells "no email or no Claude account") and the module's prose for `review_job_accounts` (the
-variable's description and the comment above its validation) name **a Claude account** where AK4 made
-that inexact: the account a review variant's calls are served by may be `config.AnthropicKeyAccount`,
-which names the project's own Anthropic API key and, in `internal/credsvc/review.go`'s own words, **is
-not an account**. The fix is the words and nothing else — the type, the validation and the one audit
-line a refusal writes stay exactly as they are — so the refusal says what the value is: the **account
-axis** value a review job is served by.
+**Interfaces:** none. **The claim stands in more places than the four refusals the review first
+listed, and all of them are this task's** (the review's **F25** is written with the whole inventory):
+
+- the **four refusals** — `internal/credsvc/auth.go` ("a review job account names no Claude account, so
+  no call of it could be served"; "the same review job service account is bound to two Claude accounts")
+  and `internal/credsvc/server.go`'s two copies in the serve path, one of which spells "no email or no
+  Claude account";
+- **the note `fugaro validate` prints** — `internal/cli/validate.go`'s `reviewJobNotes` warns on
+  `budget.per_run_usd` that a review job's model calls do not reach the gateway because "it runs on a
+  Claude account": the sentence an operator is most likely to read, and the only one of these that is
+  output rather than a comment or a refusal;
+- **two comments in `internal/cli/credentials_serve.go`** — where the service's configuration is
+  assembled ("with the Claude account its calls are served by") and on
+  `credentialsServiceReviewJobAccounts` ("carrying the Claude account that call is served by");
+- **`internal/infra/tfvars.go`'s comment** for `FUGARO_REVIEW_JOB_ACCOUNTS` ("Account is the Claude
+  account the variant's calls are served by");
+- **the module's two files** — `variables.tf`'s description of `review_job_accounts` and the comment
+  above its validation, and `credentials.tf`'s `FUGARO_REVIEW_JOB_ACCOUNTS` block ("the Claude account
+  the variant's calls are served by", "the Claude account the pairing serves a review call by").
+
+Each names **a Claude account** where AK4 made that inexact: the account a review variant's calls are
+served by may be `config.AnthropicKeyAccount`, which names the project's own Anthropic API key and, in
+`internal/credsvc/review.go`'s own words, **is not an account**. The fix is the words and nothing else —
+the type, the validation and the one audit line a refusal writes stay exactly as they are — so each
+sentence says what the value is: the **account axis** value a review job is served by. The comments and
+the module's prose take no test, because no reader executes them; the two sentences a caller or an
+operator actually sees do.
 
 **Tests and command:**
-`GOFLAGS=-p=2 go test ./internal/credsvc/ -run 'TestReviewAccountRefusalsNameTheAxisAndNotAnAccount|TestNewAuthenticatorRefusesAnIncompleteConfig' -count=1`
+`GOFLAGS=-p=2 go test ./internal/credsvc/ ./internal/cli/ -run 'TestReviewAccountRefusalsNameTheAxisAndNotAnAccount|TestNewAuthenticatorRefusesAnIncompleteConfig|TestValidateNoteNamesTheAxisAndNotAClaudeAccount' -count=1`
 
-- `TestReviewAccountRefusalsNameTheAxisAndNotAnAccount` — the four sentences, in the packages that
+- `TestReviewAccountRefusalsNameTheAxisAndNotAnAccount` — the four refusals, in the packages that
   write them: each names the axis and does not say that what serves a review call is a Claude account,
   and a review job account naming nothing is still refused. **The red step**, in the narrow sense a
   sentence has one: the test asserts the corrected sentence, so it fails on today's tree and passes
@@ -757,19 +783,25 @@ axis** value a review job is served by.
 - `TestNewAuthenticatorRefusesAnIncompleteConfig` — gains the case the branch has never had (a review
   job account whose account is empty), so the refusal this task rewrites is exercised by a named test
   and not only by review.
+- `TestValidateNoteNamesTheAxisAndNotAClaudeAccount` — `reviewJobNotes`'s `budget.per_run_usd` note
+  names the axis value and never a Claude account, and the note is still written where the cap is set
+  and a profile lists an account.
 
 **Red step:** `TestReviewAccountRefusalsNameTheAxisAndNotAnAccount` fails today, on all four
-sentences.
+refusals, and `TestValidateNoteNamesTheAxisAndNotAClaudeAccount` on the note.
 
 **Mutation:** fix `auth.go` and leave `server.go`'s two copies — the service's own serve path then
 refuses a provider-served review in words that name a Claude account, and the test's own four-site
-check goes red.
+check goes red. A second: fix the service's refusals and leave `reviewJobNotes` — `fugaro validate`
+then tells the operator the review runs on a Claude account while the service's own refusals say
+otherwise, which is the drift this task exists to end.
 
-**Reviewer tier:** **SEC** — opus. The files are the credentials service's, and its refusals are read
-by whoever operates it, so a sentence that misdescribes what was refused is a security-relevant
-inaccuracy rather than a wording preference (`.claude/rules/credentials-service.md`).
+**Reviewer tier:** **SEC** — opus. The files are the credentials service's, the launcher's and the
+deployer's, and its refusals and notes are read by whoever operates it, so a sentence that misdescribes
+what was refused is a security-relevant inaccuracy rather than a wording preference
+(`.claude/rules/credentials-service.md`).
 
-**Commit:** `credsvc: the review refusals name the account axis, not a Claude account`
+**Commit:** `credsvc, cli: the review sentences name the account axis, not a Claude account`
 
 ### AK10 — the credential write refuses a bundle the deployed service cannot read (SEC)
 
@@ -1050,9 +1082,12 @@ states the conditions those tasks keep: the base
 URL is the bundle's and never the runner's, an unknown provider fails closed, and the destination rule
 and the redaction stay where they are.
 
-**Findings.** **F25** — four refusal sentences in `internal/credsvc/auth.go` and `server.go`, and the
-module's prose for `review_job_accounts`, still say a review call is served by a **Claude account**,
-which AK4 made inexact (the sentinel is not one); **AK9**. **F26** — `ParseBundle` refuses a **whole
+**Findings.** **F25** — the tree's own sentences still say a review call is served by a **Claude
+account**, which AK4 made inexact (the sentinel is not one): four refusals in `internal/credsvc/auth.go`
+and `server.go`, the note `fugaro validate` prints on `budget.per_run_usd` ("it runs on a Claude
+account"), two comments in `internal/cli/credentials_serve.go`, `internal/infra/tfvars.go`'s comment
+for `FUGARO_REVIEW_JOB_ACCOUNTS`, and both module files' prose for the review-job document; **AK9**.
+**F26** — `ParseBundle` refuses a **whole
 document** on an unknown key, so a bundle written with AK6b's provider entry by a CLI newer than the
 installation's deployed service halts every caller of that service until `fugaro update`; **AK10**, with
 the release's `### For operators` sentence. **F27** — `README.md`'s status line still read "items 6 and
