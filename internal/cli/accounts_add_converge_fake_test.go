@@ -63,7 +63,7 @@ type addRig struct {
 	// managed is whether the project this rig's marks describe is one the gate
 	// proves is managed. It is the one fact `add` cannot read back off the
 	// filesystem — the two marks live in the fakes — and it decides whether the
-	// run it makes is asked the owner's own confirmation (accounts_managed_test.go).
+	// run it makes is shown the owner's own statement (accounts_managed_test.go).
 	managed bool
 }
 

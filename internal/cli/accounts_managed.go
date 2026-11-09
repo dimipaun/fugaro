@@ -45,7 +45,7 @@ import (
 //
 //   - A widening (`--repos` naming a repository beyond the checkout this command
 //     runs in, D868). The rule is the command's own — the sentence the owner's
-//     own confirmation carries — and the gate is asked whether the session may
+//     own statement carries — and the gate is asked whether the session may
 //     pass WITHOUT that person. A session cannot answer for a widening on the
 //     owner's behalf, so the gate refuses it: the token of an account declared
 //     here may be sent to a repository the run cannot see, which is the one
@@ -175,7 +175,7 @@ func accountsAddRefusal(marker, name string, beyond []string, claude bool) error
 // the record carries is taken from here (D1022), so the document judged and the
 // document applied are one artifact and not two that happened to agree. allow
 // is that document's own list for this account — the repositories the token may
-// be sent to — which is what the owner's confirmation prints.
+// be sent to — which is what the owner's statement prints.
 func accountsAddGate(ctx context.Context, cmd *cobra.Command, lc *localcfg.Config, o accountsAddOptions, name, profile string, beyond, allow []string, doc []byte) (initflow.Managed, managedGate, error) {
 	marker := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin()))
 	owner := accountsAddOwnTerminal(cmd, marker, o.yes)
@@ -190,10 +190,10 @@ func accountsAddGate(ctx context.Context, cmd *cobra.Command, lc *localcfg.Confi
 
 	// The marks are read for every caller, because their answer is the
 	// question this command asks first: is this project one whose owner is
-	// owed the confirmation below? A read that does not answer leaves the zero
+	// owed the statement below? A read that does not answer leaves the zero
 	// Managed behind, which is this command's behaviour exactly as it was
 	// before this row landed: the owner's terminal writes without a
-	// confirmation and a session keeps the fence it always had.
+	// statement and a session keeps the fence it always had.
 	clients, err := newInitClients(ctx, lc)
 	if err != nil {
 		return initflow.Managed{}, managedGate{}, nil

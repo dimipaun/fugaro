@@ -311,7 +311,7 @@ func TestAccountsAddManagedFilesTheAdmissionOnlyAfterTheWrite(t *testing.T) {
 // The widening: a declaration whose allow_data_to names a repository beyond the
 // checkout the command runs in is refused in a coding agent's session, before
 // anything is written, and the refusal is recorded. This is D868's widening —
-// the sentence the owner's own confirmation carries — and what the managed case
+// the sentence the owner's own statement carries — and what the managed case
 // may not do is answer it on the owner's behalf.
 func TestAccountsAddManagedRefusesAWideningInAnAgentSession(t *testing.T) {
 	r := newManagedAddRig(t, managedAddLocalWide(t), addMarksManaged)
@@ -514,7 +514,7 @@ func TestAccountsAddManagedUnreadMarksKeepTheRefusal(t *testing.T) {
 // token of an account a managed project is owed a question about.
 //
 // --yes is the case worth naming: it is a flag, and a flag answers nothing
-// here. It never satisfies the confirmation, so a scripted `accounts add
+// here. It never makes a run the owner's own, so a scripted `accounts add
 // --yes` on a managed project is refused exactly as a bare pipe is.
 func TestAccountsAddManagedRefusesARunThatAnswersNothing(t *testing.T) {
 	for _, tc := range []struct {
@@ -593,8 +593,8 @@ func TestAccountsAddManagedRefusesARunThatAnswersNothing(t *testing.T) {
 // The marker case is the one that ends differently, and deliberately: a session
 // is not refused the declaration (D1012 admits a bounded one), so what it reads
 // is the token step's own two lines and what it leaves behind is the
-// declaration. A build with the marker term dropped would ask that session for
-// the confirmation and converge, which is the failure this case catches.
+// declaration. A build with the marker term dropped would print that session
+// the statement and converge, which is the failure this case catches.
 func TestAccountsAddManagedAdmitsOnlyTheOwnerAtTheirOwnTerminal(t *testing.T) {
 	for _, tc := range []struct {
 		what   string
