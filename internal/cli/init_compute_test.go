@@ -242,62 +242,85 @@ func TestComputeStageProvisionsAfterATypedConfirmation(t *testing.T) {
 	}
 }
 
-// TestComputeRootTakesTheLaunchersTheModuleGrants: the compute root takes the
-// two role lists APART, and it is the only root that does (design
-// compute-backend §8.1 task 6): its var.launchers alone is what
-// roles/batch.jobsEditor and serviceAccountUser on the run accounts are for,
-// and its var.operators hold actAs on the preload account and nothing else
-// (modules/compute/iam.tf). The installation's own two lists are not that pair:
-// the derive keeps every admin in terraform.operators, because an admin operates
-// and the installation and repository roots want it there
-// (launchersWithOperators) -- so a root handed the derived spec's launchers
-// would grant roles/batch.jobsEditor to every admin the moment the rename
-// reached an installation, which is not the rename D1589 says this is: the
-// words move and the IAM does not (roles.go's launcherOnly).
+// TestComputeRootTakesTheLaunchersTheModuleGrants: the compute root's
+// var.launchers is the run's whole launcher list -- the operators the derive
+// builds, the admins among them, because an admin operates too -- and it is the
+// same list the installation and repository roots take
+// (infra.tfvars.go's launchersWithOperators). The two lists still reach this
+// root apart, and its var.operators hold actAs on the preload account and
+// nothing else (modules/compute/iam.tf, design compute-backend §8.1 task 6), but
+// the admins are NOT subtracted back out of var.launchers: a member on both
+// lists would lose roles/batch.jobsEditor relative to the shape before the
+// rename, and an installation whose two lists hold the same person -- the roster
+// defaultMembers writes for a one-person installation, and where the migration's
+// collapse to the highest role leaves every launcher who was also an operator
+// (update_access.go's highestProject) -- would provision a launcher list of
+// nobody.
 //
-// Mutation (pass e.spec.Launchers to this root): the admin is in the compute
-// root's launchers, the module for_eaches its Batch grant over them, and both
-// assertions below fail.
+// Mutation (subtract the admins here again, roles.go's removed launcherOnly):
+// the one-person case below plans a launcher list of nobody and fails, and the
+// first case loses the admin.
 func TestComputeRootTakesTheLaunchersTheModuleGrants(t *testing.T) {
-	const launcher, admin = "user:run@example.com", "user:root@example.com"
-	// The installation's own outputs hold both, which is what an installation
-	// whose roles moved to the node looks like: the derive's two lists are the
-	// node's, and a run told about both is a run whose review announced them
-	// (update_access.go's heldAccess).
-	r, db := accessRig(t, nil, nil, []string{launcher, admin}, []string{admin})
-	// An installation whose roles have moved to the grants node: one person who
-	// starts runs, and one admin, who the installation's launcher list holds too.
-	db.Set(accesslib.PathNode, accessNodeDoc(
-		projectGrant(launcher, accesslib.RoleOperator),
-		projectGrant(admin, accesslib.RoleAdmin)))
-	computeReady(t, r)
-	fakeTerminal(t)
-	out, _, err := executeStdin(t, "", "setup", "--yes", "--provision-batch")
-	if err != nil {
-		t.Fatalf("%v\n%s", err, out)
-	}
-	// The compute root's own variable: the launcher alone, and the admin where
-	// the module expects an operator.
-	vars := computeTfvars(t, r)
-	if got := members(vars["launchers"]); !slices.Equal(got, []string{launcher}) {
-		t.Errorf("the compute root's launchers are %v, want %v: the module grants roles/batch.jobsEditor and serviceAccountUser on the run accounts to this list alone\n%s",
-			got, []string{launcher}, out)
-	}
-	if got := members(vars["operators"]); !slices.Equal(got, []string{admin}) {
-		t.Errorf("the compute root's operators are %v, want %v: they hold actAs on the preload account\n%s", got, []string{admin}, out)
-	}
-	// And the installation's own apply is untouched by that reading: its
-	// launchers are the two lists unioned, which is what they were before the
-	// rename and what an operator who may cancel a run needs
-	// (launchersWithOperators).
-	v := r.tfvars(t)
-	if got := members(v["launchers"]); !slices.Equal(got, []string{admin, launcher}) {
-		t.Errorf("the installation's launchers are %v, want %v: the rename moves no IAM there either\n%s",
-			got, []string{admin, launcher}, out)
-	}
-	if got := members(v["operators"]); !slices.Equal(got, []string{admin}) {
-		t.Errorf("the installation's operators are %v, want %v\n%s", got, []string{admin}, out)
-	}
+	t.Run("a launcher and an admin", func(t *testing.T) {
+		const launcher, admin = "user:run@example.com", "user:root@example.com"
+		// The installation's own outputs hold both, which is what an
+		// installation whose roles moved to the node looks like: the derive's
+		// two lists are the node's, and a run told about both is a run whose
+		// review announced them (update_access.go's heldAccess).
+		r, db := accessRig(t, nil, nil, []string{launcher, admin}, []string{admin})
+		db.Set(accesslib.PathNode, accessNodeDoc(
+			projectGrant(launcher, accesslib.RoleOperator),
+			projectGrant(admin, accesslib.RoleAdmin)))
+		computeReady(t, r)
+		fakeTerminal(t)
+		out, _, err := executeStdin(t, "", "setup", "--yes", "--provision-batch")
+		if err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		// The compute root's own variable: the whole launcher list, which is
+		// what the module's launcher grant is for_each over, and the admins
+		// where the module expects the operators.
+		vars := computeTfvars(t, r)
+		if got := members(vars["launchers"]); !slices.Equal(got, []string{admin, launcher}) {
+			t.Errorf("the compute root's launchers are %v, want %v: the module grants roles/batch.jobsEditor and serviceAccountUser on the run accounts to this list, and an admin operates too\n%s",
+				got, []string{admin, launcher}, out)
+		}
+		if got := members(vars["operators"]); !slices.Equal(got, []string{admin}) {
+			t.Errorf("the compute root's operators are %v, want %v: they hold actAs on the preload account\n%s", got, []string{admin}, out)
+		}
+		// And the installation's own apply is untouched by that reading: its
+		// launchers are the two lists unioned, which is what they were before
+		// the rename and what an operator who may cancel a run needs
+		// (launchersWithOperators).
+		v := r.tfvars(t)
+		if got := members(v["launchers"]); !slices.Equal(got, []string{admin, launcher}) {
+			t.Errorf("the installation's launchers are %v, want %v: the rename moves no IAM there either\n%s",
+				got, []string{admin, launcher}, out)
+		}
+		if got := members(v["operators"]); !slices.Equal(got, []string{admin}) {
+			t.Errorf("the installation's operators are %v, want %v\n%s", got, []string{admin}, out)
+		}
+	})
+
+	t.Run("one person on both lists", func(t *testing.T) {
+		// The one-person installation: the migration collapses a launcher who
+		// was also an operator into the one admin grant, and the derive puts
+		// that member back in both lists, so the config's terraform.operators
+		// and terraform.admins name the same person.
+		const me = "user:me@example.com"
+		r, db := accessRig(t, nil, nil, []string{me}, []string{me})
+		db.Set(accesslib.PathNode, accessNodeDoc(projectGrant(me, accesslib.RoleAdmin)))
+		computeReady(t, r)
+		fakeTerminal(t)
+		out, _, err := executeStdin(t, "", "setup", "--yes", "--provision-batch")
+		if err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if got := members(computeTfvars(t, r)["launchers"]); !slices.Equal(got, []string{me}) {
+			t.Errorf("the compute root's launchers are %v, want %v: a member on both lists keeps the launcher grant, or a one-person installation provisions nobody who can start a run\n%s",
+				got, []string{me}, out)
+		}
+	})
 }
 
 // The installation's own scheduler_region wins over the nearest location Cloud

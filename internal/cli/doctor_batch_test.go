@@ -330,6 +330,37 @@ func TestDoctorBatchReportsTheLauncherGrant(t *testing.T) {
 	}
 }
 
+// TestDoctorBatchReportsAnEmptyLauncherList: the compute module's launcher
+// grant is for_each over the run's own launcher list, which is
+// terraform.operators whole -- the admins among them, because an admin operates
+// too (init_compute.go) -- so an installation whose list holds nobody has no
+// member the grant can be about and nobody who can start a run. That is a fact
+// about the config, and it is the one this check is about: a list an apply
+// wrote empty must not be invisible to doctor.
+//
+// Mutation (return nil instead of this warning when the list is empty, as the
+// check did while it subtracted the admins from the list before testing it --
+// roles.go's removed launcherOnly): doctor reports no batch-launcher-iam check
+// at all and this fails.
+func TestDoctorBatchReportsAnEmptyLauncherList(t *testing.T) {
+	r, f := newDoctorRig(t), batchRigFakes{compute: gcpfake.NewCompute(t), logging: gcpfake.NewLogging(t), usage: gcpfake.NewServiceUsage(t)}
+	batchProvisioned(t, f)
+	// The module's own grant, on nobody: the policy is what it is, and the
+	// list the check reads is the config's.
+	r.withBatch(t, f, "")
+
+	c, ok := doctorCheckByID(r.runDoctorJSON(t).Checks, "batch-launcher-iam")
+	if !ok || c.OK || c.Severity != "warning" {
+		t.Fatalf("check = %+v (%v), want a warning: the config names no launcher at all", c, ok)
+	}
+	if !strings.Contains(c.Problem, "terraform.operators") || !strings.Contains(c.Problem, "no run can start") {
+		t.Errorf("the warning does not say the config holds no launcher: %s", c.Problem)
+	}
+	if !strings.Contains(c.Fix, "--operator") {
+		t.Errorf("the Fix does not name the door that writes the list: %s", c.Fix)
+	}
+}
+
 // TestDoctorBatchReportsBothLauncherConditions: the two lists this check
 // builds are independent, so a project can hold one of each -- a launcher with
 // an unconditioned grant (a widening) and a launcher with no grant at all
