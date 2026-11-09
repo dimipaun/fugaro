@@ -24,18 +24,24 @@
 // **`@noble/curves` and the option it is called with.** The dependency is the
 // owner's one yes for this task (S2.5's Files line), it is Ed25519 with SHA-512
 // wired in and no second package behind it, and it is called with
-// `{ zip215: false }`: the design's verifier is RFC 8032's, where a
-// non-canonical encoding of a point is refused, and the default (`zip215: true`)
-// would accept the malleable spellings the shared vectors' padding-bits case
-// exists to refuse. Nothing else about the primitive is configured, and no
-// secret ever passes through here: a public key is a public key.
+// `{ zip215: false }` -- RFC 8032, not the library's default, which follows
+// ZIP-215. That default is the permissive reading: it accepts a signature over a
+// non-canonical point encoding, and over a small-order key such as the all-zero
+// one, where the CLI's `ed25519.Verify` and the console's OpenSSL are RFC 8032
+// and refuse them. Three readers of one wire format have to agree on what a
+// signature is, so the app takes the strict reading -- and it is pinned as text
+// rather than by a vector, because no shared vector can reach this option: the
+// padding-bits vector is refused inside `decodeBase64url`, before the primitive
+// is called. Nothing else about the primitive is configured, and no secret ever
+// passes through here: a public key is a public key.
 
 import { ed25519 } from '@noble/curves/ed25519.js';
 
 import { GRACE_DAYS, LICENCE_CODES, PRODUCTION_KEYRING, TIER_MAX_LIFETIME_DAYS, createLicenceVerifier } from './verify.js';
 
 /** ed25519Port is the dependency as `verify.js` takes it: the three arguments in
- * the order the design names them, and the strict encoding the vectors need. */
+ * the order the design names them, and RFC 8032 rather than ZIP-215, so this
+ * reader refuses what the CLI's and the console's refuse. */
 const ed25519Port = (signature, message, publicKey) => ed25519.verify(signature, message, publicKey, { zip215: false });
 
 /** LICENCE_VERIFIER is the app's verifier: `verify.js`'s check over the app's own

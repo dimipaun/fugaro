@@ -165,6 +165,13 @@ function refuse(code, field) {
  * minter never wrote -- and the shared vectors carry exactly that case, a
  * payload spelled with its padding bits set.
  *
+ * The length check is the same rule one step earlier: four characters carry
+ * three bytes, so a length one over a multiple of four leaves a character with
+ * no byte to fill, and a decoder that ignored it would read the canonical bytes
+ * back (`...AAAA` and `...AAAAA` would be one key). Go's
+ * `base64.RawURLEncoding.Strict()` refuses that spelling and the console's
+ * re-encode compare refuses it too.
+ *
  * @param {unknown} text a part as it is written
  * @returns {Uint8Array | null} the bytes, or null for a spelling that is not
  *   base64url or is not the canonical one

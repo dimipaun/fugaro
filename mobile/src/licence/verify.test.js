@@ -455,6 +455,24 @@ test('a non-canonical spelling of a part is refused, not decoded to the same byt
   // And the padded spelling, which a lenient decoder accepts: also refused.
   const padded = canonical.replace(/\.[^.]+$/, `.${part}=`);
   assert.equal(refusalOf(verifier(acme.keyring).verify(padded, at(ISSUED))).code, LICENCE_CODES.MALFORMED);
+
+  // And the length that leaves exactly one character over -- a spelling no byte
+  // string can have, which Go's `RawURLEncoding.Strict()` refuses as illegal
+  // base64 and the console refuses by re-encoding. A decoder that ignored the
+  // leftover character would read the canonical bytes back, so the claim set is
+  // grown until its spelling is a multiple of four and one `A` -- six zero bits
+  // -- is exactly that shape.
+  const base = claimsFor();
+  const grow = (3 - (Buffer.byteLength(JSON.stringify(base), 'utf8') % 3)) % 3;
+  const claims = { ...base, organisation: base.organisation + 'x'.repeat(grow) };
+  const grown = mint(acme, claims);
+  const [grownId, grownPayload, grownSignature] = grown.split('.');
+  assert.equal(grownPayload.length % 4, 0, 'the case needs a spelling with no leftover bits');
+  assert.equal(stateAt(grown, ISSUED, acme.keyring), 'valid');
+  assert.equal(
+    refusalOf(verifier(acme.keyring).verify(`${grownId}.${grownPayload}A.${grownSignature}`, at(ISSUED))).code,
+    LICENCE_CODES.MALFORMED,
+  );
 });
 
 test('a foreign key id is refused: the id names a key the signature does not belong to', () => {
@@ -721,9 +739,12 @@ test('the door names one package and one file, and the package is the Ed25519 de
 
   // The one line this suite cannot run: the door is where the package is named,
   // and the suite has no `node_modules` to load it from, so the wiring is held
-  // as text. It is the line that decides which of the two Ed25519 encodings the
-  // app accepts -- the shared vectors' padding-bits case needs the strict one --
-  // and the argument order the design names.
+  // as text. It is the line that decides which of the two Ed25519 readings the
+  // app takes -- RFC 8032, like the CLI's `ed25519.Verify` and the console's
+  // OpenSSL, rather than ZIP-215, which is the library's default and accepts a
+  // signature over a non-canonical encoding or a small-order key -- and the
+  // argument order the design names. No shared vector can pin it: the
+  // padding-bits vector is refused before the primitive is reached.
   assert.ok(
     INDEX_SOURCE.includes('ed25519.verify(signature, message, publicKey, { zip215: false })'),
     'the door calls the dependency with the design’s argument order and strict RFC 8032',
