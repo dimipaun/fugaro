@@ -902,7 +902,12 @@ ceiling is decided.
    and the member's two canonical `allow_repos` legs are all still required, so the pool serves only
    names the member admits, on the repository the run identity proved, that repository's own node
    admits and the member's own lists still scope; and a member that needs the last word keeps that
-   credential in its own project rather than sharing it. Closing the pairing is an owner decision and
+   credential in its own project rather than sharing it. **And the reach of the confusion is the
+   member's own lists**: reaching a second repository this way takes the member's own policy to
+   scope that credential to it — both canonical legs above are asked — so a job of one member's
+   repository reaches no other member's pool and no repository the member's own lists do not name;
+   what it reaches is another repository of the *same* member, admitted by the member itself.
+   Closing the pairing is an owner decision and
    a column — the repository beside each job account in the owner's per-member table, the pair
    `credsvc.JobAccount` already carries for the installation's own jobs, which yields the slug the
    pairing needs — not a redesign, and **it stays an open item until the owner makes that

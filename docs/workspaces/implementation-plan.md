@@ -173,7 +173,9 @@ against **Google's published Firebase signing keys**, which are one global set �
 (`internal/credsvc/auth.go`:1388-1390) names the one x509 document, and it is the same document for
 every Firebase project, so "the keys the pinned project publishes" is not a thing that exists. What
 distinguishes one project's tokens from another's is the pair `aud`/`iss`, and main derives the
-second from the first: `"https://securetoken.google.com/"+a.cfg.FirebaseProject` (`:1089`). The pin
+second from the first in one place: `"https://securetoken.google.com/"+a.cfg.FirebaseProject`, the
+body of `firebaseIssuer` (`internal/credsvc/auth.go`:1059-1060), which `verifyRun` holds the token's
+`iss` to (`:1089`). The pin
 therefore carries both values and **`Validate` refuses a pair that disagrees** — the issuer must be
 exactly `https://securetoken.google.com/<firebase_project>` — so a member that mistypes one of the
 two is refused at the write and again at the load, rather than being admitted by one and refused by
@@ -475,6 +477,19 @@ fills, `database_region` included (spec.md §5 states the same gap). A member th
 is refused at this front door, and
 one the comparison cannot read is reported as an alarm by W7's reconciliation: an unbound member is an
 unreadable one.
+
+**What nothing binds, and why it is the owner's call rather than this task's.** The pool's effective
+set is the member's own policy, the repository's own admission child and the member's two
+`allow_repos` legs, all asked over the run identity's verified slug (spec.md §4). What is **not**
+compared is that slug against the repository the **calling job account** belongs to — the check the
+installation's own front door makes (`internal/credsvc/server.go`:737) — because a member's row names
+its job accounts and no repository (`WorkspaceCredentialMember`,
+`internal/projectpolicy/workspace_credentials.go`:115, `JobAccounts` at `:149`), so an account bound
+to one of a member's repositories can present a run identity of another of them. The reach is bounded
+by the member's own lists (both legs are asked), and closing it is a **column** beside each job
+account — the pair `credsvc.JobAccount` already carries for the installation's own jobs — which is an
+owner decision rather than a task's: it is spec.md §8's residual risk 7, stated and **not enforced**
+by this task, and W9 is where `SECURITY.md` carries it.
 
 **A member's policy and its outcomes are read per member, from the database its own verified `iss`
 names.** `checkLive` (`internal/credsvc/auth.go`:1213) and the outcomes reader it uses

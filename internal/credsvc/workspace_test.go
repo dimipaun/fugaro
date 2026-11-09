@@ -1077,6 +1077,16 @@ func TestWorkspaceSharedIsRefusedWhereTheRepositoriesOwnNodeDoesNotAdmitIt(t *te
 // pairing of the calling job service account with the repository the identity
 // names.
 //
+// What the confusion reaches is bounded by the member's own lists: the sibling
+// repository this call is served on is one the member's policy scopes the
+// credential to, which is the fixture's shape (setPolicyOn names both), and the
+// other half of that bound is
+// TestWorkspaceSharedIsRefusedWhereTheMembersAllowListNoLongerNamesTheRun, where
+// the same call is refused because those lists no longer name the run's
+// repository. So the pairing crosses no member and leaves no list the member
+// itself wrote — the column that would close it is what the review's N1 and
+// spec.md §8's residual risk 7 are about.
+//
 // The installation's own front door holds the two together — its table binds
 // each job account to the repository the service account was derived from, and
 // it refuses a run whose slug is another's (`!bound || ja.Slug != id.Slug`,

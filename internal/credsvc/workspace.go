@@ -617,10 +617,13 @@ func (w *Workspace) Policy(ctx context.Context, c MemberCall) (*projectpolicy.Po
 // table binds each job account to the repository its service account is derived
 // from; this deployment's per-member table names a member's job accounts and no
 // repository, so there is no slug to compare and an account admitted for one
-// repository can present a run identity of another (review finding N1). That
-// pairing is all docs/workspaces/spec.md §8's residual risk 7 still holds:
-// stated there, an open item for the owner, and the column this service does
-// not carry.
+// repository can present a run identity of another (review finding N1). What
+// that reaches is bounded by the member's own lists, because the two legs above
+// are asked over the identity's own slug: a second repository has to be one the
+// member's own policy scopes this credential to, so the confusion crosses no
+// member and leaves no list the member itself wrote. That pairing is all
+// docs/workspaces/spec.md §8's residual risk 7 still holds: stated there, an
+// open item for the owner, and the column this service does not carry.
 //
 // The refusal an operator reads for one named credential is creds.AdmitShared's,
 // and this answers the SET, which is what the cascade is offered: the legs are

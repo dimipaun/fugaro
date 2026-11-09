@@ -32,7 +32,7 @@ project is one GCP project with its own Firebase, its own Realtime Database, its
 (`internal/budget/model.go:31-33`, `:51`), its own policy node
 (`internal/projectpolicy/paths.go:18-23`, `:29`) and its own identity: the credentials service verifies a
 Firebase ID token whose issuer is that project's own
-(`internal/credsvc/auth.go:1089`), and since #1669 its front door has a **person class** as well as
+(`internal/credsvc/auth.go:1089`, against `firebaseIssuer` at `:1059-1060`), and since #1669 its front door has a **person class** as well as
 its job classes (`internal/credsvc/auth.go:375` `PersonAccounts`, `:890` `VerifyReadCaller`, `:968`
 `VerifyPersonCaller`) — still one installation's people, named in that installation's own config. The
 only cross-project machinery in the tree is the *owner's* machine: `fugaro config list` reads several
@@ -73,7 +73,8 @@ Bitbucket fact.
 
 **F4 — Identity today is per project, verified from one Firebase. — Exists.**
 `internal/credsvc/auth.go:1089` compares the token's `iss` against
-`"https://securetoken.google.com/" + a.cfg.FirebaseProject`; `:1390` (`GoogleKeysURL`) names the
+`firebaseIssuer(a.cfg.FirebaseProject)`, which builds
+`"https://securetoken.google.com/" + a.cfg.FirebaseProject` (`:1059-1060`); `:1390` (`GoogleKeysURL`) names the
 public x509 endpoint the signing keys come from; `:767` records why the issuer is not caller-chosen
 text. The mobile
 app's own sign-in normalises and allow-lists an address (`internal/mobileauth/email.go`,
