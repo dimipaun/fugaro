@@ -101,6 +101,9 @@ type MineLocal struct {
 // this stays a pure function of its argument: HitAt is this user's own hit and
 // OthersHit a count of other people, never anyone's name (F15).
 type MineSharedIssue struct {
+	// Number is the project number the store gave the issue. Every shared
+	// issue has one: a row that has none yet is this machine's own file, and
+	// is a MineLocal.
 	Number      int
 	Summary     string
 	Status      MineStatus

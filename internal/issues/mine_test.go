@@ -355,13 +355,6 @@ func TestMineCoverageCLIAndInstallation(t *testing.T) {
 			resolvedIn: "0.22.1",
 			want:       CoverageBehind,
 		},
-		{
-			name:       "a row with no fixing release is behind",
-			version:    "0.22.1",
-			installed:  "0.22.1",
-			resolvedIn: "",
-			want:       CoverageUnknown,
-		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -397,11 +390,21 @@ func TestMineCoverageDevBuildIsUnknown(t *testing.T) {
 			t.Errorf("coverage of CLI %q = %q, want %q", version, got, CoverageUnknown)
 		}
 	}
-	// A fixing release that is not a release cannot be compared to anything,
-	// so a resolved row that names one is unknown rather than fixed (F11).
-	in := mineCoverageInput("0.22.1", "0.22.1", "0.22.x")
-	if got := mineCoverageOf(t, in); got != CoverageUnknown {
-		t.Errorf("coverage of a row whose fixing release is not a release = %q, want %q", got, CoverageUnknown)
+	// A fixing release that is not a release, or none at all, cannot be
+	// compared to anything: a resolved row that names one is unknown rather
+	// than fixed (F11).
+	for _, resolvedIn := range []string{"", "0.22.x", "0.21", "release-0.22.0"} {
+		in := mineCoverageInput("0.22.1", "0.22.1", resolvedIn)
+		if got := mineCoverageOf(t, in); got != CoverageUnknown {
+			t.Errorf("coverage of a row whose fixing release is %q = %q, want %q", resolvedIn, got, CoverageUnknown)
+		}
+	}
+	// An installation record that names something that is not a release is
+	// not known to be at or above the fix, so the row is behind and the
+	// nudge is the one command that would repair the record too (F17).
+	in := mineCoverageInput("0.22.1", "main", "0.22.0")
+	if got := mineCoverageOf(t, in); got != CoverageBehind {
+		t.Errorf("coverage with an installation release that is not a release = %q, want %q", got, CoverageBehind)
 	}
 }
 
