@@ -533,6 +533,60 @@ func TestStopLetsTheStopThroughOnlyWhereAReviewReadTheCommit(t *testing.T) {
 	})
 }
 
+// TestStopDoesNotDecideAModeWhoseStopIsADraftOnALowerLevel is the other side of
+// the ruling's stop rule: the stop reads past an enabled level that never ran
+// only where the mode's own row names a stop that accepts what it left
+// (rigor.AcceptsAtStop). Pro and Critical name none — theirs is the draft — so
+// the stop arranges no answer for them, and an enabled level that left no round
+// is a level the run lacks.
+//
+// Without that, the threshold falling at the top of level 2's loop reads past
+// it to the first-line round that shipped: a round that advises and never
+// decides, on a commit no senior review read. The pull request went ready on
+// it, which is the whole run the levels exist to prevent.
+//
+// Critical is the same run one level further up: level 3 enabled, level 2 cut
+// by the stop before it started, and the first-line round is what the sweep
+// would otherwise land on.
+func TestStopDoesNotDecideAModeWhoseStopIsADraftOnALowerLevel(t *testing.T) {
+	spec := &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Workflow: "app", Task: "Add a feature"}
+	for _, mode := range []string{"pro", "critical"} {
+		t.Run(mode, func(t *testing.T) {
+			// 0.15 of the fixture's 5m is 45s and a stage advances the harness's
+			// clock by 25: the cheap round ships at 50s, over the threshold, so
+			// the stop is asked at the top of the level below it — before any
+			// round of that level ran.
+			clk := newClock()
+			h := newHarness(t, modeCfg(t, mode, 1, "  first_line_review: on\n  review_stop_fraction: 0.15\n"), spec)
+			h.deps.Now = clk.Now
+			rec, err := h.run(t, afterStep(clk, implement("feature")), afterStep(clk, review("ship", 0)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := stageNames(rec); !eq(got, "implement", "review_first") {
+				t.Fatalf("stages = %v, want the shipped cheap round and no round of the level the stop cut", got)
+			}
+			// The record is the one thing the fix must not change: the cheap
+			// round did run and did ship, and only readiness reads past it.
+			if got := tiers(rec); !eq(got, "first:ship") {
+				t.Fatalf("tiers = %v, want the cheap round alone", got)
+			}
+			if rec.Outcome != runstore.OutcomeDraft {
+				t.Fatalf("outcome = %s (reason %q), want a draft: %s says nothing about the stop, so the level the stop cut is a level the run never held", rec.Outcome, rec.Reason, mode)
+			}
+			if want := "no review verdict"; rec.Reason != want {
+				t.Errorf("reason = %q, want %q", rec.Reason, want)
+			}
+			if ac := rec.Accepted; ac != nil {
+				t.Errorf("the record's accepted block = %+v, want none: nothing was accepted at a stop this mode has no row for", ac)
+			}
+			if pr := onlyPR(t, h.provider); !pr.Draft {
+				t.Errorf("the pull request is not a draft: %+v", pr)
+			}
+		})
+	}
+}
+
 // TestStopInABouncedCheapLoopFilesTheDecidingRoundsAcceptance is the pull
 // request's own reader of the round the policy was built from. After a bounce
 // the record's last rounds are the cheap loop's, while the round readiness read

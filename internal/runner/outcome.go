@@ -229,14 +229,24 @@ func (r *run) levelsResolved() bool {
 // decided, and Decide keeps the pull request a draft (G4's "every enabled outer
 // level's last verdict is ship" has no verdict at all to read).
 //
-// At the stop (r.stopAt) an enabled level that left no round is a level the
-// stop cut, not one the run failed to reach: no new round is started past the
-// stop, so the level above the last one that ran holds none by construction,
-// and readiness reads the highest level that did run. Without that, turning
-// level 3 on would end a Startup run at the time threshold a draft where the
-// same run with level 3 off is ready — the strictness the owner's ruling of
-// 2026-11-08 forbids. A run that stopped for any other reason keeps the answer
-// it always had.
+// At the stop (r.stopAt) an enabled level that left no round, in a mode whose
+// row names a stop that accepts what it left (rigor.AcceptsAtStop), is a level
+// the stop cut rather than one the run failed to reach: no new round is started
+// past the stop, so the level above the last one that ran holds none by
+// construction, and readiness reads the highest level that did run. Without
+// that, turning level 3 on would end a Startup run at the time threshold a
+// draft where the same run with level 3 off is ready — the strictness the
+// owner's ruling of 2026-11-08 forbids. A run that stopped for any other reason
+// keeps the answer it always had.
+//
+// The mode's stop row is what gates it, and not the stop alone: Pro and
+// Critical say nothing about the stop, so the stop arranges no answer for them
+// and a level they enabled that never ran is a level the run lacks. Reading
+// past it would decide a Pro run on its first-line round — which advises and
+// never decides — the moment the time threshold falls at the top of level 2's
+// loop, shipping a commit no senior review read. A level 3 the stop cut before
+// it started is the same answer for a Critical run. Both keep the draft, which
+// is what such a run held before the stop rule existed.
 //
 // A run that resolved no levels falls back to the last senior review, which is
 // what every such run recorded before the levels existed and what readiness
@@ -245,6 +255,7 @@ func (r *run) decidingReview() *runstore.ReviewSummary {
 	if !r.levelsResolved() {
 		return seniorReview(r.rec.Reviews)
 	}
+	cutByStop := r.stopAt != "" && rigor.AcceptsAtStop(r.reachedRigor())
 	for _, l := range []policy.Level{policy.LevelL3, policy.LevelL2, policy.LevelL1} {
 		if !levelOn(r.levels, l) {
 			continue
@@ -252,7 +263,7 @@ func (r *run) decidingReview() *runstore.ReviewSummary {
 		if rs := lastRoundOf(r.rec.Reviews, l); rs != nil {
 			return rs
 		}
-		if r.stopAt == "" {
+		if !cutByStop {
 			return nil
 		}
 	}
