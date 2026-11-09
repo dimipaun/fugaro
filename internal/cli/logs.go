@@ -44,7 +44,8 @@ func newLogsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "logs RUN",
 		Short: "Print a run's logs from Cloud Logging",
-		Long: "Print the logs of RUN (<repo-slug>/<run-id>, or a bare run ID), oldest first.\n\n" +
+		Long: "Print the logs of RUN (a run ID, <repo-slug>/<run-id>, or the last four or\n" +
+			"more characters of a run ID), oldest first.\n\n" +
 			"With -f, keep printing until the execution ends and its logs settle. Every\n" +
 			"line is redacted of the credentials in this environment, on top of the\n" +
 			"runner's own redaction.",
@@ -69,7 +70,7 @@ func runLogs(cmd *cobra.Command, o *logsOptions, ref string) error {
 		return err
 	}
 	defer env.Close()
-	_, l, _, err := locateLaunched(ctx, env, ref)
+	_, l, _, err := locateLaunched(ctx, env, ref, resolveRunOpts(cmd, o.asJSON))
 	if err != nil {
 		return err
 	}
@@ -123,8 +124,13 @@ func logQuery(l *runstore.Launch, follow bool) backend.LogQuery {
 // locateLaunched resolves ref and returns its store, its launch as the
 // views see it (ownerLaunch) and its "<slug>/<run-id>". A run that never
 // launched is a user error.
-func locateLaunched(ctx context.Context, env *cloudEnv, ref string) (*runstore.Store, *runstore.Launch, string, error) {
-	slug, id, err := locateRun(ctx, env, ref)
+//
+// ref is what resolveRun accepts: a full run ID, <slug>/<run-id>, or the last
+// four or more characters of one (D1701). o is the command's own streams and
+// its --json, which is what tells a collision at a person's terminal from one
+// nobody can be asked about (D1700).
+func locateLaunched(ctx context.Context, env *cloudEnv, ref string, o resolveRunOptions) (*runstore.Store, *runstore.Launch, string, error) {
+	slug, id, err := resolveRun(ctx, env, ref, o)
 	if err != nil {
 		return nil, nil, "", err
 	}

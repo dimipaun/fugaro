@@ -121,11 +121,12 @@ func newArtifactsLsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "ls RUN",
 		Short: "List what a run's record says it delivered",
-		Long: "List the artifacts RUN (<repo-slug>/<run-id>, or a bare run ID) recorded in\n" +
-			"its result.json: name, recorded size, short sha256, recorded content type and\n" +
-			"the probe's verdict. The record is shown as it is — a name `get` cannot\n" +
-			"retrieve is listed with the reason, never filtered out, and a missing object is\n" +
-			"not ls's to hide: ls is the record, get is the object.\n\n" +
+		Long: "List the artifacts RUN (a run ID, <repo-slug>/<run-id>, or the last four or\n" +
+			"more characters of a run ID) recorded in its result.json: name, recorded\n" +
+			"size, short sha256, recorded content type and the probe's verdict. The\n" +
+			"record is shown as it is — a name `get` cannot retrieve is listed with the\n" +
+			"reason, never filtered out, and a missing object is not ls's to hide: ls is\n" +
+			"the record, get is the object.\n\n" +
 			"--json prints the record's artifact list verbatim.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error { return runArtifactsLs(cmd, &o, args[0]) },
@@ -151,8 +152,9 @@ func newArtifactsGetCmd() *cobra.Command {
 		Short: "Download a run's artifacts, verifying them against its record",
 		Long: "Download one artifact NAME, or every artifact the record lists when NAME is\n" +
 			"omitted, verifying each one's size and sha256 against the run's result.json as\n" +
-			"the bytes arrive. A mismatch is an error naming both hashes, and nothing is\n" +
-			"written — not even the file the download streamed into.\n\n" +
+			"the bytes arrive. RUN is a run ID, <repo-slug>/<run-id>, or the last four or\n" +
+			"more characters of a run ID. A mismatch is an error naming both hashes, and\n" +
+			"nothing is written — not even the file the download streamed into.\n\n" +
 			"The destination is a fresh directory this command creates,\n" +
 			"./<run-id>-artifacts/ unless --out names another parent for it. A name in the\n" +
 			"record that is absolute, walks out of that directory, begins with a dot or\n" +
@@ -178,21 +180,27 @@ func newArtifactsGetCmd() *cobra.Command {
 	return cmd
 }
 
-// artifactsRun resolves RUN ([<repo-slug>/]<run-id>) and --repo to the store
-// of one run. --repo names the repository a bare run ID belongs to, and a RUN
-// that already carries a slug has to agree with it.
+// artifactsRun resolves RUN ([<repo-slug>/]<run-id>, or the last four or more
+// characters of a run ID) and --repo to the store of one run. --repo names the
+// repository a bare run ID belongs to, and a RUN that already carries a slug
+// has to agree with it.
 //
 // The run itself is looked up in the bucket either way. --repo answers "which
-// repository", not "does this run exist", so with it the lookup is one object
-// check under the named repository rather than a search across all of them
-// (locateRun: runstore.Locate). Doing without that check — an earlier version
-// returned a store for anything that was shaped like a run ID — reports a run
-// that was never launched as a run that recorded no artifacts: "it never
-// finished" about a run that never started, which sends an operator looking
-// for a container that died when they mistyped an id.
-func artifactsRun(ctx context.Context, env *cloudEnv, ref, repo string) (*runstore.Store, error) {
+// repository", not "does this run exist", so a full run ID with it is one
+// object check under the named repository rather than a search across all of
+// them (locateRun: runstore.Locate). Doing without that check — an earlier
+// version returned a store for anything that was shaped like a run ID —
+// reports a run that was never launched as a run that recorded no artifacts:
+// "it never finished" about a run that never started, which sends an operator
+// looking for a container that died when they mistyped an id.
+//
+// The shape check is only for the full-ID case: an ending is resolved by the
+// one resolver (SR3, resolveRun) and the answer is then held to the repository
+// --repo names, because the slug is part of every object key and the flag has
+// already answered which repository the run is in.
+func artifactsRun(ctx context.Context, env *cloudEnv, ref, repo string, o resolveRunOptions) (*runstore.Store, error) {
 	if repo == "" {
-		slug, id, err := locateRun(ctx, env, ref)
+		slug, id, err := resolveRun(ctx, env, ref, o)
 		if err != nil {
 			return nil, err
 		}
@@ -215,15 +223,20 @@ func artifactsRun(ctx context.Context, env *cloudEnv, ref, repo string) (*runsto
 		}
 		return runstore.Open(env.bucket.Bucket, slug, id), nil
 	}
-	// The run ID's form is checked here because it becomes part of an object
-	// name (the same rule locateRun applies to a bare ID).
-	if _, err := runstore.RunTime(ref); err != nil {
-		return nil, userErr("%q is neither <repo-slug>/<run-id> nor a run ID", ref)
+	if _, err := runstore.RunTime(ref); err == nil {
+		if _, _, err := locateRun(ctx, env, slug+"/"+ref); err != nil {
+			return nil, err
+		}
+		return runstore.Open(env.bucket.Bucket, slug, ref), nil
 	}
-	if _, _, err := locateRun(ctx, env, slug+"/"+ref); err != nil {
+	gotSlug, id, err := resolveRun(ctx, env, ref, o)
+	if err != nil {
 		return nil, err
 	}
-	return runstore.Open(env.bucket.Bucket, slug, ref), nil
+	if gotSlug != slug {
+		return nil, userErr("run %s is in %s, but --repo names %s", ref, gotSlug, slug)
+	}
+	return runstore.Open(env.bucket.Bucket, slug, id), nil
 }
 
 // readArtifactRecord reads the run's result.json, the one thing both
@@ -252,7 +265,7 @@ func runArtifactsLs(cmd *cobra.Command, o *artifactsLsOptions, ref string) error
 		return err
 	}
 
-	s, err := artifactsRun(ctx, env, ref, o.repo)
+	s, err := artifactsRun(ctx, env, ref, o.repo, resolveRunOpts(cmd, o.asJSON))
 	if err != nil {
 		return err
 	}
@@ -373,7 +386,7 @@ func runArtifactsGet(cmd *cobra.Command, o *artifactsGetOptions, ref, name strin
 		return err
 	}
 
-	s, err := artifactsRun(ctx, env, ref, o.repo)
+	s, err := artifactsRun(ctx, env, ref, o.repo, resolveRunOpts(cmd, false))
 	if err != nil {
 		return err
 	}

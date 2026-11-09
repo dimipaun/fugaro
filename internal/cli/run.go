@@ -315,7 +315,7 @@ func newRunCmd() *cobra.Command {
 	f.StringVar(&o.title, "title", "", "the run's title, one line: what fugaro watch and runs ls list the run by, and the pull request's title unless the agent wrote its own pr.md (default: the task's first line); a follow-up (--pr) keeps its run's title unless this is given")
 	f.StringVar(&o.planTask, "plan-task", "", "record the plan task this run works on, as <plan>/<task> (for example setup-wizard/W1.3): the id the console's graph joins this run to a node by; it changes nothing about what the run does, and a follow-up (--pr) records one only when given")
 	f.StringVar(&o.tf, "task-file", "", "read the task from this file, or - for stdin")
-	f.StringVar(&o.retry, "retry", "", "launch the stored task of RUN (<repo-slug>/<run-id> or a run ID) that never started")
+	f.StringVar(&o.retry, "retry", "", "launch the stored task of RUN (a full run ID, or <repo-slug>/<run-id>) that never started: a run an ending names is never launched, since the bucket cannot vouch for which run an ending means")
 	f.StringVar(&o.totalTimeout, "total-timeout", "", "override the workflow's timeouts.total for this run, such as 45m")
 	f.IntSliceVar(&o.pr, "pr", nil, "continue Fugaro PR N: act on its trusted review comments (TEXT adds instructions); with a mode: review --recipe, review PR N instead (repeatable, 1 to 4, any open PR)")
 	f.StringVar(&o.recipe, "recipe", "", "the recipe (task loop) to run: .fugaro/recipes/NAME.yaml, the project's, or the catalog's ("+strings.Join(recipe.CatalogNames(), ", ")+"); default: agent.recipe in fugaro.yaml, else default; a follow-up (--pr) keeps its previous run's")
@@ -1189,7 +1189,8 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 	}
 	if o.retry != "" && res.Status == "already-launched" {
 		fmt.Fprintf(warn, "%s launched already; --retry only starts a run that never launched. "+
-			"To see how it went, run fugaro diagnose %s; to redo it, start a new run.\n", res.Run, res.Run)
+			"To see how it went, run fugaro diagnose %s; to redo it, start a new run.\n",
+			task.ShortRun(oneLine(res.Run)), task.ShortRun(oneLine(res.Run)))
 	}
 	res.Project = env.lc.Name
 	res.Recipe = launchRecipeOf(spec, chooses)
@@ -3470,10 +3471,14 @@ func printLaunch(w io.Writer, res launchResult, asJSON bool) error {
 // request it continues. It is the tail of the line a launch prints, whether
 // that line is the command's own ("launched <what>") or the reporter's step
 // for a migrated launch ("launch <what>", CL7c).
+//
+// The runs are named in their short form: the line a person reads is where a
+// short run ID belongs, and the full one is one command away (D1705). The
+// JSON above keeps them whole.
 func launchWhat(res launchResult) string {
-	what := oneLine(res.Run)
+	what := task.ShortRun(oneLine(res.Run))
 	if res.PR > 0 {
-		what += fmt.Sprintf(" (follow-up of PR #%d, after %s)", res.PR, oneLine(res.PreviousRun))
+		what += fmt.Sprintf(" (follow-up of PR #%d, after %s)", res.PR, task.ShortRun(oneLine(res.PreviousRun)))
 	}
 	return what
 }

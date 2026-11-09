@@ -2360,3 +2360,49 @@ func TestRunsLsShowsArtifactCountOnlyWhenThereAreArtifacts(t *testing.T) {
 		t.Errorf("an empty listing still prints the artifact column:\n%s", empty)
 	}
 }
+
+// TestArtifactsRepoEnding: --repo is what a bare run ID needs, and it is also
+// what scopes an ending (D1701): the ending is resolved by the one resolver
+// (SR3, active runs then the seven-day window) and the answer is held to the
+// repository the flag names, because the slug is part of every object key.
+// Mutation caught: turning an ending into an object name, and answering an
+// ending that resolved to another repository.
+func TestArtifactsRepoEnding(t *testing.T) {
+	f := newEndingFixture(t)
+	ctx := context.Background()
+	id := recentRunID(t, time.Minute, "3bb2")
+	body := []byte("hello")
+	seedArtifactRun(t, f.cloudFixture, id, []runstore.ArtifactFile{
+		{Name: "sizzle.mp4", Bytes: int64(len(body)), SHA256: sha256Hex(body), ContentType: "video/mp4"},
+	}, map[string][]byte{"sizzle.mp4": body})
+
+	if out, _, err := execute(t, "artifacts", "ls", "--repo", "acme/app", "3bb2"); err != nil || !strings.Contains(out, "sizzle.mp4") {
+		t.Errorf("ls --repo acme/app 3bb2 = %v (%s)", err, out)
+	}
+
+	// An ending nothing in the window carries is D1709's refusal, not an
+	// object name under the repository.
+	_, _, err := execute(t, "artifacts", "ls", "--repo", "acme/app", "ffff")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "pass the full ID") {
+		t.Errorf("ls --repo acme/app ffff = %v, want the not-found refusal", err)
+	}
+
+	// A run of another repository, named by an ending: --repo already said
+	// which repository the run is in, so the match is refused naming both,
+	// exactly as a <slug>/<run-id> that disagrees with --repo is.
+	other := mustSlug("gitlab", "acme/app")
+	otherID := recentRunID(t, 3*time.Minute, "beef")
+	b, err := blob.OpenBucket(ctx, f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	if err := runstore.Open(b, other, otherID).CreateTask(ctx, &task.Spec{
+		Version: 1, RunID: otherID, Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = execute(t, "artifacts", "ls", "--repo", "acme/app", "beef")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), other) || !strings.Contains(err.Error(), appSlug) {
+		t.Errorf("ls --repo acme/app beef = %v, want a user error naming both repositories", err)
+	}
+}

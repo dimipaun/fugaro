@@ -444,6 +444,14 @@ type resolveRunOptions struct {
 	activeOnly bool
 }
 
+// resolveRunOpts is the lookup a command's own streams give it: the stdin a
+// person answers the pick list on, the stdout that list is written to, the
+// stderr the lookup's notes go to, and the command's --json, which is never
+// asked to choose whatever the streams are (D1700).
+func resolveRunOpts(cmd *cobra.Command, asJSON bool) resolveRunOptions {
+	return resolveRunOptions{in: cmd.InOrStdin(), out: cmd.OutOrStdout(), errOut: cmd.ErrOrStderr(), asJSON: asJSON}
+}
+
 // notes is where the lookup's notes go.
 func (o resolveRunOptions) notes() io.Writer {
 	if o.errOut != nil {
@@ -465,8 +473,11 @@ func (o resolveRunOptions) notes() io.Writer {
 // that cannot answer is handed a run it did not choose. An ending that names
 // none is D1709's refusal, whose way out is the full ID.
 //
-// Nothing calls it yet: the commands that accept an ending are wired to it at
-// SR14.
+// activeOnly is the option the one command that acts on the answer sets:
+// `cancel` takes it, so an ending is read against the active runs alone and
+// the answer is the list of them rather than a run. The one destructive
+// command is then only ever given a run a person named in full, and what an
+// ending gets back is the full IDs to paste (D1710).
 func resolveRun(ctx context.Context, env *cloudEnv, ref string, o resolveRunOptions) (slug, runID string, err error) {
 	// A full ID and <slug>/<run-id> are locateRun's, refusals included: this
 	// adds endings to what a command accepts and changes nothing about what it
