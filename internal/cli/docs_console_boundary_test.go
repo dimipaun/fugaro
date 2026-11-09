@@ -188,6 +188,19 @@ const consoleBoundarySelf = "internal/cli/docs_console_boundary_test.go"
 // three layer words) is what reads it, as §6.21's and §6.22's own checks do from
 // the entries above. Bytes again, like the five before it: no import under
 // console/, no go:embed, nothing built against what the console holds.
+//
+// The eighth is the short-run-ids plan's SR10, and it is the first entry whose
+// read is of the console's **fixtures** rather than of a document the console
+// and the CLI both describe. The live tab follows `watch` in the three things
+// D1704 names -- the order of the rows, the short ID each row is named by, and
+// the words a state is said in -- and the plan asks for that to be a test rather
+// than a promise. The fixtures are the data the two sides share
+// (console/test/fixtures/watch-parity.json, recorded from watch's own renderers
+// over one fixed view, and the console's copy of SR1's short-ID case table),
+// and the test that regenerates the one and holds the other to the Go table is
+// internal/watch/console_parity_test.go. Bytes, like every entry above: no
+// import under console/, no go:embed, and nothing in that file is built against
+// anything the console holds -- it reads the JSON the console's own suite reads.
 var consoleBoundaryAllowList = []string{
 	"internal/cli/docs_desktop_console_test.go",
 	"ee/coordinator/cli/console_contract_test.go",
@@ -196,6 +209,7 @@ var consoleBoundaryAllowList = []string{
 	"internal/cli/settings_console_fixture_test.go",
 	"internal/orchestrator/sensitivity/floor.go",
 	"internal/cli/security_test.go",
+	"internal/watch/console_parity_test.go",
 }
 
 // consoleGoModRequireBaseline is go.mod's require block as recorded when Task
@@ -830,10 +844,12 @@ func TestConsoleIsOutsideTheGoModule(t *testing.T) {
 		// documents it and the write this package answers it with; the sixth is security-classification SC1's (the floor row that names the
 		// console's main process); the seventh is security-classification SC3's
 		// (the security paths read's own §6.23 check, which reads the contract
-		// document); this number is what makes an eighth one impossible to add
-		// quietly.
-		if len(consoleBoundaryAllowList) != 7 {
-			t.Errorf("consoleBoundaryAllowList carries %d entries, %v: it holds the console contract's own docs tests, the moved halves of the coordinator's and the report's commands, the two halves of the settings fixture's check, the sensitivity floor's row naming the console's main process and the security paths read's §6.23 check, and a further entry is a widening of the boundary that must be argued for in the commit that adds it (plan Task 0.3 a3)", len(consoleBoundaryAllowList), consoleBoundaryAllowList)
+		// document); the eighth is the short-run-ids plan's SR10 (the live tab's
+		// parity with watch, which reads the console's own fixtures -- the frame
+		// recorded from watch and the copy of SR1's case table); this number is
+		// what makes a ninth one impossible to add quietly.
+		if len(consoleBoundaryAllowList) != 8 {
+			t.Errorf("consoleBoundaryAllowList carries %d entries, %v: it holds the console contract's own docs tests, the moved halves of the coordinator's and the report's commands, the two halves of the settings fixture's check, the sensitivity floor's row naming the console's main process, the security paths read's §6.23 check and the live tab's watch-parity check, and a further entry is a widening of the boundary that must be argued for in the commit that adds it (plan Task 0.3 a3)", len(consoleBoundaryAllowList), consoleBoundaryAllowList)
 		}
 	})
 

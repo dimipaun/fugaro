@@ -4284,6 +4284,12 @@ carries: the `halted (run_cap)` cell is --state halted, and --help lists the
 states the flag takes. A run's state is in its result.json, so this filter
 reads every run it filters -- it narrows the listing, never the reads.
 
+--debt lists only the runs filed from a triage deferral: a task whose own spec
+is marked debt, which is work a run's review left behind rather than work
+somebody asked for. Like --state it reads the runs it filters, since the
+mark is in the run's task.json; a run whose task.json is unreadable is
+left out rather than guessed in, because nothing there says it is one.
+
 --group-by failure_class adds a block to the listing: one row per class of the
 closed vocabulary, with the runs of the window that ended in it, their share
 of the window's runs, and what they cost. It groups the rows the listing has
@@ -4306,6 +4312,7 @@ Flags:
 | `--all` | bool | `false` | no | every repository in the runs bucket |
 | `--batch` | string | "" | no | only runs of this batch |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--debt` | bool | `false` | no | only runs filed from a triage deferral (a task marked debt) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `--group-by` | string | "" | no | group the listing by one field (failure_class) |
 | `-h`, `--help` | bool | `false` | no | help for ls |

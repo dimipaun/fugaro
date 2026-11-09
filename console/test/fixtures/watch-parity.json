@@ -1,0 +1,136 @@
+{
+  "note": "recorded from internal/watch's own renderers over one fixed view (internal/watch/console_parity_test.go). Invents every value: no installation is recorded here.",
+  "document": {
+    "project": "acme",
+    "mode": "enforce",
+    "day": "2026-11-08",
+    "now": "2026-11-08T12:31:00Z",
+    "connection": {
+      "state": "live",
+      "age_seconds": 2
+    },
+    "total": {
+      "counted_usd": 8.65,
+      "spent_usd": 8.65,
+      "notional_usd": 1.5,
+      "leased_usd": 0,
+      "daily_cap_usd": 50,
+      "percent": 17.3,
+      "max_parallel": null,
+      "burn": {
+        "known": true,
+        "usd_per_min": 0.012,
+        "fast": false
+      },
+      "kill": null,
+      "runs": 5,
+      "run_hours": 1.7
+    },
+    "repos": [
+      {
+        "slug": "acme-app",
+        "repo": "acme/app",
+        "counted_usd": 8.65,
+        "spent_usd": 8.65,
+        "notional_usd": 1.5,
+        "leased_usd": 0,
+        "daily_cap_usd": 50,
+        "percent": 17.3,
+        "burn": {
+          "known": true,
+          "usd_per_min": 0.012,
+          "fast": false
+        },
+        "kill": null
+      }
+    ],
+    "runs": [
+      {
+        "run": "20261108-113000-9c3d",
+        "slug": "acme-app",
+        "repo": "acme/app",
+        "title": "an artifact run",
+        "stage": "-",
+        "round": "-",
+        "verify": "",
+        "models": "",
+        "auth": "oauth",
+        "notional": true,
+        "spent_usd": null,
+        "age_seconds": 90,
+        "health": "ok",
+        "deadline": "ok",
+        "queued": true
+      },
+      {
+        "run": "20261108-114500-aa02",
+        "slug": "acme-app",
+        "repo": "acme/app",
+        "title": "the run that stopped reporting",
+        "stage": "implement",
+        "round": "1",
+        "verify": "-",
+        "models": "sonnet",
+        "auth": "api",
+        "notional": false,
+        "spent_usd": 1.5,
+        "age_seconds": 840,
+        "health": "lost",
+        "deadline": "ok",
+        "launched_by": "someone@example.invalid"
+      },
+      {
+        "run": "20261107-010101-3bb2",
+        "slug": "acme-app",
+        "repo": "acme/app",
+        "title": "a run from yesterday",
+        "stage": "verify",
+        "round": "2",
+        "verify": "-",
+        "models": "opus",
+        "auth": "api",
+        "notional": false,
+        "spent_usd": 4.25,
+        "age_seconds": 4260,
+        "health": "ok",
+        "deadline": "ok"
+      },
+      {
+        "run": "20261108-115248-3bb2",
+        "slug": "acme-app",
+        "repo": "acme/app",
+        "title": "the run beside it",
+        "stage": "implement",
+        "round": "1",
+        "verify": "-",
+        "models": "opus",
+        "auth": "api",
+        "notional": false,
+        "spent_usd": 0.9,
+        "age_seconds": 720,
+        "health": "ok",
+        "deadline": "ok"
+      },
+      {
+        "run": "20261108-121500-aa01",
+        "slug": "acme-app",
+        "repo": "acme/app",
+        "title": "the run in review",
+        "stage": "review",
+        "round": "2",
+        "verify": "-",
+        "models": "sonnet",
+        "auth": "api",
+        "notional": false,
+        "spent_usd": 2,
+        "age_seconds": 360,
+        "health": "ok",
+        "deadline": "ok",
+        "launched_by": "someone@example.invalid"
+      }
+    ],
+    "finished": [],
+    "ready": []
+  },
+  "plain": "project acme · mode enforce · day 2026-11-08 · live\ntotal  counted $8.65 of $50.00 (17%) · spent $8.65 + $1.50 NOTIONAL (subscription, not capped) · burn $0.01/min\n       5 runs · 1.7 run-hours\n\nacme/app  counted $8.65 of $50.00 (17%) · spent $8.65 + $1.50 NOTIONAL (subscription, not capped) · burn $0.01/min\n  RUN     TITLE                           STAGE      ROUND  AGE     SPENT  BY       FLAGS\n  9c3d    an artifact run                 -          -      1m30s   -      -        QUEUED\n  aa02    the run that stopped reporting  implement  1      14m00s  $1.50  someone  LOST (sweeper pending)\n  1-3bb2  a run from yesterday            verify     2      1h11m   $4.25  -        \n  8-3bb2  the run beside it               implement  1      12m00s  $0.90  -        \n  aa01    the run in review               review     2      6m00s   $2.00  someone  \n"
+}

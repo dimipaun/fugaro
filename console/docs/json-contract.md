@@ -610,6 +610,7 @@ reads:
 | `started_at` | `*time.Time` | **yes** | null = not started |
 | `base_branch`, `previous_run` | string | **yes** | |
 | `follow_up` | bool | no | |
+| `follow_up_of` | `*task.FollowUpOf` | **yes** | the parent a triage follow-up was filed from (docs/post-review-triage D1843, T-TR11), from the run's own `task.json` (`task.Spec.FollowUpOf`): the parent's `run` and the deferred findings' `keys` it settles. **CLI 0.22.0.** It is its own fact beside `follow_up` and not a second spelling of it: that one says the run continues a pull request's branch, this one says it was filed out of a review's deferral, and a run can be either without the other. **Absent for every run that is not one of those** — every run somebody asked for, and every task written before the field existed — so absence reads as "not filed from a deferral" and never as "filed for no finding". **Task-derived and not sanitized**, like `title`, `batch` and `requested_by` beside it: the display layer sanitizes it (design §5.1 rule 7) |
 | `draft_fallback` | bool | **yes** | the host has no draft PRs, so the PR is an ordinary one with `[DRAFT]` in its title |
 | `pr_status_at` | `*time.Time` | **yes** | when the runner last wrote the PR's status section — **null = never** |
 | `stale_draft` | bool | **yes** | the record is not final but its draft's status section is old, or the execution is gone: the run probably died |

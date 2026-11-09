@@ -284,6 +284,11 @@ var doctorMeasurePrefixes []string
 // the same: the fix is one thing the reader runs, and hiding it would hide work.
 var doctorActionableInfoIDs = map[string]bool{
 	"gcp-project-line": true,
+	// The issues this machine saved and has not filed: nothing about the
+	// installation is wrong, so it is an info line and never a failure, but
+	// filing one is a command the reader runs and the pointer line alone
+	// would hide it (T-IS13 of docs/troubleshoot-issue).
+	"issues-pending": true,
 }
 
 // doctorClassOf is the classification, and it is the only place a class is

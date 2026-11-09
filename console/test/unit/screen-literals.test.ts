@@ -110,6 +110,11 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
   },
   'degraded.ts': {
     'state.installCommand': '`FUGARO_INSTALL_COMMAND` in `src/source/cli.ts`, which is the README\'s own `brew install dimipaun/tap/fugaro` rather than a string a document chose',
+    drawn: {
+      within: 'drawRunId',
+      reason:
+        'the ending `displayRuns` answered for one run record (`shared/shortid.ts`): the shortest suffix of the run id that tells it apart from the other records of the same list, never shorter than four characters, and -- in its cross-repository form -- that suffix with the repository in front of it. It is drawn only when it is a tail of the id **this cell would draw**, and the record\'s own four characters (`shortRun` of the sanitized id) otherwise. The id has already been through `sanitizeText` in the `runId` class in the same function -- a refusal, and a marker the recorder wrote, take the `putText` branch that draws no ending at all -- and the endings are cut from `drawnRef`, which puts the id and the repository through their own classes *before* `displayRuns` cuts and prefixes them, so either answer is a cut of a string the console would draw whole. The whole id stays on the row as `data-run`, written as it was before this cell drew an ending',
+    },
     'drawnOrNothing(state.operation)': '`OperationName`, the closed IPC allow-list union: the read the console asked for, in the console\'s own words, and passed through `sanitizeRefusal` again in `refused()` because `RefusedState` can be built without `refusedState`',
     'sentence.ok ? sentence.text : REFUSAL_UNREADABLE':
       'the CLI\'s refusal sentence on the `SourceRefusal` channel (`src/source/source.ts`), not a document string, **through `sanitizeRefusal`** in `refusedState` and again in `refused()` (a state built without `refusedState` is still sanitized; idempotent): design section 6.3 requires it verbatim, the free-text rules would draw `roles/datastore.viewer` as `[redacted]` and the project as `<project>`, and the credential rules still redact a token a child echoed -- `degraded.test.ts` asserts both halves of that',
@@ -326,6 +331,11 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
       within: 'floorNote',
       reason:
         'the parameter of the `floorNote` helper itself, which is the sentence a floor is drawn as (`coordinatorJobsFloorNote` and `coordinatorWindowNote`): its two call sites pass `COORDINATOR_JOBS_FLOOR_WORD` and `COORDINATOR_WINDOW_FLOOR_WORD`, this file\'s own floor words, and the version drawn beside each is the handshake\'s own line rather than a document string',
+    },
+    drawn: {
+      within: 'drawRunId',
+      reason:
+        'the ending `displayRuns` answered for one run -- a job list row\'s `runs[].run_id` or a record\'s `runs[].id` (`shared/shortid.ts`): the shortest suffix that tells the run apart from the other rows drawn in the same list, never shorter than four characters, and -- in its cross-repository form -- that suffix with the repository in front of it. It is drawn only when it is a tail of the id **this cell would draw**, and the row\'s own four characters (`shortRun` of the sanitized id) otherwise. The id has already been through `sanitizeText` in the `runId` class in the same function -- a refusal, and a marker the recorder wrote, take the `putText` branch that draws no ending at all -- and the endings are cut from `drawnRef`, which puts the id and the repository through their own classes *before* `displayRuns` cuts and prefixes them, so either answer is a cut of a string the console would draw whole. No whole id travels on this cell: a coordinator row opens no run, so the cell carries no `data-run-id` (`live.ts`\'s `putRunId` is the door-carrying half of the same drawing)',
     },
   },
   // The two drawings console 0.116.1 adds: the panel's reading placeholder and
