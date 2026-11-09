@@ -98,9 +98,12 @@ func runFolders(t *testing.T) (source, evidence string) {
 // already escaped by the test, so no shell ever quotes it and the child only
 // splices it into the result event.
 //
-// What it did lands in record, one key per line, which is where the cases read
-// a refusal from: the answer itself is what the model wrote, and a test that
-// looked for a refusal there would be testing the fake's prose.
+// What it did lands in record, one key per line — the allow-list it was given,
+// what it did with it, and the directory it was really started in (pwd -P,
+// resolved, so a temp directory reached through a symlink compares equal to
+// the one the test named) — which is where the cases read a refusal from: the
+// answer itself is what the model wrote, and a test that looked for a refusal
+// there would be testing the fake's prose.
 func runChildScript(record string) string {
 	return `
 prompt=$(cat)
@@ -137,7 +140,7 @@ if [ -n "$want" ]; then
     did="refused $want"
   fi
 fi
-printf 'tools=%s\ndid=%s\n' "$tools" "$did" > '` + record + `'
+printf 'tools=%s\ndid=%s\ncwd=%s\n' "$tools" "$did" "$(pwd -P)" > '` + record + `'
 if printf '%s\n' "$prompt" | grep -q '^CAP: turns'; then
   printf '{"type":"result","subtype":"error_max_turns","is_error":true,"total_cost_usd":0.02,"session_id":"s1","result":""}\n'
   exit 1
@@ -301,11 +304,15 @@ func TestRunArgsIsTheReadOnlyContract(t *testing.T) {
 	// Glob as the way round it.
 	var wantDeny []string
 	for _, path := range []string{
-		"~/.ssh/**", "~/.aws/**", "~/.config/gcloud/**", "~/.claude/**",
-		"~/.config/fugaro/**", "~/.config/gh/**", "~/.config/rclone/**",
-		"~/.docker/**", "~/.terraform.d/**", "~/.kube/**", "~/.gnupg/**",
-		"~/.git-credentials", "~/.gitconfig", "~/.netrc", "~/.npmrc",
-		"~/.pgpass", "~/.pypirc", "/proc/**",
+		"~/.ssh/**", "~/.aws/**", "~/.config/gcloud/**", "~/AppData/Roaming/gcloud/**",
+		"~/.claude/**", "~/.claude.json", "~/.claude.json.backup",
+		"~/.config/fugaro/**", "~/.config/gh/**", "~/AppData/Roaming/GitHub CLI/**",
+		"~/.config/rclone/**", "~/AppData/Roaming/rclone/**",
+		"~/.docker/**", "~/.terraform.d/**", "~/AppData/Roaming/terraform.d/**",
+		"~/.terraformrc", "~/terraform.rc",
+		"~/.kube/**", "~/.gnupg/**", "~/AppData/Roaming/gnupg/**",
+		"~/.git-credentials", "~/.gitconfig", "~/.netrc", "~/_netrc", "~/.npmrc",
+		"~/.pgpass", "~/.pypirc", "~/AppData/Roaming/pip/**", "/proc/**",
 	} {
 		for _, tool := range []string{"Read", "Grep", "Glob"} {
 			wantDeny = append(wantDeny, tool+"("+path+")")
@@ -518,6 +525,51 @@ func TestRunConfinesTheChildToTwoFolders(t *testing.T) {
 	if strings.Contains(did, s.value) {
 		t.Errorf("the child read a file outside the two folders: %q", did)
 	}
+}
+
+// TestRunStartsTheChildInTheSourceTree: the working directory is the first of
+// the two roots the child is given, and it is the source tree — not the
+// evidence folder beside it, and not whatever directory Fugaro itself happens
+// to run in, which is where a child started with no Dir at all would end up.
+//
+// The fake child records the directory it was really started in, so both ways
+// this can go wrong are behavioural: pointing Dir at the evidence folder, or
+// leaving it empty, is caught by the child's own account of where it ran.
+func TestRunStartsTheChildInTheSourceTree(t *testing.T) {
+	s := newRunSetup(t)
+	if _, err := s.run(t, answer(t, fence(s.nonce, "outcome: bug\nsignature: update config invalid\nbody"))); err != nil {
+		t.Fatal(err)
+	}
+	want, err := filepath.EvalSymlinks(s.req.SourceDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The control: this case's two folders are different directories, so a
+	// comparison against the source tree tells the child's working directory
+	// apart from the evidence folder rather than matching either way.
+	evidence, err := filepath.EvalSymlinks(s.req.EvidenceDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want == evidence {
+		t.Fatalf("this case's two folders are one and the same directory (%s), so it cannot tell them apart", want)
+	}
+	if got := runField(t, s.did(t), "cwd"); got != want {
+		t.Errorf("the child ran in %s, want the source tree %s: its working directory is the first of the two roots a diagnosis gives it", got, want)
+	}
+}
+
+// runField is one `key=value` line of what the fake child recorded about
+// itself.
+func runField(t *testing.T, record, key string) string {
+	t.Helper()
+	for _, line := range strings.Split(record, "\n") {
+		if v, ok := strings.CutPrefix(line, key+"="); ok {
+			return v
+		}
+	}
+	t.Fatalf("the fake child recorded no %s, so nothing here proves it: %q", key, record)
+	return ""
 }
 
 // TestRunRefusesAToolTheAllowListDoesNotCover: the log asks the agent to run a

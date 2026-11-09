@@ -123,6 +123,18 @@ func (s *syncWriter) do(f func()) {
 // not named here is a path the child can read — which is why the test pins
 // this list whole rather than sampling it.
 //
+// Every rule is home-relative, which is what lets one list cover both
+// platforms: a store that sits somewhere else on Windows is named where it
+// sits there. That is %APPDATA% — ~/AppData/Roaming from the person's home —
+// for gh's hosts.yml, gcloud's configuration, rclone's, Terraform's plugin
+// directory and GnuPG's keyring; and the netrc curl and Python read on Windows
+// is `_netrc`, with no leading dot. A name that matches nothing on the
+// platform in hand (every directory under ~/AppData on a Linux or macOS
+// machine) closes nothing and costs nothing. The client's own state file is a
+// name *beside* its directory rather than inside it, so ~/.claude.json and the
+// backup the client keeps of it are named as well: no glob over ~/.claude/**
+// reaches a sibling.
+//
 // It is not a list of everything sensitive on a machine: that list cannot be
 // written, and a rule denying the whole filesystem would deny the source tree
 // with it. It is the set a log steering the agent would go for first: the SSH,
@@ -134,20 +146,31 @@ var childReadDeny = []string{
 	"~/.ssh/**",
 	"~/.aws/**",
 	"~/.config/gcloud/**",
+	"~/AppData/Roaming/gcloud/**",
 	"~/.claude/**",
+	"~/.claude.json",
+	"~/.claude.json.backup",
 	"~/.config/fugaro/**",
 	"~/.config/gh/**",
+	"~/AppData/Roaming/GitHub CLI/**",
 	"~/.config/rclone/**",
+	"~/AppData/Roaming/rclone/**",
 	"~/.docker/**",
 	"~/.terraform.d/**",
+	"~/AppData/Roaming/terraform.d/**",
+	"~/.terraformrc",
+	"~/terraform.rc",
 	"~/.kube/**",
 	"~/.gnupg/**",
+	"~/AppData/Roaming/gnupg/**",
 	"~/.git-credentials",
 	"~/.gitconfig",
 	"~/.netrc",
+	"~/_netrc",
 	"~/.npmrc",
 	"~/.pgpass",
 	"~/.pypirc",
+	"~/AppData/Roaming/pip/**",
 	"/proc/**",
 }
 
