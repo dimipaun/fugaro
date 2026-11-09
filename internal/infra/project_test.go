@@ -68,6 +68,25 @@ func TestWithDefaultsNameFromLocalConfig(t *testing.T) {
 	}
 }
 
+// An installation applied before the start-only launcher role existed (the
+// owner's ruling of 2026-11-09) reports no role_ids.job_starter, and
+// withDefaults fills the name Go gives a new installation: the door that reads
+// those outputs converges rather than refusing, which is CLAUDE.md's hard rule
+// and the reason this deliberately does not copy the tag mover's refusal
+// (internal/cli's installationOutputs).
+func TestWithDefaultsFillsTheStartOnlyRole(t *testing.T) {
+	lc := parseLC(t, m4LocalConfig)
+	o := withDefaults(InstallationOutputs{RoleIDs: RoleIDs{
+		Launcher:       "projects/proj-1234/roles/" + RoleLauncher,
+		JobRunner:      "projects/proj-1234/roles/" + RoleJobRunner,
+		BuildSubmitter: "projects/proj-1234/roles/" + RoleBuildSubmitter,
+		TagMover:       "projects/proj-1234/roles/" + RoleTagMover,
+	}}, lc, "fugaro-runs-proj-1234")
+	if want := "projects/proj-1234/roles/" + RoleJobStarter; o.RoleIDs.JobStarter != want {
+		t.Errorf("JobStarter = %q, want %q: the outputs of an installation applied before the role existed must converge", o.RoleIDs.JobStarter, want)
+	}
+}
+
 // infra.Repo with no installation outputs still resolves a spec (image
 // build, the local check, the in-cloud check job), and it is the outputs'
 // caller, runInitRepo, that refuses an unnamed installation.

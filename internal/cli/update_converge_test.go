@@ -84,6 +84,22 @@ func newConvergeRigYAML(t *testing.T, node map[string]any, yaml string) *converg
 	// reads back empty, so the run is about the stale things alone.
 	r.script["plan"] = map[string]any{"exit": 0}
 	r.script["show"] = map[string]any{"stdout": `{"format_version":"1.0","values":{"root_module":{"resources":[{"address":"x"}]}}}`}
+	// The installation's outputs are the release behind's, and they predate the
+	// start-only launcher role (the owner's ruling of 2026-11-09): an
+	// installation applied before the role existed reports no
+	// role_ids.job_starter. `fugaro update` converges it with no operator step
+	// — infra.withDefaults fills the name Go gives a new installation — and a
+	// release that refuses those outputs instead, the tag mover's precedent,
+	// fails every test in this file. That is the HARD RULE of CLAUDE.md, and
+	// this line is where the fixture holds it.
+	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
+		"role_ids": map[string]string{
+			"launcher":        "projects/" + initProject + "/roles/" + infra.RoleLauncher,
+			"job_runner":      "projects/" + initProject + "/roles/" + infra.RoleJobRunner,
+			"build_submitter": "projects/" + initProject + "/roles/" + infra.RoleBuildSubmitter,
+			"tag_mover":       "projects/" + initProject + "/roles/" + infra.RoleTagMover,
+		},
+	})}
 	r.save(t)
 
 	runs := t.TempDir()
