@@ -1490,8 +1490,8 @@ repeating after any change to this suite. That script runs this module's own
 suite (`node --test 'src/voice/*.test.js'`, from `mobile/`) and not the app's
 whole one, because the mutations are all here and a failure in a neighbouring
 module would be indistinguishable from a killed guard; it **finds a working
-node** rather than assuming one (this repository's base image keeps node off
-`PATH` on purpose); and it refuses to report a verdict it could not have run --
+node** rather than assuming one (the base carries no node: it comes from
+`PATH` or `mise`); and it refuses to report a verdict it could not have run --
 the pristine suite must pass first, with a test count, because `node --test`
 exits 0 over a glob that matched nothing, and then a mutation that *must* be
 caught is planted before any real one is trusted. `npm test` --
