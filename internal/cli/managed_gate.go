@@ -170,10 +170,12 @@ type managedGate struct {
 	// for a project that is not managed any more, in the gate's sentence and
 	// with nothing typed.
 	revoked bool
-	// judged is the document this gate ADMITTED, nil until it admits one. It is
-	// held here so the record written after the command's write is about the
-	// document that was judged — the same value, carrying the digest of the
-	// same bytes (D1022) — rather than about one the caller passes again.
+	// judged is the document this gate ADMITTED, nil until it admits one and
+	// nil again from the next admit: it is held here so the record written
+	// after the command's write is about the document that was judged — the
+	// same value, carrying the digest of the same bytes (D1022) — rather than
+	// about one the caller passes again. It never outlives the step it was
+	// admitted for, which is what makes one admission one record.
 	judged *managedmode.Converge
 }
 
@@ -237,6 +239,14 @@ func readManagedGate(ctx context.Context, env managedGateEnv, facts managedGateF
 // every class the gate covers and for no other, and the refusal is recorded
 // before it is returned.
 func (g *managedGate) admit(ctx context.Context, class initflow.ConfirmClass, conv managedmode.Converge) (initflow.Managed, error) {
+	// The document a previous call admitted is spent by the time this one is
+	// made: the step it was admitted for has either recorded it or is being
+	// asked again for a new plan. Only the branch at the end of this call that
+	// admits one sets this again, so no path out of here can leave a document
+	// behind that this call did not admit — a recorded() reached afterwards
+	// would otherwise file a record of a plan the step did not apply, and a
+	// caller's own write would be accounted for by another step's admission.
+	g.judged = nil
 	if !g.managed {
 		return initflow.Managed{}, nil
 	}

@@ -91,6 +91,70 @@ func TestApplyUsesSavedPlanOnly(t *testing.T) {
 	}
 }
 
+// What fugaro keeps of an apply's stderr is a tail, and the closed list
+// refuses to read a tail as the whole of what terraform wrote
+// (propagation.go's Truncated). Two things about that are the wrapper's, not
+// the list's, and neither is visible in a test that builds an ExitError by
+// hand: that `run` marks the error at all, and how big the tail it keeps is.
+// The bound is stderrEvidence, not the 4096 bytes the message shows: an apply
+// that fails on more resources than a terminal's worth of text -- a fresh
+// project's binding set -- must still be retried, while one whose stderr
+// outgrew even that is not read at all.
+//
+// The failure is the same 404 in every case, so only the bound can decide.
+func TestApplyKeepsAnEvidenceTailOfItsOwn(t *testing.T) {
+	ctx := context.Background()
+	failure := withResource("module.installation.google_cloud_run_v2_service_iam_member.credentials_invoker", invoker404)
+	// The diagnostic, repeated: one of them is a few hundred bytes, so the
+	// count is what puts the total on either side of stderrEvidence. The last
+	// one is whole either way, whatever the bound cuts.
+	one := "Refreshing... Error: " + invoker404 + "\n│   with module.installation.google_cloud_run_v2_service_iam_member.credentials_invoker,\n"
+	for _, tc := range []struct {
+		name      string
+		repeat    int
+		truncated bool
+		want      bool
+	}{
+		{name: "a stderr the message holds", repeat: 1, want: true},
+		{name: "a stderr longer than the message, but kept whole", repeat: 60, want: true},
+		{name: "a stderr past what fugaro keeps", repeat: stderrEvidence/len(one) + 10, truncated: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newRig(t)
+			r.script["apply"] = map[string]any{"exit": 1, "stderr": failure + "\n" + one, "repeat": tc.repeat}
+			tf := r.tf(t, nil)
+			plan := filepath.Join(r.dir, "tfplan")
+			if _, err := tf.Plan(ctx, plan); err != nil {
+				t.Fatal(err)
+			}
+			err := tf.Apply(ctx, plan)
+			var ee *ExitError
+			if !errors.As(err, &ee) {
+				t.Fatalf("the failed apply = %v, want an ExitError", err)
+			}
+			if !strings.HasSuffix(ee.Stderr, one) {
+				t.Fatalf("the kept stderr ends %q, want the last diagnostic", lastBytes(ee.Stderr, 120))
+			}
+			if ee.Truncated != tc.truncated {
+				t.Errorf("a stderr of %d bytes is marked truncated = %v, want %v (the bound is %d)", tc.repeat*len(one), ee.Truncated, tc.truncated, stderrEvidence)
+			}
+			if whole := tc.repeat * (len(failure) + 1 + len(one)); !tc.truncated && len(ee.Stderr) != whole {
+				t.Errorf("the kept stderr is %d bytes, want the whole %d", len(ee.Stderr), whole)
+			}
+			if tc.truncated && len(ee.Stderr) != stderrEvidence {
+				t.Errorf("the kept stderr is %d bytes, want the %d-byte bound", len(ee.Stderr), stderrEvidence)
+			}
+			if got := PropagationFailure(err, credentialsServicePlan()); got != tc.want {
+				t.Errorf("PropagationFailure = %v, want %v: the 404 is the same in every case, so only the bound can decide", got, tc.want)
+			}
+			// What a person reads is the end either way, and short.
+			if text := err.Error(); len(text) > stderrTail+len("terraform apply exited 1: ") {
+				t.Errorf("the message is %d bytes, want the displayed tail", len(text))
+			}
+		})
+	}
+}
+
 // TestRunWritesProgressWithoutRacing covers a command whose Out is a
 // bytes.Buffer (as in the real-terraform test, and as the cli wires it up in
 // tests): os/exec copies stdout and stderr on two separate goroutines unless

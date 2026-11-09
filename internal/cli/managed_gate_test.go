@@ -311,6 +311,45 @@ func TestManagedGateRefusesAStepOutsideItsRulesAndRecordsTheRefusal(t *testing.T
 	}
 }
 
+// One admission at a time. A document a call admitted belongs to the step that
+// call was made for, and a later call that admits another one — or admits
+// nothing — ends it: a recorded() reached afterwards must not file an object
+// carrying the digest of a plan the step never applied. The step that is judged
+// twice is real (`fugaro update`'s propagation retry) and it is why the second
+// call's verdict, not the first's, is the one the record carries.
+func TestManagedGateRecordsOnlyWhatTheLastCallAdmitted(t *testing.T) {
+	admitted := []byte(`{"version":1,"keys":{"rigor":"standard"}}`)
+	refused := []byte(`{"version":1,"keys":{}}`)
+	const rule = "the layer names credentials.api_key, which is a reserved key"
+	r := newManagedGateRig(t)
+	gate, err := readManagedGate(context.Background(), r.env(), r.facts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gate.admit(context.Background(), initflow.YesOrTyped, managedmode.ConvergeAdmitted(admitted, initflow.YesOrTyped, []string{rule})); err != nil {
+		t.Fatalf("a plan every rule passed was refused: %v", err)
+	}
+	if _, err := gate.admit(context.Background(), initflow.YesOrTyped, managedmode.ConvergeRefused(refused, initflow.YesOrTyped, []string{rule})); err == nil {
+		t.Fatal("the plan a rule refused was admitted")
+	}
+	// The refusal is the day's one record, written where it happened. The
+	// admission the call before it made is the record this must not add: the
+	// step it belonged to is not the step this record is about.
+	if err := gate.recorded(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	got := r.audits(t)
+	if len(got) != 1 {
+		t.Fatalf("the day holds %d records, want the refusal's own and no other: %+v", len(got), got)
+	}
+	if got[0].Verdict != managedmode.AuditRefused || got[0].PlanDigest != gateDigest(refused) {
+		t.Errorf("the record is %+v, want the refusal of the document the second call judged", got[0])
+	}
+	if got[0].PlanDigest == gateDigest(admitted) {
+		t.Errorf("the record is about the document the first call admitted (%s), which is not the one this step was judged for", gateDigest(admitted))
+	}
+}
+
 // A project that is not managed is not this design's: the helper answers the
 // zero Managed — which is what every caller of D55's rule answered before the
 // managed case existed — and writes nothing at all.
