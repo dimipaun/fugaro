@@ -100,7 +100,7 @@ const (
 // added to the registry and not to the allowlist widens the gap the audit is
 // about rather than narrowing it.
 const (
-	cfmRegistryRows   = 377
+	cfmRegistryRows   = 381
 	cfmAllowlistNamed = 88
 )
 
@@ -328,11 +328,11 @@ func TestDocsConfigManagementRelativeCitationsResolve(t *testing.T) {
 }
 
 // TestDocsConfigManagementAllowlistCounts: the figure the audit's whole argument
-// is made of is re-counted here rather than trusted. The registry holds 377 rows
+// is made of is re-counted here rather than trusted. The registry holds 381 rows
 // and the generic write path's allowlist carries eighty-eight of them by name
 // plus the rows its nine prefixes reach; the documents state the registry's
 // count and the allowlist's, and a row added to either -- which moves the gap
-// between the two -- fails here rather than leaving §1's "213 rows have no
+// between the two -- fails here rather than leaving §1's "217 rows have no
 // generic writer" reading as checked when it is not.
 //
 // The count moved with G0, which gained the allowlist the wildcard blocks
@@ -345,7 +345,9 @@ func TestDocsConfigManagementRelativeCitationsResolve(t *testing.T) {
 // the local config file's own, and with SC7, whose security.patterns row is the
 // repository file's: the audit's subject is the keys no writer carries, and a
 // key added to the registry without one widens that gap rather than narrowing
-// it.
+// it. SC8's four rows are the layer's half of that block -- three row fields
+// and always_level_3 -- and no writer carries them either: the layer file is
+// `fugaro config publish`'s, not `fugaro settings set`'s.
 //
 // It counts through the same predicate the write path uses, so the test and the
 // command cannot disagree about what "the allowlist carries" means: the three
