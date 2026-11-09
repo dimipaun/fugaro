@@ -1632,6 +1632,7 @@ describe('no module under src/renderer writes an inline style', () => {
       'screens/degraded.ts',
       'screens/graph.ts',
       'screens/launch.ts',
+      'screens/licence.ts',
       'screens/live.ts',
       'screens/managed.ts',
       'screens/nocheckout.ts',

@@ -853,11 +853,12 @@ let settingsEditRunner: SettingsEditRunner = DECLINING_SETTINGS_EDITOR
  * before console L5b added `runs.stats` (`src/source/source.ts`'s
  * `FugaroSource` lists them) -- over
  * `boundSource`, so each of them reaches the active installation's own binary
- * and nothing else), and the three operations that are not reads of the CLI are
+ * and nothing else), and the six operations that are not reads of the CLI are
  * joined in here -- `startup.compatibility`, whose answer is the console's own
- * state, and the launch and the pull request link, which are the console's one
- * write and its one built link (`CliBackedHandlers` in `src/source/source.ts`
- * says so from the other side).
+ * state, the launch and the pull request link, which are the console's one
+ * write and its one built link, the settings edit, which is its other write,
+ * and the licence section's two, which read the console's own licence store
+ * (`CliBackedHandlers` in `src/source/source.ts` says so from the other side).
  *
  * `reducedModeHandlers` wraps the result in `registerHandlers` below rather than
  * here, so that what this constant holds is the surface and what the wrapper
