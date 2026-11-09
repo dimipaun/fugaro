@@ -174,7 +174,7 @@ func consoleParityView() View {
 		Conn: Connection{Kind: ConnLive, Age: 2 * time.Second},
 		Project: ProjectLine{
 			Counted: budget.Micros(8_650_000), Spent: budget.Micros(8_650_000), Notional: budget.Micros(1_500_000),
-			Bar: Bar{Has: true, Used: budget.Micros(8_650_000), Cap: budget.Micros(50_000_000), Percent: 17.3},
+			Bar:  Bar{Has: true, Used: budget.Micros(8_650_000), Cap: budget.Micros(50_000_000), Percent: 17.3},
 			Burn: Burn{Known: true, PerMin: budget.Micros(12_000)},
 			Runs: len(runs), RunHours: 1.7,
 		},
