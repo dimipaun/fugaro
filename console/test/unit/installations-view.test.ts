@@ -516,23 +516,20 @@ describe('the picker’s document and its view', () => {
     // machine where WSL itself is missing would send the operator to install a
     // distribution into a feature that is not there (T-C4's three outcomes).
     const empty = await mount({ distros: { kind: 'listed', distributions: [] } })
-    const emptyItems = empty.element('picker-distros').children[1] as FakeElement
-    expect(emptyItems.labels()).toEqual([NO_DISTROS])
+    expect(empty.element('picker-distros').children[1]?.textContent).toBe(NO_DISTROS)
 
     const absent = await mount({
       distros: { kind: 'absent', reason: 'wsl.exe could not be run: Windows Subsystem for Linux has no installed distributions.' },
     })
-    const absentItems = absent.element('picker-distros').children[1] as FakeElement
-    expect(absentItems.labels()).toEqual([
+    expect(absent.element('picker-distros').children[1]?.textContent).toBe(
       'wsl.exe could not be run: Windows Subsystem for Linux has no installed distributions.',
-    ])
-    // The reason is the resolution's sentence and goes through the door, so a
+    )
+    // The reason is the module's sentence and goes through the door, so a
     // credential-shaped run inside it is drawn redacted.
     const refused = await mount({
       distros: { kind: 'absent', reason: `${inert('gh', 'p_')}${'a'.repeat(36)} could not be read` },
     })
-    const refusedItems = refused.element('picker-distros').children[1] as FakeElement
-    expect(refusedItems.labels()).toEqual([`${TOKEN_PLACEHOLDER} could not be read`])
+    expect(refused.element('picker-distros').children[1]?.textContent).toBe(`${TOKEN_PLACEHOLDER} could not be read`)
   })
 
   it('says it is reading the machine’s distributions before the answer lands', async () => {
@@ -698,7 +695,10 @@ describe('the picker’s document and its view', () => {
       expect(link.attributes.get('type')).toBe('button')
       await link.fire('click')
       expect(recording.openExternal).toEqual([[]])
-      expect(recording.calls).toEqual(['list', 'openExternal'])
+      // The two reads the mount makes, and then nothing else: the link sends
+      // `openExternal` with no arguments and re-reads nothing, which is the
+      // other half of "the address is the main process's".
+      expect(recording.calls).toEqual(['list', 'distros', 'openExternal'])
     }
     // A refusal from the main process is shown as the status line, verbatim.
     const refused = await mount({
@@ -731,7 +731,7 @@ describe('the picker’s document and its view', () => {
     const item = refusedChoose.element('picker-list').children[0] as FakeElement
     await item.button('Choose').fire('click')
     expect(refusedChoose.element('picker-status').textContent).toBe('this console cannot drive the CLI at /usr/local/bin/fugaro')
-    expect(refusedChoose.recording.calls).toEqual(['list', 'choose', 'list'])
+    expect(refusedChoose.recording.calls).toEqual(['list', 'distros', 'choose', 'list', 'distros'])
   })
 
   it('disables every control while a request is in flight, and sends no second choose (review S6)', async () => {

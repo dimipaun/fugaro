@@ -89,6 +89,7 @@ import {
   cliSentence,
 } from './spawn'
 import { buildHardenedWindow, consoleWebPreferences, openExternalValidated } from './window'
+import { wslDistributions } from './wsl'
 import type { BrowserWindow, BrowserWindowConstructorOptions, Session, Shell } from 'electron'
 import type { CliCompatibility } from '../shared/version'
 import type { ChildSpawner, SpawnPlan } from './spawn'
@@ -242,6 +243,13 @@ export interface InstallationPickerDeps {
   readonly spawner?: ChildSpawner
   readonly spawnLog?: SpawnLogWriter
   readonly fs?: InstallationFs
+  /** wslPath replaces the `wsl.exe` the distro list's read runs. It is T-C4's
+   * own seam (`wslDistributions`' `wslPath`) and it is here for the same reason
+   * `prefixes` is: a unit test must be able to point the console at the fake
+   * without a Windows installation on the machine under test. **The shipped app
+   * never passes it** -- `installInstallationPicker` leaves it out, so the
+   * program is `wslExecutable`'s own absolute path. */
+  readonly wslPath?: string | undefined
   /** prefixes, when given, replaces rule 4's well-known directories
    * (`binDirectories`' own parameter). It exists for the same reason `home`
    * does: a unit test must be able to say "this machine has no `fugaro`"
@@ -1255,6 +1263,34 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
         if (!opened) return { ok: false, reason: OPEN_EXTERNAL_FAILED }
         return { ok: true, data: { opened: GETTING_STARTED_URL } }
       }
+      case 'distros':
+        // The one row whose subject is not this console's record of anything:
+        // the distributions this machine has, asked of `wsl.exe` by the module
+        // that owns that question (T-C4). Two things follow from that and both
+        // are the row's whole shape:
+        //
+        //   - **the child is `wsl.exe`, never the CLI**, so it runs in this
+        //     process's own directory (rule 5's `workingDirectory`) and no
+        //     installation, checkout or project is named -- the question is
+        //     about the machine, and a console that answered it through an
+        //     installation's record would need an installation chosen to ask;
+        //   - **the answer is `wslDistributions`' own, refused shape included.**
+        //     `listed` with no names, `absent` with the sentence `wsl.exe` gave
+        //     (or the reason it gave none), and `listed` with names and the one
+        //     `--status` named the default are three different facts, and the
+        //     window draws them as three different lines -- an empty list drawn
+        //     for a machine where WSL is missing would send the operator to add
+        //     a distribution to a feature that is not installed.
+        return {
+          ok: true,
+          data: await wslDistributions({
+            appEnv: deps.appEnv,
+            cwd: workingDirectory(),
+            ...(deps.wslPath === undefined ? {} : { wslPath: deps.wslPath }),
+            ...(deps.spawner === undefined ? {} : { spawner: deps.spawner }),
+            ...(deps.spawnLog === undefined ? {} : { log: deps.spawnLog }),
+          }),
+        }
     }
   }
 

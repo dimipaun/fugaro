@@ -1041,18 +1041,27 @@ export async function validateInstallation(
 // ---------------------------------------------------------------------------
 
 /**
- * InstallationOperationName is the picker window's whole surface, and it is five
- * channels: the list, one click that opens an installation, the checkout an
- * installation is used from, the removal of the console's own record, and the
- * website link the onboarding screens offer.
+ * InstallationOperationName is the picker window's whole surface, and it is
+ * seven channels: the list, one click that opens an installation, the checkout
+ * an installation is used from, the removal of the console's own record, the one
+ * directory Explorer opens, the website link the onboarding screens offer, and
+ * the WSL distributions this machine has (Part G, T-G3).
  *
  * The add-an-installation form is **gone** (owner's ruling of 2026-10-20): there
  * is no `add`, no `pickBinary`, no `pickConfig` and no `pickCheckout`, because
  * the console asks the operator for no binary and no config. What is left is a
- * list the CLI printed, one button per row, and the two onboarding screens --
- * so a renderer cannot name a path this process did not itself obtain.
+ * list the CLI printed, one button per row, the two onboarding screens and the
+ * machine's own distributions -- so a renderer cannot name a path this process
+ * did not itself obtain, and the distro row names nothing at all.
  */
-export type InstallationOperationName = 'list' | 'choose' | 'checkout' | 'remove' | 'reveal' | 'openExternal'
+export type InstallationOperationName =
+  | 'list'
+  | 'choose'
+  | 'checkout'
+  | 'remove'
+  | 'reveal'
+  | 'openExternal'
+  | 'distros'
 
 /**
  * InstallationArgumentKind is the closed set of shapes one argument may take.
@@ -1119,6 +1128,15 @@ export const INSTALLATION_OPERATIONS: readonly InstallationOperation[] = Object.
   // the one path that opens it is `openExternalValidated`. A renderer that sends
   // a URL has sent a key no row declares, and it is refused by name.
   { name: 'openExternal', method: 'openExternal', args: [] },
+  // The one row whose subject is **this machine** rather than this console's
+  // record of anything: the WSL distributions `wsl.exe` lists, which the picker's
+  // window draws beside the installations (Part G, T-G3). It is a read, it takes
+  // no arguments, and it is answered by `wslDistributions` (`src/main/wsl.ts`) --
+  // the console's one enumeration of distributions (T-C4) -- so a frame cannot
+  // name a distribution, a path or a command for it. It is not a second way to
+  // reach a spawn: the children are `wsl.exe` itself, under the same program the
+  // WSL route already runs.
+  { name: 'distros', method: 'distros', args: [] },
 ] satisfies readonly InstallationOperation[]).map(
   (row): InstallationOperation => Object.freeze({ ...row, args: Object.freeze(row.args.map((arg) => Object.freeze(arg))) }),
 ))
