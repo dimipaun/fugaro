@@ -144,7 +144,7 @@ export interface WslReport extends StubReport {
   /** `wslpath` is the translation this invocation carried, when it was one. */
   readonly wslpath: WslPathQuery | null
   /** `childEnv` is the environment the child *inside the distribution* will
-   * receive: the eleven `CHILD_ENV_KEYS` and no other key, with `PATH` the
+   * receive: the `CHILD_ENV_KEYS` this route carries and no other key, with `PATH` the
    * distribution's own. */
   readonly childEnv: Readonly<Record<string, string>>
 }
@@ -464,7 +464,7 @@ export function translatePath(
 
 /**
  * childEnvironmentFor builds the environment the child inside the distribution
- * receives: the eleven `CHILD_ENV_KEYS` and **no other key**, with `PATH` the
+ * receives: the `CHILD_ENV_KEYS` this route carries and **no other key**, with `PATH` the
  * distribution's own. The filter is the double's half of the boundary
  * `spawn.ts`'s `childEnvironment` enforces on the console's side: whatever else
  * the host's environment holds -- a Windows `PATH`, a sentinel a test planted --
