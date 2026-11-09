@@ -171,9 +171,11 @@ func Latest(getenv func(string) string, failedOnly bool) (ID, error) {
 // The ID is checked rather than trusted — one built by hand with a command name
 // no log could carry is refused, so a typed argument cannot reach outside the
 // store — and the name is resolved inside a root opened at the state
-// directory, as the writer creates it, so the link the store refuses to write
-// through is one this refuses to read through either. Nothing is created: a
-// log that is not there is ErrNoLog.
+// directory, as the writer creates it. The root alone is not the whole refusal:
+// os.Root follows a link that stays inside it and refuses only one that leaves,
+// so openLog Lstat's the name as well and takes a regular file only, the way
+// logsIn and internal/srctree's readRecord do. Nothing is created: a log that
+// is not there is ErrNoLog.
 func Open(getenv func(string) string, id ID) (io.ReadCloser, error) {
 	if !commandRE.MatchString(id.Command) {
 		return nil, fmt.Errorf("cmdlog: %q is not a command name, so it names no log", id.Command)
@@ -295,8 +297,9 @@ func endedBadly(root *os.Root, dir string, id ID) bool {
 		return false
 	}
 	defer f.Close()
+	// openLog takes a regular file only, so the size is all this needs.
 	fi, err := f.Stat()
-	if err != nil || !fi.Mode().IsRegular() {
+	if err != nil {
 		return false
 	}
 	off := int64(0)
@@ -329,11 +332,33 @@ func lastLine(text string) string {
 }
 
 // openLog opens id's log in dir, resolved through root. The name is built from
-// the ID's parts and resolved through the root, so it cannot leave the store
-// and a link at the name is refused rather than followed (os.Root's rule, which
-// is how the writer creates the file with O_EXCL).
+// the ID's parts, so it cannot leave the store, and it is Lstat'ed through the
+// root first: only a regular file at the name is read.
+//
+// The root on its own is not the refusal its name suggests: os.Root refuses a
+// link that leaves it and follows one that stays inside, and the state
+// directory holds more than the store. A relative link at a log's name — the
+// `run-…-1.log` file pointing at the `update-…-2.log` beside it — is therefore
+// a link the root resolves, and Open would hand a diagnosis the bytes of a run
+// it never asked for. The Lstat is the reader's half of what the writer gets
+// from O_EXCL, and it is the same check logsIn makes when it lists the store
+// (internal/srctree's readRecord makes it for its record).
+//
+// The check is a moment and not a lock: the name can be swapped for a link
+// between the Lstat and the open, and closing that would take an open that
+// refuses a link at the last component (O_NOFOLLOW), which is a platform pair
+// of its own. What a swap can reach is bounded either way: the root still holds
+// the file inside the state directory.
 func openLog(root *os.Root, dir string, id ID) (*os.File, error) {
-	return root.Open(filepath.Join(dir, id.String()+logSuffix))
+	name := filepath.Join(dir, id.String()+logSuffix)
+	fi, err := root.Lstat(name)
+	if err != nil {
+		return nil, err
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, fmt.Errorf("cmdlog: %s is not a log", name)
+	}
+	return root.Open(name)
 }
 
 // logFile is an open log and the root it was resolved through. The root stays

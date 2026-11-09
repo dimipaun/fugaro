@@ -450,6 +450,55 @@ func TestOpenRefusesACommandNameNoLogIsFiledUnder(t *testing.T) {
 	}
 }
 
+// TestOpenRefusesALinkAtALogsName: the name Open resolves is refused when what
+// is at it is a link, even though the root the name is resolved in would follow
+// it: the target here is a real log, sitting beside the link, inside the store.
+// Without the Lstat in openLog this reads the other run's bytes, and the
+// evidence a diagnosis is built from would be a run the caller never named —
+// which is why the link is relative rather than an absolute one the root
+// refuses on its own.
+func TestOpenRefusesALinkAtALogsName(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("windows makes no link at a log's name for this reader to refuse")
+	}
+	getenv := env(t)
+	body := "the run that really failed\n"
+	writeLog(t, getenv, "update", logAt, body)
+	// The run whose name is linked is a different command at a different
+	// second, so the ID cannot be confused with the file it points at.
+	linked := ID{Command: "run", At: logAt.Add(time.Minute), PID: os.Getpid()}
+	if err := os.Symlink(onlyStem(t, getenv, "update")+logSuffix, filepath.Join(store(t, getenv), linked.String()+logSuffix)); err != nil {
+		t.Fatal(err)
+	}
+
+	rc, err := Open(getenv, linked)
+	if !errors.Is(err, ErrNoLog) {
+		if err == nil {
+			got, _ := io.ReadAll(rc)
+			_ = rc.Close()
+			t.Fatalf("Open(%s) read %q: a link at a log's name is not the log", linked, got)
+		}
+		t.Errorf("Open(%s) = %v, want ErrNoLog", linked, err)
+	}
+
+	// The log itself is still read: what is refused is the link, not the store.
+	id := ID{Command: "update", At: logAt, PID: os.Getpid()}
+	rc, err = Open(getenv, id)
+	if err != nil {
+		t.Fatalf("Open(%s) = %v, want the log the run left", id, err)
+	}
+	got, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rc.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != body {
+		t.Errorf("the log holds %q, want %q", got, body)
+	}
+}
+
 // TestTheStoreIsTheWriters: the store this reads is the one the writer made
 // (D1351, D1352) — the directory 0700, the log 0600 — and reading leaves it
 // exactly as it was: no second store, no second file, no loosened mode.
@@ -506,6 +555,11 @@ func TestTheStoreIsTheWriters(t *testing.T) {
 // TestTheStoreIgnoresWhatIsNotALog: another tool's notes, a name whose stamp is
 // not fourteen digits, a directory and a link at a log's name are none of them
 // a log, and none of them makes Latest answer one.
+//
+// The link is planted beside the file it points at and names it relatively, so
+// it is one the root resolves rather than one os.Root refuses on its own: a
+// link out of the state directory would say nothing about this store's own
+// reading.
 func TestTheStoreIgnoresWhatIsNotALog(t *testing.T) {
 	getenv := env(t)
 	hand(t, getenv, "notes.txt", "not a log\n")
@@ -515,11 +569,8 @@ func TestTheStoreIgnoresWhatIsNotALog(t *testing.T) {
 		t.Fatal(err)
 	}
 	if runtime.GOOS != "windows" {
-		elsewhere := filepath.Join(t.TempDir(), "elsewhere.log")
-		if err := os.WriteFile(elsewhere, []byte("elsewhere\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Symlink(elsewhere, filepath.Join(store(t, getenv), "image-"+stamp(logAt)+"-1.log")); err != nil {
+		hand(t, getenv, "elsewhere.log", "a file that is not a log\n")
+		if err := os.Symlink("elsewhere.log", filepath.Join(store(t, getenv), "image-"+stamp(logAt)+"-1.log")); err != nil {
 			t.Fatal(err)
 		}
 	}
