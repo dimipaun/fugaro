@@ -1198,6 +1198,8 @@ func TestRedactPassesLeaveCleanTextAlone(t *testing.T) {
 		"the server is at http://localhost:3000 and up",
 		"postgres://app:" + fake(`"`, "8080", `"`) + " was refused",
 		"fugaro run --password\nError: flag needs an argument",
+		"pulled " + fake("image", "@", "sha256:abcd") + " and tagged it",
+		"the run pinned " + fake("fugaro", "@", "1") + " and stopped",
 	} {
 		if got := Text(s, []string{"a-secret-value"}); got != s {
 			t.Errorf("Text(%q) = %q, want it unchanged", s, got)

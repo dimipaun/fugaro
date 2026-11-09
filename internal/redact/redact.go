@@ -729,17 +729,19 @@ var (
 	// (`c:\users\someone`, `/mnt/c/users/someone`), because the filesystem it
 	// names does not have one.
 	//
-	// email reads a host with no dot in it as well (`someone@someone-ThinkPad`)
-	// because that is the address git invents when no identity is configured —
+	// email reads the segment behind the host's dot whatever it holds, so that
+	// the address git invents when no identity is configured is read:
 	// `fatal: unable to auto-detect email address (got
 	// 'someone@someone-ThinkPad.(none)')`, which is exactly the line a
-	// troubleshoot issue quotes — and it holds the user's login name and the
-	// machine's name, which is what the report must not carry. The `.(none)`
-	// suffix git appends is read as one more segment of the host. The `@` may
-	// be written the way a URL writes it, `%40` (`runner%40acme-prod.iam.gserviceaccount.com`,
-	// which names the service account and so the project), because that is how
-	// an address reaches a log from a URL or a query string.
-	email    = regexp.MustCompile(`[A-Za-z0-9._%+\-]+(?:%40|@)[A-Za-z0-9\-]+(?:\.(?:[A-Za-z0-9\-]+|\(none\)))*`)
+	// troubleshoot issue quotes, and it holds the user's login name and the
+	// machine's name, which is what the report must not carry. That `.(none)`
+	// is the host's dot segment; a host with no dot at all is not an address,
+	// and reading one would eat a diagnosis that only looks like an address
+	// (`fugaro@1`, `image@sha256:abcd`). The `@` may be written the way a URL
+	// writes it, `%40` (`runner%40acme-prod.iam.gserviceaccount.com`, which
+	// names the service account and so the project), because that is how an
+	// address reaches a log from a URL or a query string.
+	email    = regexp.MustCompile(`[A-Za-z0-9._%+\-]+(?:%40|@)[A-Za-z0-9\-]+(?:\.(?:[A-Za-z0-9\-]+|\(none\)))+`)
 	homePath = regexp.MustCompile(`(?m)(^|[^\w]|-[A-Za-z])(?:(?:/(?:root|home|(?i:users))\b|/var/home\b|(?:/mnt)?/[a-zA-Z]/(?i:users)\b)(?:[/\\][^\s"'<>]*)?|[A-Za-z]:\\{1,2}(?i:users)\b(?:\\{1,2}[^\\/"'<>\r\n]*)?(?:[/\\][^\s"'<>]*)?)`)
 )
 
