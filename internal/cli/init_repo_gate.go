@@ -25,11 +25,13 @@ import (
 //     onboarding an unlisted repository in either front door and in either mode
 //     — the converge and the standalone --repo engine alike — for an origin
 //     whose identity is the one it claims; or
-//   - its own typed confirmation, naming owner/name (from the origin) and the
-//     checkout's path, in the user's own terminal, before the stage's first
-//     cloud call or write — which is what a run asks where the run's own
-//     confirmation is not there to give, and what every run asked before D12;
-//     or
+//   - its own confirmation, the note below, shown at the user's own terminal
+//     (owner/name from the origin, its host and the checkout's path), before
+//     the stage's first cloud call or write — which is what a run asks where
+//     the run's own confirmation is not there to give, and what every run asked
+//     before D12. Nothing is typed at it (T7, docs/no-prompt-policy); --ask is
+//     the flag that puts the gate's own question back for the owner who wants
+//     it; or
 //   - --onboard-repo owner/name, the one explicit non-interactive opt-in,
 //     which must equal the origin repository exactly.
 //
@@ -40,15 +42,15 @@ type repoAuth int
 
 const (
 	authOK     repoAuth = iota // listed in the local config, or opted in
-	authAsk                    // not yet: it can be asked for in this terminal
-	authNeeded                 // not yet, and this run cannot ask
+	authAsk                    // not yet: the gate's own note confirms it in this terminal
+	authNeeded                 // not yet, and this run cannot confirm it
 )
 
 // authState says where the origin's repository stands. A --onboard-repo that
 // is not this checkout's repository is refused whatever else is true. The
 // flag names owner/name only, so it opts in only a repository on a provider's
 // own host with an origin git config does not rewrite; any other origin takes
-// the typed confirmation, which shows the host.
+// the gate's own note, which shows the host.
 func (e *initEngine) authState(o originInfo) (repoAuth, error) {
 	opts := e.r.o
 	if opts.onboardRepo != "" && !sameRepo(opts.onboardRepo, o.Repo) {
@@ -60,8 +62,8 @@ func (e *initEngine) authState(o originInfo) (repoAuth, error) {
 	case repoKnown(e.lc, o), flagOK, e.authorized[strings.ToLower(o.typed())]:
 		return authOK, nil
 	case e.declined[strings.ToLower(o.typed())]:
-		// Asked once, at the start of the run, and not typed: the stages say
-		// what to do and are not asked again.
+		// Asked once, at the start of the run, and not confirmed: the stages
+		// say what to do and are not asked again.
 		return authNeeded, nil
 	case e.onboardCovered(o):
 		// The onboarding of an unlisted repository is covered by the run's own
@@ -97,9 +99,10 @@ func (e *initEngine) authState(o originInfo) (repoAuth, error) {
 // W5.1" and what W5.1's commit inverts — and the run's own confirmation
 // actually given. --yes is the way to give it (r.conditions().Yes, which
 // --plan-only turns off); a run that cannot give it leaves the repository for
-// the user, and at a terminal the typed owner/name is the step's own
-// confirmation, asked where it always was (confirmRepo). A coding agent's
-// session, --json, a pipe and --non-interactive give nothing (canConfirmTyped).
+// the user, and at a terminal the gate's own note is the step's confirmation,
+// shown where it always was (confirmRepo, which reads nothing: T7,
+// docs/no-prompt-policy). A coding agent's session, --json, a pipe and
+// --non-interactive give nothing (canConfirmTyped).
 //
 // It reads the run's conditions and never r.review: the review's own answer
 // (init_review.go) covers the installation's ordinary steps, and the repository
@@ -112,8 +115,8 @@ func (e *initEngine) onboardCovered(o originInfo) bool {
 	if o.Rewritten || !o.standardHost() {
 		// The origin's identity is not the one it claims: git config in the
 		// checkout rewrites it, or its host is not a provider's own. The
-		// typed confirmation — which prints the host and asks for it — is the
-		// only route there, --yes and the review included.
+		// gate's own note — which prints the host — is the only route there,
+		// --yes and the review included.
 		return false
 	}
 	if repoNameListed(e.lc, o) {
@@ -210,13 +213,13 @@ func notOnboardingDetail(o originInfo) string {
 // before any stage plans: the installation's and Firebase's Terraform plans
 // take minutes, and the question used to come only after them (live Check
 // 27). The decision is the same one the stages make and is not weakened: the
-// same authState (known, --onboard-repo, or the typed owner/name in the
-// user's own terminal, never under --yes, --non-interactive, --json or an
-// agent), the same confirmation, before any plan for a checkout. It asks only
-// for the repository the repository stage would target (the checkout's
-// fugaro.yaml on its default branch names this project); every other case is
-// left to the stages, as before. A repository not typed is remembered, so the
-// stages report needs-you with the opt-in and do not ask again.
+// same authState (known, --onboard-repo, or the gate's own note at the user's
+// own terminal, never under --yes, --non-interactive, --json or an agent), the
+// same confirmation, before any plan for a checkout. It asks only for the
+// repository the repository stage would target (the checkout's fugaro.yaml on
+// its default branch names this project); every other case is left to the
+// stages, as before. A repository the gate did not confirm is remembered, so
+// the stages report needs-you with the opt-in and do not ask again.
 //
 // Since W3.4 the setup door asks the wizard's first-repository question first
 // (asksOnboard): the answer yes changes nothing about the gate below it, and
@@ -264,8 +267,8 @@ func (e *initEngine) gateEarly(ctx context.Context) {
 
 // declineRepo remembers, for the rest of the run, that this repository is not
 // onboarded: every stage behind the gate reads it (authState's declined case)
-// and none of them asks for it again. It is how the owner/name that was not
-// typed at the gate is remembered, and how the wizard's question answered no
+// and none of them asks for it again. It is how the repository the gate did
+// not confirm is remembered, and how the wizard's question answered no
 // is carried to the stages before the repository one (the secrets and the
 // plugin wiring), which otherwise ask for the same owner/name themselves.
 func (e *initEngine) declineRepo(o originInfo) {
@@ -290,9 +293,9 @@ func (e *initEngine) asksEnrolNote() bool {
 // the converge's parts without naming a door is not a run of either door.
 func (e *initEngine) theSetupDoor() bool { return e.r.o.door == setupDoor.name }
 
-// canConfirmRepo: a typed confirmation needs the user's own terminal, as the
-// secrets stage does: never with --yes, --non-interactive or --json, nor
-// behind a coding agent.
+// canConfirmRepo: the gate's own confirmation needs the user's own terminal,
+// as the secrets stage does: never with --yes, --non-interactive or --json,
+// nor behind a coding agent.
 func (e *initEngine) canConfirmRepo() bool {
 	return e.r.canAsk() && agentMarker(os.Getenv, e.r.stdinTerminal()) == ""
 }
@@ -300,7 +303,7 @@ func (e *initEngine) canConfirmRepo() bool {
 // onboardLeft is what the user does to opt a repository in: the one-line
 // flag for an ordinary origin, else a note to use a clean clone. For a coding
 // agent's session it is never the flag, which would be a line for the agent to
-// paste: only the typed route, in the user's own terminal.
+// paste: only the gate's own note, in the user's own terminal.
 func onboardLeft(o originInfo, door string) initflow.Left {
 	if o.standardHost() && !o.Rewritten && agentMarker(os.Getenv, processTerminal()) == "" {
 		return initflow.Left{Stage: initflow.Repository, Kind: initflow.LeftCommand, Text: selfCommand() + " " + door + " --onboard-repo " + quoteWord(o.Repo)}
@@ -355,12 +358,13 @@ func convergeOptIn(lc *localcfg.Config, o originInfo) string {
 }
 
 // enrolLeft is what a door that does not enrol a repository by asking leaves
-// instead of the typed question: one line naming the door that does. `update`
-// re-converges what is enrolled (D5) and never asks for a repository the local
-// config does not list — no typed owner/name, no --onboard-repo — but that is
-// its asking, not its covering: `--yes` covers the step in its converge as it
-// does in setup's (D12's answer of 2026-10-20, onboardCovered), so this line is
-// what a run that did not give that confirmation leaves. It is a command, not a
+// instead of the gate's own question: one line naming the door that does.
+// `update` re-converges what is enrolled (D5) and never shows the gate's note
+// for a repository the local config does not list — no owner/name note, no
+// --onboard-repo — but that is its asking, not its covering: `--yes` covers the
+// step in its converge as it does in setup's (D12's answer of 2026-10-20,
+// onboardCovered), so this line is what a run that did not give that
+// confirmation leaves. It is a command, not a
 // prompt, because there is nothing for this run to type.
 func enrolLeft(door string) initflow.Left {
 	return initflow.Left{Stage: initflow.Repository, Kind: initflow.LeftCommand,
@@ -411,11 +415,11 @@ func (e *initEngine) confirmRepo(root string, o originInfo) (bool, error) {
 // gateRepo is the same gate for a --repo run, before its first cloud call: a
 // repository the local config does not list is onboarded only by the run's own
 // confirmation (--yes, D12's answer of 2026-10-20, which W5.1's commit extends
-// to this gate — it used to be typed here too), or after its owner/name is
-// typed at the user's own terminal, or by --onboard-repo (never from a coding
-// agent's session). A known repository goes on as it always did. The converge's
-// repository stage has done this itself, and --plan-only and --forget change no
-// repository, so they skip it.
+// to this gate — it used to ask for the name here too), or after the gate's own
+// note is shown at the user's own terminal, or by --onboard-repo (never from a
+// coding agent's session). A known repository goes on as it always did. The
+// converge's repository stage has done this itself, and --plan-only and
+// --forget change no repository, so they skip it.
 func (r *initRun) gateRepo(ctx context.Context, root string, lc *localcfg.Config) error {
 	oi, ok := readOrigin(ctx, root)
 	if !ok {
