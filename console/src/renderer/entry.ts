@@ -6801,9 +6801,12 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         })
         jobsStamped = true
       }
-      const fresh = jobsListed.rows.slice(jobsDrawn)
-      if (fresh.length > 0) {
-        bindJobRows(fillCoordinatorJobs(factory, fresh, section.list))
+      if (jobsListed.rows.length > jobsDrawn) {
+        // The whole list goes in, not the page: the rows `jobsDrawn` counts are
+        // the ones already drawn into this `<ul>`, and they are the rows a
+        // reader sees beside the new page, so the endings are answered over all
+        // of them together (SR10, spec part 3).
+        bindJobRows(fillCoordinatorJobs(factory, jobsListed.rows, section.list, jobsDrawn))
         jobsDrawn = jobsListed.rows.length
       } else if (jobsListedAsked && !jobsOut && jobsListed.rows.length === 0 && jobsListed.window !== null) {
         // A page that was read and printed no row: the only state in which the

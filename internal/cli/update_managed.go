@@ -15,6 +15,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/initflow"
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/shellword"
 )
 
@@ -421,7 +422,19 @@ func (r *initRun) gateNamesAnIAMCall(bucket string) string {
 // So an installation whose upgrade deletes something is the owner's to run,
 // with the flag they have always passed and the confirmations they have always
 // been asked.
-func (r *initRun) gateStep(ctx context.Context, t *tf.TF, imports []tf.ImportKey, cover managedmode.Cover) (bool, error) {
+//
+// upgrade is the one thing the gate is told and the owner's list is not: the
+// replaces this binary's own upgrade makes of a grant an earlier release wrote,
+// as infra.LauncherGrantUpgrade matched them out of this plan
+// (managed.Spec.Upgrade). A launcher's condition is ForceNew, so every
+// installation that has not been re-applied since it last changed plans one
+// replace per launcher who is not an operator, and a gate that refused it would
+// make `fugaro update` two steps — the flag the refusal names, on the owner's
+// own terminal — which is the one thing CLAUDE.md's rule about that command
+// forbids. It is the installation root's own and no other step's: the
+// runs_launcher grants live in that module, and every other call site passes
+// nil.
+func (r *initRun) gateStep(ctx context.Context, t *tf.TF, imports []tf.ImportKey, cover managedmode.Cover, upgrade []string) (bool, error) {
 	g := r.gate
 	if g == nil || !g.managed {
 		return false, nil
@@ -445,7 +458,7 @@ func (r *initRun) gateStep(ctx context.Context, t *tf.TF, imports []tf.ImportKey
 	}
 	verdict, err := managedmode.Gate(ctx, infra.PlanFile, managedmode.Spec{
 		Project: r.projectName, GCPProject: r.gcpProject,
-		Cover: cover, Imports: imports, TF: t,
+		Cover: cover, Imports: imports, TF: t, Upgrade: upgrade,
 	})
 	if err != nil {
 		// A plan terraform cannot read is never admitted (managed.Gate's own
@@ -458,7 +471,7 @@ func (r *initRun) gateStep(ctx context.Context, t *tf.TF, imports []tf.ImportKey
 	class := gateClass()
 	conv := managedmode.ConvergeRefused(doc, class, refusedRules(verdict))
 	if verdict.OK {
-		conv = managedmode.ConvergeAdmitted(doc, class, admittedRules)
+		conv = managedmode.ConvergeAdmitted(doc, class, admittedRules(upgrade))
 	}
 	m, err := g.g.admit(ctx, class, conv)
 	if err != nil {
@@ -930,17 +943,38 @@ func (r *initRun) gateDeleteLeft(reason string, doc []byte, verdict managedmode.
 // ever sees.
 func gateClass() initflow.ConfirmClass { return initflow.YesOrTyped }
 
-// admittedRules is what the record says admitted the plan: the three rules
-// Gate runs, in the order it runs them (internal/managed/plan.go), each one
-// true by the time a verdict is OK. A record that said only "admitted" would
-// be one an owner cannot check against the plan they kept, and these three are
-// what makes an admission mean something — the plan removes nothing, every
-// change is one the review's own cover announced, and no cost-bearing
-// attribute is blocked.
-var admittedRules = []string{
-	"the guard refused no delete and no replace, so the plan removes nothing of fugaro's own (the owner's delete list admits no removal in the embedded roots)",
-	"the cover of the embedded roots admitted every change in the plan",
-	"the cost list blocked no attribute of the plan",
+// admittedRules is what the record says admitted the plan: the rules Gate ran,
+// in the order it ran them (internal/managed/plan.go), each one true of the
+// plan the record digests. A record that said only "admitted" would be one an
+// owner cannot check against the plan they kept, and these are what makes an
+// admission mean something — the plan removes nothing of the owner's own, every
+// change is one the review's own cover announced, and no cost-bearing attribute
+// is blocked.
+//
+// upgrade is the replaces this binary's own upgrade makes, as the step matched
+// them out of this plan (infra.LauncherGrantUpgrade), and it is the reason the
+// sentences are the plan's own facts rather than one fixed list: on a plan that
+// carries one, the guard DID admit a replace and the cover DID NOT read the
+// change whole. A record that repeated the empty case's sentences there would
+// be an admission record stating two things false about the very plan it
+// digests — and an owner reading it back cannot check a rule against the plan
+// unless the rule says what the gate did. The empty case is the three sentences
+// every record this program wrote before the issues grant holds, unchanged.
+func admittedRules(upgrade []string) []string {
+	const costs = "the cost list blocked no attribute of the plan"
+	if len(upgrade) == 0 {
+		return []string{
+			"the guard refused no delete and no replace, so the plan removes nothing of fugaro's own (the owner's delete list admits no removal in the embedded roots)",
+			"the cover of the embedded roots admitted every change in the plan",
+			costs,
+		}
+	}
+	return []string{
+		"the guard refused no delete and no replace this binary's own upgrade does not make, so the plan removes nothing of fugaro's own (the owner's delete list admits no removal in the embedded roots)",
+		"the cover of the embedded roots admitted every change in the plan, each of the upgrade's replaces asked as the create it makes (its removal half is this binary's own, and no rule of the cover read it)",
+		costs,
+		"the replaces this binary's own upgrade makes were matched out of this plan, both halves of each change compared before it was named (infra.LauncherGrantUpgrade): " + safetext.FieldListLine(upgrade),
+	}
 }
 
 // refusedRules is the verdict's refusals as the rules that fired, one per

@@ -157,7 +157,7 @@ code. A `:line` is a **declaration** line at `777b902d`; the symbol is what to s
 - **F25: Exists, and it is what makes the migration possible at all. A catalog build hands the entry's
   Dockerfile every tool the renderer's own clone needs — the repository's URL and branch (the
   `_REPO_URL`/`_BASE_BRANCH` substitutions, `internal/backend/gcp/catalog.go:286`), the commit the
-  copied definition was read at (the pin step writes it, `internal/backend/gcp/catalog.go:364`), and
+  copied definition was read at (the pin step writes it, `internal/backend/gcp/catalog.go:369`), and
   the `git-credentials` file secret on the shared build step
   (`images/derived/cloudbuild.yaml:178`, read from `/workspace/out/source-commit`).** So a Dockerfile in
   a repository can `git clone "$REPO_URL"` at `$FUGARO_COMMIT` with the build's credential and bake the

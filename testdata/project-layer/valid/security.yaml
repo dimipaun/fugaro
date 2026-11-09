@@ -1,0 +1,8 @@
+version: 1
+project: aurora
+gcp_project: proj-1234
+security:
+  patterns:
+    - { name: payments, match: "internal/payments/**", category: credentials }
+    - { name: deploy, match: "deploy/terraform/**", category: infrastructure }
+  always_level_3: true

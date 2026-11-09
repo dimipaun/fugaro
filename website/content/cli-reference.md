@@ -46,6 +46,7 @@ Subcommands:
 - `fugaro logs` -- Print a run's logs from Cloud Logging
 - `fugaro managed` -- Act on a managed project (a project created by fugaro with the coding agent's refusal removed)
 - `fugaro models` -- Show the models this project can run, and where each is served
+- `fugaro orchestrator` -- Read and patch the project's orchestrator state
 - `fugaro pair` -- Pair a phone with this installation
 - `fugaro plan` -- Read a plan's graph artifact
 - `fugaro project` -- The project's policy, its allow-list and the repositories enrolled
@@ -3003,6 +3004,135 @@ Subcommands:
 
 This command has no subcommands.
 
+## `fugaro orchestrator`
+
+Read and patch the project's orchestrator state
+
+Read the project's orchestrator state, its audit log, and write the typed
+patch a person or a session may write. The state is the document the
+project's daemon keeps in its Firebase Realtime Database
+(orchestrator/<project>/{state,lease,audit}), and this command acts as
+the person the Application Default Credentials belong to, so the
+database's own roles decide what it may read and write.
+
+state prints the generated summary of the live node; --brief prints only
+that summary, and --brief --offline prints the brief the daemon cached at
+session start instead, reaching no network at all. events reads the audit
+log. patch applies one document from -f, and the ops only a person may
+land (approving a work item, setting the goal, closing a decision that
+waits on a person) are confirmed at a real terminal with the project's
+name typed, never by --yes: a session that has none writes nothing.
+
+Usage: `fugaro orchestrator`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for orchestrator |
+
+Subcommands:
+
+- `fugaro orchestrator events` -- Read the orchestrator's audit log
+- `fugaro orchestrator patch` -- Apply one typed patch document to the orchestrator's state
+- `fugaro orchestrator state` -- Print the orchestrator's state: the generated summary of its live node
+
+## `fugaro orchestrator events`
+
+Read the orchestrator's audit log
+
+Read the project's orchestrator audit log in the order the server stamped it,
+oldest first. --since takes a duration (1h, 30m) and keeps the entries the
+database's own clock puts inside it. --json prints a versioned document
+(schemas/orchestrator-output.schema.json).
+
+Usage: `fugaro orchestrator events`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for events |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--since` | string | "" | no | only entries newer than this duration, such as 1h or 30m |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro orchestrator patch`
+
+Apply one typed patch document to the orchestrator's state
+
+Apply one patch document (schemas/orchestrator-patch.schema.json) to the
+project's orchestrator state, from -f's file or from stdin with -f -. The
+document is validated and applied by the state model's own code, and the write
+is conditional on the revision this run read, so a patch built from a state
+somebody else has since changed is refused rather than landed on top of it.
+
+A run acts as a session. The ops only a person may land — approving a work
+item, setting the goal, and closing a decision that waits on a person — are
+confirmed at a real terminal, where the project's name is typed over the write
+that lands: the spec an approval binds, and every op the document carries,
+because the whole of it lands as the person who confirms it. Every other
+session, --json, a pipe and a coding agent's environment are refused and write
+nothing, and --yes never covers them.
+No flag, environment variable or field of the document makes this command the
+daemon or the decision agent: the daemon's bookkeeping is the daemon's.
+
+Usage: `fugaro orchestrator patch`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `-f`, `--file` | string | "" | no | the patch document to apply, or - to read it from stdin |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for patch |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro orchestrator state`
+
+Print the orchestrator's state: the generated summary of its live node
+
+Print the state of the project's orchestrator as the generated summary of its
+live node, with everything it prints out of the document fenced as data. --brief
+prints the summary alone, which is the form the daemon caches for the
+session-start print. --brief --offline prints that cache instead and reaches no
+network at all, showing the stamp the daemon wrote it with; with no cache yet it
+says so rather than reading the node. --json prints a versioned document
+(schemas/orchestrator-output.schema.json).
+
+Usage: `fugaro orchestrator state`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--brief` | bool | `false` | no | print only the generated summary |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for state |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--offline` | bool | `false` | no | print the brief the daemon cached at session start, reaching no network (goes with --brief) |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
 ## `fugaro pair`
 
 Pair a phone with this installation
@@ -4154,6 +4284,12 @@ carries: the `halted (run_cap)` cell is --state halted, and --help lists the
 states the flag takes. A run's state is in its result.json, so this filter
 reads every run it filters -- it narrows the listing, never the reads.
 
+--debt lists only the runs filed from a triage deferral: a task whose own spec
+is marked debt, which is work a run's review left behind rather than work
+somebody asked for. Like --state it reads the runs it filters, since the
+mark is in the run's task.json; a run whose task.json is unreadable is
+left out rather than guessed in, because nothing there says it is one.
+
 --pr N lists the runs on pull request N of one repository (the first run and
 its follow-ups), over the last 90d unless --since says otherwise; the totals
 line is then the PR's total cost.
@@ -4168,6 +4304,7 @@ Flags:
 | `--all` | bool | `false` | no | every repository in the runs bucket |
 | `--batch` | string | "" | no | only runs of this batch |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--debt` | bool | `false` | no | only runs filed from a triage deferral (a task marked debt) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for ls |
 | `--json` | bool | `false` | no | print machine-readable output |

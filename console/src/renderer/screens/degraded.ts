@@ -52,8 +52,10 @@
 
 import { measured, unavailable } from '../../shared/availability'
 import type { Reading } from '../../shared/availability'
-import { sanitizeRefusal, sanitizeText } from '../../shared/sanitize'
+import { isMarkerText, sanitizeRefusal, sanitizeText } from '../../shared/sanitize'
 import type { CostView, DegradedDocument, RecordView } from '../../shared/schema'
+import { displayRuns, shortRun } from '../../shared/shortid'
+import type { RunRef } from '../../shared/shortid'
 import { putReading, putText } from '../app'
 import { feedReading, notionalReading } from './live'
 import type { FeedHealth, LiveTheme, ScreenElement, ScreenFactory } from './live'
@@ -317,9 +319,11 @@ function make(factory: ScreenFactory, tag: string, ...classes: string[]): Screen
   return element
 }
 
-/** literal writes the console's own vocabulary into an element. Nothing a job
- * wrote reaches this function, and every argument it is called with here is a
- * string literal or a named constant of this file. */
+/** literal writes the console's own vocabulary into an element. Every argument
+ * it is called with here is a string literal or a named constant of this file,
+ * with the one exception `drawRunId` states -- a run id's short ending, a cut of
+ * a string the `runId` class has already accepted, which is the argument
+ * `screen-literals.test.ts` carries in this file's vocabulary. */
 function literal(element: ScreenElement, text: string): ScreenElement {
   element.textContent = text
   return element
@@ -466,12 +470,49 @@ function totals(factory: ScreenFactory, model: NoFirebaseModel): ScreenElement {
   return element
 }
 
-/** runRow draws one run record. */
-function runRow(factory: ScreenFactory, row: DegradedRunRow): ScreenElement {
+/** drawnRef is one row's run as the collision rule reads it: **the strings this
+ * screen would draw, not the ones that arrived**, which is `live.ts`'s
+ * `drawnRef` for the same reason. A value the `runId` or `repository` class
+ * refuses is handed over as the empty string: the row draws `n/a` for it, so it
+ * takes no part in the rule rather than voting with characters it never shows. */
+function drawnRef(row: DegradedRunRow): RunRef {
+  const id = sanitizeText(row.runId, 'runId', 'runs[].run_id')
+  const repo = sanitizeText(row.repo, 'repository', 'runs[].repo')
+  return { slug: repo.ok ? repo.text : '', runId: id.ok ? id.text : '' }
+}
+
+/** drawRunId draws a run's **ending** into the cell this screen names a run by:
+ * the four characters a person reads and types back into the CLI, and the
+ * shortest suffix that tells this run apart from the other rows in the same
+ * list (`shared/shortid.ts`, spec part 3). It is the drawing half of `live.ts`'s
+ * `putRunId` without the attribute: a degraded row has no run to open, and its
+ * whole id travels on `data-run` above, which is the row's identity rather than
+ * this cell's.
+ *
+ * One sanitizer answer decides what is drawn, exactly as `putRunId` states: the
+ * ending is cut from the **sanitized** id (`drawnRef`), and the characters
+ * written are that id's own tail whenever the ending handed in is not part of
+ * it -- so what is on screen is always a cut of a string this console would
+ * draw whole. A refusal, and a marker the recorder wrote, draw through `putText`
+ * and no ending at all. */
+function drawRunId(element: ScreenElement, row: DegradedRunRow, ending: string): void {
+  const id = sanitizeText(row.runId, 'runId', 'runs[].run_id')
+  if (!id.ok || isMarkerText(id.text)) {
+    putText(element, row.runId, 'runId', 'runs[].run_id')
+    return
+  }
+  const tail = ending.slice(ending.lastIndexOf('/') + 1)
+  const drawn = id.text.endsWith(tail) ? ending : shortRun(id.text)
+  literal(element, drawn)
+}
+
+/** runRow draws one run record. `ending` is the row's short id, answered for
+ * the whole list the row is drawn in (`displayRuns`). */
+function runRow(factory: ScreenFactory, row: DegradedRunRow, ending: string): ScreenElement {
   const element = make(factory, 'li', 'degraded-run')
   element.setAttribute('data-run', sanitizedKey(row.run))
   element.setAttribute('data-notional-model', row.notionalModel ? 'true' : 'false')
-  textCell(element, factory, 'span', row.runId, 'runId', 'runs[].run_id', 'degraded-run-id')
+  drawRunId(cell(element, factory, 'span', 'degraded-run-id'), row, ending)
   textCell(element, factory, 'span', row.repo, 'repository', 'runs[].repo', 'degraded-run-repo')
   textCell(element, factory, 'span', row.status, 'label', 'runs[].status', 'degraded-run-status')
   textCell(element, factory, 'span', row.stage, 'label', 'runs[].stage', 'degraded-run-stage')
@@ -501,7 +542,14 @@ export function renderNoFirebase(
   section.append(caps(factory, model))
   section.append(totals(factory, model))
   const runs = cell(section, factory, 'ol', 'degraded-runs')
-  for (const row of model.runs) runs.append(runRow(factory, row))
+  // The endings are answered for **this list**: the run records are the rows
+  // drawn together, so a run whose last four characters another row shares is
+  // extended until the two are told apart (spec part 3), and a record drawn
+  // alone keeps its plain four (`shared/shortid.ts`).
+  const endings = displayRuns(model.runs.map(drawnRef))
+  model.runs.forEach((row, at) => {
+    runs.append(runRow(factory, row, endings[at] ?? shortRun(row.runId)))
+  })
   return section
 }
 

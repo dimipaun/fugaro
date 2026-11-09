@@ -12,6 +12,14 @@ Runs of this repository that finished in 2026-W43 (2026-10-19 to 2026-10-25): 7 
 | `20261024-090000-ffff` | succeeded | #106 | yes | 0 | $0.05 | $0.05 | - |
 | `20261025-090000-1111` | succeeded | - | no | 0 | $0.00 | $0.00 | - |
 
+## Failures
+
+Why the period's runs did not succeed, over every run of the period, not only the rows above.
+
+| class | runs | billed | example |
+| --- | --- | --- | --- |
+| `halted_budget` | 1 | $0.40 | `20261020-090000-bbbb` |
+
 ## Stages
 
 Model calls and sub-agents by stage, over every run of the period.
@@ -27,5 +35,5 @@ Model calls and sub-agents by stage, over every run of the period.
 ## Summary
 
 ```json
-{"period":"2026-W43","start":"2026-10-19","end":"2026-10-25","runs":7,"shown":7,"flagged":4,"billed":"4.200000","notional":"0.150000","review":"0.740000","halts":1,"flags":{"fix_rounds":1,"halt":1,"review_calls":1,"subagents":1},"recipes":{"other":"0.300000"}}
+{"period":"2026-W43","start":"2026-10-19","end":"2026-10-25","runs":7,"shown":7,"flagged":4,"billed":"4.200000","notional":"0.150000","review":"0.740000","halts":1,"flags":{"fix_rounds":1,"halt":1,"review_calls":1,"subagents":1},"failures":{"halted_budget":1},"recipes":{"other":"0.300000"}}
 ```

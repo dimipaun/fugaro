@@ -17,12 +17,15 @@ thing it wants is missing. *Rule* — the claim is a statement of how things mus
 enforces it. *Open* — the tree cannot settle it; the owner decides.
 
 **The one thing to read first.** `docs/project-image-catalog/context-design.md` — merged on `main`,
-in the folder whose spec this issue's feature belongs to — is an **unbuilt, unapproved amendment
-titled "A repository build context for catalog `dockerfile` entries"** that already designs exactly
-this issue's ask, in this repository's own form: its own gaps **G1–G4**, decisions **A1–A8**, open
-items **O1–O6** and build tasks **C1–C5**. It takes no `D` number and no `Check` number. It is the
-single most important finding in this file (**F29**, **D1408**), and it is the reason the owner's
-first answer is needed before any task below can start.
+in the folder whose spec this issue's feature belongs to — is an **unbuilt amendment** titled "A
+repository build context for catalog `dockerfile` entries" that already designs exactly this issue's
+ask, in this repository's own form: its own gaps **G1–G4**, decisions **A1–A8**, open items **O1–O6**
+and build tasks **C1–C5**. It takes no `D` number and no `Check` number. **D1408** asked whether this
+folder supersedes it, folds into it or stands beside it, and **the owner answered on 2026-11-07: fold
+into it** — so its series is this folder's series, its C1 is this folder's CB1, and the tasks below are
+written against it, with the fold-in itself carried by **CB5**. It is the single most important finding
+in this file (**F29**, **D1408**), and it was the reason no task below could start until it was
+answered.
 
 ---
 
@@ -405,9 +408,10 @@ constraint the code enforces and a design must keep; **Open** is a question only
 - **F29. The merged amendment already designs this feature.** `docs/project-image-catalog/context-design.md`
   is titled "A repository build context for catalog `dockerfile` entries" and carries gaps G1–G4,
   decisions A1–A8, open items O1–O6 and tasks C1–C5 for exactly this ask, in the same folder as the
-  spec it amends. It is unbuilt and unapproved. **This folder does not silently become a second plan
-  for the same feature**: the owner says whether this reconciliation supersedes it, folds into it, or
-  stands beside it. **D1408**, and README §Open items.
+  spec it amends. It is unbuilt. **This folder does not silently become a second plan for the same
+  feature**: **D1408** asked whether this reconciliation supersedes it, folds into it, or stands beside
+  it, and **the owner answered 2026-11-07: fold into it** — this folder's CB1–CB5 are the tasks written
+  in that design's own series, and **CB5** carries the fold-in itself.
 - **F30. The removal's ruling points the other way.** `docs/repo-image-removal/`'s **D1208** (owner
   ruling 2026-11-04) answered "how does a migrated entry bake the repository's own dependency cache"
   with "the entry's own Dockerfile does the clone … and the engine gains NO bake mode", on the stated
@@ -475,10 +479,12 @@ Things this file could not settle from the tree, stated as such rather than gues
 
 ## 7. Decisions D1390–D1409
 
-**Not one of these is answered here.** The owner's-answer cell is empty in every row, and a task in
-[implementation-plan.md](implementation-plan.md) may not start before its row is answered. Each row
-states the question, what this reconciliation recommends and why, the alternative, and what the
-alternative costs.
+**Not one of these was answered here.** The owner's-answer cell carries the owner's dated answer —
+**every row was answered 2026-11-07, each as recommended, asked one at a time** — and the five tasks in
+[implementation-plan.md](implementation-plan.md) were approved the same day, so none of them waits on
+its own row any more. D1409 carries a **second row** for the owner's amendment of 2026-11-08, kept
+beside the answer it amends rather than rewriting it. Each row states the question, what this
+reconciliation recommends and why, the alternative, what the alternative costs, and the answer.
 
 | # | Question | Recommendation (and why) | Alternative | Its cost | Owner's answer |
 | --- | --- | --- | --- | --- | --- |
@@ -502,6 +508,7 @@ alternative costs.
 | **D1407** | What do the smoke and gate steps see for a context entry, and does `NoSmoke` keep its meaning? | **Unchanged**: smoke runs the built image as it does today, and `CatalogBuildSpec`'s `NoSmoke` keeps meaning "this entry has no smoke to run" | A different smoke for context entries | Two smoke meanings, and an operator cannot tell from the record which one ran | **2026-11-07: the recommendation.** Asked one by one; the owner chose the recommended option each time. |
 | **D1408** | Does this folder supersede `docs/project-image-catalog/context-design.md`, fold into it, or stand beside it? | **Fold into it.** It is the same feature, in the folder whose spec it amends, with its own gaps, decisions and tasks already written; a second plan for one feature is two answers to one question | Stand beside it, or supersede it | Two unbuilt designs for one feature, each with its own `D`/`Check`/task series, and the owner has to reconcile them later at higher cost than now | **2026-11-07: the recommendation.** Asked one by one; the owner chose the recommended option each time. |
 | **D1409** | Which release carries it, and in what order against `docs/repo-image-removal`? | **After the removal lands and after D1208's migrated entries are real**, so the design can be read against the shape it is meant to replace rather than guessed at | Ship it beside the removal | The removal's whole premise (D1208: no engine-side bake keyed by repository) and this feature ship in one release, and the contradiction is settled by whoever reads the notes first | **2026-11-07: the recommendation.** Asked one by one; the owner chose the recommended option each time. |
+| **D1409 — amended 2026-11-08** | Does the work still wait for `docs/repo-image-removal`'s chain, as the answer above puts it? | **No: the work does not wait for the removal chain.** The design is read against the shape D1208 has produced so far rather than against entries that do not exist yet, and the ordering against R0–R2 becomes a release-planning question rather than a code one (implementation-plan §5) | Keep the 2026-11-07 ordering: wait for the removal and for D1208's migrated entries | The feature the issue asks for waits on a chain whose end the owner does not control, and F30's question (an engine-side mechanism that re-creates part of the input D1208 removed) stays open while nothing can be built against it — the plan's own §4.7 has both readings written out | **2026-11-08: the amendment.** The owner amended D1409: this work does not wait for the repository-image removal chain. The answer above is kept as it was given, and this row is its amendment. |
 
 ---
 
@@ -551,17 +558,21 @@ the register's rule and not this folder's choice.
 
 ## 9. Open items
 
-These are the owner's, and none is decided here. They are repeated in [README.md](README.md) §Open
-items, which is where the owner's answers land.
+These were the owner's, and every one of them is answered — **2026-11-07, each the recommendation**
+(§7), with **D1409 amended on 2026-11-08**. They are repeated in [README.md](README.md) §Open items,
+which is the index; what follows is the full text with the dated answer.
 
-1. **D1408, first and blocking.** `docs/project-image-catalog/context-design.md` already designs this
-   feature (F29). Fold into it, supersede it, or stand beside it — no task in
-   [implementation-plan.md](implementation-plan.md) can start before this is answered, because the
-   answer decides which folder's tasks are real.
-2. **D1409.** `docs/repo-image-removal`'s D1208 (owner ruling 2026-11-04) refused an engine-side bake
-   keyed by repository, and this feature re-creates part of that input inside the catalog (F30). The
-   owner decides whether the difference — a checkout the Dockerfile decides what to do with, versus
-   cache state the engine maintains — is enough, and whether the two ship in one release.
+1. **D1408 — answered 2026-11-07: fold into
+   `docs/project-image-catalog/context-design.md`.** `docs/project-image-catalog/context-design.md`
+   already designs this feature (F29), so its series is this work's series; the fold-in is **CB5**'s
+   second half.
+2. **D1409 — answered 2026-11-07 (after the removal lands and D1208's migrated entries are real),
+   amended 2026-11-08 (this work does not wait for the removal chain).** `docs/repo-image-removal`'s
+   D1208 (owner ruling 2026-11-04) refused an engine-side bake keyed by repository, and this feature
+   re-creates part of that input inside the catalog (F30). The amendment removes the ordering
+   constraint, not F30's question: the difference — a checkout the Dockerfile decides what to do with,
+   versus cache state the engine maintains — is still what the work is read against, and which release
+   carries it is the owner's and is claimed nowhere (implementation-plan §5).
 3. **D1401, the security fork.** A context-change trigger needs either a credential in the check job
    or a hash staged in `builds/catalog/` (§4.6). The second is recommended and is the one that keeps
    the `objectViewer`-only grant intact (F24).
