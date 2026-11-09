@@ -229,6 +229,28 @@ func TestApplyVerdictWithDisagreeingIndexAndKeyBlocks(t *testing.T) {
 	}
 }
 
+func TestApplyUnknownWordBlocks(t *testing.T) {
+	// Decode refuses a word outside the two (verdict.go), but Apply is exported
+	// and reads whatever Verdict it is handed, so a caller that skipped the
+	// reader can reach this branch: the word is then not an answer at all, and
+	// the strict direction is the one a value this code cannot place gets — the
+	// finding blocks, and a later edit that made the fall-through defer would
+	// put a table-blocked finding on the follow-up list.
+	in := []Input{{Score: onAxis(), Key: keyCorrect}}
+	for _, w := range []Word{"skip", "", "Defer", "BLOCK", "deferrable"} {
+		out := Apply(rigor.Pro, in, verdict(Entry{Index: 0, Key: keyCorrect, Verdict: w, Reason: "not a word this vocabulary holds"}), true)
+		if len(out.Deferred) != 0 {
+			t.Errorf("a verdict word %q deferred a finding the table blocks: %+v", w, out.Deferred)
+		}
+		if len(out.Blocking) != 1 {
+			t.Fatalf("a verdict word %q blocked %d findings, want 1", w, len(out.Blocking))
+		}
+		if p := out.Blocking[0]; p.Index != 0 || p.Key != keyCorrect || p.Verdict != Block || p.Source != SourceFailSafe || p.Reason != reasonUnreadable {
+			t.Errorf("a verdict word %q placed the finding as %+v, want a fail-safe block", w, p)
+		}
+	}
+}
+
 func TestApplyTwoVerdictsForOneFindingBlock(t *testing.T) {
 	in := []Input{{Score: onAxis(), Key: keyCorrect}}
 	// Two answers for one finding: the word the round acts on would be whichever

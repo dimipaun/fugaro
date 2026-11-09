@@ -31,6 +31,7 @@ const (
 	reasonNeedsOwner  = "only the owner can settle this finding: no verdict may defer it"
 	reasonUnanswered  = "the verdict answered nothing for this finding, so the table's block stands"
 	reasonUnplaceable = "the verdict could not be placed on one finding, so this one blocks"
+	reasonUnreadable  = "the verdict's word is neither block nor defer, so this finding blocks"
 	reasonFailSafe    = "the triage call failed, so every finding the table blocks blocks"
 )
 
@@ -93,9 +94,11 @@ type Outcome struct {
 // round is dropped; an entry whose index and key disagree, and two entries for
 // one finding, block every finding either could name, because a reader taking
 // the index and one taking the key would otherwise defer different findings
-// (D1850). Each of those blocks records source fail_safe: the answer could not
-// be placed, so the strict direction was taken, exactly as for a call that
-// failed.
+// (D1850). An entry whose word is neither block nor defer — which Decode
+// refuses, so only a caller that skipped it can carry one — blocks the finding
+// it names rather than deferring it. Each of those blocks records source
+// fail_safe: the answer could not be read as an answer, so the strict direction
+// was taken, exactly as for a call that failed.
 func Apply(m rigor.Mode, in []Input, v Verdict, ok bool) Outcome {
 	var out Outcome
 
@@ -147,11 +150,16 @@ func Apply(m rigor.Mode, in []Input, v Verdict, ok bool) Outcome {
 			out.Blocking = append(out.Blocking, place(i, f.Key, Block, reasonUnanswered, SourceTable))
 		case named[i].Verdict == Defer:
 			out.Deferred = append(out.Deferred, Placed{Entry: *named[i], Source: SourceAgent})
-		default:
-			// A word Decode would refuse reads as a block here: this is the
-			// last case, and the strict direction is the one a value this code
-			// cannot place gets.
+		case named[i].Verdict == Block:
 			out.Blocking = append(out.Blocking, Placed{Entry: *named[i], Source: SourceAgent})
+		default:
+			// A word outside the two reads as a block: this is the last case,
+			// and the strict direction is the one a value this code cannot
+			// place gets. Decode refuses such a word (verdict.go), so only a
+			// caller that skipped it can reach here; the placement records the
+			// word the round acts on and not the one it could not read, because
+			// the record's own verdict is one of the two.
+			out.Blocking = append(out.Blocking, place(i, f.Key, Block, reasonUnreadable, SourceFailSafe))
 		}
 	}
 	return out
