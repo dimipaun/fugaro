@@ -1365,8 +1365,8 @@ owner's manual checklist's job, not a runner's.
    leg's nested form), and `console/src/main/fuses.ts`'s `SUPPORTED_PLATFORMS` is
    `['darwin','linux','win32']` with a `win32Executable` row beside the other two
    — so `afterPack`, the pack's only fuse flipper, no longer refuses the Windows
-   pack, and the packer no longer inherits its Windows target rather than one
-   this repository decided (implementation-plan.md Part B, T-B1, T-B2 and T-B4;
+   pack, and the packer is handed a Windows target this repository decided
+   rather than one it inherits (implementation-plan.md Part B, T-B1, T-B2 and T-B4;
    [docs/console-windows/reconciliation.md](../console-windows/reconciliation.md)
    F35, F36).
 2. **Landed**: the unit suite's POSIX assumptions. `spawn.ts`'s
