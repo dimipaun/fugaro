@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path"
 	"regexp"
 	"slices"
 	"strconv"
 	"strings"
+	"unicode"
 
 	cloudbuild "google.golang.org/api/cloudbuild/v1"
 
@@ -428,6 +430,33 @@ func (s CatalogBuildSpec) contextDir() string {
 	return catalogContextRoot
 }
 
+// contextPathMessage names what is wrong with a context as the directory a
+// build runs on, "" when nothing is. contextDir joins the value onto
+// catalogContextRoot, so a leading / or a .. segment would hand the build step
+// a directory elsewhere in the container — the fugaro-creds volume is mounted
+// at /creds while that step runs, and a Dockerfile's `COPY .` would bake the
+// repository's credential into the image — and a `//` or a `.` segment would
+// name a directory the checkout does not have. config holds these rules for
+// the key (catalogContextMessage); the request holds them too, because it is
+// built from a spec, not from a fugaro.yaml that was validated. config's
+// remaining rules for the key, the length bound it shares with every other
+// path, do not change which directory a build reads from.
+func contextPathMessage(f string) string {
+	switch {
+	case f == "":
+		return ""
+	case strings.ContainsFunc(f, unicode.IsControl):
+		return "must hold no control character"
+	case strings.HasPrefix(f, "/"):
+		return "must be a relative path inside the repository"
+	case slices.Contains(strings.Split(f, "/"), ".."):
+		return "must not hold a .. segment: the context is read inside the repository it names"
+	case path.Clean(f) != strings.TrimSuffix(f, "/"):
+		return "must be a clean path: no // and no . segment"
+	}
+	return ""
+}
+
 // catalogContextStep is the step that gives a build context to the entry's
 // Dockerfile: it checks the entry's repository out at the commit the copy
 // pinned, into catalogContextRoot, so the build step's context is a tree
@@ -656,6 +685,11 @@ func (s CatalogBuildSpec) check(project string, reserved map[string]bool) error 
 	// escaping, so each is checked for shape here rather than in the step.
 	if (s.Context == "") != (s.ContextCommit == "" && s.ContextSHA256 == "") {
 		return fmt.Errorf("the Cloud Build request has a context, a context commit and a context sum that do not come together: context %q, commit %q, sum %q", s.Context, s.ContextCommit, s.ContextSHA256)
+	}
+	if s.Context != "" {
+		if msg := contextPathMessage(s.Context); msg != "" {
+			return fmt.Errorf("the entry's context %q %s", s.Context, msg)
+		}
 	}
 	if s.Context != "" && !catalogCommitRE.MatchString(s.ContextCommit) {
 		return fmt.Errorf("the context's commit %q is not a commit SHA", s.ContextCommit)

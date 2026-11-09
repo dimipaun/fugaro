@@ -2,6 +2,8 @@ package gcp
 
 import (
 	"encoding/base64"
+	"errors"
+	"path"
 	"slices"
 	"strconv"
 	"strings"
@@ -752,6 +754,64 @@ func TestCatalogContextRootIsTheNamedSubdirectory(t *testing.T) {
 		// is the copy, whatever the context names.
 		if script := strings.Join(step(t, b, "build").Args, "\n"); !strings.Contains(script, "--file /workspace/context/Dockerfile") {
 			t.Errorf("context %q: the build step does not run the copied Dockerfile: %q", tc.context, script)
+		}
+	}
+}
+
+// TestCatalogBuildRefusesAContextOutsideTheCheckout: the context is joined
+// onto the checkout root and handed to the build step as its context
+// argument, so a spec whose context climbs out of the checkout with a `..`
+// segment, or that is absolute, is refused before the request is built. The
+// reason is not tidiness: the build step mounts the fugaro-creds volume at
+// /creds, and a context that resolved there would have a Dockerfile's
+// `COPY .` bake the repository's git credential into the image. The rule is
+// config's key rule; it is held here too, because a request is built from a
+// spec and not from a validated fugaro.yaml.
+func TestCatalogBuildRefusesAContextOutsideTheCheckout(t *testing.T) {
+	// An empty context is an entry with no context — the all-or-none check
+	// reads it before this one — and not an unclean path.
+	if msg := contextPathMessage(""); msg != "" {
+		t.Errorf("contextPathMessage(%q) = %q, want %q", "", msg, "")
+	}
+	for _, tc := range []struct {
+		context string
+		refused bool
+	}{
+		{".", false},
+		{"ci/", false},
+		{"ci/java", false},
+		// The credential volume is mounted at /creds in the build step, and
+		// /workspace/src/../../creds resolves to it.
+		{"../../creds", true},
+		{"../..", true},
+		{"..", true},
+		{"ci/../../creds", true},
+		{"a/../b", true},
+		{"/creds", true},
+		{"/", true},
+		{"ci//java", true},
+		{"ci/./java", true},
+		{"ci\n", true},
+	} {
+		s := catalogContextSpec(t)
+		s.Context = tc.context
+		b, err := CatalogBuildRequest("proj-1234", s)
+		switch {
+		case tc.refused && err == nil:
+			t.Errorf("the request accepts the context %q and builds from %q", tc.context, b.Substitutions["_CONTEXT_DIR"])
+		case tc.refused && !errors.Is(err, ErrBadBuildSpec):
+			t.Errorf("the context %q is refused with %v, which is not %v", tc.context, err, ErrBadBuildSpec)
+		case tc.refused && !strings.Contains(err.Error(), strconv.Quote(tc.context)):
+			t.Errorf("the refusal of the context %q does not name it: %v", tc.context, err)
+		case !tc.refused && err != nil:
+			t.Errorf("the request refuses the context %q: %v", tc.context, err)
+		case !tc.refused:
+			// The resolved directory, not the joined string: this is what
+			// docker is handed, and what it would read the context from.
+			dir := path.Clean(b.Substitutions["_CONTEXT_DIR"])
+			if dir != "/workspace/src" && !strings.HasPrefix(dir, "/workspace/src/") {
+				t.Errorf("the context %q builds from %q, which resolves outside the checkout", tc.context, dir)
+			}
 		}
 	}
 }
