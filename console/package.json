@@ -123,10 +123,12 @@
     },
     "win": {
       "target": [
-        "nsis"
-      ],
-      "arch": [
-        "x64"
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
       ],
       "artifactName": "Fugaro.Console-${version}-win-${arch}.${ext}"
     }
