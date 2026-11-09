@@ -725,6 +725,45 @@ func TestAccountsAddManagedOwnerTerminalIsAskedWhatTheTokenMayBeUsedBy(t *testin
 	}
 }
 
+// --ask keeps its two promises at the owner's own terminal, which is the only
+// session this command's managed case admits: the line saying the prompts of a
+// managed project are asked here instead, and the question the flag restores.
+//
+// Both halves are asserted against their opposites. The line must not be the one
+// for a project whose marks did not answer "managed" — this project's marks did,
+// and a sentence about another project would be this command telling the owner
+// something false about the file it is about to write — and the question must be
+// a question: with nothing typed for it the run stops, writes nothing and stores
+// nothing, which a build that printed a line about a question would pass.
+func TestAccountsAddManagedOwnerTerminalKeepsTheAskPromise(t *testing.T) {
+	r := newManagedAddRig(t, addRigLocal, addMarksManaged)
+	writes := r.secretWrites(t)
+	before := readFileString(t, r.cfg)
+	ownerAtTheTerminal(t)
+
+	// The name answers the confirmation this step asks for the token; nothing is
+	// left for the question --ask restores.
+	out, _, err := executeOwnerStdin(t, initProjectName+"\n", "accounts", "add", "team-a", "--repos", "owner/repo-a", "--ask")
+	if err == nil {
+		t.Fatalf("--ask asked for nothing and the run went through:\n%s", out)
+	}
+	if !strings.Contains(out, initflow.AskRestored()) {
+		t.Errorf("--ask did not say the prompts of this managed project are asked here instead:\n%s", out)
+	}
+	if strings.Contains(out, initflow.AskUnmanaged()) {
+		t.Errorf("--ask said the marks of this project did not answer managed, and they do:\n%s", out)
+	}
+	if !strings.Contains(out, "make this change? [y/N]:") {
+		t.Errorf("--ask restored no question for the write it covers:\n%s", out)
+	}
+	if after := readFileString(t, r.cfg); after != before {
+		t.Errorf("an unanswered --ask question changed the file:\n%s", after)
+	}
+	if len(writes.created) != 0 || len(writes.added) != 0 {
+		t.Errorf("an unanswered --ask question stored a token: created %v, added %v", writes.created, writes.added)
+	}
+}
+
 // The confirmation refused: the question is asked and the answer is not the
 // project's name, so the step stops there — before the login, before the diff
 // is applied and before the token is read. The run that answers nothing at all
@@ -808,9 +847,11 @@ func TestAccountsAddManagedOwnerTerminalWidensTheDeclaration(t *testing.T) {
 // then reads a token, which is the step no plan gate admits (accountsAddRules),
 // so in a managed project the flag has to work at the owner's own terminal —
 // after the same confirmation, and only there. The control is the gate's own
-// boundary, which answers the zero Managed for that run: the caller behind it
-// announces its diff and asks nothing more (D1540), and the login below is the
-// one the value never comes from.
+// boundary, which answers "managed and not admitted" for that run: the caller
+// behind it asks the question --ask restores and writes on the confirmation the
+// owner answered, never on a verdict — the admission is the flag GateConfirms
+// reads, and it is false — and the login below is the one the value never comes
+// from.
 func TestAccountsAddManagedOwnerTerminalRunsTheClaudeLogin(t *testing.T) {
 	r := newManagedAddRig(t, addRigLocal, addMarksManaged)
 	lc := r.addLocal(t)
@@ -821,8 +862,8 @@ func TestAccountsAddManagedOwnerTerminalRunsTheClaudeLogin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("--claude at the owner's own terminal was refused: %v", err)
 	}
-	if m != (initflow.Managed{}) {
-		t.Errorf("--claude at the owner's own terminal was answered %+v, want the zero value: the token entry is the owner's own step, and no gate admits one", m)
+	if want := (initflow.Managed{Managed: true}); m != want {
+		t.Errorf("--claude at the owner's own terminal was answered %+v, want %+v: the project IS managed — every sentence about it is decided under that — and no gate admits the token entry, so the admission stays false", m, want)
 	}
 	if err := gate.recorded(t.Context()); err != nil {
 		t.Fatal(err)

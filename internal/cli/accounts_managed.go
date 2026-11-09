@@ -247,7 +247,15 @@ func accountsAddGate(ctx context.Context, cmd *cobra.Command, lc *localcfg.Confi
 		if err := accountsAddTokenConfirmation(cmd, lc, name, allow); err != nil {
 			return initflow.Managed{}, managedGate{}, err
 		}
-		return initflow.Managed{}, managedGate{}, nil
+		// Managed and NOT admitted: the marks answered "managed" — the value
+		// every sentence about this project is decided under, so --ask prints
+		// its own line and asks the one question it restores instead of the
+		// line for a project that is not managed — while Admitted stays false,
+		// because this step was not taken on any verdict of the gate's. It is
+		// the truthful pair, and it is also the one that changes nothing else:
+		// GateConfirms needs the admission, so the write below proceeds on the
+		// confirmation just answered and on nothing else.
+		return initflow.Managed{Managed: true}, managedGate{}, nil
 	}
 
 	if marker == "" {
