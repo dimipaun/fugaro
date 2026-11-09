@@ -19,7 +19,9 @@ const MCPServerServiceName = "fugaro-mcp"
 // mints Bitbucket tokens at the credentials service and holds the FP's
 // database admin, and a public endpoint whose identity holds any of those
 // would make spec.md §8's "there is no credential to reach" false. The front
-// door's account holds the runs bucket's read (D932) and nothing else.
+// door's account holds two grants and no more: the runs bucket's read (D932)
+// and, in the installation module's mcpauth_store.tf, the store its own
+// records live in (D935).
 const MCPServerAccountID = "fugaro-mcp"
 
 // MCPServerSpec is the installation root's var.mcp_server (D920, D934): the

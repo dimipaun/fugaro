@@ -1785,6 +1785,11 @@ func TestAllUsersIsRefusedOnEveryOtherResource(t *testing.T) {
 		// The front door's own account's one grant, made public one line away
 		// from the account whose reach this rule exists to bound.
 		"the front door account's runs-bucket read": {"gcp/modules/installation/coordinator.tf", "gcp/modules/installation/coordinator.tf", "google_storage_bucket_iam_member.mcp_server_runs_reader"},
+		// The account's other grant, and the worse one to make public: the
+		// store D935 moves the token records, the client registrations and the
+		// audit into, where an allUsers read is every record of the front door
+		// rather than one run's artefacts.
+		"the front door account's store": {"gcp/modules/installation/mcpauth_store.tf", "gcp/modules/installation/mcpauth_store.tf", "google_storage_bucket_iam_member.mcpauth_store"},
 		// Another module: a run account's write grant on the runs bucket.
 		"a run account's runs-bucket grant": {"gcp/modules/workflow/sa.tf", "gcp/modules/workflow/sa.tf", "google_storage_bucket_iam_member.job"},
 		// The credentials bundle, which is every model credential the
