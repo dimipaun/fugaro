@@ -289,9 +289,9 @@ function claimsOf(payload) {
 
   // The object must carry exactly the six claims: a seventh name is a claim from
   // a format this verifier does not know and is refused here rather than
-  // silently dropped, and the six type checks below are what require the other
-  // five. `Object.keys` lists an own `__proto__` a payload carries, so it is
-  // refused like any other name.
+  // silently dropped, and each of the six is required by the type check under
+  // its own name. `Object.keys` lists an own `__proto__` a payload carries, so
+  // it is refused like any other name.
   if (Object.keys(parsed).length !== 6) return null;
 
   const tier = parsed['tier'];
@@ -392,8 +392,8 @@ function verifyOne(raw, now, keyring, ed25519) {
  *
  * The port is `ed25519(signature, message, publicKey)` and answers whether the
  * signature verifies, both keys as the raw bytes the design's vectors carry.
- * The ring is the build's: `index.js` supplies the production one and this file
- * has no default of its own for a caller to reach past it.
+ * The ring is the build's, and the default is the production one: a caller that
+ * verifies against another ring has to name it in as many words.
  *
  * @param {{ ed25519: Function, keyring?: object }} ports
  * @returns {{ verify: Function, latest: Function }} frozen
