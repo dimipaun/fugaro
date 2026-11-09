@@ -19,7 +19,7 @@ project config** — a sentence it prints and exits on — so the figures below
 are counted from the registry in this tree through the same predicate the write path uses, which is
 what the guard at the end of this section re-runs.
 
-- **F1 — the registry is 390 rows and the generic writer carries 171 of them.** 94 by name
+- **F1 — the registry is 392 rows and the generic writer carries 172 of them.** 95 by name
   (`internal/cli/settings_set.go:88`), made of the thirteen §4.4 names (the four budget scalars,
   `base_branch`, `max_parallel`, `update_check`, `commit_name`, `commit_email`, `layer.default_profile`,
   and D873's three account keys — `default_claude_account`, `claude_account_auto` and the wildcard
@@ -27,14 +27,19 @@ what the guard at the end of this section re-runs.
   — one per `config.RunStages` name, which make a stage's account addressable under the name it is
   written as rather than only under the registry's wildcard (the incident of 2026-11-09: a review
   account ran out, and repointing the stage meant editing the local config by hand) — the two budget
-  keys D1179 hands this path, and the wildcard blocks
+  keys D1179 hands this path, the bake switch D1901 gives it (`bake_repos`, which the setup wizard asks
+  and writes through this path), and the wildcard blocks
   D1161 gives it — a repository's 37 `workflows.*` rows and the project layer's 36 `profiles.*` ones;
   the layer's five `ab.*` rows are listed beside them, but the models family owns them, so this count
   does not carry them — and 77 through the nine prefixes
   (`internal/cli/settings_set.go:214`: `agent.`, `git.`, `followup.`, `governance.`, `watch.`,
-  `layer.defaults.`, `layer.governance.`, `credentials.`, `clone_urls.`): 13 + 6 + 2 + 37 + 36 = 94.
-  **219 rows have no generic writer**, and the audit's whole subject is which of them are a defect and
-  which are the installation's own plumbing (F13, D1182).
+  `layer.defaults.`, `layer.governance.`, `credentials.`, `clone_urls.`): 13 + 6 + 2 + 1 + 37 + 36 = 95.
+  **220 rows have no generic writer**, and the audit's whole subject is which of them are a defect and
+  which are the installation's own plumbing (F13, D1182). The count moved from 390 by the image setup
+  skill's two rows: the map (D1906) is the `image map` family's and one row, so it is not carried here,
+  and the bake switch above is. A key the registry carries and this list does not is refused by
+  `settings set` whatever it is, and a row claiming a family is pointed at that command before this
+  list is asked, so the figures are the allowlist's own and move only when it moves.
 - **F2 — `fugaro rigor` does not exist.** There is no `newRigorCmd` in `internal/cli`, no `rigor` cobra
   command and no `floor` subcommand, while the registry names `rigor` (`internal/settings/registry.go:266`)
   and `rigor floor` (`:682`) as the owners of keys. Two of the registry's owner strings name a command a

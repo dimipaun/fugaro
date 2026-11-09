@@ -347,6 +347,9 @@
         "backend": {
           "default": "unset = cloud-run"
         },
+        "bake_repos": {
+          "default": "unset = true: a repository the build can read is baked into the image its job runs"
+        },
         "base_branch": {
           "default": "unset = none: each repository's own branch"
         },
@@ -630,6 +633,9 @@
         },
         "image_catalog.entries.*.default": {
           "default": "unset = false"
+        },
+        "image_map": {
+          "default": "unset = none: no repository is mapped, and the catalog's default entry decides the image"
         },
         "image_source": {
           "default": "unset = none: no base pin has been recorded"
