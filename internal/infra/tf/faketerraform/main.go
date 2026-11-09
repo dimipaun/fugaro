@@ -29,9 +29,10 @@
 // a plan file holding PlanMarker.
 //
 // A -var-file argument that does not exist is refused with the error terraform
-// itself prints and exit 1 (the CLI writes the root's tfvars into the
-// directory it plans in, and a run whose plan does not find them is a failure
-// however healthy the fake's script is).
+// itself prints and exit 1, in either form terraform accepts it
+// ("-var-file=<file>" and "-var-file <file>"): the CLI writes the root's
+// tfvars into the directory it plans in, and a run whose plan does not find
+// them is a failure however healthy the fake's script is.
 package main
 
 import (
@@ -107,8 +108,10 @@ func run(args []string) int {
 	// makes it too: the CLI writes the tfvars into the working directory it
 	// plans in, and a fake that answered 0 for a missing one would let a
 	// workdir rebuilt between the write and the plan pass as a converged run.
-	for _, a := range args {
-		path, found := strings.CutPrefix(a, "-var-file=")
+	// Both forms of the flag are read (varFileArg); a trailing "-var-file"
+	// with no value is terraform's own argument error and not this check's.
+	for i := range args {
+		path, found := varFileArg(args, i)
 		if !found {
 			continue
 		}
@@ -134,6 +137,19 @@ func run(args []string) int {
 	fmt.Fprint(os.Stdout, st.Stdout)
 	fmt.Fprint(os.Stderr, st.Stderr)
 	return st.Exit
+}
+
+// varFileArg is the variables file args[i] names, in either form terraform
+// accepts the flag: "-var-file=<file>", or "-var-file" with the file as the
+// next argument. A "-var-file" with nothing after it names none.
+func varFileArg(args []string, i int) (string, bool) {
+	if path, found := strings.CutPrefix(args[i], "-var-file="); found {
+		return path, true
+	}
+	if args[i] == "-var-file" && i+1 < len(args) {
+		return args[i+1], true
+	}
+	return "", false
 }
 
 // scriptKey is the script key of one invocation. "state rm" is one
