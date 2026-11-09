@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/dimipaun/fugaro/internal/issues"
+	"github.com/spf13/cobra"
 )
 
 // issuesPendingID is doctor's one line for the issues this machine saved and
@@ -24,6 +25,11 @@ const issuesPendingID = "issues-pending"
 // count. A machine with no state directory at all is the same case — there is
 // nowhere an issue could have been saved — so it is silent rather than a
 // finding about a file nobody could have written.
+//
+// The caller adds the line only when the tree carries the commands its fix
+// names: this task lands before them (T-IS5 onwards), and doctor must never
+// send the reader to a command that answers "unknown command" — see
+// doctorIssuesLineExists.
 //
 // A store that cannot be read is the one state it reports as unread: the
 // number of unfiled issues is then unknown, not zero, and an unknown filed as
@@ -55,4 +61,24 @@ func doctorIssuesCheck(getenv func(string) string, goos string) *doctorCheck {
 	}
 	return &doctorCheck{ID: issuesPendingID, Severity: "info", Problem: problem,
 		Fix: "run " + selfCommand() + " issue list to see " + them + ", then " + selfCommand() + " issue submit <number> to file one"}
+}
+
+// doctorIssuesLineExists reports whether this build's tree carries the command
+// the line's fix names: `issue submit`, which T-IS5 onwards registers. This
+// task lands before the issue commands exist, and a line whose only advice is a
+// command that exits "unknown command" is worse than no line, so doctor skips
+// the check until the tree can run what the fix says. The line appears on its
+// own, with no further change here, the moment those commands do.
+func doctorIssuesLineExists(cmd *cobra.Command) bool {
+	for _, parent := range cmd.Root().Commands() {
+		if parent.Name() != "issue" {
+			continue
+		}
+		for _, child := range parent.Commands() {
+			if child.Name() == "submit" {
+				return true
+			}
+		}
+	}
+	return false
 }

@@ -431,8 +431,13 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	// The issues this machine saved and has not filed: local state, read here
 	// rather than with the installation's checks because it is the user's, not
 	// the project's, and it is one line only when there is one (F18, D1725).
-	if c := doctorIssuesCheck(os.Getenv, runtime.GOOS); c != nil {
-		o.Checks = append(o.Checks, *c)
+	// The tree has to carry the commands the fix names first: this line is the
+	// only place doctor points at the issue commands, so it waits for them
+	// (T-IS5 onwards) instead of naming a command that cannot run.
+	if doctorIssuesLineExists(cmd) {
+		if c := doctorIssuesCheck(os.Getenv, runtime.GOOS); c != nil {
+			o.Checks = append(o.Checks, *c)
+		}
 	}
 	_, tf := preflight.Terraform(doctorLookPath)
 	o.Checks = append(o.Checks, fromPreflight(tf))
