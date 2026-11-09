@@ -346,13 +346,28 @@ export function locationsFor(platform: string = process.platform): PlatformLocat
 /**
  * LICENCE_KEY_VAR is the variable the console hands the installation's licence
  * key to the child in, and it is the CLI's own name for it (`ee/licence`'s
- * `EnvironmentKey`): the CLI takes it out of its own environment at the
- * registration point, in the same step as it reads it, so no grandchild of the
- * console inherits it (subscriptions plan S2.1, S2.3).
+ * `EnvironmentKey`).
+ *
+ * **The step that keeps the key from the child's own children is the CLI's, and
+ * it has no caller on this tree yet.** `ee/licence/store.go`'s
+ * `TakeEnvironmentKey` reads the variable and unsets it before any subprocess
+ * starts (`docs/licensing/licence-key.md`, "Storage and hand-off (F41)"), and
+ * the registration point is what calls it: `ee/register`'s `init` sets the
+ * edition and nothing else, and no non-test package imports `ee/licence`. So a
+ * key handed over here today is **inherited by every program the child starts**
+ * -- git, the tools `doctor` finds with `LookPath`, `gcloud`, and their
+ * plugins -- which is the leak F41 exists to forbid, and the same "a credential
+ * handed over for no reader" the WSL route below leaves the key out for.
+ * Nothing reaches that state yet, only because `PRODUCTION_KEYRING` is empty
+ * and every paste is refused until S2.9; **a real installation must not be
+ * handed the key before the child can take it back out**, so the hand-off wants
+ * a floor on the child's version -- the release that carries the registration
+ * point -- checked the way `MODELS_LIST_CLI_FLOOR` is, and neither the floor
+ * nor that release exists yet.
  *
  * **It is the environment and never the argv**, because a key in a command line
- * is a key every local process reads (`docs/licensing/licence-key.md`, "Storage
- * and hand-off (F41)"), and it is **not read from the app's own environment**:
+ * is a key every local process reads (F41's first sentence), and it is **not
+ * read from the app's own environment**:
  * `childEnvironment` writes it from the store and nothing else, so a
  * `FUGARO_LICENCE_KEY` the console itself was started with reaches no child.
  * The store is `src/main/licence-store.ts` and `keyFor` is its only door.
