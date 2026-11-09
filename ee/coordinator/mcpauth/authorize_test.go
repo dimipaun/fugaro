@@ -109,6 +109,35 @@ func (ts *testServer) consent(t *testing.T, form url.Values) *httptest.ResponseR
 	return ts.postForm(t, AuthorizePath, form)
 }
 
+// deviceApprove is the paired device's act: a request of its own, carrying the
+// flow's id, the number the device took from the screen the person is looking
+// at, and the ID token the sign-in on that device produced — all three in the
+// form body, which is the only place M-a allows the token to be.
+func (ts *testServer) deviceApprove(t *testing.T, binding, number, token string) *httptest.ResponseRecorder {
+	t.Helper()
+	return ts.consent(t, url.Values{
+		"request_id": {binding},
+		"number":     {number},
+		"id_token":   {token},
+	})
+}
+
+// approvalToken is a fresh sign-in token for one approval. M5b spends the ID
+// token, so one approval takes one token and a test that drives two flows needs
+// two of them; the token is the one acceptedToken signs, with a marker claim of
+// its own so that the value differs. The claim is a `jti`, which the verifier
+// reads nothing of and a real sign-in carries.
+func approvalToken(t *testing.T) string {
+	t.Helper()
+	marker, err := NewValue()
+	if err != nil {
+		t.Fatalf("NewValue: %v", err)
+	}
+	claims := idTokenClaims(testProject)
+	claims["jti"] = "marker-" + marker
+	return signJWT(t, testKey(), testKid, "RS256", claims)
+}
+
 // approve posts the approval the page above asks for: the binding, the number
 // the page showed, and the Firebase ID token the sign-in produced — all three
 // in the form body, which is the only place M-a allows the token to be.
