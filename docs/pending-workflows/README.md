@@ -706,8 +706,10 @@ that packaged the console for Linux (the owner's ruling of that date: *"yes,
 Linux for 0.10.0, unsigned"*; design D10 and section 9.4, and
 `docs/plans/2026-10-15-desktop-console.md`'s phase 4). One job, `console-linux`,
 on `ubuntu-latest`: `contents: read`, **no environment and no secret at all**,
-the pinned toolchain (`npm ci --ignore-scripts`), Electron's own download
-verified against the checksums `console/package.json` pins, `npm run
+the pinned toolchain (`npm ci --ignore-scripts`), Electron's own download —
+the electron package's `install.js`, summed against that package's own
+`checksums.json`, not against `build.electronDownload.checksums`, which is
+electron-builder's own download in the pack step — `npm run
 build`, then `npm run package:linux` — which is `electron-builder --linux
 --publish never`, with no `npx` in front of it — an assertion that exactly one
 `.AppImage` and one `.deb` came out, and `upload-artifact`. It runs on every
