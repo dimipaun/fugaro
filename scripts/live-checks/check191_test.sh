@@ -147,6 +147,26 @@ run)
   esac
   kind=work
   if has --recipe "$@"; then kind=review; fi
+  # The CLI's own rule for a mode: review recipe (internal/recipe's
+  # reviewPRCounts, enforced in internal/cli/run.go): review-only reviews
+  # exactly one pull request, so a launch that does not name one is refused
+  # before anything is created. A review probe launched without --pr is not a
+  # run at all, and the fake refuses it exactly as the CLI does — so a check
+  # that dropped the --pr fails its own case rather than measuring nothing.
+  if [ "$(flag --recipe "$@")" = review-only ]; then
+    prs=0
+    for a in "$@"; do
+      case "$a" in --pr | --pr=*) prs=$((prs + 1)) ;; esac
+    done
+    pr=$(flag --pr "$@")
+    case "$pr" in
+    "" | *[!0-9]* | 0) prs=0 ;;
+    esac
+    if [ "$prs" -ne 1 ]; then
+      echo "fugaro run: recipe review-only is mode: review, which only reviews pull requests; launch it with --recipe review-only --pr N (1 to 4 times)" >&2
+      exit 1
+    fi
+  fi
   task=$(flag --task-file "$@")
   case "${task##*/}" in *ended*) kind=ended ;; esac
   # The three modes are told apart by the title the check builds from its own
@@ -235,7 +255,7 @@ to a subcommand that is not here, or with a flag that is not in its list, fails
 with exit 2, so an invented or misspelled flag cannot hide in any call — and no
 write subcommand is callable at all.
 """
-import json, os, sys
+import json, os, re, sys
 
 STATE = os.environ["FAKE_GCLOUD_STATE"]
 LOG = os.environ["FAKE_LOG_DIR"]
@@ -320,8 +340,29 @@ elif sub == ("logging", "read"):
     # answers a run's first read with three of its classes and the rest from its
     # second read on, which is what Cloud Logging's ingestion lag looks like to a
     # check that reads a run once and believes the answer.
-    classes = ["other_repository", "other_ref", "tag_ref", "ref_delete",
-               "other_pull_request", "call_not_allowed", "call_not_allowed"]
+    # The classes the real service writes for the working run's seven attempts,
+    # read from what the run's task asked for. Six are fixed by the attempt
+    # alone; the other-pull-request one is not, and that is the rule this fake
+    # exists to hold: gitproxy.Decide refuses a call that names another
+    # repository with other_repository BEFORE the pull-request write rules can
+    # answer other_pull_request (internal/gitproxy/rules.go), so the class
+    # depends on the repository the attempt names — and a task that names no
+    # repository settles neither, so no line is written for that attempt and the
+    # check's row for it cannot be read.
+    def work_classes(rid, repo):
+        task = ""
+        task_path = os.path.join(STATE, "tasks", rid + ".md")
+        if os.path.exists(task_path):
+            task = open(task_path).read()
+        m = re.search(r"comment on pull request (\d+) in (\S+)", task)
+        pr = None
+        if m:
+            pr = "other_pull_request" if m.group(2) == repo else "other_repository"
+        want = ["other_repository", "other_ref", "tag_ref", "ref_delete"]
+        if pr:
+            want.append(pr)
+        return want + ["call_not_allowed", "call_not_allowed"]
+
     calls = 0
     calls_path = os.path.join(LOG, "logging.calls")
     if os.path.exists(calls_path):
@@ -331,7 +372,7 @@ elif sub == ("logging", "read"):
     out = []
     path = os.path.join(STATE, "runs")
     for line in open(path).read().splitlines() if os.path.exists(path) else []:
-        rid, kind, _repo = line.split("\t")
+        rid, kind, repo = line.split("\t")
         if kind == "ended":
             continue
         reads = 0
@@ -346,7 +387,7 @@ elif sub == ("logging", "read"):
                   "caller": "fugaro-b-1@fugaro-dev.iam.gserviceaccount.com",
                   "credential": "bitbucket-token"}
         out.append({"jsonPayload": dict(common, purpose="github_read", status="ok")})
-        want = classes if kind == "work" else ["no_run_branch"]
+        want = work_classes(rid, repo) if kind == "work" else ["no_run_branch"]
         if mode == "missing-tag-refusal" and kind == "work":
             want = [c for c in want if c != "tag_ref"]
         if mode == "no-review-refusal" and kind == "review":
@@ -787,6 +828,63 @@ test_a_forbidden_attempt_the_run_did_not_report_is_a_failure() {
   expect_contains "$out" "FACT refusal-tag-ref: FAIL" "an unreported refusal: the fact names the attempt the run reported as served"
 }
 
+# The other-pull-request attempt has to name a pull request of the RUN'S OWN
+# repository. The rules refuse a call that names another repository for the
+# repository before they look at the pull request (internal/gitproxy/rules.go),
+# so an attempt pointed at CHECK191_OTHER_REPO earns other_repository and no
+# other_pull_request line exists for it at all: the row that reads that class is
+# left with nothing, which is a FAIL on a correct installation. The copy below
+# points the attempt at the other repository, and the fake service answers it
+# with the class the real rules would give it.
+test_the_other_pull_request_attempt_is_against_this_repository() {
+  local dir=$work/prrepo copy
+  prepare "$dir"
+  copy=$dir/check191-otherrepo.sh
+  sed 's|comment on pull request \${OTHER_PR} in \${REPO}|comment on pull request ${OTHER_PR} in ${OTHER_REPO}|' "$script" >"$copy" 2>/dev/null || true
+  if [ ! -s "$copy" ] || cmp -s "$script" "$copy"; then
+    fail "the other-pull-request attempt: the copy is the script: the task's own line for the attempt was not found to point at the other repository"
+    return 0
+  fi
+  run_check "$dir" "$copy"
+  expect_status "$status" 1 "the other-pull-request attempt pointed at the other repository"
+  expect_contains "$out" "FACT refusal-other-pull-request: FAIL" "the other-pull-request attempt: the row with no line behind it"
+  expect_contains "$out" "FACT refusal-other-repository: PASS" "the other-pull-request attempt: the repository refusal still holds"
+}
+
+# A mode: review recipe is launched with the pull request it reviews, and
+# review-only needs exactly one (internal/recipe's reviewPRCounts, enforced in
+# internal/cli/run.go): the fake `fugaro run` refuses the launch without it,
+# exactly as the CLI does, so a probe launched without one is not a run and the
+# row below it reads a launch failure rather than a refusal. The probe reviews
+# the WORKING RUN'S OWN pull request — the one pull request this check knows is
+# open and is its own artifact.
+test_the_review_probe_is_launched_with_the_pull_request_it_reviews() {
+  local dir=$work/reviewpr
+  prepare "$dir"
+  run_check "$dir" "$script"
+  expect_status "$status" 0 "the review probe's launch"
+  expect_contains "$(cat "$dir/logs/fugaro.calls")" "--recipe review-only --pr 41" \
+    "the review probe is launched with the pull request it reviews (the fake's working run opened #41)"
+  expect_contains "$out" "FACT review-run: PASS" "the review probe's launch: the row"
+}
+
+# The same launch with the --pr taken off it: the CLI refuses it before anything
+# is created, and the row that reads the refusal is left with no run at all.
+test_a_review_probe_launched_without_its_pull_request_is_a_failure() {
+  local dir=$work/nopr copy
+  prepare "$dir"
+  copy=$dir/check191-nopr.sh
+  sed 's| --recipe review-only --pr "\$pr"| --recipe review-only|' "$script" >"$copy" 2>/dev/null || true
+  if [ ! -s "$copy" ] || cmp -s "$script" "$copy"; then
+    fail "a review probe with no --pr: the copy is the script: the launch line was not found to strip"
+    return 0
+  fi
+  run_check "$dir" "$copy"
+  expect_status "$status" 1 "a review probe launched with no --pr"
+  expect_contains "$out" "FACT review-run: FAIL" "a review probe with no --pr: the row"
+  expect_contains "$out" "never launched one" "a review probe with no --pr: the reason is the launch that never happened"
+}
+
 test_the_review_runs_push_refusal_is_asserted() {
   local dir=$work/review
   prepare "$dir"
@@ -985,7 +1083,10 @@ t test_a_refusal_the_service_wrote_no_class_line_for_is_a_failure
 t test_a_refusal_that_was_not_audited_is_a_failure
 t test_a_log_that_lags_is_waited_for
 t test_a_forbidden_attempt_the_run_did_not_report_is_a_failure
+t test_the_other_pull_request_attempt_is_against_this_repository
 t test_the_review_runs_push_refusal_is_asserted
+t test_the_review_probe_is_launched_with_the_pull_request_it_reviews
+t test_a_review_probe_launched_without_its_pull_request_is_a_failure
 t test_an_outcome_that_cannot_be_written_stops_the_check
 t test_after_flip_happy_path
 t test_after_flip_a_job_that_still_mounts_the_token_is_a_failure

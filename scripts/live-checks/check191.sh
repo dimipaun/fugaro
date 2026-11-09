@@ -30,10 +30,10 @@
 # Needs:      bash, mktemp, python3 (the reader), curl, gcloud (authenticated as
 #             an owner of the installation: it reads the service's own lines
 #             through Cloud Logging (the audit's, and the refusal line that
-#             carries a refusal's class),
-#             Logging, the job list, the secrets carrying the Bitbucket token's
-#             label and their IAM policies, and mints the access token the
-#             outcome node is written with), fugaro (the release under test —
+#             carries a refusal's class), the job list, the secrets carrying the
+#             Bitbucket token's label and their IAM policies, and mints the
+#             access token the outcome node is written with), fugaro (the
+#             release under test —
 #             the release that first carries the proxy, 0.21.0: the first tag
 #             holding internal/credsvc/bitbucketproxy.go, and not a development
 #             build, which resolves no released credentials-service image) —
@@ -54,8 +54,10 @@
 #             run in from the working directory, so the same command run
 #             anywhere else is never about this repository.
 # Creates:    Check 191: three throwaway runs in the sandbox repository (a
-#             working run, a review-only run, and a probe launched after its
-#             outcome was written by hand) and ONE Realtime Database node,
+#             working run, a review-only run launched with --pr — the working
+#             run's own pull request, which is what a review-mode recipe
+#             reviews — and a probe launched after its outcome was written by
+#             hand) and ONE Realtime Database node,
 #             outcomes/<day>/<slug>/<probe run id>, written as you and deleted
 #             again by the restore. The working run is a real one: it commits
 #             one line, pushes its branch and opens its pull request through the
@@ -99,8 +101,9 @@
 # cut to a short plain-word shape before it is printed.
 #
 # Knobs (all CHECK191_*): REPO, OTHER_REPO, PLAIN_REPO (the sandbox
-# repositories), OTHER_PR (the number of an open pull request in OTHER_REPO that
-# the run tries to update), RUN_ID (the base the runs' ids are built from:
+# repositories), OTHER_PR (the number of an open pull request in REPO — the
+# run's OWN repository, and not the run's own pull request — that the run tries
+# to update), RUN_ID (the base the runs' ids are built from:
 # YYYYMMDD-HHMMSS, today's UTC date and the time, which is the day the service
 # reads a run's outcome under), CHECKOUT (the proxied repository's own checkout,
 # for --after-flip: the directory doctor must be run in; defaults to $PWD),
@@ -188,7 +191,6 @@ OUTCOME_URL=""
 ACCESS_TOKEN=""
 RESTORE_VERDICT=""
 RESTORE_NOTE=""
-LAUNCH_ERR=""
 
 scratch_up() {
   SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/chk191.XXXXXXXX") || die "Check 191 cannot make a scratch directory"
@@ -577,7 +579,7 @@ guard_inputs() {
     [ -n "$OTHER_REPO" ] || stop "CHECK191_OTHER_REPO must name a SECOND sandbox repository of the installation (<workspace>/<repository>): one of the refusals is a call to another repository, and it cannot be made against this one"
     guard_one_repo "$OTHER_REPO" CHECK191_OTHER_REPO
     case "$OTHER_PR" in
-    "" | *[!0-9]*) stop "CHECK191_OTHER_PR must be the number of an open pull request in ${OTHER_REPO} that is not this run's: got '${OTHER_PR}'" ;;
+    "" | *[!0-9]*) stop "CHECK191_OTHER_PR must be the number of an open pull request in ${REPO} — the run's own repository — that is not this run's own pull request: got '${OTHER_PR}'. It has to be this repository's, because a call that names another repository is refused for the repository before the pull-request rules are reached, so a pull request of ${OTHER_REPO} would earn the other-repository refusal and never other_pull_request" ;;
     esac
   fi
   case "$RUN_BASE" in
@@ -638,8 +640,12 @@ guard_one_repo() { # guard_one_repo REPO KNOB
 # row. `fugaro run` returns AT LAUNCH, so the row is polled for by run id until
 # the listing's own `terminal` word is yes — a reading taken straight after a
 # launch is an in-flight row, which is a FAIL no run earned. A failure to launch
-# or to read the row is not printed as a row: it sets LAUNCH_ERR, which the
-# caller's fact says.
+# or to read the row is not printed as a row: the reason goes to the launch-err
+# file, which the caller's fact reads with launch_err. It is a FILE and not a
+# variable because the callers read the row through a command substitution —
+# `row=$(launch_into ...)` — and a variable set in there is set in a subshell:
+# the caller would print a FAIL row with an empty reason, which is a row the
+# owner cannot act on.
 #
 # run_id LABEL: the id the LABEL run is launched under. `fugaro run` admits one
 # shape and only one (task.ValidRunID: ^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$), so the
@@ -660,14 +666,14 @@ run_id() {
 launch_into() {
   local repo=$1 label=$2 rid=$3 task=$4 rc=0 waited=0 row=""
   shift 4
-  LAUNCH_ERR=""
+  printf '%s' "" >"$SCRATCH/launch-err"
   say "launching the ${label} run (${rid}) in ${repo} — it goes on in the cloud"
   fugaro run --repo "$repo" --project fugaro --run-id "$rid" \
     --title "Check ${CHECK}: ${label} (the Bitbucket proxy)" \
     ${1+"$@"} \
     --task-file "$task" --json >"$SCRATCH/run-$label.json" 2>"$SCRATCH/run-$label.err" || rc=$?
   if [ "$rc" -ne 0 ]; then
-    LAUNCH_ERR="fugaro run for the ${label} run (${rid}) exited ${rc} and never launched one: $(last_line "$(cat "$SCRATCH/run-$label.err")")"
+    printf '%s' "fugaro run for the ${label} run (${rid}) exited ${rc} and never launched one: $(last_line "$(cat "$SCRATCH/run-$label.err")")" >"$SCRATCH/launch-err"
     return 1
   fi
   while :; do
@@ -682,17 +688,21 @@ launch_into() {
   done
   printf '%s\n' "$row" >"$SCRATCH/row-$label"
   if [ "$(field_of found "$row")" != yes ]; then
-    LAUNCH_ERR="the ${label} run (${rid}) does not appear in 'fugaro runs ls --repo ${repo}' after ${waited}s: it was launched but its row is not in the listing, so nothing about it is read"
+    printf '%s' "the ${label} run (${rid}) does not appear in 'fugaro runs ls --repo ${repo}' after ${waited}s: it was launched but its row is not in the listing, so nothing about it is read" >"$SCRATCH/launch-err"
     return 1
   fi
   if [ "$(field_of terminal "$row")" != yes ]; then
-    LAUNCH_ERR="the ${label} run (${rid}) had not reached a final status after ${waited}s: status=$(field_of status "$row"). A row still in flight is not an answer about the proxy — raise CHECK191_WAIT_SECONDS, or read that run's row yourself"
+    printf '%s' "the ${label} run (${rid}) had not reached a final status after ${waited}s: status=$(field_of status "$row"). A row still in flight is not an answer about the proxy — raise CHECK191_WAIT_SECONDS, or read that run's row yourself" >"$SCRATCH/launch-err"
     return 1
   fi
   printf '%s\n' "$row"
 }
 
 row_of() { cat "$SCRATCH/row-$1" 2>/dev/null || true; }
+
+# launch_err: the reason the last launch_into call could not produce a row,
+# as that call wrote it (see launch_into).
+launch_err() { cat "$SCRATCH/launch-err" 2>/dev/null || true; }
 
 run_log() { # run_log LABEL RID — the run's own log, and the attempts it reported
   local label=$1 rid=$2
@@ -729,6 +739,16 @@ audit_read() {
 # the class is COUNTED, not looked for, which is what tells the two apart from
 # the one the table says they are. The class is read off the service's own
 # refusal line, which is the only place it is written down for all seven.
+#
+# Two of the seven are only reachable from the right target. other_pull_request
+# is what a pull-request write earns when the pull request is not the run's, and
+# the rules refuse a call that names another repository for the repository
+# BEFORE they look at the pull request — so the attempt has to be a write to a
+# pull request of the RUN'S OWN repository that is not the run's own, and a pull
+# request of another repository would earn other_repository instead.
+# call_not_allowed is the classification's own refusal: merge and
+# /2.0/workspaces are not paths this proxy names at all, so they earn it
+# wherever they point.
 ATTEMPTS=(
   "other-repository|refusal-other-repository|other_repository"
   "other-ref|refusal-other-ref|other_ref"
@@ -812,16 +832,20 @@ exactly one line, on its own, in this form and with nothing else on it:
 CHK191 attempt=<name> refused=<yes|no> answer=<the HTTP status, or the first words of the refusal>
 
 The attempts, with the name to use for each:
-  other-repository    read from the OTHER repository named below
+  other-repository    read from the other repository named below
   other-ref           push a commit to the branch main of this repository
   tag                 create the tag chk191-probe on this repository
   ref-delete          delete the branch main of this repository
-  other-pull-request  comment on the pull request named below
-  merge               merge the pull request named below
+  other-pull-request  comment on pull request ${OTHER_PR} in ${REPO}
+  merge               merge pull request ${OTHER_PR} in ${REPO}
   workspaces          read the workspace list (GET /2.0/workspaces) of the API
 
-The other repository is ${OTHER_REPO}, and the pull request is number ${OTHER_PR}
-in that repository. A refusal may come from the git host itself or from the
+The other repository is ${OTHER_REPO}. The pull request is number ${OTHER_PR} in
+THIS repository (${REPO}) — the one the run above pushes to — and it is not this
+run's own. It has to be this repository's: a call that names another repository
+is refused for the repository, and the refusal this check reads for the
+other-pull-request attempt is the one a write to another run's pull request of
+this repository earns. A refusal may come from the git host itself or from the
 credentials service in front of it — what this check reads is the answer YOU got,
 so print refused=yes with the answer's own words (the service names the rule it
 refused under) when the call was refused, and refused=no with its status when it
@@ -830,7 +854,7 @@ was served.
 Do nothing else. Print one line per attempt as you go, then stop.
 TASK_EOF
   if ! row=$(launch_into "$REPO" "work" "$rid" "$task"); then
-    fact run-launch FAIL "$LAUNCH_ERR"
+    fact run-launch FAIL "$(launch_err)"
     return 0
   fi
   fact run-launch PASS "the working run (${rid}) was launched in ${REPO} and reached a final status"
@@ -877,11 +901,24 @@ step_refusals() {
 }
 
 step_review_run() {
-  local task=$SCRATCH/task-review.md row said classes statuses rid
+  local task=$SCRATCH/task-review.md row said classes statuses rid pr
   rid=$(run_id review)
-  cat >"$task" <<'TASK_EOF'
+  # The working run's own pull request is what this probe reviews, and it is the
+  # only pull request the check knows is open and is its own artifact. A
+  # review-only recipe is mode: review, which reviews pull requests and nothing
+  # else: `fugaro run` refuses the launch without exactly one --pr
+  # (internal/recipe's reviewPRCounts), so a probe launched without it is not a
+  # run at all and the row below would read a launch failure rather than a
+  # refusal.
+  pr=$(field_of pr "$(row_of work)")
+  if [ -z "$pr" ] || [ "$pr" = 0 ]; then
+    fact review-run FAIL "the working run opened no pull request this probe could review (its row carries pr=${pr:-none}), and a review-only run is launched with the pull request it reviews: 'fugaro run --recipe review-only' needs exactly one --pr, so there is no review-only run to make the attempt. Read the run-outcome row above — a run that pushed nothing is the finding — then 'fugaro logs $(run_id work)'"
+    return 0
+  fi
+  cat >"$task" <<TASK_EOF
 You are a probe for Fugaro's Check 191, run by this repository's owner. This run
-is review-only: it must not write anything.
+is review-only: it reviews pull request #${pr} of this repository, it has no
+branch of its own, and it must not write anything.
 
 Try exactly one thing: create a branch of this repository and push a commit to
 it. Then print exactly one line, on its own, in this form:
@@ -890,8 +927,8 @@ CHK191 attempt=push refused=<yes|no> answer=<the HTTP status, or the first words
 
 Then stop. Change no file and open no pull request.
 TASK_EOF
-  if ! row=$(launch_into "$REPO" "review" "$rid" "$task" --recipe review-only); then
-    fact review-run FAIL "the review-only run could not be read: ${LAUNCH_ERR}"
+  if ! row=$(launch_into "$REPO" "review" "$rid" "$task" --recipe review-only --pr "$pr"); then
+    fact review-run FAIL "the review-only run could not be read: $(launch_err)"
     return 0
   fi
   run_log "review" "$rid"
@@ -962,7 +999,7 @@ step_ended_identity() {
 Do not change any file. Reply with one line and stop.
 TASK_EOF
   if ! row=$(launch_into "$REPO" "ended" "$rid" "$task"); then
-    fact ended-identity FAIL "the probe (${rid}, whose outcome was written before the launch) could not be read: ${LAUNCH_ERR}"
+    fact ended-identity FAIL "the probe (${rid}, whose outcome was written before the launch) could not be read: $(launch_err)"
     return 0
   fi
   run_log "ended" "$rid"
@@ -1082,7 +1119,7 @@ $(date -u +%Y-%m-%d), commit it, push your branch and open the pull request.
 Change no other file, then stop.
 TASK_EOF
   if ! row=$(launch_into "$REPO" "flip" "$rid" "$task"); then
-    fact run-still-works FAIL "the run in ${REPO} could not be read after the flip: ${LAUNCH_ERR}"
+    fact run-still-works FAIL "the run in ${REPO} could not be read after the flip: $(launch_err)"
     return 0
   fi
   status=$(field_of status "$row")
@@ -1120,7 +1157,7 @@ $(date -u +%Y-%m-%d), commit it, push your branch and open the pull request.
 Change no other file, then stop.
 TASK_EOF
   if ! row=$(launch_into "$PLAIN_REPO" "plain" "$rid" "$task"); then
-    fact plain-repo FAIL "the run in ${PLAIN_REPO} (the non-proxied repository) could not be read: ${LAUNCH_ERR}"
+    fact plain-repo FAIL "the run in ${PLAIN_REPO} (the non-proxied repository) could not be read: $(launch_err)"
     return 0
   fi
   status=$(field_of status "$row")
@@ -1162,7 +1199,7 @@ plan() {
     say "  [network, read] fugaro project policy show --project fugaro --json — whether ${REPO} is admitted with proxy: true"
     say "  [network, runs] fugaro run --repo ${REPO} --run-id $(run_id work) — the throwaway run itself, whose task commits one line, pushes it and opens its pull request through the service, THEN makes the seven attempts and prints one line per attempt"
     say "  [network, read] gcloud logging read (service fugaro-credentials, jsonPayload.run) — the service's own lines for each run: its audit lines, and the refusal line that carries a refusal's class"
-    say "  [network, runs] fugaro run --repo ${REPO} --recipe review-only --run-id $(run_id review) — a review-only run, whose push must be refused"
+    say "  [network, runs] fugaro run --repo ${REPO} --recipe review-only --pr <the working run's own pull request> --run-id $(run_id review) — a review-only run (mode: review is launched with the pull request it reviews, and such a run has no branch of its own), whose push must be refused"
     say "  [network, write+delete] ONE Realtime Database node, outcomes/<day>/<slug>/$(run_id ended).json, written by you with your own credentials and deleted again by the restore, and one run ($(run_id ended)) launched with that outcome already written"
     for row in "${ATTEMPTS[@]}"; do
       IFS='|' read -r name key _ <<<"$row"
