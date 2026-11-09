@@ -1,0 +1,744 @@
+package issues
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"slices"
+	"sync"
+	"testing"
+	"time"
+
+	"gocloud.dev/blob"
+
+	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/gcpfake"
+)
+
+// sharedAt is the clock the shared store's tests run on.
+var sharedAt = time.Date(2026, 11, 8, 17, 40, 7, 0, time.UTC)
+
+// sharedBucket is the bucket those tests run against: gcpfake models the object
+// generations the store's conditional writes are matched on, and a file://
+// bucket compares contents instead, which is not what any real launcher gives
+// it.
+func sharedBucket(t *testing.T) *blobx.Bucket {
+	t.Helper()
+	return gcpfake.NewGCS(t).Bucket(t, "fugaro-issues")
+}
+
+// sharedIssue is a local issue ready to upload: the sample's text, under a run
+// stem and a fingerprint of its own, and with nothing filled in that only the
+// store or a later writer fills in.
+func sharedIssue(run, fingerprint string) Issue {
+	i := issueLocal()
+	i.Run, i.LocalID = run, localPrefix+run
+	i.Fingerprint = fingerprint
+	i.ResolvedIn, i.Regression, i.OriginalURL = "", false, ""
+	return i
+}
+
+// hit is another machine's report of the same bug: one fingerprint, its own run
+// stem, its own reporter and hit time, and the version that machine runs.
+func hit(run, fingerprint, reporter, version string, at time.Time) Issue {
+	i := sharedIssue(run, fingerprint)
+	i.Reporter, i.FugaroVersion, i.Created = reporter, version, at
+	return i
+}
+
+// upload is Upload with the error taken out, for the tests whose subject is
+// what happened after it.
+func upload(t *testing.T, ctx context.Context, b *blobx.Bucket, i Issue) Uploaded {
+	t.Helper()
+	up, err := Upload(ctx, b, i)
+	if err != nil {
+		t.Fatalf("uploading %s: %v", i.Run, err)
+	}
+	return up
+}
+
+// filedIssue uploads an issue, files it as this machine, and answers the upload
+// and the URL it was filed at: a resolved issue is one that was filed, and the
+// pass that learns its fix writes resolved_in on the record afterwards (F27).
+func filedIssue(t *testing.T, ctx context.Context, b *blobx.Bucket, fingerprint string) (Uploaded, string) {
+	t.Helper()
+	up := upload(t, ctx, b, sharedIssue("update-20261107183012-48213", fingerprint))
+	claim, err := Claim(ctx, b, up.Number, "user:ana@example.test", sharedAt)
+	if err != nil {
+		t.Fatalf("claiming issue %d: %v", up.Number, err)
+	}
+	url := fmt.Sprintf("https://github.com/dimipaun/fugaro/issues/%d", up.Number)
+	if err := RecordSubmitted(ctx, b, claim, url); err != nil {
+		t.Fatalf("filing issue %d: %v", up.Number, err)
+	}
+	return up, url
+}
+
+// setResolvedIn writes the release that fixed an issue, the way the `update`
+// command's own spec will (F27, D1731): this plan stores the field and compares
+// it, and builds no writer of it.
+func setResolvedIn(t *testing.T, ctx context.Context, b *blobx.Bucket, number int, release string) {
+	t.Helper()
+	rec, v, err := readShared(ctx, b, number)
+	if err != nil {
+		t.Fatalf("reading shared issue %d: %v", number, err)
+	}
+	rec.Issue.ResolvedIn = release
+	if err := rec.setRecord(); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := replaceRaw(ctx, b, recordKey(number), raw, v); err != nil {
+		t.Fatalf("writing the release that fixed issue %d: %v", number, err)
+	}
+}
+
+// storedOccurrences is what the store holds for an issue's occurrences,
+// decoded from the objects themselves: a test asserts on what a teammate reads
+// rather than on what a call returned.
+func storedOccurrences(t *testing.T, ctx context.Context, b *blobx.Bucket, number int) []Occurrence {
+	t.Helper()
+	iter := b.List(&blob.ListOptions{Prefix: occurrencePrefix(number)})
+	var out []Occurrence
+	for {
+		obj, err := iter.Next(ctx)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("listing the occurrences of issue %d: %v", number, err)
+		}
+		if obj.IsDir {
+			continue
+		}
+		raw, _, err := b.ReadMax(ctx, obj.Key, 4<<10)
+		if err != nil {
+			t.Fatalf("reading %s: %v", obj.Key, err)
+		}
+		var occ Occurrence
+		if err := json.Unmarshal(raw, &occ); err != nil {
+			t.Fatalf("decoding %s: %v", obj.Key, err)
+		}
+		out = append(out, occ)
+	}
+	return out
+}
+
+// race opens the window between the store's read of an object and the write it
+// conditions on that version, and runs fn to completion inside it: the second
+// machine gets all the way through while the first one is still sitting there.
+// Forcing it is what makes a test of a race the same on every run.
+func race(t *testing.T, key string, fn func()) {
+	t.Helper()
+	var (
+		mu    sync.Mutex
+		fired bool
+	)
+	beforeConditionalWrite = func(written string) {
+		if written != key {
+			return
+		}
+		mu.Lock()
+		first := !fired
+		fired = true
+		mu.Unlock()
+		if first {
+			fn()
+		}
+	}
+	t.Cleanup(func() { beforeConditionalWrite = nil })
+}
+
+// Two machines uploading at the same instant take two numbers: the counter is
+// read and written back conditioned on the version that read gave, so the
+// second one to write finds the first one's number there and takes the one
+// after it.
+func TestConcurrentUploadsGetDistinctNumbers(t *testing.T) {
+	ctx := context.Background()
+	b := sharedBucket(t)
+	// A project that already has an issue, so the counter exists: creating it
+	// is atomic on its own, and it is the read and the write back on an
+	// existing counter that race.
+	upload(t, ctx, b, sharedIssue("update-20261107183012-48213", "11111111111111111111111111111111"))
+
+	var (
+		other    Uploaded
+		otherErr error
+	)
+	race(t, counterKey(), func() {
+		ch := make(chan struct{})
+		go func() {
+			defer close(ch)
+			other, otherErr = Upload(ctx, b, sharedIssue("update-20261107183015-48216", "33333333333333333333333333333333"))
+		}()
+		<-ch
+	})
+	ours, err := Upload(ctx, b, sharedIssue("update-20261107183014-48215", "22222222222222222222222222222222"))
+	if err != nil {
+		t.Fatalf("this machine's upload: %v", err)
+	}
+	if otherErr != nil {
+		t.Fatalf("the other machine's upload: %v", otherErr)
+	}
+	if ours.Number == other.Number {
+		t.Fatalf("two machines took the same number %d", ours.Number)
+	}
+	if got, want := []int{other.Number, ours.Number}, []int{2, 3}; !slices.Equal(got, want) {
+		t.Errorf("the two uploads took %v, want %v", got, want)
+	}
+	// The counter is the last number handed out. A store that read it and
+	// wrote it back without matching the version leaves 2 here, and hands 2 out
+	// again to the next machine that uploads.
+	v, err := readVersion(ctx, b, counterKey())
+	if err != nil {
+		t.Fatalf("reading the counter: %v", err)
+	}
+	if doc, err := decodeNumber(v.raw, counterKey()); err != nil || doc.Number != 3 {
+		t.Errorf("the counter = %+v, %v; want 3", doc, err)
+	}
+	// Both uploads are issues a reader can find.
+	rows, err := ListShared(ctx, b)
+	if err != nil || len(rows) != 3 {
+		t.Fatalf("the shared store = %+v, %v; want three issues", rows, err)
+	}
+}
+
+// One fingerprint is one issue: the machine that reports a bug somebody already
+// reported gets that issue's number and its report is an occurrence of it.
+func TestSameFingerprintOneNumber(t *testing.T) {
+	ctx := context.Background()
+	b := sharedBucket(t)
+	const fp = "44444444444444444444444444444444"
+	first := sharedIssue("update-20261107183012-48213", fp)
+
+	up, err := Upload(ctx, b, first)
+	if err != nil || up.Number != 1 || up.Attached {
+		t.Fatalf("the first upload = %+v, %v", up, err)
+	}
+	up2, err := Upload(ctx, b, hit("update-20261107183013-48214", fp, "bo@example.test", "0.9.0", issueAt.Add(time.Minute)))
+	if err != nil || up2.Number != 1 || !up2.Attached {
+		t.Fatalf("the second machine's upload = %+v, %v", up2, err)
+	}
+	// An upload repeated because its answer was lost is the issue that is
+	// there, not an occurrence of itself.
+	again, err := Upload(ctx, b, first)
+	if err != nil || again.Number != 1 || again.Attached {
+		t.Fatalf("the retried upload = %+v, %v", again, err)
+	}
+	rows, err := ListShared(ctx, b)
+	if err != nil || len(rows) != 1 || rows[0].Number != 1 || rows[0].Occurrences != 1 {
+		t.Fatalf("the shared store = %+v, %v; want one issue with one occurrence", rows, err)
+	}
+
+	// Two machines that both find the fingerprint new take numbers for it, and
+	// the entry is what decides which of the two numbers the fingerprint gets:
+	// the other one is a number nobody holds and no issue.
+	t.Run("both machines numbering it at once", func(t *testing.T) {
+		ctx := context.Background()
+		b := sharedBucket(t)
+		const fp = "55555555555555555555555555555555"
+		var (
+			other    Uploaded
+			otherErr error
+		)
+		race(t, fingerprintKey(fp), func() {
+			ch := make(chan struct{})
+			go func() {
+				defer close(ch)
+				other, otherErr = Upload(ctx, b, hit("update-20261107183015-48216", fp, "bo@example.test", "0.9.0", issueAt.Add(2*time.Minute)))
+			}()
+			<-ch
+		})
+		ours, err := Upload(ctx, b, hit("update-20261107183014-48215", fp, "ana@example.test", "0.9.0", issueAt.Add(time.Minute)))
+		if err != nil {
+			t.Fatalf("this machine's upload: %v", err)
+		}
+		if otherErr != nil {
+			t.Fatalf("the other machine's upload: %v", otherErr)
+		}
+		if ours.Number != other.Number {
+			t.Errorf("the two uploads took %d and %d, want the one number the fingerprint has", ours.Number, other.Number)
+		}
+		if !ours.Attached || other.Attached {
+			t.Errorf("the uploads attached %v and %v, want the second one to attach", ours.Attached, other.Attached)
+		}
+		rows, err := ListShared(ctx, b)
+		if err != nil || len(rows) != 1 || rows[0].Number != other.Number || rows[0].Occurrences != 1 {
+			t.Fatalf("the shared store = %+v, %v; want one issue with one occurrence", rows, err)
+		}
+		// The issue this machine wrote at the number it took and then gave back
+		// is gone, and the counter is where the issue that stands is: a number
+		// a fingerprint did not keep is not an issue.
+		if _, err := readVersion(ctx, b, recordKey(1)); !errors.Is(err, blobx.ErrNotExist) {
+			t.Errorf("the number nobody kept still holds an issue: %v", err)
+		}
+		v, err := readVersion(ctx, b, fingerprintKey(fp))
+		if err != nil {
+			t.Fatalf("reading the fingerprint's entry: %v", err)
+		}
+		if doc, err := decodeNumber(v.raw, fingerprintKey(fp)); err != nil || doc.Number != other.Number {
+			t.Errorf("the fingerprint's entry = %+v, %v; want %d", doc, err, other.Number)
+		}
+	})
+}
+
+// A hit on an issue whose fix the reporter's version already has is the same
+// bug back: the occurrence is flagged and linked to the issue it repeats (F25).
+func TestMatchAtOrAboveResolvedInIsRegression(t *testing.T) {
+	ctx := context.Background()
+	b := sharedBucket(t)
+	const fp = "66666666666666666666666666666666"
+	up, url := filedIssue(t, ctx, b, fp)
+	setResolvedIn(t, ctx, b, up.Number, "0.21.1")
+
+	at := issueAt.Add(time.Minute)
+	for _, version := range []string{"0.21.1", "0.22.0"} {
+		t.Run(version, func(t *testing.T) {
+			got, err := Upload(ctx, b, hit("update-20261107183014-48215", fp, "bo@example.test", version, at))
+			if err != nil {
+				t.Fatalf("uploading the hit: %v", err)
+			}
+			at = at.Add(time.Minute)
+			if got.Number != up.Number || !got.Attached {
+				t.Fatalf("the hit = %+v, want an occurrence of issue %d", got, up.Number)
+			}
+			if !got.Regression || got.OriginalURL != url {
+				t.Errorf("the hit = %+v, want a regression linking to %s", got, url)
+			}
+			occs := storedOccurrences(t, ctx, b, up.Number)
+			if len(occs) == 0 {
+				t.Fatal("the hit was not stored as an occurrence")
+			}
+			last := occs[len(occs)-1]
+			if !last.Regression || last.OriginalURL != url {
+				t.Errorf("the stored occurrence = %+v, want a regression linking to %s", last, url)
+			}
+		})
+	}
+}
+
+// A hit from a version below the release that fixed the issue is an ordinary
+// occurrence: that reporter has the bug for the first time, not again (F25).
+// An issue nothing resolved takes hits the same way.
+func TestMatchBelowResolvedInAttaches(t *testing.T) {
+	ctx := context.Background()
+	b := sharedBucket(t)
+	const fp = "77777777777777777777777777777777"
+	up, _ := filedIssue(t, ctx, b, fp)
+	setResolvedIn(t, ctx, b, up.Number, "0.21.1")
+
+	got, err := Upload(ctx, b, hit("update-20261107183014-48215", fp, "bo@example.test", "0.20.3", issueAt.Add(time.Minute)))
+	if err != nil {
+		t.Fatalf("uploading the hit: %v", err)
+	}
+	if got.Number != up.Number || !got.Attached {
+		t.Fatalf("the hit = %+v, want an occurrence of issue %d", got, up.Number)
+	}
+	if got.Regression || got.OriginalURL != "" {
+		t.Errorf("the hit = %+v, want a plain occurrence", got)
+	}
+	occs := storedOccurrences(t, ctx, b, up.Number)
+	if len(occs) != 1 {
+		t.Fatalf("the stored occurrences = %+v, want one", occs)
+	}
+	if occs[0].Regression || occs[0].Reporter != "bo@example.test" || occs[0].At.IsZero() {
+		t.Errorf("the stored occurrence = %+v, want a plain one by bo", occs[0])
+	}
+	// The issue this hit attaches to was never resolved, so a hit from any
+	// version is a plain occurrence too.
+	unresolved := upload(t, ctx, b, sharedIssue("update-20261107183016-48217", "77777777777777777777777777777778"))
+	other, err := Upload(ctx, b, hit("update-20261107183017-48218", "77777777777777777777777777777778", "cy@example.test", "0.99.0", issueAt.Add(2*time.Minute)))
+	if err != nil || other.Number != unresolved.Number || other.Regression {
+		t.Fatalf("the hit on an unresolved issue = %+v, %v", other, err)
+	}
+}
+
+// A version that is not a release resolves nothing: a dev build, a
+// pre-release, an empty version, or a resolved_in that is none of the three
+// takes a hit as a plain occurrence rather than calling it a regression
+// (D1736).
+func TestDevOrUnparseableVersionNeverRegresses(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct{ name, resolvedIn, reporter string }{
+		{"a dev build", "0.21.1", "dev"},
+		{"a version that is not a release", "0.21.1", "v0.22"},
+		{"a pre-release", "0.21.1", "0.21.1-rc1"},
+		{"no version at all", "0.21.1", ""},
+		{"a resolved_in that is not a release", "dev", "0.22.0"},
+		{"a resolved_in that is empty", "", "0.22.0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := sharedBucket(t)
+			const fp = "88888888888888888888888888888888"
+			up, _ := filedIssue(t, ctx, b, fp)
+			if tc.resolvedIn != "" {
+				setResolvedIn(t, ctx, b, up.Number, tc.resolvedIn)
+			}
+			got, err := Upload(ctx, b, hit("update-20261107183014-48215", fp, "bo@example.test", tc.reporter, issueAt.Add(time.Minute)))
+			if err != nil {
+				t.Fatalf("uploading the hit: %v", err)
+			}
+			if got.Regression || got.OriginalURL != "" {
+				t.Errorf("the hit = %+v, want a plain occurrence", got)
+			}
+			if occs := storedOccurrences(t, ctx, b, up.Number); len(occs) != 1 || occs[0].Regression {
+				t.Errorf("the stored occurrences = %+v, want one plain occurrence", occs)
+			}
+		})
+	}
+}
+
+// An uploader that died between creating the fingerprint's entry and naming it
+// leaves the entry holding no number; the next upload of that fingerprint takes
+// the number and completes it rather than stranding the fingerprint (F28).
+func TestFingerprintWithoutNumberIsCompleted(t *testing.T) {
+	ctx := context.Background()
+	b := sharedBucket(t)
+	const fp = "99999999999999999999999999999999"
+	entry, err := json.Marshal(numberDoc{Format: sharedFormat})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Create(ctx, fingerprintKey(fp), entry, sharedJSON); err != nil {
+		t.Fatalf("seeding the fingerprint's entry: %v", err)
+	}
+
+	up, err := Upload(ctx, b, sharedIssue("update-20261107183012-48213", fp))
+	if err != nil || up.Number != 1 || up.Attached {
+		t.Fatalf("the upload = %+v, %v", up, err)
+	}
+	v, err := readVersion(ctx, b, fingerprintKey(fp))
+	if err != nil {
+		t.Fatalf("reading the fingerprint's entry: %v", err)
+	}
+	if doc, err := decodeNumber(v.raw, fingerprintKey(fp)); err != nil || doc.Number != 1 {
+		t.Errorf("the fingerprint's entry = %+v, %v; want 1", doc, err)
+	}
+	// The number is an issue: the next machine to report the bug attaches to
+	// it rather than completing the entry again.
+	got, err := Upload(ctx, b, hit("update-20261107183014-48215", fp, "bo@example.test", "0.9.0", issueAt.Add(time.Minute)))
+	if err != nil || got.Number != 1 || !got.Attached {
+		t.Fatalf("the next machine's upload = %+v, %v", got, err)
+	}
+}
+
+// A hit on an issue the team set aside or filed is recorded and reopens
+// nothing (F21): the status stays where the team put it, and the occurrence is
+// what shows the bug is still there.
+func TestOccurrenceOnDismissedReopensNothing(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name    string
+		closing func(t *testing.T, b *blobx.Bucket, number int)
+		status  Status
+	}{
+		{
+			name: "a dismissed issue",
+			closing: func(t *testing.T, b *blobx.Bucket, number int) {
+				if err := SetSharedStatus(ctx, b, number, StatusDismissed); err != nil {
+					t.Fatalf("dismissing issue %d: %v", number, err)
+				}
+				// Asking for the status it already has writes nothing and is
+				// not an error.
+				if err := SetSharedStatus(ctx, b, number, StatusDismissed); err != nil {
+					t.Errorf("dismissing issue %d twice: %v", number, err)
+				}
+			},
+			status: StatusDismissed,
+		},
+		{
+			name: "a filed issue",
+			closing: func(t *testing.T, b *blobx.Bucket, number int) {
+				claim, err := Claim(ctx, b, number, "user:ana@example.test", sharedAt)
+				if err != nil {
+					t.Fatalf("claiming issue %d: %v", number, err)
+				}
+				if err := RecordSubmitted(ctx, b, claim, "https://github.com/dimipaun/fugaro/issues/12"); err != nil {
+					t.Fatalf("filing issue %d: %v", number, err)
+				}
+			},
+			status: StatusSubmitted,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := sharedBucket(t)
+			const fp = "12121212121212121212121212121212"
+			up := upload(t, ctx, b, sharedIssue("update-20261107183012-48213", fp))
+			tc.closing(t, b, up.Number)
+
+			got, err := Upload(ctx, b, hit("update-20261107183014-48215", fp, "bo@example.test", "0.9.0", issueAt.Add(time.Minute)))
+			if err != nil || got.Number != up.Number || !got.Attached {
+				t.Fatalf("the hit = %+v, %v; want an occurrence of issue %d", got, err, up.Number)
+			}
+			rec, _, err := readShared(ctx, b, up.Number)
+			if err != nil {
+				t.Fatalf("reading shared issue %d: %v", up.Number, err)
+			}
+			if rec.Issue.Status != tc.status {
+				t.Errorf("the hit moved the issue to %q, want %q", rec.Issue.Status, tc.status)
+			}
+			rows, err := ListShared(ctx, b)
+			if err != nil || len(rows) != 1 || rows[0].Status != tc.status || rows[0].Occurrences != 1 {
+				t.Fatalf("the shared store = %+v, %v; want one %s issue with one occurrence", rows, err, tc.status)
+			}
+		})
+	}
+}
+
+// One submitter files an issue: the claim is taken on the record's version and
+// the second machine is told who holds it and until when (F9, F22).
+func TestClaimIsExclusive(t *testing.T) {
+	ctx := context.Background()
+	b := sharedBucket(t)
+	up := upload(t, ctx, b, sharedIssue("update-20261107183012-48213", "13131313131313131313131313131313"))
+
+	held, err := Claim(ctx, b, up.Number, "user:ana@example.test", sharedAt)
+	if err != nil {
+		t.Fatalf("claiming issue %d: %v", up.Number, err)
+	}
+	if held.Number != up.Number || held.Holder != "user:ana@example.test" || held.Issue.Number != up.Number {
+		t.Fatalf("the claim = %+v, want %d held by ana", held, up.Number)
+	}
+	if held.Issue.Status != StatusPending || held.Issue.Fingerprint != "13131313131313131313131313131313" {
+		t.Errorf("the claimed issue = %+v, want the record as it stands", held.Issue)
+	}
+
+	_, err = Claim(ctx, b, up.Number, "user:bo@example.test", sharedAt.Add(time.Minute))
+	var other *ClaimedError
+	if !errors.As(err, &other) {
+		t.Fatalf("the second claim = %v, want the holder reported", err)
+	}
+	if other.Holder != "user:ana@example.test" || !other.Expires.Equal(sharedAt.Add(claimLease)) {
+		t.Errorf("the refusal = %+v, want ana's claim until %s", other, sharedAt.Add(claimLease))
+	}
+	// The holder asking again is not somebody else's claim.
+	if _, err := Claim(ctx, b, up.Number, "user:ana@example.test", sharedAt.Add(time.Minute)); err != nil {
+		t.Errorf("the holder claiming again: %v", err)
+	}
+	rec, _, err := readShared(ctx, b, up.Number)
+	if err != nil {
+		t.Fatalf("reading shared issue %d: %v", up.Number, err)
+	}
+	if rec.Claim == nil || !rec.Claim.ExpiresAt.Equal(sharedAt.Add(time.Minute+claimLease)) {
+		t.Errorf("the stored claim = %+v, want it refreshed", rec.Claim)
+	}
+}
+
+// A lease lapses on its own so a submitter whose machine died cannot block the
+// issue for the team; taking it over is the same conditional write, so the
+// submitter it was taken from cannot file it afterwards (F9, F19, F22).
+func TestClaimTakeoverIsVersioned(t *testing.T) {
+	ctx := context.Background()
+	b := sharedBucket(t)
+
+	t.Run("a lapsed claim is taken over", func(t *testing.T) {
+		up := upload(t, ctx, b, sharedIssue("update-20261107183012-48213", "14141414141414141414141414141414"))
+		first, err := Claim(ctx, b, up.Number, "user:ana@example.test", sharedAt)
+		if err != nil {
+			t.Fatalf("claiming issue %d: %v", up.Number, err)
+		}
+		second, err := Claim(ctx, b, up.Number, "user:bo@example.test", sharedAt.Add(claimLease))
+		if err != nil {
+			t.Fatalf("taking over the lapsed claim: %v", err)
+		}
+		// Ana previewed the version she claimed, and that version is gone: her
+		// filing must not land under bo's claim (F19).
+		if err := RecordSubmitted(ctx, b, first, "https://github.com/dimipaun/fugaro/issues/14"); !errors.Is(err, blobx.ErrConflict) {
+			t.Errorf("filing from a claim that was taken over = %v, want a version conflict", err)
+		}
+		rec, _, err := readShared(ctx, b, up.Number)
+		if err != nil {
+			t.Fatalf("reading shared issue %d: %v", up.Number, err)
+		}
+		if rec.Issue.Status != StatusPending {
+			t.Errorf("the issue is %q after the stale filing, want pending", rec.Issue.Status)
+		}
+		if err := RecordSubmitted(ctx, b, second, "https://github.com/dimipaun/fugaro/issues/14"); err != nil {
+			t.Fatalf("bo filing the issue: %v", err)
+		}
+	})
+
+	// Two machines taking over the same lapsed claim: the record's generation
+	// is what decides, so exactly one of them holds it.
+	t.Run("two takeovers at once", func(t *testing.T) {
+		up := upload(t, ctx, b, sharedIssue("update-20261107183018-48219", "15151515151515151515151515151515"))
+		if _, err := Claim(ctx, b, up.Number, "user:ana@example.test", sharedAt); err != nil {
+			t.Fatalf("claiming issue %d: %v", up.Number, err)
+		}
+		now := sharedAt.Add(claimLease + time.Minute)
+		var (
+			other    *Claimed
+			otherErr error
+		)
+		race(t, recordKey(up.Number), func() {
+			ch := make(chan struct{})
+			go func() {
+				defer close(ch)
+				other, otherErr = Claim(ctx, b, up.Number, "user:bo@example.test", now)
+			}()
+			<-ch
+		})
+		_, err := Claim(ctx, b, up.Number, "user:carol@example.test", now)
+		var held *ClaimedError
+		if !errors.As(err, &held) {
+			t.Fatalf("the losing takeover = %v, want the holder reported", err)
+		}
+		if otherErr != nil {
+			t.Fatalf("the takeover that won: %v", otherErr)
+		}
+		if held.Holder != other.Holder || other.Holder != "user:bo@example.test" {
+			t.Errorf("the losing takeover was told %q, want %q", held.Holder, other.Holder)
+		}
+	})
+}
+
+// A submission is recorded by the submitter that holds the claim, on the
+// version it was taken at; there is no other way in (F22).
+func TestSubmittedNeedsTheClaim(t *testing.T) {
+	ctx := context.Background()
+	b := sharedBucket(t)
+	up := upload(t, ctx, b, sharedIssue("update-20261107183012-48213", "16161616161616161616161616161616"))
+
+	// A claim this machine never took, and a claim it took and released.
+	if err := RecordSubmitted(ctx, b, &Claimed{Number: up.Number, Holder: "user:bo@example.test"}, "https://github.com/dimipaun/fugaro/issues/16"); err == nil {
+		t.Error("a submission was recorded with no claim to condition it on")
+	}
+	released, err := Claim(ctx, b, up.Number, "user:ana@example.test", sharedAt)
+	if err != nil {
+		t.Fatalf("claiming issue %d: %v", up.Number, err)
+	}
+	if err := Release(ctx, b, released); err != nil {
+		t.Fatalf("releasing the claim: %v", err)
+	}
+	if err := RecordSubmitted(ctx, b, released, "https://github.com/dimipaun/fugaro/issues/16"); err == nil {
+		t.Error("a submission was recorded by a submitter that gave the claim back")
+	}
+	rec, _, err := readShared(ctx, b, up.Number)
+	if err != nil {
+		t.Fatalf("reading shared issue %d: %v", up.Number, err)
+	}
+	if rec.Issue.Status != StatusPending || rec.Issue.URL != "" {
+		t.Errorf("the issue = %+v, want it untouched", rec.Issue)
+	}
+
+	// The submitter that holds it records the submission and the URL, and the
+	// claim is cleared in the same write.
+	claim, err := Claim(ctx, b, up.Number, "user:ana@example.test", sharedAt.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("claiming issue %d again: %v", up.Number, err)
+	}
+	if err := RecordSubmitted(ctx, b, claim, "https://github.com/dimipaun/fugaro/issues/16"); err != nil {
+		t.Fatalf("filing issue %d: %v", up.Number, err)
+	}
+	rec, _, err = readShared(ctx, b, up.Number)
+	if err != nil {
+		t.Fatalf("reading shared issue %d: %v", up.Number, err)
+	}
+	if rec.Issue.Status != StatusSubmitted || rec.Issue.URL != "https://github.com/dimipaun/fugaro/issues/16" || !rec.Issue.Uploaded {
+		t.Errorf("the filed issue = %+v, want it submitted with its URL", rec.Issue)
+	}
+	if rec.Claim != nil {
+		t.Errorf("the claim is still held after the filing: %+v", rec.Claim)
+	}
+	// A URL that is not an issue of this project is refused: the post is a
+	// link a reader follows.
+	if err := RecordSubmitted(ctx, b, claim, "https://github.com/attacker/fugaro/issues/16"); err == nil {
+		t.Error("a submission was recorded with somebody else's URL")
+	}
+}
+
+// The store is writable by every launcher (F24) and what comes out of it is
+// printed and opened, so a record that links anywhere but to an issue of this
+// project is refused, and a reading that meets one leaves it out rather than
+// failing (F28).
+func TestRejectsForeignIssueURL(t *testing.T) {
+	ctx := context.Background()
+
+	for _, tc := range []struct {
+		url  string
+		want bool
+	}{
+		{"", false},
+		{"https://github.com/dimipaun/fugaro/issues/7", true},
+		{"https://github.com/dimipaun/fugaro/issues/00007", true},
+		{"http://github.com/dimipaun/fugaro/issues/7", false},
+		{"https://github.com/attacker/fugaro/issues/7", false},
+		{"https://github.com/dimipaun/fugaro/pull/7", false},
+		{"https://github.com/dimipaun/fugaro/issues/", false},
+		{"https://github.com/dimipaun/fugaro/issues/7/../../attacker", false},
+		{"https://github.com/dimipaun/fugaro/issues/abc", false},
+		{"https://github.com/dimipaun/fugaro/issues/0", false},
+		{"https://github.com/dimipaun/fugaro/issues/1000000", false},
+		{"javascript:alert(1)", false},
+		{"https://github.com/dimipaun/fugaro/issues/7\nhttps://attacker.example", false},
+	} {
+		if got := projectIssueURL(tc.url); got != tc.want {
+			t.Errorf("projectIssueURL(%q) = %v, want %v", tc.url, got, tc.want)
+		}
+	}
+
+	for _, tc := range []struct{ name, url, original string }{
+		{"a foreign issue", "https://github.com/attacker/fugaro/issues/7", ""},
+		{"a foreign original", "https://github.com/dimipaun/fugaro/issues/7", "https://github.com/attacker/fugaro/issues/3"},
+		{"something that is not a link at all", "not a URL", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := sharedBucket(t)
+			up := upload(t, ctx, b, sharedIssue("update-20261107183012-48213", "17171717171717171717171717171717"))
+			rec, v, err := readShared(ctx, b, up.Number)
+			if err != nil {
+				t.Fatalf("reading shared issue %d: %v", up.Number, err)
+			}
+			rec.Issue.URL, rec.Issue.OriginalURL = tc.url, tc.original
+			if err := rec.setRecord(); err != nil {
+				t.Fatal(err)
+			}
+			raw, err := json.Marshal(rec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := replaceRaw(ctx, b, recordKey(up.Number), raw, v); err != nil {
+				t.Fatalf("writing the record: %v", err)
+			}
+			if _, _, err := readShared(ctx, b, up.Number); err == nil {
+				t.Errorf("reading a record linking to %q was allowed", tc.url)
+			}
+			rows, err := ListShared(ctx, b)
+			if err != nil || len(rows) != 0 {
+				t.Errorf("the listing = %+v, %v; want the record left out", rows, err)
+			}
+		})
+	}
+}
+
+// A filed issue is final: the store never moves it back, never sets it aside
+// again and never files it twice (F9).
+func TestSubmittedIsFinal(t *testing.T) {
+	ctx := context.Background()
+	b := sharedBucket(t)
+	up, url := filedIssue(t, ctx, b, "18181818181818181818181818181818")
+
+	for _, status := range []Status{StatusDismissed, StatusPending, StatusSubmitted} {
+		if err := SetSharedStatus(ctx, b, up.Number, status); err == nil {
+			t.Errorf("a filed issue was set to %q", status)
+		}
+	}
+	if _, err := Claim(ctx, b, up.Number, "user:bo@example.test", sharedAt.Add(time.Hour)); err == nil {
+		t.Error("a filed issue was claimed again")
+	}
+	if err := RecordSubmitted(ctx, b, &Claimed{Number: up.Number, Holder: "user:bo@example.test"}, url); err == nil {
+		t.Error("a filed issue was submitted a second time")
+	}
+	rec, _, err := readShared(ctx, b, up.Number)
+	if err != nil {
+		t.Fatalf("reading shared issue %d: %v", up.Number, err)
+	}
+	if rec.Issue.Status != StatusSubmitted || rec.Issue.URL != url {
+		t.Errorf("the filed issue = %+v, want it unchanged", rec.Issue)
+	}
+}
