@@ -134,7 +134,7 @@ Project rules (carried over from this repository's existing plans):
 
 **Files:** `internal/config/providers.go`, `providers_test.go`, and the doc that documents `providers.<name>` today (locate it in this task: `docs/multi-model.md` §1-§2 or `docs/config-reference.md`).
 
-1. `RequireZDR *bool \`yaml:"require_zdr,omitempty" json:"require_zdr,omitempty"\`` with `RequireZDROn() bool { return p.RequireZDR == nil || *p.RequireZDR }` (the `PRSettings.EarlyDraftOn` shape, `internal/config/config.go:142`).
+1. `RequireZDR *bool \`yaml:"require_zdr,omitempty" json:"require_zdr,omitempty"\`` with `RequireZDROn() bool { return p.RequireZDR == nil || *p.RequireZDR }` (the `PRSettings.EarlyDraftOn` shape, `internal/config/config.go:115`).
 2. `PricePolicy string \`yaml:"price_policy,omitempty" json:"price_policy,omitempty"\`` — `""` means `cheapest`; a `PricePolicySet()`-style accessor returns the effective value (`cheapest` when empty), and `ValidateModelProviders` refuses anything outside `cheapest|highest` with the name of the provider and the field.
 3. `CatalogEligible(baseURL string) bool` (or a method on `ModelProvider`): the host is `openrouter.ai` (any subdomain) or loopback (`127.0.0.1`, `::1`, `localhost`). Document in the file's comment that this is an inference, not a knob (design D5), and that a direct vendor route is priced by `model_prices`.
 4. Document both fields where `route_fee_pct` is documented, with the defaults, the undercharge note (P11) and the "this prices a tier, it does not enforce routing" note (P9).

@@ -119,7 +119,7 @@ with no allow-list. *Consequence:* the pairing for a project-scoped caller uses 
 than a new registry (D1064, D1071's "not done" list in [spec.md](spec.md) §10).
 
 **F14: Exists, and it is CSR7's wiring, not this slice's.** The service's URL reaches a launch through
-`credentialsServiceLaunchEnv` (`internal/cli/run.go:2968`), which is deliberately per-repository — a shared
+`credentialsServiceLaunchEnv` (`internal/cli/run.go:4153`), which is deliberately per-repository — a shared
 job would not be given it, because a shared job's calls are refused. CSR7's variant carries the variable in
 its own environment. *Consequence:* nothing in this slice changes the launch path; the design states the
 assumption it rests on, and the review variant's environment stays CSR7's to write.

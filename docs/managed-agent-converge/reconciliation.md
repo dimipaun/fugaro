@@ -150,7 +150,7 @@ The shape of the reading: **almost everything the spec needs already exists, in 
 
 **Claim of the spec:** §8.2.
 
-**What the code does.** `internal/cli/recipes_skew.go:228` — `managedDeployerShipped = true` as of 0.10.0 — gates every managed entry point; seven scoped custom roles, one per service, each bound once under its own `fmgd-` prefix IAM condition, applied as a dedicated deployer service account holding no project-level storage role, no project-level `setIamPolicy` and no `iam.roles.*`. `plugin/skills/setup/reference/managed.md` states the fence has not been measured live, and `docs/gcp-live-checklist.md` Check 68 measures it: written, owner-run **after** the release, and **NOT RUN**.
+**What the code does.** `internal/cli/recipes_skew.go:217` — `managedDeployerShipped = true` as of 0.10.0 — gates every managed entry point; seven scoped custom roles, one per service, each bound once under its own `fmgd-` prefix IAM condition, applied as a dedicated deployer service account holding no project-level storage role, no project-level `setIamPolicy` and no `iam.roles.*`. `plugin/skills/setup/reference/managed.md` states the fence has not been measured live, and `docs/gcp-live-checklist.md` Check 68 measures it: written, owner-run **after** the release, and **NOT RUN**.
 
 **Consequence.** §8.2's honest statement — that the "the applying identity cannot write the marker" half of the forged-mark threat rests on an unproven edge — is inherited, and this design must not claim more. It does not propose to verify it: the brief forbids live steps, and Check 68 is the owner's.
 

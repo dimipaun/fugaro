@@ -95,9 +95,9 @@ is recorded with its tier, and the senior review that follows is told nothing of
 
 ### ZF2 — **Wrong** — "cheap coder ↔ cheap reviewer"
 
-The cheap loop's review is a review by **the coder's own model**. `internal/config/config.go:282`
+The cheap loop's review is a review by **the coder's own model**. `internal/config/config.go:208`
 `StageRole` maps `review_first` to `RoleCoder`; only `review` is `RoleReviewer`
-(`config.go:262` `ModelFor`). `docs/recipes.md:39` says the same in words: the `first_line`
+(`config.go:226` `ModelFor`). `docs/recipes.md:39` says the same in words: the `first_line`
 step "is a review by the coder's model in a fresh session". There is no separate cheap reviewer identity to
 draw as a second actor unless the brief means two *rounds*, which it does not.
 

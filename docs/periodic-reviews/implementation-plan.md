@@ -586,7 +586,7 @@ Hermetic throughout — it touches no cloud API the fake does not model.
   assignment from **`FUGARO_REPORTS_JOB_SPEC`** — a versioned JSON document on the
   `FUGARO_CATALOG_CHECK_SPEC` shape (`internal/infra/catalogcheck.go:29`), which R7 declares: the
   project, the bucket, the repository slugs and the periods to close — and **refuses to start without
-  it**. The release's own `*Since` constant (`internal/cli/recipes_skew.go:325` is `digestSince`'s)
+  it**. The release's own `*Since` constant (`internal/cli/recipes_skew.go:314` is `digestSince`'s)
   gains the release that ships it, so a skill or a recipe that names `runs reports` cannot reach a
   CLI without it.
 - **What it writes.** For each closed period it loops over the project's repositories and writes

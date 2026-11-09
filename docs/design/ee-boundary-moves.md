@@ -499,7 +499,7 @@ configuration that sets `governance:` will silently ignore the block.
 Three things make this the right carrier rather than an OCI label.
 
 - **The gate already reads exactly this object, for exactly this question.** `checkImageSinceDev`
-  (`internal/cli/recipes_skew.go:673`) reads `imagecheck.RecordKey(slug, spec.Workflow)` out of the
+  (`internal/cli/recipes_skew.go:662`) reads `imagecheck.RecordKey(slug, spec.Workflow)` out of the
   runs bucket and judges the *job image* by `rec.BaseRef` — the base image the build ran FROM, whose
   binary the job runs. The edition belongs beside the field that answers the same question, and that
   gate gains no read, no client and no credential: it already holds `env.recordBucket`.
@@ -676,7 +676,7 @@ those paths share with the core.
 | `budgetScopes` (`cloud.go:344`) | `BudgetScopes` | `func BudgetScopes() []string` |
 | `checkDatabaseHost` (`history.go:187`) | `CheckDatabaseHost` | `func CheckDatabaseHost(rawURL, firebaseProject string) error` |
 | `envProject`, `envFirebaseFP`, `envRTDBURL`, `envRunsBucket` (`history.go:34`) | `EnvProject`, `EnvFirebaseFP`, `EnvRTDBURL`, `EnvRunsBucket` | consts |
-| `reportIntentTimeout` (`run.go:2928`) | `ReportIntentTimeout` | const |
+| `reportIntentTimeout` (`run.go:2918`) | `ReportIntentTimeout` | const |
 
 The third block (E2.2a) is what `fugaro report`'s command reads where the second block's list stops:
 the run reader its degraded and by-mode paths share with `runs ls`/`runs stats`, and the four core

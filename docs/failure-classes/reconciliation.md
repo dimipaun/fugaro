@@ -309,9 +309,9 @@ be held to it) or **Open** (the design leaves it to the owner).
   drops (`mobile/src/feed/document.test.js:69`). `shared/` reads neither. → **D1458**.
 - **F15 — a test that does not exist.** Design §7 and §3 call the shape for an enum-mirroring test
   "`TestResultSchemaStatusesAgreeWithGo`". No such test exists anywhere in the tree. The shape is
-  `TestResultSchemaHaltReasonsAgreeWithGo` (`schemas/schemas_test.go:2046`), with
+  `TestResultSchemaHaltReasonsAgreeWithGo` (`schemas/schemas_test.go:2159`), with
   `TestResultSchemaCheckpointAgreeWithGo` (`schemas/schemas_test.go:1978`) and `TestResultSchemaReviewScopeReasonsAgreeWithGo`
-  (`schemas/schemas_test.go:2155`) as its siblings. → **FC1** names the sibling it copies.
+  (`schemas/schemas_test.go:2094`) as its siblings. → **FC1** names the sibling it copies.
 - **F16 — `api.LoadRows`.** Design §6.1: "the listing already reads the window (`api.LoadRows`,
   `internal/cli/runs.go`)". The symbol is `(*cli.Cloud).LoadRows`, declared in
   `internal/cli/api.go:301`; `internal/cli/runs.go:109` names it in a comment only.
@@ -357,8 +357,8 @@ be held to it) or **Open** (the design leaves it to the owner).
 - **F7 — the halt vocabulary and `GovernanceHaltReasons`** (`internal/runstore/runstore.go:45`–`:104`),
   the closed set the design's three halt classes translate.
 - **F8 — the schema's shape**: `additionalProperties: false` (`schemas/result.schema.json:7`),
-  `version` `const 1` (`:10`), the additive precedent's test (`schemas/schemas_test.go:1392`) and the
-  fully-populated-record test (`schemas/schemas_test.go:757`).
+  `version` `const 1` (`:10`), the additive precedent's test (`schemas/schemas_test.go:1331`) and the
+  fully-populated-record test (`schemas/schemas_test.go:696`).
 - **F9 — the five readers of a status change** (design §8 D5): `RUN_FAILURE_OUTCOMES`
   (`console/src/renderer/screens/run.ts:1324`), `mobile/` (§2.5), the history census
   (`internal/userstats/userstats.go:196`), `runs summary` (`internal/cli/runs_summary.go:62`) and

@@ -186,7 +186,7 @@ profiles:
 - **A new field, not a `secrets:` entry.** `profiles.<p>.claude_accounts` sits beside `secrets:`,
   so refusal 1 stays true and in force: a Claude token is never something an operator lists in a
   profile's mounts; the deployer adds the one mount an account job carries (§4.3).
-- `config.JobProfile` (`internal/config/config.go:593`) gains the field — `projectpolicy.Profile`
+- `config.JobProfile` (`internal/config/config.go:519`) gains the field — `projectpolicy.Profile`
   embeds it (`projectjobs.go:120-129`), so it reaches publish, the deployer and the runner from one
   declaration — and the local config validates it against `lc.ClaudeAccounts` at load.
 - **The default account** (D5) cannot be defined in `claude_accounts` ("default" is reserved there,

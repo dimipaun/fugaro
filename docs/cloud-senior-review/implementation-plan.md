@@ -1460,7 +1460,7 @@ task **Open item 4** became. **Depends on:** nothing unmerged — **CSR8 has mer
 class this task reads is the one CSR8 landed: `r.runClass()` (`internal/runner/projectjob.go:82`, the
 **task's mode**) and the class of the candidate the run was admitted to, never `r.reviewJob()`
 (`internal/runner/reviewartifact.go:934`, the environment marker `FUGARO_REVIEW_JOB` the **launcher** writes
-at `internal/cli/run.go:3580`) — see *the keying* below, which is the correction this task was re-read for.
+at `internal/cli/run.go:3560`) — see *the keying* below, which is the correction this task was re-read for.
 **E7 does not reach the code**: the
 review class exists on the service's side (C3.9a–C3.9g, merged) and every test here is hermetic; what E7
 still decides is whether a placed review run's **first call is served** (§1). **Before CSR11**: a flipped
@@ -1487,7 +1487,7 @@ constant launches a run whose reviewer this task is what gives a model to reach.
     `internal/credsvc/cascade.go:105`). `r.reviewJob()` reads `r.d.Env` — the whole of the function is
     `envLookup(r.d.Env, EnvReviewJob) != ""` (`internal/runner/reviewartifact.go:934`, the read at `:935`)
     — which is the container's environment, the one input the launcher writes for the execution
-    (`backend.LaunchSpec.Env`, `internal/cli/run.go:3573`) and the one
+    (`backend.LaunchSpec.Env`, `internal/cli/run.go:3553`) and the one
     a job definition carries — and CSR8's own rule for the class is the opposite in as many words:
     `r.runClass()` is the **task's mode** (`internal/runner/projectjob.go:82`), "never anything the job's
     environment says, so a container cannot be told which class it is by the name it was started under",

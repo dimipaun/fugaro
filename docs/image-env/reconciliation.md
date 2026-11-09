@@ -81,7 +81,7 @@ prefixes are `FUGARO_`, `ANTHROPIC_`, `CLAUDE_CODE_`, `GIT_`, `LD_`, `DYLD_`, `P
 `SSL_CERT_FILE`, `SSL_CERT_DIR`, `NODE_EXTRA_CA_CERTS`, `CURL_CA_BUNDLE`,
 `GOOGLE_APPLICATION_CREDENTIALS`, `GCE_METADATA_HOST`, `CLOUD_ML_REGION` and the
 image build's own four. It is enforced at `internal/config/validate.go:303-313` on every resolve, and
-mirrored in `schemas/fugaro.schema.json:494` (the pattern) and `:495` (the enum), whose description
+mirrored in `schemas/fugaro.schema.json:473` (the pattern) and `:474` (the enum), whose description
 names the two Go lists as its source.
 
 **F4. Today the only writer of a non-reserved name into a job's environment is the image itself —
@@ -142,7 +142,7 @@ platform names, `FUGARO_CHECKOUT`, `FUGARO_REMOTE`, `CLOUD_ML_REGION`, `ANTHROPI
 and `FUGARO_SECRET_ENVS` (`internal/infra/spec.go:1127-1188`) — all `FUGARO_` except
 `CLOUD_ML_REGION`, which is a reserved single name. The launcher adds `FUGARO_RUN`,
 `FUGARO_BUDGET_TOKEN`, `FUGARO_CREDENTIALS_SERVICE_URL` and `FUGARO_REVIEW_JOB`
-(`internal/backend/gcp/run.go:156-171`, `internal/cli/run.go:3554`, `:3563`, `:3570`). **Cloud Run's
+(`internal/backend/gcp/run.go:156-171`, `internal/cli/run.go:3544`, `:3553`, `:3560`). **Cloud Run's
 own** are `CLOUD_RUN_JOB`, `CLOUD_RUN_EXECUTION` and the task variables, all under the reserved
 `CLOUD_RUN_` prefix. **The exception is the other backend**: Batch's task variables (`BATCH_*`, `batch`
 design in `docs/backends.md`) are on **no** list, so on Batch the passthrough would hand the agent a
@@ -209,8 +209,8 @@ and IAM and reads no container. So option 3's command needs one new read (D1377)
 `Jobs.Get`, which `doctor` does not make today (it lists jobs and reads their IAM); the launcher role already holds `run.jobs.get`.
 
 **F15. One stale comment, noted and not taken.** `internal/backend/backend.go:131` says "No launcher
-sets an entry here today", and two do: `internal/cli/run.go:3573`
-(`FUGARO_CREDENTIALS_SERVICE_URL`) and `internal/cli/run.go:3570` (`FUGARO_REVIEW_JOB`) set `LaunchSpec.Env`. It is a
+sets an entry here today", and two do: `internal/cli/run.go:3553`
+(`FUGARO_CREDENTIALS_SERVICE_URL`) and `internal/cli/run.go:3560` (`FUGARO_REVIEW_JOB`) set `LaunchSpec.Env`. It is a
 one-line comment fix in a file this plan does not otherwise touch; the plan does not take it, and
 whoever takes IE1 may fix it in the same commit if they touch that file.
 
@@ -285,7 +285,7 @@ settles.
   stamp is a new name, and no existing wire field changes meaning.
 - **D1372. The filter is `config.ReservedEnv`, case-insensitively, plus the name-shape rule
   `^[A-Z_][A-Z0-9_]*$` (`internal/config/validate.go:32`, `:303-313`).** *Recommendation.* One list,
-  already reviewed, already mirrored in `schemas/fugaro.schema.json:494`; a name the shape rule
+  already reviewed, already mirrored in `schemas/fugaro.schema.json:473`; a name the shape rule
   refuses is dropped rather than made into an environment entry a shell cannot express. *Alternative:*
   a new passthrough-specific list — refused: two lists drift, and the second one is never reviewed as
   carefully as the first. **Implemented 2026-11-06, both halves:** IE1's shared subtraction applies
@@ -473,8 +473,8 @@ above"; that is no longer true of the neighbours, and the claim is unchanged bec
   passthrough hands a run the cluster's own variables on one backend and none on the other. The cost
   accepted is the new refusal a repository's workflow-secret `env` sees — a tightening, legal under
   the layering rule. **The edits are IE2's** and they are three, not one: the file O4 names
-  (`internal/config/validate.go`), the schema pattern that mirrors it (`schemas/fugaro.schema.json:494`,
-  held to the Go list by `TestFugaroSchemaReservesTheSameEnv`, `schemas/schemas_test.go:1604`) and the
+  (`internal/config/validate.go`), the schema pattern that mirrors it (`schemas/fugaro.schema.json:473`,
+  held to the Go list by `TestFugaroSchemaReservesTheSameEnv`, `schemas/schemas_test.go:1611`) and the
   doc enumeration of both (`docs/design/v1.md:616`). None is in IE1's diff; the subtraction IE1 spells
   reads the list, so it follows the change with no edit of its own.
 - **O5. Is `fugaro doctor --all` the right surface for the report? — ANSWERED 2026-11-06: yes.**

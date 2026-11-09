@@ -40,7 +40,7 @@ that decides where a repository's code may go or what a run may cost:
   `ab.*` entries are hand-edited and then published by a **second** command, `fugaro config publish`,
   which the HARD RULE in `CLAUDE.md` forbids;
 - the **local project config** — `fugaro rigor set` and `fugaro rigor floor`, which the registry names
-  as the owners of seven keys (`internal/settings/registry.go:266`, `:273`, `:691`),
+  as the owners of seven keys (`internal/settings/registry.go:266`, `:273`, `:682`),
   **do not exist**; `secrets` has no `rm` and no policy flags; `accounts` has no `rm`.
 
 `fugaro settings set` already writes scalars and string lists

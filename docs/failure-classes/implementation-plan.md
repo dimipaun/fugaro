@@ -159,7 +159,7 @@ F21, F27, F28. **Depends on:** nothing. **Reviewer tier:** standard. **SEC:** no
   The record's field is **not** in the schema's `required` (a succeeded record carries none, F8), and
   `result.json`'s `"version"` stays `const 1` (`schemas/result.schema.json:10`).
 - **Tests:** `TestResultSchemaFailureClassesAgreeWithGo` — **the shape `TestResultSchemaHaltReasonsAgreeWithGo`
-  uses (`schemas/schemas_test.go:2046`), not the `…StatusesAgreeWithGo` the design names, which does
+  uses (`schemas/schemas_test.go:1985`), not the `…StatusesAgreeWithGo` the design names, which does
   not exist** (F15): the schema's enum is `failure.Classes()`, in order. `TestFailureClassesAreClosedAndPropertyComplete`
   (every class has its row, every row its class). `TestResultSchemaAcceptsRunnerRecords` (`schemas/schemas_test.go:757`,
   re-run: the fully-populated record carries the field).
