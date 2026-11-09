@@ -2331,12 +2331,17 @@ Build a catalog entry's image with Cloud Build, or the workflow's derived image;
 Build an image with Cloud Build.
 
 With an image catalog published (fugaro image ls lists its entries), it
-builds the catalog entry you name, or every entry whose source is a
-Dockerfile: the entry's Dockerfile is copied into the project's bucket,
-the build reads that one object, mounts the workflow's secrets as file
-secrets, smoke-tests the candidate without network and promotes it into
-the installation's shared registry with a content tag naming the
-definition it built. Run it from the checkout of the entry's own
+submits the catalog entry you name, or every entry of this checkout's
+catalog — one whose Dockerfile is another repository's is passed over.
+An entry whose source is a Dockerfile or an inline definition is built:
+the definition is copied into the project's bucket, the build reads that
+one object, mounts the workflow's secrets as file secrets, smoke-tests
+the candidate without network and promotes it into the installation's
+shared registry with a content tag naming the definition it built. An
+entry whose source is a prebuilt image is not built: its run is the
+smoke of that reference against the runtime contract alone, and the
+record it writes is what fugaro doctor reads back — --no-smoke has
+nothing to leave out of it. Run it from the checkout of the entry's own
 repository: the build account, the provider credential and the secrets
 are that repository's.
 
