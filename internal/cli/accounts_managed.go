@@ -55,7 +55,7 @@ import (
 // (D1015, and the owner's ruling of 2026-11-01). In a coding agent's session the
 // gate stands in for the refusal SD9 makes; in a person's own terminal the write
 // is the owner's own, so it is read there too — and only there: a run with no
-// terminal and no --ask (settingsWriteOwnTerminal, and settingsGateAsks) writes
+// terminal and no --ask (settingsGateReads, and settingsGateAsks) writes
 // without asking anything, so it has no question for the gate to answer. A run
 // that asks nothing reads nothing, which is what
 // keeps a project whose marks are stale, unreadable or on another machine from
@@ -72,9 +72,10 @@ import (
 // to the owner's own word.
 //
 // Why it is named rather than written as a literal at the call below. The value
-// reaches settingsGateAsks, whose answer for a coding agent's session is "read
-// the marks" for every document that is not repository-scoped, or for a typed
-// edit — and this command's document is the project layer, so the parameter
+// reaches settingsGateReads's terminal term and settingsGateAsks, whose answer
+// for a coding agent's session is "read the marks" for every document that is
+// not repository-scoped, or for a typed edit — and this command's document is
+// the project layer, so the parameter
 // decides nothing today. What the name does is put the question where a later
 // typed edit has to answer it: a command that grows one (a rotation, say)
 // changes a line that says what the answer means, instead of a `false` a reader
@@ -99,7 +100,7 @@ func accountsAddGate(ctx context.Context, cmd *cobra.Command, lc *localcfg.Confi
 	// passes it (a refusal in a managed project's agent session, a sentence
 	// everywhere else), so it forces the read even where the declaration
 	// itself would have asked nothing (a session with no terminal at all).
-	if !settingsGateAsks(marker, settingsWriteOwnTerminal(cmd) || o.ask, settingsDocLocal, accountsAddTypedEdit) {
+	if !settingsGateAsks(marker, settingsGateReads(cmd, o.yes, o.ask, accountsAddTypedEdit), settingsDocLocal, accountsAddTypedEdit) {
 		return initflow.Managed{}, managedGate{}, nil
 	}
 	clients, err := newInitClients(ctx, lc)

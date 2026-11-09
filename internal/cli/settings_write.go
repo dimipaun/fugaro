@@ -42,8 +42,10 @@ type settingsEdit struct {
 	// Typed marks the widening directions: a loosened ceiling, a floor
 	// removed, a followup key turned on. They are the owner's own step, so
 	// the marker fence below refuses them in a coding agent's session whatever
-	// --yes says, and at the owner's own terminal they ask nothing at all
-	// (D1552, D1555; D1540 is why no prompt replaces the typed name here).
+	// --yes says, and at the owner's own terminal they ask nothing at all and
+	// are read by no gate (D1552, D1555; settingsGateReads is where the marks
+	// are skipped for one, and D1540 is why no prompt replaces the typed name
+	// here).
 	Typed bool
 	// TypedWhy is the sentence saying what this form widens: it is printed
 	// before the write, and it is the sentence the coding-agent refusal above

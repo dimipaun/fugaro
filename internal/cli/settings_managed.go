@@ -116,12 +116,13 @@ import (
 // takes no confirmation prompt, which is the whole point of a managed project —
 // and the write's own y/N was the question the gate stood in for. That y/N is
 // gone (D1540) and the terminal it was asked at is not, so the read is made
-// where the write is the owner's own: a real terminal
-// (settingsWriteOwnTerminal), which is the condition the prompt had, or --ask,
-// which puts that one question back (D1544). A run with neither writes without
-// asking anything and has no question for the gate to stand in for, so it pays
-// for no read either. The aim is the write's own condition, asked once, in
-// settingsGateAsks.
+// where the write is the owner's own: a real terminal, which is the condition
+// the prompt had, or --ask, which puts that one question back (D1544). A run
+// with neither writes without asking anything and has no question for the gate
+// to stand in for, so it pays for no read either. The aim is the write's own
+// condition, asked once, in settingsGateReads — which keeps the one class the
+// gate may not be read for at that terminal, the widening the typed name was
+// reserved for (settingsOwnerOnlyRule, D1026; the owner's door, D1552, D1555).
 
 // settingsGateMarker is the coding agent's session this command was run in, ""
 // for a person at a terminal. It is read once per command, here, so the two
@@ -129,13 +130,33 @@ import (
 func settingsGateMarker(terminal bool) string { return agentMarker(os.Getenv, terminal) }
 
 // settingsWriteOwnTerminal is the caller's half of whether the gate is read for
-// this write: a real terminal. It was `settingsAsk` — "a real terminal and no
-// --yes" — while the write's own y/N was the question the gate stood in for;
-// that y/N is gone (D1540), so the terminal is the whole of the condition and
-// --yes no longer narrows it. It is read from the command the caller is already
-// holding (its own stdin), so the two answers cannot disagree.
+// this write: a real terminal. It is read from the command the caller is
+// already holding (its own stdin), so the two answers cannot disagree.
 func settingsWriteOwnTerminal(cmd *cobra.Command) bool {
 	return stdinIsTerminal(cmd.InOrStdin())
+}
+
+// settingsGateReads is whether the gate is read for one write a command is
+// about to make: the write's own question, put once, in the one place every
+// caller asks it. It was `settingsAsk(cmd, o.yes) || o.ask` — "a real terminal
+// and no --yes", the condition the write's y/N was asked under — while that
+// y/N was the question the gate stood in for; the y/N is gone (D1540) but the
+// condition is not, because it is the same question (whose word is this step
+// made on? a person at their own terminal, or the flag that puts the question
+// back) and a read made anywhere else is one this write does not need.
+//
+// A widening is the class the terminal term does not cover: the gate refuses
+// every one of them (settingsOwnerOnlyRule, D1026), and a coding agent's session
+// is refused at the fence whatever --yes says, so a read of the marks at the
+// owner's own terminal would take away the one door a widening has (D1552,
+// D1555) and leave every ceiling of a managed project unwidenable.
+//
+// --ask reads the marks whatever the class is: the flag's question is decided
+// where the marks are (askDecide), so the read it needs is the one this
+// function answers for, and a widening a managed project's gate refuses to the
+// flag is the refusal the flag met before this row existed.
+func settingsGateReads(cmd *cobra.Command, yes, ask, typed bool) bool {
+	return (settingsWriteOwnTerminal(cmd) && !yes && !typed) || ask
 }
 
 // settingsGateAsks reports whether one edit is one made on the owner's own

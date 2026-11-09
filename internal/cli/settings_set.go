@@ -1589,8 +1589,14 @@ func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) e
 	// place: the flag has to speak about the marks — a refusal in a managed
 	// project's session with no terminal, a sentence anywhere else — so the
 	// read it needs is made even where the edit itself would have asked
-	// nothing (--yes, or no terminal at all).
-	managed, gate, err := settingsManagedStep(cmd.Context(), lc, sel.Path, target, key, typed, why, old, newData, "settings set", settingsWriteOwnTerminal(cmd) || o.ask)
+	// nothing (--yes, or no terminal at all). A widening is the one class the
+	// read is skipped for at the owner's own terminal: the gate refuses every
+	// one of them (settingsOwnerOnlyRule, D1026), and a session is refused at
+	// the fence whatever --yes says, so reading the marks there would take away
+	// the one door a widening has and leave every ceiling of a managed project
+	// unwidenable. --ask still reads them: the flag puts a question back
+	// (D1544), and a question is what the read stands in for.
+	managed, gate, err := settingsManagedStep(cmd.Context(), lc, sel.Path, target, key, typed, why, old, newData, "settings set", settingsGateReads(cmd, o.yes, o.ask, typed))
 	if err != nil {
 		return err
 	}
@@ -1687,8 +1693,8 @@ func runSettingsUnset(cmd *cobra.Command, args []string, o settingsWriteOptions)
 		edit.DryRun = &settingsDryRun{key: key, layer: target.layer, oldValue: oldValue, newValue: settingsValueIn(newData, target.keyPath), jsonOut: o.jsonOut}
 	}
 	// The read and the flag's own sentence: the same pair, in the same order,
-	// as the set path above.
-	managed, gate, err := settingsManagedStep(cmd.Context(), lc, sel.Path, target, key, typed, why, old, newData, "settings unset", settingsWriteOwnTerminal(cmd) || o.ask)
+	// as the set path above (settingsGateReads is the condition both pass).
+	managed, gate, err := settingsManagedStep(cmd.Context(), lc, sel.Path, target, key, typed, why, old, newData, "settings unset", settingsGateReads(cmd, o.yes, o.ask, typed))
 	if err != nil {
 		return err
 	}

@@ -718,19 +718,32 @@ func TestSettingsSetManagedAskDeclinedWritesNothing(t *testing.T) {
 	}
 }
 
-// A run that asks nothing pays nothing: --yes answers the edit itself, and a
-// run with no terminal is refused before the file is touched, so neither has a
-// question for the gate to answer and neither pays for the read. That is what
-// keeps a stale, unreadable or far-away mark from slowing down or stopping a
-// command that was never going to be asked.
+// A run that asks nothing pays nothing: at the owner's own terminal --yes
+// answers the edit itself, so the run has no question the gate could stand in
+// for and the marks are not read for it. That is what keeps a stale, unreadable
+// or far-away mark from slowing down or stopping a write that was never going to
+// be asked — the state a read without the --yes term would put it in.
+//
+// The combination is reached on purpose: a real terminal, a managed project and
+// the flag, so "no mark was read" is said about a step that happened. The write
+// below lands, which is the half a run refused before it wrote could not show.
+//
+// The mutation caught: settingsGateReads written without its --yes term, which
+// reads the marks for a run that is already on the owner's own word — the
+// direct call below would be handed a gate for a step no question was asked
+// about, and the command would pay for the read.
 func TestSettingsSetYesReadsNoMark(t *testing.T) {
 	r := newSettingsManagedRig(t, settingsMarksManaged)
 	path := settingsManagedLayerFile(t, minimalAnchored)
 	target := settingsManagedLayerTarget(path)
 	old := []byte(minimalAnchored)
 	doc := []byte(minimalAnchored + "defaults:\n  agent: { review_rounds: 6 }\n")
+	fakeTerminal(t)
 
-	m, gate, err := settingsManagedStep(context.Background(), r.managedLocal(t), r.managedConfigPath(t), target, settingsManagedLayerKey, false, "", old, doc, "settings set", false)
+	// The helper's own boundary, asked directly — a real terminal, --yes, the
+	// ordinary class, which is the combination the term is about — reads
+	// nothing and answers the zero value.
+	m, gate, err := settingsManagedStep(context.Background(), r.managedLocal(t), r.managedConfigPath(t), target, settingsManagedLayerKey, false, "", old, doc, "settings set", settingsGateReads(gateCmd(), true, false, false))
 	if err != nil {
 		t.Fatalf("a person's own terminal was refused by the gate: %v", err)
 	}
@@ -747,12 +760,19 @@ func TestSettingsSetYesReadsNoMark(t *testing.T) {
 		t.Errorf("a run with --yes filed %+v", recs)
 	}
 
-	out, _, err := execute(t, "settings", "set", settingsManagedLayerKey, settingsManagedLayerValue, "--layer", "project", "--yes")
+	// And the command, at the same terminal with that flag: the same answer,
+	// on a run that writes. The calls counted here are the command's own — the
+	// reads above are this test's — so the count is taken from where they are.
+	read := len(r.gcs.Requests())
+	out, _, err := executeStdin(t, "", "settings", "set", settingsManagedLayerKey, settingsManagedLayerValue, "--layer", "project", "--yes")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	if !strings.Contains(readFileString(t, path), "review_rounds: 6") {
 		t.Error("the owner's own run did not write")
+	}
+	if reqs := r.gcs.Requests()[read:]; len(reqs) != 0 {
+		t.Errorf("a run with --yes paid %d calls to read marks it skips no confirmation by:\n%v", len(reqs), reqs)
 	}
 	if recs := r.audits(t); len(recs) != 0 {
 		t.Errorf("a run with --yes filed %+v", recs)
@@ -830,6 +850,57 @@ func TestSettingsSetManagedOwnerTerminalAsksNoConfirmation(t *testing.T) {
 			}
 			if len(recs) != 1 || recs[0].Verdict != managedmode.AuditAdmitted {
 				t.Errorf("the day holds %+v, want the one admission of this write", recs)
+			}
+		})
+	}
+}
+
+// The owner's own terminal is the one door a widening has, and in a managed
+// project it is the whole of the door: the marker's fence refuses a coding
+// agent's session whatever --yes says, so the ceiling D1552, D1555 keep for the
+// owner's own hand is reached by a person at a real terminal and by nobody else.
+// The gate is not read for a Typed edit made there, because the refusal it would
+// answer with is the one thing that may not happen to that person: the step IS
+// theirs, and the admission is what every other class is for. Both runs below
+// therefore write — with --yes and without it — which is what the class meant
+// before the gate existed and what a widening's own sentence asks for it.
+//
+// The mutation caught: reading the gate for every class at a terminal (this is
+// the shape a gate read without the Typed term has), which hands the owner
+// ErrNotConverged for the one edit only the owner may make and leaves every
+// ceiling in a managed project unwidenable.
+func TestSettingsSetManagedOwnerTerminalWidensACeiling(t *testing.T) {
+	for _, tc := range []struct {
+		what string
+		yes  bool
+	}{
+		{"without --yes", false},
+		{"with --yes", true},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			r := newSettingsManagedRig(t, settingsMarksManaged)
+			r.managedRunsBucket(t)
+			path := settingsManagedLayerFile(t, minimalAnchored+"defaults:\n  agent:\n    max_budget_usd: 10\n")
+			noAgentSession(t)
+			fakeTerminal(t)
+
+			args := []string{"settings", "set", "layer.defaults.agent.max_budget_usd", "500", "--layer", "project"}
+			if tc.yes {
+				args = append(args, "--yes")
+			}
+			out, _, err := executeStdin(t, "", args...)
+			if err != nil {
+				t.Fatalf("the owner's own terminal was refused the one widening it is the door to: %v\n%s", err, out)
+			}
+			if got := readFileString(t, path); !strings.Contains(got, "max_budget_usd: 500") {
+				t.Errorf("the layer file does not carry the raised ceiling:\n%s", got)
+			}
+			if !strings.Contains(out, "this raises a limit") {
+				t.Errorf("the write does not say the edit raises a limit:\n%s", out)
+			}
+			assertNoPrompt(t, out)
+			if recs := r.audits(t); len(recs) != 0 {
+				t.Errorf("a step no rule was read for filed %+v", recs)
 			}
 		})
 	}
