@@ -75,7 +75,12 @@ func (s valueSpec) supply() string {
 // value, and the caller that stores it holds its own bounds. A line that ends
 // at EOF is returned as what was read so far, which is how a Ctrl-D at the
 // prompt behaves — whether an empty value is allowed is the caller's rule, as
-// are the value's length and shape.
+// are the value's length and shape — and the one-line read that ended at EOF
+// with nothing at all on it is io.EOF rather than an empty value, because an
+// input that ended is not an answer a question may fill in for the person
+// (promptChoice's own noAnswer): the empty value stays the caller's rule and
+// the ended input is the reader's fact. The hidden read is the terminal's own
+// and says neither.
 func readValue(cmd *cobra.Command, spec valueSpec) ([]byte, error) {
 	return readValueIn(cmd.Context(), cmd.InOrStdin(), cmd.ErrOrStderr(), spec)
 }
@@ -106,5 +111,9 @@ func readValueIn(ctx context.Context, in io.Reader, out io.Writer, spec valueSpe
 	if err != nil && !errors.Is(err, io.EOF) {
 		return nil, userErr("reading %s: %v", spec.what, err)
 	}
-	return []byte(strings.TrimSpace(line)), nil
+	line = strings.TrimSpace(line)
+	if line == "" && errors.Is(err, io.EOF) {
+		return nil, io.EOF
+	}
+	return []byte(line), nil
 }

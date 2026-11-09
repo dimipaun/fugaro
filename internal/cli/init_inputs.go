@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -391,16 +392,25 @@ func (r *initRun) prompt(spec valueSpec, def string, valid func(string) error) (
 // entry asks for the value under it in its own words ("Type …: "): an empty
 // line takes the suggestion, and the entry has no default of its own, so a
 // value that cannot be defaulted is refused rather than guessed (a run with no
-// terminal gets the refusal, never the suggestion in the person's place). A
-// value the caller's own rule refuses is asked again, three attempts in all,
-// and a question that runs out of attempts is noAnswer — a run that stopped at
-// a question, not a refusal.
+// terminal gets the refusal, never the suggestion in the person's place), and
+// an input that ended with nothing on the line is noAnswer rather than an empty
+// line — the suggestion is what the person took with Enter, not what this run
+// takes for them when they walked away. A value the caller's own rule refuses
+// is asked again, three attempts in all, and a question that runs out of
+// attempts is noAnswer — a run that stopped at a question, not a refusal.
 func (r *initRun) promptChoice(spec valueSpec, def, alt, why string, valid func(string) error) (string, error) {
 	if line := suggestionLine(spec.what, def, alt, why); line != "" {
 		fmt.Fprintf(r.w, "%s\n", line)
 	}
 	for range 3 {
 		b, err := readValueIn(r.ctx(), r.in, r.w, spec)
+		if errors.Is(err, io.EOF) {
+			// The input ended with nothing on the line: a question nobody
+			// answered, which the suggestion is not taken in their place for —
+			// an empty project ID is a project created with a guessed name, and
+			// an empty billing answer links an account nobody chose.
+			return "", noAnswer("no answer for %q (the input ended)", spec.what)
+		}
 		if err != nil {
 			return "", err
 		}

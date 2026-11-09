@@ -457,10 +457,21 @@ func TestFirstRunAsksWithSuggestions(t *testing.T) {
 	if err := r.gatherInputs(t.Context()); err != nil || r.o.cloud.gcpProject != "proj-1234" {
 		t.Errorf("a bad answer: %v, %q", err, r.o.cloud.gcpProject)
 	}
-	r = &initRun{o: &initOptions{name: "---", cloud: cloudOptions{region: "us-east5"}}, w: &out, in: bufio.NewReader(strings.NewReader("")), cmd: NewRootCmd()}
+	// An input that ends with nothing on the line is noAnswer even where the
+	// question suggests an answer: the suggestion is what the person takes with
+	// Enter, and a Ctrl-D at the project ID question must not create the
+	// suggested project in their place (readValue says the input ended).
+	r = &initRun{o: &initOptions{name: "aurora", cloud: cloudOptions{region: "us-east5"}}, w: &out, in: bufio.NewReader(strings.NewReader("")), cmd: NewRootCmd()}
 	t.Setenv("GOOGLE_CLOUD_PROJECT", "")
-	if err := r.gatherInputs(t.Context()); err == nil || ExitCode(err) != ExitUserError {
-		t.Errorf("ended input: exit %d, %v", ExitCode(err), err)
+	err := r.gatherInputs(t.Context())
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("ended input: exit %d, %v", ExitCode(err), err)
+	}
+	if !strings.Contains(err.Error(), "the input ended") {
+		t.Errorf("the refusal does not say the input ended: %v", err)
+	}
+	if r.o.cloud.gcpProject != "" {
+		t.Errorf("an ended input created the suggested project %q", r.o.cloud.gcpProject)
 	}
 }
 
