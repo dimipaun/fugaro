@@ -565,7 +565,33 @@ test('a signature that is not 64 bytes is refused', () => {
 
 test('a payload that is not UTF-8 is refused as claims, and never thrown from', () => {
   const acme = signer('acme-2026');
+
+  // The bytes go *inside a string value* of an otherwise valid claim set, signed
+  // as it is spelled. Bare bytes would prove nothing about the decoder: a payload
+  // that is not JSON is refused by the parser whatever the decoder did, and the
+  // overlong and surrogate forms below decode to text a parser takes -- `A`, and
+  // a lone surrogate -- so a claim set carrying them is one this verifier would
+  // read if the decoder let them through.
+  const PLACEHOLDER = 'organisation-here';
+  const withRawOrganisation = (bytes) => {
+    const json = JSON.stringify(claimsFor({ organisation: PLACEHOLDER }));
+    const at = json.indexOf(PLACEHOLDER);
+    return Buffer.concat([
+      Buffer.from(json.slice(0, at), 'utf8'),
+      Buffer.from(bytes),
+      Buffer.from(json.slice(at + PLACEHOLDER.length), 'utf8'),
+    ]);
+  };
+
   for (const bytes of [
+    // Overlong forms of a code point a shorter form carries, both of which decode
+    // to `A` -- so an accepted payload here is a claim set read from bytes that
+    // are not the text they claim to be.
+    [0xe0, 0x81, 0x81],
+    [0xf0, 0x80, 0x81, 0x81],
+    [0xc0, 0xaf],
+    // A surrogate, which a parser accepts as a lone code unit and no text is.
+    [0xed, 0xa0, 0x80],
     // Past U+10FFFF: `F4 90 80 80` decodes to U+110000, which
     // `String.fromCodePoint` throws on -- the shape a bound on the first byte
     // alone lets through, so a refusal here is what keeps the module total.
@@ -574,16 +600,11 @@ test('a payload that is not UTF-8 is refused as claims, and never thrown from', 
     // A first byte that starts no sequence at all.
     [0xf5, 0x80, 0x80, 0x80],
     [0x80],
-    [0xc0, 0xaf],
-    // Overlong forms of a code point a shorter form carries.
-    [0xf0, 0x80, 0x80, 0x80],
-    [0xe0, 0x80, 0x80],
-    // A surrogate, and a sequence cut short.
-    [0xed, 0xa0, 0x80],
+    // A sequence cut short by the quote that closes the string.
     [0xe2, 0x82],
   ]) {
-    const payload = Uint8Array.from(bytes);
-    const key = spell(acme.id, payload, edSign(null, Buffer.from(payload), acme.privateKey));
+    const payload = withRawOrganisation(bytes);
+    const key = spell(acme.id, payload, edSign(null, payload, acme.privateKey));
 
     // The signature is good and the refusal is the text's, not the signature's:
     // a failed signature would answer `signature` and never reach the decoder.
@@ -594,6 +615,13 @@ test('a payload that is not UTF-8 is refused as claims, and never thrown from', 
     );
     assert.equal(verifier(acme.keyring).latest([key], at(ISSUED)), null);
   }
+
+  // The control: the same splice with a sequence that *is* UTF-8 verifies and
+  // reads back as the character it spells, so the refusals above are the bytes'
+  // and not the splice's.
+  const control = withRawOrganisation([0xe2, 0x82, 0xac]);
+  const controlKey = spell(acme.id, control, edSign(null, control, acme.privateKey));
+  assert.equal(verified(verifier(acme.keyring).verify(controlKey, at(ISSUED))).claims.organisation, '€');
 });
 
 test('a key that is not three parts is refused, and one surrounded by whitespace is read', () => {
