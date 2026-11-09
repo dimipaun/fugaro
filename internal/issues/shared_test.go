@@ -130,6 +130,34 @@ func storedOccurrences(t *testing.T, ctx context.Context, b *blobx.Bucket, numbe
 	return out
 }
 
+// sharedSize is what the store would encode an issue as at the widest number it
+// can take: the size Upload checks a record against (F24).
+func sharedSize(t *testing.T, i Issue) int {
+	t.Helper()
+	raw, err := marshalShared(i, numberMax)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return len(raw)
+}
+
+// sized is a record whose encoded form is want bytes: a log line carries the
+// size, which is where a report's bulk is.
+func sized(t *testing.T, run, fingerprint string, want int) Issue {
+	t.Helper()
+	i := sharedIssue(run, fingerprint)
+	i.Logs = []string{""}
+	pad := want - sharedSize(t, i)
+	if pad < 0 {
+		t.Fatalf("a record cannot encode to %d bytes: the fixture is already %d", want, sharedSize(t, i))
+	}
+	i.Logs = []string{strings.Repeat("x", pad)}
+	if got := sharedSize(t, i); got != want {
+		t.Fatalf("the fixture encodes to %d bytes, want %d", got, want)
+	}
+	return i
+}
+
 // race opens the window between the store's read of an object and the write it
 // conditions on that version, and runs fn to completion inside it: the second
 // machine gets all the way through while the first one is still sitting there.
@@ -496,6 +524,41 @@ func TestNamingThatLandedBeforeItsErrorKeepsTheIssue(t *testing.T) {
 	// The entry and the issue agree, so the next machine to hit the bug attaches
 	// to it instead of meeting a fingerprint that names nothing.
 	got := upload(t, ctx, b, hit("update-20261107183014-48215", fp, "bo@example.test", "0.9.0", issueAt.Add(time.Minute)))
+	if got.Number != 1 || !got.Attached {
+		t.Errorf("the next machine's upload = %+v, want an attached occurrence of issue 1", got)
+	}
+}
+
+// A conditional write can also meet the entry it just wrote — the storage
+// client retries a write whose response it never got, and the retry meets the
+// version the first attempt left — and the store answers a conflict. The entry
+// decides that case too: it names this upload's number, so the record under it
+// is the issue, and deleting it (what the conflict path did on its own) leaves
+// a fingerprint naming an issue the store does not have, which every later
+// report of that bug fails on with no way back (F21, F28).
+func TestNamingConflictReadsTheEntryBack(t *testing.T) {
+	ctx := context.Background()
+	g := gcpfake.NewGCS(t)
+	b := g.Bucket(t, "fugaro-issues")
+	const fp = "43434343434343434343434343434343"
+	// The entry holds this upload's own number before the naming write runs, so
+	// the write is conditioned on a version that is already gone.
+	named, err := json.Marshal(numberDoc{Format: sharedFormat, Number: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	race(t, fingerprintKey(fp), func() { g.Put("fugaro-issues", fingerprintKey(fp), named) })
+
+	up := upload(t, ctx, b, sharedIssue("update-20261107183012-48213", fp))
+	if up.Number != 1 || up.Attached {
+		t.Fatalf("the upload = %+v, want issue 1", up)
+	}
+	if rows, err := ListShared(ctx, b); err != nil || len(rows) != 1 || rows[0].Number != 1 {
+		t.Fatalf("the listing = %+v, %v; want issue 1 once", rows, err)
+	}
+	// The entry and the issue agree, so the next machine to hit the bug attaches
+	// to it instead of meeting a fingerprint that names nothing.
+	got := upload(t, ctx, b, hit("update-20261107183014-48215", fp, "bo@example.test", "0.9.0", sharedAt.Add(time.Minute)))
 	if got.Number != 1 || !got.Attached {
 		t.Errorf("the next machine's upload = %+v, want an attached occurrence of issue 1", got)
 	}
@@ -942,6 +1005,82 @@ func TestOccurrenceExcerptIsRedacted(t *testing.T) {
 		}
 		stored(t, b, up.Number)
 	})
+
+	// The excerpt is one line a list can show, and a credential the cut lands
+	// inside would be left shorter than the pattern that finds it — a head of a
+	// token in the object the whole team reads. The pass runs on the whole line,
+	// so what the cut keeps of it is a marker.
+	t.Run("a credential the cut would shorten", func(t *testing.T) {
+		b := sharedBucket(t)
+		up := upload(t, ctx, b, sharedIssue("update-20261107183012-48213", "25252525252525252525252525252525"))
+		token := shape("ghp_", strings.Repeat("A1b2C3d4", 5))
+		other := hit("update-20261107183020-48220", "25252525252525252525252525252525", "bo@example.test", "0.9.0", sharedAt.Add(time.Minute))
+		other.Summary = strings.Repeat("x", occurrenceExcerptMax-20) + " " + token
+		if !strings.Contains(other.Summary, token) {
+			t.Fatal("the fixture does not carry the credential")
+		}
+		if got := upload(t, ctx, b, other); !got.Attached {
+			t.Fatalf("the second upload = %+v, want an attached occurrence", got)
+		}
+		occs := storedOccurrences(t, ctx, b, up.Number)
+		if len(occs) != 1 {
+			t.Fatalf("the store holds %d occurrences of issue %d, want 1", len(occs), up.Number)
+		}
+		for _, piece := range []string{shape("ghp_"), "A1b2C3d4"} {
+			if strings.Contains(occs[0].Excerpt, piece) {
+				t.Errorf("the cut left %q of the credential in the stored excerpt: %q", piece, occs[0].Excerpt)
+			}
+		}
+		if !strings.Contains(occs[0].Excerpt, redactedValue) {
+			t.Errorf("the stored excerpt carries no redaction marker: %q", occs[0].Excerpt)
+		}
+	})
+}
+
+// The store is where the whole issue lives, so every field of it a person wrote
+// goes in with the report's redaction over it (F5): the local record is a file
+// a person can edit, and a credential that reached it must not be published to
+// the team. The header's identity stays — the store keeps the reporter and the
+// run, and only the post to GitHub strips them (D1722).
+func TestSharedRecordIsRedacted(t *testing.T) {
+	ctx := context.Background()
+	b := sharedBucket(t)
+	leaky := "the update failed for bo@example.test under " + shape("/home/", "bo/.fugaro") +
+		", printing " + shape("ghp_", strings.Repeat("A1b2C3d4", 5)) + "\nand then it stopped"
+	for _, piece := range []string{"bo@example.test", shape("/home/", "bo/"), shape("ghp_")} {
+		if !strings.Contains(leaky, piece) {
+			t.Fatalf("the fixture does not carry %q", piece)
+		}
+	}
+	i := sharedIssue("update-20261107183012-48213", "44444444444444444444444444444444")
+	i.Summary, i.Diagnosis, i.Steps = leaky, leaky, leaky
+	i.Logs = []string{leaky}
+	i.FailedCommand = "fugaro run --repo fugaro " + shape("ghp_", strings.Repeat("A1b2C3d4", 5))
+	up := upload(t, ctx, b, i)
+
+	// What the bucket holds, not what a call returned: the object is what a
+	// teammate reads.
+	raw, _, err := b.ReadMax(ctx, recordKey(up.Number), blobx.MaxReadBytes)
+	if err != nil {
+		t.Fatalf("reading shared issue %d back: %v", up.Number, err)
+	}
+	text := string(raw)
+	for _, piece := range []string{"bo@example.test", shape("/home/", "bo/"), shape("ghp_")} {
+		if strings.Contains(text, piece) {
+			t.Errorf("the stored record kept %q", piece)
+		}
+	}
+	if !strings.Contains(text, redactedValue) {
+		t.Errorf("the stored record carries no redaction marker")
+	}
+	if !strings.Contains(text, "the update failed for") || !strings.Contains(text, "and then it stopped") {
+		t.Errorf("the stored record lost the text around it")
+	}
+	for _, kept := range []string{i.Reporter, i.Run, i.LocalID} {
+		if !strings.Contains(text, kept) {
+			t.Errorf("the stored record lost %q, which the store keeps (D1722)", kept)
+		}
+	}
 }
 
 // A fingerprint names the object an issue is filed under, and the local record
@@ -979,6 +1118,55 @@ func TestUploadRefusesAValueThatIsNotAFingerprint(t *testing.T) {
 	up, err := Upload(ctx, b, sharedIssue("update-20261107183012-48213", "23232323232323232323232323232323"))
 	if err != nil || up.Number != 1 {
 		t.Fatalf("the corrected upload = %+v, %v; want issue 1", up, err)
+	}
+}
+
+// A record past what a reader takes back would upload and then be in no
+// listing, with the fingerprint that names it stranded on it and every later
+// report of that bug failing on the read (F24). Upload refuses one before
+// anything is written, and keeps in hand the room the claim takes: the claim a
+// submitter holds the record under is written into the same object, so a record
+// written up to the cap would be unreadable the moment somebody files it.
+func TestUploadRefusesARecordTheStoreCouldNotReadBack(t *testing.T) {
+	ctx := context.Background()
+	b := sharedBucket(t)
+
+	if _, err := Upload(ctx, b, sized(t, "update-20261107183012-48213", "41414141414141414141414141414141", sharedRecordMax-sharedClaimHeadroom+1)); err == nil {
+		t.Fatal("an upload wrote a record past what a reader takes back")
+	} else if !strings.Contains(err.Error(), "more than the shared store reads back") {
+		t.Errorf("the refusal = %v, want the size of the record", err)
+	}
+	// Nothing of it is in the store: the counter has not moved, and there is
+	// neither an entry to name it nor a record to read.
+	if _, err := readVersion(ctx, b, counterKey()); !errors.Is(err, blobx.ErrNotExist) {
+		t.Errorf("a refused upload moved the counter: %v", err)
+	}
+	if rows, err := ListShared(ctx, b); err != nil || len(rows) != 0 {
+		t.Errorf("the listing after a refused upload = %+v, %v; want nothing", rows, err)
+	}
+	iter := b.List(&blob.ListOptions{Prefix: sharedDir + "/" + fingerprintsDir + "/"})
+	if obj, err := iter.Next(ctx); !errors.Is(err, io.EOF) {
+		t.Errorf("a refused upload left %v under the fingerprint prefix: %v", obj, err)
+	}
+
+	// One within the cap uploads and is still read back once it is claimed, the
+	// way a listing reads every issue it holds.
+	up := upload(t, ctx, b, sized(t, "update-20261107183014-48215", "42424242424242424242424242424242", sharedRecordMax-sharedClaimHeadroom))
+	if up.Number != 1 || up.Attached {
+		t.Fatalf("the upload at the cap = %+v, want issue 1", up)
+	}
+	if _, err := Claim(ctx, b, up.Number, "user:ana@example.test", sharedAt); err != nil {
+		t.Fatalf("claiming issue %d: %v", up.Number, err)
+	}
+	rec, _, err := readShared(ctx, b, up.Number)
+	if err != nil {
+		t.Fatalf("reading a claimed issue written at the cap: %v", err)
+	}
+	if rec.Issue.Number != up.Number {
+		t.Errorf("the claimed record holds issue %d, want %d", rec.Issue.Number, up.Number)
+	}
+	if rows, err := ListShared(ctx, b); err != nil || len(rows) != 1 || rows[0].Number != up.Number {
+		t.Errorf("the listing of a claimed issue at the cap = %+v, %v; want issue %d once", rows, err, up.Number)
 	}
 }
 

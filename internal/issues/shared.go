@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -70,6 +71,19 @@ const sharedRetries = 5
 // list shows.
 const occurrenceExcerptMax = 200
 
+// sharedRecordMax is the largest encoded record the store writes. Every reader
+// caps a read at blobx.MaxReadBytes (F24), so a record past it uploads, names
+// its fingerprint, and is then missing from every listing — and every later
+// report of that bug fails on the read.
+const sharedRecordMax = blobx.MaxReadBytes
+
+// sharedClaimHeadroom is what the store adds to a record after it is written:
+// the claim a submitter holds it under, which is a holder name, the time it was
+// taken and the time it lapses. A record within this much of the cap would
+// upload and then be unreadable the moment somebody claimed it, so the cap the
+// write side checks keeps this much in hand.
+const sharedClaimHeadroom = 512
+
 // fingerprintRE is the shape a fingerprint may have: lowercase hex, as
 // T-IS3's signature hashes them. A key is never built from anything else (F20).
 var fingerprintRE = regexp.MustCompile(`^[0-9a-f]{16,64}$`)
@@ -94,10 +108,11 @@ type numberDoc struct {
 }
 
 // sharedRecord is one issue as the store holds it: the record this machine
-// wrote, verbatim, and the claim on it while somebody is filing it. The record
-// keeps its own codec and its own version rather than being projected into
-// fields here, so the bytes a teammate reads are the bytes a person wrote on
-// the machine that hit the bug.
+// wrote, and the claim on it while somebody is filing it. The record keeps its
+// own codec and its own version rather than being projected into fields here,
+// so a teammate reads the record as it was written — with the report's
+// redaction applied to it once more on the way in (F5) and nothing else
+// changed.
 type sharedRecord struct {
 	Format int    `json:"format"`
 	Record string `json:"record"`
@@ -246,6 +261,13 @@ func Upload(ctx context.Context, b *blobx.Bucket, i Issue) (Uploaded, error) {
 	if err := checkLinks(i); err != nil {
 		return Uploaded{}, fmt.Errorf("issues: %w", err)
 	}
+	// Same reason, the other way a record nobody can read would be written: a
+	// record past what a reader's cap takes back is in no listing, and the
+	// fingerprint that names it is stranded. Nothing is written before this
+	// answers either.
+	if err := checkRecordSize(i); err != nil {
+		return Uploaded{}, err
+	}
 	key := fingerprintKey(i.Fingerprint)
 	entry, err := json.Marshal(numberDoc{Format: sharedFormat})
 	if err != nil {
@@ -328,8 +350,8 @@ func Upload(ctx context.Context, b *blobx.Bucket, i Issue) (Uploaded, error) {
 			// fails leaves the record alone: debris a later upload meets is
 			// recoverable, a fingerprint the entry names with no issue under it
 			// is not.
-			named, rerr := entryNames(ctx, b, key, number)
-			if rerr == nil && named {
+			holds, rerr := entryNames(ctx, b, key, number)
+			if rerr == nil && holds {
 				return Uploaded{Number: number}, nil
 			}
 			if rerr == nil {
@@ -337,11 +359,21 @@ func Upload(ctx context.Context, b *blobx.Bucket, i Issue) (Uploaded, error) {
 			}
 			return Uploaded{}, fmt.Errorf("issues: naming the fingerprint: %w", err)
 		}
-		// Somebody named the fingerprint between this read and this write. The
-		// entry is the truth about a fingerprint, so the issue just written at
-		// this upload's own number is an orphan: drop it and follow theirs.
-		if err := b.DeleteIf(ctx, recordKey(number), recGen, rec); err != nil && !errors.Is(err, blobx.ErrConflict) {
-			return Uploaded{}, fmt.Errorf("issues: dropping the orphaned issue %d: %w", number, err)
+		// Somebody named the fingerprint between this read and this write — or
+		// this write landed and the client, retrying a response it never got,
+		// met the entry it had just written and answered a conflict: the entry
+		// is the truth about a fingerprint, so it decides which. It names this
+		// number and the naming landed; it names anything else, and the issue
+		// just written at this upload's own number is an orphan to drop before
+		// following theirs.
+		holds, rerr := entryNames(ctx, b, key, number)
+		if rerr != nil {
+			return Uploaded{}, fmt.Errorf("issues: reading the fingerprint index: %w", rerr)
+		}
+		if !holds {
+			if err := b.DeleteIf(ctx, recordKey(number), recGen, rec); err != nil && !errors.Is(err, blobx.ErrConflict) {
+				return Uploaded{}, fmt.Errorf("issues: dropping the orphaned issue %d: %w", number, err)
+			}
 		}
 		ours = false
 	}
@@ -384,9 +416,13 @@ func occurrenceOf(rec, i Issue) Occurrence {
 }
 
 // excerptOf is the one line of the reporter's text an occurrence carries: the
-// first line of the summary, cut to a length a list can show.
+// first line of the summary, redacted and then cut to a length a list can show.
+// The pass runs before the cut, not after it: a credential the cut leaves
+// shorter than the pattern that finds it would survive into the object the
+// whole team reads (F5).
 func excerptOf(i Issue) string {
 	line, _, _ := strings.Cut(i.Summary, "\n")
+	line = redact.Report(line)
 	if r := []rune(line); len(r) > occurrenceExcerptMax {
 		line = string(r[:occurrenceExcerptMax])
 	}
@@ -582,11 +618,39 @@ func replaceRaw(ctx context.Context, b *blobx.Bucket, key string, raw []byte, v 
 	return version{raw: raw, gen: gen}, nil
 }
 
+// checkRecordSize refuses a record the store could not hand back (F24). The
+// number it will be written under only widens the encoding, so the check runs
+// on the widest one it could take, before the fingerprint entry or the counter
+// is touched.
+func checkRecordSize(i Issue) error {
+	raw, err := marshalShared(i, numberMax)
+	if err != nil {
+		return err
+	}
+	if len(raw)+sharedClaimHeadroom > sharedRecordMax {
+		return fmt.Errorf("issues: %s is %d bytes encoded, more than the shared store reads back (%d)",
+			i.LocalID, len(raw), sharedRecordMax-sharedClaimHeadroom)
+	}
+	return nil
+}
+
 // marshalShared is the object the store holds for issue i at number: the record
 // with that number in it — the number is the store's, and the copy the team
-// reads says which issue it is — written out by the record's own codec.
+// reads says which issue it is — written out by the record's own codec, with
+// the report's redaction run again over the text a person wrote. The local
+// record is a file a person can edit and the store is read by the whole team,
+// so a credential that reached the local copy must not be published with it
+// (F5); the header's identity — reporter, run, local ID — stays, because the
+// store is where the whole issue lives and only the post to GitHub strips it
+// (D1722).
 func marshalShared(i Issue, number int) ([]byte, error) {
 	i.Number, i.Uploaded = number, true
+	i.FailedCommand = redact.Report(i.FailedCommand)
+	i.Summary, i.Diagnosis, i.Steps = redact.Report(i.Summary), redact.Report(i.Diagnosis), redact.Report(i.Steps)
+	i.Logs = slices.Clone(i.Logs)
+	for n := range i.Logs {
+		i.Logs[n] = redact.Report(i.Logs[n])
+	}
 	text, err := Marshal(i)
 	if err != nil {
 		return nil, err
