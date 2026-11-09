@@ -222,6 +222,29 @@ test('a renewal installs a second key, and the later expiry is the one that appl
   assert.deepEqual(await licence.keys(), { ok: true, keys: [renewal, third] }, 'the same key twice is one key');
 });
 
+test('two pastes at once keep both keys rather than one overwriting the other', async () => {
+  const port = new MemoryStore();
+  const production = signer('prod-2026');
+  const licence = store(port, [production]);
+
+  // An install reads the entry and then writes it, so two that interleaved would
+  // each write a set missing the other's key -- and the store would then be
+  // holding one key where the user pasted two, silently. Issued together rather
+  // than one after the other, which is the whole of what this case is for.
+  const first = mint(production, claimsFor({ expires: ISSUED + 365 * DAY }));
+  const renewal = mint(production, claimsFor({ issued: ISSUED + 335 * DAY, expires: ISSUED + 700 * DAY }));
+  const [one, two] = await Promise.all([
+    licence.install(first, at(ISSUED)),
+    licence.install(renewal, at(ISSUED + 335 * DAY)),
+  ]);
+
+  assert.equal(one.ok, true, 'the first paste verified');
+  assert.equal(two.ok, true, 'the second paste verified');
+  assert.deepEqual(await licence.keys(), { ok: true, keys: [first, renewal] }, 'both keys are kept');
+  const applied = await licence.active(at(ISSUED + 335 * DAY));
+  assert.equal(applied.claims.expires, ISSUED + 700 * DAY, 'and the later expiry still applies');
+});
+
 test('an entry this store did not write is cleared rather than retried forever', async () => {
   const port = new MemoryStore();
   const production = signer('prod-2026');

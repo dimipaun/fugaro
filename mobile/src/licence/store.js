@@ -96,6 +96,14 @@ function refuse(code, field) {
 export class LicenceStore {
   #port;
   #verifier;
+  /**
+   * The tail of the queue `install` runs on. An install reads the entry and then
+   * writes it, so two of them interleaved could each write a set that misses the
+   * other's key -- and the cap of two would then drop the older of the two rather
+   * than keep both. The reading half is not queued and needs no queue: `keys` and
+   * `active` change nothing.
+   */
+  #queue = Promise.resolve();
 
   constructor({ port, verifier } = {}) {
     if (port === null || typeof port !== 'object') throw new TypeError('a store port is required');
@@ -127,13 +135,15 @@ export class LicenceStore {
   async install(raw, now) {
     const read = this.#verifier.verify(raw, now);
     if (!read.ok) return read;
-    const held = await this.#read();
-    if (!held.ok) return held;
     const text = raw.trim();
-    const kept = [...held.keys.filter((one) => one !== text), text].slice(-LICENCE_KEYS_MAX);
-    const wrote = await this.#write(kept);
-    if (wrote !== null) return wrote;
-    return read;
+    return this.#queued(async () => {
+      const held = await this.#read();
+      if (!held.ok) return held;
+      const kept = [...held.keys.filter((one) => one !== text), text].slice(-LICENCE_KEYS_MAX);
+      const wrote = await this.#write(kept);
+      if (wrote !== null) return wrote;
+      return read;
+    });
   }
 
   /**
@@ -164,6 +174,18 @@ export class LicenceStore {
     const held = await this.#read();
     if (!held.ok) return held;
     return this.#verifier.latest(held.keys, now);
+  }
+
+  /** #queued runs one mutation after the last one, and answers what it answered.
+   * The caller still sees a failure: the tail the queue keeps swallows it
+   * because the next install must run whether the previous one threw or not. */
+  #queued(work) {
+    const done = this.#queue.then(work, work);
+    this.#queue = done.then(
+      () => undefined,
+      () => undefined,
+    );
+    return done;
   }
 
   async #read() {
