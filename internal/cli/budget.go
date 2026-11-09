@@ -948,6 +948,14 @@ func printShow(w io.Writer, d *budgetShowDoc, showCompute bool) {
 			continue
 		}
 		fmt.Fprintln(w, "  running:")
+		// The block is a listing of runs like any other, so its runs are shown
+		// by the ending the CLI resolves (spec.md §1, task.DisplayRuns), while
+		// --json's own rows keep the full ID (D1705).
+		refs := make([]task.Ref, 0, len(r.Running))
+		for _, e := range r.Running {
+			refs = append(refs, task.Ref{Slug: e.Slug, RunID: e.Run})
+		}
+		endings := task.DisplayRuns(refs)
 		tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
 		for _, e := range r.Running {
 			state := oneLine(clipRunes(e.Stage, 200))
@@ -960,7 +968,7 @@ func printShow(w io.Writer, d *budgetShowDoc, showCompute bool) {
 			if e.Stale {
 				state += " (no heartbeat)"
 			}
-			fmt.Fprintf(tw, "    %s\t%s\t%s\t%s\t%s\n", oneLine(clipRunes(e.Run, 200)), oneLine(clipRunes(e.Workflow, 200)), state, usdVal(e.SpentUSD), oneLine(clipRunes(e.Title, 200)))
+			fmt.Fprintf(tw, "    %s\t%s\t%s\t%s\t%s\n", oneLine(endings[task.Ref{Slug: e.Slug, RunID: e.Run}]), oneLine(clipRunes(e.Workflow, 200)), state, usdVal(e.SpentUSD), oneLine(clipRunes(e.Title, 200)))
 		}
 		_ = tw.Flush()
 	}

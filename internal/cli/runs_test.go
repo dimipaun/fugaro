@@ -857,6 +857,8 @@ func TestLsPRColumn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The RUN cell is the run's short form (spec.md §1), so a row is looked up
+	// by that.
 	lines := map[string]string{}
 	for _, l := range strings.Split(human, "\n") {
 		if fields := strings.Fields(l); len(fields) > 0 {
@@ -865,13 +867,13 @@ func TestLsPRColumn(t *testing.T) {
 	}
 	// The BY cell follows the PR column, and none of these runs recorded a
 	// launcher (seedSpec's launch.json carries none): a dash.
-	if l := lines[appSlug+"/"+r.fu1]; !strings.Contains(l, "#7 https://github.com/acme/app/pull/7 (draft)") || !strings.HasSuffix(strings.TrimSpace(l), "-") {
+	if l := lines[task.ShortRun(r.fu1)]; !strings.Contains(l, "#7 https://github.com/acme/app/pull/7 (draft)") || !strings.HasSuffix(strings.TrimSpace(l), "-") {
 		t.Fatalf("finished follow-up line = %q\n%s", l, human)
 	}
-	if l := lines[appSlug+"/"+waiting]; !strings.Contains(l, "#7") || !strings.HasSuffix(strings.TrimSpace(l), "-") {
+	if l := lines[task.ShortRun(waiting)]; !strings.Contains(l, "#7") || !strings.HasSuffix(strings.TrimSpace(l), "-") {
 		t.Fatalf("unlaunched follow-up line = %q\n%s", l, human)
 	}
-	if l := lines[appSlug+"/"+r.plain]; l != "" {
+	if l := lines[task.ShortRun(r.plain)]; l != "" {
 		t.Fatalf("a run off the PR is listed: %q", l)
 	}
 }
@@ -1012,9 +1014,12 @@ func TestLsRecipeColumnDefaultsEmpty(t *testing.T) {
 	if err := printRows(&b, "aurora", rows, nil, time.Now(), false); err != nil {
 		t.Fatal(err)
 	}
+	// The two rows share their last four characters, so the listing extends
+	// each ending until they tell the rows apart (spec.md §3): the row stamped
+	// 100000 — the one without a recipe — is the one ending `00000-abcd`.
 	var line string
 	for _, l := range strings.Split(b.String(), "\n") {
-		if strings.Contains(l, "100000") {
+		if strings.HasPrefix(l, "00000-abcd") {
 			line = l
 		}
 	}
@@ -1034,9 +1039,11 @@ func TestLsAccountColumn(t *testing.T) {
 	if err := printRows(&b, "aurora", rows, nil, time.Now(), false); err != nil || !strings.Contains(b.String(), "ACCOUNT") || !strings.Contains(b.String(), "acme-personal") {
 		t.Fatalf("with a named account:\n%s", b.String())
 	}
+	// As above: the two rows share their last four characters, so the listing
+	// extends the endings until they tell the rows apart.
 	var line string
 	for _, l := range strings.Split(b.String(), "\n") {
-		if strings.Contains(l, "100000") {
+		if strings.HasPrefix(l, "00000-abcd") {
 			line = l
 		}
 	}
@@ -1451,7 +1458,9 @@ func TestLsLauncherComesFromLaunchJSON(t *testing.T) {
 	}
 	var dashLine string
 	for _, l := range strings.Split(human, "\n") {
-		if strings.Contains(l, "091000") {
+		// The RUN cell is the run's ending, which is what tells the two rows
+		// of this listing apart.
+		if f := strings.Fields(l); len(f) > 0 && f[0] == "bbbb" {
 			dashLine = l
 		}
 	}
@@ -1514,9 +1523,10 @@ func TestLsLauncherShortFormAndClip(t *testing.T) {
 		"ffff": strings.Repeat("c", maxNameCellRunes) + "…"} {
 		found := false
 		for _, l := range strings.Split(out, "\n") {
-			if strings.Contains(l, "-"+id) {
+			// The RUN cell is the run's ending (the four characters above),
+			// and the first cell of the row.
+			if f := strings.Fields(l); len(f) > 0 && f[0] == id {
 				found = true
-				f := strings.Fields(l)
 				if got := f[len(f)-1]; got != want {
 					t.Errorf("run %s: BY = %q, want %q\n%s", id, got, want, out)
 				}
@@ -2585,7 +2595,14 @@ func TestRunsLsDebtFiltersToDebtTasks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(human, "-aaaa") || strings.Contains(human, "-bbbb") || strings.Contains(human, "-dddd") {
+	// The RUN cell is the run's ending, so the listing is read column by column.
+	listed := map[string]bool{}
+	for _, l := range strings.Split(human, "\n") {
+		if f := strings.Fields(l); len(f) > 0 {
+			listed[f[0]] = true
+		}
+	}
+	if !listed["aaaa"] || !listed["cccc"] || listed["bbbb"] || listed["dddd"] {
 		t.Fatalf("the plain listing's --debt =\n%s", human)
 	}
 }
