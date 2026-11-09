@@ -12,6 +12,11 @@
 // deploy/terraform/modules/installation's own security tests do, and the
 // `terraform` tag is what the plan's command runs them with:
 //
+// Reading a configuration as text is also why this tree holds one form of it and
+// no other: a `.tf.json` file, an override file and a module block are each a
+// place a grant can be written where nothing above changes, and the checks here
+// see none of the three. TestTheTestsReadEveryFileOfTheTree refuses all of them.
+//
 //	go test -tags terraform ./ee/keyservice/... -count=1
 //
 // The tag also carries the one test that needs the binary (the fmt check): this
@@ -29,9 +34,11 @@ import (
 	"testing"
 )
 
+// The two roots, named once: every detailed check below reads the block a root
+// declares rather than the file it happens to live in today.
 const (
-	keyringMainTF  = "keyring/main.tf"
-	servicesMainTF = "services/main.tf"
+	keyringRoot  = "keyring"
+	servicesRoot = "services"
 )
 
 // tfSource reads one file of this tree with its comments removed: what these
@@ -61,26 +68,6 @@ func tfSource(t *testing.T, rel string) string {
 		out = append(out, line)
 	}
 	return strings.Join(out, "\n")
-}
-
-// tfBlock answers one block's text, from its header to the next block at the
-// top level of its file. It is deliberately not a parser: every assertion below
-// is about a string the block either writes or does not, and the cut at the next
-// header keeps a block that is no longer the last one in its file from silently
-// taking its neighbour's text with it.
-func tfBlock(t *testing.T, src, header string) string {
-	t.Helper()
-	i := strings.Index(src, header)
-	if i < 0 {
-		t.Fatalf("no %s: the block this check is about is gone or renamed", header)
-	}
-	rest := src[i+len(header):]
-	for _, cut := range []string{"\nresource \"", "\ndata \"", "\noutput \"", "\nvariable \""} {
-		if j := strings.Index(rest, cut); j >= 0 {
-			rest = rest[:j]
-		}
-	}
-	return rest
 }
 
 // tfBlocks answers every block in one file whose header starts with the given
@@ -156,36 +143,116 @@ func tfList(grants map[string]string) string {
 	return strings.Join(lines, "\n")
 }
 
-// tfFiles lists this tree's Terraform, so that a sweep covers a file a later
-// change adds as well as the two roots there are today. Hidden directories are
-// skipped: a provider data directory belongs outside the tree (the `terraform`
-// rule), and a state file is never committed.
-func tfFiles(t *testing.T) []string {
-	t.Helper()
-	var files []string
-	err := filepath.WalkDir(".", func(path string, d fs.DirEntry, err error) error {
+// tfTerraformFiles walks a tree and splits the files Terraform would read into
+// the ones these tests can and the ones they refuse, both relative to the root
+// given and sorted. What is refused is every form of configuration a text sweep
+// over HCL cannot see: a `.tf.json` file is the same declarations in another
+// syntax, and an override file (`override.tf`, `main_override.tf`, either of
+// them in JSON) is merged over the rest of its directory last, so it can add a
+// grant to the key ring or flip a service's IAM without any block below
+// changing. A `.tfvars` file only fills in variables — it cannot declare a
+// resource — so it is none of this walk's business.
+//
+// Hidden directories are skipped: a provider data directory belongs outside the
+// tree (the `terraform` rule), and a state file is never committed.
+func tfTerraformFiles(root string) (files, refused []string, err error) {
+	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		if d.IsDir() {
-			if path != "." && strings.HasPrefix(d.Name(), ".") {
+			if path != root && strings.HasPrefix(d.Name(), ".") {
 				return fs.SkipDir
 			}
 			return nil
 		}
-		if strings.HasSuffix(path, ".tf") {
-			files = append(files, path)
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+		switch {
+		case strings.HasSuffix(rel, ".tf.json"), tfOverrides(rel):
+			refused = append(refused, rel)
+		case strings.HasSuffix(rel, ".tf"):
+			files = append(files, rel)
 		}
 		return nil
 	})
+	slices.Sort(files)
+	slices.Sort(refused)
+	return files, refused, err
+}
+
+// tfOverrides reports whether a path is one of the names Terraform merges over
+// the other files of its directory. The JSON spellings of both are covered by
+// the `.tf.json` test beside this one.
+func tfOverrides(rel string) bool {
+	base := filepath.Base(rel)
+	return base == "override.tf" || strings.HasSuffix(base, "_override.tf")
+}
+
+// tfTerraform lists one tree's readable Terraform and fails the test on a file
+// the sweep cannot read: a sweep is only as good as the files it saw, and a tree
+// holding a second form of a root's configuration is one this suite has
+// half-read.
+func tfTerraform(t *testing.T, root string) []string {
+	t.Helper()
+	files, refused, err := tfTerraformFiles(root)
 	if err != nil {
-		t.Fatalf("walking the terraform tree: %v", err)
+		t.Fatalf("walking %s: %v", root, err)
 	}
+	for _, rel := range refused {
+		t.Errorf("%s is a Terraform configuration file these tests cannot read: a `.tf.json` file writes the same resources in another syntax and an override file is merged over its directory last, so either one can grant a role, flip a service's IAM or widen the signer role without any block below changing. Keep the root in plain HCL and in one form, or teach these tests to read the form (S3.5)", rel)
+	}
+	return files
+}
+
+// tfFiles lists the whole tree's readable Terraform, so that a sweep covers a
+// file a later change adds as well as the two roots there are today.
+func tfFiles(t *testing.T) []string {
+	t.Helper()
+	files := tfTerraform(t, ".")
 	if len(files) < 6 {
 		t.Fatalf("found %d .tf files: the walk did not see both roots, and a sweep over a tree it half-read proves nothing", len(files))
 	}
-	slices.Sort(files)
 	return files
+}
+
+// tfRootFiles lists one root's readable Terraform, for the checks that read the
+// block a root declares rather than sweeping the tree.
+func tfRootFiles(t *testing.T, root string) []string {
+	t.Helper()
+	files := tfTerraform(t, root)
+	if len(files) == 0 {
+		t.Fatalf("%s holds no .tf file", root)
+	}
+	return files
+}
+
+// tfRootBlock answers the one block a root declares under the given header,
+// whichever of that root's files holds it: Terraform refuses a resource declared
+// twice in one directory, so a root has exactly one, and a check that read
+// services/main.tf alone would read a file the block had been moved out of.
+func tfRootBlock(t *testing.T, root, header string) string {
+	t.Helper()
+	var found []string
+	for _, rel := range tfRootFiles(t, root) {
+		for _, block := range tfBlocks(tfSource(t, filepath.Join(root, rel)), `resource "`) {
+			if tfHeader(block) == header {
+				found = append(found, block)
+			}
+		}
+	}
+	switch len(found) {
+	case 1:
+		return found[0]
+	case 0:
+		t.Fatalf("%s declares no %s: the block this check is about is gone or renamed", root, header)
+	default:
+		t.Fatalf("%s declares %s %d times: Terraform refuses a resource declared twice in one directory, so this tree does not validate", root, header, len(found))
+	}
+	return ""
 }
 
 // TestTheSigningKeyIsNonExportable: the private half of a signing key exists
@@ -204,14 +271,14 @@ func tfFiles(t *testing.T) []string {
 // external_key_uri appearing on a version, or the algorithm or protection level
 // moving off the pair the verifiers were built for.
 func TestTheSigningKeyIsNonExportable(t *testing.T) {
-	key := tfBlock(t, tfSource(t, keyringMainTF), `resource "google_kms_crypto_key" "signing"`)
+	key := tfCompact(tfRootBlock(t, keyringRoot, `resource "google_kms_crypto_key" "signing"`))
 	for _, want := range []string{
-		`purpose = "ASYMMETRIC_SIGN"`,
-		`algorithm        = "EC_SIGN_ED25519"`,
-		`protection_level = "SOFTWARE"`,
+		`purpose="ASYMMETRIC_SIGN"`,
+		`algorithm="EC_SIGN_ED25519"`,
+		`protection_level="SOFTWARE"`,
 	} {
 		if !strings.Contains(key, want) {
-			t.Errorf("%s's signing key does not write %s: S2.1 fixes the algorithm as Ed25519, which the three verifiers verify, and the key is signed with through the API rather than from a file", keyringMainTF, want)
+			t.Errorf("%s's signing key does not write %s: S2.1 fixes the algorithm as Ed25519, which the three verifiers verify, and the key is signed with through the API rather than from a file", keyringRoot, want)
 		}
 	}
 
@@ -246,8 +313,6 @@ func TestTheSigningKeyIsNonExportable(t *testing.T) {
 // The mutation this fails on, and the red step the plan names: the grant's
 // member spelled google_service_account.intake.member.
 func TestOnlyTheMinterHoldsTheSignerRole(t *testing.T) {
-	src := tfSource(t, servicesMainTF)
-
 	// Every block in the tree that grants anything at all is one of the four
 	// grants this service is allowed to hold, and the list is the whole of it.
 	// A count of grants of one resource TYPE in one file would miss a second
@@ -275,15 +340,15 @@ func TestOnlyTheMinterHoldsTheSignerRole(t *testing.T) {
 		}
 	}
 
-	grant := tfCompact(tfBlock(t, src, `resource "google_kms_key_ring_iam_member" "minter_signs"`))
+	grant := tfCompact(tfRootBlock(t, servicesRoot, `resource "google_kms_key_ring_iam_member" "minter_signs"`))
 	if !strings.Contains(grant, "member=google_service_account.minter.member") {
-		t.Errorf("%s's signer grant is not the minter's account: the minter is the one service that signs (T13's split), and the grant is where that is decided — an intake here hands the signer role to the internet-facing service", servicesMainTF)
+		t.Errorf("%s's signer grant is not the minter's account: the minter is the one service that signs (T13's split), and the grant is where that is decided — an intake here hands the signer role to the internet-facing service", servicesRoot)
 	}
 	if !strings.Contains(grant, `role="projects/${var.project}/roles/${var.signer_role}"`) {
-		t.Errorf("%s's signer grant is not the custom role keyring/ creates: the narrowest grant that mints is one permission, cloudkms.cryptoKeyVersions.useToSign, while a predefined role also reads the public key and verifies", servicesMainTF)
+		t.Errorf("%s's signer grant is not the custom role keyring/ creates: the narrowest grant that mints is one permission, cloudkms.cryptoKeyVersions.useToSign, while a predefined role also reads the public key and verifies", servicesRoot)
 	}
 	if !strings.Contains(grant, "key_ring_id=data.google_kms_key_ring.signing.id") {
-		t.Errorf("%s's signer grant is not on the key ring: the grant has to reach the keys keyring/ created rather than a project, and the data source is what fails the plan while S3.8's apply has not run", servicesMainTF)
+		t.Errorf("%s's signer grant is not on the key ring: the grant has to reach the keys keyring/ created rather than a project, and the data source is what fails the plan while S3.8's apply has not run", servicesRoot)
 	}
 
 	// The role the grant names is the role keyring/ defines, and it is the
@@ -291,32 +356,35 @@ func TestOnlyTheMinterHoldsTheSignerRole(t *testing.T) {
 	// signerVerifier, which also reads the public key and verifies. Without this
 	// the pair above could name a custom role holding useToSign and
 	// useToVerify, or a role id nothing creates.
-	role := tfCompact(tfBlock(t, tfSource(t, keyringMainTF), `resource "google_project_iam_custom_role" "signer"`))
+	role := tfCompact(tfRootBlock(t, keyringRoot, `resource "google_project_iam_custom_role" "signer"`))
 	for _, want := range []string{
 		"role_id=var.signer_role",
 		`permissions=["cloudkms.cryptoKeyVersions.useToSign"]`,
 	} {
 		if !strings.Contains(role, want) {
-			t.Errorf("%s's signer role does not write %s: the minter signs and verifies nothing with the private half, and the grant services/ makes names this role", keyringMainTF, want)
+			t.Errorf("%s's signer role does not write %s: the minter signs and verifies nothing with the private half, and the grant services/ makes names this role", keyringRoot, want)
 		}
 	}
 
-	// The other half of the same boundary, over every grant rather than the
-	// signer one: the intake's account is granted exactly one thing, the invoker
-	// role on the minter. A second grant is a reach this file would otherwise
-	// never say out loud — a KMS role to the internet-facing account above all.
+	// The other half of the same boundary, over every grant in the tree rather
+	// than the signer one: the intake's account is granted exactly one thing, the
+	// invoker role on the minter. A second grant is a reach nothing else here
+	// would say out loud — a KMS role to the internet-facing account above all,
+	// and the keyring root is as good a place to write one as this one.
 	uses := 0
-	for _, block := range tfBlocks(src, `resource "`) {
-		if !strings.Contains(tfCompact(block), "google_service_account.intake.member") {
-			continue
-		}
-		uses++
-		if tfHeader(block) != `resource "google_cloud_run_v2_service_iam_member" "intake_invokes_minter"` {
-			t.Errorf("%s grants the intake's account something besides the invoker role on the minter:\n%s\nthe intake holds no KMS role and reaches the signer only through the minter (Check 174)", servicesMainTF, strings.TrimSpace(block))
+	for _, rel := range tfFiles(t) {
+		for _, block := range tfBlocks(tfSource(t, rel), `resource "`) {
+			if !strings.Contains(tfCompact(block), "google_service_account.intake.member") {
+				continue
+			}
+			uses++
+			if tfHeader(block) != `resource "google_cloud_run_v2_service_iam_member" "intake_invokes_minter"` {
+				t.Errorf("%s grants the intake's account something besides the invoker role on the minter:\n%s\nthe intake holds no KMS role and reaches the signer only through the minter (Check 174)", rel, strings.TrimSpace(block))
+			}
 		}
 	}
 	if uses != 1 {
-		t.Errorf("%s grants the intake's account %d times, want exactly 1: its whole reach is the authenticated call to the minter", servicesMainTF, uses)
+		t.Errorf("this tree grants the intake's account %d times, want exactly 1: its whole reach is the authenticated call to the minter", uses)
 	}
 }
 
@@ -329,11 +397,9 @@ func TestOnlyTheMinterHoldsTheSignerRole(t *testing.T) {
 // an invoker but the intake's own public one, and the minter's only invoker is
 // the intake's account. Check 174 again, from the network's side.
 func TestTheMinterHasNoPublicInvoker(t *testing.T) {
-	src := tfSource(t, servicesMainTF)
-
-	minter := tfCompact(tfBlock(t, src, `resource "google_cloud_run_v2_service" "minter"`))
+	minter := tfCompact(tfRootBlock(t, servicesRoot, `resource "google_cloud_run_v2_service" "minter"`))
 	if !strings.Contains(minter, "invoker_iam_disabled=false") {
-		t.Errorf("%s's minter service does not require IAM: the flag has to be stated false, because a service that stopped checking IAM answers every caller and the one invoker grant this file writes would be the only thing between the internet and the signer (Check 174)", servicesMainTF)
+		t.Errorf("%s's minter service does not require IAM: the flag has to be stated false, because a service that stopped checking IAM answers every caller and the one invoker grant this root writes would be the only thing between the internet and the signer (Check 174)", servicesRoot)
 	}
 
 	// The count is over the bare token in every block of the tree rather than
@@ -355,9 +421,9 @@ func TestTheMinterHasNoPublicInvoker(t *testing.T) {
 		t.Errorf("this tree grants allUsers %d times, want exactly 1: the intake is the one public surface, and every other binding — on the minter above all — hands the internet an invoker it should not have", public)
 	}
 
-	publicBlock := tfCompact(tfBlock(t, src, `resource "google_cloud_run_v2_service_iam_member" "intake_public"`))
+	publicBlock := tfCompact(tfRootBlock(t, servicesRoot, `resource "google_cloud_run_v2_service_iam_member" "intake_public"`))
 	if !strings.Contains(publicBlock, `"allUsers"`) {
-		t.Errorf("%s's public binding is not the one that writes allUsers: the single public grant has to be this resource, so that a reader finds the internet's one door by its name", servicesMainTF)
+		t.Errorf("%s's public binding is not the one that writes allUsers: the single public grant has to be this resource, so that a reader finds the internet's one door by its name", servicesRoot)
 	}
 	// The service the binding NAMES is the one it opens: a block that kept the
 	// intake in its location and moved its name to the minter would open the
@@ -368,14 +434,14 @@ func TestTheMinterHasNoPublicInvoker(t *testing.T) {
 		"location=google_cloud_run_v2_service.intake.",
 	} {
 		if !strings.Contains(publicBlock, want) {
-			t.Errorf("%s's allUsers binding is not on the intake service: it does not write %s", servicesMainTF, want)
+			t.Errorf("%s's allUsers binding is not on the intake service: it does not write %s", servicesRoot, want)
 		}
 	}
 	if !strings.Contains(publicBlock, `role="roles/run.invoker"`) {
-		t.Errorf("%s's allUsers binding is not the invoker role: any other role's public grant on a service is a reach nobody asked for", servicesMainTF)
+		t.Errorf("%s's allUsers binding is not the invoker role: any other role's public grant on a service is a reach nobody asked for", servicesRoot)
 	}
 
-	invoker := tfCompact(tfBlock(t, src, `resource "google_cloud_run_v2_service_iam_member" "intake_invokes_minter"`))
+	invoker := tfCompact(tfRootBlock(t, servicesRoot, `resource "google_cloud_run_v2_service_iam_member" "intake_invokes_minter"`))
 	for _, want := range []string{
 		"name=google_cloud_run_v2_service.minter.",
 		"location=google_cloud_run_v2_service.minter.",
@@ -383,7 +449,115 @@ func TestTheMinterHasNoPublicInvoker(t *testing.T) {
 		`role="roles/run.invoker"`,
 	} {
 		if !strings.Contains(invoker, want) {
-			t.Errorf("%s's invoker grant on the minter does not write %s: the minter has no public invoker, and the intake's ID token is what the platform checks before its container runs (D450(a))", servicesMainTF, want)
+			t.Errorf("%s's invoker grant on the minter does not write %s: the minter has no public invoker, and the intake's ID token is what the platform checks before its container runs (D450(a))", servicesRoot, want)
+		}
+	}
+}
+
+// TestTheTestsReadEveryFileOfTheTree: everything Terraform would read under
+// this tree is either read by the checks above or refused here, because a sweep
+// that silently skipped a file is a sweep that proves nothing about it. Three
+// forms are refused, each one a place a grant can be written where no block
+// above changes:
+//
+//   - a `.tf.json` file, which is the same declarations in another syntax, so
+//     every text check above looks at it and finds nothing;
+//   - an override file — `override.tf`, `*_override.tf`, either of them in JSON
+//     — which Terraform merges over the rest of its directory last, so the
+//     minter's `invoker_iam_disabled` or the signer grant's member can be
+//     rewritten while `main.tf` still reads as written;
+//   - a `module` block, whose configuration is another tree these tests do not
+//     walk at all.
+//
+// None of the three is used anywhere in this repository, and a tree that gains
+// one fails until a person either removes it or teaches these tests to read it.
+// The cases below are the reviewer's mutations, built in a scratch tree: an
+// override flipping the minter's IAM flag, a suffixed override adding
+// `useToVerify` to the signer role, a JSON file granting the signer role, an
+// override in JSON naming the intake in the signer grant — and a second plain
+// HCL file in a root, which is admitted, because the rule is one FORM per root
+// and not one file.
+func TestTheTestsReadEveryFileOfTheTree(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		write   map[string]string
+		refused []string
+	}{
+		{
+			name: "an override flipping the minter's IAM flag",
+			write: map[string]string{
+				"services/main.tf": "resource \"google_cloud_run_v2_service\" \"minter\" {\n  invoker_iam_disabled = false\n}\n",
+				"services/override.tf": "resource \"google_cloud_run_v2_service\" \"minter\" {\n" +
+					"  invoker_iam_disabled = true\n}\n",
+			},
+			refused: []string{"services/override.tf"},
+		},
+		{
+			name: "a suffixed override widening the signer role",
+			write: map[string]string{
+				"keyring/main.tf": "resource \"google_project_iam_custom_role\" \"signer\" {\n" +
+					"  permissions = [\"cloudkms.cryptoKeyVersions.useToSign\"]\n}\n",
+				"keyring/main_override.tf": "resource \"google_project_iam_custom_role\" \"signer\" {\n" +
+					"  permissions = [\"cloudkms.cryptoKeyVersions.useToSign\", \"cloudkms.cryptoKeyVersions.useToVerify\"]\n}\n",
+			},
+			refused: []string{"keyring/main_override.tf"},
+		},
+		{
+			name: "a JSON file granting the signer role",
+			write: map[string]string{
+				"services/main.tf": "resource \"google_kms_key_ring_iam_member\" \"minter_signs\" {\n" +
+					"  member = google_service_account.minter.member\n}\n",
+				"services/extra.tf.json": `{"resource":{"google_kms_key_ring_iam_binding":{"second":{"role":"projects/x/roles/fugaroKeySigner","members":["serviceAccount:intake@example.iam.gserviceaccount.com"],"key_ring_id":"x"}}}}`,
+			},
+			refused: []string{"services/extra.tf.json"},
+		},
+		{
+			name: "an override in JSON naming the intake in the signer grant",
+			write: map[string]string{
+				"services/main.tf": "resource \"google_kms_key_ring_iam_member\" \"minter_signs\" {\n" +
+					"  member = google_service_account.minter.member\n}\n",
+				"services/override.tf.json": `{"resource":{"google_kms_key_ring_iam_member":{"minter_signs":{"member":"${google_service_account.intake.member}"}}}}`,
+			},
+			refused: []string{"services/override.tf.json"},
+		},
+		{
+			name: "a second plain HCL file in a root",
+			write: map[string]string{
+				"services/main.tf":   "resource \"google_service_account\" \"intake\" {}\n",
+				"services/grants.tf": "resource \"google_kms_key_ring_iam_member\" \"minter_signs\" {}\n",
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			for rel, body := range tc.write {
+				path := filepath.Join(root, filepath.FromSlash(rel))
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatalf("writing %s: %v", rel, err)
+				}
+				if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+					t.Fatalf("writing %s: %v", rel, err)
+				}
+			}
+
+			files, refused, err := tfTerraformFiles(root)
+			if err != nil {
+				t.Fatalf("walking the scratch tree: %v", err)
+			}
+			if !slices.Equal(refused, tc.refused) {
+				t.Errorf("the walk refuses %v and hands %v to the checks, want it to refuse %v: a file it hands over unread is a file no check above ever saw", refused, files, tc.refused)
+			}
+			if want := len(tc.write) - len(tc.refused); len(files) != want {
+				t.Errorf("the walk hands over %v, want %d plain .tf file(s): the rule is one form per root, not one file", files, want)
+			}
+		})
+	}
+
+	// The same rule over the tree as it is: no override, no JSON, no module, so
+	// that a mutation added to the real tree fails rather than being swept past.
+	for _, rel := range tfFiles(t) {
+		if strings.Contains(tfCompact(tfSource(t, rel)), `module"`) {
+			t.Errorf("%s writes a module block: a module's configuration is a tree these tests do not walk, so a grant written inside one would be invisible here. Write the resources in this tree, or teach these tests to read the module (S3.5)", rel)
 		}
 	}
 }
