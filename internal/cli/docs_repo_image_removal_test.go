@@ -32,8 +32,10 @@ package cli
 // breaks on the task rather than on a mistake.
 //
 //  * TestDocsRepoImageRemovalIsWritten -- the four files exist, the index
-//    carries the status line and the owner's ruling verbatim, the spec carries
-//    the order that orders every task, and the plan carries its own signature.
+//    carries the status line, the parked chain (R0 and R1 shipped, R2-R10
+//    deferred by the image setup skill's D1900) and the owner's ruling
+//    verbatim, the spec carries the order that orders every task, and the plan
+//    carries its own signature.
 //  * TestDocsRepoImageRemovalDecisionsAreInRange -- D1190-D1208 are written,
 //    each exactly once and in order, every one is open with a recommendation and
 //    the cost of both the alternative and the recommendation, and D1209-D1219,
@@ -122,7 +124,14 @@ func TestDocsRepoImageRemovalIsWritten(t *testing.T) {
 	}
 	readme := flattenDoc(readDoc(t, rirReadme))
 	for _, want := range []string{
-		"**Status: a design, and nothing is built. The owner answered every decision on 2026-11-04.**",
+		// The status line, and the parking note below it: R0 and R1 are on
+		// `main` (R0's dogfood entry and pin, R1's prebuilt-entry refusal), and
+		// the chain that removes the rest is deferred rather than cancelled, so
+		// a reader who takes one thing from the index takes which half shipped
+		// and which half did not.
+		"**Status: a design. R0 and R1 have shipped, and R2–R10 are parked by the image setup skill (D1900); the owner answered every decision on 2026-11-04.**",
+		"**Amended 2026-11-09: the removal is parked, and its first two tasks have shipped.**",
+		"**R2–R10 are parked**: deferred, not cancelled",
 		// The owner's ruling, verbatim, so the index cannot drift into a
 		// paraphrase of it: every task of the plan answers this sentence.
 		"Completely disable repo-level images for now to make things simpler.",
