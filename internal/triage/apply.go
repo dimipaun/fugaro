@@ -69,19 +69,25 @@ type Outcome struct {
 // finding, since Split returns bare scores and this needs the index and key
 // each one carries — and everywhere else the table stands:
 //
+//   - A finding only the owner can settle is Blocking with source table,
+//     whatever the table and whatever the verdict say: a tolerated one is not
+//     filed as a follow-up task either, because the run is waiting for a person
+//     and neither a mode's leniency nor a judge's word is that person
+//     (D1856, F22; the same rule Decide reads above every mode's tolerance).
 //   - A finding the table tolerates is Deferred with source table, whatever
 //     any entry says. The judge's reach is what the table blocks, so it can
 //     neither add a block the table does not hold nor claim a deferral the
 //     table already made.
-//   - A finding the floor holds (rigor.Floor) or that only the owner can
-//     settle is Blocking with source table: no verdict moves either, and a
-//     needs_owner finding is never a follow-up task (D1856).
+//   - A finding the floor holds (rigor.Floor) is Blocking with source table:
+//     no verdict moves it.
 //   - A finding the table blocks that the answer left out is Blocking with
 //     source table: a missing verdict for a blocked finding blocks it (D1846).
 //   - ok == false — the call failed, timed out, or answered something Decode
 //     refused — blocks every finding the table blocks, with source fail_safe.
 //     A tolerated finding is still deferred: the table, not the judge, is what
-//     lets it through.
+//     lets it through. This is asked after the owner's flag, the one placement
+//     a failed call does not reattribute: the run waits for a person whether or
+//     not the call that would have judged the round answered.
 //
 // The verdict is untrusted data throughout. An entry naming no finding of the
 // round is dropped; an entry whose index and key disagree, and two entries for
@@ -123,14 +129,18 @@ func Apply(m rigor.Mode, in []Input, v Verdict, ok bool) Outcome {
 
 	for i, f := range in {
 		switch {
+		// The owner's flag is asked before the table's leniency, not after it:
+		// a finding only the owner can settle holds the merge even where the
+		// mode tolerates it, so it is never a follow-up task and no mode may
+		// hand it out.
+		case f.NeedsOwner:
+			out.Blocking = append(out.Blocking, place(i, f.Key, Block, reasonNeedsOwner, SourceTable))
 		case !rigor.Blocks(m, f.Score):
 			out.Deferred = append(out.Deferred, place(i, f.Key, Defer, reasonTolerated, SourceTable))
 		case !ok:
 			out.Blocking = append(out.Blocking, place(i, f.Key, Block, reasonFailSafe, SourceFailSafe))
 		case rigor.Floor(m, f.Score):
 			out.Blocking = append(out.Blocking, place(i, f.Key, Block, reasonFloor, SourceTable))
-		case f.NeedsOwner:
-			out.Blocking = append(out.Blocking, place(i, f.Key, Block, reasonNeedsOwner, SourceTable))
 		case contested[i]:
 			out.Blocking = append(out.Blocking, place(i, f.Key, Block, reasonUnplaceable, SourceFailSafe))
 		case named[i] == nil:

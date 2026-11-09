@@ -78,19 +78,27 @@ func TestApplyNeverDefersAFloorFinding(t *testing.T) {
 }
 
 func TestApplyNeverDefersANeedsOwnerFinding(t *testing.T) {
-	if rigor.Floor(rigor.Startup, onAxis()) {
-		t.Fatal("onAxis() is floor; this test would pass without the owner rule")
-	}
-	in := []Input{{Score: onAxis(), NeedsOwner: true, Key: keyCorrect}}
-	out := Apply(rigor.Startup, in, verdict(Entry{Index: 0, Key: keyCorrect, Verdict: Defer, Reason: "looks minor"}), true)
-	if len(out.Deferred) != 0 {
-		t.Errorf("a finding only the owner can settle was deferred: %+v", out.Deferred)
-	}
-	if len(out.Blocking) != 1 {
-		t.Fatalf("blocked %d findings, want 1", len(out.Blocking))
-	}
-	if p := out.Blocking[0]; p.Verdict != Block || p.Source != SourceTable || p.Reason != reasonNeedsOwner {
-		t.Errorf("placed the owner's finding as %+v, want a block the flag holds", p)
+	// A finding the table blocks and the floor does not name, and one the table
+	// tolerates: the flag holds both, and the tolerated one is where a reader
+	// would otherwise see a deferral, because the table's own answer is to let
+	// it through (F22; Decide reads the same flag above every mode's tolerance).
+	for _, s := range []rigor.Score{onAxis(), trivial()} {
+		if rigor.Floor(rigor.Startup, s) {
+			t.Fatalf("Startup's floor holds %+v; this test would pass without the owner rule", s)
+		}
+		for _, ok := range []bool{true, false} {
+			in := []Input{{Score: s, NeedsOwner: true, Key: keyCorrect}}
+			out := Apply(rigor.Startup, in, verdict(Entry{Index: 0, Key: keyCorrect, Verdict: Defer, Reason: "looks minor"}), ok)
+			if len(out.Deferred) != 0 {
+				t.Errorf("Apply(ok=%v, %+v) deferred a finding only the owner can settle: %+v", ok, s, out.Deferred)
+			}
+			if len(out.Blocking) != 1 {
+				t.Fatalf("Apply(ok=%v, %+v) blocked %d findings, want 1", ok, s, len(out.Blocking))
+			}
+			if p := out.Blocking[0]; p.Index != 0 || p.Key != keyCorrect || p.Verdict != Block || p.Source != SourceTable || p.Reason != reasonNeedsOwner {
+				t.Errorf("Apply(ok=%v, %+v) placed the owner's finding as %+v, want a block the flag holds", ok, s, p)
+			}
+		}
 	}
 }
 
