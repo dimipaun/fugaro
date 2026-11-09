@@ -2727,6 +2727,35 @@ func TestReleaseGateAcceptsAPatchOnItsMaintenanceBranch(t *testing.T) {
 	git("push", "--quiet", "origin", "release/1.2")
 	git("checkout", "--quiet", "main")
 
+	// The patch release's plugin bump belongs on main as well: the branch is never
+	// merged back, so a version only the branch carries leaves main serving a
+	// plugin older than the published tag — what made `fugaro update` on 0.21.1
+	// install main's 0.21.0 on 2026-11-09. The gate refuses it by its own message.
+	behind := runGate(t, r, g, fix, "v1.2.1")
+	if behind.err == nil {
+		t.Fatalf("the gate accepted a patch whose plugin version main does not carry:\n%s", behind.out)
+	}
+	if !strings.Contains(behind.out, "main's plugin/.claude-plugin/plugin.json says '0.11.4'") {
+		t.Errorf("the tag was refused for the wrong reason:\n%s", behind.out)
+	}
+
+	// Bump the plugin on main (where the fix went), then cherry-pick that commit
+	// onto the line's branch with the fix, as the section's step 3 says.
+	bump := exec.Command("bash", filepath.Join(r.local, "scripts", "bump-plugin-version.sh"), "1.2.1")
+	bump.Dir = r.local
+	if out, err := bump.CombinedOutput(); err != nil {
+		t.Fatalf("bump: %v\n%s", err, out)
+	}
+	git("add", "-A")
+	git("commit", "--quiet", "-m", "plugin: 1.2.1")
+	bumpSHA := git("rev-parse", "HEAD")
+	git("push", "--quiet", "origin", "main")
+	git("checkout", "--quiet", "release/1.2")
+	git("cherry-pick", "-x", bumpSHA)
+	fix = git("rev-parse", "HEAD")
+	git("push", "--quiet", "origin", "release/1.2")
+	git("checkout", "--quiet", "main")
+
 	// While 1.2 is the newest line: accepted on its branch, and a commit on main
 	// is accepted exactly as before.
 	accepted := runGate(t, r, g, fix, "v1.2.1")
