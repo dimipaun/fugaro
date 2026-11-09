@@ -504,7 +504,7 @@ double-submit. The amended answer, built by M2:
 - keep a **small grace window** in which the loser of that race is answered with the same new pair
   rather than read as a replayed token, so a client on a slow link is not logged out by its own
   retry — **not built**, and the first half of the answer is what stands alone: the loser is refused
-  `invalid_grant` with no invitation to retry (`ee/coordinator/mcpauth/token.go:323`), because the
+  `invalid_grant` with no invitation to retry (`ee/coordinator/mcpauth/token.go:336`), because the
   retry a 5xx invites presents the spent token and that presentation revokes the family the winner
   holds — so a double-submit ends in a re-authorization rather than a logout, and the session the
   window would save is the one a client that retries anyway loses;
@@ -623,7 +623,7 @@ pair` (`docs/workspaces/spec.md:217-219`, its D923). Both agree with §3 and §1
   built after M6 rather than with it. **And one row of an already-merged task
   is not in the tree either**: M2's entry, and §6's second barrier below, state the **keyed** hash and
   the **MAC over every record** as what the store does, while the store hashes with a plain unkeyed
-  sha256 (`ee/coordinator/mcpauth/store.go:494`) and writes no MAC at all — so a reader who is not the
+  sha256 (`ee/coordinator/mcpauth/store.go:503`) and writes no MAC at all — so a reader who is not the
   store's member reads an identity in the clear, and a record written by anybody else is not refused
   by a mark. That barrier is M2's own row, it is on `main` already and not in this branch, and it is
   raised as a finding rather than closed by an edit here.

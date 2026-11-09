@@ -580,7 +580,11 @@ func TestTheStoreRefusesARecordItDoesNotUnderstand(t *testing.T) {
 // the answer a rotation past either of them gives — the terminal
 // ErrTokenNotFound a token endpoint turns into invalid_grant, and not the theft
 // signal a replay raises (ErrRefreshReplay), because a family that got old is
-// not a family somebody stole.
+// not a family somebody stole. That answer is ErrFamilyAged, which is an
+// ErrTokenNotFound and is still its own sentinel: the token endpoint describes
+// the age rather than the revoke, and this test holds the two apart in both
+// directions — an aged family that was never revoked, and a revoked family that
+// never aged.
 func TestAFamilyExpires(t *testing.T) {
 	ctx := context.Background()
 	now := testNow
@@ -611,15 +615,15 @@ func TestAFamilyExpires(t *testing.T) {
 	// family rotated a couple of days before this instant, so nothing about it
 	// is idle — it is simply FamilyTTL old, and that ends it.
 	now = testNow.Add(FamilyTTL + time.Minute)
-	if _, _, err := RotateAt(ctx, s, refresh, now); !errors.Is(err, ErrTokenNotFound) {
-		t.Errorf("a rotation of a family %s old, last used minutes before it, = %v; want ErrTokenNotFound: a family's lifetime is its own bound and being busy does not extend it",
+	if _, _, err := RotateAt(ctx, s, refresh, now); !errors.Is(err, ErrTokenNotFound) || !errors.Is(err, ErrFamilyAged) {
+		t.Errorf("a rotation of a family %s old, last used minutes before it, = %v; want ErrTokenNotFound and ErrFamilyAged: a family's lifetime is its own bound, being busy does not extend it, and the token endpoint describes the age rather than a revoke that never happened",
 			FamilyTTL+time.Minute, err)
 	}
 	// The aged check is read before the replay one, so presenting a token the
 	// family rotated away is answered as the age and not as the theft it would
 	// otherwise be — and nothing is revoked for a family that merely got old.
-	if _, _, err := RotateAt(ctx, s, stale, now); !errors.Is(err, ErrTokenNotFound) {
-		t.Errorf("a rotated-away token of an aged family = %v; want ErrTokenNotFound rather than ErrRefreshReplay: the age is the read that decides, and a family nobody stole must not be revoked",
+	if _, _, err := RotateAt(ctx, s, stale, now); !errors.Is(err, ErrFamilyAged) || errors.Is(err, ErrRefreshReplay) {
+		t.Errorf("a rotated-away token of an aged family = %v; want ErrFamilyAged rather than ErrRefreshReplay: the age is the read that decides, and a family nobody stole must not be revoked",
 			err)
 	}
 	if _, err := s.LookupByHash(ctx, TokenHash(stale)); err != nil {
@@ -634,8 +638,8 @@ func TestAFamilyExpires(t *testing.T) {
 		t.Fatalf("MintAt: %v", err)
 	}
 	now = testNow.Add(FamilyIdleTTL + time.Minute)
-	if _, _, err := RotateAt(ctx, s, idle, now); !errors.Is(err, ErrTokenNotFound) {
-		t.Errorf("a rotation of a family nothing has extended for %s = %v; want ErrTokenNotFound: the idle bound is what ends a chain the client stopped using",
+	if _, _, err := RotateAt(ctx, s, idle, now); !errors.Is(err, ErrTokenNotFound) || !errors.Is(err, ErrFamilyAged) {
+		t.Errorf("a rotation of a family nothing has extended for %s = %v; want ErrTokenNotFound and ErrFamilyAged: the idle bound is what ends a chain the client stopped using, and an idle bound that ran out is an age like the absolute one",
 			FamilyIdleTTL+time.Minute, err)
 	}
 	rec, err := s.LookupByHash(ctx, TokenHash(idle))
@@ -656,5 +660,25 @@ func TestAFamilyExpires(t *testing.T) {
 	now = testNow.Add(FamilyIdleTTL - time.Minute)
 	if _, _, err := RotateAt(ctx, s, young, now); err != nil {
 		t.Errorf("a rotation of a fresh family %s after its mint = %v; want it answered", FamilyIdleTTL-time.Minute, err)
+	}
+
+	// The other direction of the same distinction: a family somebody revoked is
+	// refused as a token that resolves to nothing and not as one that aged, so
+	// the token endpoint keeps the revoke's own sentence for the revoke.
+	_, revoked, err := MintAt(ctx, s, "user:person-1", testClient(), testLimits(), testNow)
+	if err != nil {
+		t.Fatalf("MintAt: %v", err)
+	}
+	rec, err = s.LookupByHash(ctx, TokenHash(revoked))
+	if err != nil {
+		t.Fatalf("the family's own refresh token: %v", err)
+	}
+	if err := s.RevokeFamily(ctx, rec.FamilyID); err != nil {
+		t.Fatalf("RevokeFamily: %v", err)
+	}
+	now = testNow.Add(time.Minute)
+	if _, _, err := RotateAt(ctx, s, revoked, now); !errors.Is(err, ErrTokenNotFound) || errors.Is(err, ErrFamilyAged) {
+		t.Errorf("a rotation of a family revoked a minute after its mint = %v; want ErrTokenNotFound and not ErrFamilyAged: a revoke is somebody ending the family and an age is the family's own bound arriving, and the two are answered with different sentences",
+			err)
 	}
 }

@@ -213,6 +213,44 @@ func TestAnIDTokenApprovesOneFlow(t *testing.T) {
 	}
 }
 
+// TestAPaddedSpellingOfASpentIDTokenIsRefused is the other half of the spend:
+// the string whose signature is checked and the string whose hash is written
+// are one string, so every spelling of a token is the one token.
+//
+// The verifier trims the value it is handed (verifySignIn), so a form that pads
+// the token still verifies — and a spend taken from the field as it arrived
+// would make each spelling a token of its own: the padded one would be unspent,
+// and a leaked token would approve one flow per spelling an attacker could
+// write it in. That is the same hole as spending nothing, so the replay is put
+// in the padded spelling and the flow behind it is watched for a code.
+func TestAPaddedSpellingOfASpentIDTokenIsRefused(t *testing.T) {
+	ts := newTestServer(t)
+	clientID, _ := ts.register(t, "an editor", testClientRedirect)
+	token := approvalToken(t)
+
+	bindingA, numberA := ts.startFlow(t, authorizeQuery(clientID, testClientRedirect))
+	if rec := ts.deviceApprove(t, bindingA, numberA, token); rec.Code != http.StatusOK {
+		t.Fatalf("the device's act answered %d (%s); want it to record the approval", rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+
+	// The same sign-in, in the spelling a form can carry it in: the whitespace
+	// the verifier trims and the hash has to be taken after.
+	bindingB, numberB := ts.startFlow(t, authorizeQuery(clientID, testClientRedirect))
+	rec := ts.deviceApprove(t, bindingB, numberB, " \t"+token+"\n")
+	if rec.Code == http.StatusOK {
+		t.Errorf("a padded spelling of an ID token that has already approved a flow approved a second one: the token is spent as the value whose signature was verified, or one token buys as many approvals as it has spellings")
+	}
+	if rec := ts.consent(t, url.Values{"request_id": {bindingB}, "decision": {"allow"}}); rec.Code == http.StatusFound {
+		t.Errorf("the second flow minted a code on a spent ID token presented padded: no approved act stands behind that flow, so the page's answer has nothing to mint from")
+	}
+
+	// The first flow still completes, so what was refused above is the second
+	// use of one token and not the flow it was presented for.
+	if rec := ts.pageAnswer(t, bindingA, "allow"); rec.Code != http.StatusFound {
+		t.Errorf("the flow the token's first spelling approved answered %d (%s); want the code redirect: the refusal above is about the token", rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+}
+
 // TestTheDeviceActIsNotAQueryString is M-a's second rule at the device's door:
 // the paired device's act is a POST, and no token travels in a URL.
 //

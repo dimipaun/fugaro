@@ -432,7 +432,7 @@ func TestDocsMCPServerDisclosesWhatTheCodeDoesNotDo(t *testing.T) {
 		// than as what the code does, with the line that hashes without a key.
 		"The keyed hashes and the MACs the store is specified to write",
 		"Both are designed and not built",
-		"the store hashes with a plain unkeyed `sha256` (`ee/coordinator/mcpauth/store.go:494`)",
+		"the store hashes with a plain unkeyed `sha256` (`ee/coordinator/mcpauth/store.go:503`)",
 		// And the two bounds, with the owner named as the one who assigns them
 		// and the wiring task named as the carrier until he does.
 		"Who owns the two bounds the open registration endpoint is accepted under",

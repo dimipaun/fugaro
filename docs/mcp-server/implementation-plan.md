@@ -767,8 +767,8 @@ pull request that builds M5 merges dormant**: the consent page's token paste
 prerequisite before anything wires the front door**.
 **`TestNoBinaryLinksTheFrontDoorYet` is the tripwire, and M5b must land before it may be relaxed**;
 the test's own message names what the guard waits on for that reason, so the guard is relaxed by
-building the approval and not by deleting a sentence. **M5b has landed**, on the six files below and
-no seventh, and **the guard is not relaxed here**: relaxing it belongs to the wiring task, which is
+building the approval and not by deleting a sentence. **M5b has landed**, on the files below, and
+**the guard is not relaxed here**: relaxing it belongs to the wiring task, which is
 still carried by no task of this plan. **What landed is the server's half of the first requirement
 and not the delivery**: the endpoint takes an act that already carries the flow's id and the number,
 and nothing hands those two to the paired device — no QR of the flow's binding, no launcher reading
@@ -800,9 +800,13 @@ tree did not carry:
    leaked ID token leaves behind ends rather than outliving the token's hour by an unbounded amount
    (spec.md §6, §8).
 
-- **Files (6):** `ee/coordinator/mcpauth/authorize.go`, `authorize_test.go`,
+- **Files (8):** `ee/coordinator/mcpauth/authorize.go`, `authorize_test.go`,
   `ee/coordinator/mcpauth/approval.go`, `approval_test.go`, `ee/coordinator/mcpauth/store.go`,
-  `store_test.go`.
+  `store_test.go`, and the two its own reviews reached: `ee/coordinator/mcpauth/token.go`, where a
+  family past its own bounds is answered as an age rather than described as the revoke the
+  endpoint's `ErrTokenNotFound` arm describes, and `ee/coordinator/mcpauth/server_test.go`, whose
+  tripwire message names what the guard waits on and would otherwise state a fact this task
+  changed — the test's own walk and its condition are untouched.
 - **Interface:** the approve step keeps its single-use POST and its ID token in the body, and the
   **paired device's act is a request of its own** — the endpoint's name was this task's to fix, and
   it was fixed by giving the authorize endpoint's POST the two shapes rather than by adding a route:

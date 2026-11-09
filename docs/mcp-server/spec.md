@@ -656,7 +656,7 @@ amended answer has four parts, and the rules clause above is only the first:
    MAC'd**, so a writer the rules do not bind — a database admin, a launcher with a signer, a
    compromised run — cannot forge one. **This is the design's requirement and it is not what the
    code does**: the store hashes with a plain unkeyed `sha256` and writes no MAC
-   (`ee/coordinator/mcpauth/store.go:494`), so a reader who is not the store's own member reads an
+   (`ee/coordinator/mcpauth/store.go:503`), so a reader who is not the store's own member reads an
    identity in the clear. That gap is M2's own row, merged on `main` and not in this branch, and it
    is carried as a finding in §11 and [reconciliation.md](reconciliation.md) §4a rather than read
    here as a control the tree performs.
@@ -712,7 +712,7 @@ condition an `ETag` PUT gave a store inside the database — so exactly one rota
 answer's second half is not built**: the loser inside a **small grace window** is meant to be
 answered with the winner's own new pair rather than read as a replay, so a client on a slow link is
 not logged out by its own retry — and no grace window exists in the tree. What the loser gets
-instead is `invalid_grant` (`ee/coordinator/mcpauth/token.go:323`), which is terminal and carries no
+instead is `invalid_grant` (`ee/coordinator/mcpauth/token.go:336`), which is terminal and carries no
 invitation to try again, because the retry that a 5xx invites presents the spent token and that
 presentation is the theft signal itself: it revokes the family the winner is holding, so one
 double-submit would become a logout. A client that re-authorizes instead loses nothing but a page;
@@ -821,8 +821,8 @@ token as an access token
 
 **What the token's own expiry does not bound is what it buys.** The approval it answers mints a
 refresh family, and a refresh token's own expiry is the zero time
-(`ee/coordinator/mcpauth/store.go:271`): what bounds a family is **its own two lifetimes**, which
-are built (`ee/coordinator/mcpauth/store.go:220`) — an absolute one from the mint, however busy the
+(`ee/coordinator/mcpauth/store.go:280`): what bounds a family is **its own two lifetimes**, which
+are built (`ee/coordinator/mcpauth/store.go:229`) — an absolute one from the mint, however busy the
 family is, and an idle one on a family nothing has extended, both read at the rotation, which is the
 only place a family is used. **And the ID token is spent**: the approve step records it as used, in
 the store and as the sha256 of its value (D922), before the code is minted, so **a replay of the same
@@ -898,7 +898,7 @@ design says now, and what §6 states in full:
 - **The records are keyed and marked**: **HMAC-keyed hashes with a pepper in Secret Manager**, and a
   **MAC over each record's identity, limits and revocation state**, so a reader cannot reverse a
   hash and a writer the rules do not bind cannot forge a record. **Both are designed and not
-  built**: the store hashes with a plain unkeyed `sha256` (`ee/coordinator/mcpauth/store.go:494`)
+  built**: the store hashes with a plain unkeyed `sha256` (`ee/coordinator/mcpauth/store.go:503`)
   and writes no MAC, which §11 and [reconciliation.md](reconciliation.md) §4a carry as a finding
   rather than this paragraph reading as a control the tree performs.
 - **The public service holds viewer and not admin**, which is the part of the finding a *grant*
@@ -1092,13 +1092,13 @@ amendment is in this tree (`docs/workspaces/spec.md:209-210`, `:217-219`), and i
   store until M4 strips or refuses those members.
 - **The keyed hashes and the MACs the store is specified to write** (§6, §8 — the answer to finding
   H3): **designed and not built.** The store hashes with a plain unkeyed `sha256`
-  (`ee/coordinator/mcpauth/store.go:494`) and writes no MAC over a record's identity, limits or
+  (`ee/coordinator/mcpauth/store.go:503`) and writes no MAC over a record's identity, limits or
   revocation state, so a reader who is not the store's own member reads an identity in the clear and
   a writer the rules do not bind is not refused by a mark. The gap is **M2's own row**, which merged
   on `main` before this branch, and it is carried in [reconciliation.md](reconciliation.md) §4a as a
   finding rather than closed by an edit here. **What it costs is bounded by the value it hashes, and
   that bound holds only where the value is one nobody can guess**: a token record's key is the hash
-  of `NewValue`'s 32 random bytes (`ee/coordinator/mcpauth/store.go:502`), which has no weak space to
+  of `NewValue`'s 32 random bytes (`ee/coordinator/mcpauth/store.go:511`), which has no weak space to
   walk, so there the missing key buys a reader nothing practical. **It does not hold for the audit
   record** (M10): that one is keyed by the same unkeyed hash of a `user:<email>` entry
   (`ee/coordinator/mcpauth/audit_record.go:164`), and an address is guessable — so a reader who can

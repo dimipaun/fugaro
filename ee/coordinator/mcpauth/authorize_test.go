@@ -1408,6 +1408,49 @@ func refusalOf(t *testing.T, rec *httptest.ResponseRecorder) oauthRefusal {
 	return out
 }
 
+// TestAnAgedFamilyIsAnsweredAsAnAge is the token endpoint's half of M5b's
+// fourth bound: a family past its own lifetime is refused as a family that got
+// old, and not as one somebody revoked.
+//
+// Both are terminal invalid_grant — an aged family is as gone as a revoked one
+// — and they are told apart because they are different events: a revoke is a
+// person ending the family, an age is the family's own bound arriving. A client
+// told its family was revoked goes looking for a thief; the theft signal this
+// endpoint does raise is the replay, which revokes the family as it refuses,
+// and that is not what happened here.
+//
+// The store judges a family's age at its own clock, which is the process's,
+// while the server's clock is the test's: a family minted at a server instant
+// this far back is past FamilyTTL when the refresh grant below reads it, and no
+// test waits a month for one.
+func TestAnAgedFamilyIsAnsweredAsAnAge(t *testing.T) {
+	minted := time.Now().Add(-FamilyTTL - time.Hour)
+	ts := newTestServerClock(t, testConfig(), func() time.Time { return minted })
+	clientID, tokens := ts.runFlow(t, testClientRedirect)
+
+	rec, _ := ts.exchange(t, url.Values{
+		"grant_type":    {string(GrantRefreshToken)},
+		"refresh_token": {tokens.RefreshToken},
+		"client_id":     {clientID},
+	})
+	refusal := refusalOf(t, rec)
+	if rec.Code != http.StatusBadRequest || refusal.Error != string(oidc.InvalidGrant) {
+		t.Fatalf("the refresh grant on a family %s old answered %d (%s); want 400 %s: the family is gone, and a 5xx would invite the client to present the same token again",
+			FamilyTTL+time.Hour, rec.Code, strings.TrimSpace(rec.Body.String()), oidc.InvalidGrant)
+	}
+	if strings.Contains(refusal.Description, "revoked") {
+		t.Errorf("an aged family is described as a revoked one (%q): nothing revoked it, and a client told its family was revoked goes looking for a thief where the age is the whole story", refusal.Description)
+	}
+	if !strings.Contains(refusal.Description, "aged out") {
+		t.Errorf("an aged family answered %q; want the refusal to say the family aged out: the age is what happened, and it is the answer that tells a client to authorize again rather than to look for a leak", refusal.Description)
+	}
+	// And nothing was revoked on the way: the family's token still resolves, so
+	// a person can still end the chain the age refused.
+	if _, err := ts.store.LookupByHash(context.Background(), TokenHash(tokens.RefreshToken)); err != nil {
+		t.Errorf("the refresh token of an aged family no longer resolves (%v): an age is not the theft a replay is, so nothing was deleted", err)
+	}
+}
+
 // TestTokenEndpointRefusesTheWrongClientSecret: a client that presents a secret
 // which is not the one it registered with is refused at the token endpoint — on
 // every grant, including the two that do not require one.

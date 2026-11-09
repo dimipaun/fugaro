@@ -82,6 +82,15 @@ var (
 	// because that is exactly what it is now — one delete took the family
 	// and every token in it (D930).
 	ErrTokenNotFound = errors.New("mcpauth: no token with that hash")
+	// ErrFamilyAged is a family past one of its own two bounds, read at the
+	// rotation (M5b). It is an ErrTokenNotFound — a token of an aged family
+	// resolves to nothing, exactly as one of a revoked family does, and that
+	// is the reading every caller already has — and it is a sentinel of its
+	// own because the two are different events: a revoke is somebody ending
+	// the family, an age is the family's own lifetime running out, and a
+	// client told its family was revoked goes looking for a thief where there
+	// is none.
+	ErrFamilyAged = fmt.Errorf("mcpauth: the token family is past its lifetime: %w", ErrTokenNotFound)
 	// ErrClientNotFound is a client id no registration wrote.
 	ErrClientNotFound = errors.New("mcpauth: no client with that id")
 	// ErrFamilyNotFound is a family that is not in the store: one that was
@@ -699,9 +708,11 @@ func (r records) LookupByHash(ctx context.Context, hash string) (TokenRecord, er
 // the token was already rotated away, so the family is revoked and
 // ErrRefreshReplay is returned; the compare-and-swap lost a race with another
 // writer, so ErrConflict is returned and the family is left exactly as the
-// winner left it; or the family is one no token could be issued from, which is
-// refused before the swap rather than after it. A lost race is never a
-// revocation, and a refusal never leaves the family half-written.
+// winner left it; the family is past one of its own two bounds, so
+// ErrFamilyAged is returned before anything else of it is inspected (M5b); or
+// the family is one no token could be issued from, which is refused before the
+// swap rather than after it. A lost race is never a revocation, and a refusal
+// never leaves the family half-written.
 func (r records) RotateRefresh(ctx context.Context, presentedHash, nextRefreshHash string) (Family, error) {
 	rec, err := r.lookupRecord(ctx, presentedHash)
 	if err != nil {
@@ -723,17 +734,19 @@ func (r records) RotateRefresh(ctx context.Context, presentedHash, nextRefreshHa
 	// The family's own two bounds, read before anything of it is inspected
 	// (M5b's fourth requirement). A family past either of them is over, and it
 	// is answered as a family that is gone rather than as a family that may not
-	// rotate: the caller's whole vocabulary for a token whose family is not
-	// there is ErrTokenNotFound, and the token endpoint answers that with the
-	// terminal invalid_grant a client acts on instead of the 5xx that would
-	// invite it to present the same token again.
+	// rotate: ErrFamilyAged is an ErrTokenNotFound, so the caller's whole
+	// vocabulary for a token whose family is not there still reads it, and the
+	// token endpoint answers it with the terminal invalid_grant a client acts
+	// on instead of the 5xx that would invite it to present the same token
+	// again — described as the age it is rather than as the revoke that
+	// endpoint's ErrTokenNotFound arm describes.
 	//
 	// The replay check below is deliberately after this one. A family that has
 	// aged is not a family a theft signal is worth raising on — the read that
 	// decides is the age — and the revoke the replay would perform is of a
 	// family whose tokens are already worthless.
 	if fam.aged(r.clock()) {
-		return Family{}, fmt.Errorf("mcpauth: family %q: %w", fam.ID, ErrTokenNotFound)
+		return Family{}, fmt.Errorf("mcpauth: family %q: %w", fam.ID, ErrFamilyAged)
 	}
 	if presentedHash != fam.RefreshHash {
 		// The theft signal: this family rotated past the token being
