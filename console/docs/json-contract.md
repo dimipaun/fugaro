@@ -747,8 +747,9 @@ compute is unknown: their `compute_usd` 0 means "not estimated", so the sums
 are a lower bound** — the console renders that, it does not hide it).
 
 **Flags** (`f := cmd.Flags()`, `newLsCmd`): `--repo`, `--all`, `--mine`, `--since`, `--batch`,
-`--limit`, `--after`, `--state`, `--pr`, `--watch`, `--interval` (hidden), `--json`, plus the cloud
-flags. The allow-list excludes `--watch` (it is `watch` under another name).
+`--limit`, `--after`, `--state`, `--group-by`, `--pr`, `--watch`, `--interval` (hidden), `--json`, plus the cloud
+flags. The allow-list excludes `--watch` (it is `watch` under another name); `--group-by` is no row's
+argument either, so no spawn emits it and the block it adds waits for the screen that reads it.
 
 **`--limit=N` and `--after=RUN-ID` are the page and its cursor, and they are the two
 flags the console's `runs ls` row adds to the list above** (D818, the console
