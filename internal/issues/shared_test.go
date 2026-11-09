@@ -1171,19 +1171,15 @@ func TestSetResolvedIsIdempotentUnderRace(t *testing.T) {
 	}
 }
 
-// Where the transition may start from, and what it refuses: a release that is
-// not a release is no verdict to record, and an issue that is not filed has no
-// fix to record (F4, F18).
+// Where the transition may start from, and what it records: a release that is
+// not a release is no verdict to record, an issue that is not filed has no fix
+// to record, and the release goes in in the one shape every comparison reads
+// (F4, F18).
 func TestSetResolvedOnlyFromSubmitted(t *testing.T) {
 	ctx := context.Background()
 	b := sharedBucket(t)
 	pending := upload(t, ctx, b, sharedIssue("update-20261107183012-48213", fingerprint("1c")))
 
-	for _, release := range []string{"", "dev", "0.22", "0.22.0-rc1", "main", "0.22.0.1"} {
-		if err := SetResolved(ctx, b, pending.Number, release, 0); err == nil {
-			t.Errorf("the resolver recorded %q as a release", release)
-		}
-	}
 	if err := SetResolved(ctx, b, pending.Number, "0.22.0", 0); err == nil {
 		t.Error("the resolver resolved an issue nobody filed")
 	}
@@ -1200,6 +1196,43 @@ func TestSetResolvedOnlyFromSubmitted(t *testing.T) {
 	if rec.Issue.Status != StatusPending || rec.Issue.ResolvedIn != "" || rec.Issue.ClosedAs != "" {
 		t.Errorf("a refused transition left the record as %+v", rec.Issue)
 	}
+
+	// The release is checked on an issue that is filed, and the refusal is
+	// pinned: run against a record that cannot be resolved at all, every one
+	// of these would be refused for the status instead and a guard that never
+	// ran would pass for a guard that did.
+	filed, _ := filedIssue(t, ctx, b, fingerprint("20"))
+	for _, release := range []string{"", "dev", "0.22", "0.22.0-rc1", "main", "0.22.0.1"} {
+		err := SetResolved(ctx, b, filed.Number, release, 0)
+		if err == nil {
+			t.Errorf("the resolver recorded %q as a release", release)
+			continue
+		}
+		if !strings.Contains(err.Error(), "is not the release") {
+			t.Errorf("SetResolved(%q) refused for another reason: %v", release, err)
+		}
+	}
+	rec, _, err = readShared(ctx, b, filed.Number)
+	if err != nil {
+		t.Fatalf("reading shared issue %d: %v", filed.Number, err)
+	}
+	if rec.Issue.Status != StatusSubmitted || rec.Issue.ResolvedIn != "" {
+		t.Errorf("a refused release left the record as %+v", rec.Issue)
+	}
+	// What goes in is the release itself, in the one shape a reporter's own
+	// version is compared against: a GitHub milestone may carry the `v` the
+	// tag has, and `v0.22.0` is that release.
+	if err := SetResolved(ctx, b, filed.Number, "v0.22.0", 0); err != nil {
+		t.Fatalf("resolving with the release as a tag spells it: %v", err)
+	}
+	rec, _, err = readShared(ctx, b, filed.Number)
+	if err != nil {
+		t.Fatalf("reading shared issue %d: %v", filed.Number, err)
+	}
+	if rec.Issue.Status != StatusResolved || rec.Issue.ResolvedIn != "0.22.0" {
+		t.Errorf("the issue is %q fixed in %q, want %q in 0.22.0", rec.Issue.Status, rec.Issue.ResolvedIn, StatusResolved)
+	}
+
 	// The version a caller read is the one the write lands on: a caller that
 	// hands in another one is told the record moved rather than writing what
 	// it read over it.
