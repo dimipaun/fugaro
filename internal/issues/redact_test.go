@@ -217,8 +217,12 @@ func TestScrubNames(t *testing.T) {
 		// D1722's post is stripped of identity and then redacted again, so the
 		// second redaction reads text this pass wrote: a name taken out of the
 		// middle of a password must not leave the rest of it standing beside
-		// the marker it left behind.
-		password := "PGPASSWORD=" + "acme-widgets-" + strings.Repeat("Qw3", 2)
+		// the marker it left behind. The name ends at a `;` rather than at the
+		// `-` of a longer credential, because `-` starts a value for the
+		// password rules: a tail behind the marker is redacted there by the
+		// outer pass whatever order this pass ran in, and only the byte that
+		// cannot start one tells the two orders apart.
+		password := "PGPASSWORD=" + "acme-widgets;" + strings.Repeat("Qw3", 2)
 		got := Redact(Scrub(password, []string{"acme-widgets"}), nil)
 		if strings.Contains(got, strings.Repeat("Qw3", 2)) {
 			t.Errorf("Redact(Scrub(%q)) = %q: the rest of the password survived the name's marker", password, got)
