@@ -51,12 +51,14 @@ type Post struct {
 	// --body-file.
 	Title string
 	Body  string
-	// Ref is how the fallback link's cut body names the whole issue
-	// (`fugaro issue show <ref>`): the number once the issue has one, its
-	// local ID before that, which is what `show` takes either way (F23, F16).
-	// It is not part of the post and never reaches GitHub through these bytes;
-	// it is what the link tells a person to run on the machine that holds the
-	// issue.
+	// Ref is the reference `fugaro issue show` takes for this issue: the
+	// number once the issue has one, its local ID before that (F23). It is
+	// not part of the post and it is not in the fallback link either — the
+	// link is public bytes, and an unnumbered issue's reference is its local
+	// ID, which is built from the run's own stem and stamp and is identity
+	// (D1722). It is for the terminal: the command printing the fallback puts
+	// `fugaro issue show <ref>` beside the link, where the person filing it
+	// reads it and nobody else does.
 	Ref string
 }
 
@@ -208,23 +210,28 @@ func (p Post) bytes() []byte { return []byte(p.Title + "\n\n" + p.Body) }
 // conservative because the exact limit is not measured (U3).
 const newIssueURLBudget = 6 << 10
 
-// newIssueURLTail is what a cut body ends with: the command that prints the
-// whole issue on the machine that holds it. It names the issue and never a
-// file, because a local path in a public post would name this machine's user
-// and would be of no use to the reader anyway (D1722).
-func newIssueURLTail(ref string) string {
-	if ref == "" {
-		return ""
-	}
-	return "\n\nFull text: `fugaro issue show " + ref + "`\n"
-}
+// newIssueURLCutNotice is what a cut body ends with: it says the text is cut
+// and names the command that prints the whole issue on the machine that holds
+// it, with `<id>` standing where the reference goes.
+//
+// The reference itself is not here, and that is the point. These bytes are in
+// a URL that becomes a public issue, and an issue with no number yet is named
+// by its local ID — the run's own stem and stamp, which TestPostStripsIdentity
+// counts as identity — so a link that named it would put the run on GitHub
+// under a heading that says the post carries no identity (D1722). The command
+// is a placeholder rather than absent because a body that stops mid-sentence
+// with nothing said would read as the whole story; the person filing it is
+// told the reference itself on their own terminal, beside the link.
+const newIssueURLCutNotice = "\n\nThe text is cut: `fugaro issue show <id>` on the machine that filed this prints the whole issue.\n"
 
 // NewIssueURL is the link the fallback prints when there is no `gh` to file
 // with (spec 5, F16): GitHub's new-issue form with the title and the body
 // already in it, so a person with a browser and no gh can still send exactly
 // what the preview showed. The body is cut to newIssueURLBudget once encoded —
 // the form's query carries it, and the escaping is what the browser will
-// decode — and the cut body ends with the command that prints the rest.
+// decode — and the cut body ends with the command that prints the rest, naming
+// no issue: the reference is identity for an issue with no number yet
+// (newIssueURLCutNotice, D1722).
 //
 // The repository is updatecheck.Repo's, and the link is a URL and not a
 // command: nothing here runs `gh`, and the person holds the submit button.
@@ -234,15 +241,15 @@ func NewIssueURL(p Post) string {
 	if len(url.QueryEscape(p.Body)) <= newIssueURLBudget {
 		return head + url.QueryEscape(p.Body)
 	}
-	tail := newIssueURLTail(p.Ref)
-	return head + url.QueryEscape(cutForURL(p.Body, tail)+tail)
+	return head + url.QueryEscape(cutForURL(p.Body)+newIssueURLCutNotice)
 }
 
-// cutForURL is the longest prefix of body that fits the budget once tail is
-// appended and the whole of it is percent-encoded. Escaping is monotonic in
-// the length of its input, so the largest prefix that fits is found by
-// bisection rather than by cutting and re-encoding one line at a time: a body
-// of a few bytes and one of many kilobytes take the same handful of passes.
+// cutForURL is the longest prefix of body that fits the budget once
+// newIssueURLCutNotice is appended and the whole of it is percent-encoded.
+// Escaping is monotonic in the length of its input, so the largest prefix that
+// fits is found by bisection rather than by cutting and re-encoding one line at
+// a time: a body of a few bytes and one of many kilobytes take the same handful
+// of passes.
 //
 // That cut then backs off to the last line boundary in it — a person reads
 // whole lines — but only while the boundary keeps at least half of what fit.
@@ -251,11 +258,11 @@ func NewIssueURL(p Post) string {
 // URL with no space in it) has no interior boundary to retreat to: backing off
 // to the one before it hands the person a link holding a header and a pointer
 // and none of the finding. Half is where tidiness stops being worth the budget;
-// below it the cut stays mid-line, and the tail names the command that prints
-// the rest either way.
-func cutForURL(body, tail string) string {
+// below it the cut stays mid-line, and the notice that follows says so either
+// way.
+func cutForURL(body string) string {
 	fits := func(n int) bool {
-		return len(url.QueryEscape(body[:n]+tail)) <= newIssueURLBudget
+		return len(url.QueryEscape(body[:n]+newIssueURLCutNotice)) <= newIssueURLBudget
 	}
 	if fits(len(body)) {
 		return body

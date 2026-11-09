@@ -248,8 +248,7 @@ func TestNewIssueURLCutsLongBody(t *testing.T) {
 		if got := url.QueryEscape(body); len(got) > newIssueURLBudget {
 			t.Errorf("the encoded body is %d bytes, past the %d byte budget", len(got), newIssueURLBudget)
 		}
-		tail := "Full text: `fugaro issue show " + p.Ref + "`"
-		if !strings.HasSuffix(strings.TrimSpace(body), tail) {
+		if !strings.HasSuffix(body, newIssueURLCutNotice) {
 			t.Errorf("the cut body does not end with the command that prints the rest:\n%q", body)
 		}
 		return body
@@ -260,7 +259,7 @@ func TestNewIssueURLCutsLongBody(t *testing.T) {
 		i.Summary = strings.Repeat("the update stops half way\n", 1000)
 		p := BuildPost(i, nil)
 		body := linkBody(t, p)
-		cut := strings.TrimSuffix(body, "\n\nFull text: `fugaro issue show "+p.Ref+"`\n")
+		cut := strings.TrimSuffix(body, newIssueURLCutNotice)
 		if cut == "" {
 			t.Fatal("the link carries nothing of the post")
 		}
@@ -302,6 +301,40 @@ func TestNewIssueURLCutsLongBody(t *testing.T) {
 		}
 		if !strings.Contains(body, "the update stops half way. the update") {
 			t.Errorf("the link does not carry the finding:\n%q", body)
+		}
+	})
+
+	// The link is public bytes: whoever opens it reads the body, and the person
+	// who clicks submit files it. So the reference the fallback prints on the
+	// terminal — the number, or the local ID an unnumbered issue is named by —
+	// cannot be in it: the local ID is built from the run's stem and stamp, and
+	// `TestPostStripsIdentity` counts that as identity the post must not carry
+	// (D1722). Both cases are here, because the numbered one is the one it is
+	// tempting to put back.
+	t.Run("the link carries no identity", func(t *testing.T) {
+		for _, i := range []Issue{issueLocal(), issueSample()} {
+			p := BuildPost(i, nil)
+			if p.Ref == "" {
+				t.Fatal("no reference to keep out of the link")
+			}
+			// A cut body is where the reference used to go, so the post is made
+			// long enough to be cut.
+			long := i
+			long.Summary = strings.Repeat("the update stops half way. ", 2000)
+			body := linkBody(t, BuildPost(long, nil))
+			for _, f := range []struct{ name, value string }{
+				{"the run stem", i.Run},
+				{"the local ID", i.LocalID},
+			} {
+				if strings.Contains(body, f.value) {
+					t.Errorf("the link carries %s (%q):\n%q", f.name, f.value, body)
+				}
+			}
+			for _, path := range []string{"/home/", "/Users/", `c:\users\`} {
+				if strings.Contains(body, path) {
+					t.Errorf("the link carries the local path %q", path)
+				}
+			}
 		}
 	})
 }
