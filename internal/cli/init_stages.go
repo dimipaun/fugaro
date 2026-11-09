@@ -286,6 +286,12 @@ func (e *initEngine) converge(ctx context.Context) error {
 	if err := e.gateRun(ctx); err != nil {
 		return err
 	}
+	// The door's one line about the runs that are running while it converges,
+	// and the last thing before the first stage writes anything: a person
+	// deciding whether it is safe to update now reads it before the update
+	// starts rather than after. It asks nothing and it refuses nothing, and it
+	// is silent when there is nothing running (update_in_flight.go).
+	e.announceRunsInFlight(ctx)
 	res, err := initflow.Run(ctx, stages, e.options())
 	if err == nil && res != nil && e.r.o.planOnly && res.Failed == nil {
 		e.planOnlyReview(ctx, res.Stages)
