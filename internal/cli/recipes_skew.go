@@ -797,11 +797,12 @@ const gitAuthorSince = "0.14.0"
 // warning (securityImageWarnings) — the three halves rigorSince has.
 //
 // It is the repository's half of the key alone. D1501 gives security: to the
-// project layer as well, and that half arrives with SC8, the task that lets a
-// layer write it at all (config's layerTopKeys does not carry the key yet, so a
-// layer that writes it is refused as an unknown key before any gate could see
-// it). The task that lands it extends these gates the way rigorSince's carry
-// both halves, and this constant's release is the one both halves ship in.
+// project layer as well, and that half is read now (SC8: config's layerTopKeys
+// carries the key and config.ProjectLayer.Security holds the block), but no
+// gate here names it: the layer is decoded strictly, so a job image older than
+// this constant refuses the whole layer at bootstrap while these gates stay
+// quiet. Extending them the way rigorSince's carry both halves is still owed,
+// and this constant's release is the one both halves ship in.
 //
 // It names 0.22.0, the release this work is slotted for (the release jobsSince
 // names too), which is not tagged yet: the release that tags it holds this
@@ -2237,10 +2238,10 @@ func securitySet(cfg *config.Config) bool {
 
 // securitySubject names, for the gates' messages, the block a repository wrote
 // and the way out its author has. security.patterns is InProject | InRepo
-// (config.Scopes), but the project layer's half cannot be written in this build
-// — the layer refuses the key as unknown until SC8 lands it — so the subject is
-// the repository's, and the layer's half joins it the way rigorSubject names
-// both of rigor's.
+// (config.Scopes), but these gates judge the repository's file and not the
+// layer's, which is read where the run reads it — so the subject is the
+// repository's. The layer's half joins the message the way rigorSubject names
+// both of rigor's, once a gate here names it.
 func securitySubject(repo string) (subject, alt string) {
 	return "fugaro.yaml's security: block of " + repo,
 		"remove the security: block from fugaro.yaml to run under the engine's floor until every job image is current"

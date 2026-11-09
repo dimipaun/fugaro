@@ -4276,10 +4276,9 @@ func (r *initRun) gateGitAuthor(o *initOptions, repo string, lc *localcfg.Config
 // rows it holds: a runner older than securitySince refuses the security: key
 // whatever it holds, so security: {} and an explicit null are deployed by a
 // rows test and die at bootstrap. The project layer's half (D1501) is not
-// judged here yet: config's layerTopKeys does not carry the key, so a layer
-// that writes it is refused as an unknown key before this runs. The task that
-// lets a layer write it extends this gate the way gateRigor carries both
-// halves.
+// judged here yet: the layer is another object, refused whole by an older
+// runner at bootstrap, and extending this gate to it the way gateRigor carries
+// both halves is owed.
 func (r *initRun) gateSecurity(o *initOptions, repo string, lc *localcfg.Config, cfg *config.Config) error {
 	if o.forget || o.planOnly || cfg == nil {
 		return nil
