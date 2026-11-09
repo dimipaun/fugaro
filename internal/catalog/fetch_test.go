@@ -227,11 +227,14 @@ func TestDockerfileSecretArgRefused(t *testing.T) {
 		"FROM example.invalid/base\nARG CI_JOB_TOKEN=\"value\"\n",
 		"FROM example.invalid/base\nenv npm_config_//registry.npmjs.org/:_authToken=value\n",
 		"FROM example.invalid/base\nARG FUGARO_BASE\nARG \\\n    DEPLOY_PASSWORD\n",
-		// The continuation joins as the parser joins it, with nothing between
-		// the halves: NPM_\ + TOKEN is the one name NPM_TOKEN a build sets,
-		// and a join that inserted a space would read the harmless NPM.
+		// The continuation joins as the parser joins it: NPM_\ + TOKEN is the
+		// one name NPM_TOKEN a build sets, and a join that inserted a space
+		// would read the harmless NPM. A comment inside a continuation is
+		// dropped with it and the halves join across it, the same way.
 		"FROM example.invalid/base\nARG NPM_\\\nTOKEN\n",
 		"FROM example.invalid/base\nENV GIT_\\\nTOKEN=value\n",
+		"FROM example.invalid/base\nARG NPM\\\n# a comment a build drops\nTOKEN\n",
+		"FROM example.invalid/base\nARG NPM_\\\n\nTOKEN\n",
 		// ONBUILD defers the ARG to a child image, which is the image that
 		// then carries the value.
 		"FROM example.invalid/base\nONBUILD ARG NPM_TOKEN\n",
@@ -259,6 +262,12 @@ func TestDockerfileSecretArgRefused(t *testing.T) {
 		"FROM example.invalid/base\nENV TFLINT_PLUGIN_DIR=/home/fugaro/.tflint.d/plugins\n",
 		"FROM example.invalid/base\nARG REPO_URL\nARG BASE_BRANCH\nRUN git clone \"$REPO_URL\" /work/repo\n",
 		"FROM example.invalid/base\nENV AUTH_MODE=none\n",
+		// A continuation line keeps its own leading whitespace, which is the
+		// parser's reading and not a tidier one: ARG NPM_\ over an indented
+		// TOKEN is the build argument NPM_ with the default TOKEN, and no
+		// build argument named after a credential, so it is not refused.
+		"FROM example.invalid/base\nARG NPM_\\\n    TOKEN\n",
+		"FROM example.invalid/base\nENV NPM_\\\n    TOKEN=value\n",
 	} {
 		if _, err := Fetch(ctx, nil, gitprov.KindGitHub, inlineEntry(def)); err != nil {
 			t.Errorf("the definition %q was refused: %v", def, err)

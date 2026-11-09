@@ -185,31 +185,61 @@ func refuseCredentialNames(e config.Entry, line string) error {
 }
 
 // dockerfileLines returns a definition's logical lines: an instruction whose
-// physical line ends in a backslash continues on the next one, and what a
-// person reads as one instruction is what the guard above must read as one too
-// (ARG \ followed by GIT_TOKEN is one ARG).
+// physical line ends in a backslash continues on the next one, and what the
+// parser makes one instruction of is what the guard above must read as one too.
 //
-// The join is the parser's own and inserts nothing: the space before the
-// backslash is the space Docker keeps, so ARG NPM_\ / TOKEN is the one name
-// NPM_TOKEN to a build and is read as one here. A join that inserted a space
-// of its own would split exactly the name this guard is looking for.
+// The reading follows the parser rather than a tidier rule of its own, because
+// both ways of being wrong cost something: read the definition more loosely
+// than a build does and a name a build sets goes unchecked, more strictly and a
+// definition that carries no credential is refused. So the three things that
+// decide a joined name are the parser's own — the leading whitespace of a fresh
+// line is dropped, the leading whitespace of a continuation line is kept (the
+// halves then are not one word, which is how ARG NPM_\ over an indented TOKEN
+// becomes the harmless ARG NPM_), and a comment inside a continuation is
+// dropped with it (ARG NPM_\ over a comment over TOKEN is the one ARG
+// NPMTOKEN). A blank line inside a continuation is dropped with it too, which
+// is the same rule a comment follows. All of it was checked against BuildKit's
+// own parser.
 func dockerfileLines(data []byte) []string {
 	var lines []string
 	var cont strings.Builder
+	joining := false
 	for _, physical := range strings.Split(string(data), "\n") {
-		line := strings.TrimSpace(strings.TrimSuffix(physical, "\r"))
-		if strings.HasSuffix(line, `\`) && !strings.HasSuffix(line, `\\`) {
-			cont.WriteString(strings.TrimSuffix(line, `\`))
+		line := strings.TrimSuffix(physical, "\r")
+		if joining {
+			if skipped := strings.TrimSpace(line); skipped == "" || strings.HasPrefix(skipped, "#") {
+				continue
+			}
+		}
+		if !joining {
+			line = strings.TrimLeft(line, " \t")
+		}
+		body, more := trimContinuation(line)
+		cont.WriteString(body)
+		if more {
+			joining = true
 			continue
 		}
-		cont.WriteString(line)
 		lines = append(lines, cont.String())
 		cont.Reset()
+		joining = false
 	}
 	if cont.Len() > 0 {
 		lines = append(lines, cont.String())
 	}
 	return lines
+}
+
+// trimContinuation removes a line's continuation backslash and the blanks
+// after it, reporting whether the line carries one. A doubled backslash ends a
+// line without continuing it, which is the parser's own rule (the backslash
+// before the last one is what escapes it).
+func trimContinuation(line string) (string, bool) {
+	line = strings.TrimRight(line, " \t")
+	if n := len(line); n >= 2 && line[n-1] == '\\' && line[n-2] != '\\' {
+		return line[:n-1], true
+	}
+	return line, false
 }
 
 // splitInstruction cuts one logical line into its instruction and the rest:
