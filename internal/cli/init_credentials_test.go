@@ -291,6 +291,15 @@ func TestUpdateSetsCredentialsServiceOnEveryInstallation(t *testing.T) {
 // is the only thing that deletes it) and leaves the plan with no variables
 // file at all, and a plan run from another root reads another root's tfvars.
 //
+// The rig is not a managed one, and that is not what the report's failure
+// turned on: the run's own step passed the managed gate before it planned
+// anything (the gate judges a saved plan, and it touches no workdir), and the
+// cover tables admit the module's credentials service by the shape its plan
+// writes — the image pin, the environment and the IAM the service requires —
+// which the fake's plan for one address deliberately does not spell out. What
+// the gate guarantees of this step is untouched: gateStep still judges this
+// plan where the project is managed, and no cover table changed.
+//
 // Mutation (verified, run and restored): insert
 // `infra.PrepareWorkdir(e.wd.Dir, "installation")` between the WriteVars and
 // the Plan of fillCredentialsAudience — one workdir rebuilt for the same
