@@ -545,6 +545,96 @@ func TestWorkspaceServiceReadsAMembersPolicyFromTheDatabaseItsIssNames(t *testin
 	}
 }
 
+// TestNewWorkspaceOpensTheDatabaseTheMembersRegionNames: a member whose project
+// was adopted with a Realtime Database in a region has a database at
+// `<project>-default-rtdb.<region>.firebasedatabase.app` and not at the legacy
+// `firebaseio.com` host, and the row's `database_region` is where the service
+// learns that. Deriving the legacy host from the project id alone would give
+// such a member a URL that is not its database, and because NewWorkspace opens
+// every member's database at construction, that one member would decide whether
+// the whole deployment starts.
+//
+// The region says where in the project the database lives and the project id
+// still decides WHOSE it is (finding 6): the URL below is derived from the
+// verified `iss`'s project joined to the region the row declares, and never
+// from a URL a row carries.
+func TestNewWorkspaceOpensTheDatabaseTheMembersRegionNames(t *testing.T) {
+	const region = "europe-west1"
+	now := testNow()
+	cfg := WorkspaceConfig{
+		Project:  wsWorkspace,
+		Audience: wsAudience,
+		Members: []WorkspaceMember{{
+			Project: wsMemberA, FirebaseProject: wsMemberA, DatabaseRegion: region, FP: wsMemberA,
+			JobAccounts: []string{wsAccountA}, ExchangeURL: "https://exchange.project-a.example.com",
+		}},
+		OwnerPeople: []string{wsOwner},
+		Keys:        staticKeys{testKid: &testKey().PublicKey},
+		JobKeys:     staticKeys{testJobKid: &testKey().PublicKey},
+		Now:         func() time.Time { return now },
+	}
+	var opened []string
+	cfg.Open = func(url string) (Getter, error) {
+		opened = append(opened, url)
+		return &wsDB{url: url, nodes: map[string]any{}}, nil
+	}
+	if _, err := NewWorkspace(cfg); err != nil {
+		t.Fatalf("NewWorkspace with a member in a regional database: %v", err)
+	}
+	want := "https://" + wsMemberA + "-default-rtdb." + region + ".firebasedatabase.app"
+	if len(opened) != 1 || opened[0] != want {
+		t.Errorf("the databases opened = %v, want just %q: the row's region is where the host comes from, and the legacy host is not this member's database", opened, want)
+	}
+	// A region outside the grammar a host is written with is refused while the
+	// deployment is being built rather than turned into a URL: a region is a
+	// piece of the host, so one carrying a `/` or a `.` would derive a URL that
+	// names something else entirely.
+	cfg.Members[0].DatabaseRegion = "europe-west1.example.com"
+	opened = nil
+	if _, err := NewWorkspace(cfg); !errors.Is(err, ErrWorkspaceConfig) {
+		t.Fatalf("NewWorkspace with a database_region that is not a region = %v, want ErrWorkspaceConfig", err)
+	}
+	if len(opened) != 0 {
+		t.Errorf("the databases opened for a refused region = %v, want none: the row is refused before anything is reached", opened)
+	}
+}
+
+// TestWorkspaceDatabaseIsTheFirebaseProjectAndTheRegion: the region half of the
+// derivation, which both the constructor and a caller's resolution go through.
+// A region is the host the tree's own reader admits for a database created in
+// one (internal/infra's CheckFirebaseOutputsFor names exactly the legacy
+// `firebaseio.com` shape and this one), and it is a piece of that host — so a
+// region outside the grammar a host is written with is a refusal and never a
+// URL. The project's own default database, the row that carries no region, is
+// held by TestWorkspaceIssuerMatchesTheLocalPins.
+func TestWorkspaceDatabaseIsTheFirebaseProjectAndTheRegion(t *testing.T) {
+	cases := []struct {
+		name   string
+		region string
+		want   string
+		refuse bool
+	}{
+		{"a region is the database that project has there", "europe-west1", "https://project-a-default-rtdb.europe-west1.firebasedatabase.app", false},
+		{"a region is not a second host", "europe-west1.example.com", "", true},
+		{"a region is not a path", "europe/west1", "", true},
+		{"a region is lower case", "EUROPE-WEST1", "", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := workspaceDatabase("project-a", tc.region)
+			if tc.refuse {
+				if err == nil {
+					t.Fatalf("workspaceDatabase(project-a, %q) = %q, want a refusal: the region is a piece of the host and this one is not a region", tc.region, got)
+				}
+				return
+			}
+			if err != nil || got != tc.want {
+				t.Errorf("workspaceDatabase(project-a, %q) = (%q, %v), want %q", tc.region, got, err, tc.want)
+			}
+		})
+	}
+}
+
 // TestWorkspaceServiceRefusesASplicedMemberAccounts: the splice the table used
 // to allow — member B's accounts paired with member A's database, and
 // therefore with A's policy and A's outcomes. It is refused twice, and the
@@ -946,14 +1036,14 @@ func TestWorkspaceIssuerMatchesTheLocalPins(t *testing.T) {
 	}
 	// The database derivation keeps the shape the credentials service's own
 	// guard holds an installation's database URL to.
-	url, err := workspaceDatabase(wsMemberA)
+	url, err := workspaceDatabase(wsMemberA, "")
 	if err != nil {
 		t.Fatalf("workspaceDatabase: %v", err)
 	}
 	if want := "https://project-a-default-rtdb.firebaseio.com"; url != want {
 		t.Errorf("workspaceDatabase(%q) = %q, want %q", wsMemberA, url, want)
 	}
-	if _, err := workspaceDatabase("Project A"); err == nil {
+	if _, err := workspaceDatabase("Project A", ""); err == nil {
 		t.Error("workspaceDatabase accepted a project id that is not one: the URL it derives would be a database nothing serves")
 	}
 }
@@ -966,14 +1056,14 @@ func TestWorkspaceMembersOfReadsTheNodesRows(t *testing.T) {
 	node := &projectpolicy.WorkspaceCredentials{
 		Name: wsWorkspace,
 		Members: []projectpolicy.WorkspaceCredentialMember{{
-			Project: wsMemberA, FirebaseProject: wsMemberA, FP: wsMemberA,
+			Project: wsMemberA, FirebaseProject: wsMemberA, DatabaseRegion: "europe-west1", FP: wsMemberA,
 			JobAccounts: []string{wsAccountA, wsAccountOut},
 			ExchangeURL: "https://exchange.project-a.example.com",
 		}},
 	}
 	got := WorkspaceMembersOf(node)
 	want := WorkspaceMember{
-		Project: wsMemberA, FirebaseProject: wsMemberA, FP: wsMemberA,
+		Project: wsMemberA, FirebaseProject: wsMemberA, DatabaseRegion: "europe-west1", FP: wsMemberA,
 		JobAccounts: []string{wsAccountA, wsAccountOut},
 		ExchangeURL: "https://exchange.project-a.example.com",
 	}

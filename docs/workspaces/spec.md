@@ -115,9 +115,9 @@ A workspace is declared in **two** places, and the second is derived from the fi
    on the workspace's project at all (§5), and the member's exchange verifies the pin **in its own
    config** and reads **its own** launcher/operator lists (§3). The record is the workspace's own
    statement about the group; it is not an input any member trusts. **It also does not say how to
-   reach a member** — the job accounts, the Firebase project and `fp` and the member's exchange URL
-   are the service's own per-member table, from the workspace owner's config (§5), and the record
-   only names the members.
+   reach a member** — the job accounts, the Firebase project and its database's region, `fp`, and the
+   member's exchange URL are the service's own per-member table, from the workspace owner's config
+   (§5), and the record only names the members.
 
 The workspace name reuses the project-name grammar (`config.ProjectNameRE`, F21) rather than a second
 one. A workspace's record is validated strictly and strictly decoded, like every other config and
@@ -450,7 +450,8 @@ never the enforcement.
 
 **The service keeps one table of members, and every value in it comes from the workspace owner's
 config.** To resolve a caller, to check its tokens and to mint a member-bound assertion (§3) the
-service needs, per member, its **job service accounts**, its **Firebase project id and `fp`**, and
+service needs, per member, its **job service accounts**, its **Firebase project id, the region its
+database is in when it is not the project's default one, and `fp`**, and
 its **exchange URL** — and each is the workspace owner's own declaration, made once per member on the
 owner's machine (`workspace member add`, W1) and converged by the owner's `fugaro update` (W2's stage
 writes the record; W3's root of the workspace's own project and W6's service carry the table). **The
@@ -596,7 +597,7 @@ member's database. Both are applied throughout this section above, and both are 
 | `workspace ls [--json]` | Offline. Every workspace this machine's project configs name, with the members it can see **from its own files** — the owner's machine, which holds the record it publishes, sees the whole list, and a member's sees the memberships its own configs name — and which of them this machine has a config for. Versioned JSON with a schema, like every other CLI document |
 | `workspace show <name> [--json]` | Offline. One workspace from **this machine's own files**: the configs on it and the pin each carries, its cap as last published here, and the drift between what this machine holds and what it last knew the record to say. It reads no cloud node (§2: a member holds no grant on the workspace's project), so on a member it shows the member's own half and says so rather than printing an empty member list; the workspace owner's machine, which holds the record it publishes, shows the whole of it |
 | `workspace add <name>` / `workspace rm <name>` | Edits the **selected local project config** and nothing else: the membership key `workspace: <name>` **and the pin beside it** — the values of §2, which are the one place a member decides what it trusts and which workspace key it verifies an assertion against — on, or off. Prints the diff, backs up the file, writes atomically, and ends by printing `next: fugaro update` |
-| `workspace member add <name> <project>` / `member rm …` | The same, for the member list of a workspace this machine holds a config for — the owner's side of a membership. `member add` is also where the owner records the per-member values §5's service table is built from (the member's job accounts, its Firebase project and `fp`, and its exchange URL), because the owner is the side that declares them. **The member's database URL is not among them**: it is derived from the verified `iss` project (§4, §5), so that an owner cannot pair one member's accounts with another's database |
+| `workspace member add <name> <project>` / `member rm …` | The same, for the member list of a workspace this machine holds a config for — the owner's side of a membership. `member add` is also where the owner records the per-member values §5's service table is built from (the member's job accounts, its Firebase project and the region of its database, its `fp`, and its exchange URL), because the owner is the side that declares them. **The member's database URL is not among them**: it is derived from the verified `iss` project (§4, §5), so that an owner cannot pair one member's accounts with another's database |
 | `workspace cap set --workspace <name> --monthly <amount>` | Records the workspace's cap in the local config; `fugaro update` publishes it |
 
 **`workspace show` reads files and never a cloud node**, and what "drift" means follows from that.

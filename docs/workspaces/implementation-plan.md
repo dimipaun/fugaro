@@ -185,10 +185,12 @@ the `models` commands use, and every one ending with `next: fugaro update`. `wor
 the membership key **and the pin** — the four values it is given, which is the one place a member
 decides what it trusts — firebase project, issuer, assertion key and service account — and
 `workspace rm` removes both. `workspace member add` is the owner's side: it writes the member entry
-**and the four values the service's per-member table is built from** (the member's **job service
-accounts**, its **Firebase project id and `fp`**, and its **exchange URL**, spec.md §5), and
-`member rm` removes the entry. **The member's database URL is not among them**: it is **derived from
-the Firebase project the verified `iss` names** (finding 6 of the post-merge review), so an owner
+**and the values the service's per-member table is built from** (the member's **job service
+accounts**, its **Firebase project id**, the **region of that project's database when it is not the
+default one**, its **`fp`**, and its **exchange URL**, spec.md §5), and
+`member rm` removes the entry. **The member's database URL is not among them**: its project half is
+**derived from the Firebase project the verified `iss` names** (finding 6 of the post-merge review),
+and the region beside it says only where in that project the database lives, so an owner
 cannot splice member B's accounts onto member A's database, and **the runs bucket is not among them
 either** — O1's answer dropped the bucket grant, and nothing derives it. The two commands are the two
 halves of a membership, and neither writes the other's file.
@@ -451,9 +453,11 @@ to `verifyRun`'s pinning and not only to the list it looks the account up in, an
 this task that a reader is most likely to miss.
 
 **The account table is the workspace's own per-member table, and the owner's config supplies it.**
-Each entry carries the member's job service accounts, its Firebase project id and `fp`, and its
-**exchange URL** — and **not its database URL**: that is **derived from the Firebase project the
-verified `iss` names** (finding 6 of the post-merge security review), so an owner cannot declare
+Each entry carries the member's job service accounts, its Firebase project id, the region of that
+project's database when it is not the default one, its `fp`, and its
+**exchange URL** — and **not its database URL**: the project half of it is **derived from the Firebase
+project the verified `iss` names** and the region says where in that project the database lives
+(finding 6 of the post-merge security review), so an owner cannot declare
 member B's accounts against member A's looser database. There is **no runs bucket** in the entry
 either (O1's answer dropped the bucket grant). Every value that *is* there is the **workspace owner's**
 declaration, converged by the workspace owner's `fugaro update` (W2's stage writes the record; this

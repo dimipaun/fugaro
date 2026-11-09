@@ -21,7 +21,8 @@ import (
 // owner's own CLI and the workspace's service read it. What it deliberately
 // does not carry is the per-member table the service resolves a caller by:
 // that table is the owner's *declaration about how the workspace reaches each
-// member* (the member's job service accounts, its Firebase project, its Fugaro
+// member* (the member's job service accounts, its Firebase project and the
+// region of that project's database when it is not the default one, its Fugaro
 // project and its exchange URL, spec.md §5), it is many times the size of the
 // record, and mixing the two would put the identity of every member's jobs in
 // the document a person reads to see who is in the group. So the table lives
@@ -122,6 +123,18 @@ type WorkspaceCredentialMember struct {
 	// Validate refuses a second row naming it, because two rows naming one would
 	// read one member's policy, ledger and outcomes for both.
 	FirebaseProject string
+	// DatabaseRegion is the region of the member's Realtime Database, and it is
+	// empty for a database in the project's default region. A workspace's member
+	// may be an adopted project whose database was created in a region, and the
+	// tree names that database `<firebase_project>-default-rtdb.<region>.firebasedatabase.app`
+	// rather than the legacy `<firebase_project>-default-rtdb.firebaseio.com`
+	// (internal/infra's CheckFirebaseOutputsFor, which admits exactly those two
+	// shapes and nothing else). The project id still decides WHOSE database it
+	// is — finding 6's derivation, which is what the run identity's `iss` is
+	// held to — and this field only says where in that project it lives, so a
+	// row naming another project's region is a URL that project does not have,
+	// read and refused as such rather than served.
+	DatabaseRegion string
 	// FP is the member's Fugaro project name as the `fp` claim carries it. It
 	// is a field of its own rather than a second read of Project, because the
 	// claim is what the check is made against and the two are compared: a row
@@ -171,6 +184,7 @@ type workspaceCredentialsNode struct {
 type workspaceCredentialMemberNode struct {
 	Project         string   `json:"project"`
 	FirebaseProject string   `json:"firebase_project"`
+	DatabaseRegion  string   `json:"database_region"`
 	FP              string   `json:"fp"`
 	JobAccounts     []string `json:"job_accounts"`
 	ExchangeURL     string   `json:"exchange_url"`
@@ -210,7 +224,7 @@ func WorkspaceCredentialsNode(w *WorkspaceCredentials) ([]byte, error) {
 		accounts := make([]string, 0, len(m.JobAccounts))
 		accounts = append(accounts, m.JobAccounts...)
 		n.Members = append(n.Members, workspaceCredentialMemberNode{
-			Project: m.Project, FirebaseProject: m.FirebaseProject, FP: m.FP,
+			Project: m.Project, FirebaseProject: m.FirebaseProject, DatabaseRegion: m.DatabaseRegion, FP: m.FP,
 			JobAccounts: accounts, ExchangeURL: m.ExchangeURL,
 		})
 	}
@@ -270,7 +284,7 @@ func DecodeWorkspaceCredentials(raw []byte) (*WorkspaceCredentials, bool, error)
 		accounts := make([]string, 0, len(m.JobAccounts))
 		accounts = append(accounts, m.JobAccounts...)
 		w.Members = append(w.Members, WorkspaceCredentialMember{
-			Project: m.Project, FirebaseProject: m.FirebaseProject, FP: m.FP,
+			Project: m.Project, FirebaseProject: m.FirebaseProject, DatabaseRegion: m.DatabaseRegion, FP: m.FP,
 			JobAccounts: accounts, ExchangeURL: m.ExchangeURL,
 		})
 	}
@@ -300,7 +314,7 @@ func decodeStrictRows(raw []byte, out *workspaceCredentialsNode) error {
 	if err := json.Unmarshal(raw, &rows); err != nil {
 		return err
 	}
-	members := []string{"project", "firebase_project", "fp", "job_accounts", "exchange_url"}
+	members := []string{"project", "firebase_project", "database_region", "fp", "job_accounts", "exchange_url"}
 	shared := []string{"name", "projects"}
 	for _, r := range rows.Members {
 		if err := decodeRow(r, members); err != nil {
@@ -329,7 +343,7 @@ func decodeRow(raw json.RawMessage, known []string) error {
 	}
 	for _, n := range names {
 		if !slices.Contains(known, n) {
-			return fmt.Errorf("it carries the key %q, which this Fugaro does not write in a row: a member's row names the member's project, its Firebase project, its fp, its job service accounts and its exchange URL, and nothing else — the database the service reads is derived from the verified iss and no bucket is bound", n)
+			return fmt.Errorf("it carries the key %q, which this Fugaro does not write in a row: a member's row names the member's project, its Firebase project, the region its database is in when it is not the default one, its fp, its job service accounts and its exchange URL, and nothing else — the database the service reads is derived from the verified iss and no bucket is bound", n)
 		}
 	}
 	return nil
@@ -371,6 +385,9 @@ func (w *WorkspaceCredentials) Validate() error {
 			return fmt.Errorf("members[%d] names a Firebase project another row already names: one Firebase project belongs to one member, and the database a member's state is read from is derived from it, so two rows naming one would read one member's state for both", i)
 		}
 		seenFirebase[m.FirebaseProject] = true
+		if !ValidDatabaseRegion(m.DatabaseRegion) {
+			return fmt.Errorf("members[%d].database_region is not a region a Realtime Database host is written with: the service derives the member's database URL from the Firebase project and this region, and a region the tree's own host grammar does not admit derives a host that is not a database — an adopted project in a region is named there by the region alone", i)
+		}
 		if err := validExchangeURL(m.ExchangeURL); err != nil {
 			return fmt.Errorf("members[%d].exchange_url %v", i, err)
 		}
@@ -436,6 +453,31 @@ func validAccountAddress(a string) bool {
 	}
 	for i := 0; i < len(a); i++ {
 		if c := a[i]; c < 0x21 || c > 0x7e {
+			return false
+		}
+	}
+	return true
+}
+
+// ValidDatabaseRegion holds a region to the characters a Realtime Database host
+// is written with, which is the tree's own grammar and not one invented here:
+// `internal/infra` recognises a regional database as
+// `<project>-default-rtdb.<region>.firebasedatabase.app` over `[a-z0-9-]+`, and
+// a region outside that class derives a host that is not a host at all. It is
+// the same division of labour the Firebase project id has — the shape is this
+// package's and whether the database exists is the platform's — and an empty
+// region is the project's default database, which is a state and not a mistake.
+//
+// It is exported because the service derives the host from it too (credsvc's
+// workspaceDatabase) and may be handed a table that never went through this
+// node: a region is a piece of a URL whatever built the row, and one spelling
+// of "what a region may be" is what keeps the two from drifting.
+func ValidDatabaseRegion(region string) bool {
+	if region == "" {
+		return true
+	}
+	for i := 0; i < len(region); i++ {
+		if c := region[i]; (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '-' {
 			return false
 		}
 	}

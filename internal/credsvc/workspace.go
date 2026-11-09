@@ -87,6 +87,15 @@ type WorkspaceMember struct {
 	// `iss` of that member's run identities, and therefore the fact the
 	// member's database is derived from.
 	FirebaseProject string
+	// DatabaseRegion is the region of the member's Realtime Database, empty for
+	// the project's default one: an adopted project may hold its database in a
+	// region, and the tree names that database
+	// `<firebase_project>-default-rtdb.<region>.firebasedatabase.app` rather
+	// than the legacy default host (internal/infra's CheckFirebaseOutputsFor).
+	// The Firebase project still decides WHOSE database it is — the `iss` check
+	// is what makes the derivation secure — and this only says where in that
+	// project the database lives.
+	DatabaseRegion string
 	// FP is the member's Fugaro project name as the `fp` claim carries it,
 	// which the member's verifier holds the run identity to. It is the same
 	// value as Project, and the two are compared rather than one read twice
@@ -117,7 +126,7 @@ func WorkspaceMembersOf(w *projectpolicy.WorkspaceCredentials) []WorkspaceMember
 		accounts := make([]string, 0, len(m.JobAccounts))
 		accounts = append(accounts, m.JobAccounts...)
 		out = append(out, WorkspaceMember{
-			Project: m.Project, FirebaseProject: m.FirebaseProject, FP: m.FP,
+			Project: m.Project, FirebaseProject: m.FirebaseProject, DatabaseRegion: m.DatabaseRegion, FP: m.FP,
 			JobAccounts: accounts, ExchangeURL: m.ExchangeURL,
 		})
 	}
@@ -332,6 +341,13 @@ func (w *Workspace) readMembers(cfg WorkspaceConfig) error {
 		if !config.ProjectNameRE.MatchString(m.FirebaseProject) {
 			return fmt.Errorf("%w: the member %q's row names a Firebase project that is not a project name", ErrWorkspaceConfig, m.Project)
 		}
+		// The region is a piece of the database's URL and this constructor may be
+		// handed a table that never went through the node, so the shape is held
+		// here too — by the same rule (projectpolicy.ValidDatabaseRegion) and
+		// naming the member, so an operator knows which row to fix.
+		if !projectpolicy.ValidDatabaseRegion(m.DatabaseRegion) {
+			return fmt.Errorf("%w: the member %q's row names a database_region that is not a region a Realtime Database host is written with", ErrWorkspaceConfig, m.Project)
+		}
 		if _, dup := w.byProject[m.Project]; dup {
 			return fmt.Errorf("%w: the member %q is in the table twice", ErrWorkspaceConfig, m.Project)
 		}
@@ -348,7 +364,7 @@ func (w *Workspace) readMembers(cfg WorkspaceConfig) error {
 			return fmt.Errorf("%w: the members %q and %q name one Firebase project, and the database a member's state is read from is derived from it, so the two would read one member's state", ErrWorkspaceConfig, prev, m.Project)
 		}
 		seenFirebase[m.FirebaseProject] = m.Project
-		url, err := workspaceDatabase(m.FirebaseProject)
+		url, err := workspaceDatabase(m.FirebaseProject, m.DatabaseRegion)
 		if err != nil {
 			return fmt.Errorf("%w: %s", ErrWorkspaceConfig, err)
 		}
@@ -470,7 +486,7 @@ func (w *Workspace) Caller(ctx context.Context, jobToken string) (WorkspaceCalle
 	if isPerson {
 		return WorkspaceCaller{Class: ClassWorkspaceOwner, Account: person}, nil
 	}
-	url, err := workspaceDatabase(member.FirebaseProject)
+	url, err := workspaceDatabase(member.FirebaseProject, member.DatabaseRegion)
 	if err != nil {
 		return WorkspaceCaller{}, err
 	}
@@ -615,15 +631,33 @@ func (w *Workspace) database(c MemberCall) (Getter, error) {
 // is <project>-default-rtdb, the shape the installation's own service holds its
 // one database to (internal/cli's checkDatabaseHost).
 //
-// It is derived from the issuer and not declared, and the two are the same fact
-// because the member's verifier holds the run identity's `iss` to exactly
-// firebaseIssuer(FirebaseProject) before anything is read: the database a call
-// reads is therefore the one the caller's own verified `iss` names, and an
-// owner's declaration can never pair one member's accounts with another
-// member's — possibly looser — policy (finding 6).
-func workspaceDatabase(firebaseProject string) (string, error) {
+// The region is the row's and the project is the issuer's, and the division is
+// what the derivation has to keep. A Database in a region is named there by the
+// region alone — the tree's own reader admits exactly the legacy
+// `https://<project>-default-rtdb.firebaseio.com` and the regional
+// `https://<project>-default-rtdb.<region>.firebasedatabase.app`
+// (internal/infra's CheckFirebaseOutputsFor) — so a member whose project was
+// adopted with a regional database derives the host it actually has rather than
+// the legacy one, which is a URL that is not its database at all. The project id
+// still decides WHOSE database it is, which is the half finding 6 rests on, and
+// it is the issuer's: the member's verifier holds the run identity's `iss` to
+// exactly firebaseIssuer(FirebaseProject) before anything is read, so an owner's
+// declaration can never pair one member's accounts with another member's —
+// possibly looser — policy.
+//
+// The shape of the region is held here as well as in the node (projectpolicy's
+// ValidDatabaseRegion), because this constructor may be handed a table that
+// never went through the node and a region is a piece of a URL whatever built
+// the row.
+func workspaceDatabase(firebaseProject, region string) (string, error) {
 	if !config.ProjectNameRE.MatchString(firebaseProject) {
 		return "", errors.New("the member's row names a firebase_project that is not a Firebase project id, so its database could not be derived from it")
 	}
-	return "https://" + firebaseProject + "-default-rtdb.firebaseio.com", nil
+	if !projectpolicy.ValidDatabaseRegion(region) {
+		return "", errors.New("the member's row names a database_region that is not a region a Realtime Database host is written with, so its database could not be derived from it")
+	}
+	if region == "" {
+		return "https://" + firebaseProject + "-default-rtdb.firebaseio.com", nil
+	}
+	return "https://" + firebaseProject + "-default-rtdb." + region + ".firebasedatabase.app", nil
 }

@@ -123,7 +123,7 @@ func TestWorkspaceCredentialsRefusesOneAccountInTwoRows(t *testing.T) {
 	}
 }
 
-// TestWorkspaceCredentialsRefusesARowItCannotResolve: the two shape rules a
+// TestWorkspaceCredentialsRefusesARowItCannotResolve: the shape rules a
 // member's row is held to, and each is a row the workspace's service would
 // otherwise carry and never be able to use.
 //
@@ -139,8 +139,19 @@ func TestWorkspaceCredentialsRefusesOneAccountInTwoRows(t *testing.T) {
 // URL (spec.md §3), and the endpoint matches it exactly: a URL with a query or a
 // fragment, one that is not https, or one that names no host admits nobody, and
 // a member whose every sign-in is refused reads as a broken exchange rather than
-// as the misconfiguration it is. Both refusals name the FIELD and the index and
-// never what the row wrote: a row is another installation's configuration.
+// as the misconfiguration it is.
+//
+// **The database region.** The service derives a member's database URL from the
+// row's Firebase project joined to this region (credsvc's workspaceDatabase),
+// so the region is a piece of a host: one outside the characters the tree's own
+// reader writes a regional database with (`[a-z0-9-]+`,
+// internal/infra's CheckFirebaseOutputsFor) derives a URL that names something
+// else entirely. An empty region is the project's default database and a state
+// rather than a mistake, which is why the rule admits it and the positive test
+// below holds both.
+//
+// Every refusal names the FIELD and the index and never what the row wrote: a
+// row is another installation's configuration.
 func TestWorkspaceCredentialsRefusesARowItCannotResolve(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -184,6 +195,15 @@ func TestWorkspaceCredentialsRefusesARowItCannotResolve(t *testing.T) {
 		{"an empty exchange URL", "exchange_url", "", func(m *WorkspaceCredentialMember) {
 			m.ExchangeURL = ""
 		}},
+		{"a database region that is a second host", "database_region", "europe-west1.example.com", func(m *WorkspaceCredentialMember) {
+			m.DatabaseRegion = "europe-west1.example.com"
+		}},
+		{"a database region that is a path", "database_region", "europe/west1", func(m *WorkspaceCredentialMember) {
+			m.DatabaseRegion = "europe/west1"
+		}},
+		{"a database region in another case", "database_region", "EUROPE-WEST1", func(m *WorkspaceCredentialMember) {
+			m.DatabaseRegion = "EUROPE-WEST1"
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -208,6 +228,7 @@ func TestWorkspaceCredentialsRefusesARowItCannotResolve(t *testing.T) {
 				"members": []any{map[string]any{
 					"project":          w.Members[0].Project,
 					"firebase_project": w.Members[0].FirebaseProject,
+					"database_region":  w.Members[0].DatabaseRegion,
 					"fp":               w.Members[0].FP,
 					"job_accounts":     w.Members[0].JobAccounts,
 					"exchange_url":     w.Members[0].ExchangeURL,
@@ -227,6 +248,46 @@ func TestWorkspaceCredentialsRefusesARowItCannotResolve(t *testing.T) {
 	// above are the shape and not the fixture.
 	if _, err := WorkspaceCredentialsNode(credentialsFixture()); err != nil {
 		t.Fatalf("WorkspaceCredentialsNode of the fixture: %v", err)
+	}
+}
+
+// TestWorkspaceCredentialsCarriesTheDatabaseRegion: the region is a field of
+// the row and not a second database URL — the shape the splice finding 6 closed
+// still refuses a URL in a row — and both states are the node's: a member whose
+// database is the project's default one carries no region, and a member whose
+// project was adopted with its database in a region carries that region, which
+// is the only thing that tells the service where that member's database is
+// (credsvc's workspaceDatabase). A field the encoder drops is a member whose
+// database the service derives at the wrong host, and reading the wrong host
+// reads nothing at all.
+func TestWorkspaceCredentialsCarriesTheDatabaseRegion(t *testing.T) {
+	w := credentialsFixture()
+	w.Version = WorkspaceCredentialsVersion
+	w.Members[0].DatabaseRegion = "europe-west1"
+	raw, err := WorkspaceCredentialsNode(w)
+	if err != nil {
+		t.Fatalf("WorkspaceCredentialsNode with a regional database: %v", err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("the node is not JSON: %v", err)
+	}
+	rows := doc["members"].([]any)
+	for i, want := range []string{"europe-west1", ""} {
+		row := rows[i].(map[string]any)
+		if got, _ := row["database_region"].(string); got != want {
+			t.Errorf("members[%d].database_region = %q, want %q: the region is what tells the service which database of the project to read", i, got, want)
+		}
+		if _, ok := row["database_url"]; ok {
+			t.Errorf("members[%d] carries a database_url: the database is derived from the verified iss and a row that names one is the splice finding 6 closed", i)
+		}
+	}
+	got, found, err := DecodeWorkspaceCredentials(raw)
+	if err != nil || !found {
+		t.Fatalf("DecodeWorkspaceCredentials = (%v, %v), want the node it was written from", found, err)
+	}
+	if !reflect.DeepEqual(got, w) {
+		t.Errorf("the node round-tripped to\n%+v\nwant\n%+v", got, w)
 	}
 }
 
