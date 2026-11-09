@@ -1072,8 +1072,8 @@ func runEndings(rows []runview.Row) map[task.Ref]string {
 
 // repoCell is a row's REPO cell: the repository the run's task names, in the
 // column the RUN cell gave up when it became the ending. It is "-" for a run
-// whose task.json could not be read — the row's reason says so, and the row's
-// RUN cell then carries the storage slug, which is all that names it.
+// whose task.json could not be read — the row's reason says so, and the RUN
+// cell still names the run by its ending.
 func repoCell(r runview.Row) string {
 	if r.Repo == "" {
 		return "-"
