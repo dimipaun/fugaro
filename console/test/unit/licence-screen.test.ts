@@ -11,12 +11,15 @@
 //     withholds everything rather than drawing the word (`LICENCE_STATE_WORDS` is
 //     the console's own table, and a fourth state a later CLI grew is a reply
 //     this build does not read).
-//   - **the key is never drawn, and the section has nothing to redact.** Neither
-//     the read's nor the save's answer carries the key text -- what an operator
-//     reads is an organisation, a tier, a seat count and two days -- so the case
-//     below that feeds a claim value a control character holds the door that
-//     *is* there: a claim's string reaches the screen through `putText` with its
-//     class and through nothing else.
+//   - **the key is never drawn, and the section has no credential to redact.**
+//     Neither the read's nor the save's answer carries the key text -- what an
+//     operator reads is an organisation, a tier, a seat count and two days -- so
+//     the case below that feeds a claim value a control character holds the door
+//     that *is* there: a claim's string reaches the screen through `putText` with
+//     its class and through nothing else. The organisation is the one value of
+//     the set that is free text, so it is also the one the free-text rules can
+//     change: a case below pins that a domain-shaped organisation is drawn as the
+//     console's marker for a machine name.
 //   - **no link, in any state.** The screen carries no address and no
 //     "where to buy one": console code names no host of the project's own (the
 //     plan's own rule for this task). The fake element below refuses the
@@ -45,6 +48,7 @@ import {
   LICENCE_HINT,
   LICENCE_NO_KEY_WORD,
   LICENCE_OPERATION,
+  LICENCE_ORGANISATION_TERM,
   LICENCE_OUTCOME_CLASS,
   LICENCE_REFUSED_WORD,
   LICENCE_SAVED_WORD,
@@ -65,6 +69,7 @@ import {
 } from '../../src/renderer/screens/licence'
 import type { ScreenElement, ScreenFactory } from '../../src/renderer/screens/licence'
 import { REFUSAL_UNREADABLE } from '../../src/renderer/screens/degraded'
+import { HOST_PLACEHOLDER } from '../../src/shared/sanitize'
 
 // ---------------------------------------------------------------------------
 // The harness: a fake element that refuses what a screen may not do.
@@ -187,8 +192,10 @@ describe('the licence key’s section', () => {
     expect(drawn(section)).toContain('in grace')
     expect(drawn(section)).toContain(LICENCE_SOURCE)
     // The claim set, term by term: an organisation drawn as the free text it is
-    // (the class's own rules redact a value that reads as a host), the tier as a
-    // word, the seats as the number the answer carried, and the features.
+    // -- this one whole, because `acme.example` carries a suffix the host rule
+    // does not know; the case below is the domain-shaped one, which that rule
+    // draws as the marker -- the tier as a word, the seats as the number the
+    // answer carried, and the features.
     expect(all(section, LICENCE_TERM_CLASS)[0]?.textContent).toBe('Organisation')
     expect(one(section, LICENCE_CLAIMS_CLASS).childNodes()).toHaveLength(12)
     expect(drawn(section)).toContain('acme.example')
@@ -203,6 +210,24 @@ describe('the licence key’s section', () => {
     expect(one(section, LICENCE_BOX_CLASS).getAttribute('type')).toBe('text')
     expect(one(section, LICENCE_SUBMIT_CLASS).textContent).not.toBeNull()
     expect(drawn(section)).toContain(LICENCE_HINT)
+  })
+
+  it('draws an organisation that reads as a machine name as the marker, and the row beside it whole', () => {
+    // The ordinary organisation is a domain, and this console draws no machine
+    // name whichever field it arrives in: the class is `sentence`, which runs
+    // the free-text rules, so `acme.com` is the marker and not the domain -- the
+    // same answer `projects.ts` gives `routes[].host` through the `host` class,
+    // and the design states it for this section. **The row is drawn either
+    // way**: what the marker costs is the name, never the fact that a key is
+    // installed, and the seats beside it are drawn as they arrived.
+    const { drawn: section } = drawnSection({
+      raw: { state: 'valid', claims: { organisation: 'acme.com', seats: 2 } },
+      because: null,
+    })
+    expect(all(section, LICENCE_TERM_CLASS)[0]?.textContent).toBe(LICENCE_ORGANISATION_TERM)
+    expect(all(section, LICENCE_VALUE_CLASS)[0]?.textContent).toBe(HOST_PLACEHOLDER)
+    expect(drawn(section), 'a domain reached the screen').not.toContain('acme.com')
+    expect(drawn(section)).toContain('2')
   })
 
   it('draws only the claim rows the answer carries, and puts every value through the door', () => {

@@ -70,7 +70,7 @@ clock, never about the network: the check is offline, so no outage on Fugaro's s
 
 The console's whole surface is `CONSOLE_OPERATIONS` (`console/src/main/ipc.ts:600`): thirty-six
 operations, twenty-five of which spawn the CLI under an exact-argv allow-list
-(`SPAWN_COMMANDS`, `console/src/main/spawn.ts:746`). Twenty-three of the twenty-five are reads; two
+(`SPAWN_COMMANDS`, `console/src/main/spawn.ts:761`). Twenty-three of the twenty-five are reads; two
 are writes. The eleven that spawn nothing at all are the nine the console answers from its own state,
 `licence.read`, and `licence.save` — which is a third write, the console's own store's, and the only
 one with no child.
@@ -100,7 +100,7 @@ has to be able to reach the box that takes a renewal.
 The plan's F20 counted **fifteen read operations, and no launch or cancel**
 ([reconciliation.md](../subscriptions/reconciliation.md)): that was the tree of 2026-10-27. The
 launch landed since — D22 answered "one write, launch", and the row is annotated "the launch, and the
-console's only write" (`console/src/main/spawn.ts:1201`,
+console's only write" (`console/src/main/spawn.ts:1216`,
 [desktop-console-v2.md](desktop-console-v2.md)) — and the settings write landed after it, saying of
 itself in the same table that it is "the second write" (`console/src/main/ipc.ts:1162`). **Cancel and the
 kill switch are still absent, and deliberately so**: D2 keeps v1 strictly read-only, D14 makes the

@@ -182,10 +182,22 @@ export const LICENCE_UNREADABLE_WORD =
  * words, the value as the answer carried it, and the class the value is drawn
  * through. The class travels on the row because the values are not one kind of
  * string -- an organisation is free text (`sentence`: a domain, a name, or an
- * order's id, and a value that reads as a host is drawn `<host>` by that class's
- * own rules), while a tier, a seat count, a day and the feature list are the
+ * order's id), while a tier, a seat count, a day and the feature list are the
  * CLI's short rendered fields (`label`) -- and `putText` is the only door a
  * document's string has onto this screen.
+ *
+ * **An organisation that reads as a machine name is drawn as the marker, and
+ * the ordinary organisation is a domain.** `sentence` runs the free-text rules,
+ * whose host rule is the recorder's, so `acme.com` is drawn `<host>`. That is
+ * this console's rule for a machine name and not a property of the claim: a
+ * machine name is the one thing this console does not draw, whichever field it
+ * arrives in (`projects.ts`'s `routes[].host` says so of a route). No other
+ * class can be asked instead -- every other member of `TEXT_CLASSES` is a
+ * validating class with a grammar of its own, and the verifier checks no grammar
+ * on this value at all (`src/main/licence.ts`: a string, and not empty) -- and
+ * the design states the consequence where it describes this section. The row is
+ * drawn either way: what the marker costs is the name, never the fact that a key
+ * is installed.
  */
 export interface LicenceClaim {
   readonly term: string
