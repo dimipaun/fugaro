@@ -201,21 +201,36 @@ type Importing struct {
 type ExitError struct {
 	Command string // the subcommand, such as "plan" or "state rm"
 	Code    int
-	Stderr  string // the tail of terraform's stderr
-	// Truncated is whether Stderr is only the tail of what terraform wrote:
+	// Stderr is the tail of terraform's stderr, up to stderrEvidence bytes:
+	// more than a person is shown, because the one reader that has to account
+	// for every diagnostic terraform printed (PropagationFailure) may not
+	// read a tail for the whole, and one failed apply's diagnostics are not
+	// bounded by what a terminal can take.
+	Stderr string
+	// Truncated is whether even that is only a tail of what terraform wrote:
 	// the bytes before it were dropped, so the first line it starts with may
 	// be half of a message that began earlier. A reader that has to account
-	// for every diagnostic terraform printed (PropagationFailure) needs the
-	// difference between "there were no others" and "they are not here".
+	// for every diagnostic needs the difference between "there were no
+	// others" and "they are not here".
 	Truncated bool
 }
 
 func (e *ExitError) Error() string {
 	msg := fmt.Sprintf("terraform %s exited %d", e.Command, e.Code)
-	if s := strings.TrimSpace(e.Stderr); s != "" {
+	// A person reads the end of a failure, and Stderr holds more than a
+	// terminal wants: the message carries its own tail.
+	if s := strings.TrimSpace(lastBytes(e.Stderr, stderrTail)); s != "" {
 		msg += ": " + s
 	}
 	return msg
+}
+
+// lastBytes is the last n bytes of s, or s itself when it is shorter.
+func lastBytes(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[len(s)-n:]
 }
 
 // TF runs one terraform binary in one working directory.
@@ -241,7 +256,19 @@ type TF struct {
 const (
 	minMinor    = 9
 	lockTimeout = "-lock-timeout=60s"
-	stderrTail  = 4096
+	// stderrTail is how much of a failed command's stderr goes into its error
+	// message: what a person reads is the end of a failure.
+	stderrTail = 4096
+	// stderrEvidence is how much of it is kept for PropagationFailure, which
+	// has to account for EVERY diagnostic one apply printed before it may run
+	// it again. 4096 bytes is about seven of them (a boxed IAM diagnostic is
+	// some 600 bytes, and the provider's local-exec text is longer), and a
+	// fresh project's binding set is more than seven: reading a display tail
+	// as the whole would make the retry do nothing in exactly the case it
+	// exists for. A mebibyte is orders of magnitude past any one apply's
+	// errors and still a bound, and landing beyond it fails closed
+	// (Truncated), as it must: a dropped prefix could hold anything.
+	stderrEvidence = 1 << 20
 )
 
 // New checks that bin is a supported terraform and returns a TF that runs it
@@ -505,7 +532,7 @@ func (t *TF) run(ctx context.Context, args []string, stdout io.Writer) (int, err
 	if stdout == nil {
 		stdout = safeProgress
 	}
-	var stderr tailBuffer
+	stderr := tailBuffer{limit: stderrEvidence}
 	cmd := exec.CommandContext(ctx, t.bin, args...)
 	cmd.Dir = t.dir
 	cmd.Env = slices.Clone(t.env) // never nil, which would inherit ours
@@ -540,18 +567,19 @@ func (s *syncWriter) Write(p []byte) (int, error) {
 	return s.w.Write(p)
 }
 
-// tailBuffer keeps the last stderrTail bytes written to it, and records
-// whether it had to drop any: what it holds is then a tail rather than the
-// whole of what was written.
+// tailBuffer keeps the last limit bytes written to it, and records whether it
+// had to drop any: what it holds is then a tail rather than the whole of what
+// was written.
 type tailBuffer struct {
 	b       []byte
+	limit   int
 	dropped bool
 }
 
 func (t *tailBuffer) Write(p []byte) (int, error) {
 	t.b = append(t.b, p...)
-	if len(t.b) > stderrTail {
-		t.b = append([]byte(nil), t.b[len(t.b)-stderrTail:]...)
+	if len(t.b) > t.limit {
+		t.b = append([]byte(nil), t.b[len(t.b)-t.limit:]...)
 		t.dropped = true
 	}
 	return len(p), nil

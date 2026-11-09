@@ -3455,20 +3455,22 @@ recipe — the one route it leaves, the gid baked into the image, is untested
   fresh project (§1.9, Task 6). **Built** (Task 6): the module's bindings are
   `google_project_iam_member` resources that name the accounts it creates, so
   Terraform orders the account before the binding — but ordering is not a
-  wait, so the stage also retries: an apply that fails only on that gap —
-  which is one entry of the closed list `tf.PropagationFailure` holds and
-  which the converge's three cloud roots retry on (`installRoot` for the
-  installation, `planRepo` for the repository, `computeStage.apply` here) — is
-  planned, guarded and granted again, on the same three waits the installation
-  and repository steps use (20 s, 60 s, 120 s), and what is left is applied,
-  and only when the new plan passes the guard and the grant rules and holds
-  nothing the confirmed plan did not
+  wait, so the stage also retries: an apply that fails only on that gap is
+  planned, guarded and granted again, on the same three waits (20 s, 60 s,
+  120 s), and what is left is applied, and only when the new plan passes the
+  guard and the grant rules and holds nothing the confirmed plan did not
   (`computeStage.apply`, `propagationRetry`, `TestComputeStageRetriesIAMPropagation`).
-  The Firebase root (`applyRoot`) is **not** one of the three: it creates an
-  account and the bindings on it in one apply the same way, so a
-  `fugaro update --firebase-project` on a fresh project can still meet this gap
-  and still need a re-run — a hole this change leaves open rather than a claim
-  it makes.
+  The gap is one entry of the closed list `tf.PropagationFailure` holds, and
+  **every** cloud root of the converge retries on that list: `installRoot` for
+  the installation, `planRepo` for the repository, `applyRoot` for the Firebase
+  root (whose signer account and the binding that names it are created in one
+  apply, `modules/firebase/iam.tf`) and `computeStage.apply` here.
+  The list reads a tail of the apply's stderr that is the classifier's own and
+  much longer than the 4096 bytes the message shows (`tf.go`'s
+  `stderrEvidence`): a fresh project's binding set is more diagnostics than a
+  terminal's worth of text, and reading the display tail as the whole would
+  make the retry do nothing in exactly the case it exists for. Past that bound
+  it fails closed, as it must.
   Which message GCP gives for the
   gap is what a live run (57b) has to confirm rather than a fake; a gap
   reported in other words is not on the list, fails the stage, and rerunning

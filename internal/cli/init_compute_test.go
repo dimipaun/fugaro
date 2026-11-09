@@ -593,9 +593,11 @@ func TestComputeStageHoldsItsGrantsToTheCover(t *testing.T) {
 // propagationStderr is what an apply says when a binding names a service
 // account the same apply created a moment ago and IAM does not see yet
 // (design compute-backend §7.2 finding 5). It is terraform's own shape -- the
-// box, and the resource the diagnostic was applying -- because that is what
-// the retry's closed list reads: a one-line error nobody sees is not what an
-// apply writes.
+// box, and the resource the diagnostic was applying -- which is what a person
+// running terraform by hand reads; an apply fugaro runs pipes stderr, so what
+// it really writes is the same diagnostic without the box, and the retry's
+// closed list reads both (tf's TestPropagationFailureIsTheClosedList has a
+// piped row). A one-line error nobody sees is not either of them.
 const propagationStderr = "╷\n│ Error: Error applying IAM policy for project \"proj-1234\": Error setting IAM policy for project \"proj-1234\": googleapi: Error 400: Service account fugaro-reaper@proj-1234.iam.gserviceaccount.com does not exist., badRequest\n│ \n│   with module.compute.google_project_iam_member.reaper,\n│   on iam.tf line 88, in resource \"google_project_iam_member\" \"reaper\":\n│   88: resource \"google_project_iam_member\" \"reaper\" {\n│ \n╵\n"
 
 // reaperGapPlan makes the compute root's plan hold the account the apply's own

@@ -4,8 +4,8 @@
 //
 // FAKE_TERRAFORM_SCRIPT holds a JSON object keyed by subcommand ("version",
 // "init", "plan", "show", "show -json", "apply", "output", "state rm"); each
-// value gives the exit code, the stdout and stderr to print, and files to
-// write (relative to the working directory). A subcommand the script doesn't
+// value gives the exit code, the stdout and stderr to print (each optionally
+// repeated, "repeat"), and files to write (relative to the working directory). A subcommand the script doesn't
 // name exits 0 with no output, except "version", which reports 1.16.4. A key
 // "<subcommand>@<root>" (such as "output@firebase") applies to the working
 // directory of that name only and wins over the plain key there.
@@ -45,6 +45,12 @@ type step struct {
 	Stdout string            `json:"stdout"`
 	Stderr string            `json:"stderr"`
 	Files  map[string]string `json:"files"`
+	// Repeat is how many times Stdout and Stderr are printed (0 and 1 both
+	// mean once). It is here because the script travels in an environment
+	// variable, which Linux caps at about 128 KB per string: a test of what
+	// fugaro does with a stderr bigger than the tail it keeps cannot write
+	// that stderr into the script, only multiply a short one.
+	Repeat int `json:"repeat"`
 }
 
 // Call is one line of FAKE_TERRAFORM_LOG.
@@ -112,8 +118,9 @@ func run(args []string) int {
 			return 3
 		}
 	}
-	fmt.Fprint(os.Stdout, st.Stdout)
-	fmt.Fprint(os.Stderr, st.Stderr)
+	repeat := max(st.Repeat, 1)
+	fmt.Fprint(os.Stdout, strings.Repeat(st.Stdout, repeat))
+	fmt.Fprint(os.Stderr, strings.Repeat(st.Stderr, repeat))
 	return st.Exit
 }
 

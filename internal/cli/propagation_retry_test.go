@@ -244,6 +244,60 @@ const (
 	repoBuildAccount     = "fugaro-build"
 )
 
+// The Firebase root is the fourth, and last, cloud root of the converge, and
+// it is wrapped the same way (applyRoot): modules/firebase/iam.tf creates the
+// token signer and the google_service_account_iam_member that names it in one
+// apply, which is the create-then-bind race itself -- so a fresh project's
+// first `fugaro update --firebase-project` is exactly where a Google API that
+// has not caught up used to stop the upgrade and ask for the re-run CLAUDE.md
+// forbids. The failure here is that gap: the signer this apply creates, and
+// the binding on it that IAM refuses until it has seen the account.
+func TestPropagationRetryRerunsTheFirebaseStep(t *testing.T) {
+	noPropagationWaits(t)
+	p := newRepoPlanRig(t, names(4), sandboxBaseRelease, sandboxProjectSecretLC, firebaseSignerChanges)
+	p.ri.script["apply"] = []any{
+		map[string]any{"exit": 1, "stderr": firebaseSignerGap400},
+		map[string]any{"exit": 0},
+	}
+	p.ri.save(t)
+
+	applied, stop, err := p.run.applyRoot(t.Context(), p.c, p.tfr, p.wd, "firebase", "to the Firebase project "+initProject, nil)
+	if err != nil || !applied || stop {
+		t.Fatalf("applied = %v, stop = %v, err = %v, want the retried Firebase step to have applied:\n%s", applied, stop, err, p.out.String())
+	}
+	out := p.out.String()
+	const line = "retrying the Firebase step in 20s: Google had not yet caught up with a resource it just created (attempt 1 of 3)"
+	if n := strings.Count(out, line); n != 1 {
+		t.Errorf("the retry was reported %d times, want one line:\n%s", n, out)
+	}
+	if got, want := rootSubs(t, p.ri, filepath.Base(p.wd.Root), "plan", "show", "apply"), []string{"plan", "show", "apply", "plan", "show", "apply"}; !slices.Equal(got, want) {
+		t.Errorf("the Firebase root's plan/show/apply = %q, want the whole cycle again\n%s", got, out)
+	}
+}
+
+// firebaseSignerChanges is the Firebase root's plan in that failure: the token
+// signer this apply creates (modules/firebase/iam.tf) and the binding on it.
+func firebaseSignerChanges(infra.RepoSpec) []planChange {
+	account := "projects/" + initProject + "/serviceAccounts/" + signerAccount + "@" + initProject + ".iam.gserviceaccount.com"
+	return []planChange{
+		created(signerAccountAddr, "google_service_account",
+			map[string]any{"account_id": signerAccount, "email": signerAccount + "@" + initProject + ".iam.gserviceaccount.com", "name": account}),
+		created(minterGrantAddr, "google_service_account_iam_member",
+			map[string]any{"service_account_id": account, "role": "projects/" + initProject + "/roles/fugaroTokenMinter", "member": "user:owner@example.invalid"}),
+	}
+}
+
+// firebaseSignerGap400 is Google's answer to that binding while the account it
+// names is not visible to IAM yet: the 400 entry of the closed list.
+var firebaseSignerGap400 = applyDiagnostic(minterGrantAddr,
+	"Error applying IAM policy for service account 'projects/"+initProject+"/serviceAccounts/"+signerAccount+"@"+initProject+".iam.gserviceaccount.com': googleapi: Error 400: Service account "+signerAccount+"@"+initProject+".iam.gserviceaccount.com does not exist., badRequest")
+
+const (
+	signerAccountAddr = "module.firebase.google_service_account.signer"
+	minterGrantAddr   = "module.firebase.google_service_account_iam_member.minter"
+	signerAccount     = "fugaro-signer"
+)
+
 // The second plan is a plan like the first one: the managed gate judges it
 // again, and the record is of the plan the retry applied -- the digest of the
 // plan the first attempt failed on is nowhere in the day's trail, because a

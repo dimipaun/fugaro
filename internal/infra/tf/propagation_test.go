@@ -12,9 +12,12 @@ import (
 // resource the same apply created, and — just as much — what it looks like when
 // the error is something else.
 //
-// The fixtures are the shape terraform prints, box and all, so a test asserts
-// about the text an apply really writes rather than about a one-line error
-// nobody sees.
+// The fixtures are the shapes terraform really writes, so a test asserts about
+// the text an apply leaves behind rather than about a one-line error nobody
+// sees. Both of terraform's shapes are here: the boxed one it draws on a
+// terminal, and the piped one it writes when stderr is not a terminal --
+// which is the one every fugaro apply produces, because fugaro pipes stderr
+// (tf.go's MultiWriter).
 
 // applyErr is the error one terraform apply left behind, as the wrapper builds
 // it: the tail of stderr and the exit code.
@@ -22,10 +25,22 @@ func applyErr(stderr string) error {
 	return &ExitError{Command: "apply", Code: 1, Stderr: stderr}
 }
 
-// withResource renders one terraform apply diagnostic the way terraform does:
-// boxed, a blank line, and the resource it acts on above the source line.
+// withResource renders one terraform apply diagnostic the way terraform draws
+// it on a terminal: boxed, a blank line, and the resource it acts on above the
+// source line.
 func withResource(address, message string) string {
 	return "╷\n│ Error: " + message + "\n│ \n│   with " + address + ",\n│   on iam.tf line 163, in resource \"x\" \"y\":\n│  163: resource \"x\" \"y\" {\n│ \n╵\n"
+}
+
+// withResourcePiped renders the same diagnostic the way terraform writes it
+// when its output is not a terminal -- which is every apply fugaro runs, since
+// it pipes stderr: no box, no rule lines, the message (wrapped by terraform
+// where a caller passes it wrapped) and the "  with <address>," line below it.
+// Both are terraform's own shapes and the classifier reads both: the box is
+// what a person sees when they run terraform themselves, the piped one is what
+// an apply writes into the tail fugaro keeps.
+func withResourcePiped(address, message string) string {
+	return "Error: " + message + "\n  with " + address + ",\n  on iam.tf line 163, in resource \"x\" \"y\":\n  163: resource \"x\" \"y\" {\n"
 }
 
 // theReported404 is the failure of 2026-11-09, 0.21.1 on a managed project:
@@ -81,6 +96,25 @@ func TestPropagationFailureIsTheClosedList(t *testing.T) {
 			err:  applyErr(withResource("module.installation.google_cloud_run_v2_service_iam_member.credentials_invoker", invoker404) + withResource("module.installation.google_cloud_run_v2_service_iam_member.credentials_verifier", verifier404)),
 			plan: credentialsServicePlan(),
 			want: true,
+		},
+		{
+			// The same failure as the apply really writes it, since fugaro
+			// pipes stderr: no box, and the message broken across lines the
+			// way terraform breaks it.
+			name: "the piped shape of the reported failure",
+			err: applyErr(withResourcePiped("module.installation.google_cloud_run_v2_service_iam_member.credentials_invoker",
+				"Error applying IAM policy for cloudrun.googleapis.com/Service \"fugaro-credentials\": googleapi: Error 404: Resource 'fugaro-credentials' of kind 'SERVICE'\ndoes not exist, notFound")),
+			plan: credentialsServicePlan(),
+			want: true,
+		},
+		{
+			// And the piped shape of a failure that must stop at once: the
+			// shape is not what decides, the message is.
+			name: "the piped shape of one 404 mixed with another failure",
+			err: applyErr(withResourcePiped("module.installation.google_cloud_run_v2_service_iam_member.credentials_invoker",
+				"Error applying IAM policy for cloudrun.googleapis.com/Service \"fugaro-credentials\": googleapi: Error 404: Resource 'fugaro-credentials' of kind 'SERVICE' does not exist, notFound") +
+				withResourcePiped("module.installation.google_cloud_run_v2_job.history", "Error creating job: googleapi: Error 403: Quota exceeded, quotaExceeded")),
+			plan: credentialsServicePlan(),
 		},
 		{
 			// A 400 on a grant to the account that same apply created: the

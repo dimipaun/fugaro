@@ -91,31 +91,37 @@ func TestApplyUsesSavedPlanOnly(t *testing.T) {
 	}
 }
 
-// The tail is all fugaro keeps of an apply's stderr, so what it holds is not
-// the whole of what terraform wrote and the closed list refuses to read it as
-// evidence that every error was one propagation error (propagation.go's
-// Truncated). That refusal rests on `run` marking the error, which no test of
-// the list itself can show: the list's own truncated row is an ExitError built
-// by hand (propagation_test). Here the same 404 is applied twice, once with
-// stderr short enough to be kept whole and once with a stderr long enough that
-// only its 4096-byte tail survives -- the tail that ends in the 404 either
-// way, so what separates the two answers is the marking and nothing else.
-func TestApplyReportsAStderrItHadToTruncate(t *testing.T) {
+// What fugaro keeps of an apply's stderr is a tail, and the closed list
+// refuses to read a tail as the whole of what terraform wrote
+// (propagation.go's Truncated). Two things about that are the wrapper's, not
+// the list's, and neither is visible in a test that builds an ExitError by
+// hand: that `run` marks the error at all, and how big the tail it keeps is.
+// The bound is stderrEvidence, not the 4096 bytes the message shows: an apply
+// that fails on more resources than a terminal's worth of text -- a fresh
+// project's binding set -- must still be retried, while one whose stderr
+// outgrew even that is not read at all.
+//
+// The failure is the same 404 in every case, so only the bound can decide.
+func TestApplyKeepsAnEvidenceTailOfItsOwn(t *testing.T) {
 	ctx := context.Background()
 	failure := withResource("module.installation.google_cloud_run_v2_service_iam_member.credentials_invoker", invoker404)
+	// The diagnostic, repeated: one of them is a few hundred bytes, so the
+	// count is what puts the total on either side of stderrEvidence. The last
+	// one is whole either way, whatever the bound cuts.
+	one := "Refreshing... Error: " + invoker404 + "\n│   with module.installation.google_cloud_run_v2_service_iam_member.credentials_invoker,\n"
 	for _, tc := range []struct {
-		name string
-		// noise is what terraform printed before the failure: more than the
-		// tail holds, or nothing at all.
-		noise string
-		want  bool
+		name      string
+		repeat    int
+		truncated bool
+		want      bool
 	}{
-		{name: "a stderr kept whole", want: true},
-		{name: "a stderr cut to its tail", noise: strings.Repeat("Refreshing module.installation.google_storage_bucket.runs...\n", 200)},
+		{name: "a stderr the message holds", repeat: 1, want: true},
+		{name: "a stderr longer than the message, but kept whole", repeat: 60, want: true},
+		{name: "a stderr past what fugaro keeps", repeat: stderrEvidence/len(one) + 10, truncated: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := newRig(t)
-			r.script["apply"] = map[string]any{"exit": 1, "stderr": tc.noise + failure}
+			r.script["apply"] = map[string]any{"exit": 1, "stderr": failure + "\n" + one, "repeat": tc.repeat}
 			tf := r.tf(t, nil)
 			plan := filepath.Join(r.dir, "tfplan")
 			if _, err := tf.Plan(ctx, plan); err != nil {
@@ -126,26 +132,24 @@ func TestApplyReportsAStderrItHadToTruncate(t *testing.T) {
 			if !errors.As(err, &ee) {
 				t.Fatalf("the failed apply = %v, want an ExitError", err)
 			}
-			if !strings.HasSuffix(ee.Stderr, failure) {
-				t.Fatalf("the error kept %q, want it to end in the apply's failure", ee.Stderr)
+			if !strings.HasSuffix(ee.Stderr, one) {
+				t.Fatalf("the kept stderr ends %q, want the last diagnostic", lastBytes(ee.Stderr, 120))
 			}
-			if tc.noise == "" {
-				if ee.Truncated {
-					t.Errorf("a stderr the tail held whole is marked truncated")
-				}
-				if len(ee.Stderr) != len(failure) {
-					t.Errorf("the kept stderr is %d bytes, want the whole %d", len(ee.Stderr), len(failure))
-				}
-			} else {
-				if !ee.Truncated {
-					t.Errorf("a stderr of %d bytes was kept as %d and not marked truncated", len(tc.noise+failure), len(ee.Stderr))
-				}
-				if len(ee.Stderr) != stderrTail {
-					t.Errorf("the kept stderr is %d bytes, want the %d-byte tail", len(ee.Stderr), stderrTail)
-				}
+			if ee.Truncated != tc.truncated {
+				t.Errorf("a stderr of %d bytes is marked truncated = %v, want %v (the bound is %d)", tc.repeat*len(one), ee.Truncated, tc.truncated, stderrEvidence)
+			}
+			if whole := tc.repeat * (len(failure) + 1 + len(one)); !tc.truncated && len(ee.Stderr) != whole {
+				t.Errorf("the kept stderr is %d bytes, want the whole %d", len(ee.Stderr), whole)
+			}
+			if tc.truncated && len(ee.Stderr) != stderrEvidence {
+				t.Errorf("the kept stderr is %d bytes, want the %d-byte bound", len(ee.Stderr), stderrEvidence)
 			}
 			if got := PropagationFailure(err, credentialsServicePlan()); got != tc.want {
-				t.Errorf("PropagationFailure = %v, want %v: the 404 is the same in both cases, so only the truncation can decide", got, tc.want)
+				t.Errorf("PropagationFailure = %v, want %v: the 404 is the same in every case, so only the bound can decide", got, tc.want)
+			}
+			// What a person reads is the end either way, and short.
+			if text := err.Error(); len(text) > stderrTail+len("terraform apply exited 1: ") {
+				t.Errorf("the message is %d bytes, want the displayed tail", len(text))
 			}
 		})
 	}

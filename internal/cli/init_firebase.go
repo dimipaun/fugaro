@@ -143,46 +143,65 @@ func coordinatorReadsGitHub(repos []infra.CoordinatorRepo) bool {
 //
 // imports are the import blocks the root's discovery wrote: the run's one
 // confirmation covers an import only when it is one of them.
+//
+// The plan, the gate and the apply are one cycle, run again by
+// propagationRetry exactly as the installation's, the repository's and the
+// compute root's are, and for the same reason: the Firebase root creates the
+// token signer and the bindings that name it in one apply
+// (modules/firebase/iam.tf), so an IAM front end that has not caught up with
+// the account fails the bindings -- and a fresh project's first
+// `fugaro update --firebase-project` would otherwise stop there and ask for a
+// re-run. A retry re-plans and re-judges the new plan; it never applies the
+// saved plan of the failed attempt.
 func (r *initRun) applyRoot(ctx context.Context, c *infra.Clients, t *tf.TF, wd *infra.Workdir, root, what string, imports []tf.ImportKey) (applied, stop bool, err error) {
-	changed, err := t.Plan(ctx, infra.PlanFile)
-	if err != nil {
-		return false, false, remote(err)
+	cycle := func(ctx context.Context) (*tf.Plan, error) {
+		changed, err := t.Plan(ctx, infra.PlanFile)
+		if err != nil {
+			return nil, remote(err)
+		}
+		if !changed {
+			fmt.Fprintf(r.w, "No changes: the %s root matches the plan.\n", root)
+			stop = r.o.planOnly
+			return nil, nil
+		}
+		plan, err := t.Show(ctx, infra.PlanFile)
+		if err != nil {
+			return nil, remote(err)
+		}
+		fmt.Fprint(r.w, tf.Summary(plan))
+		counts := infra.CountPlan(plan)
+		// The managed gate first, and the guard and the confirmation only when it
+		// does not admit this plan (D1016, update_managed.go).
+		gated, err := r.gateStep(ctx, t, imports, r.coverOf(r.coverReasonsFirebase), nil)
+		if err != nil {
+			return plan, err
+		}
+		if !gated {
+			if err := r.guard(ctx, c, plan, r.o.allowDelete); err != nil {
+				return plan, err
+			}
+			if r.o.planOnly {
+				fmt.Fprintf(r.w, "--plan-only: nothing applied; the plan is %s\n", filepath.Join(wd.Root, infra.PlanFile))
+				stop = true
+				return plan, nil
+			}
+			if err := r.confirmOrdinary("applies "+counts.String()+" "+what, "nothing was applied", r.notCoveredFirebase(plan, imports)); err != nil {
+				return plan, err
+			}
+		}
+		if err := t.Apply(ctx, infra.PlanFile); err != nil {
+			return plan, remote(err)
+		}
+		if err := r.gateApplied(ctx); err != nil {
+			return plan, err
+		}
+		applied = true
+		return plan, nil
 	}
-	if !changed {
-		fmt.Fprintf(r.w, "No changes: the %s root matches the plan.\n", root)
-		return false, r.o.planOnly, nil
-	}
-	plan, err := t.Show(ctx, infra.PlanFile)
-	if err != nil {
-		return false, false, remote(err)
-	}
-	fmt.Fprint(r.w, tf.Summary(plan))
-	counts := infra.CountPlan(plan)
-	// The managed gate first, and the guard and the confirmation only when it
-	// does not admit this plan (D1016, update_managed.go).
-	gated, err := r.gateStep(ctx, t, imports, r.coverOf(r.coverReasonsFirebase), nil)
-	if err != nil {
+	if err := propagationRetry(ctx, r.w, "the Firebase step", cycle); err != nil {
 		return false, false, err
 	}
-	if !gated {
-		if err := r.guard(ctx, c, plan, r.o.allowDelete); err != nil {
-			return false, false, err
-		}
-		if r.o.planOnly {
-			fmt.Fprintf(r.w, "--plan-only: nothing applied; the plan is %s\n", filepath.Join(wd.Root, infra.PlanFile))
-			return false, true, nil
-		}
-		if err := r.confirmOrdinary("applies "+counts.String()+" "+what, "nothing was applied", r.notCoveredFirebase(plan, imports)); err != nil {
-			return false, false, err
-		}
-	}
-	if err := t.Apply(ctx, infra.PlanFile); err != nil {
-		return false, false, remote(err)
-	}
-	if err := r.gateApplied(ctx); err != nil {
-		return false, false, err
-	}
-	return true, false, nil
+	return applied, stop, nil
 }
 
 // initFirebase is fugaro update --firebase-project <gcp-project-id>: it adopts the project's own
