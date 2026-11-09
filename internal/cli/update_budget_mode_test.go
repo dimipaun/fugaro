@@ -234,7 +234,11 @@ func TestDoctorNamesTheMode(t *testing.T) {
 		if c.OK || c.Severity != "warning" {
 			t.Errorf("%s = ok %v, severity %q, want a warning", budgetModeCheckID, c.OK, c.Severity)
 		}
-		for _, want := range []string{budget.ModeObserve, budget.ModeEnforce, "fugaro update"} {
+		// Both repairs, not just the update: the update raises the mode on a
+		// managed project alone, so a line whose only fix were `fugaro update`
+		// could never clear on an installation that is not managed. The owner's
+		// own command works wherever the installation is.
+		for _, want := range []string{budget.ModeObserve, budget.ModeEnforce, "fugaro update", "fugaro budget set --global --mode " + budget.ModeEnforce} {
 			if !strings.Contains(c.Problem+c.Fix, want) {
 				t.Errorf("the line does not name %q: %+v", want, c)
 			}
@@ -254,6 +258,12 @@ func TestDoctorNamesTheMode(t *testing.T) {
 		}
 		if !strings.Contains(c.Fix, "fugaro budget set --global") {
 			t.Errorf("the line does not name the command that sets the caps: %+v", c)
+		}
+		// Setting the caps is not the whole repair: with them set the mode still
+		// has to be raised, and the line hands the reader the command that does
+		// it on an installation the update does not raise it on.
+		if !strings.Contains(c.Fix, "fugaro budget set --global --mode "+budget.ModeEnforce) {
+			t.Errorf("the line does not name the command that raises the mode: %+v", c)
 		}
 	})
 	t.Run("an enforcing installation has nothing to say", func(t *testing.T) {

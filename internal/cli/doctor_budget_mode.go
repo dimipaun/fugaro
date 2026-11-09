@@ -9,16 +9,21 @@ import (
 	"github.com/dimipaun/fugaro/internal/rtdb"
 )
 
-// doctor_build_budget.go holds doctor's checks about what a build may spend,
-// read from the project's budget database with the operator's own credentials.
-// They are one line each, they name no node a run may write, and they exist
+// doctor_budget_mode.go holds T16's doctor line about the project-wide budget
+// mode, read from the project's budget database with the operator's own
+// credentials. It is one line, it names no node a run may write, and it exists
 // for the states an installation reaches without anyone deciding anything:
 // D1548 makes a mode nobody chose observe, and in observe a lease does not
 // bite.
 //
-// The check below is T16's, and it reads the mode the way the step that raises
-// it does (update_budget_mode.go): the two nodes together, because the mode
-// alone cannot say whether anyone chose it.
+// It is a file of its own rather than the line the plan puts in
+// doctor_build_budget.go because T4 creates that file: this branch lands first,
+// and T4 adding its own check there would meet a file that already exists
+// holding someone else's check.
+//
+// It reads the mode the way the step that raises it does
+// (update_budget_mode.go): the two nodes together, because the mode alone
+// cannot say whether anyone chose it.
 
 // budgetModeCheckID is doctor's line about the project-wide budget mode: the
 // one ID with three states — a seeded observe the next update raises, a mode
@@ -34,12 +39,21 @@ const budgetModeCheckID = "budget-mode"
 //
 // The other two states are one warning each. A seeded observe (config/modeSet
 // absent, or stamped by an earlier update) is the state `fugaro update` exists
-// for: it raises the mode to enforce on a managed project in the same command,
-// and the line says so rather than sending the reader anywhere. Where the
-// project-wide caps are missing the raise cannot land — enforce without them
-// halts every run (D6) — and the installation is unbounded: nothing bounds how
-// many image builds run, which is the state a person has to be told about
-// rather than one doctor may leave to the update.
+// for: it raises the mode to enforce on a managed project in the same command.
+// Where the project-wide caps are missing the raise cannot land — enforce
+// without them halts every run (D6) — and the installation is unbounded:
+// nothing bounds how many image builds run, which is the state a person has to
+// be told about rather than one doctor may leave to the update.
+//
+// The state is one every installation can reach and the repair is not: the
+// update raises the mode on a managed project alone, so a line whose only fix
+// were `fugaro update` could never clear on one that is not managed — the same
+// indefinitely-recurring finding doctor exists to avoid. Both fixes therefore
+// name the owner's own `fugaro budget set --global --mode enforce` as the step
+// that works wherever the installation is, beside the update that does it for
+// them on a managed one. The observe state itself is worth the line either way:
+// in observe a lease is recorded and does not bite, whatever the project is
+// flagged as.
 //
 // It reads and never writes, like every other check, and a read that did not
 // answer is an info line carrying the unread marker rather than a pass: the
@@ -88,9 +102,9 @@ func doctorBudgetMode(ctx context.Context, db *rtdb.Client) []doctorCheck {
 	if len(missing) > 0 {
 		return []doctorCheck{{ID: budgetModeCheckID, Severity: "warning",
 			Problem: fmt.Sprintf("the project-wide budget mode is %s, and the caps enforce needs are not set at %s (%s missing): enforce without them refuses every lease, so `fugaro update` leaves the mode as it is, and this installation is unbounded — nothing bounds how many image builds run", shown, budget.PathCapsGlobal, strings.Join(missing, " and ")),
-			Fix:     "set the project-wide caps with 'fugaro budget set --global --daily <usd> --per-run <usd>'; the next `fugaro update` then raises the mode to " + budget.ModeEnforce}}
+			Fix:     "set the project-wide caps with 'fugaro budget set --global --daily <usd> --per-run <usd>'; the next `fugaro update` then raises the mode to " + budget.ModeEnforce + " on a managed project, and 'fugaro budget set --global --mode " + budget.ModeEnforce + "' raises it on any installation"}}
 	}
 	return []doctorCheck{{ID: budgetModeCheckID, Severity: "warning",
 		Problem: fmt.Sprintf("the project-wide budget mode is %s and no one chose it: a lease does not bite in observe, so an image build runs unbounded, and `fugaro update` raises the mode to %s on a managed project", shown, budget.ModeEnforce),
-		Fix:     "run `fugaro update`"}}
+		Fix:     "run `fugaro update` on a managed installation, or raise the mode yourself with 'fugaro budget set --global --mode " + budget.ModeEnforce + "'"}}
 }

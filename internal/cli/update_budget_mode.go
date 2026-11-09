@@ -38,7 +38,7 @@ import (
 // halt every run (D6) — is a warning or silence, and the mode is exactly what
 // the run found. What each of those states means is said by the line that
 // reports it, and `fugaro doctor` has a check of its own for the installation
-// left in observe (doctor_build_budget.go).
+// left in observe (doctor_budget_mode.go).
 func (e *initEngine) raiseBudgetMode(ctx context.Context) {
 	r, o := e.r, e.r.o
 	// The door first: this is the upgrade's step, and the hook both doors
@@ -131,7 +131,7 @@ func (e *initEngine) raiseBudgetMode(ctx context.Context) {
 	// against. Where they are missing the step sets no mode and says which are
 	// missing and that the installation is unbounded — the caps have no writer
 	// here, they are `fugaro budget set --global`'s, and doctor says the same
-	// line (doctor_build_budget.go).
+	// line (doctor_budget_mode.go).
 	var caps budget.GlobalCaps
 	capsFound, err := db.Get(ctx, budget.PathCapsGlobal, &caps)
 	if err != nil {
