@@ -780,9 +780,9 @@ func (r *run) sectionLines(head string, parts ...string) string {
 		}
 	}
 	line := strings.Join(kept, " · ")
-	// The section names the run the way every other surface a person reads
-	// does -- its last four characters -- and the command it tells a reader to
-	// paste takes that form too (spec.md §1, D1701).
+	// The section names the run by its short ID, the form spec.md §1 settles on
+	// (D1701), and the command it tells a reader to paste takes that form: the
+	// lookup resolves an ending once SR14 wires it (resolveRun).
 	id := inlineText(task.ShortRun(r.rec.RunID))
 	out := line + "\n"
 	out += r.ownerPart()

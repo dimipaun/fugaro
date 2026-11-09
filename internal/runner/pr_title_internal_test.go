@@ -57,8 +57,8 @@ func TestPRTitleOfARunWithoutATitleIsUnchanged(t *testing.T) {
 }
 
 // TestOpenedByLineShortID: the line that says who opened the pull request
-// names the run by its short ID (spec.md §1), the same four characters every
-// other surface shows.
+// names the run by its short ID (spec.md §1), the same four characters the
+// runner's other written text shows.
 func TestOpenedByLineShortID(t *testing.T) {
 	spec := &task.Spec{Repo: "acme/app", Task: "Add a feature", Title: "Ship it"}
 	_, body := prTitleRun(t.TempDir(), spec, "20261018-120000-3bb2").rawPRText()

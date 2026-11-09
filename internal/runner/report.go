@@ -66,9 +66,9 @@ func FollowUpReport(rec *runstore.Record, location string, tail *LogTail, fu *Fo
 // shown as a line after the outcome.
 func followUpReport(rec *runstore.Record, location string, tail *LogTail, fu *FollowUpSection, notes []string) string {
 	var b strings.Builder
-	// The heading names the run the way a person reads it everywhere, by its
-	// last four characters; the marker that closes the report keeps the full
-	// ID, which is what a follow-up reads back (spec.md §1, D1705).
+	// The heading names the run by its short ID, the form spec.md §1 settles on
+	// (D1701); the marker that closes the report keeps the full ID, which is
+	// what a follow-up reads back (D1705).
 	fmt.Fprintf(&b, "### Fugaro run `%s`\n\n", task.ShortRun(rec.RunID))
 	if rec.Status == runstore.StatusHalted && rec.Halt != nil {
 		b.WriteString(haltLines(rec))
