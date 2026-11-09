@@ -10,6 +10,8 @@ import (
 
 	"gocloud.dev/blob"
 
+	"github.com/dimipaun/fugaro/internal/backend"
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/orchestrator"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -301,6 +303,100 @@ func TestRunLauncherResolvesThePlanWithoutACheckout(t *testing.T) {
 	}
 	if execs := f.run.Executions(); len(execs) != 1 {
 		t.Fatalf("the launch started %d execution(s): %v", len(execs), execs)
+	}
+}
+
+// launcherProfilesFixture is the daemon's launcher on an installation that has
+// published profiles: the standard profile on github, in the local config and
+// in the published policy, and the shared project job the installation would
+// have deployed for it — which is the job a `checkout: clone` workflow runs on
+// (project_job.go). It is launcherFixture otherwise, so the gates every launch
+// passes before the job is resolved are the ones that fixture satisfies.
+type launcherProfilesFixture struct {
+	*launcherFixture
+}
+
+func newLauncherProfilesFixture(t *testing.T) *launcherProfilesFixture {
+	t.Helper()
+	f := newLauncherFixture(t)
+	f.appendConfig(t, "profiles: { standard: { provider: github, cpu: 2, memory: 4Gi, timeout_class: 6h } }\n")
+	publishPolicy(t, f.launchBudgetFixture, projectJobPolicy)
+	job := gcp.ProjectJobName("standard", "github", "")
+	f.run.AddProjectJob(job, "standard", "github", "", "2", "4Gi")
+	f.run.SetJobTimeout(job, projectJobTimeout+backend.TaskTimeoutSlack)
+	return &launcherProfilesFixture{launcherFixture: f}
+}
+
+// TestRunLauncherTakesNoJobFromItsWorkingDirectory is the launch's own half of
+// the rule TestRunLauncherResolvesThePlanWithoutACheckout pins for the plan: no
+// read of the daemon's directory decides anything about a launch, which
+// includes the two reads that pick what the run runs on and how.
+//
+// A daemon started in a person's checkout of the item's repository finds a
+// `checkout: clone` workflow there, and an installation that has published
+// profiles deploys a shared project job for exactly those workflows — so a
+// launch that took that directory's word would run the item on the shared job
+// of the workflow's profile while its own gates had judged a repository with no
+// checkout: the clone-side gates (the base image a clone workflow runs on, and
+// the seal and proxy pair judged with the workflow's own kind) are decided
+// against a kind the launch then ignored, and the run starts on a job and a
+// credential shape its gates never approved. The item is refused instead, with
+// the sentence `fugaro run` from outside a checkout gives, in either directory —
+// with a checkout of the item's repository and with none — because without a
+// checkout the launch cannot tell a clone workflow's shared job from a baked
+// workflow's own. What a refusal must not leave behind is a claim, a budget
+// token, a Cloud Run call or an execution. The task is stored: the refusal is
+// the start's own, past the writes `fugaro run` also makes first.
+//
+// Mutation (run, restored): mark only prepare with withoutCheckout, as the
+// launcher did before, and hand launchRun the caller's context — the first
+// subtest launches, and one jobs.run call names the shared project job of the
+// profile with one execution behind it: the launch these gates exist to refuse.
+func TestRunLauncherTakesNoJobFromItsWorkingDirectory(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		where func(t *testing.T)
+	}{
+		{"a checkout of the item's repository", func(t *testing.T) { projectJobCheckout(t) }},
+		{"no checkout at all", func(t *testing.T) { t.Chdir(t.TempDir()) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newLauncherProfilesFixture(t)
+			tc.where(t)
+			l := f.launcher(t)
+			ctx := context.Background()
+			spec := orchestrator.Spec{ItemID: "wi-1", Title: "land the daemon", Repo: "acme/app", Recipe: "standard", Brief: "Start the run this attempt recorded."}
+			const runID = "20261109-101500-abcd"
+
+			_, err := l.Launch(ctx, spec, runID)
+			if err == nil {
+				t.Fatal("a daemon launched from outside the item's repository took its job from the directory it runs in")
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Fatalf("err = %v, want a user error", err)
+			}
+			for _, want := range []string{"cannot tell which Cloud Run job it targets", "acme/app", "clone workflow"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal does not say %q: %v", want, err)
+				}
+			}
+			s := f.runStore(t, runID)
+			if _, err := s.ReadTask(ctx); err != nil {
+				t.Errorf("the refusal came before the task was stored: %v", err)
+			}
+			if _, err := s.ReadClaim(ctx); !errors.Is(err, runstore.ErrNotFound) {
+				t.Errorf("the refused launch took the launch claim: %v", err)
+			}
+			if tok := readToken(t, f.cloudFixture, runID); tok != "" {
+				t.Errorf("the refused launch minted a budget token: %s", tok)
+			}
+			if calls := f.run.RunRequests(); len(calls) != 0 {
+				t.Errorf("the refused launch asked Cloud Run for %d job(s): %+v", len(calls), calls)
+			}
+			if execs := f.run.Executions(); len(execs) != 0 {
+				t.Errorf("the refused launch started %d execution(s): %v", len(execs), execs)
+			}
+		})
 	}
 }
 

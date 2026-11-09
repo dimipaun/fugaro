@@ -52,6 +52,29 @@ type orchestratorLauncher struct {
 func (l *orchestratorLauncher) Launch(ctx context.Context, spec orchestrator.Spec, runID string) (string, error) {
 	l.started.begin()
 	defer l.started.done()
+	// The launch reads no checkout, and never the one the daemon happens to run
+	// in: a daemon's working directory is whatever its unit was started from,
+	// and a checkout of the item's repository there would decide the launch.
+	//
+	// Two of its reads are why. The ref (newRunRef): the branch a person left
+	// checked out is not the one the approval's digest covers, it moves under
+	// the daemon, and switching it between a crash and the re-issue rebuilds a
+	// spec whose task.json differs from the stored one — createTask then
+	// refuses the attempt every tick. And the workflow's own kind, which decides
+	// the job: from a checkout with a `checkout: clone` workflow this launch
+	// would take the shared project job of the workflow's profile while the gates
+	// over it judged a repository with no checkout — the clone-side gates among
+	// them (the base image a clone workflow runs on, the per-field gates, the
+	// seal, the proxy pair) decided against a kind the launch itself ignored.
+	//
+	// The switch therefore covers the whole launch: the plan and every gate
+	// (prepare) and the start itself (launchRun), whose job resolution, docker
+	// tag rule and credentials-service pair are reads of the working directory
+	// too. What that costs is the reads a checkout is needed for: they cannot be
+	// answered at all, and the launch refuses rather than guesses (project_job.go:
+	// a project that published profiles cannot tell a clone workflow's shared job
+	// from a baked workflow's own).
+	ctx = withoutCheckout(ctx)
 	slug, ts, err := l.prepare(ctx, spec, runID)
 	if err != nil {
 		return "", err
@@ -68,19 +91,17 @@ func (l *orchestratorLauncher) Launch(ctx context.Context, spec orchestrator.Spe
 // stored record of the attempt, and a crash between storing it and starting
 // the run is the one the next tick has to finish rather than start over. What
 // it returns is what launchRun needs and nothing else.
+//
+// It resolves under the context Launch marked as checkoutless, and it does not
+// mark one itself: the launch is one resolution, and a part of it that installed
+// the switch on its own is how the launch ends up judging the repository with no
+// checkout and starting it on the one the daemon's directory holds.
 func (l *orchestratorLauncher) prepare(ctx context.Context, spec orchestrator.Spec, runID string) (string, *task.Spec, error) {
-	// The launch reads no checkout, and never the one the daemon happens to
-	// run in: a daemon's working directory is whatever its unit was started
-	// from, and a checkout of the item's repository there would make the plan
-	// — the ref above all (newRunRef) — depend on the branch a person left
-	// checked out. That ref is not the one the approval's digest covers, and
-	// it moves under the daemon: a person switching branches between a crash
-	// and the re-issue would rebuild a spec whose task.json differs from the
-	// one already stored, and createTask would refuse the attempt every tick.
-	// So the switch covers this whole function — the plan, the project layer
-	// the task carries and every gate — and the launch resolves the way
-	// `fugaro run` does from outside a checkout.
-	ctx = withoutCheckout(ctx)
+	// Everything here resolves under the launch's checkoutless context, which
+	// Launch installs over the whole launch: the plan, the project layer the
+	// task carries and every gate are one resolution, and the start that
+	// follows them is judged by the same one.
+	//
 	// The item's rigor_tier is the expectation tier (trivial to large) and not
 	// the rigor mode: a daemon declares no paths and asks for no mode, so the
 	// run resolves its rigor from the configuration alone, which is what a
