@@ -658,6 +658,13 @@ export const SPAWN_KIND_FOR: Record<ArgumentKind, SpawnArgumentKind> = Object.fr
   settingKey: 'value',
   settingOp: 'settingOp',
   settingValue: 'settingValue',
+  // `licenceKey` is the second kind whose operation spawns nothing
+  // (`licence.read`/`licence.save`, S2.7, carry `command: null`), for
+  // `gitProvider`'s reason: the mapping is total over ipc.ts's kinds, and
+  // `value` is what a bare word would reach an argv as if one ever did -- which
+  // is the one thing a licence key must never do (S2.1's hand-off: the key
+  // travels in a child's environment and in no argv).
+  licenceKey: 'value',
 })
 
 /** SpawnArgument is one declared argument of one command. `flag` is null for a

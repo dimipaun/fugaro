@@ -375,14 +375,17 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
   // verifier's answer about the key this installation holds, and **the key text
   // is in neither its input nor its output**: a claim set is what a key *says*,
   // so every value beside a term goes through `putText` in the class its wire key
-  // declares, and the four entries below are what is left -- the console's own
-  // words for the states, the reason sentences (already `sanitizeRefusal`'s), the
-  // claim terms, and the sentence a save answered with.
+  // declares, and the five entries below are what is left -- the console's own
+  // words for the states and for whether a read was drawn at all, the reason
+  // sentences (already `sanitizeRefusal`'s), the claim terms, and the sentence a
+  // save answered with.
   'licence.ts': {
     'model.word':
       'the state word, and it is one of this file\'s own: `buildLicence` answers it out of `LICENCE_STATE_WORDS` (the console\'s table for the verifier\'s three states) or out of `LICENCE_NO_KEY_WORD`/`LICENCE_REFUSED_WORD`, and a state word the table does not hold draws the shape refusal instead of itself -- so a state a later CLI grew is never drawn as a word an operator would have to interpret',
     'model.because':
       'the section\'s one reason sentence, **through `sanitizeRefusal`** in `drawnRefusal` before it is stored on the model: this file\'s own sentence for a store that could not answer, the verifier\'s own for a key that does not verify, or the shape refusal for an answer this build does not read -- or `REFUSAL_UNREADABLE` when the sentence cannot be drawn at all, which is the same three-way door `managed.ts`\'s `model.because` keeps for the same channel',
+    "model.drawn === 'answer' ? 'read' : 'not read'":
+      'whether this section drew an answer at all, in this file\'s own two words: `model.drawn` is the flag `buildLicence` set from the reply it read -- an answer, a refusal, or a shape this build does not know -- so the pair is the console\'s vocabulary and never a string a document chose',
     'claim.term': {
       within: 'claimLine',
       reason:
