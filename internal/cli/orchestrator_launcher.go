@@ -148,8 +148,27 @@ func (l *orchestratorLauncher) prepare(ctx context.Context, spec orchestrator.Sp
 	if err := adoptStoredProjectLayer(ctx, s, ts); err != nil {
 		return "", nil, err
 	}
-	if _, err := freshLaunchGates(ctx, l.env, o, slug, s, ts, compression || ts.CompressionOff, l.stderr, false); err != nil {
+	// The launch that already went, asked before the gates rather than only
+	// where launchRun asks it, because a gate judging a re-issue judges it as
+	// a first launch. The parallel cap is the one that bites: a crash between
+	// jobs.run and launch.json — the execution started, the process died
+	// before the record of it was written — leaves the run's own execution in
+	// flight under a node whose launch is exactly what the gates then read as
+	// a fresh run, so under a full max_parallel the run is refused by itself
+	// ("1 runs active; max_parallel is 1") and keeps being refused every tick
+	// for the rest of its life, the attempt failing on a run that is going
+	// fine until the breaker trips on it. `fugaro run` passes the same block
+	// in the same place and for the same reason (finishLaunch): a run id that
+	// already started is not judged again, and what is left of its launch is
+	// the report that it went, which launchRun makes below.
+	prior, err := existingLaunch(ctx, l.env, s, ts)
+	if err != nil {
 		return "", nil, err
+	}
+	if prior == nil {
+		if _, err := freshLaunchGates(ctx, l.env, o, slug, s, ts, compression || ts.CompressionOff, l.stderr, false); err != nil {
+			return "", nil, err
+		}
 	}
 	if err := createTask(ctx, s, ts); err != nil {
 		return "", nil, err

@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 	"gocloud.dev/blob"
 
+	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/orchestrator"
@@ -738,7 +739,7 @@ func (v *orchestratorRunView) Runs(ctx context.Context, runIDs []string) ([]orch
 		}
 		if done, outcome := orchestratorOutcome(rec); done {
 			rep.Finished, rep.Outcome = true, outcome
-		} else if rep.Started && v.executionOver(ctx, slug, run, launch) {
+		} else if state, over := v.executionOver(ctx, slug, run, launch); rep.Started && over {
 			// The record said the run was still going when it was read, and
 			// the platform says the execution is over. The runner may have
 			// written its last record in between: result.json is the runner's
@@ -757,7 +758,15 @@ func (v *orchestratorRunView) Runs(ctx context.Context, runIDs []string) ([]orch
 			case err != nil:
 				return nil, err
 			}
+			// The state the platform reported, which is what a run whose
+			// record still says running leaves as its only word: a
+			// cancellation is a person's own act and never retried, a
+			// failure is what a retry is for (executionOver's comment is
+			// the why).
 			outcome := orchestrator.OutcomeFailed
+			if state == backend.StateCancelled {
+				outcome = orchestrator.OutcomeCancelled
+			}
 			if done, o := orchestratorOutcome(fresh); done {
 				outcome = o
 			}
@@ -781,7 +790,8 @@ func (v *orchestratorRunView) Runs(ctx context.Context, runIDs []string) ([]orch
 // node as in flight — so the daemon does nothing but wait on a run that is not
 // there, and a person cannot close the intent for it (an intent is the daemon's
 // to write, and a person's upsert carrying one is refused). A run the platform
-// has ended is over, and an attempt that ended without reporting failed.
+// has ended is over, and an attempt that ended without reporting is folded on
+// the state the platform reported for it.
 //
 // Only an execution the platform reports as ended counts. One it no longer has
 // (Cloud Run keeps them 30 days) and one whose status cannot be read are both
@@ -795,16 +805,27 @@ func (v *orchestratorRunView) Runs(ctx context.Context, runIDs []string) ([]orch
 // execution by writing its record and returning, so the record can land between
 // the view's own read of it and this question, and the caller reads it again
 // before it folds anything.
-func (v *orchestratorRunView) executionOver(ctx context.Context, slug, runID string, l *runstore.Launch) bool {
+//
+// So what it returns is the state the platform reported and whether that state
+// ends the execution, and not just the second: the two states that end one are
+// not the same thing to the caller. A run the platform killed because a person
+// cancelled it wrote no final record either, and its execution is the only
+// place that says so; folded as a failure it would be a failure a standing
+// approval still covers, and the next cycle would start the second execution
+// for the run the person just stopped.
+func (v *orchestratorRunView) executionOver(ctx context.Context, slug, runID string, l *runstore.Launch) (backend.State, bool) {
 	if l == nil || l.Execution == "" {
-		return false
+		return "", false
 	}
 	x, err := v.env.checkExecution(ctx, nil, l.Execution, slug, runID)
 	if err != nil {
 		fmt.Fprintf(v.warn, "run %s/%s: the state of its execution could not be read: %s\n", slug, runID, safetext.OneLine(err.Error()))
-		return false
+		return "", false
 	}
-	return x != nil && x.State.Terminal()
+	if x == nil {
+		return "", false
+	}
+	return x.State, x.State.Terminal()
 }
 
 // orchestratorOutcome is what one run means to the state, and whether the run

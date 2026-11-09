@@ -227,6 +227,54 @@ func TestRunViewFoldsARunThePlatformHasEnded(t *testing.T) {
 	}
 }
 
+// TestRunViewFoldsACancelledExecutionAsCancelled: a person's own `fugaro cancel
+// --now` ends a run the way the platform ends one it kills — the container is
+// cancelled and writes no final record (cancel.go) — so the record the view
+// reads is the one the runner wrote as it began, and it can never be told apart
+// from a run the platform ended by itself. The platform's word on the execution
+// is the only thing that says which of the two happened, and the difference is
+// the whole of what happens next: folded as a failure the attempt is one the
+// standing approval still covers (failedUnder), so the same cycle starts a
+// second execution for the run the person just stopped, and cancelling again
+// only mints another one. A cancellation is not a failure, and the state's own
+// cancelled outcome is what says so (foldPhase, G4's sibling).
+//
+// Mutation (run, restored): fold the terminal state as failed without reading
+// which of the two it was — the test finds the attempt folded as failed and a
+// second execution started over the run the person cancelled.
+func TestRunViewFoldsACancelledExecutionAsCancelled(t *testing.T) {
+	f, d, cs := crashDaemon(t, true, true)
+	ctx := context.Background()
+	exec := f.run.Executions()[0]
+	// The platform after a hard cancel: the execution is terminal and
+	// cancelled, and what the runner left is the record it wrote as it began.
+	f.run.SetState(exec, backend.StateCancelled)
+	if err := f.runStore(t, cs.runID).WriteRecord(ctx, &runstore.Record{
+		Version: 1, RunID: cs.runID, Execution: exec, Status: runstore.StatusRunning,
+		Stage: "bootstrap", Outcome: runstore.OutcomeNone, StartedAt: f.now,
+	}); err != nil {
+		t.Fatalf("writing the record a run in flight carries: %v", err)
+	}
+
+	rep, err := d.tick.Step(ctx)
+	if err != nil {
+		t.Fatalf("a cycle over a cancelled run: %v", err)
+	}
+	if rep.Folded != 1 {
+		t.Fatalf("the cycle folded %d attempt(s) over a run whose execution was cancelled, want one: %+v", rep.Folded, rep)
+	}
+	it := f.intent(t, orchestrator.IntentID(cs.item.ID, 1))
+	if it.Outcome != orchestrator.OutcomeCancelled {
+		t.Errorf("the attempt whose run was cancelled carries %q, and a cancellation is not a failure a retry answers", it.Outcome)
+	}
+	if after := f.item(t, cs.item.ID); after.Phase != orchestrator.PhaseCancelled {
+		t.Errorf("the item is %q after the run behind it was cancelled, want cancelled", after.Phase)
+	}
+	if execs := f.run.Executions(); len(execs) != 1 {
+		t.Errorf("a cancelled run was answered with %d execution(s) in all, want the one the person stopped: %v", len(execs), execs)
+	}
+}
+
 // TestDaemonTellsAPersonARunEnded: the daemon's tick is built with the channel
 // O7 ships — the log sink over the daemon's own output — so a run the cycle
 // folds reaches the person watching it. The daemon is the only thing in the

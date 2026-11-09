@@ -511,6 +511,60 @@ func TestRunLauncherPassesTheCommandsLaunchGates(t *testing.T) {
 	}
 }
 
+// TestRunLauncherReIssuesARunItsOwnExecutionWouldRefuse: a crash between
+// jobs.run and launch.json — the execution started, the process died before the
+// record of it was written — leaves a run in flight whose launch the next tick
+// re-issues under the intent that recorded the run id. The gates must not judge
+// that re-issue as a first launch, and the parallel cap is the one that does:
+// the run's own execution is the run the cap counts, so under max_parallel 1 the
+// run is refused by itself ("1 runs active; max_parallel is 1") every tick for
+// the rest of its life, and the breaker trips on a run that is going fine. What
+// is left of a launch that already went is the report that it went.
+//
+// Mutation (run, restored): call freshLaunchGates outside the prior == nil check
+// in the launcher's prepare — the re-issue below is refused by the run's own
+// execution and the attempt never finishes its launch.
+func TestRunLauncherReIssuesARunItsOwnExecutionWouldRefuse(t *testing.T) {
+	f := newLauncherFixture(t)
+	setMaxParallel(t, 1)
+	ctx := context.Background()
+	l := f.launcher(t)
+	spec := orchestrator.Spec{ItemID: "wi-1", Title: "land the daemon", Repo: "acme/app", Recipe: "standard", Brief: "Start the run this attempt recorded."}
+	const runID = "20261109-101500-abcd"
+
+	if _, err := l.Launch(ctx, spec, runID); err != nil {
+		t.Fatalf("the launch that fills the cap: %v", err)
+	}
+	if execs := f.run.Executions(); len(execs) != 1 {
+		t.Fatalf("the first launch started %d execution(s), want one: %v", len(execs), execs)
+	}
+	s := f.runStore(t, runID)
+	launched, err := s.ReadLaunch(ctx)
+	if err != nil {
+		t.Fatalf("the launch the first call recorded: %v", err)
+	}
+	// The crash after jobs.run and before launch.json: the execution is going
+	// and the only record of the run is the one the runner writes as it begins.
+	// launch.json is removed under the run's own object key, the way the state
+	// the crash left has it — absent — and the record is what puts it back.
+	if err := s.DeleteFile(ctx, "launch.json"); err != nil {
+		t.Fatalf("clearing the record of the launch that crashed: %v", err)
+	}
+	if err := s.WriteRecord(ctx, &runstore.Record{
+		Version: 1, RunID: runID, Repo: "acme/app", Workflow: "web", Execution: launched.Execution,
+		Status: runstore.StatusRunning, Stage: "bootstrap", Outcome: runstore.OutcomeNone,
+	}); err != nil {
+		t.Fatalf("writing the record the runner left as it began: %v", err)
+	}
+
+	if _, err := l.Launch(ctx, spec, runID); err != nil {
+		t.Fatalf("the re-issue of a run whose own execution is in flight: %v", err)
+	}
+	if execs := f.run.Executions(); len(execs) != 1 {
+		t.Fatalf("the re-issue started %d execution(s), want the one it reports: %v", len(execs), execs)
+	}
+}
+
 // TestRunLauncherGatesAReIssueOnTheStoredProjectLayer: a daemon that dies
 // between storing the task and starting the run leaves a task the next tick
 // finishes, and the runner reads that stored task — its project layer included,
