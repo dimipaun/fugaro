@@ -136,7 +136,7 @@ export class LicenceStore {
     const read = this.#verifier.verify(raw, now);
     if (!read.ok) return read;
     const text = raw.trim();
-    return this.#queued(async () => {
+    return this.#serial(async () => {
       const held = await this.#read();
       if (!held.ok) return held;
       const kept = [...held.keys.filter((one) => one !== text), text].slice(-LICENCE_KEYS_MAX);
@@ -176,10 +176,10 @@ export class LicenceStore {
     return this.#verifier.latest(held.keys, now);
   }
 
-  /** #queued runs one mutation after the last one, and answers what it answered.
+  /** #serial runs one mutation after the last one, and answers what it answered.
    * The caller still sees a failure: the tail the queue keeps swallows it
    * because the next install must run whether the previous one threw or not. */
-  #queued(work) {
+  #serial(work) {
     const done = this.#queue.then(work, work);
     this.#queue = done.then(
       () => undefined,
