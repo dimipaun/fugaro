@@ -997,7 +997,7 @@ holds no launch grant, no signer and no write on the runs bucket, so this whole 
 it holds the one thing a launcher has that no token does: **the ability to set a run's environment
 for one execution**. On Cloud Run that is `run.jobs.runWithOverrides`, which is in `fugaroJobRunner`,
 the role every launcher holds on each job (both role IDs are spelled at
-`internal/infra/tf/cover.go:791-793` — `fugaroJobRunner` beside `fugaroLauncher`, the read and cancel
+`internal/infra/tf/cover.go:885-887` — `fugaroJobRunner` beside `fugaroLauncher`, the read and cancel
 role — and `internal/cli/doctor_launcher.go:94` is the prose that a launcher holds both of the
 runner ones) and is why the repository already refuses to let a launch
 decide anything important: `internal/backend/gcp/names.go:182` records that **a launcher may override

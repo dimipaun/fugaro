@@ -1236,7 +1236,7 @@ planner who takes only the first slice takes no part of this task.
 - **Interface:** a **second custom role of the installation, created with the front door's own
   opt-in** — where `fugaroJobRunner` carries
   `run.jobs.run` **and** `run.jobs.runWithOverrides` (`deploy/terraform/gcp/modules/installation/iam.tf:30`,
-  pinned by `internal/infra/tf/cover.go:793`), this one carries **`run.jobs.run` alone** — and it is
+  pinned by `internal/infra/tf/cover.go:887`), this one carries **`run.jobs.run` alone** — and it is
   bound **on every project job**, one job-scoped grant per entry of `var.project_jobs`, to
   `google_service_account.mcp_server` — the front door's own account — and **to nobody else**. **The
   grant is written where the job is and not where the account is, and that is the correction this
