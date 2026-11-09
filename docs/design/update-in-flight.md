@@ -149,7 +149,14 @@ instead. It is absent when nothing runs, under `--json` and `--print-vars`
 The refusal stays where it is not the update door's: `fugaro upgrade`'s own
 policy step, and `fugaro project policy publish --delete` /
 `fugaro project repos rm`, which are not the whole upgrade and are their own
-commands.
+commands. The other two doors that reach this stage through `initStages` —
+`fugaro setup`, and `fugaro accounts add` / `accounts rm` — are not the update
+door either, so they keep the answer they had before this ruling, which is the
+ruling of 2026-11-06: a managed project's own session is told the count as a note
+and writes, and every other session is refused without `--yes`
+(`inflightManaged`, `policyMigrateStage.inflightAnswer`, which reads the answer
+off the door rather than taking it as a parameter). The one line above is the
+update door's and is not printed by those doors.
 
 The rows that are not simply safe are the ones the line has to own, and they are
 three (`inFlightSteps`, `internal/cli/update_in_flight.go`): the budget-mode
@@ -174,6 +181,9 @@ land under the new rules and the migrated policy.
 `TestUpdateInFlightLineNamesEveryStepThatCanReachARun` turns each of the three
 steps on alone and asserts the clause is there and the others are not, so a step
 that can reach a run and is not named fails the suite.
-`TestUpgradePolicyStepRefusesTheWriteWhileARunIsInFlight`
-(`internal/cli/init_policy_migrate_test.go`) pins the refusal on the door that
-keeps it, so changing that door's answer alone fails.
+`TestUpgradePolicyStepRefusesTheWriteWhileARunIsInFlight` and
+`TestSetupPolicyStepKeepsTheRunsInFlightAnswer`
+(`internal/cli/init_policy_migrate_test.go`) pin the refusal on the doors that
+keep it — `fugaro upgrade`'s own policy step, and `fugaro setup`, once refused
+and once written-with-the-note on a managed project — so the update door's quiet
+answer reaching a door that is not it fails the suite.

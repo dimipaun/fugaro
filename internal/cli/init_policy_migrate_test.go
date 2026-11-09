@@ -731,6 +731,73 @@ func TestUpdatePolicyManagedMigrationUnderAMarkerKeepsTheRefusal(t *testing.T) {
 	}
 }
 
+// TestSetupPolicyStepKeepsTheRunsInFlightAnswer: the policy stage is not the
+// update door's alone — initStages registers it for `fugaro setup` and for
+// `fugaro accounts add` / `accounts rm` too — and the owner's ruling of
+// 2026-11-09 (inflightQuiet) is the update door's. A stage that passed that
+// answer for every door would publish the node under the runs in flight with no
+// refusal, no --yes and no line at all, because the line about them is the
+// update door's own (announceRunsInFlight). So the doors that are not the
+// update door keep the answer of 2026-11-06 they had before it
+// (inflightManaged): a managed project's own session is told the count and
+// writes, and every other session is refused without --yes.
+func TestSetupPolicyStepKeepsTheRunsInFlightAnswer(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		managed bool
+		want    string
+		writes  bool
+	}{
+		{
+			// The refusal --yes is the way past, unchanged: the update door is
+			// the one command the whole upgrade is, so the door that is not it
+			// still waits for the runs exactly as it did before.
+			name: "an unmanaged project's setup is refused",
+			want: "run(s) are in flight: a run that is mid-flight read the policy this migration would rewrite",
+		},
+		{
+			name:    "a managed project's setup writes and is told the count",
+			managed: true,
+			want:    "1 run(s) are in flight and a run whose model calls go through the credentials service reads the new policy on its next call",
+			writes:  true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newProjectFixture(t, "")
+			f.db.Set(projectpolicy.PathShared(), v3Node(nil))
+			h := newMigrationRig(t, f, &initOptions{door: setupDoor.name}).inFlight()
+			if tc.managed {
+				h.managedGate()
+			}
+			fakeTerminal(t)
+			h.cmd.SetIn(strings.NewReader("aurora\n"))
+
+			out, err := h.apply(t, false)
+			if tc.writes {
+				if err != nil {
+					t.Fatalf("a managed project's setup was refused for the runs in flight: %v\n%s", err, out)
+				}
+				if got := nodeVersionOn(t, f.db); got != projectpolicy.Version {
+					t.Errorf("the node is version %d, want %d: the setup wrote nothing", got, projectpolicy.Version)
+				}
+				if !strings.Contains(out, tc.want) {
+					t.Errorf("the stage did not say %q:\n%s", tc.want, out)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("an unmanaged project's setup published the node under a run in flight:\n%s", out)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("the refusal is not the in-flight one: %v", err)
+			}
+			if got := nodeVersionOn(t, f.db); got != 3 {
+				t.Errorf("the node moved to version %d under the refusal", got)
+			}
+		})
+	}
+}
+
 // TestUpgradePolicyReseedAsksAboutRunsInFlightBeforeItWritesTheFile: the
 // in-flight refusal is about the node a run rewrites, and D854's re-seed carries
 // a pending migration with it — so on the door that keeps the refusal (`fugaro
