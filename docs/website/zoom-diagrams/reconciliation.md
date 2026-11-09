@@ -445,6 +445,19 @@ plant is at `origins.mjs:626` ("a form posting elsewhere"). So a Buttondown/Mail
 action needs `firebase.json`, `CSP_DIRECTIVES.form-action` **and** `refuse()`'s form case
 changed, each argued for.
 
+**Amendment (2026-11-09):** a `<form action>` is no longer first-party-only. S3.3's key request page
+posts to the key service's intake, and the owner widened `form-action` for it — D451 option (a), the
+ruling of 2026-11-07 recorded in
+[`../../subscriptions/reconciliation.md`](../../subscriptions/reconciliation.md)'s §"Rulings":
+`firebase.json`'s `form-action` carries the intake's one exact host, `CSP_DIRECTIVES` admits it in
+that directive and in no other, and a form action (or `formaction`) is first-party **or** that
+origin. The refusal's message no longer names a form either. The line citations above are to the
+file as it stood on this document's date — S3.3's comments moved them — so read them as the anchors
+they name (`CSP_DIRECTIVES`, `refuse`'s form case, the plant) rather than as numbers. ZF32's
+sentence is in the same state: the page that collects exists in the repository now, and it is held
+out of the deploy (`firebase.json`'s `ignore`) until S7.3 writes the notice that accounts for it and
+S7.4 publishes the site.
+
 ### ZF34 — **Rule** — the site's one script may not fetch
 
 `website/test/copy.mjs:331,333` bans `fetch(`, `XMLHttpRequest`, `sendBeacon`, `WebSocket`,

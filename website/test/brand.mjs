@@ -26,6 +26,10 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { siteFacts } from './lib/html.mjs'
 import { loadLanding } from '../src/lib/landing.mjs'
+// The key service's intake, the one origin the policy admits under `form-action` (S3.3):
+// derived from site.yaml's canonical URL by the same function the key request page builds its
+// form actions from, so this coarse list cannot pin a host the page does not post to.
+import { keysIntakeOrigin } from '../src/lib/keys-intake.mjs'
 
 /** The analytics origin, the same one value `origins.mjs` and the banner hold (W3.2). */
 const ANALYTICS_ORIGIN = 'https://www.googletagmanager.com'
@@ -183,7 +187,10 @@ test('firebase.json deploys the build and names no project, and no .firebaserc i
   // (D93, D106) and the campaign's three (G2.3, D401) — and each exception is read here as an
   // exact origin, not as "a remote origin is fine" — with one wildcard, `https://*.licdn.com`,
   // which the owner ruled into `img-src` alone (2026-10-31) and which `script-src` here still
-  // refuses. The three sets are the ones the two data files write, so a CSP that dropped one,
+  // refuses. The last entry is not a load at all: the key service's intake is where the key
+  // request page's forms POST (S3.3), and the policy admits it in `form-action` alone — this
+  // list is every origin the policy names, so a host admitted anywhere else in it is this case
+  // failing, and `origins.mjs` is the case that reads the directives one by one. The three sets are the ones the two data files write, so a CSP that dropped one,
   // or grew a fourth, is this case failing rather than a literal below going stale;
   // `website/test/origins.mjs` holds the whole policy, directive by directive, to Google's and
   // the three vendors' documented minimum, and this is the coarser check that those exceptions
@@ -202,6 +209,7 @@ test('firebase.json deploys the build and names no project, and no .firebaserc i
       'https://px.ads.linkedin.com',
       'https://*.licdn.com',
       new URL(loadLanding().calendlyURL).origin,
+      keysIntakeOrigin(siteFacts().canonicalURL),
     ].sort(),
     `the CSP admits an origin that is not one of the ones the site's two data files, W3.2 and the owner's ruling of 2026-10-31 (LinkedIn's img-src wildcard) pin: ${csp}`,
   )
