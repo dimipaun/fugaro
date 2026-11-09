@@ -19,12 +19,17 @@ import (
 // argv it was run with. What this file has to pin is the contract the child is
 // started under — one credential and no other, three tools and no fourth, two
 // readable folders and no third, and a cap — and the fake child
-// (runChildScript) enforces that contract the way the installed client does:
-// it reads its own --tools and its own roots and refuses what they do not
-// cover. That is what makes the two mutation checks real rather than
-// structural. Add Bash to the allow-list, or widen a root, and the fake child
-// *does the thing* — the sentinel appears, or the file nobody may read is
-// read — and the test fails on evidence the argv could not fake.
+// (runChildScript) acts on that contract out of its own argv rather than out
+// of the test: it reads its own --tools, runs a command only when the
+// allow-list covers it, and reads a file only under a root it was handed.
+//
+// The tools half is the installed client's own behaviour. The roots half is
+// this file's reading of the argv: what confines a real client to those roots
+// is the client, and no hermetic test reaches it, so what is pinned here is
+// that the argv names those roots and no others. Either way a mutation is
+// behavioural rather than structural — add Bash to the allow-list, or widen a
+// root, and the fake child *does the thing*: the sentinel appears, or the file
+// nobody may read is read.
 
 func TestMain(m *testing.M) {
 	cleanup, err := testutil.PrepareFakeCommands()
@@ -288,19 +293,24 @@ func TestRunArgsIsTheReadOnlyContract(t *testing.T) {
 	if !doc.DisableAllHooks {
 		t.Error("the settings payload does not disable hooks: a hook is a process the client starts with the child's environment, the credential among it")
 	}
-	// Every tool the child has reads files, so every one of them needs every
-	// rule: a payload that denied a path to Read alone would leave Grep and
+	// The list is pinned whole and in order rather than sampled: it is the one
+	// thing standing between a steered agent and the machine's credential
+	// stores, and a path silently dropped from it is a store silently opened.
+	// Every tool the child has reads files, so every path carries all three
+	// rules — a payload that denied a path to Read alone would leave Grep and
 	// Glob as the way round it.
-	for _, path := range []string{"~/.ssh/**", "~/.claude/**", "~/.config/gcloud/**", "~/.aws/**"} {
+	var wantDeny []string
+	for _, path := range []string{
+		"~/.ssh/**", "~/.aws/**", "~/.config/gcloud/**", "~/.claude/**",
+		"~/.config/fugaro/**", "~/.docker/config.json", "~/.git-credentials",
+		"~/.netrc", "~/.npmrc", "~/.pypirc", "/proc/**",
+	} {
 		for _, tool := range []string{"Read", "Grep", "Glob"} {
-			want := tool + "(" + path + ")"
-			if !slices.Contains(doc.Permissions.Deny, want) {
-				t.Errorf("the settings payload does not deny %s, so a log that steers the agent there is read", want)
-			}
+			wantDeny = append(wantDeny, tool+"("+path+")")
 		}
 	}
-	if want := len(childFileTools) * len(childReadDeny); len(doc.Permissions.Deny) != want {
-		t.Errorf("the settings payload holds %d deny rules, want %d — one per tool per path", len(doc.Permissions.Deny), want)
+	if !slices.Equal(doc.Permissions.Deny, wantDeny) {
+		t.Errorf("the settings payload denies\n%v\nwant\n%v", doc.Permissions.Deny, wantDeny)
 	}
 	var adds []string
 	for i, a := range args {

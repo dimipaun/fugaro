@@ -56,18 +56,21 @@ const toolAllowList = "Read,Grep,Glob"
 // the rule syntax borrows.
 var childFileTools = []string{"Read", "Grep", "Glob"}
 
-// childReadDeny are the places a diagnosis never has a reason to read. They
-// are a second line behind the working-directory confinement, and the reason
-// they exist is that the first line is the client's behaviour (U2: the pinned
-// client's Read is not confined to the working directory by itself) while this
-// one is a payload no client version can widen: whatever else a log talks the
-// agent into, the credential stores are closed to it by name.
+// childReadDeny are the places a diagnosis never has a reason to read.
 //
-// It is not a list of everything sensitive on a machine — that list cannot be
-// written, and a rule that denied the whole filesystem would deny the source
-// tree with it. It is the set that a log steering the agent would go for
-// first: the SSH, cloud, Claude and Fugaro configuration, and the files a
-// package manager keeps a token in.
+// They are the line, and not a second one behind the working directory: the
+// client does not confine its file tools to the working directory and the
+// --add-dir folders unless that confinement is asked for, and this argv does
+// not ask for it (U2). What is closed is therefore closed by name, and a path
+// not named here is a path the child can read — which is why the test pins
+// this list whole rather than sampling it.
+//
+// It is not a list of everything sensitive on a machine: that list cannot be
+// written, and a rule denying the whole filesystem would deny the source tree
+// with it. It is the set a log steering the agent would go for first — the
+// SSH, cloud, Claude and Fugaro configuration, the files a package manager
+// keeps a token in, and /proc, whose environ entries hold every secret this
+// process deliberately kept out of the child's environment.
 var childReadDeny = []string{
 	"~/.ssh/**",
 	"~/.aws/**",
@@ -79,6 +82,7 @@ var childReadDeny = []string{
 	"~/.netrc",
 	"~/.npmrc",
 	"~/.pypirc",
+	"/proc/**",
 }
 
 // childSettings is the --settings payload, as a JSON document: the two things
@@ -236,13 +240,15 @@ func Args(req Request) []string {
 		"--output-format", "stream-json",
 		"--verbose",
 		"--tools", toolAllowList,
-		// No setting source at all: this runs on the person's own machine, so
-		// the default would load their user level — their hooks, their plugins,
-		// their MCP servers and their permission rules — into a process holding
-		// the credential. The flag with an empty value is the only spelling of
-		// "none": the sources are a list of levels, and no token means no
-		// level. --strict-mcp-config with no --mcp-config beside it says the
-		// same for MCP servers, which a settings file is otherwise a way in to.
+		// No setting source of the machine's own: this runs on the person's
+		// machine, so the default would load their user level — their hooks,
+		// their plugins, their MCP servers and their permission rules — into a
+		// process holding the credential. The sources are a list of levels and
+		// an empty token means no level; a settings file an administrator
+		// manages still applies, which is policy and not a file this machine's
+		// user or a log decides. --strict-mcp-config with no --mcp-config
+		// beside it says the same for MCP servers, which a settings file is
+		// otherwise a way in to.
 		"--setting-sources", "",
 		"--strict-mcp-config",
 		// A session file is the client's own record of the run's reads and
