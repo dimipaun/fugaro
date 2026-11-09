@@ -21,6 +21,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/pricing/catalog"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rtdb"
+	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
 	"github.com/dimipaun/fugaro/internal/watch"
 )
@@ -122,7 +123,9 @@ func TestShowSanitizesRegistryText(t *testing.T) {
 	if strings.Contains(out, "\x1b") || strings.Contains(errOut, "\x1b") || strings.Contains(out, "\x07") {
 		t.Fatalf("terminal controls reached the output: %q", out)
 	}
-	if !strings.Contains(out, "20261002-090000-aaaa") || !strings.Contains(out, "the bug") {
+	// The running block names each entry by its ending (spec.md §1), so the
+	// entry is found by the cell the listing shows and not by the whole ID.
+	if !strings.Contains(out, task.ShortRun("20261002-090000-aaaa")) || !strings.Contains(out, "the bug") {
 		t.Fatalf("the running entry is missing:\n%s", out)
 	}
 	js, _, err := execute(t, "budget", "show", "--all", "--json")
