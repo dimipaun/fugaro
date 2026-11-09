@@ -793,10 +793,12 @@ tree did not carry:
    build is the delivery** — the device's
    side of showing or taking the number — so the requirement is met at the endpoint and unperformed
    on the device, and that half is named as owed in [spec.md](spec.md) §11.
-2. **The ID token is spent.** The approve step records the token as used, in M2's store and as a
-   keyed hash of it (D922), before the code is minted, so a replay of the same token is refused
-   instead of approving a second flow: when this task was written nothing spent it, so a leaked
-   token approved another flow on every replay until it expired (spec.md §8).
+2. **The ID token is spent.** The approve step records the token as used, in M2's store and as the
+   sha256 of its value (D922) — the unkeyed hash M2's store writes, and not the HMAC-keyed hash
+   D922's restatement requires, which nothing builds (spec.md §11) — before the code is minted, so a
+   replay of the same token is refused instead of approving a second flow: when this task was
+   written nothing spent it, so a leaked token approved another flow on every replay until it expired
+   (spec.md §8).
 3. **The approval is bound to the flow.** The number names **one** authorization request, and the
    code is minted only for that request, so an approval cannot be moved to another client, another
    redirect URI or another `state`.
