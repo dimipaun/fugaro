@@ -102,20 +102,27 @@ case "$sub" in
 version)
   case "$mode" in
   dev) echo "fugaro 0.15.0-dev (abc1234, dirty)" ;;
-  *) echo "fugaro 0.15.0 (test)" ;;
+  # A build from a checkout prints exactly this: cli.Version's own default is
+  # "dev" and versionTemplate is the variable and a newline.
+  devbare) echo "dev" ;;
+  *) echo "fugaro 0.21.0 (test)" ;;
   esac
   ;;
 doctor)
   # Faithful to internal/cli/doctor.go: the human report's `project:` line, and
   # --json's document with its `checks` array, which is where the after-flip
-  # check reads bitbucket-direct from.
+  # check reads bitbucket-direct from. The `project:` line belongs to the --all
+  # view — the default view ends with its pointer lines — so a guard that reads
+  # the plain view finds nothing here, exactly as it would live.
   if has --json "$@"; then
     cat "$state/doctor.json"
-  else
+  elif has --all "$@"; then
     case "$mode" in
     other) echo "project: fugaro (GCP someone-else-prod, us-east5)" ;;
     *) echo "project: fugaro (GCP fugaro-dev, us-east5)" ;;
     esac
+  else
+    echo "fugaro doctor: everything checked is ok"
   fi
   ;;
 project)
@@ -301,18 +308,38 @@ elif sub == ("secrets", "get-iam-policy"):
         sys.exit(1)
     sys.stdout.write(state("secret-policy.json", '{"bindings":[]}\n'))
 elif sub == ("logging", "read"):
-    # The audit lines of every run the fake `fugaro` launched: one `ok` line for
-    # a run that was served, one refusal line per class the check's attempts are
-    # expected to be refused with. The ended run's refusal is NOT audited (the
-    # service answers it before there is a verified identity) and so gets none.
+    # The service's own lines for every run the fake `fugaro` launched, in the
+    # two shapes the real service writes: a `credsvc: audit` line per act (one
+    # `ok` for a call it served, one `request_refused` per refusal), and one
+    # refusal line per refusal, which is where the CLASS is written down
+    # (internal/credsvc/bitbucketproxy.go's refuseProxyReason). The ended run's
+    # refusal is NOT audited (the service answers it before there is a verified
+    # identity) and so gets neither.
+    #
+    # Every read is counted, and so is every read OF ONE RUN: `lagging-log`
+    # answers a run's first read with three of its classes and the rest from its
+    # second read on, which is what Cloud Logging's ingestion lag looks like to a
+    # check that reads a run once and believes the answer.
     classes = ["other_repository", "other_ref", "tag_ref", "ref_delete",
                "other_pull_request", "call_not_allowed", "call_not_allowed"]
+    calls = 0
+    calls_path = os.path.join(LOG, "logging.calls")
+    if os.path.exists(calls_path):
+        calls = int(open(calls_path).read().strip() or "0")
+    with open(calls_path, "w") as fh:
+        fh.write(str(calls + 1))
     out = []
     path = os.path.join(STATE, "runs")
     for line in open(path).read().splitlines() if os.path.exists(path) else []:
         rid, kind, _repo = line.split("\t")
         if kind == "ended":
             continue
+        reads = 0
+        reads_path = os.path.join(LOG, "logging.reads-" + rid)
+        if os.path.exists(reads_path):
+            reads = int(open(reads_path).read().strip() or "0")
+        with open(reads_path, "w") as fh:
+            fh.write(str(reads + 1))
         common = {"message": "credsvc: audit", "run": rid,
                   "repository": "bitbucket/workspace-a/repo-a",
                   "job": "fugaro-workspace-a-repo-a-web-0123456789ab",
@@ -324,8 +351,19 @@ elif sub == ("logging", "read"):
             want = [c for c in want if c != "tag_ref"]
         if mode == "no-review-refusal" and kind == "review":
             want = []
+        if mode == "lagging-log" and reads == 0:
+            want = want[:3]
         for cls in want:
-            out.append({"jsonPayload": dict(common, purpose="git", status=cls)})
+            out.append({"jsonPayload": dict(common, purpose="git", status="request_refused")})
+            out.append({"jsonPayload": {"message": "credsvc: a Bitbucket call was refused",
+                                        "run": rid,
+                                        "repository": "bitbucket/workspace-a/repo-a",
+                                        "purpose": "git", "class": cls}})
+        if mode == "no-audit-line" and kind == "work":
+            # A class line whose refusal was never recorded: the audit line is
+            # the half that says the service wrote the refusal down.
+            for e in [e for e in out if e["jsonPayload"].get("status") == "request_refused"][:1]:
+                out.remove(e)
     sys.stdout.write(json.dumps(out) + "\n")
 GCLOUD_EOF
   chmod +x "$1/bin/gcloud"
@@ -443,6 +481,7 @@ CFG_EOF
     CHECK191_REPO=workspace-a/repo-a CHECK191_OTHER_REPO=workspace-a/repo-b \
     CHECK191_PLAIN_REPO=workspace-a/plain CHECK191_OTHER_PR=4 \
     CHECK191_RUN_ID="$run_base" CHECK191_WAIT_SECONDS=0 CHECK191_POLL_SECONDS=0 \
+    CHECK191_LOG_WAIT_SECONDS=0 \
     CHECK191_CHECKOUT="$dir/checkout" \
     ${args[@]+"${args[@]}"} \
     bash "$checked" ${cli[@]+"${cli[@]}"} >"$dir/out" 2>"$dir/err" || status=$?
@@ -572,6 +611,21 @@ test_the_project_guard_is_what_stops_a_foreign_installation() {
   expect_contains "$out" "CHECK 191 RESULT END (exit 0)" "red step: its block is a finished block"
 }
 
+# A build from a checkout prints exactly `dev` — cli.Version's default and
+# versionTemplate's whole body — and this check is about a RELEASED credentials
+# service, so that build must fail the row rather than pass it. The pattern that
+# catches `0.15.0-dev (abc1234, dirty)` does not catch the bare word, so this
+# case is the one that fails if the guard stops matching it.
+test_a_checkout_build_is_a_failure() {
+  local dir=$work/devbare
+  prepare "$dir"
+  run_check "$dir" "$script" FAKE_FUGARO_MODE=devbare
+  expect_status "$status" 1 "a checkout build"
+  expect_contains "$out" "FACT fugaro-version: FAIL" "a checkout build: the row"
+  expect_contains "$out" "prints exactly 'dev'" "a checkout build: the row says which build it refused"
+  expect_contains "$out" "FACT project-region: PASS" "a checkout build: the guard is about the version, not the project"
+}
+
 test_repo_guard() {
   local dir=$work/norepo
   prepare "$dir"
@@ -679,13 +733,50 @@ test_a_run_that_did_not_succeed_is_a_failure() {
   expect_contains "$out" "FACT run-outcome: FAIL" "a failed run: the fact"
 }
 
-test_a_forbidden_attempt_that_was_not_audited_is_a_failure() {
+test_a_refusal_the_service_wrote_no_class_line_for_is_a_failure() {
+  local dir=$work/noclass
+  prepare "$dir"
+  # The service answered one attempt but wrote no line naming its class: the run
+  # says it was refused, and there is no service line saying under what. The
+  # class is the half of the reading that says the refusal was the service's.
+  run_check "$dir" "$script" FAKE_GCLOUD_MODE=missing-tag-refusal
+  expect_status "$status" 1 "a refusal with no class line"
+  expect_contains "$out" "FACT refusal-tag-ref: FAIL" "a refusal with no class line: the fact names the class that is missing"
+  expect_contains "$out" "FACT refusal-other-ref: PASS" "a refusal with no class line: the other rows still hold on their own class lines"
+}
+
+test_a_refusal_that_was_not_audited_is_a_failure() {
   local dir=$work/unaudited
   prepare "$dir"
-  run_check "$dir" "$script" FAKE_GCLOUD_MODE=missing-tag-refusal
+  # The service's own line names the class, and no audit line records the
+  # refusal: the class alone is not the audit, and a refusal this service does
+  # not write down is not one this check can read (D143).
+  run_check "$dir" "$script" FAKE_GCLOUD_MODE=no-audit-line
   expect_status "$status" 1 "an unaudited refusal"
-  expect_contains "$out" "FACT refusal-tag-ref: FAIL" "an unaudited refusal: the fact names the class that is missing"
-  expect_contains "$out" "FACT refusal-other-ref: PASS" "an unaudited refusal: the other rows still hold on their own audit lines"
+  expect_contains "$out" "FACT refusal-other-repository: FAIL" "an unaudited refusal: the fact"
+  expect_contains "$out" "are not all audited" "an unaudited refusal: the fact says which half is missing"
+  expect_contains "$out" "FACT review-run: PASS" "an unaudited refusal: the other runs' rows still hold"
+}
+
+test_a_log_that_lags_is_waited_for() {
+  local dir=$work/lagging
+  prepare "$dir"
+  # Cloud Logging ingests a line seconds after the service writes it, so a run's
+  # first read can answer with some of its classes and no more. The check must
+  # wait for the rest rather than read a correct installation's lag as a FAIL —
+  # which is what a row that stopped at the first answer would report, and the
+  # owner could not tell it apart from the regression the row exists for.
+  run_check "$dir" "$script" FAKE_GCLOUD_MODE=lagging-log \
+    CHECK191_LOG_WAIT_SECONDS=10 CHECK191_LOG_POLL_SECONDS=1
+  expect_status "$status" 0 "a log that lags"
+  expect_contains "$out" "FACT refusal-tag-ref: PASS" "a log that lags: the class the first read was missing"
+  expect_contains "$out" "FACT refusal-workspaces: PASS" "a log that lags: the last of the seven"
+  expect_contains "$out" "CHECK 191 RESULT END (exit 0)" "a log that lags: the block is a finished one"
+  local reads
+  reads=$(cat "$dir/logs/logging.calls")
+  if [ "$reads" -lt 2 ]; then
+    fail "a log that lags: the check read the service's lines $reads time(s), so it took the first answer for the whole of it"
+  fi
 }
 
 test_a_forbidden_attempt_the_run_did_not_report_is_a_failure() {
@@ -883,13 +974,16 @@ t test_dry_run
 t test_the_plan_prints_for_the_flip
 t test_project_guard
 t test_the_project_guard_is_what_stops_a_foreign_installation
+t test_a_checkout_build_is_a_failure
 t test_repo_guard
 t test_the_run_id_must_name_today
 t test_the_run_id_base_must_be_todays_date_and_a_time
 t test_the_fake_run_refuses_an_id_the_cli_would_refuse
 t test_happy_path
 t test_a_run_that_did_not_succeed_is_a_failure
-t test_a_forbidden_attempt_that_was_not_audited_is_a_failure
+t test_a_refusal_the_service_wrote_no_class_line_for_is_a_failure
+t test_a_refusal_that_was_not_audited_is_a_failure
+t test_a_log_that_lags_is_waited_for
 t test_a_forbidden_attempt_the_run_did_not_report_is_a_failure
 t test_the_review_runs_push_refusal_is_asserted
 t test_an_outcome_that_cannot_be_written_stops_the_check

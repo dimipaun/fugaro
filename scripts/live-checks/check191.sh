@@ -28,12 +28,14 @@
 #             ... --dry-run          print the plan and run nothing
 #             ... --help             this text
 # Needs:      bash, mktemp, python3 (the reader), curl, gcloud (authenticated as
-#             an owner of the installation: it reads the audit log through Cloud
+#             an owner of the installation: it reads the service's own lines
+#             through Cloud Logging (the audit's, and the refusal line that
+#             carries a refusal's class),
 #             Logging, the job list, the secrets carrying the Bitbucket token's
 #             label and their IAM policies, and mints the access token the
 #             outcome node is written with), fugaro (the release under test,
 #             installed here and configured for the installation, with `fugaro
-#             doctor --project fugaro` working), and git for --after-flip (the
+#             doctor --project fugaro --all` working), and git for --after-flip (the
 #             repository's origin remote, to check you are standing in the
 #             checkout doctor reads).
 # Where:      the fugaro-dev installation ONLY, and sandbox Bitbucket
@@ -100,8 +102,9 @@
 # reads a run's outcome under), CHECKOUT (the proxied repository's own checkout,
 # for --after-flip: the directory doctor must be run in; defaults to $PWD),
 # WAIT_SECONDS and POLL_SECONDS (how long a run is waited for), LOG_WAIT_SECONDS
-# and LOG_POLL_SECONDS and LOG_AGE and LOG_LIMIT (the audit read, retried while
-# Cloud Logging catches up), CONFIG (the installation's local config, read for
+# and LOG_POLL_SECONDS and LOG_AGE and LOG_LIMIT (the service's lines, retried
+# while Cloud Logging catches up: the read waits for every refusal's class line
+# and stops at the deadline), CONFIG (the installation's local config, read for
 # the budget's rtdb_url), DRY_RUN, KEEP_SCRATCH.
 set -Eeuo pipefail
 
@@ -162,7 +165,7 @@ need() {
 need_tools() {
   command -v bash >/dev/null 2>&1 || die "Check 191 needs bash"
   need mktemp
-  need python3 "the reader that parses the policy, the listings and the audit lines is one python3 file"
+  need python3 "the reader that parses the policy, the listings and the service's lines is one python3 file"
   need curl
   need gcloud
   need fugaro
@@ -319,9 +322,14 @@ run      argv: the listing's file, a run id. Prints that run's row field by
 attempts argv: a log file. Prints one `attempt=` line per CHK191 attempt the
          throwaway run reported. Only those lines are printed and every field is
          cut to a short plain-word shape: a log is a run's own words.
-audit    argv: the audit lines' file, a run id. Prints the refusal classes the
-         service recorded for that run — the `status` of its `credsvc: audit`
-         lines, `ok` dropped.
+audit    argv: the service's lines' file, a run id. Prints two kinds of line for
+         that run: `status=<the wire type>` for each `credsvc: audit` line that
+         is not `ok`, and `class=<the rule>` for each of the service's OWN
+         refusal lines ("credsvc: a Bitbucket call was refused"), which is where
+         a refusal's class is written down — the audit line's status is
+         request_refused for every refusal of the route, and a refused git push
+         never shows the caller the class at all (git prints the answer's
+         status, not its body).
 jobs     argv: `gcloud run jobs list --format=json`'s file, a repository. Prints
          the repository's jobs, how many of them mount bitbucket-token, and the
          service account each one runs as. gcloud's `run jobs list` forces the
@@ -449,11 +457,16 @@ elif cmd == "audit":
     want = sys.argv[3]
     for entry in load(sys.argv[2]) or []:
         payload = entry.get("jsonPayload") if isinstance(entry, dict) else None
-        if not isinstance(payload, dict) or payload.get("message") != "credsvc: audit":
+        if not isinstance(payload, dict) or payload.get("run") != want:
             continue
-        status = payload.get("status")
-        if payload.get("run") == want and status and status != "ok":
-            print("class=%s" % word(status, 40))
+        if payload.get("message") == "credsvc: audit":
+            status = payload.get("status")
+            if status and status != "ok":
+                print("status=%s" % word(status, 40))
+        elif payload.get("message") == "credsvc: a Bitbucket call was refused":
+            cls = payload.get("class")
+            if cls:
+                print("class=%s" % word(cls, 40))
 elif cmd == "jobs":
     repo = sys.argv[3]
     total = mounts = 0
@@ -523,14 +536,18 @@ guard_project() {
   # every line below is about a service, a policy and a repository of another
   # project, which is why this stops rather than warns.
   local doctor_out v
-  doctor_out=$(fugaro doctor --project fugaro || true)
+  # --all, because the `project:` line is part of doctor's informational tail:
+  # the default view prints its pointer lines and stops, so a guard reading the
+  # plain view finds no project line at all and stops every run with "this is
+  # not the fugaro-dev installation".
+  doctor_out=$(fugaro doctor --project fugaro --all || true)
   if ! printf '%s\n' "$doctor_out" | grep '^project: .*(GCP fugaro-dev,' >/dev/null; then
-    stop "this is not the fugaro-dev installation: fugaro doctor --project fugaro printed no 'project: ... (GCP fugaro-dev,' line. Either this is not the fugaro-dev installation, or --project fugaro disagrees with this checkout's project:, or doctor itself failed (doctor is not offline: it needs usable credentials). Run 'fugaro doctor --project fugaro' here yourself and read its output before going on — this check runs on the sandbox installation only, never belong"
+    stop "this is not the fugaro-dev installation: fugaro doctor --project fugaro --all printed no 'project: ... (GCP fugaro-dev,' line. Either this is not the fugaro-dev installation, or --project fugaro disagrees with this checkout's project:, or doctor itself failed (doctor is not offline: it needs usable credentials). Run 'fugaro doctor --project fugaro --all' here yourself and read its output before going on — this check runs on the sandbox installation only, never belong"
   fi
   v=$(fugaro version 2>/dev/null | head -n 1 || true)
   case "$v" in
-  *-dev* | *dirty*)
-    fact "fugaro-version" FAIL "$v — a development build is not the release this check is about: install the release under test and run it again"
+  dev | *-dev* | *dirty*)
+    fact "fugaro-version" FAIL "$v — a development build is not the release this check is about (a checkout build prints exactly 'dev'): install the release under test and run it again"
     ;;
   *)
     fact "fugaro-version" PASS "${v:-fugaro version printed nothing}"
@@ -625,7 +642,7 @@ guard_one_repo() { # guard_one_repo REPO KNOB
 # shape and only one (task.ValidRunID: ^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$), so the
 # base — today's UTC date and a time — is followed by four hex characters, one
 # value per label, which is what tells this check's runs apart in the listing
-# and in the audit log.
+# and in the service's own lines.
 run_id() {
   case "$1" in
   work) printf '%s-0001' "$RUN_BASE" ;;
@@ -680,16 +697,21 @@ run_log() { # run_log LABEL RID — the run's own log, and the attempts it repor
   reader attempts "$SCRATCH/log-$label.txt" >"$SCRATCH/reported-$label"
 }
 
-# audit_read RID OUT: the run's audit lines, retried while Cloud Logging catches
-# up — ingestion lags the request by seconds, and a reading taken immediately is
-# an empty answer about a service that did refuse.
+# audit_read RID OUT NEED: the run's service lines, retried while Cloud Logging
+# catches up — ingestion lags the request by seconds, and a reading taken
+# immediately is an empty answer about a service that did refuse. NEED is the
+# number of refusal classes the reading is about, and the loop runs until the
+# lines hold that many or LOG_WAIT_SECONDS is up: a reading that stopped at the
+# first class line would leave a row's count at whatever had been ingested at
+# that instant, which is a FAIL a correct installation earns for being fast. The
+# answer the caller reads is the last one taken.
 audit_read() {
-  local rid=$1 out=$2 waited=0 filter
+  local rid=$1 out=$2 need=$3 waited=0 filter
   filter='resource.type="cloud_run_revision" resource.labels.service_name="fugaro-credentials" jsonPayload.run="'"$rid"'"'
   while :; do
     gcloud logging read "$filter" --project="$P" --freshness="$LOG_AGE" \
       --limit="$LOG_LIMIT" --format=json >"$out" 2>"$SCRATCH/audit.err" || true
-    if [ "$(reader audit "$out" "$rid" | grep -c '^class=' || true)" -gt 0 ]; then return 0; fi
+    if [ "$(reader audit "$out" "$rid" | grep -c '^class=' || true)" -ge "$need" ]; then return 0; fi
     if [ "$waited" -ge "$LOG_WAIT_SECONDS" ]; then return 0; fi
     sleep "$LOG_POLL_SECONDS"
     waited=$((waited + LOG_POLL_SECONDS))
@@ -698,11 +720,12 @@ audit_read() {
 
 # ---------------------------------------------------------------- the 191 steps
 # The seven refusals, in ONE table: the attempt's name as the throwaway run
-# reports it, the fact it settles, and the refusal class the service audits it
-# with (gitproxy.Classify's vocabulary). The last two attempts are both REST
-# calls outside the repository's own paths, so both are audited
-# `call_not_allowed`: the class is COUNTED, not looked for, which is what tells
-# the two apart from the one the table says they are.
+# reports it, the fact it settles, and the class the service refuses it under
+# (gitproxy.Classify's vocabulary). The last two attempts are both REST calls
+# outside the repository's own paths, so both are refused `call_not_allowed`:
+# the class is COUNTED, not looked for, which is what tells the two apart from
+# the one the table says they are. The class is read off the service's own
+# refusal line, which is the only place it is written down for all seven.
 ATTEMPTS=(
   "other-repository|refusal-other-repository|other_repository"
   "other-ref|refusal-other-ref|other_ref"
@@ -713,8 +736,27 @@ ATTEMPTS=(
   "workspaces|refusal-workspaces|call_not_allowed"
 )
 
-audit_class_count() { # audit_class_count CLASSES CLASS
+# audit_lines RID FILE LABEL: the run's service lines, split into the two files
+# the steps read. The classes are the service's OWN refusal lines — the one
+# place a refusal's class is written down — and the statuses are its
+# `credsvc: audit` lines, which are what says a refusal was recorded at all.
+audit_lines() { # audit_lines RID FILE LABEL
+  local rid=$1 file=$2 label=$3 got
+  got=$(reader audit "$file" "$rid")
+  printf '%s\n' "$got" | sed -n 's/^class=//p' >"$SCRATCH/classes-$label"
+  printf '%s\n' "$got" | sed -n 's/^status=//p' >"$SCRATCH/statuses-$label"
+}
+
+# audit_class_count CLASSES CLASS
+audit_class_count() {
   printf '%s\n' "$1" | grep -c "^$2\$" || true
+}
+
+# audit_audited STATUSES: how many of the run's lines are the audit's own
+# refusal status, which every refusal of the route writes exactly one of
+# (C1.13).
+audit_audited() {
+  printf '%s\n' "$1" | grep -c '^request_refused$' || true
 }
 
 audit_class_need() { # audit_class_need CLASS
@@ -800,9 +842,12 @@ TASK_EOF
 }
 
 step_refusals() {
-  local reported classes row name key cls said seen need
+  local reported classes statuses row name key cls said seen need audited refusals
   reported=$(cat "$SCRATCH/reported-work" 2>/dev/null || true)
   classes=$(cat "$SCRATCH/classes-work" 2>/dev/null || true)
+  statuses=$(cat "$SCRATCH/statuses-work" 2>/dev/null || true)
+  audited=$(audit_audited "$statuses")
+  refusals=$(printf '%s\n' "$classes" | grep -c . || true)
   for row in "${ATTEMPTS[@]}"; do
     IFS='|' read -r name key cls <<<"$row"
     said=$(printf '%s\n' "$reported" | sed -n "s/^attempt=$name //p" | head -n 1)
@@ -813,19 +858,23 @@ step_refusals() {
       continue
     fi
     if [ "${said%% *}" != refused=yes ]; then
-      fact "$key" FAIL "the working run made the ${name} attempt and was SERVED (${said}): the call was answered instead of refused, so the proxy admits a call it must not. This is the finding this check exists for — read that run's log and the service's audit lines before anything else"
+      fact "$key" FAIL "the working run made the ${name} attempt and was SERVED (${said}): the call was answered instead of refused, so the proxy admits a call it must not. This is the finding this check exists for — read that run's log and the service's own lines before anything else"
       continue
     fi
     if [ "$seen" -lt "$need" ]; then
-      fact "$key" FAIL "the working run was refused the ${name} attempt (${said}) but the service's audit log holds $seen line(s) classified ${cls} where ${need} of the seven attempts need it: the refusal is not the service's, or it was not audited. Read the audit lines yourself (gcloud logging read, jsonPayload.run) and that run's log"
+      fact "$key" FAIL "the working run was refused the ${name} attempt (${said}) but the service's own lines hold $seen refusal(s) carrying the class ${cls} where $need of the seven attempts need it (they carry: $(printf '%s' "$classes" | tr '\n' ' ')): either the refusal is not the service's, or the service wrote no line for it. Read the service's own lines yourself (gcloud logging read, jsonPayload.class) and that run's log"
       continue
     fi
-    fact "$key" PASS "the ${name} attempt was refused with the service's own words (${said}) and audited under ${cls}"
+    if [ "$audited" -lt "$refusals" ]; then
+      fact "$key" FAIL "the working run's refusals are not all audited: the service's own lines carry $refusals refusal class(es) for it and its audit lines hold $audited request_refused line(s), short of the one line each refusal writes. A refusal this service does not record is not one this check can read (D143) — read the audit lines (gcloud logging read, jsonPayload.status) and that run's log"
+      continue
+    fi
+    fact "$key" PASS "the ${name} attempt was refused with the service's own words (${said}), the service's own line carries the class ${cls}, and all $refusals refusals the service wrote a class line for are audited"
   done
 }
 
 step_review_run() {
-  local task=$SCRATCH/task-review.md row said classes rid
+  local task=$SCRATCH/task-review.md row said classes statuses rid
   rid=$(run_id review)
   cat >"$task" <<'TASK_EOF'
 You are a probe for Fugaro's Check 191, run by this repository's owner. This run
@@ -843,22 +892,28 @@ TASK_EOF
     return 0
   fi
   run_log "review" "$rid"
-  audit_read "$rid" "$SCRATCH/audit-review.json"
-  classes=$(reader audit "$SCRATCH/audit-review.json" "$rid" | sed -n 's/^class=//p')
+  audit_read "$rid" "$SCRATCH/audit-review.json" 1
+  audit_lines "$rid" "$SCRATCH/audit-review.json" review
+  classes=$(cat "$SCRATCH/classes-review" 2>/dev/null || true)
+  statuses=$(cat "$SCRATCH/statuses-review" 2>/dev/null || true)
   said=$(sed -n 's/^attempt=push //p' "$SCRATCH/reported-review" | head -n 1)
   if [ -z "$said" ]; then
     fact review-run FAIL "the review-only run (${rid}) reported no 'CHK191 attempt=push' line, so whether its push was refused is not settled. Run 'fugaro logs ${rid}' and read what it did"
     return 0
   fi
   if [ "${said%% *}" != refused=yes ]; then
-    fact review-run FAIL "the review-only run's push was SERVED (${said}): a run that is not admitted to write a branch pushed one, which is the finding this row exists for. Read that run's log and the service's audit lines"
+    fact review-run FAIL "the review-only run's push was SERVED (${said}): a run that is not admitted to write a branch pushed one, which is the finding this row exists for. Read that run's log and the service's lines"
     return 0
   fi
   if ! printf '%s\n' "$classes" | grep -qx no_run_branch; then
-    fact review-run FAIL "the review-only run was refused its push (${said}) but the service's audit log holds no no_run_branch line for it (it holds: $(printf '%s' "$classes" | tr '\n' ' ')): the refusal and the audit line about it are two halves of one reading"
+    fact review-run FAIL "the review-only run was refused its push (${said}) but the service's own lines hold no no_run_branch refusal for it (they carry: $(printf '%s' "$classes" | tr '\n' ' ')): the refusal and the service's line about it are two halves of one reading"
     return 0
   fi
-  fact review-run PASS "the review-only run's push was refused with the service's own words (${said}) and audited under no_run_branch"
+  if [ "$(audit_audited "$statuses")" -lt 1 ]; then
+    fact review-run FAIL "the review-only run's push was refused under no_run_branch but the service's audit lines hold no request_refused line for it, so the refusal was not recorded (D143): read the audit lines (gcloud logging read, jsonPayload.status) and that run's log"
+    return 0
+  fi
+  fact review-run PASS "the review-only run's push was refused with the service's own words (${said}), the service's own line carries the class no_run_branch, and the refusal is audited"
 }
 
 # step_ended_identity: the last row of Check 191 — a run whose outcome is
@@ -914,7 +969,7 @@ TASK_EOF
   pushed=$(field_of pushed "$row")
   pr=$(field_of pr "$row")
   if [ "$pushed" = yes ] || { [ -n "$pr" ] && [ "$pr" != 0 ]; }; then
-    fact ended-identity FAIL "the probe launched with its outcome already written PUSHED or opened pull request ${pr}: a run that has ended must not be served at all, and this one got as far as writing to the repository. Read 'fugaro logs ${rid}' and the service's audit lines"
+    fact ended-identity FAIL "the probe launched with its outcome already written PUSHED or opened pull request ${pr}: a run that has ended must not be served at all, and this one got as far as writing to the repository. Read 'fugaro logs ${rid}' and the service's own lines"
     return 0
   fi
   if [ -z "$halt" ]; then
@@ -928,8 +983,8 @@ run_191() {
   step_policy
   step_work_run
   run_log "work" "$(run_id work)"
-  audit_read "$(run_id work)" "$SCRATCH/audit-work.json"
-  reader audit "$SCRATCH/audit-work.json" "$(run_id work)" | sed -n 's/^class=//p' >"$SCRATCH/classes-work"
+  audit_read "$(run_id work)" "$SCRATCH/audit-work.json" "${#ATTEMPTS[@]}"
+  audit_lines "$(run_id work)" "$SCRATCH/audit-work.json" work
   step_refusals
   step_review_run
   step_ended_identity
@@ -1003,10 +1058,10 @@ step_doctor() {
   case "$ok" in
   yes) fact doctor PASS "fugaro doctor, run in ${CHECKOUT} (${REPO}'s own checkout), reports bitbucket-direct clean for ${REPO} (ok=true)" ;;
   no)
-    fact doctor FAIL "fugaro doctor, run in ${CHECKOUT} (${REPO}'s own checkout), reports bitbucket-direct NOT clean for ${REPO}: ${problem:-the report carried no problem word}. doctor reads the same two things the rows above read (a proxied repository whose jobs still mount the secret), so this row and those are one reading — run 'fugaro doctor --project fugaro' from that checkout yourself and read the finding"
+    fact doctor FAIL "fugaro doctor, run in ${CHECKOUT} (${REPO}'s own checkout), reports bitbucket-direct NOT clean for ${REPO}: ${problem:-the report carried no problem word}. doctor reads the same two things the rows above read (a proxied repository whose jobs still mount the secret), so this row and those are one reading — run 'fugaro doctor --project fugaro --all' from that checkout yourself and read the finding"
     ;;
   *)
-    fact doctor FAIL "fugaro doctor --json, run in ${CHECKOUT}, printed no bitbucket-direct check at all: doctor emits it only where it can resolve the checkout it is run in (a parseable origin remote and a valid fugaro.yaml), and CHECK191_CHECKOUT was checked to be ${REPO}'s — so this is the repository's own fugaro.yaml, not the directory, and the flip's doctor row is what the owner reads after the flip. Run 'fugaro doctor --project fugaro' from that checkout yourself"
+    fact doctor FAIL "fugaro doctor --json, run in ${CHECKOUT}, printed no bitbucket-direct check at all: doctor emits it only where it can resolve the checkout it is run in (a parseable origin remote and a valid fugaro.yaml), and CHECK191_CHECKOUT was checked to be ${REPO}'s — so this is the repository's own fugaro.yaml, not the directory, and the flip's doctor row is what the owner reads after the flip. Run 'fugaro doctor --project fugaro --all' from that checkout yourself"
     ;;
   esac
 }
@@ -1091,7 +1146,7 @@ run_192() {
 plan() {
   local row name key
   say "CHECK ${CHECK} plan (dry run: nothing below is run, and no row in the block was measured)"
-  say "  [no network, already read] the guards: fugaro doctor --project fugaro and fugaro version"
+  say "  [no network, already read] the guards: fugaro doctor --project fugaro --all and fugaro version"
   if [ "$MODE" = flip ]; then
     say "  [network, read] gcloud run jobs list --project=${P} --region=${L} --format=json — the jobs of ${REPO} and of ${PLAIN_REPO}, and whether they mount the Bitbucket token"
     say "  [network, read] gcloud secrets list --project=${P} --format=json, then gcloud secrets get-iam-policy <the container(s) labelled fugaro_secret=bitbucket-token> --project=${P} --format=json — the accessor on the credential"
@@ -1103,7 +1158,7 @@ plan() {
   else
     say "  [network, read] fugaro project policy show --project fugaro --json — whether ${REPO} is admitted with proxy: true"
     say "  [network, runs] fugaro run --repo ${REPO} --run-id $(run_id work) — the throwaway run itself, whose task commits one line, pushes it and opens its pull request through the service, THEN makes the seven attempts and prints one line per attempt"
-    say "  [network, read] gcloud logging read (service fugaro-credentials, jsonPayload.run) — the service's own audit lines for each run"
+    say "  [network, read] gcloud logging read (service fugaro-credentials, jsonPayload.run) — the service's own lines for each run: its audit lines, and the refusal line that carries a refusal's class"
     say "  [network, runs] fugaro run --repo ${REPO} --recipe review-only --run-id $(run_id review) — a review-only run, whose push must be refused"
     say "  [network, write+delete] ONE Realtime Database node, outcomes/<day>/<slug>/$(run_id ended).json, written by you with your own credentials and deleted again by the restore, and one run ($(run_id ended)) launched with that outcome already written"
     for row in "${ATTEMPTS[@]}"; do
