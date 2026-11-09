@@ -750,12 +750,14 @@ const NOT_ON_THIS_TREE: readonly string[] = [
  * is still `runs ls --json` and rule 6's row carries the two words in its
  * parenthetical.
  *
- * **It is twenty-five argvs, and this surface is the same twenty-five.** (The
+ * **It is twenty-six argvs, and this surface is the same twenty-six.** (The
  * enumeration below numbers twenty-two of them: CG9a's `graph --json` landed
  * after it was written and sits between `plan status --json` and
  * `coordinator status --from-store --all --json`, and this plan's
  * `managed status --json` and `project policy show --json` are the two rows
- * after `coordinator intents --all --json`.) The thirteenth is
+ * after `coordinator intents --all --json`.) CG9b's `graph --watch --json` is
+ * the twenty-sixth and sits directly under the read it is a word longer than.
+ * The thirteenth is
  * `config list --json`, the rail's own read (owner's design ruling of
  * 2026-10-25): until that ruling there were twelve here and it was pinned where
  * the picker's table was, and the ruling made the read the dashboard's own
@@ -808,6 +810,15 @@ const DESIGN_ARGV: readonly string[] = [
   // its one fixed flag. The design's own row states the whole argv,
   // `graph --json [--source <v>]` and all.
   'graph --json',
+  // The same graph, live (the graph plan's CG9b). `--watch` is a **word of the
+  // command path** and not a flag this table fixes, because it is what makes the
+  // child a stream rather than a read: the operation's `command` is
+  // `graph --watch` and the one flag is `--json`, so the argv here is the whole
+  // of what the row can be. Its two arguments are the same scope as the read's
+  // (`--source <v>`, taken out by the convention above) and a visibility flag
+  // that names no word at all (`src/main/spawn.ts`'s `flag: null`). The design's
+  // own row states the whole argv, `graph --watch --json [--source <v>]` and all.
+  'graph --watch --json',
   'coordinator status --from-store --all --json',
   // The pull request read (coordinator v2 C3, D816): `--repo R` and `--pr N`
   // are the operation's two declared arguments, so this file's convention --
@@ -1364,6 +1375,12 @@ const WELL_FORMED: Record<OperationName, Record<string, unknown>> = {
   // read -- there is no directory, no repository and no id it can name
   // (the graph plan's CG9a).
   'graph.read': {},
+  // The scope, and the visibility the tab is in (the graph plan's CG9b). Both
+  // are optional: no `source` is the read a screen opens on (`all`), and no
+  // `visible` is the poll -- `visible: false` is the one value that stops the
+  // child, and it is the only argument on this surface that reaches no word of
+  // any argv (`src/main/spawn.ts`).
+  'graph.watch': {},
   // No `repo`, no `since`, no `path`: T1.2's read is the installation's whole
   // repository set, from the view the coordinator already stored, so this
   // payload is empty on purpose (Bitbucket credentials T1.2).
@@ -2603,7 +2620,7 @@ describe('the spend read’s arguments', () => {
  * table's order -- and it is the frozen list the plan asks for: it is spelled
  * here rather than read back from `EXPOSED_OPERATIONS`, because a test that
  * compared the table with itself would hold for a table that had just gained a
- * channel. The claim is "these thirty-six, and no others".
+ * channel. The claim is "these thirty-seven, and no others".
  *
  * Task 2.4 asserted the twelve and said the spend controls widened nothing;
  * Task 3.3 added the thirteenth (`startup.compatibility` / `getCompatibility`,
@@ -2724,6 +2741,21 @@ describe('the spend read’s arguments', () => {
  * never in an argv (S2.1's hand-off, rule 8), and no argument of either
  * operation becomes a word of any command line -- so a reader asking where the
  * key could reach a process's argv finds these two rows and no command.
+ *
+ * **The graph plan's CG9b added the thirty-seventh** (`graph.watch` /
+ * `graphWatch`: the same screen's live feed, `fugaro graph --watch --json`, one
+ * whole document per change) and left the other thirty-six exactly where they
+ * were. It is next to `graph.read`, of which its argv is one word longer and
+ * whose scope argument and admission rule it shares, and it is the second
+ * operation on this surface whose child does not end on its own -- `live.watch`
+ * is the first -- with the two held to one ceiling by `src/source/cli.ts`
+ * (`MAX_LIVE_FEEDS`, four, the graph's counted with the live feed's, H6). Its
+ * `--watch` is a word of its `command` rather than a flag of its row, which is
+ * what keeps a renderer from being able to turn the stream on or off; and its
+ * second argument is the first here that **names no word of any argv at all**
+ * (`src/main/spawn.ts`'s `flag: null`): `visible: false` is how the Graph tab
+ * says it has gone away, and all the main process can do with it is stop the
+ * child.
  */
 const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   ['live.watch', 'subscribeLive'],
@@ -2734,6 +2766,12 @@ const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   ['runs.summary', 'summaryRuns'],
   ['plan.status', 'planStatus'],
   ['graph.read', 'graphRead'],
+  // The graph's live feed (the graph plan's CG9b), directly under the read whose
+  // argv it is one word longer than -- which is where `EXPOSED_OPERATIONS` puts
+  // it, and where the two are read as one screen's pair. It is the surface's
+  // second long-lived operation, and the one whose second argument names no word
+  // of any argv.
+  ['graph.watch', 'graphWatch'],
   ['run.diagnose', 'diagnoseRun'],
   ['run.logs', 'readRunLogs'],
   ['run.logLink', 'runLogLink'],
@@ -2796,7 +2834,7 @@ export function surfaceOffences(proposed: readonly (readonly [string, string])[]
 }
 
 describe('the frozen list of operations the preload exposes', () => {
-  it('is exactly these thirty-six, with `spend.report` on `runReport`, the handshake on `getCompatibility` and the rail on `listInstallations`', () => {
+  it('is exactly these thirty-seven, with `spend.report` on `runReport`, the handshake on `getCompatibility` and the rail on `listInstallations`', () => {
     expect(EXPOSED_OPERATIONS).toEqual(SHIPPED_SURFACE)
     expect(surfaceOffences(EXPOSED_OPERATIONS)).toEqual([])
     expect(Object.isFrozen(EXPOSED_OPERATIONS)).toBe(true)
@@ -2817,7 +2855,7 @@ describe('the frozen list of operations the preload exposes', () => {
     // next task that adds a read cannot do it quietly.
     const thirtySecond = surfaceOffences([...SHIPPED_SURFACE, ['fleet.report', 'fleetReport']])
     expect(thirtySecond).toContain('fleet.report: a channel this console does not ship')
-    expect(thirtySecond).toContain('37 rows, and this console ships 36')
+    expect(thirtySecond).toContain('38 rows, and this console ships 37')
 
     // A write verb, which the allow-list forbids outright: it is refused here
     // for the same reason, one step earlier than `assertReachableSurface`.
@@ -2831,7 +2869,7 @@ describe('the frozen list of operations the preload exposes', () => {
       SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
     )
     expect(withoutTheNewRow).toContain('startup.compatibility: not on the surface at all')
-    expect(withoutTheNewRow).toContain('35 rows, and this console ships 36')
+    expect(withoutTheNewRow).toContain('36 rows, and this console ships 37')
     expect(
       surfaceOffences([
         ...SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
@@ -2846,8 +2884,8 @@ describe('the frozen list of operations the preload exposes', () => {
     )
   })
 
-  it('is frozen, and hands the window a bridge with the thirty-six methods and nothing else', () => {
-    // The bridge the window is handed: the thirty-six methods and the names,
+  it('is frozen, and hands the window a bridge with the thirty-seven methods and nothing else', () => {
+    // The bridge the window is handed: the thirty-seven methods and the names,
     // with no `invoke`, no channel and no method of its own.
     const bridge = createConsoleBridge(fakeRenderer())
     expect(Object.keys(bridge).sort()).toEqual(
@@ -4021,7 +4059,7 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
 
   it('lets every other operation through, so a reduced console is still a console', async () => {
     const { bridge, reached } = reducedConsole(REDUCED_HANDSHAKE)
-    // The non-vacuity half: twenty-nine of the surface's thirty-six operations,
+    // The non-vacuity half: thirty of the surface's thirty-seven operations,
     // all of them reachable in a reduced mode (the handshake is the one the loop
     // skips and its own test covers; `installation.current`, Task 3.4b, is among
     // the nineteen, because a reduced console's header still names its
@@ -4068,8 +4106,14 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
     // screen has to stay reachable in every state, which is the design's own
     // rule for it (`docs/design/lapse-read-only.md`: "the key screen in
     // particular is never gated", because a lapse is exactly when the operator
-    // has to reach the box that takes a renewal).
-    expect(THE_OPEN_OPERATIONS.length).toBe(29)
+    // has to reach the box that takes a renewal). **`graph.watch` (CG9b) is the
+    // thirtieth**, for `graph.read`'s reason exactly: the document it streams is
+    // the same repository state the read answers -- there is no figure in it for
+    // the mode to withhold -- and the feed is the read's own child, so a mode
+    // that withheld the stream would be withholding a picture rather than a
+    // figure. It is reached here with no `visible` at all, which is the poll a
+    // screen makes while the tab is on screen.
+    expect(THE_OPEN_OPERATIONS.length).toBe(30)
     expect(THE_OPEN_OPERATIONS).toContain('installation.current')
     for (const name of THE_OPEN_OPERATIONS) {
       const reply = await asCallable(

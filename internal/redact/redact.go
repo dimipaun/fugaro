@@ -130,11 +130,227 @@ func patternPass(s string) string {
 	s = authHeader.ReplaceAllString(s, `$1`+redacted)
 	s = authScheme.ReplaceAllString(s, "$1 "+redacted)
 	s = signedParam.ReplaceAllString(s, "$1$2="+redacted)
+	s = connString.ReplaceAllString(s, "$1:"+redacted+"@")
+	s = connStringCut.ReplaceAllString(s, "$1:"+redacted)
+	s = dsnString.ReplaceAllString(s, "$1"+redacted+"$3")
+	s = passwordEscaped.ReplaceAllString(s, "$1$2$3$4$5$6$10"+redacted+"$8$9")
+	s = redactPasswords(s)
+	s = redactPasswords(s)
 	for _, re := range tokenShapes {
 		s = re.ReplaceAllString(s, redacted)
 	}
 	return s
 }
+
+// markerHeld is what a marker becomes while the rules below read the text: a
+// NUL and a SOH, the NUL being a byte no unquoted value may open on (see
+// passwordValueTail). A marker stands where a value stood, and a value is what
+// these rules would otherwise read it as — the bracket is a value's byte like
+// any other — whose right-hand end they then have to guess at, and the field
+// after it pays: the branch that reads a value to the delimiter before the next
+// field's name takes that name into the match, the scan resumes past it, and
+// the credential written in that field is never read at all. That second
+// application is exactly what reads such a credential, so a marker it cannot
+// read is what makes it work — and a value opening with the marker's own
+// bracket stays a value the rules read like any other.
+const markerHeld = "\x00\x01"
+
+// redactPasswords applies the five rules that read a credential by the name
+// introducing it, each with the replacement that writes its own groups back
+// around the marker. The caller runs it twice: the value of a field stops at
+// the delimiter before the next field's name only where a name follows, and
+// that name is part of the match (see passwordValueTail), so the scan resumes
+// after it — and the second application is what reads a credential written in
+// that field — `?token=…&password=…` — with the name the first one put back in
+// place. Running the rules again over text they have already read changes
+// nothing: the marker they wrote is held aside (markerHeld), so what they see
+// is what they saw, and a value they rewrite they rewrite as the marker.
+func redactPasswords(s string) string {
+	s = strings.ReplaceAll(s, redacted, markerHeld)
+	s = passwordValue.ReplaceAllString(s, "$1$2$3$4$5$8$11$13"+redacted+"$7$10$16")
+	s = passwordWord.ReplaceAllString(s, "$1$2$3$4$5$8$11$13"+redacted+"$7$10$16")
+	s = passwordColon.ReplaceAllString(s, "$1$2$3$4$5$6$7$8$11$14$16"+redacted+"$10$13$19")
+	s = passwordCamel.ReplaceAllString(s, "$1$2$3$4$5$8$11$13"+redacted+"$7$10$16")
+	s = passwordFlag.ReplaceAllString(s, "$1 $2$5$8$10"+redacted+"$4$7$13")
+	return strings.ReplaceAll(s, markerHeld, redacted)
+}
+
+// passwordValueTail is how each password rule reads the value, written once
+// because five rules read it the same way. A quoted value is read from a bare
+// quote to the bare quote that closes it: that is what lets it hold the other
+// kind (`{"password":"ab'cd"}`) and, escaped, its own
+// (`{"password":"ab\"cd"}`), where a class that stopped at either quote read
+// three bytes and gave up, leaving a value of four bytes or more half redacted
+// — a leak of the half it did not reach. The class reads an escaped quote as
+// one character, so the value runs past it to the quote that really closes it.
+//
+// The opener is bare, and the closer with it, because the two have to be the
+// same spelling: a value opened by a backslash is a value inside a record that
+// has itself been escaped, where the `\"` after it is the record's own
+// delimiter rather than an escape, and a branch that paired that opener with a
+// bare closer read the whole rest of the line — the fields after the
+// credential, which are the diagnosis — into the value. Such a record is
+// passwordEscaped below, and a quote reached through a backslash is no opener
+// here at all.
+//
+// The closing quote is required, and the two branches after the quoted pair
+// read the value that never closes: a truncated excerpt still holds a
+// credential, so a value running to the end of its line is one too. They are
+// one branch per quote kind rather than one for both, because a value cut off
+// after the *other* kind of quote is still an unterminated value —
+// `{"password":"ab'cdefgh12`, a field cut before its closing quote, which a
+// class that stopped at either kind read as two bytes before giving up. Each
+// of the two reads its own kind's quote only as an escape, so a bare quote of
+// that kind still ends it and a value that does close is the pair's to read.
+//
+// The unquoted value is read to whitespace and no further, because a password
+// may hold anything else: `,`, `\` and either quote are ordinary bytes of one
+// (`PGPASSWORD=Qw3Qw,3Qw3Qw3x`, `PGPASSWORD=it's-a-secret-value`,
+// `PGPASSWORD=abcd"efgh1234`), and a class that stopped at any of them
+// redacted the head of the value and left its tail in the text, or — where the
+// value was too short to reach the floor before the byte — left it whole. `;`
+// and `&` are ordinary bytes too, but they are also what separates the fields
+// of a keyword connection string and the parameters of a query
+// (`Pwd=…;Database=app`, `password=…&user=app`), and the fields after the
+// credential are the diagnosis: so one branch reads the value to one of them,
+// and only where the name of a field follows (`[;&]<name>=`), which is the
+// shape that separates the two readings. The delimiter and that name are part
+// of the match, because the replacement has to put them back where they stood —
+// the branch takes the whole `Pwd=…;Database=` so that the value group is the
+// credential alone, and a rule that matched the name without writing it back
+// would lose the next field's name. That is also why the rules run twice (see
+// redactPasswords): the scan resumes after the name the first application put
+// back, and a credential written in the field after the delimiter
+// (`?token=…&password=…`) is read by the second application, with the name back
+// in place.
+//
+// The last branch is the value that reaches no such delimiter: it crosses `;`
+// and `&` the way it crosses any other byte, because `PGPASSWORD=ab;cdefgh12`
+// has two bytes before the `;` and is one value rather than a field of a
+// connection string.
+//
+// What a value may not start on is the other half of the rule, and each
+// exclusion is a shape the rule would otherwise read as a value:
+//
+//   - a quote, because the value a quote opens is the quoted branches' to read
+//     and one under the floor (`{"password":"abc"}`) is not a credential to
+//     guess at: read from the quote, this branch would take the closing quote
+//     and the record's brace with it.
+//   - `;` or `&`, because an empty field (`?token=&state=ok`) has no value
+//     there to redact, and reading one would take the parameters after it. A
+//     `,` is not such a delimiter and is a value's byte like any other
+//     (`PGPASSWORD=,Qw3Qw3Qw3x`).
+//   - a backslash directly before a quote, because that is how a transcript
+//     escapes one: the escaped header above leaves `…\":\"[REDACTED]\"…` in
+//     its place, and a value read from that backslash crosses the escaped
+//     quotes and takes the record's fields with it. Reading a record the way
+//     its own escaping writes it is passwordEscaped's work below.
+//   - the NUL the marker is held as while these rules run (markerHeld), and
+//     with it each branch's floor: a value may stand behind a marker and often
+//     does, because the exact pass marks the part of a value Fugaro holds and
+//     the text spells the rest of that value with bytes of its own
+//     (`PGPASSWORD=<marker>-2024xyz`, where the `-2024xyz` is the password too,
+//     and `Pwd=<marker>x;Database=app`, where one byte of it follows the marker
+//     and the field name after that is the next field). The floor asks whether a
+//     value stood at the `=`, and a marker answers it, so the branches below
+//     read a marker's value without the floor. What a marker may not stand in
+//     front of is what no value may open on — a delimiter, a quote, nothing
+//     (`Pwd=[REDACTED];Database=app`, `?token=[REDACTED]&state=ok`) — because a
+//     value read from there takes the name of the field after it, which is what
+//     the right-hand end of an unquoted value is found by. The marker's bracket
+//     is deliberately not the exclusion: a value may open with one
+//     (`PGPASSWORD=[hunter2x`) and is read like any other.
+//
+// A value may hold either quote, and the byte after it is what says which
+// reading it belongs to: a quote the text continues past as a value's byte is
+// the value's own (`PGPASSWORD=abcd"efgh1234`, `PGPASSWORD=it's-a-secret-value`),
+// while a quote followed by a byte that can open the next field or close the
+// record around it — a space, a `,`, a `;`, an `&`, a brace — is the
+// surrounding record's, and the value ends before it
+// (`{"message":"invalid token: abc123","type":"auth"}` keeps its second
+// field, where a value read to whitespace alone took it).
+//
+// The quotes and the value are groups because a replacement puts the quotes
+// back around the marker and drops what stood between them — the opener before
+// it and the closer after — so the tail's groups are numbered from whatever
+// the rule's own prefix captures, and each rule's replacement names them from
+// there.
+const passwordValueTail = `(?:(")((?:\\"|[^"\n]){4,})(")` +
+	`|(')((?:\\'|[^'\n]){4,})(')` +
+	`|(")((?:\\"|[^"\n]){4,})(?m:$)` +
+	`|(')((?:\\'|[^'\n]){4,})(?m:$)` +
+	`|((?:\x00\x01(?:` + passwordValueStart + `)(?:` + passwordValueRun + `)*|(?:` + passwordValueStart + `)(?:` + passwordValueRun + `){3,}))([;&][A-Za-z_][A-Za-z0-9_\-]*=)` +
+	`|((?:\x00\x01(?:` + passwordValueStart + `)(?:` + passwordValueCross + `)*|(?:` + passwordValueStart + `)(?:` + passwordValueCross + `){3,})))`
+
+// The pieces an unquoted value is read from, written once because the two
+// branches at the end of passwordValueTail read them: passwordValueStart is
+// what a value may open with, passwordValueRun is what follows it up to the
+// delimiter the field branch reads, and passwordValueCross is the same where
+// the value reaches no delimiter and `;` and `&` are bytes of it like any
+// other. Both readings of each branch — the value behind a marker and the value
+// at the `=` — are these same two pieces, so what the two branches differ by is
+// written around them: the marker in front and the floor behind.
+const (
+	passwordValueStart = `[^\s"';&\x00\\]|\\[^"]`
+	passwordValueRun   = `[^\s;&"']|"[^\s,;&}\])]|'[^\s,;&}\])]`
+	passwordValueCross = `[^\s"']|"[^\s,;&}\])]|'[^\s,;&}\])]`
+)
+
+// connStringQuoted is the value of a connection string written inside quotes,
+// which is how a config line, a `.env` line or a shell line writes one
+// (`postgres://app:"<password>"@host`), and the same value one encoding in,
+// where a record that has itself been escaped carries the quotes as `\"`. It is
+// written once because the two connection-string rules below open with it, as
+// passwordValueTail is written once for the password rules; where they part is
+// below, at connStringCutQuoted's letter, body and tail. The unquoted
+// class beside it cannot read such a value — it stops at the quote that opens
+// it, and the value's first byte is that quote — and that is the whole of the
+// asymmetry the two answer: the same password in single quotes is a value to
+// that class and was redacted, while this one went into the text whole. Both
+// delimiters are read with the backslashes they arrive with rather than one,
+// because a `\"` opening the value and a `\"` closing it are the record's
+// delimiter either way, and the delimiters go with the value: a password
+// written in quotes goes the way an unquoted one does, so the two come out
+// alike and the shape around the marker is the text's. The body holds the
+// escaped byte of a value holding its own quote
+// (`postgres://app:"ab\"cd"@host`) and is the four bytes every quoted value
+// here is read with.
+const connStringQuoted = `\\*"(?:\\.|[^"\\\r\n]){4,}\\*"`
+
+// connStringCutBody is what a quoted value of that rule holds between its
+// delimiters, read at the level its escaping leaves it at: a plain byte, the
+// byte a backslash introduces (`\\` and `\"` are one byte each), or the quote a
+// value holding one of its own carries, which is read together with the byte
+// behind it. That byte is what tells the value's own quote from the one closing
+// it — the value goes on after the first (`postgres://app:"ab\"cd" refused`) and
+// stops at the second — and this rule needs the distinction more than the one
+// above, which has an `@` behind the value to end it.
+const connStringCutBody = `(?:\\"[^\s,;&}\])"]|\\[^"]|[^"\\\r\n])*`
+
+// connStringCutQuoted is that value under the letter connStringCut reads a
+// password with, and is that rule's alone: with no `@` and no host to tell a
+// password from a port by, a letter is its evidence rather than a length, and
+// the two kinds of quote come out alike there only if a quoted port — which is
+// not how a port is written — is read the way the bare class reads one. What
+// the text writes after the closing quote is connStringCutTail below: a quote
+// the text goes on writing after is a byte of the value rather than the value's
+// last one, and a rule that ended the value there would put its marker halfway
+// through a password and leave the rest of it standing in the text.
+const connStringCutQuoted = `\\*"` + connStringCutBody + `[A-Za-z]` +
+	connStringCutBody + `\\*"` + connStringCutTail
+
+// connStringCutTail is the rest of such a value: the bytes the text writes
+// after a quote that turned out to be a byte of it
+// (`postgres://app:"ab12"Zyxw9876secret refused`, a password holding a quote,
+// which is what an excerpt cut before the host leaves). The value ends where
+// connStringCut ends an unquoted one — at the URL's path or query, at an `@`,
+// at whitespace — and where a field ends: a `,`, a `;`, an `&`, a brace or a
+// bracket behind the quote closes the value rather than continuing it, which is
+// what keeps the fields beside a URL written in a record. A quote is read as a
+// pair with the byte after it, as connString reads one, so a second quoted
+// segment of the same value is read as well, and a backslash before a quote is
+// the escaped record's own delimiter and stops the value there.
+const connStringCutTail = `(?:\\[^"]|[^\s"/?#@\\,;&}\])]|"[^\s,;&}\]])*`
 
 var (
 	// authHeaderEscaped is the same header one encoding further in: a JSON
@@ -248,6 +464,248 @@ var (
 	// one of the shapes this pass claims.
 	signedParam = regexp.MustCompile(`(?i)([?&#])(x-amz-signature|x-amz-credential|x-amz-security-token|x-goog-signature|x-goog-credential|googleaccessid|awsaccesskeyid|signature|sig|access_token|id_token|refresh_token|api_key|apikey|client_secret|password|token)=([^&\s"'<>]+)`)
 
+	// connString is the userinfo of a connection string, where the password is
+	// a credential whatever its value: `postgres://app:<password>@host/db` in
+	// a message, a config or an error body. Only the password goes — the
+	// scheme, the user and the host are the diagnosis, and the user names a
+	// role rather than a credential. The user may be absent — a Redis URL with
+	// no user is written `redis://:<password>@host` — and the host has to
+	// follow, which is what keeps a URL that merely carries a port
+	// (`https://host:8080/x`) out of it.
+	//
+	// The password runs to the last `@` before a space or a double quote,
+	// because the `@` that ends the userinfo is the only thing that tells it
+	// from the host: a password may hold a colon (`user:pa:ss@host`, which
+	// libpq reads up to the first one), a `#`, a `?`, a `/` or an `@` of its
+	// own (`user:p@ss@host`), and a rule that stopped at the first of any of
+	// them left the rest of the credential in place. A space or a double quote
+	// is where the URL ends in the text around it — a record's field, a
+	// sentence — so the run does not reach past one into the next URL on the
+	// line. A single quote does not end it: that byte is legal in the userinfo
+	// of a URL (`postgres://app:ab'cdefgh@db.example.com/app`), and a rule that
+	// stopped at it redacted the head of the password and left the rest.
+	//
+	// A double quote inside the password is read the way passwordValueTail
+	// reads one: as a byte of the value where the text continues past it
+	// (`postgres://app:ab"cdefgh12@db.example.com/app`), and as the record's own
+	// delimiter where the byte after it ends a field. The value class is the
+	// pair unit for that reason, and the pairing is not a refinement: with the
+	// base class alone the rule did not shorten its match around such a quote,
+	// it made none at all — the `@` and the host have to follow the value — and
+	// the password went into the text whole.
+	//
+	// A password the text writes in quotes at both ends is connStringQuoted
+	// above, the second reading of this value group and the one this class
+	// cannot reach: the pair unit reads a quote the text continues past, and
+	// here the closing quote is the value's last byte with the `@` behind it.
+	// The two are one group rather than two rules, so a value found by either
+	// is replaced the same way, and the delimiters are part of the value: the
+	// marker stands where the password stood and the quotes go with it.
+	connString = regexp.MustCompile(`(?i)\b([a-z][a-z0-9+.\-]*://[^\s:/@?#]*):(?:` + connStringQuoted + `|(?:[^\s"]|"[^\s,;&}\])])+)@`)
+
+	// connStringCut is the same userinfo where the excerpt stops before the
+	// host: the URL of a `.env` line, of a config value or of an error message
+	// that was cut short (`postgres://app:<password>` with nothing after it),
+	// and the same URL written in a record, where the field's own quote stands
+	// where the host would. There is no `@` to end the value, so the value is
+	// what has to carry the reading: a port is digits and nothing else, so a
+	// run holding a letter is the password and one without a letter is left as
+	// the port it is — which is what keeps a URL that merely carries a port out
+	// of the rule (`https://api.example.com:8080/v1/runs`,
+	// `http://localhost:3000`), the way the host keeps it out of connString
+	// above. The value ends where the URL's path or query begins, at an `@`, at
+	// a double quote and at whitespace: a record keeps the fields beside the
+	// one the URL is written in (`{"dsn":"postgres://app:…","step":"terraform
+	// apply"}`), and it is connString that reads the password of a URL that
+	// does have a host, whole, before this rule sees the text.
+	//
+	// What is not claimed is stated rather than guessed at: a cut-off value
+	// with no letter in it, which cannot be told from a port, and one that
+	// holds a `/`, a `?`, a `#` or an `@` past the point where the rule stops,
+	// which is left half redacted rather than read as part of a credential. A
+	// backslash is read as a pair with the byte after it and never alone,
+	// because a record that has itself been escaped carries its closing quote
+	// as `\"`, and a value that took the backslash left the quote it escapes
+	// bare.
+	//
+	// A value written in quotes is connStringCutQuoted above, and the letter is
+	// its guard as it is the class's: an excerpt that stops inside such a quote
+	// holds bytes this class cannot read at all, so what tells a password from a
+	// port is the same letter and nothing more. That value does not end at the
+	// quote closing it either, which is what connStringCutTail reads: the bytes
+	// the text goes on writing after a quote are the value's own, so a password
+	// holding one comes out whole where a rule that stopped at the first quote
+	// would have put its marker halfway through it and left the rest standing.
+	connStringCut = regexp.MustCompile(`(?i)\b([a-z][a-z0-9+.\-]*://[^\s:/@?#]*):(?:` + connStringCutQuoted + `|(?:\\[^"]|[^\s"/?#@\\])*[A-Za-z](?:\\[^"]|[^\s"/?#@\\])*)`)
+
+	// dsnString is the same userinfo where no scheme introduces it: the DSN the
+	// MySQL driver reads, `app:<password>@tcp(db:3306)/app`, which a Go program
+	// writes in a config, a flag or a log line. There is no `://` to anchor it
+	// and no host after the `@` either — the `@` is followed by the transport
+	// in parentheses — so the transport is what tells the two halves of the DSN
+	// from a word and a sentence, and only that one shape is claimed. The
+	// password ends at the `@`, which it cannot hold here: the transport after
+	// it is what the rule matched.
+	dsnString = regexp.MustCompile(`\b([A-Za-z0-9_.\-]+:)([^\s"@]+)(@(?:tcp|unix|udp)\()`)
+
+	// passwordEscapedValue is the value of a field of a record that has itself
+	// been escaped, read at the level the escaping leaves it at: a byte of the
+	// value is a plain byte, or the byte a backslash introduces (`\\` and `\"`
+	// are one byte each there), or the three backslashes and the quote a value
+	// holding a quote of its own arrives as — the value's quote and the
+	// backslash escaping it, written one encoding further in. That reading is
+	// tried first, so the `\"` the value's own quote ends in is not taken for
+	// the record's closing one; telling the closing one from a byte the value
+	// could have gone on with is what the guard in the rule below is for.
+	passwordEscapedValue = `(?:\\\\\\"|\\[^"]|[^"\\])`
+
+	// passwordEscaped is the same credential inside a record that has itself
+	// been escaped — a JSON object carried inside a JSON string, a provider's
+	// error body, a transcript field — where every quote of the inner object
+	// is doubled with a backslash: `{\"password\":\"…\",\"step\":\"terraform
+	// apply\"}`. The escaping decides where the value ends, because a quote
+	// reached through a backslash is the inner record's own delimiter rather
+	// than an escape, and that is why it is a rule of its own rather than a
+	// branch of passwordValueTail above, as authHeaderEscaped is a rule of its
+	// own rather than an optional backslash on the headers below it: the tail
+	// pairs a bare opener with a bare closer, and reads nothing where the
+	// opener is the record's escaping. A record's field read the other way —
+	// from the bare quote a doubled opener holds — runs to the last quote of
+	// the line and takes the fields after the credential with it, which is how
+	// a record stops being one.
+	//
+	// A value is read through the escaping the record arrived in: a backslash
+	// escapes the byte after it, a doubled backslash is one escaped character
+	// and is stepped over whole, and a value holding a quote of its own arrives
+	// as three backslashes and a quote, which is that character rather than the
+	// `\"` closing the field. What tells a closing `\"` from a byte of the
+	// value is the byte after it: a field of a record ends at a separator, at a
+	// brace or at the end of the text, so a `\"` with the rest of a word after
+	// it is no closing one, and the rule reads on to the one the record ends
+	// the field with. The second alternative reads the value that never closes
+	// — the transcript realising it holds a credential only after cutting the
+	// line — and stops at the `\"` just the same: a value that does close is
+	// the first alternative's to read, and one that closes below the floor
+	// (`{\"password\":\"abc\"}`) is not a credential to guess at, so the
+	// record keeps its fields either way.
+	//
+	// The name is the one a record writes: the lower-case spellings of
+	// passwordValue above, which a JSON body and an environment dump share, and
+	// the same words run into a capital before them (`dbPassword`), which is
+	// passwordCamel's spelling in plain text. What stands before the name is
+	// the record's escaped quote where a field's name starts the record or
+	// follows another, and the boundary below it as everywhere else.
+	passwordEscaped = regexp.MustCompile(`(?i)(^|(?-i:[^a-z]))(\\*["']?)(pass(?:word|phrase|wd)s?|pwd|secret(?:[_-]?(?:access[_-])?key)?|token|api[_-]?key|access[_-]?key|auth[_-]?token|(?-i:[A-Za-z0-9_]*?(?:Pass(?:word|Phrase|Wd)?s?|Pwd|Secret(?:[_-]?(?:Access[_-])?Key)?|Token|Key)))(\\*["']?)(\s*[:=]\s*)(?:(\\+")(` + passwordEscapedValue + `{4,})(\\+")([^A-Za-z0-9_]|\z)|(\\+")(` + passwordEscapedValue + `{4,})(?m:$))`)
+
+	// passwordValue is the credential a name introduces with a sign, wherever
+	// that is written: an environment dump (`PGPASSWORD=…`, `SENTRY_AUTH_TOKEN=…`,
+	// `DD_API_KEY=…`), a config or a record (`{"db_password":"…"}`), the field of
+	// a keyword connection string (`Password=…;`), and a transcript's escaped
+	// record (`{\"password\":\"…\"}`), which is what the doubling of the quotes
+	// and of the opening one reads. A quote on either side of the name and of the
+	// value may be a single one as well — a shell writes `PGPASSWORD='…'` and
+	// `--password '…'`, and a record written in Python or in YAML is
+	// `{'password': '…'}` — so the rules here read the two, and how each of
+	// them reads the value itself is passwordValueTail above.
+	// signedParam above knows the same name only where a URL query parameter
+	// puts it, which is the one place a delimiter tells the value from the text
+	// around it.
+	//
+	// A token and an API key are the same shape as a password here: the value
+	// has no spelling of its own to be known by — `SENTRY_AUTH_TOKEN=` and
+	// `DD_API_KEY=` hold whatever the provider issued, which is exactly the case
+	// tokenShapes below cannot name — so the name is the only thing that says
+	// what the value is, and it says it in the environment dump and in the
+	// argv of the failed command as readily as in a password field. `key` alone
+	// is not one of these names: it is a field of a record (`PartitionKey=…`)
+	// and of a sentence, and what may precede it here is the boundary below.
+	//
+	// What may stand before the name is anything but a lower-case letter: a
+	// name is written `DB_PASSWORD`, `PGPASSWORD` or `AWS_SECRET_ACCESS_KEY`,
+	// while a lower-case word that merely ends in one of these words —
+	// `bypass`, `compass`, `surpass` — is English, and redacting the value
+	// after it would eat the sentence instead. A name run into the word before
+	// it is passwordCamel below, which reads it by the capital it starts with.
+	// Two spellings are therefore not claimed, and both are a sentence read the
+	// same way: a name run together in lower case (`dbpassword=…`), and a value
+	// with neither a sign nor a dash before it (`PASSWORD hunter2`), which
+	// passwordFlag below reads only where a flag's dashes introduce it. The
+	// value needs four bytes, the floor the exact pass uses and for its
+	// reason: a shorter one is not a credential, and replacing it mangles the
+	// text around it.
+	//
+	// A quoted value is read to the quote that closes it, and an unquoted one
+	// stops at whitespace, at the quote closing the record around it
+	// (`{"message":"invalid token: abc123","type":"auth"}` keeps its second
+	// field) and at `&` or `;` where the name of a field follows one — a
+	// sentence and a query string both put one there (`Pwd=…;Database=app`,
+	// `password=…&user=app`), while a password holds either as readily as any
+	// other byte. What an unquoted value after a colon costs is the sentence
+	// that reads the same way:
+	// `password: required field missing` loses its `required` exactly as
+	// `smtpPassword: hunter2 rejected` loses its password, and no rule that
+	// reads neither the word nor the value can tell the two apart. The field's
+	// name and the rest of the line still say what happened, which is the
+	// cheaper of the two mistakes to make.
+	passwordValue = regexp.MustCompile(`(?i)(^|(?-i:[^a-z]))(pass(?:word|phrase|wd)s?|pwd|secret(?:[_-]?(?:access[_-])?key)|token|api[_-]?key|access[_-]?key|auth[_-]?token)(\\*["']?)(\s*[:=]\s*)` + passwordValueTail)
+
+	// passwordWord is the same credential under a bare `pass` or `secret`,
+	// which is an English word as readily as a name: `--- PASS:
+	// TestRunnerFinalize` and `the secret: rotated by the operator` are a test
+	// report and a sentence, and redacting what follows the colon would take
+	// the test's name with it. An `=` writes a name and a colon is also a
+	// sentence's punctuation, so the bare word is claimed only where the sign
+	// is the one an assignment uses — `PASS=…`, `JWT_SECRET=…`, `client_secret=…`
+	// — and a name with more to it than the word (`password`, `passwd`,
+	// `secret_key`) is passwordValue above, which reads either sign.
+	passwordWord = regexp.MustCompile(`(?i)(^|(?-i:[^a-z]))(pass|secret)(\\*["']?)(\s*=\s*)` + passwordValueTail)
+
+	// passwordColon is the same bare word with a colon, which passwordWord
+	// above refuses because a colon is a sentence's punctuation as readily as
+	// a name's sign. What tells the two apart here is the name rather than the
+	// sign: a word an underscore joins to another (`client_secret:`,
+	// `DB_PASS:`, `JWT_SECRET:`) or a word in quotes (`{"secret": "…"}`, the
+	// client JSON of an OAuth installation) is a name and not English, while
+	// `the secret: rotated by the operator` and `--- PASS: TestRunnerFinalize`
+	// are a sentence and a test report with a space before the word.
+	// The quoted spelling requires its closing quote, so a word merely opened
+	// by one (`the word "pass in a sentence: it is not a field`) stays a
+	// sentence. Both spellings are captured rather than matched and dropped —
+	// the underscore and the name's opening quote are the text's, and the
+	// replacement writes them back before the marker.
+	passwordColon = regexp.MustCompile(`(?i)(?:(_)(pass|secret|pwd)(\\*["']?)|((?:\\+)?["'])(pass|secret|pwd)(\\*["']))(\s*:\s*)` + passwordValueTail)
+
+	// passwordCamel is the same name written inside another word, which is how
+	// a record, a config or a keyword connection string spells a field:
+	// `dbPassword`, `{"apiSecretKey":"…"}`, `smtpPassword:`. What tells it from
+	// English is the capital of the name's first letter — no word of a sentence
+	// carries one in its middle — so this rule reads the name case by case. The
+	// word it runs into is part of the rule: a name standing on its own is
+	// passwordValue's to read, and reading it here as well would claim the
+	// `Pass:` a test report opens a line with.
+	//
+	// A token and an API key are spelled here as the second word of a compound
+	// (`apiKey`, `accessKey`, `authToken`), which is why the two bare words are
+	// names of this rule: the compound's first word is the group the rule
+	// writes back, so nothing shorter than the capitalised word can stand for
+	// it. A field that merely ends in `Key` (`PublicKey=`, `partitionKey=`)
+	// loses its value with it — the safe direction, and a value under such a
+	// name is as likely to be a credential as not.
+	passwordCamel = regexp.MustCompile(`([A-Za-z0-9_]+)(Pass(?:word|Phrase|Wd)?s?|Pwd|Secret(?:[_-]?(?:Access[_-])?Key)?|Token|Key)(\\*["']?)(\s*[:=]\s*)` + passwordValueTail)
+
+	// passwordFlag is the same credential on a command line, where the value
+	// follows the flag after a space rather than a sign
+	// (`--password <password>`, `--token <token>`) — the argv of a command that
+	// failed, which is what a diagnosis quotes.
+	// This is the one spelling of it with nothing between the name and the
+	// value to read by, so the dashes before the name are what keeps a
+	// sentence out of the rule. The space it reads is a space on the flag's
+	// own line: a flag whose line ends after it has no value in the text, and
+	// the word that starts the next line is that line's own — a rule that
+	// crossed the break took the word for the password and joined two lines of
+	// the diagnosis into one.
+	passwordFlag = regexp.MustCompile(`(?i)(-{1,2}(?:pass(?:word|phrase|wd)?s?|pwd|secret(?:[_-]?(?:access[_-])?key)?|token|api[_-]?key|access[_-]?key|auth[_-]?token))[ \t]+` + passwordValueTail)
+
 	// keyBlock is a PEM private key, terminated or not: an unterminated block
 	// is still a key, so an END that never comes redacts to the end of the
 	// text rather than leaving the body in place.
@@ -275,11 +733,48 @@ var (
 	//
 	// homePath's leading delimiter is captured rather than looked behind (Go
 	// has no lookaround): without it a URL path such as
-	// `example.com/home/page` would be redacted, and with it only a path that
-	// starts a word goes. A Windows path may carry one backslash or, as it
-	// arrives inside JSON, two.
-	email    = regexp.MustCompile(`[A-Za-z0-9._%+\-]+@[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)+`)
-	homePath = regexp.MustCompile(`(?m)(^|[^\w/])(?:/(?:root|home|Users)\b|[A-Za-z]:\\{1,2}Users\b)(?:[/\\][^\s"'<>]*)?`)
+	// `example.com/home/page` would be redacted, and with it only a path whose
+	// last segment starts a word goes — the character before the `/` is not a
+	// word character, which is what a URL's `home` segment fails. The
+	// delimiter may itself be a slash, because a file URL writes three of them
+	// (`file:///home/someone/x`) and the home directory is still the one the
+	// path names. It may also be a flag's single letter, since a compiler line
+	// writes the path of an include right after one (`cc -I/home/someone`),
+	// and the letter there is a word character the rule above would refuse.
+	// `/var/home` is the layout a Fedora installation uses, where `/home` is a
+	// symlink to it, so the user's name is in the same place. A Windows path
+	// may carry one backslash or, as it arrives inside JSON, two.
+	//
+	// The same directory is reached by three more spellings, each of them the
+	// user's name in the same place: a WSL mount (`/mnt/c/Users/someone`, and
+	// the Git Bash one-letter drive `/c/Users/someone`), and a Windows profile
+	// whose name holds a space (`C:\Users\John Smith\AppData`), where the
+	// segment after `Users\` is read to the next separator rather than to the
+	// next space — a rule that stopped at the space redacted `C:\Users\John`
+	// and left the surname in the text. What that costs is a sentence that
+	// puts words after such a path (`C:\Users\someone was not found`), which
+	// loses them with the path: the report does not need them and the path is
+	// the one thing it must not carry. That segment does stop at a line break,
+	// though: a profile name is not what follows the path on the next line,
+	// and an environment dump under `USERPROFILE=` was losing every line up to
+	// the next quote or separator. `Users` is matched without regard to case
+	// (`c:\users\someone`, `/mnt/c/users/someone`), because the filesystem it
+	// names does not have one.
+	//
+	// email reads the segment behind the host's dot whatever it holds, so that
+	// the address git invents when no identity is configured is read:
+	// `fatal: unable to auto-detect email address (got
+	// 'someone@someone-ThinkPad.(none)')`, which is exactly the line a
+	// troubleshoot issue quotes, and it holds the user's login name and the
+	// machine's name, which is what the report must not carry. That `.(none)`
+	// is the host's dot segment; a host with no dot at all is not an address,
+	// and reading one would eat a diagnosis that only looks like an address
+	// (`fugaro@1`, `image@sha256:abcd`). The `@` may be written the way a URL
+	// writes it, `%40` (`runner%40acme-prod.iam.gserviceaccount.com`, which
+	// names the service account and so the project), because that is how an
+	// address reaches a log from a URL or a query string.
+	email    = regexp.MustCompile(`[A-Za-z0-9._%+\-]+(?:%40|@)[A-Za-z0-9\-]+(?:\.(?:[A-Za-z0-9\-]+|\(none\)))+`)
+	homePath = regexp.MustCompile(`(?m)(^|[^\w]|-[A-Za-z])(?:(?:/(?:root|home|(?i:users))\b|/var/home\b|(?:/mnt)?/[a-zA-Z]/(?i:users)\b)(?:[/\\][^\s"'<>]*)?|[A-Za-z]:\\{1,2}(?i:users)\b(?:\\{1,2}[^\\/"'<>\r\n]*)?(?:[/\\][^\s"'<>]*)?)`)
 )
 
 // Forms returns the strings to redact for secrets, longest first so a secret

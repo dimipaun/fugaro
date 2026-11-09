@@ -278,6 +278,17 @@ func accountsAddRunStages(ctx context.Context, cmd *cobra.Command, run *stepRun,
 	// hold (stepRun.hold).
 	r.rep, r.repLog = run.rep, run.log
 	r.setProject(lc)
+	// The workdirs are the converge's, whichever door converged them: the
+	// Installation stage rebuilds the installation's tree and the Repository
+	// stage the checkout's (both go through PrepareWorkdir), which is the pair
+	// `fugaro update` takes the lock for. So this door takes it too — here,
+	// where the project is known and before the loop prepares anything, and not
+	// in a stage, for the reason runInit.lockWorkdirs states.
+	unlock, err := r.lockWorkdirs(lc.GCPProject)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 	spec, err := installOptions(o, lc)
 	if err != nil {
 		return nil, err

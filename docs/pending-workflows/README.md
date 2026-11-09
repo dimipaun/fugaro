@@ -16,7 +16,7 @@ see `## images.yml` — staged again below).
 - **`console-release-linux.yml`** — the console's signing, notarisation and publishing pipeline **with the Linux legs added**: a third job that builds and verifies the unsigned AppImage and `.deb`, and a `publish` that merges both legs, signs one merged `console-sha256sums.txt` keyless with cosign and attaches everything to `console-vX.Y.Z`. It runs on the release tag and **never on a pull request**, so it is the first of the three files here that are not pull-request checks. It supersedes the staged `console-release.yml`, so its copy-in is three commands; see `## console-release-linux.yml` below.
 - **`console-release-feed.yml`** — the console's signing, notarisation and publishing pipeline **with the console's update feed added**: the macOS `release` job writes electron-updater's `latest-mac.yml` beside the `.zip` it has just verified, sums it into the job's `console-sha256sums.txt` and uploads it with the other assets, and `publish` requires it, checks it against the sums and attaches it — so the release carries the feed under the one keyless cosign signature over the merged sums file. It runs on the release tag and **never on a pull request**. It supersedes the staged `console-release.yml`, so its copy-in is three commands; see `## console-release-feed.yml` below.
 - **`console-release-symbols.yml`** — the console's signing, notarisation and publishing pipeline **with the crash reporter's symbols stamped into the build and then uploaded**: two steps — a build with no secret in its environment, then the stamp that writes `dist/main`'s debug id **before** the signing step packs it — which is why the signing step's first pack changes from `npm run package` to the same packer without its build, `npm run package:targets -- --dir` — and, after the artifacts have been verified and before they are uploaded, a step that pushes the packaged app's native debug files and the main process's JavaScript and source maps to Sentry (org `fugaro`, project `fugaro-console`, the EU region) — the maps under the console's own version, which every event now names as its release, and the native debug files keyed by the debug id inside each one, so `debug-files upload` takes no release at all. **One piece is still missing**: the pinned SDK fills an event's debug images from `globalThis._sentryDebugIds`, which the bundler shims write into a *bundle*, and the console's main process is unbundled `tsc` output — so an event carries the release and no image yet, and the four things now true (and the one that is not) are in `## console-release-symbols.yml` below. It carries the running file's text plus those three steps and the one changed pack line, and **it is the file that adds `SENTRY_AUTH_TOKEN` to the `console-release` environment**; each step prints one line and exits 0 while that secret does not exist, so the copy-in is inert until the owner adds it. It runs on the release tag and **never on a pull request**. It supersedes the staged `console-release.yml`, so its copy-in is three commands; see `## console-release-symbols.yml` below.
-- **`console-windows.yml`** — the console's **Windows pack**, and the second of the three files here that are **not** a pull-request check (`console-release-linux.yml` above is the first and `mobile-release.yml` below is the third): one job on `windows-latest` that typechecks, runs the unit suite and packs the unsigned NSIS installer **at release time only** — the release tag, or a `workflow_dispatch` before one, and **never on a pull request**, not even path-filtered — and uploads it, holding no secret at all. Staged by the 2026-10-20 run that plans the console's Windows build (the owner's ruling of that date: the console drives the **Linux** `fugaro` inside WSL, unsigned), and re-cut the same day for the owner's answer to that plan's decision D7, whose words were *"a waste of resources; if there are problems we will fix them then"*. **It is red until two things in `console/` land** — the `package:win` script and the `win32` fuse row, and the POSIX repairs that let the unit suite run on a Windows runner — which is why it is staged now and copied in later; the file's own header says so first. The third blocker, the `win32-x64` Electron checksum pin, landed on **2026-11-09** (implementation-plan.md T-B3): `build.electronDownload.checksums` pins the fourth hash and `console/test/unit/fuses.test.ts` holds it to the lockfile's own `checksums.json`. It is its own workflow rather than a second job in `console-tests.yml` for the reason `console-linux.yml` gives below; see `## console-windows.yml` below.
+- **`console-windows.yml`** — the console's **Windows pack**, and the second of the three files here that are **not** a pull-request check (`console-release-linux.yml` above is the first and `mobile-release.yml` below is the third): one job on `windows-latest` that typechecks, runs the unit suite and packs the unsigned NSIS installer **at release time only** — the release tag, or a `workflow_dispatch` before one, and **never on a pull request**, not even path-filtered — and uploads it, holding no secret at all. Staged by the 2026-10-20 run that plans the console's Windows build (the owner's ruling of that date: the console drives the **Linux** `fugaro` inside WSL, unsigned), and re-cut the same day for the owner's answer to that plan's decision D7, whose words were *"a waste of resources; if there are problems we will fix them then"*. **Every edit it once asked for has landed** — the `package:win` script and the `win32` fuse row, the `win` block that names the Windows target, the POSIX repairs that let the unit suite run on a Windows runner, and the `win32-x64` Electron checksum pin (**2026-11-09**, implementation-plan.md T-B3: `build.electronDownload.checksums` pins the fourth hash and `console/test/unit/fuses.test.ts` holds it to the lockfile's own `checksums.json`) — so what is left is that the job has never run, and the file's own header says so first. It is its own workflow rather than a second job in `console-tests.yml` for the reason `console-linux.yml` gives below; see `## console-windows.yml` below.
 - **`mobile-release.yml`** — **applied on 2026-10-23, not pending** (copied into `.github/workflows/` and its staged copy removed; what follows is the record). The **mobile app's release**, staged on 2026-10-20 on the owner's rulings of 2026-10-19/20 and reworked on 2026-10-21 after the security review of #777 (the build runs from GitHub Actions on each release tag, and by hand). On every `mobile-v[0-9]+.[0-9]+.[0-9]+` tag (the app's own stream since the owner's ruling of 2026-10-22) and on a manual dispatch, **one job per platform** builds on EAS and submits the finished build to TestFlight's internal testers and to Play's internal-testing track, behind the `mobile-release` GitHub environment — whose required reviewer, the owner, was removed on 2026-11-07, as `console-release`'s and `website-live`'s were, so what fences the jobs now is that environment's deployment branch policy, the release gate each job runs (the tagged tree's own copy of it) and the tag ruleset — whose **creation** rule is still owed, which is what `docs/release.md`, "What fences a release now", gives as the owner step that stops a `mobile-v*` tag being created on an unreviewed commit. **On this stream alone there is a second one**: the workflow's `workflow_dispatch` — the dry run, and the re-submit after a rejection — carries no actor guard where `website-promote.yml`'s job carries `if: github.actor == 'dimipaun'`, so anyone with write access can start a manual submission, and that page gives the owner both steps that close it (the environment section below says the same under its own note about putting a reviewer back). The two jobs are independent, **both are enabled**, and one repository variable (`MOBILE_RELEASE_DISABLED_PLATFORMS`) can turn either off; see `## mobile-release.yml` below, which carries the Android first-release checklist.
 - **`console-release-tag.yml`** — the console's **own release stream**: the staged `console-release.yml` with its trigger moved from the CLI's `vX.Y.Z` tag to the console's own `console-vX.Y.Z` tag, a step that refuses a tag whose X.Y.Z is not `console/package.json`'s own `version`, a step that refuses a version whose notes file `docs/releases/console/vX.Y.Z.md` is missing, and a `publish` whose release body is that notes file rather than the string it used to inline. The three release streams are independent (owner addendum 2026-10-22: CLI = animals, Console = fruits, Mobile = birds); nothing else in the file moved, and `scripts/release.sh` and `scripts/release-gate.sh` stay CLI-only. **Applied on 2026-10-23**: it was copied over the staged `console-release.yml` and into `.github/workflows/console-release.yml`, and its own staged copy is gone, so the byte-identity clause in `TestDocsConsoleReleaseWorkflowIsStagedAndPinned` holds on the new text; see `## console-release-tag.yml` below, which is now the record.
 - **`dependabot-console.yml`** — **applied on 2026-10-23, not pending** (copied over `.github/dependabot.yml` and its staged copy removed; what follows is the record). **Dependabot's watch over the console's npm dependencies**, staged on 2026-10-23 on the owner's ruling of 2026-10-22. It is **not a workflow and not a file of its own**: it is the whole of `.github/dependabot.yml` as it should read once the console is watched -- the `github-actions` entry that runs today, unchanged, plus one `npm` entry for `/console`, weekly and **grouped** so that minor and patch bumps arrive as one pull request a week (a major, Electron's included, stays outside the group and arrives on its own for a deliberate look). **A staging file is not strictly forced here** -- `.github/dependabot.yml` is not under `.github/workflows/`, so an agent run may write it -- which is exactly why this plan stages it: `docs/plans/2026-10-15-desktop-console.md`'s open item 5 reserved the decision for the owner, and the ruling of 2026-10-22 is "stage it, with the copy-in step, and let them apply it". See `## dependabot-console.yml` below for the copy-in commands and for the two sentences that copy-in has to update.
@@ -1354,34 +1354,38 @@ POSIX repairs below worth doing. The e2e suite is not run here — it drives the
 console's real window under its real CSP and needs a display, which is the
 owner's manual checklist's job, not a runner's.
 
-**Read this before copying it in: it is red until two things in `console/` have
-landed, and they are not this directory's to do.**
+**Read this before copying it in: every edit it once asked for has landed in
+`console/`, and they were not this directory's to do.**
 
-1. `console/package.json` has no `package:win` script and no `win` block, and
-   `console/src/main/fuses.ts`'s `SUPPORTED_PLATFORMS` is `['darwin','linux']`
-   with `fuseTarget` **throwing** for anything else. `afterPack` is the pack's
-   only fuse flipper, so `electron-builder --win` produces **no artifact at
-   all** today, and the pack step cannot succeed
-   ([docs/console-windows/reconciliation.md](../console-windows/reconciliation.md)
-   F35, and implementation-plan.md Part B).
-2. The unit suite has never run on Windows: `spawn.ts`'s `isExecutableFile`
-   reads `stat.mode & 0o111`, which Windows never sets, and the suite's stubs
-   are host executables (F4, F33) — so the test step is red on a Windows runner
-   until that is platform-aware, along with the `':'` split of the app's own
-   `PATH` (F5).
+1. **Landed** (2026-11-09): `console/package.json` has the `package:win` script
+   (`npm run build && electron-builder --win --publish never`), and
+   `console/src/main/fuses.ts`'s `SUPPORTED_PLATFORMS` is
+   `['darwin','linux','win32']` with a `win32Executable` row beside the other two
+   — so `afterPack`, the pack's only fuse flipper, no longer refuses the Windows
+   pack (implementation-plan.md Part B, T-B1 and T-B2;
+   [docs/console-windows/reconciliation.md](../console-windows/reconciliation.md)
+   F35). The `win` block that names the target, the arch and the artifact name
+   landed with it (T-B4), so the packer is handed a Windows target this
+   repository decided rather than one it inherits.
+2. **Landed**: the unit suite's POSIX assumptions. `spawn.ts`'s
+   `isExecutableFile` takes the platform now (on `win32`, a regular file is
+   runnable), and `binDirectories` splits the app's own `PATH` on the **host's**
+   separator while `childPath` keeps the child's `':'` (F4, F5, F33; Parts A
+   and C).
+3. **Landed** (2026-11-09): `console/package.json`'s
+   `build.electronDownload.checksums` pins the fourth zip,
+   `electron-v<version>-win32-x64.zip` — copied out of the lockfile-pinned
+   package's own `checksums.json` and held to that file by
+   `console/test/unit/fuses.test.ts` (implementation-plan.md T-B3, F37) — so the
+   Electron step verifies its distribution against a hash in this repository
+   rather than against a `SHASUMS256.txt` fetched from the release host.
 
-**The third blocker is discharged, on 2026-11-09.** `console/package.json`'s
-`build.electronDownload.checksums` pinned three zips — `darwin-arm64`,
-`darwin-x64`, `linux-x64` — and no `win32-x64` one, so the Electron step
-downloaded its distribution against no pinned hash on this runner. It now pins
-the fourth, `electron-v<version>-win32-x64.zip`, copied out of the
-lockfile-pinned package's own `checksums.json` and held to that file by
-`console/test/unit/fuses.test.ts` (implementation-plan.md T-B3, F37). It is the
-one blocker that was a supply-chain pin rather than a code change, and it was
-taken first for that reason: a Windows pack must not be the first thing to need
-the hash.
+**All three have landed, and the job has never run.** No host has completed an
+`electron-builder --win` pack (the console's README, "The Windows pack,
+unsigned, and not yet run"), so its first dispatch is where the pack is proven
+rather than assumed.
 
-The order the plan gives is: **stage this file, land those two edits, then copy
+The order the plan gives is: **stage this file, land those edits, then copy
 it in.** Staging it now is the point of this directory — the file is reviewable
 while it is still a proposal, and the header's first paragraph says the same
 thing to whoever opens the file rather than this page.

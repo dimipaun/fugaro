@@ -22,8 +22,11 @@
 //     nothing, which is a different fact from one whose cap cannot be read.
 //   - **a permission refusal shows the CLI's text unchanged** -- the sentence
 //     goes in and the same characters come out, remedy and roles included.
-//   - **the absent-binary screen** -- what is needed, the install command, the
-//     picker, and no dashboard around it.
+//   - **the four screens with no installation to read** (Part G): what is
+//     missing, the resolution's own sentence, the remedy for *that* failure --
+//     the install command for a missing binary, and one sentence each for a
+//     missing WSL, a distribution this machine does not have and a CLI that is
+//     not inside the distribution -- and no dashboard around any of them.
 //   - **a stale feed breaks the graphs** rather than interpolating across the
 //     silence, and keeps the last-known values with the timestamp they came
 //     from.
@@ -53,13 +56,27 @@ import { LIVE_BURN_MAX_SAMPLES, LIVE_STALE_AFTER_SECONDS, BurnHistory, buildLive
 import type { FeedHealth, LiveFactory, LiveTheme, ScreenElement } from '../../src/renderer/screens/live'
 import {
   DEGRADED_THEMES,
+  INSTALL_LEAD,
+  NO_BINARY_HEADLINE,
   NO_CAPS_BECAUSE,
+  NO_DISTRO_HEADLINE,
+  NO_DISTRO_REMEDY,
+  NO_FUGARO_IN_DISTRO_HEADLINE,
+  NO_FUGARO_IN_DISTRO_REMEDY,
+  NO_WSL_HEADLINE,
+  NO_WSL_REMEDY,
+  SEARCHED_LEAD,
   buildNoFirebaseModel,
   refusedState,
   renderNoFirebase,
   renderUnavailable,
 } from '../../src/renderer/screens/degraded'
-import type { DegradedRunRow, NoBinaryState, RefusedState } from '../../src/renderer/screens/degraded'
+import type {
+  DegradedRunRow,
+  NoInstallationKind,
+  NoInstallationState,
+  RefusedState,
+} from '../../src/renderer/screens/degraded'
 
 const consoleDir = join(__dirname, '..', '..')
 const fixturePath = join(consoleDir, 'test', 'fixtures', 'degraded.ndjson')
@@ -246,13 +263,50 @@ function aRefusedState(): RefusedState {
   return refusedState('budget.show', refusal)
 }
 
-/** anAbsentState is the state `src/source/cli.ts` builds when resolution found
- * no binary. */
-function anAbsentState(): NoBinaryState {
-  return noInstallationState({
-    reason: 'no fugaro binary was found: looked at /usr/local/bin/fugaro, /usr/bin/fugaro',
-    home: '/nonexistent-home',
-  })
+/** theReasons are the resolutions' own sentences, one per kind, in the shapes
+ * `src/main/spawn.ts` writes them: the walk's own list, `wsl.exe`'s refusal, the
+ * distributions the machine does have, and the distribution's shell saying it
+ * found no `fugaro`. They are the resolutions' words and not this screen's, and
+ * the screen draws them as prose. */
+const theReasons: Readonly<Record<NoInstallationKind, string>> = Object.freeze({
+  'no-binary': 'no fugaro binary was found: looked at /usr/local/bin/fugaro, /usr/bin/fugaro',
+  'no-wsl':
+    'wsl.exe exited 1 for `--list --quiet`: WSL is not installed on this machine, and its feature may be off',
+  'no-distro': 'this machine has no distribution named "Ubuntu": wsl.exe lists "Debian"',
+  'no-fugaro-in-distro': 'the distribution "Ubuntu" has no "fugaro": sh: 1: fugaro: not found',
+})
+
+/** aNoInstallationState is the state `src/source/cli.ts` builds when resolution
+ * failed with one of the four kinds (`BinaryRefusalKind`). */
+function aNoInstallationState(kind: NoInstallationKind): NoInstallationState {
+  return noInstallationState({ kind, reason: theReasons[kind], home: '/nonexistent-home' })
+}
+
+/** expectWslPage asserts the shape each of the three WSL states draws: its own
+ * headline, the resolution's own sentence as the reason, and its own remedy --
+ * and **no** install command and **no** searched count, because no host
+ * directory was walked on that route and no command this console knows installs
+ * WSL or a distribution. The state's own two fields are asserted beside the
+ * drawing: the state is what the screen is handed, and a remedy the state does
+ * not carry is a remedy no page can draw. */
+function expectWslPage(state: NoInstallationState, headline: string, remedy: string): void {
+  const kind = state.kind
+  const tree = renderUnavailable(factory, state, 'light')
+  expect(state.installCommand, `${kind} carries an install line`).toBe('')
+  expect(state.searched, `${kind} carries a walk of this host, which it never made`).toEqual([])
+  expect((tree as FakeScreen).getAttribute('data-kind'), kind).toBe(kind)
+  expect(one(tree, 'unavailable-headline').textContent, kind).toBe(headline)
+  expect(one(tree, 'unavailable-reason').textContent, kind).toBe(theReasons[kind])
+  expect(one(tree, 'unavailable-remedy').textContent, kind).toBe(remedy)
+  expect(all(tree, 'unavailable-install'), `${kind} offers an install command`).toEqual([])
+  expect(all(tree, 'unavailable-install-command'), `${kind} offers an install command`).toEqual([])
+  expect(all(tree, 'unavailable-searched'), `${kind} counts places this route never walked`).toEqual([])
+  // Not a partially drawn dashboard, and one section: the same boundary the
+  // no-binary page holds.
+  expect(all(tree, 'live'), kind).toEqual([])
+  expect(all(tree, 'degraded-caps'), kind).toEqual([])
+  expect(all(tree, 'degraded-run'), kind).toEqual([])
+  expect(walk(tree).filter((node) => node.tag === 'section'), kind).toHaveLength(1)
 }
 
 // ---------------------------------------------------------------------------
@@ -757,22 +811,22 @@ describe('the stale Live screen', () => {
   })
 })
 
-describe('the console with no binary to read', () => {
+describe('the console with no installation to read', () => {
   it('gives the one figure it draws the same alignment hook as the degraded screen', () => {
     // The searched count is this screen's only reading, and it comes through the
     // same `numberCell` as the degraded screen's figures -- so it carries the
     // same hook (design §2.10: the hook is the helper's, not the screen's).
-    const tree = renderUnavailable(factory, anAbsentState(), 'light')
+    const tree = renderUnavailable(factory, aNoInstallationState('no-binary'), 'light')
     expect(one(tree, 'unavailable-searched-count').classes).toContain('degraded-num')
   })
 
   it('names what is needed, the install command, and no picker to choose a binary with', () => {
-    const state = anAbsentState()
+    const state = aNoInstallationState('no-binary')
     expect(state.installCommand).toBe(FUGARO_INSTALL_COMMAND)
     expect(state.searched.length).toBeGreaterThan(0)
     const tree = renderUnavailable(factory, state, 'light')
     expect((tree as FakeScreen).getAttribute('data-kind')).toBe('no-binary')
-    expect(one(tree, 'unavailable-headline').textContent).toBe('no fugaro binary')
+    expect(one(tree, 'unavailable-headline').textContent).toBe(NO_BINARY_HEADLINE)
     expect(one(tree, 'unavailable-install-command').textContent).toBe(FUGARO_INSTALL_COMMAND)
     // **No choose-the-binary affordance**, which is the design's §6.3 row as this
     // PR amended it (owner's ruling of 2026-10-20: the console asks the operator
@@ -785,12 +839,13 @@ describe('the console with no binary to read', () => {
     // reintroduction under a new name is caught too.
     expect(all(tree, 'unavailable-picker')).toEqual([])
     expect(all(tree, 'unavailable-configured')).toEqual([])
-    expect(one(tree, 'unavailable-install-lead').textContent).toBe('install it with')
+    expect(one(tree, 'unavailable-install-lead').textContent).toBe(INSTALL_LEAD)
     // How many places were searched, and never which: no path is drawn on this
     // console -- the `path` class turns every one of them into `<path>`, and a
     // column of `<path>` under a sentence saying the console looked somewhere
     // tells the operator nothing. The count is the fact that survives.
     expect(one(tree, 'unavailable-searched-count').textContent).toBe(String(state.searched.length))
+    expect(one(tree, 'unavailable-searched-lead').textContent).toBe(SEARCHED_LEAD)
     const drawn = walk(tree).map((node) => node.textContent).join('\n')
     expect(drawn).not.toContain('/opt/homebrew')
     expect(drawn).not.toContain('/usr/local/bin')
@@ -809,6 +864,43 @@ describe('the console with no binary to read', () => {
     expect(all(tree, 'degraded-caps')).toEqual([])
     expect(all(tree, 'degraded-run')).toEqual([])
     expect(walk(tree).filter((node) => node.tag === 'section')).toHaveLength(1)
+  })
+
+  // The other three ways an installation can have no `fugaro` to read, one case
+  // each (Part G, T-G1). They are three different failures with three different
+  // remedies -- which is the whole reason the resolution names a kind
+  // (`BinaryRefusalKind`, `src/main/spawn.ts`) -- and a console that drew the
+  // install command for all four would send somebody to install a CLI when what
+  // is missing is WSL, and somebody to install WSL when the CLI is there and
+  // merely not on the distribution's `PATH`.
+  it('says there is no WSL on this machine, and what to do about it', () => {
+    expectWslPage(aNoInstallationState('no-wsl'), NO_WSL_HEADLINE, NO_WSL_REMEDY)
+  })
+
+  it('says there is no distribution for the installation to run in', () => {
+    expectWslPage(aNoInstallationState('no-distro'), NO_DISTRO_HEADLINE, NO_DISTRO_REMEDY)
+  })
+
+  it('says the CLI is not inside the distribution, and not that the installation is missing', () => {
+    expectWslPage(aNoInstallationState('no-fugaro-in-distro'), NO_FUGARO_IN_DISTRO_HEADLINE, NO_FUGARO_IN_DISTRO_REMEDY)
+  })
+
+  it('gives each of the four states words of its own, so no two pages are the same page', () => {
+    // The defect this holds off is the one the state kind exists for: three
+    // states drawn with the absent-binary page's words, which is what the console
+    // did before the resolution's kind reached the state at all.
+    const words = [
+      NO_BINARY_HEADLINE,
+      NO_WSL_HEADLINE,
+      NO_DISTRO_HEADLINE,
+      NO_FUGARO_IN_DISTRO_HEADLINE,
+    ]
+    expect(new Set(words).size, 'two of the four states share a headline').toBe(words.length)
+    const remedies = [NO_WSL_REMEDY, NO_DISTRO_REMEDY, NO_FUGARO_IN_DISTRO_REMEDY]
+    expect(new Set(remedies).size, 'two of the three WSL states share a remedy').toBe(remedies.length)
+    for (const kind of ['no-wsl', 'no-distro', 'no-fugaro-in-distro'] as const) {
+      expect(theReasons[kind], `${kind} and no-binary share a reason`).not.toBe(theReasons['no-binary'])
+    }
   })
 })
 

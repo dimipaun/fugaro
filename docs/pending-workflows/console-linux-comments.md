@@ -76,8 +76,9 @@ a dangling reference here, because the fragments are `.md` and neither
 ## Why the count is dropped rather than raised to four
 
 The block pins one archive per platform this build packs, and that set moves:
-`win32-x64` joined it on 2026-11-09 and the Windows leg's own fuse row and packer
-target are still to land (implementation-plan.md T-B2, T-B4). A comment that
-names the number is a comment that goes stale on the next one, which is what
-happened here; the sentence says what the file is checked against instead, and
-`console/test/unit/fuses.test.ts` is where the exact set is pinned.
+`win32-x64` joined it on 2026-11-09, in the same batch of Windows work that
+added the leg's fuse row and its packer target (implementation-plan.md T-B2,
+T-B4). A comment that names the number is a comment that goes stale on the next
+one, which is what happened here; the sentence says what the file is checked
+against instead, and `console/test/unit/fuses.test.ts` is where the exact set is
+pinned.

@@ -17,14 +17,19 @@ import (
 // and the only way to guarantee that is for the answer to be computed once, in
 // Go, beside the read.
 //
-// Three things are computed, and they are one feature:
+// Five things are computed, and they are one feature:
 //
 //   - **levels**: the longest chain of dependencies ending at each task, so a
 //     view can draw a plan in waves rather than by guesswork;
 //   - **done / ready / blocked**, per task, against a done set the caller
 //     states;
 //   - **the critical path** and its length, with the raw downstream count
-//     beside it (D26).
+//     beside it (D26);
+//   - **the gain** a contract-first decoupling pass bought, measured from the
+//     breaks the graph records rather than taken from the planner's word, so a
+//     break that lengthened the plan says so (CD3, D1811, D1816);
+//   - **which stubs are still in the tree**, the one answer here that opens a
+//     checkout rather than only the document (CD3, D1815).
 //
 // The done set is an input and not an inference, and that is the one decision
 // this file takes that the design left open. A task is done when the work is
@@ -65,6 +70,13 @@ type Graph struct {
 	// from a v3 one that recorded neither.
 	Decoupling      []Decoupling     `json:"decoupling,omitempty"`
 	ContractChanges []ContractChange `json:"contract_changes,omitempty"`
+	// Gain is what the pass bought, measured by this read from the recorded
+	// `was` edges, the sizes and the node kinds (decouple.go): the before graph
+	// is a reconstruction and the arithmetic is the CLI's, so the fields are the
+	// read's own and a planner that wrote one is refused by name (D1811,
+	// D1816). It is absent from a v1 or v2 graph and from a v3 one that broke no
+	// edge — a gain of zero would be noise where the plan ran no pass.
+	Gain *Gain `json:"gain,omitempty"`
 	// Levels is how many levels the plan has: the longest chain of
 	// dependencies plus one, and 0 for a graph with no tasks. It is the count
 	// of the waves a view can draw, which is the one figure a per-task level
@@ -116,6 +128,14 @@ type NodeState struct {
 	// CriticalPathLength: six one-line dependents are six, and three dependents
 	// that are each a week of work are three.
 	Downstream int `json:"downstream"`
+	// StubsPresent is the contract's own stubs that still exist in the checkout
+	// the graph was read in — the whole files the integration task has not
+	// deleted yet (D1815, decouple.go). It is the read's field and not the
+	// artifact's, it is set on a contract node with stubs and on no other, and
+	// it is absent when none of them remains: `stubs` beside it says the
+	// contract had some, so the two together are "none remain" rather than "the
+	// CLI did not say".
+	StubsPresent []string `json:"stubs_present,omitempty"`
 }
 
 // CriticalPath is the longest chain of tasks in a graph: how many tasks it runs
@@ -237,6 +257,23 @@ func Analyze(path string, doc Document, done []string) (Graph, error) {
 		}
 	}
 
+	// The pass's two answers, computed over the same validated graph: which
+	// stubs are still in the checkout, and what the break bought. Both are the
+	// read's own — the artifact carries neither — and a graph that ran no pass
+	// opens no tree and carries no gain, so a v1 or v2 read is what it was.
+	present, err := stubsPresent(name, doc)
+	if err != nil {
+		return Graph{}, err
+	}
+	var gain *Gain
+	if len(doc.Decoupling) > 0 {
+		computed, err := decouplingGain(name, doc)
+		if err != nil {
+			return Graph{}, err
+		}
+		gain = &computed
+	}
+
 	g := Graph{
 		SchemaVersion:   doc.SchemaVersion,
 		Plan:            doc.Plan,
@@ -245,6 +282,7 @@ func Analyze(path string, doc Document, done []string) (Graph, error) {
 		Edges:           doc.Edges,
 		Decoupling:      doc.Decoupling,
 		ContractChanges: doc.ContractChanges,
+		Gain:            gain,
 		Levels:          levels,
 	}
 	if g.Edges == nil {
@@ -268,6 +306,7 @@ func Analyze(path string, doc Document, done []string) (Graph, error) {
 			Blocked:            !isDone && blocked,
 			CriticalPathLength: chainOf(n.ID),
 			Downstream:         downstreamCount(n.ID, dependents),
+			StubsPresent:       present[n.ID],
 		})
 	}
 
