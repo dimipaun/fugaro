@@ -14,7 +14,9 @@ that the owner did not object to, each with the date and the reason it rests on
 ([reconciliation.md](reconciliation.md) §4) — so what is still owed is the owner's **approval of the
 plan**, and the one question its residual raises: whether the removal's release may ship the
 per-repository `--retire` as an operator step, or has to fold the retirement into `fugaro update`'s own
-converge. **No task starts before that is picked.**
+converge. **No task starts before that is picked.** *This paragraph is the status as first written, kept:
+R0 and R1 landed without the approval it asks for, and the note below parks R2–R10 rather than
+scheduling them.*
 
 **Amended 2026-11-09: the removal is parked, and its first two tasks have shipped.**
 [docs/image-setup-skill/](../image-setup-skill/README.md) reconciles the same ruling of 2026-11-04
@@ -89,10 +91,12 @@ only for a workflow that declares none of the derived-image keys, because `catal
 (`internal/catalog/select.go:318`) returns false the moment `image:` or `dockerfile:` is set. So the
 tree carries **two image paths**, and the ruling says one: the catalog's.
 
-**Two repositories carry a per-repository image today and neither may lose it:** this repository, whose
-`go` workflow sets `image.setup` (`./fugaro.yaml:43`), and the sandbox repository. §3 of
+**Two repositories carried a per-repository image when this was written and neither may lose it:** this
+repository, whose `go` workflow set `image.setup`, and the sandbox repository. §3 of
 [spec.md](spec.md) is the order that gets both onto a catalog entry **before** the removal lands, so
-the dogfood pipeline never runs a job whose image does not exist.
+the dogfood pipeline never runs a job whose image does not exist — and **this repository's half has
+since landed**: its `go` workflow sets `image_name: go` (`./fugaro.yaml:64`) on the catalog entry R0
+had built out of `images/catalog/go/Dockerfile`, with the sandbox's half the owner's.
 
 **The gateway enforces the cost cap on this run.** Every figure Claude Code prints about this session's
 own spend is ignored: it misprices non-Anthropic models, here by roughly a factor of twenty-five, and

@@ -133,6 +133,14 @@ func TestDocsRepoImageRemovalIsWritten(t *testing.T) {
 		"**Status: a design. R0 and R1 have shipped, and R2–R10 are parked by the image setup skill (D1900); the owner answered every decision on 2026-11-04.**",
 		"**Amended 2026-11-09: the removal is parked, and its first two tasks have shipped.**",
 		"**R2–R10 are parked**: deferred, not cancelled",
+		// The two sentences the amendment has to carry away from the present
+		// tense: the standing gate, which R0 and R1 landed without, and the
+		// paragraph claiming this repository still carries a per-repository
+		// image, which the tree contradicts at `./fugaro.yaml:64`. Both are
+		// marked as first written rather than left reading as today's state.
+		"*This paragraph is the status as first written, kept: R0 and R1 landed without the approval it asks for",
+		"**Two repositories carried a per-repository image when this was written and neither may lose it:**",
+		"this repository's half has since landed",
 		// The owner's ruling, verbatim, so the index cannot drift into a
 		// paraphrase of it: every task of the plan answers this sentence.
 		"Completely disable repo-level images for now to make things simpler.",
@@ -178,6 +186,10 @@ func TestDocsRepoImageRemovalIsWritten(t *testing.T) {
 		// where the order stopped.
 		"**Status: a plan. R0 and R1 are built; R2–R10 are parked by the image setup skill (D1900), and no task of theirs is approved.**",
 		"**Amended 2026-11-09: R0 and R1 have shipped, and R2–R10 are parked**",
+		// The gate paragraph is marked as first written for the same reason the
+		// index's is: "no task lands before that is picked" reads as today's
+		// state beside an amendment saying two tasks landed.
+		"*This paragraph is the status as first written, kept: R0 and R1 landed without the approval it asks for",
 		"**catalog ships → R0 → D1148 (both tasks) → R1 → R2 → R3 → R4 → R5 → R6 → R7 → R8 → R9 → R10.**",
 		"**0.20.0 — two releases after D1148's two tasks",
 		// The ceiling, and the one subject that exceeds it: a reader checking

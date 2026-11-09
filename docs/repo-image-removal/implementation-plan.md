@@ -10,7 +10,9 @@ them waits on a question; what is still owed is the owner's **approval of the pl
 question its residual raises — whether the removal's release may ship the per-repository `--retire` as
 an operator step ([reconciliation.md](reconciliation.md) §5). **No task lands before that is picked**,
 because the answer decides whether the removal release needs the retirement folded into `update`'s own
-converge, and that is a change to a task rather than a detail inside it.
+converge, and that is a change to a task rather than a detail inside it. *This paragraph is the status
+as first written, kept: R0 and R1 landed without the approval it asks for, and the note below parks
+R2–R10 rather than scheduling them.*
 
 **Amended 2026-11-09: R0 and R1 have shipped, and R2–R10 are parked**, as [README.md](README.md) states
 it in full. **R0** (#1693) is the dogfood repository's catalog entry and its pin — `images/catalog/go/Dockerfile`,
