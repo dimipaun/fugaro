@@ -726,11 +726,26 @@ export function mountPicker(document: PickerDocument, bridge: PickerBridge, wind
    * A `distros` of `null` is the host that is not Windows, and the early return
    * is where that machine's **no read at all** is kept: nothing is sent, so
    * nothing can be answered with a Windows read failure, and the section this
-   * document declares is left empty rather than drawn with a heading over it. */
+   * document declares is left empty rather than drawn with a heading over it.
+   *
+   * The section keeps **the latest read's answer**: `distroRead` is the sequence
+   * token of the owner's rule of 2026-10-31 (item 4), and two reads can be out at
+   * once here -- `reRead` starts one without waiting for it, so a mutation's read
+   * runs over the first paint's, or over the previous mutation's. Without the
+   * token the slower answer would win, and a slow `wsl.exe` that never answered
+   * would draw its refusal over a machine a later read had just listed. Only the
+   * answer is the token's business: the busy line belongs to the read that
+   * started last, which is the one that put it there. */
+  let distroRead = 0
+
   const refreshDistros = async (): Promise<void> => {
     if (distros === null) return
+    distroRead += 1
+    const mine = distroRead
     distros.replaceChildren(own('h2', DISTROS_TITLE), own('p', DISTROS_READING))
-    distros.replaceChildren(...distroNodes(distroViewOf(await bridge.distros())))
+    const answer = distroViewOf(await bridge.distros())
+    if (mine !== distroRead) return
+    distros.replaceChildren(...distroNodes(answer))
   }
 
   /** refresh starts the two reads **together** and settles when both have drawn:

@@ -664,6 +664,69 @@ describe('the picker’s document and its view', () => {
     expect((document.byId.get('picker-distros') as FakeElement).children[1]?.textContent).toBe(NO_DISTROS)
   })
 
+  it('keeps the latest distro answer when an older read lands after it', async () => {
+    // Two distro reads are out at once as soon as a mutation has run: `reRead`
+    // starts one without awaiting it, so the read before it may still be coming
+    // back. `wsl.exe` is the slowest thing this window asks, so an older answer
+    // landing last is the ordinary order rather than a rare one -- and without a
+    // sequence token the older read wins, drawing "wsl.exe did not answer" over a
+    // machine a newer read has just listed (the owner's rule of 2026-10-31, item
+    // 4: the sequence token covers each section).
+    const document = fakeDocument()
+    const redrawn: InstallationReply = {
+      ok: true,
+      data: {
+        onboard: { kind: 'none' },
+        rows: [row()],
+        warnings: [],
+        path: DEFAULT_PATH,
+        active: { chosen: false, sentence: 'no installation has been chosen' },
+      },
+    }
+    const { bridge } = fakeBridge({ rows: [row()], answer: { remove: redrawn, choose: redrawn } })
+    // Every distro read is held, so the order of the answers is the test's to
+    // choose: the view starts them in this order, and this answers them backwards.
+    const held: ((reply: InstallationReply) => void)[] = []
+    const view = mountPicker(
+      document,
+      { ...bridge, distros: () => new Promise<InstallationReply>((resolve) => held.push(resolve)) },
+      true,
+    )
+    const section = (): FakeElement => document.byId.get('picker-distros') as FakeElement
+    const list = (): FakeElement => document.byId.get('picker-list') as FakeElement
+    const firstDistro = (): string | null =>
+      ((section().children[1] as FakeElement).children[0] as FakeElement).textContent
+
+    // The first paint's read answers, so the window mounts with a machine that
+    // has a distribution.
+    const first = view.refresh()
+    held[0]?.({ ok: true, data: { kind: 'listed', distributions: [{ name: 'Ubuntu', isDefault: true }] } })
+    await first
+    expect(firstDistro()).toBe(`Ubuntu${DISTRO_DEFAULT_MARK}`)
+
+    // Two mutations in a row, each re-reading the list and starting a distro read
+    // of its own: this machine is slow enough that both reads are still out.
+    await (list().children[0] as FakeElement).button('Remove').fire('click')
+    await (list().children[0] as FakeElement).button('Choose').fire('click')
+    expect(held).toHaveLength(3)
+
+    // The newer read answers: this machine has Debian now.
+    held[2]?.({ ok: true, data: { kind: 'listed', distributions: [{ name: 'Debian', isDefault: false }] } })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(firstDistro()).toBe('Debian')
+
+    // The older read answers last, with the refusal a hung `wsl.exe` gets -- and
+    // the section stays the newer read's, rather than the older answer's.
+    held[1]?.({ ok: true, data: { kind: 'absent', reason: 'wsl.exe did not answer' } })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(firstDistro()).toBe('Debian')
+    // Still the list of a machine that answered, and not the refusal paragraph
+    // the older read carried.
+    expect(section().children[1]?.tag).toBe('ul')
+  })
+
   it('asks the machine’s distributions of a Windows host and of no other', async () => {
     // `isWindowsPlatform` is the one place the window's platform is asked about,
     // and these are the spellings it reads: the modern hints first, the
