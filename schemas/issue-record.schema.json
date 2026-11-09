@@ -16,6 +16,8 @@
     "fugaro_version",
     "os",
     "status",
+    "closed_as",
+    "installation",
     "url",
     "uploaded",
     "fingerprint",
@@ -79,10 +81,41 @@
       "enum": [
         "pending",
         "submitted",
-        "dismissed"
+        "dismissed",
+        "resolved"
       ],
-      "description": "Where the issue stands: saved and not yet filed, filed on GitHub, or set aside by a person. A value is only ever added to this list; a status is never renamed while it keeps its meaning.",
-      "$comment": "StatusPending, StatusSubmitted and StatusDismissed in internal/issues/issue.go."
+      "description": "Where the issue stands: saved and not yet filed, filed on GitHub, set aside, or confirmed fixed by the release in `resolved_in`. A value is only ever added to this list; a status is never renamed while it keeps its meaning. `resolved` is written by the pass `fugaro update` runs, in the shared record, which is why this value ships with the first CLI that reads shared records.",
+      "$comment": "StatusPending, StatusSubmitted, StatusDismissed and StatusResolved in internal/issues/issue.go."
+    },
+    "closed_as": {
+      "enum": [
+        "",
+        "not_planned",
+        "duplicate"
+      ],
+      "description": "Why the issue closed without being fixed, in the words GitHub's own close reason has: `not_planned` or `duplicate`, and empty for every issue that did not close that way — a person setting one aside leaves it empty. It is what tells a reader why an issue is `dismissed` and not `resolved` (D1752).",
+      "$comment": "ClosedNotPlanned and ClosedDuplicate in internal/issues/issue.go."
+    },
+    "installation": {
+      "type": "string",
+      "pattern": "^(|[0-9a-fA-F]{1,64})$",
+      "description": "The installation the issue was saved in: the digest of the runs bucket URL, so a machine that serves two projects never files one project's issue into the other, and `issue mine` in one never prints the other's (F8b). Empty on a record saved before there was a field to stamp, and on one a store with no project to name saved — no installation claims it, so nothing uploads or prints it as its own.",
+      "$comment": "Issue.Installation in internal/issues/issue.go."
+    },
+    "submitted_at": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$",
+      "description": "When the issue was filed, in UTC, stamped by the write that made it `submitted` (D1781). The member is absent until that happened, and a reader shows nothing for it — the record this schema describes is one a record may leave these three dates out of, which is why they are not required members."
+    },
+    "resolved_at": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$",
+      "description": "When the issue was confirmed fixed by the release in `resolved_in`, in UTC, stamped by the resolver's own transition (D1781). Absent until then; it is one of the two dates the 30-day retirement of a finished issue is measured from (F4)."
+    },
+    "dismissed_at": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$",
+      "description": "When the issue was set aside — filed and closed without a fix, or dismissed by a person before it was ever uploaded — in UTC, stamped by the write that set it aside (D1781). Absent until then, and the other date the 30-day retirement is measured from (F4)."
     },
     "url": {
       "type": "string",

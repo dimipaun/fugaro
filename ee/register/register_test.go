@@ -132,6 +132,7 @@ var seamSetters = []string{
 	"SetStage",
 	"SetEditionEE",
 	"SetHandoff",
+	"SetBatch",
 	"SetSubscriptionLimit",
 }
 

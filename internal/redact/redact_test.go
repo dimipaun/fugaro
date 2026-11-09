@@ -15,7 +15,8 @@ func fake(parts ...string) string { return strings.Join(parts, "") }
 
 // patternCases are what the exact pass cannot know: credentials Fugaro never
 // held, printed by something else — a failing cloud call, a provider's error
-// body, a signed URL in a message, a key block in a Terraform stream.
+// body, a signed URL in a message, a key block in a Terraform stream, the
+// password of a connection string or of a command line.
 var patternCases = []struct {
 	name string
 	in   string
@@ -220,6 +221,22 @@ var patternCases = []struct {
 		leak: strings.Repeat("A1b2C3d4", 3),
 	},
 	{
+		name: "token scheme with space after the parameter sign",
+		in:   `Authorization: Token token= "` + fake(strings.Repeat("A1b2C3d4", 3)) + `"`,
+		leak: strings.Repeat("A1b2C3d4", 3),
+	},
+	{
+		name: "token scheme with space before the parameter sign",
+		in:   `Authorization: Token token ="` + fake(strings.Repeat("A1b2C3d4", 3)) + `"`,
+		leak: strings.Repeat("A1b2C3d4", 3),
+	},
+	{
+		name: "single quoted oauth token parameter",
+		in: `Authorization: OAuth oauth_token='abc', oauth_signature='` +
+			fake(strings.Repeat("A1b2C3d4", 3)) + `'`,
+		leak: strings.Repeat("A1b2C3d4", 3),
+	},
+	{
 		name: "single quoted oauth signature",
 		in: `Authorization: OAuth oauth_consumer_key='abc', oauth_signature='` +
 			fake(strings.Repeat("A1b2C3d4", 3)) + `'`,
@@ -329,11 +346,423 @@ var patternCases = []struct {
 		in:   fake("-----BEGIN ", "PRIVATE KEY-----\n", "dW50ZXJtaW5hdGVk"),
 		leak: "dW50ZXJtaW5hdGVk",
 	},
+	{
+		name: "password in an environment dump",
+		in:   "PGPASSWORD=" + fake(strings.Repeat("Qw3", 5)) + " psql: connection refused",
+		leak: strings.Repeat("Qw3", 5),
+		keep: "psql: connection refused",
+	},
+	{
+		name: "password field of a json record",
+		in: `{"db_password":"` + fake(strings.Repeat("Qw3", 5)) +
+			`","message":"quota exceeded","step":"terraform apply"}`,
+		leak: strings.Repeat("Qw3", 5),
+		keep: `"step":"terraform apply"}`,
+	},
+	{
+		name: "password escaped inside a json string",
+		in:   `{"content":"{\"password\":\"` + fake(strings.Repeat("Qw3", 5)) + `\"}"}`,
+		leak: strings.Repeat("Qw3", 5),
+		keep: `\"}"}`,
+	},
+	{
+		name: "password field of an escaped json record",
+		in: `{\"password\":\"` + fake(strings.Repeat("Qw3", 5)) +
+			`\",\"step\":\"terraform apply\"}`,
+		leak: strings.Repeat("Qw3", 5),
+		keep: `\",\"step\":\"terraform apply\"}`,
+	},
+	{
+		name: "password holding an escaped quote in an escaped json record",
+		in: `{\"password\":\"` + fake(strings.Repeat("Qw3", 5)) + `\\\"` +
+			fake(strings.Repeat("Qw3", 5)) + `\",\"step\":\"terraform apply\"}`,
+		leak: strings.Repeat("Qw3", 5),
+		keep: `\",\"step\":\"terraform apply\"}`,
+	},
+	{
+		name: "password holding an escaped quote where the record stops",
+		in: `{\"password\":\"` + fake(strings.Repeat("Qw3", 5)) + `\\\"` +
+			fake(strings.Repeat("Qw3", 5)),
+		leak: strings.Repeat("Qw3", 5),
+	},
+	{
+		name: "camel case password field of an escaped json record",
+		in: `{\"dbPassword\":\"` + fake(strings.Repeat("Qw3", 5)) +
+			`\",\"step\":\"terraform apply\"}`,
+		leak: strings.Repeat("Qw3", 5),
+		keep: `\",\"step\":\"terraform apply\"}`,
+	},
+	{
+		name: "password field inside a json string value",
+		in: `{"message":"invalid token: ` + fake(strings.Repeat("Qw3", 5)) +
+			`","type":"auth"}`,
+		leak: strings.Repeat("Qw3", 5),
+		keep: `","type":"auth"}`,
+	},
+	{
+		name: "password beginning with a bracket",
+		in:   "PGPASSWORD=" + fake("[", strings.Repeat("Qw3", 5)) + " psql: connection refused",
+		leak: fake("[", strings.Repeat("Qw3", 5)),
+		keep: "psql: connection refused",
+	},
+	{
+		name: "password beginning with a bracket in a record",
+		in: `{"password":"` + fake("[", strings.Repeat("Qw3", 5)) +
+			`","step":"terraform apply"}`,
+		leak: fake("[", strings.Repeat("Qw3", 5)),
+		keep: `","step":"terraform apply"}`,
+	},
+	{
+		name: "password on a command line",
+		in:   "--password " + fake(strings.Repeat("Qw3", 5)) + " --user someone failed",
+		leak: strings.Repeat("Qw3", 5),
+		keep: "--user someone failed",
+	},
+	{
+		name: "password of a connection string",
+		in: "postgres://app:" + fake(strings.Repeat("Qw3", 5)) +
+			"@db.example.com:5432/app refused",
+		leak: strings.Repeat("Qw3", 5),
+		keep: "db.example.com:5432/app refused",
+	},
+	{
+		name: "connection string with no user",
+		in:   "redis://:" + fake(strings.Repeat("Qw3", 5)) + "@cache.example.com:6379 timed out",
+		leak: strings.Repeat("Qw3", 5),
+		keep: "cache.example.com:6379 timed out",
+	},
+	{
+		name: "password holding a double quote in a connection string",
+		in: "postgres://app:" + fake(`ab"`, strings.Repeat("Qw3", 3)) +
+			"@db.example.com:5432/app refused",
+		leak: fake(`ab"`, strings.Repeat("Qw3", 3)),
+		keep: "db.example.com:5432/app refused",
+	},
+	{
+		name: "connection string stopping before its host",
+		in:   "postgres://app:" + fake(strings.Repeat("Qw3", 5)) + " refused",
+		leak: strings.Repeat("Qw3", 5),
+		keep: "refused",
+	},
+	{
+		name: "connection string with its host outside the excerpt",
+		in: `{"dsn":"postgres://app:` + fake(strings.Repeat("Qw3", 5)) +
+			`","step":"terraform apply"}`,
+		leak: strings.Repeat("Qw3", 5),
+		keep: `","step":"terraform apply"}`,
+	},
+	{
+		name: "password written in quotes in a connection string",
+		in: "postgres://app:" + fake(`"`, strings.Repeat("Qw3", 5), `"`) +
+			"@db.example.com:5432/app refused",
+		leak: strings.Repeat("Qw3", 5),
+		keep: "db.example.com:5432/app refused",
+	},
+	{
+		name: "password written in quotes in a connection string inside an escaped record",
+		in: `{"dsn":"postgres://app:\"` + fake(strings.Repeat("Qw3", 5)) +
+			`\"@db.example.com:5432/app refused"}`,
+		leak: strings.Repeat("Qw3", 5),
+		keep: `@db.example.com:5432/app refused`,
+	},
+	{
+		name: "quoted password the excerpt goes on writing after",
+		in: "postgres://app:" + fake(`"`, "ab12", `"`, "Zyxw9876secret") +
+			" refused",
+		leak: "Zyxw9876secret",
+		keep: "refused",
+	},
+	{
+		name: "password field of a keyword connection string",
+		in: "Server=db.example.com;User Id=app;Pwd=" + fake(strings.Repeat("Qw3", 5)) +
+			";Database=app",
+		leak: strings.Repeat("Qw3", 5),
+		keep: "Database=app",
+	},
+	{
+		name: "password holding a quote in a keyword connection string",
+		in: "Pwd=" + fake(`ab"`, strings.Repeat("Qw3", 3)) +
+			";Database=app refused",
+		leak: fake(`ab"`, strings.Repeat("Qw3", 3)),
+		keep: ";Database=app refused",
+	},
+	{
+		name: "secret key in an environment dump",
+		in:   "AWS_SECRET_ACCESS_KEY=" + fake(strings.Repeat("Qw3", 5)) + " aws s3 refused",
+		leak: strings.Repeat("Qw3", 5),
+		keep: "aws s3 refused",
+	},
+	{
+		name: "password field of a record in camel case",
+		in: `{"dbPassword":"` + fake(strings.Repeat("Qw3", 5)) +
+			`","step":"terraform apply"}`,
+		leak: strings.Repeat("Qw3", 5),
+		keep: `"step":"terraform apply"}`,
+	},
+	{
+		name: "secret key a camel-case name introduces",
+		in:   "smtpSecretKey=" + fake(strings.Repeat("Qw3", 5)) + " smtp refused",
+		leak: strings.Repeat("Qw3", 5),
+		keep: "smtp refused",
+	},
+	{
+		name: "password in single quotes",
+		in:   "PGPASSWORD='" + fake(strings.Repeat("Qw3", 5)) + "' psql: connection refused",
+		leak: strings.Repeat("Qw3", 5),
+		keep: "psql: connection refused",
+	},
+	{
+		name: "password field of a record in single quotes",
+		in:   `{'password': '` + fake(strings.Repeat("Qw3", 5)) + `'}`,
+		leak: strings.Repeat("Qw3", 5),
+	},
+	{
+		name: "password field of a camel-case record in single quotes",
+		in:   `{'dbPassword': '` + fake(strings.Repeat("Qw3", 5)) + `'}`,
+		leak: strings.Repeat("Qw3", 5),
+	},
+	{
+		name: "password on a command line in single quotes",
+		in:   "--password '" + fake(strings.Repeat("Qw3", 5)) + "' --user someone failed",
+		leak: strings.Repeat("Qw3", 5),
+		keep: "--user someone failed",
+	},
+	{
+		name: "password holding a colon in a connection string",
+		in: "postgres://app:" + fake("pa", ":", strings.Repeat("Qw3", 5)) +
+			"@db.example.com:5432/app refused",
+		leak: "pa" + ":" + strings.Repeat("Qw3", 5),
+		keep: "db.example.com:5432/app refused",
+	},
+	{
+		name: "password with a comma inside quotes",
+		in:   `{"password":"` + fake("ab,", "cdefgh12") + `"}`,
+		leak: fake("ab,", "cdefgh12"),
+	},
+	{
+		name: "password with a semicolon inside quotes",
+		in:   `{"password":"` + fake("Xy;", "9kLmnop") + `"}`,
+		leak: fake("Xy;", "9kLmnop"),
+	},
+	{
+		name: "password of several words inside quotes",
+		in:   `PASSWORD="` + fake("my long ", "pass phrase") + `"`,
+		leak: fake("my long ", "pass phrase"),
+	},
+	{
+		name: "password of several words on a command line",
+		in:   `--password "` + fake("my long ", "pass phrase") + `" --user someone failed`,
+		leak: fake("my long ", "pass phrase"),
+		keep: "--user someone failed",
+	},
+	{
+		name: "bare password name in an environment dump",
+		in:   "PASS=" + fake(strings.Repeat("Qw3", 5)) + " psql: connection refused",
+		leak: strings.Repeat("Qw3", 5),
+		keep: "psql: connection refused",
+	},
+	{
+		name: "bare secret name in an environment dump",
+		in:   "JWT_SECRET=" + fake(strings.Repeat("Qw3", 5)) + " the token is refused",
+		leak: strings.Repeat("Qw3", 5),
+		keep: "the token is refused",
+	},
+	{
+		name: "password field of a struct dump",
+		in:   "{User:app Password:" + fake(strings.Repeat("Qw3", 5)) + " Host:db} refused",
+		leak: strings.Repeat("Qw3", 5),
+		keep: "Host:db} refused",
+	},
+	{
+		name: "password field after a colon with text after it",
+		in:   "smtpPassword: " + fake(strings.Repeat("Qw3", 5)) + " rejected by the server",
+		leak: strings.Repeat("Qw3", 5),
+		keep: "rejected by the server",
+	},
+	{
+		name: "password holding a hash in a connection string",
+		in:   "postgres://app:" + fake("ab#", "cd1234XYZ") + "@db.example.com:5432/app refused",
+		leak: fake("ab#", "cd1234XYZ"),
+		keep: "db.example.com:5432/app refused",
+	},
+	{
+		name: "password holding a question mark in a connection string",
+		in:   "postgres://app:" + fake("ab?", "cd1234XYZ") + "@db.example.com:5432/app refused",
+		leak: fake("ab?", "cd1234XYZ"),
+		keep: "db.example.com:5432/app refused",
+	},
+	{
+		name: "password holding a slash in a connection string",
+		in:   "postgres://app:" + fake("ab/", "cd1234XYZ") + "@db.example.com:5432/app refused",
+		leak: fake("ab/", "cd1234XYZ"),
+		keep: "db.example.com:5432/app refused",
+	},
+	{
+		name: "password holding an at sign in a connection string",
+		in:   "postgres://app:" + fake("p@", "ss1234XYZ") + "@db.example.com:5432/app refused",
+		leak: fake("ss1234XYZ"),
+		keep: "db.example.com:5432/app refused",
+	},
+	{
+		name: "password with a single quote inside double quotes",
+		in:   `{"password":"` + fake("ab'", "cdefgh12") + `"}`,
+		leak: fake("ab'", "cdefgh12"),
+	},
+	{
+		name: "password with a double quote inside single quotes",
+		in:   `{'password': '` + fake(`ab"`, "cdefgh12") + `'}`,
+		leak: fake(`ab"`, "cdefgh12"),
+	},
+	{
+		name: "password with an escaped quote inside double quotes",
+		in:   `{"password":"` + fake(`ab\"`, "cdefgh12") + `"}`,
+		leak: fake(`ab\"`, "cdefgh12"),
+	},
+	{
+		name: "password with an escaped quote after four bytes",
+		in:   `{"password":"` + fake("abcd", `\"`, "ijk45678") + `"}`,
+		leak: fake("ijk45678"),
+	},
+	{
+		name: "password with a single quote after an equals sign",
+		in:   `password="` + fake("abcd'", "lmn90123") + `"`,
+		leak: fake("lmn90123"),
+	},
+	{
+		name: "client secret field of a record after a colon",
+		in:   `{"client_secret":"` + fake(strings.Repeat("Qw3", 5)) + `"}`,
+		leak: strings.Repeat("Qw3", 5),
+	},
+	{
+		name: "bare secret field of a record after a colon",
+		in:   `{"secret": "` + fake(strings.Repeat("Qw3", 5)) + `"}`,
+		leak: strings.Repeat("Qw3", 5),
+	},
+	{
+		name: "client secret field of a yaml record",
+		in:   "client_secret: " + fake(strings.Repeat("Qw3", 5)) + " refused",
+		leak: strings.Repeat("Qw3", 5),
+		keep: "refused",
+	},
+	{
+		name: "password name in capitals after a colon",
+		in:   "DB_PASS: " + fake(strings.Repeat("Qw3", 5)) + " psql: connection refused",
+		leak: strings.Repeat("Qw3", 5),
+		keep: "psql: connection refused",
+	},
+	{
+		name: "secret name in capitals after a colon",
+		in:   "JWT_SECRET: " + fake(strings.Repeat("Qw3", 5)) + " the token is refused",
+		leak: strings.Repeat("Qw3", 5),
+		keep: "the token is refused",
+	},
+	{
+		name: "auth token in an environment dump",
+		in:   "SENTRY_AUTH_TOKEN=" + fake(strings.Repeat("Qw3", 5)) + " sentry refused",
+		leak: strings.Repeat("Qw3", 5),
+		keep: "sentry refused",
+	},
+	{
+		name: "api key in an environment dump",
+		in:   "DD_API_KEY=" + fake(strings.Repeat("Qw3", 5)) + " dd refused",
+		leak: strings.Repeat("Qw3", 5),
+		keep: "dd refused",
+	},
+	{
+		name: "access key in an environment dump",
+		in:   "ACCESS_KEY=" + fake(strings.Repeat("Qw3", 5)) + " s3 refused",
+		leak: strings.Repeat("Qw3", 5),
+		keep: "s3 refused",
+	},
+	{
+		name: "token in an environment dump",
+		in:   "token=" + fake(strings.Repeat("Qw3", 5)) + " the token is refused",
+		leak: strings.Repeat("Qw3", 5),
+		keep: "the token is refused",
+	},
+	{
+		name: "api key field of a record in camel case",
+		in: `{"apiKey":"` + fake(strings.Repeat("Qw3", 5)) +
+			`","step":"terraform apply"}`,
+		leak: strings.Repeat("Qw3", 5),
+		keep: `"step":"terraform apply"}`,
+	},
+	{
+		name: "token on a command line",
+		in:   "--token " + fake(strings.Repeat("Qw3", 5)) + " --user someone failed",
+		leak: strings.Repeat("Qw3", 5),
+		keep: "--user someone failed",
+	},
+	{
+		name: "password with a comma outside quotes",
+		in:   "PGPASSWORD=" + fake("Qw3Qw,", "3Qw3Qw3x") + " psql: connection refused",
+		leak: fake(",", "3Qw3Qw3x"),
+		keep: "psql: connection refused",
+	},
+	{
+		name: "password with a backslash outside quotes",
+		in:   "PGPASSWORD=" + fake(`Qw3Qw\`, "w3Qw3Qw3") + " psql: connection refused",
+		leak: fake(`\`, "w3Qw3Qw3"),
+		keep: "psql: connection refused",
+	},
+	{
+		name: "password with a semicolon before its fourth byte",
+		in:   "PGPASSWORD=" + fake("ab;", "cdefgh12") + " psql: connection refused",
+		leak: fake("ab;", "cdefgh12"),
+		keep: "psql: connection refused",
+	},
+	{
+		name: "password field followed by another password field",
+		in:   "Pwd=" + fake(strings.Repeat("Qw3", 5)) + ";Pwd=" + fake(strings.Repeat("Qw3", 5)),
+		leak: strings.Repeat("Qw3", 5),
+	},
+	{
+		name: "password of a mysql dsn",
+		in:   "app:" + fake(strings.Repeat("Qw3", 5)) + "@tcp(db:3306)/app refused",
+		leak: strings.Repeat("Qw3", 5),
+		keep: "db:3306)/app refused",
+	},
+	{
+		name: "password with a single quote in a connection string",
+		in:   "postgres://app:" + fake("ab'", "cdefgh12") + "@db.example.com/app refused",
+		leak: fake("ab'", "cdefgh12"),
+		keep: "db.example.com/app refused",
+	},
+	{
+		name: "password cut off after the other kind of quote",
+		in:   `{\"password\":\"` + fake("ab'", "cdefgh12"),
+		leak: fake("ab'", "cdefgh12"),
+	},
+	{
+		name: "password holding a single quote outside quotes",
+		in:   "PGPASSWORD=" + fake("it's-a-", "secret-value") + " psql: connection refused",
+		leak: fake("it's-a-", "secret-value"),
+		keep: "psql: connection refused",
+	},
+	{
+		name: "password holding a double quote outside quotes",
+		in:   "PGPASSWORD=" + fake(`abcd"`, "efgh1234") + " psql: connection refused",
+		leak: fake(`"`, "efgh1234"),
+		keep: "psql: connection refused",
+	},
+	{
+		name: "password beginning with a comma",
+		in:   "PGPASSWORD=" + fake(",", "Qw3Qw3Qw3x") + " psql: connection refused",
+		leak: fake("Qw3Qw3Qw3x"),
+		keep: "psql: connection refused",
+	},
+	{
+		name: "password beginning with a backslash",
+		in:   "PGPASSWORD=" + fake(`\`, "srv-pw-1234") + " psql: connection refused",
+		leak: fake(`\`, "srv-pw-1234"),
+		keep: "psql: connection refused",
+	},
 }
 
-// TestTextRedactsPatterns: a shape the exact pass cannot name is still a
-// credential, and Text removes it while leaving the rest of the line alone.
-func TestTextRedactsPatterns(t *testing.T) {
+// TestRedactCorpus: a shape the exact pass cannot name is still a credential,
+// and Text removes it while leaving the rest of the line alone. One row per
+// kind, every value built from fragments.
+func TestRedactCorpus(t *testing.T) {
 	for _, tc := range patternCases {
 		t.Run(tc.name, func(t *testing.T) {
 			got := Text(tc.in, nil)
@@ -345,6 +774,89 @@ func TestTextRedactsPatterns(t *testing.T) {
 			}
 			if tc.keep != "" && !strings.Contains(got, tc.keep) {
 				t.Errorf("Text(%q) = %q: the pattern pass ate %q as well", tc.in, got, tc.keep)
+			}
+		})
+	}
+}
+
+// TestRedactKeepsNoHalfOfAValue: a rule that cannot find the end of a value
+// makes no match rather than a short one, and the value goes into the text
+// whole — so where a rule does stop early, the half it leaves is the leak. The
+// corpus is no instrument for this: its leak spans the marker a half
+// redaction writes, and a `Contains` that never finds the whole of the value
+// is satisfied by the last byte of it being gone.
+func TestRedactKeepsNoHalfOfAValue(t *testing.T) {
+	password := fake(strings.Repeat("Qw3", 5))
+	for _, tc := range []struct{ name, in, want string }{
+		{
+			"a password holding a quote the text continues past",
+			"postgres://app:" + fake(`ab"`, strings.Repeat("Qw3", 3)) +
+				"@db.example.com:5432/app refused",
+			"postgres://app:" + redacted + "@db.example.com:5432/app refused",
+		},
+		{
+			"an excerpt that stops before the host",
+			"postgres://app:" + password + " refused",
+			"postgres://app:" + redacted + " refused",
+		},
+		{
+			"a record whose field the url is written in",
+			`{"dsn":"postgres://app:` + password + `","step":"terraform apply"}`,
+			`{"dsn":"postgres://app:` + redacted + `","step":"terraform apply"}`,
+		},
+		{
+			"a password written in quotes",
+			"postgres://app:" + fake(`"`, strings.Repeat("Qw3", 5), `"`) +
+				"@db.example.com:5432/app refused",
+			"postgres://app:" + redacted + "@db.example.com:5432/app refused",
+		},
+		{
+			"the same password written in single quotes",
+			"postgres://app:" + fake(`'`, strings.Repeat("Qw3", 5), `'`) +
+				"@db.example.com:5432/app refused",
+			"postgres://app:" + redacted + "@db.example.com:5432/app refused",
+		},
+		{
+			"a quoted password in a record that was itself escaped",
+			`{"dsn":"postgres://app:\"` + strings.Repeat("Qw3", 5) + `\"@db.example.com:5432/app refused"}`,
+			`{"dsn":"postgres://app:` + redacted + `@db.example.com:5432/app refused"}`,
+		},
+		{
+			"a quoted password in an excerpt that stops before the host",
+			"postgres://app:" + fake(`"`, strings.Repeat("Qw3", 5), `"`) + " refused",
+			"postgres://app:" + redacted + " refused",
+		},
+		{
+			"a quoted password the excerpt goes on writing after",
+			"postgres://app:" + fake(`"`, "ab12", `"`, "Zyxw9876secret") + " refused",
+			"postgres://app:" + redacted + " refused",
+		},
+		{
+			"the same password written in single quotes",
+			"postgres://app:" + fake(`'`, "ab12", `'`, "Zyxw9876secret") + " refused",
+			"postgres://app:" + redacted + " refused",
+		},
+		{
+			"a quoted password holding its own escaped quote",
+			"postgres://app:" + fake(`"`, "ab", `\"`, "cd", `"`) + " refused",
+			"postgres://app:" + redacted + " refused",
+		},
+		{
+			"a quoted password in the record its field is written in",
+			`{"dsn":"postgres://app:\"` + password + `\"","step":"terraform apply"}`,
+			`{"dsn":"postgres://app:` + redacted + `","step":"terraform apply"}`,
+		},
+		{
+			// the value ends at the quote closing it rather than at the byte
+			// behind it, so the record's own `,` is left where it was written.
+			"a quoted password in a record whose quotes are plain",
+			`{"dsn":"postgres://app:"` + password + `","step":"terraform apply"}`,
+			`{"dsn":"postgres://app:` + redacted + `,"step":"terraform apply"}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := Text(tc.in, nil); got != tc.want {
+				t.Errorf("Text(%q) = %q, want %q", tc.in, got, tc.want)
 			}
 		})
 	}
@@ -364,20 +876,97 @@ func TestRedactsBothPasses(t *testing.T) {
 	}
 }
 
+// TestRedactReadsThroughTheMarker: the exact pass may put its marker inside a
+// credential, because a value Fugaro holds is a value the text spells with more
+// of its own bytes around it, and the pattern pass then has to read that value
+// to the end — a value read from before the marker stops where the marker
+// stands, and the bytes after it are what the marker hides. The last two cases
+// are the other side of it: a marker with a field's delimiter behind it is not
+// the front of a value, and a value read from there would take the field after
+// it along.
+func TestRedactReadsThroughTheMarker(t *testing.T) {
+	secret := fake("acme-", "widgets")
+	for _, tc := range []struct{ name, in, want string }{
+		{
+			"an environment entry",
+			"PGPASSWORD=" + secret + "-2024xyz psql: connection refused",
+			"PGPASSWORD=" + redacted + " psql: connection refused",
+		},
+		{
+			"a flag",
+			"--password " + secret + "-2024xyz --user someone failed",
+			"--password " + redacted + " --user someone failed",
+		},
+		{
+			"a field of a record",
+			`{"password":"` + secret + `-2024xyz"}`,
+			`{"password":"` + redacted + `"}`,
+		},
+		{
+			"a connection string",
+			"postgres://app:" + secret + "-2024xyz@db.example.com:5432/app refused",
+			"postgres://app:" + redacted + "@db.example.com:5432/app refused",
+		},
+		{
+			"a field name behind the marked value",
+			"Pwd=" + secret + "-2024xyz;Database=app",
+			"Pwd=" + redacted + ";Database=app",
+		},
+		{
+			"a field name behind a marked value of one byte",
+			"Pwd=" + secret + "x;Database=app",
+			"Pwd=" + redacted + ";Database=app",
+		},
+		{
+			"a value of one byte behind the marker and no field after it",
+			"PGPASSWORD=" + secret + "x psql: connection refused",
+			"PGPASSWORD=" + redacted + " psql: connection refused",
+		},
+		{
+			"a delimiter behind the marker",
+			"Pwd=" + secret + ";Database=app",
+			"Pwd=" + redacted + ";Database=app",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := Text(tc.in, []string{secret}); got != tc.want {
+				t.Errorf("Text(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+			if again := Text(tc.want, []string{secret}); again != tc.want {
+				t.Errorf("Text(%q) = %q, want it unchanged", tc.want, again)
+			}
+		})
+	}
+}
+
 // TestReportMasksThePerson: the issue report is the one output that must not
 // carry the address or the home directory of whoever filed it.
 func TestReportRedactsThePerson(t *testing.T) {
-	for _, tc := range []struct{ name, in, leak string }{
-		{"email", "filed by " + fake("dimi", "@", "example.com") + " today", fake("dimi", "@", "example.com")},
-		{"home path", "at " + fake("/home/", "someone", "/.config/fugaro/fugaro.yaml") + " the file is", fake("/home/", "someone")},
-		{"mac home path", "at " + fake("/Users/", "someone", "/Library/logs") + " it is", fake("/Users/", "someone")},
-		{"root home", "reading " + fake("/root", "/.config/fugaro") + " now", fake("/root", "/.config/fugaro")},
-		{"windows home path", "at " + fake(`C:\\Users\\`, "someone", `\\AppData`) + " it is", fake(`C:\\Users\\`, "someone")},
+	for _, tc := range []struct{ name, in, leak, keep string }{
+		{"email", "filed by " + fake("dimi", "@", "example.com") + " today", fake("dimi", "@", "example.com"), ""},
+		{"email written the way a url writes it", "filed by " + fake("runner", "%40", "acme-prod.iam.gserviceaccount.com") + " today", fake("runner", "%40", "acme-prod.iam.gserviceaccount.com"), "today"},
+		{"home path", "at " + fake("/home/", "someone", "/.config/fugaro/fugaro.yaml") + " the file is", fake("/home/", "someone"), ""},
+		{"home path in a file url", "at " + fake("file:///home/", "someone", "/x.yaml") + " it is", fake("/home/", "someone"), ""},
+		{"home path under var", "at " + fake("/var/home/", "someone", "/x.yaml") + " it is", fake("/var/home/", "someone"), ""},
+		{"mac home path", "at " + fake("/Users/", "someone", "/Library/logs") + " it is", fake("/Users/", "someone"), ""},
+		{"root home", "reading " + fake("/root", "/.config/fugaro") + " now", fake("/root", "/.config/fugaro"), ""},
+		{"windows home path", "at " + fake(`C:\\Users\\`, "someone", `\\AppData`) + " it is", fake(`C:\\Users\\`, "someone"), ""},
+		{"home path after a compiler flag", "cc " + fake("-I/home/", "someone", "/include") + " -o out", fake("/home/", "someone"), ""},
+		{"wsl home path", "at " + fake("/mnt/c/Users/", "someone", "/x") + " it is", fake("/Users/", "someone"), ""},
+		{"git bash home path", "at " + fake("/c/Users/", "someone", "/x") + " it is", fake("/Users/", "someone"), ""},
+		{"windows home path with a space in the profile name", "at " + fake(`C:\Users\John `, "Smith") + `\AppData it is`, "Smith", ""},
+		{"windows home path spelled the way the filesystem does", "at " + fake(`c:\users\`, "someone", `\AppData\Local\Temp`) + " it is", fake(`c:\users\`, "someone"), ""},
+		{"wsl home path spelled the way the filesystem does", "at " + fake("/mnt/c/users/", "someone", "/x") + " it is", fake("/users/", "someone"), ""},
+		{"git bash home path spelled the way the filesystem does", "at " + fake("/c/users/", "someone", "/x") + " it is", fake("/users/", "someone"), ""},
+		{"windows home path with a line after it", "at " + fake(`C:\Users\`, "someone") + "\nline two\nline three ok", fake(`C:\Users\`, "someone"), "line two\nline three ok"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := Report(tc.in)
 			if strings.Contains(got, tc.leak) {
 				t.Errorf("Report(%q) = %q: %q survived", tc.in, got, tc.leak)
+			}
+			if tc.keep != "" && !strings.Contains(got, tc.keep) {
+				t.Errorf("Report(%q) = %q: the mask ate %q as well", tc.in, got, tc.keep)
 			}
 		})
 	}
@@ -445,6 +1034,120 @@ func TestRedactKeepsAnEscapedRecordReadable(t *testing.T) {
 	}
 	if rec["authorization"] != "[REDACTED]" {
 		t.Errorf("authorization = %q, want the marker", rec["authorization"])
+	}
+}
+
+// TestRedactKeepsAConnectionStringRecordReadable: the same record with the
+// credential written as the URL of a connection string, which is a shape read
+// by its own spelling rather than by the name of the field it stands in. The
+// field's closing quote arrives escaped there, and a value that read the
+// backslash before it as a byte of its own left the quote it escapes bare —
+// the record behind the escaping stopped parsing.
+func TestRedactKeepsAConnectionStringRecordReadable(t *testing.T) {
+	password := fake(strings.Repeat("Qw3", 5))
+	inner := `{"severity":"ERROR","dsn":"postgres://app:` + password +
+		`","message":"quota exceeded for project foo","step":"terraform apply"}`
+	got := Text(`{"type":"result","content":`+strconv.Quote(inner)+`}`, nil)
+	if strings.Contains(got, password) {
+		t.Fatalf("Text = %q: the password survived the escaping", got)
+	}
+	var outer struct{ Content string }
+	if err := json.Unmarshal([]byte(got), &outer); err != nil {
+		t.Fatalf("Text = %q, which is no longer a JSON record: %v", got, err)
+	}
+	var rec map[string]string
+	if err := json.Unmarshal([]byte(outer.Content), &rec); err != nil {
+		t.Fatalf("the record inside it is %q, which no longer parses: %v", outer.Content, err)
+	}
+	for field, want := range map[string]string{
+		"severity": "ERROR",
+		"message":  "quota exceeded for project foo",
+		"step":     "terraform apply",
+	} {
+		if rec[field] != want {
+			t.Errorf("Text lost %s: %#v", field, rec)
+		}
+	}
+	if rec["dsn"] != "postgres://app:[REDACTED]" {
+		t.Errorf("dsn = %q, want the marker where the password stood", rec["dsn"])
+	}
+}
+
+// TestRedactKeepsAPasswordRecordReadable: the same two records read by the name
+// of the field rather than by a scheme word. A record's fields are the
+// diagnosis, and a password rule that read a value past the quote closing it —
+// the quote of the field in a plain record, the `\"` of one in an escaped
+// record — would take the fields after the credential and leave a text that is
+// no longer a record at all.
+func TestRedactKeepsAPasswordRecordReadable(t *testing.T) {
+	value := fake(strings.Repeat("Qw3", 5))
+	check := func(t *testing.T, got string) {
+		t.Helper()
+		if strings.Contains(got, value) {
+			t.Errorf("Text = %q: the value survived", got)
+		}
+		var rec map[string]string
+		if err := json.Unmarshal([]byte(got), &rec); err != nil {
+			t.Fatalf("Text = %q, which is no longer a JSON record: %v", got, err)
+		}
+		for field, want := range map[string]string{
+			"severity": "ERROR",
+			"message":  "quota exceeded for project foo",
+			"step":     "terraform apply",
+		} {
+			if rec[field] != want {
+				t.Errorf("Text lost %s: %#v", field, rec)
+			}
+		}
+		if rec["token"] != "[REDACTED]" {
+			t.Errorf("token = %q, want the marker", rec["token"])
+		}
+	}
+	inner := `{"severity":"ERROR","token":"` + value +
+		`","message":"quota exceeded for project foo","step":"terraform apply"}`
+
+	t.Run("plain", func(t *testing.T) {
+		check(t, Text(inner, nil))
+	})
+
+	t.Run("escaped", func(t *testing.T) {
+		got := Text(`{"type":"result","content":`+strconv.Quote(inner)+`}`, nil)
+		if strings.Contains(got, value) {
+			t.Fatalf("Text = %q: the value survived the escaping", got)
+		}
+		var outer struct{ Content string }
+		if err := json.Unmarshal([]byte(got), &outer); err != nil {
+			t.Fatalf("Text = %q, which is no longer a JSON record: %v", got, err)
+		}
+		check(t, outer.Content)
+	})
+
+	// The value holds bytes the escaping has to be read twice for: a quote of
+	// its own, which the inner record writes as `\"` and the escaping around
+	// that record doubles into three backslashes — the value's quote and the
+	// backslash escaping it — and a backslash at the end of it, which arrives
+	// as five backslashes before the quote closing the field. Read as that
+	// closing `\"`, the value's own quote leaves the tail of the credential in
+	// the text and the record stops parsing; read the other way round, the
+	// closing one is the quote the field really ends at, and which of the two
+	// a `\"` is is what the byte after it tells.
+	for _, tc := range []struct{ name, value string }{
+		{"a quote in the value", value + `\"` + value},
+		{"a backslash ending the value", value + `\\`},
+	} {
+		t.Run("escaped with "+tc.name, func(t *testing.T) {
+			inner := `{"severity":"ERROR","token":"` + tc.value +
+				`","message":"quota exceeded for project foo","step":"terraform apply"}`
+			got := Text(`{"type":"result","content":`+strconv.Quote(inner)+`}`, nil)
+			if strings.Contains(got, value) {
+				t.Fatalf("Text = %q: the value survived the escaping", got)
+			}
+			var outer struct{ Content string }
+			if err := json.Unmarshal([]byte(got), &outer); err != nil {
+				t.Fatalf("Text = %q, which is no longer a JSON record: %v", got, err)
+			}
+			check(t, outer.Content)
+		})
 	}
 }
 
@@ -528,9 +1231,25 @@ func TestRedactPassesLeaveCleanTextAlone(t *testing.T) {
 		"see https://github.com/dimipaun/fugaro/pull/1918 for the change",
 		"retrying in 30s, attempt 3 of 5",
 		"the task-sk-1234567890abcdefghij note is not a key",
-		"see https://example.com/home/page and /var/home/user for the shape",
+		"see https://example.com/home/page for the shape",
 		"https://host/cb?token=&state=ok returned nothing",
 		"retrying with Bearer\nQWERTYUIOPASDFGHJKLZXCVBNM now",
+		"the password is wrong, so the update stops",
+		"the password's wrong, so the update stops",
+		"the secret: it was rotated by the operator",
+		"compass: north, and bypass the cache to surpass it",
+		"a Compass: north, and the Surpass: 3 points",
+		"--- PASS: TestRunnerFinalize (0.00s)",
+		"Pass: TestRunnerFinalize (0.00s)",
+		"the secret: rotated by the operator",
+		"the pass: it was accepted by the runner",
+		"the word 'pass' in quotes: it is not a field",
+		"see https://api.example.com:8080/v1/runs for the endpoint",
+		"the server is at http://localhost:3000 and up",
+		"postgres://app:" + fake(`"`, "8080", `"`) + " was refused",
+		"fugaro run --password\nError: flag needs an argument",
+		"pulled " + fake("image", "@", "sha256:abcd") + " and tagged it",
+		"the run pinned " + fake("fugaro", "@", "1") + " and stopped",
 	} {
 		if got := Text(s, []string{"a-secret-value"}); got != s {
 			t.Errorf("Text(%q) = %q, want it unchanged", s, got)

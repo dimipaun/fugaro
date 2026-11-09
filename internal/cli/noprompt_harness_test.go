@@ -193,6 +193,20 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	// block; it asks nothing now (D1540) and the diff of that block is the proof
 	// this fixture reaches it.
 	"fugaro accounts add": {args: []string{"team-a", "--repos", "acme/app"}, reaches: "claude_accounts"},
+	// The pool writes are the same kind of edit, and they reach it the same
+	// way: the seed gives the world a credential to list and a pool to remove,
+	// so each runs to its own sentence rather than stopping at the block's own
+	// "no credential of this name is defined here".
+	"fugaro accounts pool add": {
+		args:    []string{"claude-pool", "team-a", "team-b"},
+		reaches: "declare pools.claude-pool.members = [team-a, team-b]",
+		seed:    closedStdinPoolSeed,
+	},
+	"fugaro accounts pool rm": {
+		args:    []string{"claude-pool"},
+		reaches: "remove pools.claude-pool",
+		seed:    closedStdinPoolSeed,
+	},
 	// The settings write used to ask for the project's name over the document it
 	// edits, and what it edits here is the world's own project config. It asks
 	// nothing now (D1540), and the sentence naming the change is the proof this
@@ -293,6 +307,8 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 var closedStdinNoFixture = map[string]string{
 	"fugaro accounts":          "is a name for its four subcommands: a bare run prints its own usage and returns",
 	"fugaro accounts ls":       "selects no project and names the two ways to (--repo, an origin remote)",
+	"fugaro accounts pool":     "is a name for ls, add and rm: a bare run prints its own usage and returns",
+	"fugaro accounts pool ls":  "reads the selected project's own config, which this world's has no pools in, and prints that none are defined",
 	"fugaro backends":          "is a name for its one subcommand: a bare run prints its own usage and returns",
 	"fugaro backends ls":       "lists every backend a project may name, which needs no project",
 	"fugaro backlog add":       "stops at its own D27 field checks, which this world has no values for",
@@ -577,6 +593,14 @@ const closedStdinRetiredWhy = "is the tombstone: it prints the two commands that
 func closedStdinSetBaseBranch(t *testing.T, f *budgetFixture) {
 	t.Helper()
 	f.appendConfig(t, "base_branch: main\n")
+}
+
+// closedStdinPoolSeed gives the world the two things a pool write needs to
+// reach its own edit: a credential a member may name (two of them, so the
+// declaration the fixture asks for is a change) and a pool to remove.
+func closedStdinPoolSeed(t *testing.T, f *budgetFixture) {
+	t.Helper()
+	f.appendConfig(t, "credentials:\n  - name: team-a\n    type: claude-oauth\n  - name: team-b\n    type: claude-oauth\npools:\n  - name: claude-pool\n    members:\n      - team-a\n")
 }
 
 // closedStdinWorld is the state every leaf is run in: one hermetic
