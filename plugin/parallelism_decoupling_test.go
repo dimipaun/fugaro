@@ -168,6 +168,38 @@ func TestFollowupInstructionsNameTheContractFile(t *testing.T) {
 			t.Errorf("the decoupling text never says %q, so a contract, an integration task or a follow-up can be launched without the user's go-ahead: the pass proposes its runs and adds no way to spend", want)
 		}
 	}
+
+	// The section a planner reads first carries the go-ahead rule, so its
+	// enumeration of what the yes covers has to be the whole of it: a kind of run
+	// the rule leaves out is one launched on a yes that never covered it, and the
+	// independent review is a paid job like the rest.
+	skill := parallelismSkillFiles(t)[parallelismSkillPath]
+	if section := decouplingSection(skill); !strings.Contains(section, "independent review") {
+		t.Errorf("%s's decoupling section lists the runs it proposes without the independent review a security-relevant contract gets, so that launch reads as one the user's yes already covered", parallelismSkillPath)
+	}
+}
+
+// TestParallelismSkillKeepsAContractFileToItsChangeRequest: the files a contract
+// and its changes own are the ones both sides build against, so a task that has
+// to change one raises the change request instead of editing it, and a reviewer
+// treats any other task's diff to one as a contract change (F10). The rule has
+// to be written as that obligation: a sentence that reported the boundary as
+// unguarded — that nothing checks a run's real changes against its footprint —
+// is the one an agent reads as "so nothing stops me editing a merged contract",
+// which widens its scope past the plan it was given.
+func TestParallelismSkillKeepsAContractFileToItsChangeRequest(t *testing.T) {
+	ref := decouplingReferenceText(t)
+	for _, want := range []string{
+		"raises the change request instead of editing it",
+		"treats it as a contract change",
+	} {
+		if !strings.Contains(ref, want) {
+			t.Errorf("the decoupling reference never says %q, so a task that changes a contract on its own authority is neither stopped by the rule nor caught by a reviewer", want)
+		}
+	}
+	if strings.Contains(ref, "nothing checks") {
+		t.Errorf("the decoupling reference reports the footprint as unguarded (%q), which an agent reads as permission to edit a contract file it was not given", "nothing checks")
+	}
 }
 
 // TestParallelismSkillNamesTheCLIForTheGraph: plan text is untrusted, so the
