@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -644,4 +645,69 @@ func credentialsServicePlan(t *testing.T) *tf.Plan {
 		t.Fatal(err)
 	}
 	return &p
+}
+
+// What the design says about which applies retry (§7.2 finding 5) is held to
+// the code, in both directions: the steps this command runs through the retry
+// are exactly the four the design names, and the two applies it names as NOT
+// wrapped are still outside it. Wrapping a fifth -- the retirement's apply,
+// the gap the design leaves open and says why -- fails here, which is what
+// makes the sentence and its exception list move with the code that would make
+// them false.
+func TestPropagationRetrySitesAreWhatTheDesignNames(t *testing.T) {
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sites := regexp.MustCompile(`propagationRetry\(ctx, r\.w, "([^"]+)"`)
+	wrapped := map[string]string{} // the step's name in its retry line -> its file
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range sites.FindAllStringSubmatch(string(b), -1) {
+			wrapped[m[1]] = f
+		}
+	}
+	design := readDoc(t, "docs/design/compute-backend.md")
+	for step, root := range map[string]string{
+		"the installation step": "`installRoot`",
+		"the repository step":   "`planRepo`",
+		"the Firebase step":     "`applyRoot`",
+		"the compute step":      "`computeStage.apply`",
+	} {
+		if _, ok := wrapped[step]; !ok {
+			t.Errorf("propagationRetry does not run %s (a call site looks like propagationRetry(ctx, r.w, %q, ...)): the design says every cloud root of the converge runs its own cycle through the retry", step, step)
+		}
+		if !strings.Contains(design, root) {
+			t.Errorf("docs/design/compute-backend.md no longer names %s among the roots that retry", root)
+		}
+	}
+	if len(wrapped) != 4 {
+		steps := make([]string, 0, len(wrapped))
+		for step, f := range wrapped {
+			steps = append(steps, step+" ("+f+")")
+		}
+		slices.Sort(steps)
+		t.Errorf("propagationRetry wraps %d step(s): %s. The design names four, and names the two applies that are NOT wrapped: wrapping a fifth -- the retirement's apply, `retirePlan`, is the gap it leaves open -- moves §7.2 finding 5's list and this test with it",
+			len(wrapped), strings.Join(steps, ", "))
+	}
+	// The names and the claim they answer have to be in the retry's own
+	// paragraph -- where the "every cloud root" sentence is -- and not
+	// somewhere else in the document: a mention of `retirePlan` in the
+	// retirement's own section is not this claim.
+	i := strings.Index(design, "are not wrapped")
+	if i < 0 {
+		t.Fatalf("docs/design/compute-backend.md no longer names the applies that are NOT wrapped: the design claims that every cloud root of the converge retries")
+	}
+	claim := design[i:min(len(design), i+2000)]
+	for _, outside := range []string{"`retirePlan`", "`fillCredentialsAudience`"} {
+		if !strings.Contains(claim, outside) {
+			t.Errorf("docs/design/compute-backend.md no longer names %s among the applies that do not retry, so the design claims more than the code does", outside)
+		}
+	}
 }
