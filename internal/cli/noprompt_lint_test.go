@@ -18,8 +18,9 @@ import (
 // package asks a person with cannot be added unnoticed. The rule is about the
 // SHAPE of a read rather than about a list of callers, and the walk covers
 // every declaration of the package — functions, methods, and the function
-// literals a package-level var is bound to (pair.go's pairTerminal is the shape
-// of that plumbing, so a read written inside one is the same read).
+// literals a package-level var is bound to (a `var ask = func(cmd
+// *cobra.Command) {…}` is the shape of that plumbing, so a read written inside
+// one is the same read).
 //
 // What it matches are the SHAPES a stream is read with here, and a shape is not
 // a verdict: no syntax says whether a stream is stdin, since a reader that
@@ -210,8 +211,8 @@ func readsIn(root ast.Node, imports map[string]string, file, fn string) []decisi
 }
 
 // valueName is the name a package-level value's read is reported under: the
-// name that value is bound to, so `var pairTerminal = func(…) io.Reader {…}`
-// belongs to pairTerminal. A value with one name and several values — or, as a
+// name that value is bound to, so `var askLater = func(…) {…}` belongs to
+// askLater. A value with one name and several values — or, as a
 // var without names cannot have values, the reverse — takes the name at the
 // value's own position where there is one, which is where the read is written.
 func valueName(vs *ast.ValueSpec, value int) string {
@@ -504,10 +505,10 @@ func TestLintCatchesAnAliasedStdinReader(t *testing.T) {
 // TestLintWalksEveryDeclaration is the other half of "a reader added later
 // cannot pass unnoticed": the walk covers the declarations a read can hide in
 // and not only the functions, so a read written inside a package-level func
-// literal — pair.go:59 keeps its stdin plumbing that way — is a site like any
-// other, reported under the name the literal is bound to. The last row is that
-// plumbing itself, which hands stdin on and reads nothing: plumbing is not a
-// read, and the lint must not start reporting a door as the room behind it.
+// literal is a site like any other, reported under the name the literal is
+// bound to. The last row is plumbing of that kind, which hands stdin on and
+// reads nothing: plumbing is not a read, and the lint must not start reporting
+// a door as the room behind it.
 func TestLintWalksEveryDeclaration(t *testing.T) {
 	rows := []struct {
 		name string
@@ -534,8 +535,8 @@ func TestLintWalksEveryDeclaration(t *testing.T) {
 			[]string{"bufio.NewReader", "ReadString"},
 		},
 		{
-			"pair.go's own plumbing, which reads nothing",
-			"var pairTerminal = func(cmd *cobra.Command) io.Reader { return cmd.InOrStdin() }",
+			"a package-level literal that hands stdin on and reads nothing",
+			"var stdinLine = func(cmd *cobra.Command) io.Reader { return cmd.InOrStdin() }",
 			"",
 			nil,
 		},
@@ -682,14 +683,15 @@ var dataReadSites = map[string]string{
 }
 
 // notADecisionSites is a read of one of the shapes above that is not a read of
-// a person, and the reason it is not: a response body, a file, a buffer. The
-// shape cannot say which stream it is — a reader over a body and a reader over
-// stdin are built and read identically — so the answer is written here by a
-// person, and the entry is asserted to be FOUND, like a sanctioned site, so it
-// cannot outlive the read it explains. It is empty today: every shape the
-// package reads is either sanctioned or a confirmation the policy still owes a
-// removal for. A prompt does not belong here: it belongs nowhere.
-var notADecisionSites = map[string]string{}
+// a person, and the reason it is not: a response body, a file, a buffer, a line
+// a caller hands the command. The shape cannot say which stream it is — a
+// reader over a body and a reader over stdin are built and read identically —
+// so the answer is written here by a person, and the entry is asserted to be
+// FOUND, like a sanctioned site, so it cannot outlive the read it explains. A
+// prompt does not belong here: it belongs nowhere.
+var notADecisionSites = map[string]string{
+	"pair.go:pairReadCode": "the --json caller's own line: a console asks the operator for the code and hands the command the answer on stdin (§4.1, \"the typed code is read as one stdin line\"), so what arrives is data a caller delivered rather than a question the CLI put to a person; the interactive half reads the same value through readValue and is not this shape",
+}
 
 // pendingSites is every decision read the package still makes and the task of
 // docs/no-prompt-policy/implementation-plan.md that removes it. It is the

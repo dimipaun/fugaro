@@ -592,27 +592,48 @@ func TestPairRefusalCodesNameTheCase(t *testing.T) {
 	}
 }
 
-// TestPairWithoutATerminalRefusesAndReadsNothing: the code is a value, and a
-// value is read at the operator's own terminal and nowhere else (readValue,
-// D1540). A pairing whose input is a pipe refuses at once, naming what it
-// needs, rather than reading the line a caller handed it — which is where the
-// code used to come from, and which is why the harness above says its readers
-// are terminals (pairRunCtx) and this one says there is none.
-func TestPairWithoutATerminalRefusesAndReadsNothing(t *testing.T) {
+// TestPairJSONReadsTheCodeFromAPipe: --json is the console's door, and the
+// console has no terminal to lend the command — it asks the operator for the
+// code itself and hands it back as one stdin line (§4.1: "the typed code is
+// read as one stdin line"). So a --json pairing whose input is a pipe and never
+// a terminal reads the code and pairs, and the events carry the whole run.
+func TestPairJSONReadsTheCodeFromAPipe(t *testing.T) {
 	f := newPairFixture(t, pairMe)
 	uid := pairFixedRand(t)
 	f.pairSeedRequest(uid, pairKey)
-	out, _, err := pairRunSession(t, context.Background(), token.Fingerprint(pairKeyBytes), false, "--json")
+	fingerprint := token.Fingerprint(pairKeyBytes)
+
+	out, _, err := pairRunSession(t, context.Background(), fingerprint, false, "--json")
+	if err != nil {
+		t.Fatalf("a --json pairing driven over a pipe: %v", err)
+	}
+	events := pairLines(t, out)
+	if len(events) != 4 || events[3].Event != pairEventDone {
+		t.Fatalf("events = %v, want the done event: the piped line is the code", events)
+	}
+	if got := events[3].Document.Request.KeyFingerprint; got != fingerprint {
+		t.Fatalf("the document's fingerprint is %q, want %q", got, fingerprint)
+	}
+}
+
+// TestPairInteractiveWithoutATerminalRefusesAndReadsNothing: the interactive
+// command's code is a value, and a value is read at the operator's own terminal
+// (readValue, D1540) — §4.1 gives the stdin line to --json alone. A pairing
+// with no terminal there refuses at once, naming what it needs, rather than
+// reading the line a caller handed it.
+func TestPairInteractiveWithoutATerminalRefusesAndReadsNothing(t *testing.T) {
+	f := newPairFixture(t, pairMe)
+	uid := pairFixedRand(t)
+	f.pairSeedRequest(uid, pairKey)
+	out, _, err := pairRunSession(t, context.Background(), token.Fingerprint(pairKeyBytes), false)
 	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("a pairing with no terminal: err = %v, want exit 1", err)
 	}
 	if !strings.Contains(err.Error(), "terminal") {
 		t.Errorf("the refusal does not name the terminal it needs: %v", err)
 	}
-	events := pairLines(t, out)
-	if len(events) != 4 || events[2].Event != pairEventCode ||
-		events[3].Event != pairEventRefused || events[3].Code != pairRefusedCodeMissing {
-		t.Fatalf("events = %v, want the code event and a refusal of the missing code", events)
+	if strings.Contains(out, `"event"`) {
+		t.Errorf("an interactive refusal wrote a --json event: %s", out)
 	}
 	f.pairNoSideEffect(t, uid)
 }

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -106,7 +107,9 @@ func newPairCmd() *cobra.Command {
 			"\n" +
 			"Its own state is the local config: the project, its database URL and\n" +
 			"Identity Toolkit API key, and the signer account. --json streams the\n" +
-			"pairing as one JSON object per line on stdout for a console to read.",
+			"pairing as one JSON object per line on stdout for a console to read;\n" +
+			"the console has asked the operator for the code itself, and the command\n" +
+			"takes the code back as one line on stdin.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runPair(cmd, o) },
 	}
@@ -320,7 +323,7 @@ func runPair(cmd *cobra.Command, o *pairOptions) error {
 	} else {
 		fmt.Fprintf(out, "the phone shows %s\n", fingerprint)
 	}
-	typed, err := pairReadCode(waitCtx, cmd)
+	typed, err := pairReadCode(waitCtx, cmd, o.asJSON)
 	if err != nil {
 		if errors.Is(err, errPairInterrupted) {
 			return pairRefuse(ev, o, pairRefusedInterrupted, err)
@@ -653,24 +656,38 @@ var errPairNoCode = errors.New("pairing: no typed code")
 
 // pairReadCode reads the operator's code as exactly one value (§7.1 step 5):
 // one value, read once, and never a second prompt or a retry — a code that did
-// not match is a refused pairing, not a typo to try again. It goes through the
-// one value-entry helper (readValue, D1540): a code is a value and not a
-// confirmation, so it is read at the operator's own terminal, where the phone's
-// screen can be read beside it, and a run with no terminal is refused at once
-// naming what it needs instead of waiting for a line nobody can type.
+// not match is a refused pairing, not a typo to try again.
+//
+// The two doors read it differently, and §4.1 is why. --json hands the caller
+// the events and takes the code back as one stdin line: a console has asked the
+// operator itself and has no terminal to lend this command, so what arrives is
+// data a caller delivered. The interactive command reads the same value at the
+// operator's own terminal through the one value-entry helper (readValue,
+// D1540), where the phone's screen can be read beside it, and a run with no
+// terminal there is refused at once naming what it needs instead of waiting for
+// a line nobody can type.
 //
 // The read races the wait's deadline because --timeout bounds steps 4 and 5
 // together, and a reader that has not answered by then is refused like an EOF:
 // an operator who walked away. The goroutine is left behind when a terminal
 // never answers — there is no way to cancel a blocked read of a terminal, and
 // the command is about to exit with its refusal.
-func pairReadCode(ctx context.Context, cmd *cobra.Command) (string, error) {
+func pairReadCode(ctx context.Context, cmd *cobra.Command, asJSON bool) (string, error) {
 	type line struct {
 		text string
 		err  error
 	}
+	where := "at the terminal"
+	if asJSON {
+		where = "on stdin"
+	}
 	read := make(chan line, 1)
 	go func() {
+		if asJSON {
+			text, err := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
+			read <- line{text: text, err: err}
+			return
+		}
 		b, err := readValue(cmd, valueSpec{what: "the code the phone shows"})
 		read <- line{text: string(b), err: err}
 	}()
@@ -681,18 +698,23 @@ func pairReadCode(ctx context.Context, cmd *cobra.Command) (string, error) {
 		if !errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return "", fmt.Errorf("%w while the code the phone shows was being typed, so this pairing was abandoned by the operator rather than refused by it; run fugaro pair again", errPairInterrupted)
 		}
-		return "", fmt.Errorf("%w: the code the phone shows is read as one line at the terminal, and no line arrived before the wait ran out", errPairNoCode)
+		return "", fmt.Errorf("%w: the code the phone shows is read as one line %s, and no line arrived before the wait ran out", errPairNoCode, where)
 	case got := <-read:
-		if got.err != nil {
-			// The value entry's own refusal (no terminal to read a value at):
-			// it is the operator's to fix and it says how, so it is carried as
-			// it is rather than folded into the missing-code sentence.
-			return "", got.err
+		if got.err != nil && !errors.Is(got.err, io.EOF) {
+			if !asJSON {
+				// The value entry's own refusal (no terminal to read a value
+				// at) is the operator's to fix and it says how, so it is
+				// carried as it is rather than folded into the missing-code
+				// sentence.
+				return "", got.err
+			}
+			return "", fmt.Errorf("reading the typed code: %v", got.err)
 		}
-		// Whitespace around the line is the terminal's, not the operator's.
+		// Whitespace around the line is the terminal's, not the operator's,
+		// and an empty line — with the input ending on it or not — is no code.
 		code := strings.TrimSpace(got.text)
 		if code == "" {
-			return "", fmt.Errorf("%w: the code the phone shows is read as one line at the terminal, and the line was empty", errPairNoCode)
+			return "", fmt.Errorf("%w: the code the phone shows is read as one line %s, and the line was empty", errPairNoCode, where)
 		}
 		return code, nil
 	}

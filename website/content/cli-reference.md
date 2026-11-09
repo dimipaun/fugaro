@@ -2971,7 +2971,9 @@ stop being a QR code; --json carries that same payload for a console.
 
 Its own state is the local config: the project, its database URL and
 Identity Toolkit API key, and the signer account. --json streams the
-pairing as one JSON object per line on stdout for a console to read.
+pairing as one JSON object per line on stdout for a console to read;
+the console has asked the operator for the code itself, and the command
+takes the code back as one line on stdin.
 
 Usage: `fugaro pair`
 
