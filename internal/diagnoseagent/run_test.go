@@ -302,8 +302,10 @@ func TestRunArgsIsTheReadOnlyContract(t *testing.T) {
 	var wantDeny []string
 	for _, path := range []string{
 		"~/.ssh/**", "~/.aws/**", "~/.config/gcloud/**", "~/.claude/**",
-		"~/.config/fugaro/**", "~/.docker/config.json", "~/.git-credentials",
-		"~/.netrc", "~/.npmrc", "~/.pypirc", "/proc/**",
+		"~/.config/fugaro/**", "~/.config/gh/**", "~/.config/rclone/**",
+		"~/.docker/**", "~/.terraform.d/**", "~/.kube/**", "~/.gnupg/**",
+		"~/.git-credentials", "~/.gitconfig", "~/.netrc", "~/.npmrc",
+		"~/.pgpass", "~/.pypirc", "/proc/**",
 	} {
 		for _, tool := range []string{"Read", "Grep", "Glob"} {
 			wantDeny = append(wantDeny, tool+"("+path+")")
@@ -347,8 +349,18 @@ func TestRunArgsAlwaysCarriesACap(t *testing.T) {
 	if got, _ := runFlag(args, "--max-turns"); got != "30" {
 		t.Errorf("--max-turns is %q, want DefaultCap's 30", got)
 	}
-	if got, _ := runFlag(args, "--max-budget-usd"); got != "1.00" {
-		t.Errorf("--max-budget-usd is %q, want DefaultCap's 1.00", got)
+	if got, _ := runFlag(args, "--max-budget-usd"); got != "1" {
+		t.Errorf("--max-budget-usd is %q, want DefaultCap's 1", got)
+	}
+	// The cap the client is given is the cap the post-run check compares
+	// against, whatever its size: a cap below a cent written to two decimals
+	// is "0.00" to the client, which is not the bound this run was promised.
+	args = Args(Request{
+		Handle: runHandle(t, runValue(t, "cents")), Prompt: "prompt", Nonce: NewNonce(),
+		Cap: Cap{Turns: 5, USD: 0.001}, SourceDir: source, EvidenceDir: evidence,
+	})
+	if got, _ := runFlag(args, "--max-budget-usd"); got != "0.001" {
+		t.Errorf("--max-budget-usd is %q for a cap of 0.001, want the cap itself", got)
 	}
 }
 
@@ -379,6 +391,29 @@ func TestRunChildEnvironmentHoldsNothingButTheHandle(t *testing.T) {
 		default:
 			t.Errorf("the child's environment carries %s, which is neither a variable a diagnosis needs nor the handle's own credential", name)
 		}
+	}
+}
+
+// TestSyncBufferOrdersTheReadAgainstAStragglingWrite: procgroup returns while
+// an abandoned copy goroutine may still be writing to the caller's writer, and
+// Run reads this one to get the answer. The guard is a lock, so the case that
+// sees it is the race detector's: a plain bytes.Buffer written here while
+// stream() reads it fails with -race, and this passes.
+func TestSyncBufferOrdersTheReadAgainstAStragglingWrite(t *testing.T) {
+	b := &syncBuffer{}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 2000; i++ {
+			_, _ = b.Write([]byte("{\"type\":\"result\"}\n"))
+		}
+	}()
+	for i := 0; i < 2000; i++ {
+		_ = b.stream()
+	}
+	<-done
+	if len(b.stream()) == 0 {
+		t.Error("the buffer holds nothing after 2000 writes, so this case proves nothing")
 	}
 }
 

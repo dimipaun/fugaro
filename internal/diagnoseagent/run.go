@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/procgroup"
@@ -24,7 +25,14 @@ import (
 // own credential in its environment. So the child is built to be unable to act
 // on anything the log says: it has three read tools and no fourth, no setting
 // source of the machine's own, no MCP server, a working directory and one
-// folder beside it as the only readable roots, and a cap that ends it.
+// folder beside it as the roots it is given, and a cap that ends it.
+//
+// Those two are the roots it is *given* and not the whole of what it can
+// reach: the client does not confine its file tools to them (F16, U2), so what
+// closes a path is the deny payload below, which names the places a diagnosis
+// never has a reason to read. A path that is in neither the roots nor that
+// list is a path this child can read, and the list is therefore the file's own
+// account of the reads it stops.
 //
 // What replaces the run's local internal/gateway, which F16 asks this task to
 // weigh: the gateway is the runner's answer to "the child must not hold the
@@ -56,6 +64,56 @@ const toolAllowList = "Read,Grep,Glob"
 // the rule syntax borrows.
 var childFileTools = []string{"Read", "Grep", "Glob"}
 
+// syncBuffer is the child's standard output, and the read that follows it is
+// why it is a type of its own: the answer is parsed out of what the child
+// wrote once procgroup.Run has returned, and Run can return while a copy
+// goroutine is still writing here — procgroup abandons that goroutine when a
+// child escaped the process group and held the pipe past its drain timeout.
+// internal/mailbox/keychain's boundedBuffer and internal/watch's are this type
+// for the same reason; reading a plain bytes.Buffer here would be a race on
+// the diagnosis itself.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+// stream is the child's output as a slice of its own: a write the abandoned
+// copy goroutine makes after this one cannot reach it.
+func (b *syncBuffer) stream() []byte {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return slices.Clone(b.buf.Bytes())
+}
+
+// syncWriter serializes the writes to the child's standard error with the
+// flush that follows them: the same abandoned copy goroutine that can still be
+// writing there can still be inside the redactor, whose pending state the
+// flush reads.
+type syncWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (s *syncWriter) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.w.Write(p)
+}
+
+// do runs f with the lock held, for the flush that has to come after the last
+// write rather than beside it.
+func (s *syncWriter) do(f func()) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	f()
+}
+
 // childReadDeny are the places a diagnosis never has a reason to read.
 //
 // They are the line, and not a second one behind the working directory: the
@@ -67,20 +125,28 @@ var childFileTools = []string{"Read", "Grep", "Glob"}
 //
 // It is not a list of everything sensitive on a machine: that list cannot be
 // written, and a rule denying the whole filesystem would deny the source tree
-// with it. It is the set a log steering the agent would go for first — the
-// SSH, cloud, Claude and Fugaro configuration, the files a package manager
-// keeps a token in, and /proc, whose environ entries hold every secret this
-// process deliberately kept out of the child's environment.
+// with it. It is the set a log steering the agent would go for first: the SSH,
+// cloud, Claude, GitHub and Fugaro configuration, the files a package manager
+// or an infrastructure tool keeps a token or a cluster credential in, and
+// /proc, whose environ entries hold every secret this process deliberately
+// kept out of the child's environment.
 var childReadDeny = []string{
 	"~/.ssh/**",
 	"~/.aws/**",
 	"~/.config/gcloud/**",
 	"~/.claude/**",
 	"~/.config/fugaro/**",
-	"~/.docker/config.json",
+	"~/.config/gh/**",
+	"~/.config/rclone/**",
+	"~/.docker/**",
+	"~/.terraform.d/**",
+	"~/.kube/**",
+	"~/.gnupg/**",
 	"~/.git-credentials",
+	"~/.gitconfig",
 	"~/.netrc",
 	"~/.npmrc",
+	"~/.pgpass",
 	"~/.pypirc",
 	"/proc/**",
 }
@@ -264,8 +330,17 @@ func Args(req Request) []string {
 	cap := req.Cap.withDefaults()
 	return append(args,
 		"--max-turns", strconv.Itoa(cap.Turns),
-		"--max-budget-usd", strconv.FormatFloat(cap.USD, 'f', 2, 64))
+		"--max-budget-usd", cap.budgetArg())
 }
+
+// budgetArg is the dollar cap as the client's flag takes it and as the
+// messages below name it: one spelling, so the number the client is given and
+// the number the person is told are always the same one. The value is written
+// exactly rather than at two decimals, because rounding is a cap the client
+// does not apply: a cap of a few tenths of a cent is "0.00" there, which is
+// no budget at all, and the in-flight half of D1613 would be gone while the
+// run still reported that it had one.
+func (c Cap) budgetArg() string { return strconv.FormatFloat(c.USD, 'f', -1, 64) }
 
 // Run starts the person's own claude as one child and returns the diagnosis it
 // answered. It is the only place in this package that starts a process, and
@@ -282,12 +357,14 @@ func Run(ctx context.Context, req Request) (Diagnosis, error) {
 		bin = "claude"
 	}
 
-	var out bytes.Buffer
+	out := &syncBuffer{}
 	var stderr io.Writer
 	var stderrRed *redact.Redactor
+	var stderrW *syncWriter
 	if req.Stderr != nil {
 		stderrRed = redact.NewRedactor(req.Stderr, secrets)
-		stderr = stderrRed
+		stderrW = &syncWriter{w: stderrRed}
+		stderr = stderrW
 	}
 	parent := req.ParentEnv
 	if parent == nil {
@@ -299,11 +376,11 @@ func Run(ctx context.Context, req Request) (Diagnosis, error) {
 		Dir:    req.SourceDir,
 		Env:    childEnvironment(parent, req.Handle),
 		Stdin:  strings.NewReader(req.Prompt),
-		Stdout: &out,
+		Stdout: out,
 		Stderr: stderr,
 	})
-	if stderrRed != nil {
-		_ = stderrRed.Flush()
+	if stderrW != nil {
+		stderrW.do(func() { _ = stderrRed.Flush() })
 	}
 	if runErr != nil {
 		return Diagnosis{}, fmt.Errorf("the diagnosis agent could not be run: %w", runErr)
@@ -318,7 +395,7 @@ func Run(ctx context.Context, req Request) (Diagnosis, error) {
 		transcriptRed = redact.NewRedactor(req.Transcript, secrets)
 		transcript = transcriptRed
 	}
-	res, found, err := agent.ParseStream(bytes.NewReader(out.Bytes()), transcript)
+	res, found, err := agent.ParseStream(bytes.NewReader(out.stream()), transcript)
 	if transcriptRed != nil {
 		_ = transcriptRed.Flush()
 	}
@@ -331,8 +408,8 @@ func Run(ctx context.Context, req Request) (Diagnosis, error) {
 		// is read at all: its result event carries no block, so reading one
 		// first would report "the agent wrote no block" for a run that ended
 		// exactly as D1613 says a run that does not settle should end.
-		return Diagnosis{}, fmt.Errorf("the diagnosis was stopped by the cap on this run: the agent ended with %s, which is claude's own report that it reached --max-turns %d or --max-budget-usd %.2f (D1613). Raise the cap and run it again if the answer is worth the spend",
-			safetext.OneLine(res.Subtype), cap.Turns, cap.USD)
+		return Diagnosis{}, fmt.Errorf("the diagnosis was stopped by the cap on this run: the agent ended with %s, which is claude's own report that it reached --max-turns %d or --max-budget-usd %s (D1613). Raise the cap and run it again if the answer is worth the spend",
+			safetext.OneLine(res.Subtype), cap.Turns, cap.budgetArg())
 	case !found:
 		return Diagnosis{}, fmt.Errorf("the diagnosis agent exited with code %d without a result event, so it answered nothing", code)
 	case res.IsError:
@@ -343,7 +420,7 @@ func Run(ctx context.Context, req Request) (Diagnosis, error) {
 	// that reports more than the cap was given did not stay inside it whatever
 	// its --max-budget-usd was set to.
 	if res.CostUSD > cap.USD {
-		return Diagnosis{}, fmt.Errorf("the diagnosis cost $%.2f and the cap for this run is $%.2f (D1613): the run went past the bound it was given, so its answer is not shown. Raise the cap and run it again if the answer is worth the spend", res.CostUSD, cap.USD)
+		return Diagnosis{}, fmt.Errorf("the diagnosis cost $%.2f and the cap for this run is $%s (D1613): the run went past the bound it was given, so its answer is not shown. Raise the cap and run it again if the answer is worth the spend", res.CostUSD, cap.budgetArg())
 	}
 	d, err := parseAnswer(res.Text, req.Nonce)
 	if err != nil {
