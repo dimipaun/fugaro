@@ -13,9 +13,9 @@ import (
 	"github.com/dimipaun/fugaro/internal/issues"
 )
 
-// newIssueCmd builds `fugaro issue`: the commands over the issues
-// `fugaro troubleshoot` saved on this machine — the record and its local store
-// are internal/issues (T-IS1).
+// newIssueCmd builds `fugaro issue`: the commands over the issues a diagnosis
+// saved on this machine — the record and its local store are internal/issues
+// (T-IS1).
 //
 // The folder is the user's own state directory, so nothing here reads a
 // credential, a project or a bucket: `list`, `show` and `dismiss` are reads
@@ -23,20 +23,24 @@ import (
 // are later slices, which is why `dismiss` refuses in a coding agent's session
 // even though it writes no cloud record (D1730): the dismissal it makes is
 // what a steered agent would use to bury a real bug.
+//
+// The help names no command that saves an issue, because none is in this tree
+// yet: the diagnosis that writes one is another plan's, and a reference that
+// told a reader to run it would name a command they cannot type.
 func newIssueCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "issue",
-		Short: "Read, dismiss and file the issues fugaro troubleshoot saved",
-		Long: "Read the issues `fugaro troubleshoot` saved on this machine.\n\n" +
+		Short: "Read and dismiss the issues saved on this machine",
+		Long: "Read the issues saved on this machine.\n\n" +
 			"An issue is one Markdown file under the user's state directory, holding\n" +
 			"the whole issue: a strict header and the diagnosis' own words. `list`\n" +
 			"shows what is saved, `show` prints one, and `dismiss` sets one aside so\n" +
 			"nothing is filed for it. An issue is named by its local ID\n" +
 			"(`local-<run stem>`) until it has been uploaded, and by its number\n" +
 			"(`#0007`) from then on; `show` and `dismiss` take either.\n\n" +
-			"Nothing here files anything: the issue stays on this machine until a\n" +
-			"person runs the submit command, and the text of a record is printed as\n" +
-			"data — it comes from log text this machine did not write.",
+			"Nothing here is uploaded: the issue stays on this machine, and the text\n" +
+			"of a record is printed as data — it comes from log text this machine did\n" +
+			"not write.",
 	}
 	cmd.AddCommand(newIssueListCmd(), newIssueShowCmd(), newIssueDismissCmd())
 	return cmd

@@ -43,7 +43,7 @@ Subcommands:
 - `fugaro graph` -- Print the project's dependency graph
 - `fugaro help` -- Help about any command
 - `fugaro image` -- Build and inspect a workflow's derived container image
-- `fugaro issue` -- Read, dismiss and file the issues fugaro troubleshoot saved
+- `fugaro issue` -- Read and dismiss the issues saved on this machine
 - `fugaro logs` -- Print a run's logs from Cloud Logging
 - `fugaro managed` -- Act on a managed project (a project created by fugaro with the coding agent's refusal removed)
 - `fugaro models` -- Show the models this project can run, and where each is served
@@ -2495,9 +2495,9 @@ This command has no subcommands.
 
 ## `fugaro issue`
 
-Read, dismiss and file the issues fugaro troubleshoot saved
+Read and dismiss the issues saved on this machine
 
-Read the issues `fugaro troubleshoot` saved on this machine.
+Read the issues saved on this machine.
 
 An issue is one Markdown file under the user's state directory, holding
 the whole issue: a strict header and the diagnosis' own words. `list`
@@ -2506,9 +2506,9 @@ nothing is filed for it. An issue is named by its local ID
 (`local-<run stem>`) until it has been uploaded, and by its number
 (`#0007`) from then on; `show` and `dismiss` take either.
 
-Nothing here files anything: the issue stays on this machine until a
-person runs the submit command, and the text of a record is printed as
-data — it comes from log text this machine did not write.
+Nothing here is uploaded: the issue stays on this machine, and the text
+of a record is printed as data — it comes from log text this machine did
+not write.
 
 Usage: `fugaro issue`
 
