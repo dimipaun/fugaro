@@ -16,6 +16,7 @@ package installation
 import (
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -23,7 +24,52 @@ import (
 const (
 	coordinatorTF = "coordinator.tf"
 	variablesTF   = "variables.tf"
+
+	// mcpauthStoreTF is the store's own file, and the reason the store is a
+	// file of its own is that the front door's account may be named by exactly
+	// one grant in coordinator.tf (the count in
+	// TestCoordinatorServiceHasItsOwnAccount reads that file alone): the
+	// store's binding lives beside the bucket it binds, and the account's file
+	// keeps naming it twice.
+	mcpauthStoreTF = "mcpauth_store.tf"
 )
+
+// tfFiles reads every Terraform file of this module, comments stripped, keyed
+// by base name. A test that has to say "no file of this module writes X" —
+// which is what a convenience binding left on a bucket would be — cannot read
+// one file and mean it, and the module is the unit a plan is built from.
+func tfFiles(t *testing.T) map[string]string {
+	t.Helper()
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("reading this module's directory: %v", err)
+	}
+	files := map[string]string{}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".tf") {
+			continue
+		}
+		files[e.Name()] = tfSource(t, e.Name())
+	}
+	return files
+}
+
+// tfFilesNaming returns the module's files that mention any of the given
+// strings, sorted, so a failure names them rather than one of them.
+func tfFilesNaming(t *testing.T, files map[string]string, needles ...string) []string {
+	t.Helper()
+	var out []string
+	for name, src := range files {
+		for _, n := range needles {
+			if strings.Contains(src, n) {
+				out = append(out, name)
+				break
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
 
 // tfSource reads one of this module's files, with its comments removed: what
 // these tests decide is what the module WRITES, and the prose above a resource
@@ -184,9 +230,10 @@ func TestCoordinatorServiceIsPublicAndCarriesNoCredential(t *testing.T) {
 // tokens at the credentials service and holds the FP's database admin through
 // the Firebase root (D922's writer), and a public endpoint whose identity held
 // any of those would make spec.md §8's "no forge credential … there is none to
-// reach" false the day it is turned on. What this account holds is one grant —
-// the runs bucket's read (D932) — and nothing else in this tree or the Firebase
-// root grants it anything.
+// reach" false the day it is turned on. What this account holds is two grants —
+// the runs bucket's read (D932) and the store's objectAdmin (D935, in
+// mcpauth_store.tf) — and nothing else in this tree or the Firebase root grants
+// it anything.
 //
 // A container that fell back to the default compute account would run the
 // front door as an identity nothing in this tree granted anything to and
@@ -235,11 +282,197 @@ func TestCoordinatorServiceHasItsOwnAccount(t *testing.T) {
 		}
 	}
 	if strings.Contains(code, "roles/firebasedatabase.admin") {
-		t.Errorf("%s: the front door's file grants or names the FP's database admin: that is the sweep account's role, granted by the Firebase root, and what a front door may read in the coordinator's own store is D935 — an owner's answer this plan does not have, so no binding on one is planned here", coordinatorTF)
+		t.Errorf("%s: the front door's file grants or names the FP's database admin: that is the sweep account's role, granted by the Firebase root, and what a front door may read in the coordinator's own store is D935's own bucket, whose one binding is in %s", coordinatorTF, mcpauthStoreTF)
 	}
 	// Nobody may act as it: whoever could deploy a revision as it would serve
 	// the front door's answers as the installation's own identity.
 	if strings.Contains(code, "roles/iam.serviceAccountUser") {
 		t.Errorf("%s: nobody is granted actAs on the front door's account, operators included: a deployer as it would serve every run artefact behind the port as this identity", coordinatorTF)
+	}
+}
+
+// TestTheStoreHasExactlyOneMemberAndItIsTheMCPAccount is D935 at the plan's own
+// level: the bucket the mcpauth records live in is a bucket of its own with one
+// binding and one member, and the member is the front door's own account
+// `mcp_server` — never the coordinator's, which is the sweep's.
+//
+// The two accounts are two different reaches and this is where the difference
+// is decided: the sweep's account holds the GitHub App's key, a Bitbucket read
+// at the credentials service and the FP's database admin, and a store whose
+// member list named it would put token hashes and revocation state behind an
+// identity that reads runs. The sweep reads runs and never tokens (P5), and the
+// operator's read of the audit record is served by M10's tool rather than by a
+// credential — so the second the store gains a second member is the second this
+// design has widened, and this test is what makes that fail rather than happen.
+//
+// The name is the other half, and it is the correction of 2026-11-05: the store
+// is a function of the GCP project alone and carries no `fmgd-` prefix, because
+// the managed deployer's `fugaroDeployerStorage` is a project-level binding
+// conditioned on that prefix (deployer.tf:379, :142) and every operator can act
+// as the deployer (deployer.tf:501). A prefixed name would put the store inside
+// the reach it exists to leave — F32 again, one resource over.
+//
+// The mutations this fails on: a second grant on the store's bucket anywhere in
+// this module, a member that is the coordinator's account or a literal, a role
+// other than objectAdmin, and a name that gained `fmgd-`.
+func TestTheStoreHasExactlyOneMemberAndItIsTheMCPAccount(t *testing.T) {
+	files := tfFiles(t)
+	code, ok := files[mcpauthStoreTF]
+	if !ok {
+		t.Fatalf("this module has no %s: D935's store is a bucket of its own with one binding, and the file that creates both is %s", mcpauthStoreTF, mcpauthStoreTF)
+	}
+	grant := tfResource(t, code, "google_storage_bucket_iam_member", "mcpauth_store")
+	for _, want := range []struct{ what, re string }{
+		{"roles/storage.objectAdmin", `(?m)^\s*role\s*=\s*"roles/storage\.objectAdmin"\s*$`},
+		{"the store's own bucket", `(?m)^\s*bucket\s*=\s*google_storage_bucket\.mcpauth_store\[0\]\.name\s*$`},
+		{"the front door's own member", `(?m)^\s*member\s*=\s*google_service_account\.mcp_server\[0\]\.member\s*$`},
+		{"the front door's opt-in", `(?m)^\s*count\s*=\s*local\.mcp_server_on\b`},
+	} {
+		if !regexp.MustCompile(want.re).MatchString(grant) {
+			t.Errorf("%s: the store's one binding sets no %s (D935: the store's IAM names the front door's own account mcp_server and nobody else, and objectAdmin is the narrowest role the plan review accepts here with no condition):\n%s", mcpauthStoreTF, want.what, grant)
+		}
+	}
+	// The member is the front door's own account, and the sweep's account is
+	// named nowhere near the store: it is a different identity with a different
+	// reach, and its name here would be the widening this test exists for.
+	if strings.Contains(grant, "google_service_account.coordinator") {
+		t.Errorf("%s: the store's binding names the coordinator's own account: that is the sweep's account, which reads runs and never tokens, and the store's one member is the front door's own (D935):\n%s", mcpauthStoreTF, grant)
+	}
+	if strings.Contains(code, "google_service_account.coordinator") {
+		t.Errorf("%s: the store's file names the coordinator's own account at all: the store is the front door's own state and the sweep reads runs, not tokens (D935)", mcpauthStoreTF)
+	}
+
+	// One binding, one member: nothing else in this module may name the store's
+	// bucket, and the name itself is written once. A second grant is the second
+	// member, however it is spelled.
+	if named := tfFilesNaming(t, files, "google_storage_bucket.mcpauth_store", "mcpauth_store_bucket"); len(named) != 2 ||
+		named[0] != mcpauthStoreTF || named[1] != "outputs.tf" {
+		t.Errorf("the store's bucket is named by %v, want exactly [%s outputs.tf]: the bucket and its one binding live in the store's own file, and the output that publishes its name is the installation's own (D935: the store's member list is one, and a grant in a third file is a member nobody reviewed)", named, mcpauthStoreTF)
+	}
+
+	// The name, and the prefix it must not carry. The expression is pinned as
+	// an expression rather than read back out of the file, so a later edit that
+	// made the name a variable, or a function of anything but the project,
+	// fails here rather than shipping a name a caller could choose.
+	if !strings.Contains(code, `"fugaro-mcpauth-${var.project}"`) {
+		t.Errorf("%s: the store's bucket is not named fugaro-mcpauth-${var.project}: D935's store is a function of the GCP project alone — the convention the runs bucket and both state buckets follow — so a name a caller could choose is a name that could be pointed at another installation's store", mcpauthStoreTF)
+	}
+	if strings.Contains(code, "fmgd-") {
+		t.Errorf("%s: the store's file names the managed prefix fmgd-: the managed deployer's conditioned storage role is a project-level binding on that prefix (deployer.tf:379, :142) and every operator can act as the deployer (:501), so a store named under it would be readable and rewritable by both (the correction of 2026-11-05)", mcpauthStoreTF)
+	}
+}
+
+// TestTheStoreBucketCarriesNoConvenienceBinding is the half of the store's
+// floor this task can narrow, and the reason it is a test rather than a
+// sentence.
+//
+// Four classes reach a bucket this installation has just made, and they are not
+// one (M4's floor bullet): the project's Owners and Editors through their
+// project-level roles, which no bucket policy narrows and this task cannot take
+// away; anyone else holding a project-level storage role, for the same reason;
+// a basic project Viewer through the convenience bindings GCS attaches to every
+// bucket it creates (projectOwner:/projectEditor: as
+// roles/storage.legacyBucketOwner and projectViewer: as the legacy reader pair,
+// internal/gcpfake/gcs.go:266); and the one member this task grants. The third
+// is the task's to close, and what this test decides is that the plan writes
+// none of it — no legacy role, no convenience member, no authoritative policy
+// resource that would own the whole binding list, and no second member.
+//
+// What it cannot see, and what the plan says so about: the bindings GCS itself
+// attaches at creation are not in the plan, so no plan-level test can read them
+// off (implementation-plan.md §6: "a plan-level test reads the plan, and the
+// plan is not the project's policy"). Taking those off is the repository's
+// existing storage-IAM call — infra.RemoveProjectViewers, which fugaro setup
+// and fugaro update already run on the state and runs buckets — and its call
+// site for this bucket is the release that turns the front door on, because
+// nothing in this tree creates the store yet. Check 8's "a basic project Viewer
+// is refused" is the reading that proves it happened, and it is owner-run.
+//
+// The mutations this fails on: a `projectViewer:` member or a legacy role
+// written onto the store's bucket (which is the shape a convenience binding
+// left on it takes in Terraform), and a second member beside the front door's
+// account.
+func TestTheStoreBucketCarriesNoConvenienceBinding(t *testing.T) {
+	files := tfFiles(t)
+	// The convenience bindings, as Terraform would write them: the four legacy
+	// roles GCS gives a new bucket, and the three project-level member prefixes
+	// they are granted to. Nothing in this tree writes any of them today, which
+	// is what makes the assertion cheap and total.
+	for _, bad := range []string{
+		"roles/storage.legacyBucketOwner", "roles/storage.legacyBucketReader",
+		"roles/storage.legacyObjectOwner", "roles/storage.legacyObjectReader",
+		"projectOwner:", "projectEditor:", "projectViewer:",
+	} {
+		if named := tfFilesNaming(t, files, bad); len(named) > 0 {
+			t.Errorf("%v write %q: a bucket GCS creates answers to its convenience bindings until they are taken off it, and a basic project Viewer reads the store through them (internal/gcpfake/gcs.go:266, docs/design/bucket-iam.md:47). This task's store names one member and no other, so no file of this module may write one of these (D935)", named, bad)
+		}
+	}
+	// And the other route to a member list: an authoritative resource, which
+	// would own the bucket's whole policy rather than add one binding to it.
+	// deploy/terraform/terraform_test.go refuses every such type tree-wide
+	// (TestNoAuthoritativeIAM); this says the same of the store's own file, so
+	// the store cannot be the exception that arrives by accident.
+	for _, bad := range []string{"google_storage_bucket_iam_policy", "google_storage_bucket_iam_binding"} {
+		if named := tfFilesNaming(t, files, bad); len(named) > 0 {
+			t.Errorf("%v write %s: an authoritative IAM resource owns the bucket's whole policy — the members GCS attached included — and this repository grants on shared things additively and never that way (TestNoAuthoritativeIAM):\n%s", named, bad, files[mcpauthStoreTF])
+		}
+	}
+	// One member, so a second cannot be added beside it unnoticed: the store's
+	// bucket is the target of exactly one IAM resource in this module.
+	code := files[mcpauthStoreTF]
+	if got := strings.Count(code, "resource \"google_storage_bucket_iam_"); got != 1 {
+		t.Errorf("%s declares %d bucket IAM resources, want exactly 1 (the front door's one objectAdmin binding): D935's whole content is that the store's IAM names one account, and a second resource here is a second member", mcpauthStoreTF, got)
+	}
+}
+
+// TestTheStoreBucketIsCreatedAndNeverAdopted is the squatting half of D935.
+//
+// `fugaro-mcpauth-<gcp-project>` is a function of the project alone — the shape
+// the runs bucket and both state buckets have — which makes it predictable, and
+// bucket names are global: anyone on the internet can hold that name in another
+// project, and the deployer's own `storage.buckets.create` is unconditioned
+// (deployer.tf:219), so nothing in a managed plan can be relied on to have
+// taken it either. Terraform is the answer and it is a fail-closed one: the
+// bucket is created by `fugaro update` running with the owner's own rights, and
+// a create against a name that already exists fails the apply rather than
+// importing it. So what this test decides is that the plan is a create — no
+// `import` block, no data source, no "use what is there" — and that the bucket
+// is a plain `google_storage_bucket` with the two settings the installer's plan
+// review refuses a bucket without.
+//
+// The mutations this fails on: an import block or a data source for the store,
+// a name taken from a variable rather than derived from the project, a bucket
+// without uniform access or without public access prevention enforced
+// (internal/infra/tf/cover.go refuses both), and force_destroy, which would
+// take the token records and the revocation state with the bucket.
+func TestTheStoreBucketIsCreatedAndNeverAdopted(t *testing.T) {
+	files := tfFiles(t)
+	code, ok := files[mcpauthStoreTF]
+	if !ok {
+		t.Fatalf("this module has no %s: D935's store is created by it and by nothing else", mcpauthStoreTF)
+	}
+	bucket := tfResource(t, code, "google_storage_bucket", "mcpauth_store")
+	for _, want := range []struct{ what, re string }{
+		{"the front door's opt-in", `(?m)^\s*count\s*=\s*local\.mcp_server_on\b`},
+		{"uniform bucket-level access", `(?m)^\s*uniform_bucket_level_access\s*=\s*true\s*$`},
+		{"public access prevention enforced", `(?m)^\s*public_access_prevention\s*=\s*"enforced"\s*$`},
+		{"force_destroy = false", `(?m)^\s*force_destroy\s*=\s*false\s*$`},
+		{"the derived name", `(?m)^\s*name\s*=\s*local\.mcpauth_store_bucket\s*$`},
+	} {
+		if !regexp.MustCompile(want.re).MatchString(bucket) {
+			t.Errorf("%s: the store's bucket sets no %s: the installer's plan review refuses a bucket without uniform access and public access prevention (internal/infra/tf/cover.go), the opt-in is what creates it at all (D934), and force_destroy would take the token records with the bucket:\n%s", mcpauthStoreTF, want.what, bucket)
+		}
+	}
+	// No adoption of a name this installation did not create: no import block,
+	// and no data source read the store out of a bucket that is already there.
+	for name, src := range files {
+		for _, line := range strings.Split(src, "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), "import ") || strings.TrimSpace(line) == "import {" {
+				t.Errorf("%s carries an import block (%q): the store's name is predictable and global, and a bucket this installation did not create is never adopted — a create against a name that already exists fails the apply (D935, 2026-11-05)", name, strings.TrimSpace(line))
+			}
+		}
+		if strings.Contains(src, `data "google_storage_bucket"`) {
+			t.Errorf("%s reads a bucket with a data source: M2 opens only the name this module writes into the installation's outputs, and a data source would read the store out of a bucket somebody else holds (D935, 2026-11-05)", name)
+		}
 	}
 }
