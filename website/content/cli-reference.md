@@ -490,8 +490,10 @@ Subcommands:
 
 Download a run's artifacts, verifying them against its record
 
-Download one artifact NAME, or every artifact the record lists when NAME is
-omitted, verifying each one's size and sha256 against the run's result.json as
+Download one artifact NAME of RUN (a run ID, <repo-slug>/<run-id>, or the last
+four or more characters of a run ID), or every artifact the record lists when
+NAME is omitted, verifying each one's size and sha256 against the run's
+result.json as
 the bytes arrive. A mismatch is an error naming both hashes, and nothing is
 written — not even the file the download streamed into.
 
@@ -518,7 +520,7 @@ Flags:
 | `--out` | string | "" | no | the directory to create the run's artifact directory in (default: the working directory) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
-| `--repo` | string | "" | no | the repository RUN belongs to (owner/name, or a path inside its checkout; needed only for a bare run ID) |
+| `--repo` | string | "" | no | the repository RUN belongs to (owner/name, or a path inside its checkout; needed only for a run ID with no repository in it) |
 
 Subcommands:
 
@@ -528,7 +530,8 @@ This command has no subcommands.
 
 List what a run's record says it delivered
 
-List the artifacts RUN (<repo-slug>/<run-id>, or a bare run ID) recorded in
+List the artifacts RUN (a run ID, <repo-slug>/<run-id>, or the last four or
+more characters of a run ID) recorded in
 its result.json: name, recorded size, short sha256, recorded content type and
 the probe's verdict. The record is shown as it is — a name `get` cannot
 retrieve is listed with the reason, never filtered out, and a missing object is
@@ -548,7 +551,7 @@ Flags:
 | `--json` | bool | `false` | no | print machine-readable output |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
-| `--repo` | string | "" | no | the repository RUN belongs to (owner/name, or a path inside its checkout; needed only for a bare run ID) |
+| `--repo` | string | "" | no | the repository RUN belongs to (owner/name, or a path inside its checkout; needed only for a run ID with no repository in it) |
 
 Subcommands:
 
@@ -1055,7 +1058,12 @@ This command has no subcommands.
 
 Cancel a run, letting the runner open a draft PR first
 
-Cancel RUN (<repo-slug>/<run-id>, or a bare run ID).
+Cancel RUN (a full run ID, or <repo-slug>/<run-id>).
+
+An ending of a run ID is not a run to cancel: given one, cancel lists the
+active runs whose ID ends that way, with their full IDs, and cancels nothing —
+cancelling a run is the one thing here that cannot be taken back, so the run
+has to be named in full.
 
 cancel writes the run's cancel marker; the runner sees it, stops the current
 stage and finalizes a draft PR. If the execution is still in a stage after
@@ -1919,7 +1927,8 @@ This command has no subcommands.
 
 Explain how a run went: status, tests, review findings, the agent's last word, logs
 
-Gather what is known about RUN (<repo-slug>/<run-id>, or a bare run ID): its
+Gather what is known about RUN (a run ID, <repo-slug>/<run-id>, or the last
+four or more characters of a run ID): its
 status and reason, the last test run's failed and flaky tests, the last
 review's findings, the agent's final message, the newest log lines, its cost
 and its pull request. Everything printed is redacted of the credentials in
@@ -2496,7 +2505,8 @@ This command has no subcommands.
 
 Print a run's logs from Cloud Logging
 
-Print the logs of RUN (<repo-slug>/<run-id>, or a bare run ID), oldest first.
+Print the logs of RUN (a run ID, <repo-slug>/<run-id>, or the last four or
+more characters of a run ID), oldest first.
 
 With -f, keep printing until the execution ends and its logs settle. Every
 line is redacted of the credentials in this environment, on top of the

@@ -735,7 +735,7 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 	// went nowhere, silently. No attachment is added to a run that already
 	// went: it started with the task it started with.
 	if prior != nil && len(o.attach) > 0 {
-		return launchResult{}, userErr("run ID %s has already launched; --attach uploads a run's files before it starts, so it never adds attachments to a run that already went — use a new run ID", spec.RunID)
+		return launchResult{}, userErr("run ID %s has already launched; --attach uploads a run's files before it starts, so it never adds attachments to a run that already went — use a new run ID", task.ShortRun(spec.RunID))
 	}
 	if prior == nil && reused {
 		if err := recheckFollowUp(ctx, env, slug, spec, warn); err != nil {
@@ -1188,8 +1188,9 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 		return launchResult{}, err
 	}
 	if o.retry != "" && res.Status == "already-launched" {
+		short := task.ShortRun(res.Run)
 		fmt.Fprintf(warn, "%s launched already; --retry only starts a run that never launched. "+
-			"To see how it went, run fugaro diagnose %s; to redo it, start a new run.\n", res.Run, res.Run)
+			"To see how it went, run fugaro diagnose %s; to redo it, start a new run.\n", short, short)
 	}
 	res.Project = env.lc.Name
 	res.Recipe = launchRecipeOf(spec, chooses)
@@ -1798,7 +1799,7 @@ func runAttempts(cmd *cobra.Command, env *cloudEnv, o *runOptions, text string, 
 			// only be some other process's run reusing the id — too
 			// improbable to recover from; the batch must not silently count
 			// a run it did not itself start.
-			err := fmt.Errorf("run %s was already launched, not by this batch", oneLine(res.Run))
+			err := fmt.Errorf("run %s was already launched, not by this batch", task.ShortRun(oneLine(res.Run)))
 			failStep(rep, step, err)
 			return reportBatchFailure(cmd, o.batch, n, o.asJSON, results, i, err)
 		}
@@ -1857,7 +1858,7 @@ func reportBatchFailure(cmd *cobra.Command, batch string, n int, asJSON bool, re
 	}
 	ids := make([]string, len(results))
 	for j, r := range results {
-		ids[j] = r.RunID
+		ids[j] = task.ShortRun(r.RunID)
 	}
 	return fmt.Errorf("attempt %d of %d: %w; launched %d (batch %s): %s", i+1, n, err, len(results), batch, strings.Join(ids, ", "))
 }
@@ -3272,13 +3273,13 @@ func retrySpec(ctx context.Context, env *cloudEnv, ref string) (string, *task.Sp
 	s := runstore.Open(env.bucket.Bucket, slug, runID)
 	spec, err := s.ReadTask(ctx)
 	if errors.Is(err, runstore.ErrNotFound) {
-		return "", nil, userErr("run %s/%s has no task.json", slug, runID)
+		return "", nil, userErr("run %s has no task.json", task.ShortRun(runID))
 	}
 	if err != nil {
 		return "", nil, remote(err)
 	}
 	if spec.RunID != runID {
-		return "", nil, userErr("run %s/%s holds the task of run %s; it can't be retried", slug, runID, spec.RunID)
+		return "", nil, userErr("run %s holds the task of run %s; it can't be retried", task.ShortRun(runID), task.ShortRun(spec.RunID))
 	}
 	checkout := checkoutOf(ctx, spec.Repo)
 	if spec.Workflow == "" {
@@ -3321,7 +3322,7 @@ func retrySpec(ctx context.Context, env *cloudEnv, ref string) (string, *task.Sp
 	// that speaks for a repository recipe, and the recipe's text or file,
 	// for a report run whose manifest came out empty.
 	if spec.Recipe != nil && (len(spec.DigestRuns) > 0 || digestRecipe(checkoutRoot(ctx, spec.Repo), spec.Recipe)) {
-		return "", nil, userErr("run %s/%s is a report run, and --retry launches the task of its first launch as it stands: its manifest is stale by now, and a repository has one report run at a time, because both would write the same reports — launch a new report run with fugaro run --recipe %s", slug, runID, spec.Recipe.Name)
+		return "", nil, userErr("run %s is a report run, and --retry launches the task of its first launch as it stands: its manifest is stale by now, and a repository has one report run at a time, because both would write the same reports — launch a new report run with fugaro run --recipe %s", task.ShortRun(runID), spec.Recipe.Name)
 	}
 	return slug, spec, nil
 }
@@ -3423,7 +3424,7 @@ func createTask(ctx context.Context, s *runstore.Store, spec *task.Spec) error {
 		return err
 	}
 	if string(a) != string(b) {
-		return userErr("run ID %s already holds a different task", spec.RunID)
+		return userErr("run ID %s already holds a different task", task.ShortRun(spec.RunID))
 	}
 	// The stored task is what the job actually reads: a repeat keeps its
 	// project layer exactly as first launched, however spec just resolved
@@ -3471,9 +3472,9 @@ func printLaunch(w io.Writer, res launchResult, asJSON bool) error {
 // that line is the command's own ("launched <what>") or the reporter's step
 // for a migrated launch ("launch <what>", CL7c).
 func launchWhat(res launchResult) string {
-	what := oneLine(res.Run)
+	what := task.ShortRun(oneLine(res.Run))
 	if res.PR > 0 {
-		what += fmt.Sprintf(" (follow-up of PR #%d, after %s)", res.PR, oneLine(res.PreviousRun))
+		what += fmt.Sprintf(" (follow-up of PR #%d, after %s)", res.PR, task.ShortRun(oneLine(res.PreviousRun)))
 	}
 	return what
 }
@@ -3506,7 +3507,7 @@ func existingLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, spec 
 	runID := spec.RunID
 	check := func(name string) error {
 		if _, err := env.checkExecution(ctx, nil, name, s.Slug(), runID); err != nil {
-			return remote(fmt.Errorf("run %s/%s: not following its execution: %w", s.Slug(), runID, err))
+			return remote(fmt.Errorf("run %s: not following its execution: %w", task.ShortRun(runID), err))
 		}
 		return nil
 	}
@@ -3763,7 +3764,7 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 	if cancelled, err := s.CancelRequested(ctx); err != nil {
 		return res, remote(err)
 	} else if cancelled {
-		return res, userErr("run %s was cancelled; start a new one", res.Run)
+		return res, userErr("run %s was cancelled; start a new one", task.ShortRun(res.Run))
 	}
 	// The job this launch runs on (project_job.go): the shared project job of
 	// the profile the workflow selects, or nil for the per-repository job this
@@ -3844,7 +3845,7 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		rctx, rcancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		releaseClaim(rctx, env, s, holder)
 		rcancel()
-		return res, userErr("run %s was cancelled; start a new one", res.Run)
+		return res, userErr("run %s was cancelled; start a new one", task.ShortRun(res.Run))
 	}
 	// The docker tag's rule, before anything of this launch is written or
 	// reported (D1149): a run whose DEPLOYED job image carries the docker tag

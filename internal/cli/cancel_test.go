@@ -983,6 +983,15 @@ func TestCancelEndingListsAndNeverActs(t *testing.T) {
 	f.run.SetState(secondExec, backend.StateRunning)
 	for _, r := range []struct{ id, title string }{{live, "the running run"}, {second, "the other running run"}} {
 		f.db.Set(budget.PathAgent(appSlug, r.id), map[string]any{"run_id": r.id, "title": r.title})
+		// The title the listing shows is the run's own task.json, not the
+		// feed's: the feed is job-writable and nothing in it is believed
+		// (runCandidates reads the object).
+		spec := &task.Spec{Version: 1, RunID: r.id, Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x", Title: r.title}
+		data, err := spec.Marshal()
+		if err != nil {
+			t.Fatal(err)
+		}
+		putBuildObject(t, f.cloudFixture, "runs/"+appSlug+"/"+r.id+"/task.json", data)
 	}
 
 	for _, args := range [][]string{{"cancel", "3bb2"}, {"cancel", "--json", "3bb2"}} {

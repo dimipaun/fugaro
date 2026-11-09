@@ -135,11 +135,11 @@ func resolvePR(ctx context.Context, env *cloudEnv, repo, slug string, pr int, ex
 	for _, r := range rows {
 		switch r.Status {
 		case runview.StatusError:
-			return nil, userErr("run %s on PR #%d can't be read (%s), so the PR's state is unknown; see fugaro diagnose %s", r.Run, pr, oneLine(r.Reason), r.Run)
+			return nil, userErr("run %s on PR #%d can't be read (%s), so the PR's state is unknown; see fugaro diagnose %s", task.ShortRun(r.RunID), pr, oneLine(r.Reason), task.ShortRun(r.RunID))
 		case runview.StatusLaunching, runview.StatusPending, string(runstore.StatusRunning):
-			return nil, userErr("run %s on PR #%d is still %s; wait for it to finish (fugaro runs ls --pr %d --repo %s) or cancel it", r.Run, pr, r.Status, pr, repo)
+			return nil, userErr("run %s on PR #%d is still %s; wait for it to finish (fugaro runs ls --pr %d --repo %s) or cancel it", task.ShortRun(r.RunID), pr, r.Status, pr, repo)
 		case runview.StatusUnlaunched:
-			fmt.Fprintf(warn, "warning: run %s on PR #%d never launched; leaving it out\n", oneLine(r.Run), pr)
+			fmt.Fprintf(warn, "warning: run %s on PR #%d never launched; leaving it out\n", task.ShortRun(r.RunID), pr)
 			continue
 		}
 		runs = append(runs, r)
@@ -173,7 +173,7 @@ func resolvePR(ctx context.Context, env *cloudEnv, repo, slug string, pr int, ex
 	prev, err := readTask(ctx, env, slug, c.Previous.RunID)
 	switch {
 	case errors.Is(err, runstore.ErrNotFound):
-		return nil, userErr("run %s, the last to update PR #%d, has no task.json, so its base branch is unknown; start a new run instead", c.Previous.Run, pr)
+		return nil, userErr("run %s, the last to update PR #%d, has no task.json, so its base branch is unknown; start a new run instead", task.ShortRun(c.Previous.RunID), pr)
 	case err != nil:
 		return nil, err
 	}
@@ -203,12 +203,12 @@ func resolvePR(ctx context.Context, env *cloudEnv, repo, slug string, pr int, ex
 		// name (below). Refused rather than trusted, the way an unreadable
 		// record is.
 		if ruled {
-			return nil, userErr("run %s, the last to update PR #%d, has no record left, so whether it left the repository's owner any decisions cannot be known; --owner-ruled answers the decisions a run left waiting, so a launch carrying one here would reach the reviewers as an answer to nothing: start a new run instead", oneLine(c.Previous.Run), pr)
+			return nil, userErr("run %s, the last to update PR #%d, has no record left, so whether it left the repository's owner any decisions cannot be known; --owner-ruled answers the decisions a run left waiting, so a launch carrying one here would reach the reviewers as an answer to nothing: start a new run instead", task.ShortRun(c.Previous.RunID), pr)
 		}
 	case corruptObject(err):
-		return nil, userErr("run %s's result.json is unreadable (%v), so the mode it ran under and the recipe the runner chose for it are unknown; nothing was launched", c.Previous.Run, err)
+		return nil, userErr("run %s's result.json is unreadable (%v), so the mode it ran under and the recipe the runner chose for it are unknown; nothing was launched", task.ShortRun(c.Previous.RunID), err)
 	case err != nil:
-		return nil, remote(fmt.Errorf("reading the record of run %s to keep its mode and its recipe: %w; nothing was launched", c.Previous.Run, err))
+		return nil, remote(fmt.Errorf("reading the record of run %s to keep its mode and its recipe: %w; nothing was launched", task.ShortRun(c.Previous.RunID), err))
 	default:
 		od := rec.OwnerDecisions.Bounded()
 		// A ruling is accepted only where there is something to answer (OD1).
@@ -220,7 +220,7 @@ func resolvePR(ctx context.Context, env *cloudEnv, repo, slug string, pr int, ex
 		// answers what a run left waiting, which is the one thing it is for.
 		if od == nil && ruled {
 			return nil, userErr("run %s, the last to update PR #%d, left the repository's owner no decisions to answer, so there is nothing here for --owner-ruled to answer: the flag is the owner's ruling on the findings a run left waiting for them, and the reviewers read it as the answer to those; launch again without it, or start a new follow-up",
-				oneLine(c.Previous.Run), pr)
+				task.ShortRun(c.Previous.RunID), pr)
 		}
 		// The previous run stopped on findings only the owner can settle
 		// (OD1): a follow-up launched without their answer would read the same
@@ -231,7 +231,7 @@ func resolvePR(ctx context.Context, env *cloudEnv, repo, slug string, pr int, ex
 		// has the question in front of them.
 		if od != nil && !ruled {
 			return nil, userErr("%s; answer them and launch again with --owner-ruled <text-or-file>, which is appended to this follow-up's brief verbatim",
-				ownerWaitingRefusal(c.Previous.Run, pr, od))
+				ownerWaitingRefusal(task.ShortRun(c.Previous.RunID), pr, od))
 		}
 		// The runner chose this run's recipe (agent.recipe at the ref); a
 		// follow-up keeps it, as the runner ignores agent.recipe on follow-ups.
@@ -265,7 +265,7 @@ func resolvePR(ctx context.Context, env *cloudEnv, repo, slug string, pr int, ex
 	ref, ok := branchName(c.Ref, !recorded)
 	if !ok {
 		return nil, userErr("run %s, the last to update PR #%d, ran on ref %q, which is not a branch name (a tag or a commit?); a follow-up reads its configuration from its base branch, so start a new run instead",
-			c.Previous.Run, pr, oneLine(c.Ref))
+			task.ShortRun(c.Previous.RunID), pr, oneLine(c.Ref))
 	}
 	c.Ref = ref
 	if c.Workflow == "" {
@@ -325,13 +325,13 @@ func readTask(ctx context.Context, env *cloudEnv, slug, id string) (*task.Spec, 
 	case errors.Is(err, runstore.ErrNotFound):
 		return nil, err
 	case corruptObject(err):
-		return nil, userErr("run %s/%s's task.json is unreadable: %v", slug, id, err)
+		return nil, userErr("run %s's task.json is unreadable: %v", task.ShortRun(id), err)
 	case err != nil:
 		return nil, remote(err)
 	}
 	spec, err := task.Parse(raw)
 	if err != nil {
-		return nil, userErr("run %s/%s's task.json is unreadable: %v", slug, id, err)
+		return nil, userErr("run %s's task.json is unreadable: %v", task.ShortRun(id), err)
 	}
 	return spec, nil
 }
@@ -355,13 +355,13 @@ func checkRoot(ctx context.Context, env *cloudEnv, slug, root, branch string, pr
 	case errors.Is(err, runstore.ErrNotFound):
 		return nil // expired: the runs that remain agree on the branch
 	case corruptObject(err):
-		return userErr("run %s/%s, which PR #%d's branch names, has an unreadable result.json (%v); see fugaro diagnose %s/%s", slug, root, pr, err, slug, root)
+		return userErr("run %s, which PR #%d's branch names, has an unreadable result.json (%v); see fugaro diagnose %s", task.ShortRun(root), pr, err, task.ShortRun(root))
 	case err != nil:
 		return remote(err)
 	}
 	if rec.Branch != branch {
-		return userErr("run %s/%s, which PR #%d's branch %s names, records branch %q; the PR is not the one it opened, so follow it up by hand",
-			slug, root, pr, branch, oneLine(rec.Branch))
+		return userErr("run %s, which PR #%d's branch %s names, records branch %q; the PR is not the one it opened, so follow it up by hand",
+			task.ShortRun(root), pr, branch, oneLine(rec.Branch))
 	}
 	return nil
 }
@@ -401,15 +401,15 @@ func checkBranchLock(ctx context.Context, env *cloudEnv, slug, branch string, no
 		return nil
 	}
 	if !lock.Stale(h, executionTerminal(ctx, env, h.Execution)) {
-		return userErr("branch busy: run %s holds it until %s; wait for it, or cancel it", oneLine(h.RunID), h.ExpiresAt.UTC().Format(time.RFC3339))
+		return userErr("branch busy: run %s holds it until %s; wait for it, or cancel it", task.ShortRun(h.RunID), h.ExpiresAt.UTC().Format(time.RFC3339))
 	}
 	gen, err := lock.Takeover(ctx, env.bucket, key, h)
 	switch {
 	case err == nil:
-		fmt.Fprintf(warn, "note: run %s's execution has ended (confirmed by the backend); cleared its branch lock\n", oneLine(h.RunID))
+		fmt.Fprintf(warn, "note: run %s's execution has ended (confirmed by the backend); cleared its branch lock\n", task.ShortRun(h.RunID))
 		return nil
 	case errors.Is(err, lock.ErrHolderChanged):
-		return userErr("branch busy: run %s holds it until %s; wait for it, or cancel it", oneLine(h.RunID), h.ExpiresAt.UTC().Format(time.RFC3339))
+		return userErr("branch busy: run %s holds it until %s; wait for it, or cancel it", task.ShortRun(h.RunID), h.ExpiresAt.UTC().Format(time.RFC3339))
 	case isAccessDenied(err):
 		return userErr("%s", lockClearMessage(env, key, gen, h.RunID))
 	default:
@@ -460,14 +460,14 @@ func lockClearMessage(env *cloudEnv, key string, gen int64, runID string) string
 			object = "gs://" + name + "/" + key
 		}
 		return fmt.Sprintf("the lock of run %s is held by an execution that ended, but it could not be read to name its generation safely; an operator must inspect %s by hand before clearing it",
-			oneLine(runID), object)
+			task.ShortRun(runID), object)
 	}
 	object := key
 	if name := env.lc.RunsBucketName(); name != "" {
 		object = fmt.Sprintf("gs://%s/%s#%d", name, key, gen)
 	}
 	return fmt.Sprintf("the lock of run %s is held by an execution that ended; an operator must clear it (or the sweeper does): gcloud storage rm %s",
-		oneLine(runID), object)
+		task.ShortRun(runID), object)
 }
 
 // prSpec builds the spec of fugaro run --pr: a stored follow-up that a
@@ -774,7 +774,7 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 // the same way.
 func followUpRigor(o *runOptions, c *prChain) (rigor.Mode, error) {
 	req := rigor.Mode(o.rigor)
-	if err := refuseFollowUpRigor(req, c.Rigor, c.Previous.Run, o.pr[0], "--mode", ""); err != nil {
+	if err := refuseFollowUpRigor(req, c.Rigor, task.ShortRun(c.Previous.RunID), o.pr[0], "--mode", ""); err != nil {
 		return "", err
 	}
 	return rigor.Strictest(req, c.Rigor), nil
@@ -823,11 +823,11 @@ func recheckFollowUp(ctx context.Context, env *cloudEnv, slug string, spec *task
 		return err
 	}
 	if c.Branch != spec.Branch {
-		return userErr("run %s/%s continues %s, but PR #%d is on %s; start a new follow-up: fugaro run --pr %d", slug, spec.RunID, spec.Branch, spec.PR, c.Branch, spec.PR)
+		return userErr("run %s continues %s, but PR #%d is on %s; start a new follow-up: fugaro run --pr %d", task.ShortRun(spec.RunID), spec.Branch, spec.PR, c.Branch, spec.PR)
 	}
 	if c.Previous.RunID != spec.PreviousRun {
-		return userErr("run %s/%s follows %s, but run %s has updated PR #%d since; start a new follow-up: fugaro run --pr %d",
-			slug, spec.RunID, spec.PreviousRun, c.Previous.Run, spec.PR, spec.PR)
+		return userErr("run %s follows %s, but run %s has updated PR #%d since; start a new follow-up: fugaro run --pr %d",
+			task.ShortRun(spec.RunID), task.ShortRun(spec.PreviousRun), task.ShortRun(c.Previous.RunID), spec.PR, spec.PR)
 	}
 	// The raise-only rule again, on the request the stored task itself carries
 	// (T5.2, D6, F14), after the two checks above because both read the chain
@@ -840,14 +840,14 @@ func recheckFollowUp(ctx context.Context, env *cloudEnv, slug string, spec *task
 	// alone, which is what the recorded mode is not — and it has no resolution
 	// left to make, since the task is reused as it is. Both are refused, and
 	// the cure is a new follow-up, which resolves the mode again.
-	subject := fmt.Sprintf("the stored task of run %s/%s", slug, spec.RunID)
+	subject := fmt.Sprintf("the stored task of run %s", task.ShortRun(spec.RunID))
 	cure := fmt.Sprintf("; start a new follow-up: fugaro run --pr %d", spec.PR)
-	if err := refuseFollowUpRigor(rigor.Mode(spec.Rigor), c.Rigor, c.Previous.Run, spec.PR, subject, cure); err != nil {
+	if err := refuseFollowUpRigor(rigor.Mode(spec.Rigor), c.Rigor, task.ShortRun(c.Previous.RunID), spec.PR, subject, cure); err != nil {
 		return err
 	}
 	if spec.Rigor == "" && c.Rigor != "" {
 		return userErr("%s asks for no rigor mode, but run %s, the last to update PR #%d, recorded %s, which a follow-up keeps%s",
-			subject, c.Previous.Run, spec.PR, c.Rigor, cure)
+			subject, task.ShortRun(c.Previous.RunID), spec.PR, c.Rigor, cure)
 	}
 	return nil
 }
@@ -870,7 +870,7 @@ func carryChosenRecipe(ctx context.Context, env *cloudEnv, repo string, c *prCha
 		rcp = &task.Recipe{Name: ch.Name, Source: ch.Source}
 	} else {
 		msg := func(cause error) error {
-			return fmt.Errorf("the recipe run %s ran (%s) cannot be used: %w; pass --recipe NAME to choose another", pluginwire.Printable(oneLineCLI(c.Previous.Run)), ch.Name, cause)
+			return fmt.Errorf("the recipe run %s ran (%s) cannot be used: %w; pass --recipe NAME to choose another", task.ShortRun(c.Previous.Run), ch.Name, cause)
 		}
 		wrap := func(err error) error {
 			var ee *ExitError
@@ -896,9 +896,9 @@ func carryChosenRecipe(ctx context.Context, env *cloudEnv, repo string, c *prCha
 		rcp = rr.taskRecipe()
 		changed = ch.SHA256 != "" && recipe.Sum(rr.Text) != ch.SHA256
 	}
-	fmt.Fprintf(warn, "note: keeping recipe %s, which the runner chose for run %s\n", pluginwire.Printable(ch.Name), pluginwire.Printable(oneLineCLI(c.Previous.Run)))
+	fmt.Fprintf(warn, "note: keeping recipe %s, which the runner chose for run %s\n", pluginwire.Printable(ch.Name), task.ShortRun(c.Previous.Run))
 	if changed {
-		fmt.Fprintf(warn, "note: recipe %s has changed since run %s\n", pluginwire.Printable(ch.Name), pluginwire.Printable(oneLineCLI(c.Previous.Run)))
+		fmt.Fprintf(warn, "note: recipe %s has changed since run %s\n", pluginwire.Printable(ch.Name), task.ShortRun(c.Previous.Run))
 	}
 	return rcp, nil
 }

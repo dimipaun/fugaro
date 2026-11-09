@@ -121,7 +121,8 @@ func newArtifactsLsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "ls RUN",
 		Short: "List what a run's record says it delivered",
-		Long: "List the artifacts RUN (<repo-slug>/<run-id>, or a bare run ID) recorded in\n" +
+		Long: "List the artifacts RUN (a run ID, <repo-slug>/<run-id>, or the last four or\n" +
+			"more characters of a run ID) recorded in\n" +
 			"its result.json: name, recorded size, short sha256, recorded content type and\n" +
 			"the probe's verdict. The record is shown as it is — a name `get` cannot\n" +
 			"retrieve is listed with the reason, never filtered out, and a missing object is\n" +
@@ -131,7 +132,7 @@ func newArtifactsLsCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error { return runArtifactsLs(cmd, &o, args[0]) },
 	}
 	f := cmd.Flags()
-	f.StringVar(&o.repo, "repo", "", "the repository RUN belongs to (owner/name, or a path inside its checkout; needed only for a bare run ID)")
+	f.StringVar(&o.repo, "repo", "", "the repository RUN belongs to (owner/name, or a path inside its checkout; needed only for a run ID with no repository in it)")
 	f.BoolVar(&o.asJSON, "json", false, "print machine-readable output")
 	addCloudFlags(cmd, &o.cloud)
 	return cmd
@@ -149,8 +150,10 @@ func newArtifactsGetCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "get RUN [NAME]",
 		Short: "Download a run's artifacts, verifying them against its record",
-		Long: "Download one artifact NAME, or every artifact the record lists when NAME is\n" +
-			"omitted, verifying each one's size and sha256 against the run's result.json as\n" +
+		Long: "Download one artifact NAME of RUN (a run ID, <repo-slug>/<run-id>, or the last\n" +
+			"four or more characters of a run ID), or every artifact the record lists when\n" +
+			"NAME is omitted, verifying each one's size and sha256 against the run's\n" +
+			"result.json as\n" +
 			"the bytes arrive. A mismatch is an error naming both hashes, and nothing is\n" +
 			"written — not even the file the download streamed into.\n\n" +
 			"The destination is a fresh directory this command creates,\n" +
@@ -171,28 +174,37 @@ func newArtifactsGetCmd() *cobra.Command {
 		},
 	}
 	f := cmd.Flags()
-	f.StringVar(&o.repo, "repo", "", "the repository RUN belongs to (owner/name, or a path inside its checkout; needed only for a bare run ID)")
+	f.StringVar(&o.repo, "repo", "", "the repository RUN belongs to (owner/name, or a path inside its checkout; needed only for a run ID with no repository in it)")
 	f.StringVar(&o.out, "out", "", "the directory to create the run's artifact directory in (default: the working directory)")
 	f.BoolVar(&o.force, "force", false, "replace a file that is already at a destination path")
 	addCloudFlags(cmd, &o.cloud)
 	return cmd
 }
 
-// artifactsRun resolves RUN ([<repo-slug>/]<run-id>) and --repo to the store
-// of one run. --repo names the repository a bare run ID belongs to, and a RUN
-// that already carries a slug has to agree with it.
+// artifactsRun resolves RUN ([<repo-slug>/]<run-id>, or an ending) and --repo
+// to the store of one run. --repo names the repository a run ID with no
+// repository in it belongs to, and a run that resolves elsewhere is refused.
 //
 // The run itself is looked up in the bucket either way. --repo answers "which
-// repository", not "does this run exist", so with it the lookup is one object
-// check under the named repository rather than a search across all of them
-// (locateRun: runstore.Locate). Doing without that check — an earlier version
-// returned a store for anything that was shaped like a run ID — reports a run
-// that was never launched as a run that recorded no artifacts: "it never
-// finished" about a run that never started, which sends an operator looking
-// for a container that died when they mistyped an id.
-func artifactsRun(ctx context.Context, env *cloudEnv, ref, repo string) (*runstore.Store, error) {
+// repository", not "does this run exist", so with a full run ID the lookup is
+// one object check under the named repository rather than a search across all
+// of them (locateRun: runstore.Locate) — the ID may exist in two repositories,
+// and --repo is what says which one is meant. Doing without the check — an
+// earlier version returned a store for anything shaped like a run ID — reports
+// a run that was never launched as a run that recorded no artifacts: "it never
+// finished" about a run that never started, which sends an operator looking for
+// a container that died when they mistyped an id.
+//
+// An ending cannot be narrowed that way: resolving it is a walk over every
+// repository's run IDs (runstore.ResolveEnding), so it is resolved exactly as
+// the other read commands resolve one — the active runs, then the last seven
+// days — and --repo is then checked against where it resolved (SR14). A run of
+// another repository is refused rather than read, so --repo is never a way
+// around the repository in the object key; a person naming both a repository
+// and a run that is in it reads the run they meant.
+func artifactsRun(ctx context.Context, env *cloudEnv, ref, repo string, o resolveRunOptions) (*runstore.Store, error) {
 	if repo == "" {
-		slug, id, err := locateRun(ctx, env, ref)
+		slug, id, err := resolveRun(ctx, env, ref, o)
 		if err != nil {
 			return nil, err
 		}
@@ -202,28 +214,52 @@ func artifactsRun(ctx context.Context, env *cloudEnv, ref, repo string) (*runsto
 	if err != nil {
 		return nil, err
 	}
-	if strings.Contains(ref, "/") {
-		refSlug, id, err := parseRunRef(ref)
-		if err != nil {
+	if !endingRef(ref) {
+		if strings.Contains(ref, "/") {
+			refSlug, id, err := parseRunRef(ref)
+			if err != nil {
+				return nil, err
+			}
+			if refSlug != slug {
+				return nil, userErr("run %s is in %s, but --repo names %s", ref, refSlug, slug)
+			}
+			if _, _, err := locateRun(ctx, env, slug+"/"+id); err != nil {
+				return nil, err
+			}
+			return runstore.Open(env.bucket.Bucket, slug, id), nil
+		}
+		// The run ID's form is checked here because it becomes part of an object
+		// name (the same rule locateRun applies to a bare ID).
+		if _, err := runstore.RunTime(ref); err != nil {
+			return nil, userErr("%q is neither <repo-slug>/<run-id> nor a run ID", ref)
+		}
+		if _, _, err := locateRun(ctx, env, slug+"/"+ref); err != nil {
 			return nil, err
 		}
-		if refSlug != slug {
-			return nil, userErr("run %s is in %s, but --repo names %s", ref, refSlug, slug)
-		}
-		if _, _, err := locateRun(ctx, env, slug+"/"+id); err != nil {
-			return nil, err
-		}
-		return runstore.Open(env.bucket.Bucket, slug, id), nil
+		return runstore.Open(env.bucket.Bucket, slug, ref), nil
 	}
-	// The run ID's form is checked here because it becomes part of an object
-	// name (the same rule locateRun applies to a bare ID).
-	if _, err := runstore.RunTime(ref); err != nil {
-		return nil, userErr("%q is neither <repo-slug>/<run-id> nor a run ID", ref)
-	}
-	if _, _, err := locateRun(ctx, env, slug+"/"+ref); err != nil {
+	runSlug, id, err := resolveRun(ctx, env, ref, o)
+	if err != nil {
 		return nil, err
 	}
-	return runstore.Open(env.bucket.Bucket, slug, ref), nil
+	if runSlug != slug {
+		return nil, userErr("run %s/%s is in %s, but --repo names %s", runSlug, id, runSlug, slug)
+	}
+	return runstore.Open(env.bucket.Bucket, slug, id), nil
+}
+
+// endingRef reports whether ref is an ending rather than a run named exactly:
+// the one shape resolveRun resolves against the active runs and the last seven
+// days instead of handing to locateRun. It is resolveRun's own first test, kept
+// in one place because artifactsRun takes the two apart for a different reason
+// — a full ID is resolved inside the repository --repo names, and an ending
+// cannot be (see its own note).
+func endingRef(ref string) bool {
+	if strings.Contains(ref, "/") {
+		return false
+	}
+	_, err := runstore.RunTime(ref)
+	return err != nil
 }
 
 // readArtifactRecord reads the run's result.json, the one thing both
@@ -252,7 +288,9 @@ func runArtifactsLs(cmd *cobra.Command, o *artifactsLsOptions, ref string) error
 		return err
 	}
 
-	s, err := artifactsRun(ctx, env, ref, o.repo)
+	s, err := artifactsRun(ctx, env, ref, o.repo, resolveRunOptions{
+		in: cmd.InOrStdin(), out: cmd.OutOrStdout(), errOut: cmd.ErrOrStderr(), asJSON: o.asJSON,
+	})
 	if err != nil {
 		return err
 	}
@@ -373,7 +411,9 @@ func runArtifactsGet(cmd *cobra.Command, o *artifactsGetOptions, ref, name strin
 		return err
 	}
 
-	s, err := artifactsRun(ctx, env, ref, o.repo)
+	s, err := artifactsRun(ctx, env, ref, o.repo, resolveRunOptions{
+		in: cmd.InOrStdin(), out: cmd.OutOrStdout(), errOut: cmd.ErrOrStderr(),
+	})
 	if err != nil {
 		return err
 	}

@@ -15,6 +15,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/report"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // Cancel statuses, as cancel --json reports them.
@@ -72,7 +73,11 @@ func newCancelCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "cancel RUN",
 		Short: "Cancel a run, letting the runner open a draft PR first",
-		Long: "Cancel RUN (<repo-slug>/<run-id>, or a bare run ID).\n\n" +
+		Long: "Cancel RUN (a full run ID, or <repo-slug>/<run-id>).\n\n" +
+			"An ending of a run ID is not a run to cancel: given one, cancel lists the\n" +
+			"active runs whose ID ends that way, with their full IDs, and cancels nothing —\n" +
+			"cancelling a run is the one thing here that cannot be taken back, so the run\n" +
+			"has to be named in full.\n\n" +
 			"cancel writes the run's cancel marker; the runner sees it, stops the current\n" +
 			"stage and finalizes a draft PR. If the execution is still in a stage after\n" +
 			"--grace, cancel stops it through Cloud Run. It never stops a run that is\n" +
@@ -138,12 +143,21 @@ func cancelRun(ctx context.Context, env *cloudEnv, o *cancelOptions, arg string,
 			_ = sink.Close()
 		}
 	}()
-	// Not locateLaunched: a never-launched run is a case cancel handles.
-	slug, id, err := locateRun(ctx, env, arg)
+	// Not locateLaunched: a never-launched run is a case cancel handles. The
+	// lookup is active-only (D1710): an ending names the active runs it could
+	// mean and nothing else — never the seven-day window, whose runs cannot be
+	// cancelled — and it answers with that list rather than with a run, so this
+	// command only ever acts on an ID a person named in full.
+	slug, id, err := resolveRun(ctx, env, arg, resolveRunOptions{out: out, errOut: errOut, activeOnly: true})
 	if err != nil {
 		return err
 	}
 	ref := slug + "/" + id
+	// short is how every message that names this run shows it (SR14, spec.md
+	// §1): the last four characters of its ID, the form every surface shows a
+	// run in. ref stays the run's own name — the bucket path, the hint a
+	// command is given, and --json's field, which D1705 keeps whole.
+	short := task.ShortRun(id)
 	if newRep != nil {
 		// The reporter opens where the cancel's own work does, once the run is
 		// located: a ref this command does not resolve is refused before there
@@ -155,7 +169,7 @@ func cancelRun(ctx context.Context, env *cloudEnv, o *cancelOptions, arg string,
 		// progress line a person waits on, and the wait itself is the grace
 		// period — minutes, with the runner finalizing behind it (G1).
 		out = loggedOut(out, sink)
-		step = rep.Step("cancel " + ref)
+		step = rep.Step("cancel " + task.ShortRun(id))
 		rep.Pause()
 	}
 	emit := func(r cancelResult) error {
@@ -251,9 +265,9 @@ func cancelRun(ctx context.Context, env *cloudEnv, o *cancelOptions, arg string,
 	}
 	if !o.asJSON {
 		if o.now {
-			_, _ = fmt.Fprintf(out, "cancel requested for %s; cancelling the execution now…\n", ref)
+			_, _ = fmt.Fprintf(out, "cancel requested for %s; cancelling the execution now…\n", short)
 		} else {
-			_, _ = fmt.Fprintf(out, "cancel requested for %s; waiting up to %s for the runner to finalize a draft PR…\n", ref, grace)
+			_, _ = fmt.Fprintf(out, "cancel requested for %s; waiting up to %s for the runner to finalize a draft PR…\n", short, grace)
 		}
 	}
 
@@ -289,7 +303,7 @@ func cancelRun(ctx context.Context, env *cloudEnv, o *cancelOptions, arg string,
 				break
 			}
 			// Still finalizing after the extension: leave it to the task timeout.
-			return userErr("the run is still finalizing after %s; not cancelling it mid-finalize; check fugaro diagnose %s", limit, ref)
+			return userErr("the run is still finalizing after %s; not cancelling it mid-finalize; check fugaro diagnose %s", limit, short)
 		}
 		select {
 		case <-ctx.Done():
@@ -526,6 +540,10 @@ func printCancel(w io.Writer, r cancelResult, o *cancelOptions) error {
 	}
 	var msg string
 	r.Run, r.PR = oneLine(r.Run), oneLine(r.PR)
+	// The text a person reads names the run by its short ID (SR14, spec.md
+	// §1); --json above printed the field whole, which is what D1705 keeps it
+	// for.
+	short := task.ShortRun(r.Run)
 	// lockNote, appended where LockHeld may be set, is true whichever of
 	// clearStaleLock's outcomes set it: cleared (a separate stderr line
 	// already said so) or not (one of them will, in time) are both cases
@@ -536,11 +554,11 @@ func printCancel(w io.Writer, r cancelResult, o *cancelOptions) error {
 	}
 	switch r.Status {
 	case cancelAlreadyFinished:
-		msg = fmt.Sprintf("%s has already finished; nothing to cancel%s", r.Run, lockNote)
+		msg = fmt.Sprintf("%s has already finished; nothing to cancel%s", short, lockNote)
 	case cancelNotLaunched:
-		msg = fmt.Sprintf("%s was never launched; marked it cancelled, so fugaro run --retry refuses it", r.Run)
+		msg = fmt.Sprintf("%s was never launched; marked it cancelled, so fugaro run --retry refuses it", short)
 	case cancelLaunching:
-		msg = fmt.Sprintf("a launch of %s is in flight; marked it cancelled, so the launch is refused or its runner stops at bootstrap; check fugaro runs ls", r.Run)
+		msg = fmt.Sprintf("a launch of %s is in flight; marked it cancelled, so the launch is refused or its runner stops at bootstrap; check fugaro runs ls", short)
 	case cancelFinalized:
 		switch {
 		case r.PR != "":
@@ -548,16 +566,16 @@ func printCancel(w io.Writer, r cancelResult, o *cancelOptions) error {
 		case r.NoPR:
 			msg = "finalized; no pull request was needed"
 		default:
-			msg = fmt.Sprintf("finalized; check fugaro diagnose %s for its PR", r.Run)
+			msg = fmt.Sprintf("finalized; check fugaro diagnose %s for its PR", short)
 		}
 	case cancelUnfinalized:
-		msg = fmt.Sprintf("the run ended without finalizing; check fugaro diagnose %s%s", r.Run, lockNote)
+		msg = fmt.Sprintf("the run ended without finalizing; check fugaro diagnose %s%s", short, lockNote)
 	default:
 		lead := "grace period over; cancelled the execution."
 		if o.now {
 			lead = "cancelled the execution."
 		}
-		msg = fmt.Sprintf("%s The run may not have a draft PR; check fugaro diagnose %s%s", lead, r.Run, lockNote)
+		msg = fmt.Sprintf("%s The run may not have a draft PR; check fugaro diagnose %s%s", lead, short, lockNote)
 	}
 	_, err := fmt.Fprintln(w, msg)
 	return err

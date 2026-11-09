@@ -44,7 +44,8 @@ func newLogsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "logs RUN",
 		Short: "Print a run's logs from Cloud Logging",
-		Long: "Print the logs of RUN (<repo-slug>/<run-id>, or a bare run ID), oldest first.\n\n" +
+		Long: "Print the logs of RUN (a run ID, <repo-slug>/<run-id>, or the last four or\n" +
+			"more characters of a run ID), oldest first.\n\n" +
 			"With -f, keep printing until the execution ends and its logs settle. Every\n" +
 			"line is redacted of the credentials in this environment, on top of the\n" +
 			"runner's own redaction.",
@@ -69,7 +70,9 @@ func runLogs(cmd *cobra.Command, o *logsOptions, ref string) error {
 		return err
 	}
 	defer env.Close()
-	_, l, _, err := locateLaunched(ctx, env, ref)
+	_, l, _, err := locateLaunched(ctx, env, ref, resolveRunOptions{
+		in: cmd.InOrStdin(), out: cmd.OutOrStdout(), errOut: cmd.ErrOrStderr(), asJSON: o.asJSON,
+	})
 	if err != nil {
 		return err
 	}
@@ -120,11 +123,11 @@ func logQuery(l *runstore.Launch, follow bool) backend.LogQuery {
 	return q
 }
 
-// locateLaunched resolves ref and returns its store, its launch as the
-// views see it (ownerLaunch) and its "<slug>/<run-id>". A run that never
-// launched is a user error.
-func locateLaunched(ctx context.Context, env *cloudEnv, ref string) (*runstore.Store, *runstore.Launch, string, error) {
-	slug, id, err := locateRun(ctx, env, ref)
+// locateLaunched resolves ref (resolveRun: a full ID, <slug>/<run-id>, or an
+// ending) and returns its store, its launch as the views see it (ownerLaunch)
+// and its "<slug>/<run-id>". A run that never launched is a user error.
+func locateLaunched(ctx context.Context, env *cloudEnv, ref string, o resolveRunOptions) (*runstore.Store, *runstore.Launch, string, error) {
+	slug, id, err := resolveRun(ctx, env, ref, o)
 	if err != nil {
 		return nil, nil, "", err
 	}

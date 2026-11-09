@@ -464,14 +464,11 @@ func (o resolveRunOptions) notes() io.Writer {
 // shows the same candidates and the endings that tell them apart, so nothing
 // that cannot answer is handed a run it did not choose. An ending that names
 // none is D1709's refusal, whose way out is the full ID.
-//
-// Nothing calls it yet: the commands that accept an ending are wired to it at
-// SR14.
 func resolveRun(ctx context.Context, env *cloudEnv, ref string, o resolveRunOptions) (slug, runID string, err error) {
 	// A full ID and <slug>/<run-id> are locateRun's, refusals included: this
 	// adds endings to what a command accepts and changes nothing about what it
 	// accepts already.
-	if _, err := runstore.RunTime(ref); strings.Contains(ref, "/") || err == nil {
+	if !endingRef(ref) {
 		return locateRun(ctx, env, ref)
 	}
 	// The minimum is checked here as well as in the resolver, because the
