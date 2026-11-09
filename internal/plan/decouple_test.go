@@ -373,6 +373,49 @@ func TestGainRefusesAConsumerTheRecordDoesNotName(t *testing.T) {
 	}
 }
 
+// TestGainRefusesAWaitOnAnIntegrationThatRunsNoTask: the other half of "a wait
+// the before graph cannot place is refused rather than dropped". A task that
+// waited on the integration node waited on what the integration runs, so an
+// integration node that runs no task at all leaves the wait with nothing to
+// stand on — the same absence as a consumer no record names, and the document is
+// refused the same way. Both the shapes that reach it are here: an integration
+// that waits only on another integration, and one no decoupling entry covers.
+func TestGainRefusesAWaitOnAnIntegrationThatRunsNoTask(t *testing.T) {
+	const chained = `{
+	  "schema_version": 3,
+	  "plan": "docs/plans/decoupled.md",
+	  "nodes": [
+	    {"id": "A", "title": "one side", "size": 5, "footprint": {"prediction": true, "paths": ["internal/a/**"]}},
+	    {"id": "B", "title": "the other side", "size": 5, "footprint": {"prediction": true, "paths": ["internal/b/**"]}},
+	    {"id": "X", "title": "what waits on the second integration", "size": 2, "footprint": {"prediction": true, "paths": ["internal/x/**"]}},
+	    {"id": "C1", "title": "the contract", "kind": "contract", "footprint": {"prediction": true, "paths": ["internal/contract/types.go"]}},
+	    {"id": "I1", "title": "the integration", "kind": "integration", "footprint": {"prediction": true, "paths": ["internal/i1/**"]}},
+	    {"id": "I2", "title": "an integration over the first", "kind": "integration", "footprint": {"prediction": true, "paths": ["internal/i2/**"]}}
+	  ],
+	  "edges": [
+	    {"task": "B", "needs": "C1", "reason": "B is built against the contract"},
+	    {"task": "I1", "needs": "A", "reason": "the integration runs both sides"},
+	    {"task": "I1", "needs": "B", "reason": "the integration runs both sides"},
+	    {"task": "I2", "needs": "I1", "reason": "the second integration waits on the first"},
+	    {"task": "X", "needs": "I2", "reason": "X waits for both sides to be re-joined"}
+	  ],
+	  "decoupling": [
+	    {"contract": "C1", "was": {"task": "B", "needs": "A"}, "integration": "I1", "reason": "B needed A's interface only"}
+	  ]
+	}`
+	// Parse accepts both: an integration node is a node of the graph whether or
+	// not an entry covers it, and an edge onto one is an edge like any other.
+	for _, body := range []string{chained, strings.Replace(chained,
+		`{"task": "I2", "needs": "I1", "reason": "the second integration waits on the first"},`, "", 1)} {
+		doc := parseDoc(t, body)
+		if _, err := Analyze("graph.json", doc, nil); err == nil {
+			t.Fatal("the read measured a before graph with a wait on an integration that runs no task")
+		} else if !strings.Contains(err.Error(), "waits on no task") {
+			t.Errorf("Analyze's error = %v, want the integration with nothing to stand on named", err)
+		}
+	}
+}
+
 // TestGainRefusesAPathWeighedPastWhatANumberHolds: a size is a positive number
 // and a path is a sum of them, so two sizes at a float's own edge weigh
 // infinity — and infinity is not a figure any caller can print. The gain is a

@@ -162,12 +162,15 @@ func countPairs(edges []Edge) int {
 // the integration node is the task that runs them together.
 //
 // A dependency the plan had before the pass is never dropped for want of a
-// place to put it. A task waits on a contract because the pass moved its edge
-// there, and the record says where that edge stood before: the entry whose
-// `was` names the task, whose restored edge stands in for this one. A consumer
-// no entry names is therefore a document with one of the plan's own
-// dependencies missing from its before graph, and a gain measured without it is
-// a gain the plan did not get — such a document is refused rather than read.
+// place to put it, and the two nodes the pass added that a task can wait on are
+// each refused when the document gives the wait nowhere to stand. A task waits
+// on a contract because the pass moved its edge there, and the record says where
+// that edge stood before: the entry whose `was` names the task, whose restored
+// edge stands in for this one, so a consumer no entry names has no place to
+// stand. A task waits on an integration because it waited on what the
+// integration runs, so an integration that runs no task at all is the same
+// absence. Either way, a gain measured without that dependency is a gain the
+// plan did not get — such a document is refused rather than read.
 //
 // What is dropped is the pass's own scaffolding, each edge removed with the
 // node it hangs from: the work a contract, an integration or a change request
@@ -213,6 +216,16 @@ func beforePath(path string, doc Document) (PathMeasure, error) {
 		case kinds[e.Task] == KindTask && kinds[e.Needs] == KindTask:
 			edges = append(edges, e)
 		case kinds[e.Task] == KindTask && kinds[e.Needs] == KindIntegration:
+			// A task that waited on the integration node waited on what the
+			// integration runs, so the wait is put there. An integration node
+			// that runs no task at all — a chained integration, or one no
+			// decoupling entry covers — states nothing the wait can stand on,
+			// so the document is refused rather than read with one of the
+			// plan's own dependencies left out of it.
+			if len(waited[e.Needs]) == 0 {
+				return PathMeasure{}, refuse(path, "the graph has %s waiting on the integration node %q, and that node waits on no task; the before graph rewrites a wait on an integration onto the tasks the integration runs, and a wait with none to stand on is refused rather than dropped",
+					e.Task, e.Needs)
+			}
 			for _, dep := range waited[e.Needs] {
 				edges = append(edges, Edge{Task: e.Task, Needs: dep, Reason: e.Reason})
 			}
