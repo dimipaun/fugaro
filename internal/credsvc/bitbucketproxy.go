@@ -190,6 +190,15 @@ func (s *Server) bitbucketProxy(ctx context.Context, w http.ResponseWriter, r *h
 		// same token whichever way the call would have gone, so nothing an
 		// operator needs is lost. What the line does carry is the CLASS, which
 		// is the one thing known about a path that could not be named.
+		//
+		// The operator's own line is written here as it is for every other
+		// refusal of this route, and for these refusals it is the only line
+		// there is: merge and /2.0/workspaces are refused by the classification
+		// itself, so no later step of the route ever sees them and no other
+		// line names their class. It carries no cause, because the class IS
+		// the cause's whole content here (the refusal's error is the rule's
+		// name and nothing else).
+		s.logProxyRefusal(id, "", reason, nil)
 		s.refuseCall(ctx, w, id, "", "", "", StatusRequestRefused, ErrorRequestRefused, requestRefused+reason)
 		return
 	}
@@ -716,12 +725,22 @@ func (s *Server) refuseProxy(ctx context.Context, w http.ResponseWriter, id Iden
 // cause: what the operator needs from it is the class, and a refusal decided by
 // the rules (a ref, a repository, a pull request) has no cause to carry.
 func (s *Server) refuseProxyReason(ctx context.Context, w http.ResponseWriter, id Identity, purpose, class string, cause error) {
+	s.logProxyRefusal(id, purpose, class, cause)
+	s.refuseCall(ctx, w, id, purpose, config.BitbucketSecret, "", StatusRequestRefused, ErrorRequestRefused, requestRefused+class)
+}
+
+// logProxyRefusal writes this route's own line for a refusal: the class, which
+// is the one thing that tells a refusal of a ref from a refusal of a repository
+// or of a call this route does not name at all, and the run and repository it
+// was made under. It is written by every refusal of the route — the
+// classification's own refusals included, which is why it is a helper and not
+// part of refuseProxyReason — and never carries a byte of what the caller sent.
+func (s *Server) logProxyRefusal(id Identity, purpose, class string, cause error) {
 	attrs := []any{"purpose", purpose, "run", id.Run, "repository", id.Slug, "class", class}
 	if cause != nil {
 		attrs = append(attrs, "error", cause.Error())
 	}
 	s.log.Warn("credsvc: a Bitbucket call was refused", attrs...)
-	s.refuseCall(ctx, w, id, purpose, config.BitbucketSecret, "", StatusRequestRefused, ErrorRequestRefused, requestRefused+class)
 }
 
 // refuseUnavailable answers a request this route could not serve for a reason

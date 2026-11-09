@@ -1068,6 +1068,37 @@ func TestBitbucketRouteOneAuditLinePerRequest(t *testing.T) {
 		}
 	})
 
+	t.Run("a call the route does not name", func(t *testing.T) {
+		// merge and /2.0/workspaces are refused by the CLASSIFICATION itself,
+		// before the decision and before the bundle is read: no later step of
+		// this route ever sees them, so the operator's own line written here is
+		// the only place their class is written down. The audit line carries
+		// the refusal's wire type, which is one word for every refusal of the
+		// route, so a reader of the audit alone cannot tell these two from a
+		// refused ref.
+		for _, c := range []struct{ method, path string }{
+			{http.MethodPost, proxyRESTPath("/pullrequests/7/merge")},
+			{http.MethodGet, "2.0/workspaces"},
+		} {
+			s, up, _ := proxySvc(t)
+			resp, ans := s.proxyCall(t, c.method, proxyPath(c.path), nil)
+			proxyRefused(t, resp, ans, http.StatusBadRequest, ErrorRequestRefused, gitproxy.ReasonCallNotAllowed)
+			if n := up.count(); n != 0 {
+				t.Errorf("%s %s reached the upstream %d times, and a call that never classified must forward none", c.method, c.path, n)
+			}
+			line := s.onlyAuditLine(t)
+			if line["status"] != ErrorRequestRefused {
+				t.Errorf("%s %s: the audit line = %v, want the refusal's own wire type", c.method, c.path, line)
+			}
+			if auditField(line, "purpose") != "" || auditField(line, "credential") != "" {
+				t.Errorf("%s %s: the audit line = %v, and a call that never classified names neither a purpose nor a credential", c.method, c.path, line)
+			}
+			if logged := s.logs.String(); !strings.Contains(logged, "class="+gitproxy.ReasonCallNotAllowed) {
+				t.Errorf("%s %s: the service's own log does not carry the class %q: %s", c.method, c.path, gitproxy.ReasonCallNotAllowed, logged)
+			}
+		}
+	})
+
 	t.Run("a REST read", func(t *testing.T) {
 		s, up, _ := proxySvc(t)
 		up.answerWith(http.StatusOK, "{}")
