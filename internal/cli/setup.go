@@ -212,8 +212,11 @@ a provider's own, takes the confirmation of a person at the terminal whatever
 the run was given. What
 --yes still never covers: creating a project or linking billing, a secret, and
 the Firestore database's permanent location, this door's first-time question.
-With --yes, --non-interactive, --json or a pipe each of those is left for you,
-with the one line to run. In a coding agent's environment (CLAUDECODE, CLAUDE_CODE_ENTRYPOINT,
+With --yes, --non-interactive or --json each of those is left for you, with the
+one line to run. A first run that does ask the billing question — a pipe for
+standard input, none of those flags given — stops there instead: with no
+terminal the question is refused at once, in the sentence naming --link-billing,
+before any account of yours is read. In a coding agent's environment (CLAUDECODE, CLAUDE_CODE_ENTRYPOINT,
 CLAUDE_CODE_REMOTE, CURSOR_AGENT or AI_AGENT is set) setup
 applies nothing, --yes included, and says to run it in your own terminal
 window; --plan-only and the read-only checks still work, and so does setup

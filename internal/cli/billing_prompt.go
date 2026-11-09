@@ -35,14 +35,17 @@ import (
 // The second condition is readValue's (T7, docs/no-prompt-policy, D1540): the
 // answer is a value, so where stdin is not a terminal the question is refused
 // at once, naming --link-billing, *before* any account is listed — no account
-// of the operator's is read for a run that cannot be answered. Nothing is
-// listed then, nothing is recorded, and the run is exactly the run it was
-// before this task (reconciliation F6): the project stage's own guided line is
-// what the operator sees then. Where the question ran and neither source answered, the
-// run is that run plus one value-free line saying the list could not be read
-// (askBilling): an owner who asked for the list and got silence cannot tell it
-// from a run with no picker at all, and Check 111 records which source
-// answered — here, neither.
+// of the operator's is read for a run that cannot be answered. That refusal is
+// the run's end: the wizard's questions are asked before the run plans or
+// applies anything, so a run refused here never reaches the project stage and
+// never prints its guided `gcloud billing projects link` line
+// (TestBillingChoiceFailsAtOnceWithoutATerminal). That line belongs to the runs
+// the question does not fire for — the flags and sessions asksBilling names
+// above. Where the question ran and neither source answered, the run is the one
+// it would have been with no picker at all, plus one value-free line saying the
+// list could not be read (askBilling): an owner who asked for the list and got
+// silence cannot tell it from a run with no picker, and Check 111 records which
+// source answered — here, neither.
 //
 // W4.4 is the other half of that line: what the run does when the API's own
 // answer is that cloudbilling.googleapis.com is off on the credentials' quota
