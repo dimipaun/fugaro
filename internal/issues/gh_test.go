@@ -47,8 +47,11 @@ func TestGHNotInstalledAndNotLoggedIn(t *testing.T) {
 	if loggedOut.LoggedIn(context.Background()) {
 		t.Error("LoggedIn() = true for a gh that refused to answer")
 	}
-	if want := [][]string{{"auth", "status"}}; !reflect.DeepEqual(asked, want) {
-		t.Errorf("LoggedIn asked gh %q, want %q: one question, about this machine", asked, want)
+	// One question, and about the host the post goes to: gh's answer without a
+	// host covers every account this machine holds, including an Enterprise one
+	// the post never goes to.
+	if want := [][]string{{"auth", "status", "--hostname", "github.com"}}; !reflect.DeepEqual(asked, want) {
+		t.Errorf("LoggedIn asked gh %q, want %q: one question, about the host the post goes to", asked, want)
 	}
 
 	// A gh that cannot file reports the refusal and records no URL: the caller

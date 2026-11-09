@@ -26,11 +26,17 @@ import (
 // GHBin is the binary every command and every hint here names.
 const GHBin = "gh"
 
+// ghHost is the GitHub every call here is about. gh knows an account per host,
+// so a person may be logged in to an Enterprise one and not to this: the login
+// question has to name the host the post goes to, or the answer is about
+// another GitHub and a post that cannot be filed passes the check.
+const ghHost = "github.com"
+
 // GHRepo is the repository the post goes to, in the one form `-R` takes that
-// names the host as well as the slug (F22). It is built from updatecheck.Repo,
-// so the repository a post goes to and the repository the updater knows cannot
-// drift apart.
-const GHRepo = "github.com/" + updatecheck.Repo
+// names the host as well as the slug (F22). It is built from ghHost and
+// updatecheck.Repo, so the repository a post goes to and the repository the
+// updater knows cannot drift apart.
+const GHRepo = ghHost + "/" + updatecheck.Repo
 
 // ghTimeout bounds one `gh issue create`. The call goes to GitHub on a
 // connection this machine does not control, and a call that never returns
@@ -138,15 +144,22 @@ func (g GH) Installed() bool {
 // prints can hold a token's name and a host, and the caller needs only the yes
 // or no.
 //
-// A no is two things and not one: no account, and an API this call could not
-// reach — gh reports a dropped connection the same way, which is why
+// The host is ghHost and not "every host this machine knows about". gh holds
+// one account per host and its default answer is about all of them, which is
+// an answer about where the post is not going: Create files to GHRepo and
+// nowhere else, so a person logged in only to an Enterprise host would pass
+// this check and then be told nothing was filed, and a person logged in here
+// with a bad Enterprise token would be sent to the fallback they do not need.
+//
+// A no is two things and not one: no account on ghHost, and an API this call
+// could not reach — gh reports a dropped connection the same way, which is why
 // scripts/retry.sh retries this command on any failure — and they are told
 // apart by the caller, which decides what a no prints. Telling a person whose
 // network just blipped to run `gh auth login` is the one wrong answer here.
 func (g GH) LoggedIn(ctx context.Context) bool {
 	ctx, cancel := context.WithTimeout(ctx, ghStatusTimeout)
 	defer cancel()
-	_, err := g.run()(ctx, "auth", "status")
+	_, err := g.run()(ctx, "auth", "status", "--hostname", ghHost)
 	return err == nil
 }
 
