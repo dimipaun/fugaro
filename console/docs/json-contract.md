@@ -1391,7 +1391,10 @@ so a renderer never has half a graph to draw.
 Schema 3 refuses the same way over what it added, because it is untrusted plan
 text: a `kind` outside the four, a `size` of `0` or less, a `stub` that is a
 glob or that the contract's own footprint does not name, a `contract` node whose
-footprint names no literal file, a `decoupling` entry whose integration node does
+footprint names no literal file — a contract's files are whole files it names
+one by one, so a **pattern** in a contract's footprint is refused rather than
+read: `internal/contract/[t]ypes.go` names files the rule below cannot hold
+another task to — a `decoupling` entry whose integration node does
 not depend on both sides of the edge it records, an edge that is recorded as
 broken and is still in `edges`, a `contract_change` naming a node that is not
 there, a **path that does not print** — a newline, a control character or a
@@ -1414,7 +1417,13 @@ empty, a `.` or a `..` element**, as in `{./internal/contract/types.go}` or
 `internal/{dep/..,}/contract/types.go`: `path.Clean` reads a pattern as one
 string and normalises such an element only outside a group, so a group is how a
 respelling is written without the rule that reads the path reading it — a group
-alternating between real paths, `internal/{a,b}/x.go`, is untouched. The console
+alternating between real paths, `internal/{a,b}/x.go`, is untouched — and a **path
+element a glob expands to a `.` or a `..`**, as in
+`internal/dep/[.][.]/contract/types.go`, `internal/dep/.?/contract/types.go` or
+`[.]/internal/contract/types.go`: `path.Clean` collapses a literal `./` or
+`../` in a pattern but reads past a dot a class or a wildcard spells, so those
+respell the contract's file while the rule reading the path reads none of them —
+an ordinary `*` or `?` element carries no dot and is untouched. The console
 shows the CLI's sentence in each case, like every other refusal here.
 
 **What the read computes, and why the done set is passed in.** `level`, `done`,
@@ -1454,8 +1463,9 @@ schema **3** added the node's `kind`, `size` and `stubs`, the document's
 Schema **1** is a plan written before any of them, and it stays a document this
 build renders — its `version` is the planner's own words and is read as written,
 because the shape is the newer schema's promise rather than a retroactive one. A
-v1 artifact carrying a `stream`, a v1 or v2 artifact carrying any schema-3 field,
-or a v2 artifact whose `version` is not `MAJOR.MINOR[.PATCH]`, is **refused**
+v1 artifact carrying a `stream`, a v1 or v2 artifact carrying any schema-3 key —
+the key itself, whether it carries a list, a `null` or an empty string — or a
+v2 artifact whose `version` is not `MAJOR.MINOR[.PATCH]`, is **refused**
 rather than read with the difference dropped: a file and a read that disagree
 about which stream a plan ships in is worse than a refusal. The `version` shape
 holds at **every** version from 2 on, so a v3 graph's versions are checked too.

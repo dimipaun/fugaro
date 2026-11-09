@@ -12,6 +12,8 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/bmatcuk/doublestar/v4"
+
 	"github.com/dimipaun/fugaro/internal/streams"
 )
 
@@ -98,6 +100,17 @@ func Parse(path string, data []byte) (Document, error) {
 	}
 	version := *head.SchemaVersion
 
+	// And in the file itself, before it is decoded: the third schema's keys are
+	// keys a document written to one of the older schemas does not have,
+	// whether or not they carry anything — `"decoupling": null` and
+	// `"kind": ""` are the keys as much as a list of entries is, and reading
+	// them would be reading a document written to no schema at all.
+	if version < SchemaVersion {
+		if carried := schema3Keys(data); len(carried) > 0 {
+			return Document{}, schema3FieldsRefusal(path, version, carried)
+		}
+	}
+
 	// Then strictly: at either schema version the field set is closed, so a key
 	// this build does not know is a document written to a schema it does not
 	// have — the same refusal as a future version, caught one field at a time.
@@ -147,12 +160,7 @@ func Normalize(path string, doc Document) (Document, error) {
 	// and the read disagreeing about the graph.
 	if doc.SchemaVersion < SchemaVersion {
 		if carried := schema3Fields(doc); len(carried) > 0 {
-			noun := "field"
-			if len(carried) > 1 {
-				noun = "fields"
-			}
-			return Document{}, refuse(path, "the graph artifact is schema version %d and carries the schema version %d %s %s",
-				doc.SchemaVersion, SchemaVersion, noun, strings.Join(carried, ", "))
+			return Document{}, schema3FieldsRefusal(path, doc.SchemaVersion, carried)
 		}
 	}
 	if doc.Nodes == nil {
@@ -323,6 +331,55 @@ func schema3Fields(doc Document) []string {
 	return out
 }
 
+// schema3Keys is schema3Fields' question asked of the file rather than of the
+// decoded document, and it is the one that is asked first: a key is carried
+// whether or not it holds anything, so `"decoupling": null` and `"kind": ""`
+// are keys a document written to an older schema does not have just as a list
+// of entries is. The decoded document cannot tell the two apart — both decode
+// to the zero value — so the presence is read from the JSON.
+func schema3Keys(data []byte) []string {
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(data, &top); err != nil {
+		return nil
+	}
+	var out []string
+	seen := map[string]bool{}
+	add := func(name string) {
+		if _, ok := top[name]; ok && !seen[name] {
+			seen[name] = true
+			out = append(out, name)
+		}
+	}
+	add("decoupling")
+	add("contract_changes")
+	var nodes []map[string]json.RawMessage
+	if raw, ok := top["nodes"]; ok {
+		if err := json.Unmarshal(raw, &nodes); err == nil {
+			for _, n := range nodes {
+				for _, key := range []string{"kind", "size", "stubs"} {
+					if _, ok := n[key]; ok && !seen[key] {
+						seen[key] = true
+						out = append(out, key)
+					}
+				}
+			}
+		}
+	}
+	return out
+}
+
+// schema3FieldsRefusal is the sentence both of those questions get answered
+// with: a document carrying a field its own version does not have is written to
+// neither schema.
+func schema3FieldsRefusal(path string, version int, carried []string) error {
+	noun := "field"
+	if len(carried) > 1 {
+		noun = "fields"
+	}
+	return refuse(path, "the graph artifact is schema version %d and carries the schema version %d %s %s",
+		version, SchemaVersion, noun, strings.Join(carried, ", "))
+}
+
 // validateSchema3 checks what the third schema added: the kind a node is, the
 // weight it carries, the stubs a contract leaves behind, the record of each
 // broken edge and the change requests raised against merged contracts.
@@ -365,6 +422,17 @@ func validateSchema3(path string, doc Document) error {
 				return refuse(path, "node %q names the stub %q and its footprint does not name that file; a stub is a file the contract names, and a glob over it never stands in for one", n.ID, stub)
 			}
 		}
+		// And a contract's own files are named the same way, for the same
+		// reason: the rule below holds other tasks to the files a contract
+		// names, and a pattern names files it cannot hold anyone to — a
+		// contract spelling its file `internal/contract/[t]ypes.go` would leave
+		// types.go for any other task to claim, which is the rule failing open
+		// on the contract's own side of it.
+		for _, pattern := range n.Footprint.Paths {
+			if strings.ContainsAny(repoPath(pattern), "*?[]{}") {
+				return refuse(path, "node %q is a contract node and its footprint names the pattern %q; a contract's files are whole files it names one by one, and a pattern over them is one the contract-file rule cannot hold any other task to", n.ID, pattern)
+			}
+		}
 	}
 
 	// The contract-file rule below turns on how a footprint spells a path, and
@@ -388,6 +456,10 @@ func validateSchema3(path string, doc Document) error {
 			}
 			if respelledInBraces(pattern) {
 				return refuse(path, "node %q has the footprint path %q; a brace group that spells an empty element, a %q or a %q respells a path rather than alternating between paths, so the file it names is not the one the contract-file rule reads — it is refused rather than matched as written", n.ID, pattern, ".", "..")
+			}
+			if respellsDotElement(pattern) {
+				return refuse(path, "node %q has the footprint path %q; a path element a glob can expand to %q or %q — a character class such as %q, or a pattern such as %q — respells the path it names, so the file it names is not the one the contract-file rule reads — it is refused rather than matched as written",
+					n.ID, pattern, ".", "..", "[.]", ".?")
 			}
 		}
 	}
@@ -495,6 +567,36 @@ func carriesEdge(doc Document, task, needs string) bool {
 	return false
 }
 
+// respellsDotElement reports whether an element of p is a "." or a ".." written
+// through glob syntax. `path.Clean` normalises a pattern as one string and
+// collapses the literal `./` and `../` of one, so what it reads straight past
+// is the dot a class or a wildcard spells: `internal/dep/[.][.]/contract/types.go`,
+// `internal/dep/.?/contract/types.go` and `[.]/internal/contract/types.go` are
+// one checkout path to anything that resolves the pattern — the contract's file
+// among them — and doublestar matches none of them against that file, so the
+// contract-file rule below read none of them. Refused by name, beside the
+// escape, the leading slash and the brace group.
+//
+// An element is judged only when it writes a dot *and* a metacharacter: the
+// literal `./internal/x.go` is a respelling `path.Clean` already reads as
+// internal/x.go, and it is read — the F10 rule is written on the cleaned path.
+// An ordinary wildcard (`*`, `**`, `?`) matches the string "." to doublestar
+// without carrying one, names an element of the path rather than respelling
+// one, and refusing it would refuse every ordinary glob in the tree.
+func respellsDotElement(p string) bool {
+	for _, elem := range strings.Split(p, "/") {
+		if !strings.Contains(elem, ".") || !strings.ContainsAny(elem, "*?[]{}") {
+			continue
+		}
+		for _, dot := range []string{".", ".."} {
+			if ok, err := doublestar.Match(elem, dot); err == nil && ok {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // respelledInBraces reports whether a brace group in p spells an element that
 // is empty, "." or "..". `path.Clean` normalises a pattern as one string, so it
 // collapses such an element only where it stands outside a group: it reads
@@ -507,12 +609,21 @@ func carriesEdge(doc Document, task, needs string) bool {
 //
 // Only elements *inside* a group are refused. A `..` element outside one is
 // cleaned away above and read as the file it names, which is what the rule
-// wants; and a group alternating between real paths (`internal/{a,b}/x.go`) is
-// the alternation braces exist for.
+// wants; and a group alternating between real paths (`internal/{a,b}/x.go`, and
+// a group nested in one, `internal/{a,{b,c}}/x.go`) is the alternation braces
+// exist for.
 func respelledInBraces(p string) bool {
 	depth, start := 0, 0
 	respelt := func(end int) bool {
 		if depth == 0 {
+			return false
+		}
+		// The text that runs into a group's own brace is not an element: a group
+		// opens and closes *inside* an element, so `internal/{a,{b,c}}/x.go`
+		// writes the empty text between the comma and the inner brace without
+		// spelling an empty element, and the empty text after the inner group is
+		// the rest of the outer one. Only a separator ends an element.
+		if start == end && end > 0 && (p[end-1] == '{' || p[end-1] == '}') {
 			return false
 		}
 		switch p[start:end] {
@@ -524,9 +635,10 @@ func respelledInBraces(p string) bool {
 	for i, r := range p {
 		switch r {
 		case '{':
-			if respelt(i) {
-				return true
-			}
+			// The text ending at an opening brace is not an element: a group
+			// opens *inside* one, so `internal/{a,{b,c}}/x.go` writes the empty
+			// text between the comma and the inner brace without spelling an
+			// empty element. Only a separator or a closing brace ends one.
 			depth++
 			start = i + 1
 		case '}':

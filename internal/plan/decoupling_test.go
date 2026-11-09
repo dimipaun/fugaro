@@ -156,6 +156,15 @@ func TestV2DocumentWithAV3FieldIsRefused(t *testing.T) {
 		{"a change request in a v2 document", doc(2, `"contract_changes": []`), "contract_changes", 2},
 		{"a kind in a v1 document", node(1, `"kind": "contract",`), "kind", 1},
 		{"a change request in a v1 document", doc(1, `"contract_changes": []`), "contract_changes", 1},
+		// The key is carried whether or not it holds anything: a null list and
+		// an empty kind are the fields of the third schema just as a filled one
+		// is, and a v1 or v2 document carrying either is written to no schema —
+		// the console's contract lists Null as "never" for all of them.
+		{"a null decoupling record in a v2 document", doc(2, `"decoupling": null`), "decoupling", 2},
+		{"a null change list in a v2 document", doc(2, `"contract_changes": null`), "contract_changes", 2},
+		{"an empty kind in a v2 document", node(2, `"kind": "",`), "kind", 2},
+		{"an empty size in a v2 document", node(2, `"size": null,`), "size", 2},
+		{"an empty stub list in a v2 document", node(2, `"stubs": null,`), "stubs", 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			refused(t, tc.body, fmt.Sprintf("schema version %d and carries", tc.version), tc.key, "schema version 3 field")
@@ -466,13 +475,46 @@ func TestContractFilesBelongToTheContractAndItsChanges(t *testing.T) {
 		})
 	}
 
-	// Refusing a group is not refusing braces: an alternation between real
-	// paths is the thing braces are for, and a `..` outside one is cleaned away
-	// and read as the file it names, so both still read.
+	// A dot written through a character class or a wildcard is the fifth: the
+	// same respelling the brace group above is, in the syntax `path.Clean`
+	// cannot see at all. Each of these is the contract's one file to anything
+	// that resolves the pattern, and none of them matches it through
+	// doublestar, so the rule below reads none of them.
+	for _, spelling := range []string{
+		"internal/dep/[.][.]/contract/types.go", // a class for each dot
+		"internal/dep/.?/contract/types.go",     // a wildcard over the second dot
+		"[.]/internal/contract/types.go",        // a leading element as a class
+	} {
+		t.Run("a footprint pattern that is not a checkout path: a wildcard dot "+spelling, func(t *testing.T) {
+			refused(t, v3Doc(t, `{"id": "B", "title": "the dependent", "footprint": {"prediction": true, "paths": ["internal/dep/**"]}}`,
+				fmt.Sprintf(`{"id": "B", "title": "the dependent", "footprint": {"prediction": true, "paths": [%q]}}`, spelling)),
+				"a path element a glob can expand to", "not the one the contract-file rule reads")
+		})
+	}
+
+	// And the same shape on the contract's own side: a contract that spells its
+	// file as a pattern names no file the rule can hold any other task to, so
+	// `internal/contract/[t]ypes.go` would leave types.go for B to claim.
+	// Refused rather than dropped, because dropping it is the fail-open.
+	t.Run("a contract node naming its file as a pattern", func(t *testing.T) {
+		refused(t, v3Doc(t,
+			`"paths": ["internal/contract/types.go", "internal/contract/stub.go"]`,
+			`"paths": ["internal/contract/[t]ypes.go", "internal/contract/stub.go"]`),
+			`node "C1" is a contract node and its footprint names the pattern "internal/contract/[t]ypes.go"`,
+			"whole files it names one by one")
+	})
+
+	// Refusing a group is not refusing braces, and refusing a wildcard dot is
+	// not refusing wildcards: an alternation between real paths, a group nested
+	// in one, a `..` outside a group (which `path.Clean` reads as the file it
+	// names) and an ordinary `*` element all still read.
 	t.Run("a brace group alternating between paths still reads", func(t *testing.T) {
 		for _, pattern := range []string{
 			"internal/{dep,other}/**",
+			"internal/{dep,{other,third}}/**",
 			"internal/dep/../dep/**",
+			"internal/*/dep/**",
+			"internal/dep/**",
 		} {
 			if _, err := Parse("graph.json", []byte(v3Doc(t,
 				`"paths": ["internal/dep/**"]`,
