@@ -245,19 +245,21 @@ func redactPasswords(s string) string {
 //     its place, and a value read from that backslash crosses the escaped
 //     quotes and takes the record's fields with it. Reading a record the way
 //     its own escaping writes it is passwordEscaped's work below.
-//   - the NUL the marker is held as while these rules run (markerHeld), where
-//     the byte after it does not open a value: a marker standing where the next
-//     field's name begins (`Pwd=[REDACTED];Database=app`,
-//     `?token=[REDACTED]&state=ok`) read as a value would take that name with
-//     it, because that is what the right-hand end of an unquoted value is found
-//     by. A value may stand behind a marker, and often does: the exact pass
-//     marks the part of a value Fugaro holds, and the text spells the rest of
-//     that value with bytes of its own (`PGPASSWORD=<marker>-2024xyz`), so a
-//     marker with a value's byte after it opens a value too and the value is
-//     read from there — the whole of it, rather than the marker and whatever
-//     the text put behind it. The marker's bracket is deliberately not the
-//     exclusion: a value may open with one (`PGPASSWORD=[hunter2x`) and is read
-//     like any other.
+//   - the NUL the marker is held as while these rules run (markerHeld), and
+//     with it each branch's floor: a value may stand behind a marker and often
+//     does, because the exact pass marks the part of a value Fugaro holds and
+//     the text spells the rest of that value with bytes of its own
+//     (`PGPASSWORD=<marker>-2024xyz`, where the `-2024xyz` is the password too,
+//     and `Pwd=<marker>x;Database=app`, where one byte of it follows the marker
+//     and the field name after that is the next field). The floor asks whether a
+//     value stood at the `=`, and a marker answers it, so the branches below
+//     read a marker's value without the floor. What a marker may not stand in
+//     front of is what no value may open on — a delimiter, a quote, nothing
+//     (`Pwd=[REDACTED];Database=app`, `?token=[REDACTED]&state=ok`) — because a
+//     value read from there takes the name of the field after it, which is what
+//     the right-hand end of an unquoted value is found by. The marker's bracket
+//     is deliberately not the exclusion: a value may open with one
+//     (`PGPASSWORD=[hunter2x`) and is read like any other.
 //
 // A value may hold either quote, and the byte after it is what says which
 // reading it belongs to: a quote the text continues past as a value's byte is
@@ -277,8 +279,22 @@ const passwordValueTail = `(?:(")((?:\\"|[^"\n]){4,})(")` +
 	`|(')((?:\\'|[^'\n]){4,})(')` +
 	`|(")((?:\\"|[^"\n]){4,})(?m:$)` +
 	`|(')((?:\\'|[^'\n]){4,})(?m:$)` +
-	`|((?:\x00\x01)?(?:[^\s"';&\x00\\]|\\[^"])(?:[^\s;&"']|"[^\s,;&}\])]|'[^\s,;&}\])]){3,})([;&][A-Za-z_][A-Za-z0-9_\-]*=)` +
-	`|((?:\x00\x01)?(?:[^\s"';&\x00\\]|\\[^"])(?:[^\s"']|"[^\s,;&}\])]|'[^\s,;&}\])]){3,}))`
+	`|((?:\x00\x01(?:` + passwordValueStart + `)(?:` + passwordValueRun + `)*|(?:` + passwordValueStart + `)(?:` + passwordValueRun + `){3,}))([;&][A-Za-z_][A-Za-z0-9_\-]*=)` +
+	`|((?:\x00\x01(?:` + passwordValueStart + `)(?:` + passwordValueCross + `)*|(?:` + passwordValueStart + `)(?:` + passwordValueCross + `){3,})))`
+
+// The pieces an unquoted value is read from, written once because the two
+// branches at the end of passwordValueTail read them: passwordValueStart is
+// what a value may open with, passwordValueRun is what follows it up to the
+// delimiter the field branch reads, and passwordValueCross is the same where
+// the value reaches no delimiter and `;` and `&` are bytes of it like any
+// other. Both readings of each branch — the value behind a marker and the value
+// at the `=` — are these same two pieces, so what the two branches differ by is
+// written around them: the marker in front and the floor behind.
+const (
+	passwordValueStart = `[^\s"';&\x00\\]|\\[^"]`
+	passwordValueRun   = `[^\s;&"']|"[^\s,;&}\])]|'[^\s,;&}\])]`
+	passwordValueCross = `[^\s"']|"[^\s,;&}\])]|'[^\s,;&}\])]`
+)
 
 // connStringQuoted is the value of a connection string written inside quotes,
 // which is how a config line, a `.env` line or a shell line writes one

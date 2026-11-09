@@ -850,6 +850,16 @@ func TestRedactReadsThroughTheMarker(t *testing.T) {
 			"Pwd=" + redacted + ";Database=app",
 		},
 		{
+			"a field name behind a marked value of one byte",
+			"Pwd=" + secret + "x;Database=app",
+			"Pwd=" + redacted + ";Database=app",
+		},
+		{
+			"a value of one byte behind the marker and no field after it",
+			"PGPASSWORD=" + secret + "x psql: connection refused",
+			"PGPASSWORD=" + redacted + " psql: connection refused",
+		},
+		{
 			"a delimiter behind the marker",
 			"Pwd=" + secret + ";Database=app",
 			"Pwd=" + redacted + ";Database=app",
