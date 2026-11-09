@@ -438,37 +438,48 @@ func validExchangeURL(raw string) error {
 }
 
 // MemberAdmitsShared is the member side of D1298's intersection: whether the
-// member's OWN published policy admits a credential of the workspace's pool,
-// for the repository the run is on (spec.md §4: "the member's own policy, which
-// may refuse a provider or a credential the workspace holds").
+// member's OWN published policy admits a credential of the workspace's pool
+// (spec.md §4: "the member's own policy, which may refuse a provider or a
+// credential the workspace holds").
 //
 // **It is the member's existing vocabulary and not a second one.** A credential
-// is admitted the way every other credential of the member's installation is: the
-// member's own `claude_accounts` names it — which is the block `fugaro project
-// policy publish` derives into the node's `accounts` (DeriveAccounts) — the
-// account's own allow-list names this repository, and the project's allow_repos
-// admits it at all. The workspace's pool therefore adds credentials to a member
-// without inventing a key a member has to learn: an administrator who wants a
-// shared credential used here writes the same declaration they write for a
-// credential of their own, and one who writes nothing is served nothing from the
-// workspace.
+// is admitted the way every other credential of the member's installation is:
+// the member's own `claude_accounts` names it, which is the block `fugaro
+// project policy publish` derives into the node's `accounts` (DeriveAccounts).
+// The workspace's pool therefore adds credentials to a member without inventing
+// a key a member has to learn: an administrator who wants a shared credential
+// used here writes the same declaration they write for a credential of their
+// own, and one who writes nothing is served nothing from the workspace.
 //
 // **A refusal is the member's, and naming it so is the point.** D1298's whole
 // safety property is that the member's policy is the tighter side, so a
 // credential the member has not admitted is refused with the member's policy as
 // the reason and never with the workspace's — the operator is not sent to the
-// workspace for a refusal the member made. The three legs are the same
-// intersection admittedAccounts makes for the member's own credentials, read
-// here without the per-repository node: a repository's own node is the
-// member's administrator's admission of that repository, and the workspace's
-// credential is not in it.
-func MemberAdmitsShared(p *Policy, name, repo string) bool {
+// workspace for a refusal the member made.
+//
+// **The repository legs of the same intersection are deliberately not asked
+// here, and this is the one place in the intersection where a leg is left
+// out.** The member's own service narrows its credentials by the canonical
+// repository the call is on (admittedAccounts takes it from the job account the
+// deployment published, never from the run's own header). This deployment
+// cannot: what it verifies about a caller is its member, and the repository a
+// run is on reaches it only as the run identity's `fs`, a slug that
+// `task.Slug` sanitised and no reader can invert into the canonical name the
+// member's `allow_repos` lists. Asking a leg whose input the workspace cannot
+// verify would be a check that reads whatever the caller said, which is the
+// shape the service refuses everywhere else (the X-Fugaro-Run-Job rule). So the
+// shared pool is scoped by the credential's NAME and the workspace's
+// per-project allow-list, and a member's own per-repository narrowing of that
+// name is not enforced for a pooled credential — it is a bound this shape
+// records rather than a check it makes, and the honest way to close it is a
+// canonical repository per job account in the owner's per-member table, which
+// is a column this table does not carry. What the name leg does buy is the
+// whole of D1298's direction: a credential the member's policy never declared
+// is refused, so the pool can only serve names the member already admits.
+func MemberAdmitsShared(p *Policy, name string) bool {
 	if p == nil {
 		return false
 	}
-	acct, ok := p.Accounts[name]
-	if !ok {
-		return false
-	}
-	return AdmitRepo(acct.AllowRepos, repo) && AdmitRepo(p.AllowRepos, repo)
+	_, ok := p.Accounts[name]
+	return ok
 }
