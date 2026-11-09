@@ -78,7 +78,7 @@ hold the three (`test/unit/{redact,fixture,recorder}.test.ts`).
 
 ## The toolchain, pinned (Task 1.0)
 
-**Electron is pinned to exactly `45.0.0`, and it is bumped on purpose**, with the
+**Electron is pinned to exactly `45.2.3`, and it is bumped on purpose**, with the
 toolchain task and the lockfile in the same commit — the same rule
 `internal/budget/rules/emulator/package.json` states for its own `firebase-tools`
 pin. Electron is not an ordinary dependency: it pulls a large prebuilt runtime
@@ -91,16 +91,16 @@ the one runtime dependency (`electron-updater`, below):
 
 | Package | Version | Where | Why it is here |
 |---|---|---|---|
-| `electron` | `45.0.0` | `devDependencies` | the app's runtime, bumped on purpose |
+| `electron` | `45.2.3` | `devDependencies` | the app's runtime, bumped on purpose |
 | `typescript` | `7.0.2` | `devDependencies` | `tsc --noEmit` for `npm run typecheck`, and `tsc -p tsconfig.build.json` for `npm run build` (Task 1.1: the build is `tsc` too, because the pinning rule leaves no room for a bundler) |
-| `vitest` | `5.0.5` | `devDependencies` | `npm run test:unit` |
+| `vitest` | `5.1.0` | `devDependencies` | `npm run test:unit` |
 | `@playwright/test` | `1.64.1` | `devDependencies` | `npm run test:e2e`, Electron driven by `electron.launch` (Task 1.1) |
-| `@types/node` | `22.20.5` | `devDependencies` | the Node the main process and the tests run on |
+| `@types/node` | `26.6.6` | `devDependencies` | the Node the main process and the tests run on |
 | `@electron/fuses` | `2.1.3` | `devDependencies` | the `afterPack` hook's fuse writer (Task 4.1) |
 | `electron-builder` | `26.18.0` | `devDependencies` | the packer, run from its local binary by `npm run package` (Task 4.1) |
-| `elkjs` | `0.11.0` | `devDependencies` | the graph view's layout engine: the build copies its `elk-worker.min.js` verbatim into the served root (GV2.2); its EPL-2.0 licence is `THIRD_PARTY_NOTICES.md` |
+| `elkjs` | `0.12.1` | `devDependencies` | the graph view's layout engine: the build copies its `elk-worker.min.js` verbatim into the served root (GV2.2); its EPL-2.0 licence is `THIRD_PARTY_NOTICES.md` |
 
-`dependencies` holds exactly one entry — `electron-updater` pinned to `6.8.10`,
+`dependencies` holds exactly one entry — `electron-updater` pinned to `6.8.11`,
 the console's one runtime dependency — and that is a decision rather than a
 symptom: the renderer bundles no framework runtime and no charting library
 (design D9); its one third-party file is elkjs's layout worker, a devDependency
@@ -115,8 +115,8 @@ second one is a deliberate edit there with the case for it written down.
 
 **The Node is pinned exactly too: `engines.node` is `22.23.3`, not a range.**
 It is the version every command in this task was run on, and it is a member of
-both pinned tools' own engine ranges (Electron 45.0.0 declares `>= 22.12.0`,
-Vitest 5.0.5 declares `^22.12.0 || ^24.0.0 || >=26.0.0`), so nothing in the
+both pinned tools' own engine ranges (Electron 45.2.3 declares `>= 22.12.0`,
+Vitest 5.1.0 declares `^22.12.0 || ^24.0.0 || >=26.0.0`), so nothing in the
 toolchain is asking for anything narrower. A range here would have been the one
 float left in a task whose whole subject is exact pins — and the plan already
 hands this field to CI (Task 1.4's `actions/setup-node` takes its version from
@@ -155,7 +155,7 @@ install step, because Electron's runtime is not fetched by a lifecycle script
 here.** Electron is not an ordinary dependency — the pin, the download and the
 checksum are hand-bumped and documented rather than floated (design section
 5.2) — but with `--ignore-scripts` the download simply happens later: Electron
-45.0.0 fetches its runtime on the first `require('electron')` (its `index.js`
+45.2.3 fetches its runtime on the first `require('electron')` (its `index.js`
 spawns `install.js` when `path.txt` and `dist/` are missing, printing
 `Downloading Electron binary...`). Verified on this tree: `npm ci
 --ignore-scripts --no-audit --no-fund`, then `require('electron')`, downloads
@@ -190,7 +190,7 @@ console's own release stream at launch and then every six hours, and downloads a
 newer version **quietly**; nothing is installed until you press **Restart to
 update** on the non-blocking notice that names the version on disk, and **nothing
 is ever installed on quit** — the update installs only the download that notice
-named. The client is `electron-updater` `6.8.10`, the console's one runtime
+named. The client is `electron-updater` `6.8.11`, the console's one runtime
 dependency, pinned exactly, and `src/main/updater-electron.ts`'s `hardenUpdater`
 rewrites it where the library would otherwise identify the machine: it neither
 mints nor writes `.updaterId` under `userData`, and no request carries
@@ -239,7 +239,7 @@ setting, so the switch did not move`) and the menu is **redrawn from disk**, so
 the checkbox shows the value in force rather than the one the click asked for.
 
 **What is sent, and what is never sent.** The client is `@sentry/electron`
-`8.2.0` (`src/main/crash-electron.ts`, the only file that imports it; design
+`8.3.0` (`src/main/crash-electron.ts`, the only file that imports it; design
 §7.4). A report holds the **exception's type and the frames it was thrown
 from** — each an app-relative file with its function name, its line, its column
 and its `in_app` flag — and
@@ -2203,7 +2203,7 @@ because "left at its upstream default" is a decision and not an oversight:
 | `GrantFileProtocolExtraPrivileges` | **disabled** | `file://` keeps no extra privileges; the console serves itself over `app://` (Task 1.1). |
 | `EnableCookieEncryption` | *left alone* | The console keeps no cookie store: no sign-in is stored. |
 | `LoadBrowserProcessSpecificV8Snapshot` | *left alone* | A startup optimisation for a browser process that loads web content. |
-| `WasmTrapHandlers` (index 8) | *left alone, enabled* | Upstream default kept: V8's WebAssembly bounds-check strategy loads no code, reads no environment variable or flag, and the console runs no WebAssembly. It was beyond the pin until `@electron/fuses` 2.1 named it; `BEYOND_PIN_FUSES` is now empty, because Electron 45.0.0's nine fuses are all named by the package. |
+| `WasmTrapHandlers` (index 8) | *left alone, enabled* | Upstream default kept: V8's WebAssembly bounds-check strategy loads no code, reads no environment variable or flag, and the console runs no WebAssembly. It was beyond the pin until `@electron/fuses` 2.1 named it; `BEYOND_PIN_FUSES` is now empty, because Electron 45.2.3's nine fuses are all named by the package. |
 
 Three properties of the hook are worth stating here, because they are what make
 the six a fact rather than an intention:
@@ -2241,7 +2241,7 @@ the six a fact rather than an intention:
   differ, so an Electron bump that adds a fuse cannot reach the signer
   unexamined. The three fuses it leaves alone are checked **by value** too: the
   cookie and snapshot fuses must still be disabled and `WasmTrapHandlers` enabled,
-  the defaults the pinned Electron 45.0.0 ships, or the build stops.
+  the defaults the pinned Electron 45.2.3 ships, or the build stops.
   `fuses.test.ts` also reads the real binary's wire when
   `node_modules/electron/dist` is installed, and on macOS runs the real hook over
   a copy of it in a temporary directory; without the binary those two tests skip

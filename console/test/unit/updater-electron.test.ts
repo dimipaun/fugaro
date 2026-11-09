@@ -5,7 +5,7 @@
 // update check that carries an identifier", section 5.1 rule 10 for the two
 // files the app may write).
 //
-// U1's review of 2026-10-30 found that electron-updater 6.8.10 sends and stores
+// U1's review of 2026-10-30 found that electron-updater 6.8.11 sends and stores
 // an identifier of its own: `AppUpdater.getUpdateInfoAndProvider` (~380-392)
 // calls `client.setRequestHeaders(this.computeFinalHeaders({ "x-user-staging-id":
 // stagingUserId }))` on every feed request, and `stagingUserIdPromise` (~189) is
@@ -179,7 +179,7 @@ describe('the identifier electron-updater sends and stores', () => {
 
   it('sends the identifier and writes the file without the hardening, on the same client', async () => {
     // The red step, held as a test. This is what the assertion above is worth:
-    // if 6.8.10 ever stopped sending `x-user-staging-id` the hardened test would
+    // if 6.8.11 ever stopped sending `x-user-staging-id` the hardened test would
     // pass for a reason that has nothing to do with this app, and this one would
     // be the failure that says so.
     const updater = new MacUpdater(NO_CONFIG, appAdapter(directory))
@@ -323,7 +323,7 @@ describe('the hardening refuses a client it does not recognise', () => {
   it('refuses a client with no stagingUserIdPromise at all', () => {
     const { updater } = updaterFake()
     delete (updater as unknown as Record<string, unknown>)['stagingUserIdPromise']
-    expect(() => hardenUpdater(updater)).toThrow(/6\.8\.10/)
+    expect(() => hardenUpdater(updater)).toThrow(/6\.8\.11/)
   })
 
   it('refuses a stagingUserIdPromise that is not a Lazy', () => {
@@ -332,13 +332,13 @@ describe('the hardening refuses a client it does not recognise', () => {
     // would be no `value` to set, so the library's own creator would run.
     const { updater } = updaterFake()
     ;(updater as unknown as Record<string, unknown>)['stagingUserIdPromise'] = Promise.resolve('x')
-    expect(() => hardenUpdater(updater)).toThrow(/6\.8\.10/)
+    expect(() => hardenUpdater(updater)).toThrow(/6\.8\.11/)
   })
 
   it('refuses a client whose computeFinalHeaders is gone', () => {
     const { updater } = updaterFake()
     delete (updater as unknown as Record<string, unknown>)['computeFinalHeaders']
-    expect(() => hardenUpdater(updater)).toThrow(/6\.8\.10/)
+    expect(() => hardenUpdater(updater)).toThrow(/6\.8\.11/)
   })
 
   it('refuses a client with no configOnDisk at all', () => {
@@ -347,13 +347,13 @@ describe('the hardening refuses a client it does not recognise', () => {
     // without it is a client whose every download fails at the last step.
     const { updater } = updaterFake()
     delete (updater as unknown as Record<string, unknown>)['configOnDisk']
-    expect(() => hardenUpdater(updater)).toThrow(/6\.8\.10/)
+    expect(() => hardenUpdater(updater)).toThrow(/6\.8\.11/)
   })
 
   it('refuses a configOnDisk that is not a Lazy', () => {
     const { updater } = updaterFake()
     ;(updater as unknown as Record<string, unknown>)['configOnDisk'] = Promise.resolve({})
-    expect(() => hardenUpdater(updater)).toThrow(/6\.8\.10/)
+    expect(() => hardenUpdater(updater)).toThrow(/6\.8\.11/)
   })
 
   it('never reaches the library’s own id creator, and leaves a constant behind', async () => {
@@ -645,7 +645,7 @@ describe('the platform gate comes before the client', () => {
     // is what the entry point does with it.
     const { updater } = updaterFake()
     delete (updater as unknown as Record<string, unknown>)['stagingUserIdPromise']
-    expect(() => hardenUpdater(updater)).toThrow(/6\.8\.10/)
+    expect(() => hardenUpdater(updater)).toThrow(/6\.8\.11/)
   })
 
   it('turns updates off in one constant line rather than failing to start', () => {

@@ -59,7 +59,7 @@ const UNDECLARED_LOADS: readonly string[] = []
 /** BUNDLED are the notices sections whose code ships inside a build output. They
  * are not packages of the packed `node_modules`, so the derivation below leaves
  * them out, and they are asserted present separately. */
-const BUNDLED: readonly string[] = ['elkjs 0.11.0', 'Instrument Sans', 'IBM Plex Mono']
+const BUNDLED: readonly string[] = ['elkjs 0.12.1', 'Instrument Sans', 'IBM Plex Mono']
 
 interface PackageEntry {
   readonly version?: string
@@ -208,8 +208,8 @@ describe('the notices file lists what ships, for every platform', () => {
     // true and mean nothing.
     const shipped = shippedOn(['darwin', 'arm64'])
     expect(shipped.length).toBeGreaterThan(25)
-    expect(shipped).toContain('electron-updater 6.8.10')
-    expect(shipped).toContain('@sentry/electron 8.2.0')
+    expect(shipped).toContain('electron-updater 6.8.11')
+    expect(shipped).toContain('@sentry/electron 8.3.0')
     // `semver` is the case that says the walk **resolves** rather than lists:
     // the copy that ships is the one nested under `electron-updater` (7.7.4),
     // not the tree root's (7.8.5) which only a development dependency needs, and
@@ -237,7 +237,7 @@ describe('the notices file lists what ships, for every platform', () => {
     for (const gone of [
       'sentry 0.45.0',
       'oxc-parser 0.152.0',
-      '@sentry/bundler-plugins 11.7.0',
+      '@sentry/bundler-plugins 11.8.0',
       'glob 13.0.6',
       'supports-color 8.1.1',
       'has-flag 4.0.0',
@@ -271,7 +271,7 @@ describe('the notices file lists what ships, for every platform', () => {
     // package of the packed tree, so none is in the derived set, and this is
     // what stops them being deleted as unmatched.
     for (const section of [
-      '## elkjs 0.11.0 -- Eclipse Public License 2.0',
+      '## elkjs 0.12.1 -- Eclipse Public License 2.0',
       '## Instrument Sans -- SIL Open Font License 1.1',
       '## IBM Plex Mono -- SIL Open Font License 1.1',
     ]) {
