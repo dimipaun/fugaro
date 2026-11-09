@@ -47,6 +47,7 @@ import {
   binDirectories,
   cliSentence,
   decodeFeedLine,
+  keyedArguments,
   planFor,
   privateWorkingDirectory,
   resolveBinary,
@@ -61,6 +62,7 @@ import type {
   Notice,
   SettingsEditPhase,
   Sidecar,
+  SpawnOperationName,
   SpawnPlan,
   SpawnTarget,
 } from '../main/spawn'
@@ -1014,15 +1016,23 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
     injected ?? ((installation: BoundInstallation): Promise<CliSource> => sourceFor(installation, options))
   let bound: { readonly key: string; readonly source: CliSource } | null = null
   let pending: { readonly key: string; readonly source: Promise<CliSource> } | null = null
-  const feeds = new Map<string, LiveFeed>()
+  /**
+   * feeds is the live subscriptions this surface handed out, keyed by `feedKey`.
+   * Each entry names the **binding** it was made for, because an entry can belong
+   * to the binding that is being *built* rather than the one being dropped: a
+   * subscription is registered before any source exists (`lazyFeed`), so the
+   * first `resolve()` of a binding runs with that binding's own entries already
+   * here (see `resolve`).
+   */
+  const feeds = new Map<string, { readonly binding: string; readonly feed: LiveFeed }>()
 
   /**
    * planReads holds the last `plan status` read per (binding, argv) -- the
    * promise itself, so a read still in flight is shared -- with the console
    * clock of the moment it finished, `null` while it runs. It is cleared wherever
-   * `feeds` is: both are answers about the binding that is being dropped, and a
-   * cached plan graph for a directory the console has stopped showing is the
-   * same defect as a live feed for one.
+   * the caches of a dropped binding are: both are answers about the binding that
+   * is being dropped, and a cached plan graph for a directory the console has
+   * stopped showing is the same defect as a live feed for one.
    */
   const planReads = new Map<string, { readonly reading: Promise<Snapshot>; at: number | null }>()
 
@@ -1114,7 +1124,17 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
     // that was already being probed).
     const previous = bound
     bound = null
-    feeds.clear()
+    // The feeds of the binding that is going, and **only** those. An entry for
+    // the binding being built is a subscription that arrived before its source
+    // existed (`lazyFeed`), and clearing it would leave that feed's own stop
+    // looking for an entry that is not there: the child would run on with
+    // nothing holding it (H6 -- a `graph --watch` child outliving the Graph tab).
+    // The keys themselves cannot be reused across bindings -- `feedKey` carries
+    // the installation -- so this is about the *same* installation's entries
+    // surviving the first build of the binding they were registered for.
+    for (const [entryKey, entry] of feeds) {
+      if (entry.binding !== key) feeds.delete(entryKey)
+    }
     planReads.clear()
     graphReads.clear()
     graphScopes.clear()
@@ -1268,15 +1288,17 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
     subscribeLive(args: ValidatedArguments): LiveFeed {
       // One feed object per (installation, arguments) while it is live, which is
       // the idempotency `FugaroSource.subscribeLive` states. The key is the
-      // active installation's id and the argument object: the same arguments
-      // under a different installation are legitimately a different feed.
+      // active installation's id and the arguments that reach a word of the
+      // child's argv (`keyedArguments`): the same arguments under a different
+      // installation are legitimately a different feed, and an argument the child
+      // is never asked is not part of the child at all.
       const installation = deps.installation()
       if (installation === null) throw noInstallation()
-      const key = `${installation.id}\u0000${JSON.stringify(sortedArguments(args))}`
+      const key = feedKey('live.watch', installation.id, args)
       const existing = feeds.get(key)
-      if (existing !== undefined) return existing
+      if (existing !== undefined) return existing.feed
       const feed = lazyFeed((source) => source.subscribeLive(args))
-      feeds.set(key, feed)
+      feeds.set(key, { binding: bindingKey(installation), feed })
       return feed
     },
     /**
@@ -1299,12 +1321,15 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
      *     stream reads the project's stored view through the caller's own
      *     credential, from wherever the child runs.
      *
-     * The key is the installation and the arguments, as above, so a poll with the
-     * same scope is answered by the feed that is already live. The `visible`
-     * argument is part of that key only in the sense that it is an argument like
-     * any other: it reaches no argv (`src/main/spawn.ts`), so a poll and a stop
-     * for the same scope name the same subscription, which is what makes
-     * `stopGraphWatch` below stop the running child rather than look past it.
+     * The key is the installation and the arguments **that reach a word of the
+     * child's argv** (`keyedArguments`), as above, so a poll with the same scope
+     * is answered by the feed that is already live. `visible` is deliberately
+     * not part of it: it reaches no argv, so it decides whether the child runs
+     * rather than which child it is -- and the two calls this surface is asked
+     * for differ by exactly that argument, the poll (`{source}`) and the stop
+     * (`{source, visible: false}`). Keyed on it, the stop would look for a feed
+     * that does not exist, answer nothing, and leave the running child alive
+     * (H6).
      */
     subscribeGraph(args: ValidatedArguments): LiveFeed {
       const installation = deps.installation()
@@ -1313,11 +1338,11 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
       if (scope !== GRAPH_SCOPE_ALL && !(graphScopes.get(bindingKey(installation))?.has(scope) ?? false)) {
         throw new SourceRefusal(NO_GRAPH_SCOPE)
       }
-      const key = `${installation.id}\u0000${JSON.stringify(sortedArguments(args))}`
+      const key = feedKey('graph.watch', installation.id, args)
       const existing = feeds.get(key)
-      if (existing !== undefined) return existing
+      if (existing !== undefined) return existing.feed
       const feed = lazyFeed((source) => source.subscribeGraph(args))
-      feeds.set(key, feed)
+      feeds.set(key, { binding: bindingKey(installation), feed })
       return feed
     },
     /**
@@ -1337,11 +1362,11 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
     stopGraphWatch: async (args) => {
       const installation = deps.installation()
       if (installation === null) return
-      const key = `${installation.id}\u0000${JSON.stringify(sortedArguments(args))}`
-      const feed = feeds.get(key)
-      if (feed === undefined) return
+      const key = feedKey('graph.watch', installation.id, args)
+      const entry = feeds.get(key)
+      if (entry === undefined) return
       feeds.delete(key)
-      await feed.stop()
+      await entry.feed.stop()
     },
     showBudget: (args) => read('budget.show', (source) => source.showBudget(args)),
     runReport: (args) => read('spend.report', (source) => source.runReport(args)),
@@ -1529,6 +1554,24 @@ function sortedArguments(args: ValidatedArguments): Record<string, unknown> {
   const out: Record<string, unknown> = {}
   for (const key of Object.keys(args).sort()) out[key] = args[key]
   return out
+}
+
+/**
+ * feedKey is the key one bound live feed is held under: the installation, and
+ * the arguments that reach a word of the child's argv (`keyedArguments`).
+ *
+ * **An argument that reaches no word is left out of it, and that is what makes a
+ * stop find the feed a poll started.** `graph.watch`'s `visible` says whether
+ * the child runs rather than what it is asked, so the renderer's poll
+ * (`{source}`) and its stop (`{source, visible: false}`) name one child; keyed on
+ * the raw arguments they would be two, the stop would find nothing, and the
+ * `graph --watch` child would outlive the Graph tab (H6).
+ *
+ * The installation is part of the key because the same arguments under another
+ * installation are legitimately another child.
+ */
+function feedKey(operation: SpawnOperationName, installationId: string, args: ValidatedArguments): string {
+  return `${installationId}\u0000${JSON.stringify(sortedArguments(keyedArguments(operation, args)))}`
 }
 
 /**

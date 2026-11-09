@@ -78,6 +78,7 @@ import {
   isExecutableFile,
   decodeFeedLine,
   isSafeArgumentValue,
+  keyedArguments,
   locationsFor,
   nodeSpawner,
   parseVersionLine,
@@ -678,6 +679,30 @@ describe('the spawn table and the argv it builds', () => {
     // An undeclared key cannot smuggle a word in either: the row's arguments are
     // the whole of what reaches this argv.
     expect(() => argvFor('graph.read', { watch: true } as never, safeContext())).toThrow(/does not declare/)
+  })
+
+  it('keys a subscription on the arguments that reach a word, and no others', () => {
+    // The bound source and the fixture both name a live child by what it was
+    // spawned with, so the two calls a screen makes for one child must build one
+    // key. `graph.watch`'s calls differ by `visible`: the poll names the scope,
+    // the stop adds `visible: false` for the tab that went away, and the row
+    // declares that argument with no flag -- `argvFor` emits no word for it, so
+    // it is no part of the child's identity and `keyedArguments` drops it here.
+    expect(keyedArguments('graph.watch', { source: 'all' })).toEqual({ source: 'all' })
+    expect(keyedArguments('graph.watch', { source: 'all', visible: false })).toEqual({ source: 'all' })
+    // `visible: true` is dropped too: it is not a word either, and a screen that
+    // sent it would otherwise name a second child that never existed.
+    expect(keyedArguments('graph.watch', { source: 'all', visible: true })).toEqual({ source: 'all' })
+    // Every argument of the live feed does reach a word, so its key is the whole
+    // object and a per-repository subscription stays its own child.
+    expect(keyedArguments('live.watch', { repo: 'r-1a2b3c4d/r-5e6f7a8b' })).toEqual({ repo: 'r-1a2b3c4d/r-5e6f7a8b' })
+    // An undeclared key is kept rather than dropped: `argvFor` is where it is
+    // refused, by name, and a key merged away here would let a payload the row
+    // never saw answer an existing child of the same scope.
+    expect(keyedArguments('graph.watch', { source: 'all', watch: true } as never)).toEqual({
+      source: 'all',
+      watch: true,
+    })
   })
 
   it('a source value outside the pattern is refused before any spawn', () => {

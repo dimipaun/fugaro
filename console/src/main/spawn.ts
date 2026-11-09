@@ -1771,6 +1771,79 @@ export function argvFor(
   return Object.freeze(argv)
 }
 
+/**
+ * keyedArguments is one argument object reduced to the arguments that reach a
+ * word of this operation's argv -- the whole of what two calls have to agree on
+ * to be the same child.
+ *
+ * It exists for the bound source (`src/source/cli.ts`, `src/source/fixture.ts`),
+ * which keys a live feed **before** any child is planned, and it is the reason
+ * that key can be trusted: an argument that emits no word is not part of the
+ * argv, so it must not be part of the key either. **`graph.watch`'s `visible` is
+ * the case that made this a function.** It says whether the child runs at all,
+ * so the renderer's poll (`{source}`) and its stop (`{source, visible: false}`)
+ * name one subscription; keyed on the raw arguments they were two, the stop
+ * looked for a feed that did not exist, answered nothing, and left a
+ * `graph --watch` child running after the Graph tab went off screen (H6).
+ *
+ * The answer comes from the row rather than from a second list:
+ * `emitsArgvWord` reads each declared argument the way `argvFor` emits it. An
+ * **undeclared** key is kept, so two calls carrying different junk still split
+ * the key -- `argvFor` is where such a key is refused, by name, and this
+ * function must not quietly merge what that one rejects.
+ */
+export function keyedArguments(
+  operation: SpawnOperationName,
+  args: ValidatedArguments,
+): Readonly<Record<string, ValidatedArgument>> {
+  const row = spawnCommandFor(operation)
+  const declared = new Map(row.args.map((spec) => [spec.key, spec]))
+  const out: Record<string, ValidatedArgument> = {}
+  for (const key of Object.keys(args)) {
+    const value = args[key]
+    if (value === undefined) continue
+    const spec = declared.get(key)
+    if (spec !== undefined && !emitsArgvWord(spec, value)) continue
+    out[key] = value
+  }
+  return Object.freeze(out)
+}
+
+/**
+ * emitsArgvWord answers whether one declared argument puts a word of its own
+ * into the argv for this value. It is `argvFor`'s own switch read as a question
+ * rather than a second emitter, and it is exhaustive over `SpawnArgumentKind` so
+ * that a kind added to the table with no answer here is a compile error rather
+ * than a feed keyed on an argument the child is never asked.
+ *
+ * Three kinds can emit nothing: the boolean whose row declares no flag
+ * (`graph.watch`'s `visible`, which decides whether the child runs rather than
+ * what it is asked), the `repo` secret scope (`--project-wide` is the word, and
+ * it is absent when the scope is the other one) and the launch's task text,
+ * which travels on the child's standard input. The settings value emits a word
+ * like any other, behind the row's terminator.
+ */
+function emitsArgvWord(spec: SpawnArgument, value: ValidatedArgument): boolean {
+  switch (spec.kind) {
+    case 'boolean':
+      return spec.flag !== null && value === true
+    case 'secretScope':
+      return value === 'project-wide'
+    case 'stdin':
+      return false
+    case 'value':
+    case 'limit':
+    case 'after':
+    case 'summarySince':
+    case 'pullRequest':
+    case 'title':
+    case 'planTask':
+    case 'settingOp':
+    case 'settingValue':
+      return true
+  }
+}
+
 /** RUN_ID_ARGUMENT_RE is `task.NewRunID`'s shape as this module requires it of
  * the id the main process generated: a UTC stamp and four hex digits. It is
  * narrower than `ipc.ts`'s `RUN_ID_RE` -- which has to accept any run id a CLI

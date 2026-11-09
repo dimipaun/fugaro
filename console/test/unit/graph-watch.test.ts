@@ -3,9 +3,11 @@
 // The graph's live feed (the graph plan's CG9b): `graph.watch`, the console's
 // thirty-seventh operation and its second long-lived child.
 //
-// Each of the plan's six claims is a case below, in the plan's own order; three
-// more hold the rest of this row's contract (the scope is a value and `visible`
-// reaches no argv, one child per scope, and a stopped feed is not handed back):
+// Each of the plan's six claims is a case below, in the plan's own order -- the
+// fourth has a second case through `createBoundSource`, the source the app
+// builds -- and three more hold the rest of this row's contract (the scope is a
+// value and `visible` reaches no argv, one child per scope, and a stopped feed
+// is not handed back):
 //
 //   1. **The argv is exactly the declared row.** §5.1 rule 6 is a fence, not a
 //      description: what a real child is handed is `graph --watch --json`, the
@@ -44,7 +46,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import { SPAWN_COMMANDS, SPAWN_FLAGS, argvFor } from '../../src/main/spawn'
-import { CliSource, MAX_LIVE_FEEDS } from '../../src/source/cli'
+import { CliSource, MAX_LIVE_FEEDS, createBoundSource } from '../../src/source/cli'
 import { handlersFor } from '../../src/source/source'
 import type { LiveFeed, Snapshot } from '../../src/source/source'
 import { GRAPH_DOCUMENT_VERSION } from '../../src/shared/schema'
@@ -268,6 +270,41 @@ describe('the graph feed’s lifetime', () => {
     // And the tab's return is a fresh child: the stopped feed is not handed
     // back, because a screen that comes back to the graph has to be reading.
     await handlers['graph.watch']?.({ source: 'all' })
+    await waitFor(() => graphSpawns(stub) === 2)
+    await source.close()
+    await waitFor(() => stub.kills().length === 2)
+  })
+
+  it('stops the running child when the source the app builds is told the tab is hidden', async () => {
+    // The case above drives the handler over a `CliSource`, and `entry-wiring`
+    // drives a fake bridge; neither reaches `createBoundSource`, which is the one
+    // source the shipped app constructs (`src/main/index.ts`) and which keys its
+    // own feeds. **H6 is only kept if that key ignores the argument the stop
+    // adds**: the renderer polls `{source: 'all'}` and stops `{source: 'all',
+    // visible: false}`, so a key holding `visible` answers the stop with "no such
+    // feed", returns silently, and leaves the `graph --watch` child running after
+    // the Graph tab is gone.
+    const stub = installStub(freshDirectory(), { commands: WATCHING })
+    const source = createBoundSource({
+      installation: () => ({ id: 'a1', project: PROJECT, binaryPath: stub.binary }),
+      create: async () =>
+        CliSource.create({ target: { project: PROJECT }, configuredBinaryPath: stub.binary, appEnv: {} }),
+    })
+    const feed = source.subscribeGraph({ source: 'all' })
+    await feed.current()
+    await waitFor(() => graphSpawns(stub) === 1)
+
+    await source.stopGraphWatch({ source: 'all', visible: false })
+    await waitFor(() => stub.kills().length === 1)
+    expect(stub.kills()[0]?.argv).toEqual(['graph', '--watch', '--json', '--source', 'all', '--project', PROJECT])
+    expect(graphSpawns(stub), 'the stop started a child of its own').toBe(1)
+
+    // The tab's return is a new child, and the console's own shutdown still
+    // reaches it: the bound source hands nothing stopped back and drops nothing
+    // it is still holding.
+    const again = source.subscribeGraph({ source: 'all' })
+    expect(again, 'the stopped feed was handed back').not.toBe(feed)
+    await again.current()
     await waitFor(() => graphSpawns(stub) === 2)
     await source.close()
     await waitFor(() => stub.kills().length === 2)

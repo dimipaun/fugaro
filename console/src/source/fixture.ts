@@ -50,8 +50,8 @@
 
 import { createHash } from 'node:crypto'
 
-import { FeedTracker, GraphStreamGate } from '../main/spawn'
-import type { Notice, SettingsEditPhase, Timers } from '../main/spawn'
+import { FeedTracker, GraphStreamGate, keyedArguments } from '../main/spawn'
+import type { Notice, SettingsEditPhase, SpawnOperationName, Timers } from '../main/spawn'
 import type { OperationName, ValidatedArguments } from '../main/ipc'
 import { stringifyDeep } from '../shared/stringify'
 import { MAX_REDACTABLE_LINE_LENGTH, REDACTOR_VERSION, RedactionRefusal, assertRedacted } from './redact'
@@ -508,7 +508,7 @@ export class FixtureSource implements FugaroSource {
    * dropped past `MAX_LIVE_FEEDS`. A feed that has ended is not live, so the
    * next call replays the recording from its first record. */
   subscribeLive(args: ValidatedArguments): LiveFeed {
-    return this.#replay(argsKey(args), null)
+    return this.#replay(argsKey('live.watch', args), null)
   }
 
   /**
@@ -525,7 +525,7 @@ export class FixtureSource implements FugaroSource {
    * `seq` is how the console's own rule is held to what it promises.
    */
   subscribeGraph(args: ValidatedArguments): LiveFeed {
-    return this.#replay(argsKey(args), new GraphStreamGate())
+    return this.#replay(argsKey('graph.watch', args), new GraphStreamGate())
   }
 
   /** stopGraphWatch ends the replay these arguments name and forgets it, so a
@@ -533,7 +533,7 @@ export class FixtureSource implements FugaroSource {
    * other half is that it never refuses: a feed that is not there is the state
    * the caller asked for. */
   async stopGraphWatch(args: ValidatedArguments): Promise<void> {
-    const key = argsKey(args)
+    const key = argsKey('graph.watch', args)
     const feed = this.#feeds.get(key)
     if (feed === undefined) return
     this.#feeds.delete(key)
@@ -710,18 +710,33 @@ export class FixtureSource implements FugaroSource {
   }
 }
 
-/** argsKey is a subscription's identity: the arguments, sorted, so two calls
- * that ask for the same thing are the same feed however they were spelled. */
-function argsKey(args: ValidatedArguments): string {
+/** argumentPairs is one argument object as `key=value` strings in a fixed order,
+ * so two calls that ask for the same thing are spelled the same way. */
+function argumentPairs(args: ValidatedArguments): readonly string[] {
   return Object.keys(args)
     .sort()
     .map((key) => `${key}=${JSON.stringify(args[key] ?? null)}`)
-    .join('\u0000')
 }
 
+/**
+ * argsKey is a subscription's identity: the arguments **that reach a word of the
+ * operation's argv** (`keyedArguments`), so two calls that ask for the same child
+ * are the same feed however they were spelled -- and a call that differs only by
+ * an argument the child is never asked is the same feed too. `graph.watch`'s
+ * `visible` is that argument, and it is why this seam cannot key on the raw
+ * object: the renderer polls `{source}` and stops `{source, visible: false}`, and
+ * a stop that found no feed would leave the replay running.
+ */
+function argsKey(operation: SpawnOperationName, args: ValidatedArguments): string {
+  return argumentPairs(keyedArguments(operation, args)).join('\u0000')
+}
+
+/** argsNote names the arguments a fixture could not answer, and it reads the
+ * caller's own object rather than the key above: the note is about the read that
+ * was asked for, so an argument that reaches no argv is still worth naming. */
 function argsNote(args: ValidatedArguments): string {
-  const key = argsKey(args)
-  return key === '' ? 'no arguments' : key.replaceAll('\u0000', ', ')
+  const note = argumentPairs(args).join(', ')
+  return note === '' ? 'no arguments' : note
 }
 
 const NODE_TIMERS: Timers = {
