@@ -91,6 +91,7 @@ Subcommands:
 - `fugaro accounts add` -- Declare a named Claude account and the repositories its token may be used by
 - `fugaro accounts clear` -- Clear one account's broken or exhausted credential mark, after replacing its token
 - `fugaro accounts ls` -- List the named Claude accounts (claude_accounts in the local config) a repository may use with fugaro run --token
+- `fugaro accounts pool` -- List, declare and remove the named pools a craft's access may name
 - `fugaro accounts rm` -- Remove a named Claude account, its secret and the job that served it
 
 ## `fugaro accounts add`
@@ -109,6 +110,15 @@ accounts must write its own allow_repos, and every account it lists must cover
 every repository on it: an account that covers less is refused before the file
 is touched, naming the repositories it is missing, because widening the account
 silently is what that rule exists to prevent.
+
+--type declares the name as a typed credential as well, in this prefix's
+credentials block: the entry that lets a pool list the name as a member
+(fugaro accounts pool add). claude-oauth is the type this command's token step
+serves. vertex is built in and is never defined, and the two types the spec
+lists as future work are refused in words that say so. A type whose key no
+command stores yet is refused too: the entry would name a credential no run
+could authenticate with. Without the flag nothing but claude_accounts and the
+profile is written, which is what this command has always done.
 
 Then it converges, in one command and behind the one sentence it prints: the
 token is stored project-wide as a new version of the account's own secret, the
@@ -139,6 +149,7 @@ Flags:
 | `-h`, `--help` | bool | `false` | no | help for add |
 | `--profile` | string | "" | no | the profile whose claude_accounts gains the name (default: the only profile, when there is exactly one) |
 | `--repos` | string | "" | no | the repositories the token may be used by, as owner/name,owner/name (default: this checkout's origin) |
+| `--type` | string | "" | no | declare the name as a typed credential too, one of openrouter, anthropic, claude-oauth (without it, the name is declared in claude_accounts alone, as it always was; vertex is built in and is never defined) |
 | `--yes` | bool | `false` | no | confirm the write without a prompt |
 
 Subcommands:
@@ -259,6 +270,131 @@ Flags:
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | repository as owner/name, or a path inside its checkout (default: this checkout's origin) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro accounts pool`
+
+List, declare and remove the named pools a craft's access may name
+
+Usage: `fugaro accounts pool`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for pool |
+
+Subcommands:
+
+- `fugaro accounts pool add` -- Declare a pool with these members, in this order
+- `fugaro accounts pool ls` -- List the named pools and the members each one walks
+- `fugaro accounts pool rm` -- Remove a pool from this project's config
+
+## `fugaro accounts pool add`
+
+Declare a pool with these members, in this order
+
+Declare pools.<NAME> in this project: the credentials it walks, in the order it
+walks them.
+
+The members are credential names the same config defines (fugaro accounts ls
+names the accounts; the Claude OAuth ones a credential entry each), and they are
+written in the order given — failover tries them in that order and round-robin
+starts from the first. A credential the config does not define, a repeated
+member, a name this command may not use and a strategy that is not failover or
+round-robin are all refused before the file is touched.
+
+--strategy failover (the default) or round-robin. A pool that already exists
+keeps the strategy it has when the flag is left out, and this command replaces
+its members with the list on the command line: it is the whole list every time,
+so a member you leave out is dropped.
+
+Run it at your own terminal: a pool decides where a project's calls may be
+spent and whose key they may carry, so a coding agent's session is refused,
+--yes included.
+
+Usage: `fugaro accounts pool add NAME MEMBER...`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--ask` | bool | `false` | no | ask the confirmation this write would otherwise get; refused where nobody can answer it (a coding agent's session, a pipe), and beside --yes |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for add |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--strategy` | string | "" | no | how the pool walks its members: failover (the default: try them in order) or round-robin (share the load). Left out, a pool that exists keeps the strategy it has |
+| `--yes` | bool | `false` | no | confirm the write without a prompt |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro accounts pool ls`
+
+List the named pools and the members each one walks
+
+List the pools the installation's own config defines (pools, docs/model-crafts/spec.md §2): each pool's
+strategy, its members in the order it walks them, and which half of a run
+serves them.
+
+An OpenRouter or Vertex member is served by a run's own gateway; a Claude OAuth
+or Anthropic-key member by the credentials service, which selects by tier
+(OAuth before key: D154). A pool whose members need both is one that can only
+fail over where the credential is chosen again, at a stage boundary.
+
+The read is offline: it reads the selected project's config file and reaches no
+bucket, no database and no host.
+
+Usage: `fugaro accounts pool ls`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for ls |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro accounts pool rm`
+
+Remove a pool from this project's config
+
+Remove pools.<NAME> from this project's config: the pool goes, and a craft whose
+access names it is refused rather than left pointing at nothing.
+
+It removes the pool from the installation's config only. A repository that
+selected the pool keeps its own file untouched, and the pool the policy node
+carries is what the next fugaro update publishes.
+
+Run it at your own terminal: a pool decides where a project's calls may be
+spent, so a coding agent's session is refused, --yes included.
+
+Usage: `fugaro accounts pool rm NAME`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--ask` | bool | `false` | no | ask the confirmation this write would otherwise get; refused where nobody can answer it (a coding agent's session, a pipe), and beside --yes |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for rm |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--strategy` | string | "" | no | how the pool walks its members: failover (the default: try them in order) or round-robin (share the load). Left out, a pool that exists keeps the strategy it has |
+| `--yes` | bool | `false` | no | confirm the write without a prompt |
 
 Subcommands:
 
