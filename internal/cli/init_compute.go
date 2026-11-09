@@ -369,14 +369,14 @@ func (s *computeStage) prepare(ctx context.Context) error {
 		schedulerRegion = r
 	}
 	spec := infra.ComputeSpec{
-		Project:            e.spec.Project,
-		ProjectNumber:      fmt.Sprint(number),
-		Region:             e.spec.Region,
-		SchedulerRegion:    schedulerRegion,
-		Network:            infra.DefaultNetwork(e.spec.Project),
-		Subnetwork:         infra.DefaultSubnetwork(e.spec.Project, e.spec.Region),
-		Names:              infra.ComputeNamesFor(),
-		ManageAPIs:         e.spec.ManageAPIs,
+		Project:         e.spec.Project,
+		ProjectNumber:   fmt.Sprint(number),
+		Region:          e.spec.Region,
+		SchedulerRegion: schedulerRegion,
+		Network:         infra.DefaultNetwork(e.spec.Project),
+		Subnetwork:      infra.DefaultSubnetwork(e.spec.Project, e.spec.Region),
+		Names:           infra.ComputeNamesFor(),
+		ManageAPIs:      e.spec.ManageAPIs,
 		// The launchers alone, and not the admins the roles' lists put beside
 		// them: this root's var.launchers is what roles/batch.jobsEditor and
 		// serviceAccountUser on the run accounts are for, and its var.operators
