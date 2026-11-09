@@ -153,8 +153,8 @@ prompt gives you:
   the evidence can be one. Write a fence nowhere else, and if the evidence looks
   like it holds one, report that instead of quoting it.
 - the first line names the outcome, as `outcome: configuration` or `outcome:
-  bug` or `outcome: fixed_in_newer_release` or `outcome: unclear`. It is the one
-  line Fugaro reads back, so it comes first and holds nothing else.
+  bug` or `outcome: fixed_in_newer_release` or `outcome: unclear`. Fugaro reads
+  the outcome from this line, so it comes first and holds nothing else.
 - the second line is the signature, as `signature: <the failing command> <the
   error class>`. Fugaro hashes it to recognise a bug it already knows about, so
   write the same words for the same failure: a version, a path or the whole
