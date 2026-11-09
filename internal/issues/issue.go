@@ -100,8 +100,8 @@ func (s Status) Valid() bool {
 // a bug that came back is a new upload, never a rewrite of the record (F9,
 // F21) — so the shared store refuses to claim, to file and to set aside an
 // issue that carries one. `dismissed` is not decided: it is the value
-// SetSharedStatus itself writes, and no other caller reaches the store from a
-// dismissed record.
+// SetSharedStatus itself writes, and setting an issue aside again is that
+// call's own no-op.
 func (s Status) decided() bool { return s == StatusSubmitted || s == StatusResolved }
 
 // UnmarshalYAML refuses a status outside the four, for the reason Class
