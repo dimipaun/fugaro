@@ -155,7 +155,6 @@ func accountsAddGate(ctx context.Context, cmd *cobra.Command, lc *localcfg.Confi
 		// sentence it read before this row landed — and nothing is recorded.
 		return initflow.Managed{}, managedGate{}, nil
 	}
-	applied, refused := accountsAddRules(name, profile, beyond, o.claude)
 	conv := managedmode.ConvergeAdmitted(doc, initflow.YesOrTyped, applied)
 	if len(refused) > 0 {
 		conv = managedmode.ConvergeRefused(doc, initflow.YesOrTyped, refused)
@@ -182,6 +181,20 @@ func accountsAddGate(ctx context.Context, cmd *cobra.Command, lc *localcfg.Confi
 	// own refusal.
 	return initflow.Managed{}, managedGate{}, nil
 }
+
+// accountsAddOwnerOnly is whether this declaration is a step only the owner may
+// make: one this command's own rules refuse, so the gate would refuse the
+// document itself and the step's door is the owner's own terminal and no
+// session (D1552, D1555).
+//
+// Why it is read off the rules rather than off the flags. A rule that refuses
+// is a rule saying the owner is the only one who can answer for this step — a
+// widening names a repository this run cannot see (D868), and --claude carries
+// a token, which no plan gate judges (D1026) — so the rules are where that fact
+// already lives: the one place a class of step is declared, and a rule grown
+// here later needs no second list to keep in step with it. It is the fact
+// settingsGateReads's owner-only term is about, in this command's own words.
+func accountsAddOwnerOnly(refused []string) bool { return len(refused) > 0 }
 
 // accountsAddRules are the rules the gate judges this command's document by, in
 // the words the record and the refusal carry: the rules that were applied and

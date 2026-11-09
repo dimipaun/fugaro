@@ -236,7 +236,7 @@ the CLI has **one** helper for the four steps around a write (`internal/cli/mana
 by `fugaro config publish` (`internal/cli/config_publish_managed.go:97`), `fugaro project policy
 publish` (`internal/cli/project_policy_managed.go:513`), `fugaro image refresh`
 (`internal/cli/image_refresh_managed.go:115`) and `fugaro accounts add`
-(`internal/cli/accounts_managed.go:86`); `fugaro update` runs the same four steps through its own
+(`internal/cli/accounts_managed.go:98`); `fugaro update` runs the same four steps through its own
 path, and `fugaro settings`' writes are local config edits. Consequence for this design: **W2's
 `fugaro update` stage lands inside a gate that exists** rather than beside a design, and the
 workspace's own commands are local writes of exactly the `settings`/`models` shape — so the
