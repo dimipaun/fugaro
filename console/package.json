@@ -24,7 +24,8 @@
     "package": "npm run build && npm run symbols:inject && electron-builder --mac --universal --publish never",
     "package:targets": "electron-builder --mac --universal --publish never",
     "symbols:inject": "node scripts/upload-sentry-symbols.mjs inject",
-    "package:linux": "electron-builder --linux --publish never"
+    "package:linux": "electron-builder --linux --publish never",
+    "package:win": "npm run build && electron-builder --win --publish never"
   },
   "build": {
     "appId": "io.github.dimipaun.fugaro-console",

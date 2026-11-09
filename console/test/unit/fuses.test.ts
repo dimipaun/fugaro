@@ -911,6 +911,19 @@ describe('the packaging configuration the fuses belong to', () => {
     expect(entry?.dev).toBe(true)
   })
 
+  it('packs Windows with the lockfile’s own electron-builder, and never publishes', () => {
+    // The Windows leg's script, and it lives here rather than in the staged
+    // `console-windows.yml` for the reason `package:linux`'s own comment gives:
+    // `--publish never` is in the script so that no invocation of the packer can
+    // add one, and the packer named is the lockfile's exact electron-builder
+    // rather than whatever `npx` would resolve in the shell the job runs in.
+    const script = manifest.scripts['package:win'] ?? ''
+    expect(script).toBe('npm run build && electron-builder --win --publish never')
+    expect(script).not.toMatch(/\bnpx\b/)
+    expect(script).not.toMatch(/--publish\s+(?:always|onTag|onTagOrDraft)/)
+    expect(script).not.toMatch(/electron-builder@/)
+  })
+
   it('runs this hook, compiled to the file the build emits', () => {
     expect(build.afterPack).toBe('dist/main/fuses.js')
     // and the build does emit there: `rootDir: src`, `outDir: dist`.
