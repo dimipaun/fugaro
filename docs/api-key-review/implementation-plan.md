@@ -61,8 +61,8 @@ AK3 is the record — and either may land at any point in L1 without moving it. 
 it too**: they are the security review's two findings (a wording pair that says a review job's account
 is a Claude account, and the credential write that can outrun the service that reads it), and **neither
 blocks a cloud task from starting** — but **AK10 is a release precondition of AK6b** (§6 item 11): the
-two land in one release, AK10 first, and **that release waits on the owner's approval of AK10**, which
-is written and not approved. **The OpenRouter half of the critical path carries one more gate, and no
+two land in one release, AK6b's commit first and the guard after it, and **that release waits on the
+owner's approval of AK10**, which is written and not approved. **The OpenRouter half of the critical path carries one more gate, and no
 task holds it: Check 50** (§6 item 10) — the live check the tree's own tier-C refusal names, which the
 owner has not run — so AK6a, AK6b and AK7 may all land and be unit-tested while a review **served** by
 a provider key is still refused, and §5's step C may not be run before it.
@@ -604,12 +604,13 @@ intersects a repository's child with it), so a second value is a second admissio
 **Slice:** cloud, OpenRouter (L3). **Depends on:** AK6a (the axis value its offer rule matches),
 **D1418** — the provider's base URL and auth shape go **in the bundle** — **D1419**, answered "not at
 all in the Anthropic-key slice", which leaves the provider endpoint to this half, and **D1416**.
-**And its release depends on AK10, which lands in the same release and before it** (§6 item 11,
-condition 8 of the review): the provider entry is the first bundle key a deployed service can be too
-old to read, so the write that would halt every caller of that service — coding runs included — is
-guarded before the entry that makes the halt possible exists. AK10 is **written and not approved**, so
-**this half cannot be released until the owner approves it**. **The other half of §6.7's CSR17**, and
-the half whose six-file list this plan already had: it is
+**And its release depends on AK10, which lands in the same release, after this half's own commit**
+(§6 item 11, condition 8 of the review): the provider entry is the first bundle key a deployed service
+can be too old to read, so **the release that first ships the entry carries the guard against the
+write** — `fugaro creds set` refuses a bundle whose newest key the installation's recorded service
+image predates — and **no release ships one without the other**. AK10 is **written and not approved**,
+so **this half cannot be released until the owner approves it**. **The other half of §6.7's CSR17**,
+and the half whose six-file list this plan already had: it is
 that list — `bundle.go` and its test, `cascade.go`, `forward.go` and its test and the bundle schema —
 plus `internal/credsvc/cascade_test.go` (the tier map's own test, which the six named no test for) and
 `internal/creds/select.go` and its test, the tier-C refusal no sketch booked (§2).
@@ -819,12 +820,14 @@ what was refused is a security-relevant inaccuracy rather than a wording prefere
 
 **Slice:** none — **off the levels and off the critical path** (§1, §2's `—` rows), and **a release
 precondition of AK6b** (§6 item 11, condition 8 of the review): it lands in the same release as AK6b
-and **before** AK6b's own commit, because the guard must exist before the entry it guards can be
-written. **Depends on:** AK6b (the field whose write it guards); it was found by the security review of
-the merged AK4 and AK5 (§7, **F26**) and it is the guard AK6b's own shape requires rather than a change
-to AK6b. **It is written and not approved**, so its approval is what the OpenRouter half's release
-waits on — and the ordering is deliberate: AK6b's commit may land in the tree first, but no release
-carries AK6b without this.
+and **after** AK6b's own commit, because the guard judges a document only a CLI carrying the provider
+entry can write — its own `TestCredsSetWritesWhenTheServiceIsNewer` loads the written bundle through
+`credsvc.ParseBundle`, which refuses a key the tree does not know, so the field must exist before the
+guard that judges it can be committed. **Depends on:** AK6b (the field whose write it guards); it was
+found by the security review of the merged AK4 and AK5 (§7, **F26**) and it is the guard AK6b's own
+shape requires rather than a change to AK6b. **It is written and not approved**, so its approval is
+what the OpenRouter half's release waits on — and the ordering is deliberate: commit order is this
+half's own, but **no release carries AK6b without this**, so the two commits land in one release.
 
 **Files (4):** `internal/cli/creds.go`, `internal/cli/creds_test.go`,
 `internal/cli/creds_skew_test.go` (new), `internal/cli/recipes_skew.go`.
@@ -1060,8 +1063,9 @@ that reconciliation found, and item 11 the release precondition AK6b cannot ship
     the owner runs `fugaro update`. AK10 is the guard that stops the write from happening — `fugaro
     creds set` refuses a bundle whose newest key the installation's own recorded service image
     predates, naming `fugaro update` — so **AK6b may not be released without it, and AK10 lands in the
-    same release, before AK6b's own commit** (the guard must exist before the entry it guards can be
-    written). **AK10 is written and not approved** (item 3), and that has a consequence this plan states
+    same release, after AK6b's own commit** (the guard's own test loads the write it judges through
+    `credsvc.ParseBundle`, so the field lands first; the guarantee is at the release, not the commit).
+    **AK10 is written and not approved** (item 3), and that has a consequence this plan states
     rather than hides: **the OpenRouter half's release waits on the owner's approval of AK10.** AK10's
     own section carries the same requirement from its side, and §1's L3 row says so beside AK6b.
 

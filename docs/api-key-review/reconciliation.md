@@ -1,9 +1,10 @@
 # The api-key review path — reconciliation
 
-**Status: reconciliation only; no code is implemented; D1410–D1429 are answered 2026-11-07 and all
-tasks are approved 2026-11-07 (owner: "All tasks approved. Jobmax") — except the two the security
-review added later, AK9 and AK10, which are written and not approved.** This document reads every
-clause of the owner's ask ([spec.md](spec.md), 2026-11-07) against the tree, classifies what it finds,
+**Status: AK1–AK5 are implemented on `main` and no task past AK5 is started; D1410–D1429 are answered
+2026-11-07 and all tasks are approved 2026-11-07 (owner: "All tasks approved. Jobmax") — except the two
+the security review added later, AK9 and AK10, which are written and not approved.** This document
+reads every clause of the owner's ask ([spec.md](spec.md), 2026-11-07) against the tree as it stood
+then, classifies what it finds,
 and turns the parts that needed a decision into questions **D1410–D1429** (§7), every one of them
 answered the same day, each as recommended. **Two things happened after that reading and neither
 reopens it:** on **2026-11-09** the owner answered **D1418** — the provider's base URL and the auth
@@ -412,7 +413,7 @@ of its service (`terraform.tfvars.json`'s `credentials_service.image`), refusing
 `fugaro update`, with the release's own `### For operators` sentence. Found the same day; it is the
 review's task **AK10**, written and **not approved**, and it is off the levels and off the critical
 path like **AK9** — but **it gates AK6b's release** (implementation-plan §6 item 11): the guard lands
-in the same release as the entry it guards and before it, so **no release carries AK6b without
+in the same release as the entry it guards and after it, so **no release carries AK6b without
 AK10**, and the OpenRouter half's release waits on the owner's approval of it.
 
 **F27 — Stale docs, fixed here. `README.md` was reading the gates of 2026-11-07.** Its status line

@@ -240,9 +240,11 @@ themselves.
    the provider entry in the bundle and no guard at `fugaro creds set`, a CLI newer than the deployed
    service can halt every caller of that service — coding runs included — with a write, which is the
    failure CLAUDE.md's "`fugaro update` is the whole upgrade" rule exists to forbid. AK10 is therefore
-   **not optional and not a later fix**: it lands in the same release as AK6b, **before** it
-   ([implementation-plan.md](implementation-plan.md) §6 item 11), and **the OpenRouter half's release
-   waits on the owner's approval of AK10**, which is written and not approved.
+   **not optional and not a later fix**: it lands in the same release as AK6b, **after** AK6b's own
+   commit (the guard's own test loads the write it judges through `credsvc.ParseBundle`, so the field
+   it guards lands first — [implementation-plan.md](implementation-plan.md) §6 item 11), and **the
+   OpenRouter half's release waits on the owner's approval of AK10**, which is written and not
+   approved.
 
 ## 6. What this review could not verify
 
