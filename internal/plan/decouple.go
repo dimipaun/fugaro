@@ -1,6 +1,7 @@
 package plan
 
 import (
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -155,15 +156,24 @@ func countPairs(edges []Edge) int {
 // The reconstruction is the only one the document admits: every contract,
 // integration and change-request node is the pass's own and is removed, the
 // recorded `was` edges are restored beside the edges that were kept, and every
-// edge that ran through a removed integration node is rewritten onto the
-// endpoints of the edges that node re-joins — a task that waited on the
-// integration node was waiting on both sides of the break, because the
-// integration node is the task that runs them together.
+// edge that ran through a removed integration node is rewritten onto what that
+// node waits for — a task that waited on the integration node was waiting on
+// everything the integration runs, the two sides of the break included, because
+// the integration node is the task that runs them together.
 //
-// An edge onto a removed node that is not a rewrite is dropped, which is what
-// the pass's own scaffolding is: the edge a consumer gained onto the contract
-// stands where the restored `was` edge used to, and counting both would count
-// one dependency twice.
+// A dependency the plan had before the pass is never dropped for want of a
+// place to put it. A task waits on a contract because the pass moved its edge
+// there, and the record says where that edge stood before: the entry whose
+// `was` names the task, whose restored edge stands in for this one. A consumer
+// no entry names is therefore a document with one of the plan's own
+// dependencies missing from its before graph, and a gain measured without it is
+// a gain the plan did not get — such a document is refused rather than read.
+//
+// What is dropped is the pass's own scaffolding, each edge removed with the
+// node it hangs from: the work a contract, an integration or a change request
+// waits for is work the pass added, counted in AddedTasks, and a dependent's
+// edge onto a change request (D1812) is a wait raised against a contract the
+// pass had already merged — one no plan before the pass could hold.
 //
 // The rewrite is a product of two sides that both come from the file — every
 // edge onto an integration node against every endpoint that node re-joins — so
@@ -174,11 +184,21 @@ func beforePath(path string, doc Document) (PathMeasure, error) {
 	for _, n := range doc.Nodes {
 		kinds[n.ID] = kindOf(n)
 	}
-	// What each integration node re-joins, in the entries' own order, so the
-	// rewrite below is a function of the document rather than of a map walk.
-	rejoined := map[string][]string{}
+	// What each integration node waits for, and which tasks the record moved
+	// onto each contract, both read in the document's own order so the before
+	// graph below is a function of the file rather than of a map walk.
+	waited := map[string][]string{}
+	for _, e := range doc.Edges {
+		if kinds[e.Task] == KindIntegration && kinds[e.Needs] == KindTask {
+			waited[e.Task] = append(waited[e.Task], e.Needs)
+		}
+	}
+	consumers := map[string]map[string]bool{}
 	for _, d := range doc.Decoupling {
-		rejoined[d.Integration] = append(rejoined[d.Integration], d.Was.Task, d.Was.Needs)
+		if consumers[d.Contract] == nil {
+			consumers[d.Contract] = map[string]bool{}
+		}
+		consumers[d.Contract][d.Was.Task] = true
 	}
 
 	nodes := make([]Node, 0, len(doc.Nodes))
@@ -193,8 +213,13 @@ func beforePath(path string, doc Document) (PathMeasure, error) {
 		case kinds[e.Task] == KindTask && kinds[e.Needs] == KindTask:
 			edges = append(edges, e)
 		case kinds[e.Task] == KindTask && kinds[e.Needs] == KindIntegration:
-			for _, endpoint := range rejoined[e.Needs] {
-				edges = append(edges, Edge{Task: e.Task, Needs: endpoint, Reason: e.Reason})
+			for _, dep := range waited[e.Needs] {
+				edges = append(edges, Edge{Task: e.Task, Needs: dep, Reason: e.Reason})
+			}
+		case kinds[e.Task] == KindTask && kinds[e.Needs] == KindContract:
+			if !consumers[e.Needs][e.Task] {
+				return PathMeasure{}, refuse(path, "the graph has %s waiting on the contract %q and no decoupling entry records an edge from %s for the pass to have moved onto it; the before graph restores a consumer's edge from the record, and one the record does not name has nowhere to stand",
+					e.Task, e.Needs, e.Task)
 			}
 		}
 		if len(edges) > maxBeforeEdges {
@@ -302,6 +327,15 @@ func measurePath(path string, nodes []Node, edges []Edge) (PathMeasure, error) {
 		if got.Weight > out.Weight {
 			out.Weight = got.Weight
 		}
+	}
+	// A size is a positive number and a path is a sum of them, so a path of
+	// sizes large enough to be a float's own edge weighs infinity, and infinity
+	// is not a figure any caller can print: a field of this shape is marshalled
+	// into `fugaro plan graph --json`, and a graph the read accepted would fail
+	// there with `json: unsupported value: +Inf` instead of with a sentence
+	// about the plan. The sum is known here, so the refusal is made here.
+	if math.IsInf(out.Weight, 0) {
+		return PathMeasure{}, refuse(path, "the graph's sizes weigh a path past what a number can hold; the before and after paths are reported as figures, and a plan that weighs infinity is refused rather than reported")
 	}
 	return out, nil
 }

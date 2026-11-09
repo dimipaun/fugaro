@@ -293,6 +293,120 @@ func TestGainRewritesEdgesOnTheIntegrationNode(t *testing.T) {
 	}
 }
 
+// TestGainRewritesAWaitOntoEverythingTheIntegrationRuns: the rewrite is onto
+// what the integration node waits for, which is not only the two sides the
+// record names for it. A task waited on the integration node, so it waited on
+// the whole of what that node runs; T here is neither endpoint of the break, and
+// a before graph that dropped the wait on it would measure a plan shorter than
+// the one the pass ran over — the direction that invents a gain.
+func TestGainRewritesAWaitOntoEverythingTheIntegrationRuns(t *testing.T) {
+	const extra = `{
+	  "schema_version": 3,
+	  "plan": "docs/plans/decoupled.md",
+	  "nodes": [
+	    {"id": "A", "title": "one side", "size": 1, "footprint": {"prediction": true, "paths": ["internal/a/**"]}},
+	    {"id": "B", "title": "the other side", "size": 5, "footprint": {"prediction": true, "paths": ["internal/b/**"]}},
+	    {"id": "T", "title": "something else the integration runs", "size": 100, "footprint": {"prediction": true, "paths": ["internal/t/**"]}},
+	    {"id": "X", "title": "what waits on the integration", "size": 1, "footprint": {"prediction": true, "paths": ["internal/x/**"]}},
+	    {"id": "C1", "title": "the contract", "kind": "contract", "size": 0.5, "footprint": {"prediction": true, "paths": ["internal/contract/types.go"]}},
+	    {"id": "I1", "title": "the integration", "kind": "integration", "footprint": {"prediction": true, "paths": ["internal/i/**"]}}
+	  ],
+	  "edges": [
+	    {"task": "B", "needs": "C1", "reason": "B is built against the contract"},
+	    {"task": "I1", "needs": "A", "reason": "the integration runs both sides"},
+	    {"task": "I1", "needs": "B", "reason": "the integration runs both sides"},
+	    {"task": "I1", "needs": "T", "reason": "the integration runs T as well"},
+	    {"task": "X", "needs": "I1", "reason": "X waits for the integration to finish"}
+	  ],
+	  "decoupling": [
+	    {"contract": "C1", "was": {"task": "B", "needs": "A"}, "integration": "I1", "reason": "B needed A's interface only"}
+	  ]
+	}`
+	gain := gainOf(t, extra)
+	// X -> A is 3 of weight, X -> B -> A is 7, and X -> T is 101: the heaviest
+	// chain of the before plan runs through the dependency the record does not
+	// name, and the measure says so.
+	if want := (PathMeasure{Tasks: 3, Weight: 101}); gain.Before != want {
+		t.Errorf("before = %+v, want %+v: X waited on I1, and I1 waits for T as well as for both sides", gain.Before, want)
+	}
+	if gain.Before.Weight == 7 {
+		t.Error("before.weight = 7: the wait on the integration was rewritten onto its recorded endpoints only")
+	}
+}
+
+// TestGainRefusesAConsumerTheRecordDoesNotName: a task waits on a contract
+// because the pass moved its edge there, so the before graph restores that edge
+// from the record — and a consumer no entry names leaves one of the plan's own
+// dependencies out of the before graph, which measures a plan shorter than the
+// one the pass ran over. The document is refused rather than read, the way a
+// break recorded onto a node of the pass is: both are a record that does not
+// admit the reconstruction the gain is computed from.
+func TestGainRefusesAConsumerTheRecordDoesNotName(t *testing.T) {
+	const unrecorded = `{
+	  "schema_version": 3,
+	  "plan": "docs/plans/decoupled.md",
+	  "nodes": [
+	    {"id": "A", "title": "the base", "size": 5, "footprint": {"prediction": true, "paths": ["internal/a/**"]}},
+	    {"id": "B", "title": "the dependent", "size": 5, "footprint": {"prediction": true, "paths": ["internal/b/**"]}},
+	    {"id": "X", "title": "another consumer", "size": 5, "footprint": {"prediction": true, "paths": ["internal/x/**"]}},
+	    {"id": "C1", "title": "the contract", "kind": "contract", "footprint": {"prediction": true, "paths": ["internal/contract/types.go"]}},
+	    {"id": "I1", "title": "the integration", "kind": "integration", "footprint": {"prediction": true, "paths": ["internal/i/**"]}}
+	  ],
+	  "edges": [
+	    {"task": "B", "needs": "C1", "reason": "B is built against the contract"},
+	    {"task": "X", "needs": "C1", "reason": "X is built against the contract"},
+	    {"task": "I1", "needs": "A", "reason": "the integration runs both sides"},
+	    {"task": "I1", "needs": "B", "reason": "the integration runs both sides"}
+	  ],
+	  "decoupling": [
+	    {"contract": "C1", "was": {"task": "B", "needs": "A"}, "integration": "I1", "reason": "B needed A's interface only"}
+	  ]
+	}`
+	// Parse accepts it: X waits on a node of the graph, which is all the third
+	// schema asks of an edge, and nothing records where that wait stood before
+	// the pass.
+	doc := parseDoc(t, unrecorded)
+	if _, err := Analyze("graph.json", doc, nil); err == nil {
+		t.Fatal("the read measured a before graph with a consumer the record does not name")
+	} else if !strings.Contains(err.Error(), "no decoupling entry records an edge from X") {
+		t.Errorf("Analyze's error = %v, want the unnamed consumer named", err)
+	}
+}
+
+// TestGainRefusesAPathWeighedPastWhatANumberHolds: a size is a positive number
+// and a path is a sum of them, so two sizes at a float's own edge weigh
+// infinity — and infinity is not a figure any caller can print. The gain is a
+// field of the document `fugaro plan graph --json` marshals, where it would fail
+// with `json: unsupported value: +Inf` rather than with a sentence about the
+// plan, so the read refuses the graph where the sum is known.
+func TestGainRefusesAPathWeighedPastWhatANumberHolds(t *testing.T) {
+	const overflows = `{
+	  "schema_version": 3,
+	  "plan": "docs/plans/decoupled.md",
+	  "nodes": [
+	    {"id": "A", "title": "one side", "size": 1e308, "footprint": {"prediction": true, "paths": ["internal/a/**"]}},
+	    {"id": "B", "title": "the other side", "size": 1e308, "footprint": {"prediction": true, "paths": ["internal/b/**"]}},
+	    {"id": "C1", "title": "the contract", "kind": "contract", "footprint": {"prediction": true, "paths": ["internal/contract/types.go"]}},
+	    {"id": "I1", "title": "the integration", "kind": "integration", "footprint": {"prediction": true, "paths": ["internal/i/**"]}}
+	  ],
+	  "edges": [
+	    {"task": "B", "needs": "C1", "reason": "B is built against the contract"},
+	    {"task": "I1", "needs": "A", "reason": "the integration runs both sides"},
+	    {"task": "I1", "needs": "B", "reason": "the integration runs both sides"}
+	  ],
+	  "decoupling": [
+	    {"contract": "C1", "was": {"task": "B", "needs": "A"}, "integration": "I1", "reason": "B needed A's interface only"}
+	  ]
+	}`
+	// Parse accepts it: 1e308 is a number greater than zero like any other.
+	doc := parseDoc(t, overflows)
+	if _, err := Analyze("graph.json", doc, nil); err == nil {
+		t.Fatal("the read reported a gain whose weight is infinity")
+	} else if !strings.Contains(err.Error(), "weigh a path past what a number can hold") {
+		t.Errorf("Analyze's error = %v, want the path weighed past a number named", err)
+	}
+}
+
 // TestGainRefusesABeforeGraphWithACycle: the before graph is a reconstruction,
 // and a document whose recorded breaks restore an edge in both directions
 // closes a cycle in it. The two records are individually valid -- neither edge
@@ -526,8 +640,9 @@ func TestStubsPresentDoesNotReportADirectory(t *testing.T) {
 // TestStubsPresentDoesNotFollowSymlinksOut: a stub whose file is a symlink out
 // of the checkout is not a file of this checkout, however exactly the path
 // names one. The root refuses to follow it, so nothing is reported -- and the
-// test would pass just as well if the read followed the link and found a file,
-// which is the mistake this pins against.
+// link points at a file that is really there, so a read that followed it would
+// report the stub as still in the tree and fail here, which is the mistake this
+// pins against.
 func TestStubsPresentDoesNotFollowSymlinksOut(t *testing.T) {
 	outside := filepath.Join(t.TempDir(), "elsewhere.go")
 	if err := os.WriteFile(outside, []byte("package elsewhere\n"), 0o644); err != nil {
