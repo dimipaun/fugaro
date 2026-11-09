@@ -1,7 +1,8 @@
 # The api-key review path — implementation plan
 
 **Status: AK1–AK5 are implemented on `main`, and no task past AK5 is started; D1410–D1429 are answered
-2026-11-07 and all tasks are approved 2026-11-07 (owner: "All tasks approved. Jobmax").** AK4 lets the
+2026-11-07 and all tasks are approved 2026-11-07 (owner: "All tasks approved. Jobmax"), except the two
+the security review added — AK9 and AK10, which are written and not approved.** AK4 lets the
 review class's one credential be the project's own Anthropic API key: a policy naming the sentinel is
 publishable and the credentials service serves it, and **AK5 deploys the route** (its own section and
 **§6.8** — a profile naming the sentinel gets the job whose account segment is the sentinel, mounting
@@ -9,15 +10,29 @@ nothing, and its review-only variant beside it, so an installation that publishe
 Claude account has a review job at all). Every gate this plan carried that a decision or an approval
 could settle is satisfied: the answers are in
 [reconciliation.md](reconciliation.md) §7 and §9, and §6 below records what each one settled. **One
-gate in that list is not of that kind and still stands** — the mandatory security review owed before
-AK4–AK7 land (item 6, which AK4's and AK5's changes are under rather than past) — and **E7's gate is
+gate in that list is not of that kind and partly stands** — the mandatory security review owed before
+AK4–AK7 land (item 6, which AK4's and AK5's changes are under rather than past): **the review of the
+merged AK4 and AK5 is written** ([security-review.md](security-review.md), §7 below), it found no
+defect that lets the key or the bundle out of the service, and it owes the same review again for
+**AK6a**, **AK6b** and **AK7** — and **E7's gate is
 lifted**, item 7's own accounting: its second half reached the tree on 2026-11-08, so `fugaro review`
-admits a launch, though **no live installation has been measured** against it. Where this file and
+admits a launch, though **no live installation has been measured** against it.
+
+**The reconciliation with `docs/cloud-senior-review/implementation-plan.md` §6.7 is done, on
+2026-11-09** (§1's own paragraph, and §6 items 9 and 10): **§6.7's reading was right and this plan's
+was the loser on the one point they disagreed about** — a provider key needs **its own value on the
+account axis**, because the axis's value is the admission unit and the pairing, not a selector,
+decides which credential serves a review — so **AK6 is now two tasks, AK6a and AK6b** (§3), and
+**D1418 is answered: the provider's base URL and auth shape go in the bundle**, which is AK6b's
+field. Where this file and
 [reconciliation.md](reconciliation.md) disagree about the code, the reconciliation wins.
 
-**Read with:** [spec.md](spec.md) (the owner's ask) and [reconciliation.md](reconciliation.md) (what
-the tree does today, and **D1410–D1429**). Every path and symbol cited here exists on `main` at
-`aa26f322f`; the findings in parentheses are the reconciliation's.
+**Read with:** [spec.md](spec.md) (the owner's ask), [reconciliation.md](reconciliation.md) (what
+the tree does today, **D1410–D1429** and **D1418**'s answer of 2026-11-09) and
+[security-review.md](security-review.md) (the review of the merged AK4 and AK5, and the conditions it
+places on AK6a, AK6b and AK7). Every path and symbol cited here exists on `main` at
+`aa26f322f` — except the ones the review read at `9fa5fd90`, which it says so about; the findings in
+parentheses are the reconciliation's.
 
 ## 1. The slices, the levels and the critical path
 
@@ -31,21 +46,41 @@ a slice the owner does not want is simply not started.
 | --- | --- | --- | --- |
 | **L1** | **AK1**, **AK2**, **AK3** | the in-job path named and pinned: tests (**F5**), docs (**F9**), a field of the record's own for the credential a stage ran on (**F18**, **D1415**) | no shared file, no service change, no ordering between them |
 | **L2** | **AK4**, **AK5** | the cloud Anthropic-key half: the class may be served by the project's key (**F12**, **F13**, **F14**), and the runner admits it, so the review-only variant — already deployed and admitted for a project with no Claude account (**F17**) — is served by it (**F11**). **This was code for a launch E7 refused when it was written; the flip of 2026-11-08 admits it** (**F10**, **U6**) | AK4 is `internal/credsvc` + `internal/config` + `internal/projectpolicy` + `internal/localcfg`, with one refusal's sentence in `internal/infra` (§2's declared exception), and AK5 is `internal/runner` + `internal/cli` + `internal/infra`; the two share that one file, AK4 first |
-| **L3** | **AK6**, **AK7** | the OpenRouter half: the bundle holds a provider key (**F15**, **F16**, **F24**), and the review run's model path reaches a provider's endpoint | AK6 is `internal/credsvc` and `schemas/`; AK7 is `internal/runner` and `internal/gateway` |
+| **L3** | **AK6a**, **AK6b**, **AK7** | the OpenRouter half: the provider key gets its own value on the account axis, so a profile can publish it and a policy admit it (**F15**, **F25**), the bundle holds the key and the service forwards to the provider's endpoint (**F15**, **F16**, **F24**, **D1418**), and the review run's model path reaches it (**F22**) | **AK6a and AK6b share no file** — AK6a is `internal/config`, `internal/projectpolicy`, `internal/localcfg`, `internal/infra`, `internal/cli`, `internal/task`, `schemas/task.schema.json` and the module, and AK6b is `internal/credsvc` and `schemas/creds-bundle.schema.json` (§2 books both) — and AK6a is first because AK6b's offer rule matches the axis value AK6a defines; AK7 is `internal/runner` and nothing else, because the provider's base URL never leaves the bundle (**D1418**, **F26**) |
 | **L4** | **AK8** | the live check, **Check 330** (§5) | owner-run, after everything else |
 
-**The critical path is `AK1 → AK4 → AK5 → AK6 → AK7 → AK8`**, and it is the shortest chain the
+**The critical path is `AK1 → AK4 → AK5 → AK6a → AK6b → AK7 → AK8`**, and it is the shortest chain the
 dependencies allow: AK1 is the slice that proves the path the ask names first, AK4 is the service's
-side (a runner path to a service that cannot serve it is a halt), AK5 is the runner's admission, AK6
-is the provider key the OpenRouter half needs, AK7 is the runner's path to it, and AK8 measures the
+side (a runner path to a service that cannot serve it is a halt), AK5 is the runner's admission, AK6a
+is the axis value the provider key needs to be publishable and deployable at all, AK6b is the service
+holding and serving that key, AK7 is the runner's path to it, and AK8 measures the
 result on a real installation. **AK2 and AK3 are off the critical path** — AK2 is documentation and
-AK3 is the record — and either may land at any point in L1 without moving it.
+AK3 is the record — and either may land at any point in L1 without moving it. **AK9 and AK10 are off
+it too**: they are the security review's two findings (a wording pair that says a review job's account
+is a Claude account, and the credential write that can outrun the service that reads it), and neither
+blocks a cloud task.
 
 **D1410, D1421 and the gates in §6 that a decision settles are settled as of 2026-11-07, before any
-task starts; §6's items 6 and 7 are not decisions and still stand.** **D1410**
+task starts; §6's items 6 and 7 are not decisions, and item 6 partly stands.** **D1410**
 is answered **both slices**, so L1, L2 and L3 all stand and the plan does not end after AK3.
-**D1416** is answered **the Anthropic key first**, so AK6 and AK7 stay two tasks rather than one SEC
-task.
+**D1416** is answered **the Anthropic key first**, so the OpenRouter half follows AK4–AK5 rather than
+riding them.
+
+**The reconciliation of 2026-11-09 split AK6 and settled which reading of the pairing was right.**
+This plan's AK6 and `docs/cloud-senior-review/implementation-plan.md` §6.7's CSR17 disagreed about one
+thing: §6.7 sketched a **second axis value** — the account a review job is served by may be a
+provider account rather than a Claude account, which is a change to `internal/credsvc/review.go`'s own
+file — and this plan's six-file AK6 did not. **§6.7's reading is right and AK6's file list is the
+loser**, for the reason §2's preamble now carries: the account axis's value **is the admission unit**
+(`projectpolicy` derives the `accounts` block keyed by it and `credsvc`'s `admittedAccounts`
+intersects a repository's child with it), and the pairing — not the cascade's selector — is what fixes
+which credential serves a review call. A provider key riding the sentinel
+`config.AnthropicKeyAccount` would be a second credential under a value an installation already
+spells, carrying the Anthropic key's admissions and its meaning, and `offeredToReview` matching by
+name **and** tier would have to offer two credentials where the class's whole rule is exactly one with
+no fallback. So the provider key gets a value of its own (**AK6a**, 24 files — AK4's and AK5's readers
+for a second value, which is what §6.7's "6–8" estimate was short of) and the service half is
+**AK6b** (9 files). §6.7 is amended to say so in the same commit (§6 item 9).
 
 ## 2. The shared-files table
 
@@ -71,57 +106,78 @@ could touch).
 | `internal/runner/cost.go` | L1 | AK3 |
 | `internal/runner/provider_run_test.go` | L1 | AK3 |
 | `schemas/result.schema.json` | L1 | AK3 |
-| `internal/credsvc/review.go` | L2 | AK4 |
-| `internal/credsvc/review_test.go` | L2 | AK4 |
-| `internal/credsvc/cascade.go` | L2 | AK4, then AK6 |
-| `internal/credsvc/cascade_test.go` | L2 | AK4 |
-| `internal/config/claude_accounts.go` | L2 | AK4, then AK5 |
-| `internal/config/claude_accounts_test.go` | L2 | AK4, then AK5 |
-| `internal/config/project_secrets.go` | L2 | AK4 (the project's own key's reach) |
-| `internal/config/project_secrets_test.go` | L2 | AK4 (the same) |
-| `internal/projectpolicy/accounts.go` | L2 | AK4 (the sentinel's `accounts` entry) |
-| `internal/projectpolicy/accounts_test.go` | L2 | AK4 (the same) |
-| `internal/projectpolicy/policy.go` | L2 | AK4 (the account-choice members refuse the sentinel) |
-| `internal/projectpolicy/stage_accounts_test.go` | L2 | AK4 (the same) |
-| `internal/localcfg/localcfg.go` | L2 | AK4 (the account-choice keys refuse the sentinel) |
-| `internal/localcfg/localcfg_test.go` | L2 | AK4 (the same) |
+| `internal/credsvc/review.go` | L2 | AK4, then AK6a (the second axis value) |
+| `internal/credsvc/review_test.go` | L2 | AK4, then AK6a (the same) |
+| `internal/credsvc/cascade.go` | L2 | AK4, then AK6b |
+| `internal/credsvc/cascade_test.go` | L2 | AK4, then AK6b |
+| `internal/config/claude_accounts.go` | L2 | AK4, then AK5, then AK6a |
+| `internal/config/claude_accounts_test.go` | L2 | AK4, then AK5, then AK6a |
+| `internal/config/project_secrets.go` | L2 | AK4 (the project's own key's reach), then AK6a |
+| `internal/config/project_secrets_test.go` | L2 | AK4 (the same), then AK6a |
+| `internal/projectpolicy/accounts.go` | L2 | AK4 (the sentinel's `accounts` entry), then AK6a |
+| `internal/projectpolicy/accounts_test.go` | L2 | AK4 (the same), then AK6a |
+| `internal/projectpolicy/policy.go` | L2 | AK4 (the account-choice members refuse the sentinel), then AK6a |
+| `internal/projectpolicy/stage_accounts_test.go` | L2 | AK4 (the same), then AK6a |
+| `internal/localcfg/localcfg.go` | L2 | AK4 (the account-choice keys refuse the sentinel), then AK6a |
+| `internal/localcfg/localcfg_test.go` | L2 | AK4 (the same), then AK6a |
 | `internal/runner/routing.go` | L2 | AK5, then AK7 |
 | `internal/runner/routing_internal_test.go` | L2 | AK5, then AK7 |
-| `internal/cli/run.go` | L2 | AK5 |
-| `internal/cli/project_job.go` | L2 | AK5 (the sentinel's own job) |
-| `internal/cli/project_job_test.go` | L2 | AK5 (the same) |
-| `internal/credsvc/sharedjobs_test.go` | L2 | AK4, then AK5 |
-| `internal/infra/projectjobs.go` | L2 | AK4 (the sentinel's refusal), then AK5 |
-| `internal/infra/projectjobs_test.go` | L2 | AK4 (the same), then AK5 |
-| `deploy/terraform/gcp/modules/project/variables.tf` | L2 | AK5 (the `job.account` validation) |
-| `schemas/task.schema.json` | L2 | AK5 (if the axis value reaches a task's `oauth_token`) |
-| `schemas/schemas_test.go` | L2 | AK5 (the same) |
-| `internal/task/task.go` | L2 | AK5 (the same) |
-| `internal/task/task_test.go` | L2 | AK5 (the same) |
-| `docs/project-layer.md` | L2 | AK5 (the axis's prose) |
-| `internal/credsvc/bundle.go` | L3 | AK6 |
-| `internal/credsvc/bundle_test.go` | L3 | AK6 |
-| `internal/credsvc/forward.go` | L3 | AK6 |
-| `internal/credsvc/forward_test.go` | L3 | AK6 |
-| `schemas/creds-bundle.schema.json` | L3 | AK6 |
+| `internal/cli/run.go` | L2 | AK5, then AK6a (the second axis value) |
+| `internal/cli/project_job.go` | L2 | AK5 (the sentinel's own job), then AK6a |
+| `internal/cli/project_job_test.go` | L2 | AK5 (the same), then AK6a |
+| `internal/credsvc/sharedjobs_test.go` | L2 | AK4, then AK5, then AK6a (the agreement test gains the value) |
+| `internal/infra/projectjobs.go` | L2 | AK4 (the sentinel's refusal), then AK5, then AK6a |
+| `internal/infra/projectjobs_test.go` | L2 | AK4 (the same), then AK5, then AK6a |
+| `deploy/terraform/gcp/modules/project/variables.tf` | L2 | AK5 (the `job.account` validation), then AK6a |
+| `schemas/task.schema.json` | L2 | AK5 (if the axis value reaches a task's `oauth_token`), then AK6a |
+| `schemas/schemas_test.go` | L2 | AK5 (the same), then AK6a |
+| `internal/task/task.go` | L2 | AK5 (the same), then AK6a |
+| `internal/task/task_test.go` | L2 | AK5 (the same), then AK6a |
+| `docs/project-layer.md` | L2 | AK5 (the axis's prose), then AK6a |
+| `internal/credsvc/bundle.go` | L3 | AK6b |
+| `internal/credsvc/bundle_test.go` | L3 | AK6b |
+| `internal/credsvc/forward.go` | L3 | AK6b |
+| `internal/credsvc/forward_test.go` | L3 | AK6b |
+| `schemas/creds-bundle.schema.json` | L3 | AK6b |
+| `internal/creds/select.go` | L3 | AK6b (the tier-C candidate the provider key is offered as) |
+| `internal/creds/select_test.go` | L3 | AK6b (the same) |
 | `internal/runner/agentenv.go` | L3 | AK7 |
-| `internal/gateway/gateway.go` | L3 | AK7, if the upstream kind moves |
+| `internal/runner/agentenv_test.go` | L3 | AK7 |
 | `docs/gcp-live-checklist.md` | L4 | AK8 |
+| `internal/credsvc/auth.go` | — | AK9 (the two refusals that say Claude account) |
+| `internal/credsvc/auth_test.go` | — | AK9 (the same) |
+| `internal/credsvc/server.go` | — | AK9 (the same, in the serve path) |
+| `internal/credsvc/server_test.go` | — | AK9 (the same) |
+| `deploy/terraform/gcp/modules/installation/variables.tf` | — | AK9 (the same, in the module's prose) |
+| `internal/cli/creds.go` | — | AK10 (the credential write's guard) |
+| `internal/cli/creds_test.go` | — | AK10 (the same) |
+| `internal/cli/creds_skew_test.go` (new) | — | AK10 (the same) |
+| `internal/cli/recipes_skew.go` | — | AK10 (the constant and the check) |
 
-`internal/credsvc/cascade.go` is booked twice across two levels — AK4's candidate list and AK6's tier
+**A row with `—` in the Level column is a task that is on no level**, which §1 says of AK9 and AK10:
+they are off the levels and off the critical path, so their files are booked here only so that a later
+task knows they are taken.
+
+`internal/credsvc/cascade.go` is booked twice across two levels — AK4's candidate list and AK6b's tier
 map — and `internal/runner/routing.go` with `internal/runner/routing_internal_test.go` twice within
-one: AK5's admission and AK7's upstream over it. A fourth is listed once and conditionally —
-`internal/gateway/gateway.go`, AK7 only, and only if the upstream kind moves — put here so a later
-task knows it is taken. The rest of the files two tasks of one **level** share are the exception the
-preamble above declares, and AK5 is where the plan's inventory of them was short: AK4 and AK5 both
-touch `internal/infra/projectjobs.go` and its test (AK4 answers what the sentinel is, AK5 deploys it),
-`internal/config/claude_accounts.go` and its test (the same: AK4's prose says the sentinel is not
-deployable, AK5 makes it deployable) and `internal/credsvc/sharedjobs_test.go` (AK4's agreement test
-gains the axis value). AK5 also books `internal/cli/project_job.go` and its test, which no task booked
-and which the placement it makes is unreachable without: the account axis is resolved there, so a
-sentinel the launcher cannot place on its own job is a sentinel the deployer deploys and no launch
-reaches. A task that needs a file another **level** holds adds itself to this table in the same
-commit.
+one: AK5's admission and AK7's upstream over it. **AK6a re-enters L2's own readers of the account
+axis** and that is the reconciliation's answer, not a lapse: a second value on the axis is read by
+every reader of the axis, so `internal/config/claude_accounts.go` and its test,
+`internal/infra/projectjobs.go` and its test and `internal/credsvc/sharedjobs_test.go` are marked
+`then AK6a` after AK4 and AK5 — and the same is why §1 says AK6a is where §6.7's "6–8" file estimate
+was short, and why AK6a and AK6b share no file: AK6a is the axis, AK6b is the service's document.
+**The conditional `internal/gateway/gateway.go` row is gone**: §6.7's CSR18 booked it "if the upstream
+kind moves", and **D1418** puts the provider's base URL and auth shape in the bundle, so the
+gateway's own upstream kind does not move and no task writes that file. The rest of the files two
+tasks of one **level** share are the exception the preamble above declares, and AK5 is where the
+plan's inventory of them was short: AK4 and AK5 both touch `internal/infra/projectjobs.go` and its
+test (AK4 answers what the sentinel is, AK5 deploys it), `internal/config/claude_accounts.go` and its
+test (the same: AK4's prose says the sentinel is not deployable, AK5 makes it deployable) and
+`internal/credsvc/sharedjobs_test.go` (AK4's agreement test gains the axis value). AK5 also books
+`internal/cli/project_job.go` and its test, which no task booked and which the placement it makes is
+unreachable without: the account axis is resolved there, so a sentinel the launcher cannot place on
+its own job is a sentinel the deployer deploys and no launch reaches. A task that needs a file another
+**level** holds adds itself to this table in the same commit.
 
 ## 3. The tasks
 
@@ -450,67 +506,173 @@ which runs a credential-bearing variant is launched for.
 
 **Commit:** `runner: a review may be served by the project's Anthropic key`
 
-### AK6 — the bundle holds a provider key, and the service forwards to a provider's endpoint (SEC)
+### AK6a — the provider key gets a value of its own on the account axis (SEC)
 
-**Slice:** cloud, OpenRouter (L3). **Depends on:** AK5, and the answers it was priced against:
-**D1416** — the Anthropic key first, so this half follows AK4–AK5 — **D1418** — deferred to the
-reconciliation with §6.7 below — and **D1419**, answered "not at all in the Anthropic-key slice",
-which leaves the provider endpoint to this task. **This task is
-`docs/cloud-senior-review/implementation-plan.md` §6.7's CSR17,
-and it must be reconciled with it before it starts** — §6.7 owns the sketch and this task owns the
-reconciliation's reading of it.
+**Slice:** cloud, OpenRouter (L3). **Depends on:** AK4 and AK5 (the axis it extends a second time),
+**D1416** — the Anthropic key first, so this half follows AK4–AK5 — **D1418** (the base URL and the
+auth shape are the bundle's, which is AK6b's field), and the reconciliation of 2026-11-09 with
+`docs/cloud-senior-review/implementation-plan.md` §6.7's **CSR17** (§6 item 9). **CSR17's reading is
+the right one and this plan's six-file AK6 was the loser** (§1's own paragraph, §2's preamble): a
+provider key needs **its own value on the account axis**, because that value is the admission unit
+and the pairing — not the cascade's selector — fixes which credential serves a review call.
 
-**Files (6):** `internal/credsvc/bundle.go`, `internal/credsvc/bundle_test.go`,
-`internal/credsvc/cascade.go`, `internal/credsvc/forward.go`, `internal/credsvc/forward_test.go`,
-`schemas/creds-bundle.schema.json`.
+**Files (24):** `internal/config/claude_accounts.go` and its test, `internal/config/project_secrets.go`
+and its test, `internal/projectpolicy/accounts.go` and its test, `internal/projectpolicy/policy.go`,
+`internal/projectpolicy/stage_accounts_test.go`, `internal/localcfg/localcfg.go` and its test,
+`internal/infra/projectjobs.go` and its test, `internal/cli/project_job.go` and its test,
+`internal/cli/run.go`, `internal/task/task.go` and its test, `schemas/task.schema.json` and
+`schemas/schemas_test.go`, `deploy/terraform/gcp/modules/project/variables.tf`, `docs/project-layer.md`,
+and `internal/credsvc/review.go`, `internal/credsvc/review_test.go` and
+`internal/credsvc/sharedjobs_test.go`. **Twenty-three of them are L2's own readers of the axis**, which
+is what §2's preamble means by `then AK6a`, and the twenty-fourth — `internal/credsvc/review.go` and
+its test, the pairing's type and its offer rule — is the file §6.7's CSR17 booked and this plan's AK6
+did not: that is the disagreement the reconciliation settled in CSR17's favour. **No new secret, no
+new resource, no new grant:** the value is an axis value, and the credential it names is AK6b's
+bundle key.
 
-**Interfaces:** `CredentialKey`'s closed set gains a provider-key kind (**F15**); the bundle gains
-the routing facts a provider call needs — a base URL and an auth shape of `bearer` or `x-api-key`,
-which are **not** credentials (**D1418**); `cascade.go`'s `wireTier` maps the reserved
-`creds.TierC` (**F16**) so a provider key is offered as a tier rather than a name; and
-`forward.go`'s `send` builds the provider's upstream and destination rather than
-`upstreamKindAnthropic`'s. **No Terraform:** the service holds one secret document (Global
-Constraint 12), so a new credential kind is a bundle key and never a resource or a grant.
+**Interfaces:** the account axis gains **a second value of its own** beside
+`config.AnthropicKeyAccount` — a constant in `internal/config/claude_accounts.go`, called here the
+provider-key account, whose spelling is the task's to settle and whose one hard rule is that it is a
+value no installation spells today (`config.ValidateClaudeAccounts` accepts it as *not* a Claude
+account, exactly as it accepts the sentinel, and `config.DefaultClaudeAccount` is not it) — so that
+`projectpolicy`'s `DeriveAccounts` writes an `accounts` entry for it, `credsvc`'s `admittedAccounts`
+intersects a repository's child with it, the deployer's `ProjectJobs` builds the profile's job and its
+review-only variant for it, the launcher places it on that job, and `modules/project`'s `job.account`
+validation admits the literal. The three doors AK5 opened for the sentinel open for it in the same
+shape and no wider: **admissible at the account flag `--token`** and by inheritance from a launch that
+used one, **refused in a repository's own `fugaro.yaml`** (`config.Validate`), and **refused as a
+stage account** (AK4's choice-key refusal) — a stage's account is a token the job's environment
+already carries, and this value's job carries nothing. `internal/credsvc/review.go`'s
+`ReviewJobAccount.Account` and `ReviewJobAccountsFor` take it as the axis value they already document
+beside the sentinel, and the pairing's offer rule matches it by **name and tier** exactly as it
+matches the sentinel's — one credential, no fallback.
 
 **Tests and command:**
-`GOFLAGS=-p=2 go test ./internal/credsvc/ -run 'TestBundleHoldsAProviderKey|TestProviderKeyEntryIsNotOfferedToAnyOtherCaller|TestForwardToAProviderCarriesTheProviderAuthShape|TestProviderDestinationIsTheProvidersOwnHost' -count=1`
+`GOFLAGS=-p=2 go test ./internal/projectpolicy/ ./internal/infra/ ./internal/cli/ ./internal/credsvc/ -run 'TestProviderKeyGetsItsOwnValueOnTheAccountAxis|TestProviderKeyIsNotAClaudeAccount|TestProviderKeyJobMountsNothing|TestReviewAccountsAreTheNamesProjectJobsDeploys' -count=1`
+
+- `TestProviderKeyGetsItsOwnValueOnTheAccountAxis` — a policy that publishes the provider-key account
+  derives an `accounts` entry for it, the deployer builds the profile's job and its review-only
+  variant for it, and the launcher resolves that job. **The red step.**
+- `TestProviderKeyIsNotAClaudeAccount` — the three doors above, in AK5's own three directions: the
+  value is admissible at `--token`, refused in a repository's `fugaro.yaml` and refused as a stage
+  account.
+- `TestProviderKeyJobMountsNothing` — the job whose account segment is the value mounts no token
+  (`config.ProjectJobTokenAccount` answers `("", false)`), so no Claude token reaches it.
+- `TestReviewAccountsAreTheNamesProjectJobsDeploys` — the deployer-and-service agreement test,
+  extended to the new value (the file AK4 and AK5 both booked and this task re-enters).
+
+**Red step:** `TestProviderKeyGetsItsOwnValueOnTheAccountAxis` fails today: the value is not a name
+the tree accepts as an axis value (`ValidateClaudeAccounts`' rules), `ProjectJobs` has no branch for
+it and `modules/project`'s `ClaudeAccountNameRE` does not match it, so a policy that publishes it is
+refused by `fugaro update` before any of this exists.
+
+**Mutation:** let the provider key ride `config.AnthropicKeyAccount` — the loser's reading (§1) —
+and `TestReviewAccountsAreTheNamesProjectJobsDeploys` finds one axis value where the policy published
+two credentials, while the pairing's own test in `internal/credsvc/review_test.go` finds one
+credential asked to be two. The sharper mutation is the other direction: admit the value as a *stage*
+account, which mounts a token the job has none of and hands a coding run the review's credential —
+`TestProviderKeyIsNotAClaudeAccount`'s stage direction goes red.
+
+**Reviewer tier:** **SEC** — opus, with the independent security review mandatory. The axis value is
+the admission unit (`DeriveAccounts` keys the `accounts` block by it and `admittedAccounts`
+intersects a repository's child with it), so a second value is a second admission.
+
+**Commit:** `config: the provider key is an account axis value of its own`
+
+### AK6b — the bundle holds a provider key, and the service forwards to a provider's endpoint (SEC)
+
+**Slice:** cloud, OpenRouter (L3). **Depends on:** AK6a (the axis value its offer rule matches),
+**D1418** — the provider's base URL and auth shape go **in the bundle** — **D1419**, answered "not at
+all in the Anthropic-key slice", which leaves the provider endpoint to this half, and **D1416**.
+**The other half of §6.7's CSR17**, and the half whose six-file list this plan already had: it is
+§6.7's sketch minus the axis value AK6a took, plus `internal/creds/select.go` and its test, which no
+sketch booked (§2).
+
+**Files (9):** `internal/credsvc/bundle.go`, `internal/credsvc/bundle_test.go`,
+`internal/credsvc/cascade.go`, `internal/credsvc/cascade_test.go`, `internal/credsvc/forward.go`,
+`internal/credsvc/forward_test.go`, `schemas/creds-bundle.schema.json`, `internal/creds/select.go`,
+`internal/creds/select_test.go`.
+
+**Interfaces:** `CredentialKey`'s closed set gains a provider-key kind (**F15**); a bundle entry
+carries the routing facts a provider call needs — **a base URL and an auth shape of `bearer` or
+`x-api-key`, which are not credentials** — as **additive optional fields** (**D1418**, 2026-11-09): an
+older bundle still decodes, because no field is removed and none is retyped, so the format's version
+does not move, and a field never changes meaning, so the names this task picks are new ones. A
+provider entry **without** those fields is refused by name and an auth shape outside the two is
+refused rather than defaulted: **a provider the bundle does not describe fails closed**, which is the
+one thing this entry may not do, because a defaulted base URL is a credential sent to an endpoint
+nobody named. `cascade.go`'s `wireTier` maps the reserved `creds.TierC` (**F16**) so a provider key is
+offered as a tier rather than a name — and `internal/creds/select.go`'s `checkCandidates` refuses
+**every** tier-C candidate in a sentence naming **Check 50** (D150, C3.6;
+`TestSelectRefusesReservedTierC`), so **this half's served path is refused until Check 50 runs**,
+which is the owner's check and not this task's: the task may land its document, its offer and its
+forwarding, and its own test asserts that the refusal still stands (**§6 item 10**).
+`forward.go`'s `send` builds the provider's upstream and destination rather than
+`upstreamKindAnthropic`'s: the destination is the **bundle's** base URL joined to the path
+`servedRoute`'s closed set yields, the query is dropped where it carries a caller token, the client
+refuses redirects, the answer names the credential's name and tier and never its value, and it is
+chained through `gateway.NewRedactWriter` for the credential and every caller token — every one of
+those rules is the code on `main` today and this task moves none of them (§7's conditions). **No
+Terraform:** the service holds one secret document (Global Constraint 12), so a new credential kind is
+a bundle key and never a resource or a grant.
+
+**Tests and command:**
+`GOFLAGS=-p=2 go test ./internal/credsvc/ ./internal/creds/ -run 'TestBundleHoldsAProviderKey|TestProviderEntryWithoutItsRoutingFactsIsRefused|TestProviderKeyEntryIsNotOfferedToAnyOtherCaller|TestForwardToAProviderCarriesTheProviderAuthShape|TestProviderDestinationIsTheProvidersOwnHost|TestSelectRefusesReservedTierC' -count=1`
 
 - `TestBundleHoldsAProviderKey` — a bundle holding a provider key loads, and `CredentialKey` names
   its kind and tier. **The red step.**
+- `TestProviderEntryWithoutItsRoutingFactsIsRefused` — the fail-closed direction: an entry with no
+  base URL, or with an auth shape outside `bearer` and `x-api-key`, refuses the document by name and
+  never defaults an endpoint.
 - `TestProviderKeyEntryIsNotOfferedToAnyOtherCaller` — a coding caller's candidate list is what it
   was; the provider key is offered to the review pairing alone.
 - `TestForwardToAProviderCarriesTheProviderAuthShape` — a `bearer` key goes on `Authorization`, an
   `x-api-key` key on `X-Api-Key`, and neither goes to Anthropic.
 - `TestProviderDestinationIsTheProvidersOwnHost` — the destination rule holds: the key reaches the
-  host its base URL names and no other.
+  host its base URL names and no other, a redirect is refused, and the credential appears in neither
+  the answer's headers nor its body.
+- `TestSelectRefusesReservedTierC` — re-run, not rewritten: the tier-C refusal that gates this half's
+  served path is still there, and still names Check 50.
 
 **Red step:** `TestBundleHoldsAProviderKey` fails today: `CredentialKey`'s closed set has no entry
 for a provider key, so the loader refuses the document (**F15**).
 
 **Mutation:** send the provider key to `upstreamKindAnthropic`'s address —
-`TestProviderDestinationIsTheProvidersOwnHost` goes red.
+`TestProviderDestinationIsTheProvidersOwnHost` goes red. A second: default the auth shape to `bearer`
+for an entry that names none — `TestProviderEntryWithoutItsRoutingFactsIsRefused` goes red and a key
+the provider reads as a bearer token is sent one shape further than the installation chose.
 
 **Reviewer tier:** **SEC** — opus, with the independent security review mandatory. This is a
 credential the service attaches to a caller's request **and** a destination rule, which is the pair
-`internal/credsvc/forward.go` exists to keep apart.
+`internal/credsvc/forward.go` exists to keep apart — and it is the second bundle key to move what the
+service can reach, which is why **AK10** stands beside it.
 
 **Commit:** `credsvc: the bundle can hold a provider key`
 
 ### AK7 — the review run's model path reaches a provider's endpoint (SEC)
 
-**Slice:** cloud, OpenRouter (L3). **Depends on:** AK6. **This task is §6.7's CSR18.**
+**Slice:** cloud, OpenRouter (L3). **Depends on:** AK6a and AK6b. **This task is §6.7's CSR18, and the
+reconciliation of 2026-11-09 amended it in two places** (§6 item 9): CSR18's `internal/gateway/gateway.go`
+is **dropped**, because its own clause was "if the upstream kind or the auth shape a provider call
+carries moves", and with **D1418** both are the bundle's — the service builds the provider's call from
+the document it holds, so the gateway's upstream kind does not move and no task writes that file; and
+CSR18's `internal/runner/runner.go` call-site clause is dropped too, because the one call site
+`agentenv.go` already has is the call site. `internal/runner/agentenv_test.go`, which CSR18 booked and
+this plan had not, is kept.
 
-**Files (4):** `internal/runner/routing.go`, `internal/runner/agentenv.go`,
-`internal/runner/routing_internal_test.go`, `internal/gateway/gateway.go` (only if the upstream kind
-or the auth shape a provider call carries moves).
+**Files (4):** `internal/runner/routing.go`, `internal/runner/routing_internal_test.go`,
+`internal/runner/agentenv.go`, `internal/runner/agentenv_test.go`. **No file outside
+`internal/runner`**: with **D1418** the provider's base URL and auth shape never leave the service's
+bundle, so the runner names no provider endpoint and no host — the property §7's third attack question
+answers.
 
 **Interfaces:** the class's model path stops being the service's Anthropic forward alone — the
-upstream a provider-served review call carries is the provider's, and `internal/runner/agentenv.go`'s
+upstream a provider-served review call carries is the service's own, and `internal/runner/agentenv.go`'s
 gateway variables carry what a provider's model list needs. The pins and the allow-list are
 unchanged: the review is still held to the project policy's `budget.allowed_models` (**D1425**).
 
 **Tests and command:**
-`GOFLAGS=-p=2 go test ./internal/runner/ ./internal/gateway/ -run 'TestReviewRunOnAProviderKeyReachesTheProvider|TestReviewRunIsStillHeldToTheAllowList|TestReviewRunIsServedByTheProjectsAnthropicKey' -count=1`
+`GOFLAGS=-p=2 go test ./internal/runner/ -run 'TestReviewRunOnAProviderKeyReachesTheProvider|TestReviewRunIsStillHeldToTheAllowList|TestReviewRunIsServedByTheProjectsAnthropicKey' -count=1`
 
 - `TestReviewRunOnAProviderKeyReachesTheProvider` — a review run served by a provider key reaches
   the provider's endpoint with the provider's auth shape, and Anthropic's fake sees no call. **The
@@ -520,12 +682,13 @@ unchanged: the review is still held to the project policy's `budget.allowed_mode
 - `TestReviewRunIsServedByTheProjectsAnthropicKey` — the second direction, re-run from AK5: the
   Anthropic-key path is unchanged by the provider one.
 
-**Red step:** `TestReviewRunOnAProviderKeyReachesTheProvider` fails today: the class's upstream is
-Anthropic's and there is no path that carries a provider's base URL.
+**Red step:** `TestReviewRunOnAProviderKeyReachesTheProvider` fails today: the class's model path
+admits the service's Anthropic forward and nothing a provider-served pairing reaches.
 
-**Mutation:** drop the provider's base URL and let the call fall to Anthropic's address — the test's
-own destination assertion goes red, and the review's prompt reaches a vendor the project did not
-choose.
+**Mutation:** carry the provider's base URL into the agent's environment, so the runner picks the
+endpoint instead of the service's document — the test's own assertion that the job's environment names
+no provider host goes red, and the installation would have two places deciding where a review's prompt
+goes (**D1418**, §7's third attack question).
 
 **Reviewer tier:** **SEC** — opus, with the independent security review mandatory.
 
@@ -552,6 +715,100 @@ register.
 **Reviewer tier:** owner-run.
 
 **Commit:** `docs(checklist): check 330, the api-key review`
+
+### AK9 — the service's own sentences stop saying a review is served by a Claude account (SEC)
+
+**Slice:** none — **off the levels and off the critical path** (§1, §2's `—` rows). **Depends on:**
+nothing; it was found by the security review of the merged AK4 and AK5 (§7, **F25**).
+
+**Files (5):** `internal/credsvc/auth.go`, `internal/credsvc/auth_test.go`, `internal/credsvc/server.go`,
+`internal/credsvc/server_test.go`, `deploy/terraform/gcp/modules/installation/variables.tf`.
+
+**Interfaces:** none. The two refusal sentences in `internal/credsvc/auth.go` ("a review job account
+names no Claude account, so no call of it could be served"; "the same review job service account is
+bound to two Claude accounts"), the two in `internal/credsvc/server.go` (the serve path's copies, one
+of which spells "no email or no Claude account") and the module's prose for `review_job_accounts` (the
+variable's description and the comment above its validation) name **a Claude account** where AK4 made
+that inexact: the account a review variant's calls are served by may be `config.AnthropicKeyAccount`,
+which names the project's own Anthropic API key and, in `internal/credsvc/review.go`'s own words, **is
+not an account**. The fix is the words and nothing else — the type, the validation, the audit line and
+the number of lines stay exactly as they are — so the refusal says what the value is: the **account
+axis** value a review job is served by.
+
+**Tests and command:**
+`GOFLAGS=-p=2 go test ./internal/credsvc/ -run 'TestReviewAccountRefusalsNameTheAxisAndNotAnAccount|TestNewAuthenticatorRefusesAnIncompleteConfig' -count=1`
+
+- `TestReviewAccountRefusalsNameTheAxisAndNotAnAccount` — the four sentences, in the packages that
+  write them: each names the axis and does not say that what serves a review call is a Claude account,
+  and a review job account naming nothing is still refused. **The red step**, in the narrow sense a
+  sentence has one: the test asserts the corrected sentence, so it fails on today's tree and passes
+  after the change.
+- `TestNewAuthenticatorRefusesAnIncompleteConfig` — gains the case the branch has never had (a review
+  job account whose account is empty), so the refusal this task rewrites is exercised by a named test
+  and not only by review.
+
+**Red step:** `TestReviewAccountRefusalsNameTheAxisAndNotAnAccount` fails today, on all four
+sentences.
+
+**Mutation:** fix `auth.go` and leave `server.go`'s two copies — the service's own serve path then
+refuses a provider-served review in words that name a Claude account, and the test's own four-site
+check goes red.
+
+**Reviewer tier:** **SEC** — opus. The files are the credentials service's, and its refusals are read
+by whoever operates it, so a sentence that misdescribes what was refused is a security-relevant
+inaccuracy rather than a wording preference (`.claude/rules/credentials-service.md`).
+
+**Commit:** `credsvc: the review refusals name the account axis, not a Claude account`
+
+### AK10 — the credential write refuses a bundle the deployed service cannot read (SEC)
+
+**Slice:** none — **off the levels and off the critical path** (§1, §2's `—` rows). **Depends on:**
+AK6b (the field whose write it guards); it was found by the security review of the merged AK4 and AK5
+(§7, **F26**) and it is the guard AK6b's own shape requires rather than a change to AK6b.
+
+**Files (4):** `internal/cli/creds.go`, `internal/cli/creds_test.go`,
+`internal/cli/creds_skew_test.go` (new), `internal/cli/recipes_skew.go`.
+
+**Interfaces:** `internal/credsvc`'s `ParseBundle` is strict — **an unknown key refuses the whole
+document** (`bundleErr(ErrBundleUnknownKey, …)`), which the service answers as a service-wide refusal
+rather than a refused credential — so a bundle written with AK6b's provider entry by a CLI newer than
+the installation's deployed credentials service halts every caller of that service, coding runs
+included, until `fugaro update` moves the service onto the image that reads it. `fugaro creds set` is
+the bundle's only writer and an owner-only command, so the guard belongs at that write:
+`internal/cli/recipes_skew.go` gains one `*Since`-style constant and one check — the idiom
+`reviewAdmissionSince` established, judged against the installation's own record of its service
+(`terraform.tfvars.json`'s `credentials_service.image`, `installationServiceRelease`) rather than
+against a build record — and `internal/cli/creds.go` refuses to **write** a document whose newest key
+the deployed service predates, naming `fugaro update` as the one command that fixes it. Two things
+follow and both are part of this task: the release that ships AK6b carries the sentence under
+`### For operators` in its own notes (CLAUDE.md's HARD RULE: `fugaro update` is the whole upgrade, and
+what an operator may be asked is spelled there), and an installation whose service is already newer is
+written exactly as today.
+
+**Tests and command:**
+`GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestCredsSetRefusesAProviderBundleAnOlderServiceCannotRead|TestCredsSetWritesWhenTheServiceIsNewer|TestCredsSetIsUnaffectedByAnInstallationWithNoService' -count=1`
+
+- `TestCredsSetRefusesAProviderBundleAnOlderServiceCannotRead` — the write of a document carrying the
+  provider entry against a recorded service image older than the constant is refused, nothing is
+  written, and the sentence names `fugaro update`. **The red step.**
+- `TestCredsSetWritesWhenTheServiceIsNewer` — the same write against a service at or past the constant
+  succeeds, and the resulting document loads through `credsvc.ParseBundle`.
+- `TestCredsSetIsUnaffectedByAnInstallationWithNoService` — an installation with no credentials
+  service has no such skew (there is no service to refuse the document), and its bundle is written as
+  today.
+
+**Red step:** `TestCredsSetRefusesAProviderBundleAnOlderServiceCannotRead` fails today: no write path
+reads the installation's service release, so the document is written and the older service refuses
+every caller of it.
+
+**Mutation:** judge the guard against the CLI's own version instead of the installation's record —
+the test's older-service fixture is then written and the service-wide refusal ships, which is exactly
+what **F26** found.
+
+**Reviewer tier:** **SEC** — opus, with the independent security review mandatory. It is a refusal on
+the credentials service's only write path.
+
+**Commit:** `cli: creds set refuses a bundle the deployed service cannot read`
 
 ## 4. What is deliberately not in this plan
 
@@ -616,10 +873,14 @@ Anthropic key; the job's own environment held no credential of the repository's;
 whose `agent.auth` is `api-key` **without** the pairing naming the key is still refused, with the
 sentence AK5 rewrote.
 
-**C. The OpenRouter path (AK6–AK7).** Taken by **D1410** and sequenced after the Anthropic-key half
-by **D1416**: the same as B with a provider
+**C. The OpenRouter path (AK6a, AK6b, AK7).** Taken by **D1410** and sequenced after the Anthropic-key
+half by **D1416**: the same as B with a provider
 route claiming the Claude ID as one explicit `anthropic/<id>` (**F22**), reading off that the key
-reached the provider's own host and Anthropic saw no call.
+reached the provider's own host and Anthropic saw no call. **This step may not be run before
+Check 50** — the live check **D150** and **C3.6** gate a third-party route for a Claude model on, and
+it is **not run**: `internal/creds/select.go`'s `checkCandidates` refuses every tier-C candidate in a
+sentence naming it, so a run of this step today would measure that refusal rather than the path, which
+is the one thing the paragraph below exists to keep a check from doing (§6 item 10).
 
 **What the check must not be run against.** A repository the project depends on for real work, and
 any installation whose budget mode is `off` — the review class refuses a run with no gateway
@@ -628,27 +889,41 @@ any installation whose budget mode is `off` — the review class refuses a run w
 ## 6. The gates a task may not start without
 
 **Items 1–5 below are satisfied as of 2026-11-07**, each recording what the owner's answer settled or
-the approval of that day gave. **Item 6 is not the owner's answer to give and is not satisfied**: the
-security review is owed before AK4–AK7 land, so the two that have landed — AK4 and AK5, and no task
-past AK5 is started — landed under it rather than past it.
-**Item 7's gate is lifted** — E7's second half reached the tree on 2026-11-08 (**U6**) — so the launch
-is admitted where it was refused, though no live installation has been measured against it. A reader
-must take item 6 as standing.
+the approval of that day gave. **Item 6 is not the owner's answer to give and is now partly settled**:
+the security review owed before AK4–AK7 land is **written for the two that landed** —
+[security-review.md](security-review.md), §7 below — so AK4 and AK5 landed under it rather than past
+it, and it **stands for AK6a, AK6b and AK7**, which have not landed. **Item 7's gate is lifted** — E7's
+second half reached the tree on 2026-11-08 (**U6**) — so the launch is admitted where it was refused,
+though no live installation has been measured against it. **Item 3's approval covered the tasks that
+existed on 2026-11-07: AK9 and AK10 are written and not approved.** **Item 9 records the reconciliation
+of 2026-11-09 and item 10 a gate no task carried, which that reconciliation found.**
 
 1. **D1410 answered: both slices** — the plan is about all three (reconciliation §9.1).
 2. **D1421 answered: after 0.20.0** — the release for AK8 and for any release note.
 3. **The owner's own go: given.** He approved every task on 2026-11-07 (owner: "All tasks approved.
    Jobmax"), so no task here waits on a further approval — unlike the ones in
-   `docs/cloud-senior-review`.
-4. **AK4 and AK5 were gated on D1416, D1417 and D1422; AK6 and AK7 on D1418, D1419 and a
+   `docs/cloud-senior-review`. **That approval is AK1–AK8 as they stood that day**; the two tasks the
+   security review added later — **AK9** and **AK10** — are written and **not approved**.
+4. **AK4 and AK5 were gated on D1416, D1417 and D1422; AK6a, AK6b and AK7 on D1418, D1419 and a
    reconciliation with §6.7's CSR17–CSR18**, which own the sketch this plan reads. D1416, D1417,
-   D1419 and D1422 are answered as recommended; D1418 defers the bundle-and-policy contract
-   question to that reconciliation, which still stands.
+   D1419 and D1422 are answered as recommended. **D1418 is answered, 2026-11-09 — see item 9** — and
+   the reconciliation it was deferred to is done: **the provider's base URL and the auth shape go in
+   the bundle**. Its shape is the owner's own ruling: an **additive optional field**, so an older
+   bundle still decodes and no format version moves (a version would move only if a field were removed
+   or retyped, and **a field never changes meaning**), which settles three things for the two tasks
+   that carry it: the bundle's field names are **new names** and never a reuse of `secret` or
+   `kind`'s existing values, **a provider the bundle does not describe fails closed** (no defaulted
+   base URL, no defaulted auth shape), and **no test, fixture or doc carries a secret-shaped literal**
+   for either — a base URL and an auth shape are configuration and are written as such.
 5. **AK3 gated on D1415 — answered: the record names the credential, in a new field** and not a
    new value on `credential` (**F18**): the record is a wire shape another reader consumes, and
    CLAUDE.md allows an additive field there but not a changed meaning.
 6. **The security review owed before AK4–AK7 land**, not after: each is SEC, and the review is
-   mandatory rather than advisory.
+   mandatory rather than advisory. **Partly settled, 2026-11-09**: the review of the merged AK4 and
+   AK5 is written (§7, [security-review.md](security-review.md)) — what it read, the three attack
+   questions (the bundle, the forwarded key, the base URL) and its findings — and it found **no defect
+   that lets the key or the bundle out of the service**. It **stands for AK6a, AK6b and AK7**, and the
+   conditions §7 lists are what those tasks keep rather than re-decide.
 7. **AK4–AK7 were gated on E7, and it was not this plan's to meet** (**F10**, **U6**;
    `docs/cloud-senior-review` §1) — **that gate is lifted, because E7's second half reached the tree
    on 2026-11-08**: `internal/cli/review.go`'s `reviewJobAdmitted` is `true` (CSR11's flip, resting on
@@ -681,6 +956,35 @@ must take item 6 as standing.
    naming the move that worked (take the key off the profile) — so the state was safe and honest, but
    not a state to ship a release on.
 
+9. **The reconciliation with `docs/cloud-senior-review/implementation-plan.md` §6.7 is done, 2026-11-09**,
+   and it settled the one point the two plans disagreed about: **§6.7's CSR17 was right and this plan's
+   six-file AK6 was the loser**. The reason is §1's and §2's — the account axis's value **is the
+   admission unit** (`projectpolicy`'s `DeriveAccounts` keys the `accounts` block by it and `credsvc`'s
+   `admittedAccounts` intersects a repository's child with it), the pairing and not the cascade's
+   selector fixes which credential serves a review call, and `offeredToReview` matches by name **and**
+   tier, so a provider key riding the sentinel would carry the Anthropic key's own admissions and force
+   the class to offer two credentials where its rule is exactly one with no fallback. **AK6 is
+   therefore two tasks**: **AK6a** (the second axis value — 24 files, and **`internal/credsvc/review.go`
+   among them, the file §6.7 booked and this plan did not**) and **AK6b** (the service's document, its
+   offer and its forward — 9 files). **AK7 is amended** to CSR18 minus two clauses: `internal/gateway/gateway.go`
+   is dropped (its own condition was "if the upstream kind or the auth shape moves", and with D1418
+   both are the bundle's, so nothing moves) and `internal/runner/runner.go`'s call site with it, while
+   `internal/runner/agentenv_test.go` is kept. **§2 books every file of both tasks, drops the
+   conditional gateway row, and says which L2 rows AK6a re-enters**, and **§6.7 itself is amended in
+   the same commit** — CSR17 and CSR18 now point at AK6a, AK6b and AK7 rather than at this plan's old
+   AK6, and CSR17's "**Files (sketched, 6–8)**" is corrected: it covered the service half only and was
+   short of the axis's own readers.
+10. **A gate no task carried, found by that reconciliation: Check 50 is not run, and the OpenRouter
+    half's served path waits on it** (**D150**, **C3.6**). `internal/creds/select.go`'s `checkCandidates`
+    refuses **every** tier-C candidate in a sentence naming Check 50, and `TestSelectRefusesReservedTierC`
+    pins that refusal; the provider key is offered as that tier (**F16**), so the tree refuses a review
+    served by a provider key today. **The check is the owner's and no task in AK1–AK10 carries it**:
+    AK6b may land its document, its offer and its forwarding — each unit-tested — and AK7 its runner
+    path, but **§5's step C may not be run** and no release note may present a provider-served review as
+    working until Check 50 has run or the owner takes a new decision. Reading AK6b as having shipped a
+    working provider path would be selling a refusal, which is the one thing §5's "what the check must
+    not be run against" paragraph exists to prevent.
+
 **One answer leaves work that no gate and no task carries yet, and it is named here so it is not
 lost:** **D1413** settles *that* the key wins when the owner asks for it explicitly, and **the
 spelling of that request is this plan's to design** (reconciliation §7, §9.3), but **no task in
@@ -696,3 +1000,57 @@ it would put every one of its runs, coding runs included, on the key's job. The 
 stays owed, and the door for it is open as of 2026-11-08: the launch it would be spelled at is
 admitted since E7's second half reached the tree (item 7, **U6**), so a `fugaro review --pr N` runs,
 while what the owner still cannot do is ask for the project's key on that launch explicitly.
+
+## 7. The security review of the merged AK4 and AK5
+
+**Written 2026-11-09, by this pass, as [security-review.md](security-review.md)** — item 6's first
+half. It reads the tree the two tasks landed (`1d2591d5`, PR #1860, and `0944d4d4` with `9fa5fd90`, PR
+#2033) rather than the plan's sketches, and it is a **review of code that is already on `main`**, so its
+findings are tasks or notes and never edits to this plan's own design.
+
+**What it read.** `internal/credsvc`'s whole request path — `server.go` (the routes, the caller's
+verification, the class's own door), `auth.go` (`AuthConfig`, the job set and the review set),
+`review.go` (`ReviewJobAccount`, `ReviewJobAccountsFor`, the pairing's offer), `bundle.go`
+(`CredentialKey`'s closed set and `ParseBundle`), `forward.go` (`send`'s upstream, destination and
+redaction), `cascade.go` (the wire tiers and the candidate list), `probe.go` (the sweep's own audit) and
+`audit.go`; `internal/creds/select.go` (which candidate a call is offered, and the tier-C refusal);
+`internal/config/claude_accounts.go` and `project_secrets.go` (the sentinel and the project's key reach);
+`internal/gateway/export.go` and `gateway.go` (the helpers the service reuses and the base it builds);
+`internal/runner/routing.go` (the class's model path); `internal/cli/run.go`, `project_job.go` and
+`creds.go`; `internal/projectpolicy`'s `accounts.go` and `policy.go`; `internal/task/task.go` with
+`schemas/task.schema.json`; and `modules/installation/variables.tf` with `modules/project/variables.tf`.
+
+**The three attack questions, and the answers.** *What a hostile agent can do with the bundle:* **it
+cannot reach it** — the job holds no credential, the service's whole Secret Manager reach is one
+accessor grant on the one container (Global Constraint 12), the document is written by `fugaro creds
+set` alone and that command refuses a coding agent's session, a run's own process and the GODEBUG
+leak before it opens the cloud, no workflow may declare the container, and no header, body or audit
+line of an answer carries a value (chained through `gateway.NewRedactWriter` for the credential and
+every caller token). *What it can do with the forwarded key:* **it gets a call forwarded under it and
+nothing else** — the caller cannot steer the host (the destination is a constant base joined to a path
+from `servedRoute`'s closed set, and the query is dropped where it carries a caller token), cannot
+steer the credential (the pairing names exactly one, `offeredToReview` matches by name and tier with no
+fallback, and a repository's own file cannot choose the class's credential), the redirect is refused by
+the client, and the mint is scoped to the pairing's canonical repository under the read-only permission
+set. *What it can do with the base URL:* **nothing today** — the base URL is not in the bundle yet
+(**D1418**), so §6.7's and this plan's provider endpoint is a property of **AK6a/AK6b/AK7** rather
+than of the merged code, and §7 of the review file states the conditions those tasks keep: the base
+URL is the bundle's and never the runner's, an unknown provider fails closed, and the destination rule
+and the redaction stay where they are.
+
+**Findings.** **F25** — four refusal sentences in `internal/credsvc/auth.go` and `server.go`, and the
+module's prose for `review_job_accounts`, still say a review call is served by a **Claude account**,
+which AK4 made inexact (the sentinel is not one); **AK9**. **F26** — `ParseBundle` refuses a **whole
+document** on an unknown key, so a bundle written with AK6b's provider entry by a CLI newer than the
+installation's deployed service halts every caller of that service until `fugaro update`; **AK10**, with
+the release's `### For operators` sentence. **F27** — `README.md`'s status line still read "items 6 and
+7 … not met, so those four tasks may not start", and its file table still claimed "at most six" files
+per task; **fixed in this docs pass** and not a task. **No finding lets the key or the bundle out of
+the service, and nothing found is a defect in the merged behaviour**: F25 is wording, F26 is a guard a
+task's own write path needs, F27 was a stale doc.
+
+**What the review could not verify, and says so:** no live installation was measured (the owner's live
+checks are unrun, item 7), the service's behaviour against a real Secret Manager, a real Firebase
+project and a real provider is not measured anywhere in this folder, and the review read `main`'s code
+rather than a running service. **AK9 and AK10 are written and not approved** (item 3), and neither
+blocks a task: they are off the levels and off the critical path (§1, §2).
