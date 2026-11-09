@@ -1743,42 +1743,48 @@ func TestLocalcfgDecodesTheAccountChoiceBlockStrictly(t *testing.T) {
 }
 
 // TestAccountChoiceKeysRefuseTheProjectsAnthropicKey: the account-choice keys
-// ask a run's stages to choose an account, and the project's own Anthropic API
-// key is not one. config.ValidClaudeAccountRef admits the sentinel, because a
-// profile's claude_accounts entry may name it, and these two keys are the
-// second reader of that value — so without a refusal of its own the key fell
-// through to the defined-account lookup and was refused with "define it as
-// claude_accounts: {anthropic-api-key--project: {allow_data_to: [owner/name]}}",
-// the one entry config.ValidateClaudeAccounts refuses: one refusal naming what
-// the other forbids, and no move the operator can make.
+// ask a run's stages to choose an account, and neither of the account axis's
+// non-account values is one — the sentinel this test is named after (the
+// project's own Anthropic API key) and the provider key AK6a added beside it.
+// config.ValidClaudeAccountRef admits both, because a profile's
+// claude_accounts entry may name either, and these two keys are the second
+// reader of those values — so without a refusal of its own each fell through to
+// the defined-account lookup and was refused with "define it as claude_accounts:
+// {anthropic-api-key--project: {allow_data_to: [owner/name]}}", the one entry
+// config.ValidateClaudeAccounts refuses: one refusal naming what the other
+// forbids, and no move the operator can make.
 //
 // What the test pins is the remedy. The sentence names the key the operator
-// edits and tells them to drop it, and it names no claude_accounts entry.
+// edits and tells them to drop it, and it names no claude_accounts entry. Both
+// values are read in one loop because the rule is one rule
+// (config.NonAccountChoiceMessage answers them together).
 //
-// Mutation (run, restore): drop the sentinel's arm in choiceRefProblem — both
-// keys go back to the lookup's sentence and both subtests go red.
+// Mutation (run, restore): drop the AxisNonAccountValue arm in choiceRefProblem
+// — both keys go back to the lookup's sentence and every subtest goes red.
 func TestAccountChoiceKeysRefuseTheProjectsAnthropicKey(t *testing.T) {
-	for _, tc := range []struct{ name, yaml, key string }{
-		{"the project default", "default_claude_account: " + config.AnthropicKeyAccount + "\n", "default_claude_account"},
-		{"a stage's own", "stages:\n  review:\n    claude_account: " + config.AnthropicKeyAccount + "\n", "stages.review.claude_account"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			_, err := Parse([]byte(sample + tc.yaml))
-			if err == nil {
-				t.Fatalf("a config naming %s for %s was accepted: no job mounts the project's own key as a Claude account", config.AnthropicKeyAccount, tc.key)
-			}
-			for _, banned := range []string{"claude_accounts", "allow_data_to"} {
-				if strings.Contains(err.Error(), banned) {
-					t.Errorf("the refusal names %q: %v — the account lookup's sentence prescribes claude_accounts: {%s: {allow_data_to: [owner/name]}}, an entry config.ValidateClaudeAccounts refuses, so it is a remedy nobody can carry out", banned, err, config.AnthropicKeyAccount)
+	for _, value := range []string{config.AnthropicKeyAccount, config.ProviderKeyAccount} {
+		for _, tc := range []struct{ name, yaml, key string }{
+			{"the project default", "default_claude_account: " + value + "\n", "default_claude_account"},
+			{"a stage's own", "stages:\n  review:\n    claude_account: " + value + "\n", "stages.review.claude_account"},
+		} {
+			t.Run(value+"/"+tc.name, func(t *testing.T) {
+				_, err := Parse([]byte(sample + tc.yaml))
+				if err == nil {
+					t.Fatalf("a config naming %s for %s was accepted: no job mounts this value as a Claude account", value, tc.key)
 				}
-			}
-			if !strings.Contains(err.Error(), tc.key) {
-				t.Errorf("the refusal does not name the key the operator edits (%s): %v", tc.key, err)
-			}
-			if !strings.Contains(err.Error(), "drop the key") {
-				t.Errorf("the refusal does not name the move that works (dropping the key): %v", err)
-			}
-		})
+				for _, banned := range []string{"claude_accounts", "allow_data_to"} {
+					if strings.Contains(err.Error(), banned) {
+						t.Errorf("the refusal names %q: %v — the account lookup's sentence prescribes claude_accounts: {%s: {allow_data_to: [owner/name]}}, an entry config.ValidateClaudeAccounts refuses, so it is a remedy nobody can carry out", banned, err, value)
+					}
+				}
+				if !strings.Contains(err.Error(), tc.key) {
+					t.Errorf("the refusal does not name the key the operator edits (%s): %v", tc.key, err)
+				}
+				if !strings.Contains(err.Error(), "drop the key") {
+					t.Errorf("the refusal does not name the move that works (dropping the key): %v", err)
+				}
+			})
+		}
 	}
 }
 
