@@ -6,7 +6,7 @@ prerequisite before any binary links the front door (the owner's ruling of 2026-
 except the reading of the installation's published state its lists come from, which no task of this
 plan carries; M10 is built except the store's own bucket and its one grant, which are M4's store
 half and not started; M8 is built except the wiring that would serve its four read tools, which is
-the task M5b gates; M9 is not started; this folder approves no task.** The owner's spec of
+the task M5b gates; M9 and M11 are not started; this folder approves no task.** The owner's spec of
 2026-10-24 is §0, copied **verbatim**; the design that follows (§1 onward) is written to the
 **answers the owner gave on 2026-11-04** to the fifteen decisions in
 [reconciliation.md](reconciliation.md) §4 (D920–D934) — **every one of them the recommendation at
@@ -566,11 +566,16 @@ so this paragraph states both rules and says plainly that the way to *use* them 
 token's spend limit is never sent to the
 agent as its own budget figure. It is applied where the run's ceiling is applied: the run's ceiling
 is `min(the project's configured cap, the token's limit)`, the same "only tighten" merge the budget
-already does between a repository's cap and the installation's. Concretely, a submitted run starts
-with an environment override on the job carrying the token's limit in **a variable of its own**, and
+already does between a repository's cap and the installation's. Concretely, a submitted run carries
+the token's limit in **a field of its own, on the run's own task**, and
 the run's ceiling is the tighter of that and the job's own — so **the gateway enforces the token's
 spend limit**, the run's ledger charges against it, and a wrong number at the coordinator cannot
-widen a ceiling, because the run takes the tighter side itself. The one thing the design refuses
+widen a ceiling, because the run takes the tighter side itself. **The answer of 2026-11-04 named the
+execution's environment override as the channel; the owner's ruling of 2026-11-09 on the
+launch-override fence moved the channel and left the rule as it was** (§8): the front door's account
+holds no `runWithOverrides`, so nothing it launches reaches the container's environment at all, and
+the limit travels in the signed task in the runs bucket beside the marker that says a launch carries
+one. The one thing the design refuses
 outright is routing the limit through the agent's own `--max-budget-usd` flag: that figure is the
 agent's own estimate of cost, and the repository's own dogfooding notes record that it misprices
 non-Anthropic models by roughly an order of magnitude. A limit enforced there would be a limit
@@ -993,8 +998,22 @@ variables this design adds (the token's ceiling of D924 and the marker that says
 and the requirement is that nothing else a caller could put there is read. Until a mechanism lets the
 runner read its non-allowlisted configuration from something an override cannot set, **a compromised
 coordinator can change what a run does, not only narrow its ceiling**, and the privilege the owner is
-asked to grant is that of a launcher with an unfenced environment. Building the mechanism is a gate on
-M9 and D931, and which mechanism is an owner decision (§11).
+asked to grant is that of a launcher with an unfenced environment.
+
+**The owner decided the mechanism on 2026-11-09, and the fence is still not built.** It is **a split
+launcher role**: the front door's own account holds only the permission to **start an execution** —
+`run.jobs.run` — and **never `run.jobs.runWithOverrides`**, so no caller of this front door can
+rewrite the job's template, its environment or its arguments at all. **The per-launch data this design
+adds — D924's token ceiling and the marker that says a launch carries one — travels in the signed task
+in the runs bucket** (`internal/task/task.go:57`, the `Spec` the runner reads there at bootstrap),
+which is the run's own trusted input rather than an environment a caller could rewrite. **That is the
+allowlist read the other way round:** rather than the runner telling a template value from an override
+value inside one merged environment, which it cannot do, there is no override to tell apart — so the
+fence costs the runner nothing and is one IAM role and one binding in Terraform. **It is decided and
+NOT BUILT**: no role of this installation grants `run.jobs.run` alone, the front door's launch grant is
+deliberately absent (`deploy/terraform/gcp/modules/installation/coordinator.tf:377`), and the task
+that builds it is **M11** ([implementation-plan.md](implementation-plan.md) §3). **What gates M9 and
+D931 is that task being built, not the decision**, and no owner answer is outstanding (§11).
 
 **And the workspaces work is the second surface an approval has to agree across** — §10 states the
 dependency and the identity mismatch, and it is the reason the accepted risk above is not only this
@@ -1128,7 +1147,14 @@ amendment is in this tree (`docs/workspaces/spec.md:209-210`, `:217-219`), and i
   workspaces text is in this tree and read here** (`docs/workspaces/spec.md:209-210`, `:217-219`), so
   what is open is the **implementation** agreement the two designs' tasks have to keep rather than
   the text ([reconciliation.md](reconciliation.md) §4a, the workspaces dependency).
-- **The override fence is unbuilt and its mechanism is undecided** (§8): how the runner reads non-allowlisted configuration from something `runWithOverrides` cannot set. It gates M9 and D931; the owner decides the mechanism before either is built.
+- **The override fence's mechanism is decided and the fence is not built** (§8): the owner ruled on
+  2026-11-09 that it is **a split launcher role** — the front door's own account holds `run.jobs.run`
+  and never `run.jobs.runWithOverrides`, and D924's token ceiling and the marker that says a launch
+  carries one travel in the signed task in the runs bucket, so no caller of this front door can rewrite
+  the job's template and the runner needs no allowlist of its own. **It gates M9 and D931 by being
+  built rather than by being decided**: the task that builds it is **M11**
+  ([implementation-plan.md](implementation-plan.md) §3), and until it lands the launch grant is absent
+  and nothing here starts a run. No owner answer is outstanding.
 - The three open items of the owner's spec are answered or narrowed: the library is **zitadel/oidc**
   (§3, D921, answered 2026-11-04 with its licence **UNCONFIRMED** and cleared by the owner on
   2026-11-07, so **§6's first check is met**: [licence-gate.md](licence-gate.md) is the record, and
