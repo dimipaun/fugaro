@@ -16,6 +16,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/dimipaun/fugaro/internal/orchestrator/sensitivity"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/rigor"
@@ -102,6 +103,17 @@ type ProjectLayer struct {
 	// the project runs should be.
 	Jobs *Jobs `yaml:"jobs"`
 
+	// Security is the project's security: block (docs/security-classification,
+	// D1501): the rows every repository of the project treats as
+	// security-sensitive, and the layer's own always_level_3. A top-level key
+	// on purpose, like Governance and AB and for their reason: the defaults:
+	// overlay is replace-not-tighten (resolve.go), so a security: under
+	// defaults: would let a repository's own block replace the project's rows,
+	// and a repository dropping a row the project wrote is the one direction
+	// D1506 forbids. Read here, the layer's rows and the repository's meet only
+	// in the union, which keeps the project's first.
+	Security *LayerSecurity `yaml:"security"`
+
 	// Raw is the exact text, SHA256 its hex sha256.
 	Raw    []byte `yaml:"-"`
 	SHA256 string `yaml:"-"`
@@ -138,6 +150,40 @@ type JobState struct {
 	// generic path writes its allowlist and nothing else), so the file is
 	// written by hand and `fugaro update` is what publishes it and applies it.
 	Paused *bool `yaml:"paused"`
+}
+
+// LayerSecurity is the project layer's security: block (docs/security-
+// classification, D1501): the rows every repository of the project treats as
+// security-sensitive, and the switch that puts every run of the project at
+// level 3. Fugaro before 0.22.0 refuses the key, in every repository of the
+// project: the layer is decoded strictly by every release, so an older job
+// image dies at bootstrap on the key alone.
+//
+// The rows are sensitivity.Pattern, the type the repository's own security:
+// block carries (config.Security): a row is written, validated and read the
+// same way in either layer, so a project's row moves to a repository's file
+// unchanged and neither layer has a rule the other lacks (D1500, D1502). They
+// are judged by validateSecurity, the one function both blocks go through.
+//
+// AlwaysLevel3 is the block's one member a repository may not write: a
+// repository's security: block is the rows and nothing else, so a file that
+// writes it is refused by the decoder and by the published schema. That is
+// deliberate. "Everything this repository touches is security-sensitive" is a
+// whole-repository statement about a shared project, and it is the statement
+// D1503 refuses to let a `**` pattern hide inside a glob — a repository that
+// could write it would be answering a project's control from below.
+type LayerSecurity struct {
+	// Patterns are the project's rows: a name, a doublestar glob relative to
+	// the repository root, and the category the paths it matches are labelled
+	// with. Each row is validated by sensitivity.Pattern.Validate, at load and
+	// at its own index (D1502, F21): a glob the matcher cannot read or a
+	// category outside the seven-value vocabulary is a configuration error
+	// rather than a rule that silently never fires.
+	Patterns []sensitivity.Pattern `yaml:"patterns"`
+	// AlwaysLevel3 puts every run of the project at level 3, whatever paths it
+	// changed (D1517). It only ever turns the level on: false and an absent
+	// key are the same statement, and there is no value that asks for less.
+	AlwaysLevel3 bool `yaml:"always_level_3"`
 }
 
 // ReportsPaused is the reports job's own state: the value the layer wrote,
@@ -371,7 +417,7 @@ func LayerSum(data []byte) string {
 	return hex.EncodeToString(s[:])
 }
 
-var layerTopKeys = []string{"version", "project", "gcp_project", "defaults", "profiles", "default_profile", "claude_models", "governance", "ab", "jobs"}
+var layerTopKeys = []string{"version", "project", "gcp_project", "defaults", "profiles", "default_profile", "claude_models", "governance", "ab", "jobs", "security"}
 
 // layerReserved are keys a later release defines; this one refuses them
 // with a message saying so.
@@ -794,6 +840,12 @@ func validateLayer(l *ProjectLayer, a LayerAnchor) []Problem {
 	ps = append(ps, validateRigor("defaults.rigor", d.Rigor.Default, d.Rigor.Areas)...)
 	ps = append(ps, validateGovernance("governance", l.Governance)...)
 	ps = append(ps, validateAB("ab", l.AB)...)
+	if l.Security != nil {
+		// The project's rows, by the rules the repository's own are judged by:
+		// one function, two blocks (D1502, D1506). always_level_3 is a bool and
+		// has nothing to refuse.
+		ps = append(ps, validateSecurity("security", l.Security.Patterns)...)
+	}
 	for _, p := range validateAgentModels(Agent{Model: ag.Model, Models: ag.Models, Crafts: ag.Crafts}) {
 		p.Path = "defaults." + p.Path
 		ps = append(ps, p)

@@ -468,12 +468,14 @@ func setsGitAuthor(tree map[string]any) bool {
 // null, which decodes to no block at all, is refused exactly like a full one.
 // Its answer becomes Config.RepoSecuritySet.
 //
-// It is the repository's half alone. The project layer's security: block
-// (D1501) is the other half and arrives with the task that lets a layer write
-// the key at all (SC8 of docs/security-classification/implementation-plan.md:
-// layerTopKeys does not carry it yet, so a layer that writes it is refused as
-// an unknown key); the image-skew gates in internal/cli judge this half today
-// and have to gain the layer's when it lands, the way rigorSince's have both.
+// It is the repository's half alone: the project layer's security: block
+// (D1501) is read from the layer itself (ProjectLayer.Security) and never
+// merges into this tree, which is what keeps a repository's own block from
+// replacing the project's rows — the two meet only in the union, project
+// first (D1506). The image-skew gates in internal/cli judge this half today:
+// a job image older than the release that reads the key decodes fugaro.yaml
+// strictly and refuses it. Such an image refuses the layer's half the same
+// way, and no gate names that one yet, where rigorSince's carries both.
 func setsSecurity(tree map[string]any) bool {
 	_, ok := tree["security"]
 	return ok
