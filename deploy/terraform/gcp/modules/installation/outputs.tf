@@ -105,6 +105,11 @@ output "mcp_server" {
   } : null
 }
 
+output "mcpauth_store_bucket" {
+  description = "The bucket the front door's own records live in — the token hashes, the client registrations and the audit — fugaro-mcpauth-<gcp-project> (D935), or null on an installation the owner has not turned the front door on for. It is a function of the project alone and never a flag, and this output is the only place the name is published: the front door's own account mcp_server is the bucket's one member, and the process that serves the endpoint opens the store by this name and by no other (M2's OpenStore refuses the runs bucket, the project's database and anything under the managed prefix fmgd-). A bucket that already exists under the name fails the apply rather than being adopted, so a name read back from here is one this installation created."
+  value       = local.mcp_server_on ? local.mcpauth_store_bucket : null
+}
+
 output "catalog_check_service_account" {
   description = "The project's catalog check job account email (D1148), or null on an installation whose project publishes no catalog. fugaro update passes it to every repository root, which grants it actAs (roles/iam.serviceAccountUser) on that repository's build account — the one grant that lets a scheduled catalog rebuild run as the entry's own repository."
   value       = var.catalog_check == null ? null : google_service_account.catalog_check[0].email

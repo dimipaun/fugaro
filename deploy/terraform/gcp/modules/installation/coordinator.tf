@@ -314,9 +314,12 @@ resource "google_cloud_scheduler_job" "coordinator_sweep" {
 # binding follow.
 #
 # The database half of what a front door needs is NOT here and deliberately so:
-# the store binding is D935, which the owner has not answered, and its account
-# is the only member that binding will name (#1760). Until then this account
-# reads run artefacts (D932) and can reach nothing else.
+# the store binding is D935, whose bucket and one binding live in
+# mcpauth_store.tf — beside the bucket they bind rather than in this file,
+# which names this account exactly twice (the runs bucket's read below, and the
+# service's own identity) and must keep doing so. What this account reaches is
+# therefore the runs bucket (D932) and the store's objects (D935), and nothing
+# else.
 resource "google_service_account" "mcp_server" {
   count = local.mcp_server_on ? 1 : 0
 
@@ -463,9 +466,12 @@ resource "google_cloud_run_v2_service" "coordinator_front_door" {
       # subtrees live in, and the runs bucket a run's artefacts (its logs and
       # its diff) are read from (D932). None of them is a credential, no entry
       # here has a value_source, and naming the database is not a grant on it:
-      # what this account may read there is D935's store binding, which does not
-      # exist yet, so a front door built from this file reaches the runs bucket
-      # and nothing else.
+      # what this account may read there is D935's store binding, which is the
+      # one binding mcpauth_store.tf writes, so the front door reaches the runs
+      # bucket and the store's own bucket and nothing else. The store's URL is
+      # deliberately not an entry yet: the process that opens it (M5) names the
+      # bucket it was handed, and the name it must be handed is the installation
+      # output mcpauth_store_bucket.
       env {
         name  = "FUGARO_PROJECT"
         value = var.fugaro_project
