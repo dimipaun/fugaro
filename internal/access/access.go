@@ -30,10 +30,11 @@
 //     github/acme/a/b.
 //
 // What this package deliberately does not do, said here so a reader does not
-// look for it: it holds no licence code (a lapse is an input — Input.Lapse — and
-// ee/ owns that seam), it runs no command by itself (every command asks it),
-// and it cannot check that a member exists: Fugaro has no directory to ask
-// (F27).
+// look for it: it holds no licence code — a lapse is an input (Input.Lapse) and
+// the limit a Subscription surface keeps while one has lapsed is ee/'s,
+// installed through the seam lapse.go declares — it runs no command by itself
+// (every command asks it), and it cannot check that a member exists: Fugaro has
+// no directory to ask (F27).
 //
 // The one part of the package that touches a database is store.go (RS2): it is
 // where the grants node at config/admin/access is read and conditionally
