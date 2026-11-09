@@ -37,11 +37,12 @@ const (
 type Store struct {
 	dir string
 	// Installation names the project this store's issues belong to: the digest
-	// of the runs bucket URL (F8b). Save stamps it on every record it writes,
+	// of the runs bucket URL (F8b). Save stamps it on a record that names none,
 	// so a machine that serves two projects never leaves one project's issue
 	// where the other's `sync` would upload it or the other's `mine` would
-	// print it. Empty is a store opened with no project to name, which stamps
-	// nothing and leaves whatever the record already carried.
+	// print it — and never relabels an issue that already belongs to one.
+	// Empty is a store opened with no project to name, which stamps nothing and
+	// leaves whatever the record already carried.
 	Installation string
 }
 
@@ -61,10 +62,17 @@ func (s *Store) Dir() string { return s.dir }
 
 // Save writes the issue under the name its number and stem give it, stamped
 // with the installation this store holds: an issue is saved by the project
-// whose command failed, and the file outlives that command (F8b). A store with
-// no installation stamps nothing, so a record keeps the one it was saved with.
+// whose command failed, and the file outlives that command (F8b).
+//
+// The stamp only goes on a record that names no installation. SetStatus and
+// MarkUploaded rewrite a record through this call, so a store that relabelled
+// everything it wrote would hand a project's issue to whichever project wrote
+// it last: an issue filed in A and dismissed on a machine working in B would
+// become B's, and the listing and `sync` that filter on this field would carry
+// and print it as the wrong project's. A store with no installation of its own
+// stamps nothing either way.
 func (s *Store) Save(i Issue) error {
-	if s.Installation != "" {
+	if s.Installation != "" && i.Installation == "" {
 		i.Installation = s.Installation
 	}
 	name, err := i.FileName()

@@ -210,6 +210,45 @@ func TestSavedIssueCarriesInstallation(t *testing.T) {
 		t.Errorf("a store with no installation rewrote it as %q", again.Installation)
 	}
 
+	// An issue that already belongs to an installation keeps it, whatever store
+	// writes it next: `SetStatus` and `MarkUploaded` rewrite a record through
+	// Save, so a machine working in one project that dismissed or uploaded
+	// another project's issue would otherwise hand the issue over — and the
+	// listing and the `sync` of the next task filter on exactly this field, so
+	// the wrong value here is the wrong project's issue (F8b).
+	const otherInstallation = "0011223344556677"
+	bStore := issueStore(t, env)
+	bStore.Installation = otherInstallation
+	if err := bStore.SetStatus(local.LocalID, StatusDismissed, issueAt); err != nil {
+		t.Fatalf("dismissing through another store: %v", err)
+	}
+	if filed, err := bStore.Get(local.LocalID); err != nil {
+		t.Fatalf("getting the dismissed issue back: %v", err)
+	} else if filed.Installation != issueInstallation {
+		t.Errorf("dismissing through another project's store relabelled the issue %q", filed.Installation)
+	}
+	if err := bStore.Save(got); err != nil {
+		t.Fatalf("re-saving through another store: %v", err)
+	}
+	if again, err := bStore.Get(local.LocalID); err != nil {
+		t.Fatalf("getting the record back: %v", err)
+	} else if again.Installation != issueInstallation {
+		t.Errorf("another project's store rewrote the issue as %q", again.Installation)
+	}
+	// A record that names none is the one this store's own installation is for:
+	// the issue this project's command just saved.
+	unclaimed := issueLocal()
+	unclaimed.Run, unclaimed.LocalID = "update-20261109120000-5150", "local-update-20261109120000-5150"
+	unclaimed.Installation = ""
+	if err := bStore.Save(unclaimed); err != nil {
+		t.Fatalf("saving a record with no installation: %v", err)
+	}
+	if claimed, err := bStore.Get(unclaimed.LocalID); err != nil {
+		t.Fatalf("getting the second issue back: %v", err)
+	} else if claimed.Installation != otherInstallation {
+		t.Errorf("a record with no installation was saved as %q, want %q", claimed.Installation, otherInstallation)
+	}
+
 	// A record saved before there was a field to stamp is a record no project
 	// claims, and reading it leaves it that way: the field is one the reader
 	// supplies as empty, not one an old file is rewritten to grow.
@@ -242,10 +281,13 @@ func TestSavedIssueCarriesInstallation(t *testing.T) {
 	// is refused by the record's own rules and nothing is written: a store that
 	// built the field from something else — a URL, a path — would save a record
 	// whose reader, in another installation, hides the issue as another
-	// project's.
+	// project's. The record saved here is one that names none, which is the one
+	// this store's own value goes on.
 	bad := issueStore(t, env)
 	bad.Installation = "not a digest"
-	err = bad.Save(issueSample())
+	unnamed := issueSample()
+	unnamed.Installation = ""
+	err = bad.Save(unnamed)
 	if err == nil {
 		t.Fatal("Save wrote an installation that is not a digest")
 	}
