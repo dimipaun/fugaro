@@ -11,12 +11,15 @@
 # size" the classic store's flattened image config gives), so a host running
 # the containerd store would need a different measurement, not this script.
 set -eu
-# Lowered from 4000/3500 when the base stopped carrying the seven non-Claude
-# harnesses (design base-image.md section 13, image setup skill IS4): the
-# harness tier was about 1 GB of the 3812 MB amd64 image, and a budget with
-# the old headroom would no longer notice the tier coming back.
-MAX_MB=3200
-WARN_MB=3000
+# Both lines stay where they are although the base is about a gigabyte
+# slimmer by estimate, now that it carries no harness but Claude Code (design
+# base-image.md section 13, image setup skill IS4): the seven it dropped were
+# 0.97 GB of the measured 3812 MB amd64 image, but the slimmed image has not
+# been measured, and a line set from the estimate would fail the next
+# fugaro-base build on main rather than the change that removed them. Lower
+# both to what that build reports.
+MAX_MB=4000
+WARN_MB=3500
 image=${1:?usage: size-budget.sh IMAGE [MAX_MB [WARN_MB]]}
 max=${2:-$MAX_MB}
 warn=${3:-$WARN_MB}
