@@ -127,9 +127,15 @@ func updateRetryHint(cmd *cobra.Command, o *initOptions) {
 // write a document (or one line of a checkout) rather than bringing the
 // installation up to this release, and --forget takes the installation apart
 // instead. The offer is about a run that has just installed the release that
-// fixed the issue.
+// fixed the issue, which is why the list is the one the modes exclude one
+// another by (init.go) and not a set of flags this file invents.
 func updateRetryOffers(o *initOptions) bool {
-	return !(o.planOnly || o.printVars || o.configOnly || o.publishConfig || o.anchor || o.forget)
+	for _, oneShot := range []bool{o.planOnly, o.printVars, o.configOnly, o.forget, o.publishConfig, o.anchor} {
+		if oneShot {
+			return false
+		}
+	}
+	return true
 }
 
 // retryHintLines is the offer's whole decision over the two stores: the lines
