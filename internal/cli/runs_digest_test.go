@@ -20,7 +20,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -28,7 +30,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/digest"
+	"github.com/dimipaun/fugaro/internal/issues"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
@@ -774,4 +778,195 @@ func TestRunsDigestSkippedNameIsOneLine(t *testing.T) {
 // listing is one line of text.
 func digestControl(r rune) bool {
 	return r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f)
+}
+
+// digestTerminal makes runs digest believe its output is a person's terminal,
+// which is where the Issues section is printed (T-IS16, D1729). execute's
+// buffers are not one, which is why every other test here never sees the
+// section.
+func digestTerminal(t *testing.T) {
+	t.Helper()
+	old := writerIsTerminal
+	writerIsTerminal = func(io.Writer) bool { return true }
+	t.Cleanup(func() { writerIsTerminal = old })
+}
+
+// seedDigestIssue uploads one issue into the fixture project's shared store,
+// under the run stem and summary given, and answers the upload. The store is
+// the one runs digest reads -- the bucket the fixture's config names -- so the
+// row the section prints is one the store really holds, not a hand-built row.
+func seedDigestIssue(t *testing.T, f *cloudFixture, run, summary string, created time.Time) issues.Uploaded {
+	t.Helper()
+	ctx := context.Background()
+	b, err := blobx.Open(ctx, f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = b.Close() })
+	up, err := issues.Upload(ctx, b, issues.Issue{
+		Run: run, LocalID: "local-" + run,
+		Reporter: "someone@example.test", Created: created,
+		Class: issues.ClassFugaro, Status: issues.StatusPending,
+		OS: "linux", FugaroVersion: "0.21.0",
+		// One byte pair repeated, so no literal here is the hash of anything.
+		Fingerprint: strings.Repeat("ab", 32),
+		Summary:     summary, Diagnosis: "the review stage starts twice", Steps: "run it again",
+	})
+	if err != nil {
+		t.Fatalf("seeding issue %s: %v", run, err)
+	}
+	return up
+}
+
+// TestRunsDigestPrintsIssuesSectionOnTerminal is D1729's terminal half: after
+// the output of its own, a run on a terminal prints the project's Issues
+// section, and a coding agent's session prints none of it.
+func TestRunsDigestPrintsIssuesSectionOnTerminal(t *testing.T) {
+	digestCheckout(t)
+	f := newCloudFixture(t)
+	dir := t.TempDir()
+	digestClock(t, "2026-10-27")
+	seedDigestRun(t, f, "20261025-120000-abcd", time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC), "acme/app")
+	up := seedDigestIssue(t, f, "run-20261025120000-48213", "the review stage starts twice",
+		time.Date(2026, 10, 19, 9, 0, 0, 0, time.UTC))
+	digestTerminal(t)
+	args := []string{"runs", "digest", "--period", "day", "--date", "2026-10-25", "--dir", dir}
+
+	out, errOut, err := execute(t, args...)
+	if err != nil {
+		t.Fatalf("runs digest: %v (%s)", err, errOut)
+	}
+	// The row names the issue, its summary and the command that files it, and
+	// the wording firms up: the default threshold is a week and this issue has
+	// waited seven days (spec §6, T-IS15).
+	for _, want := range []string{
+		"## Issues",
+		fmt.Sprintf("#%04d", up.Number),
+		"the review stage starts twice",
+		fmt.Sprintf("[fugaro issue submit %d]", up.Number),
+		"please file it",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the terminal section does not carry %q:\n%s", want, out)
+		}
+	}
+	// After the digest's own output, which is what "after runs digest" means.
+	if wrote := strings.Index(out, "wrote "); wrote < 0 || wrote > strings.Index(out, "## Issues") {
+		t.Errorf("the section is not printed after the report the command wrote:\n%s", out)
+	}
+	// And the report itself is untouched: the section is the terminal's own
+	// (D1729).
+	if body := digestReport(t, dir, "2026-10-25"); strings.Contains(body, "## Issues") {
+		t.Errorf("the committed report carries the Issues section:\n%s", body)
+	}
+
+	// The wording is this machine's own setting (T-IS15): a threshold of 30
+	// days reads the same issue as merely waiting.
+	f.appendConfig(t, "issues: { nudge_after_days: 30 }\n")
+	out, errOut, err = execute(t, args...)
+	if err != nil {
+		t.Fatalf("runs digest with a nudge threshold of its own: %v (%s)", err, errOut)
+	}
+	if !strings.Contains(out, "waiting 7 days") || strings.Contains(out, "please file it") {
+		t.Errorf("a threshold of 30 days did not change the wording:\n%s", out)
+	}
+
+	t.Setenv("CLAUDECODE", "1")
+	out, errOut, err = execute(t, args...)
+	if err != nil {
+		t.Fatalf("runs digest in an agent session: %v (%s)", err, errOut)
+	}
+	if strings.Contains(out, "## Issues") {
+		t.Errorf("a coding agent's session printed the Issues section:\n%s", out)
+	}
+}
+
+// TestRunsDigestFileUnchangedByIssues is D1729's other half: the section is
+// printed to the terminal and written nowhere, so a report and an index
+// regenerated with issues in the project are byte for byte the ones the same
+// run wrote without them.
+func TestRunsDigestFileUnchangedByIssues(t *testing.T) {
+	digestCheckout(t)
+	f := newCloudFixture(t)
+	dir := t.TempDir()
+	digestClock(t, "2026-10-27")
+	seedDigestRun(t, f, "20261025-120000-abcd", time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC), "acme/app")
+	digestTerminal(t)
+	args := []string{"runs", "digest", "--period", "day", "--date", "2026-10-25", "--dir", dir}
+
+	if _, errOut, err := execute(t, args...); err != nil {
+		t.Fatalf("runs digest: %v (%s)", err, errOut)
+	}
+	report, index := digestReport(t, dir, "2026-10-25"), digestIndex(t, dir)
+	if _, errOut, err := execute(t, args...); err != nil {
+		t.Fatalf("runs digest: %v (%s)", err, errOut)
+	} else if got := digestReport(t, dir, "2026-10-25"); got != report {
+		// Two runs of the same period write the same bytes (G3), so the files
+		// compared below differ only if the section reached one of them.
+		t.Error("a second run of the same report wrote different bytes")
+	}
+	seedDigestIssue(t, f, "run-20261025120000-48213", "the review stage starts twice",
+		time.Date(2026, 10, 19, 9, 0, 0, 0, time.UTC))
+	out, errOut, err := execute(t, args...)
+	if err != nil {
+		t.Fatalf("runs digest with an issue in the project: %v (%s)", err, errOut)
+	}
+	if !strings.Contains(out, "## Issues") {
+		t.Errorf("the run with an issue printed no Issues section, so this test proves nothing:\n%s", out)
+	}
+	if got := digestReport(t, dir, "2026-10-25"); got != report {
+		t.Errorf("an issue in the project changed the report:\n%s", got)
+	}
+	if got := digestIndex(t, dir); !bytes.Equal(got, index) {
+		t.Errorf("an issue in the project changed the index:\n%s", got)
+	}
+}
+
+// TestRunsDigestOmitsSectionOnReadFailure: the section is a read of the
+// project's shared store, and a read that fails costs one line on stderr. The
+// report is already written and stays a success: a store nobody can reach must
+// not take the daily report down with it.
+func TestRunsDigestOmitsSectionOnReadFailure(t *testing.T) {
+	digestCheckout(t)
+	newCloudFixture(t)
+	dir := t.TempDir()
+	digestClock(t, "2026-10-27")
+	digestTerminal(t)
+	old := digestIssuesRows
+	digestIssuesRows = func(context.Context, *blobx.Bucket) ([]issues.SharedRow, error) {
+		return nil, errors.New("the store could not be listed")
+	}
+	t.Cleanup(func() { digestIssuesRows = old })
+
+	out, errOut, err := execute(t, "runs", "digest", "--period", "day", "--date", "2026-10-25", "--dir", dir)
+	if err != nil {
+		t.Fatalf("a shared store that cannot be read failed the report: %v", err)
+	}
+	if strings.Contains(out, "## Issues") {
+		t.Errorf("the section was printed although the store could not be read:\n%s", out)
+	}
+	// One line about the section, and it names the cause: the other line
+	// stderr carries is the project header every command prints.
+	var reported []string
+	for _, line := range strings.Split(strings.TrimSuffix(errOut, "\n"), "\n") {
+		if strings.Contains(line, "Issues section") {
+			reported = append(reported, line)
+		}
+	}
+	if len(reported) != 1 || !strings.Contains(reported[0], "the store could not be listed") {
+		t.Errorf("the read failure printed %v, want one line naming the failure:\n%s", reported, errOut)
+	}
+	if !strings.Contains(digestReport(t, dir, "2026-10-25"), "# Run digest") {
+		t.Error("the report was not written")
+	}
+}
+
+// digestIndex reads the index the command regenerated.
+func digestIndex(t *testing.T, dir string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(dir, "README.md"))
+	if err != nil {
+		t.Fatalf("the command regenerated no index: %v", err)
+	}
+	return data
 }

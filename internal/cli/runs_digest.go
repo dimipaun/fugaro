@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dimipaun/fugaro/internal/digest"
+	"github.com/dimipaun/fugaro/internal/issues"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -319,7 +320,58 @@ func runRunsDigest(cmd *cobra.Command, o *digestOptions) error {
 		return fmt.Errorf("writing %s: %w", indexPath, err)
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "wrote %s\nwrote %s\n", path, indexPath)
+	digestIssuesSection(cmd, ctx, env)
 	return nil
+}
+
+// digestIssuesRows reads the project's shared issues, which runs digest prints
+// as the terminal Issues section. Tests replace it: the store's own failures
+// are a bucket the tests of this command do not reach.
+var digestIssuesRows = issues.ListShared
+
+// digestIssuesSection prints the Issues section after the output of the report
+// this call just wrote (T-IS16, D1729).
+//
+// The section is the terminal's own and is printed nowhere else: a person
+// reads it, the committed file never carries it, and a coding agent's session
+// adds no part of it to output a caller reads. It is printed once the report
+// and the index are written, so nothing here can change a byte of either.
+//
+// A shared store the CLI cannot read costs one line on stderr and nothing
+// else: the report is written and the command succeeded, and a teammate's
+// store being unreachable must not turn the daily report into a failed
+// command.
+func digestIssuesSection(cmd *cobra.Command, ctx context.Context, env *cloudEnv) {
+	if !writerIsTerminal(cmd.OutOrStdout()) || agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())) != "" {
+		return
+	}
+	rows, err := digestIssuesRows(ctx, env.bucket)
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: this project's issues could not be read, so the report carries no Issues section: %s\n", safetext.OneLine(err.Error()))
+		return
+	}
+	th := issues.Thresholds{AfterDays: env.lc.NudgeAfterDays(), Recurrence: env.lc.NudgeRecurrence()}
+	fmt.Fprintf(cmd.OutOrStdout(), "\n%s", issues.Section(digestSectionRows(rows), digestNow().UTC(), th))
+}
+
+// digestSectionRows is the shared store's rows as the section prints them. An
+// issue has been reported once for the report that created it and once more
+// for every duplicate the store merged into it (F21), which is what makes it
+// recurring.
+func digestSectionRows(rows []issues.SharedRow) []issues.SectionRow {
+	out := make([]issues.SectionRow, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, issues.SectionRow{
+			Number:  r.Number,
+			LocalID: r.LocalID,
+			Class:   r.Class,
+			Status:  r.Status,
+			Summary: r.Summary,
+			Created: r.Created,
+			Reports: 1 + r.Occurrences,
+		})
+	}
+	return out
 }
 
 // digestDim is --period as the time grouping it names.
