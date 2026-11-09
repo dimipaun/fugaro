@@ -56,6 +56,7 @@ import {
 } from '../main/spawn'
 import type {
   BinaryRefusalKind,
+  BinaryResolution,
   ChildSpawner,
   JSONObject,
   Notice,
@@ -235,9 +236,13 @@ export interface NoInstallationState {
    * no distribution this console can drive, is fixed by installing something no
    * command here installs, and the page's own sentence says so instead.
    *
-   * On the WSL route the line is not `brew` at all but the register procedure
-   * (`docs/windows-cli/wsl.md`), which is why the field can be empty here: the
-   * screen points at that procedure, it does not retype it (F32).
+   * The three WSL kinds carry the empty string and not `FUGARO_INSTALL_COMMAND`:
+   * `brew install dimipaun/tap/fugaro` is not a Windows install and Homebrew is
+   * not inside the distribution (F32), and the one command that would install
+   * WSL installs nothing this console can then run. Their route's install line is
+   * the register procedure in `docs/windows-cli/wsl.md`, **pointed at** rather
+   * than retyped (F32) -- and that line is not drawn here: these pages carry
+   * their remedy as their own sentence, which is `degraded.ts`'s `NO_WSL_REMEDY`.
    */
   readonly installCommand: string
   /**
@@ -324,6 +329,19 @@ export interface CliSourceOptions {
   readonly licenceKey?: ((project: string) => string | undefined) | undefined
   readonly spawner?: ChildSpawner
   readonly spawnLog?: SpawnLogWriter
+  /**
+   * `resolver` replaces `resolveBinary` itself, and it is a seam for the same
+   * reason `spawner` is: it is how a test reaches a resolution this machine
+   * cannot produce. The shipped app leaves it out.
+   *
+   * It exists for exactly one fact: `resolveBinary` answers `no-binary` for
+   * **every** refusal it makes, because the WSL route is `resolveInstalledBinary`
+   * and nothing in `resolveBinary` reaches it. So a state that failed as one of
+   * the three WSL kinds cannot be produced through `create` by any filesystem a
+   * test can build, and the line that carries `resolution.kind` into the refusal
+   * would otherwise be pinned by nothing.
+   */
+  readonly resolver?: ((request: Parameters<typeof resolveBinary>[0]) => Promise<BinaryResolution>) | undefined
   readonly home?: string
   readonly clock?: () => Date
   readonly firstFrameBudgetMs?: number
@@ -373,9 +391,9 @@ export class CliSource implements FugaroSource {
     const directory = options.checkout ?? privateWorkingDirectory()
     const log = options.spawnLog ?? createSpawnLog(env)
     const ownsLog = log !== options.spawnLog
-    let resolution: Awaited<ReturnType<typeof resolveBinary>>
+    let resolution: BinaryResolution
     try {
-      resolution = await resolveBinary({
+      resolution = await (options.resolver ?? resolveBinary)({
         ...(options.configuredBinaryPath === undefined ? {} : { configuredPath: options.configuredBinaryPath }),
         appEnv: env,
         directory,
