@@ -11401,7 +11401,9 @@ subscriptions plan ([subscriptions/implementation-plan.md](subscriptions/impleme
 
 **What the check confirms.** [design/lapse-read-only.md](design/lapse-read-only.md) §3, §5 and §7:
 that the lapse keeps the reads and cancel and the kill switch, and refuses the two writes **in the
-console's main process**, which is where the fence already lives.
+console's main process**, which is where the fence already lives. **Which views survive is the
+owner's open call** (§8 item 6: the alternative hides the paid views), so the steps below read the
+set the build you pack ships, and the design's own reading is that every read stays.
 
 **What you do:**
 
@@ -11431,7 +11433,9 @@ takes (170–179)"), and run by the owner in task **S6.4**.
 
 **What the check confirms.** [design/lapse-read-only.md](design/lapse-read-only.md) §4 and §7: that
 the app's cancel does not ride on a paid component, and that the refusal is at the mailbox client,
-which is the app's only write path.
+which is the app's only write path. **Which core component carries that cancel is the owner's open
+call** (§8 item 5), and the constraint all three options share is what the steps below measure: a
+stopped paid agent does not take the cancel with it.
 
 **What you do:**
 
