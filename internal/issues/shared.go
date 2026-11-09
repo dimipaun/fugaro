@@ -308,6 +308,11 @@ func Upload(ctx context.Context, b *blobx.Bucket, i Issue) (Uploaded, error) {
 		if _, err := replaceRaw(ctx, b, key, named, v); err == nil {
 			return Uploaded{Number: number}, nil
 		} else if !errors.Is(err, blobx.ErrConflict) {
+			// The naming failed for a reason of its own: drop the issue this
+			// attempt wrote, so the retry a caller makes does not leave a second
+			// issue of one fingerprint behind. A delete that fails too leaves
+			// debris only a launcher's own rewriting of the store can explain.
+			_ = b.DeleteIf(ctx, recordKey(number), recGen, rec)
 			return Uploaded{}, fmt.Errorf("issues: naming the fingerprint: %w", err)
 		}
 		// Somebody named the fingerprint between this read and this write. The
@@ -394,10 +399,13 @@ func takeNumber(ctx context.Context, b *blobx.Bucket) (int, error) {
 		if err != nil {
 			return 0, fmt.Errorf("issues: %w", err)
 		}
-		if beforeConditionalWrite != nil {
-			beforeConditionalWrite(key)
-		}
 		if first {
+			// The counter was read as absent, so this attempt is a create; the
+			// seam is the same window as a conditional write's. A create the
+			// store says is taken is another machine's number, taken first.
+			if beforeConditionalWrite != nil {
+				beforeConditionalWrite(key)
+			}
 			if _, err := b.Create(ctx, key, raw, sharedJSON); errors.Is(err, blobx.ErrExists) {
 				continue
 			} else if err != nil {
