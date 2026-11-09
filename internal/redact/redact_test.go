@@ -221,6 +221,22 @@ var patternCases = []struct {
 		leak: strings.Repeat("A1b2C3d4", 3),
 	},
 	{
+		name: "token scheme with space after the parameter sign",
+		in:   `Authorization: Token token= "` + fake(strings.Repeat("A1b2C3d4", 3)) + `"`,
+		leak: strings.Repeat("A1b2C3d4", 3),
+	},
+	{
+		name: "token scheme with space before the parameter sign",
+		in:   `Authorization: Token token ="` + fake(strings.Repeat("A1b2C3d4", 3)) + `"`,
+		leak: strings.Repeat("A1b2C3d4", 3),
+	},
+	{
+		name: "single quoted oauth token parameter",
+		in: `Authorization: OAuth oauth_token='abc', oauth_signature='` +
+			fake(strings.Repeat("A1b2C3d4", 3)) + `'`,
+		leak: strings.Repeat("A1b2C3d4", 3),
+	},
+	{
 		name: "single quoted oauth signature",
 		in: `Authorization: OAuth oauth_consumer_key='abc', oauth_signature='` +
 			fake(strings.Repeat("A1b2C3d4", 3)) + `'`,
