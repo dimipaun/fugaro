@@ -30,8 +30,7 @@ var fullRunIDStamp = regexp.MustCompile(`\b\d{8}-\d{6}-`)
 
 // sweepEndings are what the sweep world's four runs are shown as: two whose
 // four characters already tell them apart, and two that share their last four
-// and are therefore extended through the dash (SR1's rule, F1). The order is
-// the mint order.
+// and are therefore extended through the dash (SR1's rule, F1).
 var sweepEndings = []string{"aaaa", "bbbb", "800-3bb2", "900-3bb2"}
 
 // humanRenderer is one place the CLI shows runs to a person, as the sweep
@@ -53,10 +52,10 @@ type humanRenderer struct {
 }
 
 // sweepRenderers is every human renderer the sweep drives: the CLI's listings
-// of runs and the one-run views. The list is the sweep's registry, and
-// TestEveryHumanRendererIsSwept holds it against the command tree, so a
-// renderer that is not here -- a new printer -- fails the sweep rather than
-// going unchecked.
+// of runs and the one-run views. Driving a command is what checks the whole of
+// what it prints, the endings it does not build from a row among it, so this
+// list is as wide as the sweep can reach by running things -- and a printer
+// that is not here is caught by the source scan instead (assertNoPrintSiteNamesARunID).
 var sweepRenderers = []humanRenderer{
 	{
 		name:  "runs ls",
