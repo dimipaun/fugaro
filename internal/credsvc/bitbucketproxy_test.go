@@ -1057,6 +1057,15 @@ func TestBitbucketRouteOneAuditLinePerRequest(t *testing.T) {
 		if line["status"] != ErrorRequestRefused || line["purpose"] != PurposeGit {
 			t.Errorf("the line = %v, want one git line whose status is the refusal's own type", line)
 		}
+		// The class is on the service's own line and nowhere else an operator
+		// can read it: the audit line carries the refusal's wire type for every
+		// refusal of this route, and a refused git push never shows the caller
+		// the class (git reports the answer's status, not its body). A refusal
+		// the rules decided carries no cause, so a line written only when there
+		// is one is a line the operator does not get.
+		if logged := s.logs.String(); !strings.Contains(logged, "class="+gitproxy.ReasonOtherRef) {
+			t.Errorf("the service's own log does not carry the refusal's class %q: %s", gitproxy.ReasonOtherRef, logged)
+		}
 	})
 
 	t.Run("a REST read", func(t *testing.T) {

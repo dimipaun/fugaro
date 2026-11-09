@@ -697,7 +697,13 @@ func itoa(n int) string { return fmt.Sprintf("%d", n) }
 // also what the service's own log line carries, because it is the operator who
 // needs to tell a ref from a repository in a refusal, and the audit line's
 // fields are names of the act rather than of the request (AuditEvent has no
-// free-text field, deliberately).
+// free-text field, deliberately). Every refusal of this route writes that line,
+// and the class on it is the only place the class survives: the audit line
+// carries the refusal's wire type (request_refused) for all of them, and a
+// caller that was refused a git push never sees the class at all — git reports
+// the status of the answer and not its body, so the operator reading Cloud
+// Logging (and Check 191, which reads it as the owner's instrument) has this
+// line and no other.
 func (s *Server) refuseProxy(ctx context.Context, w http.ResponseWriter, id Identity, purpose, class string) {
 	s.refuseProxyReason(ctx, w, id, purpose, class, nil)
 }
@@ -706,11 +712,15 @@ func (s *Server) refuseProxy(ctx context.Context, w http.ResponseWriter, id Iden
 // operator's own line. The cause is a Go error written by this repository or
 // wrapped from internal/gitproxy's parsers, so it names a rule and never a
 // value — and it is deliberately NOT put in the caller's refusal, whose
-// sentence is the class alone.
+// sentence is the class alone. The line is written whether or not there is a
+// cause: what the operator needs from it is the class, and a refusal decided by
+// the rules (a ref, a repository, a pull request) has no cause to carry.
 func (s *Server) refuseProxyReason(ctx context.Context, w http.ResponseWriter, id Identity, purpose, class string, cause error) {
+	attrs := []any{"purpose", purpose, "run", id.Run, "repository", id.Slug, "class", class}
 	if cause != nil {
-		s.log.Warn("credsvc: a Bitbucket call was refused", "purpose", purpose, "run", id.Run, "repository", id.Slug, "class", class, "error", cause.Error())
+		attrs = append(attrs, "error", cause.Error())
 	}
+	s.log.Warn("credsvc: a Bitbucket call was refused", attrs...)
 	s.refuseCall(ctx, w, id, purpose, config.BitbucketSecret, "", StatusRequestRefused, ErrorRequestRefused, requestRefused+class)
 }
 
