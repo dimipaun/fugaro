@@ -97,9 +97,21 @@ func TestProjectScopeOnlyForProjectActions(t *testing.T) {
 	if Allowed(platformLead, alice, ActionViewProject, repo) {
 		t.Errorf("an all-repos admin is allowed %s: project-level reads (spend, members) need a project-scope role (F19, D1586)", ActionViewProject)
 	}
+	// The project's orchestrator agents are project-level too: an all-repos
+	// admin administers every repository and no agent of the project's (O17).
+	if Allowed(platformLead, alice, ActionHandoffAgent, repo) {
+		t.Errorf("an all-repos admin is allowed %s: an agent belongs to the project, so handing one to another developer is a project-level act (F19)", ActionHandoffAgent)
+	}
+	if Allowed(platformLead, alice, ActionHandoffAgent, "") {
+		t.Errorf("an all-repos admin is allowed %s with no repository: a project-level action never reads the repository, and this one is not held by all-repos at any call", ActionHandoffAgent)
+	}
+	// A repository grant is narrower still, and so is a person holding nothing.
+	if Allowed(knows(grant(bob, RoleAdmin, scope(t, "github/acme/app"))), bob, ActionHandoffAgent, "") {
+		t.Errorf("an admin of one repository is allowed %s: the repository is all they hold, and no agent of the project's lives in it", ActionHandoffAgent)
+	}
 
 	projectAdmin := knows(grant(alice, RoleAdmin, scope(t, "project")))
-	for _, action := range []Action{ActionManageRepo, ActionManageProject, ActionViewProject, ActionViewRepo, ActionLaunch, ActionCancel} {
+	for _, action := range []Action{ActionManageRepo, ActionManageProject, ActionHandoffAgent, ActionViewProject, ActionViewRepo, ActionLaunch, ActionCancel} {
 		if !Allowed(projectAdmin, alice, action, repo) {
 			t.Errorf("a project admin is refused %s: project scope covers the project and every repository in it", action)
 		}
@@ -109,7 +121,7 @@ func TestProjectScopeOnlyForProjectActions(t *testing.T) {
 	if !Allowed(viewer, bob, ActionViewRepo, repo) || !Allowed(viewer, bob, ActionViewProject, repo) {
 		t.Errorf("a viewer is refused a read: viewer is the read-only role")
 	}
-	for _, action := range []Action{ActionLaunch, ActionCancel, ActionManageRepo, ActionManageProject} {
+	for _, action := range []Action{ActionLaunch, ActionCancel, ActionManageRepo, ActionManageProject, ActionHandoffAgent} {
 		if Allowed(viewer, bob, action, repo) {
 			t.Errorf("a viewer is allowed %s: a viewer cannot launch, cancel or change anything", action)
 		}

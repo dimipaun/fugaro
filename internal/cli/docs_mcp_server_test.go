@@ -122,8 +122,11 @@ const (
 	// they are at rest in is M2's bucket-backed one, whose bucket and single
 	// grant in an installation are M4's store half — not started — so a line
 	// saying M10 were built whole would claim a store an installation does not
-	// carry.
-	mcpStatus = "Status: design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are built and merged on `main`; M5 is built except the paired device M-a asks for, which is M5b and is a hard prerequisite before any binary links the front door (the owner's ruling of 2026-11-07); M7 is built except the reading of the installation's published state its lists come from, which no task of this plan carries; M10 is built except the store's own bucket and its one grant, which are M4's store half and not started; M8 and M9 are not started; this folder approves no task."
+	// carry. M8's is the same shape once more: the four read tools are built and
+	// no binary registers them, and the wiring that would is what M5b gates, so
+	// its exception is named the same way and for the same reason -- a line
+	// saying M8 were built whole would claim a reach no process has.
+	mcpStatus = "Status: design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are built and merged on `main`; M5 is built except the paired device M-a asks for, which is M5b and is a hard prerequisite before any binary links the front door (the owner's ruling of 2026-11-07); M7 is built except the reading of the installation's published state its lists come from, which no task of this plan carries; M10 is built except the store's own bucket and its one grant, which are M4's store half and not started; M8 is built except the wiring that would serve its four read tools, which is the task M5b gates; M9 is not started; this folder approves no task."
 )
 
 func mcpDocs() []string { return []string{mcpReadme, mcpSpec, mcpReconciled, mcpPlan} }
@@ -399,12 +402,14 @@ func TestDocsMCPServerNamesWhatItDesigns(t *testing.T) {
 // window, and the endpoint refuses it instead; and the approve step is meant to
 // read an identity out of the launcher and operator lists, which M7 reads at the
 // MCP endpoint and the approve step still does not -- the reading of the
-// published state those lists live in being M7's own exception, disclosed in the
-// same section. A document that asserted any
-// of them as a fact would be a security
-// document promising a control the code does not perform -- so what is pinned is
-// the caveat itself, in the file a reader meets first, and the section that
-// carries each as a finding.
+// published state those lists live in being M7's own exception, and the four
+// read tools M8 builds being registered on no binary being M8's. Each exception
+// is disclosed in the section that carries it, and the clause the status line
+// carries for it is pinned to a sentence, so that neither can be dropped alone.
+// A document that asserted any of them as a fact would be a security document
+// promising a control the code does not perform -- so what is pinned is the
+// caveat itself, in the file a reader meets first, and the section that carries
+// each as a finding.
 func TestDocsMCPServerDisclosesWhatTheCodeDoesNotDo(t *testing.T) {
 	spec := flattenDoc(readDoc(t, mcpSpec))
 	for _, want := range []string{
@@ -424,6 +429,11 @@ func TestDocsMCPServerDisclosesWhatTheCodeDoesNotDo(t *testing.T) {
 		"Where the front door's own two lists are read from",
 		"no implementation of that interface over the published state is in the tree and no task of this plan carries one",
 		"the wiring task that mounts this package on a binary — the one M5b gates — owes this reading beside the two bounds above",
+		// And the one M8 itself leaves unserved: the four read tools are
+		// built and registered on no binary, so the wiring that would serve
+		// them is named, and with it where the slugs it needs come from.
+		"The four read tools M8 builds are registered on no binary",
+		"`FUGARO_COORDINATOR_REPOS` the installation already puts on the front door's own service",
 		// And the two halves of the flow the review of this branch found
 		// promised: the grace window a lost rotation race is answered in, and
 		// the launcher and operator lists the approve step is supposed to read
@@ -440,7 +450,20 @@ func TestDocsMCPServerDisclosesWhatTheCodeDoesNotDo(t *testing.T) {
 		"that token reaches no tool",
 	} {
 		if !strings.Contains(spec, want) {
-			t.Errorf("%s does not state %q: the keyed hash and the MAC, the two bounds the open registration endpoint is accepted under, the reading of the published state the front door's lists come from, the grace window a lost rotation race is answered in and the launcher and operator lists the approve step would read an identity out of are all specified in this folder and built nowhere, so a document that dropped the caveat would read as a control the tree performs", mcpSpec, want)
+			t.Errorf("%s does not state %q: the keyed hash and the MAC, the two bounds the open registration endpoint is accepted under, the reading of the published state the front door's lists come from, the four read tools that are registered on no binary, the grace window a lost rotation race is answered in and the launcher and operator lists the approve step would read an identity out of are all specified in this folder and built nowhere, so a document that dropped the caveat would read as a control the tree performs", mcpSpec, want)
+		}
+	}
+
+	// M8's exception is a claim about the code, and one the tests of the
+	// package it is about would otherwise falsify: they construct the reach and
+	// register the tools on it, which "called by nobody, constructed nowhere"
+	// stopped being true of. The clause names the tests as the only callers, and
+	// it is read in both documents that carry it -- the spec a reader meets
+	// first and the plan a task is written from -- because a claim about what
+	// the tree does is the one thing here that code can go and check.
+	for _, path := range []string{mcpSpec, mcpPlan} {
+		if !strings.Contains(flattenDoc(readDoc(t, path)), "nothing outside this package's own tests calls `RegisterReadTools` or constructs `NewProjectRuns`") {
+			t.Errorf("%s no longer says that nothing but this package's own tests calls `RegisterReadTools` or constructs `NewProjectRuns`: the read reach M8 adds is reach no binary has until the wiring task lands, and a sentence that stopped saying which callers exist would read as a reach something has", path)
 		}
 	}
 
@@ -452,9 +475,22 @@ func TestDocsMCPServerDisclosesWhatTheCodeDoesNotDo(t *testing.T) {
 		// And M7's own exception, stated where §4a says what every built task
 		// still owes: the seam is merged and the reading behind it is nobody's.
 		"nothing in the tree implements it over that state, because no task of the plan carries the reading",
+		// And M8's, in the same place and the same shape: the four read tools
+		// are built and served by no binary, which is the wiring M5b gates.
+		"no binary registers them, which is the wiring M5b gates",
 	} {
 		if !strings.Contains(rec, want) {
 			t.Errorf("%s does not state %q: each gap is raised there as a finding for the owner to assign, and a reconciliation that dropped one would leave the caveat in the spec with nothing behind it", mcpReconciled, want)
+		}
+	}
+
+	// And the clause in the status line every file carries, which is where a
+	// reader meets M8's exception first: it is pinned here so that dropping it
+	// is an edit to a sentence a test reads rather than one the line carries
+	// alone, the sections above being what the clause points a reader at.
+	for _, path := range mcpFolderDocs() {
+		if !strings.Contains(flattenDoc(readDoc(t, path)), "M8 is built except the wiring that would serve its four read tools") {
+			t.Errorf("%s carries no clause for M8's exception: the four read tools are registered on no binary, and a status line saying M8 were built whole would claim a reach no process has", path)
 		}
 	}
 }

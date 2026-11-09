@@ -1050,12 +1050,12 @@ is untouched by anything here.
     review run's own task**, whose `agent.oauth_token` (`internal/task/task.go:169`) *is* that account and
     whose **absence is the default** — the field may never spell `default` itself
     (`internal/task/task.go:1094`) — so the fix-round launcher reads the review run's task with
-    `ReadTask` (`internal/runstore/runstore.go:1283`, which validates what it reads), maps "" through the
+    `ReadTask` (`internal/runstore/runstore.go:1549`, which validates what it reads), maps "" through the
     rule the launch already prints with (`reviewAccount`, `internal/cli/review.go:198`), and puts
     `config.DefaultClaudeAccount` on the wire: `readVerifyRequest` refuses an empty account as a bad
     **call**, not as a `valid:false` about an artifact.
     **`oauth_account` in the run's record is deliberately not that source**
-    (`internal/runstore/runstore.go:656`): it is documented as informational, never read by anything that
+    (`internal/runstore/runstore.go:852`): it is documented as informational, never read by anything that
     makes a security decision, and the **job** writes it itself from the credential name the service
     answered with (`recordCredential`, `internal/runner/runner.go:808`) — so it may be "" or a credential
     name, and a value that is neither the account nor always there cannot key a verify call.
@@ -1197,7 +1197,7 @@ that is still the check's step 3.
   (§2's rule, §6.4's note): the constant and its comment, `TestRecipesSkewRefusesReviewJobOnAnOldImage`
   (whose `0.19.0` row is a refused one now and whose admitted row is `"0.20.0"`, derived image and clone
   alike), two new tests — `TestReviewJobSinceHasAReleaseBullet`, the reader this constant never had,
-  since `docs/release.md:226`'s checklist bullet is what holds it to a release and every sibling
+  since `docs/release.md:227`'s checklist bullet is what holds it to a release and every sibling
   `…Since` constant has that test and this one did not, and `TestReviewJobSinceCitationsPointAtItsOwnLine`,
   because the citation checks resolve a line against its file and never against its subject, which is
   how this constant's own citations here went stale in the change that moved it — the same file's
@@ -2412,7 +2412,7 @@ recommendation). **Why, in one line:** the 0.19.0 release in flight carries none
 release that carries the flip has to carry the tasks that make the flip work — the placement, the
 registration, the verifier and the switch's own removal. Two consequences, settled together as the item
 said: the release note's `### For operators` sentence is written for that release (§6.5), and
-**`reviewJobSince` is `"0.20.0"`** — `docs/release.md:226`'s bullet verifies it against the release
+**`reviewJobSince` is `"0.20.0"`** — `docs/release.md:227`'s bullet verifies it against the release
 whose runner can serve the launch, `internal/cli/recipes_skew.go:456` holds it, and a wrong value refuses
 too late (a launch names a variant the installation has not deployed, or a runner that cannot serve one)
 or too early (an installation that holds both stays blocked). **The move waited for CSR11's flip**:

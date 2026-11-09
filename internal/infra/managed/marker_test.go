@@ -927,16 +927,19 @@ func TestRunAccountsHaveNoWritePathToTheMarker(t *testing.T) {
 	// widening of one is a visible diff: a job writes runs/, cache/ and
 	// locks/, a build writes builds/, a launcher writes runs/ and, since the
 	// sealed budget token moved there, tokens/ (budget-token-channel.md §7.2,
-	// D16: the deliberate widening). tokens/ is not a run account's write
-	// prefix — the job's grant there is objectViewer, checked by
-	// runAccountGrants and by the scan's write-role rules.
+	// D16: the deliberate widening), and, since the shared issue store, issues/
+	// (docs/troubleshoot-issue/reconciliation.md D1727: the launcher who files
+	// an issue writes it with their own credential). tokens/ and issues/ are
+	// not a run account's write prefix — the job's grant on tokens/ is
+	// objectViewer, checked by runAccountGrants and by the scan's write-role
+	// rules, and no run account holds issues/ at all.
 	if !slices.Equal(gcp.JobBucketPrefixes, []string{"runs", "cache", "locks"}) {
 		t.Errorf("gcp.JobBucketPrefixes = %v", gcp.JobBucketPrefixes)
 	}
 	if !slices.Equal(gcp.BuildBucketPrefixes, []string{"builds"}) {
 		t.Errorf("gcp.BuildBucketPrefixes = %v", gcp.BuildBucketPrefixes)
 	}
-	if got := startsWithPrefixes(gcp.LauncherBucketCondition(testBucket), testBucket); !slices.Equal(got, []string{"runs/", "tokens/"}) {
+	if got := startsWithPrefixes(gcp.LauncherBucketCondition(testBucket), testBucket); !slices.Equal(got, []string{"runs/", "tokens/", "issues/"}) {
 		t.Errorf("the launcher condition grants %v", got)
 	}
 	// The project's catalog check job (D1148) writes one repository's check

@@ -831,7 +831,7 @@ func findRefusal(rs []Refusal, gate, address string) (Refusal, bool) {
 func TestGateGuardErrorWithEmptyMessageIsNotOK(t *testing.T) {
 	for _, msg := range []string{"", "  \n "} {
 		old := guard
-		guard = func(*tf.Plan, []tf.DeleteEntry) error { return errors.New(msg) }
+		guard = func(*tf.Plan, []tf.DeleteEntry, []string) error { return errors.New(msg) }
 		r := newRig(t)
 		r.show(t, bucket(planBucket))
 		v := gate(t, r, spec(t, r, admitAll{}))
@@ -904,7 +904,10 @@ func TestGateRefusesAListedReplaceTheCoverDoesNotJudge(t *testing.T) {
 func TestGateHandsTheCoverTheSameDeleteListAsTheGuard(t *testing.T) {
 	var covered, guarded []tf.DeleteEntry
 	old := guard
-	guard = func(_ *tf.Plan, allowDelete []tf.DeleteEntry) error { guarded = slices.Clone(allowDelete); return nil }
+	guard = func(_ *tf.Plan, allowDelete []tf.DeleteEntry, _ []string) error {
+		guarded = slices.Clone(allowDelete)
+		return nil
+	}
 	t.Cleanup(func() { guard = old })
 	r := newRig(t)
 	r.show(t, removing(planBucket, "google_storage_bucket", []string{"delete"},
@@ -970,6 +973,51 @@ func TestGateAdmitsAListedDeleteOnlyInsideTheManagedAllowlist(t *testing.T) {
 	}
 	if v := gate(t, r, spec(t, r, managedCover(), entry("module.managed.google_storage_bucket.other", "type=google_storage_bucket id=other"))); v.OK {
 		t.Error("a delete of an address not listed was admitted")
+	}
+}
+
+// An upgrade's own replace: the addresses a caller matched out of THIS plan
+// (infra.LauncherGrantUpgrade, which reads both halves of each change before
+// naming it) reach the gate as Spec.Upgrade, and are admitted — with no entry
+// on the owner's list, because nobody approved them and there is nothing for
+// the owner to approve: the change is what the upgrade itself makes. The cover
+// is still asked about the CREATE the same change makes: it refuses a change
+// carrying a delete as one fact (tf.Cover.NotCovered), so a create half no
+// managed plan may carry has to reach it as the create it is
+// (tf.WithoutRemovals) — this is the arm that fails if that line is dropped.
+func TestGateAdmitsAnUpgradesOwnReplaceAndJudgesItsCreate(t *testing.T) {
+	const addr = "module.managed.google_storage_bucket.fmgd_data"
+	replace := func(name string) map[string]any {
+		return managedChange(addr, "google_storage_bucket", []string{"delete", "create"},
+			map[string]any{"name": "fmgd-data", "time_created": bucketCreated},
+			map[string]any{"name": name, "public_access_prevention": "enforced", "uniform_bucket_level_access": true})
+	}
+	upgrading := func(t *testing.T, r *rig) Spec {
+		t.Helper()
+		s := spec(t, r, managedCover())
+		s.Upgrade = []string{addr}
+		return s
+	}
+	r := newRig(t)
+	r.managedShow(t, replace("fmgd-data"))
+	if v := gate(t, r, upgrading(t, r)); !v.OK {
+		t.Fatalf("the upgrade's own replace is refused: %v", v.Refusals)
+	}
+	// The same plan with no upgrade named: both gates refuse it, so the
+	// admission above is the list and not a plan that was going to pass.
+	if v := gate(t, r, spec(t, r, managedCover())); v.OK {
+		t.Fatal("a replace no upgrade named was admitted")
+	}
+	// The create half is judged: this plan's bucket is outside the managed
+	// prefix, and the cover says so about the create the replace makes — which
+	// it can only read once the removal half is off the question.
+	r.managedShow(t, replace("fugaro-tfstate-"+gcpProject))
+	v := gate(t, r, upgrading(t, r))
+	if v.OK {
+		t.Fatal("an upgrade's replace of a resource outside the managed prefix was admitted")
+	}
+	if len(v.Refusals) == 0 || !strings.Contains(v.Refusals[0].Why, "outside the managed prefix") {
+		t.Errorf("refusals %v, want the cover's prefix refusal of %s", v.Refusals, addr)
 	}
 }
 
@@ -1227,7 +1275,7 @@ func TestGateCarriesAFlagOnlyFindingWithoutRefusing(t *testing.T) {
 // verdict. guardLines drops the header as well; this holds the source.
 func TestGateGuardCarriesNoAdviceOfItsOwn(t *testing.T) {
 	p := &tf.Plan{ResourceChanges: []tf.ResourceChange{{Address: planBucket, Change: tf.Change{Actions: []string{"delete"}}}}}
-	err := guard(p, nil)
+	err := guard(p, nil, nil)
 	if err == nil {
 		t.Fatal("the guard admitted an unlisted delete")
 	}

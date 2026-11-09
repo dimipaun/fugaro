@@ -1616,7 +1616,7 @@ one entry of `nodes`:
 | `critical` | bool | never | never | the task is on the plan's critical path (§6.9's `critical_path.tasks`), so a screen can highlight the chain rather than recompute it |
 | `needs` | array of strings | **yes** | never | the ids of the tasks this task needs, from the plan's own edges (`edges[]`'s `task`/`needs` pairs of §6.9), **sorted by id and de-duplicated**; absent when the task needs nothing. It lists every needed task **whether or not that task is in `nodes` in this read** — a closed task is filtered out without `--all` — because it is the graph's edge and not a statement about the read. **The graph screen's edges come from here**, so this is the field a cross-release or a critical-path edge is drawn from |
 | `release` | string | **yes** | never | the target version, `MAJOR.MINOR` or `MAJOR.MINOR.PATCH`, as the artifact spells it; absent when the task names none |
-| `run` | string | **yes** | never | the **suffix** of the run this task is joined to — the four characters after the last dash of a run id, which is the part a person reads out loud, and the short form `fugaro watch` shows a run by (`internal/watch`'s `shortRun`); `runs ls` prints the whole id |
+| `run` | string | **yes** | never | the **suffix** of the run this task is joined to — the four characters after the last dash of a run id, which is the part a person reads out loud, and the short form `fugaro watch` shows a run by (`internal/task`'s `ShortRun`; where two shown rows collide it is longer, and `DisplayRuns` extends it); `runs ls` prints the whole id |
 | `stage` | string | **yes** | never | the stage that run is in. **Job-written display text**: it arrives sanitised (`safetext.Field`) and is rendered as text |
 | `pr_number` | number | **yes** | never | the pull request number this task shows, **whenever the run has recorded one** — running or finished. It is the run's `record_pr` (F9) when it has one, the run's own number otherwise, and it is absent rather than `0` when there is none: a repository that numbers its pull requests from 1 makes `0` no number at all. It is never a link (§5.1 rule 2) |
 | `mark` | string | **yes** | never | `"merge unknown"`, and nothing else today: the task's run recorded a ready pull request and no lookup could say whether it merged (below). A screen shows it beside the state, never instead of it |
@@ -3082,11 +3082,14 @@ the repository, and no list can speak about it. The spellings are the ones
 `TestSecurityPathsCheckFailsClosedOnAnUnplaceablePath` holds, drawn from
 `sensitivity`'s own table (`pattern_test.go`'s
 `TestUnplaceablePathMatchesNoRuleAndClassifiesSensitive`): `/etc/passwd` is
-absolute, `docs/../website/src/x.md` escapes, the empty string is no path at
-all, and a bare `.` and a bare `..` are the repository root as a directory
-reference and the tree above it — the pair the matcher's own rule *accepts*,
-since `path.Clean` leaves both exactly as they are, and that this command
-refuses where it composes the answer. The two are told apart by `matched`:
+absolute, `../SECURITY.md`, `../../etc/passwd` and a bare `..` escape the
+checkout, `docs/../website/src/x.md` is rewritten by `path.Clean`, and the empty
+string is no path at all — the matcher's own rule refuses every one of them, a
+leading `..` included, so no row can name them. A bare `.` is the one spelling
+that rule *accepts*, since `path.Clean` leaves it exactly as it is, and it names
+the repository root as a directory reference rather than a file of it: this
+command refuses it where it composes the answer. The two are told apart by
+`matched`:
 `sensitive: true` with `matched: null` is exactly that unplaceable case, and
 `docs/pending-workflows/console-tests.yml` is `true` **with** the floor's
 `pending-workflows` row.

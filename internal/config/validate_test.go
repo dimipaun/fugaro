@@ -3,8 +3,11 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/orchestrator/sensitivity"
 )
 
 // TestAllowedModelClaimNeedsARoute pins the one consequence of the claim-blind
@@ -228,5 +231,225 @@ defaults:
 	same := strings.Replace(repo, "    - { name: payments-again, match: \"payments/**\", mode: poc }\n", "", 1)
 	if c, _, ps := Resolve([]byte(same), mustLayer(t, layer)); c == nil || len(ps) > 0 {
 		t.Fatalf("the same glob in the two layers was refused: %s", problemsText(ps))
+	}
+}
+
+// securityRepo is the head the security tests below build a file on: a
+// repository that parses with no security: key at all, so each case adds the
+// block it is about and nothing else.
+const securityRepo = minimalRepo + `git: { provider: github }
+workflows:
+  app: { commands: { build: sh build.sh, test: sh test.sh } }
+`
+
+// TestSecurityKeyDecodesStrictly is SC7's own test of the block's shape
+// (D1500, D1501): a repository writes a list of {name, match, category} rows
+// at security.patterns, and the decoder reads it strictly — KnownFields, like
+// every other key of the file — so a misspelled member of the block or of a
+// row is refused where it is written rather than dropped in silence, which for
+// this key would be a pattern its author believes is protecting a tree and
+// that fires for nothing.
+//
+// It is also where the absent case is pinned. Config.SHA256 takes the hash of
+// this struct marshalled, so a block that appears out of an absent key would
+// move the hash of a file that did not change — the reason the field is a
+// pointer with a json name, as Rigor's is.
+func TestSecurityKeyDecodesStrictly(t *testing.T) {
+	const block = `security:
+  patterns:
+    - { name: payments, match: "internal/payments/**", category: credentials }
+    - { name: pricing, match: "internal/pricing/*.go", category: targets }
+`
+	cfg, ps := Parse([]byte(securityRepo + block))
+	if len(ps) > 0 {
+		t.Fatalf("the decoder refused a file it has to read: %s", problemsText(ps))
+	}
+	want := []sensitivity.Pattern{
+		{Name: "payments", Match: "internal/payments/**", Category: sensitivity.Credentials},
+		{Name: "pricing", Match: "internal/pricing/*.go", Category: sensitivity.Targets},
+	}
+	if cfg.Security == nil {
+		t.Fatal("the security: block decoded to nothing")
+	}
+	if !slices.Equal(cfg.Security.Patterns, want) {
+		t.Errorf("security.patterns = %+v, want %+v", cfg.Security.Patterns, want)
+	}
+
+	if none, ps := Parse([]byte(securityRepo)); len(ps) > 0 || none.Security != nil {
+		t.Errorf("a file with no security: key decoded to %+v (problems %s), want no block at all", none.Security, problemsText(ps))
+	}
+
+	for _, tc := range []struct{ name, block, member string }{
+		{"an unknown key of the block", "security:\n  severity: high\n", "severity"},
+		{"an unknown key of a row", "security:\n  patterns:\n    - { name: p, match: \"p/**\", category: credentials, mode: pro }\n", "mode"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, ps := Parse([]byte(securityRepo + tc.block))
+			if len(ps) == 0 {
+				t.Fatalf("the decoder accepted %s, and the block is decoded strictly", tc.member)
+			}
+			if !strings.Contains(problemsText(ps), tc.member) {
+				t.Errorf("the refusal does not name %q: %s", tc.member, problemsText(ps))
+			}
+		})
+	}
+}
+
+// TestSecurityKeyRefusesAUnknownCategory is D1500's closed vocabulary: the
+// category is one of the seven words the record, the pull request body and
+// fugaro watch print, so a value outside it is refused where it is written and
+// never carried as an unknown label for a reader to interpret. The refusal
+// names the whole set, because the writer's next move is to pick one of them.
+func TestSecurityKeyRefusesAUnknownCategory(t *testing.T) {
+	const block = "security:\n  patterns:\n    - { name: deploy, match: \"deploy/**\", category: deployment }\n"
+	cfg, ps := Parse([]byte(securityRepo + block))
+	if cfg != nil {
+		t.Fatalf("a file with an unknown category resolved: %+v", cfg.Security)
+	}
+	if len(ps) != 1 || ps[0].Path != "security.patterns[0]" {
+		t.Fatalf("problems = %s", problemsText(ps))
+	}
+	for _, want := range []string{"category must be one of", sensitivity.CategoryList()} {
+		if !strings.Contains(ps[0].Message, want) {
+			t.Errorf("the refusal of security.patterns[0] does not carry %q: %q", want, ps[0].Message)
+		}
+	}
+	// The zero value — a row that forgot the key — is refused by the same
+	// rule rather than read as a category nobody wrote.
+	if _, ps := Parse([]byte(securityRepo + "security:\n  patterns:\n    - { name: deploy, match: \"deploy/**\" }\n")); len(ps) == 0 {
+		t.Error("a row with no category was accepted")
+	}
+}
+
+// TestSecurityKeyRefusesAMatchTheMatcherCannotRead is F21 and D1502 through
+// this key: the glob rules are rigor.areas' own four checks, in the same order,
+// because a row reaches the same matcher — and asking them at load is the whole
+// of what keeps a pattern the matcher cannot read from becoming a rule that
+// silently never fires, which is a tree its author believes is covered.
+func TestSecurityKeyRefusesAMatchTheMatcherCannotRead(t *testing.T) {
+	for _, tc := range []struct{ name, match, want string }{
+		{"a glob doublestar cannot read", "internal/[a-", "is not a valid glob pattern"},
+		{"an absolute match", "/etc/**", "must be relative to the repository root"},
+		{"a .. component", "../secrets/**", "must not contain a .. component"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			block := "security:\n  patterns:\n    - { name: p, match: \"" + tc.match + "\", category: credentials }\n"
+			cfg, ps := Parse([]byte(securityRepo + block))
+			if cfg != nil {
+				t.Fatalf("the decoder read %q, and the matcher cannot use it: %+v", tc.match, cfg.Security)
+			}
+			if len(ps) != 1 || ps[0].Path != "security.patterns[0]" {
+				t.Fatalf("problems = %s", problemsText(ps))
+			}
+			if !strings.Contains(ps[0].Message, tc.want) {
+				t.Errorf("the refusal of %q does not carry %q: %q", tc.match, tc.want, ps[0].Message)
+			}
+		})
+	}
+}
+
+// TestSecurityKeyRefusesAPatternThatMatchesEverything is D1503: `*`, `**` and
+// an empty match are refused at write time. A row that matches every path of a
+// repository is not a pattern — it is the whole-repository answer, which the
+// project layer writes as always_level_3 (D1517) — and accepting `**` would
+// hide that intent inside a glob no reader of the record can see through.
+//
+// A pattern that matches *nothing* is the other half of D1503 and stays
+// accepted: a repository may write the row before it writes the tree, and
+// doctor is where the row that still matches nothing is said once (D1513).
+// That half is pinned here too, because the two are one rule and a later edit
+// that refuses both would read as the same fix.
+func TestSecurityKeyRefusesAPatternThatMatchesEverything(t *testing.T) {
+	for _, match := range []string{"*", "**", ""} {
+		block := "security:\n  patterns:\n    - { name: p, match: \"" + match + "\", category: credentials }\n"
+		cfg, ps := Parse([]byte(securityRepo + block))
+		if cfg != nil {
+			t.Errorf("the decoder read the match %q, which names the whole repository: %+v", match, cfg.Security)
+			continue
+		}
+		if len(ps) != 1 || ps[0].Path != "security.patterns[0]" {
+			t.Errorf("problems for %q = %s", match, problemsText(ps))
+		}
+	}
+	const empty = "security:\n  patterns:\n    - { name: search, match: \"internal/search/**\", category: guards }\n"
+	if cfg, ps := Parse([]byte(securityRepo + empty)); cfg == nil || len(ps) > 0 {
+		t.Errorf("a row whose tree does not exist yet was refused: %s", problemsText(ps))
+	}
+}
+
+// TestSecurityKeyRefusesARepeatedName is D1506 read from below: a row's name
+// is its identity in the union of the floor, the project's rows and the
+// repository's, and the first writer's row keeps it. Two rows of one layer
+// under one name therefore leave the second firing for nothing — it can never
+// be named in the record — so it is refused where it is written, as two
+// rigor.areas rules for one glob are (F14). The refusal is per layer: a
+// repository's row for a tree the project's own list also names is refused
+// here only when the project wrote the same *name*, which is the union's rule
+// and not this function's to check.
+//
+// The floor is the same rule on the one side this function can see whole: it
+// is the union's first writer, so a row named after one of the engine's own
+// rows is dropped whichever glob it carries — the silent no-op D1503 refuses
+// `**` for, one name long. The name is taken from the floor table itself
+// rather than spelled here, so the case cannot pass by naming a row the engine
+// no longer has.
+func TestSecurityKeyRefusesARepeatedName(t *testing.T) {
+	const block = `security:
+  patterns:
+    - { name: payments, match: "internal/payments/**", category: credentials }
+    - { name: payments-api, match: "internal/payments/api/**", category: credentials }
+    - { name: payments, match: "internal/billing/**", category: targets }
+`
+	cfg, ps := Parse([]byte(securityRepo + block))
+	if cfg != nil {
+		t.Fatalf("a file naming one row twice resolved: %+v", cfg.Security)
+	}
+	if len(ps) != 1 || ps[0].Path != "security.patterns[2]" {
+		t.Fatalf("problems = %s", problemsText(ps))
+	}
+	for _, want := range []string{`"payments"`, "patterns[0]"} {
+		if !strings.Contains(ps[0].Message, want) {
+			t.Errorf("the refusal of security.patterns[2] does not carry %q: %q", want, ps[0].Message)
+		}
+	}
+
+	// A glob the floor's own row does not cover, so the refusal is the name's
+	// and not the overlap's: the row asks for a tree the engine never named.
+	floorName := sensitivity.Floor()[0].Name
+	const own = `security:
+  patterns:
+    - { name: %s, match: "internal/billing/**", category: targets }
+`
+	cfg, ps = Parse([]byte(securityRepo + fmt.Sprintf(own, floorName)))
+	if cfg != nil {
+		t.Fatalf("a file reusing the floor's name %q resolved: %+v", floorName, cfg.Security)
+	}
+	if len(ps) != 1 || ps[0].Path != "security.patterns[0]" {
+		t.Fatalf("problems for the floor's name %q = %s", floorName, problemsText(ps))
+	}
+	for _, want := range []string{fmt.Sprintf("%q", floorName), "the engine's own floor"} {
+		if !strings.Contains(ps[0].Message, want) {
+			t.Errorf("the refusal of a floor name does not carry %q: %q", want, ps[0].Message)
+		}
+	}
+}
+
+// TestSecurityKeyIsBounded is MaxPatterns' half of the list's bounds
+// (sensitivity.MaxPatterns, the number schemas/fugaro.schema.json states as
+// maxItems): the rows a run is made to carry are bounded where they are
+// written, because the matched subset of them is what the record, the pull
+// request body and fugaro watch print.
+func TestSecurityKeyIsBounded(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("security:\n  patterns:\n")
+	for i := range sensitivity.MaxPatterns + 1 {
+		fmt.Fprintf(&b, "    - { name: p%d, match: \"tree%d/**\", category: guards }\n", i, i)
+	}
+	cfg, ps := Parse([]byte(securityRepo + b.String()))
+	if cfg != nil {
+		t.Fatalf("a list over the bound resolved: %d rows", len(cfg.Security.Patterns))
+	}
+	if len(ps) != 1 || ps[0].Path != "security.patterns" || !strings.Contains(ps[0].Message, fmt.Sprint(sensitivity.MaxPatterns)) {
+		t.Fatalf("problems = %s", problemsText(ps))
 	}
 }

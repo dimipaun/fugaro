@@ -2644,9 +2644,10 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 		// grants; exactly those are allowed, and named (bucket-iam.md H7).
 		// A delete is never covered, so the step still asks its own name.
 		hardening := infra.HardeningAllowDelete(plan, spec.Launchers, spec.Operators)
-		// The 0.9.0 upgrade replaces each launcher's runs/-only grant with
-		// the runs/ and tokens/ one (a condition is ForceNew); exactly that
-		// replace is allowed, and named (bucket-iam.md H5).
+		// The upgrade replaces each launcher's grant under an earlier form of
+		// the launchers' condition with the current runs/, tokens/ and issues/
+		// one (a condition is ForceNew); exactly that replace is allowed, and
+		// named (bucket-iam.md H5).
 		upgrade := infra.LauncherGrantUpgrade(plan, spec.RunsBucket, spec.Launchers, spec.Operators)
 		allowed := append(append(slices.Clone(r.o.allowDelete), hardening...), upgrade...)
 		counts := infra.CountPlan(plan)
@@ -2656,7 +2657,7 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 		// what the gate refused rather than the guard's advice, which is what
 		// a managed project's refusal is about. Everything the guard's own
 		// path prints or records stays where it was, on the path that runs it.
-		gated, err := r.gateStep(ctx, t, im.Keys(), r.coverOf(r.coverReasons))
+		gated, err := r.gateStep(ctx, t, im.Keys(), r.coverOf(r.coverReasons), upgrade)
 		if err != nil {
 			return outs, false, err
 		}
@@ -3757,6 +3758,13 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	if err := r.gateGitAuthor(o, repo, lc, cfg); err != nil {
 		return err
 	}
+	// The security: block is the same kind of break on securitySince. Only
+	// the repository's half can be written in this build: the layer's half
+	// arrives with the task that lets a layer carry the key, and gateSecurity
+	// gains it then, the way gateRigor names both of rigor's.
+	if err := r.gateSecurity(o, repo, lc, cfg); err != nil {
+		return err
+	}
 	if !o.forget {
 		w := r.w
 		if o.printVars {
@@ -4262,6 +4270,27 @@ func (r *initRun) gateGitAuthor(o *initOptions, repo string, lc *localcfg.Config
 	return refuseGitAuthorSkew(repo, cfg.RepoGitAuthorSet, lc.BaseImage(config.BaseKind), w)
 }
 
+// gateSecurity is fugaro update --repo's gate for securitySince:
+// refuseSecuritySkew, with gateRigor's escapes and for its reason. The
+// repository's half is the key being written (RepoSecuritySet) rather than the
+// rows it holds: a runner older than securitySince refuses the security: key
+// whatever it holds, so security: {} and an explicit null are deployed by a
+// rows test and die at bootstrap. The project layer's half (D1501) is not
+// judged here yet: config's layerTopKeys does not carry the key, so a layer
+// that writes it is refused as an unknown key before this runs. The task that
+// lets a layer write it extends this gate the way gateRigor carries both
+// halves.
+func (r *initRun) gateSecurity(o *initOptions, repo string, lc *localcfg.Config, cfg *config.Config) error {
+	if o.forget || o.planOnly || cfg == nil {
+		return nil
+	}
+	w := r.w
+	if o.printVars {
+		w = r.cmd.ErrOrStderr()
+	}
+	return refuseSecuritySkew(repo, cfg.RepoSecuritySet, lc.BaseImage(config.BaseKind), w)
+}
+
 // checkVertexBudget refuses a repository whose fugaro.yaml authenticates
 // the agent through Vertex AI (agent.auth: vertex) under a project budget
 // in enforce mode. observe and off are allowed.
@@ -4569,7 +4598,7 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 	// does not admit this plan (D1016, update_managed.go). A repository root
 	// is one of Fugaro's own too, so it is judged by the same cover and the
 	// same guard the installation's roots are.
-	gated, err := r.gateStep(ctx, t, im.Keys(), r.coverOf(r.coverReasons))
+	gated, err := r.gateStep(ctx, t, im.Keys(), r.coverOf(r.coverReasons), nil)
 	if err != nil {
 		return infra.RepoSpec{}, nil, err
 	}

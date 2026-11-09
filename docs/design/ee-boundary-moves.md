@@ -435,8 +435,9 @@ first wins, and the checkpoint report is the core plumbing that reads `runstore.
   the enforcement a tagged binary registered. The edition is set the same way (§7).
 - **`ee/register` panics on any setter error, and only `ee/register` may call a `Set*`**
   (`internal/eeboundary/seam_test.go`'s `TestOnlyEERegisterSetsTheSeams` scans the module for
-  `SetLaunchDeclarer`, `RegisterCommand`, `SetSections`, `SetGovernance`, `SetStage` and
-  `SetEditionEE` outside `ee/register`'s non-test files, with a planted tree for the red step).
+  `SetLaunchDeclarer`, `RegisterCommand`, `SetSections`, `SetGovernance`, `SetStage`,
+  `SetEditionEE` and `SetHandoff` outside `ee/register`'s non-test files, with a planted tree for
+  the red step).
 - **A seam that switches behaviour *off* is test-only**: the `SetCore()`-style seams live in an
   `export_test.go` beside the hook, never in production code, so no core caller can turn governance
   off in a tagged binary. `export_test.go` is compiled only into that package's own tests.

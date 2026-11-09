@@ -155,6 +155,11 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
       reason:
         '`rigorModeWord(rigor.mode)`, which answers one of the console\'s five mode words or `null`; `null` is the branch that hands the document\'s own value to `putText` (the `label` class, the `runs[].rigor.mode` field), so only the console\'s word reaches the sink',
     },
+    drawn: {
+      within: 'putRunId',
+      reason:
+        'the ending `displayRuns` answered for one row (`shared/shortid.ts`): the shortest suffix of the run id that tells it apart from the other rows drawn in the same list, never shorter than four characters, and -- in its cross-repository form -- that suffix with the repository in front of it. It is drawn only when it is a tail of the id **this cell would draw**, and the row\'s own four characters (`shortRun` of the sanitized id) otherwise. The id itself has already been through `sanitizeText` in the `runId` class in this same function -- a refusal, and a marker the recorder wrote, take the `putText` branch that draws no ending at all -- and `runEndings` puts the id and the repository through their own classes *before* `displayRuns` cuts and prefixes them, so either answer is a cut of a string the console would draw whole; the whole id travels on the cell as `data-run-id`',
+    },
   },
   'spend.ts': {
     'entry.dimension': 'the switch is `SPEND_DIMENSIONS.map(...)`: the eight words are the console\'s table, and an unknown document dimension is drawn as "an unknown breakdown"',
@@ -551,6 +556,11 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
       within: 'fleetBar',
       reason:
         '`axis` of the same share as the segment\'s own width: the axis is this file\'s constant rather than a number from the document, so the value is the shape\'s size and nothing a document can spell',
+    },
+    'id.text': {
+      within: 'putRunId',
+      reason:
+        'the whole run id as `sanitizeText` drew it in the `runId` class -- the class `schema.ts` declares for `runs[].run` and `ready[].run`, and the one whose grammar is the CLI\'s own run-ID shape. It is the door `entry.ts`\'s `wireRuns` opens Run detail from, so the id a command receives is the whole one; the cell\'s drawn text is the short ending, and a refusal takes the `putText` branch above and writes no attribute at all',
     },
     theme: { within: 'renderLive', reason: 'a `LiveTheme`, the closed theme tuple' },
   },
