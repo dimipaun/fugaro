@@ -138,7 +138,7 @@ fugaro secrets set claude-oauth-token
 
 **Named Claude accounts (optional).** The operator may hold more than one Claude account in their local config (`claude_accounts`; never in `fugaro.yaml`) — `fugaro secrets ls --repo --json` then lists more than one name starting `claude-oauth-token-`. If so, ask which account this repository's `agent.auth: oauth` workflow should use, and write `agent.oauth_token: <name>` under `agent`, the part after `claude-oauth-token-`. Leave the key out to keep its default, and never guess a name: `fugaro run` refuses one the operator's config does not list this repository under.
 
-An account with no stored token is not usable; the operator's one command is `fugaro accounts add <name>`, in their own terminal window, not through the agent: it declares the account, stores the token project-wide under `claude-oauth-token-<name>` and converges this repository's job set. `fugaro doctor` names each missing account; minting a *second* account's token there is not yet verified.
+An account with no stored token is not usable; the operator's one command is `fugaro accounts add <name>`, in their own terminal window, not through the agent: it declares the account, stores the token project-wide under `claude-oauth-token-<name>` and converges this repository's job set. Run it there and not here whatever the project is: **the declaration is a step an agent may make and the token is not**, and where the project's marks say it is managed the command asks the person standing at the terminal to confirm the repositories the token may be used by before it stores it. `fugaro doctor` names each missing account; minting a *second* account's token there is not yet verified.
 
 ## 9. Hand off
 

@@ -79,8 +79,18 @@ only source of the value, so a login you cancelled or that failed costs one
 paste rather than the command. A login that failed stores nothing and still
 leaves you the prompt.
 
-Run it at your own terminal: this file decides where a credential may be sent,
-so a coding agent's session is refused, --yes included.`,
+Run it at your own terminal. This file decides where a credential may be sent
+and this command then stores the token itself, so in a project whose marks say
+it is managed it asks YOU and nobody else: it prints the repositories the token
+may be used by, says that a job on those repositories can read it, and asks you
+to type the project's own name to confirm. A flag never answers that — --yes
+included — and a pipe, a run with no terminal and a coding agent's session are
+refused before a byte is written.
+
+A coding agent's session may still declare a bounded account: the repositories
+it names are the only ones the token may be used by, and none of them is beyond
+this checkout. The token is not written for it, because a secret is the one
+step no plan admits.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runAccountsAdd(cmd, args[0], o)
@@ -90,7 +100,7 @@ so a coding agent's session is refused, --yes included.`,
 	f.StringVar(&o.repos, "repos", "", "the repositories the token may be used by, as owner/name,owner/name (default: this checkout's origin)")
 	f.StringVar(&o.profile, "profile", "", "the profile whose claude_accounts gains the name (default: the only profile, when there is exactly one)")
 	f.BoolVar(&o.claude, "claude", false, "run Anthropic's own claude setup-token login on this terminal first, then paste the token at the hidden prompt")
-	f.BoolVar(&o.yes, "yes", false, "confirm the write without a prompt")
+	f.BoolVar(&o.yes, "yes", false, "confirm the run without a prompt: it answers the converge's own questions and never the confirmation a managed project asks its owner")
 	f.BoolVar(&o.ask, "ask", false, "in a project whose marks say it is managed, ask the confirmation this declaration would otherwise get instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back. Refused where nobody can answer it (a coding agent's session, a pipe); a no-op with a sentence in a project that is not managed; refused beside --yes")
 	return cmd
 }

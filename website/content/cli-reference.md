@@ -125,8 +125,18 @@ only source of the value, so a login you cancelled or that failed costs one
 paste rather than the command. A login that failed stores nothing and still
 leaves you the prompt.
 
-Run it at your own terminal: this file decides where a credential may be sent,
-so a coding agent's session is refused, --yes included.
+Run it at your own terminal. This file decides where a credential may be sent
+and this command then stores the token itself, so in a project whose marks say
+it is managed it asks YOU and nobody else: it prints the repositories the token
+may be used by, says that a job on those repositories can read it, and asks you
+to type the project's own name to confirm. A flag never answers that — --yes
+included — and a pipe, a run with no terminal and a coding agent's session are
+refused before a byte is written.
+
+A coding agent's session may still declare a bounded account: the repositories
+it names are the only ones the token may be used by, and none of them is beyond
+this checkout. The token is not written for it, because a secret is the one
+step no plan admits.
 
 Usage: `fugaro accounts add NAME`
 
@@ -139,7 +149,7 @@ Flags:
 | `-h`, `--help` | bool | `false` | no | help for add |
 | `--profile` | string | "" | no | the profile whose claude_accounts gains the name (default: the only profile, when there is exactly one) |
 | `--repos` | string | "" | no | the repositories the token may be used by, as owner/name,owner/name (default: this checkout's origin) |
-| `--yes` | bool | `false` | no | confirm the write without a prompt |
+| `--yes` | bool | `false` | no | confirm the run without a prompt: it answers the converge's own questions and never the confirmation a managed project asks its owner |
 
 Subcommands:
 
