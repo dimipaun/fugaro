@@ -36,6 +36,26 @@ repos:
   owner/repo-a: {}
 `
 
+// TestModelsRmAsksNothing is the same removal with nobody to ask: the file
+// stops naming the model, and the write is announced rather than confirmed
+// (D1540) — no terminal and no --yes, so the run that used to stop at the y/N
+// now prints the sentence naming the key it takes out and writes it.
+func TestModelsRmAsksNothing(t *testing.T) {
+	_, path := modelsWriteHome(t)
+
+	out, _, err := execute(t, "models", "rm", "vendor/model-x")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	assertNoPrompt(t, out)
+	if !strings.Contains(out, "remove vendor/model-x from the project config") {
+		t.Errorf("the run does not name the removal it makes:\n%s", out)
+	}
+	if after := readFileString(t, path); strings.Contains(after, "vendor/model-x") {
+		t.Errorf("the model is still in the config after the removal:\n%s", after)
+	}
+}
+
 // TestModelsRmWarnsNamingEachPinningRepository is the red step: removing a
 // model does not refuse when a repository pins it (D783, the owner's answer),
 // so the warning is the whole of the protection. It names every repository and

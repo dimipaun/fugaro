@@ -27,6 +27,12 @@
 // Every invocation appends one JSON line (argv, environment and working
 // directory) to FAKE_TERRAFORM_LOG, and an -out=<file> argument makes it write
 // a plan file holding PlanMarker.
+//
+// A -var-file argument that does not exist is refused with the error terraform
+// itself prints and exit 1, in either form terraform accepts it
+// ("-var-file=<file>" and "-var-file <file>"): the CLI writes the root's
+// tfvars into the directory it plans in, and a run whose plan does not find
+// them is a failure however healthy the fake's script is.
 package main
 
 import (
@@ -98,6 +104,22 @@ func run(args []string) int {
 		st = step{Stdout: `{"terraform_version":"1.16.4","platform":"linux_amd64","provider_selections":{},"terraform_outdated":false}`}
 	}
 
+	// A -var-file that is not there is terraform's own failure, and the fake
+	// makes it too: the CLI writes the tfvars into the working directory it
+	// plans in, and a fake that answered 0 for a missing one would let a
+	// workdir rebuilt between the write and the plan pass as a converged run.
+	// Both forms of the flag are read (varFileArg); a trailing "-var-file"
+	// with no value is terraform's own argument error and not this check's.
+	for i := range args {
+		path, found := varFileArg(args, i)
+		if !found {
+			continue
+		}
+		if _, err := os.Stat(path); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: Failed to read variables file\n\nGiven variables file %s does not exist.\n", path)
+			return 1
+		}
+	}
 	for _, a := range args {
 		if out, found := strings.CutPrefix(a, "-out="); found {
 			if err := os.WriteFile(out, []byte(PlanMarker), 0o600); err != nil {
@@ -115,6 +137,19 @@ func run(args []string) int {
 	fmt.Fprint(os.Stdout, st.Stdout)
 	fmt.Fprint(os.Stderr, st.Stderr)
 	return st.Exit
+}
+
+// varFileArg is the variables file args[i] names, in either form terraform
+// accepts the flag: "-var-file=<file>", or "-var-file" with the file as the
+// next argument. A "-var-file" with nothing after it names none.
+func varFileArg(args []string, i int) (string, bool) {
+	if path, found := strings.CutPrefix(args[i], "-var-file="); found {
+		return path, true
+	}
+	if args[i] == "-var-file" && i+1 < len(args) {
+		return args[i+1], true
+	}
+	return "", false
 }
 
 // scriptKey is the script key of one invocation. "state rm" is one

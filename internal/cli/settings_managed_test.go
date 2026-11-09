@@ -646,19 +646,104 @@ func TestSettingsSetManagedUnreadMarksKeepTheRefusal(t *testing.T) {
 	}
 }
 
-// A run that asks nothing pays nothing: --yes answers the edit itself, and a
-// run with no terminal is refused before the file is touched, so neither has a
-// question for the gate to answer and neither pays for the read. That is what
-// keeps a stale, unreadable or far-away mark from slowing down or stopping a
-// command that was never going to be asked.
+// The other half of the same condition. --ask asks for the confirmations back,
+// so the marks have to be read for it wherever no prompt can be answered as
+// well — a pipe, --non-interactive, a coding agent's session — and the answer
+// there is a refusal and never a silent proceed. A run that skipped the read
+// would answer a managed project's --ask with the sentence for a project whose
+// marks did not answer "managed", and then write.
+//
+// The mutation caught: settingsManagedStep called with settingsWriteOwnTerminal
+// alone, which drops --ask from the gate's condition (accounts_managed.go's own
+// call keeps the term, and the two have to agree).
+func TestSettingsSetManagedAskWithoutATerminalReadsTheMarks(t *testing.T) {
+	r := newSettingsManagedRig(t, settingsMarksManaged)
+	r.managedRunsBucket(t)
+	path := settingsManagedLayerFile(t, minimalAnchored)
+	before := readFileString(t, path)
+	noAgentSession(t)
+	noTerminal(t)
+
+	out, _, err := execute(t, "settings", "set", settingsManagedLayerKey, settingsManagedLayerValue, "--layer", "project", "--ask")
+	if err == nil {
+		t.Fatalf("--ask with no terminal wrote instead of refusing:\n%s", out)
+	}
+	if want := initflow.AskRefusal(initflow.Conditions{}); !strings.Contains(err.Error(), want) {
+		t.Errorf("--ask with no terminal was refused with %q, want the refusal the flag earns where nobody can answer it (%q)", err, want)
+	}
+	if strings.Contains(out, initflow.AskUnmanaged()) {
+		t.Errorf("a managed project's --ask run was answered with the sentence for a project whose marks did not answer managed:\n%s", out)
+	}
+	if after := readFileString(t, path); after != before {
+		t.Errorf("a refused --ask run rewrote the layer:\n%s", after)
+	}
+	if recs := r.audits(t); len(recs) != 0 {
+		t.Errorf("a refused --ask run filed %+v", recs)
+	}
+}
+
+// The other half of the same run: where a terminal CAN answer, the flag's
+// question is the whole of what it restores, and a "no" is an answer rather
+// than a shrug. announceSettingsWrite's refusal is the whole of that answer,
+// and it is what stops the write at the point where the sentence naming the
+// change has already been read. Nothing is written and nothing is left behind —
+// not the edit, and not a backup of a document that did not change.
+//
+// The mutation caught: announceSettingsWrite's `if !ok`, whose false branch
+// written anyway left the whole suite green.
+func TestSettingsSetManagedAskDeclinedWritesNothing(t *testing.T) {
+	r := newSettingsManagedRig(t, settingsMarksManaged)
+	r.managedRunsBucket(t)
+	path := settingsManagedLayerFile(t, minimalAnchored)
+	before := readFileString(t, path)
+	noAgentSession(t)
+	typed(t)
+
+	out, _, err := executeStdin(t, "n\n", "settings", "set", settingsManagedLayerKey, settingsManagedLayerValue, "--layer", "project", "--ask")
+	if err == nil {
+		t.Fatalf("a declined --ask wrote the change instead of stopping:\n%s", out)
+	}
+	if want := "not confirmed; nothing was written"; !strings.Contains(err.Error(), want) {
+		t.Errorf("a declined --ask was refused with %q, want %q", err, want)
+	}
+	if after := readFileString(t, path); after != before {
+		t.Errorf("a declined --ask rewrote the layer:\n%s", after)
+	}
+	backups, err := filepath.Glob(path + ".bak-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(backups) != 0 {
+		t.Errorf("a declined --ask left %d backups beside the layer, want none", len(backups))
+	}
+}
+
+// A run that asks nothing pays nothing: at the owner's own terminal --yes
+// answers the edit itself, so the run has no question the gate could stand in
+// for and the marks are not read for it. That is what keeps a stale, unreadable
+// or far-away mark from slowing down or stopping a write that was never going to
+// be asked — the state a read without the --yes term would put it in.
+//
+// The combination is reached on purpose: a real terminal, a managed project and
+// the flag, so "no mark was read" is said about a step that happened. The write
+// below lands, which is the half a run refused before it wrote could not show.
+//
+// The mutation caught: settingsGateReads written without its --yes term, which
+// reads the marks for a run that is already on the owner's own word — the
+// direct call below would be handed a gate for a step no question was asked
+// about, and the command would pay for the read.
 func TestSettingsSetYesReadsNoMark(t *testing.T) {
 	r := newSettingsManagedRig(t, settingsMarksManaged)
 	path := settingsManagedLayerFile(t, minimalAnchored)
 	target := settingsManagedLayerTarget(path)
 	old := []byte(minimalAnchored)
 	doc := []byte(minimalAnchored + "defaults:\n  agent: { review_rounds: 6 }\n")
+	fakeTerminal(t)
 
-	m, gate, err := settingsManagedStep(context.Background(), r.managedLocal(t), r.managedConfigPath(t), target, settingsManagedLayerKey, false, "", old, doc, "settings set", false)
+	// The helper's own boundary, asked directly — a real terminal, --yes, the
+	// ordinary class, which is the combination the term is about — reads
+	// nothing and answers the zero value.
+	m, gate, err := settingsManagedStep(context.Background(), r.managedLocal(t), r.managedConfigPath(t), target, settingsManagedLayerKey, false, "", old, doc, "settings set", settingsGateReads(gateCmd(), true, false, false))
 	if err != nil {
 		t.Fatalf("a person's own terminal was refused by the gate: %v", err)
 	}
@@ -675,30 +760,40 @@ func TestSettingsSetYesReadsNoMark(t *testing.T) {
 		t.Errorf("a run with --yes filed %+v", recs)
 	}
 
-	out, _, err := execute(t, "settings", "set", settingsManagedLayerKey, settingsManagedLayerValue, "--layer", "project", "--yes")
+	// And the command, at the same terminal with that flag: the same answer,
+	// on a run that writes. The calls counted here are the command's own — the
+	// reads above are this test's — so the count is taken from where they are.
+	read := len(r.gcs.Requests())
+	out, _, err := executeStdin(t, "", "settings", "set", settingsManagedLayerKey, settingsManagedLayerValue, "--layer", "project", "--yes")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	if !strings.Contains(readFileString(t, path), "review_rounds: 6") {
 		t.Error("the owner's own run did not write")
 	}
+	if reqs := r.gcs.Requests()[read:]; len(reqs) != 0 {
+		t.Errorf("a run with --yes paid %d calls to read marks it skips no confirmation by:\n%v", len(reqs), reqs)
+	}
 	if recs := r.audits(t); len(recs) != 0 {
 		t.Errorf("a run with --yes filed %+v", recs)
 	}
 }
 
-// The owner's own terminal in a managed project takes no confirmation either
-// (the ruling of 2026-11-01: the gate manages the project on the owner's
-// behalf, without the prompts). The marks are read because this is exactly the
-// run the y/N would have been asked at, the gate judges the document the edit
-// would write, and its verdict replaces the question — the diff above it is the
-// whole of what the owner reads, and the admission is in their own bucket.
+// The owner's own terminal in a managed project takes no confirmation (the
+// ruling of 2026-11-01: the gate manages the project on the owner's behalf,
+// without the prompts), and neither does the same edit anywhere else: no
+// settings write asks anything any more (D1540). What the two runs read apart
+// is where the write's answer came from. The managed one reads GateProceeded's
+// sentence: the marks ARE read because this is exactly the run the y/N would
+// have been asked at, the gate judges the document the edit would write, and
+// its verdict stands where the question stood — the diff above it is the whole
+// of what the owner reads, and the admission is in their own bucket. The
+// control reads the sentence naming the change and nothing about a verdict, and
+// files no record, because no rule read this edit's document.
 //
-// The control is the same edit, the same terminal and a project the marks do
-// not prove is managed: the question is asked, and a terminal with nothing
-// typed writes nothing. The mutation caught: Managed.Removes answering true for
-// every project, which leaves the control's question unasked and the edit
-// written.
+// The mutation caught: Managed.Removes answering true for every project, which
+// hands the control the managed run's sentence and files it a record of a
+// verdict that was never taken.
 func TestSettingsSetManagedOwnerTerminalAsksNoConfirmation(t *testing.T) {
 	for _, tc := range []struct {
 		what    string
@@ -712,7 +807,6 @@ func TestSettingsSetManagedOwnerTerminalAsksNoConfirmation(t *testing.T) {
 			r := newSettingsManagedRig(t, tc.marks)
 			r.managedRunsBucket(t)
 			path := settingsManagedLayerFile(t, minimalAnchored)
-			before := readFileString(t, path)
 			noAgentSession(t)
 			fakeTerminal(t)
 
@@ -720,14 +814,17 @@ func TestSettingsSetManagedOwnerTerminalAsksNoConfirmation(t *testing.T) {
 			after := readFileString(t, path)
 			recs := r.audits(t)
 			if !tc.managed {
-				if err == nil || !strings.Contains(err.Error(), "not confirmed; nothing was written") {
-					t.Fatalf("a project the marks do not prove is managed was not asked: %v\n%s", err, out)
+				if err != nil {
+					t.Fatalf("a project the marks do not prove is managed was refused: %v\n%s", err, out)
 				}
-				if !strings.Contains(out, "Write this to "+path+"? [y/N]") {
-					t.Errorf("the y/N this command has always asked was not printed:\n%s", out)
+				assertNoPrompt(t, out)
+				if !strings.Contains(after, "review_rounds: 6") {
+					t.Errorf("the write did not land:\n%s", after)
 				}
-				if after != before {
-					t.Error("a question nobody answered wrote the file anyway")
+				for _, gate := range []string{initflow.GateProceeded(), initflow.GateOrdinary()} {
+					if strings.Contains(out, gate) {
+						t.Errorf("a project the marks do not prove is managed reads a verdict that was never taken:\n%s", out)
+					}
 				}
 				if len(recs) != 0 {
 					t.Errorf("a project that is not managed filed %+v", recs)
@@ -740,9 +837,7 @@ func TestSettingsSetManagedOwnerTerminalAsksNoConfirmation(t *testing.T) {
 			if !strings.Contains(after, "review_rounds: 6") {
 				t.Errorf("the write did not land:\n%s", after)
 			}
-			if strings.Contains(out, "? [y/N]") {
-				t.Errorf("a managed project's own terminal was asked anyway:\n%s", out)
-			}
+			assertNoPrompt(t, out)
 			// The owner's own terminal reads the sentence that says where the
 			// verdict was taken, not GateOrdinary's — this step's diff IS the
 			// document the gate judged and the record above names its digest,
@@ -755,6 +850,67 @@ func TestSettingsSetManagedOwnerTerminalAsksNoConfirmation(t *testing.T) {
 			}
 			if len(recs) != 1 || recs[0].Verdict != managedmode.AuditAdmitted {
 				t.Errorf("the day holds %+v, want the one admission of this write", recs)
+			}
+		})
+	}
+}
+
+// The owner's own terminal is the one door a widening has, and in a managed
+// project it is the whole of the door: the marker's fence refuses a coding
+// agent's session whatever --yes says, so the ceiling D1552, D1555 keep for the
+// owner's own hand is reached by a person at a real terminal and by nobody else.
+// The gate is not read for a Typed edit made there, because the refusal it would
+// answer with is the one thing that may not happen to that person: the step IS
+// theirs, and the admission is what every other class is for. Every run below
+// therefore writes — with --yes and without it, raising the ceiling and taking
+// it away, which are the two directions of the one class and the two call sites
+// of the read — which is what the class meant before the gate existed and what a
+// widening's own sentence asks for it.
+//
+// The mutation caught: reading the gate for every class at a terminal (this is
+// the shape a gate read without the Typed term has), which hands the owner
+// ErrNotConverged for the one edit only the owner may make and leaves every
+// ceiling in a managed project unwidenable.
+func TestSettingsSetManagedOwnerTerminalWidensACeiling(t *testing.T) {
+	for _, tc := range []struct {
+		what string
+		args []string
+		want string
+		says string
+	}{
+		{"set, without --yes", []string{"set", "layer.defaults.agent.max_budget_usd", "500"}, "max_budget_usd: 500", "this raises a limit"},
+		{"set, with --yes", []string{"set", "layer.defaults.agent.max_budget_usd", "500", "--yes"}, "max_budget_usd: 500", "this raises a limit"},
+		{"unset", []string{"unset", "layer.defaults.agent.max_budget_usd"}, "", "removing a ceiling hands the decision back to a looser layer"},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			r := newSettingsManagedRig(t, settingsMarksManaged)
+			r.managedRunsBucket(t)
+			// The block carries a second key, so withdrawing the ceiling leaves
+			// a file that still reads back: an emptied block is not a layer.
+			path := settingsManagedLayerFile(t, minimalAnchored+"defaults:\n  agent:\n    max_budget_usd: 10\n    review_rounds: 4\n")
+			noAgentSession(t)
+			fakeTerminal(t)
+
+			args := append(append([]string{"settings"}, tc.args...), "--layer", "project")
+			out, _, err := executeStdin(t, "", args...)
+			if err != nil {
+				t.Fatalf("the owner's own terminal was refused the one widening it is the door to: %v\n%s", err, out)
+			}
+			got := readFileString(t, path)
+			if tc.want == "" {
+				// The ceiling taken away: the key is what the run withdraws.
+				if strings.Contains(got, "max_budget_usd") {
+					t.Errorf("the withdrawn ceiling is still in the layer file:\n%s", got)
+				}
+			} else if !strings.Contains(got, tc.want) {
+				t.Errorf("the layer file does not carry %q:\n%s", tc.want, got)
+			}
+			if !strings.Contains(out, tc.says) {
+				t.Errorf("the write does not say what it widens (%q):\n%s", tc.says, out)
+			}
+			assertNoPrompt(t, out)
+			if recs := r.audits(t); len(recs) != 0 {
+				t.Errorf("a step no rule was read for filed %+v", recs)
 			}
 		})
 	}

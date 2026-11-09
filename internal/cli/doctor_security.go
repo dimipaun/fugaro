@@ -43,10 +43,11 @@ const (
 // force there, and the written row that matched nothing in its base.
 func doctorSecurityChecks(ctx context.Context, root string) []doctorCheck {
 	// Slice 1 (D1519): the list in force is the engine's floor alone — the
-	// config key does not exist yet — so nothing was written and no base is
-	// read. SC9 re-points this at config.SecurityPatterns' one resolution,
-	// which is where the project's and the repository's rows come from; the
-	// closure below is what reads the base then.
+	// keys that write a list exist and are validated, and no run reads one yet
+	// — so nothing is written and no base is read. SC9 re-points this at
+	// config.SecurityPatterns' one resolution, which is where the project's and
+	// the repository's rows come from; the closure below is what reads the base
+	// then.
 	return doctorSecurityListChecks(sensitivity.Floor(), nil, func() (string, []string) {
 		ref := defaultBranchRef(ctx, root)
 		paths, ok := doctorSecurityBaseTree(ctx, root, ref)

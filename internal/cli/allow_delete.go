@@ -294,7 +294,8 @@ func allowDelete(cmd *cobra.Command, o cloudOptions, args []string) error {
 	// removes the approval it carried — and an approval dropped without the
 	// owner noticing is a delete refused later for a reason nobody remembers
 	// giving. The entries this write drops are named, and a list that drops any
-	// of them is written only after the project's name is typed.
+	// of them says so before it is written: the write asks nothing (D1540), so
+	// what carries the fact to the person running it is the sentence below.
 	dropped := droppedFrom(current, approved)
 	// What this write replaces is the run's own account of it — the entries it
 	// leaves out are what the person below is agreeing to lose, and the
@@ -307,30 +308,27 @@ func allowDelete(cmd *cobra.Command, o cloudOptions, args []string) error {
 		fmt.Fprintf(out, "gs://%s/%s approves %d entry(ies) now, and this list leaves out %d of them:\n", safetext.Field(bucket), managed.AllowDeleteObject, len(current), len(dropped))
 		printEntries(out, dropped)
 	}
-	// An object that is there but is not a list this command reads is
-	// replaced only on the same typed confirmation: what it held is unknown.
+	// An object that is there but is not a list this command reads is named the
+	// same way before it is replaced: what it held is unknown.
 	if state.Unreadable {
 		fmt.Fprintf(out, "gs://%s/%s is there but is not a list this command reads (an object written by an older Fugaro, whose addresses carry no identities, is one of these): writing replaces it\n", safetext.Field(bucket), managed.AllowDeleteObject)
 	}
 	if len(dropped) > 0 || state.Unreadable {
-		// Strict rather than confirmTyped: this command has no --yes (it
-		// registers the cloud flags and nothing else), so a refusal offering
-		// one would tell the owner to pass a flag that does not exist. The
-		// typed name is the whole of the confirmation here, which is also the
-		// right way round: an approval is removed by a person reading what
-		// goes, not by a flag typed in advance.
+		// The typed name this command used to ask for is gone (D1540): no
+		// command waits on stdin, and a project's name typed under a question is
+		// the wrong way round for an approval — what removes one is a person
+		// reading what goes, which the sentence says. This command registers no
+		// --ask either (it registers the cloud flags and nothing else), so there
+		// is no door that puts the question back.
 		//
-		// The question says what is lost: the approvals named above, or, for
-		// an unreadable object, whatever it held — dropped is empty then
-		// because nothing could be read, not because nothing is removed.
+		// The sentence says what is lost: the approvals named above, or, for an
+		// unreadable object, whatever it held — dropped is empty then because
+		// nothing could be read, not because nothing is removed.
 		what := fmt.Sprintf("this replaces %s's list, removing %d entry(ies) it approved: every delete or replacement of the objects they named is refused again", safetext.Field(lc.Name), len(dropped))
 		if state.Unreadable {
 			what = fmt.Sprintf("this replaces gs://%s/%s, an object that is not a list this command reads: nothing it held could be read, so any approval it carried for %s is lost and every delete or replacement it allowed is refused again", safetext.Field(bucket), managed.AllowDeleteObject, safetext.Field(lc.Name))
 		}
-		if err := confirmTypedStrict(cmd, lc,
-			"removing an approval is confirmed by typing the project's name at a terminal, and by nothing else", what); err != nil {
-			return err
-		}
+		fmt.Fprintln(out, what)
 	}
 	// The write is the run's one step, and it is opened before it: a write
 	// that fails is a failed step on the screen, not an error printed under a
@@ -702,7 +700,7 @@ func allowDeleteWriteErr(lc *localcfg.Config, bucket string, err error) error {
 		return userErr("nothing was written for %s: gs://%s/%s changed after this command read it, so another write happened in between: run the command again to see the list as it is now: %s",
 			safetext.Field(lc.Name), safetext.Field(bucket), managed.AllowDeleteObject, safetext.Field(err.Error()))
 	case isAccessDenied(err):
-		return userErr("nothing was written for %s: gs://%s/%s is at the runs bucket's root, where only an operator's own credential may write (a launcher writes only runs/ and tokens/, and no run account may write the bucket's root at all): run this as an operator, or ask one to approve the entries: %s",
+		return userErr("nothing was written for %s: gs://%s/%s is at the runs bucket's root, where only an operator's own credential may write (a launcher writes only runs/, tokens/ and issues/, and no run account may write the bucket's root at all): run this as an operator, or ask one to approve the entries: %s",
 			safetext.Field(lc.Name), safetext.Field(bucket), managed.AllowDeleteObject, safetext.Field(err.Error()))
 	default:
 		return remote(fmt.Errorf("writing %s in gs://%s for %s: %w", managed.AllowDeleteObject, safetext.Field(bucket), safetext.Field(lc.Name), safetext.FieldErr(err)))

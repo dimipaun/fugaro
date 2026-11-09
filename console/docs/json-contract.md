@@ -575,6 +575,7 @@ int64, none `omitempty`.
 | `project` | string | no | the Fugaro project |
 | `runs` | `[]runview.Row` | no | `[]` when none |
 | `totals` | `runview.Totals` | no | below |
+| `groups` | `[]object` | **yes** | **only under `runs ls --group-by failure_class`** (`internal/cli/runs_group.go`): the window's failures grouped, one object per class of the closed vocabulary of `docs/design/failure-classes.md` §3 that some run of the window ended in, beside the `runs` array rather than instead of it. Each group carries `class` (one of the nineteen names), `runs` (how many of the window's runs ended in it), `share` (that count's share **of the window's runs**, never of the spend — D1465) and `spend_usd` (what those runs cost). The order is the vocabulary's own (`failure.Classes()`), so two readers of one window read the same block. **`omitempty` is what keeps the phone's degraded feed alive**: the degraded watch document embeds this shape and the app refuses a key it does not know, so a block printed by a listing that never grouped would break the degraded screen (`internal/cli/watch.go`) |
 | `warnings` | `[]string` | no | the lines a human listing prints before its table |
 
 `runview.Row` (`internal/runview/runview.go`) is the run shape behind
@@ -609,6 +610,7 @@ reads:
 | `started_at` | `*time.Time` | **yes** | null = not started |
 | `base_branch`, `previous_run` | string | **yes** | |
 | `follow_up` | bool | no | |
+| `follow_up_of` | `*task.FollowUpOf` | **yes** | the parent a triage follow-up was filed from (docs/post-review-triage D1843, T-TR11), from the run's own `task.json` (`task.Spec.FollowUpOf`): the parent's `run` and the deferred findings' `keys` it settles. **CLI 0.22.0.** It is its own fact beside `follow_up` and not a second spelling of it: that one says the run continues a pull request's branch, this one says it was filed out of a review's deferral, and a run can be either without the other. **Absent for every run that is not one of those** — every run somebody asked for, and every task written before the field existed — so absence reads as "not filed from a deferral" and never as "filed for no finding". **Task-derived and not sanitized**, like `title`, `batch` and `requested_by` beside it: the display layer sanitizes it (design §5.1 rule 7) |
 | `draft_fallback` | bool | **yes** | the host has no draft PRs, so the PR is an ordinary one with `[DRAFT]` in its title |
 | `pr_status_at` | `*time.Time` | **yes** | when the runner last wrote the PR's status section — **null = never** |
 | `stale_draft` | bool | **yes** | the record is not final but its draft's status section is old, or the execution is gone: the run probably died |
@@ -746,8 +748,9 @@ compute is unknown: their `compute_usd` 0 means "not estimated", so the sums
 are a lower bound** — the console renders that, it does not hide it).
 
 **Flags** (`f := cmd.Flags()`, `newLsCmd`): `--repo`, `--all`, `--mine`, `--since`, `--batch`,
-`--limit`, `--after`, `--state`, `--pr`, `--watch`, `--interval` (hidden), `--json`, plus the cloud
-flags. The allow-list excludes `--watch` (it is `watch` under another name).
+`--limit`, `--after`, `--state`, `--group-by`, `--pr`, `--watch`, `--interval` (hidden), `--json`, plus the cloud
+flags. The allow-list excludes `--watch` (it is `watch` under another name); `--group-by` is no row's
+argument either, so no spawn emits it and the block it adds waits for the screen that reads it.
 
 **`--limit=N` and `--after=RUN-ID` are the page and its cursor, and they are the two
 flags the console's `runs ls` row adds to the list above** (D818, the console
@@ -1296,11 +1299,13 @@ The document:
 
 | Key | Type | Absent | Null | Notes |
 | --- | --- | --- | --- | --- |
-| `schema_version` | number | never | never | `1` or `2` today; a document carrying another number is **refused**, not rendered |
+| `schema_version` | number | never | never | `1`, `2` or `3` today; a document carrying another number is **refused**, not rendered |
 | `plan` | string | never | never | the plan the artifact came from, as the artifact names it |
 | `stream` | string | **yes** | **yes** | the release stream the plan ships in: `cli`, `console` or `mobile` (GD7). Absent, or null, when the plan does not say — and **refused** when it names another. A **schema-2** field, so a v1 artifact carrying one is refused rather than read |
 | `nodes` | array | never | never | the tasks; `[]` is a plan with no tasks yet |
 | `edges` | array | never | never | the dependencies; `[]` is a plan with no dependencies yet |
+| `decoupling` | array | **yes** | never | one entry per edge the contract-first decoupling pass broke, below. A **schema-3** field, absent when the planner broke nothing — so a v1 or v2 artifact, and a v3 one whose plan kept every edge, prints no such key. Every entry is checked against the graph: the contract is a `contract` node, the integration is an `integration` node that depends on both endpoints of the edge the entry records, and that edge is **not** still in `edges` |
+| `contract_changes` | array | **yes** | never | the change requests raised against contracts that have already merged, below. A **schema-3** field, absent when there are none |
 | `levels` | number | never | never | how many levels the plan has — the longest chain of dependencies plus one; `0` for a plan with no tasks |
 | `critical_path` | object | never | never | the longest chain of tasks in the plan, below |
 | `bottleneck` | string | never | **yes** | the task the critical path runs through; null only when the plan has no tasks |
@@ -1314,6 +1319,9 @@ one entry of `nodes`:
 | `run` | string | never | **yes** | the run this task belongs to; null when it belongs to none |
 | `version` | string | never | **yes** | the target version; null when the plan does not say. In a **v2** artifact it is `MAJOR.MINOR` or `MAJOR.MINOR.PATCH` — `0.10`, or the patch box `0.10.1` a release such as 0.10.1 is — and anything else is **refused**; a v1 artifact's version is free text and is read as written |
 | `footprint` | object | never | never | the expected paths, below |
+| `kind` | string | **yes** | never | what this node is: `task` (the default, and every node of a v1 or v2 artifact), `contract`, `integration` or `contract_change`. A **schema-3** field; it is absent from the document this build emits when the node is a plain task, and a **non-empty** value outside those four is **refused** — an empty string means the default. A `contract` node carries the stubs and the literal files the graph holds every other task against; an `integration` node is the one that depends on both sides of a broken edge |
+| `size` | number | **yes** | **yes** | the task's weight relative to the others, greater than `0`; absent or null means `1`. A **schema-3** field, and the figure the accepted/refused comparison of a break is weighed with rather than a task count. `0` or a negative number is **refused** |
+| `stubs` | array of strings | **yes** | never | the whole files a `contract` node leaves for its dependents to compile against, each a literal repository-relative path — never a glob, never absolute, never with a `..` element, never carrying a character that does not print, and each one named **literally** in that node's own `footprint.paths`. A **schema-3** field, on a `contract` node and nowhere else: a **non-empty** list on any other node is **refused**, and absent, null or an empty list is a node that leaves no stub behind — the key is absent from the document this build emits |
 | `level` | number | never | never | the longest chain of dependencies *ending* at this task: `0` for a task that waits on nothing, otherwise one more than the deepest task it waits for |
 | `done` | bool | never | never | the task is in the `--done` set the read was given. **A fact the caller stated, not one the CLI derived**: a finished run is not the same claim as a done task (see below) |
 | `ready` | bool | never | never | the task is not done and **every task it needs is done**. This is the field a launch may act on (design F7) |
@@ -1348,6 +1356,32 @@ and the `footprint` object:
 | `prediction` | bool | never | never | **always `true`** — a footprint is a prediction, and the label travels with the data (D28) |
 | `paths` | array | never | never | glob patterns matched with doublestar; `[]` is a task that predicts it touches nothing |
 
+one entry of `decoupling` (schema 3):
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `contract` | string | never | never | the id of the `contract` node the edge was broken through |
+| `was` | object | never | never | the edge as it stood before the pass broke it, below |
+| `integration` | string | never | never | the id of the `integration` node that depends on **both** endpoints of `was`, and one contract's entries all name the same one |
+| `reason` | string | never | never | why the break is right; an entry with no reason is refused |
+
+the `was` object:
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `task` | string | never | never | the node that depended |
+| `needs` | string | never | never | the node it depended on. The pair must **not** still be an entry of `edges`: an edge that is both broken and there is a document disagreeing with itself |
+
+one entry of `contract_changes` (schema 3):
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `change` | string | never | never | the id of the `contract_change` node that carries the work |
+| `contract` | string | never | never | the id of the `contract` node the change is against |
+| `raised_by` | string | never | never | the id of the node that found the change |
+| `reason` | string | never | never | what has to change and why; an entry with no reason is refused |
+| `affects` | array of strings | never | never | the ids of the tasks the change reaches, each a node of this graph. An entry that reaches none is emitted as `[]` and never as a null, so a null here is a document no reader has to allow for (§1) |
+
 **Four refusals, and they are refusals rather than partial renders:** a document
 from a schema version this build does not read (the message names both
 versions), a malformed one, one whose edges name a node that is not there or
@@ -1355,6 +1389,52 @@ whose ids repeat, and **one with a cycle** — every "ready" and "blocked" answe
 is a function of the graph, so a cyclic graph has none to give. A refused graph
 is no document at all: the command exits non-zero and prints nothing to stdout,
 so a renderer never has half a graph to draw.
+
+Schema 3 refuses the same way over what it added, because it is untrusted plan
+text: a **non-empty** `kind` outside the four — an absent or empty one is the
+default `task` — a `size` of `0` or less, a **non-empty** `stub` list on a node
+that is not a contract, a `stub` that is a
+glob or that the contract's own footprint does not name, a `contract` node whose
+footprint names no literal file — a contract's files are whole files it names
+one by one, so a **pattern** in a contract's footprint is refused rather than
+read: `internal/contract/[t]ypes.go` names files the rule below cannot hold
+another task to — a `decoupling` entry whose integration node does
+not depend on both sides of the edge it records, an edge that is recorded as
+broken and is still in `edges`, a `contract_change` naming a node that is not
+there, a **path that does not print** — a newline, a control character or a
+format character such as U+202E, in a footprint path or in a stub, because a
+footprint path is a name the instructions of a later run end up carrying (D1812)
+and a field that reads as one thing to a person while carrying another is not a
+name — and a footprint that covers a merged contract's file from outside the
+contract and the change requests against it — **however that path is spelled on
+either side**, because `./internal/contract/types.go`,
+`internal//contract/types.go` and `internal/dep/../contract/types.go` all name
+the one file, and a rule that read only the literal spelling would be a rule a
+respelling steps around: a contract that spells its own file differently still
+has that file protected, rather than a file no other task's footprint is
+checked against. And a
+footprint **pattern** that is not a checkout path at all is refused by name, so
+it can never be read as the contract's file: a **backslash** — doublestar's
+escape character, where `types\.go` is a pattern for `types.go` — a **leading
+slash**, which makes the pattern absolute — and a **brace group that spells an
+empty, a `.` or a `..` element**, as in `{./internal/contract/types.go}` or
+`internal/{dep/..,}/contract/types.go`: `path.Clean` reads a pattern as one
+string and normalises such an element only outside a group, so a group is how a
+respelling is written without the rule that reads the path reading it — a group
+alternating between real paths, `internal/{a,b}/x.go`, is untouched — and a **path
+element a glob expands to a `.` or a `..`**, as in
+`internal/dep/[.][.]/contract/types.go`, `internal/dep/.?/contract/types.go` or
+`[.]/internal/contract/types.go`: `path.Clean` collapses a literal `./` or
+`../` in a pattern but reads past a dot a class or a wildcard spells, so those
+respell the contract's file while the rule reading the path reads none of them —
+an element carrying a `*` stands for a name of any length, so `*.*`, `docs/.*`
+and `**/.*` are ordinary multi-extension globs and are read. A graph inside the
+artifact's own cap can still ask for more work than a read should take —
+every contract's files against every other task's patterns is a product of two
+sides that both come from the file — so the rule counts every pair it asks — a
+literal lookup as much as a pattern it drops on its own shape or hands to a
+match — and **refuses a graph past the bound** rather than read it slowly. The
+console shows the CLI's sentence in each case, like every other refusal here.
 
 **What the read computes, and why the done set is passed in.** `level`, `done`,
 `ready`, `blocked`, `critical_path_length`, `downstream`, `levels`,
@@ -1386,16 +1466,21 @@ this, and they answer different halves: an older CLI has no `plan graph` at all,
 and a newer *planner* can write a `schema_version` the CLI refuses. The console
 shows the CLI's refusal sentence rather than a graph.
 
-**Two schema versions are read, and the older one is not a second dialect.**
+**Three schema versions are read, and each older one is not a second dialect.**
 Schema **2** added the document's `stream` and the shape a node's `version` has;
-schema **1** is a plan written before them, and it stays a document this build
-renders — its `version` is the planner's own words and is read as written,
+schema **3** added the node's `kind`, `size` and `stubs`, the document's
+`decoupling` and `contract_changes`, and the rules that hold them together.
+Schema **1** is a plan written before any of them, and it stays a document this
+build renders — its `version` is the planner's own words and is read as written,
 because the shape is the newer schema's promise rather than a retroactive one. A
-v1 artifact carrying a `stream`, or a v2 artifact whose `version` is not
-`MAJOR.MINOR[.PATCH]`, is **refused** rather than read with the difference
-dropped: a file and a read that disagree about which stream a plan ships in is
-worse than a refusal. A **3** is a graph from a newer planner, and it is the
-refusal the version number exists for.
+v1 artifact carrying a `stream`, a v1 or v2 artifact carrying any schema-3 key —
+the key itself, whether it carries a list, a `null` or an empty string — or a
+v2 artifact whose `version` is not `MAJOR.MINOR[.PATCH]`, is **refused**
+rather than read with the difference dropped: a file and a read that disagree
+about which stream a plan ships in is worse than a refusal. The `version` shape
+holds at **every** version from 2 on, so a v3 graph's versions are checked too.
+A **4** is a graph from a newer planner, and it is the refusal the version
+number exists for.
 
 **The computed fields are additive, and they are not the artifact's.** They are
 fields of the *read's* document and not of the artifact: the artifact carries the
@@ -3082,11 +3167,14 @@ the repository, and no list can speak about it. The spellings are the ones
 `TestSecurityPathsCheckFailsClosedOnAnUnplaceablePath` holds, drawn from
 `sensitivity`'s own table (`pattern_test.go`'s
 `TestUnplaceablePathMatchesNoRuleAndClassifiesSensitive`): `/etc/passwd` is
-absolute, `docs/../website/src/x.md` escapes, the empty string is no path at
-all, and a bare `.` and a bare `..` are the repository root as a directory
-reference and the tree above it — the pair the matcher's own rule *accepts*,
-since `path.Clean` leaves both exactly as they are, and that this command
-refuses where it composes the answer. The two are told apart by `matched`:
+absolute, `../SECURITY.md`, `../../etc/passwd` and a bare `..` escape the
+checkout, `docs/../website/src/x.md` is rewritten by `path.Clean`, and the empty
+string is no path at all — the matcher's own rule refuses every one of them, a
+leading `..` included, so no row can name them. A bare `.` is the one spelling
+that rule *accepts*, since `path.Clean` leaves it exactly as it is, and it names
+the repository root as a directory reference rather than a file of it: this
+command refuses it where it composes the answer. The two are told apart by
+`matched`:
 `sensitive: true` with `matched: null` is exactly that unplaceable case, and
 `docs/pending-workflows/console-tests.yml` is `true` **with** the floor's
 `pending-workflows` row.
@@ -3247,14 +3335,23 @@ table against the live constructors.
    exceptions, and both are writes the console's own confirmation windows
    answer**: the launch (§6.14, design §5.1 rule 11), which was the console's
    **first write**, and the settings edit (§6.20, design §5.1 rule 12, the
-   settings-edit plan's C3), which is its **second write**. The allow-list is by
+   settings-edit plan's C3), which is its **second write**. **A third write
+   reads no document of this file at all**, so it neither widens nor narrows
+   this sentence: `licence.save` (design §5.1 rule 5, the subscriptions plan's
+   S2.7) keeps the licence key the operator pasted in the console's own store
+   (design §5.1 rule 10), spawns nothing, consumes none of the documents below,
+   and needs no confirmation window because there is no child and no cloud
+   object to confirm — what it writes is a file of the console's own, and what
+   it refuses is a key that does not verify. The allow-list is by
    exact argv (design §5.1 rule 6), and both are on it: `run.launch` and
-   `settings.edit` are the two operations of the surface that write (V2.5.1a,
+   `settings.edit` are the two **spawning** operations of the surface that write
+   — `licence.save` is the third that writes and spawns nothing, which is why
+   there is no row of §8 for it (V2.5.1a,
    2026-10-28/29, took the surface to twenty-four; K2a's
    `link.openPullRequest` took it to twenty-five and writes nothing, and C4c's
    `coordinator.intents` took it to twenty-six and writes nothing — **the
    counts in this parenthesis are the history up to that commit, and rule 5's
-   thirty-one is today's**), and no other argv that writes is reachable
+   thirty-six is today's**), and no other argv that writes is reachable
    from a renderer. Two further commands this file
    describes are writes, and **neither is in the console's set**: `fugaro cancel
    RUN --json` (§6.3), which is on the design's "never" table and which no v1

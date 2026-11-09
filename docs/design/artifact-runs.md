@@ -1545,7 +1545,7 @@ design assumes none of them by itself**. In particular **Task 1 is not
 one optional key to two stored schemas and add a CLI subcommand — all additive,
 and all shippable in **0.8.0**, one point release, with a new launch-time
 `*Since` constant (`artifactsSince`, through the existing `checkImageSince`
-seam, `internal/cli/recipes_skew.go:204-270`) so a recipe or an `--attach` using
+seam, `internal/cli/recipes_skew.go:215-281`) so a recipe or an `--attach` using
 the new keys is refused against a job image whose runner predates them.
 
 **Which of them is safe *alone*, and the one that is not unless it is

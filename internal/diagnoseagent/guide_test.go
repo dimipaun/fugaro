@@ -56,6 +56,13 @@ func TestGuideNamesTheOutcomeLabels(t *testing.T) {
 			t.Errorf("the guide does not name the outcome %q", outcome)
 		}
 	}
+	// The signature line the prompt asks for is the other thing the reader takes
+	// from the block, and the agent reads the guide as part of its instructions:
+	// a guide that stopped naming the field would leave the agent writing a block
+	// no duplicate can be matched by.
+	if !strings.Contains(guide, SignatureField+":") {
+		t.Errorf("the guide does not name the %q line", SignatureField)
+	}
 }
 
 func TestGuideCopyMatchesTheDocument(t *testing.T) {

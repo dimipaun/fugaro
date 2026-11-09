@@ -1,0 +1,12 @@
+version: 1
+project: aurora
+git: { provider: github }
+security:
+  patterns:
+    - { name: payments, match: "internal/payments/**", category: credentials }
+    - { name: pricing, match: "internal/pricing/*.go", category: targets }
+    # A row written before its tree exists is accepted (D1503): the glob
+    # matches nothing today and doctor is where that is said once.
+    - { name: search, match: "internal/search/**", category: guards }
+workflows:
+  server: { commands: { build: make, test: make test } }

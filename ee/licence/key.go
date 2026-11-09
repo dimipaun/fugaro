@@ -175,6 +175,19 @@ func Verify(raw []byte, now time.Time) (Claims, State, error) {
 	return verify(raw, now, productionKeyring)
 }
 
+// VerifyAgainst answers what a keyring of the caller's -- not the compiled one
+// -- makes of one key.
+//
+// It is the same check, with the ring named instead of the build's, and it
+// exists because a caller outside this package cannot reach verify: the owner's
+// mint tool (S2.10) holds no compiled ring of its own and checks what it minted
+// against the public half it was given, and that is a ring no build carries
+// until S2.9 publishes the owner's. The console's and the app's verifiers take a
+// keyring the same way, so the three read one shape.
+func VerifyAgainst(raw []byte, now time.Time, ring Keyring) (Claims, State, error) {
+	return verify(raw, now, ring)
+}
+
 // verify is the check against a keyring of the caller's: the production ring
 // for the CLI, and the vectors' own for the tests that have to exercise a key
 // this build does not trust.

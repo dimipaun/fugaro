@@ -715,6 +715,10 @@ func TestMarkAndProjectWritten(t *testing.T) {
 
 func TestBudgetModeSeedsRTDB(t *testing.T) {
 	mode := func(r *fbRig) any { return r.db.Value("config/mode") }
+	// modeSet records WHO chose the mode: the flag the operator passed, or
+	// nobody, and the difference is what `fugaro update` reads before it
+	// raises a seeded observe to enforce (D1548, task T16).
+	modeSet := func(r *fbRig) any { return r.db.Value("config/modeSet") }
 
 	// Without the flag an absent mode is seeded observe, and the jobs'
 	// mode (the local config) is left alone.
@@ -725,6 +729,9 @@ func TestBudgetModeSeedsRTDB(t *testing.T) {
 	}
 	if mode(r) != "observe" || r.localConfig(t).BudgetMode() != localcfg.BudgetOff {
 		t.Errorf("mode %v, local %s", mode(r), r.localConfig(t).BudgetMode())
+	}
+	if s := modeSet(r); s != nil {
+		t.Errorf("%s = %v: the seed of an absent mode is nobody's choice, and a node here would make `fugaro update` leave it observing for ever", budget.PathModeSet, s)
 	}
 	if !strings.Contains(out, "budget.mode is off") {
 		t.Errorf("no word that jobs don't use the backend yet:\n%s", out)
@@ -745,6 +752,10 @@ func TestBudgetModeSeedsRTDB(t *testing.T) {
 	}
 	if mode(r) != "observe" || r.localConfig(t).BudgetMode() != localcfg.BudgetObserve {
 		t.Errorf("mode %v, local %s", mode(r), r.localConfig(t).BudgetMode())
+	}
+	if s := modeSet(r); s != budget.ChosenByOwner {
+		t.Errorf("%s = %v, want %q: a mode the operator asked for is the operator's own, and no later update may raise it",
+			budget.PathModeSet, s, budget.ChosenByOwner)
 	}
 
 	// enforce needs the per-run cap the jobs enforce; refused before any apply.
@@ -778,6 +789,10 @@ func TestBudgetModeSeedsRTDB(t *testing.T) {
 	}
 	if mode(r) != "enforce" || r.localConfig(t).BudgetMode() != localcfg.BudgetEnforce {
 		t.Errorf("mode %v, local %s", mode(r), r.localConfig(t).BudgetMode())
+	}
+	if s := modeSet(r); s != budget.ChosenByOwner {
+		t.Errorf("%s = %v, want %q: --budget-mode enforce is the operator's own choice too",
+			budget.PathModeSet, s, budget.ChosenByOwner)
 	}
 	if strings.Contains(out, "every run halts") {
 		t.Errorf("a warning about missing caps with caps set:\n%s", out)
@@ -2423,6 +2438,119 @@ func TestUpdateRulesRedeploysADocumentUnderACurrentMarker(t *testing.T) {
 	if got, want := rulesMarkerOn(t, db), strconv.Itoa(projectpolicy.RulesVersion); got != want {
 		t.Errorf("the marker is %q, want %q", got, want)
 	}
+}
+
+// TestPreviousRulesGenerationConvergesOnUpdate: the installation this change
+// finds in the field, and the one `fugaro update` has to take to this release
+// with no second command (the HARD RULE). It is what the release before this
+// one leaves behind: this binary's own rules document *without* T8's build lease
+// family (previousRulesDocument), under the same generation marker — because
+// naming the family and refusing it opens nothing to a client, which is the
+// state projectpolicy's RulesVersion documents as one that does not bump
+// ("a generation that only adds a deny, or a node no client may reach, would
+// not need the bump either"). What converges here is the document, then:
+// rulesSkewOf reads it whenever the marker records this generation, doctor's
+// policy-rules-skew warning is the line the operator sees, and the rules stage
+// of one plain `fugaro update` is the deploy — no --firebase-project, and no
+// marker to migrate.
+//
+// The plan (docs/no-prompt-policy/implementation-plan.md's T8) asks the rules
+// change to "carry a generation bump and an update migration"; the generation
+// marker's own rule is why it does not, and this test is the convergence that
+// stands in the migration's place. What the plan would have caught is a rules
+// change an installation cannot reach with one command, and that is what the
+// assertions below are: the state is diagnosed before the run, one run reaches
+// this binary's document, and the diagnosis is gone afterwards.
+func TestPreviousRulesGenerationConvergesOnUpdate(t *testing.T) {
+	r, db := updateBudgetRig(t)
+	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
+	db.SetRules(previousRulesDocument(t))
+	currentRelease(t)
+	registerInstallation(t, r)
+
+	before := doctorChecks(t, r.dir)
+	if c, ok := doctorCheckByID(before.Checks, "policy-rules-skew"); !ok || c.OK {
+		t.Fatalf("the fixture is not the previous release's: policy-rules-skew is %+v", c)
+	}
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
+	if err != nil {
+		t.Fatalf("fugaro update did not reach the build lease family, so this installation needs a second command: %v\n%s%s", err, out, errOut)
+	}
+	var res convergeJSON
+	if err := json.Unmarshal([]byte(out), &res); err != nil {
+		t.Fatalf("%v:\n%s", err, out)
+	}
+	if got := res.state(initflow.Rules); got != "changed" {
+		t.Errorf("the rules stage is %q, want changed:\n%s", got, out)
+	}
+	gen, err := rules.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !infra.SameJSON(db.Rules(), gen) {
+		t.Errorf("the deployed document is not this release's:\n%s", out)
+	}
+	if !strings.Contains(string(db.Rules()), `"`+rules.PathBuildLeases+`"`) {
+		t.Errorf("the deployed document carries no /%s family:\n%s", rules.PathBuildLeases, out)
+	}
+	if got, want := rulesMarkerOn(t, db), strconv.Itoa(projectpolicy.RulesVersion); got != want {
+		t.Errorf("the marker is %q, want %q: the deploy moves the document and not the generation", got, want)
+	}
+
+	after := doctorChecks(t, r.dir)
+	if c, ok := doctorCheckByID(after.Checks, "policy-rules-skew"); ok && !c.OK {
+		t.Errorf("after one fugaro update, doctor still says the rules are not this release's: %s (fix: %s)", c.Problem, c.Fix)
+	}
+}
+
+// registerInstallation makes the rig's installation one doctor can select: the
+// rig keeps the project config where the commands read it (FUGARO_CONFIG, which
+// is also how `fugaro update` below finds it), and doctor lists the projects
+// directory instead, so the one file is copied there and the environment left
+// to the selection by name.
+func registerInstallation(t *testing.T, r *initRig) {
+	t.Helper()
+	cfg, err := os.ReadFile(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "fugaro", "projects")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, initProjectName+".yaml"), cfg, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// previousRulesDocument is the document the release before this one deployed:
+// this binary's own, with the build lease family removed. It is derived rather
+// than pinned because the difference IS the change T8 makes to the rules, so a
+// fixture that drifted from it would be testing a previous release nobody ran.
+func previousRulesDocument(t *testing.T) []byte {
+	t.Helper()
+	gen, err := rules.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(gen, &doc); err != nil {
+		t.Fatal(err)
+	}
+	node, ok := doc["rules"].(map[string]any)
+	if !ok {
+		t.Fatalf("the generated rules carry no \"rules\" object")
+	}
+	if _, ok := node[rules.PathBuildLeases]; !ok {
+		t.Fatalf("the generated rules carry no /%s family, so this fixture is not the release before T8", rules.PathBuildLeases)
+	}
+	delete(node, rules.PathBuildLeases)
+	prev, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return prev
 }
 
 // TestUpdateRulesVerifySaysTheGenerationIsNotDeployed: Verify's sentence may not

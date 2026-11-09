@@ -276,6 +276,26 @@ func (d *DB) Plan(ctx context.Context) ([]DBAction, []string, error) {
 		d.put(budget.PathMode, etag, want, fmt.Sprintf("changes the mode: %s -> %s", cur, want))
 	}
 
+	// And who chose that mode, when anyone did: the mode above is the one the
+	// operator asked for when --budget-mode was passed, and a seeded observe is
+	// nobody's choice. `fugaro update` raises a seeded mode — or one an earlier
+	// update raised — to enforce on a managed project, and it may never touch a
+	// mode the owner chose (D1548, task T16), so the two have to be told apart
+	// after this run is over. The node beside the mode is that record; the seed
+	// above writes nothing here, which is what leaves a fresh installation's
+	// observe raisable.
+	if d.mode != "" {
+		var curSet string
+		setEtag, setFound, err := d.c.GetETag(ctx, budget.PathModeSet, &curSet)
+		if err != nil {
+			return nil, nil, dbErr("reading "+budget.PathModeSet, err)
+		}
+		if !setFound || curSet != budget.ChosenByOwner {
+			d.put(budget.PathModeSet, setEtag, budget.ChosenByOwner,
+				"records the mode as the installation owner's own choice ("+budget.PathModeSet+" = "+budget.ChosenByOwner+")")
+		}
+	}
+
 	// The limit the rules need to grant any lease at all: absent denies.
 	var lim map[string]json.RawMessage
 	etag, found, err = d.c.GetETag(ctx, budget.PathLimits, &lim)

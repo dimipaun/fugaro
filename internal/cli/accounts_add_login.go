@@ -41,10 +41,10 @@ func runClaudeLogin(in io.Reader, out, errOut io.Writer) error {
 }
 
 // claudeLoginReady is every precondition act one has, and the claude they are
-// about. It answers the resolved absolute path, which the command's one
-// confirmation names before the login runs (spec §3.1 step 1), and it is
+// about. It answers the resolved absolute path, which the one sentence this
+// command prints names before the login runs (spec §3.1 step 1), and it is
 // separate from the run itself so that everything which can refuse the login
-// happens before the person is asked to answer for it.
+// is refused before the run announces it.
 func claudeLoginReady(in io.Reader, out io.Writer) (string, error) {
 	for _, name := range claudeLoginCredentialEnv {
 		if os.Getenv(name) != "" {
@@ -67,10 +67,11 @@ func claudeLoginReady(in io.Reader, out io.Writer) (string, error) {
 		return "", userErr("%v", err)
 	}
 	// A path the lookup resolves to and nothing can run is refused here, before
-	// the person is asked to answer for it. runClaudeLoginBinary asks the same
-	// question again on the far side of that answer: this check is early on
-	// purpose, and the confirmation between the two is an arbitrarily long
-	// window, so the early answer is never the one the child is started on.
+	// the run announces it. runClaudeLoginBinary asks the same question again on
+	// the far side of that sentence: this check is early on purpose, and the
+	// window between the two is an arbitrarily long one — nothing waits on an
+	// answer any more (D1540), and the login inside it runs at the person's own
+	// terminal — so the early answer is never the one the child is started on.
 	if err := claudeLoginRunnable(bin); err != nil {
 		return "", err
 	}
@@ -80,9 +81,9 @@ func claudeLoginReady(in io.Reader, out io.Writer) (string, error) {
 // claudeLoginRunnable is the standing §3.1 case — a path the lookup resolves to
 // that is a directory, which nothing can run. It is checked twice, and the two
 // checks are not the same question: the first is what refuses a login that
-// cannot happen before anyone is asked to confirm it (so a refusal leaves the
-// file as it was), and the second is the one that stands between the answer and
-// the fork, where the path is a name somebody else may have replaced.
+// cannot happen before the run announces it (so a refusal leaves the file as it
+// was), and the second is the one that stands between that announcement and the
+// fork, where the path is a name somebody else may have replaced.
 func claudeLoginRunnable(bin string) error {
 	if info, err := os.Stat(bin); err == nil && info.IsDir() {
 		return userErr("claude resolves to %s, which is a directory and not a program; fugaro does not run it from there", pluginwire.Printable(bin))
@@ -100,12 +101,13 @@ func claudeLoginRunnable(bin string) error {
 // A login that ran and exited non-zero comes back as *claudeLoginStatus: the
 // status is the child's own and not a failure of the command that called this
 // (§3.3). A child that could not start at all is a refusal, because there is
-// no status to report and nothing the owner could have answered.
+// no status to report and nothing the owner answered for.
 func runClaudeLoginBinary(bin string, in io.Reader, out, errOut io.Writer) error {
-	// Asked again on this side of the confirmation, immediately before anything
-	// is announced or started: the answer that was given was for a login that
-	// will run, and between it and here the path is only a name. A refusal still
-	// says nothing about a login starting, so it comes before the line below.
+	// Asked again on this side of the sentence that named it, immediately before
+	// anything is announced or started: what a person read was a login that will
+	// run, and between that sentence and here the path is only a name. A refusal
+	// still says nothing about a login starting, so it comes before the line
+	// below.
 	if err := claudeLoginRunnable(bin); err != nil {
 		return err
 	}
@@ -155,10 +157,10 @@ func (e *claudeLoginStatus) Error() string { return e.err.Error() }
 func (e *claudeLoginStatus) Unwrap() error { return e.err }
 
 // accountsAddClaudePrepare is act one's first half: everything that can refuse
-// the login, and the resolved path the command's one confirmation then names.
-// It runs before the diff and before that confirmation (the owner's ruling of
-// 2026-11-02), so a person is never asked to answer for a login that cannot
-// happen, and every refusal it can make leaves the file exactly as it was.
+// the login, and the resolved path the command's one sentence then names. It
+// runs before the diff and before that sentence (the owner's ruling of
+// 2026-11-02), so the run never announces a login that cannot happen, and every
+// refusal it can make leaves the file exactly as it was.
 //
 // It refuses in a coding agent's session before anything runs (D868, the
 // owner's ruling of 2026-11-01). The fence is here rather than only on the
@@ -174,7 +176,7 @@ func accountsAddClaudePrepare(cmd *cobra.Command, path, what, command string) (s
 	return claudeLoginReady(cmd.InOrStdin(), cmd.OutOrStdout())
 }
 
-// accountsAddClaudeRun is the login itself, run after that one confirmation and
+// accountsAddClaudeRun is the login itself, run after that one sentence and
 // before the token is stored: it runs Anthropic's login on the owner's own
 // terminal, reports one that did not finish without failing the command, and
 // leaves the token itself to the hidden prompt below, which is the only path a

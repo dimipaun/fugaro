@@ -283,6 +283,22 @@ var yamlMeta = map[string]Row{
 		Doc:     "docs/rigor-modes/spec.md",
 	},
 	"rigor.areas": {Owner: "rigor", Merge: Union, Default: unset("no area rules"), Doc: "docs/rigor-modes/spec.md"},
+
+	// The security list is rigor.areas' twin in the two fields a Scopes row
+	// cannot answer. Its merge is Union and not the default Replace (D1506):
+	// the repository's rows are added to the project's and the engine's, never
+	// put in their place, so a layer that writes the key can only ever say
+	// more. And its owner is not `settings set`, though that is the row a key
+	// with no entry here takes: D1515 decides the editor is fugaro.yaml and the
+	// project layer file — a list has no scalar floor for the allow-list's rule
+	// to raise — and `fugaro config publish` is the command that carries the
+	// layer's half, which is what the row names.
+	"security.patterns": {Owner: "config", Merge: Union, Default: unset("the engine's floor alone")},
+
+	// The planning pass's switch (docs/contract-first-decoupling, D1813). It
+	// is a preference rather than a bound, so the ordinary rule decides it:
+	// the narrowest layer that sets it wins.
+	"planning.decoupling": {Default: value("true", "config.DefaultPlanningDecoupling")},
 }
 
 // buildRows is the table, assembled from the three documents' own sources: the
@@ -520,6 +536,10 @@ var layerRows = []Row{
 	layerRow("defaults.rigor.areas.*.name", "none", "rigor", docRigor),
 	layerRow("defaults.rigor.areas.*.match", "none", "rigor", docRigor),
 	layerRow("defaults.rigor.areas.*.mode", "none", "rigor", docRigor),
+	// The planning pass's switch, read the way defaults.git.pr.early_draft
+	// above is: a layer that states nothing leaves it as the fugaro.yaml row
+	// says (docs/contract-first-decoupling, D1813).
+	layerRow("defaults.planning.decoupling", "true", "settings set", docLayer),
 
 	layerRow("profiles.*.description", "none", "settings set", docLayer),
 	layerRow("profiles.*.base", "none; the key was removed in 0.7.0", "settings set", config.MigrationDoc),
@@ -598,6 +618,20 @@ var layerRows = []Row{
 	// set` refuses both keys, which is the state R13 ships.
 	layerValueRow("jobs.reports.paused", "true", "update", docPeriodicReviews),
 	layerValueRow("jobs.catalog_check.paused", "true", "update", docPeriodicReviews),
+
+	// The project layer's own half of the security list (D1501) and the switch
+	// that is its alone (D1517, D1503): the rows the layer adds for every
+	// repository of the project, and always_level_3, which asks for the
+	// adversarial review level for every change of the project. Owner `config`
+	// for security.patterns' reason — the layer file is the second editor
+	// D1515 names, and `fugaro config publish` is what carries it — and the
+	// rows are judged by the rules the repository's own are, which is why they
+	// share that row's answer. always_level_3 is the one that is no list: it is
+	// a switch that only turns on, and false is a layer that states nothing.
+	layerRow("security.patterns.*.name", "none", "config", docLayer),
+	layerRow("security.patterns.*.match", "none", "config", docLayer),
+	layerRow("security.patterns.*.category", "none", "config", docLayer),
+	layerValueRow("security.always_level_3", "false", "config", docLayer),
 }
 
 // LocalPrefix marks a local row whose bare name a fugaro.yaml key already
@@ -804,6 +838,7 @@ var localRows = []Row{
 	loc("image_catalog.entries.*.source.repo", "none", "project", docImages),
 	loc("image_catalog.entries.*.source.path", "none", "project", docImages),
 	loc("image_catalog.entries.*.source.branch", "none", "project", docImages),
+	loc("image_catalog.entries.*.source.context", "none", "project", docImages),
 	loc("image_catalog.entries.*.source.inline", "none", "project", docImages),
 	loc("image_catalog.entries.*.source.image", "none", "project", docImages),
 	loc("image_catalog.entries.*.description", "none", "project", docImages),

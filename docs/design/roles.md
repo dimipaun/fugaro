@@ -72,7 +72,7 @@ is checked against a role anywhere.
 | Launch a job (the opt-in Batch backend, `--provision-batch`) | `roles/batch.jobsEditor`, conditioned to Fugaro-shaped job names (`modules/compute/iam.tf:140`), and `roles/iam.serviceAccountUser` on each run account, never on the project (`:159`) | — | — |
 | Cancel a run, read job/execution status | the `fugaroLauncher` custom role: `run.jobs.get/list`, `run.executions.get/list/cancel`, `run.operations.get` (`modules/installation/iam.tf:8`) | — | — |
 | Run logs | `roles/logging.viewAccessor` on the isolated log view (`modules/installation/logging.tf:106`) | same | — |
-| Runs bucket | read the whole bucket (`objectViewer`, `modules/installation/iam.tf:156`); write `runs/` and `tokens/` only (`objectUser`, conditioned, `:172`) | read and write **all** of it (`objectAdmin`, `:141`) | — |
+| Runs bucket | read the whole bucket (`objectViewer`, `modules/installation/iam.tf:156`); write `runs/`, `tokens/` and `issues/` only (`objectUser`, conditioned, `:172`) | read and write **all** of it (`objectAdmin`, `:141`) | — |
 | Terraform state bucket | — | `roles/storage.objectAdmin` (`:194`) | — |
 | Image builds / base images | — | `fugaroBuildSubmitter` (`:77`), the base-image writer on the registry (`:204`) | — |
 | Secret Manager | list secrets and versions, metadata only (`fugaroLauncher`, `modules/installation/iam.tf:16`) | — | — |

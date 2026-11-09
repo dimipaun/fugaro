@@ -57,7 +57,7 @@ and T8 waits on the spike only.
 | No raise form is open to an agent session: `budget set`, `budget resume`, the policy ceilings | T3 |
 | Over-cap error: estimated cost, cap, spent, the one command, non-zero exit | T8 |
 | A missing or unknown Cloud Billing price **refuses**; a missing machine type refuses; local config cannot supply a rate | T8 |
-| Observe mode: the build proceeds and records; an absent mode is observe; only maxReserve and kill switches bite; `doctor` says so | T8, T9 |
+| Observe mode: the build proceeds and records; an absent mode is observe; only maxReserve and kill switches bite; `doctor` says so | T4 (the `doctor` line), T8, T9 |
 | `fugaro update` raises the mode to enforce on a managed project wherever the owner has not chosen one (an additive `config/modeSet` says which); one `doctor` line says so, and where the global caps are missing the raise cannot land (D6): the mode stays observe, `doctor` names the caps, and the installation is unbounded | T16 |
 | The integrity refusals stay (listed in T9) and are in `TestIntegrityRefusalsStillRefuse` | T9 |
 | Out-of-table grants apply, are recorded and warned (session and `doctor`); the record is harder to erase | T9 |
@@ -125,9 +125,10 @@ and T8 waits on the spike only.
 
 ### T4 — image build and refresh: no confirmation, the lease
 - **Files:** `internal/cli/image.go`, `image_build_catalog.go`, `image_refresh.go`, `image_refresh_managed.go`,
-  `image_refresh_steps.go`, `image_build_managed.go` (`ImageBuildsBound` use), their tests. **`image_refresh_managed.go` and `image_build_managed.go` lose the `ImageBuildsBound` call here** (moved from T10, so T9 and T10 do not both write `image_refresh_managed.go`).
+  `image_refresh_steps.go`, `image_build_managed.go` (`ImageBuildsBound` use), `internal/cli/doctor_build_budget.go`
+  (new; the observe-mode warning, D1548), their tests. **`image_refresh_managed.go` and `image_build_managed.go` lose the `ImageBuildsBound` call here** (moved from T10, so T9 and T10 do not both write `image_refresh_managed.go`). **The doctor check moves here from T8**: nothing takes a build lease until this task wires the lease into the build path, so the warning that an over-cap build is recorded and never refused has nothing true to say before it.
 - Remove `confirmBuild`/`buildNotConfirmable`; take T8's lease before each submit. **Tests:**
-  `TestImageBuildAsksNothing`, `TestImageBuildOverCapFailsWithTheSpecError`.
+  `TestImageBuildAsksNothing`, `TestImageBuildOverCapFailsWithTheSpecError`, `TestDoctorWarnsObserveWithUnattendedBuilds`.
 - **Depends on:** T1, T8, (#1870 merged). **Reviewer:** opus + mandatory independent review.
 - **Commit:** `image: a build asks nothing and leases its cost (T4)`.
 
@@ -195,7 +196,7 @@ and T8 waits on the spike only.
 
 ### T8 — the estimator, the Billing read, and the lease (D1543, D1548, D1550, F19)
 - **Files:** `internal/budget/buildcost.go` (new), `internal/budget/buildcost_test.go` (new),
-  `internal/budget/lease_build.go` (new), `internal/cli/image_cost.go` (new), `internal/cli/doctor_build_budget.go` (new; the observe-mode warning, D1548), the Firebase rules under
+  `internal/budget/lease_build.go` (new), `internal/cli/image_cost.go` (new) — **no doctor change here: the observe-mode warning (`doctor_build_budget.go`, D1548) and its test are T4's**, whose lease wiring is what makes the check true — the Firebase rules under
   `deploy/terraform/gcp/modules/firebase` and `internal/budget/rules` (the build lease path) with their emulator
   tests, golden plans, **and the rules path the catalog check job's lease uses (T10 consumes it, so it is written here)**, **and** `deploy/terraform/gcp/modules/installation/iam.tf` **only if this task's live run of the service-account path needs an entry there**: the spike found no grant is needed on the **user** path (2026-11-08), while the job path's no-quota-project request is still unprobed ([billing-price-spike.md](billing-price-spike.md) §9 item 1), so the file stays on this list and any entry it needs takes the level-3 review in the same release.
 - **T8S first** decides the Billing mechanism (list prices need the API enabled, not a project role; contract prices need a billing-account role a project module cannot grant; the CLI runs on the person's credentials): **decided 2026-11-08 — no grant in `iam.tf` on the user path**, the API enabled on the installation project being the only installation change there, and the lookup reading the catalog on the caller's own OAuth credentials, no API key. **The job path is not decided**: this task's live run of the catalog check job's own request (no quota project) is what says whether `iam.tf` needs an entry for it (§9 item 1 of the spike). **The price is queried from Cloud Billing at run time** (D1550); **a missing or unknown price refuses**,
@@ -206,7 +207,7 @@ and T8 waits on the spike only.
   exits non-zero. Observe mode records and proceeds (D1548).
 - **Tests:** `TestBuildCostIsAnUpperBound`, `TestUnknownBillingPriceRefuses`, `TestOverCapErrorNamesEstimateCapSpentAndTheCommand`,
   `TestObserveModeRecordsAndProceeds`, the rules' emulator test `TestBuildLeasePath`,
-  `TestPreviousRulesGenerationConvergesOnUpdate`, `TestAnAbandonedBuildLeaseIsReclaimed`, `TestBuildLeaseWriterCannotTouchAnotherRunsReservedOrCaps` (emulator), `TestDoctorWarnsObserveWithUnattendedBuilds`.
+  `TestPreviousRulesGenerationConvergesOnUpdate`, `TestAnAbandonedBuildLeaseIsReclaimed`, `TestBuildLeaseWriterCannotTouchAnotherRunsReservedOrCaps` (emulator).
 - **Depends on:** T1; **T8S** (the Billing spike), **answered 2026-11-08 for the user path**: no `iam.tf` grant
   there, the mechanism being the API's entry in `apis.tf` plus a read on the caller's own credentials. The
   level-3 security review that a grant's shape takes before `iam.tf` is written (T5 of the reconciliation) is
@@ -250,7 +251,7 @@ and T8 waits on the spike only.
   `config/caps/global` — T16's step sets no mode there, because `enforce` is refused without the global caps
   (D6) and neither `setup` nor `update` seeds that node (`fugaro budget set --global` is its only writer). In
   observe only `maxReserveMicros` (seeded at $5, so one build is bounded per lease) and the kill switches bite,
-  and nothing bounds how many builds run. `doctor` names the mode in both cases: T8's observe warning, and
+  and nothing bounds how many builds run. `doctor` names the mode in both cases: T4's observe warning, and
   T16's line, which names the missing caps. The caps are the operator's to set — no task here writes them — and
   the capless case is one of the reconciliation's open items. **Tests:** `TestPreviousMarkerVersionConvergesOnUpdate`, `TestCatalogCheckJobLeasesEachBuild`.
 - **Depends on:** T4, T8, **T9** (golden plans and installation-module files are shared), **T16** (T6(b): the
@@ -278,7 +279,7 @@ and T8 waits on the spike only.
 - **Files:** `internal/cli/update.go` (the hook), `internal/cli/update_budget_mode.go` (new),
   `internal/infra/firebasedb.go` (the mode write records whether the mode was **asked for** or seeded),
   `internal/cli/budget.go` (`budget set --global --mode …` records the owner's choice; T3 lands first),
-  `internal/cli/doctor_build_budget.go` (one line; T8 lands first), their tests.
+  `internal/cli/doctor_build_budget.go` (one line; T4 lands first), their tests.
 - **The trigger is the record of an owner's choice, not the mode's absence.**
   `internal/infra/firebasedb.go` **seeds** `config/mode` = `observe` at install and keeps it ("changed only on
   request"), so on every installation that could take a build lease the node is **present**: a step that fired on
@@ -379,7 +380,7 @@ ruled); T16, the T6(b) step, is off the critical path.
 | `managed_gate.go`, `managed_apply.go`, `doctor_managed_audit.go`, `internal/managed/{converge,plan,apply,audit}.go`, `cover.go`, `guard.go` | T9 (3) |
 | `internal/managed/builds.go`, `internal/infra/managed/*`, `internal/infra/catalogcheck.go` | T10 (3) |
 | `internal/budget/*`, Firebase rules, `iam.tf` (billing grant) | T8 (1) |
-| `update.go`, `update_budget_mode.go` (new), `doctor_build_budget.go`, `internal/infra/firebasedb.go` | T8 (1: `doctor_build_budget.go`, new), T16 (2: the mode step and one doctor line) |
+| `update.go`, `update_budget_mode.go` (new), `doctor_build_budget.go`, `internal/infra/firebasedb.go` | T4 (2: `doctor_build_budget.go`, new), T16 (2: the mode step and one doctor line) |
 | `internal/initflow/stage.go` | T9 (3: `Removes` only), T12 (6) |
 | `docs/gcp-live-checklist.md`, `SECURITY.md` flag text, plugin skills, console `spawn.ts`/`confirm.ts` | T11 (5); T14 rows and T13 gate text land at level 5 |
 | `CLAUDE.md`, `.claude/rules/*` | T13 (6) |

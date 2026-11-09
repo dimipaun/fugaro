@@ -244,7 +244,7 @@ raised, the owner answered on 2026-11-01, and nothing further is needed for.
   daily caps (spec §4, §9).
 - **The image skew.** `task.Parse` decodes with `DisallowUnknownFields` (`internal/task/task.go:863`), so a
   job image whose runner predates the new `overrides` members refuses the whole task. Every other field
-  added to a task is gated by `checkImageSince` (`internal/cli/recipes_skew.go:700`) against a `*Since`
+  added to a task is gated by `checkImageSince` (`internal/cli/recipes_skew.go:711`) against a `*Since`
   release constant (`titlesSince` `:348`, `rigorRequestSince` `:511`, `governanceSince` `:531`), and the
   gates are called in one block in `launchRun` (`internal/cli/run.go:727-801`). A new field that skips the
   gate is a launch that fails in the container, which the HARD RULE forbids.

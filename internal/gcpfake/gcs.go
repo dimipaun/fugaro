@@ -80,6 +80,9 @@ type GCS struct {
 	// (FailObjectStoresAfterWrite), which is the one failure a caller that
 	// removes what a failed create may have left cannot see any other way.
 	failStores int
+	// failWrites is how many more writes of an object ("<bucket>/<name>") are
+	// refused without storing it (FailObjectWrites).
+	failWrites map[string]int
 	// failObject maps an object ("<bucket>/<name>") to the first read of it
 	// that answers 403 (FailObjectGetsAfter); reads is how many reads of
 	// each object the fake has served, successful or failed.
@@ -144,7 +147,7 @@ func NewGCS(t *testing.T) *GCS {
 	g := &GCS{gen: 1_700_000_000_000_000, buckets: map[string]map[string]*object{}, meta: map[string]*bucketMeta{},
 		uploads: map[string]*upload{}, projects: map[string]uint64{}, denied: map[string][]string{},
 		refusedPolicy: map[string]bool{}, failedPolicy: map[string]bool{}, held: map[string][]string{},
-		failObject: map[string]int{}, reads: map[string]int{}, failList: map[string]bool{}, noList: map[string][]string{}}
+		failWrites: map[string]int{}, failObject: map[string]int{}, reads: map[string]int{}, failList: map[string]bool{}, noList: map[string][]string{}}
 	g.Server = newServer(t, g.handle)
 	return g
 }
@@ -201,6 +204,19 @@ func (g *GCS) FailObjectStoresAfterWrite(n int) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.failStores = n
+}
+
+// FailObjectWrites makes the next n writes of the object named name in bucket
+// answer 403 without storing it: a write that landed nowhere, which a caller
+// that removes what a failed write may have left behind must not read as "the
+// object is as it was". 403 and not a 5xx, because the storage client retries
+// a 5xx on its own; no store, unlike FailObjectStoresAfterWrite; and one object
+// rather than a prefix and only n times, unlike DenyWrites, so a test can fail
+// the second write of an object and let the third through.
+func (g *GCS) FailObjectWrites(bucket, name string, n int) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.failWrites[bucket+"/"+name] = n
 }
 
 // FailListings makes every object listing of bucket answer 403
@@ -724,6 +740,11 @@ func (g *GCS) store(w http.ResponseWriter, bucket, name, ct string, cond *int64,
 		return
 	}
 	if g.deniedWrite(w, bucket, name) {
+		return
+	}
+	if key := bucket + "/" + name; g.failWrites[key] > 0 {
+		g.failWrites[key]--
+		writeError(w, http.StatusForbidden, "PERMISSION_DENIED", "the write of this object was refused and stored nothing")
 		return
 	}
 	objs := g.buckets[bucket]

@@ -99,7 +99,7 @@ func TestRunHumanOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := markDone + " launch " + appSlug + "/20260927-100000-abcd\n  branch fugaro/20260927-100000-abcd cut from main\n  logs https://"
+	want := markDone + " launch " + task.ShortRun("20260927-100000-abcd") + "\n  branch fugaro/20260927-100000-abcd cut from main\n  logs https://"
 	if !strings.HasPrefix(out, want) {
 		t.Fatalf("output:\n%s\nwant prefix:\n%s", out, want)
 	}
@@ -721,7 +721,7 @@ func TestRunRetryOfALaunchedRunHints(t *testing.T) {
 		t.Fatal(err)
 	}
 	out, errOut, err := execute(t, "run", "--retry", "20260927-100000-abcd")
-	if err != nil || !strings.Contains(out, markSkipped+" launch "+appSlug+"/20260927-100000-abcd already launched") || !strings.Contains(errOut, "fugaro diagnose "+appSlug+"/20260927-100000-abcd") {
+	if err != nil || !strings.Contains(out, markSkipped+" launch "+task.ShortRun("20260927-100000-abcd")+" already launched") || !strings.Contains(errOut, "fugaro diagnose "+task.ShortRun("20260927-100000-abcd")) {
 		t.Fatalf("out %q, stderr %q, err %v", out, errOut, err)
 	}
 }
@@ -2166,4 +2166,92 @@ func TestReviewRunFlagNeedsAPullRequest(t *testing.T) {
 	// carry findings about code this fix round is not for.
 	seedRoot(t, f, rootID, time.Now().Add(-72*time.Hour))
 	wantFindingsRefused(t, f, mustSlug("github", "other/app")+"/"+reviewID, "is a review of")
+}
+
+// TestLaunchOutputShortID: the line a launch prints names the run by the four
+// characters every surface shows (D1706) — the reporter's step, and the hint
+// a --retry of an already-launched run adds. The branch line keeps the full
+// ID, which is what a branch is (D1705), and --json keeps the whole document
+// (F8).
+func TestLaunchOutputShortID(t *testing.T) {
+	newCloudFixture(t)
+	t.Chdir(t.TempDir())
+	const id = "20260927-100000-abcd"
+	out, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", id, "Add a feature")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.SplitN(out, "\n", 3)
+	if want := markDone + " launch " + task.ShortRun(id); lines[0] != want {
+		t.Fatalf("the launch line = %q, want %q", lines[0], want)
+	}
+	if len(lines) < 2 || !strings.Contains(lines[1], "fugaro/"+id) {
+		t.Errorf("the branch line = %q, want the full run ID in the branch", lines[1])
+	}
+
+	// --json is the machine's: the run and its ID stay whole (F8, D1705).
+	js, _, err := execute(t, "run", "--json", "--repo", "acme/app", "--run-id", id, "Add a feature")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var res launchResult
+	if err := json.Unmarshal([]byte(js), &res); err != nil {
+		t.Fatal(err)
+	}
+	if res.Run != appSlug+"/"+id || res.RunID != id {
+		t.Errorf("--json's run = %q, %q, want the full IDs", res.Run, res.RunID)
+	}
+
+	// The hint beside a --retry names the run the short way too, because the
+	// command it names accepts it (SR14).
+	_, errOut, err := execute(t, "run", "--retry", id)
+	if err != nil || !strings.Contains(errOut, "fugaro diagnose "+task.ShortRun(id)) {
+		t.Fatalf("the --retry hint = %q, %v", errOut, err)
+	}
+}
+
+// TestRetryEndingRefused: `run --retry` launches a stored task, so it takes a
+// full run ID or <slug>/<run-id> and never an ending (D1705, O4): a run minted
+// by an ending the bucket cannot vouch for must not be launched.
+func TestRetryEndingRefused(t *testing.T) {
+	newCloudFixture(t)
+	t.Chdir(t.TempDir())
+	_, _, err := execute(t, "run", "--retry", "3bb2")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "neither <repo-slug>/<run-id> nor a run ID") {
+		t.Fatalf("run --retry 3bb2 = %v, want the malformed-reference refusal", err)
+	}
+}
+
+// TestReviewRunEndingRefused: --review-run carries a stored review's findings
+// into a fix round, so it names a run in full like --retry does (D1705, O4).
+func TestReviewRunEndingRefused(t *testing.T) {
+	newCloudFixture(t)
+	t.Chdir(t.TempDir())
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--review-run", "3bb2", "fix it")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "--review-run \"3bb2\" must look like") {
+		t.Fatalf("run --review-run 3bb2 = %v, want the shape refusal", err)
+	}
+}
+
+// TestReviewShowEndingRefused: `review show` reads one run's verdict artifact,
+// so its RUN is <repo-slug>/<run-id> and an ending is refused (SR14 leaves it
+// with locateRun's family rather than resolveRun's).
+func TestReviewShowEndingRefused(t *testing.T) {
+	newCloudFixture(t)
+	_, _, err := execute(t, "review", "show", "3bb2")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "<repo-slug>/<run-id>") {
+		t.Fatalf("review show 3bb2 = %v, want the malformed-reference refusal", err)
+	}
+}
+
+// TestRunIDFlagKeepsFullID: --run-id is an identifier the bucket and the
+// launcher's idempotency read, so it stays a full run ID (D1705): an ending
+// there would name a run nothing minted.
+func TestRunIDFlagKeepsFullID(t *testing.T) {
+	newCloudFixture(t)
+	t.Chdir(t.TempDir())
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "3bb2", "Add a feature")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "must look like 20260926-221530-a1b2") {
+		t.Fatalf("run --run-id 3bb2 = %v, want the shape refusal", err)
+	}
 }

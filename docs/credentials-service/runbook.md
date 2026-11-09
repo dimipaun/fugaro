@@ -170,3 +170,19 @@ gcloud projects set-iam-policy <gcp-project> policy.json
 ```
 
 Then read the log back: a bundle read is **one** entry, naming the secret and never a value. With one bundle secret (Q6) the log shows that the service read *the* secret; it does not show which credential inside it was used.
+
+## 11. The Bitbucket proxy: rotating its token, and what an outage looks like
+
+The service's **git half** is the Bitbucket proxy: on a repository whose installation opted in **and** whose published node's `bitbucket_token` block admits it with `proxy: true`, the run's git traffic reaches Bitbucket through the service and the run's own git environment carries no token at all (SECURITY.md's "The Bitbucket git proxy"). Two operator facts differ from the model half above.
+
+**A rotation writes two copies while S4 is open.** The proxy's copy is the bundle's entry, and the build account keeps its own copy of the same token until S4 — so a rotation is two writes of one new value, and a rotation that misses the second leaves every build of the repository cloning with the token you just revoked:
+
+```bash
+fugaro creds ls                                                        # the names, never a value
+fugaro creds set bitbucket-token < token-file                          # the proxy's copy, in the bundle
+fugaro secrets set bitbucket-token --repo <owner/name> < token-file    # the build's copy, until S4
+```
+
+The bundle write is §6's read-modify-write, and the version it replaced is disabled afterwards. The repository's own copy is the ordinary one, or the project-wide one where the token really is one workspace token. Wait for the builds and executions using it to end, then revoke the old token at Bitbucket. The two copies must not disagree: the build and the proxy would authenticate with different tokens, and one of them is the one you meant to retire. A repository the node does not proxy has one copy only, the one it has always had.
+
+**A cold start and an outage land on the clone.** The service scales to zero (§3's second read), so for a proxied run the first git request after an idle period, the clone, pays the cold start before any work. It is one revision with **no redundancy** beyond Cloud Run's own, so a service that is never applied, a revision that fails to start and a caller IAM refuses leave every proxied run unable to clone — and §3's reads are what tells those apart. A proxied run that cannot reach the service fails or halts named and **never falls back to a token of its own** (D143): it has none to fall back to, which is the point. Every Bitbucket repository the node does not proxy is untouched by all of this: its runs mount and read their own token exactly as before.

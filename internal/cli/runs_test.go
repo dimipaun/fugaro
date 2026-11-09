@@ -2429,3 +2429,288 @@ func TestRunsLsFollowsExecutionsWithinFollowWorkers(t *testing.T) {
 		t.Errorf("runs ls followed %d executions at once, want exactly followWorkers (%d): the pass fans out over the runs the listing could not answer for, within its bound", peak, followWorkers)
 	}
 }
+
+// TestRunsWithoutGroupByIsUnchanged: the grouping is additive. A listing that
+// did not ask for it carries the four keys it always has and no `groups` key at
+// all, and the grouped document is that document plus the one block: the flag
+// moves no row and no total. The phone reads this shape strictly, so an extra
+// key is not a bigger document but a frame the app refuses (F14, D1458).
+func TestRunsWithoutGroupByIsUnchanged(t *testing.T) {
+	f := newCloudFixture(t)
+	f.run.Project, f.run.Region = "proj-1234", "us-east5"
+	seedClassedRun(t, f, recentRunID(t, time.Minute, "aaaa"), failure.TestsFailed, 1)
+
+	plain, _, err := execute(t, "runs", "ls", "--json", "--since", "0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(plain, `"groups"`) {
+		t.Errorf("a listing without --group-by carries a groups block:\n%s", plain)
+	}
+	docKeys, rowKeys := lsJSONKeys(t, "--since", "0")
+	if want := []string{"project", "runs", "totals", "warnings"}; !slices.Equal(docKeys, want) {
+		t.Errorf("the plain document's keys are %v, want %v", docKeys, want)
+	}
+	grouped, raw := groupJSON(t, "--since", "0")
+	groupedKeys, groupedRowKeys := lsJSONKeys(t, "--since", "0", "--group-by", "failure_class")
+	if want := []string{"groups", "project", "runs", "totals", "warnings"}; !slices.Equal(groupedKeys, want) {
+		t.Errorf("the grouped document's keys are %v, want the plain document's plus groups (%v)", groupedKeys, want)
+	}
+	if !slices.Equal(rowKeys, groupedRowKeys) {
+		t.Errorf("a row's keys are %v grouped and %v plain, want rows that did not move", groupedRowKeys, rowKeys)
+	}
+	if len(grouped.Rows) != 1 || grouped.Totals.Runs != 1 {
+		t.Errorf("the grouped document lists %d rows and totals %d, want the window's one run: the block is beside the rows, not instead of them",
+			len(grouped.Rows), grouped.Totals.Runs)
+	}
+	if !strings.Contains(raw, `"totals"`) {
+		t.Errorf("the grouped document dropped the totals line:\n%s", raw)
+	}
+}
+
+// TestLegacyRowsAreGroupedByTheirReason: a record written before the field
+// shipped names no class, and the reader answers one for it — so the window is
+// grouped by the cause and not split into before and after (F34, D1455).
+func TestLegacyRowsAreGroupedByTheirReason(t *testing.T) {
+	f := newCloudFixture(t)
+	f.run.Project, f.run.Region = "proj-1234", "us-east5"
+	old := runIDAt(0, "090000", "aaaa")
+	seedRun(t, f, old, "", "someone@example.com", false)
+	writeRecord(t, f, old, &runstore.Record{Version: 1, RunID: old, Repo: "acme/app",
+		Status: runstore.StatusFailed, Stage: "verify", Reason: "tests failing on the final commit"})
+	seedClassedRun(t, f, runIDAt(0, "091000", "bbbb"), failure.TestsFailed, 1)
+
+	got, _ := groupJSON(t, "--since", "0")
+	byClass := map[string]lsGroupWire{}
+	for _, g := range got.Groups {
+		byClass[g.Class] = g
+	}
+	if len(byClass) != 1 || byClass[string(failure.TestsFailed)].Runs != 2 {
+		t.Fatalf("the window grouped as %+v, want the legacy record and the classed one in tests_failed's own group", got.Groups)
+	}
+}
+
+// seedTaskRun writes the task.json of one run the listing reads, with the
+// spec the caller built: the two triage follow-up fields (task.Spec.Debt and
+// Spec.FollowUpOf) are what `runs ls --debt` and `runs ls --json`'s
+// follow_up_of are about, and a run is only what its task says it is.
+func seedTaskRun(t *testing.T, f *cloudFixture, id string, spec *task.Spec) *runstore.Store {
+	t.Helper()
+	ctx := context.Background()
+	b, err := blobx.Open(ctx, f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	spec.Version, spec.RunID, spec.Repo, spec.Ref = 1, id, "acme/app", "main"
+	if spec.Workflow == "" {
+		spec.Workflow = "web"
+	}
+	if spec.Task == "" {
+		spec.Task = "x"
+	}
+	s := runstore.Open(b.Bucket, appSlug, id)
+	if err := s.CreateTask(ctx, spec); err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+// seedCorruptTask leaves a run whose task.json is not a task spec. The
+// store's own writes are create-only and always a valid spec, so the object
+// is written where the bucket keeps it, the way cloudFixture writes its
+// project marker.
+func seedCorruptTask(t *testing.T, f *cloudFixture, id string) {
+	t.Helper()
+	dir := filepath.Join(f.dir, "runs", filepath.FromSlash("runs/"+appSlug+"/"+id))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "task.json"), []byte("{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// lsRawRuns is a listing's rows as they went over the wire, key by key,
+// rather than a decode into Row: a decode cannot show a key that appeared or
+// went missing, which is what an additive field's test has to see.
+func lsRawRuns(t *testing.T, args ...string) []map[string]json.RawMessage {
+	t.Helper()
+	out, errOut, err := execute(t, append([]string{"runs", "ls", "--json"}, args...)...)
+	if err != nil {
+		t.Fatalf("ls: %v (%s)", err, errOut)
+	}
+	var doc struct {
+		Runs []map[string]json.RawMessage `json:"runs"`
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	return doc.Runs
+}
+
+// TestRunsLsDebtFiltersToDebtTasks: --debt lists the runs filed from a
+// triage deferral and nothing else (docs/post-review-triage T-TR11): the
+// flag reads the task's own mark (task.Spec.Debt), so a run somebody asked
+// for is never in the listing. A run whose task.json is unreadable is not
+// either: an unreadable task cannot say it is debt, and a listing about the
+// work nobody chose may not guess a run into itself.
+func TestRunsLsDebtFiltersToDebtTasks(t *testing.T) {
+	f := newCloudFixture(t)
+	today := time.Now().UTC().Format("20060102")
+	debt := &task.Spec{Debt: true, FollowUpOf: &task.FollowUpOf{Run: "20261107-090000-3c4d", Keys: []string{"9f2a1c"}}}
+	seedTaskRun(t, f, today+"-090000-aaaa", debt)
+	seedTaskRun(t, f, today+"-091000-bbbb", &task.Spec{})
+	seedTaskRun(t, f, today+"-092000-cccc", &task.Spec{Debt: true})
+	seedCorruptTask(t, f, today+"-093000-dddd")
+
+	all, _ := lsJSON(t, "--since", "0")
+	if len(all.Runs) != 4 {
+		t.Fatalf("the fixture lists %d runs, want the 4 it seeded", len(all.Runs))
+	}
+	got, _ := lsJSON(t, "--since", "0", "--debt")
+	if len(got.Runs) != 2 {
+		t.Fatalf("runs ls --debt = %d runs, want the 2 whose task is marked debt: %+v", len(got.Runs), runIDs(got.Runs))
+	}
+	for _, want := range []string{"-aaaa", "-cccc"} {
+		if !slices.ContainsFunc(got.Runs, func(r runview.Row) bool { return strings.HasSuffix(r.RunID, want) }) {
+			t.Errorf("runs ls --debt left out the run ending %s", want)
+		}
+	}
+	if slices.ContainsFunc(got.Runs, func(r runview.Row) bool { return strings.HasSuffix(r.RunID, "-bbbb") }) {
+		t.Error("runs ls --debt listed a run its task does not mark debt")
+	}
+
+	human, _, err := execute(t, "runs", "ls", "--since", "0", "--debt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(human, "-aaaa") || strings.Contains(human, "-bbbb") || strings.Contains(human, "-dddd") {
+		t.Fatalf("the plain listing's --debt =\n%s", human)
+	}
+}
+
+// TestRunsLsJSONCarriesFollowUpOf: a run whose task came out of a triage
+// deferral carries the parent it was filed from and the deferred finding
+// keys it settles (docs/post-review-triage D1843, T-TR11), under the new
+// key `follow_up_of`; a run nobody filed that way carries no key at all, so
+// absence reads as "not a triage follow-up" rather than as an empty parent.
+func TestRunsLsJSONCarriesFollowUpOf(t *testing.T) {
+	f := newCloudFixture(t)
+	today := time.Now().UTC().Format("20060102")
+	const parent = "20261107-090000-3c4d"
+	seedTaskRun(t, f, today+"-090000-aaaa", &task.Spec{
+		Debt:       true,
+		FollowUpOf: &task.FollowUpOf{Run: parent, Keys: []string{"9f2a1c", "3b7e05"}},
+	})
+	seedTaskRun(t, f, today+"-091000-bbbb", &task.Spec{Branch: "fugaro/" + parent, PreviousRun: parent})
+
+	got, _ := lsJSON(t, "--since", "0")
+	if len(got.Runs) != 2 {
+		t.Fatalf("the fixture lists %d runs, want 2", len(got.Runs))
+	}
+	byID := map[string]runview.Row{}
+	for _, r := range got.Runs {
+		byID[r.RunID[len(r.RunID)-4:]] = r
+	}
+	filed := byID["aaaa"]
+	if filed.FollowUpOf == nil {
+		t.Fatalf("the triage follow-up's row carries no follow_up_of: %+v", filed)
+	}
+	if filed.FollowUpOf.Run != parent {
+		t.Errorf("follow_up_of.run = %q, want %q", filed.FollowUpOf.Run, parent)
+	}
+	if !slices.Equal(filed.FollowUpOf.Keys, []string{"9f2a1c", "3b7e05"}) {
+		t.Errorf("follow_up_of.keys = %v, want the parent's two finding keys", filed.FollowUpOf.Keys)
+	}
+	if asked := byID["bbbb"]; asked.FollowUpOf != nil {
+		t.Errorf("a run nobody filed from a deferral carries follow_up_of = %+v", asked.FollowUpOf)
+	}
+
+	raw := lsRawRuns(t, "--since", "0")
+	if len(raw) != 2 {
+		t.Fatalf("the raw listing holds %d rows, want 2", len(raw))
+	}
+	var want string
+	for _, row := range raw {
+		if strings.Contains(string(row["run_id"]), "-aaaa") {
+			want = string(row["follow_up_of"])
+		}
+	}
+	if want == "" {
+		t.Fatalf("the raw row carries no follow_up_of key: %v", raw)
+	}
+	var doc struct {
+		Run  string   `json:"run"`
+		Keys []string `json:"keys"`
+	}
+	if err := json.Unmarshal([]byte(want), &doc); err != nil {
+		t.Fatalf("follow_up_of = %s: %v", want, err)
+	}
+	if doc.Run != parent || !slices.Equal(doc.Keys, []string{"9f2a1c", "3b7e05"}) {
+		t.Errorf("the wire's follow_up_of = %s, want the parent and its two keys", want)
+	}
+}
+
+// TestRunsLsJSONExistingFieldsUnchanged: the new key is additive. Two runs
+// minted at the same instant, whose tasks are the same follow-up apart from
+// the triage fields, are the same row in every other key -- nothing retyped,
+// renamed or dropped -- which is what "a field never changes meaning" means
+// for a reader that has not been rebuilt for it.
+func TestRunsLsJSONExistingFieldsUnchanged(t *testing.T) {
+	f := newCloudFixture(t)
+	const parent = "20261107-090000-3c4d"
+	// The same mint time, so `created` (the run ID's own time) is one value
+	// on both rows and the only keys left to differ are the two that name
+	// the run.
+	day := time.Now().UTC().Format("20060102")
+	seedTaskRun(t, f, day+"-090000-aaaa", &task.Spec{
+		Branch:      "fugaro/" + parent,
+		PR:          7,
+		PreviousRun: parent,
+		FollowUpOf:  &task.FollowUpOf{Run: parent, Keys: []string{"9f2a1c"}},
+		Debt:        true,
+	})
+	seedTaskRun(t, f, day+"-090000-bbbb", &task.Spec{
+		Branch:      "fugaro/" + parent,
+		PR:          7,
+		PreviousRun: parent,
+	})
+
+	rows := map[string]map[string]json.RawMessage{}
+	for _, row := range lsRawRuns(t, "--since", "0") {
+		var id string
+		if err := json.Unmarshal(row["run_id"], &id); err != nil {
+			t.Fatal(err)
+		}
+		rows[id[len(id)-4:]] = row
+	}
+	if len(rows) != 2 {
+		t.Fatalf("the listing holds %d rows, want the 2 it seeded", len(rows))
+	}
+	if _, ok := rows["aaaa"]["follow_up_of"]; !ok {
+		t.Fatalf("the row whose task carries the triage fields has no follow_up_of: %v", rows["aaaa"])
+	}
+	if _, ok := rows["bbbb"]["follow_up_of"]; ok {
+		t.Errorf("a task with no follow_up_of writes the key anyway: %s", rows["bbbb"]["follow_up_of"])
+	}
+	delete(rows["aaaa"], "follow_up_of")
+	for _, row := range rows {
+		// The two keys that name the run, and nothing else.
+		delete(row, "run")
+		delete(row, "run_id")
+	}
+	if len(rows["aaaa"]) != len(rows["bbbb"]) {
+		t.Fatalf("the two rows differ in their keys: %d with the fields, %d without", len(rows["aaaa"]), len(rows["bbbb"]))
+	}
+	for key, want := range rows["bbbb"] {
+		got, ok := rows["aaaa"][key]
+		if !ok {
+			t.Errorf("adding the triage follow-up fields dropped the field %q", key)
+			continue
+		}
+		if !bytes.Equal(got, want) {
+			t.Errorf("field %q changed when the triage fields were added: %s, want %s", key, got, want)
+		}
+	}
+}

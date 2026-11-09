@@ -315,7 +315,7 @@ func newRunCmd() *cobra.Command {
 	f.StringVar(&o.title, "title", "", "the run's title, one line: what fugaro watch and runs ls list the run by, and the pull request's title unless the agent wrote its own pr.md (default: the task's first line); a follow-up (--pr) keeps its run's title unless this is given")
 	f.StringVar(&o.planTask, "plan-task", "", "record the plan task this run works on, as <plan>/<task> (for example setup-wizard/W1.3): the id the console's graph joins this run to a node by; it changes nothing about what the run does, and a follow-up (--pr) records one only when given")
 	f.StringVar(&o.tf, "task-file", "", "read the task from this file, or - for stdin")
-	f.StringVar(&o.retry, "retry", "", "launch the stored task of RUN (<repo-slug>/<run-id> or a run ID) that never started")
+	f.StringVar(&o.retry, "retry", "", "launch the stored task of RUN (a full run ID, or <repo-slug>/<run-id>) that never started: a run an ending names is never launched, since the bucket cannot vouch for which run an ending means")
 	f.StringVar(&o.totalTimeout, "total-timeout", "", "override the workflow's timeouts.total for this run, such as 45m")
 	f.IntSliceVar(&o.pr, "pr", nil, "continue Fugaro PR N: act on its trusted review comments (TEXT adds instructions); with a mode: review --recipe, review PR N instead (repeatable, 1 to 4, any open PR)")
 	f.StringVar(&o.recipe, "recipe", "", "the recipe (task loop) to run: .fugaro/recipes/NAME.yaml, the project's, or the catalog's ("+strings.Join(recipe.CatalogNames(), ", ")+"); default: agent.recipe in fugaro.yaml, else default; a follow-up (--pr) keeps its previous run's")
@@ -889,6 +889,16 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 			if err := checkCloneJobsImage(ctx, env, spec, warn); err != nil {
 				return launchResult{}, err
 			}
+			// The security: block, the same shape as the rigor: gate above
+			// and for the same reason: see checkSecurityImage.
+			if err := checkCloneSecurityImage(ctx, env, spec, warn); err != nil {
+				return launchResult{}, err
+			}
+			// The planning: block, the same shape and the same reason again:
+			// see checkPlanningImage.
+			if err := checkClonePlanningImage(ctx, env, spec, warn); err != nil {
+				return launchResult{}, err
+			}
 			// The run's own rigor request, gated on the field the same way:
 			// a runner older than rigorRequestSince refuses a task carrying
 			// rigor or paths outright (task.Parse decodes with
@@ -999,6 +1009,16 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 			// The project layer's jobs: block, the same shape and the same
 			// reason again: see jobsSince.
 			if err := checkJobsImage(ctx, env, slug, spec, kind, warn); err != nil {
+				return launchResult{}, err
+			}
+			// The security: block, the same shape as the rigor: gate above and
+			// for the same reason: see checkSecurityImage.
+			if err := checkSecurityImage(ctx, env, slug, spec, kind, warn); err != nil {
+				return launchResult{}, err
+			}
+			// The planning: block, the same shape and the same reason again:
+			// see checkPlanningImage.
+			if err := checkPlanningImage(ctx, env, slug, spec, kind, warn); err != nil {
 				return launchResult{}, err
 			}
 			// The same gate as the clone branch's above, and for the same
@@ -1179,7 +1199,8 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 	}
 	if o.retry != "" && res.Status == "already-launched" {
 		fmt.Fprintf(warn, "%s launched already; --retry only starts a run that never launched. "+
-			"To see how it went, run fugaro diagnose %s; to redo it, start a new run.\n", res.Run, res.Run)
+			"To see how it went, run fugaro diagnose %s; to redo it, start a new run.\n",
+			task.ShortRun(oneLine(res.Run)), task.ShortRun(oneLine(res.Run)))
 	}
 	res.Project = env.lc.Name
 	res.Recipe = launchRecipeOf(spec, chooses)
@@ -1788,7 +1809,7 @@ func runAttempts(cmd *cobra.Command, env *cloudEnv, o *runOptions, text string, 
 			// only be some other process's run reusing the id — too
 			// improbable to recover from; the batch must not silently count
 			// a run it did not itself start.
-			err := fmt.Errorf("run %s was already launched, not by this batch", oneLine(res.Run))
+			err := fmt.Errorf("run %s was already launched, not by this batch", task.ShortRun(oneLine(res.Run)))
 			failStep(rep, step, err)
 			return reportBatchFailure(cmd, o.batch, n, o.asJSON, results, i, err)
 		}
@@ -1847,7 +1868,7 @@ func reportBatchFailure(cmd *cobra.Command, batch string, n int, asJSON bool, re
 	}
 	ids := make([]string, len(results))
 	for j, r := range results {
-		ids[j] = r.RunID
+		ids[j] = task.ShortRun(r.RunID)
 	}
 	return fmt.Errorf("attempt %d of %d: %w; launched %d (batch %s): %s", i+1, n, err, len(results), batch, strings.Join(ids, ", "))
 }
@@ -3460,10 +3481,14 @@ func printLaunch(w io.Writer, res launchResult, asJSON bool) error {
 // request it continues. It is the tail of the line a launch prints, whether
 // that line is the command's own ("launched <what>") or the reporter's step
 // for a migrated launch ("launch <what>", CL7c).
+//
+// The runs are named in their short form: the line a person reads is where a
+// short run ID belongs, and the full one is one command away (D1705). The
+// JSON above keeps them whole.
 func launchWhat(res launchResult) string {
-	what := oneLine(res.Run)
+	what := task.ShortRun(oneLine(res.Run))
 	if res.PR > 0 {
-		what += fmt.Sprintf(" (follow-up of PR #%d, after %s)", res.PR, oneLine(res.PreviousRun))
+		what += fmt.Sprintf(" (follow-up of PR #%d, after %s)", res.PR, task.ShortRun(oneLine(res.PreviousRun)))
 	}
 	return what
 }
@@ -3753,7 +3778,7 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 	if cancelled, err := s.CancelRequested(ctx); err != nil {
 		return res, remote(err)
 	} else if cancelled {
-		return res, userErr("run %s was cancelled; start a new one", res.Run)
+		return res, userErr("run %s was cancelled; start a new one", task.ShortRun(oneLine(res.Run)))
 	}
 	// The job this launch runs on (project_job.go): the shared project job of
 	// the profile the workflow selects, or nil for the per-repository job this
@@ -3807,7 +3832,7 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 			if round < claimRounds-1 {
 				continue
 			}
-			return res, userErr("the launch claim of %s keeps being released by other launches that were refused; fugaro run --retry %s tries again", res.Run, res.Run)
+			return res, userErr("the launch claim of %s keeps being released by other launches that were refused; fugaro run --retry %s tries again", task.ShortRun(oneLine(res.Run)), oneLine(res.Run))
 		}
 		if err != nil {
 			return res, err
@@ -3834,7 +3859,7 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		rctx, rcancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		releaseClaim(rctx, env, s, holder)
 		rcancel()
-		return res, userErr("run %s was cancelled; start a new one", res.Run)
+		return res, userErr("run %s was cancelled; start a new one", task.ShortRun(oneLine(res.Run)))
 	}
 	// The docker tag's rule, before anything of this launch is written or
 	// reported (D1149): a run whose DEPLOYED job image carries the docker tag
@@ -3968,7 +3993,7 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 			rcancel()
 			// A GCP API error is a remote failure (exit 2); %w keeps
 			// ErrRejected and ErrNotFound visible to errors.Is.
-			return res, remote(fmt.Errorf("the launch of %s was refused, so nothing started; fix the cause, then fugaro run --retry %s: %w", res.Run, res.Run, err))
+			return res, remote(fmt.Errorf("the launch of %s was refused, so nothing started; fix the cause, then fugaro run --retry %s: %w", task.ShortRun(oneLine(res.Run)), oneLine(res.Run), err))
 		}
 		// Ambiguous (timeout, 5xx, dropped connection, unreadable reply): the
 		// execution may exist. Keep the claim, and the token object: an

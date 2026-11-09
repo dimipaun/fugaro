@@ -424,6 +424,12 @@ func TestBudgetRaiseRefusesInAnAgentSession(t *testing.T) {
 		// another project's or checkout's caps than the one this run was about,
 		// and the typed project name that used to catch that is gone.
 		{[]string{"budget", "set", "--repo", "--daily", "150"}, "fugaro budget set --daily=150 --repo=acme/app --project=aurora"},
+		// The mode is the fence's other form, and the one a session could
+		// otherwise make unopposed: with the mode node absent (an absent mode is
+		// observe, D1548) the mode edit is a no-op and the choice beside it is
+		// the only node that moves, so the write would record the mode as the
+		// owner's and put the update's own raise out of reach for ever (T16).
+		{[]string{"budget", "set", "--global", "--mode", "observe"}, "fugaro budget set --global --mode=observe --project=aurora"},
 	} {
 		_, _, err := execute(t, c.args...)
 		if err == nil || ExitCode(err) != ExitUserError {
@@ -451,6 +457,27 @@ func TestBudgetRaiseRefusesInAnAgentSession(t *testing.T) {
 	}
 	if v := f.db.Value(nodeCG).(map[string]any)["dailyMicros"].(json.Number).String(); v != "50000000" {
 		t.Fatalf("daily = %s", v)
+	}
+	// A refused mode choice neither moved the mode nor recorded one, and it
+	// names the act it refused rather than the caps it never touched: what the
+	// owner has to run themselves is the mode command above, not a raise.
+	if v := f.db.Value(budget.PathMode); v != nil {
+		t.Errorf("%s = %v: a coding agent's session chose the mode", budget.PathMode, v)
+	}
+	if v := f.db.Value(budget.PathModeSet); v != nil {
+		t.Errorf("%s = %v: a coding agent's session recorded a mode choice, so `fugaro update` would never raise this installation's mode again", budget.PathModeSet, v)
+	}
+	if _, _, err := execute(t, "budget", "set", "--global", "--mode", "observe"); err == nil || !strings.Contains(err.Error(), "choosing the project-wide budget mode") {
+		t.Errorf("the refusal does not name the act: %v", err)
+	}
+	// Enforce is the direction the update wanted anyway, so a session may take
+	// it — and the record it leaves beside the mode forecloses nothing: the
+	// installation is already in the state the update raises to.
+	if _, _, err := execute(t, "budget", "set", "--global", "--mode", "enforce"); err != nil {
+		t.Fatalf("enforce was refused in an agent session: %v", err)
+	}
+	if v := f.db.Value(budget.PathMode); v != budget.ModeEnforce {
+		t.Errorf("%s = %v, want %s", budget.PathMode, v, budget.ModeEnforce)
 	}
 }
 
@@ -492,6 +519,32 @@ func TestSetLowerNoConfirmation(t *testing.T) {
 	agentSession(t)
 	if _, _, err := execute(t, "budget", "set", "--global", "--mode", "observe"); err == nil || !strings.Contains(err.Error(), "owner's own step") {
 		t.Fatalf("loosening the mode was open to a coding agent's session: %v", err)
+	}
+}
+
+// TestSetModeRecordsTheOwner: a mode given on this command line is the
+// installation owner's own choice, and the node beside it says so
+// (config/modeSet = owner, D1548). It is what `fugaro update` reads before it
+// raises a seeded observe to enforce, so without it the next update would undo
+// the owner's setting — and it is the CHOICE that is recorded, not a change of
+// value: a mode the owner sets to what it already is is theirs just the same.
+func TestSetModeRecordsTheOwner(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	seedCaps(f, 100, 20)
+	if _, _, err := execute(t, "budget", "set", "--global", "--mode", "observe", "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.db.Value(budget.PathMode); got != budget.ModeObserve {
+		t.Errorf("%s = %v, want %s", budget.PathMode, got, budget.ModeObserve)
+	}
+	if got := f.db.Value(budget.PathModeSet); got != budget.ChosenByOwner {
+		t.Errorf("%s = %v, want %q: the mode this command set is the owner's own, and `fugaro update` may never raise it", budget.PathModeSet, got, budget.ChosenByOwner)
+	}
+	if _, _, err := execute(t, "budget", "set", "--global", "--mode", "enforce", "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.db.Value(budget.PathModeSet); got != budget.ChosenByOwner {
+		t.Errorf("%s = %v after a second choice: the record is the owner's either way", budget.PathModeSet, got)
 	}
 }
 

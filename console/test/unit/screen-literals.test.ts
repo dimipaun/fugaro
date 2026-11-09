@@ -110,6 +110,11 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
   },
   'degraded.ts': {
     'state.installCommand': '`FUGARO_INSTALL_COMMAND` in `src/source/cli.ts`, which is the README\'s own `brew install dimipaun/tap/fugaro` rather than a string a document chose',
+    drawn: {
+      within: 'drawRunId',
+      reason:
+        'the ending `displayRuns` answered for one run record (`shared/shortid.ts`): the shortest suffix of the run id that tells it apart from the other records of the same list, never shorter than four characters, and -- in its cross-repository form -- that suffix with the repository in front of it. It is drawn only when it is a tail of the id **this cell would draw**, and the record\'s own four characters (`shortRun` of the sanitized id) otherwise. The id has already been through `sanitizeText` in the `runId` class in the same function -- a refusal, and a marker the recorder wrote, take the `putText` branch that draws no ending at all -- and the endings are cut from `drawnRef`, which puts the id and the repository through their own classes *before* `displayRuns` cuts and prefixes them, so either answer is a cut of a string the console would draw whole. The whole id stays on the row as `data-run`, written as it was before this cell drew an ending',
+    },
     'drawnOrNothing(state.operation)': '`OperationName`, the closed IPC allow-list union: the read the console asked for, in the console\'s own words, and passed through `sanitizeRefusal` again in `refused()` because `RefusedState` can be built without `refusedState`',
     'sentence.ok ? sentence.text : REFUSAL_UNREADABLE':
       'the CLI\'s refusal sentence on the `SourceRefusal` channel (`src/source/source.ts`), not a document string, **through `sanitizeRefusal`** in `refusedState` and again in `refused()` (a state built without `refusedState` is still sanitized; idempotent): design section 6.3 requires it verbatim, the free-text rules would draw `roles/datastore.viewer` as `[redacted]` and the project as `<project>`, and the credential rules still redact a token a child echoed -- `degraded.test.ts` asserts both halves of that',
@@ -327,6 +332,11 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
       reason:
         'the parameter of the `floorNote` helper itself, which is the sentence a floor is drawn as (`coordinatorJobsFloorNote` and `coordinatorWindowNote`): its two call sites pass `COORDINATOR_JOBS_FLOOR_WORD` and `COORDINATOR_WINDOW_FLOOR_WORD`, this file\'s own floor words, and the version drawn beside each is the handshake\'s own line rather than a document string',
     },
+    drawn: {
+      within: 'drawRunId',
+      reason:
+        'the ending `displayRuns` answered for one run -- a job list row\'s `runs[].run_id` or a record\'s `runs[].id` (`shared/shortid.ts`): the shortest suffix that tells the run apart from the other rows drawn in the same list, never shorter than four characters, and -- in its cross-repository form -- that suffix with the repository in front of it. It is drawn only when it is a tail of the id **this cell would draw**, and the row\'s own four characters (`shortRun` of the sanitized id) otherwise. The id has already been through `sanitizeText` in the `runId` class in the same function -- a refusal, and a marker the recorder wrote, take the `putText` branch that draws no ending at all -- and the endings are cut from `drawnRef`, which puts the id and the repository through their own classes *before* `displayRuns` cuts and prefixes them, so either answer is a cut of a string the console would draw whole. No whole id travels on this cell: a coordinator row opens no run, so the cell carries no `data-run-id` (`live.ts`\'s `putRunId` is the door-carrying half of the same drawing)',
+    },
   },
   // The two drawings console 0.116.1 adds: the panel's reading placeholder and
   // the Graph's no-checkout card. Neither is handed a document string that
@@ -370,6 +380,29 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
       reason:
         'the parameter of the `line` helper itself; every call site passes one of this file\'s own constants, or `refusalText(...)`, which is `sanitizeRefusal`\'s own answer for a sentence main or the CLI wrote',
     },
+  },
+  // The licence key's section (the subscriptions plan's S2.7). It draws the
+  // verifier's answer about the key this installation holds, and **the key text
+  // is in neither its input nor its output**: a claim set is what a key *says*,
+  // so every value beside a term goes through `putText` in the class its wire key
+  // declares, and the five entries below are what is left -- the console's own
+  // words for the states and for whether a read was drawn at all, the reason
+  // sentences (already `sanitizeRefusal`'s), the claim terms, and the sentence a
+  // save answered with.
+  'licence.ts': {
+    'model.word':
+      'the state word, and it is one of this file\'s own: `buildLicence` answers it out of `LICENCE_STATE_WORDS` (the console\'s table for the verifier\'s three states) or out of `LICENCE_NO_KEY_WORD`/`LICENCE_REFUSED_WORD`, and a state word the table does not hold draws the shape refusal instead of itself -- so a state a later CLI grew is never drawn as a word an operator would have to interpret',
+    'model.because':
+      'the section\'s one reason sentence, **through `sanitizeRefusal`** in `drawnRefusal` before it is stored on the model: this file\'s own sentence for a store that could not answer, the verifier\'s own for a key that does not verify, or the shape refusal for an answer this build does not read -- or `REFUSAL_UNREADABLE` when the sentence cannot be drawn at all, which is the same three-way door `managed.ts`\'s `model.because` keeps for the same channel',
+    "model.drawn === 'answer' ? 'read' : 'not read'":
+      'whether this section drew an answer at all, in this file\'s own two words: `model.drawn` is the flag `buildLicence` set from the reply it read -- an answer, a refusal, or a shape this build does not know -- so the pair is the console\'s vocabulary and never a string a document chose',
+    'claim.term': {
+      within: 'claimLine',
+      reason:
+        'the parameter of the `claimLine` helper itself; every call site passes one of this file\'s own term constants (`LICENCE_ORGANISATION_TERM`, `LICENCE_TIER_TERM`, ... `LICENCE_FEATURES_TERM`), which are the console\'s words for what the value beside them is',
+    },
+    'read.sentence':
+      'the sentence `licenceSaveOutcomeOf` read out of one `licence.save` reply: this file\'s own word for a write that happened (`LICENCE_SAVED_WORD`), the store\'s refusal **through `sanitizeRefusal`** (the verifier\'s own sentence for a key that does not verify, which is the one thing an operator has to be able to read unparaphrased), or this file\'s `LICENCE_UNREADABLE_WORD` for a reply nobody can read -- so no string a document chose reaches the sink',
   },
 })
 
@@ -855,6 +888,17 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
   'policynotes.ts': {
     "classes.join(' ')": { within: 'make', reason: 'the class list of the `make` helper; every call site passes string-literal class names' },
   },
+  // The licence key's section (S2.7) carries two hooks and no `data-*` state of
+  // its own: the operation it draws and the theme's own classes. Its one
+  // parameter is the `make` helper's class name -- the module sets no attribute
+  // from a document, a claim or a state word, and the mark of a read that is out
+  // belongs to the section helper on the entry's side (`../section.ts`).
+  'licence.ts': {
+    "classes.join(' ')": {
+      within: 'make',
+      reason: 'the class list of the `make` helper; every call site passes one of this file\'s own class constants',
+    },
+  },
 })
 
 const STRING_LITERAL = /^(?:'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*")$/
@@ -1256,6 +1300,7 @@ describe('a screen writes only its own vocabulary through literal', () => {
       'degraded.ts',
       'graph.ts',
       'launch.ts',
+      'licence.ts',
       'live.ts',
       'managed.ts',
       'nocheckout.ts',
@@ -1600,6 +1645,7 @@ describe('no module under src/renderer writes an inline style', () => {
       'screens/degraded.ts',
       'screens/graph.ts',
       'screens/launch.ts',
+      'screens/licence.ts',
       'screens/live.ts',
       'screens/managed.ts',
       'screens/nocheckout.ts',

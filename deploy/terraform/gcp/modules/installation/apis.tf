@@ -21,6 +21,13 @@ locals {
     ],
     var.enable_vertex ? ["aiplatform.googleapis.com"] : [],
     var.budget == null ? [] : ["billingbudgets.googleapis.com"],
+    # The image-build estimator reads Cloud Build's prices from the public
+    # Cloud Billing catalog at build time (D1550), on the caller's own
+    # credentials. The lookup runs only where the budget backend is on —
+    # without the ledger there is no dollar reservation to size, so a
+    # backend-less installation must not look a price up at all — which is
+    # what enable_budget names here. Enabling the API is free; the read is.
+    var.enable_budget ? ["cloudbilling.googleapis.com"] : [],
   ))
 }
 

@@ -226,7 +226,34 @@ func TestUpgradeRunsTheRulesStep(t *testing.T) {
 		t.Errorf("the rules generation marker is %q, want %q", rulesMarkerOn(t, db), want)
 	}
 	if !strings.Contains(out, "The security rules of the Firebase project "+initProject+":") {
-		t.Errorf("the plan was not shown before the confirmation:\n%s", out)
+		t.Errorf("the plan was not shown before the deploy:\n%s", out)
+	}
+}
+
+// TestUpgradeRulesStepAsksNothing is D1540 on the one step of this command
+// that carried a typed confirmation: the deploy is named — the plan above it
+// and the sentence under it — and it goes ahead with no --yes and no terminal,
+// which is the shape a script drives this command in. A step that still asked
+// would refuse this run instead of deploying.
+func TestUpgradeRulesStepAsksNothing(t *testing.T) {
+	_, db, root := upgradeBudgetRig(t)
+	db.SetRules([]byte(`{"rules":{".read":false}}`))
+	out := &syncBuf{}
+	cmd := NewRootCmd()
+	cmd.SetOut(out)
+	cmd.SetErr(&syncBuf{})
+	u := &upgradeCtx{cmd: cmd, w: out, loc: pluginwire.Location{Root: root}}
+
+	got := rulesStep(context.Background(), u)
+	if got.state != stepDone {
+		t.Fatalf("the rules step is %s: %s\n%s", got.state, got.reason, out)
+	}
+	assertNoPrompt(t, out.String())
+	if !strings.Contains(out.String(), "deploys the security rules listed") {
+		t.Errorf("the sentence naming the deploy is not printed:\n%s", out)
+	}
+	if want := strconv.Itoa(projectpolicy.RulesVersion); rulesMarkerOn(t, db) != want {
+		t.Errorf("the rules generation marker is %q, want %q", rulesMarkerOn(t, db), want)
 	}
 }
 
