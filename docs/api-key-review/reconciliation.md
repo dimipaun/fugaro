@@ -7,8 +7,8 @@ clause of the owner's ask ([spec.md](spec.md), 2026-11-07) against the tree, cla
 and turns the parts that needed a decision into questions **D1410–D1429** (§7), every one of them
 answered the same day, each as recommended. **Two things happened after that reading and neither
 reopens it:** on **2026-11-09** the owner answered **D1418** — the provider's base URL and the auth
-shape go **in the bundle** (§5, §7) — and the security review of the merged AK4 and AK5
-([security-review.md](security-review.md), 2026-11-09) was written, adding **F25–F27** and tasks
+shape go **in the bundle** (§5, §7) — and the **author's own security pass** over the merged AK4 and
+AK5 ([security-review.md](security-review.md), 2026-11-09) was written, adding **F25–F27** and tasks
 **AK9** and **AK10**; the plan's AK6 was split into **AK6a** and **AK6b** the same day
 ([implementation-plan.md](implementation-plan.md) §6 item 9).
 
@@ -411,12 +411,16 @@ bundle's only writer and an owner-only command, so the guard belongs at that wri
 of its service (`terraform.tfvars.json`'s `credentials_service.image`), refusing the write and naming
 `fugaro update`, with the release's own `### For operators` sentence. Found the same day; it is the
 review's task **AK10**, written and **not approved**, and it is off the levels and off the critical
-path like **AK9**.
+path like **AK9** — but **it gates AK6b's release** (implementation-plan §6 item 11): the guard lands
+in the same release as the entry it guards and before it, so **no release carries AK6b without
+AK10**, and the OpenRouter half's release waits on the owner's approval of it.
 
 **F27 — Stale docs, fixed here. `README.md` was reading the gates of 2026-11-07.** Its status line
 still said "items 6 and 7 … E7, not met, so those four tasks may not start and the cloud half stays
-unlaunchable" — item 7's gate is lifted (the flip of 2026-11-08, **U6**) and item 6 is now partly
-settled by the review — and its file table still claimed "each with its files (at most six)", which
+unlaunchable" — item 7's gate is lifted (the flip of 2026-11-08, **U6**) and **item 6 is open, not
+settled**: the review that exists is the folder's own author's pass, which says of itself that it is
+not the independent review the SEC tier requires — and its file table still claimed "each with its
+files (at most six)", which
 the reconciliation of 2026-11-09 made false in both directions (**AK6a** is 24 files). Fixed in the
 same docs pass as this section rather than carried as a task.
 
@@ -494,7 +498,8 @@ is settled at its merge, and the register's own row and section are written by t
 implements the check, under the number free at that merge (implementation-plan §5).
 
 **This folder's own numbers.** Findings **F1–F27** and tasks **AK1–AK10** are this folder's, and take
-no number any other work reads. **F25–F27 and AK9–AK10 are the security review's** (2026-11-09,
+no number any other work reads. **F25–F27 and AK9–AK10 are the author's own security pass's**
+(2026-11-09,
 [security-review.md](security-review.md)), and **AK6a** and **AK6b** are the reconciliation of the
 same day's splitting of the plan's old AK6 (implementation-plan §1, §2, §6 item 9): the numbering of
 a task never moves, so the two halves take the new letters rather than renumbering AK7 and AK8.
@@ -506,8 +511,9 @@ the reason each one existed and **the answer it carries since 2026-11-07**. **It
 owner's decisions and every one of them takes the recommendation**; **item 9 is not** — **U1** and
 **U2** are outside the tree (an owner/counsel question and the owner's own figures), so no answer
 here settles them and none is recorded. All tasks were approved the same day — **AK1–AK8 as they
-stood then: AK9 and AK10, added by the security review of 2026-11-09, are written and not
-approved.**
+stood then: AK9 and AK10, added by the author's own security pass of 2026-11-09, are written and not
+approved**, and **AK10's approval is a precondition of AK6b's release** (implementation-plan §6
+item 11).
 
 1. **D1410 — answered: both slices.** The ask names one path and the tree has two reviews (§4), so
    the answer decides which slice the plan is about; the gate it carried — no task may start before

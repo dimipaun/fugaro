@@ -10,12 +10,17 @@ an `oauth` run's review does not move onto an API key; **D1415 a new additive fi
 `StageTiming`, never a new value on `credential`; and **D1418, answered 2026-11-09: a provider's base
 URL and auth shape go in the bundle**, as additive optional fields. This folder is a design for the
 owner to read, and the five tasks that have landed are its first two levels. **Items 1–5 of
-[implementation-plan.md](implementation-plan.md) §6 are satisfied; item 6 is now partly settled and
-item 7's gate is lifted.** Two things are still owed, and each is named where it stands: **the
-security review**, written for the merged AK4 and AK5
-([security-review.md](security-review.md)) and **owed again for AK6a, AK6b and AK7**, which have not
-landed — and **D1413's spelling**, which §6 records as design work this plan still owes because no
-task names it yet. **E7 is met as of 2026-11-08** (the flip below), so a `fugaro review --pr N` is
+[implementation-plan.md](implementation-plan.md) §6 are satisfied; item 6 is open and item 7's gate is
+lifted.** What the folder has for item 6 is **the author's own pass** over the merged AK4 and AK5
+([security-review.md](security-review.md)) — **not the independent review the SEC tier and
+`.claude/rules/credentials-service.md` require, as that file says of itself** — so item 6 is open for
+AK4 and AK5 (which landed under it, not past it) and stands for **AK6a**, **AK6b** and **AK7**. Three
+things are still owed, and each is named where it stands: **the independent security review**, for the
+merged AK4 and AK5 and then for the three tasks that have not landed — **D1413's spelling**, which §6
+records as design work this plan still owes because no task names it yet — and **the owner's approval
+of AK10, without which AK6b's release may not ship** (§6 item 11: the credential write that can outrun
+the deployed service is guarded in the same release). **E7 is met as of 2026-11-08** (the flip below),
+so a `fugaro review --pr N` is
 admitted where it was refused; what no live installation has measured is either cloud path, which is
 **Check 330**.
 
@@ -79,8 +84,8 @@ measurement (Check 330) rather than the code path.
 | --- | --- |
 | [spec.md](spec.md) | The owner's ask of **2026-11-07**, verbatim, with a header naming the owner by role and the status line. Where this file and the others disagree about what the ask *says*, this file wins |
 | [reconciliation.md](reconciliation.md) | Every clause of the ask against the code on `main`, read by path and symbol: the findings **F1–F27** (Wrong / Exists / Gap / Rule / Open), what the **in-job** path does today end to end (§1), what the **cloud** path does today end to end (§2), the two readings of "the api-key review" (§4), **the security analysis as an attacker would see it** (§5), an **UNVERIFIED** section (§6), the decisions **D1410–D1429** each with a recommendation, an alternative and **the owner's answer** — 2026-11-07, except **D1418**, answered 2026-11-09 — (§7), the number block and how it was read (§8), and the owner's **Open items**, each with the answer it now carries (§9). **Where it disagrees with [spec.md](spec.md) about the code, it wins** |
-| [implementation-plan.md](implementation-plan.md) | The tasks **AK1–AK10** — including **AK6a** and **AK6b**, the two the reconciliation of 2026-11-09 split the old AK6 into — each with its files, its interfaces, its named tests and command, its **red step**, its **mutation**, its **reviewer tier**, its dependencies and its commit; the levels, the critical path and the shared-files table proving no level has two writers of one file (§1–§2), what is deliberately not in the plan (§3), the release slot — **after 0.20.0**, from D1421 (§4) — the owner-run live check **Check 330** (§5), the gates a task may not start without — the five the answers of 2026-11-07 satisfy, the security review's own state, and the two the reconciliation added (§6) — and the security review of the merged AK4 and AK5 in summary (§7) |
-| [security-review.md](security-review.md) | The mandatory review of the merged **AK4** and **AK5**, written **2026-11-09**: what was read, the properties it verified, the three attack questions (the bundle, the forwarded key, the base URL), its findings **F25–F27** and the tasks they became (**AK9**, **AK10**), and the conditions it places on **AK6a**, **AK6b** and **AK7**. **It is not a second design**: it reviews code that is already on `main` |
+| [implementation-plan.md](implementation-plan.md) | The tasks **AK1–AK10** — including **AK6a** and **AK6b**, the two the reconciliation of 2026-11-09 split the old AK6 into — each with its files, its interfaces, its named tests and command, its **red step**, its **mutation**, its **reviewer tier**, its dependencies and its commit; the levels, the critical path and the shared-files table proving no level has two writers of one file (§1–§2), what is deliberately not in the plan (§3), the release slot — **after 0.20.0**, from D1421 (§4) — the owner-run live check **Check 330** (§5), the gates a task may not start without — the five the answers of 2026-11-07 satisfy, the independent security review's own state (item 6, **open**), the two the reconciliation added (items 9 and 10) and AK6b's release precondition (§6 item 11) — and the author's own security pass over the merged AK4 and AK5 in summary (§7) |
+| [security-review.md](security-review.md) | **The author's own security pass** over the merged **AK4** and **AK5**, written **2026-11-09** and **awaiting the independent review item 6 asks for** — it says so itself: what was read, the properties it verified, the three attack questions (the bundle, the forwarded key, the base URL), its findings **F25–F27** and the tasks they became (**AK9**, **AK10**, both unapproved), the conditions it places on **AK6a**, **AK6b** and **AK7**, and that AK10 is a release precondition of AK6b. **It is not a second design**: it reviews code that is already on `main` |
 | `README.md` | This file: the status, the shape in one paragraph, the numbers, and what a reader should not take from here |
 
 ## The two things to read first
@@ -118,10 +123,12 @@ upstreams in one run and asserts the reviewer's call reached Anthropic (**F4**).
   [implementation-plan.md](implementation-plan.md) is written to, and **§3** of that file says what
   the instruction rules out.
 - **It is not a substitute for the security review.** AK4–AK7 touch a model credential the service
-  attaches to a caller's request, and are written as **SEC** tasks — opus, with the independent
-  review mandatory. That review is owed before those tasks land, not after: it is **written for AK4
-  and AK5**, which are merged ([security-review.md](security-review.md)), and it stands for **AK6a**,
-  **AK6b** and **AK7**.
+  attaches to a caller's request, and are written as **SEC** tasks — opus, with the **independent**
+  review mandatory. That review is owed before those tasks land, not after, and **it is not written
+  yet**: what exists is **the author's own pass** over the merged AK4 and AK5
+  ([security-review.md](security-review.md)), which says of itself that it is not the independent
+  review the tier asks for. So **§6 item 6 stays open** for AK4 and AK5 and for **AK6a**, **AK6b** and
+  **AK7**, and no release note may present any of them as reviewed.
 - **It claims no number of another work.** The decision block is read above every allocation on
   `main` (§8) and the live check is well above the register's highest written section; the
   register's own file is not this task's to write (implementation-plan §5).
@@ -133,7 +140,7 @@ upstreams in one run and asserts the reviewer's call reached Anthropic (**F4**).
 | **D1410–D1429** | this work's block, read on 2026-11-07 over `origin/main` (`aa26f322f`) and every open pull request's head. The highest decision written anywhere on `main` is **D1409** (`docs/catalog-build-context`, merged as #1805), and a `git grep` for the decision numbers in the `D141x` and `D142x` ranges over `main` and over all open heads returns **no path at all**, with positive controls run so that "nothing" is not a broken command. **D1410–D1429 are all written** in [reconciliation.md](reconciliation.md) §7 and **every one of them is answered, as recommended: all on 2026-11-07 except D1418, which the owner answered on 2026-11-09** (the base URL and the auth shape go in the bundle); none is reserved unused. The reading, with its commands, is §8 |
 | **Check 330** | this work's live check (implementation-plan §5), far above the register's highest **written** `## Check` section: **290** at this folder's own reading ([reconciliation.md](reconciliation.md) §8, `origin/main` at `aa26f322f`, 2026-11-07) and **291** since `docs/image-env`'s check was written (`docs/gcp-live-checklist.md`, the image-`ENV` work's check: what a catalog image's `ENV` does in a run, itself **NOT RUN**). **292 is claimed** by `docs/catalog-build-context` (merged on `main` as #1805); **293–299** are claimed by nobody; `docs/stateless-orchestrator` claims 300–309 and `docs/cli-output-console-graph` claims 310–314, both below this block. Like every claim above the highest written section, 330 is **claimed, not reserved**: the register's rule is that a claim is settled at its merge, and whichever of two claims merges second renumbers itself. The register's own row and section are written by the task that implements the check, under the number free **at that merge** |
 | **Findings F1–F27** | this folder's own numbering, in [reconciliation.md](reconciliation.md) §1, §2 and §5 — **F25–F27** are the security review's ([security-review.md](security-review.md), 2026-11-09) — taking no number any other work reads |
-| **AK1–AK10** | this folder's task series, in [implementation-plan.md](implementation-plan.md) — the two halves of the old AK6 take the letters **AK6a** and **AK6b** rather than renumbering AK7 and AK8. Distinct from `docs/cloud-senior-review`'s **CSR1–CSR18** and from `docs/in-job-review`'s **Q1–Q17** on purpose: two series in one tree that share letters would be read as one |
+| **AK1–AK10** | this folder's task series, in [implementation-plan.md](implementation-plan.md) — the two halves of the old AK6 take the letters **AK6a** and **AK6b** rather than renumbering AK7 and AK8. **AK9 and AK10 are unapproved**, and **AK10 gates AK6b's release** (§6 item 11). Distinct from `docs/cloud-senior-review`'s **CSR1–CSR18** and from `docs/in-job-review`'s **Q1–Q17** on purpose: two series in one tree that share letters would be read as one |
 
 ## Open items
 

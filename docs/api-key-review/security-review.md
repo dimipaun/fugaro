@@ -1,11 +1,13 @@
-# The api-key review — the security review of the merged AK4 and AK5
+# The api-key review — the author's own security pass over the merged AK4 and AK5
 
-**Written 2026-11-09.** This is [implementation-plan.md](implementation-plan.md) §6 item 6's mandatory
-review, owed **before** the SEC tasks of that plan land rather than after: the two that have landed —
-**AK4** (`1d2591d5`, PR #1860) and **AK5** (`0944d4d4`, PR #1905, with `9fa5fd90`, PR #2033) — landed
-under it, and it **stands for AK6a, AK6b and AK7**, which have not. It reviews **code that is on
-`main`** and not a sketch: what the two tasks actually changed, what that change is worth as an
-attack surface, and what it leaves to the tasks that follow.
+**Written 2026-11-09.** This is [implementation-plan.md](implementation-plan.md) §6 item 6's subject
+matter — the review owed **before** the SEC tasks land rather than after — but **it is not that item's
+discharge**: the item asks for an **independent** review, and §6's last section below says plainly that
+this is a single pass by the same author as this folder. **Item 6 stays open for AK4 and AK5** (which
+landed under it, not past it) **and for AK6a, AK6b and AK7**, which have not landed. It reviews **code
+that is on `main`** and not a sketch: what the two tasks actually changed, what that change is worth as
+an attack surface, and what it leaves to the tasks that follow. **The two it reviews are AK4**
+(`1d2591d5`, PR #1860) **and AK5** (`0944d4d4`, PR #1905, with `9fa5fd90`, PR #2033).
 
 **It is not a second design and it changes no design.** Where it disagrees with
 [implementation-plan.md](implementation-plan.md) or [reconciliation.md](reconciliation.md), those two
@@ -186,14 +188,18 @@ write whose newest key the installation's own recorded service image
 `*Since` guard `reviewAdmissionSince` already establishes — with the release's `### For operators`
 sentence. **Became AK10** (SEC), written and not approved, and it is a **guard AK6b's own shape needs**
 rather than a defect in AK4 or AK5: today no credential kind reaches the bundle that the deployed
-service cannot read. **Severity: high when AK6b lands, none before it.**
+service cannot read. **Severity: high when AK6b lands, none before it** — and because it is high there,
+**AK10 is a release precondition of AK6b** rather than an optional repair beside it (the plan's §6 item
+11, and condition 8 below): a release that shipped AK6b's provider entry without the guard would ship
+the very state CLAUDE.md's "`fugaro update` is the whole upgrade" rule forbids.
 
 **F27 — the README was reading the gates of 2026-11-07.** Its status line still said "items 6 and 7
 … E7, not met, so those four tasks may not start and the cloud half stays unlaunchable", and its file
 table still claimed "each with its files (at most six)". Item 7's gate is lifted (the flip of
-2026-11-08), item 6 is now partly settled by this review, and the reconciliation of 2026-11-09 made
-the file count false in both directions (AK6a is 24 files). **One-line fix:** the status, the file
-table and the numbers are read off the tree, as they now are. **Fixed in this docs pass, not a task.**
+2026-11-08), item 6 **stays open** — this pass does not discharge it (§6's last bullet) — and the
+reconciliation of 2026-11-09 made the file count false in both directions (AK6a is 24 files).
+**One-line fix:** the status, the file table and the numbers are read off the tree, as they now are.
+**Fixed in this docs pass, not a task.**
 
 **What was considered and is not a finding.** The mint's read-only set, the audit line's one-per-refusal
 rule, the `ReasonNotAdmitted` spelling, the class's door, the sentinel's spelling (`--project`, which
@@ -230,6 +236,13 @@ themselves.
    and **Check 330's step C may not be run** until Check 50 has run or the owner takes a new decision
    ([implementation-plan.md](implementation-plan.md) §6 item 10, [reconciliation.md](reconciliation.md)
    **U7**).
+8. **AK6b's release carries AK10.** The guard is what keeps F26 from being a state a release ships: with
+   the provider entry in the bundle and no guard at `fugaro creds set`, a CLI newer than the deployed
+   service can halt every caller of that service — coding runs included — with a write, which is the
+   failure CLAUDE.md's "`fugaro update` is the whole upgrade" rule exists to forbid. AK10 is therefore
+   **not optional and not a later fix**: it lands in the same release as AK6b, **before** it
+   ([implementation-plan.md](implementation-plan.md) §6 item 11), and **the OpenRouter half's release
+   waits on the owner's approval of AK10**, which is written and not approved.
 
 ## 6. What this review could not verify
 

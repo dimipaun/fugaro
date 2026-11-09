@@ -2,7 +2,8 @@
 
 **Status: AK1–AK5 are implemented on `main`, and no task past AK5 is started; D1410–D1429 are answered
 2026-11-07 and all tasks are approved 2026-11-07 (owner: "All tasks approved. Jobmax"), except the two
-the security review added — AK9 and AK10, which are written and not approved.** AK4 lets the
+the security review added — AK9 and AK10, which are written and not approved, and **AK10's approval is
+a precondition of AK6b's release** (§6 item 11).** AK4 lets the
 review class's one credential be the project's own Anthropic API key: a policy naming the sentinel is
 publishable and the credentials service serves it, and **AK5 deploys the route** (its own section and
 **§6.8** — a profile naming the sentinel gets the job whose account segment is the sentinel, mounting
@@ -10,11 +11,12 @@ nothing, and its review-only variant beside it, so an installation that publishe
 Claude account has a review job at all). Every gate this plan carried that a decision or an approval
 could settle is satisfied: the answers are in
 [reconciliation.md](reconciliation.md) §7 and §9, and §6 below records what each one settled. **One
-gate in that list is not of that kind and partly stands** — the mandatory security review owed before
-AK4–AK7 land (item 6, which AK4's and AK5's changes are under rather than past): **the review of the
-merged AK4 and AK5 is written** ([security-review.md](security-review.md), §7 below), it found no
-defect that lets the key or the bundle out of the service, and it owes the same review again for
-**AK6a**, **AK6b** and **AK7** — and **E7's gate is
+gate in that list is not of that kind and **stands** — the mandatory security review owed before
+AK4–AK7 land (item 6): what exists is the **author's own pass** over the merged AK4 and AK5
+([security-review.md](security-review.md), §7 below), it found no defect that lets the key or the
+bundle out of the service, and by its own last section it is **not the independent review** the SEC
+tier and `.claude/rules/credentials-service.md` require — so item 6 is **open for AK4 and AK5**, which
+landed under it rather than past it, and stands for **AK6a**, **AK6b** and **AK7** too. **E7's gate is
 lifted**, item 7's own accounting: its second half reached the tree on 2026-11-08, so `fugaro review`
 admits a launch, though **no live installation has been measured** against it.
 
@@ -46,7 +48,7 @@ a slice the owner does not want is simply not started.
 | --- | --- | --- | --- |
 | **L1** | **AK1**, **AK2**, **AK3** | the in-job path named and pinned: tests (**F5**), docs (**F9**), a field of the record's own for the credential a stage ran on (**F18**, **D1415**) | no shared file, no service change, no ordering between them |
 | **L2** | **AK4**, **AK5** | the cloud Anthropic-key half: the class may be served by the project's key (**F12**, **F13**, **F14**), and the runner admits it, so the review-only variant — already deployed and admitted for a project with no Claude account (**F17**) — is served by it (**F11**). **This was code for a launch E7 refused when it was written; the flip of 2026-11-08 admits it** (**F10**, **U6**) | AK4 is `internal/credsvc` + `internal/config` + `internal/projectpolicy` + `internal/localcfg`, with one refusal's sentence in `internal/infra` (§2's declared exception), and AK5 is `internal/runner` + `internal/cli` + `internal/infra`; the two share that one file, AK4 first |
-| **L3** | **AK6a**, **AK6b**, **AK7** | the OpenRouter half: the provider key gets its own value on the account axis, so a profile can publish it and a policy admit it (**F15**, §6 item 9), the bundle holds the key and the service forwards to the provider's endpoint (**F15**, **F16**, **F24**, **D1418**), and the review run's model path reaches it (**F22**) | **No file is written by two of the three** — AK6a is `internal/config`, `internal/projectpolicy`, `internal/localcfg`, `internal/infra`, `internal/cli`, `internal/task`, `schemas/task.schema.json`, `deploy/terraform/gcp/modules/project/variables.tf` (the `job.account` validation) and the **three** `internal/credsvc` rows §2 books for it (`review.go`, `review_test.go` — the two CSR17's sketch named and AK6's six-file list did not — and `sharedjobs_test.go`, the deployer-and-service agreement test); AK6b is the rest of `internal/credsvc`, `internal/creds` and `schemas/creds-bundle.schema.json`; AK7 is `internal/runner` and nothing else, because the provider's base URL never leaves the bundle (**D1418**) — and AK6a is first because AK6b's offer rule matches the axis value AK6a defines (§2 books all of them) |
+| **L3** | **AK6a**, **AK6b**, **AK7** | the OpenRouter half: the provider key gets its own value on the account axis, so a profile can publish it and a policy admit it (**F15**, §6 item 9), the bundle holds the key and the service forwards to the provider's endpoint (**F15**, **F16**, **F24**, **D1418**), and the review run's model path reaches it (**F22**) | **No file is written by two of the three** — AK6a is `internal/config`, `internal/projectpolicy`, `internal/localcfg`, `internal/infra`, `internal/cli`, `internal/task`, `schemas/task.schema.json`, `deploy/terraform/gcp/modules/project/variables.tf` (the `job.account` validation) and the **three** `internal/credsvc` rows §2 books for it (`review.go`, `review_test.go` — the two CSR17's sketch named and AK6's six-file list did not — and `sharedjobs_test.go`, the deployer-and-service agreement test); AK6b is the rest of `internal/credsvc`, `internal/creds` and `schemas/creds-bundle.schema.json`; AK7 is `internal/runner` and nothing else, because the provider's base URL never leaves the bundle (**D1418**) — and AK6a is first because AK6b's offer rule matches the axis value AK6a defines (§2 books all of them) — and **AK10, off the levels, rides with AK6b in one release** (§6 item 11) |
 | **L4** | **AK8** | the live check, **Check 330** (§5) | owner-run, after everything else |
 
 **The critical path is `AK1 → AK4 → AK5 → AK6a → AK6b → AK7 → AK8`**, and it is the shortest chain the
@@ -57,14 +59,17 @@ holding and serving that key, AK7 is the runner's path to it, and AK8 measures t
 result on a real installation. **AK2 and AK3 are off the critical path** — AK2 is documentation and
 AK3 is the record — and either may land at any point in L1 without moving it. **AK9 and AK10 are off
 it too**: they are the security review's two findings (a wording pair that says a review job's account
-is a Claude account, and the credential write that can outrun the service that reads it), and neither
-blocks a cloud task. **The OpenRouter half of the critical path carries one more gate, and no task
-holds it: Check 50** (§6 item 10) — the live check the tree's own tier-C refusal names, which the owner
-has not run — so AK6a, AK6b and AK7 may all land and be unit-tested while a review **served** by a
-provider key is still refused, and §5's step C may not be run before it.
+is a Claude account, and the credential write that can outrun the service that reads it), and **neither
+blocks a cloud task from starting** — but **AK10 is a release precondition of AK6b** (§6 item 11): the
+two land in one release, AK10 first, and **that release waits on the owner's approval of AK10**, which
+is written and not approved. **The OpenRouter half of the critical path carries one more gate, and no
+task holds it: Check 50** (§6 item 10) — the live check the tree's own tier-C refusal names, which the
+owner has not run — so AK6a, AK6b and AK7 may all land and be unit-tested while a review **served** by
+a provider key is still refused, and §5's step C may not be run before it.
 
 **D1410, D1421 and the gates in §6 that a decision settles are settled as of 2026-11-07, before any
-task starts; §6's items 6 and 7 are not decisions, and item 6 partly stands.** **D1410**
+task starts; §6's items 6 and 7 are not decisions, and item 6 stands — what exists is the folder's own
+author's pass, not the independent review it asks for.** **D1410**
 is answered **both slices**, so L1, L2 and L3 all stand and the plan does not end after AK3.
 **D1416** is answered **the Anthropic key first**, so the OpenRouter half follows AK4–AK5 rather than
 riding them.
@@ -597,7 +602,12 @@ intersects a repository's child with it), so a second value is a second admissio
 **Slice:** cloud, OpenRouter (L3). **Depends on:** AK6a (the axis value its offer rule matches),
 **D1418** — the provider's base URL and auth shape go **in the bundle** — **D1419**, answered "not at
 all in the Anthropic-key slice", which leaves the provider endpoint to this half, and **D1416**.
-**The other half of §6.7's CSR17**, and the half whose six-file list this plan already had: it is
+**And its release depends on AK10, which lands in the same release and before it** (§6 item 11,
+condition 8 of the review): the provider entry is the first bundle key a deployed service can be too
+old to read, so the write that would halt every caller of that service — coding runs included — is
+guarded before the entry that makes the halt possible exists. AK10 is **written and not approved**, so
+**this half cannot be released until the owner approves it**. **The other half of §6.7's CSR17**, and
+the half whose six-file list this plan already had: it is
 that list — `bundle.go` and its test, `cascade.go`, `forward.go` and its test and the bundle schema —
 plus `internal/credsvc/cascade_test.go` (the tier map's own test, which the six named no test for) and
 `internal/creds/select.go` and its test, the tier-C refusal no sketch booked (§2).
@@ -805,9 +815,14 @@ what was refused is a security-relevant inaccuracy rather than a wording prefere
 
 ### AK10 — the credential write refuses a bundle the deployed service cannot read (SEC)
 
-**Slice:** none — **off the levels and off the critical path** (§1, §2's `—` rows). **Depends on:**
-AK6b (the field whose write it guards); it was found by the security review of the merged AK4 and AK5
-(§7, **F26**) and it is the guard AK6b's own shape requires rather than a change to AK6b.
+**Slice:** none — **off the levels and off the critical path** (§1, §2's `—` rows), and **a release
+precondition of AK6b** (§6 item 11, condition 8 of the review): it lands in the same release as AK6b
+and **before** AK6b's own commit, because the guard must exist before the entry it guards can be
+written. **Depends on:** AK6b (the field whose write it guards); it was found by the security review of
+the merged AK4 and AK5 (§7, **F26**) and it is the guard AK6b's own shape requires rather than a change
+to AK6b. **It is written and not approved**, so its approval is what the OpenRouter half's release
+waits on — and the ordering is deliberate: AK6b's commit may land in the tree first, but no release
+carries AK6b without this.
 
 **Files (4):** `internal/cli/creds.go`, `internal/cli/creds_test.go`,
 `internal/cli/creds_skew_test.go` (new), `internal/cli/recipes_skew.go`.
@@ -932,14 +947,15 @@ any installation whose budget mode is `off` — the review class refuses a run w
 ## 6. The gates a task may not start without
 
 **Items 1–5 below are satisfied as of 2026-11-07**, each recording what the owner's answer settled or
-the approval of that day gave. **Item 6 is not the owner's answer to give and is now partly settled**:
-the security review owed before AK4–AK7 land is **written for the two that landed** —
-[security-review.md](security-review.md), §7 below — so AK4 and AK5 landed under it rather than past
-it, and it **stands for AK6a, AK6b and AK7**, which have not landed. **Item 7's gate is lifted** — E7's
-second half reached the tree on 2026-11-08 (**U6**) — so the launch is admitted where it was refused,
-though no live installation has been measured against it. **Item 3's approval covered the tasks that
-existed on 2026-11-07: AK9 and AK10 are written and not approved.** **Item 9 records the reconciliation
-of 2026-11-09 and item 10 a gate no task carried, which that reconciliation found.**
+the approval of that day gave. **Item 6 is not the owner's answer to give and it is open**: what
+exists is the **author's own pass** over the two tasks that landed — [security-review.md](security-review.md),
+§7 below — and it says of itself that it is not the independent review the gate asks for, so **AK4 and
+AK5 landed under the gate rather than past it** and it **stands for AK4, AK5, AK6a, AK6b and AK7**
+alike. **Item 7's gate is lifted** — E7's second half reached the tree on 2026-11-08 (**U6**) — so the
+launch is admitted where it was refused, though no live installation has been measured against it.
+**Item 3's approval covered the tasks that existed on 2026-11-07: AK9 and AK10 are written and not
+approved.** **Item 9 records the reconciliation of 2026-11-09, item 10 a gate no task carried, which
+that reconciliation found, and item 11 the release precondition AK6b cannot ship without.**
 
 1. **D1410 answered: both slices** — the plan is about all three (reconciliation §9.1).
 2. **D1421 answered: after 0.20.0** — the release for AK8 and for any release note.
@@ -961,12 +977,18 @@ of 2026-11-09 and item 10 a gate no task carried, which that reconciliation foun
 5. **AK3 gated on D1415 — answered: the record names the credential, in a new field** and not a
    new value on `credential` (**F18**): the record is a wire shape another reader consumes, and
    CLAUDE.md allows an additive field there but not a changed meaning.
-6. **The security review owed before AK4–AK7 land**, not after: each is SEC, and the review is
-   mandatory rather than advisory. **Partly settled, 2026-11-09**: the review of the merged AK4 and
-   AK5 is written (§7, [security-review.md](security-review.md)) — what it read, the three attack
-   questions (the bundle, the forwarded key, the base URL) and its findings — and it found **no defect
-   that lets the key or the bundle out of the service**. It **stands for AK6a, AK6b and AK7**, and the
-   conditions §7 lists are what those tasks keep rather than re-decide.
+6. **The security review owed before AK4–AK7 land, and it is an *independent* review**, not after:
+   each is SEC, and `.claude/rules/credentials-service.md` makes the independent review mandatory
+   rather than advisory. **It is open, 2026-11-09.** What the folder has is **the author's own pass**
+   over the merged AK4 and AK5 (§7, [security-review.md](security-review.md)) — what it read, the three
+   attack questions (the bundle, the forwarded key, the base URL), its findings, and the conditions it
+   places on AK6a, AK6b and AK7 — and it found **no defect that lets the key or the bundle out of the
+   service**. **The pass is not the review this item asks for, and it says so itself** (§6's last
+   bullet of that file): it is a single pass by the same author as this folder. So **the gate is open
+   for AK4 and AK5**, which landed under it and whose independent review is still owed, and it stands
+   for **AK6a, AK6b and AK7**: no release note may present any of the three as reviewed, and the
+   independent review is the owner's step or a second agent's — **a task this plan does not carry and
+   may not discharge for itself**.
 7. **AK4–AK7 were gated on E7, and it was not this plan's to meet** (**F10**, **U6**;
    `docs/cloud-senior-review` §1) — **that gate is lifted, because E7's second half reached the tree
    on 2026-11-08**: `internal/cli/review.go`'s `reviewJobAdmitted` is `true` (CSR11's flip, resting on
@@ -1027,6 +1049,19 @@ of 2026-11-09 and item 10 a gate no task carried, which that reconciliation foun
     working until Check 50 has run or the owner takes a new decision. Reading AK6b as having shipped a
     working provider path would be selling a refusal, which is the one thing §5's "what the check must
     not be run against" paragraph exists to prevent.
+11. **AK10 is a precondition of AK6b's release, not an optional repair beside it** — and this is the
+    gate CLAUDE.md's hard rule puts on the pair ("`fugaro update` is the whole upgrade, and it works
+    perfectly": a release must not ship a state whose repair is another command, a deletion or a manual
+    step). **F26** is rated **high when AK6b lands**: `ParseBundle` refuses the **whole document** on a
+    key it does not know, so a bundle written with AK6b's provider entry by a CLI newer than the
+    installation's deployed service **halts every caller of that service, coding runs included**, until
+    the owner runs `fugaro update`. AK10 is the guard that stops the write from happening — `fugaro
+    creds set` refuses a bundle whose newest key the installation's own recorded service image
+    predates, naming `fugaro update` — so **AK6b may not be released without it, and AK10 lands in the
+    same release, before AK6b's own commit** (the guard must exist before the entry it guards can be
+    written). **AK10 is written and not approved** (item 3), and that has a consequence this plan states
+    rather than hides: **the OpenRouter half's release waits on the owner's approval of AK10.** AK10's
+    own section carries the same requirement from its side, and §1's L3 row says so beside AK6b.
 
 **One answer leaves work that no gate and no task carries yet, and it is named here so it is not
 lost:** **D1413** settles *that* the key wins when the owner asks for it explicitly, and **the
@@ -1046,10 +1081,15 @@ while what the owner still cannot do is ask for the project's key on that launch
 
 ## 7. The security review of the merged AK4 and AK5
 
-**Written 2026-11-09, by this pass, as [security-review.md](security-review.md)** — item 6's first
-half. It reads the tree the two tasks landed (`1d2591d5`, PR #1860, and `0944d4d4` with `9fa5fd90`, PR
+**Written 2026-11-09, by this pass, as [security-review.md](security-review.md)** — and it is **the
+author's own pass, which does not discharge item 6**: the item asks for an **independent** review of
+SEC tasks, and the file's own last section says it is a single pass by the same author as this folder
+and not the review `.claude/rules/credentials-service.md` requires. It reads the tree the two tasks
+landed (`1d2591d5`, PR #1860, and `0944d4d4` with `9fa5fd90`, PR
 #2033) rather than the plan's sketches, and it is a **review of code that is already on `main`**, so its
-findings are tasks or notes and never edits to this plan's own design.
+findings are tasks or notes and never edits to this plan's own design. **Item 6 therefore stays open
+for AK4 and AK5 as well as for AK6a, AK6b and AK7**, and nothing here may be read as the independent
+review of any of them.
 
 **What it read.** `internal/credsvc`'s whole request path — `server.go` (the routes, the caller's
 verification, the class's own door), `auth.go` (`AuthConfig`, the job set and the review set),
@@ -1099,5 +1139,8 @@ task's own write path needs, F27 was a stale doc.
 **What the review could not verify, and says so:** no live installation was measured (the owner's live
 checks are unrun, item 7), the service's behaviour against a real Secret Manager, a real Firebase
 project and a real provider is not measured anywhere in this folder, and the review read `main`'s code
-rather than a running service. **AK9 and AK10 are written and not approved** (item 3), and neither
-blocks a task: they are off the levels and off the critical path (§1, §2).
+rather than a running service. **It is also not the independent review item 6 asks for** — the file
+says so in its own last section — so **item 6 stays open for AK4 and AK5** and for AK6a, AK6b and
+AK7. **AK9 and AK10 are written and not approved** (item 3); **AK9 blocks no task**, and **AK10 blocks
+no task from starting but gates AK6b's release** (§6 item 11) — both are off the levels and off the
+critical path (§1, §2).

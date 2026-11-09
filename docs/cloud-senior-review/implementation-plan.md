@@ -2705,8 +2705,9 @@ served by a provider key`.
 it does not change 0.20.0's `### For operators` sentence (§6.5), and it does not add a level, an edge or a
 shared-files row: the two tasks above are a later release's, and their own release writes the sentence that
 names them. **Nor does it decide anything about them that the api-key review's own plan now carries**
-(2026-11-09): the reconciliation above, the conditions its security review places on AK6a, AK6b and AK7,
-and the finding that the OpenRouter half's **served** path waits on **Check 50** — a live check neither plan
+(2026-11-09): the reconciliation above, the conditions **the author's own security pass** — which is not
+the independent review the SEC tier asks for — places on AK6a, AK6b and AK7, the fact that **AK10 is a
+release precondition of AK6b** there, and the finding that the OpenRouter half's **served** path waits on **Check 50** — a live check neither plan
 has run, and the tree refuses every tier-C candidate until it has — all live in `docs/api-key-review`. This
 subsection's job was to name the slice, order it and leave it outside 0.20.0, and it still does exactly
 that.
