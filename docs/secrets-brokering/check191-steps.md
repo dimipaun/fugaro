@@ -2,9 +2,9 @@
 
 **Status: written by task B1.11 of the secrets-brokering plan; run by the owner, task B1.12 (Check
 191) and the flip's own task (Check 192).** Neither has been run: Check 191 runs on the **released**
-0.15.0, because `fugaro update --provision-credentials` refuses a development build
-(`internal/cli/init_credentials.go`, `resolveCredentialsImage`), and Check 192 runs after the flip
-(D500, O7). **No agent runs any step of either**, and no agent has: what they measure is a live
+0.15.0 and not on a development build — a build from a checkout resolves no released
+credentials-service image to deploy (`internal/cli/init_credentials.go`, `resolveCredentialsImage`),
+so `fugaro version` must not print `dev` — and Check 192 runs after the flip (D500, O7). **No agent runs any step of either**, and no agent has: what they measure is a live
 installation, real runs and the credentials service's own answers.
 
 The check is `scripts/live-checks/check191.sh` — one script, two modes: without an argument it runs
