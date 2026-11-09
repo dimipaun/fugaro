@@ -32,8 +32,11 @@ package cli
 // breaks on the task rather than on a mistake.
 //
 //  * TestDocsRepoImageRemovalIsWritten -- the four files exist, the index
-//    carries the status line and the owner's ruling verbatim, the spec carries
-//    the order that orders every task, and the plan carries its own signature.
+//    carries the status line, the parked chain (R0 and R1 shipped, R2-R10
+//    deferred by the image setup skill's D1900) and the owner's ruling
+//    verbatim, the spec carries the order that orders every task, and the plan
+//    carries its own signature, its status line and the same parking note --
+//    the three places a reader checks the folder against the build.
 //  * TestDocsRepoImageRemovalDecisionsAreInRange -- D1190-D1208 are written,
 //    each exactly once and in order, every one is open with a recommendation and
 //    the cost of both the alternative and the recommendation, and D1209-D1219,
@@ -122,7 +125,22 @@ func TestDocsRepoImageRemovalIsWritten(t *testing.T) {
 	}
 	readme := flattenDoc(readDoc(t, rirReadme))
 	for _, want := range []string{
-		"**Status: a design, and nothing is built. The owner answered every decision on 2026-11-04.**",
+		// The status line, and the parking note below it: R0 and R1 are on
+		// `main` (R0's dogfood entry and pin, R1's prebuilt-entry refusal), and
+		// the chain that removes the rest is deferred rather than cancelled, so
+		// a reader who takes one thing from the index takes which half shipped
+		// and which half did not.
+		"**Status: a design. R0 and R1 have shipped, and R2–R10 are parked by the image setup skill (D1900); the owner answered every decision on 2026-11-04.**",
+		"**Amended 2026-11-09: the removal is parked, and its first two tasks have shipped.**",
+		"**R2–R10 are parked**: deferred, not cancelled",
+		// The two sentences the amendment has to carry away from the present
+		// tense: the standing gate, which R0 and R1 landed without, and the
+		// paragraph claiming this repository still carries a per-repository
+		// image, which the tree contradicts at `./fugaro.yaml:64`. Both are
+		// marked as first written rather than left reading as today's state.
+		"*This paragraph is the status as first written, kept: R0 and R1 landed without the approval it asks for",
+		"**Two repositories carried a per-repository image when this was written and neither may lose it:**",
+		"this repository's half has since landed",
 		// The owner's ruling, verbatim, so the index cannot drift into a
 		// paraphrase of it: every task of the plan answers this sentence.
 		"Completely disable repo-level images for now to make things simpler.",
@@ -162,7 +180,16 @@ func TestDocsRepoImageRemovalIsWritten(t *testing.T) {
 	// plan reads as eleven independent tasks, which is the one thing it is not.
 	plan := flattenDoc(readDoc(t, rirPlan))
 	for _, want := range []string{
-		"**Status: plan only; nothing is implemented; no task approved.**",
+		// The plan's status line carries the same correction the index's does:
+		// a plan whose first two tasks are on `main` and whose rest is parked
+		// reads as unstarted to a builder who skims it, and the amendment says
+		// where the order stopped.
+		"**Status: a plan. R0 and R1 are built; R2–R10 are parked by the image setup skill (D1900), and no task of theirs is approved.**",
+		"**Amended 2026-11-09: R0 and R1 have shipped, and R2–R10 are parked**",
+		// The gate paragraph is marked as first written for the same reason the
+		// index's is: "no task lands before that is picked" reads as today's
+		// state beside an amendment saying two tasks landed.
+		"*This paragraph is the status as first written, kept: R0 and R1 landed without the approval it asks for",
 		"**catalog ships → R0 → D1148 (both tasks) → R1 → R2 → R3 → R4 → R5 → R6 → R7 → R8 → R9 → R10.**",
 		"**0.20.0 — two releases after D1148's two tasks",
 		// The ceiling, and the one subject that exceeds it: a reader checking
