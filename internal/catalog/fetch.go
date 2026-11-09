@@ -150,9 +150,9 @@ func definition(e config.Entry, data []byte) ([]byte, error) {
 // the rule keeps it out of; the ARG or ENV name is printed instead, through
 // pluginwire.Printable like every other value this package prints.
 func refuseCredentialIn(e config.Entry, data []byte) error {
-	lines := dockerfileLines(data)
+	lines, esc := dockerfileLines(data)
 	for _, line := range lines {
-		if err := refuseCredentialNames(e, line); err != nil {
+		if err := refuseCredentialNames(e, line, esc); err != nil {
 			return err
 		}
 	}
@@ -168,8 +168,10 @@ func refuseCredentialIn(e config.Entry, data []byte) error {
 
 // refuseCredentialNames checks one logical line's ARG and ENV names, and the
 // ARG and ENV an ONBUILD line defers to a child image: both are instructions
-// whose variable reaches a layer, so both are read.
-func refuseCredentialNames(e config.Entry, line string) error {
+// whose variable reaches a layer, so both are read. esc is the definition's
+// own escape character (dockerfileLines), which decides how the line is cut
+// into words.
+func refuseCredentialNames(e config.Entry, line string, esc byte) error {
 	inst, rest := splitInstruction(line)
 	if inst == "ONBUILD" {
 		inst, rest = splitInstruction(rest)
@@ -177,7 +179,7 @@ func refuseCredentialNames(e config.Entry, line string) error {
 	if inst != "ARG" && inst != "ENV" {
 		return nil
 	}
-	for _, name := range instructionNames(inst, rest) {
+	for _, name := range instructionNames(inst, rest, esc) {
 		if credentialShaped(name) {
 			return fmt.Errorf("the catalog entry %s: its Dockerfile sets %s %s, a name a credential is carried in; a build argument or an environment variable with a secret in it reaches the image, so mount the value with RUN --mount=type=secret instead",
 				nameOf(e), inst, pluginwire.Printable(name))
@@ -206,7 +208,11 @@ func refuseCredentialNames(e config.Entry, line string) error {
 // The parser's own idea of whitespace is the one used here, unicode and not
 // "space and tab": a name after a vertical tab is a name to a build. All of it
 // was checked against BuildKit's own parser.
-func dockerfileLines(data []byte) []string {
+//
+// It returns the lines and the escape character it read the definition with,
+// which a caller needs as well: the same character decides how a line is cut
+// into the words an instruction is parsed from (dockerfileWords).
+func dockerfileLines(data []byte) ([]string, byte) {
 	// A byte-order mark is stripped from the first line and nowhere else, as
 	// the parser strips it: left in place it becomes part of the first
 	// instruction's name, and an ARG under one is an ARG no longer.
@@ -247,7 +253,7 @@ func dockerfileLines(data []byte) []string {
 	if cont.Len() > 0 {
 		lines = append(lines, cont.String())
 	}
-	return lines
+	return lines, esc
 }
 
 // trimContinuation removes a line's continuation escape character and the
@@ -321,10 +327,12 @@ func dockerfileEscape(data string) byte {
 // read with either in it is an instruction the guard does not see.
 const dockerSpace = " \t\v\f\r"
 
-// splitInstruction cuts one logical line into its instruction and the rest:
-// the instruction upper-cased, because Dockerfile instructions are
-// case-insensitive, and the rest as it was written. A blank line, a comment
-// and the parser directive return no instruction.
+// splitInstruction cuts one logical line into its instruction and the
+// arguments it is parsed from: the instruction upper-cased, because Dockerfile
+// instructions are case-insensitive, and the arguments with the builder flags
+// the parser takes off the front of them removed, because a flag is not an
+// argument of ARG or ENV. A blank line, a comment and the parser directive
+// return no instruction.
 func splitInstruction(line string) (string, string) {
 	line = strings.TrimSpace(line)
 	if line == "" || strings.HasPrefix(line, "#") {
@@ -334,21 +342,90 @@ func splitInstruction(line string) (string, string) {
 	if i < 0 {
 		return strings.ToUpper(line), ""
 	}
-	return strings.ToUpper(line[:i]), strings.TrimLeft(line[i:], dockerSpace)
+	return strings.ToUpper(line[:i]), withoutBuilderFlags(strings.TrimLeft(line[i:], dockerSpace))
 }
 
-// instructionNames returns the variable names one ARG or ENV line sets.
-func instructionNames(inst, rest string) []string {
+// withoutBuilderFlags removes the builder flags from the front of a line's
+// arguments, the way the parser does before an instruction is parsed
+// (splitCommand's extractBuilderFlags): a leading run of words that begin with
+// `--` is flags, and a bare `--` ends the run and is a flag itself. Without
+// this, a bare `--` reads here as the first name and the name a build sets —
+// `ENV -- NPM_TOKEN=1` is the environment variable NPM_TOKEN — goes unchecked;
+// the flags may be quoted, so a word is cut the same way the parser cuts it.
+func withoutBuilderFlags(rest string) string {
+	const (
+		inSpaces = iota // looking for start of a word
+		inWord
+		inQuote
+	)
+	phase, wordStart := inSpaces, 0
+	var quote byte
+	for pos := 0; pos <= len(rest); pos++ {
+		if phase == inSpaces {
+			if pos == len(rest) {
+				return ""
+			}
+			if unicode.IsSpace(rune(rest[pos])) {
+				continue
+			}
+			// Only a word that starts with `--` is a flag; the run of them ends
+			// at the first word that does not, which is where the arguments are.
+			if rest[pos] != '-' || pos+1 == len(rest) || rest[pos+1] != '-' {
+				return rest[pos:]
+			}
+			phase, wordStart = inWord, pos
+			continue
+		}
+		if pos == len(rest) {
+			// The last word ran to the end of the line: a flag, or nothing.
+			return ""
+		}
+		switch phase {
+		case inWord:
+			if unicode.IsSpace(rune(rest[pos])) {
+				if rest[wordStart:pos] == "--" {
+					return rest[pos:]
+				}
+				phase = inSpaces
+				continue
+			}
+			if rest[pos] == '\'' || rest[pos] == '"' {
+				quote = rest[pos]
+				phase = inQuote
+				continue
+			}
+			if rest[pos] == '\\' && pos+1 < len(rest) {
+				pos++ // the parser's own escape in a flag, always the backslash
+			}
+		case inQuote:
+			if rest[pos] == quote {
+				phase = inWord
+				continue
+			}
+			if rest[pos] == '\\' && pos+1 < len(rest) {
+				pos++
+			}
+		}
+	}
+	return ""
+}
+
+// instructionNames returns the variable names one ARG or ENV line sets, from
+// the line's arguments (splitInstruction) and the definition's escape
+// character.
+func instructionNames(inst, rest string, esc byte) []string {
 	if inst == "ARG" {
-		// Every whitespace-separated word of an ARG line is its own build
-		// argument (ARG FOO BAR declares both, and each takes the value of a
-		// --build-arg of its own name), so every word is a name this guard has
-		// to read and not only the first: a credential-shaped name written
-		// second is declared by a build all the same. A word is a name, or a
-		// name=default, so the name ends at its '='. The whitespace is the
-		// parser's own here (unicode.IsSpace, parseWords).
+		// Every word of an ARG line is its own build argument (ARG FOO BAR
+		// declares both, and each takes the value of a --build-arg of its own
+		// name), so every word is a name this guard has to read and not only
+		// the first: a credential-shaped name written second is declared by a
+		// build all the same. A word is a name, or a name=default, so the name
+		// ends at its '='. The words are the parser's own (parseWords) and not
+		// a plain split on whitespace: a quoted default holds blanks, and
+		// cutting one into words would read a value as a name and refuse a
+		// definition that sets none.
 		var names []string
-		for _, word := range strings.FieldsFunc(rest, unicode.IsSpace) {
+		for _, word := range dockerfileWords(rest, esc) {
 			name, _, _ := strings.Cut(word, "=")
 			if name != "" {
 				names = append(names, name)
@@ -357,6 +434,88 @@ func instructionNames(inst, rest string) []string {
 		return names
 	}
 	return envNames(rest)
+}
+
+// dockerfileWords cuts a line's arguments into the words the parser cuts them
+// into (parseWords): whitespace separates words — the parser's own whitespace,
+// unicode and not "space and tab" — while a quoted stretch is one word with its
+// quotes taken off, and the definition's escape character keeps the character
+// after it in the word rather than ending it. Nothing here reads a value: what
+// the words are for is the name at the front of each.
+func dockerfileWords(rest string, esc byte) []string {
+	const (
+		inSpaces = iota // looking for start of a word
+		inWord
+		inQuote
+	)
+	var words []string
+	phase := inSpaces
+	word := ""
+	var quote byte
+	blankOK := false
+	var ch byte
+	for pos := 0; pos <= len(rest); pos++ {
+		if pos != len(rest) {
+			ch = rest[pos]
+		}
+		if phase == inSpaces {
+			if pos == len(rest) {
+				break
+			}
+			if unicode.IsSpace(rune(ch)) {
+				continue
+			}
+			phase = inWord
+		}
+		if (phase == inWord || phase == inQuote) && pos == len(rest) {
+			if blankOK || len(word) > 0 {
+				words = append(words, word)
+			}
+			break
+		}
+		if phase == inWord {
+			if unicode.IsSpace(rune(ch)) {
+				phase = inSpaces
+				if blankOK || len(word) > 0 {
+					words = append(words, word)
+				}
+				word, blankOK = "", false
+				continue
+			}
+			if ch == '\'' || ch == '"' {
+				quote = ch
+				blankOK = true
+				phase = inQuote
+			}
+			if ch == esc {
+				if pos+1 == len(rest) {
+					continue // an escape character at the end of the line
+				}
+				word += string(ch)
+				pos++
+				ch = rest[pos]
+			}
+			word += string(ch)
+			continue
+		}
+		// inQuote: the same reading, with only the quote that opened it ending
+		// the stretch — the escape character cannot escape a single quote, as
+		// the parser has it.
+		if ch == quote {
+			phase = inWord
+		}
+		if ch == esc && quote != '\'' {
+			if pos+1 == len(rest) {
+				phase = inWord
+				continue
+			}
+			pos++
+			word += string(ch)
+			ch = rest[pos]
+		}
+		word += string(ch)
+	}
+	return words
 }
 
 // envNames returns the names an ENV line sets: the modern form is one or more

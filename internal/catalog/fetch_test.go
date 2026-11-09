@@ -279,6 +279,16 @@ func TestDockerfileSecretArgRefused(t *testing.T) {
 		// A `# syntax=` directive is one the parser knows, so the block goes on
 		// past it and the `# escape=` after it is followed.
 		"# syntax=docker/dockerfile:1\n# escape=`\nFROM example.invalid/base\nARG NPM_`\nTOKEN=1\n",
+		// The parser takes a leading run of `--`-prefixed words off the front
+		// of a line's arguments as builder flags, and a bare `--` ends the run
+		// (splitCommand's extractBuilderFlags), so the name after one is the
+		// name the instruction sets: read without that cut, an ENV's name is
+		// the `--` and the credential name under it is never looked at.
+		"FROM example.invalid/base\nENV -- NPM_TOKEN=1\n",
+		"FROM example.invalid/base\nONBUILD ENV -- NPM_TOKEN=1\n",
+		"FROM example.invalid/base\nARG -- NPM_TOKEN=1\n",
+		"FROM example.invalid/base\nARG --build-arg NPM_TOKEN=1\n",
+		"FROM example.invalid/base\nARG --x=1 FOO TOKEN\n",
 	} {
 		_, err := Fetch(ctx, nil, gitprov.KindGitHub, inlineEntry(def))
 		if err == nil {
@@ -319,6 +329,13 @@ func TestDockerfileSecretArgRefused(t *testing.T) {
 		// Several words on an ARG line are several names, and none of these is
 		// credential-shaped.
 		"FROM example.invalid/base\nARG NODE_VERSION GOPATH=/go\n",
+		// A quoted default is one word with blanks in it (the parser's own
+		// reading, parseWords), so the words inside the quotes are part of a
+		// value and not names: a split on whitespace would refuse this
+		// definition over a build argument named credentials that it does not
+		// declare. The same on an ENV line.
+		"FROM example.invalid/base\nARG NOTES=\"no credentials here\"\n",
+		"FROM example.invalid/base\nENV NOTES=\"not a password field\"\n",
 	} {
 		if _, err := Fetch(ctx, nil, gitprov.KindGitHub, inlineEntry(def)); err != nil {
 			t.Errorf("the definition %q was refused: %v", def, err)
