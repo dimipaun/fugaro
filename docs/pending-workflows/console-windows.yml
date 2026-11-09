@@ -25,9 +25,7 @@
 # because it arrives at release time.
 #
 #   1. **Landed** (2026-11-09): `console/package.json` has the `package:win`
-#      script (`npm run build && electron-builder --win --publish never`),
-#      `console/package.json`'s `build.win` names the target, the arch and the
-#      artifact name (`nsis`, x64, the Linux leg's nested form), and
+#      script (`npm run build && electron-builder --win --publish never`), and
 #      `console/src/main/fuses.ts`'s `SUPPORTED_PLATFORMS` is
 #      `['darwin','linux','win32']` with a `win32Executable` row beside the other
 #      two -- so `afterPack`, the pack's only fuse flipper, no longer refuses the
