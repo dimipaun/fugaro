@@ -423,6 +423,20 @@ var patternCases = []struct {
 		keep: `","step":"terraform apply"}`,
 	},
 	{
+		name: "password written in quotes in a connection string",
+		in: "postgres://app:" + fake(`"`, strings.Repeat("Qw3", 5), `"`) +
+			"@db.example.com:5432/app refused",
+		leak: strings.Repeat("Qw3", 5),
+		keep: "db.example.com:5432/app refused",
+	},
+	{
+		name: "password written in quotes in a connection string inside an escaped record",
+		in: `{"dsn":"postgres://app:\"` + fake(strings.Repeat("Qw3", 5)) +
+			`\"@db.example.com:5432/app refused"}`,
+		leak: strings.Repeat("Qw3", 5),
+		keep: `@db.example.com:5432/app refused`,
+	},
+	{
 		name: "password field of a keyword connection string",
 		in: "Server=db.example.com;User Id=app;Pwd=" + fake(strings.Repeat("Qw3", 5)) +
 			";Database=app",
@@ -754,6 +768,28 @@ func TestRedactKeepsNoHalfOfAValue(t *testing.T) {
 			`{"dsn":"postgres://app:` + password + `","step":"terraform apply"}`,
 			`{"dsn":"postgres://app:` + redacted + `","step":"terraform apply"}`,
 		},
+		{
+			"a password written in quotes",
+			"postgres://app:" + fake(`"`, strings.Repeat("Qw3", 5), `"`) +
+				"@db.example.com:5432/app refused",
+			"postgres://app:" + redacted + "@db.example.com:5432/app refused",
+		},
+		{
+			"the same password written in single quotes",
+			"postgres://app:" + fake(`'`, strings.Repeat("Qw3", 5), `'`) +
+				"@db.example.com:5432/app refused",
+			"postgres://app:" + redacted + "@db.example.com:5432/app refused",
+		},
+		{
+			"a quoted password in a record that was itself escaped",
+			`{"dsn":"postgres://app:\"` + strings.Repeat("Qw3", 5) + `\"@db.example.com:5432/app refused"}`,
+			`{"dsn":"postgres://app:` + redacted + `@db.example.com:5432/app refused"}`,
+		},
+		{
+			"a quoted password in an excerpt that stops before the host",
+			"postgres://app:" + fake(`"`, strings.Repeat("Qw3", 5), `"`) + " refused",
+			"postgres://app:" + redacted + " refused",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := Text(tc.in, nil); got != tc.want {
@@ -774,6 +810,59 @@ func TestRedactsBothPasses(t *testing.T) {
 	}
 	if got != "line [REDACTED] and [REDACTED] end" {
 		t.Errorf("Text = %q, want both matches replaced", got)
+	}
+}
+
+// TestRedactReadsThroughTheMarker: the exact pass may put its marker inside a
+// credential, because a value Fugaro holds is a value the text spells with more
+// of its own bytes around it, and the pattern pass then has to read that value
+// to the end — a value read from before the marker stops where the marker
+// stands, and the bytes after it are what the marker hides. The last two cases
+// are the other side of it: a marker with a field's delimiter behind it is not
+// the front of a value, and a value read from there would take the field after
+// it along.
+func TestRedactReadsThroughTheMarker(t *testing.T) {
+	secret := fake("acme-", "widgets")
+	for _, tc := range []struct{ name, in, want string }{
+		{
+			"an environment entry",
+			"PGPASSWORD=" + secret + "-2024xyz psql: connection refused",
+			"PGPASSWORD=" + redacted + " psql: connection refused",
+		},
+		{
+			"a flag",
+			"--password " + secret + "-2024xyz --user someone failed",
+			"--password " + redacted + " --user someone failed",
+		},
+		{
+			"a field of a record",
+			`{"password":"` + secret + `-2024xyz"}`,
+			`{"password":"` + redacted + `"}`,
+		},
+		{
+			"a connection string",
+			"postgres://app:" + secret + "-2024xyz@db.example.com:5432/app refused",
+			"postgres://app:" + redacted + "@db.example.com:5432/app refused",
+		},
+		{
+			"a field name behind the marked value",
+			"Pwd=" + secret + "-2024xyz;Database=app",
+			"Pwd=" + redacted + ";Database=app",
+		},
+		{
+			"a delimiter behind the marker",
+			"Pwd=" + secret + ";Database=app",
+			"Pwd=" + redacted + ";Database=app",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := Text(tc.in, []string{secret}); got != tc.want {
+				t.Errorf("Text(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+			if again := Text(tc.want, []string{secret}); again != tc.want {
+				t.Errorf("Text(%q) = %q, want it unchanged", tc.want, again)
+			}
+		})
 	}
 }
 
@@ -1056,6 +1145,7 @@ func TestRedactPassesLeaveCleanTextAlone(t *testing.T) {
 		"the word 'pass' in quotes: it is not a field",
 		"see https://api.example.com:8080/v1/runs for the endpoint",
 		"the server is at http://localhost:3000 and up",
+		"postgres://app:" + fake(`"`, "8080", `"`) + " was refused",
 		"fugaro run --password\nError: flag needs an argument",
 	} {
 		if got := Text(s, []string{"a-secret-value"}); got != s {

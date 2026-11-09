@@ -245,11 +245,19 @@ func redactPasswords(s string) string {
 //     its place, and a value read from that backslash crosses the escaped
 //     quotes and takes the record's fields with it. Reading a record the way
 //     its own escaping writes it is passwordEscaped's work below.
-//   - the NUL the marker is held as while these rules run (markerHeld). A
-//     marker left to be read as a value would take the name of the field after
+//   - the NUL the marker is held as while these rules run (markerHeld), where
+//     the byte after it does not open a value: a marker standing where the next
+//     field's name begins (`Pwd=[REDACTED];Database=app`,
+//     `?token=[REDACTED]&state=ok`) read as a value would take that name with
 //     it, because that is what the right-hand end of an unquoted value is found
-//     by. The marker's bracket is deliberately not the exclusion: a value may
-//     open with one (`PGPASSWORD=[hunter2x`) and is read like any other.
+//     by. A value may stand behind a marker, and often does: the exact pass
+//     marks the part of a value Fugaro holds, and the text spells the rest of
+//     that value with bytes of its own (`PGPASSWORD=<marker>-2024xyz`), so a
+//     marker with a value's byte after it opens a value too and the value is
+//     read from there — the whole of it, rather than the marker and whatever
+//     the text put behind it. The marker's bracket is deliberately not the
+//     exclusion: a value may open with one (`PGPASSWORD=[hunter2x`) and is read
+//     like any other.
 //
 // A value may hold either quote, and the byte after it is what says which
 // reading it belongs to: a quote the text continues past as a value's byte is
@@ -269,8 +277,36 @@ const passwordValueTail = `(?:(")((?:\\"|[^"\n]){4,})(")` +
 	`|(')((?:\\'|[^'\n]){4,})(')` +
 	`|(")((?:\\"|[^"\n]){4,})(?m:$)` +
 	`|(')((?:\\'|[^'\n]){4,})(?m:$)` +
-	`|((?:[^\s"';&\x00\\]|\\[^"])(?:[^\s;&"']|"[^\s,;&}\])]|'[^\s,;&}\])]){3,})([;&][A-Za-z_][A-Za-z0-9_\-]*=)` +
-	`|((?:[^\s"';&\x00\\]|\\[^"])(?:[^\s"']|"[^\s,;&}\])]|'[^\s,;&}\])]){3,}))`
+	`|((?:\x00\x01)?(?:[^\s"';&\x00\\]|\\[^"])(?:[^\s;&"']|"[^\s,;&}\])]|'[^\s,;&}\])]){3,})([;&][A-Za-z_][A-Za-z0-9_\-]*=)` +
+	`|((?:\x00\x01)?(?:[^\s"';&\x00\\]|\\[^"])(?:[^\s"']|"[^\s,;&}\])]|'[^\s,;&}\])]){3,}))`
+
+// connStringQuoted is the value of a connection string written inside quotes,
+// which is how a config line, a `.env` line or a shell line writes one
+// (`postgres://app:"<password>"@host`), and the same value one encoding in,
+// where a record that has itself been escaped carries the quotes as `\"`. It is
+// written once because the two connection-string rules below read it the same
+// way, as passwordValueTail is written once for the password rules, and
+// connStringCutQuoted below is the one difference between them. The unquoted
+// class beside it cannot read such a value — it stops at the quote that opens
+// it, and the value's first byte is that quote — and that is the whole of the
+// asymmetry the two answer: the same password in single quotes is a value to
+// that class and was redacted, while this one went into the text whole. Both
+// delimiters are read with the backslashes they arrive with rather than one,
+// because a `\"` opening the value and a `\"` closing it are the record's
+// delimiter either way, and the delimiters go with the value: a password
+// written in quotes goes the way an unquoted one does, so the two come out
+// alike and the shape around the marker is the text's. The body holds the
+// escaped byte of a value holding its own quote
+// (`postgres://app:"ab\"cd"@host`) and is the four bytes every quoted value
+// here is read with.
+const connStringQuoted = `\\*"(?:\\.|[^"\\\r\n]){4,}\\*"`
+
+// connStringCutQuoted is that value under the letter connStringCut reads a
+// password with, and is that rule's alone: with no `@` and no host to tell a
+// password from a port by, a letter is its evidence rather than a length, and
+// the two kinds of quote come out alike there only if a quoted port — which is
+// not how a port is written — is read the way the bare class reads one.
+const connStringCutQuoted = `\\*"(?:\\.|[^"\\\r\n])*[A-Za-z](?:\\.|[^"\\\r\n])*\\*"`
 
 var (
 	// authHeaderEscaped is the same header one encoding further in: a JSON
@@ -413,7 +449,15 @@ var (
 	// base class alone the rule did not shorten its match around such a quote,
 	// it made none at all — the `@` and the host have to follow the value — and
 	// the password went into the text whole.
-	connString = regexp.MustCompile(`(?i)\b([a-z][a-z0-9+.\-]*://[^\s:/@?#]*):((?:[^\s"]|"[^\s,;&}\])])+)@`)
+	//
+	// A password the text writes in quotes at both ends is connStringQuoted
+	// above, the second reading of this value group and the one this class
+	// cannot reach: the pair unit reads a quote the text continues past, and
+	// here the closing quote is the value's last byte with the `@` behind it.
+	// The two are one group rather than two rules, so a value found by either
+	// is replaced the same way, and the delimiters are part of the value: the
+	// marker stands where the password stood and the quotes go with it.
+	connString = regexp.MustCompile(`(?i)\b([a-z][a-z0-9+.\-]*://[^\s:/@?#]*):(?:` + connStringQuoted + `|(?:[^\s"]|"[^\s,;&}\])])+)@`)
 
 	// connStringCut is the same userinfo where the excerpt stops before the
 	// host: the URL of a `.env` line, of a config value or of an error message
@@ -439,7 +483,12 @@ var (
 	// because a record that has itself been escaped carries its closing quote
 	// as `\"`, and a value that took the backslash left the quote it escapes
 	// bare.
-	connStringCut = regexp.MustCompile(`(?i)\b([a-z][a-z0-9+.\-]*://[^\s:/@?#]*):((?:\\[^"]|[^\s"/?#@\\])*[A-Za-z](?:\\[^"]|[^\s"/?#@\\])*)`)
+	//
+	// A value written in quotes is connStringCutQuoted above, and the letter is
+	// its guard as it is the class's: an excerpt that stops inside such a quote
+	// holds bytes this class cannot read at all, so what tells a password from a
+	// port is the same letter and nothing more.
+	connStringCut = regexp.MustCompile(`(?i)\b([a-z][a-z0-9+.\-]*://[^\s:/@?#]*):(?:` + connStringCutQuoted + `|(?:\\[^"]|[^\s"/?#@\\])*[A-Za-z](?:\\[^"]|[^\s"/?#@\\])*)`)
 
 	// dsnString is the same userinfo where no scheme introduces it: the DSN the
 	// MySQL driver reads, `app:<password>@tcp(db:3306)/app`, which a Go program
