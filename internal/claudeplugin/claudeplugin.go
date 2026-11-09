@@ -42,6 +42,10 @@ var (
 	updateMarket  = []string{"plugin", "marketplace", "update", pluginwire.Marketplace}
 	installUser   = []string{"plugin", "install", pluginwire.PluginID, "--scope", "user"}
 	addPrefix     = []string{"plugin", "marketplace", "add", "--scope", "user"}
+	// removeUser clears the declaration an add is refused by, at the one scope
+	// fugaro's own add writes and never at a scope whose settings the checkout
+	// commits.
+	removeUser = []string{"plugin", "marketplace", "remove", pluginwire.Marketplace, "--scope", "user"}
 	// scopes an update may name, in the order Decide updates them.
 	scopes = []string{"local", "project", "user"}
 )
@@ -76,7 +80,7 @@ func ValidSource(s string) bool {
 // Allowed is nil when args is one of the calls fugaro makes, and an error
 // naming it otherwise. Runner checks it before anything is executed.
 func Allowed(args []string) error {
-	fixed := [][]string{listMarkets, listInstalled, updateMarket, installUser}
+	fixed := [][]string{listMarkets, listInstalled, updateMarket, installUser, removeUser}
 	for _, s := range scopes {
 		fixed = append(fixed, updatePlugin(s))
 	}

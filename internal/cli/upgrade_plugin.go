@@ -78,7 +78,24 @@ func pluginStep(ctx context.Context, u *upgradeCtx) stepResult {
 	}
 	before, _ := os.ReadFile(u.loc.Settings)
 	for _, c := range plan.Calls {
-		if err := run.Change(ctx, c...); err != nil {
+		err := run.Change(ctx, c.Args...)
+		switch {
+		case err == nil:
+		case c.Kind == claudeplugin.Clear:
+			// The declaration Claude Code refuses an add by: clearing one it
+			// does not have fails the same way, and the add below is what
+			// decides whether the marketplace ends up at this release's tag.
+			fmt.Fprintf(u.w, "  continuing without clearing: %v\n", err)
+		case c.Kind == claudeplugin.Declare:
+			// Claude Code would not declare the marketplace at this release's
+			// tag, which is the plugin's only route: a source is declared for
+			// the name in settings fugaro does not own and must not rewrite.
+			// The version cannot be had here, and the checkout's other steps
+			// are not this one's to stop: the step says exactly that, and
+			// hands the user the commands that do it by hand.
+			return stepResult{state: stepSkipped, reason: fmt.Sprintf("claude would not declare the %s marketplace at %s (%s): in Claude Code run /plugin marketplace remove %s, then /plugin marketplace add %s#%s and /plugin install %s, then rerun; this update's other steps do not need it",
+				pluginwire.Marketplace, tag, oneLine(err.Error()), pluginwire.Marketplace, repo, tag, pluginwire.PluginID)}
+		default:
 			return fail(err)
 		}
 	}

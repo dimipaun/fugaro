@@ -14,8 +14,11 @@ import (
 // (ClaudePluginKey): sleep.<key> sleeps (exec, so a kill reaches it),
 // fail.<key> fails with its content on stderr, plugins.<key> and
 // marketplaces.<key> replace the lists' answers, touch.<key> appends a newline
-// to the working directory's .claude/settings.json, and print.<key> is printed
-// before "ok: <args>". Marker files change every call: dumpenv writes its
+// to the working directory's .claude/settings.json, rm.<key> deletes the file
+// it names in this directory (a call that clears what a later one is refused
+// by, the way claude answers an add of a name it has declared: the refused add
+// is then allowed, without the argument lists ever moving), and print.<key> is
+// printed before "ok: <args>". Marker files change every call: dumpenv writes its
 // environment to env.out, readstdin copies stdin to stdin.out (then
 // "stdin-eof"), grandchild starts a background job that writes marker after
 // 2 s and then sleeps (creating spawned once it started), holdout leaves a job in its own process group holding
@@ -42,6 +45,7 @@ if [ -f "$d/fail.$key" ]; then cat "$d/fail.$key" >&2; exit 1; fi
 if [ -f "$d/plugins.$key" ]; then cp "$d/plugins.$key" "$d/plugins.json"; fi
 if [ -f "$d/marketplaces.$key" ]; then cp "$d/marketplaces.$key" "$d/marketplaces.json"; fi
 if [ -f "$d/touch.$key" ]; then printf '\n' >> "$PWD/.claude/settings.json"; fi
+if [ -f "$d/rm.$key" ]; then rm -f "$d/$(cat "$d/rm.$key")"; fi
 if [ -f "$d/print.$key" ]; then cat "$d/print.$key"; fi
 echo "ok: $*"
 `
@@ -77,7 +81,7 @@ func (f *ClaudePluginFake) Write(t *testing.T, name, content string) {
 }
 
 // On arranges what the call args does: kind is sleep, fail, plugins,
-// marketplaces, touch or print (see claudePluginScript).
+// marketplaces, touch, rm or print (see claudePluginScript).
 func (f *ClaudePluginFake) On(t *testing.T, kind, content string, args ...string) {
 	t.Helper()
 	f.Write(t, kind+"."+ClaudePluginKey(args...), content)

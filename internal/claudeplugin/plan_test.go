@@ -7,6 +7,15 @@ import (
 	"testing"
 )
 
+// argsOf is a plan's calls as argument lists: what each test pins.
+func argsOf(calls []Call) [][]string {
+	out := make([][]string, 0, len(calls))
+	for _, c := range calls {
+		out = append(out, c.Args)
+	}
+	return out
+}
+
 func TestDecide(t *testing.T) {
 	root, other := t.TempDir(), t.TempDir()
 	at := func(ref string) []Market {
@@ -21,6 +30,7 @@ func TestDecide(t *testing.T) {
 		return Install{ID: "fugaro@fugaro", Version: v, Scope: "project", ProjectPath: at}
 	}
 	add := []string{"plugin", "marketplace", "add", "--scope", "user", "dimipaun/fugaro#v0.5.2"}
+	rm := []string{"plugin", "marketplace", "remove", "fugaro", "--scope", "user"}
 	upd := []string{"plugin", "marketplace", "update", "fugaro"}
 	inst := []string{"plugin", "install", "fugaro@fugaro", "--scope", "user"}
 	updU := []string{"plugin", "update", "fugaro@fugaro", "--scope", "user"}
@@ -45,10 +55,12 @@ func TestDecide(t *testing.T) {
 		// A marketplace with no ref follows the repository's default branch, so
 		// on a release main does not carry yet it offers another plugin than
 		// this binary: it is re-declared at this release's tag even when every
-		// install is current (the 0.21.1 failure of 2026-11-09).
-		{"unpinned marketplace, current install", unpinned, []Install{user("0.5.2")}, [][]string{add, upd}, "0.5.2"},
-		{"unpinned marketplace, install behind", unpinned, []Install{user("0.5.1")}, [][]string{add, upd, updU}, "0.5.1"},
-		{"marketplace at an older tag", older, []Install{user("0.5.1")}, [][]string{add, upd, updU}, "0.5.1"},
+		// install is current (the 0.21.1 failure of 2026-11-09). The clear comes
+		// first, because claude refuses an add of a name already declared from a
+		// different source.
+		{"unpinned marketplace, current install", unpinned, []Install{user("0.5.2")}, [][]string{rm, add, upd}, "0.5.2"},
+		{"unpinned marketplace, install behind", unpinned, []Install{user("0.5.1")}, [][]string{rm, add, upd, updU}, "0.5.1"},
+		{"marketplace at an older tag", older, []Install{user("0.5.1")}, [][]string{rm, add, upd, updU}, "0.5.1"},
 		// U10: a ref a newer fugaro wrote is never lowered, and a plugin that
 		// applies is left to it: nothing to do at all.
 		{"marketplace at a newer tag", newer, []Install{user("0.5.2")}, nil, "0.5.2"},
@@ -58,11 +70,11 @@ func TestDecide(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !slices.EqualFunc(p.Calls, tc.want, slices.Equal[[]string]) || p.Before != tc.before {
-				t.Fatalf("calls %q before %q, want %q %q", p.Calls, p.Before, tc.want, tc.before)
+			if !slices.EqualFunc(argsOf(p.Calls), tc.want, slices.Equal[[]string]) || p.Before != tc.before {
+				t.Fatalf("calls %q before %q, want %q %q", argsOf(p.Calls), p.Before, tc.want, tc.before)
 			}
 			for _, c := range p.Calls {
-				if err := Allowed(c); err != nil {
+				if err := Allowed(c.Args); err != nil {
 					t.Errorf("a planned call is not allowed: %v", err)
 				}
 			}
@@ -86,8 +98,8 @@ func TestDecideNeverReplacesAnotherMarketplace(t *testing.T) {
 
 func TestDecideFork(t *testing.T) {
 	p, err := Decide(Input{Root: t.TempDir(), Want: "0.5.2", Ref: "v0.5.2", Repo: "someone/fugaro"})
-	if err != nil || len(p.Calls) == 0 || !slices.Equal(p.Calls[0], []string{"plugin", "marketplace", "add", "--scope", "user", "someone/fugaro#v0.5.2"}) {
-		t.Fatalf("%q %v", p.Calls, err)
+	if err != nil || len(p.Calls) == 0 || !slices.Equal(p.Calls[0].Args, []string{"plugin", "marketplace", "add", "--scope", "user", "someone/fugaro#v0.5.2"}) {
+		t.Fatalf("%q %v", argsOf(p.Calls), err)
 	}
 	if _, err := Decide(Input{Root: t.TempDir(), Want: "0.5.2", Ref: "v0.5.2", Repo: "-rf/x"}); err == nil {
 		t.Fatal("a repository that reads as an option was planned")
@@ -132,8 +144,8 @@ func TestDecideOneUpdatePerStaleScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := [][]string{{"plugin", "marketplace", "update", "fugaro"}, {"plugin", "update", "fugaro@fugaro", "--scope", "user"}}
-	if !slices.EqualFunc(p.Calls, want, slices.Equal[[]string]) {
-		t.Fatalf("calls %q, want %q", p.Calls, want)
+	if !slices.EqualFunc(argsOf(p.Calls), want, slices.Equal[[]string]) {
+		t.Fatalf("calls %q, want %q", argsOf(p.Calls), want)
 	}
 }
 
@@ -148,8 +160,8 @@ func TestDecideInstallNewerThanWant(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := [][]string{{"plugin", "marketplace", "update", "fugaro"}, {"plugin", "update", "fugaro@fugaro", "--scope", "user"}}
-	if !slices.EqualFunc(p.Calls, want, slices.Equal[[]string]) || p.Before != "0.6.0" {
-		t.Fatalf("calls %q before %q, want %q 0.6.0", p.Calls, p.Before, want)
+	if !slices.EqualFunc(argsOf(p.Calls), want, slices.Equal[[]string]) || p.Before != "0.6.0" {
+		t.Fatalf("calls %q before %q, want %q 0.6.0", argsOf(p.Calls), p.Before, want)
 	}
 }
 
@@ -166,5 +178,48 @@ func TestApplyingNonexistentProjectPath(t *testing.T) {
 	got := Applying(root, []Install{{ID: "fugaro@fugaro", Version: "0.4.0", Scope: "project", ProjectPath: root + "/does/not/exist"}})
 	if len(got) != 0 {
 		t.Fatalf("a nonexistent project path matched the checkout: %+v", got)
+	}
+}
+
+// TestDecideKindsOfTheMovedPlan: the two calls that carry the pin's fate are
+// distinguishable from the update's own work, because the step takes their
+// failures differently: a clear Claude Code has nothing to clear leaves the
+// plan on its way, and a declaration it refuses means the plugin cannot be had
+// on this machine at all (the step reports it instead of failing the update).
+func TestDecideKindsOfTheMovedPlan(t *testing.T) {
+	ours := []Market{{Name: "fugaro", Source: "github", Repo: "dimipaun/fugaro"}}
+	p, err := Decide(Input{Root: t.TempDir(), Want: "0.5.2", Ref: "v0.5.2", Repo: "dimipaun/fugaro",
+		Markets: ours, Installed: []Install{{ID: "fugaro@fugaro", Version: "0.5.1", Scope: "user"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Kind{Clear, Declare, Change, Change}
+	if len(p.Calls) != len(want) {
+		t.Fatalf("calls %q, want %d", argsOf(p.Calls), len(want))
+	}
+	for i, k := range want {
+		if p.Calls[i].Kind != k {
+			t.Errorf("call %d (%q) is kind %v, want %v", i, p.Calls[i].Args, p.Calls[i].Kind, k)
+		}
+	}
+	// A plan that declares a marketplace it has never seen is a declaration
+	// too: its refusal is the same one, and it is not the update's to fail.
+	fresh, err := Decide(Input{Root: t.TempDir(), Want: "0.5.2", Ref: "v0.5.2", Repo: "dimipaun/fugaro"})
+	if err != nil || len(fresh.Calls) == 0 || fresh.Calls[0].Kind != Declare {
+		t.Fatalf("a fresh machine's plan is %q, %v", argsOf(fresh.Calls), err)
+	}
+}
+
+// TestDecideRefusesARefThatIsNotAReleaseTag: the ref reaches claude's command
+// line as part of the marketplace source, so nothing but a strict release tag
+// (pluginwire.ValidTag) may get there: a branch name would follow a moving
+// target, and an option-shaped ref would read as an argument of fugaro's own
+// choosing.
+func TestDecideRefusesARefThatIsNotAReleaseTag(t *testing.T) {
+	for _, ref := range []string{"", "main", "0.5.2", "v0.5", "v0.5.2.1", "v01.5.2", "v0.5.2-rc1", "--scope", "v0.5.2#x"} {
+		p, err := Decide(Input{Root: t.TempDir(), Want: "0.5.2", Ref: ref, Repo: "dimipaun/fugaro"})
+		if err == nil || len(p.Calls) != 0 {
+			t.Errorf("ref %q was planned as %q, want a refusal", ref, argsOf(p.Calls))
+		}
 	}
 }

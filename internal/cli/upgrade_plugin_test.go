@@ -30,10 +30,16 @@ var (
 	argsListMarkets = []string{"plugin", "marketplace", "list", "--json"}
 	argsListPlugins = []string{"plugin", "list", "--json"}
 	argsAdd         = []string{"plugin", "marketplace", "add", "--scope", "user", "dimipaun/fugaro#v0.5.2"}
+	argsRemove      = []string{"plugin", "marketplace", "remove", "fugaro", "--scope", "user"}
 	argsUpdMarket   = []string{"plugin", "marketplace", "update", "fugaro"}
 	argsInstall     = []string{"plugin", "install", "fugaro@fugaro", "--scope", "user"}
 	argsUpdProject  = []string{"plugin", "update", "fugaro@fugaro", "--scope", "project"}
 )
+
+// refusedAdd is what the real claude answers to an add of a name it has
+// already declared from a different source (2.1.283, 2026-11-09): an exit 1
+// that names the only way through, which is the clear this step runs first.
+const refusedAdd = "Cannot add marketplace \"fugaro\": its network source differs from the one declared for it in settings (kind, target, or a fetch-shaping field such as headers / ref / path / sparsePaths); the source must match the one declared for this name in settings (or change the declaration)."
 
 // useFakeClaude makes f the claude the plugin step finds (upgradeEnv restores
 // the lookup).
@@ -96,11 +102,15 @@ func TestUpgradePluginInstallsWithExactArgv(t *testing.T) {
 // main's plugin.json still carries the version main was last bumped to, so
 // `fugaro update` on 0.21.1 (2026-11-09) installed 0.21.0 from it and failed a
 // complete update with "the installed plugin is still 0.21.0". The step
-// re-declares the marketplace at this release's tag before anything is
-// installed from it.
+// declares the marketplace at this release's tag before anything is installed
+// from it, and it clears the old declaration first: claude refuses an add of a
+// name it has already declared from a different source, and the fake refuses
+// it here too until the clear has run.
 func TestUpgradePluginMovesAnUnpinnedMarketplaceToTheRelease(t *testing.T) {
 	upgradeEnv(t, "0.5.2")
 	f := testutil.NewClaudePluginFake(t, ourMarket, userInstall("0.5.1"))
+	f.On(t, "fail", refusedAdd, argsAdd...)
+	f.On(t, "rm", "fail."+testutil.ClaudePluginKey(argsAdd...), argsRemove...)
 	// What Claude Code serves is decided by the marketplace's ref, so the fake
 	// changes the installed version when the pinned add runs — the way the
 	// failed update of 2026-11-09 got 0.21.0 from an unpinned marketplace.
@@ -112,12 +122,39 @@ func TestUpgradePluginMovesAnUnpinnedMarketplaceToTheRelease(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	want := [][]string{argsAdd, argsUpdMarket, argsUpdUser}
+	want := [][]string{argsRemove, argsAdd, argsUpdMarket, argsUpdUser}
 	if !slices.EqualFunc(f.Changes(t), want, slices.Equal[[]string]) {
 		t.Fatalf("changes %q, want %q\n%s", f.Changes(t), want, out)
 	}
 	if !strings.Contains(out, "plugin: done: installed 0.5.2") {
 		t.Errorf("the plugin did not converge on this release's version:\n%s", out)
+	}
+}
+
+// TestUpgradePluginReportsAMarketplaceItCannotDeclare: claude refuses the add, and
+// the clear it refused it by is not fugaro's to make either (a source declared
+// for the name in settings fugaro does not own, an organization's, say). The
+// plugin cannot be had on this machine, so the step says exactly that and hands
+// over the commands, and the update's other steps are not stopped for it.
+func TestUpgradePluginReportsAMarketplaceItCannotDeclare(t *testing.T) {
+	upgradeEnv(t, "0.5.2")
+	f := testutil.NewClaudePluginFake(t, ourMarket, userInstall("0.5.1"))
+	f.On(t, "fail", refusedAdd, argsAdd...)
+	f.On(t, "fail", "Marketplace 'fugaro' is not declared in user settings. Omit --scope to remove it from all scopes.", argsRemove...)
+	useFakeClaude(t, f)
+	root, _ := skillCheckout(t, wiredAt("v0.5.2"))
+	out, _, err := executeStdin(t, "", "upgrade", "--local", root)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !slices.EqualFunc(f.Changes(t), [][]string{argsRemove, argsAdd}, slices.Equal[[]string]) {
+		t.Fatalf("changes %q\n%s", f.Changes(t), out)
+	}
+	for _, w := range []string{"continuing without clearing", "plugin: skipped: claude would not declare the fugaro marketplace at v0.5.2",
+		"/plugin marketplace remove fugaro", "/plugin marketplace add dimipaun/fugaro#v0.5.2"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("output lacks %q:\n%s", w, out)
+		}
 	}
 }
 

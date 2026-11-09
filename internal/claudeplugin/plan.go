@@ -20,10 +20,37 @@ type Input struct {
 	Installed []Install // claude plugin list --json
 }
 
+// Kind is what a plan call is for, and so what its failure means to the step
+// that runs it.
+type Kind int
+
+const (
+	// Change is the update's own work: a failure fails the step.
+	Change Kind = iota
+	// Clear clears the declaration Claude Code refuses an add by. Claude Code
+	// also refuses a clear of a name it has not declared in user settings,
+	// which is the state a clear leaves behind: a failure is printed and the
+	// plan goes on to the add.
+	Clear
+	// Declare declares the marketplace at this release's tag, the one call
+	// here Claude Code can refuse for a reason that is not fugaro's to fix (a
+	// declaration for the name in settings fugaro does not own). The step
+	// says so and stops: the plugin cannot be had on this machine, and an
+	// otherwise complete update is not failed for it.
+	Declare
+)
+
+// Call is one claude invocation, with the kind that says how its failure is
+// taken.
+type Call struct {
+	Args []string
+	Kind Kind
+}
+
 // Plan is the change calls to make, in order (none: nothing to do), and the
 // plugin version that applied to the checkout before them ("" for none).
 type Plan struct {
-	Calls  [][]string
+	Calls  []Call
 	Before string
 }
 
@@ -86,9 +113,10 @@ func refNewer(ref, want string) bool {
 //   - a fugaro marketplace from another source: OtherMarketError;
 //   - the marketplace pinned at Ref and every applying install at Want: none;
 //   - otherwise the marketplace declared at Ref (missing, or there at another
-//     ref that is not newer) and refreshed, then the plugin installed at user
-//     scope when no install applies, or each stale scope updated (local,
-//     project, user).
+//     ref that is not newer, in which case the declaration it is refused by is
+//     cleared first) and refreshed, then the plugin installed at user scope
+//     when no install applies, or each stale scope updated (local, project,
+//     user).
 //
 // Every call it returns passes Allowed.
 func Decide(in Input) (Plan, error) {
@@ -113,12 +141,17 @@ func Decide(in Input) (Plan, error) {
 	}
 	// moved: the marketplace is on this machine, but not at this release's
 	// tag, so what it serves is not this binary's plugin. Claude Code's add is
-	// the only call that sets a marketplace's ref (there is no set-ref call,
-	// and update refreshes from the source the declaration already has), and
-	// re-adding a name it knows overwrites that declaration, so the step
-	// declares it again at the pin. A ref strictly newer than this binary's is
-	// never lowered (U10): a newer fugaro wrote it, and the plugin from it is a
-	// note, not a failure.
+	// the call that sets a marketplace's ref (there is no set-ref call, and
+	// update refreshes from the source the declaration already has) — but it
+	// refuses a name that is already declared from a different source, and the
+	// ref counts as part of the source, so every marketplace a previous fugaro
+	// declared with no ref is one: the add of 2026-11-09's failure, which
+	// claude answered with "already added from a different source ... remove
+	// that marketplace first". Its own message is the route this step takes:
+	// clear the declaration at user scope, then declare the name there at this
+	// release's tag. A ref strictly newer than this binary's is never lowered
+	// (U10): a newer fugaro wrote it, and the plugin from it is a note, not a
+	// failure.
 	moved := market != nil && market.Ref != in.Ref && !refNewer(market.Ref, in.Ref)
 	applying := Applying(in.Root, in.Installed)
 	p := Plan{Before: Effective(in.Root, in.Installed)}
@@ -132,17 +165,20 @@ func Decide(in Input) (Plan, error) {
 		return p, nil
 	}
 	if market == nil || moved {
-		p.Calls = append(p.Calls, addMarket(in.Repo, in.Ref))
+		if moved {
+			p.Calls = append(p.Calls, Call{Args: slices.Clone(removeUser), Kind: Clear})
+		}
+		p.Calls = append(p.Calls, Call{Args: addMarket(in.Repo, in.Ref), Kind: Declare})
 	}
 	if market != nil {
-		p.Calls = append(p.Calls, slices.Clone(updateMarket))
+		p.Calls = append(p.Calls, Call{Args: slices.Clone(updateMarket)})
 	}
 	if len(applying) == 0 {
-		p.Calls = append(p.Calls, slices.Clone(installUser))
+		p.Calls = append(p.Calls, Call{Args: slices.Clone(installUser)})
 	}
 	for _, s := range scopes {
 		if slices.Contains(stale, s) {
-			p.Calls = append(p.Calls, updatePlugin(s))
+			p.Calls = append(p.Calls, Call{Args: updatePlugin(s)})
 		}
 	}
 	return p, nil
