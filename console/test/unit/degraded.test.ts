@@ -26,14 +26,16 @@
 //     missing, the resolution's own sentence, the remedy for *that* failure --
 //     the install command for a missing binary, and one sentence each for a
 //     missing WSL, a distribution this machine does not have and a CLI that is
-//     not inside the distribution -- and no dashboard around any of them.
+//     not inside the distribution; each of those three names the CLI's own
+//     install procedure rather than carrying the host route's install line
+//     (F32, D9(a)) -- and no dashboard around any of them.
 //   - **a stale feed breaks the graphs** rather than interpolating across the
 //     silence, and keeps the last-known values with the timestamp they came
 //     from.
 //   - **the console's stale threshold is the CLI's** (`watch.StaleAfter`, 45 s),
 //     asserted as two constants that cannot drift.
 
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
@@ -883,6 +885,30 @@ describe('the console with no installation to read', () => {
 
   it('says the CLI is not inside the distribution, and not that the installation is missing', () => {
     expectWslPage(aNoInstallationState('no-fugaro-in-distro'), NO_FUGARO_IN_DISTRO_HEADLINE, NO_FUGARO_IN_DISTRO_REMEDY)
+  })
+
+  it('offers the install line of the route it is on, and never the other route’s', () => {
+    // F32, D9(a): there is one install line **per route**, and the constant that
+    // used to be shown on every failure is the host route's. `brew install
+    // dimipaun/tap/fugaro` is not a Windows install and Homebrew is not inside a
+    // distribution, so the WSL pages must not carry it -- and what they carry
+    // instead **names** the CLI install procedure rather than retyping it:
+    // `docs/windows-cli/wsl.md` owns the four commands, and a second copy of
+    // them in a `<code>` block is a copy that goes stale silently (D9(b)).
+    const host = renderUnavailable(factory, aNoInstallationState('no-binary'), 'light')
+    expect(one(host, 'unavailable-install-command').textContent, 'the host route lost its install line').toBe(
+      FUGARO_INSTALL_COMMAND,
+    )
+    // The document is named as the path it is, written out here rather than read
+    // from the page's own constant, so a constant that stopped naming this file
+    // fails this case instead of agreeing with itself.
+    const procedure = 'docs/windows-cli/wsl.md'
+    expect(existsSync(join(__dirname, '..', '..', '..', procedure)), `${procedure} is not a document`).toBe(true)
+    for (const kind of ['no-wsl', 'no-distro', 'no-fugaro-in-distro'] as const) {
+      const tree = renderUnavailable(factory, aNoInstallationState(kind), 'light')
+      expect(one(tree, 'unavailable-remedy').textContent, `${kind} does not name the procedure`).toContain(procedure)
+      expect(drawn(tree), `${kind} offers the host route's install line`).not.toContain(FUGARO_INSTALL_COMMAND)
+    }
   })
 
   it('gives each of the four states words of its own, so no two pages are the same page', () => {

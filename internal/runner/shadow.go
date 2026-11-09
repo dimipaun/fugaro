@@ -364,6 +364,12 @@ func (r *run) shadowFinalize(ctx context.Context) error {
 		return fmt.Errorf("reading head sha: %w", err)
 	}
 	r.recordChangedFiles(ctx)
+	// The arm's diff is classified at the same two seams the champion's loop
+	// has, and its whole diff is read here as the champion's finalize reads it:
+	// both calls are the champion's, so a refusal is not one of the two ways
+	// the arms differ from each other (D555, D559). That the arm publishes
+	// nothing is the outcome's business (OutcomeNone, D568), not this member's.
+	r.escalateSecurityAtFinalize(ctx)
 	r.finalizeRigor()
 	records, err := verify.Records(r.d.StateDir)
 	if err != nil {
@@ -385,6 +391,11 @@ func (r *run) shadowFinalize(ctx context.Context) error {
 	if committed && reason == ReasonNoVerifiedTest {
 		reason = "uncommitted changes were committed at finalize, after the last verified test run"
 	}
+	// The champion's rule, called in the champion's order (finalize, runner.go):
+	// a refused escalation is not something the arm's own records can answer
+	// away, and an arm whose record said succeeded while the champion's said
+	// failed would be a pair read as two different runs of the same work.
+	ready, reason, class = r.applySecurityRefusal(ready, reason, class)
 	if fr := r.failure(); fr != "" {
 		ready, reason, class = false, fr, r.failureClass()
 	}

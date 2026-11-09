@@ -109,7 +109,7 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
       'every reason the section has not to draw a table -- the CLI\'s refusal sentence for its read (`settings.read`, the `SourceRefusal` channel), or one of this module\'s own sentences -- is put through `sanitizeRefusal` (`drawnRefusal`) in `buildAccountKeys`, before it is stored on the model, exactly as `projects.ts` does it for its panels. Design section 6.3 requires the CLI\'s sentence verbatim, so the pattern classes must not touch it: `roles/datastore.viewer` is `[redacted]` and the project\'s own config path is `<path>` under `sentence`, and the tab\'s settings panel draws the same refusal unedited. A sentence the sanitizer refuses is `REFUSAL_UNREADABLE` (`./degraded`), so the cell is never blank',
   },
   'degraded.ts': {
-    'state.installCommand': '`FUGARO_INSTALL_COMMAND` in `src/source/cli.ts`, which is the README\'s own `brew install dimipaun/tap/fugaro` rather than a string a document chose',
+    'state.installCommand': '`FUGARO_INSTALL_COMMAND` in `src/source/cli.ts`, which is the README\'s own `brew install dimipaun/tap/fugaro` rather than a string a document chose. The install line is per route (F32), and this cell is the **host route\'s**: it is drawn on the absent-binary page alone, because the three WSL kinds carry the empty string and their pages carry the procedure\'s name as this file\'s own remedy constants (`NO_WSL_REMEDY` and the two beside it), which the scan accepts as module constants',
     drawn: {
       within: 'drawRunId',
       reason:
@@ -634,7 +634,7 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
     "classes.join(' ')": { within: 'make', reason: 'the class list of the `make` helper; every call site passes string-literal class names' },
     "model.caps.state": 'a Reading\'s `state`, the closed `ReadingState` union',
     "sanitizedKey(row.run)": 'the run id as `sanitizeText` drew it (runId class), empty when refused',
-    kind: { within: 'root', reason: 'the closed discriminant of this file\'s states (`no-firebase`, `no-binary`, `refused`), written as a key' },
+    kind: { within: 'root', reason: 'the closed discriminant of this file\'s states (`no-firebase`, the four installation kinds `no-binary`, `no-wsl`, `no-distro` and `no-fugaro-in-distro`, and `refused`), written as a key' },
     "receivedAt === null ? '' : receivedAt": 'the arrival stamp `src/source/cli.ts` wrote on the frame, or the empty string when the caller keeps no feed reading; a key rather than text',
     theme: { within: 'root', reason: 'a `LiveTheme`, the closed theme tuple' },
   },
