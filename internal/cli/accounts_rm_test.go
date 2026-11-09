@@ -104,6 +104,110 @@ func TestAccountsRmRemovesTheDeclarationAndTheProfileEntry(t *testing.T) {
 	}
 }
 
+// accountsRmTypedLocal is the account's typed entry already named by the rest
+// of the config: a craft served by it and a pool whose members list it. Both
+// are the state a removal of the entry must refuse under — the craft because
+// its access would resolve to nothing, the pool because a member that is not
+// defined is the file its own loader rejects.
+const accountsRmTypedLocal = addRigLocal + `
+credentials:
+  - name: team-a
+    type: claude-oauth
+crafts:
+  coder:
+    model: deepseek-v4-1
+    access: team-a
+pools:
+  - name: paid
+    members:
+      - team-a
+`
+
+// TestAccountsRmTakesTheTypedEntryWithTheAccount is the other end of `accounts
+// add --type`: the entry in the credentials block the account was declared with
+// goes in the same removal as the declaration, so the pair add-then-rm leaves
+// the file as it found it. An entry left behind is not inert — no profile, no
+// secret and no job back it, while a pool of this very file is still admitted
+// to name it — which is the state `accounts add --type`'s own refusal exists to
+// keep out of a file (accounts_add.go).
+func TestAccountsRmTakesTheTypedEntryWithTheAccount(t *testing.T) {
+	r := newAddRig(t)
+	r.add(t, "team-a", "--repos", "owner/repo-a", "--type", "claude-oauth")
+	lc := r.addLocal(t)
+	assertPoolMemberAdmitted(t, lc, "team-a", true)
+
+	out := r.rm(t, "team-a", "--profile", "standard")
+
+	if got := r.addLocal(t).Credentials; len(got) != 0 {
+		t.Errorf("credentials.team-a is still declared after the removal: %v", got)
+	}
+	if strings.Contains(readFileString(t, r.cfg), "credentials:") {
+		t.Errorf("the file keeps a credentials block no entry is left in:\n%s", readFileString(t, r.cfg))
+	}
+	if !strings.Contains(out, "remove credentials.team-a (the typed entry the account was declared with)") {
+		t.Errorf("the sentence does not name the typed entry it removed:\n%s", out)
+	}
+	if got := accountsAddRow(t, out, "account"); !strings.Contains(got, "credentials.team-a") {
+		t.Errorf("the block's account line reads %q, want the typed entry it removed named", got)
+	}
+	assertPoolMemberAdmitted(t, r.addLocal(t), "team-a", false)
+	// The file it left is the config its own reader loads, which is what the
+	// pool above is judged by: the loader refuses a member no block defines.
+	if _, err := localcfg.Load(r.cfg); err != nil {
+		t.Fatalf("the config this command wrote does not load: %v", err)
+	}
+}
+
+// TestAccountsRmRefusesWhileACredentialIsStillNamed is the same guard at the
+// other end: while a craft is served by the entry or a pool lists it, the
+// removal is refused rather than leaving either pointing at a credential that
+// is gone. The refusal names both fields, because both are what the owner has
+// to point elsewhere first, and nothing is written.
+func TestAccountsRmRefusesWhileACredentialIsStillNamed(t *testing.T) {
+	r := newAddRigWith(t, accountsRmTypedLocal)
+	r.add(t, "team-a", "--repos", "owner/repo-a")
+	before, err := os.ReadFile(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, rmErr := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard", "--yes")
+
+	after, err := os.ReadFile(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Errorf("the command wrote %s while a craft and a pool still named the credential:\n%s", r.cfg, after)
+	}
+	if rmErr == nil {
+		t.Fatalf("the account was removed while its typed entry was still named by crafts.coder.access and pools.paid.members")
+	}
+	for _, want := range []string{"credentials.team-a", "crafts.coder.access", "pools.paid.members", "nothing was written"} {
+		if !strings.Contains(rmErr.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, rmErr)
+		}
+	}
+	if got := r.sm.Deleted(); len(got) != 0 {
+		t.Errorf("the command deleted %v while it was refusing", got)
+	}
+	if _, err := localcfg.Load(r.cfg); err != nil {
+		t.Fatalf("the config that command left is one its own next load refuses: %v", err)
+	}
+}
+
+// assertPoolMemberAdmitted is whether a pool naming this credential is the
+// config's own rule's business: ValidatePools is what a load of this file
+// applies to its pools block, so a member it does not complain about is one a
+// `pool add` write of this file would be admitted to declare.
+func assertPoolMemberAdmitted(t *testing.T, lc *localcfg.Config, name string, want bool) {
+	t.Helper()
+	problems := config.ValidatePools([]config.Pool{{Name: "probe", Members: []string{name}}}, lc.Credentials)
+	if got := len(problems) == 0; got != want {
+		t.Errorf("ValidatePools admits a pool naming %s: %v, want %v (problems: %v)", name, got, want, problems)
+	}
+}
+
 // TestAccountsRmDeletesTheSecretAndConverges is spec §4 steps 2 and 3 for the
 // account that is fully removed: the secret's container takes the delete and
 // its value is gone, the published node no longer names the account, and the

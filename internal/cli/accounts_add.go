@@ -106,7 +106,7 @@ so a coding agent's session is refused, --yes included.`,
 	f.StringVar(&o.repos, "repos", "", "the repositories the token may be used by, as owner/name,owner/name (default: this checkout's origin)")
 	f.StringVar(&o.profile, "profile", "", "the profile whose claude_accounts gains the name (default: the only profile, when there is exactly one)")
 	f.BoolVar(&o.claude, "claude", false, "run Anthropic's own claude setup-token login on this terminal first, then paste the token at the hidden prompt")
-	f.StringVar(&o.typ, "type", "", "declare the name as a typed credential too, one of "+strings.Join(config.SupportedCredentialTypes(), ", ")+" (without it, the name is declared in claude_accounts alone, as it always was; vertex is built in and is never defined)")
+	f.StringVar(&o.typ, "type", "", "declare the name as a typed credential too, so a craft or a pool may spend it: claude-oauth, the one type this command's token step serves (without it, the name is declared in claude_accounts alone, as it always was)")
 	f.BoolVar(&o.yes, "yes", false, "confirm the write without a prompt")
 	f.BoolVar(&o.ask, "ask", false, "in a project whose marks say it is managed, ask the confirmation this declaration would otherwise get instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back. Refused where nobody can answer it (a coding agent's session, a pipe); a no-op with a sentence in a project that is not managed; refused beside --yes")
 	return cmd
@@ -144,7 +144,7 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 		// whose key has no command yet is refused here, before the file is
 		// read, rather than half-declared.
 		if o.typ != config.CredentialTypeClaudeOAuth {
-			return userErr("--type %s: a credential of this type authenticates with a key, and no command stores one under a credential's own name yet — this command's secret step is the Claude OAuth token's, and a %s entry written without one would be a name no run could authenticate with and a pool would still be allowed to list; declare it when that path ships (fugaro secrets add stores the project's own keys today); nothing was written",
+			return userErr("--type %s: a credential of this type authenticates with a key, and no command stores one under a credential's own name yet — this command's secret step is the Claude OAuth token's, and a %s entry written without one would be a name no run could authenticate with and a pool would still be allowed to list; declare it when that path ships (today a key is the project's, and fugaro secrets set stores it there); nothing was written",
 				pluginwire.Printable(o.typ), pluginwire.Printable(o.typ))
 		}
 	}

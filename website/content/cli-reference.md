@@ -149,7 +149,7 @@ Flags:
 | `-h`, `--help` | bool | `false` | no | help for add |
 | `--profile` | string | "" | no | the profile whose claude_accounts gains the name (default: the only profile, when there is exactly one) |
 | `--repos` | string | "" | no | the repositories the token may be used by, as owner/name,owner/name (default: this checkout's origin) |
-| `--type` | string | "" | no | declare the name as a typed credential too, one of openrouter, anthropic, claude-oauth (without it, the name is declared in claude_accounts alone, as it always was; vertex is built in and is never defined) |
+| `--type` | string | "" | no | declare the name as a typed credential too, so a craft or a pool may spend it: claude-oauth, the one type this command's token step serves (without it, the name is declared in claude_accounts alone, as it always was) |
 | `--yes` | bool | `false` | no | confirm the write without a prompt |
 
 Subcommands:
