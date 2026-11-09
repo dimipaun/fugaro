@@ -42,20 +42,25 @@ const (
 	layerReseedWhat  = "this re-seeds your local layer file from the published project layer: the file you have now is kept beside it"
 )
 
-// confirmWrite is the confirmation of this stage's three writes: the one
-// confirmRemoval asks (the project's name typed at a terminal, or --yes), or
-// nothing at all for the owner's own terminal on a managed project — the
-// owner's ruling of 2026-11-06, and the same shape the policy stage's writes
-// take. What the owner reads instead is what stands above the sentence: the
-// plan this stage printed (the layer file, the generation), a re-seed's
-// three-way state, and — for the publish, the one of the three that replaces
-// the document every repository resolves against — the diff publishLayer prints
-// before it asks (the object it replaces, the lines that differ, and any
-// executable change), so the replacement is read before the write rather than
-// reported after it. A layer publish loses no data — the write is conditional
-// on the generation the run read, and a re-seed keeps the file it replaces
-// beside it — and takes no secret value, which is the whole of what the ruling
-// leaves asked.
+// confirmWrite is the confirmation of this stage's three writes: nothing at all
+// for the owner's own terminal on a managed project — the owner's ruling of
+// 2026-11-06, and the same shape the policy stage's writes take — and the
+// confirmation of any other write that loses no data and takes no secret value
+// everywhere else (confirmStageWrite: a person at their own terminal answers it
+// by being there, --yes answers it where the flag reaches the stage, --ask puts
+// the question back), so a session that can do none of the three is refused
+// rather than asked. Nothing is typed (T7, docs/no-prompt-policy): the project's
+// name this used to ask for is gone.
+//
+// What the owner reads instead is what stands above the sentence: the plan this
+// stage printed (the layer file, the generation), a re-seed's three-way state,
+// and — for the publish, the one of the three that replaces the document every
+// repository resolves against — the diff publishLayer prints before it asks
+// (the object it replaces, the lines that differ, and any executable change),
+// so the replacement is read before the write rather than reported after it. A
+// layer publish loses no data — the write is conditional on the generation the
+// run read, and a re-seed keeps the file it replaces beside it — and takes no
+// secret value, which is the whole of what the ruling leaves asked.
 //
 // It is not a verdict about any plan: this stage's document is judged nowhere
 // (the layer stage is not one of the gate's stages), so the sentence claims
@@ -67,7 +72,7 @@ func (s *layerStage) confirmWrite(lc *localcfg.Config, env initflow.Env, what st
 		fmt.Fprintf(r.w, "  %s\n", initflow.OwnerProceeded())
 		return nil
 	}
-	return confirmRemoval(r.cmd, lc, env.Yes, what)
+	return confirmStageWrite(r.cmd, lc, r.conditions(), env.Yes, what)
 }
 
 // layerStage is the stage itself.
@@ -374,11 +379,11 @@ func (s *layerStage) seed(env initflow.Env, p *layerPlan) (initflow.Outcome, err
 //
 // The confirmation is asked inside publishLayer, between the diff it prints and
 // the write it makes: the owner reads what the publish replaces before agreeing
-// to it, which is the whole of what stands in for the typed name where the
-// ruling of 2026-11-06 takes it away (the policy stage's own shape, m.print
-// before policyMigrationConfirm), and a publish agreed to blind is one the owner
-// never read. publishLayer's own executable-key gate still withholds the write
-// afterwards, with the banner that names the keys.
+// to it, and a publish agreed to blind is one the owner never read. That note
+// and the diff above it are the whole of what answers for the write now that no
+// name is typed (T7, docs/no-prompt-policy; the policy stage's own shape,
+// m.print before policyMigrationConfirm). publishLayer's own executable-key gate
+// still withholds the write afterwards, with the banner that names the keys.
 func (s *layerStage) publish(ctx context.Context, env initflow.Env, p *layerPlan) (initflow.Outcome, error) {
 	w := s.e.r.w
 	b, err := openRecordBucket(ctx, p.url)

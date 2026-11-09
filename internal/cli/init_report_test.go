@@ -619,11 +619,12 @@ func TestTheLineStaysDownThroughAWholeQuestion(t *testing.T) {
 
 // TestAMidStageConfirmationIsNeverDrawnOver is the round-3 finding, on the
 // layer stage's re-seed: the confirmation a stage asks is the shared
-// confirmRemoval, which holds the command rather than the run. Asked with a step
-// of the run's own open (a step is open across every stage), it landed on the
-// line the spinner had drawn — the frame and then the banner, with no clear
+// confirmStageWrite, which holds the command rather than the run. Asked with a
+// step of the run's own open (a step is open across every stage), it landed on
+// the line the spinner had drawn — the frame and then the banner, with no clear
 // between them — and the redraw every 100ms kept painting the frame over the
-// prompt and over the name typed under it (G1).
+// banner. Nothing is typed under it now (T7, docs/no-prompt-policy): the banner
+// is the whole of the question, and what answers it is the person being there.
 func TestAMidStageConfirmationIsNeverDrawnOver(t *testing.T) {
 	t.Setenv("TERM", "xterm-256color")
 	clearAgentMarkers(t)
@@ -636,7 +637,7 @@ func TestAMidStageConfirmationIsNeverDrawnOver(t *testing.T) {
 	// which is what makes this a prompt asked mid-stage and not one before the
 	// first step — the shape TestConfirmPromptsAreNeverSuppressed covers.
 	step := run.rep.Step(initflow.Layer)
-	answerAQuestionMidStage(t, run, r.out, "⚠ CONFIRM (project "+initProjectName+"): ", func() error {
+	aStageConfirmsMidStageWithNothingTyped(t, run, r.out, "⚠ CONFIRM (project "+initProjectName+"): ", func() error {
 		_, err := r.s.Apply(context.Background(), initflow.Env{Interactive: true})
 		return err
 	})
@@ -645,8 +646,9 @@ func TestAMidStageConfirmationIsNeverDrawnOver(t *testing.T) {
 
 // TestThePolicyStagesConfirmationIsNeverDrawnOver is the finding's own repro:
 // the policy migration prints its diff through the run's own writer and asks
-// confirmRemoval from inside the step the loop opened for the stage, so the
-// banner's line is the one the frame was drawn on.
+// confirmStageWrite from inside the step the loop opened for the stage, so the
+// banner's line is the one the frame was drawn on. Its confirmation reads
+// nothing (T7): the write it confirms loses no data.
 func TestThePolicyStagesConfirmationIsNeverDrawnOver(t *testing.T) {
 	t.Setenv("TERM", "xterm-256color")
 	clearAgentMarkers(t)
@@ -658,7 +660,7 @@ func TestThePolicyStagesConfirmationIsNeverDrawnOver(t *testing.T) {
 	run := h.s.e.r
 	run.rep = report.New(report.Options{Out: h.out, Getenv: os.Getenv, IsTerminal: writerIsTerminal})
 	step := run.rep.Step(initflow.Policy)
-	answerAQuestionMidStage(t, run, h.out, "⚠ CONFIRM (project "+initProjectName+"): ", func() error {
+	aStageConfirmsMidStageWithNothingTyped(t, run, h.out, "⚠ CONFIRM (project "+initProjectName+"): ", func() error {
 		_, err := h.s.Apply(context.Background(), initflow.Env{Interactive: true})
 		return err
 	})
@@ -774,6 +776,40 @@ func answerAQuestionMidStage(t *testing.T, run *initRun, out *syncBuf, head stri
 	got := out.String()
 	if strings.HasSuffix(got, "\n") {
 		t.Errorf("the stage's line did not come back after the answer: %q", tail(got, 80))
+	}
+}
+
+// aStageConfirmsMidStageWithNothingTyped is answerAQuestionMidStage's shape for
+// the stages whose confirmation asks nothing (T7, docs/no-prompt-policy): the
+// banner is the whole of the question, so there is no prompt to wait for and no
+// answer to type. What is held is the same G1 property — the line in flight was
+// taken down before the banner, so the frame the spinner had drawn is not what
+// the person reads the confirmation on — and that the stage went on by itself
+// instead of putting a question to a session it can read nothing from.
+func aStageConfirmsMidStageWithNothingTyped(t *testing.T, run *initRun, out *syncBuf, head string, ask func() error) {
+	t.Helper()
+	done := make(chan error, 1)
+	go func() { done <- ask() }()
+
+	waitForOutput(t, out, head)
+	shown := out.String()
+	at := strings.Index(shown, head)
+	if before := shown[:at]; !strings.HasSuffix(before, "\r\x1b[K") && !strings.HasSuffix(before, "\n") {
+		t.Errorf("the spinner drew the confirmation over its own line: %q", before)
+	}
+	if nl := strings.Index(shown[at:], "\n"); nl < 0 {
+		t.Fatalf("the confirmation's banner never ended, so it cannot be read as its own line:\n%q", shown[at:])
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("the stage: %v\n%s", err, out.String())
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatalf("the stage is still waiting for something after its confirmation:\n%q", out.String())
+	}
+	if got := out.String(); strings.Contains(got, "Type ") || strings.Contains(got, "[y/N]") {
+		t.Errorf("the stage asked a person to type at the confirmation:\n%s", tail(got, 400))
 	}
 }
 

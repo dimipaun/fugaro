@@ -5,6 +5,7 @@ import (
 	"go/parser"
 	"go/token"
 	"maps"
+	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -671,6 +672,30 @@ func TestNoDecisionReadOutsideTheTwoHelpers(t *testing.T) {
 	}
 }
 
+// TestT7sStagesAskNothingTyped is the half of the entry above that the four
+// lists cannot hold. The plan gives T7 the two stage files below, and each of
+// them used to confirm its write with confirmRemoval — the typed project name,
+// which the policy leaves to a deletion or a widening (D846). Both take
+// confirmStageWrite now, but the read the lint watches is the helper's own site
+// in a file T6 owns, and T5's and T15's callers keep it alive, so removing the
+// callers cannot show up as a stale entry. The removal is pinned here instead:
+// a helper that asks a person to type cannot come back into either file without
+// this failing, and the D846 widening T7 does keep typed (confirmTypedStrict,
+// for a policy node that loosens) is not one of the shapes named.
+func TestT7sStagesAskNothingTyped(t *testing.T) {
+	for _, name := range []string{"init_layer_stage.go", "init_policy_migrate.go"} {
+		src, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, call := range []string{"confirmRemoval(", "confirmTyped(", "askTyped("} {
+			if strings.Contains(string(src), call) {
+				t.Errorf("%s calls %s again: the stage T7 took has a typed confirmation back", name, strings.TrimSuffix(call, "("))
+			}
+		}
+	}
+}
+
 // sanctionedSites is what the policy keeps, and why: the owner's one
 // sanctioned confirmation and the value-entry helper with the hidden read it
 // drives. Each is asserted to be found, so the lint says out loud that it is
@@ -721,13 +746,19 @@ var pendingSites = map[string]string{
 	"budget.go:confirmTypedStrict": "T3",
 	"image.go:confirmBuild":        "T4",
 	"managed_apply.go:managedAsk":  "T9",
-	// T6 removed every read of this command family it could remove. This one
-	// stays because its callers do not: confirmRemoval is defined in a file T6
-	// owns, but upgrade.go (T5), init_layer_stage.go and init_policy_migrate.go
-	// (T7) and update_workspace.go (T15) still call it, so the entry outlives T6
-	// and belongs to the task that removes the last caller. Deleting it here
-	// would not compile.
-	"project_cmd.go:confirmRemoval":          "T6's file, whose callers T5, T7 and T15 remove",
+	// T6 removed every read of this command family it could remove, and T7
+	// removed the two callers the plan gave it (init_layer_stage.go,
+	// init_policy_migrate.go: their writes take confirmStageWrite now, which
+	// asks nothing of a person and reads no line). This one stays because its
+	// callers do not: confirmRemoval is defined in a file T6 owns, but
+	// upgrade.go (T5) and update_workspace.go (T15) still call it, so the entry
+	// outlives T6 and belongs to the task that removes the last caller. Deleting
+	// it here would not compile. The deletions that keep it in the same family —
+	// project_cmd.go's `policy publish --delete` and project_enroll.go's
+	// allow-list removal — are data loss, which the ruling of 2026-11-06 leaves
+	// typed where --yes does not stand in, so no task of the plan removes them
+	// and this entry is not theirs.
+	"project_cmd.go:confirmRemoval":          "T6's file, whose callers T5 and T15 remove",
 	"settings_write.go:confirmSettingsWrite": "T5",
 }
 

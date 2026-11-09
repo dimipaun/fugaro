@@ -490,7 +490,11 @@ func TestManagedOwnerTerminalAnchorWritesNothingWithNobodyAtTheTerminal(t *testi
 // no secret value, which is the whole of what the ruling leaves asked.
 //
 // The control is the same seed on a project that is not managed: the same
-// empty terminal and the typed name, with no file written.
+// empty terminal seeds the same file, and the only thing that differs is the
+// sentence — the gate's own is not printed for a project the marks did not
+// answer "managed" for. Nothing is typed there either (T7,
+// docs/no-prompt-policy: the project's name this used to ask for is gone), and
+// the banner above is the whole of what the person reads.
 func TestManagedOwnerTerminalLayerWritesWithoutAsking(t *testing.T) {
 	t.Run("managed", func(t *testing.T) {
 		r := newLayerRig(t, testProjectLayer)
@@ -525,15 +529,18 @@ func TestManagedOwnerTerminalLayerWritesWithoutAsking(t *testing.T) {
 		out := atTerminal(t, e, "")
 		e.r.cmd.SetOut(out) // confirmWrite writes through the command, not through r.w
 
-		_, err := newLayerStage(e).Apply(t.Context(), initflow.Env{Interactive: true})
-		if err == nil {
-			t.Fatalf("a project that is not managed seeded the layer with nothing typed:\n%s", out)
+		if _, err := newLayerStage(e).Apply(t.Context(), initflow.Env{Interactive: true}); err != nil {
+			t.Fatalf("a project that is not managed refused a person at its own terminal: %v\n%s", err, out)
 		}
-		if _, rerr := os.Stat(localLayerPath(t)); !errors.Is(rerr, os.ErrNotExist) {
-			t.Errorf("the local layer file was seeded with nothing typed: %v", rerr)
+		data, rerr := os.ReadFile(localLayerPath(t))
+		if rerr != nil {
+			t.Fatalf("a project that is not managed did not seed the layer with nothing typed: %v\n%s", rerr, out)
 		}
-		if !strings.Contains(out.String(), "Type "+initProjectName+" to confirm") {
-			t.Errorf("a project that is not managed was not asked:\n%s", out)
+		if string(data) != testProjectLayer {
+			t.Errorf("the local layer file is not the published layer:\n%s", data)
+		}
+		if strings.Contains(out.String(), "Type "+initProjectName) || strings.Contains(out.String(), "to confirm") {
+			t.Errorf("a project that is not managed was asked to type something:\n%s", out)
 		}
 		if strings.Contains(out.String(), initflow.OwnerProceeded()) {
 			t.Errorf("a project that is not managed read the managed sentence:\n%s", out)
@@ -589,7 +596,9 @@ func TestManagedOwnerTerminalLayerPublishReadsTheDiffBeforeTheNote(t *testing.T)
 // TestManagedOwnerTerminalLayerRefusesAnAgentSession is the layer stage's own
 // half of the same case, driven at its own call: a coding agent's session
 // writes nothing there and reads no sentence of the owner's, and the
-// confirmation it meets is the typed one it has always met. The gate is read
+// confirmation it meets is the refusal every session nobody can answer from
+// meets (confirmStageWrite: no question is put to it, and the sentence names
+// what reaches the step from where it is). The gate is read
 // first, so the arm is reachable at all — readUpdateGate answers the marks
 // whoever is sitting there, and only PersonAtTheTerminal's marker is what
 // keeps the session out. Apply refuses a marker on its own before any of this
@@ -613,7 +622,7 @@ func TestManagedOwnerTerminalLayerRefusesAnAgentSession(t *testing.T) {
 	t.Setenv(agentMarkers[0], "1")
 
 	// A config with the rig's own project name is all the arm reads (the name
-	// is what confirmRemoval compares and prints).
+	// is what confirmStageWrite prints in its banner).
 	if err := newLayerStage(e).confirmWrite(&localcfg.Config{Name: initProjectName}, initflow.Env{Interactive: true}, layerSeedWhat); err == nil {
 		t.Fatalf("a coding agent's session on a managed project confirmed the layer's write:\n%s", out)
 	}
@@ -632,8 +641,9 @@ func TestManagedOwnerTerminalLayerRefusesAnAgentSession(t *testing.T) {
 // stage's own half of the other case, and it is the one that matters most: a
 // pipe carries no marker, so a managed update nobody is watching reads exactly
 // like the owner's own session, and the terminal is the whole of what tells
-// them apart. The step keeps the confirmation it always had — the name typed
-// at a terminal, or --yes — and the file is not written.
+// them apart. The step is confirmed by a person at a terminal or by --yes, and
+// by nothing else (T7, docs/no-prompt-policy): a session with neither is
+// refused, and the file is not written.
 func TestManagedOwnerTerminalLayerRefusesWithNobodyAtTheTerminal(t *testing.T) {
 	r := newLayerRig(t, testProjectLayer)
 	r.managedRuns(t, initProjectName, initProject)

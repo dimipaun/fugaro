@@ -2093,6 +2093,52 @@ func (r *initRun) askBanner(what string) (bool, error) {
 	return true, nil
 }
 
+// confirmStageWrite is the confirmation of a stage's own write for the sessions
+// the managed owner's note does not reach: the local layer file this run seeds,
+// publishes or re-seeds (layerStage.confirmWrite) and the policy node it
+// rewrites (policyMigrationConfirm, confirmReseed). A person at their own
+// terminal answers it by being there — the banner and whatever stands above it
+// are the whole of what they read, and nothing is typed (T7,
+// docs/no-prompt-policy) — --yes answers it where the flag reaches the stage,
+// and --ask is the flag that puts the question back, in askConfirm's own [y/N]
+// and with askConfirm's own refusal where nobody can answer it. A session that
+// can do none of the three is refused, naming the one thing that reaches it
+// from there, and nothing is written.
+//
+// It is for the two writes that lose no data and take no secret value, which is
+// what leaves a deletion and a widening in confirmTypedStrict's hands (D846):
+// the layer's three writes keep what they replace beside it or write against
+// the generation the run read, and the policy node is written from the
+// operator's own local config behind the diff this caller prints first.
+//
+// The banner goes to the command's own output, where the typed confirmation's
+// went before it, and to the run's writer only through it: a --json run prints
+// its document on stdout, and the refusal below is the error cobra reports.
+func confirmStageWrite(cmd *cobra.Command, lc *localcfg.Config, c initflow.Conditions, yes bool, what string) error {
+	out := cmd.OutOrStdout()
+	fmt.Fprintf(out, "⚠ CONFIRM (project %s): %s\n", safetext.Field(lc.Name), what)
+	switch {
+	case c.Ask:
+		// The owner asked for this step's question back: askConfirm asks it
+		// below and refuses in its own sentence where nobody can answer one.
+	case yes:
+		fmt.Fprintln(out, "  confirmed by --yes")
+		return nil
+	case initflow.PersonAtTheTerminal(c):
+		return nil
+	default:
+		return userErr("%s, or pass --yes once you have read what it does", initflow.NeedsTerminal("the confirmation of this step"))
+	}
+	ok, err := askConfirm(cmd, what+"?")
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return userErr("not confirmed (the answer was no); nothing was written")
+	}
+	return nil
+}
+
 // stepClass is the confirmation class of the one money-or-permanent step this
 // door decides differently: the Firestore database's location. It is
 // initflow.Typed in `setup`, which asks for it as a first-time question, and
