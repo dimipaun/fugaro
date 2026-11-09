@@ -96,13 +96,13 @@ func TestKeyserviceCIDocsMatchTheWorkflow(t *testing.T) {
 	for _, p := range keyserviceCIStateProblems(ci, readme) {
 		t.Error(p)
 	}
-	// The suite the section is about has to be the tagged file it says it is, or
-	// the claim is about nothing: an untagged file would be compiled by the
-	// `test` job's `go test ./...` and run there, whichever job runs what.
-	suite := readDoc(t, "ee/keyservice/terraform/infra_test.go")
-	if !strings.Contains(suite, "//go:build terraform") {
-		t.Errorf("ee/keyservice/terraform/infra_test.go no longer carries `//go:build terraform`: docs/pending-workflows/README.md's `## ci.yml` section rests on its being a tagged file that untagged `go test ./...` compiles to no test at all")
-	}
+	// The other half of the section's claim is the suite's own build tag — an
+	// untagged file would be run by the `test` job's `go test ./...` — and it is
+	// not asserted here on purpose: a core test reading the real ee/ has to go
+	// through readRealEE and be named in eeReadingTests, which the
+	// core-without-ee workflow skips by a list this run may not edit. That half
+	// also fails loudly rather than rotting: the tag is what keeps the suite out
+	// of the test job, and that job has no terraform binary for it to run with.
 }
 
 // TestKeyserviceCIStateRulesSeeEveryState pins the rules above against the

@@ -775,7 +775,12 @@ counts of the tree before it, so they move with the tree: the top-level keys fro
 one block the project layer's `defaults:` may set and one image-skew `Since`
 constant (`planningSince`), so the same four rows move once more: the top-level
 keys from 13 to 14, the scope rows from 102 to 103, the layer's `defaults:` blocks
-from 3 to 4 and the image-skew constants from 31 to 32.) They
+from 3 to 4 and the image-skew constants from 31 to 32. Amended 2026-11-09:
+`internal/cli/docs_keyservice_terraform_ci_test.go`, the key service's pin over the
+key service's Terraform suite and docs/pending-workflows/README.md's `## ci.yml`
+section on it (S3.5), moved the table's row from 114 to 115: the section's claim
+that no job runs that suite is a claim about `.github/workflows/ci.yml`, so the
+pin holds the two to each other in both directions.) They
 are named because the figure is a running total of other folders' guards: a folder
 that writes one moves this row in its own commit, and a reader who finds the row
 stale has found a merge that did not.
@@ -794,7 +799,7 @@ stale has found a merge that did not.
 | Files in `internal/runner` that mention `Severity` at all | 4 | `git grep -l 'Severity' -- internal/runner ':!*_test.go' \| wc -l` |
 | Image-skew `Since` constants | 32 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
 | Run outcomes | 4 | `git grep -ho 'Outcome[A-Za-z]* *= *"[a-z]*"' internal/runstore/runstore.go \| wc -l` |
-| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 114 | `ls internal/cli/docs_*_test.go \| wc -l` |
+| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 115 | `ls internal/cli/docs_*_test.go \| wc -l` |
 | Questions the in-job-review folder put to the owner, all answered | 17 | `git grep -hc '^\*\*Q[0-9]*\. ' docs/in-job-review/reconciliation.md` |
 | Published project-policy version | 4 | `sed -n 's/^const Version = //p' internal/projectpolicy/version.go` |
 | Blocks the project layer's `defaults:` may set whose value names a repository | 0 | `sed -n '/^type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -ci repo` |
