@@ -36,29 +36,45 @@ func noCloudTouched(t *testing.T, r *initRig, what string) {
 	}
 }
 
-// update --repo on its own is the converge's hostile-checkout gate too: a
-// repository the local config does not list is never onboarded by one
-// command with --yes, in a pipe, with --json or by an agent; it takes the
-// typed owner/name, or --onboard-repo in a terminal with no agent marker.
+// hostileOrigin is the origin this test's rig checks out: a host that is not a
+// provider's own, so the checkout's identity is not the one it claims and the
+// run's own confirmation does not cover onboarding it (onboardCovered, D12).
+// This is the one class of origin the standalone gate refuses every session
+// that cannot confirm, which is what lets each row below assert the gate's own
+// refusal instead of whatever the engine says next.
+const hostileOrigin = "https://evil.example/acme/hostile.git"
+
+// setup --repo on its own is the converge's hostile-checkout gate too (gateRepo):
+// a repository the local config does not list, whose origin's identity is not
+// the one it claims, is never onboarded by --yes, in a pipe, with --json, with
+// --non-interactive or by a coding agent's session — each is refused by the gate
+// itself, before any cloud call, with the gate's own sentence. --onboard-repo is
+// the one flag that admits a repository, and only the origin's own name outside
+// an agent session reaches it. A person at their own terminal is the one session
+// the gate admits, and it asks nothing of them (T7, docs/no-prompt-policy): the
+// note and its line saying the host is not a provider's own are the whole of
+// what they read, and the typed owner/name route this test used to pin is gone.
 func TestInitRepoAloneIsBehindTheHostileGate(t *testing.T) {
 	for name, tc := range map[string]struct {
 		args  []string
 		env   string
 		stdin string
 		tty   bool
+		// wants is the gate's own sentence for this row. Empty for the one row
+		// the gate admits: the person at their own terminal.
+		wants []string
 	}{
-		"--yes":                      {[]string{"--yes"}, "", "", false},
-		"--yes at a terminal":        {[]string{"--yes"}, "", "acme/hostile\n", true},
-		"--json":                     {[]string{"--json"}, "", "", false},
-		"--non-interactive":          {[]string{"--non-interactive", "--yes"}, "", "", false},
-		"a coding agent, --yes":      {[]string{"--yes"}, "CLAUDECODE", "", true},
-		"a terminal, wrong typed":    {nil, "", "acme/other\n", true},
-		"a terminal, name not typed": {nil, "", "yes\n", true},
-		"--onboard-repo, an agent":   {[]string{"--yes", "--onboard-repo", "acme/hostile"}, "CLAUDECODE", "", true},
-		"--onboard-repo, wrong repo": {[]string{"--yes", "--onboard-repo", "acme/else"}, "", "", false},
+		"--yes":                 {args: []string{"--yes"}, wants: []string{"needs your own opt-in", "host evil.example is not a provider's own", "--yes does not give it for an origin whose identity is not the one it claims"}},
+		"--yes at a terminal":   {args: []string{"--yes"}, stdin: "acme/hostile\n", tty: true, wants: []string{"needs your own opt-in", "host evil.example is not a provider's own"}},
+		"--json":                {args: []string{"--json"}, wants: []string{"needs your own opt-in", "host evil.example is not a provider's own"}},
+		"--non-interactive":     {args: []string{"--non-interactive", "--yes"}, wants: []string{"needs your own opt-in", "host evil.example is not a provider's own"}},
+		"a coding agent, --yes": {args: []string{"--yes"}, env: "CLAUDECODE", tty: true, wants: []string{"needs your own opt-in"}},
+		"a person at the terminal, nothing typed": {stdin: "yes\n", tty: true},
+		"--onboard-repo, an agent":                {args: []string{"--yes", "--onboard-repo", "acme/hostile"}, env: "CLAUDECODE", tty: true, wants: []string{"--onboard-repo opts a repository in to cloud changes and is not accepted in a coding agent's session"}},
+		"--onboard-repo, wrong repo":              {args: []string{"--yes", "--onboard-repo", "acme/else"}, wants: []string{"--onboard-repo acme/else does not name this checkout's origin repository (acme/hostile)"}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			r, dir := hostileRepoRig(t, "https://github.com/acme/hostile.git")
+			r, dir := hostileRepoRig(t, hostileOrigin)
 			if tc.tty {
 				fakeTerminal(t)
 			}
@@ -66,16 +82,43 @@ func TestInitRepoAloneIsBehindTheHostileGate(t *testing.T) {
 				t.Setenv(tc.env, "1")
 			}
 			out, errOut, err := executeStdin(t, tc.stdin, append([]string{"setup", "--repo", "--github-app-id", "42"}, append(tc.args, dir)...)...)
+			noCloudTouched(t, r, name)
+			all := ErrorText(err) + out + errOut
+			if len(tc.wants) == 0 {
+				// The person at the terminal: the gate's note names the
+				// repository, the host and the checkout, and nothing under it
+				// is typed. The engine behind the gate then refuses this rig's
+				// origin for its own reason (a host that is not github's, which
+				// no workflow resolves), and reaching that refusal is what says
+				// the gate opened.
+				if !strings.Contains(out, "this checkout's repository is not one of the project's yet") ||
+					!strings.Contains(out, "repository: acme/hostile on host evil.example") {
+					t.Fatalf("the gate's note was not what the person read:\n%s", out)
+				}
+				if strings.Contains(all, "Type ") || strings.Contains(all, "[y/N]") {
+					t.Errorf("the gate asked a person at their own terminal to type something:\n%s", all)
+				}
+				if !strings.Contains(all, hostileOrigin+" is not on github's host") {
+					t.Errorf("the run did not get past the gate to the engine's own refusal:\n%s", all)
+				}
+				return
+			}
 			if err == nil {
 				t.Fatalf("an unlisted repository was onboarded:\n%s", out)
 			}
-			noCloudTouched(t, r, name)
-			all := out + errOut + err.Error()
+			if strings.Contains(all, "is not on github's host") {
+				t.Fatalf("the run got past the gate to the engine, so this row pins nothing:\n%s", all)
+			}
+			for _, want := range tc.wants {
+				if !strings.Contains(all, want) {
+					t.Errorf("the gate's refusal lacks %q:\n%s", want, all)
+				}
+			}
 			if tc.env != "" && strings.Contains(strings.ReplaceAll(all, "--onboard-repo opts a repository in to cloud changes and is not accepted", ""), "--onboard-repo acme/hostile") {
 				t.Errorf("an agent session was handed --onboard-repo to paste:\n%s", all)
 			}
 			if tc.env != "" && !strings.Contains(all, "your own terminal") {
-				t.Errorf("no typed route:\n%s", all)
+				t.Errorf("an agent session is left no route at all:\n%s", all)
 			}
 		})
 	}
@@ -207,16 +250,17 @@ func pastGate(t *testing.T, err error) {
 	}
 }
 
-// The ways in: the typed owner/name at a terminal, or --onboard-repo outside
-// an agent. Past the gate the engine runs as it always did (here it stops at
-// the fake installation, which is not what is under test).
+// The ways in: a person at their own terminal, where the gate confirms the
+// repository with nothing typed (T7, docs/no-prompt-policy), or --onboard-repo
+// outside an agent. Past the gate the engine runs as it always did (here it
+// stops at the rig's own missing base image, which is not what is under test).
 func TestInitRepoAloneOptIns(t *testing.T) {
 	gate := "is not one of project"
 	_, dir := hostileRepoRig(t, "https://github.com/acme/hostile.git")
 	fakeTerminal(t)
-	_, _, err := executeStdin(t, "acme/hostile\n", "setup", "--repo", "--github-app-id", "42", dir)
+	_, _, err := executeStdin(t, "", "setup", "--repo", "--github-app-id", "42", dir)
 	if err != nil && strings.Contains(err.Error(), gate) {
-		t.Errorf("the typed opt-in did not pass the gate: %v", err)
+		t.Errorf("the person at the terminal did not pass the gate: %v", err)
 	}
 	pastGate(t, err)
 	_, dir = hostileRepoRig(t, "https://github.com/acme/hostile.git")
