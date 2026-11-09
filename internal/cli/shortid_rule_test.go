@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/runner"
 )
 
@@ -249,15 +250,16 @@ func shortIDRuleTexts(t *testing.T) map[string]string {
 // endingRefusalText runs one command path with an ending in place of the run
 // and returns what the CLI said when it refused the ending as a name it cannot
 // resolve, "" when the command took it. A refusal is a lookup's message for a
-// ref that names no run: locateRun's "is neither <repo-slug>/<run-id> nor a run
-// ID" today, and, once SR14 wires the read commands to it, everything
-// resolveRun answers an ending with — "no run ending ... among the active runs
-// and the last N days" (D1709), "no active run ending ..." for its active-only
-// readers, and, when the ending does name runs, "<ending> is an ending; pass
-// one of the full run IDs above", which is what the probe below reads: it runs
-// `cancel`, a destructive command that lists its matches instead of acting
-// (D1710). A vocabulary missing that phrase would call a command that did
-// refuse one whose silence this test then trusts.
+// ref that names no run, and SR14 has landed (cloud.go): locateRun's "is
+// neither <repo-slug>/<run-id> nor a run ID", resolveRun's "no run ending ...
+// among the active runs or the runs the bucket still holds" (D1709) and "no
+// active run ending ..." for its active-only readers, and — what the probe
+// below reads, because it runs `cancel`, a destructive command that lists its
+// matches instead of acting (D1710) — "<ending>" names N active runs: ... pass
+// one of the full run IDs above. Each phrase is the refusal's own wording, so
+// the last one is the sentence cloud.go prints after the list and not the
+// "is an ending" the same refusal was drafted with. A vocabulary missing one
+// would call a command that did refuse one whose silence this test then trusts.
 func endingRefusalText(t *testing.T, path, ending string) string {
 	t.Helper()
 	out, errOut, err := execute(t, append(strings.Fields(path), ending)...)
@@ -265,7 +267,7 @@ func endingRefusalText(t *testing.T, path, ending string) string {
 		return ""
 	}
 	msg := err.Error() + " " + errOut + " " + out
-	for _, refusal := range []string{"is neither", "no run ending", "no active run ending", "is an ending"} {
+	for _, refusal := range []string{"is neither", "no run ending", "no active run ending", "pass one of the full run IDs above"} {
 		if strings.Contains(msg, refusal) {
 			return strings.TrimSpace(msg)
 		}
@@ -277,13 +279,15 @@ func endingRefusalText(t *testing.T, path, ending string) string {
 // plugin skills carry tells an agent to pass a run's short ID to a command.
 // That is a claim about this CLI, so it is checked here, where the commands
 // are: a command the rule names that way must take one, or the agent is sent to
-// a command that refuses the ID it was told to pass. No command takes one today
-// -- SR3's resolveRun has no caller until SR14 wires `logs`, `diagnose` and
-// `artifacts` to it -- so no text claims one, and the rule names no command at
-// all; this is the test that fails if the naming comes back before the wiring
-// does, whatever words the sentence is written in. A sentence the scan cannot
-// read is reported rather than skipped (shortFormClaims), so a rule cannot slip
-// past by phrasing itself around the scan.
+// a command that refuses the ID it was told to pass. SR14 has landed on main --
+// `logs`, `diagnose` and `artifacts` go through resolveRun and take an ending,
+// and `cancel` refuses one by listing the runs it names (D1710) -- so the
+// commands a text may name now have to accept what it says they take, and the
+// texts that ship name none: the rule asks a command for the ID its own help
+// asks for. This is the test that fails the moment a text names a command that
+// refuses an ending, whatever words the sentence is written in. A sentence the
+// scan cannot read is reported rather than skipped (shortFormClaims), so a rule
+// cannot slip past by phrasing itself around the scan.
 //
 // The rule names a flag as readily as a command -- "`fugaro run --retry` takes
 // the short ID" -- and a flag is the one shape of claim that cannot be run: the
@@ -291,9 +295,16 @@ func endingRefusalText(t *testing.T, path, ending string) string {
 // where the form it takes is stated, and to nothing else; that is a weaker
 // promise than the commands get, and it is the strongest one a launcher admits.
 func TestShortIDRuleNamesOnlyCommandsThatTakeOne(t *testing.T) {
-	f := newCloudFixture(t)
+	// The ending fixture, not a bare cloud one: `cancel` now reads the live
+	// runs to refuse an ending, and an installation with no budget database
+	// answers a lookup that cannot see them with an error rather than a
+	// refusal (F6). A probe run against that installation would read the
+	// config error, report the command as one that took the ending, and fail
+	// on a command that had in fact refused it.
+	f := newEndingFixture(t)
 	id := recentRunID(t, time.Minute, "abcd")
-	seedRun(t, f, id, "", "someone@example.com", true)
+	seedTitledRun(t, f.cloudFixture, id, "the run")
+	f.db.Set(budget.PathAgent(appSlug, id), map[string]any{"run_id": id, "title": "the run"})
 	root := NewRootCmd()
 
 	// The scan is exercised on the wordings a rule may use, because a guard
