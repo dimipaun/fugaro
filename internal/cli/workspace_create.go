@@ -95,10 +95,12 @@ func workspaceAccount(project string) string {
 	return tf.WorkspaceServiceAccountID + "@" + project + ".iam.gserviceaccount.com"
 }
 
-// declared is whether this installation is a workspace's own: the config
-// carries the owner's half of the membership (workspaceDeclared, which is
-// workspaceRecordOf's own predicate — W2's publish stage and the Identity
-// Platform carve-out are built on the same one).
+// declared is whether this installation is a workspace's own, and where it is
+// not, why — the detail the stage answers Skipped with.
+//
+// The config carries the owner's half of the membership (workspaceDeclared,
+// which is workspaceRecordOf's own predicate — W2's publish stage and the
+// Identity Platform carve-out are built on the same one).
 //
 // A config that declares a workspace and lists NO member is this project's
 // workspace too, and the stage converges it: the record admits nobody and W2
@@ -117,24 +119,36 @@ func workspaceAccount(project string) string {
 // on rather than converge a root from a half-read config. The record is read
 // and not just the predicate, so that check happens before anything is planned.
 //
-// A workspace's own project whose Firebase is ANOTHER project's is refused here
-// too, and before anything is planned (workspaceSplitFirebase): the one grant
-// this root makes is the workspace's own service's whole reach over the
-// workspace's database, and that database is the workspace's own project's.
-func (s *workspaceProjectStage) declared() (bool, error) {
+// A workspace's own project whose Firebase is ANOTHER project's is a SKIP for
+// the same reason and not an error (workspaceSplitFirebase): the one grant this
+// root makes is the workspace's own service's whole reach over the workspace's
+// database, that database is the workspace's own project's, and on a split
+// installation the grant would bind on a database the workspace does not use.
+// Nothing is planned, no service account is created and no grant is made — but
+// the run is not stopped, because the record stage, the layer and the checkout
+// behind this one are still the upgrade the owner ran `fugaro update` for, and
+// one command is the whole of it (the HARD RULE). An installation in this state
+// has been updating without this stage all along — the stage is this release's,
+// and W2's publish (v0.21.0, the workspace command is public) carries no such
+// check — so failing the run here would take a working `fugaro update` away
+// from it and leave a hand-edited config as the way back. The reason the
+// operator reads is the skip's own detail, and `fugaro doctor` carries the same
+// state as a check of its own (doctorWorkspaceSplitCheck), so the owner meets it
+// on doctor's day rather than only in one run's output.
+func (s *workspaceProjectStage) declared() (bool, string, error) {
 	if !workspaceDeclared(s.e.lc) {
-		return false, nil
+		return false, workspaceProjectSkip(s.e.lc), nil
 	}
 	if why := workspaceSplitFirebase(s.e.lc); why != "" {
-		return false, errors.New(why)
+		return false, why, nil
 	}
 	if _, err := workspaceRecordOf(s.e.lc); err != nil {
 		var notOurs *workspacePublishNotOurs
 		if !errors.As(err, &notOurs) {
-			return false, err
+			return false, "", err
 		}
 	}
-	return true, nil
+	return true, "", nil
 }
 
 // workspaceSplitFirebase is why a workspace's own installation cannot converge
@@ -155,18 +169,19 @@ func (s *workspaceProjectStage) declared() (bool, error) {
 // check accepts it, because the stage holds the plan to the same wrong project
 // (tf.WorkspaceNotCovered reads the one project it is given).
 //
-// Refused rather than converged against the Firebase project's name: the account
+// Converged against the Firebase project's name it is not, either: the account
 // and the role are the identity of a service that runs in the workspace's own
 // project (W6), so a second project here would be a cross-project grant the root
 // does not carry, tf.WorkspaceNotCovered refuses by name and this design has no
 // shape for — and it would be a second answer to what a workspace's own project
-// is. The remedy is the one every split installation takes, which `fugaro
-// doctor` says beside the same command (adoptOwnFirebaseProject).
+// is. The stage skips with this reason and the rest of the run goes on
+// (declared): the remedy is the one every split installation takes, which
+// `fugaro doctor` says beside the same command (adoptOwnFirebaseProject).
 func workspaceSplitFirebase(lc *localcfg.Config) string {
 	if lc.Budget == nil || lc.Budget.FirebaseProject == "" || lc.Budget.FirebaseProject == lc.GCPProject {
 		return ""
 	}
-	return fmt.Sprintf("this installation declares a workspace of its own, and its Firebase is another project's: %s's config records budget.firebase_project %s, so the workspace's database is %s's while the workspace's own project — the project the workspace is named after, whose own service account and one grant this root creates — is %s. A workspace's own project holds the workspace's Firebase, its database and its service (docs/workspaces/spec.md §3), and that is what makes the root's single grant the account's whole reach: applied here it would put the workspace's own service account on a database the workspace does not use and on the workspace's own database not at all. The two cannot be split, so this is refused before anything is planned: make this project its own Firebase project — drop budget.firebase_project and budget.rtdb_url from %s's config, then run `fugaro update --firebase-project %s`, which adopts it", lc.Name, lc.Budget.FirebaseProject, lc.Budget.FirebaseProject, lc.GCPProject, lc.Name, lc.GCPProject)
+	return fmt.Sprintf("this installation declares a workspace of its own, and its Firebase is another project's: %s's config records budget.firebase_project %s, so the workspace's database is %s's while the workspace's own project — the project the workspace is named after, whose own service account and one grant this root creates — is %s. A workspace's own project holds the workspace's Firebase, its database and its service (docs/workspaces/spec.md §3), and that is what makes the root's single grant the account's whole reach: applied here it would put the workspace's own service account on a database the workspace does not use and on the workspace's own database not at all. The two cannot be split, so the workspace's own project is left alone here — no service account is created, no grant is made, and the rest of `fugaro update` runs as usual — and the way out is to make this project its own Firebase project: drop budget.firebase_project and budget.rtdb_url from %s's config, then run `fugaro update --firebase-project %s`, which adopts it", lc.Name, lc.Budget.FirebaseProject, lc.Budget.FirebaseProject, lc.GCPProject, lc.Name, lc.GCPProject)
 }
 
 // Check reads the root's plan, because the plan is the only thing that knows
@@ -187,14 +202,17 @@ func workspaceSplitFirebase(lc *localcfg.Config) string {
 //
 // A config that declares no workspace is a SKIP with the reason, never a
 // failure, and it reaches no terraform at all: it is every installation that is
-// not a workspace's own, which is most of them.
+// not a workspace's own, which is most of them. A workspace's own project whose
+// Firebase is another project's is the other skip (workspaceSplitFirebase, in
+// declared): this stage converges nothing there, and the stages behind it still
+// run.
 func (s *workspaceProjectStage) Check(ctx context.Context) (initflow.Status, error) {
-	ok, err := s.declared()
+	ok, why, err := s.declared()
 	if err != nil {
 		return initflow.Status{}, userErr("%v", err)
 	}
 	if !ok {
-		return initflow.Status{State: initflow.Skipped, Detail: workspaceProjectSkip(s.e.lc)}, nil
+		return initflow.Status{State: initflow.Skipped, Detail: why}, nil
 	}
 	plan, _, err := s.readPlan(ctx, false)
 	if err == nil && plan == nil {
@@ -230,12 +248,12 @@ func workspaceProjectSkip(lc *localcfg.Config) string {
 
 // Plan shows the real plan and guards it, and changes nothing.
 func (s *workspaceProjectStage) Plan(ctx context.Context, _ initflow.Env) (initflow.Plan, error) {
-	ok, err := s.declared()
+	ok, why, err := s.declared()
 	if err != nil {
 		return initflow.Plan{}, userErr("%v", err)
 	}
 	if !ok {
-		return initflow.Plan{NothingToDo: true, Detail: workspaceProjectSkip(s.e.lc)}, nil
+		return initflow.Plan{NothingToDo: true, Detail: why}, nil
 	}
 	plan, counts, err := s.readPlan(ctx, true)
 	if err != nil {
@@ -250,13 +268,19 @@ func (s *workspaceProjectStage) Plan(ctx context.Context, _ initflow.Env) (initf
 // Apply is the write, and a coding agent's session never reaches it: the typed
 // confirmation cannot be given there (stepConfirmation), and what it would
 // confirm is an access grant.
+//
+// Every state that is not a workspace's own answers its own reason and applies
+// nothing, which for the split installation is the same answer Check gives: a
+// run whose Check skipped is never planned or applied, so the branch is the
+// answer of a stage nothing should have asked — and if something ever does ask,
+// no grant is made on the wrong project.
 func (s *workspaceProjectStage) Apply(ctx context.Context, _ initflow.Env) (initflow.Outcome, error) {
-	ok, err := s.declared()
+	ok, why, err := s.declared()
 	if err != nil {
 		return initflow.Outcome{}, userErr("%v", err)
 	}
 	if !ok {
-		return initflow.Outcome{Detail: workspaceProjectSkip(s.e.lc)}, nil
+		return initflow.Outcome{Detail: why}, nil
 	}
 	plan, counts, err := s.readPlan(ctx, true)
 	if err != nil {

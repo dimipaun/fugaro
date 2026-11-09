@@ -12,6 +12,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
 // workspace_create_test.go is the workspace's own project's root (W3 of the
@@ -228,47 +229,167 @@ func TestWorkspaceProjectStageSkipsAnInstallationThatIsNotAWorkspace(t *testing.
 	}
 }
 
-// TestWorkspaceProjectStageRefusesAWorkspaceWhoseFirebaseIsAnotherProject: the
+// TestWorkspaceProjectStageSkipsAWorkspaceWhoseFirebaseIsAnotherProject: the
 // workspace's own project holds the workspace's Firebase, its database and its
 // service (spec §3), so an installation whose budget.firebase_project names
 // another project is one where this root's one grant would bind on a database
 // the workspace does not use — the record W2's publish stage writes and the
 // workspace's own service reads lives in the Firebase project's — and where the
 // plan check would accept it, because the stage holds the plan to the same
-// wrong project. All three paths refuse it before anything is planned, with the
-// two projects named and the remedy a split installation takes, and terraform
-// is never reached: no workdir, no init, no plan.
-func TestWorkspaceProjectStageRefusesAWorkspaceWhoseFirebaseIsAnotherProject(t *testing.T) {
+// wrong project.
+//
+// The stage SKIPS with that reason and does not fail the run: the record, the
+// layer, the checkout and every stage behind this one are still the upgrade the
+// owner ran `fugaro update` for, and one command is the whole of it (the HARD
+// RULE — workspace_create.go's declared). Nothing is planned, no service
+// account is created and no grant is made, and the reason names the two
+// projects and the migration a split installation takes. All three paths answer
+// it the same way, and terraform is never reached: no workdir, no init, no
+// plan.
+func TestWorkspaceProjectStageSkipsAWorkspaceWhoseFirebaseIsAnotherProject(t *testing.T) {
 	fakeTerminal(t)
 	g := newWSCreateRig(t, wsProjectName+"\n", wsOwnerTable+wsOwnerCap+wsSplitFirebase)
-	for _, c := range []struct {
-		name string
-		run  func() error
-	}{
-		{"check", func() error { _, err := g.s.Check(context.Background()); return err }},
-		{"plan", func() error { _, err := g.s.Plan(context.Background(), initflow.Env{Interactive: true}); return err }},
-		{"apply", func() error { _, err := g.s.Apply(context.Background(), initflow.Env{Interactive: true}); return err }},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			err := c.run()
-			if err == nil || ExitCode(err) != ExitUserError {
-				t.Fatalf("%s = %v, want a refusal the operator reads", c.name, err)
-			}
-			for _, want := range []string{
-				"budget.firebase_project", "proj-9999", "docs/workspaces/spec.md §3",
-				wsProject, wsProjectName, "fugaro update --firebase-project " + wsProject,
-			} {
-				if !strings.Contains(err.Error(), want) {
-					t.Errorf("the refusal does not name %q: %v", want, err)
-				}
-			}
-		})
+
+	st := g.check(t)
+	if st.State != initflow.Skipped {
+		t.Fatalf("check = %v (%s), want the skip a split installation takes", st.State, st.Detail)
 	}
+	for _, want := range []string{
+		"budget.firebase_project", "proj-9999", "docs/workspaces/spec.md §3",
+		wsProject, wsProjectName, "fugaro update --firebase-project " + wsProject,
+		"the rest of `fugaro update` runs as usual",
+	} {
+		if !strings.Contains(st.Detail, want) {
+			t.Errorf("the skip does not name %q: %s", want, st.Detail)
+		}
+	}
+
+	p, err := g.plan(t, initflow.Env{Interactive: true})
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if !p.NothingToDo || p.Detail != st.Detail {
+		t.Errorf("plan = %+v, want nothing to do, with the skip's own reason", p)
+	}
+
+	// Apply is unreachable from a run whose Check skipped. Asked directly it
+	// answers the same reason and writes nothing, which is the property that
+	// matters: no grant on a database the workspace does not use.
+	o, err := g.apply(t, initflow.Env{Interactive: true})
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if o.Changed || o.Detail != st.Detail {
+		t.Errorf("apply = %+v, want no change and the skip's own reason", o)
+	}
+
 	if calls := g.ri.calls(t); len(calls) != 0 {
 		t.Errorf("the stage reached terraform for a workspace whose Firebase is another project's: %q", calls)
 	}
 	if _, err := os.Stat(g.root()); !os.IsNotExist(err) {
 		t.Errorf("the workspace workdir was prepared: %v", err)
+	}
+}
+
+// wsSplitFirebaseProject is the other project a split installation's config
+// names in budget.firebase_project: the Firebase project it adopted before the
+// one-project rule (design D3), which is the state workspaceSplitFirebase reads.
+const wsSplitFirebaseProject = "proj-9999"
+
+// splitWorkspaceOwnerConfig makes the selected installation a split workspace
+// owner: the owner's half of the membership in its config, and
+// budget.firebase_project naming another project than gcp_project.
+//
+// The database URL stays the rig's own fake: nothing in a plain `fugaro update`
+// reads budget.firebase_project — the Firebase stage is skipped without
+// --firebase-project, and the workspace stage is the one that reads the pair —
+// so the fake stands for the adopted project's database exactly as
+// updateBudgetRigFor's fixture has it.
+func splitWorkspaceOwnerConfig(t *testing.T) {
+	t.Helper()
+	path := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "fugaro", "projects", initProjectName+".yaml")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := strings.Replace(string(b), "firebase_project: "+initProject, "firebase_project: "+wsSplitFirebaseProject, 1)
+	if text == string(b) {
+		t.Fatalf("the fixture's config does not name budget.firebase_project %s:\n%s", initProject, b)
+	}
+	if err := os.WriteFile(path, []byte(text+wsOwnerTable+wsOwnerCap), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestUpdateConvergesASplitWorkspaceOwnerInOneCommand: the HARD RULE at the one
+// state this root cannot converge, and the reason the stage skips rather than
+// fails (workspace_create.go's declared). An installation that declares a
+// workspace of its own while its Firebase is another project's has been
+// updating without this stage all along — W2's publish shipped in v0.21.0 and
+// the workspace command is public, so the release behind converges the state —
+// and this release may not take that away: `fugaro update` skips the workspace's
+// own project, names why, creates no service account and makes no grant, and
+// every stage behind it converges in the same run.
+//
+// The fixture is the previous release's (update_converge_test.go): the same
+// `fugaro update --yes` an owner runs, over a checkout whose rules generation,
+// published policy and plugin pin are behind, with the owner's half in the
+// config and budget.firebase_project naming another project.
+//
+// The record node is there already, which is what makes this an installation at
+// the previous version rather than a fresh one: W2's publish shipped in v0.21.0,
+// so a run of it left the node the config declares, and this release's update
+// finds nothing to write (and so nothing to take to a terminal). That node is
+// also the stage behind the skipped one, and what the update does with it is
+// the proof that the run went on.
+func TestUpdateConvergesASplitWorkspaceOwnerInOneCommand(t *testing.T) {
+	r := newConvergeRig(t, v3Node(nil))
+	currentRelease(t)
+	splitWorkspaceOwnerConfig(t)
+	r.db.Set(projectpolicy.PathWorkspace(initProjectName), map[string]any{
+		"version": projectpolicy.WorkspaceVersion,
+		"name":    initProjectName,
+		"members": []any{wsPublishedMember("member-b", "owner/repo-a", "owner/repo-b")},
+		"cap":     map[string]any{"monthly_micros": 25_000_000},
+	})
+
+	// The state is doctor's own line too, before the update and after it: the
+	// update does not change it, and the migration is the owner's.
+	before := doctorChecks(t, r.root)
+	if c, ok := doctorCheckByID(before.Checks, workspaceSplitCheckID); !ok || c.OK {
+		t.Fatalf("doctor does not report the split workspace owner: %+v", c)
+	}
+
+	out := convergeOn(t, r, []string{"policy-rules-skew", "policy-older-than-binary", "plugin-pin"})
+
+	for _, want := range []string{"workspace-project", "its Firebase is another project's", "budget.firebase_project", "fugaro update --firebase-project " + initProject} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the update's output does not carry %q:\n%s", want, out)
+		}
+	}
+	// Nothing reached the workspace's own root: the stage skipped before
+	// opening a workdir, so no init, no plan and no apply happened there.
+	if _, err := os.Stat(filepath.Join(os.Getenv("XDG_STATE_HOME"), "fugaro", "terraform", initProject, "workspace")); !os.IsNotExist(err) {
+		t.Errorf("the skipped stage opened the workspace root's workdir: %v", err)
+	}
+	for _, root := range r.applies(t) {
+		if root == "workspace" {
+			t.Errorf("the skipped stage applied the workspace root: %v", r.applies(t))
+		}
+	}
+	// The stage behind it ran: the update read the node the previous release
+	// left, found it carrying what this installation declares and went on to
+	// the layer, the checkout and the rest (convergeOn's own assertions).
+	if !strings.Contains(out, "carries what this installation declares") {
+		t.Errorf("the update's output does not carry the record stage's own line, so the run did not reach it:\n%s", out)
+	}
+	if r.db.Value(projectpolicy.PathWorkspace(initProjectName)) == nil {
+		t.Errorf("the workspace record the previous release published is gone")
+	}
+
+	after := doctorChecks(t, r.root)
+	if c, ok := doctorCheckByID(after.Checks, workspaceSplitCheckID); !ok || c.OK {
+		t.Errorf("after fugaro update, doctor no longer reports the split workspace owner: %+v", c)
 	}
 }
 
