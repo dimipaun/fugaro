@@ -185,8 +185,8 @@ RUN --mount=type=bind,source=images/base/fetch.sh,target=/tmp/fetch.sh \
 # own (no pip; design section 4: a runtime-bound package manager is never a
 # system package, and a project that wants one uses mise), so graphify gets
 # a private runtime of its own: uv itself is one pinned, checksummed single
-# binary (like gh, yq, docker and gcloud,
-# 1b above), kept out of /usr/local/bin; it installs its own managed CPython
+# binary (like gh, yq, docker and gcloud, 1b above), kept out of
+# /usr/local/bin; it installs its own managed CPython
 # and graphify's dependencies -- verified against this committed,
 # hash-pinned lockfile (`uv pip compile --generate-hashes`; see
 # images/base/graphify/requirements.in for how to regenerate it), so a PyPI
