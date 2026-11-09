@@ -106,6 +106,16 @@ type Summary struct {
 	// other period writes it.
 	Months int            `json:"months,omitempty"`
 	Flags  map[string]int `json:"flags,omitempty"`
+	// Failures is how many of the period's runs each class holds, by the
+	// class's own name (design §6.2): the two failure-class rules read counts,
+	// and money per class stays out of a block whose discipline is flat maps
+	// and exact strings.
+	//
+	// A block written before the field shipped carries no key at all, which is
+	// not the same fact as a period of no failures: the two rules read the
+	// key's presence, so a period whose runs all succeeded carries none either
+	// (G5).
+	Failures map[string]int `json:"failures,omitempty"`
 	// Recipes is each recipe's median cost over the period's runs, by the
 	// name the report writes: a catalog recipe's own, "other" for the runs no
 	// catalog recipe names. The pattern rules read it month over month, and a

@@ -34,10 +34,17 @@ const (
 	// RuleCostPerRunRising is the billed cost per run rising across
 	// CostRiseMonths monthly reports.
 	RuleCostPerRunRising = "cost_per_run_rising"
+	// RuleFailureClassHigh is one failure class above
+	// FailureClassShareNum/FailureClassShareDen of a week's runs,
+	// FailureClassWeeks weeks running.
+	RuleFailureClassHigh = "failure_class_high"
+	// RuleFailureClassNew is a class this week's block names that no block of
+	// the last FailureClassNewWindow periods names.
+	RuleFailureClassNew = "failure_class_new"
 )
 
 // RuleNames is every rule, in the order a report lists them.
-var RuleNames = []string{RuleFlagRecurs, RuleReviewShare, RuleRecipeMedian, RuleHaltsHigh, RuleCostPerRunRising}
+var RuleNames = []string{RuleFlagRecurs, RuleReviewShare, RuleRecipeMedian, RuleHaltsHigh, RuleCostPerRunRising, RuleFailureClassHigh, RuleFailureClassNew}
 
 // The rules' thresholds (D326, D968).
 const (
@@ -60,6 +67,15 @@ const (
 	// rise across (D968): the last five committed monthly reports, each
 	// month's cost per run above the month before it.
 	CostRiseMonths = 5
+	// FailureClassShareNum/FailureClassShareDen is what "most of a week's
+	// failures are this class" means, and FailureClassWeeks is how many weeks
+	// running it must hold.
+	FailureClassShareNum = 1
+	FailureClassShareDen = 4
+	FailureClassWeeks    = 2
+	// FailureClassNewWindow is how many periods' blocks a class is looked for
+	// in before it reads as new.
+	FailureClassNewWindow = 4
 )
 
 // Pattern is one pattern a fixed rule found in the reports committed before

@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/failure"
 )
 
 // weekBlock is one committed weekly report's summary block, with the figures
@@ -28,6 +30,13 @@ func monthBlock(key, billed, notional, review string, recipes map[string]string)
 	return Summary{
 		Period: key, Runs: 4, Billed: billed, Notional: notional, Review: review, Recipes: recipes,
 	}
+}
+
+// weekFailures is one committed weekly report's summary block with the block
+// the two failure-class rules read: how many of the week's runs each class
+// holds, and how many runs the week counted.
+func weekFailures(key string, runs int, failures map[string]int) Summary {
+	return Summary{Period: key, Runs: runs, Failures: failures}
 }
 
 // costBlock is one committed monthly report's summary block with the two
@@ -328,6 +337,110 @@ func TestPatternCostPerRunRisingIgnoresAPeriodItDidNotWrite(t *testing.T) {
 	}
 	if want := "0.250000,0.275000,0.300000,0.325000,0.350000"; strings.Join(p.Figures, ",") != want {
 		t.Errorf("the pattern's figures = %v, want %s", p.Figures, want)
+	}
+}
+
+// TestFailureClassHighNeedsItsWeeks pins the sixth rule: one class above a
+// quarter of a week's runs, two weeks running, and both weeks are needed. A
+// week exactly at the line is not above it, and a class a week of the window
+// does not carry at all is not above it either.
+func TestFailureClassHighNeedsItsWeeks(t *testing.T) {
+	high := func(key string, runs, failures int) Summary {
+		return weekFailures(key, runs, map[string]int{string(failure.TestsFailed): failures})
+	}
+	got := Patterns([]Summary{
+		high("2026-W41", 5, 2),
+		high("2026-W42", 5, 3),
+	}, high("2026-W43", 5, 2))
+	p := only(t, got, RuleFailureClassHigh)
+	if p.Subject != string(failure.TestsFailed) {
+		t.Errorf("the pattern's subject = %q, want %q", p.Subject, failure.TestsFailed)
+	}
+	if want := "2026-W42,2026-W43"; strings.Join(p.Periods, ",") != want {
+		t.Errorf("the pattern read %v, want %s: the weeks it needs are the last ones", p.Periods, want)
+	}
+	if want := "3/5,2/5"; strings.Join(p.Figures, ",") != want {
+		t.Errorf("the pattern's figures = %v, want %s", p.Figures, want)
+	}
+
+	// One week above the line is not two.
+	one := Patterns(nil, high("2026-W43", 5, 2))
+	if len(one) != 0 {
+		t.Errorf("one week above the line raised %+v", one)
+	}
+
+	// A week exactly at the line: a quarter of four runs is one failure, and
+	// one is not above it.
+	at := Patterns([]Summary{
+		weekFailures("2026-W42", 4, map[string]int{string(failure.TestsFailed): 1}),
+	}, weekFailures("2026-W43", 4, map[string]int{string(failure.TestsFailed): 1}))
+	if len(at) != 0 {
+		t.Errorf("a week at exactly a quarter raised %+v", at)
+	}
+	above := Patterns([]Summary{
+		weekFailures("2026-W42", 4, map[string]int{string(failure.TestsFailed): 2}),
+	}, weekFailures("2026-W43", 4, map[string]int{string(failure.TestsFailed): 2}))
+	if q := only(t, above, RuleFailureClassHigh); q.Subject != string(failure.TestsFailed) {
+		t.Errorf("a week above a quarter raised %+v", q)
+	}
+
+	// A week the window does not carry the class in is not above the line:
+	// absent is not zero failures of that class.
+	absent := Patterns([]Summary{
+		weekFailures("2026-W42", 5, map[string]int{string(failure.Cancelled): 1}),
+	}, high("2026-W43", 5, 5))
+	if len(absent) != 0 {
+		t.Errorf("a week the class does not appear in raised %+v", absent)
+	}
+}
+
+// TestFailureClassNewIgnoresBlocksWithoutTheField pins the seventh rule and
+// what it reads: a class this week's block names that no block of the last four
+// periods names. A block written before the field shipped carries no failures
+// key at all, and the rule skips it rather than reading it as a period of no
+// failures -- so the first week after the release raises nothing, and the rule
+// reports the periods it did read.
+func TestFailureClassNewIgnoresBlocksWithoutTheField(t *testing.T) {
+	// Two weekly reports written before the field shipped, and this week's,
+	// which carries it: there is no block to compare against, and a class
+	// cannot be called new against nothing.
+	old := []Summary{weekBlock("2026-W41", 5, 0), weekBlock("2026-W42", 5, 0)}
+	cur := weekFailures("2026-W43", 5, map[string]int{string(failure.TestsFailed): 2})
+	if got := Patterns(old, cur); len(got) != 0 {
+		t.Errorf("the release's first week raised %+v", got)
+	}
+
+	// The week before carries the block and names the class: the same class is
+	// not new, and the one only this week names is -- with the periods the rule
+	// read.
+	prev := []Summary{weekFailures("2026-W42", 5, map[string]int{string(failure.TestsFailed): 2})}
+	cur = weekFailures("2026-W43", 5, map[string]int{string(failure.TestsFailed): 2, string(failure.Cancelled): 1})
+	p := only(t, Patterns(prev, cur), RuleFailureClassNew)
+	if p.Subject != string(failure.Cancelled) {
+		t.Errorf("the pattern's subject = %q, want the class only this week names, %q", p.Subject, failure.Cancelled)
+	}
+	if want := "2026-W42,2026-W43"; strings.Join(p.Periods, ",") != want {
+		t.Errorf("the pattern read %v, want %s", p.Periods, want)
+	}
+	if want := "0,1"; strings.Join(p.Figures, ",") != want {
+		t.Errorf("the pattern's figures = %v, want %s: one figure per period read", p.Figures, want)
+	}
+
+	// The window is the last four periods, not every report ever committed: a
+	// class the fifth period back named and nothing since is new again, and the
+	// pattern names the five periods it read.
+	var weeks []Summary
+	for _, key := range []string{"2026-W38", "2026-W39", "2026-W40", "2026-W41", "2026-W42"} {
+		weeks = append(weeks, weekFailures(key, 5, map[string]int{string(failure.TestsFailed): 1}))
+	}
+	weeks[0] = weekFailures("2026-W38", 5, map[string]int{string(failure.Cancelled): 1})
+	last := weekFailures("2026-W43", 5, map[string]int{string(failure.Cancelled): 2})
+	got := only(t, Patterns(weeks, last), RuleFailureClassNew)
+	if got.Subject != string(failure.Cancelled) {
+		t.Errorf("a class the fifth period back named and nothing since reads as %q, want new again", got.Subject)
+	}
+	if want := "2026-W39,2026-W40,2026-W41,2026-W42,2026-W43"; strings.Join(got.Periods, ",") != want {
+		t.Errorf("the pattern read %v, want the last four periods and this one, %s", got.Periods, want)
 	}
 }
 
@@ -632,6 +745,11 @@ func TestPatternRuleOrderIsStable(t *testing.T) {
 		monthBlock("2026-08", "1.200000", "0.000000", "0.300000", map[string]string{"standard": "0.100000"}),
 		monthBlock("2026-09", "1.300000", "0.000000", "0.400000", map[string]string{"standard": "0.100000"}),
 	}
+	// The last two weeks carry the failure block: one class holds two of each
+	// week's five runs (above a quarter, twice running), and a class only the
+	// newest of the two names is new.
+	prev[2].Failures = map[string]int{string(failure.TestsFailed): 2}
+	prev[3].Failures = map[string]int{string(failure.TestsFailed): 2, string(failure.Cancelled): 1}
 	cur := monthBlock("2026-10", "1.400000", "0.000000", "0.500000", map[string]string{"standard": "0.150000"})
 	patterns := Patterns(prev, cur)
 

@@ -32,6 +32,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/stats"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -238,6 +239,22 @@ type FlagCount struct {
 	Count int
 }
 
+// ClassCount is one class of the period's failures: how many runs it holds,
+// what they billed, and one of their run IDs. Every field is a figure, a run
+// ID or a value of the closed vocabulary, so a row can hold no word a record
+// chose.
+type ClassCount struct {
+	Class failure.Class
+	Runs  int
+	// Billed is the class's runs' billed dollars, the figure the report's run
+	// table prints in its own column.
+	Billed budget.Micros
+	// Example is one run of the class, the newest of them: a run ID begins
+	// with the run's own start time, so the figure is the same whatever order
+	// the records arrive in (G3).
+	Example string
+}
+
 // Digest is one period's report.
 type Digest struct {
 	Period Period
@@ -252,6 +269,11 @@ type Digest struct {
 	Total Figures
 	// Flags counts the period's flags by name, in FlagNames order.
 	Flags []FlagCount
+	// Failures is why the period's runs did not succeed, one row per class
+	// that holds any of them, in failure.Classes() order. A run that did not
+	// fail is in no row: a class is a record's own ending, never a derivation
+	// (design §3, D1464).
+	Failures []ClassCount
 	// Recipes is each recipe's median cost over the period's runs, by the
 	// name the report writes: a catalog recipe's own, "other" for every other
 	// name. It is the per-recipe figure D326's third rule reads month over
