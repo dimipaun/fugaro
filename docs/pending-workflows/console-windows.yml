@@ -43,11 +43,16 @@
 #   3. **Still outstanding, and the one that keeps this file staged.**
 #      `console/package.json`'s `build.electronDownload.checksums` pins three
 #      zips -- darwin-arm64, darwin-x64, linux-x64 -- and no `win32-x64` one, so
-#      the Electron step below downloads its distribution against **no pinned
-#      hash** on this runner, and `npm run package:win` fails at that step on
-#      every host rather than in `afterPack`. Adding the fourth is a supply-chain
-#      pin and therefore an owner-reviewable edit rather than a convenience.
-#      (Part B, T-B3, finding F37.)
+#      `npm run package:win` **stops** when electron-builder downloads the
+#      Windows distribution -- `No checksum found in checksum file for
+#      "electron-v<version>-win32-x64.zip"` -- on every host, before `afterPack`
+#      is ever called. The missing entry is a refusal rather than an unverified
+#      download: the sums the packer checks against carry those three hashes and
+#      no Windows one, so the archive is refused rather than accepted unverified
+#      (on a cache hit too, because the check is on the entry and not on the
+#      transfer). Adding the fourth is a supply-chain pin and therefore an
+#      owner-reviewable edit rather than a convenience. (Part B, T-B3, finding
+#      F37.)
 #
 # The order the plan gives is: stage this file, land those edits, then copy it
 # in. Staging it now is the point of the staging directory -- the file is
@@ -132,8 +137,8 @@
 #     can launch -- the same packer on the same runner, with the same fuses. What
 #     that block does **not** yet carry is the `win32-x64` hash in
 #     `build.electronDownload.checksums`, which pins three zips today and no
-#     Windows one, so the Electron step below would fetch its distribution
-#     unverified until that pin lands (finding F37, T-B3).
+#     Windows one, so the packer's own download of the Windows distribution stops
+#     until that pin lands rather than proceeding unverified (finding F37, T-B3).
 
 name: console-windows
 
@@ -212,13 +217,14 @@ jobs:
       - name: run the unit suite
         run: npm run test:unit
       # Electron's own download of its distribution, checked against the pinned
-      # package's `checksums.json`: `electron-v<version>-win32-x64.zip` will be
-      # one of the hashes `build.electronDownload.checksums` pins **once the
-      # win32-x64 pin this file's header asks for has landed** (finding F37) --
-      # today that block pins three zips and none of them is a Windows one, so
-      # this step fetches Electron unverified. Then the build the packer packs
-      # (`npm run build` is what writes the file package.json's `main` points
-      # at).
+      # electron package's own `checksums.json`: the Windows archive is one of
+      # the hashes that file carries, so this step **succeeds** on this runner
+      # and is not governed by `build.electronDownload.checksums` at all -- that
+      # field is what electron-builder's *own* download is summed against, and it
+      # is the pack step below, not this one, that stops while the `win32-x64`
+      # entry this file's header asks for is missing (finding F37).
+      # Then the build the packer packs (`npm run build` is what writes the file
+      # package.json's `main` points at).
       - name: download Electron and build the app
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"

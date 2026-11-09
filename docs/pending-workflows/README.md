@@ -1317,9 +1317,10 @@ the *Linux* binary running inside WSL**, unsigned
 [docs/windows-cli/](../windows-cli/README.md)). One job, `console-windows`, on
 `windows-latest`: `contents: read`, **no environment and no secret at all**, the
 pinned toolchain (`npm ci --ignore-scripts`), `npm run typecheck`, `npm run
-test:unit`, Electron's own download — which the checksums `console/package.json`
-pins will cover once the `win32-x64` hash below lands, and do not today —
-`npm run build`, then `npm run package:win` — which is
+test:unit`, Electron's own download — the electron package's `install.js`, summed
+against that package's own `checksums.json`, which pins the Windows archive too,
+so it is not the step the missing `win32-x64` hash below stops — `npm run build`,
+then `npm run package:win` — which is
 `electron-builder --win --publish never`, with no `npx` in front of it — an
 assertion that exactly one `.exe` came out, and `upload-artifact`.
 
@@ -1374,11 +1375,16 @@ in `console/`, and they are not this directory's to do.**
    and C).
 3. **Still outstanding, and the one that keeps this file staged.**
    `console/package.json`'s `build.electronDownload.checksums` pins three zips —
-   `darwin-arm64`, `darwin-x64`, `linux-x64` — and **no `win32-x64` one**, so the
-   Electron step downloads its distribution against no pinned hash on this
-   runner, and `npm run package:win` fails at that step on every host rather than
-   in `afterPack`. That fourth hash is a supply-chain pin and an owner-reviewable
-   edit rather than a convenience (F37, Part B T-B3).
+   `darwin-arm64`, `darwin-x64`, `linux-x64` — and **no `win32-x64` one**, so
+   `npm run package:win` **stops** when electron-builder downloads the Windows
+   distribution, on every host, before `afterPack` is ever called. The missing
+   entry is a refusal rather than an unverified download — the sums the packer
+   checks against carry those three hashes and no Windows one, so the archive is
+   refused rather than accepted unverified, on a cache hit too — and the job's
+   own Electron step is unaffected: that one is the electron package's
+   `install.js`, summed against that package's own `checksums.json`, which does
+   pin the Windows archive. That fourth hash is a supply-chain pin and an
+   owner-reviewable edit rather than a convenience (F37, Part B T-B3).
 
 The order the plan gives is: **stage this file, land those edits, then copy
 it in.** Staging it now is the point of this directory — the file is reviewable
