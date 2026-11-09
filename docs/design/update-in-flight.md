@@ -144,12 +144,12 @@ question, and it never asks anybody to wait. What it claims is what holds
 whatever this update turns out to do — the update asks no run to finish first
 and rewrites nothing a run holds — and never the flat "the runs are unaffected",
 which the budget-mode raise below makes false; what it can still reach is named
-instead. It is absent when nothing runs,
-under `--json` and `--print-vars` (whose stdout is a document), and under
-`--plan-only` (which applies nothing). The refusal stays where it is not the
-update door's: `fugaro upgrade`'s own policy step, and `fugaro project policy
-publish --delete` / `fugaro project repos rm`, which are not the whole upgrade
-and are their own commands.
+instead. It is absent when nothing runs, under `--json` and `--print-vars`
+(whose stdout is a document), and under `--plan-only` (which applies nothing).
+The refusal stays where it is not the update door's: `fugaro upgrade`'s own
+policy step, and `fugaro project policy publish --delete` /
+`fugaro project repos rm`, which are not the whole upgrade and are their own
+commands.
 
 The rows that are not simply safe are the ones the line has to own, and they are
 three (`inFlightSteps`, `internal/cli/update_in_flight.go`): the budget-mode
