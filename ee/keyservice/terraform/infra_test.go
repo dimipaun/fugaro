@@ -13,9 +13,10 @@
 // `terraform` tag is what the plan's command runs them with:
 //
 // Reading a configuration as text is also why this tree holds one form of it and
-// no other: a `.tf.json` file, an override file and a module block are each a
-// place a grant can be written where nothing above changes, and the checks here
-// see none of the three. TestTheTestsReadEveryFileOfTheTree refuses all of them.
+// no other: a `.tf.json` file, an override file, a variable file and a module
+// block are each a place a grant can be written — or decided — where nothing
+// above changes, and the checks here see none of the four.
+// TestTheTestsReadEveryFileOfTheTree refuses all of them.
 //
 //	go test -tags terraform ./ee/keyservice/... -count=1
 //
@@ -158,11 +159,18 @@ func tfList(grants map[string]string) string {
 // the ones these tests can and the ones they refuse, both relative to the root
 // given and sorted. What is refused is every form of configuration a text sweep
 // over HCL cannot see: a `.tf.json` file is the same declarations in another
-// syntax, and an override file (`override.tf`, `main_override.tf`, either of
-// them in JSON) is merged over the rest of its directory last, so it can add a
-// grant to the key ring or flip a service's IAM without any block below
-// changing. A `.tfvars` file only fills in variables — it cannot declare a
-// resource — so it is none of this walk's business.
+// syntax, an override file (`override.tf`, `main_override.tf`, either of them in
+// JSON) is merged over the rest of its directory last, so it can add a grant to
+// the key ring or flip a service's IAM without any block below changing, and a
+// variable file (`terraform.tfvars`, `*.auto.tfvars`, either of them in JSON)
+// decides what the blocks below it MEAN: `signer_role` names the role the signer
+// grant mentions and `keyring` names the ring that grant is made on, so a
+// `terraform.tfvars` reading `signer_role = "editor"` hands the minter Editor
+// while `role = "projects/${var.project}/roles/${var.signer_role}"` still reads as
+// written. Terraform loads those two spellings out of a root's own directory
+// without being asked, which is why a variable file is refused rather than
+// ignored — and a `-var` or a `-var-file` on the owner's command line is not
+// configuration this tree holds (S3.7, S3.8), so it is beyond anything here.
 //
 // Hidden directories are skipped: a provider data directory belongs outside the
 // tree (the `terraform` rule), and a state file is never committed.
@@ -183,7 +191,7 @@ func tfTerraformFiles(root string) (files, refused []string, err error) {
 		}
 		rel = filepath.ToSlash(rel)
 		switch {
-		case strings.HasSuffix(rel, ".tf.json"), tfOverrides(rel):
+		case strings.HasSuffix(rel, ".tf.json"), tfOverrides(rel), tfVars(rel):
 			refused = append(refused, rel)
 		case strings.HasSuffix(rel, ".tf"):
 			files = append(files, rel)
@@ -203,6 +211,19 @@ func tfOverrides(rel string) bool {
 	return base == "override.tf" || strings.HasSuffix(base, "_override.tf")
 }
 
+// tfVars reports whether a path is a variable file, every spelling of one:
+// `terraform.tfvars` and `*.auto.tfvars`, which Terraform loads from a root's own
+// directory without being asked, and a plain `something.tfvars` (or any of the
+// three in JSON), which needs a `-var-file` on the command line. All four are
+// refused for the same reason: a variable decides what the blocks below it mean —
+// which role the signer grant names, which ring it is made on, which two key ids
+// exist — and this suite reads blocks, not variable values, so a tree holding one
+// is a tree it has half-read.
+func tfVars(rel string) bool {
+	base := filepath.Base(rel)
+	return strings.HasSuffix(base, ".tfvars") || strings.HasSuffix(base, ".tfvars.json")
+}
+
 // tfTerraform lists one tree's readable Terraform and fails the test on a file
 // the sweep cannot read: a sweep is only as good as the files it saw, and a tree
 // holding a second form of a root's configuration is one this suite has
@@ -214,7 +235,7 @@ func tfTerraform(t *testing.T, root string) []string {
 		t.Fatalf("walking %s: %v", root, err)
 	}
 	for _, rel := range refused {
-		t.Errorf("%s is a Terraform configuration file these tests cannot read: a `.tf.json` file writes the same resources in another syntax and an override file is merged over its directory last, so either one can grant a role, flip a service's IAM or widen the signer role without any block below changing. Keep the root in plain HCL and in one form, or teach these tests to read the form (S3.5)", rel)
+		t.Errorf("%s is a Terraform configuration file these tests cannot read: a `.tf.json` file writes the same resources in another syntax, an override file is merged over its directory last, and a variable file decides what the blocks below it mean (`signer_role` names the role a grant mentions), so any of them can grant a role, flip a service's IAM or widen the signer role without any block below changing. Keep the root in plain HCL and in one form, with no variable file in it, or teach these tests to read the form (S3.5)", rel)
 	}
 	return files
 }
@@ -577,9 +598,9 @@ func TestTheMinterHasNoPublicInvoker(t *testing.T) {
 
 // TestTheTestsReadEveryFileOfTheTree: everything Terraform would read under
 // this tree is either read by the checks above or refused here, because a sweep
-// that silently skipped a file is a sweep that proves nothing about it. Three
-// forms are refused, each one a place a grant can be written where no block
-// above changes:
+// that silently skipped a file is a sweep that proves nothing about it. Four
+// forms are refused, each one a place a grant can be written — or decided —
+// where no block above changes:
 //
 //   - a `.tf.json` file, which is the same declarations in another syntax, so
 //     every text check above looks at it and finds nothing;
@@ -587,10 +608,15 @@ func TestTheMinterHasNoPublicInvoker(t *testing.T) {
 //     — which Terraform merges over the rest of its directory last, so the
 //     minter's `invoker_iam_disabled` or the signer grant's member can be
 //     rewritten while `main.tf` still reads as written;
+//   - a variable file — `terraform.tfvars`, `*.auto.tfvars`, `something.tfvars`,
+//     any of them in JSON — which decides what the blocks below it mean without
+//     changing one of them: `signer_role` names the role the signer grant
+//     mentions, so a file reading `signer_role = "editor"` hands the minter
+//     Editor while the grant still reads `roles/${var.signer_role}`;
 //   - a `module` block, whose configuration is another tree these tests do not
 //     walk at all.
 //
-// A fourth is not a form but a place: Terraform in a root that is not `keyring/`
+// A fifth is not a form but a place: Terraform in a root that is not `keyring/`
 // or `services/`. Every sweep above walks those two, so a third root is a whole
 // configuration — its own resources, its own grants — that none of them reads,
 // and the same signer grant appended to it is a holder of the role no list here
@@ -601,9 +627,10 @@ func TestTheMinterHasNoPublicInvoker(t *testing.T) {
 // The cases below are the reviewer's mutations, built in a scratch tree: an
 // override flipping the minter's IAM flag, a suffixed override adding
 // `useToVerify` to the signer role, a JSON file granting the signer role, an
-// override in JSON naming the intake in the signer grant, a second plain HCL
-// file in a root — admitted, because the rule is one FORM per root and not one
-// file — and the third root above, which is not.
+// override in JSON naming the intake in the signer grant, a variable file naming
+// another role and an auto-loaded one in JSON, a second plain HCL file in a root
+// — admitted, because the rule is one FORM per root and not one file — and the
+// third root above, which is not.
 func TestTheTestsReadEveryFileOfTheTree(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
@@ -647,6 +674,27 @@ func TestTheTestsReadEveryFileOfTheTree(t *testing.T) {
 				"services/override.tf.json": `{"resource":{"google_kms_key_ring_iam_member":{"minter_signs":{"member":"${google_service_account.intake.member}"}}}}`,
 			},
 			refused: []string{"services/override.tf.json"},
+		},
+		{
+			// The third form a variable file is: it declares no resource and
+			// changes none, and it decides what they mean. This one hands the
+			// minter Editor while the grant still reads as written.
+			name: "a variable file naming another signer role",
+			write: map[string]string{
+				"services/main.tf": "resource \"google_kms_key_ring_iam_member\" \"minter_signs\" {\n" +
+					"  role   = \"projects/${var.project}/roles/${var.signer_role}\"\n" +
+					"  member = google_service_account.minter.member\n}\n",
+				"services/terraform.tfvars": "signer_role = \"editor\"\n",
+			},
+			refused: []string{"services/terraform.tfvars"},
+		},
+		{
+			name: "an auto-loaded variable file in JSON",
+			write: map[string]string{
+				"keyring/main.tf":                     "resource \"google_kms_crypto_key\" \"signing\" {}\n",
+				"keyring/production.auto.tfvars.json": `{"keys":{"production":"some-other-key","staging":"some-other-key"}}`,
+			},
+			refused: []string{"keyring/production.auto.tfvars.json"},
 		},
 		{
 			name: "a second plain HCL file in a root",
