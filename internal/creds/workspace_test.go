@@ -21,29 +21,29 @@ import (
 func TestWorkspaceCredentialIsRefusedWhenTheMembersPolicyExcludesIt(t *testing.T) {
 	shared := Shared{
 		Credential: Credential{Name: "claude-oauth-token-team", Tier: TierA},
-		Projects:   []string{"owner/repo-a"},
+		Projects:   []string{"project-a"},
 	}
 	// The member's own policy refuses this credential, which its allow-list
 	// admits: the intersection is the member's answer.
 	excluded := func(string) bool { return false }
-	err := AdmitShared("owner/repo-a", shared, excluded)
+	err := AdmitShared("project-a", shared, excluded)
 	if !errors.Is(err, ErrMemberPolicy) {
 		t.Fatalf("AdmitShared with the member's policy excluding the credential = %v, want ErrMemberPolicy", err)
 	}
 	if errors.Is(err, ErrNotShared) {
 		t.Errorf("the refusal = %v, which reads as the workspace's allow-list refusing it: it is the member's own policy that excludes it, and the operator is not sent to the workspace for a refusal the member made", err)
 	}
-	if got := SharedFor("owner/repo-a", []Shared{shared}, excluded); len(got) != 0 {
+	if got := SharedFor("project-a", []Shared{shared}, excluded); len(got) != 0 {
 		t.Errorf("SharedFor = %v, want none: the effective set is the intersection and the member admits nothing", got)
 	}
 
 	// The same credential with the member's policy admitting it is served: the
 	// refusal above is the policy's and not the shape's.
 	admits := func(name string) bool { return name == "claude-oauth-token-team" }
-	if err := AdmitShared("owner/repo-a", shared, admits); err != nil {
+	if err := AdmitShared("project-a", shared, admits); err != nil {
 		t.Fatalf("AdmitShared with the member's policy admitting the credential = %v, want it served", err)
 	}
-	got := SharedFor("owner/repo-a", []Shared{shared}, admits)
+	got := SharedFor("project-a", []Shared{shared}, admits)
 	if len(got) != 1 || got[0] != shared.Credential {
 		t.Fatalf("SharedFor = %v, want the one credential the member's policy admits", got)
 	}
@@ -59,23 +59,23 @@ func TestWorkspaceCredentialIsRefusedWhenTheMembersPolicyExcludesIt(t *testing.T
 func TestWorkspaceCredentialIsRefusedForAMemberOutsideItsAllowList(t *testing.T) {
 	shared := Shared{
 		Credential: Credential{Name: "claude-oauth-token-team", Tier: TierA},
-		Projects:   []string{"owner/repo-b"},
+		Projects:   []string{"project-b"},
 	}
 	// A member's policy that admits everything changes nothing: the leg that
 	// refuses is the workspace's own allow-list.
 	admitsEverything := func(string) bool { return true }
-	err := AdmitShared("owner/repo-a", shared, admitsEverything)
+	err := AdmitShared("project-a", shared, admitsEverything)
 	if !errors.Is(err, ErrNotShared) {
 		t.Fatalf("AdmitShared for a project the allow-list does not name = %v, want ErrNotShared", err)
 	}
 	if errors.Is(err, ErrMemberPolicy) {
 		t.Errorf("the refusal = %v, which reads as the member's own policy refusing it: the workspace did not share this credential with this project at all", err)
 	}
-	if got := SharedFor("owner/repo-a", []Shared{shared}, admitsEverything); len(got) != 0 {
-		t.Errorf("SharedFor = %v, want none: the workspace shares this credential with owner/repo-b and not with this project", got)
+	if got := SharedFor("project-a", []Shared{shared}, admitsEverything); len(got) != 0 {
+		t.Errorf("SharedFor = %v, want none: the workspace shares this credential with project-b and not with this project", got)
 	}
 	// The project the allow-list does name is served, with the same policy.
-	if err := AdmitShared("owner/repo-b", shared, admitsEverything); err != nil {
+	if err := AdmitShared("project-b", shared, admitsEverything); err != nil {
 		t.Fatalf("AdmitShared for the project the allow-list names = %v, want it served", err)
 	}
 }
@@ -86,9 +86,9 @@ func TestWorkspaceCredentialIsRefusedForAMemberOutsideItsAllowList(t *testing.T)
 // hands the answer to a selector and a doubled candidate is a credential the
 // cascade would consider twice for one call.
 func TestSharedForKeepsEveryAdmittedCredentialOnce(t *testing.T) {
-	a := Shared{Credential: Credential{Name: "a", Tier: TierA}, Projects: []string{"owner/repo-a"}}
-	b := Shared{Credential: Credential{Name: "b", Tier: TierB}, Projects: []string{"owner/repo-a"}}
-	got := SharedFor("owner/repo-a", []Shared{a, a, b}, func(string) bool { return true })
+	a := Shared{Credential: Credential{Name: "a", Tier: TierA}, Projects: []string{"project-a"}}
+	b := Shared{Credential: Credential{Name: "b", Tier: TierB}, Projects: []string{"project-a"}}
+	got := SharedFor("project-a", []Shared{a, a, b}, func(string) bool { return true })
 	if len(got) != 2 || got[0].Name != "a" || got[1].Name != "b" {
 		t.Fatalf("SharedFor = %v, want a and b once each", got)
 	}

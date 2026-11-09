@@ -40,8 +40,8 @@ import (
 // value — Credential's own rule) and the per-project allow-list D1298 asks for,
 // which is the same shape allow_data_to already uses for a model route.
 //
-// Projects are project names (internal/workspaces's grammar, config.
-// ProjectNameRE, the same grammar a workspace and its members are named by),
+// Projects are member project names (config.ProjectNameRE, the grammar a
+// workspace and its members are both named by),
 // and an empty list is a credential the workspace offers to nobody: an entry
 // nobody is on the list for is not a widening, and reading an empty list as
 // "everybody" would be the one mistake that turns a shared pool into D1298's
