@@ -1825,7 +1825,7 @@ NAME is a credential the service can issue, in the document's own spelling:
   claude-oauth-token-<account>       a named Claude account's OAuth token (tier A)
   anthropic-api-key                the project's Anthropic API key (tier B)
   github-app-key                  the GitHub App's private key (no tier: the mint signs with it)
-  bitbucket-token                   the upstream Bitbucket token (no tier: held for the git proxy a later release adds; a Bitbucket run's job still uses its own mounted token)
+  bitbucket-token                   the upstream Bitbucket token (no tier: the git proxy issues this entry for the repositories the published node admits with proxy: true, and every other Bitbucket run's job still uses its own mounted copy until the flip)
   bitbucket-read-consumer             the Bitbucket read consumer (no tier: the service's read mint exchanges it for a read-scoped token): a YAML mapping of key, secret and workspace, one field per line, so redirect it from a file — the hidden prompt takes one line
   claude-oauth-token--review-signing  the default account's review-signing key (no tier: the service's sign
                                      route computes a MAC with it; written by --generate below)
