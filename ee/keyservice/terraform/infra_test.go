@@ -109,14 +109,70 @@ func tfStripComments(src string) string {
 
 // tfSkipString answers the index just past the closing quote of the string
 // starting at i, and whether there was one: a backslash escapes the character
-// after it, so a quote inside a description does not end the string.
+// after it, so a quote inside a description does not end the string, and an
+// interpolation — `${`, or `%{` for a template directive — is read to its own
+// closing brace, so a quote inside one does not end it either.
+//
+// The second half is not decoration. `"a${"\""}"` is a valid, fmt-clean string
+// whose interpolation holds a quote; a reader that ended the string at that
+// quote read the rest of the file as the inside of strings, so every block
+// header below it was text and no sweep found one — a second signer grant
+// written under such a line passed every check in this file.
 func tfSkipString(src string, i int) (int, bool) {
-	for j := i + 1; j < len(src); j++ {
-		switch src[j] {
-		case '\\':
-			j++
-		case '"':
+	for j := i + 1; j < len(src); {
+		switch c := src[j]; {
+		case c == '\\':
+			j += 2
+		case c == '"':
 			return j + 1, true
+		case c == '$' || c == '%':
+			switch {
+			// `$${` and `%%{` are how a literal `${`/`%{` is spelled, so they
+			// open nothing.
+			case j+1 < len(src) && src[j+1] == c:
+				j += 2
+			case j+1 < len(src) && src[j+1] == '{':
+				k, ok := tfSkipInterpolation(src, j+1)
+				if !ok {
+					return len(src), false
+				}
+				j = k
+			default:
+				j++
+			}
+		default:
+			j++
+		}
+	}
+	return len(src), false
+}
+
+// tfSkipInterpolation answers the index just past the brace closing the
+// interpolation whose `{` is at i, and whether there was one. What it holds is an
+// HCL expression: its brackets nest, and it may carry a quoted string of its own
+// — which may itself interpolate — so it is read with the same readers as the
+// file around it.
+func tfSkipInterpolation(src string, i int) (int, bool) {
+	depth := 0
+	for j := i; j < len(src); {
+		switch c := src[j]; {
+		case c == '"':
+			k, ok := tfSkipString(src, j)
+			if !ok {
+				return len(src), false
+			}
+			j = k
+		case c == '{' || c == '[' || c == '(':
+			depth++
+			j++
+		case c == '}' || c == ']' || c == ')':
+			depth--
+			j++
+			if depth == 0 {
+				return j, true
+			}
+		default:
+			j++
 		}
 	}
 	return len(src), false
@@ -1266,8 +1322,10 @@ func TestTheMinterHasNoPublicInvoker(t *testing.T) {
 // defaults rule over a tree that changed one of them, the same rule against a
 // block that names the wanted literal in a comment, a string or a heredoc
 // instead of in its default, the reads of a block's own attributes against a
-// grant and a key naming what a check looks for in free text, a second key
-// beside the one block the checks read, and the third root above, which is not.
+// grant and a key naming what a check looks for in free text, a grant written
+// under a string whose interpolation holds a quote — which a reader that ended
+// the string at the first quote it saw did not see at all — a second key beside
+// the one block the checks read, and the third root above, which is not.
 func TestTheTestsReadEveryFileOfTheTree(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
@@ -1456,6 +1514,32 @@ func TestTheTestsReadEveryFileOfTheTree(t *testing.T) {
 		}
 		if got, _ := tfAttr(version, "algorithm"); got != `"RSA_SIGN_PKCS1_2048_SHA256"` {
 			t.Errorf("the key's algorithm reads as %s: a heredoc in the labels map spells version_template out, and a check that read that text would hold the algorithm it names while the key is created with another", got)
+		}
+	})
+
+	// And the readers of a file one form further in: a string whose
+	// interpolation holds another string, whose own quote is not the end of the
+	// first. `"a${"\""}"` is valid and fmt-clean, and the grant written under it
+	// is the case: a reader that ended the outer string at the first quote it saw
+	// left the rest of the file inside strings, so the block header below was
+	// found by no sweep — the second holder of the signer role below is one this
+	// file's whole set of rules about the signer role missed.
+	t.Run("a quote inside an interpolation", func(t *testing.T) {
+		root := t.TempDir()
+		tfWrite(t, root, "services/main.tf", "locals {\n"+
+			"  q = \"a${\"\\\"\"}\"\n"+
+			"  d = \"x${\"resource \\\"google_kms_crypto_key\\\" \\\"decoy\\\" {}\"}\"\n"+
+			"}\n\n"+
+			"resource \"google_kms_key_ring_iam_member\" \"second\" {\n"+
+			"  role   = \"projects/x/roles/fugaroKeySigner\"\n"+
+			"  member = \"user:attacker@example.com\"\n}\n")
+		grant := tfRootBlock(t, filepath.Join(root, servicesRoot), `resource "google_kms_key_ring_iam_member" "second"`)
+		got, ok := tfAttr(grant, "member")
+		if !ok || got != `"user:attacker@example.com"` {
+			t.Errorf("the grant written under a string that interpolates a quote reads as %s (found = %t), want \"user:attacker@example.com\": a string ends at its own closing quote, not at a quote inside the interpolation, and a reader that ended it early read every block below as text — which is a sweep that finds nothing and passes", got, ok)
+		}
+		if got := len(tfBlocks(tfSource(t, filepath.Join(root, servicesRoot, "main.tf")), `resource "`)); got != 1 {
+			t.Errorf("the file reads as %d resource blocks, want 1: the decoy header inside the second interpolation is text, and the grant written after the locals block is code — a reader that answered either one wrongly is a reader no sweep above can be built on", got)
 		}
 	})
 
