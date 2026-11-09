@@ -298,9 +298,9 @@ type TokenRecord struct {
 // proof of the sign-in, and an approval that could name its own redirect URI
 // would be an approval to send a code somewhere the person was never shown.
 // The identity is here too, and it is the one field of the flow that arrives
-// later: it is what the paired device's ID token attests (M5b), so it is
-// settled when the device's act is recorded and read by the page's answer,
-// which mints the code.
+// later: it is what the approving act's ID token attests (M5b), so it is
+// settled when that act is recorded and read by the page's answer, which mints
+// the code.
 type Request struct {
 	// ID is the flow's own id and the binding the consent must carry.
 	ID string `json:"id"`
@@ -329,8 +329,8 @@ type Request struct {
 	Scopes []string `json:"scopes"`
 	// ExpiresAt is when the flow stops waiting for its consent.
 	ExpiresAt time.Time `json:"expires_at"`
-	// Approval is the paired device's approval of this flow, written when the
-	// device's own act arrives and nil until then (M5b). It is a field of this
+	// Approval is the approval this flow's act recorded, written when that
+	// act arrives and nil until then (M5b). It is a field of this
 	// record rather than a record of its own, and that is the third
 	// requirement's whole mechanism: an approval that lives on the flow cannot
 	// be moved to another client, another redirect URI or another state,
@@ -339,8 +339,9 @@ type Request struct {
 	Approval *Approval `json:"approval,omitempty"`
 }
 
-// Approval is one paired device's approval of one flow (M5b): what the device's
-// act recorded before any code existed.
+// Approval is the approval one act recorded for one flow (M5b), before any code
+// existed: what proves it is the ID token the act carried, and not a key the
+// device holds (approval.go's header).
 //
 // It holds a hash and never the ID token itself (D922), exactly as a token
 // record does, so a reader of the store cannot present what it reads — and the

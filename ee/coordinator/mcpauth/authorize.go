@@ -40,23 +40,25 @@ import (
 // value of its own — a redirect URI of the caller's own choosing beside the
 // binding still goes to the record's URI.
 //
-// **Number matching is two acts, and the second one is M5b's.** The flow
+// **Number matching is two acts, and the approving one is M5b's.** The flow
 // carries its own six-digit number and the page shows it, and the number is
-// presented back **on the paired device**: the device's act is a POST of its
-// own — the flow's id, the number the person read off the screen, and the
-// Firebase ID token that device's own session produced — and it is that act
-// which records the approval (approval.go). **The page's own answer carries
-// neither the number nor the token**: it is the binding and the person's
-// decision, and it mints the code for a flow the device approved. So a page
-// that rendered a flow of its own displays that flow's number and still cannot
-// approve it, because the number has to arrive from the device beside a token
-// this server verifies (M-a's first requirement).
+// presented back with a sign-in in a POST of the act's own — the flow's id, the
+// number the person read off the screen, and a Firebase ID token — and it is
+// that act which records the approval (approval.go). **The page's own answer
+// carries neither the number nor the token**: it is the binding and the person's
+// decision, and it mints the code for a flow that carries an approval.
 //
-// What M5b does not build is H1's device-held signing key: the approval is
-// bound to the device's session, which is the residual risk H1 accepts and
-// spec.md §8 documents — a device token is a custom token any launcher can
-// mint, and the signing key that would bind the act to one device is in no
-// task.
+// **What that act is proved by is the ID token, and by nothing a device holds**,
+// so the two acts are told apart by their shape and not by who sent them: the
+// act's values — the flow's id, the number on the page, a pasted sign-in — are
+// every one of them a page's to have or to collect, and a page that rendered a
+// flow of its own reads its number off its own text, so it produces the same act
+// a paired device does. **M-a's first requirement, that the approval is the
+// paired device's, is therefore not met by this endpoint** — that gap is H1's
+// accepted residual risk and spec.md §3 and §8 state it — and what the server
+// checks is the shape, the number and the sign-in, which is everything it can
+// check. H1's device-held signing key, which would bind the act to one device,
+// is built by no task.
 //
 // **The client is shown as UNVERIFIED** (M-a, the unverified client name).
 // `client_name` is the client's own assertion about itself — RFC 7591 takes it
@@ -278,13 +280,16 @@ func (s *Server) serveAuthorizeRequest(w http.ResponseWriter, r *http.Request) {
 }
 
 // serveAuthorizeConsent is this endpoint's POST, and M5b makes it two acts
-// rather than one: the **paired device's approval** (approval.go), which is
-// what carries the flow's number and the ID token, and the **page's answer**,
-// which carries the flow's binding and the person's decision and no credential
-// at all. They are told apart by the token's field, which only one of them
-// may carry, and a body carrying that field beside a decision is refused — that
-// shape is M5's page posting its own number back beside a token, which is the
-// approval this endpoint no longer takes (M-a's first requirement).
+// rather than one: the **approving act** (approval.go), which is what carries
+// the flow's number and the ID token, and the **page's answer**, which carries
+// the flow's binding and the person's decision and no credential at all. They
+// are told apart by the token's field, which only one of them may carry, and a
+// body carrying that field beside a decision is refused — that shape is M5's
+// page posting its own number back beside a token, and one body carrying both
+// is neither act. **The shape is what tells them apart and not the sender**:
+// the act's values are a page's to have or to collect, so a page that posts the
+// act and then its decision approves the flow, and M-a's first requirement is
+// not met here (the file's header).
 //
 // Both go through the endpoint rather than through a path of their own because
 // the paths of this front door are mounted in server.go's `Mount`
@@ -324,7 +329,7 @@ func (s *Server) serveAuthorizeConsent(w http.ResponseWriter, r *http.Request) {
 // same binding, one press of Continue. Spending it there would end the flow on
 // the person for pressing a button in the wrong order, and the flow would have
 // to be started again from the client. Nothing is granted by the refusal: a
-// flow no device approved still mints no code, and the take below re-reads the
+// flow carrying no approval still mints no code, and the take below re-reads the
 // same record, so the approval this decides on is the approval the mint acts
 // on.
 //

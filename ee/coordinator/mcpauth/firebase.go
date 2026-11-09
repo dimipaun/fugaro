@@ -14,8 +14,10 @@
 // do.
 //
 // This file is M6: Firebase at the authorize endpoint. The person's sign-in is
-// approved by a paired device and the session that approval produced is the
-// signer (D923), so the coordinator only ever VERIFIES an ID token — it mints
+// approved by the act M5b takes, whose proof is the session's own ID token —
+// the endpoint cannot tell a paired device from any other holder of one
+// (spec.md §3, §8) — and that session is the signer (D923), so the coordinator
+// only ever VERIFIES an ID token — it mints
 // none, it holds no signer role, and there is no code path here that could
 // answer "this person signed in" for somebody who did not. What is verified is
 // the token the installation's own project signs: the issuer is built from the

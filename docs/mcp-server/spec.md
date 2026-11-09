@@ -2,10 +2,13 @@
 
 **Status: design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are built and
 merged on `main`; M5 is built and M5b is built with it — the paired-device approval the owner ruled
-a task of its own on 2026-11-07, so the approval this front door takes is the paired device's,
-except the delivery of a flow to that device — no QR of the flow's binding is rendered and no
-launcher reads the page — which nothing builds and no task of this plan carries; M7 is built except
-the reading of the installation's published state its lists come from, which no task of this plan
+a task of its own on 2026-11-07 — and what is built of it is the endpoint's half: the authorize POST
+takes the device's act as a shape of its own, the ID token is spent once and a family ages, all of
+it proved by the ID token and by no device key, so M-a's first requirement is not met — the endpoint
+cannot tell a paired device from any other holder of one, which is H1's accepted residual risk — and
+the delivery of a flow to that device, with no QR of the flow's binding rendered and no launcher
+reading the page, is built nowhere and carried by no task of this plan; M7 is built except the
+reading of the installation's published state its lists come from, which no task of this plan
 carries; M10 is built except the store's own bucket and its one grant, which are M4's store half and
 not started; M8 is built except the wiring that would serve its four read tools, which no binary has
 and no task of this plan carries; M9 is not started; this folder approves no task.** The owner's
@@ -181,9 +184,11 @@ dependencies' clearance**, so what the tree carries is the owner's clearance and
 ([reconciliation.md](reconciliation.md) §6, check 1). **So the first owner check is met, and the
 licence holds nothing back** — a licence that turned out to be unusable would still send D921 back to
 its own alternatives, with the library out of `go.mod` and M5 rebuilt without it — **and the gate
-that kept M5 dormant was M5b**, the paired-device approval (§3, §8), **which is built**: the
-approval the front door takes is the paired device's, and what is left between this package and a
-binary is the wiring, which no task of this plan carries.
+that kept M5 dormant was M5b**, the paired-device approval (§3, §8), **which is built on the
+server's side only**: M-a's first requirement, that the approval is the paired device's, **is not
+met** — the act is proved by a Firebase ID token and this endpoint cannot tell a paired device from
+any other holder of one, which is **H1's accepted residual risk** (§8) — and what is left between
+this package and a binary is the wiring, which no task of this plan carries.
 
 ## 2. The front door: transport, endpoint, and who may reach it
 
@@ -230,9 +235,10 @@ confirmation rather than a silent apply.
 - `/.well-known/oauth-authorization-server` — the authorization server's metadata.
 - `POST /oauth/register` — Dynamic Client Registration (RFC 7591).
 - `GET /oauth/authorize` — the authorization request, which renders the page a person reads — and
-  `POST /oauth/authorize`, which takes two acts and never one that is both: **the paired device's
-  approval** (the flow's id, the number the page shows and the ID token of that device's own
-  session, M5b) and **the page's answer** (the flow's binding and the decision, and no credential).
+  `POST /oauth/authorize`, which takes two acts and never one that is both: **the act that approves**
+  (the flow's id, the number the page shows and the ID token of a session, M5b — proved by that token
+  and by no device's own key, §8) and **the page's answer** (the flow's binding and the decision, and
+  no credential).
   One path, two methods: M-a's approval is a POST, and the GET verifies nothing.
 - `POST /oauth/token`, `POST /oauth/revoke`.
 
@@ -275,9 +281,10 @@ settles the library's *behaviour* against this design and not its licence, so th
 himself: **he read [licence-table.md](licence-table.md) on 2026-11-07 and cleared the dependency set
 in one line — "Cleared: all permissive" — recorded in [licence-gate.md](licence-gate.md)**
 ([reconciliation.md](reconciliation.md) §6, check 1). **Counsel was never asked, and no line here is
-counsel's clearance.** So the check that gated M5 is met, and **the paired-device approval the owner
-ruled a task of its own (§8) is built with it**: the front door approves through the paired device,
-and what still holds the package off a binary is the wiring rather than the licence — a licence that
+counsel's clearance.** So the check that gated M5 is met, and **the task the owner ruled of its own
+(§8) is built with it**: the front door takes the approving act as a POST of its own and refuses the
+page's own submission as an approval, and what still holds the package off a binary is the wiring
+rather than the licence — a licence that
 had turned out to be unusable would send D921 back to its alternatives rather than to a
 workaround. The alternatives and their costs stay in the reconciliation; the short version is that
 ory/fosite brings the same missing piece and a heavier plugin API for a flow this small, and a
@@ -352,8 +359,11 @@ of them the endpoints, all of them what happens at them):
    short-lived, and bound to the client, the redirect URI and the code challenge. **A missing
    challenge and a challenge that is not `S256` are refused by the coordinator before the library
    sees the request** (finding M-c), because the library instead reads a missing method as `plain`.
-5. The user signs in, and **the sign-in is approved by a paired device** (D923, the owner's answer
-   of 2026-11-04). **This design does not redirect to a Firebase-hosted sign-in page**: the
+5. The user signs in, and **the sign-in is approved by the paired device** (D923, the owner's answer
+   of 2026-11-04) — **which this server cannot tell from any other holder of an ID token: the
+   requirement is met by the design and not by the endpoint**, and the device-held key that would
+   meet it there is H1's named, unbuilt change (§8). **This design does not redirect to a
+   Firebase-hosted sign-in page**: the
    project's Identity Platform is initialized with no sign-in providers and refuses any public
    sign-up path, so there is no hosted page to redirect to, and turning one on is the exact change
    `docs/mobile-auth` ruled against in D221. What approves the sign-in is the mechanism the
@@ -390,22 +400,26 @@ of them the endpoints, all of them what happens at them):
      URL**, where it would land in history, logs and referrers;
    - **nothing is pushed without a person starting it.**
 
-   **The first of those is built on the server's side and not yet on the device's.** M5's approve
-   step rendered the flow's number on the page and posted it back from the same page's form, so the
-   number was a binding between that page and the approval and **not the device-side approval this
-   bullet asks for**: the paired device never saw the number, and a page rendering a flow of its own
-   knows its own number ([reconciliation.md](reconciliation.md) §4a, D923's M-a amendment). **The
-   owner answered it on 2026-11-07: it is M5b, a task of its own and a hard prerequisite before
-   anything wires the front door** ([implementation-plan.md](implementation-plan.md) §3). **M5b is
-   built, and what it built is the half a server can**: the approval is a POST of its own carrying
-   the flow's id, the number the person read off the screen and the ID token of the paired device's
-   session, the page's answer carries the binding and the decision and no credential, and the code is
-   minted only for a flow the device approved. **What is not built is how a flow reaches that
-   device** — no QR of the flow's binding is rendered and no launcher reads the page — so the act the
-   endpoint accepts is one no client produces yet, and a person who reads the number off the page has
-   nothing to type it into. **That half is owed and named in §11**: no task of this plan carries it,
-   and the wiring task carries it beside the two bounds the registration endpoint is accepted under
-   (`approval.go`'s own header states the same gap where it is read).
+   **The first of those is not met.** M5's approve step rendered the flow's number on the page and
+   posted it back from the same page's form, so the number was a binding between that page and the
+   approval and **not the device-side approval this bullet asks for**: the paired device never saw
+   the number, and a page rendering a flow of its own knows its own number
+   ([reconciliation.md](reconciliation.md) §4a, D923's M-a amendment). **The owner answered it on
+   2026-11-07: it is M5b, a task of its own and a hard prerequisite before anything wires the front
+   door** ([implementation-plan.md](implementation-plan.md) §3). **M5b is built, and it does not meet
+   this bullet either**: the approval is a POST of its own carrying the flow's id, the number the
+   person read off the screen and the ID token of a session, the page's answer carries the binding
+   and the decision and no credential, and the code is minted only for a flow that carries an
+   approval — **but the act is proved by that ID token and by nothing a device holds, so any holder
+   of one can produce it, and the endpoint cannot tell a paired device from the browser that answered
+   the page**, which is **H1's accepted residual risk** (§8). What would close this bullet is the
+   **device-held key registered at pairing** H1 records as not built and in no task. **And what is
+   not built is how a flow reaches a device at all** — no QR of the flow's binding is rendered and no
+   launcher reads the page — so the act the endpoint accepts is one no client produces yet, and a
+   person who reads the number off the page has nothing to type it into. **Both halves are owed and
+   named in §11**: no task of this plan carries either, and the wiring task carries them beside the
+   two bounds the registration endpoint is accepted under (`approval.go`'s own header states the same
+   gap where it is read).
 6. The coordinator issues the authorization code, and the exchange at `POST /oauth/token` mints a
    short-lived access token and a refresh token, scoped to the MCP resource URL, carrying the
    identity, the client, the scopes and the limits of §6.
@@ -829,24 +843,28 @@ the store and as the sha256 of its value (D922), before the code is minted, so *
 token is refused instead of approving a second flow**. Both were M-a's second and fourth
 requirements, and both are built.
 
-**What the device half adds to them is the first requirement, and it too is built.** M5's approve
+**What the device half adds to them is the first requirement, and it is not met.** M5's approve
 step rendered the flow's number on the page and took it back from the same browser that answered,
 which bound the page to the flow and nothing to a paired device, so a page that rendered a flow of
 its own handed over the number and the token together and this server could not tell that approval
 from the one M-a asks for. **The owner answered it on 2026-11-07: the device half is M5b, a task of
 its own and a hard prerequisite before anything wires the front door**
 ([implementation-plan.md](implementation-plan.md) §3; [reconciliation.md](reconciliation.md) §4a),
-**and it is built with the other two, as far as the server can build it**: the approval is the paired
-device's own POST — the flow's id, the number the person read off the screen and the ID token that
-device's session produced — and the page's answer carries the binding and the decision and no
-credential, so a flow no device approved mints no code. **What is not built is the delivery**:
-nothing renders a QR of the flow's binding and no launcher reads the page, so the act the endpoint
-takes is one no client produces yet and no task of this plan carries the half that would (§11).
+**and M5b is built — but what it built is not a device binding**: the approving act is a POST of its
+own — the flow's id, the number the person read off the screen and the ID token a session produced —
+and the page's answer carries the binding and the decision and no credential, so **a flow no
+approval was recorded for mints no code**. **The act is proved by that ID token and by no device's
+own key**, so the browser that answered the page produces it exactly as a paired device does: **M-a's
+first requirement is not met on the server's side**, which is **H1's accepted residual risk** stated
+above, and the one change that would close it is the device-held key registered at pairing that H1
+records as not built and in no task. **And what is not built is the delivery**: nothing renders a QR
+of the flow's binding and no launcher reads the page, so the act the endpoint takes is one no client
+produces yet and no task of this plan carries the half that would (§11).
 
 **The coordinator mints no Firebase token of its own** either: it holds no
 signer role, so a compromised coordinator cannot answer "this person signed in" for somebody who
-did not — that is the paired device's act (§3), and the coordinator only verifies what the device's
-session produced.
+did not — that act is the session's own (§3), and the coordinator only verifies what that session
+produced.
 
 **The paired device is an ACCEPTED residual risk, and this is where it is stated.** Finding **H1**,
 and **the one amendment that is not the recommendation** ([reconciliation.md](reconciliation.md)
@@ -1117,14 +1135,16 @@ amendment is in this tree (`docs/workspaces/spec.md:209-210`, `:217-219`), and i
   of their own — and **until it comes the bound is the wiring task's**: the task that mounts this
   package on a binary carries both bounds and deletes `TestNoBinaryLinksTheFrontDoorYet`, so the
   growth §8 accepts is accepted only while nothing mounts the routes. **M5b was owed beside them**
-  (the owner's ruling of 2026-11-07) **and is built**, and it closed the half of M-a's device
-  requirement a server can close: the guard is relaxed by building the paired-device approval rather
-  than by deleting its message. **What it left is the other half, and it is owed now**: **the
-  delivery of a flow to the paired device** — no QR of the flow's binding is rendered and no launcher
-  reads the page — **which no task of this plan carries**, and which the wiring task therefore
-  carries beside the two bounds and the guard. Until it lands, the act the endpoint accepts is one
-  no client produces: the approval is decided exactly as M5b built it, and a person who reads the
-  number off the page has nothing yet to type it into.
+  (the owner's ruling of 2026-11-07) **and is built**, and **what it left owed is more than the
+  delivery**: **M-a's first requirement, that the approval is the paired device's, is not met on the
+  server's side and no task of this plan meets it** — the act is proved by a Firebase ID token and
+  the endpoint cannot tell a paired device from any other holder of one, so what closes it is the
+  **device-held key registered at pairing** that H1 records as an accepted residual risk and as not
+  built (§8) — **and neither is the delivery of a flow to the paired device**, no QR of the flow's
+  binding rendered and no launcher reading the page. **Neither is carried by any task of this plan**,
+  so both are the wiring task's beside the two bounds and the guard, and until they land the act the
+  endpoint accepts is one no client produces: the approval is decided exactly as M5b built it, and a
+  person who reads the number off the page has nothing yet to type it into.
 - **Where the front door's own two lists are read from** (§4, D933, the amendment's finding M-f):
   **the design says the installation's published state, and the tree reads nothing there.** §8's
   claim that the lists bound what a token buys turns on it: `ee/coordinator/mcpauth/identity.go`

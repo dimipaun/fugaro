@@ -3,15 +3,20 @@
 
 package mcpauth
 
-// M5b's own tests: the approval happens on the paired device, the ID token it
-// spends is spent, and the number names one flow.
+// M5b's own tests: the approving act is a request shape of its own, the ID token
+// it carries is spent, and the number names one flow.
 //
 // What M5 built is the page half of M-a's number matching — the flow's number
 // rendered on the page and presented back to the same page — and M5b is the
-// device half: **the page's own submission mints nothing**, the paired device's
-// act is a request of its own, and the ID token that act carries is spent
-// before a code exists. The tests below are the wire, not the internals: every
-// one of them drives the endpoints a client and a device drive.
+// half the endpoint can perform: **a body carrying both acts at once is
+// refused**, the approving act is a request of its own, and the ID token it
+// carries is spent before a code exists. **What the endpoint cannot do is tell
+// a paired device from any other holder of that token**: the act carries a
+// flow's id, the number the page shows and a pasted sign-in, and every one of
+// those is a value a page has or collects, so M-a's first requirement is not met
+// on the server's side — H1's accepted residual risk (approval.go's header,
+// spec.md §3, §8). The tests below are the wire, not the internals: every one of
+// them drives the endpoints a client and a device drive.
 
 import (
 	"context"
@@ -22,30 +27,34 @@ import (
 	"testing"
 )
 
-// TestAnApprovalFromThePageAloneIsRefused is M5b's red step, and M-a's first
-// requirement stated as a fact about the wire: a submission from the page that
-// rendered the flow — carrying the number that page showed and the ID token —
-// is refused, and no code is minted.
+// TestABodyCarryingBothActsIsRefused is M5b's red step: the endpoint's two
+// request shapes are told apart, and a body that is both of them — the flow's
+// binding, the number the page showed, a sign-in and a decision — is refused,
+// and no code is minted.
 //
 // It is refused by the rule that tells the two acts apart — a body carrying an
 // ID token beside a decision is neither of them (serveAuthorizeConsent) — and
-// the rule exists because the number the page renders is not the device's
-// approval: the page knows its own number, so a check that the same page
-// satisfies is a page binding and nothing more (authorize.go's note). What M-a
-// asks for is an act from the paired device, and this submission is not one.
+// what the rule proves is which shape arrived, not who may approve. The act's
+// own values are a page's to have or to collect: the binding is in its form, the
+// number is on it, and the token is pasted into it, so **a page that posts the
+// approving act and then the page's answer approves the flow**, and this
+// endpoint cannot tell it from a paired device. That gap is H1's accepted
+// residual risk and **M-a's first requirement is not met on the server's side**
+// (approval.go's header, spec.md §3, §8) — what the server can check is the
+// shape, which is what this test pins.
 //
 // The refusal is also not an answer to the flow: the binding survives it, so
 // the device's own act and the page's Continue still finish the flow below.
 // A refusal that burned the flow would be a page a stranger who read the
 // number could end.
-func TestAnApprovalFromThePageAloneIsRefused(t *testing.T) {
+func TestABodyCarryingBothActsIsRefused(t *testing.T) {
 	ts := newTestServer(t)
 	clientID, _ := ts.register(t, "an editor", testClientRedirect)
 	binding, number := ts.startFlow(t, authorizeQuery(clientID, testClientRedirect))
 
-	// The shape M5 accepts today: the flow's binding, the number the page
-	// rendered, the ID token, and the page's own Allow — all in one POST from
-	// the browser, with no act from a paired device anywhere in it.
+	// Both shapes in one body: the flow's binding and the decision, which is the
+	// page's answer, beside the number and the sign-in, which is the approving
+	// act's — a request that is neither shape, and so one the endpoint refuses.
 	rec := ts.consent(t, url.Values{
 		"request_id": {binding},
 		"number":     {number},
@@ -53,18 +62,18 @@ func TestAnApprovalFromThePageAloneIsRefused(t *testing.T) {
 		"decision":   {"allow"},
 	})
 	if rec.Code == http.StatusFound {
-		t.Fatalf("a submission from the page alone answered %d with a redirect to %q: the page's own number and an ID token are not the approval M-a asks for, so this mints a code for an approval no paired device made", rec.Code, rec.Header().Get("Location"))
+		t.Fatalf("a body carrying both shapes answered %d with a redirect to %q: a request that is both the approving act and the page's answer is neither, and honouring one would read a decision as an approval", rec.Code, rec.Header().Get("Location"))
 	}
 	if loc := rec.Header().Get("Location"); loc != "" {
 		t.Errorf("the page's own submission answered with a redirect to %q: a refusal is a page, because an approval this server will not honour is not an answer the client is waiting on", loc)
 	}
 	for key := range ts.store.objects(t) {
 		if strings.HasPrefix(key, codePrefix) {
-			t.Errorf("%s is a code the page's own submission minted: the code is minted only for a flow the paired device approved", key)
+			t.Errorf("%s is a code a body carrying both shapes minted: the code is minted only off an approval that one shape recorded", key)
 		}
 	}
 
-	// The flow was refused, not answered: the device's act and the page's
+	// The flow was refused, not answered: the approving act and the page's
 	// Continue still finish it.
 	if rec := ts.deviceApprove(t, binding, number, approvalToken(t)); rec.Code != http.StatusOK {
 		t.Fatalf("the paired device's act answered %d (%s); want the page that tells the device the flow is approved", rec.Code, strings.TrimSpace(rec.Body.String()))
@@ -87,15 +96,17 @@ func TestAnApprovalFromThePageAloneIsRefused(t *testing.T) {
 // page shows or carries — the flow's binding in its form and the flow's number
 // in its text — is not an approval of the flow, however it is posted.
 //
-// What the act is proved by is the Firebase ID token the paired device's own
-// session produced, which is the one value the page's form does not carry and
-// the one value the endpoint reads out of a body. The number ties the act to
-// the screen the person is reading and the token is what makes it an act, so a
-// post that has the number and not the token is the page's own answer at best
-// (M5's shape with the token taken out of it), and it is refused while the flow
-// is unapproved — which is what the two posts below are, and why neither of
-// them mints a code or spends the flow. The device's own act still approves the
-// flow afterwards, so the refusals are about what the posts carried.
+// What makes a body an approving act is the sign-in it carries, and the number
+// ties it to the screen the person is reading, so a post with the number and no
+// token is the page's own answer at best (M5's shape with the token taken out of
+// it), and it is refused while the flow is unapproved — which is what the two
+// posts below are, and why neither of them mints a code or spends the flow.
+// What that does not prove is that only a paired device can approve: the page
+// carries a paste field for the sign-in too, so the page that rendered the flow
+// can produce the act as well, which is H1's accepted residual risk and M-a's
+// first requirement unmet (approval.go's header). The device's own act still
+// approves the flow afterwards, so the refusals are about what the posts
+// carried.
 func TestKnowingWhatThePageShowsIsNotApprovingTheFlow(t *testing.T) {
 	ts := newTestServer(t)
 	clientID, _ := ts.register(t, "an editor", testClientRedirect)

@@ -522,12 +522,18 @@ func TestNoAnswerOfThisServerIsCacheable(t *testing.T) {
 // builds reaches this package. The owner's ruling of 2026-11-07 added the
 // second half of what a task that wires the front door owes: M5 is built
 // dormant, and the paired-device approval M-a asks for is M5b, a task of its
-// own and a hard prerequisite (implementation-plan.md §3). M5b is built, and it
-// built the server's half of that approval: the endpoint takes the device's act,
-// and what it left is the delivery — nothing renders a QR of the flow's binding
-// and no launcher reads the page — which is owed beside the bounds (spec.md §11).
-// A task that wires the front door deliberately deletes this test and carries
-// those bounds and that delivery with it; until then, a non-test file that names
+// own and a hard prerequisite (implementation-plan.md §3). M5b is built, and
+// what it built is the endpoint's half — the approving act as a shape of its
+// own, the spent ID token and the family's age — **while M-a's first
+// requirement is not met**: the act is proved by the ID token and not by a key
+// the device holds, so a page that rendered a flow approves it with the same two
+// posts any holder of a session token can send, and the endpoint cannot tell it
+// from a paired device (spec.md §3, §8; H1's accepted residual risk). So the
+// wiring task owes the bounds, the delivery and a device binding this endpoint
+// does not perform: nothing renders a QR of the flow's binding and no launcher
+// reads the page, and the key that would bind the act to a device is in no task
+// (spec.md §11). A task that wires the front door deliberately deletes this test
+// and carries those with it; until then, a non-test file that names
 // this package fails here rather than turning the exposure reachable in a release
 // nobody re-read the paragraph for.
 func TestNoBinaryLinksTheFrontDoorYet(t *testing.T) {
@@ -546,7 +552,7 @@ func TestNoBinaryLinksTheFrontDoorYet(t *testing.T) {
 				return err
 			}
 			if strings.Contains(string(data), pkg) {
-				t.Errorf("%s links the MCP front door, which mounts an open registration endpoint with neither a rate limit nor a sweep; a task that wires it carries those two bounds and the delivery of a flow to the paired device, which nothing builds, and deletes this guard", path)
+				t.Errorf("%s links the MCP front door, which mounts an open registration endpoint with neither a rate limit nor a sweep; a task that wires it carries those two bounds, the delivery of a flow to the paired device — which nothing builds — and the device binding this endpoint cannot perform, since a page that rendered a flow can approve it with a session token, and deletes this guard", path)
 			}
 			return nil
 		})

@@ -2,10 +2,13 @@
 
 **Status: design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are built and
 merged on `main`; M5 is built and M5b is built with it — the paired-device approval the owner ruled
-a task of its own on 2026-11-07, so the approval this front door takes is the paired device's,
-except the delivery of a flow to that device — no QR of the flow's binding is rendered and no
-launcher reads the page — which nothing builds and no task of this plan carries; M7 is built except
-the reading of the installation's published state its lists come from, which no task of this plan
+a task of its own on 2026-11-07 — and what is built of it is the endpoint's half: the authorize POST
+takes the device's act as a shape of its own, the ID token is spent once and a family ages, all of
+it proved by the ID token and by no device key, so M-a's first requirement is not met — the endpoint
+cannot tell a paired device from any other holder of one, which is H1's accepted residual risk — and
+the delivery of a flow to that device, with no QR of the flow's binding rendered and no launcher
+reading the page, is built nowhere and carried by no task of this plan; M7 is built except the
+reading of the installation's published state its lists come from, which no task of this plan
 carries; M10 is built except the store's own bucket and its one grant, which are M4's store half and
 not started; M8 is built except the wiring that would serve its four read tools, which no binary has
 and no task of this plan carries; M9 is not started; this folder approves no task.** The design is
@@ -30,8 +33,9 @@ read [licence-table.md](licence-table.md) on 2026-11-07 and cleared the dependen
 all permissive" — recorded in [licence-gate.md](licence-gate.md), the gate file the check describes,
 **so nothing about the licence holds M5 back**, and a licence that had turned out to be unusable
 would still send D921 back to its own alternatives rather than ship the dependency. What kept M5
-from being wired into a binary was **M5b**, the paired device M-a asks for, **and M5b is built**:
-what holds it off one now is the wiring and the guard.
+from being wired into a binary was **M5b**, the paired device M-a asks for, **and M5b is built — the
+endpoint's half of it, with M-a's first requirement still unmet** (the status line above): what holds
+it off one now is the wiring and the guard.
 
 ## 1. What the owner answered on 2026-11-04, and what each answer moves
 
@@ -117,7 +121,8 @@ it:
   **"Cleared: all permissive"**, recorded in [licence-gate.md](licence-gate.md), which is the M5 gate
   file ([reconciliation.md](reconciliation.md) §6, check 1). **Counsel was never asked**, so the
   clearance is the owner's own, and **the check no longer holds M5 back** — the front door stayed
-  dormant because of **M5b** rather than because of the licence, **and M5b is built**.
+  dormant because of **M5b** rather than because of the licence, **and M5b is built on the server's
+  side, where M-a's first requirement is not met**.
 - **D922 — H3.** Keyed hashes and MACs, no database admin on the public service, and the records
   outside the main database (**D935**, the store of §8). M2, M3 and M4 carry it.
 - **D923 — H1 and M-a.** **H1 is the one amendment that is not the recommendation**: a device token
@@ -131,7 +136,9 @@ it:
   a paired device, so the device-side half was raised as a finding for the owner rather than answered
   by rewriting M-a ([reconciliation.md](reconciliation.md) §4a, D923's M-a amendment). **The owner
   answered it on 2026-11-07: it is M5b, a task of its own below, and it is a hard prerequisite before
-  any binary links the front door — and M5b is built.**
+  any binary links the front door — and M5b is built, as the endpoint's half: the act is proved by
+  the ID token and not by a key the device holds, so this requirement is not met on the server's
+  side, which is H1's accepted residual risk ([spec.md](spec.md) §3, §8).**
 - **D924 — M-b.** The family spend limit is enforced across concurrent runs by reserving
   `min(job cap, remaining)` **atomically against the family counter** at spawn and settling at
   finalize; for `client_credentials` the family is the client. The store half is M2's, the call site
@@ -165,8 +172,9 @@ this amended plan, because M4's draft predates the D934 and M-e answers and M6's
 **Where the tree has gone since**: **M1 (#1713), M2 (#1767), M3 (#1715), M6 (#1714) and M4's first
 half (#1716) are merged on `main`** — M4's half being the account, the front door service and its
 public invoker binding (`deploy/terraform/gcp/modules/installation/coordinator.tf:320`, `:382`,
-`:527`) — **M5 is built and M5b below is built with it, so the approval the front door takes is the
-paired device's, M7 is built apart from the reading of the installation's published state its lists
+`:527`) — **M5 is built and M5b below is built with it, as the endpoint's half -- the approve POST takes the
+act as a shape of its own, and what proves that act is the ID token and no key a device holds, so
+M-a's first requirement is not met -- M7 is built apart from the reading of the installation's published state its lists
 come from, which no task below carries, M10 is built apart from the store's own bucket and its one
 grant, which are M4's store half below and are not started, **M8 is built apart from the wiring that
 would serve its four read tools**, which is the wiring no task below carries, **and M9 is not
@@ -301,7 +309,8 @@ D921 back to its alternatives before any code exists rather than after. **The ow
 himself on 2026-11-07** — he read [licence-table.md](licence-table.md) and cleared the dependency
 set, **"Cleared: all permissive"**, recorded in [licence-gate.md](licence-gate.md) — **so it stands
 met and M5 waits on the licence no longer**: what kept the front door off a binary was **M5b**,
-**which is built**, so what holds it off one now is the wiring and the guard.
+**which is built on the server's side with M-a's first requirement unmet**, so what holds it off one
+now is the wiring and the guard.
 
 **That review has run, on 2026-11-04, and the gate from here on is per task**: its findings and the
 owner's answers to them are [reconciliation.md](reconciliation.md) §4a, every document in this folder
@@ -315,7 +324,7 @@ dependency set — "Cleared: all permissive", with [licence-gate.md](licence-gat
 §6 check 1 describes — **and counsel was never asked**
 ([reconciliation.md](reconciliation.md) §6, check 1). **So that half is met and the gate in front of
 every task from here is the review's per-task one**, and **what kept the front door off a binary was
-M5b, which is built, rather than the licence.**
+M5b, built on the server's side with M-a's first requirement unmet, rather than the licence.**
 **A third gate stood in front of M2 and M4, and it has been answered rather than left standing.**
 D935 moved the records out of the project's database and left **which** separate store to the owner
 (§8), so M2's backend file and M4's Terraform were both written against an answer nobody had given
@@ -732,7 +741,8 @@ hand-check of [reconciliation.md](reconciliation.md) §6 (check 8) rather than w
   check 1 describes. This is the one task the licence gated directly, and **that gate is met**, so
   the
   dependency's `go.mod` entry no longer lands ahead of it; what this task still waited for is the
-  review's per-task gate, and **what kept it off a binary was M5b, which is built**.
+  review's per-task gate, and **what kept it off a binary was M5b, which is built on the server's
+  side with M-a's first requirement unmet**.
 - **The amendment's findings, and what this task carries (2026-11-04).** **M-a, M-c, M-f and the
   unverified client name**, all answered here: **a missing challenge, a challenge that is not `S256`
   and an unknown scope are refused before the library sees them**; only the code and refresh grants
@@ -745,7 +755,10 @@ hand-check of [reconciliation.md](reconciliation.md) §6 (check 8) rather than w
   in the tree when this row was written**: the approve step bound the page and not the device, and
   the owner answered that on 2026-11-07 — it is **M5b** below, a hard prerequisite before any binary
   links the front door ([reconciliation.md](reconciliation.md) §4a) — rather than rewritten into
-  this row, **and M5b is built**: the approval is the paired device's own POST.
+  this row, **and M5b is built, as the endpoint's half**: the approve POST takes a shape of its own,
+  and what that act is proved by is the ID token and no key a device holds, so **the approval on the
+  wire is not the paired device's** and this requirement is not met on the server's side
+  ([spec.md](spec.md) §3, §8).
 - **What the review settles about the library, and what it does not.** The review found the library's
   defaults are the opposite of this design's rules in five named ways, and that half is settled by
   the constraints above; **the licence is not, and the owner settled that half himself on
@@ -769,30 +782,36 @@ prerequisite before anything wires the front door**.
 the test's own message names what the guard waits on for that reason, so the guard is relaxed by
 building the approval and not by deleting a sentence. **M5b has landed**, on the files below, and
 **the guard is not relaxed here**: relaxing it belongs to the wiring task, which is
-still carried by no task of this plan. **What landed is the server's half of the first requirement
-and not the delivery**: the endpoint takes an act that already carries the flow's id and the number,
-and nothing hands those two to the paired device — no QR of the flow's binding, no launcher reading
-the page — so no client produces that act yet. **The delivery is owed, and named as owed** in
+still carried by no task of this plan. **What landed is the part of the first requirement the
+endpoint can perform and not the requirement itself**: the endpoint takes an act that already carries
+the flow's id and the number, and what proves that act is the ID token rather than a device's key, so
+the page that rendered the flow can produce it too (**M-a's first requirement is not met**; the
+requirement's own item below). **Nor is the delivery landed**: nothing hands the flow's id and its
+number to the paired device — no QR of the flow's binding, no launcher reading the page — so no
+client produces that act yet. **Both are owed, and named as owed** in
 [spec.md](spec.md) §11, [reconciliation.md](reconciliation.md) §4a and the wiring sections under M7
 and M8 below.
 
 **Four things, and no fifth.** Each is a requirement M-a or the review of this branch raised and the
 tree did not carry:
 
-1. **The approval happens on the paired device, not on the page.** The device shows the flow's number
-   or takes it (a QR the page renders carries the same number), so a person approves a request they
-   can see came from the screen in front of them. **A number the page renders and the same page posts
-   back is not this** — the page knows its own number — which is why the page's check is what M5
-   built and this task is what it built past. **What this task built is the shape the server can
-   check**: an act arriving with the flow's id, the number and the paired device's own ID token, and
-   an approval no page post can produce. **What the act is proved by is the device's session and not
-   the device's own key**: the endpoint checks the ID token and cannot tell a paired device from any
-   other holder of one, which is **H1's accepted residual risk**, stated with its consequences in
-   [spec.md](spec.md) §8 and whose signing key (a device-held key registered at pairing) is in no
-   task — so the number and the endpoint's two shapes are not a hardware binding. **What it did not
-   build is the delivery** — the device's
-   side of showing or taking the number — so the requirement is met at the endpoint and unperformed
-   on the device, and that half is named as owed in [spec.md](spec.md) §11.
+1. **The approval happens on the paired device, not on the page — and this requirement is not met
+   on the server's side.** The device shows the flow's number or takes it (a QR the page renders
+   carries the same number), so a person approves a request they can see came from the screen in
+   front of them. **A number the page renders and the same page posts back is not this** — the page
+   knows its own number — which is why the page's check is what M5 built and this task is what it
+   built past. **What this task built is the shape the server can check, and no more than the
+   shape**: the endpoint tells an act carrying the flow's id, the number and an ID token from one
+   carrying a decision, and refuses a body that is both — **but what proves the act is the ID token
+   and not a key the device holds**, and every value in it (the flow's id, the number on the page, a
+   pasted sign-in) is a page's to have or to collect, so a page that rendered a flow **can produce
+   this act and approve the flow**, and the endpoint cannot tell it from a paired device. That is
+   **H1's accepted residual risk**, stated with its consequences in [spec.md](spec.md) §3 and §8, and
+   the change that would close it — **a device-held key registered at pairing** — is in no task. So
+   **M-a's first requirement stands unmet**: what this task closed is the shape, the spend and the
+   family's age, and not the binding to a device. **What it did not build beside that is the
+   delivery** — the device's side of showing or taking the number — and both are named as owed in
+   [spec.md](spec.md) §11.
 2. **The ID token is spent.** The approve step records the token as used, in M2's store and as the
    sha256 of its value (D922) — the unkeyed hash M2's store writes, and not the HMAC-keyed hash
    D922's restatement requires, which nothing builds (spec.md §11) — before the code is minted, so a
@@ -819,19 +838,23 @@ tree did not carry:
   rather than to the 500 it would answer if the record's missing family reached the family read as
   an empty key.
 - **Interface:** the approve step keeps its single-use POST and its ID token in the body, and the
-  **paired device's act is a request of its own** — the endpoint's name was this task's to fix, and
+  **approving act is a request of its own** — the endpoint's name was this task's to fix, and
   it was fixed by giving the authorize endpoint's POST the two shapes rather than by adding a route:
   the front door's routes are mounted in `server.go`'s `Mount`, which is M5/M6/M7's file (§4) — and
   D928's allowlist rule and the consent page's CSRF binding apply to it exactly as they do to the
   approve step. The store gains the spent-token record and the family's two bounds; both go
   through M2's `Store` interface and neither opens a client of its own (D935).
-- **Red step:** `TestAnApprovalFromThePageAloneIsRefused` — a POST carrying the number the page
-  rendered and the ID token, with no act from the paired device, is refused, and the code is not
-  minted. It fails because the page's own number is what the approve step accepts today.
-- **Tests:** `TestAnApprovalFromThePageAloneIsRefused`, `TestTheNumberNamesOneRequest` (an approval
-  for one request mints no code for another), `TestAnIDTokenApprovesOneFlow` (the second use of a
-  spent token is refused), `TestAFamilyExpires`, and `TestTheDeviceActIsNotAQueryString` (the
-  device's act is a POST, and no token travels in a URL).
+- **Red step:** `TestABodyCarryingBothActsIsRefused` — a POST carrying the flow's binding, the
+  number the page rendered, a sign-in and a decision, which is both of the endpoint's shapes at
+  once, is refused, and the code is not minted. It fails because one shape is what the approve step
+  accepts today. **What it pins is the shape and not who may approve**: the act's values are ones
+  the page has or collects, so the page can produce the act as well (H1's residual risk), and the
+  test is written so it states the shape rather than a device binding this server does not perform.
+- **Tests:** `TestABodyCarryingBothActsIsRefused`, `TestKnowingWhatThePageShowsIsNotApprovingTheFlow`
+  (a post carrying only what the page shows or carries mints nothing), `TestTheNumberNamesOneRequest`
+  (an approval for one request mints no code for another), `TestAnIDTokenApprovesOneFlow` (the second
+  use of a spent token is refused), `TestAFamilyExpires`, and `TestTheDeviceActIsNotAQueryString`
+  (the approving act is a POST, and no token travels in a URL).
 - **SEC:** **yes** — this is the step that decides who a person is, and it is where a mistake is
   silent. **It is not one of the five whose marker says mandatory**, because that marker is a
   property of the review that has already run: the independent SECURITY review of 2026-11-04 read §8

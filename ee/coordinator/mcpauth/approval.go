@@ -13,20 +13,32 @@ import (
 	"strings"
 )
 
-// This file is M5b: **the paired device's approval**, which is M-a's first
-// requirement, and **the ID token spent**, which is its second.
+// This file is M5b: **the approving act as a request shape of its own**, and
+// **the ID token spent**, which are M-a's first and second requirements as far
+// as this server can carry them.
 //
 // **The act is a request of its own.** M5 built the page half of number
 // matching — the flow's number is rendered on the page a person reads and the
 // same page presents it back — and that is a binding to the *page*: the page
 // knows its own number, so a page that rendered a flow of its own displays its
-// own number and whoever fills that form hands over the number and the ID token
-// together (authorize.go's note). What M-a asks for is an approval made on the
-// device paired to the installation, and this file is that act: a POST whose
-// body carries the flow's own id, the flow's number as the person read it off
-// the screen, and the Firebase ID token the device's session produced. The
-// page's answer that follows carries neither the number nor the token — see
-// servePageAnswer — and the code is minted only for a flow this act approved.
+// own number and whoever fills that form hands over the number and a sign-in
+// together (authorize.go's note). M5b's act is the POST whose body carries the
+// flow's own id, the flow's number as the person read it off the screen, and a
+// Firebase ID token. The page's answer that follows carries neither the number
+// nor the token — see servePageAnswer — and the code is minted only for a flow
+// this act approved.
+//
+// **What the act is proved by is the ID token, and M-a's first requirement is
+// not met.** Every value that makes the act is a page's to have or to collect —
+// the flow's id is in the page's own form, the number is its text, and a sign-in
+// is pasted into it — so the page that rendered a flow produces the same act a
+// paired device does, and the endpoint cannot tell a device from that page. That
+// is **H1's accepted residual risk**, stated with its consequences in spec.md
+// §3 and §8, and the change that would close it — a device-held signing key
+// registered at pairing — is built by no task. What this file does perform is
+// the shape: a body that is both acts at once is refused, the act's own request
+// carries the number, and the code is minted only off an approval the act
+// recorded.
 //
 // **Why the act is a shape of the authorize endpoint and not a path of its
 // own.** The endpoint's name is this task's to fix (implementation-plan.md,
@@ -36,7 +48,7 @@ import (
 // this task would be a handler nothing mounts and no test could reach. What
 // this task fixes instead is the *shape*: the authorize endpoint's POST takes
 // two bodies and never one that is both — a body carrying an ID token is the
-// device's act, a body carrying a decision is the page's answer, and a body
+// approving act, a body carrying a decision is the page's answer, and a body
 // carrying both is refused (serveAuthorizeConsent). The wiring task, which
 // waits on this one, is where a path of its own can be mounted if the owner
 // wants the device's act on one.
@@ -66,11 +78,11 @@ import (
 // own, so a crash between them costs a sign-in and never an approval of a flow
 // nobody proved.
 
-// isDeviceAct answers whether an authorize POST is the paired device's act, and
-// the ID token's field is what names it.
+// isDeviceAct answers whether an authorize POST is the approving act, and the
+// ID token's field is what names it.
 //
 // It is answered by the field's presence rather than by its value: an act whose
-// token field is empty is still the device's act, and it is refused as an
+// token field is empty is still the approving act, and it is refused as an
 // unverified sign-in, which is the answer a device that lost its session needs.
 // A body *without* that field is the page's answer, whatever else it carries —
 // the page posts a decision and nothing else — so the shapes the caller tells
@@ -78,7 +90,7 @@ import (
 // beside a decision (serveAuthorizeConsent).
 func isDeviceAct(form url.Values) bool { return form.Has("id_token") }
 
-// serveDeviceApproval is the paired device's act: it checks the flow, checks
+// serveDeviceApproval is the approving act: it checks the flow, checks
 // the number the person read off the screen, spends the ID token, and records
 // the approval on the flow.
 //
