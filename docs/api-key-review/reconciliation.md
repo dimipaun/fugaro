@@ -4,8 +4,8 @@
 2026-11-07 and all tasks are approved 2026-11-07 (owner: "All tasks approved. Jobmax") — except the two
 the security review added later, AK9 and AK10, which are written and not approved.** This document
 reads every clause of the owner's ask ([spec.md](spec.md), 2026-11-07) against the tree as it stood
-then, classifies what it finds,
-and turns the parts that needed a decision into questions **D1410–D1429** (§7), every one of them
+then, classifies what it finds, and turns the parts that needed a decision into questions
+**D1410–D1429** (§7), every one of them
 answered the same day, each as recommended. **Two things happened after that reading and neither
 reopens it:** on **2026-11-09** the owner answered **D1418** — the provider's base URL and the auth
 shape go **in the bundle** (§5, §7) — and the **author's own security pass** over the merged AK4 and
@@ -408,9 +408,14 @@ every caller rather than of one credential — so a bundle written with **AK6b**
 CLI newer than the installation's deployed credentials service halts every run that reaches that
 service, coding runs included, until `fugaro update` moves the image. `fugaro creds set` is the
 bundle's only writer and an owner-only command, so the guard belongs at that write: the
-`*Since`-style check `reviewAdmissionSince` established, judged against the installation's own record
-of its service (`terraform.tfvars.json`'s `credentials_service.image`), refusing the write and naming
-`fugaro update`, with the release's own `### For operators` sentence. Found the same day; it is the
+`*Since`-style check `reviewAdmissionSince` established — but judged against the release that
+**serves** the document: the deployed credentials service's own image, read from Cloud Run, which
+decides whenever the service exists, falling back to the installation's pin
+(`terraform.tfvars.json`'s `credentials_service.image`, the update's **desired** state, which a
+declined or failed apply leaves ahead of what serves) only for a service not deployed yet — refusing
+the write, and naming `fugaro update`, with the release's own `### For operators` sentence. A release
+that cannot be read is a refusal as well, rather than the warning `reviewAdmissionSince`'s own reader
+gives: unknown is the state this write may not be made in. Found the same day; it is the
 review's task **AK10**, written and **not approved**, and it is off the levels and off the critical
 path like **AK9** — but **it gates AK6b's release** (implementation-plan §6 item 11): the guard lands
 in the same release as the entry it guards and after it, so **no release carries AK6b without

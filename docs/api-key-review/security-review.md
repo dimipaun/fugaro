@@ -159,14 +159,18 @@ account, and AK4 made that inexact — in more places than the four refusals tha
 The **refusals**: `internal/credsvc/auth.go` refuses a review job account naming nothing with
 "names no Claude account, so no call of it could be served" and a duplicate with "bound to two Claude
 accounts"; `internal/credsvc/server.go` writes the same two in the serve path, one of them as "no
-email or no Claude account". **Three more Go sites carry the same claim**: `internal/cli/validate.go`'s
+email or no Claude account". **Six more Go sites carry the same claim** — the two the first pass
+missed are the de-duplication comment below and `tfvars.go`'s `CredentialsReviewJob`:
+`internal/cli/validate.go`'s
 `reviewJobNotes` prints the operator a note on `budget.per_run_usd` saying a review job's model calls
 do not reach the gateway because "it runs on a Claude account" — the note `fugaro validate` writes, and
-the one an operator is most likely to read; `internal/cli/credentials_serve.go` says it twice, once
-where the service's configuration is assembled ("with the Claude account its calls are served by") and
-once on `credentialsServiceReviewJobAccounts` ("carrying the Claude account that call is served by");
-and `internal/infra/tfvars.go` writes `FUGARO_REVIEW_JOB_ACCOUNTS` with "Account is the Claude account
-the variant's calls are served by". **The module says it in both its files**:
+the one an operator is most likely to read; `internal/cli/credentials_serve.go` says it **three** times,
+where the service's configuration is assembled ("with the Claude account its calls are served by"), on
+`credentialsServiceReviewJobAccounts` ("carrying the Claude account that call is served by") and on the
+de-duplication the same function makes ("rows that name one account under two **Claude accounts** are
+left for `credsvc.NewAuthenticator` to refuse"); and `internal/infra/tfvars.go` writes it **twice**,
+`CredentialsReviewJob` with "account is the Claude account the policy's admissions spell" and
+`FUGARO_REVIEW_JOB_ACCOUNTS` with "Account is the Claude account the variant's calls are served by". **The module says it in both its files**:
 `modules/installation/variables.tf` describes `review_job_accounts` as "carrying the Claude account the
 variant's calls are served by" (its description and the comment under it), and
 `modules/installation/credentials.tf`'s `FUGARO_REVIEW_JOB_ACCOUNTS` block says "the Claude account the
@@ -183,10 +187,16 @@ the **whole document** on a key it does not know (`bundleErr(ErrBundleUnknownKey
 service answers that as a refusal of every caller: a bundle written with **AK6b**'s provider entry by
 a CLI newer than the installation's deployed service halts every run that reaches the service, coding
 runs included, until `fugaro update` moves the image. **One-line fix:** `fugaro creds set` refuses a
-write whose newest key the installation's own recorded service image
-(`terraform.tfvars.json`'s `credentials_service.image`) predates, naming `fugaro update` — the
+write whose newest key the release that **serves** the document predates, naming `fugaro update` — the
 `*Since` guard `reviewAdmissionSince` already establishes — with the release's `### For operators`
-sentence. **Became AK10** (SEC), written and not approved, and it is a **guard AK6b's own shape needs**
+sentence. **And it is not that guard's reading of the record.** The installation's
+`terraform.tfvars.json` pin is the update's **desired** state, written as its stage plans and applied
+afterwards, so a declined or failed apply leaves it ahead of the deployed service and a guard reading
+it alone admits the very write this finding is about; the deployed service's own image comes from Cloud
+Run's `services.get` and **it decides when the service exists**, the pin decides only for a service not
+deployed yet, and **a release that cannot be read** — a failed read, a reference carrying no release —
+is a **refusal**, where `checkReviewAdmission` warns and admits. Both of those are AK10's own
+Interfaces ([implementation-plan.md](implementation-plan.md) §3). **Became AK10** (SEC), written and not approved, and it is a **guard AK6b's own shape needs**
 rather than a defect in AK4 or AK5: today no credential kind reaches the bundle that the deployed
 service cannot read. **Severity: high when AK6b lands, none before it** — and because it is high there,
 **AK10 is a release precondition of AK6b** rather than an optional repair beside it (the plan's §6 item
@@ -239,7 +249,12 @@ themselves.
 8. **AK6b's release carries AK10.** The guard is what keeps F26 from being a state a release ships: with
    the provider entry in the bundle and no guard at `fugaro creds set`, a CLI newer than the deployed
    service can halt every caller of that service — coding runs included — with a write, which is the
-   failure CLAUDE.md's "`fugaro update` is the whole upgrade" rule exists to forbid. AK10 is therefore
+   failure CLAUDE.md's "`fugaro update` is the whole upgrade" rule exists to forbid. **The guard**
+   — as F26 above sets it out — **has to
+   judge what serves**, not the installation's pin (the desired state an apply can still be behind, and
+   a declined or failed apply is exactly the state the write gets through in), and **a release it
+   cannot read is a refusal** — the one place it does not follow `reviewAdmissionSince`'s
+   warn-and-admit rule. AK10 is therefore
    **not optional and not a later fix**: it lands in the same release as AK6b, **after** AK6b's own
    commit (the guard's own test loads the write it judges through `credsvc.ParseBundle`, so the field
    it guards lands first — [implementation-plan.md](implementation-plan.md) §6 item 11), and **the

@@ -166,7 +166,7 @@ could touch).
 | `internal/cli/creds.go` | — | AK10 (the credential write's guard) |
 | `internal/cli/creds_test.go` | — | AK10 (the same) |
 | `internal/cli/creds_skew_test.go` (new) | — | AK10 (the same) |
-| `internal/cli/recipes_skew.go` | — | AK10 (the constant and the check) |
+| `internal/cli/recipes_skew.go` | — | AK10 (the constant, beside `reviewAdmissionSince`'s, and the pin's own reader `installationServiceRelease` it reuses) |
 
 **A row with `—` in the Level column is a task that is on no level**, which §1 says of AK9 and AK10:
 they are off the levels and off the critical path, so their files are booked here only so that a later
@@ -768,11 +768,14 @@ listed, and all of them are this task's** (the review's **F25** is written with 
   `budget.per_run_usd` that a review job's model calls do not reach the gateway because "it runs on a
   Claude account": the sentence an operator is most likely to read, and the only one of these that is
   output rather than a comment or a refusal;
-- **two comments in `internal/cli/credentials_serve.go`** — where the service's configuration is
-  assembled ("with the Claude account its calls are served by") and on
-  `credentialsServiceReviewJobAccounts` ("carrying the Claude account that call is served by");
-- **`internal/infra/tfvars.go`'s comment** for `FUGARO_REVIEW_JOB_ACCOUNTS` ("Account is the Claude
-  account the variant's calls are served by");
+- **three comments in `internal/cli/credentials_serve.go`** — where the service's configuration is
+  assembled ("with the Claude account its calls are served by"), on
+  `credentialsServiceReviewJobAccounts` ("carrying the Claude account that call is served by"), and on
+  the de-duplication the same function makes ("rows that name one account under two **Claude
+  accounts** are left for `credsvc.NewAuthenticator` to refuse");
+- **both of `internal/infra/tfvars.go`'s comments** on the review-job document — `CredentialsReviewJob`
+  ("account is the Claude account the policy's admissions spell") and `FUGARO_REVIEW_JOB_ACCOUNTS`
+  ("Account is the Claude account the variant's calls are served by");
 - **the module's two files** — `variables.tf`'s description of `review_job_accounts` and the comment
   above its validation, and `credentials.tf`'s `FUGARO_REVIEW_JOB_ACCOUNTS` block ("the Claude account
   the variant's calls are served by", "the Claude account the pairing serves a review call by").
@@ -838,35 +841,91 @@ rather than a refused credential — so a bundle written with AK6b's provider en
 the installation's deployed credentials service halts every caller of that service, coding runs
 included, until `fugaro update` moves the service onto the image that reads it. `fugaro creds set` is
 the bundle's only writer and an owner-only command, so the guard belongs at that write:
-`internal/cli/recipes_skew.go` gains one `*Since`-style constant and one check — the idiom
-`reviewAdmissionSince` established, judged against the installation's own record of its service
-(`terraform.tfvars.json`'s `credentials_service.image`, `installationServiceRelease`) rather than
-against a build record — and `internal/cli/creds.go` refuses to **write** a document whose newest key
-the deployed service predates, naming `fugaro update` as the one command that fixes it. Two things
-follow and both are part of this task: the release that ships AK6b carries the sentence under
-`### For operators` in its own notes (CLAUDE.md's HARD RULE: `fugaro update` is the whole upgrade, and
-what an operator may be asked is spelled there), and an installation whose service is already newer is
-written exactly as today.
+`internal/cli/recipes_skew.go` gains one `*Since`-style constant — the idiom `reviewAdmissionSince`
+established — and `internal/cli/creds.go` refuses to **write** a document whose newest key the service
+that reads it predates, naming `fugaro update` as the one command that fixes it.
+
+**What the guard judges, and it is not the pin alone.** Two records name a release, and the guard
+reads both:
+
+- **the deployed service's own image** — Cloud Run's `services.get` on
+  `infra.CredentialsServiceName` in the project and region the local config names, through `run/v2`,
+  the read `doctor`'s own credentials-service check makes (`internal/cli/doctor_brokering.go`), taking
+  the container image its template carries (the reference is the pinned `:X.Y.Z@sha256:` form, so the
+  release reads out of it with the same `CredentialsServiceImageRelease` the pin's does). This is the
+  state that **serves** the document, and its `NotFound` is the one answer that needs no judging;
+- **the installation's pin** — `terraform.tfvars.json`'s `credentials_service.image` through
+  `installationServiceRelease`, which is the **desired** state and not the applied one: `fugaro update`
+  writes that document as its stage plans and applies it afterwards, so a run whose apply the owner
+  declined, or which failed at the apply, **leaves the pin ahead of what serves**. A guard reading the
+  pin alone admits the write in exactly that state — **F26**'s own case, and the reason this task does
+  not take `reviewAdmissionSince`'s reading.
+
+**What is deployed decides, and the pin only when nothing is deployed; what cannot be read is a
+refusal.**
+
+- **The deployed service's release decides whenever the service exists** — it is what serves the
+  document — and the pin cannot raise that answer. A pin ahead of a deployed service older than the
+  constant (the declined or failed apply above) is therefore refused, which is the direction a guard
+  reading the pin alone gets wrong.
+- **The deployed service absent, the pin stated** — nothing serves yet and a service is coming, at the
+  release the installation's own record names — is judged by the **pin**, so an old one refuses the
+  write rather than let it halt the service the next apply deploys.
+- **The deployed service absent and no pin** — nothing serves and nothing is coming — is the write as
+  today, and `TestCredsSetIsUnaffectedByAnInstallationWithNoService` is that case and not "unknown".
+- **The record that decides unreadable** — the Cloud Run read failing for any reason other than
+  `NotFound`, or a reference carrying no release at all (an operator's hand-written digest, one
+  resolved from another registry) — **refuses the write**. This is where the guard deliberately parts
+  from `checkReviewAdmission`, which warns and admits: a review launch from a machine holding no record
+  can still work and the remedy is the reader's own, while this write is the one that can halt every
+  caller of the service, and the read it needs asks the project the write itself already opens
+  (`creds set` reaches Secret Manager in that project with the owner's own identity). An unknown
+  release is exactly what the guard cannot clear, so it is a refusal that names the read that failed
+  and `fugaro update` beside it.
+
+Two things follow and both are part of this task: the release that ships AK6b carries the sentence
+under `### For operators` in its own notes (CLAUDE.md's HARD RULE: `fugaro update` is the whole
+upgrade, and what an operator may be asked is spelled there), and an installation whose service is
+already newer is written exactly as today. **What the guard does not cover is stated rather than left
+to be discovered:** it closes the program's own write path, and a bundle container written around the
+command — `gcloud secrets versions add`, the same reach `credsOwnerOnly`'s own comment names when it
+calls the agent marker "a speed bump and not a boundary" — is outside every gate here and stays
+**F26**'s residual.
 
 **Tests and command:**
-`GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestCredsSetRefusesAProviderBundleAnOlderServiceCannotRead|TestCredsSetWritesWhenTheServiceIsNewer|TestCredsSetIsUnaffectedByAnInstallationWithNoService' -count=1`
+`GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestCredsSetRefusesAProviderBundleAnOlderServiceCannotRead|TestCredsSetRefusesWhenNoRecordSaysWhichServiceServes|TestCredsSetJudgesWhatIsDeployedBeforeWhatIsPinned|TestCredsSetWritesWhenTheServiceIsNewer|TestCredsSetIsUnaffectedByAnInstallationWithNoService' -count=1`
 
 - `TestCredsSetRefusesAProviderBundleAnOlderServiceCannotRead` — the write of a document carrying the
-  provider entry against a recorded service image older than the constant is refused, nothing is
-  written, and the sentence names `fugaro update`. **The red step.**
-- `TestCredsSetWritesWhenTheServiceIsNewer` — the same write against a service at or past the constant
-  succeeds, and the resulting document loads through `credsvc.ParseBundle`.
+  provider entry against a deployed service older than the constant is refused, nothing is written, and
+  the sentence names `fugaro update`. **The red step.**
+- `TestCredsSetRefusesWhenNoRecordSaysWhichServiceServes` — **neither half of the guard may be
+  skipped on an unknown**: a Cloud Run read that fails (a refused credential, an unavailable API) and a
+  record whose reference carries no release (a hand-written digest) are each refused, nothing is
+  written, and the refusal names what could not be read — the case a warn-and-admit reader, which is
+  `checkReviewAdmission`'s rule, would write through. **The red step too**, and its own test so "no
+  service" and "unknown" are never one fixture.
+- `TestCredsSetJudgesWhatIsDeployedBeforeWhatIsPinned` — the desired-state skew the review found, and
+  the three answers it settles: a pin at this release over a deployed service older than the constant
+  (an apply declined or failed) is **refused** — the one direction a guard reading the pin alone gets
+  wrong; a deployed service at this release with a stale pin is **written**; and no deployed service
+  with an old pin is **refused**, because the apply coming carries that release.
+- `TestCredsSetWritesWhenTheServiceIsNewer` — the same write against a deployed service at or past the
+  constant succeeds, and the resulting document loads through `credsvc.ParseBundle`.
 - `TestCredsSetIsUnaffectedByAnInstallationWithNoService` — an installation with no credentials
-  service has no such skew (there is no service to refuse the document), and its bundle is written as
-  today.
+  service **and no pin** has no such skew (there is no service to refuse the document and none coming),
+  and its bundle is written as today. It is this case and not the one above: a service that is not
+  there is an answer, and a service nobody can read is not.
 
-**Red step:** `TestCredsSetRefusesAProviderBundleAnOlderServiceCannotRead` fails today: no write path
-reads the installation's service release, so the document is written and the older service refuses
-every caller of it.
+**Red step:** `TestCredsSetRefusesAProviderBundleAnOlderServiceCannotRead` and
+`TestCredsSetRefusesWhenNoRecordSaysWhichServiceServes` fail today: no write path reads any service
+release, so the document is written and the older service refuses every caller of it.
 
-**Mutation:** judge the guard against the CLI's own version instead of the installation's record —
-the test's older-service fixture is then written and the service-wide refusal ships, which is exactly
-what **F26** found.
+**Mutation:** judge the installation's pin alone, as `reviewAdmissionSince`'s reader does — the
+declined-apply fixture of `TestCredsSetJudgesWhatIsDeployedBeforeWhatIsPinned` is then written
+and the service-wide refusal ships, which is exactly what **F26** found. A second: admit an unknown
+record with a warning, the way `checkReviewAdmission` does — the release-less digest and the failed
+read are written, and
+`TestCredsSetRefusesWhenNoRecordSaysWhichServiceServes` is what goes red.
 
 **Reviewer tier:** **SEC** — opus, with the independent security review mandatory. It is a refusal on
 the credentials service's only write path.
@@ -1061,8 +1120,11 @@ that reconciliation found, and item 11 the release precondition AK6b cannot ship
     key it does not know, so a bundle written with AK6b's provider entry by a CLI newer than the
     installation's deployed service **halts every caller of that service, coding runs included**, until
     the owner runs `fugaro update`. AK10 is the guard that stops the write from happening — `fugaro
-    creds set` refuses a bundle whose newest key the installation's own recorded service image
-    predates, naming `fugaro update` — so **AK6b may not be released without it, and AK10 lands in the
+    creds set` reads the **deployed** service's own image through Cloud Run, falls back to the
+    installation's **pin** for a service that is not deployed yet, and refuses a bundle whose newest
+    key that release predates, naming `fugaro update`; a release it cannot read is a refusal too, which
+    is where it parts from `checkReviewAdmission`'s warn-and-admit (AK10's own Interfaces) — so **AK6b
+    may not be released without it, and AK10 lands in the
     same release, after AK6b's own commit** (the guard's own test loads the write it judges through
     `credsvc.ParseBundle`, so the field lands first; the guarantee is at the release, not the commit).
     **AK10 is written and not approved** (item 3), and that has a consequence this plan states
@@ -1131,12 +1193,14 @@ and the redaction stay where they are.
 **Findings.** **F25** — the tree's own sentences still say a review call is served by a **Claude
 account**, which AK4 made inexact (the sentinel is not one): four refusals in `internal/credsvc/auth.go`
 and `server.go`, the note `fugaro validate` prints on `budget.per_run_usd` ("it runs on a Claude
-account"), two comments in `internal/cli/credentials_serve.go`, `internal/infra/tfvars.go`'s comment
-for `FUGARO_REVIEW_JOB_ACCOUNTS`, and both module files' prose for the review-job document; **AK9**.
+account"), three comments in `internal/cli/credentials_serve.go`, both of `internal/infra/tfvars.go`'s
+comments on the review-job document (the `CredentialsReviewJob` one and the
+`FUGARO_REVIEW_JOB_ACCOUNTS` one), and both module files' prose for the review-job document; **AK9**.
 **F26** — `ParseBundle` refuses a **whole
 document** on an unknown key, so a bundle written with AK6b's provider entry by a CLI newer than the
 installation's deployed service halts every caller of that service until `fugaro update`; **AK10**, with
-the release's `### For operators` sentence. **F27** — `README.md`'s status line still read "items 6 and
+the release's `### For operators` sentence — and the guard's reach is the release that **serves**, read
+from Cloud Run, not the installation's pin, which the apply can still be behind. **F27** — `README.md`'s status line still read "items 6 and
 7 … not met, so those four tasks may not start", and its file table still claimed "at most six" files
 per task; **fixed in this docs pass** and not a task. **No finding lets the key or the bundle out of
 the service, and nothing found is a defect in the merged behaviour**: F25 is wording, F26 is a guard a
