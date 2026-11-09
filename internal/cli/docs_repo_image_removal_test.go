@@ -35,7 +35,8 @@ package cli
 //    carries the status line, the parked chain (R0 and R1 shipped, R2-R10
 //    deferred by the image setup skill's D1900) and the owner's ruling
 //    verbatim, the spec carries the order that orders every task, and the plan
-//    carries its own signature.
+//    carries its own signature, its status line and the same parking note --
+//    the three places a reader checks the folder against the build.
 //  * TestDocsRepoImageRemovalDecisionsAreInRange -- D1190-D1208 are written,
 //    each exactly once and in order, every one is open with a recommendation and
 //    the cost of both the alternative and the recommendation, and D1209-D1219,
@@ -171,7 +172,12 @@ func TestDocsRepoImageRemovalIsWritten(t *testing.T) {
 	// plan reads as eleven independent tasks, which is the one thing it is not.
 	plan := flattenDoc(readDoc(t, rirPlan))
 	for _, want := range []string{
-		"**Status: plan only; nothing is implemented; no task approved.**",
+		// The plan's status line carries the same correction the index's does:
+		// a plan whose first two tasks are on `main` and whose rest is parked
+		// reads as unstarted to a builder who skims it, and the amendment says
+		// where the order stopped.
+		"**Status: a plan. R0 and R1 are built; R2–R10 are parked by the image setup skill (D1900), and no task of theirs is approved.**",
+		"**Amended 2026-11-09: R0 and R1 have shipped, and R2–R10 are parked**",
 		"**catalog ships → R0 → D1148 (both tasks) → R1 → R2 → R3 → R4 → R5 → R6 → R7 → R8 → R9 → R10.**",
 		"**0.20.0 — two releases after D1148's two tasks",
 		// The ceiling, and the one subject that exceeds it: a reader checking

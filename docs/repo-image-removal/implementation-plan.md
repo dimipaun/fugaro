@@ -1,6 +1,7 @@
 # Implementation plan: removing the per-repository derived images
 
-**Status: plan only; nothing is implemented; no task approved.** Eleven tasks, **R0–R10**, each with its
+**Status: a plan. R0 and R1 are built; R2–R10 are parked by the image setup skill (D1900), and no task
+of theirs is approved.** Eleven tasks, **R0–R10**, each with its
 files, its interface, its **red step**, its named tests and its **SEC** flag. Every task is written
 against the tree of 2026-11-04 (`777b902d`, the merge of `main` this round read) and every citation in
 it was resolved while writing. **The owner answered the decisions in
@@ -10,6 +11,19 @@ question its residual raises — whether the removal's release may ship the per-
 an operator step ([reconciliation.md](reconciliation.md) §5). **No task lands before that is picked**,
 because the answer decides whether the removal release needs the retirement folded into `update`'s own
 converge, and that is a change to a task rather than a detail inside it.
+
+**Amended 2026-11-09: R0 and R1 have shipped, and R2–R10 are parked**, as [README.md](README.md) states
+it in full. **R0** (#1693) is the dogfood repository's catalog entry and its pin — `images/catalog/go/Dockerfile`,
+`image_name: go` on the `go` workflow of `./fugaro.yaml`, held by `TestDogfoodWorkflowPinsTheCatalogEntry`
+— and **R1** (#1698) is `checkout: baked` keeping both its values, with a prebuilt entry refused on one
+(`TestBakedWorkflowRefusesAPrebuiltCatalogEntry`). **The order of §2 has therefore run through R1 and
+stops there**: the catalog shipped, R0 landed, D1148's two tasks landed, R1 landed, and **R2 is the next
+task the plan names and the first one D1900 parks.** D1900 keeps this plan's ruling first half and
+reverses its second, so the disabling the plan described as removal is delivered by
+[docs/image-setup-skill/implementation-plan.md](../image-setup-skill/implementation-plan.md)'s IS1 and
+IS2 with **the code kept and nothing deleted**: every task from R2 down keeps its number, its files and
+its red step for whenever the owner unparkes it, nothing lands before then, and the residual the
+approval above turns on is parked with it — so no release carries the operator step it asks about.
 
 ## 1. What this plan does not own
 
