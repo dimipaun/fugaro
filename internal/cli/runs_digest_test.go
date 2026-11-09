@@ -29,6 +29,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/digest"
 	"github.com/dimipaun/fugaro/internal/issues"
@@ -824,19 +826,40 @@ func TestRunsDigestPrintsIssuesSectionOnTerminal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runs digest: %v (%s)", err, errOut)
 	}
-	// The row names the issue, its summary and the command that files it, and
-	// the wording firms up: the default threshold is a week and this issue has
+	// The row names the issue, its summary and what to do about it, and the
+	// wording firms up: the default threshold is a week and this issue has
 	// waited seven days (spec §6, T-IS15).
 	for _, want := range []string{
 		"## Issues",
 		fmt.Sprintf("#%04d", up.Number),
 		"the review stage starts twice",
-		fmt.Sprintf("[fugaro issue submit %d]", up.Number),
 		"please file it",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the terminal section does not carry %q:\n%s", want, out)
 		}
+	}
+	// Every pending line of the section names `fugaro issue submit`, and it is
+	// printed only where this build answers it: the command is a later slice,
+	// so this tree prints the section without a reference a reader could not
+	// type (the rule `fugaro issue`'s own help follows). The tree's own answer
+	// is what the run has to agree with.
+	submit, _, _ := NewRootCmd().Find([]string{"issue", "submit"})
+	answers := submit != nil && submit.Name() == "submit"
+	if ref := strings.Contains(out, "fugaro issue submit"); ref != answers {
+		t.Errorf("the section names `fugaro issue submit` %v, but this build answers it %v:\n%s", ref, answers, out)
+	}
+	// A build that does answer it prints the reference T-IS14 writes: the seam
+	// stands in for the tree T-IS7 registers the command in.
+	oldAnswers := digestAnswersSubmit
+	digestAnswersSubmit = func(*cobra.Command) bool { return true }
+	t.Cleanup(func() { digestAnswersSubmit = oldAnswers })
+	out, errOut, err = execute(t, args...)
+	if err != nil {
+		t.Fatalf("runs digest in a build that answers issue submit: %v (%s)", err, errOut)
+	}
+	if want := fmt.Sprintf("[fugaro issue submit %d]", up.Number); !strings.Contains(out, want) {
+		t.Errorf("a build that answers the command printed no %q:\n%s", want, out)
 	}
 	// After the digest's own output, which is what "after runs digest" means.
 	if wrote := strings.Index(out, "wrote "); wrote < 0 || wrote > strings.Index(out, "## Issues") {

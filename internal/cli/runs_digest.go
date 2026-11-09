@@ -341,6 +341,11 @@ var digestIssuesRows = issues.ListShared
 // else: the report is written and the command succeeded, and a teammate's
 // store being unreachable must not turn the daily report into a failed
 // command.
+//
+// The section names `fugaro issue submit` on every pending line, and this
+// build prints that reference only if it answers the command: `issue submit`
+// is a later slice, so a tree without it prints the listing and no command a
+// reader cannot type (the rule `fugaro issue`'s own help follows).
 func digestIssuesSection(cmd *cobra.Command, ctx context.Context, env *cloudEnv) {
 	if !writerIsTerminal(cmd.OutOrStdout()) || agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())) != "" {
 		return
@@ -351,7 +356,39 @@ func digestIssuesSection(cmd *cobra.Command, ctx context.Context, env *cloudEnv)
 		return
 	}
 	th := issues.Thresholds{AfterDays: env.lc.NudgeAfterDays(), Recurrence: env.lc.NudgeRecurrence()}
-	fmt.Fprintf(cmd.OutOrStdout(), "\n%s", issues.Section(digestSectionRows(rows), digestNow().UTC(), th))
+	section := issues.Section(digestSectionRows(rows), digestNow().UTC(), th)
+	if !digestAnswersSubmit(cmd.Root()) {
+		section = digestWithoutSubmitRefs(section)
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "\n%s", section)
+}
+
+// digestAnswersSubmit reports whether this build answers `fugaro issue submit`,
+// which the section names on every pending line (T-IS14, F23). Tests replace
+// it: the answer is the command tree's, and it becomes true the day T-IS7
+// registers the command.
+var digestAnswersSubmit = func(root *cobra.Command) bool {
+	found, _, err := root.Find([]string{"issue", "submit"})
+	return err == nil && found != nil && found.Name() == "submit"
+}
+
+// digestSubmitRefLead opens the reference T-IS14 appends to a pending line.
+const digestSubmitRefLead = " [fugaro issue submit "
+
+// digestWithoutSubmitRefs is the section with that reference taken out of every
+// line it ends. The lines are internal/issues' own, so this reads the shape
+// they are written in and its test fails if that shape changes.
+func digestWithoutSubmitRefs(section string) string {
+	lines := strings.Split(section, "\n")
+	for i, line := range lines {
+		if !strings.HasSuffix(line, "]") {
+			continue
+		}
+		if at := strings.LastIndex(line, digestSubmitRefLead); at >= 0 {
+			lines[i] = line[:at]
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // digestSectionRows is the shared store's rows as the section prints them. An
