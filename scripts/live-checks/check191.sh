@@ -110,12 +110,10 @@ exec 3>&1 4>&2
 PROG=${0##*/}
 say() { printf '%s: %s\n' "$PROG" "$*" >&2; }
 owner() { printf '%s: %s\n' "$PROG" "$*" >&4; }
-ABORT_REASON=""
-die() { say "$*"; ABORT_REASON=$*; exit 2; }
+die() { say "$*"; exit 2; }
 
 stop() {
   fact aborted FAIL "$1"
-  ABORT_REASON=$1
   owner "stopped: $1"
   exit 1
 }
@@ -142,7 +140,6 @@ on_error() {
   trap - ERR
   local line=${BASH_LINENO[0]:-?}
   say "an internal error ended this check at line $line"
-  ABORT_REASON="an internal error ended the check at line $line"
   exit 2
 }
 
