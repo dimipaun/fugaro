@@ -1227,8 +1227,8 @@ func buildEdits(ctx context.Context, db *rtdb.Client, p *setPlan, slug string) (
 		if err != nil {
 			return nil, err
 		}
-		se := &nodeEdit{path: budget.PathModeSet, etag: setEtag, newVal: budget.ModeSetOwner}
-		if setFound && curSet == budget.ModeSetOwner {
+		se := &nodeEdit{path: budget.PathModeSet, etag: setEtag, newVal: budget.ChosenByOwner}
+		if setFound && curSet == budget.ChosenByOwner {
 			se.noop = true
 			se.lines = []string{"mode choice: the owner's (unchanged)"}
 		} else {

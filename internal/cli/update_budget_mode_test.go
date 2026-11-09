@@ -75,8 +75,8 @@ func TestUpdateRaisesASeededObserveToEnforce(t *testing.T) {
 	if got := db.Value(budget.PathMode); got != budget.ModeEnforce {
 		t.Errorf("%s = %v after the update, want %s: a seeded observe is nobody's choice and this is the run that raises it (D1548, T6(b))", budget.PathMode, got, budget.ModeEnforce)
 	}
-	if got := db.Value(budget.PathModeSet); got != budget.ModeSetUpdate {
-		t.Errorf("%s = %v, want %q: the raise must record that the update made it, not that the owner asked for it", budget.PathModeSet, got, budget.ModeSetUpdate)
+	if got := db.Value(budget.PathModeSet); got != budget.ChosenByUpdate {
+		t.Errorf("%s = %v, want %q: the raise must record that the update made it, not that the owner asked for it", budget.PathModeSet, got, budget.ChosenByUpdate)
 	}
 	said := out + errOut
 	if !strings.Contains(said, budget.ModeEnforce) {
@@ -96,7 +96,7 @@ func TestUpdateRaisesASeededObserveToEnforce(t *testing.T) {
 // on every run, which is the one thing the mode's "changed only on request"
 // rule exists to prevent.
 func TestAnOwnerChosenObserveIsNeverRaised(t *testing.T) {
-	_, db := budgetModeUpdateRig(t, budget.ModeObserve, budget.ModeSetOwner)
+	_, db := budgetModeUpdateRig(t, budget.ModeObserve, budget.ChosenByOwner)
 	budgetModeCaps(db)
 	out, errOut, err := executeStdin(t, "", "update", "--yes")
 	if err != nil {
@@ -105,8 +105,8 @@ func TestAnOwnerChosenObserveIsNeverRaised(t *testing.T) {
 	if got := db.Value(budget.PathMode); got != budget.ModeObserve {
 		t.Errorf("%s = %v after the update, want %s: the owner chose it", budget.PathMode, got, budget.ModeObserve)
 	}
-	if got := db.Value(budget.PathModeSet); got != budget.ModeSetOwner {
-		t.Errorf("%s = %v, want %q: the update does not write beside a mode its owner chose", budget.PathModeSet, got, budget.ModeSetOwner)
+	if got := db.Value(budget.PathModeSet); got != budget.ChosenByOwner {
+		t.Errorf("%s = %v, want %q: the update does not write beside a mode its owner chose", budget.PathModeSet, got, budget.ChosenByOwner)
 	}
 	if said := out + errOut; strings.Contains(said, "raised") {
 		t.Errorf("the run claims to have raised a mode its owner chose:\n%s", said)
@@ -126,9 +126,9 @@ func TestPreviousModeConvergesOnUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fugaro update: %v\n%s\n%s", err, out, errOut)
 	}
-	if db.Value(budget.PathMode) != budget.ModeEnforce || db.Value(budget.PathModeSet) != budget.ModeSetUpdate {
+	if db.Value(budget.PathMode) != budget.ModeEnforce || db.Value(budget.PathModeSet) != budget.ChosenByUpdate {
 		t.Fatalf("after one update %s = %v and %s = %v, want %s / %q",
-			budget.PathMode, db.Value(budget.PathMode), budget.PathModeSet, db.Value(budget.PathModeSet), budget.ModeEnforce, budget.ModeSetUpdate)
+			budget.PathMode, db.Value(budget.PathMode), budget.PathModeSet, db.Value(budget.PathModeSet), budget.ModeEnforce, budget.ChosenByUpdate)
 	}
 	if c, ok := doctorChecksByID(t)[budgetModeCheckID]; ok && !c.OK {
 		t.Errorf("doctor still has work to report after the update: %+v", c)
@@ -140,7 +140,7 @@ func TestPreviousModeConvergesOnUpdate(t *testing.T) {
 // and nothing said about the mode. The database refuses both writes, so a run
 // that tried one would say so.
 func TestUpdateIsANoOpAfterTheRaise(t *testing.T) {
-	_, db := budgetModeUpdateRig(t, budget.ModeEnforce, budget.ModeSetUpdate)
+	_, db := budgetModeUpdateRig(t, budget.ModeEnforce, budget.ChosenByUpdate)
 	budgetModeCaps(db)
 	db.Deny(budget.PathMode)
 	db.Deny(budget.PathModeSet)
@@ -180,6 +180,40 @@ func TestUpdateLeavesASeededObserveWhenTheCapsAreMissing(t *testing.T) {
 		if !strings.Contains(said, want) {
 			t.Errorf("the run does not say %q about the raise it could not make:\n%s", want, said)
 		}
+	}
+}
+
+// TestUpdateRaisesTheModeInTheRunThatNamesTheBackend: the run whose own
+// arguments shape the installation — `update --firebase-project` — is the one
+// that gives it a budget backend, and that run is admitted without the managed
+// gate (shapesTheInstallation), so it has no gate read to take the answer from
+// and asks the fact itself. Everything else is the same step: the database it
+// has just deployed holds a seeded observe that nobody chose, and the caps a
+// fresh one carries from `budget set --global`, so the run that made the
+// database is the run that raises its mode. Left to the next update instead,
+// the installation would sit unbounded for as long as the owner takes to run
+// the command a second time, which is the one-run rule the HARD RULE states.
+func TestUpdateRaisesTheModeInTheRunThatNamesTheBackend(t *testing.T) {
+	r := newFBRig(t)
+	r.db.Set(budget.PathMark, auroraMark())
+	r.fs.SetDatabase("us-east5")
+	// The project's managed marks, or the step would correctly leave the mode
+	// alone: managedRuns writes the label and the object the read compares.
+	r.managedRuns(t, initProjectName, initProject)
+	budgetModeCaps(r.db)
+	fakeTerminal(t)
+	// No --budget-mode: the door seeds config/mode = observe and, per the
+	// record's whole point, writes no config/modeSet with it.
+	out, errOut, err := executeStdin(t, initProjectName+"\n", "update", "--firebase-project", fpID, "--yes")
+	said := out + errOut
+	if err != nil {
+		t.Fatalf("update --firebase-project failed: %v\n%s", err, said)
+	}
+	if got := r.db.Value(budget.PathMode); got != budget.ModeEnforce {
+		t.Errorf("%s = %v in the database the run has just deployed, want %s\n%s", budget.PathMode, got, budget.ModeEnforce, said)
+	}
+	if got := r.db.Value(budget.PathModeSet); got != budget.ChosenByUpdate {
+		t.Errorf("%s = %v, want %q\n%s", budget.PathModeSet, got, budget.ChosenByUpdate, said)
 	}
 }
 
@@ -233,7 +267,7 @@ func TestDoctorNamesTheMode(t *testing.T) {
 	t.Run("a mode the owner chose is left alone", func(t *testing.T) {
 		_, db := doctorPolicyRig(t, nil, "")
 		db.Set(budget.PathMode, budget.ModeObserve)
-		db.Set(budget.PathModeSet, budget.ModeSetOwner)
+		db.Set(budget.PathModeSet, budget.ChosenByOwner)
 		budgetModeCaps(db)
 		if c, ok := doctorChecksByID(t)[budgetModeCheckID]; ok && !c.OK {
 			t.Errorf("doctor reports %+v on a mode its owner chose", c)

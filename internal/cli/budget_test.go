@@ -510,13 +510,13 @@ func TestSetModeRecordsTheOwner(t *testing.T) {
 	if got := f.db.Value(budget.PathMode); got != budget.ModeObserve {
 		t.Errorf("%s = %v, want %s", budget.PathMode, got, budget.ModeObserve)
 	}
-	if got := f.db.Value(budget.PathModeSet); got != budget.ModeSetOwner {
-		t.Errorf("%s = %v, want %q: the mode this command set is the owner's own, and `fugaro update` may never raise it", budget.PathModeSet, got, budget.ModeSetOwner)
+	if got := f.db.Value(budget.PathModeSet); got != budget.ChosenByOwner {
+		t.Errorf("%s = %v, want %q: the mode this command set is the owner's own, and `fugaro update` may never raise it", budget.PathModeSet, got, budget.ChosenByOwner)
 	}
 	if _, _, err := execute(t, "budget", "set", "--global", "--mode", "enforce", "--yes"); err != nil {
 		t.Fatal(err)
 	}
-	if got := f.db.Value(budget.PathModeSet); got != budget.ModeSetOwner {
+	if got := f.db.Value(budget.PathModeSet); got != budget.ChosenByOwner {
 		t.Errorf("%s = %v after a second choice: the record is the owner's either way", budget.PathModeSet, got)
 	}
 }

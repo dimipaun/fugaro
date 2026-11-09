@@ -156,11 +156,17 @@ const (
 	ModeEnforce = "enforce"
 )
 
-// ModeSet values of PathModeSet, the record of who chose the mode: the person
-// who owns the installation, or the `fugaro update` that raised a seeded one.
+// Values of PathModeSet, the record of who chose the mode: the person who owns
+// the installation, or the `fugaro update` that raised a seeded one. They carry
+// no Mode prefix on purpose. docs_desktop_console_test.go reads this file's
+// `Mode\w+ = "…"` constants as the values of PathMode and holds them against the
+// console scrub's vocabulary for the mode a run row carries; these two are
+// values of another node, which no console document carries, and a name the
+// scan picked up would have to be taught to the scrub as a mode it can never
+// see.
 const (
-	ModeSetOwner  = "owner"
-	ModeSetUpdate = "update"
+	ChosenByOwner  = "owner"
+	ChosenByUpdate = "update"
 )
 
 // Key escapes one path segment for RTDB. RTDB forbids . $ # [ ] / and ASCII

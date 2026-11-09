@@ -115,7 +115,7 @@ func (e *initEngine) raiseBudgetMode(ctx context.Context) {
 	// An owner's own choice, left alone ever after — and the owner is the only
 	// writer that records one, so this is the one state in which a mode that
 	// is not enforce stays what it is.
-	if setFound && set == budget.ModeSetOwner {
+	if setFound && set == budget.ChosenByOwner {
 		return
 	}
 	// Nothing to raise. The second run over this installation reaches here,
@@ -160,7 +160,7 @@ func (e *initEngine) raiseBudgetMode(ctx context.Context) {
 		r.warn(fmt.Sprintf("the budget mode was left as it is: writing %s failed (%s)", budget.PathMode, safetext.FieldErr(err)))
 		return
 	}
-	if err := db.PutIfMatch(ctx, budget.PathModeSet, setEtag, budget.ModeSetUpdate); err != nil {
+	if err := db.PutIfMatch(ctx, budget.PathModeSet, setEtag, budget.ChosenByUpdate); err != nil {
 		r.warn(fmt.Sprintf("the budget mode is %s, but %s could not be written (%s): the next update finds the mode already raised and writes nothing, and `fugaro budget set --global --mode …` records the owner's own choice beside it",
 			budget.ModeEnforce, budget.PathModeSet, safetext.FieldErr(err)))
 		return

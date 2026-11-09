@@ -274,9 +274,9 @@ func (d *DB) Plan(ctx context.Context) ([]DBAction, []string, error) {
 		if err != nil {
 			return nil, nil, dbErr("reading "+budget.PathModeSet, err)
 		}
-		if !setFound || curSet != budget.ModeSetOwner {
-			d.put(budget.PathModeSet, setEtag, budget.ModeSetOwner,
-				"records the mode as the installation owner's own choice ("+budget.PathModeSet+" = "+budget.ModeSetOwner+")")
+		if !setFound || curSet != budget.ChosenByOwner {
+			d.put(budget.PathModeSet, setEtag, budget.ChosenByOwner,
+				"records the mode as the installation owner's own choice ("+budget.PathModeSet+" = "+budget.ChosenByOwner+")")
 		}
 	}
 

@@ -63,7 +63,7 @@ func doctorBudgetMode(ctx context.Context, db *rtdb.Client) []doctorCheck {
 	if err != nil {
 		return unread(budget.PathModeSet, err)
 	}
-	if setFound && set == budget.ModeSetOwner {
+	if setFound && set == budget.ChosenByOwner {
 		return nil
 	}
 	// The mode as the reader has to hear it: the node is absent on a database
