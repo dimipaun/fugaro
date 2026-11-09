@@ -3352,6 +3352,44 @@ describe('the graph’s live frame', () => {
     expect(feeds).toHaveLength(3)
     expect(feeds[2]).toEqual({ name: 'graphWatch', args: { source: GRAPH_SCOPE_ALL } })
   })
+  it('holds no feed for a scope the feed does not draw', async () => {
+    // **The feed's document is the coordinator scope's.** `graph --watch --json
+    // --source all` prints the union scope's document; the plan scope -- the one
+    // the Graph opens on whenever the installation records a checkout -- is a
+    // `plan.status`, and there is no streaming form of it. A child held there
+    // prints a document every one of whose answers is thrown away, which is H6's
+    // own cost (the CLI's subscription on the project's scope subtree) on the
+    // console's common path, so it is never started.
+    const { bridge, calls } = graphBridge({ graphRead: () => graphReply(), graphWatch: () => graphReply() })
+    const document = await openGraph(bridge)
+    expect(scopeChosen(document), 'the case would prove nothing: the tab did not open on the plan scope').toBe(
+      GRAPH_SCOPE_PLAN,
+    )
+    expect(classed(panelOf(document), 'graph-canvas').length).toBeGreaterThan(0)
+    // Neither the entry nor the tick: the tab is on screen and the plan it read
+    // is the picture it holds. The tick is the case's real half -- it is what
+    // runs while the tab is up, and a poll that subscribed for a scope it cannot
+    // draw would hold the child from the second after the entry.
+    await vi.advanceTimersByTimeAsync(LIVE_POLL_MS * 3)
+    await flush()
+    expect(calls.filter((call) => call.name === 'graphWatch')).toEqual([])
+
+    // The operator asks for the scope the feed is about, and the child is
+    // subscribed in that frame: the document the scope opens with is the feed's
+    // own, and not one a tick brought a second later.
+    await chooseScope(document, GRAPH_SCOPE_ALL)
+    expect(calls.filter((call) => call.name === 'graphWatch')).toEqual([
+      { name: 'graphWatch', args: { source: GRAPH_SCOPE_ALL } },
+    ])
+
+    // And back on the plan scope the child is given up: nothing is held for a
+    // scope whose documents are not this screen's.
+    await chooseScope(document, GRAPH_SCOPE_PLAN)
+    expect(calls.filter((call) => call.name === 'graphWatch')).toEqual([
+      { name: 'graphWatch', args: { source: GRAPH_SCOPE_ALL } },
+      { name: 'graphWatch', args: { source: GRAPH_SCOPE_ALL, visible: false } },
+    ])
+  })
 })
 
 describe('the graph’s plan read when it refuses', () => {

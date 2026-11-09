@@ -3601,10 +3601,10 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
      * decoration must not hold up the plan's cadence. */
     decorating: boolean
     /** watching is whether the console has a graph feed it must stop: it is set
-     * when the Graph tab comes into view and cleared when the stop is sent, so a
-     * tab that is left does not send one stop per tick -- and, more to the point,
-     * so a feed that is wanted is never stopped by a second look at the same
-     * conditions (`syncGraphWatch`). */
+     * at the subscribe and cleared when the stop is sent, so a tab that is left
+     * does not send one stop per tick -- and, more to the point, so a feed that
+     * is wanted is never stopped by a second look at the same conditions
+     * (`startGraphWatch` / `stopGraphWatch`). */
     watching: boolean
     /** feedInFlight is whether a poll of the graph feed is outstanding. It is
      * `decorating`'s rule for the feed: the tick must not start a second poll
@@ -3686,16 +3686,15 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
   }
 
   /**
-   * syncGraphWatch decides whether the graph feed is wanted, and it is the one
-   * place that decides it: the Graph tab is the view on screen and the window is
-   * visible. **The tab is H6's condition**, and the cost it exists for is the
-   * CLI's own subscription on the project's scope subtree: a console whose
-   * operator is on another tab, or whose window is behind another window, must
-   * not be holding one. `close()` on the source would stop it anyway; what this
-   * buys is that it is never held in the first place.
+   * startGraphWatch and stopGraphWatch are the two acts the feed's conditions
+   * decide between, and `watching` is what makes each of them once: a feed that
+   * is wanted is not subscribed twice, and the stop is sent for a child the
+   * console holds and never once per tick.
    *
-   * It is called from `syncPolling`, so the tab switch (`markCurrent`), the
-   * visibility change and the first read all go through it and cannot disagree.
+   * **The poll is what starts the child**: the main process's `graph.watch`
+   * subscribes the feed and answers the document it holds, so the door that wants
+   * it makes one call now rather than waiting for the next tick of the interval
+   * -- and the first document is drawn rather than thrown away.
    *
    * **The stop names the scope the subscription was made with**, because that
    * argv is the feed's key in the main process: a stop with a different `source`
@@ -3703,19 +3702,49 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * quit. The reply is not awaited and not drawn -- the state the caller asked for
    * is "no child", and `stopGraphWatch` never refuses.
    */
-  const syncGraphWatch = (): void => {
-    if (currentView === 'graph' && scopeVisible()) {
-      graph.watching = true
-      // The poll is what starts the child: the main process's `graph.watch`
-      // subscribes the feed and answers the document it holds, so entering the
-      // tab makes one call now rather than waiting for the next tick of the
-      // interval -- and the first document is drawn rather than thrown away.
-      void pollGraph()
-      return
-    }
+  const startGraphWatch = (): void => {
+    if (graph.watching) return
+    graph.watching = true
+    void pollGraph()
+  }
+
+  const stopGraphWatch = (): void => {
     if (!graph.watching) return
     graph.watching = false
     void bridge.graphWatch({ source: GRAPH_SCOPE_ALL, visible: false })
+  }
+
+  /**
+   * syncGraphWatch decides whether the graph feed is wanted, and it is the one
+   * place that decides it: the Graph tab is the view on screen, the window is
+   * visible, and the scope in hand is the one the feed's document is about. **The
+   * tab is H6's condition**, and the cost it exists for is the CLI's own
+   * subscription on the project's scope subtree: a console whose operator is on
+   * another tab, or whose window is behind another window, must not be holding
+   * one. `close()` on the source would stop it anyway; what this buys is that it
+   * is never held in the first place.
+   *
+   * **The scope is the second one, and it is the document's own.** `graph --watch
+   * --json --source all` prints the union scope's document and there is no
+   * streaming form of the plan scope's -- a plan is `plan.status`, and the plan
+   * scope is the one the Graph opens on whenever a checkout is recorded -- so a
+   * console showing that scope would hold a child whose every document it throws
+   * away. That is the subscription H6's cost is about, held on the common path:
+   * it is not started at all, and what starts it is the scope becoming `all`
+   * (`chooseScope`, `readScope`).
+   *
+   * It is called from `syncPolling`, so the tab switch (`markCurrent`), the
+   * visibility change and the first read all go through it and cannot disagree --
+   * and from the doors that settle the scope in hand, because a scope is not a
+   * tab: a choice and the fallback of H9 both settle one while the tab stays
+   * where it is.
+   */
+  const syncGraphWatch = (): void => {
+    if (currentView === 'graph' && scopeVisible() && graph.scope === GRAPH_SCOPE_ALL) {
+      startGraphWatch()
+      return
+    }
+    stopGraphWatch()
   }
 
   /**
@@ -3734,6 +3763,15 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * screen, or the scope in hand is not this feed's (`all`), which is the plan
    * scope's drawing and not this document's to replace (CG10).
    *
+   * **The scope is the feed's own condition and this is the door it is kept at**,
+   * because the poll is what starts the child: the tick asks this every second
+   * while the Graph is on screen, so a scope that moved without one of its own
+   * doors -- a scope read that refused, whose fallback is the plan scope -- is
+   * answered here too, and a child the console no longer has a use for is given up
+   * rather than kept for the rest of the visit. Nothing is subscribed for a scope
+   * the document does not belong to: it would be a child printing a document that
+   * is thrown away, which is the subscription H6's cost is about.
+   *
    * **A refusal is not a drawing.** A child that died, or one the ceiling
    * evicted, must leave the figures the operator is reading exactly where they
    * are: `graph.read` is the read that answers a screen with a sentence about this
@@ -3744,6 +3782,13 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    */
   const pollGraph = async (): Promise<void> => {
     if (graph.feedInFlight) return
+    if (graph.scope !== GRAPH_SCOPE_ALL) {
+      stopGraphWatch()
+      return
+    }
+    // The poll subscribes, so it is the poll that records the child as held: a
+    // feed this call started is one a tab that is left still gives up.
+    graph.watching = true
     graph.feedInFlight = true
     try {
       const reply = await bridge.graphWatch({ source: GRAPH_SCOPE_ALL })
@@ -3946,6 +3991,13 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       graph.notice = null
       graph.fellBack = false
       redraw(drawn, stopNow())
+      // **The scope is settled, so the feed is asked for in this turn.** This is
+      // the read the console's own fallback makes for an installation that
+      // records no checkout (H9), and it is the one door into this scope that is
+      // nobody's press: without this call the child would wait for the next tick
+      // of the interval, and the first document -- the drawing this scope opens
+      // with -- would be the one thrown away (`syncGraphWatch`).
+      syncGraphWatch()
     } catch {
       // As `readGraph`: `readBridgeFrom` answers `null` rather than rejecting, so
       // this is a throw this file did not expect, and the generation is checked
@@ -4027,6 +4079,12 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     graph.fellBack = false
     graph.scope = scope
     graph.notice = null
+    // **The feed goes with the scope, in this frame.** The choice of `all` is
+    // what starts the child and any other choice is what gives it up, and the
+    // operator's own door is not a second late: the tick would answer the same
+    // question on its next turn, which is a whole second of a subscription to a
+    // scope nobody is looking at (`syncGraphWatch`).
+    syncGraphWatch()
     const token = graphRead.start()
     if (scope === GRAPH_SCOPE_ALL) void readScope(claim(), token)
     else void readGraph(claim(), token)
