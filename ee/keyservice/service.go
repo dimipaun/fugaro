@@ -221,8 +221,13 @@ func (s *Service) freeSeatForm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.freeMail(domain) || held {
+		id, err := newID()
+		if err != nil {
+			fail(w, err)
+			return
+		}
 		if err := s.store.SaveApplication(ctx, Application{
-			ID:     newID(),
+			ID:     id,
 			Plan:   s.freeSeat.Name,
 			Email:  email,
 			Domain: domain,
@@ -285,8 +290,13 @@ func (s *Service) requestForm(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	id, err := newID()
+	if err != nil {
+		fail(w, err)
+		return
+	}
 	if err := s.store.SaveApplication(r.Context(), Application{
-		ID:     newID(),
+		ID:     id,
 		Email:  email,
 		Domain: domain,
 		Detail: detail(form.Get("request")),
@@ -512,15 +522,11 @@ func hostOf(remoteAddr string) string {
 	return host
 }
 
-// newID names one queued application.
-func newID() string {
-	secret, err := newSecret()
-	if err != nil {
-		// A service that cannot read the system's randomness cannot make a
-		// token either, and both are refusals rather than a guess.
-		return ""
-	}
-	return secret
+// newID names one queued application. It is a second secret rather than a
+// counter, because the store is an upsert by id and two applications that
+// arrived at once must not become one.
+func newID() (string, error) {
+	return newSecret()
 }
 
 // newSecret is 256 bits of the system's randomness, spelled in the alphabet a
