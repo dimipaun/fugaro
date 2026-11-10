@@ -48,13 +48,15 @@ const (
 	StatusHalted     Status = "halted" // a budget or token limit stopped the run
 )
 
-// Statuses is the whole vocabulary, in source order. It is closed: a value
-// outside it is refused where it is written, never read as an unknown status
-// later. It is the one spelling of the set — result.schema.json's status enum,
-// internal/digest's closed set and the statuses the budget database accepts in
-// an outcome (internal/budget's outcomeStatuses, built from these) are each
-// held to it, so a reader of a run record and the run that wrote it cannot
-// drift apart.
+// Statuses is the whole vocabulary, in source order. It is the one spelling of
+// the set: result.schema.json's status enum, internal/digest's closed set and
+// the statuses the budget database accepts in an outcome (internal/budget's
+// outcomeStatuses, built from these, less the one status no ending run writes)
+// are each held to it, so a reader of a run record and the run that wrote it
+// cannot drift apart. Nothing in this tree writes a word outside it, and the
+// two places a record crosses its boundary refuse one rather than let it be
+// read as a status later: a strict reader validates against the schema, and the
+// database's rules refuse the outcome.
 var Statuses = []Status{StatusRunning, StatusSucceeded, StatusFailed, StatusUnreviewed, StatusInfraError, StatusCancelled, StatusHalted}
 
 // Terminal reports whether a run carrying this status has ended. Running is the
