@@ -54,11 +54,12 @@ import (
 //     readers the tree already has — a gitprov.Provider and the runs bucket —
 //     and the pure join in ee/coordinator between them.
 //   - It is read-only to GitHub as well (P2, Q3 answered (A)): every
-//     repository is read through the coordinator's own installation token,
-//     minted per repository with a named read-only permission set and no
-//     `write` anywhere (github.CoordinatorTokenPermissions), and cached for
-//     the token's life. The provider's own mint — the run's set, which holds
-//     two writes — is replaced before the first call.
+//     repository is read through the coordinator's own token, minted per
+//     repository at the credentials service the project publishes, with the
+//     service's person read set — contents, pull requests and metadata, all
+//     read, and no `write` anywhere (github.PersonReadTokenPermissions) —
+//     cached for the token's life. The provider's own mint — the run's set,
+//     which holds two writes — is replaced before the first call.
 //   - What it prints about a launcher is a DECLARATION. launch.json's
 //     launched_by is a string a launcher writes about itself and nothing
 //     verifies (reconciliation finding #11), so the view carries it as
@@ -642,9 +643,10 @@ func newCoordinatorStatusCmd() *cobra.Command {
 			"command today.\n\n" +
 			"Every repository is read through the installation's credentials service: one\n" +
 			"read-only token for that repository, minted there against the caller's own\n" +
-			"Google ID token and carrying a named read-only permission set — pull requests\n" +
-			"and metadata, the two reads this view makes (Q3 answered (A)) — and cached for\n" +
-			"the token's life, so a second read of the same repository mints nothing.\n" +
+			"Google ID token and carrying the service's person read permission set —\n" +
+			"contents, pull requests and metadata, all read (Q3 answered (A)) — and\n" +
+			"cached for the token's life, so a second read of the same repository mints\n" +
+			"nothing.\n" +
 			"The service's URL is the project's own published credentials_service block and\n" +
 			"never an environment variable, and this command holds no GitHub App key at\n" +
 			"all: an installation that publishes no service is one whose host read is\n" +

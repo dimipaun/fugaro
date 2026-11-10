@@ -2065,7 +2065,7 @@ every brief until the head it demands can be read — which is why §6.5's opera
     asked — GitHub's `Repo(repo, appID)` (`internal/gitprov/github/serviceread.go:168`, which also carries
     the App the mint is signed as) and Bitbucket's `Repo(repo)` (`internal/gitprov/bitbucket/service.go:197`,
     which has no App at all) — and that is the same shape the coordinator's person read already uses
-    (`ee/coordinator/cli/coordinator.go:1145`, `:1162`).
+    (`ee/coordinator/cli/coordinator.go:1147`, `:1164`).
   - **The three values the mint needs, and each has one source.** The **service URL** from the
     installation's published `credentials_service` block (`localcfg.Config.CredentialsService`), never
     an environment variable — F23's rule for a person's read, and the same value `reviewVerifier`
@@ -2078,7 +2078,7 @@ every brief until the head it demands can be read — which is why §6.5's opera
     `internal/credsvc/server.go:335`, for the GitHub mint; `VerifyReadCaller`,
     `internal/credsvc/auth.go:890`, for the Bitbucket one). **The mint is written here rather than
     imported**: the tree's person mint is the coordinator's
-    (`ee/coordinator/cli/coordinator.go:1380`), and
+    (`ee/coordinator/cli/coordinator.go:1382`), and
     `ee/coordinator/cli` imports `internal/cli` (`coordinator_intents.go:16`), so this package cannot
     import it — the two either duplicate the small mint or share one lifted into `internal/`.
   - **A Bitbucket repository takes the same path** with its own mint (`/v1/bitbucket/read-token`), and a

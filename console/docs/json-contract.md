@@ -2114,13 +2114,13 @@ would be showing work that does not exist.
 
 **The credential is the coordinator's own, and it is read-only.** The read goes
 through the same path as §6.13's project-wide read (`coordinatorReader`): one
-GitHub App installation token per repository, minted from the installation's App
-with the coordinator's named permission set — **metadata read and pull requests
-read, no `write` of any kind** (Q3 answered (A)) — cached for the token's life
-and revoked when the command is done. There is no second credential path, and
-**no credential of the host's reaches the document, an error or a log line**;
-the provider's own error text is redacted with the values the read held before it
-is reported.
+GitHub App installation token per repository, minted at the installation's
+credentials service, with its **person read** permission set — **contents read,
+pull requests read and metadata read, no `write` of any kind** (Q3 answered (A),
+D915) — cached for the token's life and revoked when the command is done. There
+is no second credential path, and **no credential of the host's reaches the
+document, an error or a log line**; the provider's own error text is redacted
+with the values the read held before it is reported.
 
 **The refusals.** With `FUGARO_CREDENTIALS_SERVICE_URL` set, the installation's
 credentials service holds the App's key and this command holds none, so it

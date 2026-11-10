@@ -1782,9 +1782,10 @@ command today.
 
 Every repository is read through the installation's credentials service: one
 read-only token for that repository, minted there against the caller's own
-Google ID token and carrying a named read-only permission set — pull requests
-and metadata, the two reads this view makes (Q3 answered (A)) — and cached for
-the token's life, so a second read of the same repository mints nothing.
+Google ID token and carrying the service's person read permission set —
+contents, pull requests and metadata, all read (Q3 answered (A)) — and
+cached for the token's life, so a second read of the same repository mints
+nothing.
 The service's URL is the project's own published credentials_service block and
 never an environment variable, and this command holds no GitHub App key at
 all: an installation that publishes no service is one whose host read is
