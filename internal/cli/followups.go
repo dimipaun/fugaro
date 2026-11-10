@@ -478,10 +478,22 @@ func followUpsTaskSpec(ctx context.Context, env *cloudEnv, repo, parent string, 
 		return nil, err
 	}
 	spec := &task.Spec{
-		Version:     1,
-		RunID:       runID,
-		Repo:        repo,
-		Ref:         parentSpec.Ref,
+		Version: 1,
+		RunID:   runID,
+		Repo:    repo,
+		Ref:     parentSpec.Ref,
+		// The base the parent's pull request targeted, inherited from the task
+		// its own launcher wrote: this command is the launcher of the run it
+		// files, and the file that run checks out is the same one the parent
+		// read, so a base the layers below that file resolved has to travel with
+		// the task. Omitted, it is the runner's fallback that answers — main —
+		// and a repository whose base the installation config or the published
+		// policy names opens the new pull request against a branch the deferred
+		// findings were never left on. specBaseBranch is the rule every launch
+		// writes the field by, so a parent whose own file names the base leaves
+		// the child carrying none, and baseBranchSkew drops it for a job image
+		// that cannot read it.
+		BaseBranch:  specBaseBranch(parentSpec.BaseBranch),
 		Workflow:    parentSpec.Workflow,
 		Task:        followUpBrief(repo, parent, pr, g),
 		RequestedBy: me,

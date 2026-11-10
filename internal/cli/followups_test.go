@@ -635,6 +635,57 @@ func TestFollowupsMarksDebtAndParent(t *testing.T) {
 	}
 }
 
+// TestFollowupsFilesTheTaskOnTheParentsBase: the run this command files is a
+// first run of its own, and the branch its pull request targets is the base the
+// parent's pull request targeted. The task is the only carrier that can say so:
+// the runner reads the repository's fugaro.yaml at the ref — the same file the
+// parent read — and takes the base from the task's own field only when that file
+// names no git.base_branch, else main. A filed task that omits the field
+// therefore sends a repository whose base the installation config or the
+// published policy names to main, a branch the deferred findings were never left
+// on.
+//
+// The field is inherited as the parent's own launcher wrote it, which is also
+// why a parent whose fugaro.yaml names the base leaves the child with no field:
+// the child reads the same file at the same ref and resolves the same branch,
+// and a field that changes nothing is what a job image older than baseBranchSince
+// refuses the whole task over.
+func TestFollowupsFilesTheTaskOnTheParentsBase(t *testing.T) {
+	for _, c := range []struct {
+		name       string
+		parentBase string
+		want       string
+	}{
+		{"a base the layers below the file name", "release/1", "release/1"},
+		{"a base the repository's own file names", "", ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newCloudFixture(t)
+			launchable(t, f)
+			parent := wallRunIDAt(0, "090000", "aaaa")
+			spec := firstRunSpec(parent)
+			spec.Ref, spec.BaseBranch = "release/1", c.parentBase
+			if c.parentBase == "" {
+				spec.Ref = "main"
+			}
+			seedSpec(t, f, spec, false)
+			rec := parentRecord(parent)
+			rec.Deferred = deferred(t, finding("k1", "the parser drops the error path's context", "the fix round cap was reached", "g1"))
+			writeRecord(t, f, parent, rec)
+			followUpsStub(t, followUpPR(7, "fugaro/"+parent, gitprov.PRMerged))
+
+			doc := followUpsDoc(t, parent, "--launch")
+			got := readSpec(t, f, doc.Tasks[0].RunID)
+			if got.BaseBranch != c.want {
+				t.Errorf("the filed task's base_branch = %q, want %q: the run it starts would open its pull request against another branch", got.BaseBranch, c.want)
+			}
+			if got.Ref != spec.Ref {
+				t.Errorf("the filed task's ref = %q, want the parent's %q", got.Ref, spec.Ref)
+			}
+		})
+	}
+}
+
 // TestFollowupsFenceTheFindingText: the finding's words and the triage's own
 // reason come from a model and reach a run's instructions, so they are fenced
 // and indented as data (the triage prompt's own rule): a text that forges a
