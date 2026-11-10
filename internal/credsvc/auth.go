@@ -1072,10 +1072,11 @@ func (a *Authenticator) VerifyPersonCaller(ctx context.Context, tok string) (str
 // two facts about them the two routes key on.
 //
 // It is not the run's Identity and not a class of the model path: a launcher
-// holds no run identity and is admitted on no route of this service's own
-// contract, which is why the two routes that consume it — the grant route
-// (DS1.3) and the intake (DS2.1) — take the token directly rather than a
-// Request, the shape VerifyVerifier and the read mints already take.
+// holds no run identity and is admitted on no route that takes a Request — the
+// run route, the read mints and the verify route are all looked up in other
+// lists — which is why the two places that consume it, the grant route (DS1.3)
+// and the intake (DS2.1, another process's route entirely), take the token
+// directly, the shape VerifyVerifier and the read mints already take.
 //
 // Every field is a claim Google signed for an address this installation
 // configured; nothing in it is a credential, and no credential value can be
@@ -1096,14 +1097,21 @@ type LauncherCaller struct {
 	Sub string
 }
 
-// maxLauncherSubDigits bounds the account id the launcher class carries. A
-// Google account id is a 64-bit number, so at most 20 digits can spell one;
-// the bound is here because the value is caller text that reaches a secret
-// name (fugaro_u_<id>_<name>, whose length Secret Manager bounds) and an audit
-// line, and a `sub` of any length is not an account id this class can answer
-// with. It is the package's no-unbounded-caller-text rule, applied to the one
-// claim the service carries rather than only reads.
-const maxLauncherSubDigits = 20
+// maxLauncherSubDigits bounds the account id the launcher class carries, and
+// it is 21 because that is the width of a Google account id: a 21-digit number
+// above 2^53 — the fact internal/infra/tf's identity handling already records
+// of the same number, a service account's unique_id. Twenty digits would be
+// the width of a uint64, and these ids are wider than one, so a bound derived
+// from a 64-bit number refuses every launcher there is.
+//
+// The bound is a SHAPE check rather than a fence against a stranger's text: the
+// claim is inside a token Google signed, so a caller cannot choose this value
+// — what the bound keeps out of the service's own two sinks (the slip's owner
+// and the secret name fugaro_u_<id>_<name>, whose total length Secret Manager
+// bounds) is an id Google has never issued. A value the issuer widens past this
+// one day is refused rather than carried, which is the fail-closed answer, and
+// widening it would be this constant's change and the test that pins it.
+const maxLauncherSubDigits = 21
 
 // VerifyLauncher admits the caller of the grant route and of the intake, or
 // refuses it with ErrUnverifiedJob (the caller is not one of the
@@ -1131,8 +1139,9 @@ const maxLauncherSubDigits = 20
 // minted on their own machine, and a user account cannot mint for another
 // audience at all (`gcloud auth print-identity-token --audiences` is refused
 // for one). The gcloud audience is not scoped to this service and is
-// replayable at it for about an hour (F26, D1939, D1944, which accept that and
-// document it): what bounds the replay is the class's own admission, the
+// replayable at it for about an hour (F26, D1939, D1944, which accept it and
+// leave the SECURITY.md text that says so to DS4.3): what bounds the replay is
+// the class's own admission, the
 // roster it is held to, and the fact that the grant it buys is a slip bound to
 // a run the caller then has to launch.
 //

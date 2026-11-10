@@ -2178,10 +2178,17 @@ func TestRunIdentityRefusedOnReadRoute(t *testing.T) {
 const testLauncherAccount = "launcher-1@example.invalid"
 
 // testLauncherSub is the Google account id a launcher's token carries in its
-// sub claim, and the fixture's jobClaims already carries it: the intake builds
-// a secret's prefix from this value (R1, R3), so the tests below read it out
+// sub claim, which launcherToken writes into every token below: the intake
+// builds a secret's prefix from this value (R1, R3), so the tests read it out
 // and change it rather than spelling a second one.
-const testLauncherSub = "1234567890"
+//
+// It is spelled at the width a real account id has — 21 digits, above 2^53
+// (internal/infra/tf's identity handling records the same fact of a service
+// account's unique_id) — and deliberately not as a short round number: a class
+// whose bound on this claim was derived from a 64-bit number would refuse every
+// launcher there is, and a fixture of ten digits could not tell that from a
+// class that works.
+const testLauncherSub = "104329501182774832335"
 
 // launcherFixture is the fixture with the launcher class wired (D1938): the
 // addresses the class admits, which is the installation's roster as `update`
@@ -2202,6 +2209,9 @@ func (f *fixture) launcherToken(mutate ...func(map[string]any)) string {
 		func(c map[string]any) {
 			c["email"] = testLauncherAccount
 			c["aud"] = GcloudAudience
+			// The account id is the launcher's own: jobClaims' default is a job
+			// service account's, and this class answers the token's sub.
+			c["sub"] = testLauncherSub
 		},
 	}, mutate...)...)
 }
@@ -2221,8 +2231,8 @@ func (f *fixture) verifyLauncher(tok string) (LauncherCaller, error) {
 //
 // The refusals are the fail-closed half of the same rule: the grammar the
 // intake builds a name from is digits only (R1), so a token whose sub is
-// missing, is not a string, carries anything but digits or is longer than a
-// 64-bit account id can be is refused rather than carried into a name. The
+// missing, is not a string, carries anything but digits or is wider than a
+// Google account id is, is refused rather than carried into a name. The
 // audience half is here too, because it is the one fact about the class that
 // is not its list: a user account can mint gcloud's own audience and this
 // service's URL, and nothing else (D1944 accepts the replay of the first).
@@ -2272,17 +2282,17 @@ func TestLauncherSubIsTheTokenSub(t *testing.T) {
 	// A sub the prefix grammar could not be built from is refused: the class
 	// answers a whole identity or nothing, and never a partial one.
 	for name, sub := range map[string]any{
-		"absent":              nil,
-		"not a string":        1234567890,
-		"empty":               "",
-		"letters":             "acct-1",
-		"a decimal point":     "1234567890.5",
-		"a minus sign":        "-1234567890",
-		"a leading space":     " 1234567890",
-		"longer than 64 bits": strings.Repeat("1", maxLauncherSubDigits+1),
-		"a trailing newline":  testLauncherSub + "\n",
-		"a zero-width space":  "1234567890​",
-		"an ideographic zero": "０１",
+		"absent":                    nil,
+		"not a string":              1234567890,
+		"empty":                     "",
+		"letters":                   "acct-1",
+		"a decimal point":           "1234567890.5",
+		"a minus sign":              "-1234567890",
+		"a leading space":           " 1234567890",
+		"wider than any account id": strings.Repeat("1", maxLauncherSubDigits+1),
+		"a trailing newline":        testLauncherSub + "\n",
+		"a zero-width space":        "1234567890​",
+		"an ideographic zero":       "０１",
 	} {
 		t.Run("a sub that is "+name, func(t *testing.T) {
 			_, err := f.verifyLauncher(f.launcherToken(func(c map[string]any) { c["sub"] = sub }))
