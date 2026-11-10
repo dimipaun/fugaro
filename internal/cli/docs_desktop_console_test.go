@@ -8563,8 +8563,8 @@ func TestDocsConsoleReleaseSymbolsIsStagedAndPinned(t *testing.T) {
 //
 // The claim is the same in both: the owner's ruling of 2026-10-20 moves half of
 // that sentence. The Windows *build* is in -- the console drives the *Linux*
-// `fugaro` inside a WSL distribution, and the pack is staged as a release-time
-// job -- and the *signing* answer is not, because there is still no Authenticode
+// `fugaro` inside a WSL distribution, and the pack job runs at release time
+// only -- and the *signing* answer is not, because there is still no Authenticode
 // identity and none is planned. The README keeps its own sentence and gains the
 // dated note, for the reason the other three do: a rewrite would claim more
 // than the ruling does.
@@ -8591,7 +8591,7 @@ func TestDocsConsoleReadmeCarriesTheWindowsNote(t *testing.T) {
 		"the *build* half",
 		"the signing half",
 		"Authenticode",
-		windowsConsoleWorkflowPath,
+		appliedConsoleWindowsPath,
 	} {
 		if !strings.Contains(linux, want) {
 			t.Errorf("%s's Linux section no longer carries %q: it opens on \"Windows stays out\", the owner's ruling of 2026-10-20 moves half of that sentence, and the README is the one of the four places a console developer reads first", path, want)
@@ -8600,9 +8600,9 @@ func TestDocsConsoleReadmeCarriesTheWindowsNote(t *testing.T) {
 
 	// The Windows section's own pointer, which is T-H4's half of this file's
 	// claim: no `.exe` exists, the job has never run, and what a reader can
-	// learn about it -- whether it is still staged, how it is copied in, why it
-	// is a workflow of its own -- is in the pack job's document, so this section
-	// has to send them there by name.
+	// learn about it -- the path that runs, when it was copied in, why it is a
+	// workflow of its own -- is in the pack job's document, so this section has
+	// to send them there by name.
 	// The section is read from the Windows pack's own heading rather than from
 	// the first "### What is not here" in the file, which is the Linux
 	// section's: the two sections share the subheading, and the pointer belongs
@@ -8620,8 +8620,8 @@ func TestDocsConsoleReadmeCarriesTheWindowsNote(t *testing.T) {
 	for _, want := range []string{
 		"docs/pending-workflows/README.md",
 		"## console-windows.yml",
-		"staged",
 		"copy-in",
+		"2026-11-10",
 	} {
 		if !strings.Contains(windows, want) {
 			t.Errorf("%s's Windows section no longer carries %q: the pack has never run, and the pack job's own document is where the status, the copy-in and the reason it is a workflow of its own are written -- a section that stops naming it leaves the reader with a job they cannot find", path, want)

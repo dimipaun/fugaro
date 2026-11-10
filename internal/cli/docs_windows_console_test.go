@@ -1068,14 +1068,16 @@ func TestDocsWindowsConsoleNotesSayWhichHalfMoved(t *testing.T) {
 
 	// Every note says the same three things, because "which half moved" is only
 	// checkable if the note names both halves and the identity neither one has:
-	// the date, the build half with the pack's own staged path, the signing half,
-	// and the Authenticode identity that does not exist.
+	// the date, the build half with the path of the file that runs, the signing
+	// half, and the Authenticode identity that does not exist. The path is the
+	// applied one: the notes landed on 2026-11-10, the day the staged copy was
+	// removed, so the staged path they once named is a file that is not there.
 	note := []string{
 		windowsConsoleNoteDate,
 		"the *build* half",
 		"the signing half",
 		"Authenticode",
-		windowsConsoleWorkflowPath,
+		appliedConsoleWindowsPath,
 	}
 	for _, tc := range []struct{ what, start, stop string }{
 		{"section 4.2's Windows bullet", "- **Windows as a *packaged* deliverable**", "\n- **The backing-repository history view**"},

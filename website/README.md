@@ -2297,10 +2297,10 @@ running `.github/workflows/images.yml` plus one step and is copied in on its own
 site's (the credentials service's image leg in `images.yml`, credentials-service plan task C1.14, was copied in on 2026-10-30, the shared package's test job, `shared-tests.yml`, was copied in on 2026-10-22, the
 mobile app's release workflow, `mobile-release.yml`, and the console's own release
 stream, `console-release-tag.yml`, were copied in on 2026-10-23, and all four are no longer
-staged, the console's Windows installer pack, `.github/workflows/console-windows.yml`, was
-copied in on 2026-11-10 and runs at release time only rather than on a pull request, and
-Dependabot's watch over the console's npm dependencies was copied over
-`.github/dependabot.yml` the same day): the website's two manual
+staged, and Dependabot's watch over the console's npm dependencies was copied over
+`.github/dependabot.yml` the same day, and the console's Windows installer pack,
+`.github/workflows/console-windows.yml`, was copied in on 2026-11-10 and runs at release time
+only rather than on a pull request): the website's two manual
 workflows, `website-preview.yml` and `website-promote.yml` (#566), were copied into `.github/workflows/` by the
 owner, and no deploy workflow is staged. The only other workflow files left there are the desktop
 console's `console-tests.yml` and `console-release.yml`, which the owner has copied in as well:
