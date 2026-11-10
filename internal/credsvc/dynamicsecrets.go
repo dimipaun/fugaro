@@ -190,7 +190,12 @@ func (d *DynamicSecrets) read(ctx context.Context, c creds.Credential) (Entry, b
 	// The entry is built rather than looked up: there is no bundle entry under
 	// this name, and the tier is the one the candidate was selected at — the
 	// rotation replaces a value and not a credential, so the tier the cascade
-	// spoke stays the tier the call is served at.
+	// spoke stays the tier the call is served at. Its kind is the model
+	// credential's for the same reason: the candidates a per-secret name can
+	// reach this resolution in are the cascade's own (the slip's list is what
+	// hands one over), and every other route resolves its value by kind — the
+	// App key's, the git token's, the review signing keys' — which no
+	// per-secret name is a candidate for (R7 reserves those).
 	return Entry{Kind: KindModel, Name: c.Name, Tier: c.Tier, value: secret{value: value}}, true, "", nil
 }
 

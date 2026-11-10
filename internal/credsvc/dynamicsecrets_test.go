@@ -151,7 +151,7 @@ func TestPerSecretBeforeBundle(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("the answer is %d, want the upstream's 200: %s", rec.Code, rec.Body)
 		}
-		if served, held := entryValue(t, b, testAccount), rotated; served == held {
+		if held := entryValue(t, b, testAccount); held == rotated {
 			t.Fatal("the fixture's two stores hold the same value, so nothing here says which one served the call")
 		}
 		if got, want := authOf(t, s), "Bearer "+rotated; got != want {
@@ -334,7 +334,8 @@ func TestFailedReadFailsClosed(t *testing.T) {
 	// empty value, because an answer here is a credential this service would
 	// attach to a call.
 	t.Run("a reader with no client is a failure", func(t *testing.T) {
-		value, found, err := SecretManagerPerSecrets{}.Value(context.Background(), "fugaro_p_default")
+		name := mustUserName(t, testLauncherSub, testAccount)
+		value, found, err := SecretManagerPerSecrets{}.Value(context.Background(), name)
 		if err == nil || found {
 			t.Fatalf("a reader with no Secret Manager client answered (%q, %v), want a failure", value, found)
 		}
@@ -418,7 +419,6 @@ func TestNoValueInErrors(t *testing.T) {
 
 	t.Run("a failed read whose error carries the value", func(t *testing.T) {
 		s := newPerSecretSvc(t)
-		s.dyn.values[name] = rotated
 		s.dyn.err = errors.New("the container holds " + rotated + " and could not be decoded")
 
 		rec, _ := s.serve(t, creds.Credential{Name: name, Tier: creds.TierA})
