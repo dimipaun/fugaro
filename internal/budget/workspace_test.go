@@ -163,11 +163,11 @@ func TestWorkspaceCapOvershootIsBoundedByTheReservationInFlight(t *testing.T) {
 		t.Fatalf("the room reads %v settled and %v reserved, want 0 and $1.50", room.Settled.USD(), room.Reserved.USD())
 	}
 	s := wsMeterRead(t, client)
-	if got := s.OvershootBound(); got != wsMeterUSD(t, 1.5) {
+	if got := s.OvershootBound(wsMeterNow); got != wsMeterUSD(t, 1.5) {
 		t.Fatalf("the overshoot bound is %v with $1.50 in flight, want $1.50", got.USD())
 	}
-	if s.Settled()+s.OvershootBound() > c.Monthly {
-		t.Fatalf("settled %v plus the bound %v is more than the ceiling %v", s.Settled().USD(), s.OvershootBound().USD(), c.Monthly.USD())
+	if s.Settled()+s.OvershootBound(wsMeterNow) > c.Monthly {
+		t.Fatalf("settled %v plus the bound %v is more than the ceiling %v", s.Settled().USD(), s.OvershootBound(wsMeterNow).USD(), c.Monthly.USD())
 	}
 
 	// A second call that would take the room past the ceiling is refused, which
@@ -179,7 +179,7 @@ func TestWorkspaceCapOvershootIsBoundedByTheReservationInFlight(t *testing.T) {
 
 	// The settle turns the reservation into money spent, and the bound falls to
 	// nothing with it.
-	after, err := budget.SettleWorkspaceSpend(ctx, client, hold, budget.WorkspaceSettle{Actual: wsMeterUSD(t, 0.25), Ceiling: c})
+	after, err := budget.SettleWorkspaceSpend(ctx, client, hold, budget.WorkspaceSettle{Actual: wsMeterUSD(t, 0.25), Ceiling: c, Now: wsMeterNow})
 	if err != nil {
 		t.Fatalf("Settle: %v", err)
 	}
@@ -187,8 +187,102 @@ func TestWorkspaceCapOvershootIsBoundedByTheReservationInFlight(t *testing.T) {
 		t.Fatalf("after the settle the room reads %v settled and %v reserved, want $0.25 and 0", after.Settled.USD(), after.Reserved.USD())
 	}
 	s = wsMeterRead(t, client)
-	if s.OvershootBound() != 0 {
-		t.Fatalf("the bound is %v with nothing in flight, want 0", s.OvershootBound().USD())
+	if s.OvershootBound(wsMeterNow) != 0 {
+		t.Fatalf("the bound is %v with nothing in flight, want 0", s.OvershootBound(wsMeterNow).USD())
+	}
+}
+
+// A hold whose call can no longer be in flight is released rather than held to
+// the month's end: the room comes back to the workspace's cap, OvershootBound
+// falls with it, and the node stops carrying it the next time anything writes
+// that month. Without it a hold lost to a crash, a restart, a disconnect or a
+// settle nothing retried would shrink the cap under a ceiling nobody set.
+func TestWorkspaceCapReleasesAHoldWhoseCallCannotStillBeInFlight(t *testing.T) {
+	ctx := context.Background()
+	_, client := wsMeterDB(t)
+	c := wsMeterCeiling(t, 2)
+
+	old := wsMeterReserve(t, "call-old", wsMeterMember, 1, c)
+	old.Now = wsMeterNow.Add(-budget.WorkspaceReservationTTL - time.Minute)
+	oldHold, _, err := budget.ReserveWorkspaceSpend(ctx, client, old)
+	if err != nil {
+		t.Fatalf("Reserve: %v", err)
+	}
+	// The hold is in the node as it was written, with the moment it was taken:
+	// that moment is what the age is read from.
+	if s := wsMeterRead(t, client); len(s.Reservations) != 1 || s.Reservations["call-old"].At != old.Now.UnixMilli() {
+		t.Fatalf("the node holds %v, want the hold with the moment it was taken", s.Reservations)
+	}
+
+	if _, _, err := budget.ReserveWorkspaceSpend(ctx, client, wsMeterReserve(t, "call-live", wsMeterOther, 0.5, c)); err != nil {
+		t.Fatalf("Reserve: %v", err)
+	}
+	if got := wsMeterRead(t, client).OvershootBound(wsMeterNow); got != wsMeterUSD(t, 0.5) {
+		t.Fatalf("the bound is %v with one $1 hold past its age and $0.50 in flight, want $0.50", got.USD())
+	}
+
+	// The read the headroom answer is made of releases it too: a service that
+	// crashed leaving the hold behind has written nothing since, so the read is
+	// the only place the room can come back.
+	room, err := budget.ReadWorkspaceRoom(ctx, client, wsMeterName, c, wsMeterNow)
+	if err != nil {
+		t.Fatalf("ReadWorkspaceRoom: %v", err)
+	}
+	if room.Reserved != wsMeterUSD(t, 0.5) || room.Headroom != wsMeterUSD(t, 1.5) {
+		t.Fatalf("the room reads %v reserved and %v of headroom, want $0.50 and $1.50", room.Reserved.USD(), room.Headroom.USD())
+	}
+
+	// A settle arriving after the hold aged out is refused rather than recorded:
+	// a usage the meter cannot place is a usage the service cannot record, and
+	// the call it belongs to is refused on it.
+	if _, err := budget.SettleWorkspaceSpend(ctx, client, oldHold, budget.WorkspaceSettle{Actual: wsMeterUSD(t, 0.25), Ceiling: c, Now: wsMeterNow}); !errors.Is(err, budget.ErrWorkspaceReservationUnknown) {
+		t.Fatalf("the settle of a hold past its age came back as %v, want the no-reservation refusal", err)
+	}
+
+	// The room it released is admitted again — $1 did not fit while both holds
+	// were counted — and the write that takes it drops the aged hold from the
+	// node, so it is not carried from month to month.
+	if _, _, err := budget.ReserveWorkspaceSpend(ctx, client, wsMeterReserve(t, "call-3", wsMeterMember, 1, c)); err != nil {
+		t.Fatalf("a $1 call with $0.50 in flight and a $1 hold left over from a crash was refused: %v", err)
+	}
+	s := wsMeterRead(t, client)
+	if _, ok := s.Reservations["call-old"]; ok {
+		t.Fatalf("the aged hold is still in the node after a write: %v", s.Reservations)
+	}
+	if _, ok := s.Reservations["call-live"]; !ok {
+		t.Fatalf("the write dropped a hold that is still in flight: %v", s.Reservations)
+	}
+}
+
+// A hold still within its age is room taken, and a moment nobody states expires
+// nothing: the age is not a guess.
+func TestWorkspaceCapKeepsAHoldThatIsStillInsideItsAge(t *testing.T) {
+	ctx := context.Background()
+	_, client := wsMeterDB(t)
+	c := wsMeterCeiling(t, 2)
+
+	just := wsMeterReserve(t, "call-just", wsMeterMember, 1, c)
+	just.Now = wsMeterNow.Add(-budget.WorkspaceReservationTTL + time.Second)
+	hold, _, err := budget.ReserveWorkspaceSpend(ctx, client, just)
+	if err != nil {
+		t.Fatalf("Reserve: %v", err)
+	}
+	room, err := budget.ReadWorkspaceRoom(ctx, client, wsMeterName, c, wsMeterNow)
+	if err != nil {
+		t.Fatalf("ReadWorkspaceRoom: %v", err)
+	}
+	if room.Reserved != wsMeterUSD(t, 1) {
+		t.Fatalf("a hold one second inside its age is %v of room, want the whole $1", room.Reserved.USD())
+	}
+	if _, err := budget.SettleWorkspaceSpend(ctx, client, hold, budget.WorkspaceSettle{Actual: wsMeterUSD(t, 0.25), Ceiling: c, Now: wsMeterNow}); err != nil {
+		t.Fatalf("Settle of a hold inside its age: %v", err)
+	}
+
+	// The node as read with no moment at all: nothing is expired, because no
+	// caller stated a time to expire it against.
+	s := wsMeterRead(t, client)
+	if got := s.Live(time.Time{}); len(got.Reservations) != len(s.Reservations) {
+		t.Fatalf("an unstated moment released %d holds", len(s.Reservations)-len(got.Reservations))
 	}
 }
 
@@ -221,7 +315,7 @@ func TestWorkspaceCapRefusesASettleWithNoReservation(t *testing.T) {
 
 	_, err := budget.SettleWorkspaceSpend(ctx, client, budget.WorkspaceHold{
 		Name: wsMeterName, Month: budget.MonthKey(wsMeterNow), Call: "call-1", Member: wsMeterMember, Amount: wsMeterUSD(t, 1),
-	}, budget.WorkspaceSettle{Actual: wsMeterUSD(t, 0.25), Ceiling: c})
+	}, budget.WorkspaceSettle{Actual: wsMeterUSD(t, 0.25), Ceiling: c, Now: wsMeterNow})
 	if !errors.Is(err, budget.ErrWorkspaceReservationUnknown) {
 		t.Fatalf("the settle came back as %v, want the no-reservation refusal", err)
 	}

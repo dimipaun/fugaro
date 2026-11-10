@@ -38,6 +38,22 @@ import (
 // Money is integer micro-dollars, as everywhere in this package.
 const pathWorkspaceSpend = "workspace_spend"
 
+// WorkspaceReservationTTL is how long room may stay taken for a call that never
+// settles. A reservation is the meter's whole hold on room, and the process
+// that took it can be gone with it — a crash, a restart, a disconnect, or a
+// settle that was refused and that nothing retried — which is why the hold
+// cannot be for the month: a leaked one would shrink the workspace's cap and
+// widen OvershootBound and the reconciliation alarm's bound until the month
+// turned, and the cap would be under a ceiling nobody set.
+//
+// The age is stated rather than tuned: the call the workspace's service pays
+// for is one proxied model request, and no model request is in flight for
+// hours, so a hold that old is a hold whose call cannot still be in flight. An
+// expired hold is released by the READ as well as by the next write
+// (WorkspaceSpend.Live), so a workspace with no traffic after a crash still
+// reads its own room.
+const WorkspaceReservationTTL = 6 * time.Hour
+
 // monthRE is the spelling of a month segment: MonthKey's own output, and
 // nothing else. A month is a path segment here, so a value that is not one
 // would put the node somewhere else in the tree.
@@ -99,7 +115,10 @@ func (s WorkspaceSpend) Settled() Micros {
 	return total
 }
 
-// Reserved is the room the calls in flight hold.
+// Reserved is the room the reservations the node holds count, as the node
+// states them. It is not what a figure is reported from: a reservation whose
+// call can no longer be in flight is not room taken any more, and Live is where
+// that is decided.
 func (s WorkspaceSpend) Reserved() Micros {
 	var total Micros
 	for _, r := range s.Reservations {
@@ -108,15 +127,65 @@ func (s WorkspaceSpend) Reserved() Micros {
 	return total
 }
 
+// ReservedBy is the room the calls in flight hold for ONE member. It is what a
+// bound on that member's own figures is made of: what another member has in
+// flight is not a difference this member's ledger can account for.
+func (s WorkspaceSpend) ReservedBy(member string) Micros {
+	var total Micros
+	for _, r := range s.Reservations {
+		if r.Member == member {
+			total = add(total, r.Amount)
+		}
+	}
+	return total
+}
+
+// Live is the month as it stands at now: a reservation taken longer ago than
+// WorkspaceReservationTTL is released, and the node it is released out of is
+// what a figure is computed from. A reservation the node holds with no moment
+// at all is released too — it cannot be placed in time, and room held for a
+// call nobody can date is room held until the month ends.
+//
+// A moment that is not stated expires nothing: a caller with no clock is
+// handed the node as it was read rather than one it guessed an age for.
+func (s WorkspaceSpend) Live(now time.Time) WorkspaceSpend {
+	if now.IsZero() {
+		return s
+	}
+	stale := false
+	for _, r := range s.Reservations {
+		if s.expired(r, now) {
+			stale = true
+			break
+		}
+	}
+	if !stale {
+		return s
+	}
+	live := s
+	live.Reservations = make(map[string]WorkspaceReservation, len(s.Reservations))
+	for call, r := range s.Reservations {
+		if !s.expired(r, now) {
+			live.Reservations[call] = r
+		}
+	}
+	return live
+}
+
+// expired reports whether a reservation's call can no longer be in flight.
+func (s WorkspaceSpend) expired(r WorkspaceReservation, now time.Time) bool {
+	return now.UnixMilli()-r.At >= WorkspaceReservationTTL.Milliseconds()
+}
+
 // OvershootBound is how far past its ceiling the workspace's settled figure can
 // still get, stated as a number rather than as an adjective: the reservations in
-// flight. It is that and not something else because a reservation is only ever
-// taken out of room the ceiling had left (ReserveWorkspaceSpend refuses
+// flight at now. It is that and not something else because a reservation is only
+// ever taken out of room the ceiling had left (ReserveWorkspaceSpend refuses
 // otherwise) and a settle only ever turns one of those reservations into a
 // settled amount, so `Settled` cannot pass the ceiling except through the calls
 // still in flight — and each of those was admitted at a worst-case price no
 // usage can exceed. A workspace that states no ceiling has no bound to state.
-func (s WorkspaceSpend) OvershootBound() Micros { return s.Reserved() }
+func (s WorkspaceSpend) OvershootBound(now time.Time) Micros { return s.Live(now).Reserved() }
 
 // Room is the workspace's figure at one moment, as a caller reports it.
 type WorkspaceRoom struct {
@@ -148,9 +217,12 @@ func (r WorkspaceRoom) Fits(amount Micros) bool {
 	return add(r.Settled, add(r.Reserved, amount)) <= r.Ceiling.Monthly
 }
 
-// Room is the figure the meter node holds, read against a ceiling.
-func (s WorkspaceSpend) Room(c WorkspaceCeiling) WorkspaceRoom {
-	r := WorkspaceRoom{Ceiling: c, Settled: s.Settled(), Reserved: s.Reserved()}
+// Room is the figure the meter node holds at now, read against a ceiling: it is
+// the LIVE node (Live), so a hold whose call can no longer be in flight is not
+// room taken any more.
+func (s WorkspaceSpend) Room(c WorkspaceCeiling, now time.Time) WorkspaceRoom {
+	live := s.Live(now)
+	r := WorkspaceRoom{Ceiling: c, Settled: live.Settled(), Reserved: live.Reserved()}
 	if c.Set {
 		if used := add(r.Settled, r.Reserved); used < c.Monthly {
 			r.Headroom = c.Monthly - used
@@ -183,13 +255,17 @@ type WorkspaceReserve struct {
 	Now     time.Time
 }
 
-// WorkspaceSettle is one settle to make: what the call actually cost, and the
+// WorkspaceSettle is one settle to make: what the call actually cost, the
 // ceiling the room is reported against (the workspace's record may have been
 // narrowed since the reservation was taken, so it is read afresh rather than
-// carried in the hold).
+// carried in the hold), and the moment it is made, which is what decides
+// whether the hold it ends is still one. It is required, like a reservation's
+// own moment: a settle that names no time is a settle that cannot say whether
+// its call can still be in flight.
 type WorkspaceSettle struct {
 	Actual  Micros
 	Ceiling WorkspaceCeiling
+	Now     time.Time
 }
 
 // WorkspaceSpendDB is the part of a database the meter needs: the workspace's
@@ -237,6 +313,12 @@ var (
 // ReadWorkspaceSpend reads one month of a workspace's meter. found is false for
 // a month with no node, which is the state every month starts in and not a
 // refusal.
+//
+// The node is returned as it is STORED, expired reservations included: this
+// read holds no write, so it cannot clean up after a call that never settled. A
+// caller that reports a figure prunes with Live first, and a caller that writes
+// the node prunes it on the way (updateWorkspaceSpend), so the stale entries
+// last only until the next write to that month.
 func ReadWorkspaceSpend(ctx context.Context, db WorkspaceSpendReader, name, month string) (WorkspaceSpend, bool, error) {
 	path := PathWorkspaceSpend(name, month)
 	var s WorkspaceSpend
@@ -267,7 +349,7 @@ func ReadWorkspaceRoom(ctx context.Context, db WorkspaceSpendReader, name string
 	if err != nil {
 		return WorkspaceRoom{}, err
 	}
-	return s.Room(c), nil
+	return s.Room(c, now), nil
 }
 
 // validate refuses a node the meter cannot read. A member or a call with no
@@ -315,18 +397,18 @@ func ReserveWorkspaceSpend(ctx context.Context, db WorkspaceSpendDB, r Workspace
 	}
 	month := MonthKey(r.Now)
 	var hold WorkspaceHold
-	spend, err := updateWorkspaceSpend(ctx, db, r.Name, month, func(s *WorkspaceSpend) error {
+	spend, err := updateWorkspaceSpend(ctx, db, r.Name, month, r.Now, func(s *WorkspaceSpend) error {
 		if _, ok := s.Reservations[r.Call]; ok {
 			return ErrWorkspaceCallReserved
 		}
-		if !s.Room(r.Ceiling).Fits(r.Amount) {
+		if !s.Room(r.Ceiling, r.Now).Fits(r.Amount) {
 			return ErrWorkspaceCeilingReached
 		}
 		s.Reservations[r.Call] = WorkspaceReservation{Member: r.Member, Amount: r.Amount, At: r.Now.UnixMilli()}
 		hold = WorkspaceHold{Name: r.Name, Month: month, Call: r.Call, Member: r.Member, Amount: r.Amount}
 		return nil
 	})
-	room := spend.Room(r.Ceiling)
+	room := spend.Room(r.Ceiling, r.Now)
 	if err != nil {
 		if errors.Is(err, ErrWorkspaceCeilingReached) {
 			return WorkspaceHold{}, room, err
@@ -356,7 +438,10 @@ func SettleWorkspaceSpend(ctx context.Context, db WorkspaceSpendDB, h WorkspaceH
 	if s.Actual < 0 {
 		return WorkspaceRoom{}, fmt.Errorf("budget: a settle records what the call cost, and %d micro-dollars is negative", s.Actual)
 	}
-	spend, err := updateWorkspaceSpend(ctx, db, h.Name, h.Month, func(sp *WorkspaceSpend) error {
+	if s.Now.IsZero() {
+		return WorkspaceRoom{}, errors.New("budget: a settle states when it is made: a hold whose call cannot still be in flight is not the hold it ends")
+	}
+	spend, err := updateWorkspaceSpend(ctx, db, h.Name, h.Month, s.Now, func(sp *WorkspaceSpend) error {
 		res, ok := sp.Reservations[h.Call]
 		if !ok {
 			return ErrWorkspaceReservationUnknown
@@ -371,20 +456,26 @@ func SettleWorkspaceSpend(ctx context.Context, db WorkspaceSpendDB, h WorkspaceH
 	if err != nil {
 		return WorkspaceRoom{}, err
 	}
-	return spend.Room(s.Ceiling), nil
+	return spend.Room(s.Ceiling, s.Now), nil
 }
 
 // updateWorkspaceSpend is the one transaction both halves of the meter use: read
-// the month's node with its ETag, let f change it, and put the whole node back
-// only if nothing wrote it meanwhile. RTDB has no server-side transaction, so
-// this is the compare-and-set the budget's other conditional writes use
-// (SetKill), and it is what makes a reservation and a settle each atomic with
-// the workspace's own database.
+// the month's node with its ETag, drop the holds whose calls can no longer be in
+// flight (Live), let f change it, and put the whole node back only if nothing
+// wrote it meanwhile. RTDB has no server-side transaction, so this is the
+// compare-and-set the budget's other conditional writes use (SetKill), and it is
+// what makes a reservation and a settle each atomic with the workspace's own
+// database.
+//
+// Pruning here is what makes an expired hold leave the node rather than linger
+// to the month's end: the read that reports a figure treats it as gone, and the
+// next write to that month removes it. A refusal writes nothing, so the drop is
+// then the read's alone.
 //
 // The callback must return BEFORE it changes anything when it refuses, so a
-// refusal leaves the node as it was read and the caller's room is the figure
-// that refused it.
-func updateWorkspaceSpend(ctx context.Context, db WorkspaceSpendDB, name, month string, f func(*WorkspaceSpend) error) (WorkspaceSpend, error) {
+// refusal leaves the node as it was read — expired holds included — and the
+// caller's room is the figure that refused it.
+func updateWorkspaceSpend(ctx context.Context, db WorkspaceSpendDB, name, month string, now time.Time, f func(*WorkspaceSpend) error) (WorkspaceSpend, error) {
 	path := PathWorkspaceSpend(name, month)
 	for attempt := 1; attempt <= SetAttempts; attempt++ {
 		var cur WorkspaceSpend
@@ -402,6 +493,7 @@ func updateWorkspaceSpend(ctx context.Context, db WorkspaceSpendDB, name, month 
 		if err := cur.validate(); err != nil {
 			return WorkspaceSpend{}, err
 		}
+		cur = cur.Live(now)
 		if cur.Members == nil {
 			cur.Members = map[string]Micros{}
 		}

@@ -139,14 +139,18 @@ func (m *WorkspaceMeter) Reserve(ctx context.Context, member, call string, amoun
 //
 // An error here is a call to refuse rather than to serve: a call whose cost the
 // service cannot record spends against a cap it cannot see. The failure is not
-// swallowed and the reservation is not released as zero, so the service's next
-// attempt at the same call settles it.
+// swallowed and the reservation is not released as zero, so the reservation is
+// still there for the service's next attempt at the same call — and that retry
+// is bounded by the hold's own age (budget.WorkspaceReservationTTL): a hold
+// older than that is a call that cannot still be in flight, so it is released
+// and a settle that arrives then finds no reservation and is refused like any
+// other usage the meter cannot place.
 func (m *WorkspaceMeter) Settle(ctx context.Context, h budget.WorkspaceHold, actual pricing.Micros) (budget.WorkspaceRoom, error) {
 	ceiling, err := m.Ceiling(ctx)
 	if err != nil {
 		return budget.WorkspaceRoom{}, err
 	}
-	return budget.SettleWorkspaceSpend(ctx, m.db, h, budget.WorkspaceSettle{Actual: actual, Ceiling: ceiling})
+	return budget.SettleWorkspaceSpend(ctx, m.db, h, budget.WorkspaceSettle{Actual: actual, Ceiling: ceiling, Now: m.now()})
 }
 
 // SetWorkspaceHeadroom writes the advisory headroom onto the answer to a member.

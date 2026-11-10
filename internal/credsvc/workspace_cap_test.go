@@ -275,7 +275,9 @@ func TestFailedSettleRefusesTheCall(t *testing.T) {
 		t.Fatalf("the reservation is %v after a failed settle, want the whole $1 still in flight", room.Reserved.USD())
 	}
 	// The call is refused, so the retry is the service's next attempt at the
-	// same call: it settles the reservation it still holds.
+	// same call: it settles the reservation it still holds — until the hold is
+	// older than budget.WorkspaceReservationTTL, which is where a service that
+	// never retries releases the room instead of holding it to the month's end.
 	if _, err := m.Settle(ctx, hold, wsMicros(t, 0.25)); err != nil {
 		t.Fatalf("the retried settle was refused: %v", err)
 	}
@@ -429,7 +431,11 @@ func TestWorkspaceCapSettlesACallAgainstTheMonthItWasReservedIn(t *testing.T) {
 	ctx := context.Background()
 	db, client := wsMeterDB(t)
 	wsSeedRecord(t, db, 2)
-	now := testNow()
+	// A call taken at the last seconds of a month and settled in the next one:
+	// the boundary is crossed while the call is in flight, which is the only
+	// way the two months can differ for a call that is still one.
+	now := time.Date(2026, 10, 31, 23, 59, 58, 0, time.UTC)
+	reserved := now
 	m, err := NewWorkspaceMeter(WorkspaceMeterConfig{Name: wsWorkspace, DB: client, Now: func() time.Time { return now }})
 	if err != nil {
 		t.Fatalf("NewWorkspaceMeter: %v", err)
@@ -439,11 +445,11 @@ func TestWorkspaceCapSettlesACallAgainstTheMonthItWasReservedIn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Reserve: %v", err)
 	}
-	now = now.AddDate(0, 1, 0) // midnight passes into the next month
+	now = now.Add(5 * time.Second) // midnight passes into the next month
 	if _, err := m.Settle(ctx, hold, wsMicros(t, 0.25)); err != nil {
 		t.Fatalf("Settle across the month boundary: %v", err)
 	}
-	if _, ok := db.Value(budget.PathWorkspaceSpend(wsWorkspace, budget.MonthKey(testNow()))).(map[string]any); !ok {
+	if _, ok := db.Value(budget.PathWorkspaceSpend(wsWorkspace, budget.MonthKey(reserved))).(map[string]any); !ok {
 		t.Fatal("the call did not settle against the month it was reserved in")
 	}
 	if v := db.Value(budget.PathWorkspaceSpend(wsWorkspace, budget.MonthKey(now))); v != nil {
