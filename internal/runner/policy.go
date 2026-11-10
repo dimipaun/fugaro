@@ -464,8 +464,12 @@ func sourcesText(m map[string]string) string {
 // PolicyKeyPath is where a policy key lives in fugaro.yaml: the governance
 // keys under a governance: block of their own — a tier's own keys under
 // governance.tiers.<tier>, the block that carries them (policy.TierKey) — the
-// agent's own keys, its output limits and the crafts, under agent:, and
-// everything else — the budget's cost and model policy — under budget:.
+// agent's own keys, its output limits, the triage switch and the crafts, under
+// agent:, and everything else — the budget's cost and model policy — under
+// budget:. The triage switch is the agent's key and not the budget's
+// (policy.KeyTriage is "triage" and the repository writes agent.triage,
+// config.Scopes), so a report that read it as a budget key would name a key no
+// file has.
 //
 // A craft key is the agent.crafts block (policy.CraftAccessKey), which is the
 // block where a repository's file writes the one of the three it may write at
@@ -476,7 +480,7 @@ func sourcesText(m map[string]string) string {
 // budget:, where neither a craft nor a credential lives.
 func PolicyKeyPath(key string) string {
 	switch key {
-	case policy.KeyMaxRunTokens, policy.KeyMaxOutputCoder, policy.KeyMaxOutputReviewer:
+	case policy.KeyMaxRunTokens, policy.KeyMaxOutputCoder, policy.KeyMaxOutputReviewer, policy.KeyTriage:
 		return "agent." + key
 	case policy.KeyReviewRatio, policy.KeyReviewFloorCalls, policy.KeyMaxSubagents,
 		policy.KeyStageBudgetImplement, policy.KeyStageBudgetReview, policy.KeyStageBudgetFix,

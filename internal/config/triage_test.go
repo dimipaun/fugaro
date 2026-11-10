@@ -68,6 +68,30 @@ func TestTriageIsAMixedAccountStage(t *testing.T) {
 	}
 }
 
+// TestTriageStageIsTheSeniorReviewersRole: the stage's role is the reviewer's,
+// so the runner's own ladder takes its model, its output limit and its managed
+// settings role from the reviewer's slot — the same model the launch admits
+// the stage's account for (MixedStageModel, D1848). A stage whose role said
+// coder would be judged on the coder's model: in an api-key run that model is
+// the provider route's, and rung 4 refuses a stage whose model the account's
+// own endpoint cannot serve, so the run the launch admitted would die at the
+// account's own check (internal/runner's mixedDefaultAccount, agentenv.go).
+func TestTriageStageIsTheSeniorReviewersRole(t *testing.T) {
+	if got := StageRole("triage"); got != RoleReviewer {
+		t.Errorf("StageRole(triage) = %q, want %q: the stage is the senior reviewer's, the role its model and output limit come from", got, RoleReviewer)
+	}
+	a := Agent{Models: ModelRoles{Coder: "claude-sonnet-5-5", Reviewer: "claude-opus-5"}}
+	if got, want := a.ModelFor(StageRole("triage")), a.Models.Reviewer; got != want {
+		t.Errorf("ModelFor(StageRole(triage)) = %q, want the reviewer's %q", got, want)
+	}
+	if got, want := a.ModelFor(StageRole("triage")), MixedStageModel(a, "triage"); got != want {
+		t.Errorf("the ladder's model for triage = %q and MixedStageModel's = %q: the launch and the run judge rung 4 on the same model", got, want)
+	}
+	if a.MaxOutputFor(StageRole("triage")) != a.MaxOutputTokens.Reviewer {
+		t.Errorf("MaxOutputFor(StageRole(triage)) = %d, want the reviewer's %d", a.MaxOutputFor(StageRole("triage")), a.MaxOutputTokens.Reviewer)
+	}
+}
+
 // TestAgentTriageDefaultsOnOnlyInStartupAndPro is D1851 as the key's own
 // default: with nothing set the stage runs in Startup and Pro, and no mode but
 // those two makes a triage call at all — POC and Critical are byte-identical

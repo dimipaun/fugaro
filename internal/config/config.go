@@ -703,10 +703,21 @@ const (
 )
 
 // StageRole is the role of a stage: implement, fix and review_first (the
-// first-line review) are the coder, review (the senior one) and adversarial
-// (level 3's) the reviewer. An unknown stage is the coder.
+// first-line review) are the coder, review (the senior one), adversarial
+// (level 3's) and triage (the judge that weighs a review round's findings,
+// D1851) the reviewer. An unknown stage is the coder.
+//
+// triage is the reviewer's for the reason MixedStageModel gives it the senior
+// reviewer's model (D1848) and not a second answer beside that one: the role
+// is what the runner's own ladder takes the stage's model, its output limit
+// and its managed-settings role from (stageRole and stageModel,
+// internal/runner), so a stage whose role said coder would be judged by rung 4
+// on the coder's model — a provider model in a mixed run — and refused there
+// as a stage the account cannot serve, while the launch, reading
+// MixedStageModel, had admitted it.
 func StageRole(stage string) Role {
-	if stage == "review" || stage == "adversarial" {
+	switch stage {
+	case "review", "adversarial", "triage":
 		return RoleReviewer
 	}
 	return RoleCoder

@@ -204,7 +204,7 @@ func TestRoutingRoutesALevelsOwnModel(t *testing.T) {
 // its pins would take its output limit and its model from two different
 // answers.
 func TestStageRoleAgreesWithConfig(t *testing.T) {
-	for _, stage := range []string{"review_first", "review", "implement", "fix", "plan", stageAdversarial} {
+	for _, stage := range []string{"review_first", "review", "implement", "fix", "plan", stageAdversarial, "triage"} {
 		if got, want := stageRole(stage), config.StageRole(stage); got != want {
 			t.Errorf("stageRole(%q) = %q, config.StageRole says %q", stage, got, want)
 		}
@@ -214,6 +214,33 @@ func TestStageRoleAgreesWithConfig(t *testing.T) {
 	}
 	if stageAdversarial != "adversarial" {
 		t.Errorf("the adversarial stage is %q: it is the recipe step's own name", stageAdversarial)
+	}
+}
+
+// TestRoutingTriageRunsTheReviewersModel: the triage stage is the senior
+// reviewer's — the model the launch admits the stage's account for
+// (config.MixedStageModel) — so the run's own ladder answers the reviewer's
+// slot for it: the stage's model, its output limit and the gateway's set for
+// the stage all have to name the reviewer's model, because rung 4 refuses a
+// stage the account serves whose model the account's endpoint does not
+// (mixedDefaultAccount, and stageSpec is the set the gateway admits for it).
+// A stage read as the coder's would be refused there after the launch had
+// admitted it, or run on a model the reviewer's account does not serve.
+func TestRoutingTriageRunsTheReviewersModel(t *testing.T) {
+	const coder, reviewer = "claude-sonnet-5-5", "claude-opus-5"
+	a := config.Agent{Models: config.ModelRoles{Coder: coder, Reviewer: reviewer}}
+	r := levelsRun(a, nil)
+	if got := r.stageModel("triage"); got != reviewer {
+		t.Errorf("stageModel(triage) = %q, want the reviewer's %q", got, reviewer)
+	}
+	if got := r.stageSpec("triage").Model; got != reviewer {
+		t.Errorf("the gateway's model for triage = %q, want %q: the launch admitted the stage's account on this model", got, reviewer)
+	}
+	if got := r.stageSpec("triage").MaxOutputTokens; got != a.MaxOutputTokens.Reviewer {
+		t.Errorf("the gateway's output limit for triage = %d, want the reviewer's %d", got, a.MaxOutputTokens.Reviewer)
+	}
+	if got, want := r.stageModel("triage"), config.MixedStageModel(a, "triage"); got != want {
+		t.Errorf("the run's model for triage = %q and the launch's = %q: rung 4 and the launch judge the stage on one model", got, want)
 	}
 }
 
