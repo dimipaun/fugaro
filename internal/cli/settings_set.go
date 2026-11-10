@@ -43,12 +43,6 @@ var settingsWriteLayers = []string{settingsLayerLocal, settingsLayerProject, set
 // writes its keys (D853). A key whose Owner is in here is refused by the
 // generic path and pointed at that family: two paths writing one key is how
 // the cross-key checks the families exist for get lost.
-//
-// The read's owner column is not this map and must not be folded into it
-// (D1178): the families below are the ones a *write* refuses, and the default
-// owner is deliberately absent — so a family added here for the read's sake
-// would refuse keys `settings set` writes, which is what F11 was. The read's
-// table is settingsOwnerCommands (settings_read.go).
 var settingsFamilyCommands = map[string]string{
 	"models":      "fugaro models",
 	"rigor":       "fugaro rigor set",

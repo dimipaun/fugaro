@@ -391,9 +391,9 @@ var settingsOwnerCommands = map[string]string{
 	"project":      "fugaro project",
 	"workspace":    "fugaro workspace",
 	"image map":    "fugaro image map",
-	"setup":        "fugaro setup, which writes the installation's own facts (and fugaro update re-applies them)",
+	"setup":        "fugaro setup, which writes the installation's own facts",
 	"update":       "fugaro update, which writes the installation's own generations",
-	"budget":       "fugaro setup, which writes the installation's own budget backend (and fugaro update re-applies it)",
+	"budget":       "fugaro setup, which writes the installation's own budget backend",
 	"config":       "fugaro update, which applies the file the key is stated in",
 }
 

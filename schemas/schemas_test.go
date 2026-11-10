@@ -5325,15 +5325,15 @@ func TestSettingsSchemaCoversPlanningKey(t *testing.T) {
 // own flag and the member is written **only when it is true**; and writability
 // follows from the two refusals that come before the generic path's allowlist
 // (settingsWriteRowHinted) -- a sensitive key is never written by it and neither
-// is a key a family owns -- so a row that says `writable` while it carries an
-// owner word, or while the registry marks it sensitive, is a row no write
-// produces. The fixture this branch corrected spelled `target_layer` "project"
-// on the row whose write lands in `repo` and `""` on two rows that each name a
-// layer, and it said `writable` on two rows that carry an owner word -- the
-// drift this half exists for. **The rule this half restates is the read's own,
-// and its guard is in the package that holds it**: `target_layer` is
-// settingsDefaultLayer's answer, and `owner` and `writable` are
-// settingsFamilyCommands' and settingsWriteRow's, all three set by projectRow
+// is a key a family owns -- so a row that says `writable` while the registry
+// marks it sensitive is a row no write produces. Every row also names an owner,
+// which is the read's answer rather than this package's (D1178). The fixture
+// this branch corrected spelled `target_layer` "project" on the row whose write
+// lands in `repo` and `""` on two rows that each name a layer, and it said
+// `writable` on two rows that carry an owner word -- the drift this half exists
+// for. **The rule this half restates is the read's own, and its guard is in the
+// package that holds it**: `target_layer` is settingsDefaultLayer's answer, and
+// `owner` and `writable` are settingsOwnerCommands' and settingsWriteRow's, all three set by projectRow
 // in internal/cli, so TestSettingsConsoleFixtureOwnerAndWritable
 // (internal/cli/settings_console_fixture_test.go) holds the fixture to those
 // three functions and a change to one of them is red there even where the
@@ -5430,13 +5430,20 @@ func TestSettingsConsoleFixture(t *testing.T) {
 		if row.TargetLayer != wantLayer {
 			t.Errorf("%s: target_layer = %q, and the narrowest of repo, project and local the key may be set in is %q, which is what a write with no --layer lands in and what the read prints (settingsDefaultLayer)", row.Key, row.TargetLayer, wantLayer)
 		}
-		if row.Writable {
-			if reg.Sensitive {
-				t.Errorf("%s: the fixture says writable, and a sensitive key is refused before the allowlist is asked (settingsWriteRowHinted): the generic path never writes one", row.Key)
-			}
-			if row.Owner != "" {
-				t.Errorf("%s: the fixture carries the owner word %q and says writable, and the read prints an owner word only for a key the generic path does not write (the family that owns it does, settingsRead.projectRow): no row is both", row.Key, row.Owner)
-			}
+		// `owner` is the word for the command that writes the row (D1178): the
+		// generic writer's name on a key the allowlist carries, a family's on a
+		// key it refuses, and the sentence naming `fugaro setup` or
+		// `fugaro update` on the installation's own. The registry answers the
+		// token and this package cannot map it -- the table that maps it is
+		// settingsOwnerCommands, internal/cli's -- so the one fact about the
+		// word this half can restate is that every row of the read carries one,
+		// and the guard beside the table (settings_console_fixture_test.go)
+		// holds the fixture to the word itself.
+		if row.Owner == "" {
+			t.Errorf("%s: the fixture names no owner, and every row of the read names the command that writes it (settingsOwnerCommands, D1178)", row.Key)
+		}
+		if row.Writable && reg.Sensitive {
+			t.Errorf("%s: the fixture says writable, and a sensitive key is refused before the allowlist is asked (settingsWriteRowHinted): the generic path never writes one", row.Key)
 		}
 		switch {
 		case reg.Sensitive && row.Sensitive == nil:

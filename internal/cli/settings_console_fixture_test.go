@@ -26,9 +26,9 @@ import (
 // is the guard, because a restatement cannot see the functions change.
 //
 // The three are not the registry's to answer: `owner` is the word the read prints
-// for a key the generic path does not write, and it comes from
-// settingsFamilyCommands -- a map from the registry's owner token to the command
-// family a screen names; `writable` is the generic path's own decision for the
+// for the command that writes the key, and it comes from settingsOwnerCommands --
+// the read's own table from the registry's owner token to the command or the
+// sentence a screen names (D1178); `writable` is the generic path's own decision for the
 // key, asked of the write (D1102); and `target_layer` is settingsDefaultLayer's
 // answer, the layer a write with no `--layer` lands in. projectRow sets all three
 // that way and never from a second list beside them, so a fixture that answers
@@ -67,8 +67,8 @@ func TestSettingsConsoleFixtureOwnerAndWritable(t *testing.T) {
 			t.Errorf("%s: the fixture carries a row the registry has no key for, and no read prints such a row", row.Key)
 			continue
 		}
-		if want := settingsFamilyCommands[reg.Owner]; row.Owner != want {
-			t.Errorf("%s: the fixture's owner is %q, and the read prints %q for a row the registry gives the owner token %q (settingsFamilyCommands)", row.Key, row.Owner, want, reg.Owner)
+		if want := settingsOwnerCommands[reg.Owner]; row.Owner != want {
+			t.Errorf("%s: the fixture's owner is %q, and the read prints %q for a row the registry gives the owner token %q (settingsOwnerCommands)", row.Key, row.Owner, want, reg.Owner)
 		}
 		_, writeErr := settingsWriteRow(row.Key)
 		if want := writeErr == nil; row.Writable != want {

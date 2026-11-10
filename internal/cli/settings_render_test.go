@@ -269,10 +269,11 @@ func TestSettingsJSONMarksTheGenericPathsRowsWritable(t *testing.T) {
 }
 
 // TestSettingsJSONNamesTheFamilyThatOwnsTheOthers: a row the generic path does
-// not write carries the command family that does, in S5's own words, so the
-// console says who writes it instead of drawing a pencil (D1102, D1111). A row
-// no family owns — the installation's own plumbing — names nothing and is not
-// writable: the honest answer, not an invented name.
+// not write carries the command that does, so the console says who writes it
+// instead of drawing a pencil (D1102, D1111, D1178). A family names itself; the
+// installation's own plumbing, which no command edits, names the sentence the
+// design asks for — `fugaro setup`, the command a person runs for it — rather
+// than nothing at all.
 func TestSettingsJSONNamesTheFamilyThatOwnsTheOthers(t *testing.T) {
 	settingsWriteHome(t)
 	rows := readSettingsWritability(t)
@@ -282,55 +283,73 @@ func TestSettingsJSONNamesTheFamilyThatOwnsTheOthers(t *testing.T) {
 		{"layer.defaults.rigor.default", "fugaro rigor set"},
 		{"job_profiles.*.cpu", "fugaro project"},
 		{"batch.secrets", "fugaro secrets"},
+		{"budget.firebase_project", settingsOwnerCommands["budget"]},
 	} {
 		row := writableRowOf(t, rows, tc.key, "project")
 		if row.Owner == nil {
 			t.Errorf("%s: no owner member, and %s writes it", tc.key, tc.family)
 		} else if *row.Owner != tc.family {
-			t.Errorf("%s: owner = %q, and the family that writes it is %q", tc.key, *row.Owner, tc.family)
+			t.Errorf("%s: owner = %q, and the command that writes it is %q", tc.key, *row.Owner, tc.family)
 		}
 		if row.Writable != nil && *row.Writable {
-			t.Errorf("%s: writable = true, and a family owns it", tc.key)
+			t.Errorf("%s: writable = true, and another command owns it", tc.key)
 		}
-	}
-
-	row := writableRowOf(t, rows, "budget.firebase_project", "project")
-	if row.Owner == nil {
-		t.Errorf("budget.firebase_project: no owner member, and the empty string is the answer for a key no family owns")
-	} else if *row.Owner != "" {
-		t.Errorf("budget.firebase_project: owner = %q, and no family owns the installation's plumbing", *row.Owner)
 	}
 }
 
 // TestSettingsJSONOwnerMatchesTheRefusalSettingsSetPrints is the anti-drift pin
-// (D1102): every row the document names a family for is a row `settings set`
-// refuses, and the command's own sentence names the same family. The two are
-// read from one table in the CLI, and this is what makes a second copy — or a
-// table that moved without the other — red rather than a pencil that offers an
-// edit the write will not make.
+// (D1102, D1178): every row names a command, a row the generic path writes names
+// the generic writer, and a row it refuses — with a family's name beside it — is
+// refused by that family's own words. The read's table and the write's map are
+// two tables and both answer for the families, so this is what makes a rename in
+// one without the other red rather than a pencil that offers an edit the write
+// will not make, or a word naming a command that writes nothing.
+//
+// The families are the ones the write's map names, and they are the half that
+// can be compared word for word: the families whose keys are the converge's own
+// carry a sentence in the read's table and a refusal in the write's that names
+// no command at all (`endpoints.run` is refused as plumbing), which is why those
+// rows are held to being refused and not to the words of the refusal.
 func TestSettingsJSONOwnerMatchesTheRefusalSettingsSetPrints(t *testing.T) {
 	settingsWriteHome(t)
 	rows := readSettingsWritability(t)
-	named := 0
+	generic := settingsOwnerCommands["settings set"]
+	named, families := 0, 0
 	for _, r := range settings.Rows() {
 		row := writableRowOf(t, rows, r.Key, "project")
 		if row.Owner == nil || *row.Owner == "" {
+			t.Errorf("%s: the row names no command, and every row of the document names the one that writes it (D1178)", r.Key)
 			continue
 		}
 		named++
 		if row.Writable != nil && *row.Writable {
-			t.Errorf("%s: writable = true and owner = %q, and a row with an owner is one the generic path refuses", r.Key, *row.Owner)
+			if *row.Owner != generic {
+				t.Errorf("%s: writable = true and owner = %q, and a row the generic path writes names the generic writer (D1178)", r.Key, *row.Owner)
+			}
+			continue
 		}
 		_, _, err := execute(t, "settings", "set", r.Key, "x")
 		if err == nil {
 			t.Errorf("%s: settings set wrote a key the document says %s owns", r.Key, *row.Owner)
 			continue
 		}
-		if !strings.Contains(err.Error(), *row.Owner) {
-			t.Errorf("%s: the document names %q, and settings set refuses it with %q", r.Key, *row.Owner, err)
+		family, namedByTheWrite := settingsFamilyCommands[r.Owner]
+		if !namedByTheWrite {
+			continue
+		}
+		families++
+		if *row.Owner != family {
+			t.Errorf("%s: the document names %q, and `settings set` refuses a %s key in the name %q: the read's table and the write's map have parted", r.Key, *row.Owner, r.Owner, family)
+			continue
+		}
+		if !strings.Contains(err.Error(), family) {
+			t.Errorf("%s: the document names %q, and settings set refuses it with %q", r.Key, family, err)
 		}
 	}
 	if named == 0 {
+		t.Fatal("no row of the document names a command, and every row of the read does (D1178)")
+	}
+	if families == 0 {
 		t.Fatal("no row of the document names a command family, and the registry has rows a family owns")
 	}
 }
