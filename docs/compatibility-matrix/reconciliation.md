@@ -96,7 +96,7 @@ deviates, so there is no open tension).
 
 None between answers. Open items (D1527's amended Vertex answer was confirmed by the owner on 2026-11-07; D1539's re-asked answer was given the same day): (a) the page's final copy of each row's note is the build task's
 to draft and the owner's to read before the website promote, which the release procedure performs
-(the required reviewer was removed from the GitHub environments on 2026-11-07; `docs/release.md` still says otherwise until the stale-docs task DOC1 lands); (b) **(2) the navigation change needs the owner's explicit approval**, because `.claude/rules/website.md` keeps nav labels and URLs unless the owner approves a change: the build task proposes the entry (the "Project" group in `website/src/layouts/Base.astro` is the candidate) and does not add it before the owner says yes.
+(the required reviewer was removed from the GitHub environments on 2026-11-07; `docs/release.md` still says otherwise until the stale-docs task DOC1 lands); (b) **(2) the navigation change** needed the owner's explicit approval, because `.claude/rules/website.md` keeps nav labels and URLs unless the owner approves a change: **given on 2026-11-10 — "Yes, add Compatibility to the nav"** — so the entry is in the "Project" group of `website/src/layouts/Base.astro`, directly after Docs, and the approval is recorded in `.claude/rules/website.md` beside the one of 2026-10-23 and pinned by `website/test/base-styles.mjs` and `website/test/compatibility-page.mjs`.
 
 ## 5. UNVERIFIED
 
