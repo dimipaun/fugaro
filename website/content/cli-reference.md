@@ -3365,6 +3365,7 @@ Flags:
 Subcommands:
 
 - `fugaro orchestrator events` -- Read the orchestrator's audit log
+- `fugaro orchestrator ls` -- List the installation's orchestrators
 - `fugaro orchestrator patch` -- Apply one typed patch document to the orchestrator's state
 - `fugaro orchestrator run` -- Run the project's orchestrator daemon in the foreground
 - `fugaro orchestrator state` -- Print the orchestrator's state: the generated summary of its live node
@@ -3391,6 +3392,39 @@ Flags:
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--since` | string | "" | no | only entries newer than this duration, such as 1h or 30m |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro orchestrator ls`
+
+List the installation's orchestrators
+
+List the orchestrators this installation has: every id whose node exists in
+the project's database, with the holder of its lease and when that holder last
+beat, and every cached brief this machine holds, with the time the daemon wrote
+it. An orchestrator this machine runs — one with a cached brief — is `local`;
+one only the database holds is `central`. A cache nothing has rewritten inside
+a lease is stale, which is how a daemon that stopped is told from one that is
+driving the id. --json prints a versioned document
+(schemas/orchestrator-output.schema.json).
+
+There is no registry of processes and no port: the node and the cache file are
+the two things the daemon writes, and a run or a token may not read either.
+
+Usage: `fugaro orchestrator ls`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for ls |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
 
 Subcommands:
 

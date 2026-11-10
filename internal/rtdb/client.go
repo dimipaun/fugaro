@@ -491,7 +491,22 @@ func ValidateURL(raw string, loopbackOK bool) error {
 // RootKeys lists the keys at the database root without downloading its data
 // (a shallow read). An empty database has none.
 func (c *Client) RootKeys(ctx context.Context) ([]string, error) {
-	res, err := c.do(ctx, http.MethodGet, "", url.Values{"shallow": {"true"}}, nil, nil)
+	return c.Keys(ctx, "")
+}
+
+// Keys lists the keys at path without downloading their values (a shallow
+// read): the child names of one node, sorted. An empty path is the database
+// root, which is what RootKeys reads. A node that is absent, or one that holds
+// a value rather than an object, has no keys.
+//
+// It is how a caller enumerates a subtree it means to read node by node — the
+// orchestrator subtree, whose every state and audit document is far larger than
+// the names of them — without paying for the values.
+func (c *Client) Keys(ctx context.Context, path string) ([]string, error) {
+	if err := validPath(path); err != nil {
+		return nil, err
+	}
+	res, err := c.do(ctx, http.MethodGet, path, url.Values{"shallow": {"true"}}, nil, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -499,9 +514,16 @@ func (c *Client) RootKeys(ctx context.Context) ([]string, error) {
 	if len(body) == 0 || string(body) == "null" {
 		return nil, nil
 	}
+	// A shallow read of a node that holds a value rather than an object answers
+	// with that value, and a scalar has no children: the caller asked for keys,
+	// so it gets none rather than a decode failure that names a subtree it never
+	// meant to read.
+	if body[0] != '{' {
+		return nil, nil
+	}
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal(body, &m); err != nil {
-		return nil, fmt.Errorf("rtdb: GET /: decoding the root's keys: %w", err)
+		return nil, fmt.Errorf("rtdb: GET /%s: decoding the node's keys: %w", path, err)
 	}
 	keys := make([]string, 0, len(m))
 	for k := range m {

@@ -729,3 +729,39 @@ func TestRootKeysAndRules(t *testing.T) {
 		t.Errorf("a denied deployment: %v", err)
 	}
 }
+
+// TestKeysListsOneNodeShallowly: listing the children of one node is a shallow
+// read of that node (what a caller that wants the names and not the values,
+// like a listing of the orchestrators, must do rather than download a subtree),
+// and a node that is absent or holds a value rather than an object has none.
+func TestKeysListsOneNodeShallowly(t *testing.T) {
+	f := gcpfake.NewRTDB(t)
+	c := newClient(t, f)
+	f.Set("orchestrator/belong/state/agent_id", "belong")
+	f.Set("orchestrator/belong/lease/holder", "cloud-run-7")
+	f.Set("orchestrator/aurora/state/agent_id", "aurora")
+	f.Set("config/mode", "observe")
+
+	keys, err := c.Keys(ctx(t), "orchestrator")
+	if err != nil || len(keys) != 2 || keys[0] != "aurora" || keys[1] != "belong" {
+		t.Fatalf("keys = %v, %v (one node's children, sorted)", keys, err)
+	}
+	if reqs := f.Requests(); !strings.Contains(reqs[len(reqs)-1].Query, "shallow=true") {
+		t.Errorf("the subtree was read whole: %v", reqs[len(reqs)-1])
+	}
+	if reqs := f.Requests(); !strings.HasSuffix(reqs[len(reqs)-1].Path, "/orchestrator.json") {
+		t.Errorf("the read was not of the node asked for: %v", reqs[len(reqs)-1])
+	}
+
+	// A node nothing has written, and one holding a value: neither has children,
+	// and neither is an error.
+	if keys, err := c.Keys(ctx(t), "orchestrator/nobody"); err != nil || len(keys) != 0 {
+		t.Errorf("an absent node: %v, %v", keys, err)
+	}
+	if keys, err := c.Keys(ctx(t), "config/mode"); err != nil || len(keys) != 0 {
+		t.Errorf("a node holding a value: %v, %v", keys, err)
+	}
+	if _, err := c.Keys(ctx(t), "orchestrator/bad.key"); err == nil {
+		t.Error("an unescaped key was sent")
+	}
+}
