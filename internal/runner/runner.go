@@ -5230,11 +5230,11 @@ func (r *run) finalize(ctx context.Context) error {
 	r.recordOwnerDecisions(halt)
 	pol := r.findingsPolicy()
 	decidedRound := r.decidingReview()
-	ready, reason, class := Decide(records, decided, decidedRound, pol, r.rec.OwnerDecisions)
+	dec := Decide(records, decided, decidedRound, pol, r.rec.OwnerDecisions)
 	r.rec.Tolerated = r.toleratedRecord(pol, decidedRound)
 	r.rec.Accepted = r.acceptedRecord(pol, decidedRound)
-	if committed && reason == ReasonNoVerifiedTest {
-		reason = "uncommitted changes were committed at finalize, after the last verified test run"
+	if committed && dec.Reason == ReasonNoVerifiedTest {
+		dec.Reason = "uncommitted changes were committed at finalize, after the last verified test run"
 	}
 	// A run whose diff matched a security row and whose escalation was refused
 	// is not ready, whatever Decide answered (D1509): the level the
@@ -5243,16 +5243,18 @@ func (r *run) finalize(ctx context.Context) error {
 	// both hold — a refusal found at finalize is found there because the run
 	// committed work nobody reviewed, and the member's own `at` says so — and
 	// the run's own failure still outranks it (the override below).
-	ready, reason, class = r.applySecurityRefusal(ready, reason, class)
-	// The class follows the reason, and it is chosen by this same three-way
-	// choice in the same place by the same lines (design §4.2): the run's own
-	// first failure outranks what Decide read, a halt outranks both, and each
-	// override hands over the class of the sentence it just wrote. That is
-	// what keeps the field describing the status the record carries —
-	// unverified_final_commit under a halt's reason would name a cause the
-	// record no longer holds.
+	dec = r.applySecurityRefusal(dec)
+	// The reason, the class and the kind follow each other, and they are chosen
+	// by this same three-way choice in the same place by the same lines (design
+	// §4.2): the run's own first failure outranks what Decide read, a halt
+	// outranks both, and each override hands over the sentence it just wrote
+	// with the class and the kind that sentence carries. That is what keeps the
+	// fields describing the status the record carries — unverified_final_commit
+	// under a halt's reason would name a cause the record no longer holds, and a
+	// run refused for a stage it never finished is `failed`, never the label a
+	// run no review answered carries, however few rounds it got to.
 	if fr := r.failure(); fr != "" {
-		ready, reason, class = false, fr, r.failureClass()
+		dec = blockedDecision(fr, r.failureClass())
 	}
 	if halt != nil {
 		// Never ready, and the reason is the halt's, whatever failed first. The
@@ -5263,13 +5265,13 @@ func (r *run) finalize(ctx context.Context) error {
 		// "halted: <reason>: <detail>" spelling of it (OD1). The class is the
 		// halt's own family either way: the sentence a reader sees changes with
 		// the reason, and what the run stopped for does not.
-		ready, class = false, haltClass(halt.Reason)
+		reason := (&HaltError{*halt}).Error()
 		if halt.Reason == runstore.HaltOwnerDecision {
 			reason = halt.Detail
-		} else {
-			reason = (&HaltError{*halt}).Error()
 		}
+		dec = blockedDecision(reason, haltClass(halt.Reason))
 	}
+	ready, reason, class := dec.Ready, dec.Reason, dec.Class
 	// Finalize's push must not outlive its token either; a short reserve
 	// still asks for at least what bootstrap's fetch does.
 	if err := r.refreshGitAuth(ctx, authValidity(max(r.wf.Timeouts.FinalizeReserve.Duration, bootstrapAuthMinValid))); err != nil {
@@ -5354,6 +5356,7 @@ func (r *run) finalize(ctx context.Context) error {
 			// ready, so this is recorded as a draft with a reason
 			// naming the failure.
 			ready, reason, class = false, r.redact(err.Error()), failure.GitProviderError
+			dec = blockedDecision(reason, class)
 		}
 	case err != nil:
 		if pr.Number != 0 && r.giveUpNoteAllowed(ctx) {
@@ -5391,6 +5394,15 @@ func (r *run) finalize(ctx context.Context) error {
 	// above hands one over — Decide names its own refusal, r.failure() names
 	// the class written with the run's first reason (unclassified where its
 	// site named none), and the forge's own failure names git_provider_error.
+	//
+	// The label a run no review answered carries is the one case of the
+	// default that is not a failure: Decide read a round that answered nothing,
+	// or no round at all, and nothing else in the run ended it (D994, D995).
+	// The kind is what says so — a sentence would not, which is why the
+	// decision carries one — and it is the *last* case, because every ending
+	// above it replaces the decision with a sentence of its own and the reason
+	// is the run's own: a run halted, cancelled or refused is not a run that
+	// merely went unread.
 	switch {
 	case ready:
 		r.recordEnd(runstore.StatusSucceeded, runstore.OutcomeReady, "", reason)
@@ -5399,6 +5411,8 @@ func (r *run) finalize(ctx context.Context) error {
 		r.recordEnd(runstore.StatusHalted, runstore.OutcomeDraft, haltClass(halt.Reason), reason)
 	case r.isCancelled():
 		r.recordEnd(runstore.StatusCancelled, runstore.OutcomeDraft, failure.Cancelled, reason)
+	case dec.Kind == KindUnreviewed:
+		r.recordEnd(runstore.StatusUnreviewed, runstore.OutcomeDraft, class, reason)
 	default:
 		r.recordEnd(runstore.StatusFailed, runstore.OutcomeDraft, class, reason)
 	}

@@ -387,7 +387,8 @@ func (r *run) shadowFinalize(ctx context.Context) error {
 	// the same three-way choice, so an arm that was refused and then halted is
 	// classed as a halt and one the agent left empty-handed is `no_commits`.
 	decidedRound := r.decidingReview()
-	ready, reason, class := Decide(records, sha, decidedRound, pol, r.rec.OwnerDecisions)
+	dec := Decide(records, sha, decidedRound, pol, r.rec.OwnerDecisions)
+	ready, reason, class := dec.Ready, dec.Reason, dec.Class
 	r.rec.Tolerated = r.toleratedRecord(pol, decidedRound)
 	r.rec.Accepted = r.acceptedRecord(pol, decidedRound)
 	if committed && reason == ReasonNoVerifiedTest {
@@ -397,7 +398,8 @@ func (r *run) shadowFinalize(ctx context.Context) error {
 	// a refused escalation is not something the arm's own records can answer
 	// away, and an arm whose record said succeeded while the champion's said
 	// failed would be a pair read as two different runs of the same work.
-	ready, reason, class = r.applySecurityRefusal(ready, reason, class)
+	dec = r.applySecurityRefusal(dec)
+	ready, reason, class = dec.Ready, dec.Reason, dec.Class
 	if fr := r.failure(); fr != "" {
 		ready, reason, class = false, fr, r.failureClass()
 	}
