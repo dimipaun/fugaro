@@ -114,13 +114,14 @@ func (resolvedBroken) Fetch(context.Context, int) (issueresolve.State, error) {
 	return issueresolve.NoVerdict{}, fmt.Errorf("%w: no route to host", issueresolve.ErrTransport)
 }
 
-// resolvedUntouched is the reader of a step that may not reach GitHub at all:
-// one Fetch is the step spending the pass's twenty seconds and its twenty
-// requests (F17), so a call here is a failure and not an answer.
+// resolvedUntouched is the reader of a step that may not reach GitHub at all —
+// a run that left a step for the person, a run on the other door: one Fetch is
+// the step spending the pass's twenty seconds and its twenty requests (F17), so
+// a call here is a failure and not an answer.
 type resolvedUntouched struct{ t *testing.T }
 
 func (r resolvedUntouched) Fetch(context.Context, int) (issueresolve.State, error) {
-	r.t.Error("the resolved-issues step asked GitHub about an issue in a run that left a step for the person")
+	r.t.Error("the resolved-issues step asked GitHub about an issue in a run that may not run the pass")
 	return issueresolve.NoVerdict{}, errors.New("the step may not reach GitHub here")
 }
 
@@ -147,19 +148,29 @@ func (r resolvedNoStdin) Read([]byte) (int, error) {
 	return 0, io.EOF
 }
 
-// resolvedRig is the step over a bucket directory of this test's own: the
-// update door's command — so the tree a stored command is checked against is
-// the released one — and the run the door builds. dir "" installs no bucket
-// seam, for the modes that may not open one at all.
+// resolvedRig is the step on the door that has it, `fugaro update`: the door's
+// own command — so the tree a stored command is checked against is the released
+// one — and the run the door builds.
+func resolvedRig(t *testing.T, modes func(*initOptions), dir string) (*initRun, *bytes.Buffer) {
+	t.Helper()
+	return resolvedDoorRig(t, newUpdateCmdWith, modes, dir)
+}
+
+// resolvedDoorRig is resolvedRig over a door of the caller's choosing. Both
+// doors build their run through newInitCmdWith (setup.go, update.go) and both
+// reach the resolved-issues step — init_stages.go's outcome is the loop's and
+// not one door's — so which door a run is is part of what the step has to
+// answer, and a test that drives the other one drives it the same way.
 //
+// dir "" installs no bucket seam, for the modes that may not open one at all.
 // modes is applied after the command is built, because building it writes every
 // flag's default into the options (pflag's own constructors do): a mode a test
 // drives has to be set after the door exists, exactly as a parser would set it,
 // and before newInitRun reads --json.
-func resolvedRig(t *testing.T, modes func(*initOptions), dir string) (*initRun, *bytes.Buffer) {
+func resolvedDoorRig(t *testing.T, door func(*initOptions) *cobra.Command, modes func(*initOptions), dir string) (*initRun, *bytes.Buffer) {
 	t.Helper()
 	o := &initOptions{}
-	cmd := newUpdateCmdWith(o)
+	cmd := door(o)
 	root := NewRootCmd()
 	root.AddCommand(cmd)
 	var out bytes.Buffer
@@ -419,6 +430,51 @@ func TestUpdateResolvedIncompleteRunWritesNothing(t *testing.T) {
 	}
 	if r.res.ResolvedIssues != nil {
 		t.Errorf("a run that left a step for the person put %+v in the --json document", r.res.ResolvedIssues)
+	}
+}
+
+// TestUpdateResolvedSetupDoorRunsNothing: the step is the update door's and no
+// other's (F17). Both doors run the converge it hangs off — outcome is the
+// loop's and not one door's, so a setup run reaches the same call site — and a
+// setup run installed nothing: the record it would advance is the
+// installation's, which the update door applied, and the pass it would run is
+// about the issues a release fixed. A setup run that reached either would
+// spend its own run on another door's bookkeeping, against a store it did not
+// converge.
+func TestUpdateResolvedSetupDoorRunsNothing(t *testing.T) {
+	retryEnv(t)
+	stubResolvedBucketFatal(t)
+	stubUpdateResolve(t, resolvedUntouched{t})
+
+	r, out := resolvedDoorRig(t, newSetupCmdWith, nil, "")
+	r.updateResolved(t.Context())
+
+	if out.String() != "" {
+		t.Errorf("a setup run printed:\n%s", out.String())
+	}
+	if r.res.ResolvedIssues != nil {
+		t.Errorf("a setup run put %+v in the --json document", r.res.ResolvedIssues)
+	}
+}
+
+// TestSetupDoorResolvesNothing is the same guard through the whole command: a
+// `fugaro setup --yes` run converges and reaches neither of the step's seams.
+// Both are fatal here, so the run's own success and its silence about issues
+// are what say the step answered before it opened the bucket and before it
+// asked GitHub anything — and that the door is what stopped it, rather than a
+// mode, a project the run could not select or a store that happened to be
+// empty.
+func TestSetupDoorResolvesNothing(t *testing.T) {
+	newInitRig(t)
+	stubResolvedBucketFatal(t)
+	stubUpdateResolve(t, resolvedUntouched{t})
+
+	out, _, err := executeStdin(t, "", "setup", "--yes")
+	if err != nil {
+		t.Fatalf("fugaro setup stopped at %s:\n%s", stoppedStage(out), out)
+	}
+	if strings.Contains(out, resolvedSummaryLead) || strings.Contains(out, resolvedAlsoHead) {
+		t.Errorf("a setup run printed the resolved issues:\n%s", out)
 	}
 }
 
