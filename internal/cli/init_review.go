@@ -19,17 +19,17 @@ import (
 // In a project Fugaro owns, the ordinary steps (the Terraform applies of the
 // installation, the Firebase root, the history job and the repository, the
 // state bucket, the Viewer-read removal, the Firestore marks and rules, image
-// copies that only add tags, the local config) share ONE typed project name,
-// asked with a review screen the first time one of them has something to
-// change (so a rerun with nothing to do asks nothing). Each step still prints
-// its own exact plan and banner, and says it was covered.
+// copies that only add tags, the local config) share ONE confirmation, taken
+// with a review screen the first time one of them has something to change (so
+// a rerun with nothing to do asks nothing). Each step still prints its own
+// exact plan and banner, and says it was covered.
 //
 // It never covers what is money, permanent, a secret or someone else's:
 // project creation, billing, the Firestore database's creation, a Cloud Build,
 // replacing a registry tag, an unlisted repository (confirmRepo), secrets.
 // Those never call anything here: TestRunConfirmationCallSites lists the only
 // files that may. And a step whose plan destroys, replaces or removes an IAM
-// grant is not covered either (tf.Cover): it asks its own typed confirmation.
+// grant is not covered either (tf.Cover): it asks its own question.
 //
 // Fugaro-owned means: the project was created by this run (fugaro setup
 // --create-project), or the runs bucket's fugaro/project.json names this
@@ -69,18 +69,19 @@ func (r *initRun) ctx() context.Context {
 }
 
 // runCovers reports whether the run's one confirmation covers an ordinary
-// step now, asking for it the first time. It is true only for a person at a
-// real terminal (initflow.CanConfirmRun: never --yes, --non-interactive,
-// --json, a pipe, --plan-only or a coding agent) who typed the project's
-// name, in a project Fugaro owns. A name that is not the project's is a
-// needs-you for this step and every one after it.
+// step now, taking it the first time. It is true only for a person at a real
+// terminal (initflow.CanConfirmRun: never --yes, --non-interactive, --json, a
+// pipe, --plan-only or a coding agent), in a project Fugaro owns; nothing is
+// typed for it (T7: the policy's confirmations are gone, and --ask is the flag
+// that puts the review's own question back), and a "no" is a needs-you for
+// this step and every one after it.
 //
 // In a managed project the confirmation is the gate's read of the two marks
-// and nothing is typed (the ruling of 2026-11-01): the review screen is still
-// printed — the owner's own account of what is about to happen, which is what
-// the screen is for — and the ordinary steps go through, exactly as they do in
-// a coding agent's session the gate admitted. The screen is printed ONCE, as
-// the typed name was asked once.
+// (the ruling of 2026-11-01): the review screen is still printed — the owner's
+// own account of what is about to happen, which is what the screen is for —
+// and the ordinary steps go through, exactly as they do in a coding agent's
+// session the gate admitted. The screen is printed ONCE, as the question the
+// person answered was asked once.
 func (r *initRun) runCovers() (bool, error) {
 	rv := r.review
 	if rv == nil || r.o.planOnly || agentMarker(os.Getenv, r.stdinTerminal()) != "" || !initflow.CanConfirmRun(r.conditions()) {
@@ -106,7 +107,7 @@ func (r *initRun) runCovers() (bool, error) {
 		return false, nil
 	}
 	rv.screen(ctx, why)
-	ok, err := r.typed("Type " + r.projectName + " to apply all of the above: ")
+	ok, err := r.confirmNow("apply all of the steps above to GCP project " + r.gcpProject + "?")
 	if err != nil {
 		return false, err
 	}
@@ -118,24 +119,31 @@ func (r *initRun) runCovers() (bool, error) {
 	return true, nil
 }
 
-// declinedRun is the needs-you of a run whose one confirmation was not typed:
-// nothing is applied, here or in a later stage.
+// declinedRun is the needs-you of a run whose one confirmation was not given:
+// nothing is applied, here or in a later stage. The question is asked to the
+// person at their own terminal (--ask puts it back), so the line says what
+// that answer was and the left says how the run is resumed.
 func (r *initRun) declinedRun() error {
 	args := []string{r.o.doorName()}
 	if r.o.firebase != "" {
 		args = append(args, "--firebase-project", quoteWord(r.o.firebaseProject()))
 	}
-	fmt.Fprintln(r.w, "not confirmed (the project's name was not typed at the review); nothing was applied")
-	return &initflow.NeedsYouError{Left: promptLeft(initflow.Installation, "type the project's name at the review to apply all of its steps", args...)}
+	fmt.Fprintln(r.w, "not confirmed (the review's own question was answered no); nothing was applied")
+	return &initflow.NeedsYouError{Left: promptLeft(initflow.Installation, "run the command below: the review's screen is printed again and its steps go ahead, with nothing typed", args...)}
 }
 
 // notCovered is why a plan is not covered by the run's one confirmation, ""
 // when it is: only a plan that is entirely creates and in-place updates of the
 // installation's own resource types, granting only the roles the modules use
 // to people the review listed or to Fugaro's own service accounts, is covered
-// (tf.Cover). Anything else, a plan that could not be read included, asks its
-// own typed confirmation. imports are the import blocks the root's discovery
-// wrote: an import that is not one of them is not covered.
+// (tf.Cover). Anything else — a plan that could not be read included — is not
+// covered, and since T7 the step is left rather than asked for a name: a plan
+// the review did not announce is exactly the plan that may delete, replace or
+// remove an IAM grant, and there is nothing left to type, so the caller
+// refuses with what is left undone, or the person at the terminal proceeds
+// having read the banner (--ask puts the question back). imports are the
+// import blocks the root's discovery wrote: an import that is not one of them
+// is not covered.
 func (r *initRun) notCovered(p *tf.Plan, imports []tf.ImportKey) string {
 	return coverSentence(r.coverReasons(p, imports))
 }
@@ -169,8 +177,9 @@ func coverSentence(items []string) string {
 
 // askOrdinary is ask for an ordinary step: covered by the run's one
 // confirmation when it applies, else the step's own. notCovered, when set, is
-// why this step is not covered (shown), so it asks its own typed
-// confirmation.
+// why this step is not covered (shown), and the step then goes through the
+// run's own confirmation path (ask, and confirmNow behind it), which asks
+// nothing of a person who is there.
 //
 // The owner's own terminal on a managed project types nothing here either, and
 // this is the owner's ruling of 2026-11-06: a step of the converge that loses
@@ -181,7 +190,8 @@ func coverSentence(items []string) string {
 // may delete, replace or remove an IAM grant, and the ruling's exception is
 // about steps that lose nothing — the cover that says which those are is the
 // same one the gate judges the step by (stepCover below). Such a step reads the
-// note below and asks for its own name, as it did before the ruling.
+// note below and then takes the confirmation every other step of the run takes
+// (T7: the name it used to ask for is gone; --ask puts the question back).
 //
 // The marker is refused above either way: a coding agent's session is not this
 // case (PersonAtTheTerminal reads the marker).
@@ -199,7 +209,7 @@ func (r *initRun) askOrdinary(what, notCovered string) (bool, error) {
 			if r.gateStandsIn() {
 				fmt.Fprintf(r.w, "  %s\n", initflow.GateOrdinary())
 			} else {
-				fmt.Fprintln(r.w, "  covered by the run confirmation (the project's name typed at the review)")
+				fmt.Fprintln(r.w, "  covered by the run confirmation (the review's own question, at this run's terminal)")
 			}
 			return true, nil
 		}
@@ -210,7 +220,7 @@ func (r *initRun) askOrdinary(what, notCovered string) (bool, error) {
 		}
 	}
 	if notCovered != "" && r.review != nil && r.review.state == reviewTaken {
-		fmt.Fprintf(r.w, "note: this step is not covered by the run confirmation: %s; it asks for its own\n", notCovered)
+		fmt.Fprintf(r.w, "note: this step is not covered by the run confirmation: %s; it is shown and then applied, and where nobody is at the terminal the run leaves it to you\n", notCovered)
 	}
 	return r.ask(what)
 }
@@ -441,7 +451,7 @@ func (e *initEngine) reviewScreen(ctx context.Context, why string) {
 	}
 	fmt.Fprintln(w, "Fixed, announced and free, so they need no plan: the Terraform state bucket (cents a month) and the Cloud Resource Manager API when missing, the local config (its diff is shown first).")
 	fmt.Fprintf(w, "IAM changes announced: removes project Viewers' read access to the runs bucket gs://%s and the state bucket gs://%s when they have it.\n", e.spec.RunsBucket, e.spec.StateBucket)
-	fmt.Fprintln(w, "Who gets access (the effective lists; a plan that grants anyone else stops and asks its own typed confirmation):")
+	fmt.Fprintln(w, "Who gets access (the effective lists; a plan that grants anyone else is shown and then applied, and where nobody is at the terminal the run leaves it to you):")
 	for _, a := range e.accessLists(ctx) {
 		list := "nobody"
 		if len(a.members) > 0 {
@@ -460,7 +470,7 @@ func (e *initEngine) reviewScreen(ctx context.Context, why string) {
 	for _, a := range e.accessLists(ctx) {
 		for _, m := range a.members {
 			if strings.HasPrefix(m, "domain:") || m == "allUsers" || m == "allAuthenticatedUsers" {
-				fmt.Fprintf(w, "WARNING: %s lists %s, which is everyone in a domain or on the internet: a plan granting it is NOT covered and asks its own typed confirmation.\n", a.what, pluginwire.Printable(m))
+				fmt.Fprintf(w, "WARNING: %s lists %s, which is everyone in a domain or on the internet: a plan granting it is NOT covered by the run confirmation, and is shown and then applied; where nobody is at the terminal the run leaves it to you.\n", a.what, pluginwire.Printable(m))
 			}
 		}
 	}
@@ -469,7 +479,7 @@ func (e *initEngine) reviewScreen(ctx context.Context, why string) {
 	if o.billingAccount != "" {
 		fmt.Fprintf(w, "  %-15s %s (from --billing-account; the only account a budget may name)\n", "billing account:", pluginwire.Printable(o.billingAccount))
 	}
-	fmt.Fprintln(w, "Every Terraform plan is shown as it runs. It is covered only if it consists of creates and in-place updates of the installation's own resource kinds, its attributes are the modules' (images in this project's registry, jobs of this project called by Fugaro's accounts, logs to this project, private buckets, this project's names), and it grants only the modules' roles to the members above or to Fugaro's own service accounts. Anything else (a destroy or replace, a binding or policy, a key, another project, an unlisted member) stops that step, which asks its own typed confirmation.")
+	fmt.Fprintln(w, "Every Terraform plan is shown as it runs. It is covered only if it consists of creates and in-place updates of the installation's own resource kinds, its attributes are the modules' (images in this project's registry, jobs of this project called by Fugaro's accounts, logs to this project, private buckets, this project's names), and it grants only the modules' roles to the members above or to Fugaro's own service accounts. Anything else (a destroy or replace, a binding or policy, a key, another project, an unlisted member) is shown and then applied, and where nobody is at the terminal the run leaves it to you.")
 	if managed {
 		fmt.Fprintln(w, "What the gate does not stand in for, and still asks separately (the gate judges a document, and these are not documents):")
 	} else {
@@ -498,10 +508,10 @@ func (e *initEngine) reviewScreen(ctx context.Context, why string) {
 			sep = append(sep, "the plugin wiring (its own y/N)")
 		}
 		if e.previewState(initflow.Checkout) == initflow.Todo {
-			sep = append(sep, "the checkout's own steps, run by fugaro update as they are here: the plugin pin and the plugin wiring ask nothing of their own (the pin prints its diff, and is reviewed with git diff after), while the image refresh asks at each step of its own that changes something — the base image it pins by digest, the daily image check job's config, and the billable build of the checkout's job images, one confirmation per build — the project's name typed, or --yes")
+			sep = append(sep, "the checkout's own steps, run by fugaro update as they are here: the plugin pin and the plugin wiring ask nothing of their own (the pin prints its diff, and is reviewed with git diff after), while the image refresh asks at each step of its own that changes something — the base image it pins by digest, the daily image check job's config, and the billable build of the checkout's job images, one confirmation per build — confirmed by the person at the terminal it runs at, or by --yes")
 		}
 		if e.previewState(initflow.Policy) == initflow.Todo {
-			sep = append(sep, "migrating the published policy node in place (type the project's name)")
+			sep = append(sep, "migrating the published policy node in place (the project's name is asked for a widening in it)")
 		}
 		if e.previewState(initflow.Workspace) == initflow.Todo {
 			sep = append(sep, "publishing the workspace record (its own y/N, and the project's name typed for the group's first record and whenever it admits more to the group than the published one does)")
@@ -510,7 +520,7 @@ func (e *initEngine) reviewScreen(ctx context.Context, why string) {
 		// The plugin wiring is not in this list: its y/N is one of the
 		// prompts a managed project does not ask (init_plugin_stage.go).
 		if e.previewState(initflow.Checkout) == initflow.Todo {
-			sep = append(sep, "the checkout's image refresh, which asks nothing here either: the base image it pins by digest, the daily image check job's config and the checkout: clone workflow's job move are answered by the gate's own read of the marks (each still prints its diff), and each billable build of the checkout's job images goes through the gate's own per-build verdict and its bound (D1013) instead of a typed name")
+			sep = append(sep, "the checkout's image refresh, which asks nothing here either: the base image it pins by digest, the daily image check job's config and the checkout: clone workflow's job move are answered by the gate's own read of the marks (each still prints its diff), and each billable build of the checkout's job images goes through the gate's own per-build verdict and its bound (D1013) instead of a confirmation of its own")
 		}
 		if e.previewState(initflow.Policy) == initflow.Todo {
 			sep = append(sep, "migrating the published policy node in place when the migration loosens a ceiling, which takes the project's name: a Typed step is money or permanence, and no plan gate admits one (D1026)")
@@ -544,7 +554,7 @@ func (e *initEngine) planOnlyReview(ctx context.Context, stages []initflow.Stage
 	// is why --plan-only reads no mark (gateRun: a run that cannot act on the
 	// answer pays for none): a managed project asks nothing at all, and this
 	// is the screen that explains the run either way.
-	fmt.Fprintf(e.r.w, "A run without --plan-only asks once at a terminal: Type %s to apply all of the above — and in a managed project it asks nothing at all, because the deterministic gate judges each document as it writes. --plan-only never takes --yes or it.\n", e.r.projectName)
+	fmt.Fprint(e.r.w, "A run without --plan-only asks once at a terminal, with nothing typed: the person reading this screen is the whole of the answer — and in a managed project it asks nothing at all, because the deterministic gate judges each document as it writes. --plan-only never takes --yes or it.\n")
 }
 
 // alertEmail is the alert email in effect and where it comes from.
@@ -590,7 +600,7 @@ func (e *initEngine) firebaseVerified(ctx context.Context) (bool, string) {
 	if e.fpChecked == "yes" {
 		return true, "verified as Fugaro's (its own runs bucket carries this project's mark)"
 	}
-	return false, "NOT verified as Fugaro's (another project than " + pluginwire.Printable(r.gcpProject) + ", with no Fugaro mark): its Terraform apply and database writes each ask their own typed name"
+	return false, "NOT verified as Fugaro's (another project than " + pluginwire.Printable(r.gcpProject) + ", with no Fugaro mark): its Terraform apply and database writes each ask their own confirmation"
 }
 
 // firebaseReason is why a step on the Firebase project is not covered, "" when

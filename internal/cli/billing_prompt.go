@@ -4,10 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
+	"os"
 	"os/exec"
 	"strconv"
-	"strings"
 
 	"github.com/dimipaun/fugaro/internal/billing"
 	"github.com/dimipaun/fugaro/internal/infra"
@@ -20,27 +19,33 @@ import (
 // 2026-10-20): where the project stage prints the guided `gcloud billing
 // projects link` line, a run at a real terminal lists the open billing
 // accounts the operator can link, by number, and takes the one picked into
-// --link-billing's own field — the field the project stage's typed
-// confirmation reads, so the account still reaches a link only by being typed
-// there.
+// --link-billing's own field — the field the project stage links, so the
+// account reaches a link only by being an answer this run acted on.
 //
 // It is a deliberate, narrow reversal of the project stage's rule that init
 // never lists the caller's billing accounts. internal/billing's package doc
 // carries the bounds, and this file is the one call site it names: the list is
-// asked for only where canType() says yes (a real terminal, not
-// --non-interactive, not --json, not a coding agent's session — Global
-// Constraint 8), only the open accounts are offered, only an ID and a display
-// name are shown, nothing is cached, written or logged, and the account a
-// project is already linked to is never read or printed.
+// asked for only where the question itself is asked (asksBilling: not
+// --non-interactive, not --json, not --yes, not --print-vars, not a coding
+// agent's session — Global Constraint 8) and stdin is a terminal, only the
+// open accounts are offered, only an ID and a display name are shown, nothing
+// is cached, written or logged, and the account a project is already linked to
+// is never read or printed.
 //
-// Where any of that fails — one of the four conditions — nothing is listed,
-// nothing is recorded, and the run is exactly the run it was before this task
-// (reconciliation F6): the project stage's own guided line is what the
-// operator sees then. Where the question ran and neither source answered, the
-// run is that run plus one value-free line saying the list could not be read
-// (askBilling): an owner who asked for the list and got silence cannot tell it
-// from a run with no picker at all, and Check 111 records which source
-// answered — here, neither.
+// The second condition is readValue's (T7, docs/no-prompt-policy, D1540): the
+// answer is a value, so where stdin is not a terminal the question is refused
+// at once, naming --link-billing, *before* any account is listed — no account
+// of the operator's is read for a run that cannot be answered. That refusal is
+// the run's end: the wizard's questions are asked before the run plans or
+// applies anything, so a run refused here never reaches the project stage and
+// never prints its guided `gcloud billing projects link` line
+// (TestBillingChoiceFailsAtOnceWithoutATerminal). That line belongs to the runs
+// the question does not fire for — the flags and sessions asksBilling names
+// above. Where the question ran and neither source answered, the run is the one
+// it would have been with no picker at all, plus one value-free line saying the
+// list could not be read (askBilling): an owner who asked for the list and got
+// silence cannot tell it from a run with no picker, and Check 111 records which
+// source answered — here, neither.
 //
 // W4.4 is the other half of that line: what the run does when the API's own
 // answer is that cloudbilling.googleapis.com is off on the credentials' quota
@@ -128,10 +133,20 @@ var billingProjectNumber = func(ctx context.Context, gcpProject, region string) 
 	return num, true
 }
 
-// asksBilling is the whole of the question's condition: the run can ask and be
-// answered (a terminal, and none of the flags a script uses), the operator's
-// billing accounts may be listed (canType: the four conditions of Global
-// Constraint 8), and the answer is one this run acts on.
+// asksBilling is the whole of the question's condition: the run is one that
+// asks its own questions and acts on this answer, and it is not one whose
+// answers a flag has already taken.
+//
+// The terminal is NOT part of it, and that is T7's change (docs/no-prompt-policy,
+// D1540): the answer is a value, a value is read at a terminal and fails at
+// once everywhere else naming the flag that supplies it, and the failure is
+// readValue's own — made in askBilling before the operator's accounts are
+// listed, which is why the condition here is about the run and not about who
+// is at the other end. What is left is what the wizard's own questions answer
+// to (--yes takes the answers it covers on the operator's behalf, and
+// --print-vars is stdout as a document), the two flags that say this run asks
+// nobody anything, and a coding agent's session — whose transcript the
+// operator's own account list must not reach.
 //
 // The last part is the question's own: the project stage links billing only
 // for a project this run was asked to create (its Check skips the stage
@@ -140,13 +155,10 @@ var billingProjectNumber = func(ctx context.Context, gcpProject, region string) 
 // this question — a second answer would replace what the operator typed.
 func (r *initRun) asksBilling() bool {
 	o := r.o
-	if !r.canType() {
+	if o.nonInteractive || o.asJSON || o.yes || o.printVars {
 		return false
 	}
-	// The wizard's own question conditions (canAsk), without the terminal
-	// canType already reads: --yes takes the answers it covers on the
-	// operator's behalf, and --print-vars is stdout as a document.
-	if o.yes || o.printVars {
+	if agentMarker(os.Getenv, r.stdinTerminal()) != "" {
 		return false
 	}
 	return o.createProject && o.linkBilling == ""
@@ -157,13 +169,23 @@ func (r *initRun) asksBilling() bool {
 //
 // The picked account is recorded in --link-billing's field and nowhere else:
 // nothing is written to a file, to the local config or to a Terraform
-// variable, and the account reaches a link only through the project stage's
-// typed confirmation of its ID.
+// variable, and the account reaches a link only by being an answer this run
+// acted on.
 func (r *initRun) askBilling(ctx context.Context) error {
 	if !r.asksBilling() {
 		return nil
 	}
 	o, project := r.o, r.o.cloud.gcpProject
+	spec := valueSpec{what: "the billing account to link to " + pluginwire.Printable(project) + " (a number, or " + billingNoAccount + " to link none now)", flag: "--link-billing"}
+	if !stdinIsTerminal(r.cmd.InOrStdin()) {
+		// T7 (D1540): the answer is a value, so with no terminal the question
+		// fails at once naming the flag that supplies it — and the refusal the
+		// value entry makes here is the one the reader gets, made before the
+		// operator's own accounts are listed: a run nobody can answer has no
+		// business reading them.
+		_, err := readValue(r.cmd, spec)
+		return err
+	}
 	opts := billingSources
 	opts.Project = project
 	accounts, source, err := billing.ListWithFallback(ctx, opts)
@@ -209,7 +231,7 @@ func (r *initRun) askBilling(ctx context.Context) error {
 	if len(accounts) == 1 {
 		def = "1" // one account is the answer Enter takes
 	}
-	v, err := r.prompt(fmt.Sprintf("Billing account (a number, or %s to link none now)", billingNoAccount), def, func(s string) error {
+	v, err := r.prompt(valueSpec{what: "the billing account to link to " + pluginwire.Printable(project) + " (a number, or " + billingNoAccount + " to link none now)", flag: "--link-billing"}, def, func(s string) error {
 		if s == billingNoAccount {
 			return nil
 		}
@@ -283,24 +305,23 @@ func (r *initRun) billingAPIOff(ctx context.Context, opts billing.Options, err e
 		return nil, billing.SourceNone, err
 	}
 	// D3's first case: the API is off on the project this run is setting up, so
-	// this run may offer to turn it on there — behind a typed confirmation, the
-	// one the wizard's other state-changing steps ask for, naming the project
-	// and the API. --yes never covers it: a --yes run is a run that asked for no
+	// this run may offer to turn it on there — behind the note below, naming the
+	// project and the API, and the run's own answer to it (confirmNow): a person
+	// at their own terminal reads the note and the API is enabled, --ask is the
+	// flag that puts the question back, and a session where nobody can answer
+	// leaves the project exactly as it was and hands the operator the line to run
+	// by hand. --yes never covers it: a --yes run is a run that asked for no
 	// question, so asksBilling is false there and this is not reached at all.
 	//
-	// Nothing about the offer is taken for an answer: only the project's own ID
-	// typed on the line enables anything, and every other answer — Enter, a
-	// stray word, the end of input — leaves the project exactly as it was and
-	// hands the operator the line to run by hand.
+	// The project's ID is typed nowhere (T7, docs/no-prompt-policy): the note
+	// above is what the reader has before the API is turned on.
 	fmt.Fprintf(r.w, "⚠ CONFIRM: ENABLE the Cloud Billing API (%s) in GCP project %s, the project this run is setting up: it is disabled there, and it is what the billing accounts this run can link are listed with (free, and nothing fugaro does disables it again)\n",
 		billingAPIService, project)
-	fmt.Fprintf(r.w, "Type %s to enable it, or press Enter to link an account by hand instead: ", project)
-	line, rerr := r.in.ReadString('\n')
-	if rerr != nil && !errors.Is(rerr, io.EOF) {
-		return nil, billing.SourceNone, userErr("reading the confirmation: %v", rerr)
+	ok, rerr := r.confirmNow("enable the Cloud Billing API in GCP project " + project + "?")
+	if rerr != nil {
+		return nil, billing.SourceNone, rerr
 	}
-	fmt.Fprintln(r.w)
-	if strings.TrimSpace(line) != opts.Project {
+	if !ok {
 		r.billingEnableLeft(off)
 		return nil, billing.SourceNone, err
 	}

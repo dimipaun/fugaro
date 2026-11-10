@@ -337,15 +337,18 @@ func TestAResumedCreationIsMarkedManaged(t *testing.T) {
 // r.res.Created is what a resumed creation leaves behind and also what every other way
 // a --managed run creates nothing leaves behind, so the message may only say
 // "already existed" when the project stage actually read a project that was
-// already there. Here it does not exist and the typed confirmation is
-// declined, so nothing was adopted and nothing was created: the warning says
-// the creation did not happen, and a reader is not sent to look for a project
-// that is not there.
+// already there. Here it does not exist and the step is left for the user —
+// a person at the terminal who passed --yes, which is the one way one of
+// these steps is declined now that nothing is typed at a confirmation (T7,
+// docs/no-prompt-policy: --yes stands in for no Typed step, so the step is
+// left rather than taken) — so nothing was adopted and nothing was created:
+// the warning says the creation did not happen, and a reader is not sent to
+// look for a project that is not there.
 func TestManagedWarningDoesNotClaimAdoptionWithoutOne(t *testing.T) {
 	r := newProjectRig(t)
 	r.bill.AddAccount(billingAcc, true)
-	out, errOut, err := r.run(t, true, "not-the-project-id\n",
-		"--create-project", "--managed", "--budget", "7", "--budget-currency", "USD", "--billing-account", billingAcc)
+	out, errOut, err := r.run(t, true, "",
+		"--yes", "--create-project", "--managed", "--budget", "7", "--budget-currency", "USD", "--billing-account", billingAcc)
 	all := refusalText(out, errOut, err)
 	if err == nil {
 		t.Fatalf("a declined creation returned no error:\n%s", all)
@@ -355,7 +358,7 @@ func TestManagedWarningDoesNotClaimAdoptionWithoutOne(t *testing.T) {
 	// rather than about an earlier refusal.
 	r.nothingDone(t, "a managed creation whose confirmation was declined")
 	if !strings.Contains(all, "not confirmed") {
-		t.Fatalf("the run did not stop at the project's typed confirmation:\n%s", all)
+		t.Fatalf("the run did not stop at the project's confirmation:\n%s", all)
 	}
 	if !strings.Contains(all, "--managed was not applied") {
 		t.Errorf("the run created no project under --managed and did not say --managed was not applied:\n%s", all)
@@ -450,13 +453,26 @@ func TestManagedFactIsNotWrittenWhenTheInstallationApplyFails(t *testing.T) {
 
 // TestAResumedCreationIsNeverMarkedWithoutATypedID: fugaro_created=true is a
 // label anyone with resourcemanager.projects.update can set, so it alone never
-// marks a project managed. A resumed creation is marked only after its ID is
-// typed at the person's own terminal (the bar fugaro managed flag keeps): under
+// marks a project managed. A resumed creation is marked only at the person's
+// own terminal, --yes and every way of running that is not one excluded (the
+// bar fugaro managed flag keeps, stepConfirmation(Typed)): under --yes, with
 // --yes --non-interactive, or in a coding agent's session, nothing is written —
 // neither the object nor the fugaro_managed label — and the run says how to
 // mark it.
 func TestAResumedCreationIsNeverMarkedWithoutATypedID(t *testing.T) {
-	for name, agent := range map[string]bool{"--yes --non-interactive": false, "a coding agent's session": true} {
+	cases := map[string]struct {
+		args  []string
+		agent bool
+	}{
+		"--yes at a terminal":     {args: []string{"--create-project", "--yes"}},
+		"--yes --non-interactive": {args: []string{"--create-project", "--yes", "--non-interactive"}},
+		"a coding agent's session": {
+			args:  []string{"--create-project", "--yes", "--non-interactive"},
+			agent: true,
+		},
+	}
+	for name, tc := range cases {
+		agent := tc.agent
 		t.Run(name, func(t *testing.T) {
 			r := newProjectRig(t)
 			const number = 424242
@@ -481,7 +497,7 @@ func TestAResumedCreationIsNeverMarkedWithoutATypedID(t *testing.T) {
 			if agent {
 				t.Setenv("CLAUDECODE", "1")
 			}
-			out, errOut, err := r.run(t, true, newProj+"\n", "--create-project", "--yes", "--non-interactive")
+			out, errOut, err := r.run(t, true, newProj+"\n", tc.args...)
 			all := refusalText(out, errOut, err)
 			if got, ok := markerAt(t, r.gcs, bucket); ok {
 				t.Errorf("a resumed creation was marked with no typed ID: gs://%s/%s = %s\n%s", bucket, managed.MarkerObject, got, all)

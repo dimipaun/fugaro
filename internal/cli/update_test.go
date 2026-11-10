@@ -253,9 +253,13 @@ func TestUpdateAppliesTheFourStepsItOwns(t *testing.T) {
 				if !tc.covered {
 					// The class is Typed for `setup`, so --yes confirms nothing
 					// here and the run leaves the permanent location for the
-					// user rather than reading a location off stdin.
-					if err == nil || !strings.Contains(err.Error(), infra.FirestoreLocation) {
+					// user: T7, nothing is typed at it, and the banner below is
+					// the note, which names the location.
+					if err == nil || !strings.Contains(err.Error(), "the Firestore database's permanent location") {
 						t.Fatalf("setup confirmed the permanent location: %v\n%s", err, out)
+					}
+					if !strings.Contains(out.String(), infra.FirestoreLocation) {
+						t.Errorf("the setup banner does not name the location it leaves:\n%s", out)
 					}
 					if strings.Contains(out.String(), "confirmed by --yes") {
 						t.Errorf("setup --yes confirmed the location:\n%s", out)
@@ -370,12 +374,14 @@ func TestUpdateAppliesTheFourStepsItOwns(t *testing.T) {
 				}
 			})
 		}
-		// And a run that cannot take it leaves it, in either door.
+		// And a run that cannot take it leaves it, in either door: nothing is
+		// typed at the step any more (T7), so what is left is the command
+		// whose own confirmation it takes.
 		for _, door := range []string{setupDoor.name, updateDoor.name} {
 			e, out := stageEngine(t, initProjectName+"\n", &initOptions{door: door})
 			st := &imagesStage{e: e}
 			err := st.confirmReplace(pl)
-			if err == nil || !strings.Contains(err.Error(), "the project's name") {
+			if err == nil || !strings.Contains(err.Error(), "asks you nothing and replaces base") {
 				t.Fatalf("%s replaced a tag with no confirmation: %v\n%s", door, err, out)
 			}
 		}

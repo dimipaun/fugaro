@@ -257,7 +257,7 @@ func policyMigrationForIn(ctx context.Context, lc *localcfg.Config, configPath s
 	// config states, is left alone whatever the deployed rules are, and D854's
 	// re-seed writes the local file and not the node — and it is checked here
 	// rather than at the write because the operator reads the diff before it: a
-	// refusal after the typed confirmation would be a document they confirmed
+	// refusal after the confirmation would be a document they confirmed
 	// and did not get.
 	writes := moved != nil || m.pub != nil
 	// The generation record belongs to the agreement between the file and the
@@ -456,9 +456,12 @@ func policyMigrationRefusal(err error) error {
 // not asked to type the project's name to publish the node, so the typed
 // confirmation below is replaced by a note of what is written — for a node that
 // is there and for a project's first one alike, the empty-allow-list first
-// publish above being the only write that keeps the typed name. The upgrade
-// door has no gate and passes false, so it keeps that confirmation exactly as it
-// was.
+// publish above being the only write that keeps a question of its own. Nothing
+// is typed in either case (T7, docs/no-prompt-policy): the session the note
+// does not reach takes confirmStageWrite's confirmation instead, where the
+// person at the terminal answers by being there and --ask is the flag that puts
+// the question back. The upgrade door has no gate and passes false, so it keeps
+// that confirmation exactly as it was.
 //
 // inflight is what this door does about the runs in flight over the node
 // (inflightAnswer): the update door passes inflightQuiet, because the owner's
@@ -487,8 +490,15 @@ func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMi
 	if err := m.refuseRunsInFlight(ctx, yes, inflight, managed, c, w); err != nil {
 		return err
 	}
+	// --ask's own read, the one confirmNow asks its question on: it puts back a
+	// confirmation only where the gate replaced one, and this door's read of the
+	// marks is that fact here (initRun.asksBack is the same read made at the
+	// run). A project the marks did not answer "managed" for keeps the
+	// confirmation it always had, in its terminal arm as well, instead of one
+	// the flag puts back (restoreAsk).
+	ask := c.Ask && managed
 	if m.generations != nil {
-		return m.confirmReseed(ctx, cmd, yes, w, admitted)
+		return m.confirmReseed(ctx, cmd, restoreAsk(c, ask), yes, w, admitted)
 	}
 	if !m.writesNode() {
 		// The one write of this run is the generation record in this machine's
@@ -512,14 +522,15 @@ func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMi
 		// project stops before it starts (doctor's allow-list-empty). The diff
 		// above shows the empty list as one line among the ones a first publish
 		// adds, which reads as harmless, so the consequence is said before the
-		// write and a person has to type the project's name — the publisher's own
-		// confirmation, reused rather than worded a second time, and the same one
-		// the explicit door asks (#1674). It replaces the confirmations below
-		// rather than joining them: it is the stricter of the two (no flag stands
-		// in, and a session with no terminal or a coding agent's is refused), and
-		// a document this node's confirmation already covers needs no second
-		// question.
-		if err := confirmEmptyAllowList(cmd, m.lc, c.Agent); err != nil {
+		// write and the person at the terminal is what answers it (nothing is
+		// typed, T7) — the publisher's own confirmation, reused rather than
+		// worded a second time, and the same one the explicit door asks
+		// (#1674). It replaces the confirmations below rather than joining
+		// them: it is the stricter of the two (only --ask puts the question
+		// back, and a session with no terminal, a coding agent's, or
+		// --non-interactive or --json is refused), and a document this node's
+		// confirmation already covers needs no second question.
+		if err := confirmEmptyAllowList(cmd, m.lc, c); err != nil {
 			return err
 		}
 	} else if managed && initflow.PersonAtTheTerminal(c) && !admitted {
@@ -534,9 +545,10 @@ func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMi
 		// needs to have a policy at all — the diff above the note is the first
 		// publish's own (printFirstPublishDiff), naming every member the node is
 		// created with, and the note says the node is the project's first. The
-		// first publish that does keep the typed name is the empty allow-list
-		// one handled above, which is the write that would stop every run of
-		// the project (confirmEmptyAllowList, #1674).
+		// first publish that keeps the publisher's own confirmation rather than
+		// this note is the empty allow-list one handled above, which is the
+		// write that would stop every run of the project
+		// (confirmEmptyAllowList, #1674).
 		//
 		// The condition is the gate's own reading of who is there
 		// (initflow.PersonAtTheTerminal, ConfirmsByGate's condition half): a
@@ -573,7 +585,7 @@ func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMi
 			if err := confirmTypedStrict(cmd, m.lc, why, what); err != nil {
 				return err
 			}
-		} else if err := confirmRemoval(cmd, m.lc, yes, what); err != nil {
+		} else if err := confirmStageWrite(cmd, m.lc, restoreAsk(c, ask), yes, what); err != nil {
 			return err
 		}
 	}
@@ -774,10 +786,15 @@ func (m *policyMigration) recordGeneration(ctx context.Context, cmd *cobra.Comma
 // afterwards. A bare re-seed never reaches here admitted: nothing is published,
 // so there is no document for a verdict to be about, and the gate keeps the
 // session's own refusal for it.
-func (m *policyMigration) confirmReseed(ctx context.Context, cmd *cobra.Command, yes bool, w io.Writer, admitted bool) error {
+//
+// The confirmation is confirmStageWrite's, the same one the node's own write
+// takes: the file the re-seed replaces is backed up beside it, so nothing is
+// lost and nothing secret is written, and a person at their own terminal
+// answers it by having read the three-way state above (nothing is typed, T7).
+func (m *policyMigration) confirmReseed(ctx context.Context, cmd *cobra.Command, c initflow.Conditions, yes bool, w io.Writer, admitted bool) error {
 	m.printGenerationState(w)
 	if !admitted {
-		if err := confirmRemoval(cmd, m.lc, yes, policyReseedWhat); err != nil {
+		if err := confirmStageWrite(cmd, m.lc, c, yes, policyReseedWhat); err != nil {
 			return err
 		}
 	}
@@ -1144,14 +1161,16 @@ func (m *policyMigration) planDetail() string {
 
 // Apply is the write. The refusals are the ones the delete path has, in the
 // same order and the same words where they are the same refusal: a coding
-// agent's session, no terminal (--yes is the confirmation then), and the typed
-// project name. The answer about the runs in flight is the door's rather than
-// the stage's (inflightAnswer, refuseRunsInFlight): `fugaro update` implies no
-// refusal and no request to wait at all — the owner's ruling of 2026-11-09,
-// the whole upgrade being this command — the doors that reach this stage
-// without being the update door (`fugaro setup`, `fugaro accounts add`) keep
-// the answer of 2026-11-06 they had before it, and it is `fugaro upgrade`'s own
-// policy step that keeps the refusal --yes is the way past, the same reading
+// agent's session, and no terminal (--yes is what stands in for the
+// confirmation of the write where it reaches, confirmStageWrite, which asks
+// nothing of a person and types nothing: T7, docs/no-prompt-policy). The answer
+// about the runs in flight is the door's rather than the stage's
+// (inflightAnswer, refuseRunsInFlight): `fugaro update` implies no refusal and
+// no request to wait at all — the owner's ruling of 2026-11-09, the whole
+// upgrade being this command — the doors that reach this stage without being
+// the update door (`fugaro setup`, `fugaro accounts add`) keep the answer of
+// 2026-11-06 they had before it, and it is `fugaro upgrade`'s own policy step
+// that keeps the refusal --yes is the way past, the same reading
 // `fugaro project policy publish --delete` has (internal/cli/project_cmd.go).
 func (s *policyMigrateStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outcome, error) {
 	// A managed project's gate is asked FIRST, and only this door has one: in a
@@ -1193,10 +1212,10 @@ func (s *policyMigrateStage) Apply(ctx context.Context, env initflow.Env) (initf
 	}
 	// The diff, the confirmation and every line of the write go through the
 	// run's own writer, and the questions this stage asks are the shared ones
-	// (confirmEmptyAllowList, confirmTypedStrict, confirmRemoval), which hold
+	// (confirmEmptyAllowList, confirmTypedStrict, confirmStageWrite), which hold
 	// the command rather than the run: the whole call is put to the person with
 	// the line in flight down (initRun.asking), so neither the diff nor the
-	// CONFIRM block nor the project's name typed under it is drawn over (G1).
+	// CONFIRM block under it is drawn over (G1).
 	cmd := s.e.r.cmd
 	if err := s.e.r.asking(func() error {
 		return policyMigrationConfirm(ctx, cmd, m, env.Yes, s.e.r.w, admitted, s.e.r.gateUnderway(), s.e.r.conditions(), s.inflightAnswer())
