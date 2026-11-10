@@ -1202,9 +1202,8 @@ reconciliation with `docs/model-crafts` of 2026-11-10 and the fold of AK9 and AK
    was dropped on ("the one call site `agentenv.go` already has") is false — `reviewEffort` asks the
    same question of a stage, so the class's stage was launched as a provider's only half-way; AK7's
    section and §2's AK7 rows carry that fifth file and the reason
-   `internal/runner/agentenv_test.go` stays quiet. **§2 books every file of both tasks and of AK7,
-   drops the
-   conditional gateway row, and says which L2 rows AK6a re-enters**, and **§6.7 itself is amended in
+   `internal/runner/agentenv_test.go` stays quiet. **§2 books every file of both tasks and of AK7, drops
+   the conditional gateway row, and says which L2 rows AK6a re-enters**, and **§6.7 itself is amended in
    the same pass** — CSR17 and CSR18 now point at AK6a, AK6b and AK7 rather than at this plan's old
    AK6, and CSR17's "**Files (sketched, 6–8)**" is corrected: it covered the service half only and was
    short of the axis's own readers.
