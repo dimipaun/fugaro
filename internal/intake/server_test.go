@@ -658,6 +658,11 @@ func TestRefusesAContainerInvisibleToItAndAlreadyThere(t *testing.T) {
 	if len(f.store.values) != 0 {
 		t.Fatalf("the intake wrote %v", f.store.values)
 	}
+	// The refusal is recorded like every other call, and the line names the
+	// container (G6).
+	if line := audit(t, f); line["id"] != id || line["status"] != ErrorNoSuchSecret {
+		t.Fatalf("the line is %v, want the container named and %s", line, ErrorNoSuchSecret)
+	}
 }
 
 // TestOneAuditLinePerCall: every call the intake answers writes exactly one
