@@ -1533,11 +1533,15 @@ func storeSecret(run *stepRun, cmd *cobra.Command, env *cloudEnv, o secretsOptio
 // whitespace at either end. Errors never quote the value.
 func readSecret(ctx context.Context, in io.Reader, prompt io.Writer, name string, multiline bool) ([]byte, error) {
 	var raw []byte
-	if stdinIsTerminal(in) {
+	// The hidden prompt needs a file to take the echo off, so the reader the
+	// hidden path is handed is the file itself, not just a stream a terminal
+	// was reported for (readValueIn's own check says the same thing in one
+	// place): a stream that is not one is a value read to EOF like any pipe.
+	if f, ok := in.(*os.File); ok && stdinIsTerminal(in) {
 		if multiline {
 			return nil, userErr("%s spans several lines, which the hidden prompt can't take; redirect it from a file: fugaro secrets set %s < FILE", name, name)
 		}
-		b, err := readValueIn(ctx, in, prompt, valueSpec{what: name, secret: true})
+		b, err := readValueIn(ctx, f, prompt, valueSpec{what: name, secret: true})
 		if err != nil {
 			return nil, err
 		}
