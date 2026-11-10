@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
 	"github.com/dimipaun/fugaro/internal/triage"
 )
@@ -35,6 +37,18 @@ func triageOn(t *testing.T, cfg string) string {
 	out := strings.Replace(cfg, "  triage: false\n", "  triage: true\n", 1)
 	if out == cfg {
 		t.Fatal("the configuration carries no `  triage: false` line to flip, so the stage would not run")
+	}
+	return out
+}
+
+// triageOff is triageOn's inverse, for the cases whose point is a file that
+// writes the switch off: the fixture's own key, on a configuration a case
+// built with triageOn.
+func triageOff(t *testing.T, cfg string) string {
+	t.Helper()
+	out := strings.Replace(cfg, "  triage: true\n", "  triage: false\n", 1)
+	if out == cfg {
+		t.Fatal("the configuration carries no `  triage: true` line to flip")
 	}
 	return out
 }
@@ -316,6 +330,52 @@ func TestTriageFailureIsRecordedAndHarmless(t *testing.T) {
 	}
 }
 
+// TestTriageStageFailureEndsTheRun: a judge call the run could not make — a
+// model the gateway refused for the stage, a cancel, a halt, a spent budget —
+// is a stage failure like every other one, and the loop that called the judge
+// stops on it. The shadow rule is about what the run does with a *verdict*: it
+// says a verdict moves nothing, not that a failure is swallowed, and a run its
+// shadow stage already failed buys no fix round, no further review and no
+// second judge — the stage a run ends on is recorded where it failed and not
+// papered over by the stages a failed run would otherwise go on dispatching.
+func TestTriageStageFailureEndsTheRun(t *testing.T) {
+	b := newHandleBox(t)
+	h := newHarness(t, startupCfg(t, 2, ""), nil)
+	const violation = "model claude-x is not pinned for stage triage"
+	arm := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		b.h.SetStageExtra(func(stage string) ([]string, int64) {
+			if stage == "triage" {
+				return []string{violation}, 0
+			}
+			return nil, 0
+		})
+		return implement("feature")(t, ctx, req)
+	}
+	rec, err := h.run(t,
+		arm,
+		reviewScored("changes", blockingFinding()),
+		triageStep("block"),
+		fixStep,
+		review("ship", 0),
+		triageStep("defer"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Reason != "stage triage: "+violation {
+		t.Fatalf("rec = %+v, want the run failed by the judge's own stage", rec)
+	}
+	if got := stageNames(rec); !eq(got, "implement", "review", "triage") {
+		t.Fatalf("stages = %v, want the run to stop at the judge that failed it", got)
+	}
+	if len(h.agent.calls) != 3 {
+		t.Errorf("%d agent calls, want the implement, the review and the judge: a run the judge failed runs no further stage", len(h.agent.calls))
+	}
+	if rec.Triage != nil {
+		t.Errorf("the record's triage block = %+v, want none: the round a stage failure ended is the run's failure, not a failed round", rec.Triage)
+	}
+}
+
 // TestShadowTriageDoesNotChangeTheFixPrompt is the shadow slice's own red
 // step: the fixer is handed the round exactly as it was before the stage
 // existed (FixPrompt of the review's verdict), whatever the judge answered.
@@ -480,6 +540,87 @@ func TestTriageStageAccountIsRecorded(t *testing.T) {
 		}
 	})
 }
+
+// TestTriageSwitchIsReadFromTheBaseBranch: the switch is the base branch's
+// answer and never the checkout's (D25, D1854). The branch under review is the
+// artifact being reviewed: a branch that could turn the judge on for its own
+// pull request would be choosing who judges it, and one that could turn it off
+// would be choosing not to be judged.
+//
+// The two cases below are the two ways the checkout's answer differs from the
+// base's. In the first the base reads fugaro.yaml and writes the switch off
+// while the branch writes it on; in the second there is no base file to read at
+// all — baseCfg is nil — and the mode the run is judged at comes from the
+// project layer the task carried, which is the one part of a configuration that
+// is no branch's. Neither run calls a judge, and a run that read r.cfg instead
+// would call one in both.
+func TestTriageSwitchIsReadFromTheBaseBranch(t *testing.T) {
+	t.Run("the checkout turns it on over a base that does not", func(t *testing.T) {
+		// main, the base, is the fixture with a rigor block and the switch off;
+		// the branch under review is the same file with the switch on.
+		h := newHarness(t, triageOff(t, startupCfg(t, 1, "")), nil)
+		pushBranch(t, h, "feature", startupCfg(t, 1, ""))
+		setRef(t, h, task.Spec{Ref: "feature"})
+		// The judge's answer is scripted so that a run which asked for one is
+		// answered rather than failing on the unscripted call: what this case
+		// reads is whether the call was made at all.
+		rec, err := h.run(t, implement("feature"), review("ship", 0), triageStep("defer"))
+		mustReady(t, rec, err)
+		if rec.Rigor == nil || rec.Rigor.Mode != rigor.Startup {
+			t.Fatalf("the run resolved %+v, want the Startup both files name: the mode is not what this case is about", rec.Rigor)
+		}
+		if n := countStage(rec, "triage"); n != 0 {
+			t.Errorf("%d triage stages, want none: the branch under review's own switch is not the base's", n)
+		}
+		if rec.Triage != nil {
+			t.Errorf("the record carries a triage block: %+v", rec.Triage)
+		}
+	})
+	t.Run("a base that cannot be read", func(t *testing.T) {
+		// The repository's default branch has no fugaro.yaml: the base is
+		// unreadable, baseCfg is nil, and the mode comes from the project layer
+		// (rigor: startup under defaults). The checkout asks for the stage, and
+		// the run makes no call: with no base file to read a switch from, the
+		// strict direction is no triage, and the checkout's own answer is the
+		// one this must never fall back to.
+		checkout := strings.Replace(triageOn(t, firstLineCfg(t, 1, "")), "project: aurora\n", "project: aurora\ngcp_project: proj-1234\n", 1)
+		layer := layerSpec(triageLayer).ProjectLayer
+		h := newHarness(t, checkout, layerSpec(triageLayer))
+		pushBranch(t, h, "feature", checkout)
+		commitToRemote(t, h, func(dir string) {
+			if err := os.Remove(filepath.Join(dir, "fugaro.yaml")); err != nil {
+				t.Fatal(err)
+			}
+		})
+		setRef(t, h, task.Spec{Ref: "feature", ProjectLayer: layer})
+		rec, err := h.run(t, implement("feature"), review("ship", 0), triageStep("defer"))
+		// mustReady as well as the two below: a switch read off a nil baseCfg
+		// does not answer false, it panics, and a stage the runner recovers is
+		// a run that ends failed with no triage stage either — the assertion
+		// that tells the two apart is that this run finished its work.
+		mustReady(t, rec, err)
+		if rec.Rigor == nil || rec.Rigor.Mode != rigor.Startup {
+			t.Fatalf("the run resolved %+v, want the layer's Startup: the mode gate is not what this case is about", rec.Rigor)
+		}
+		if n := countStage(rec, "triage"); n != 0 {
+			t.Errorf("%d triage stages, want none: a run whose base file cannot be read triages nothing", n)
+		}
+		if rec.Triage != nil {
+			t.Errorf("the record carries a triage block: %+v", rec.Triage)
+		}
+	})
+}
+
+// triageLayer is a project layer whose defaults.rigor names Startup and nothing
+// else: the mode a run whose base branch cannot be read still resolves, which is
+// what makes the second case above about the switch and not about the mode.
+const triageLayer = `version: 1
+project: aurora
+gcp_project: proj-1234
+defaults:
+  rigor:
+    default: startup
+`
 
 // TestTriageSwitchIsReadFromThePublishedNode: the owner's published node is
 // where the off switch lives (D1854), read beside the base branch's own key

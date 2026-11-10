@@ -3505,8 +3505,12 @@ func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, s
 		// after the round is recorded and before anything acts on it, and what
 		// it answers is logged and nothing else — the fix below, Decide above
 		// the loop and the pull request's body all read the round exactly as
-		// they did before it existed.
-		r.triageRound(ctx, round, policy.LevelL2, v)
+		// they did before it existed. A judge the run could not make is a
+		// stage failure like any other, and the loop stops on it: nothing of
+		// the round is acted on by a run that is already over.
+		if !r.triageRound(ctx, round, policy.LevelL2, v) {
+			return false
+		}
 		// OD1: a round that asks for changes and names nothing but decisions
 		// only the owner can make is where the loop stops. No fix round is
 		// dispatched — there is nothing a coder could change — and no further
@@ -3608,8 +3612,11 @@ func (r *run) adversarialLoop(ctx context.Context, st planStep, reviewPrompt, sy
 		}
 		// The judge, exactly as seniorLoop calls it and for this level's own
 		// rounds: level 3's findings are judged too (D1847), whichever level
-		// decides readiness.
-		r.triageRound(ctx, round, policy.LevelL3, v)
+		// decides readiness. A judge that failed the run stops this loop the
+		// same way.
+		if !r.triageRound(ctx, round, policy.LevelL3, v) {
+			return false
+		}
 		// OD1, exactly as seniorLoop stops: level 3 is the deciding level of a
 		// run whose mode enabled it, so a round that names only the owner's
 		// decisions stops the run here rather than buying a fix round and a
@@ -3929,9 +3936,10 @@ func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt, sys, sess
 		// review level, its findings are what the level above is handed, and
 		// which level decided them does not change what the judge is asked. A
 		// round that answered no verdict has none to weigh, so it is skipped
-		// rather than judged on findings nothing named.
-		if parsed {
-			r.triageRound(ctx, round, policy.LevelL1, v)
+		// rather than judged on findings nothing named. A judge that failed
+		// the run ends this loop, which is the session's own return.
+		if parsed && !r.triageRound(ctx, round, policy.LevelL1, v) {
+			return sessionID, false
 		}
 		if sum.Verdict != "changes" {
 			return sessionID, true

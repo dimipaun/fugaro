@@ -74,19 +74,32 @@ func (r *run) triageOn() bool {
 }
 
 // triageRound is the step itself: it judges the findings of one review round
-// and records what it answered. It never fails the run and never changes what
-// the run does — a call that could not be made or could not be read is recorded
-// as a failed round and the loop goes on (D1846), and every exit below is a
-// return into the loop that called it.
+// and records what it answered. It never changes what the run does with a
+// verdict — a call that could not be made or could not be read is recorded as
+// a failed round and the loop goes on (D1846) — and it reports whether the loop
+// may go on at all: false is a stage failure that already ended the run, and
+// the caller returns into its own loop the way it does after any other stage
+// that failed.
+//
+// The distinction is the run's and not the stage's. A stage the run may do
+// without (Skippable) is skipped and the round logged as failed; a stage the
+// gateway refused — a model that is not pinned for it, a tool the policy
+// forbids, a request shape it will not forward — a stage the run's own clock
+// stopped, a cancel, a spent budget and a halt are all facts about the run,
+// and the loop that called the judge is not the one that gets to ignore them:
+// a run a shadow-only stage failed buys no fix round, no further review and no
+// second judge, exactly as it buys none after a failed review round. The
+// failure itself is recorded where the stage recorded it; nothing is logged
+// for this round, which no judge answered.
 //
 // round is the review round this triage followed, as the round's own summary
 // numbered it (ReviewSummary.Round), and level is the review level that ran it
 // (D1847): a level 1 round and a level 2 round of the same run are two triage
 // rounds, and which level's question the judge answered is what the record
 // says beside each.
-func (r *run) triageRound(ctx context.Context, round int, level policy.Level, v Verdict) {
+func (r *run) triageRound(ctx context.Context, round int, level policy.Level, v Verdict) bool {
 	if !r.triageOn() {
-		return
+		return true
 	}
 	mode := r.reachedRigor()
 	in, findings := triageInputs(v.Findings)
@@ -102,7 +115,7 @@ func (r *run) triageRound(ctx context.Context, round int, level policy.Level, v 
 		r.d.Log.Warn("the triage stage's own working directory could not be made; the round is recorded as failed",
 			"round", round, "err", r.redact(err.Error()))
 		r.recordTriage(ctx, round, level, triage.Outcome{}, false)
-		return
+		return true
 	}
 	defer os.RemoveAll(dir)
 
@@ -132,7 +145,7 @@ func (r *run) triageRound(ctx context.Context, round int, level policy.Level, v 
 		// A halt, a cancellation, a spent budget or a violation ended the run:
 		// the run's own reason is already recorded and there is no round left
 		// to log, exactly as the review loop itself returns here.
-		return
+		return false
 	}
 	verdict, parsed := readTriageVerdict(res)
 	if !parsed {
@@ -140,6 +153,7 @@ func (r *run) triageRound(ctx context.Context, round int, level policy.Level, v 
 			"round", round, "failed", !ok)
 	}
 	r.recordTriage(ctx, round, level, triage.Apply(mode, in, verdict, parsed), parsed)
+	return true
 }
 
 // recordTriage writes one round to the record's triage block. The block is the
