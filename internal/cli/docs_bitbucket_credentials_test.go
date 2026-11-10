@@ -38,6 +38,10 @@ const (
 	bitbucketCredentialsSpec   = "docs/bitbucket-credentials/spec.md"
 	bitbucketCredentialsRecon  = "docs/bitbucket-credentials/reconciliation.md"
 	bitbucketCredentialsPlan   = "docs/bitbucket-credentials/implementation-plan.md"
+	// bitbucketCredentialsReconSecrets is the 2026-11-10 reading of the plan
+	// against the secrets-brokering proxy chain. It is guarded like the three
+	// above: the index must name it, and every path it cites is checked.
+	bitbucketCredentialsReconSecrets = "docs/bitbucket-credentials/reconciliation-secrets-brokering.md"
 
 	// bitbucketCredentialsReadmeStatus is the index's status line, word for
 	// word, and bitbucketCredentialsPlanStatus the plan's. They move together:
@@ -73,6 +77,7 @@ var bitbucketCredentialsIndexedFiles = []string{
 	"[spec.md](spec.md)",
 	"[reconciliation.md](reconciliation.md)",
 	"[implementation-plan.md](implementation-plan.md)",
+	"[reconciliation-secrets-brokering.md](reconciliation-secrets-brokering.md)",
 }
 
 // bitbucketDecisionRE matches one decision row of the reconciliation's §5 table:
@@ -89,8 +94,8 @@ var bitbucketDecisionRE = regexp.MustCompile(`(?m)^\|\s*\*\*D(3[0-9][0-9])\*\*\s
 var bitbucketCredentialsAgainstRecommendation = []string{"D360", "D362", "D363", "D367"}
 
 // TestDocsBitbucketCredentialsIsWritten: the folder exists with its index and
-// its three documents, the index carries the status line word for word and names
-// the other three files, the plan carries its own status line and its slices,
+// its four documents, the index carries the status line word for word and names
+// the other four files, the plan carries its own status line and its slices,
 // and both number blocks are stated with what is written in them and what is
 // reserved. Its red state is this test: the folder's guard did not exist until
 // this file did.
@@ -359,6 +364,7 @@ func TestDocsBitbucketCredentialsEveryCitedPathExists(t *testing.T) {
 	paths := map[string]bool{}
 	for _, doc := range []string{
 		bitbucketCredentialsReadme, bitbucketCredentialsRecon, bitbucketCredentialsPlan,
+		bitbucketCredentialsReconSecrets,
 	} {
 		for _, p := range bitbucketCitedPaths(readDoc(t, doc)) {
 			paths[p] = true

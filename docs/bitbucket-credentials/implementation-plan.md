@@ -75,6 +75,15 @@ S2.
 **The active plan is S0–S2.** S3 is kept below as a parked slice. Its tasks keep their numbers, and
 none of them may start until the owner unparks S3.
 
+**Amended 2026-11-10: the plan is read against the secrets-brokering proxy chain, task by task.**
+[reconciliation-secrets-brokering.md](reconciliation-secrets-brokering.md) is that reading, taken
+on `origin/main`. It finds **every S3 task superseded by merged code**: T3.0 by the published
+node's `proxy` switch (BW-T2.1) with B1.7, T3.1 by B1.4 and B1.5, T3.2 by B1.6, B1.7 and B1.8,
+T3.4 by B1.10, T3.6 by B1.8's flip, and T3.5 with T3.7 and Check 147 — with two exceptions:
+**T3.3**'s cross-repository trust paths and **T3.8**'s read half stay owed. **S2 is untouched and
+still owed**: T2.6, T2.11, and T1.3 as the owner's own run. The reading's decisions are
+**D1960–D1962**, and its block is **D1960–D1979**.
+
 **D366 lands in no task by design.** Nothing is built for Data Center. BB5 pins the API root for
 the service-minted read path, which also keeps it on Bitbucket Cloud. T3.2, which is parked, does
 the same for runs.
@@ -264,6 +273,10 @@ unchanged, and `textContent` only.
 - **Commit:** `console: the project view, read from the stored coordinator view`.
 
 **T1.3 Check 149 (OWNER-RUN).**
+
+*Verdict 2026-11-10: **Kept**. Nothing in the proxy chain changes it: the read it confirms is
+merged, and the register's row reads USER-RUN, NOT RUN. See
+[reconciliation-secrets-brokering.md](reconciliation-secrets-brokering.md) §2.*
 
 - **What it confirms:** U9, end to end. The console already spawns reads that depend on ADC
   (`budget.show`), so this check confirms the new view rather than the mechanism.
@@ -637,6 +650,12 @@ T2.10 (Check 146). It comes after BB4 because it reuses the read mint BB4 builds
 retarget and its subject did not move — what moved is who the consumer is minted to, which the
 runbook now says.*
 
+*Verdict 2026-11-10: **Kept, and owed.** Nothing builds it: `docs/credentials-service/runbook.md`
+has no sentence about the read consumer — its §11 is the proxy's, a different holder — and the code
+it documents is merged (`internal/credsvc/bundle.go`'s `BitbucketReadConsumerSecret`,
+`internal/credsvc/auth.go`'s person class, `ee/coordinator/cli/coordinator_show.go`). D1962 asks
+whether it ships now with its two Check 145 clauses marked UNVERIFIED, or waits for the check.*
+
 - **What it documents:**
   - creating the read consumer under the installing person's account, with read scopes only;
   - that its token acts as that person, read-only, and stops working when the person leaves;
@@ -669,6 +688,10 @@ runbook now says.*
 
 *Retargeted in place (2026-11-01): the number stays, and the caller class it documents is now two —
 the person class (BB4) and the coordinator class (BB5).*
+
+*Verdict 2026-11-10: **Kept, and owed.** B1.10's `SECURITY.md` section, "The Bitbucket git proxy",
+is about the **run's** git credential; the read consumer, the read mint's two caller classes and
+the read mint's custody (O6) are still unwritten, and `SECURITY.md` names neither.*
 
 - **What it says:**
   - whether IP allowlisting applies to the read token (U8), or that it is unknown;
@@ -730,6 +753,25 @@ deferred until a push and pull-request proxy exists (D363(d)), and it is not can
   (F33, U16).
 - The parked parts are: T3.0–T3.8, Checks 147 and 148, the run consumer (F21), and the SECURITY.md
   statements of T3.4.
+
+**Verdicts 2026-11-10, against the proxy chain** (the reading is
+[reconciliation-secrets-brokering.md](reconciliation-secrets-brokering.md) §2). S3 was parked
+"until a push and pull-request proxy exists"; that proxy exists, and it does not want S3 — the
+chain keeps the credential in the service instead of minting one to the run, so S3's premise is
+what the chain removes. Every task below is **Superseded** by merged code, except the two whose
+verdict is split.
+
+| Task | Verdict | The merged code that builds it |
+| --- | --- | --- |
+| **T3.0** the per-repository switch, rendered into the job | **Superseded** | The switch is now the published node's: `internal/config/project_secrets.go`'s `Proxy`, `internal/projectpolicy/bitbucket.go`'s `BitbucketToken.Proxy`, read by `internal/gitprov/providers/providers.go`'s `Proxied` (BW-T2.1, B1.7). A launcher's local config cannot override it, which is what T3.0 rejected the shared config for |
+| **T3.1** the run mint, allow-listed and audited | **Superseded** | `internal/gitproxy/rules.go`'s `Decide` and `CheckPRWrite`, behind `internal/credsvc/bitbucketproxy.go` (B1.4, B1.5). Nothing is minted to a run, so there is no token to allow-list and no mint to audit |
+| **T3.2** the runner gets its token from the service | **Superseded** | `internal/gateway/gitforward.go` (B1.6) with `internal/gitprov/providers/providers.go`'s `Proxied`, installed by `internal/runner/runner.go`'s `startProxiedGit` (B1.7); its "no fallback to the mounted token" is B1.8's drop, whose flip is B1.13 part two |
+| **T3.3** comment identity and the trust paths | **Superseded in part, Kept in part** | The identity half goes with the run consumer: there is no consumer-owned person identity, and what a run may comment is B1.4's REST allow-list behind B1.5's route. The cross-repository trust paths stay owed |
+| **T3.4** `SECURITY.md` and the docs say it plainly | **Superseded** | B1.10's "The Bitbucket git proxy" and B1.13 part one's operator notes. Its subject was a minted run token's reach, and no token is minted; the sentences it was to replace are still true for a non-proxied run |
+| **T3.5** the minimum run scopes, and their check | **Superseded — Check 147 with it** | Nothing is minted, so there is no run scope set to enforce: the service spends the credential the operator stored. D1960 asks the owner to retire 147 |
+| **T3.6** the per-repository drop of the job's own token | **Superseded** | `internal/config/providers.go`'s `ProxiedGitSecretNames` with `internal/infra/spec.go`'s `RepoSpec.BitbucketProxied` and `deploy/terraform/gcp/modules/workflow/sa.tf` (B1.8). Only the flip is owed |
+| **T3.7** Check 147 (OWNER-RUN) | **Superseded** | The check is dropped with T3.5; the proxy's own owner-run check is `scripts/live-checks/check191.sh` and the register's row 191 (B1.11, B1.12), with 192 for the flip |
+| **T3.8** Check 148: the stop, rotation and transfer drill | **Superseded in part, Kept in part** | The run-mint half goes with S3; the read half is the read consumer's own drill, and D1961 asks the owner to bring it back into S2 |
 
 **T3.0 The per-repository switch, rendered into the job (F25, G9).**
 
@@ -849,6 +891,13 @@ deferred until a push and pull-request proxy exists (D363(d)), and it is not can
 - **Commit:** `runner: Bitbucket run tokens from the credentials service`.
 
 **T3.3 Comment identity and the cross-repository trust paths (F19, F28). PARKED with S3.**
+
+*Verdict 2026-11-10: **superseded in part, kept in part.** The identity half — whether the run
+consumer carries `account`, and what `selfUser` marks — goes with the run consumer, which the proxy
+chain replaces. The trust paths stay owed and are live again: a proxied run's comments are written
+with the operator's own token, and `internal/gitprov/bitbucket/comments.go`'s `selfUser` and
+`internal/followup/select.go`'s `MarkersFromAnyone` are in the tree from other work, while the four
+tests this task names are not.*
 
 - **What it does:** implements O1's chosen option.
 - **Its tests hold under every option:**
@@ -982,6 +1031,11 @@ deferred until a push and pull-request proxy exists (D363(d)), and it is not can
 
 **T3.8 Check 148: the stop, rotation and ownership-transfer drill (OWNER-RUN, D367).**
 
+*Verdict 2026-11-10: **superseded in part, kept in part.** The run-mint half goes with S3. The read
+half — the read consumer's own stop, rotation and ownership transfer, with U13 — is Kept: the read
+consumer is merged and shipped, nothing else exercises its rotation, and D1961 asks the owner to
+bring it back into S2 beside T2.6.*
+
 - **What the owner does:** follows the runbook on a sandbox:
   - takes the read consumer out of the bundle, and confirms a read mint is refused;
   - rotates a secret, and confirms that the old secret is refused **and** whether tokens already
@@ -1089,6 +1143,12 @@ golden plans and the workflow module.
 | 149 | The console shows the stored view on the owner's own machine (U9, end to end) | owner | T0.2 |
 
 Checks 150–154 are reserved and unused.
+
+**Amended 2026-11-10.** Check 147's subject — a sandbox run on a service-minted token, with exactly
+the minimum scopes — is gone with S3 (T3.5), and the number has no script and no register row.
+D1960 asks the owner to retire it, and D1961 to bring 148's read half back into S2; until the owner
+answers, the table above stands as written. The proxy chain's own owner-run checks are 191 and 192,
+written by B1.11.
 
 ## Release actions
 
