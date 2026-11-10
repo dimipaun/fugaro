@@ -469,7 +469,7 @@ run "an app command is never forwarded as text" \
 #     -- and a `propose` that answered a launch without sending it would leave the
 #     owner's command nowhere.
 run "a launch is sent as the owner's own words" \
-  "        const sent = await deliver(text);
+  "        const sent = await deliver(text, { verb: stepped.verb });
         if (sent.ok !== true) return sent;" \
   "        const sent = Object.freeze({ ok: true, outcome: DIALOGUE_OUTCOME.SENT, id: null, at });" \
   mobile/src/voice/dialogue.js src/voice/dialogue.test.js
