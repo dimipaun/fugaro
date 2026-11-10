@@ -544,8 +544,13 @@ prepare() { # dir
   cat >"$1/state/project-policy.json" <<'POLICY_EOF'
 {"project":"fugaro","policy":{"bitbucket_token":{"allow_repos":["bitbucket/workspace-a/repo-a"],"proxy":true}}}
 POLICY_EOF
+  # `fugaro doctor --json`: the bitbucket-direct row the flip's step reads, and
+  # the credentials-service-deployed row the `proxied` step reads the switch
+  # from. This one is doctor's arm for an installation whose every job account
+  # may invoke the service — ok, and no problem line — which is the state the
+  # sandbox repository is on the switch in.
   cat >"$1/state/doctor.json" <<'DOCTOR_EOF'
-{"ok":true,"checks":[{"id":"bitbucket-direct","ok":true},{"id":"creds-service","ok":true}],"project":{"name":"fugaro","gcp_project":"fugaro-dev","region":"us-east5"}}
+{"ok":true,"checks":[{"id":"credentials-service-deployed","ok":true,"class":"measure"},{"id":"bitbucket-direct","ok":true},{"id":"creds-service","ok":true}],"project":{"name":"fugaro","gcp_project":"fugaro-dev","region":"us-east5"}}
 DOCTOR_EOF
   # The repository's jobs, as `gcloud run jobs list --format=json` answers them:
   # the v1 Job shape, whose service account and container env are at
@@ -713,6 +718,47 @@ test_the_fake_run_refuses_an_id_the_cli_would_refuse() {
   fi
   expect_contains "$(cat "$dir/err")" "not the shape a run id takes" "the fake refuses a run id the CLI would"
   if [ -s "$dir/state/runs" ]; then fail "the fake recorded a run it had refused"; fi
+}
+
+test_the_switch_being_off_stops_the_check() {
+  local dir=$work/switchoff
+  prepare "$dir"
+  # `fugaro doctor`'s arm for a repository the credentials service does not
+  # admit: the repository's own auth is not cascade, so its root wrote its job
+  # account no invoker grant, and the `proxy: true` the policy advertises is
+  # inert for it — its runs hold the token themselves. The check has to stop
+  # here rather than launch three real runs at the direct path.
+  cat >"$dir/state/doctor.json" <<'DOCTOR_EOF'
+{"ok":false,"checks":[{"id":"credentials-service-deployed","ok":false,"severity":"warning","class":"update","problem":"the credentials service fugaro-credentials is deployed and grants no roles/run.invoker to workspace-a/repo-a (web), workspace-a/plain (web): a run of workspace-a/repo-a (web), workspace-a/plain (web) would fail to fetch a model credential"}],"project":{"name":"fugaro","gcp_project":"fugaro-dev","region":"us-east5"}}
+DOCTOR_EOF
+  run_check "$dir" "$script"
+  expect_status "$status" 1 "the switch off"
+  expect_contains "$out" "FACT proxied: FAIL" "the switch off: the row does not pass"
+  expect_contains "$out" "the credentials-service switch is OFF for workspace-a/repo-a" "the switch off: the row says what is off"
+  expect_contains "$out" "agent.auth: cascade" "the switch off: the remedy names the auth"
+  expect_contains "$out" "fugaro update --repo" "the switch off: the remedy names the apply"
+  expect_contains "$out" "grants no roles/run.invoker to workspace-a/repo-a" "the switch off: doctor's own problem is carried into the detail"
+  # Every row below is read from a run that goes through the service, so none
+  # of them was reached and no run was launched to measure the direct path.
+  expect_contains "$out" "FACT run-launch: FAIL — not reached" "the switch off: the rows below are not reached"
+  expect_contains "$out" "FACT scratch-removed: PASS" "the switch off: the scratch directory is still restored"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "the switch off: no run launched"
+}
+
+test_a_switch_the_check_cannot_read_is_unmeasured() {
+  local dir=$work/switchunread
+  prepare "$dir"
+  # The document doctor answers without the row the switch is read from: the
+  # check could not settle whether the repository is served, so the row is one
+  # it could NOT measure (exit 2) rather than a PASS over a fact nobody read.
+  cat >"$dir/state/doctor.json" <<'DOCTOR_EOF'
+{"ok":true,"checks":[{"id":"bitbucket-direct","ok":true}],"project":{"name":"fugaro","gcp_project":"fugaro-dev","region":"us-east5"}}
+DOCTOR_EOF
+  run_check "$dir" "$script"
+  expect_status "$status" 2 "doctor's document with no credentials-service-deployed row"
+  expect_contains "$out" "FACT proxied: FAIL" "an unread switch: the row is a FAIL"
+  expect_contains "$err" "could NOT measure proxied" "an unread switch: the check says it could not measure"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "an unread switch: no run launched"
 }
 
 test_happy_path() {
@@ -1077,6 +1123,8 @@ t test_repo_guard
 t test_the_run_id_must_name_today
 t test_the_run_id_base_must_be_todays_date_and_a_time
 t test_the_fake_run_refuses_an_id_the_cli_would_refuse
+t test_the_switch_being_off_stops_the_check
+t test_a_switch_the_check_cannot_read_is_unmeasured
 t test_happy_path
 t test_a_run_that_did_not_succeed_is_a_failure
 t test_a_refusal_the_service_wrote_no_class_line_for_is_a_failure
