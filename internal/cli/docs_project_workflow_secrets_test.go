@@ -763,12 +763,13 @@ func TestDocsProjectWorkflowSecretsResidualNamesTheManagedExposure(t *testing.T)
 		}
 	}
 	// D1270's unknown-key citation is the write path's, and it moved when
-	// `fugaro settings set` grew the managed gate, and again when the stage
-	// account's rows and refusals landed above it. The read path's own refusal
-	// is a different line in a different file, and saying which is which is what
-	// makes the citation re-readable.
+	// `fugaro settings set` grew the managed gate, again when the stage
+	// account's rows and refusals landed above it, and again when the workflow
+	// group's executable-key gate landed on both write paths. The read path's own
+	// refusal is a different line in a different file, and saying which is which
+	// is what makes the citation re-readable.
 	d1270 := subBody(t, rec, "D1270")
-	for _, want := range []string{"settings_set.go:467", "settings.go:170"} {
+	for _, want := range []string{"settings_set.go:491", "settings.go:170"} {
 		if !strings.Contains(d1270, want) {
 			t.Errorf("reconciliation.md D1270 does not cite %q: the registry answer has to name the line it comes from", want)
 		}

@@ -18,6 +18,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/failure"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/verify"
@@ -35,11 +36,36 @@ const (
 	// refusing a pull request before checkout (no PR of its own ever
 	// exists): a policy decision the runner made correctly, not an
 	// infrastructure fault.
-	StatusFailed     Status = "failed"
+	StatusFailed Status = "failed"
+	// StatusUnreviewed is a run that finished its loop, pushed and opened
+	// (or updated) its pull request, and that no review verdict exists for:
+	// a senior review round that answered nothing after its retry, or a run
+	// whose review never produced a senior round at all. Nothing failed —
+	// its tests passed — and nothing read it either, which is the state the
+	// label names.
+	StatusUnreviewed Status = "unreviewed"
 	StatusInfraError Status = "infra_error"
 	StatusCancelled  Status = "cancelled"
 	StatusHalted     Status = "halted" // a budget or token limit stopped the run
 )
+
+// Statuses is the whole vocabulary, in source order. It is the one spelling of
+// the set: result.schema.json's status enum, internal/digest's closed set and
+// the statuses the budget database accepts in an outcome (internal/budget's
+// outcomeStatuses, built from these, less the one status no ending run writes)
+// are each held to it, so a reader of a run record and the run that wrote it
+// cannot drift apart. Nothing in this tree writes a word outside it, and the
+// two places a record crosses its boundary refuse one rather than let it be
+// read as a status later: a strict reader validates against the schema, and the
+// database's rules refuse the outcome.
+var Statuses = []Status{StatusRunning, StatusSucceeded, StatusFailed, StatusUnreviewed, StatusInfraError, StatusCancelled, StatusHalted}
+
+// Terminal reports whether a run carrying this status has ended. Running is the
+// one status that has not, which is what the budget database's outcome
+// vocabulary needs: a run writes its outcome as it ends, so `running` is a
+// status no outcome carries — and one the rules refuse there, where a run that
+// ended with its outcome refused would show as a fault that never happened.
+func (s Status) Terminal() bool { return s != StatusRunning }
 
 // HaltReason says which limit halted a run.
 type HaltReason string
@@ -621,6 +647,289 @@ func NewAccepted(mode rigor.Mode, round int, at string, findings []ToleratedFind
 	return &AcceptedFindings{Findings: tf.Findings, Total: tf.Total, Mode: mode, Round: round, At: at}
 }
 
+// MaxTriageRounds bounds the triage rounds a record stores. Unlike
+// MaxTriageEntries it is not a cut any run reaches: a triage round follows a
+// review verdict (T-TR7a), a recipe's steps are a fixed tuple of at most four
+// with at most three review-bearing ones (schemas/recipe.schema.json's steps,
+// items: false), and each of those is held at recipe.MaxReviewRounds — so a run
+// triages at most 30 rounds and this cap is above every plan there is. It is
+// the record's ceiling for the reason MaxTolerated is: the record is a small
+// object every listing reads.
+const MaxTriageRounds = 32
+
+// MaxTriageEntries bounds one triage round's verdicts. It is the record's own
+// ceiling on a round's list, for the reason MaxTolerated and MaxOwnerDecisions
+// are ceilings: the record is a small object every listing reads, and the list
+// is a model's output. It is NOT a bound on a review round's findings — nothing
+// bounds those (internal/runner/verdict.go caps no finding list and
+// internal/triage.Prompt presents every one) — so a round that read more is
+// recorded as its first MaxTriageEntries with Total saying how many it read,
+// exactly as the tolerated, accepted and owner-decision lists say when they are
+// cut. A truncated list is never presented as the whole one (F19's rule for
+// those three).
+const MaxTriageEntries = 100
+
+// MaxTriageLine bounds a verdict's reason and a group key in runes, like
+// MaxToleratedTitle bounds a finding's title: the reason is the judge's own
+// one-line why and the group key is a word a reader routes on, and both are
+// printed in a table cell and carried into a follow-up task's brief.
+const MaxTriageLine = 200
+
+// TriageVerdict is the word a triage round placed on one finding
+// (docs/post-review-triage, D1840): the two words internal/triage's own
+// vocabulary holds, restated here because the record is read outside this
+// binary (result.schema.json closes the enum on these two).
+type TriageVerdict string
+
+const (
+	// VerdictBlock is the finding fixed in this patch before the merge: it is
+	// handed to the fixer and it holds the pull request as a draft.
+	VerdictBlock TriageVerdict = "block"
+	// VerdictDefer is the finding filed as a follow-up task and merged
+	// without. Only the findings that took effect reach Record.Deferred
+	// (T-TR7b, T-TR8): a verdict the floor or the mode's table overrode is
+	// recorded here and changes nothing.
+	VerdictDefer TriageVerdict = "defer"
+)
+
+// TriageSource says where a verdict or a deferral came from, so a reader can
+// tell a judge's call from the table's fallback (D1846) and from the cap's
+// (D1858). It is the record's own vocabulary and not internal/triage's: it
+// holds internal/triage's three spellings and adds the cap's, whose deferral is
+// not a verdict any judge answers and which no triage.Source names. The three
+// shared spellings are the same words on purpose — the record restates them
+// rather than importing them, because the two sets differ — and
+// TestTriageSourcesCoverTheStagesVocabulary holds the two to each other.
+type TriageSource string
+
+const (
+	// TriageSourceAgent is a judge's own verdict.
+	TriageSourceAgent TriageSource = "agent"
+	// TriageSourceTable is the mode's threshold table's call, which the run
+	// makes without a judge: a finding the table tolerates (T-TR7b), or one
+	// the table blocks where the judge would have deferred (D1840).
+	TriageSourceTable TriageSource = "table"
+	// TriageSourceFailSafe is the fallback a failed or unreadable triage call
+	// leaves: every finding the table blocks blocks (D1846).
+	TriageSourceFailSafe TriageSource = "fail_safe"
+	// TriageSourceCap is the cap's own deferral (D1858): a run that spent its
+	// triage budget defers the findings it could not judge, and this is the
+	// source that says the deferral is the cap's rather than anyone's call.
+	TriageSourceCap TriageSource = "cap"
+)
+
+// TriageRecord is what a run's triage decided (docs/post-review-triage, D1850):
+// one entry per round the stage ran, in the order it ran them, so a reader can
+// see how each finding was placed, by which model, and what a failed call left
+// behind. It is a block of its own and never a replacement for `tolerated`:
+// that one is the mode's table's account of what it let through, and this one
+// is the post-review step's, and a run carries both.
+//
+// The block is the run's log, so a round is kept whatever it decided — a round
+// whose call failed is kept with Failed set (D1846's triage_failed), which is
+// the fact a reader needs and a block that dropped it would hide.
+type TriageRecord struct {
+	// Rounds is one entry per triage round the run ran. Never empty: a run
+	// that triaged nothing carries no block at all.
+	Rounds []TriageRound `json:"rounds"`
+}
+
+// TriageRound is one triage round: which round of the run it judged, the mode
+// and review level in force at it, the account and model that answered, and
+// one verdict per finding the round read, with Total saying how many it read
+// where the list was cut.
+type TriageRound struct {
+	// Round is the review round this triage followed, at least 1.
+	Round int `json:"round"`
+	// Mode is the mode reached at this round (F14): the mode's persona is what
+	// the judge was asked from, and it is not necessarily the run's starting
+	// mode.
+	Mode rigor.Mode `json:"mode"`
+	// Level is the review level in force at the round (internal/policy's
+	// vocabulary, D1847).
+	Level policy.Level `json:"level"`
+	// Account and Model are the account that served the call and the model
+	// that answered it, empty when the round bought no call — a round the
+	// table settled alone.
+	Account string `json:"account,omitempty"`
+	Model   string `json:"model,omitempty"`
+	// Failed marks a round whose call failed or whose answer could not be
+	// read: the fallback blocks every finding the table blocks (D1846), and
+	// the flag is what makes that visible rather than a round that looks like
+	// any other.
+	Failed bool `json:"failed,omitempty"`
+	// Entries is one verdict per finding of the round. It may be empty — a
+	// round whose call failed before it placed anything still says so through
+	// Failed — and is never null, so a reader can range over it.
+	Entries []TriageEntry `json:"entries"`
+	// Total is how many findings the round read, so a list the cap cut still
+	// says how many verdicts the round wrote (MaxTriageEntries). Never less
+	// than len(Entries), and set by NewTriage from the entries it was given
+	// rather than by a caller: a round that reported fewer than it holds would
+	// be the same silent truncation the cap would otherwise be.
+	Total int `json:"total"`
+}
+
+// TriageEntry is one finding's placement in a round: which finding, the word,
+// the judge's one-line why, the group that ties related deferrals into one
+// follow-up task, and where the placement came from.
+type TriageEntry struct {
+	// Index is the finding's position in the round's list, as the brief
+	// numbered it (D1850).
+	Index int `json:"index"`
+	// Key identifies the finding across rounds: it is the same opaque key the
+	// follow-up task carries (T-TR4), so a reader can follow a finding from
+	// its verdict to the deferral that took effect.
+	Key string `json:"key"`
+	// Verdict is the word: block or defer.
+	Verdict TriageVerdict `json:"verdict"`
+	// Reason is the judge's one-line why, clipped to MaxTriageLine runes.
+	Reason string `json:"reason"`
+	// Group is the key that puts a deferral in the same follow-up task as
+	// other deferrals, empty for a finding that is its own task.
+	Group string `json:"group,omitempty"`
+	// Source is where the placement came from.
+	Source TriageSource `json:"source"`
+}
+
+// NewTriage bounds the triage rounds a run records and returns the block to
+// store, or nil when it holds none — a run that triaged nothing carries no
+// block at all, rather than an empty one.
+//
+// The rounds are capped at MaxTriageRounds and one round's entries at
+// MaxTriageEntries — each round's Total is set here, from the entries the
+// caller gave it, so a round the cap cut says how many verdicts it wrote
+// instead of looking like one that read only the first hundred — the reason and
+// the group key are clipped to MaxTriageLine, and a round or an entry a reader
+// cannot place is dropped: a round with no number, a mode or a level outside
+// its vocabulary, and an entry at a negative index, with no key, no reason, a
+// word outside the two or a source outside the four — an index below 0 names no
+// position in any round, which is the same refusal internal/triage's own reader
+// makes of a verdict. A round whose every entry was dropped is still kept when
+// it is failed, because that is the fact the round carries.
+func NewTriage(rounds []TriageRound) *TriageRecord {
+	if len(rounds) == 0 {
+		return nil
+	}
+	tr := &TriageRecord{Rounds: []TriageRound{}}
+	for _, r := range rounds {
+		if r.Round < 1 || !rigor.Known(r.Mode) || !policy.KnownLevel(r.Level) {
+			continue
+		}
+		if len(tr.Rounds) >= MaxTriageRounds {
+			break
+		}
+		r.Total = len(r.Entries)
+		entries := []TriageEntry{}
+		for _, e := range r.Entries {
+			if len(entries) >= MaxTriageEntries {
+				break
+			}
+			if e.Index < 0 || e.Key == "" || e.Reason == "" || !knownVerdict(e.Verdict) || !knownSource(e.Source) {
+				continue
+			}
+			e.Reason, e.Group = clipRunes(e.Reason, MaxTriageLine), clipRunes(e.Group, MaxTriageLine)
+			entries = append(entries, e)
+		}
+		r.Entries = entries
+		tr.Rounds = append(tr.Rounds, r)
+	}
+	if len(tr.Rounds) == 0 {
+		return nil
+	}
+	return tr
+}
+
+// MaxDeferred bounds the deferred findings a record stores, for the reason
+// MaxTolerated bounds the tolerated ones.
+const MaxDeferred = 100
+
+// DeferredFindings is the findings whose deferral took effect (D1850): the
+// ones the mode's table tolerates, the ones T-TR7b's enforcement left, and the
+// ones the cap deferred (D1858). It is what the report and the pull request
+// list and what `fugaro followups` files, so it carries exactly what a
+// follow-up task needs — the key that ties it to its verdict, the reviewer's
+// summary, the one-line why and the group.
+//
+// A verdict the floor or the mode's table overrode is never here: TriageRecord
+// is the log of what was decided and this block is what took effect, and the
+// shadow stage of T-TR7a writes the first and never the second.
+type DeferredFindings struct {
+	// Findings is one entry per deferral that took effect, in the reviewer's
+	// order. Never empty: a run that deferred nothing carries no block at all.
+	Findings []DeferredFinding `json:"findings"`
+	// Total is how many findings the run deferred. Never less than
+	// len(Findings).
+	Total int `json:"total"`
+}
+
+// DeferredFinding is one finding whose deferral took effect: the key it is
+// known by, the reviewer's own words for it, the one-line why, the group that
+// ties it to other deferrals in one task, and the source that made the
+// deferral stick.
+type DeferredFinding struct {
+	// Key is the finding's opaque key, the same one the verdict names and the
+	// one the follow-up task carries (T-TR4).
+	Key string `json:"key"`
+	// Summary is the reviewer's own summary of the finding, clipped to
+	// MaxToleratedTitle runes: the one piece of the finding's text the record
+	// carries, and the line the follow-up task and the report show.
+	Summary string `json:"summary"`
+	// Reason is the one-line why the deferral took effect, clipped to
+	// MaxTriageLine runes.
+	Reason string `json:"reason"`
+	// Group is the key that puts this deferral in the same follow-up task as
+	// the others that carry it, empty for a finding that is its own task.
+	Group string `json:"group,omitempty"`
+	// Source is where the deferral came from: the judge's word, the table's
+	// tolerance, or the cap's.
+	Source TriageSource `json:"source"`
+}
+
+// NewDeferred bounds the deferrals a run records and returns the block to
+// store, or nil when it holds none, for the reason NewTolerated returns nil.
+//
+// The list is capped at MaxDeferred with Total saying how many the run really
+// deferred, the summary is clipped to MaxToleratedTitle and the reason and the
+// group to MaxTriageLine, and an entry a follow-up cannot be built from is
+// dropped: one with no key, no summary, no reason, or a source outside the
+// four.
+func NewDeferred(findings []DeferredFinding) *DeferredFindings {
+	if len(findings) == 0 {
+		return nil
+	}
+	df := &DeferredFindings{Findings: []DeferredFinding{}, Total: len(findings)}
+	for _, f := range findings {
+		if f.Key == "" || f.Summary == "" || f.Reason == "" || !knownSource(f.Source) {
+			continue
+		}
+		if len(df.Findings) >= MaxDeferred {
+			break
+		}
+		f.Summary = clipRunes(f.Summary, MaxToleratedTitle)
+		f.Reason, f.Group = clipRunes(f.Reason, MaxTriageLine), clipRunes(f.Group, MaxTriageLine)
+		df.Findings = append(df.Findings, f)
+	}
+	if len(df.Findings) == 0 {
+		return nil
+	}
+	return df
+}
+
+// knownVerdict and knownSource are the two vocabularies' membership tests, the
+// way rigor.Known and policy.KnownLevel are for theirs: a value outside them is
+// a placement no reader can act on, so NewTriage and NewDeferred drop it rather
+// than store a word the schema's own enum refuses.
+func knownVerdict(v TriageVerdict) bool { return v == VerdictBlock || v == VerdictDefer }
+
+func knownSource(s TriageSource) bool {
+	switch s {
+	case TriageSourceAgent, TriageSourceTable, TriageSourceFailSafe, TriageSourceCap:
+		return true
+	}
+	return false
+}
+
 // MaxOwnerDecisions bounds the pending owner decisions a record stores, for
 // the reason MaxTolerated bounds the tolerated findings: the list is a model's
 // output and the record is a small object every listing reads.
@@ -1132,6 +1441,26 @@ type Record struct {
 	// this field existed: the field is additive, so an old reader sees the
 	// record it always saw and the schema's version stays 1 (F21).
 	Accepted *AcceptedFindings `json:"accepted,omitempty"`
+	// Triage is what the run's post-review triage decided (D1850): one entry
+	// per round the stage ran, with each finding's placement and, on a round
+	// whose call failed or whose answer could not be read, the fact that it
+	// did (D1846's triage_failed). A block of its own and never a replacement
+	// for Tolerated: that one is the mode's table's account of what it let
+	// through, and this one is the triage step's. Absent — never an empty
+	// block — for every run that triaged nothing, which is every record
+	// written before this field existed: the field is additive, so an old
+	// reader sees the record it always saw and the schema's version stays 1
+	// (F21).
+	Triage *TriageRecord `json:"triage,omitempty"`
+	// Deferred is the findings whose deferral took effect: the ones the mode's
+	// table tolerates, the ones the judge deferred inside the floor (T-TR7b)
+	// and the ones the cap deferred (D1858), with the keys a follow-up task
+	// carries. A verdict the floor or the table overrode is never here — the
+	// shadow stage of T-TR7a writes Triage and never this — so this block is
+	// exactly what the report lists and `fugaro followups` files. Absent —
+	// never an empty block — for every run that deferred nothing, which is
+	// every record written before this field existed (F21).
+	Deferred *DeferredFindings `json:"deferred,omitempty"`
 	// OwnerDecisions is what the run's review left for the repository's owner
 	// to settle (OD1): the findings a reviewer marked needs_owner, which no
 	// code change can fix, so the run spent no fix round on them — it stopped

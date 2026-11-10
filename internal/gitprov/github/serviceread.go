@@ -17,9 +17,9 @@ package github
 //     repository through the installation's own inventory and refuses one it
 //     does not hold. The answer echoes the repository back, which is what this
 //     client checks before it uses the token.
-//   - the permissions are the service's own (its github read mint asks GitHub
-//     for the coordinator's read-only set and adds none). This client asks for
-//     no permission, because there is no field to ask in.
+//   - the permissions are the service's own: its github read mint asks GitHub
+//     with github.PersonReadTokenPermissions (contents, pull_requests and
+//     metadata, all read). This client asks for none, because there is no field to ask in.
 //
 // The App ID travels in the body, and it is the one field of this contract that
 // is neither the repository nor an identity. It is not a secret -- the platform

@@ -4,9 +4,9 @@ package credsvc
 // mint's tests with the credential changed, and the two properties they exist to
 // hold are the two the route's design turns on:
 //
-//   - the permissions a person's token carries are the coordinator's read-only
-//     set and nothing else, asserted against the mint body GitHub was actually
-//     sent rather than against the constant the service passed in;
+//   - the permissions a person's token carries are the person read set and
+//     nothing else, asserted against the mint body GitHub was actually sent
+//     rather than against the constant the service passed in;
 //   - the route admits the installation's people and NOBODY else — not a job,
 //     not a verifier, not the coordinator.
 //
@@ -134,14 +134,14 @@ func TestGitHubReadMintsAReadOnlyTokenForAPerson(t *testing.T) {
 }
 
 // TestGitHubReadAsksForNoWrite is the permission half of the route's mutation
-// proof: the set GitHub is asked for is EXACTLY the coordinator's read-only set,
-// asserted field by field against the body the service actually sent.
+// proof: the set GitHub is asked for is EXACTLY the person read set, asserted
+// field by field against the body the service actually sent.
 //
-// A mutant that granted the person any permission the coordinator's set does not
-// hold — a contents write, a pull-requests write, an extra noun — fails here,
-// because the comparison is against the constant's own contents and not against
-// a subset. The second half of the test says the same thing in the vocabulary an
-// operator greps: no value the mint asked for is a write.
+// A mutant that granted the person any permission the set does not hold — a
+// contents write, a pull-requests write, an extra noun — fails here, because the
+// comparison is against the constant's own contents and not against a subset.
+// The second half of the test says the same thing in the vocabulary an operator
+// greps: no value the mint asked for is a write.
 func TestGitHubReadAsksForNoWrite(t *testing.T) {
 	s, gh := githubReadSvc(t, testPersonAccount)
 	if _, body := s.readGitHub(t, testRepoPath, testAppID, testPersonAccount); !strings.Contains(string(body), `"token"`) {
@@ -154,9 +154,9 @@ func TestGitHubReadAsksForNoWrite(t *testing.T) {
 	if err := json.Unmarshal([]byte(mint.body), &sent); err != nil {
 		t.Fatalf("the mint's body is not the object this contract writes: %v (%q)", err, mint.body)
 	}
-	want := github.CoordinatorTokenPermissions()
+	want := github.PersonReadTokenPermissions()
 	if len(sent.Permissions) != len(want) {
-		t.Fatalf("the read mint asked for %d permissions %v, want the coordinator's %d %v: this route mints a READ and adds no reach of its own",
+		t.Fatalf("the read mint asked for %d permissions %v, want the person read set's %d %v: this route mints a READ and adds no reach of its own",
 			len(sent.Permissions), sent.Permissions, len(want), want)
 	}
 	for noun, level := range want {

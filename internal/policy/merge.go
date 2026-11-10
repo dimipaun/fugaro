@@ -156,39 +156,95 @@ func Merge(ceiling Layer, tighten ...Layer) Effective {
 		}
 
 		if l.AllowedModels != nil {
-			if e.AllowedModels == nil {
-				e.AllowedModels, e.Sources[KeyAllowedModels] = dedupe(l.AllowedModels), src
-			} else {
-				in, running := toSet(l.AllowedModels), toSet(e.AllowedModels)
-				kept := make([]string, 0, len(e.AllowedModels))
-				for _, m := range e.AllowedModels { // running order is kept
-					if in[m] {
-						kept = append(kept, m)
-					}
-				}
-				extra := false
-				for _, v := range l.AllowedModels {
-					if !running[v] {
-						extra = true
-						break
-					}
-				}
-				prev := e.Sources[KeyAllowedModels]
-				if len(kept) < len(e.AllowedModels) {
-					e.AllowedModels, e.Sources[KeyAllowedModels] = kept, src
-				}
-				if extra { // asked for a model the earlier layers had excluded
-					e.Ignored = append(e.Ignored, Ignored{KeyAllowedModels,
-						strings.Join(dedupe(l.AllowedModels), ","),
-						strings.Join(e.AllowedModels, ","), prev})
-				}
-			}
+			e.intersectAllowList(&e.AllowedModels, l.AllowedModels, KeyAllowedModels, src)
 		}
+
+		// The binary allow-list is the same intersection over a key whose unset
+		// is the strict end: no list admits no binary (spec.md §2.1), so it is
+		// the one list a layer under the ceiling may not write where the layers
+		// so far admitted nothing — that would be introducing the paths rather
+		// than removing them (D986, spec.md §3). The cap is the caps rule
+		// beside it: the smaller positive one wins.
+		if l.BinariesAllow != nil {
+			e.tightenBinaryList(l.BinariesAllow, src, i == 0)
+		}
+		e.tightenInt(&e.BinariesMaxBytes, l.BinariesMaxBytes, KeyBinariesMaxBytes, src)
 	}
 	if len(e.Sources) == 0 {
 		e.Sources = nil
 	}
 	return e
+}
+
+// intersectAllowList applies one layer's allow-list to the running one: the
+// entries the earlier layers had are kept in their order, an entry the layer
+// asks for that they had excluded is dropped and recorded, and a layer that
+// sets the first list establishes it. It is one rule for both allow-lists this
+// package merges — the models a run may call and the paths it may add a binary
+// at — so the two cannot drift into two answers to "what may a later layer
+// narrow".
+//
+// The two keys' nil does not mean the same thing to a consumer (no models list
+// allows every model, no binaries list admits no binary), and that difference
+// lives at the check rather than here: what this rule owes both of them is
+// that a later layer can only take away. Which layer may establish the list at
+// all is the other half, and it is not the same for the two either
+// (tightenBinaryList).
+func (e *Effective) intersectAllowList(cur *[]string, l []string, key, src string) {
+	if *cur == nil {
+		*cur, e.Sources[key] = dedupe(l), src
+		return
+	}
+	in, running := toSet(l), toSet(*cur)
+	kept := make([]string, 0, len(*cur))
+	for _, v := range *cur { // running order is kept
+		if in[v] {
+			kept = append(kept, v)
+		}
+	}
+	extra := false
+	for _, v := range l {
+		if !running[v] {
+			extra = true
+			break
+		}
+	}
+	prev := e.Sources[key]
+	if len(kept) < len(*cur) {
+		*cur, e.Sources[key] = kept, src
+	}
+	if extra { // asked for an entry the earlier layers had excluded
+		e.Ignored = append(e.Ignored, Ignored{key,
+			strings.Join(dedupe(l), ","),
+			strings.Join(*cur, ","), prev})
+	}
+}
+
+// tightenBinaryList applies one layer's binary allow-list. It is
+// intersectAllowList with the one thing this key's unset forces: a nil running
+// list is the strict end here — no list admits no binary (spec.md §2.1) — so a
+// layer that is not the merge's first, and finds nothing admitted, cannot be
+// tightening the rule by writing a list. Intersecting would keep nothing and
+// read as a narrowing, while the paths it named had been admitted by no layer
+// at all; the list is refused and recorded instead (D986, spec.md §3).
+//
+// A later layer that names no path introduces none of them and is not
+// recorded, the way a craft credential the effective set already holds is not
+// (refuseCraftCredentials): there is no value to have lost to.
+func (e *Effective) tightenBinaryList(l []string, src string, first bool) {
+	switch {
+	case e.BinariesAllow != nil:
+		e.intersectAllowList(&e.BinariesAllow, l, KeyBinariesAllow, src)
+	case first:
+		e.BinariesAllow, e.Sources[KeyBinariesAllow] = dedupe(l), src
+	case len(l) > 0:
+		// The merge's first layer is what a key no layer set answers to
+		// (craftSource), and there is no effective list here for the refused
+		// one to have lost to: the run admits nothing, which is the value this
+		// layer's list would otherwise have widened.
+		e.Ignored = append(e.Ignored, Ignored{KeyBinariesAllow,
+			strings.Join(dedupe(l), ","), "", SourceCeiling})
+	}
 }
 
 // unionReviewFloor adds l's levels to the effective floor, mode by mode, and

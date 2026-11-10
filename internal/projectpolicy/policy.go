@@ -331,6 +331,28 @@ type Policy struct {
 	// existed.
 	ReviewFloor map[rigor.Mode][]policy.Level `json:"review_floor,omitempty"`
 
+	// Binaries is the project's binary allow rule (D981, D986): the paths a run
+	// may add a binary at, and the largest one it may add. It belongs to this
+	// node for the floor's reason — the owner writes it and the runner fails
+	// closed on it, while the shared file is writable by any launcher — and for
+	// the sharper one the block's own comment gives: the rule's writer must not
+	// be a file the subject of the rule can write, and the repository's
+	// fugaro.yaml is inside the checkout the run's own agent writes.
+	//
+	// Nothing decodes it yet: `binaries` is deliberately not in
+	// knownTopLevelKeys, so a node that writes the key has it listed in
+	// UnknownKeys and this field stays nil, which is the strict end — the run
+	// admits no binary. The member, its validation and the version bump that
+	// publishes them are the plan's AR0 and land together, because a block read
+	// before its patterns, count, lengths and cap are checked would be an
+	// unvalidated rule in force (see internal/projectpolicy/binaries.go).
+	//
+	// The runner reads it at bootstrap and puts the block on the ceiling layer
+	// (internal/runner's policyCeiling), where Merge intersects the list and
+	// takes the smaller cap, so a layer under the ceiling can remove an admitted
+	// path and can never add one.
+	Binaries *Binaries `json:"binaries,omitempty"`
+
 	// VerifierAccounts are the identities that may ask the credentials
 	// service's verify route whether a verdict's signature is that service's
 	// (C3.9g3, D1068, D1075): the coordinator's own account once it exists,

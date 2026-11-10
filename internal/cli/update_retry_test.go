@@ -74,13 +74,23 @@ func retryFile(t *testing.T, s *issues.Store, number int, command string) issues
 	return i
 }
 
+// retryMember is the member string the credential of the machine that filed
+// this file's reports answers with, and retryIdentity is that credential as
+// Upload takes it: the reporter a shared record carries is the credential's
+// member string and never a value the record came with (F3).
+const retryMember = "ana@example.test"
+
+func retryIdentity() issues.Identity {
+	return issues.Identity{Address: retryMember, Digest: issues.Digest(retryMember), Source: issues.SourceVerified}
+}
+
 // retrySharedIssue is the shared store's copy of a report, as the spec that
 // fills resolved_in leaves it once a later release fixed the bug (F27, D1731):
 // this plan builds no writer of that field and reads it.
 func retrySharedIssue(run, resolvedIn string) issues.Issue {
 	return issues.Issue{
 		LocalID: "local-" + run, Run: run,
-		Reporter:      issues.Digest("ana@example.test"),
+		Reporter:      retryMember,
 		Created:       retryAt,
 		FailedCommand: "fugaro update",
 		Class:         issues.ClassFugaro,
@@ -137,7 +147,7 @@ func retryBucket(t *testing.T, resolvedIn string) (*blobx.Bucket, int) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = b.Close() })
-	up, err := issues.Upload(t.Context(), b, retrySharedIssue(retryRun, resolvedIn))
+	up, err := issues.Upload(t.Context(), b, retrySharedIssue(retryRun, resolvedIn), retryIdentity())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +176,7 @@ func retrySharedStore(t *testing.T, resolvedIn string) issues.Uploaded {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = b.Close() })
-	up, err := issues.Upload(t.Context(), b, retrySharedIssue("update-20261107183012-48213", resolvedIn))
+	up, err := issues.Upload(t.Context(), b, retrySharedIssue("update-20261107183012-48213", resolvedIn), retryIdentity())
 	if err != nil {
 		t.Fatalf("seeding the shared store: %v", err)
 	}
@@ -423,7 +433,7 @@ func TestUpdateRetryMakesNoCloudWrite(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = b.Close() })
-	up, err := issues.Upload(t.Context(), b, retrySharedIssue(retryRun, retryRelease))
+	up, err := issues.Upload(t.Context(), b, retrySharedIssue(retryRun, retryRelease), retryIdentity())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -578,7 +588,7 @@ func TestUpdateRetryReadsTheCheckoutsStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = b.Close() })
-	up, err := issues.Upload(t.Context(), b, retrySharedIssue(retryRun, retryRelease))
+	up, err := issues.Upload(t.Context(), b, retrySharedIssue(retryRun, retryRelease), retryIdentity())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -629,7 +639,7 @@ func TestUpdateRetrySelectsTheProjectTheRunNamed(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { _ = b.Close() })
-			up, err := issues.Upload(t.Context(), b, retrySharedIssue(retryRun, retryRelease))
+			up, err := issues.Upload(t.Context(), b, retrySharedIssue(retryRun, retryRelease), retryIdentity())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -722,7 +732,7 @@ func TestUpdateRetryAppliesTheRunsBucket(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { _ = b.Close() })
-			up, err := issues.Upload(t.Context(), b, retrySharedIssue(retryRun, retryRelease))
+			up, err := issues.Upload(t.Context(), b, retrySharedIssue(retryRun, retryRelease), retryIdentity())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -813,4 +823,11 @@ func retryConfig(t *testing.T, url string) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+// uploadAsReporter uploads an issue under the verified identity of its own
+// reporter, the way a signed-in member's machine does (issues.Upload takes the
+// identity the reporter index is written under).
+func uploadAsReporter(ctx context.Context, b *blobx.Bucket, i issues.Issue) (issues.Uploaded, error) {
+	return issues.Upload(ctx, b, i, issues.Identity{Address: i.Reporter, Digest: issues.Digest(i.Reporter), Source: issues.SourceVerified})
 }

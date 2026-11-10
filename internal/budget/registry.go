@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/rtdb"
+	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
@@ -369,8 +370,31 @@ func (s *Session) heartbeat(ctx context.Context) {
 	}
 }
 
-// outcomeStatuses are the statuses the rules accept in an outcome.
-var outcomeStatuses = map[string]bool{"succeeded": true, "failed": true, "halted": true, "cancelled": true, "infra_error": true, "none": true}
+// outcomeStatuses are the statuses an outcome may carry: runstore's own
+// vocabulary — Statuses, the one spelling of the set, read from the package
+// that writes a run's record — plus "none", which no record writes (a run with
+// no outcome at all) and the rules accept. Deriving it rather than spelling the
+// words again is what keeps the database true about a status a release adds:
+// with the literal list this map held before, the first run labelled
+// `unreviewed` would have been filed here as an infrastructure error, a figure
+// a reader acts on and the run's own record contradicts.
+//
+// The same set is a literal in the rules' outcome validator, because the
+// template is a document and not Go; the pin that holds the two together is
+// TestOutcomeRuleAcceptsEveryRunStatus (internal/budget/rules/rules_test.go,
+// which can import runstore), and TestFinishRecordsTheRunsOwnStatus
+// (internal/budget/session_test.go) is the end of the path: the status the
+// runner passes reaches the outcome node unchanged.
+var outcomeStatuses = func() map[string]bool {
+	set := map[string]bool{"none": true}
+	for _, s := range runstore.Statuses {
+		if !s.Terminal() {
+			continue // a run that has not ended has no outcome to write
+		}
+		set[string(s)] = true
+	}
+	return set
+}()
 
 // Finish ends the session: it stops the loops, tries again to release what
 // an earlier release left, reports the last usage, writes the run's outcome
@@ -404,6 +428,12 @@ func (s *Session) Finish(ctx context.Context, status string) {
 			s.log.Warn("budget: the last usage report failed", "error", err.Error())
 		}
 		if !outcomeStatuses[status] {
+			// A word no record of this build carries. The rules would refuse the
+			// outcome outright, leaving the dashboard with no figure for the run
+			// at all, so it is filed as an infrastructure error — the ending a
+			// reader acts on — and named in the log: a silent rewrite is how a
+			// wrong figure reaches a person.
+			s.log.Warn("budget: the outcome status is not one this build writes; the outcome is filed as an infrastructure error", "status", status)
 			status = "infra_error"
 		}
 		day := Day(s.now())
