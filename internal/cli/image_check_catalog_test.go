@@ -859,3 +859,48 @@ func TestCatalogCheckJobRefusesADefinitionBakedForAnotherRepository(t *testing.T
 		})
 	}
 }
+
+// TestCatalogCheckJobRebuildsADefinitionComposedFromANonCanonicalOrigin: a
+// definition is composed from a checkout's origin — the operator's own remote —
+// while the check's own REPO_URL is repourl.CloneURL's canonical form, and the
+// two are the same repository whenever the origin differs only in git's own
+// spellings of it: no ".git", a trailing slash, a capital letter. Such an entry
+// is not held back by the check: it is submitted, and the URL the submission
+// carries is the rebuild's own canonical one — the pair the stage's guard has
+// to accept (imagebake's repoURLGuard, which is where the guard itself is run,
+// because a guard is shell and this job never builds anything for real).
+func TestCatalogCheckJobRebuildsADefinitionComposedFromANonCanonicalOrigin(t *testing.T) {
+	for name, origin := range map[string]string{
+		"no .git":          "https://bitbucket.org/acme/app",
+		"a trailing slash": "https://bitbucket.org/acme/app/",
+		"a capital letter": "https://Bitbucket.org/Acme/App",
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newCatalogCheckJob(t, catalogCheckSpecFor(t, catalogCheckCatalog("tools"), 5))
+			baked, err := imagebake.Append([]byte(catalogCheckAppDef), imagebake.Plan{Baked: &imagebake.Repo{
+				Repo: "acme/app", Slug: f.slugs["acme/app"], URL: origin, Branch: "main",
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.seed(t, "tools", "acme/app", string(baked), "sha256:"+strings.Repeat("9", 64))
+
+			lines, err := runCatalogCheck(t)
+			if err != nil {
+				t.Fatalf("err = %v: a definition composed from %s bakes acme/app, which is the repository this entry rebuilds as", err, origin)
+			}
+			if got := buildPosts(f.fb); got != 1 {
+				t.Fatalf("builds submitted = %d, want 1: the entry's definition bakes the repository the rebuild runs as", got)
+			}
+			if l := lineFor(t, lines, "tools"); l.Decision != imagecheck.Rebuild {
+				t.Fatalf("tools line = %+v, want a rebuild", l)
+			}
+			// The build's own argument is the canonical spelling, which is the
+			// one the composed definition does not carry: the guard is what
+			// has to see through that, not this test's fixture.
+			if subs := catalogBuildSubs(t, f.fb); subs["_REPO_URL"] != "https://bitbucket.org/acme/app.git" {
+				t.Fatalf("_REPO_URL = %v, want the rebuild's own canonical URL", subs["_REPO_URL"])
+			}
+		})
+	}
+}

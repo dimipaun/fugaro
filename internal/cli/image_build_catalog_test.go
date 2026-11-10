@@ -933,3 +933,47 @@ func TestCatalogBuildNamesTheReposThatCloneAtStart(t *testing.T) {
 		t.Errorf("stderr = %q, want the repositories that clone at job start named", stderr)
 	}
 }
+
+// TestCatalogBuildBakesTheEntryAWorkflowsNeedsChoose: a workflow that declares
+// needs: and no image_name: runs the entry the tag-cover rule covers its tags
+// with — catalog.Choose, the rule internal/infra's catalogJobImage resolves
+// the deployed job's image with — and that entry is a catalog reference like a
+// pin (F4, T1 (b)). The entry the project's map puts the repository on is not
+// that entry, so nothing is composed into it: the checkout would sit in an
+// image its own jobs never start, and in an image every other repository the
+// map gives that entry to would run (F18).
+func TestCatalogBuildBakesTheEntryAWorkflowsNeedsChoose(t *testing.T) {
+	repo := strings.Replace(bitbucketYAML, "app: {", "app: { needs: [postgres],", 1)
+	if repo == bitbucketYAML {
+		t.Fatal("the fixture workflow has changed shape")
+	}
+	// base is the entry whose tags cover postgres, and the map says tools:
+	// the two disagree, and the rule the job's image is resolved with is the
+	// one this build follows.
+	_, gcs, f := catalogBuildCheckoutFor(t, repo, catalogBuildYAML, gitprov.KindBitbucket, "")
+	stubCatalogProvider(t, map[string]string{".fugaro/base.Dockerfile": catalogBuildFetched})
+	f.sm.AllowAccess()
+	f.appendConfig(t, "image_map:\n  acme/app: tools\n")
+
+	_, stderr, err := executeBuild(t, "image", "build", "tools", "--base", "b:1")
+	if err != nil {
+		t.Fatalf("%v (%s)", err, stderr)
+	}
+	got, _ := catalogCopy(t, gcs, "tools")
+	if got != catalogBuildInline {
+		t.Errorf("the copy is %q, want the entry's own definition %q: this repository's jobs run base, not tools", got, catalogBuildInline)
+	}
+	if strings.Contains(stderr, "bakes the checkout") {
+		t.Errorf("stderr = %q, want no bake line for an entry this repository does not run", stderr)
+	}
+	// The entry the rule chose is the one its jobs start, so that entry's
+	// build is where the checkout goes.
+	if _, _, err := executeBuild(t, "image", "build", "base", "--base", "b:1"); err != nil {
+		t.Fatalf("%v", err)
+	}
+	dir := "/work/baked/" + mustSlug(gitprov.KindBitbucket, "acme/app")
+	got, _ = catalogCopy(t, gcs, "base")
+	if baked, ok := imagebake.BakedDir([]byte(got)); !ok || baked != dir {
+		t.Errorf("the copy of base bakes at %q, %v; want %s: needs: [postgres] picks that entry, so its jobs run it", baked, ok, dir)
+	}
+}

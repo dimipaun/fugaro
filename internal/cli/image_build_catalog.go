@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/catalog"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
@@ -287,7 +288,7 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 	// Decide). No path under fugaro update writes a definition at all (O1),
 	// which is what keeps it a one-command upgrade.
 	bakeRepo := imagebake.Repo{Repo: canon, Slug: rs.Slug, URL: repoURL, Branch: cmp.Or(rs.BaseBranch, "main")}
-	bakeRef := bakeReference(cfg)
+	bakeRef := bakeReference(cfg, cat, rs.Slug, catalog.Backend(lc.Backend()))
 	// The image is spelled from the host the installation's registries are
 	// under and not from a region of this command's own, so a build pushes
 	// exactly where a job's catalog image is pulled from, whichever one the
@@ -678,27 +679,44 @@ func catalogBuildBanner(entries []config.Entry, machineType, account, registry s
 	}
 }
 
-// bakeReference is the catalog entry the checkout's own workflows name, ""
-// when they name none or a different one each: a repository that names an
-// entry in its workflow runs that entry's image whatever the project's map
-// says (T1 reading (b)), so the bake belongs in that entry's image and not in
-// this one.
+// bakeReference is the catalog entry the checkout's own jobs run, "" when they
+// run none or a different one each: a repository whose jobs run an entry runs
+// that entry's image whatever the project's map says (T1 reading (b)), so the
+// bake belongs in that entry's image and not in this one.
+//
+// The entry is the deploy's own answer to the same question, because the bake
+// belongs in the image the repository's jobs actually start — a checkout baked
+// into an image they never pull is work nobody reads. catalog.Applies says
+// whether the catalog speaks for a workflow at all, and catalog.Choose is the
+// pin and the tag-cover rule internal/infra's catalogJobImage resolves the
+// deployed job's image with. A pin (image_name:) and a workflow's own needs:
+// are both references, which is what F4 and T1 (b) call them: reading only the
+// pin would bake a repository that declares needs: into the entry the map puts
+// it on, an image its own jobs never start.
 //
 // A workflow that runs the base image or a shared dependency layer names no
 // entry and is skipped: such a job holds no repository source and a checkout
-// baked for it would be read by nobody. Tags a workflow needs (Needs) are not
-// a reference: the tag-cover rule picks an entry per job, and a bake that
-// follows a set of tags would move with a choice this command does not make.
-func bakeReference(cfg *config.Config) string {
+// baked for it would be read by nobody. A workflow the rule cannot answer —
+// a pin the catalog does not hold, no default and no covering candidate —
+// contributes nothing, and a bake is not the place to guess: what such a
+// workflow runs is what fugaro validate and the job spec's own refusals
+// settle, before a build is composed at all.
+func bakeReference(cfg *config.Config, cat *config.Catalog, slug string, be catalog.Backend) string {
 	names := map[string]bool{}
 	for _, name := range slices.Sorted(maps.Keys(cfg.Workflows)) {
 		w := cfg.Workflows[name]
-		if w.Checkout == config.CheckoutClone || w.Checkout == config.CheckoutShared {
+		if !catalog.Applies(*cat, w) {
 			continue
 		}
-		if w.ImageName != "" {
-			names[w.ImageName] = true
+		choice, err := catalog.Choose(catalog.Job{
+			Catalog: *cat,
+			Repos:   []catalog.Repo{{Slug: slug, Pin: w.ImageName, Needs: w.Needs}},
+			Backend: be,
+		})
+		if err != nil {
+			continue
 		}
+		names[choice.Entry.Name] = true
 	}
 	if len(names) != 1 {
 		return ""

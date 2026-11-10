@@ -71,6 +71,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // Root is the directory a baked checkout lives under, one per repository slug.
@@ -259,6 +261,15 @@ func Path(slug string) (string, error) {
 // on the pairing it read from the two. So the stage refuses a REPO_URL that is
 // not the one it was composed for, and the rebuild fails saying so instead of
 // baking the wrong source.
+//
+// The refusal is about the repository, not about the spelling: a definition is
+// composed from a checkout's origin, which is the operator's remote, while the
+// catalog build itself passes repourl.CloneURL's canonical form — so a guard
+// holding the two to one string would refuse the nightly rebuild of every
+// definition composed from an origin without ".git", or with a trailing slash,
+// or with a capital letter. The guard and the composed spelling are one fold
+// (originID), which is task.CanonicalRepo's: what git and every other reader
+// here call one repository is one answer to this REFUSAL too.
 func Stage(r Repo) (string, error) {
 	dir, err := Path(r.Slug)
 	if err != nil {
@@ -276,8 +287,7 @@ func Stage(r Repo) (string, error) {
 	b.WriteString("ARG REPO_URL\nARG BASE_BRANCH\nARG FUGARO_COMMIT=\"\"\n")
 	fmt.Fprintf(&b, "RUN --mount=type=secret,id=git-credentials,uid=1000,required=false \\\n"+
 		"    case \"$FUGARO_COMMIT\" in *[!0-9a-f]*) echo \"FUGARO_COMMIT is not a commit ID\" >&2; exit 1 ;; esac \\\n"+
-		" && case \"$REPO_URL\" in '%s') ;; \\\n"+
-		"      *) echo \"this definition bakes one repository's checkout, and REPO_URL is not it: a rebuild of the entry has to run as the repository whose checkout it bakes\" >&2; exit 1 ;; esac \\\n"+
+		" && %s \\\n"+
 		" && install -d -m 0755 %s \\\n"+
 		" && GIT_TERMINAL_PROMPT=0 git -c credential.helper= \\\n"+
 		"      -c credential.helper='store --file=/run/secrets/git-credentials' \\\n"+
@@ -290,8 +300,46 @@ func Stage(r Repo) (string, error) {
 		"      || { echo \"commit $commit is no longer reachable: the branch was force-pushed; re-run the build\" >&2; exit 1; }; } \\\n"+
 		" && git -C %s reset --quiet --hard \"$commit\" \\\n"+
 		" && /usr/local/lib/fugaro/finalize-checkout %s\n",
-		r.URL, Root, dir, dir, dir, dir, dir)
+		repoURLGuard(r.URL), Root, dir, dir, dir, dir, dir)
 	return b.String(), nil
+}
+
+// repoURLGuardFormat is the shell the generated stage runs to hold a build's
+// REPO_URL to the repository the definition was composed for, with the one
+// substitution it takes: the composed origin as originID spells it. The two
+// folds the shell does are the two originID does — ASCII case down, then a
+// trailing "/" and a trailing ".git" off — because the build's REPO_URL is not
+// the composed spelling: a catalog build passes repourl.CloneURL's canonical
+// form while this definition was composed from the checkout's origin, and the
+// two differ by exactly those.
+//
+// It is a constant, and separate from the stage, so a test can run it through
+// sh -c with a REPO_URL of each spelling: the invariant is what the shell does
+// with two URLs and not the words of its refusal, and a guard whose text alone
+// is pinned can be relaxed to an always-matching arm with nothing failing.
+const repoURLGuardFormat = `repo=$(printf '%%s' "$REPO_URL" | tr 'A-Z' 'a-z') \
+ && repo=${repo%%/} && repo=${repo%%.git} \
+ && case "$repo" in '%s') ;; \
+      *) echo "this definition bakes one repository's checkout, and REPO_URL is not it: a rebuild of the entry has to run as the repository whose checkout it bakes" >&2; exit 1 ;; esac`
+
+// repoURLGuard is that shell for one composed URL, byte for byte what the
+// stage carries.
+func repoURLGuard(url string) string { return fmt.Sprintf(repoURLGuardFormat, originID(url)) }
+
+// originID is a clone URL as the repository it names, spelled one way: the
+// fold task.CanonicalRepo puts a repository name through — ASCII case down and
+// a trailing ".git" off — applied to the whole URL, with a trailing "/" off
+// first because a URL may carry one and a repository name may not.
+//
+// It is the identity the guard compares and the spelling the stage writes into
+// it, so a definition composed from any of git's spellings of one repository
+// is rebuilt by the nightly check, which passes the canonical one. It is not a
+// second parse of the URL: nothing here decides where the host ends, because
+// two URLs git clones the same repository from are already the same string
+// once this fold is applied, and a URL that is not one is refused before a
+// stage is written (httpsOrigin).
+func originID(u string) string {
+	return task.ASCIILower(strings.TrimSuffix(strings.TrimSuffix(u, "/"), ".git"))
 }
 
 // httpsOrigin refuses a URL a stage may not spell into a definition: the URL is

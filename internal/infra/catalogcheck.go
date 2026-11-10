@@ -289,11 +289,10 @@ func CatalogBuilds(lc *localcfg.Config) bool {
 
 // catalogCheckRepos are the repositories the catalog's entries build in, each
 // with the entries assigned to it: a Dockerfile-sourced entry goes to the
-// repository its source names, an inline definition to the repository the
-// project's map puts it on — the same input a build reads to decide whose
-// checkout goes into the entry — and an entry whose repository this
-// installation cannot name, a prebuilt image among them, to the project's
-// first. Every entry is assigned at most once — the job refuses a spec that
+// repository its source names, an inline definition to the repository this
+// machine's map puts it on, and an entry whose repository this installation
+// cannot name, a prebuilt image among them, to the project's first. Every
+// entry is assigned at most once — the job refuses a spec that
 // assigns one twice, since the second build would race the first for the
 // entry's record.
 //
@@ -342,6 +341,22 @@ func catalogCheckRepos(lc *localcfg.Config, cat *config.Catalog) ([]CatalogCheck
 	// it bakes and which repository runs the entry (imagebake.Decide, D1906), so
 	// it is what the rebuild has to run as: a definition that bakes a checkout
 	// is only reproducible by the repository whose checkout it is.
+	//
+	// It is THIS machine's map and not the published node's, because that is
+	// what this function has: a check job's spec is rendered from the
+	// installation root's own inputs (catalogCheckFor takes the local config
+	// alone), while a build reads the map over the published one
+	// (localcfg.ImageMapEffective over the policy node). A project whose map
+	// lives only on the published node — a second machine published it — then
+	// assigns an inline entry to the project's first repository here while the
+	// build baked the mapped repository's checkout into it. They disagree in
+	// the direction that is safe and self-correcting: the entry falls to the
+	// project's first repository, and the job refuses a definition baked for
+	// another repository before a build is submitted (internal/cli's catalog
+	// check), naming the `fugaro image map set` that makes the two agree and
+	// the `fugaro update` that re-renders this spec. Nothing is therefore
+	// built under an account that does not reach the checkout a definition
+	// bakes; the cost is a night of refusals until the map is set here.
 	imageMap := lc.ImageMapEffective(nil)
 	for _, e := range cat.Entries {
 		i := 0 // the project's first repository: the one an entry with none of its own goes to

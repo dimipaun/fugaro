@@ -1,6 +1,8 @@
 package imagebake
 
 import (
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -231,7 +233,7 @@ func TestStageClonesWithTheBuildsOwnCredential(t *testing.T) {
 	for _, want := range []string{
 		"--mount=type=secret,id=git-credentials,uid=1000,required=false",
 		"credential.helper='store --file=/run/secrets/git-credentials'",
-		"case \"$REPO_URL\" in 'https://github.com/acme/app.git') ;;",
+		"case \"$repo\" in 'https://github.com/acme/app') ;;",
 		"clone --quiet --branch \"$BASE_BRANCH\" --single-branch -- \"$REPO_URL\" /work/baked/app-1234abcd",
 		"reset --quiet --hard \"$commit\"",
 		"/usr/local/lib/fugaro/finalize-checkout /work/baked/app-1234abcd",
@@ -276,10 +278,10 @@ func TestStageRefusesAnotherRepositorysURL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The guard compares the build's own argument with the composed URL and
-	// fails the build when they differ, saying which way out there is.
-	if !strings.Contains(stage, `case "$REPO_URL" in 'https://github.com/acme/app.git') ;;`) {
-		t.Fatalf("the stage does not hold REPO_URL to the URL it was composed for:\n%s", stage)
+	// The stage runs the guard the test below runs; what is pinned here is
+	// that this stage carries it and not a second spelling of the rule.
+	if !strings.Contains(stage, repoURLGuard(reqApp().Repo.URL)) {
+		t.Fatalf("the stage does not hold REPO_URL to the repository it was composed for:\n%s", stage)
 	}
 	if !strings.Contains(stage, "a rebuild of the entry has to run as the repository whose checkout it bakes") {
 		t.Errorf("the guard's refusal does not say what went wrong or what to do:\n%s", stage)
@@ -299,6 +301,46 @@ func TestStageRefusesAnotherRepositorysURL(t *testing.T) {
 			r.URL = bad
 			if stage, err := Stage(r); err == nil {
 				t.Fatalf("Stage spelled %q into a definition:\n%s", bad, stage)
+			}
+		})
+	}
+}
+
+// TestRepoURLGuardHoldsTheRepositoryNotTheSpelling: the guard is shell, and
+// what it has to do is what the text of it cannot promise — accept every
+// spelling git clones one repository from and refuse another repository. The
+// build's REPO_URL is not the composed one: a catalog build passes
+// repourl.CloneURL's canonical form (https://host/owner/name.git) while the
+// definition was composed from the checkout's origin, which git spells with or
+// without ".git", with or without a trailing slash, and in any case. A guard
+// comparing the two strings refused the nightly rebuild of such a definition
+// inside the build, every night, after it was submitted and paid for.
+func TestRepoURLGuardHoldsTheRepositoryNotTheSpelling(t *testing.T) {
+	// Composed from an origin with none of the three canonical marks.
+	guard := repoURLGuard("https://Bitbucket.org/acme/Other")
+	for name, tc := range map[string]struct {
+		repoURL string
+		held    bool
+	}{
+		"the canonical form the nightly check passes": {"https://bitbucket.org/acme/other.git", true},
+		"the origin it was composed from":             {"https://Bitbucket.org/acme/Other", true},
+		"a trailing slash":                            {"https://bitbucket.org/acme/other.git/", true},
+		"another repository":                          {"https://bitbucket.org/acme/elsewhere.git", false},
+		"another repository, spelt like the origin":   {"https://Bitbucket.org/Acme/Elsewhere", false},
+		"another repository of another host":          {"https://github.com/acme/other.git", false},
+		"a repository whose name starts the same":     {"https://bitbucket.org/acme/other-repo.git", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cmd := exec.Command("sh", "-c", guard)
+			cmd.Env = append(os.Environ(), "REPO_URL="+tc.repoURL)
+			out, err := cmd.CombinedOutput()
+			switch {
+			case tc.held && err != nil:
+				t.Fatalf("the guard refused %s, which is the repository this definition bakes: %v\n%s", tc.repoURL, err, out)
+			case !tc.held && err == nil:
+				t.Fatalf("the guard accepted %s, and the rebuild would bake it into this definition's slug path", tc.repoURL)
+			case !tc.held && !strings.Contains(string(out), "REPO_URL is not it"):
+				t.Fatalf("the guard refused %s without saying why:\n%s", tc.repoURL, out)
 			}
 		})
 	}
