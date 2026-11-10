@@ -180,6 +180,55 @@ func TestStopStartupWithLevel3IsNoStricterThanWithoutIt(t *testing.T) {
 	})
 }
 
+// TestStopEscalatedLevel3IsNoStricterThanLevel3AskedFor is the record the pair
+// above pins, read with level 3 arriving from the other direction: there the
+// task asks for it and the plan the loop starts with carries the adversarial
+// step, here the security escalation's fix seam turns it on in the middle of
+// the senior loop and rebuilds the plan (security.go, D1507).
+//
+// The rounds half of the stop rule is spent at the plan's last review step, and
+// that is a question about the plan as it stands when a step's own rounds run
+// out — never about the plan the loop read when it dispatched the step. The
+// escalation rebuilds the plan inside the step, so a level-2 step that was the
+// last one when it started is one the adversarial step follows: written there,
+// the stop takes level 2's blocking round as accepted and the run goes ready on
+// a finding its own floor blocks and no round left to fix — with nothing on the
+// record saying so, which is the answer the pair above refuses.
+func TestStopEscalatedLevel3IsNoStricterThanLevel3AskedFor(t *testing.T) {
+	blocking := reviewScored("changes", map[string]any{
+		"summary": "no bound on the retry loop", "likelihood": 3, "impact": 3, "fix_cost": 2, "class": "correctness",
+	})
+	h := newHarnessFiles(t, securityLoopCfg(t), nil, securityLoopFiles)
+	rec, err := h.run(t,
+		implement("feature"), // nothing on the list: the implement seam escalates nothing
+		review("ship", 0),    // review_first
+		blocking,             // review round 1: level 2 asks for changes
+		fixOnAListedPath,     // the fix adds a path on the list: the fix seam turns level 3 on
+		blocking,             // review round 2: level 2's rounds are spent, and the adversarial step is still to run
+		review("ship", 0),    // adversarial: level 3 ships, and it is the deciding level
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stageNames(rec); !eq(got, "implement", "review_first", "review", "fix", "review", "adversarial") {
+		t.Fatalf("stages = %v, want the escalation's adversarial step after the fix's review round", got)
+	}
+	if rec.Security == nil || rec.Security.At != runstore.SecurityAtFix || rec.Security.Pattern != "credentials" {
+		t.Fatalf("the record's escalation = %+v, want the credentials row at the fix seam", rec.Security)
+	}
+	if rec.Outcome != runstore.OutcomeDraft {
+		t.Fatalf("outcome = %s (reason %q), want draft: level 3 shipped, and level 2 left a finding the mode blocks on", rec.Outcome, rec.Reason)
+	}
+	for _, want := range []string{"review level 2 last shipped nothing", "round 2 left changes", "until every enabled review level ships"} {
+		if !strings.Contains(rec.Reason, want) {
+			t.Errorf("reason = %q, want it to name the level and say %q", rec.Reason, want)
+		}
+	}
+	if rec.Accepted != nil {
+		t.Errorf("the record accepts level 2's round at the stop (%+v) although the level that decides readiness had still to run when its rounds were spent", rec.Accepted)
+	}
+}
+
 // TestStopAcceptanceIsFiledOnThePullRequestAndTheReport is the filing half of
 // the ruling (item 3) at a real run's own output: the findings a stop accepted
 // are filed exactly as a tolerated round's are — the pull request's status line

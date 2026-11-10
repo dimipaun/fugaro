@@ -3128,19 +3128,12 @@ func (r *run) agentLoop(ctx context.Context) {
 			return
 		}
 		st := r.plan[next]
-		// last is whether this step is the plan's last review step: the stop
-		// rule's rounds half is spent there and nowhere else, because the
-		// mode's rounds are spent only when the last level it enabled has run
-		// its own out (the owner's ruling of 2026-11-08, item 6b: a run that
-		// enabled level 3 stops at the same moment as one that did not, and
-		// the senior step is not a stop while an adversarial step follows it).
-		last := next == len(r.plan)-1
 		walked[st.Kind] = true
 		switch st.Kind {
 		case recipe.StepFirstLine:
 			tier = runstore.TierSenior
 			var ok bool
-			if sessionID, ok = r.firstLine(ctx, st.Rounds, reviewPromptWithFocus(reviewPrompt, r.levelFocus(policy.LevelL1)), sys, sessionID, last); !ok {
+			if sessionID, ok = r.firstLine(ctx, st.Rounds, reviewPromptWithFocus(reviewPrompt, r.levelFocus(policy.LevelL1)), sys, sessionID); !ok {
 				return
 			}
 		case recipe.StepReview:
@@ -3149,15 +3142,34 @@ func (r *run) agentLoop(ctx context.Context) {
 			// could not finish — a failed stage, a cap, a closed pull request,
 			// an answer with no verdict — is where the run stops, and the
 			// levels after it are not run (checkPlan keeps the order fixed).
-			if !r.seniorLoop(ctx, st, tier, reviewPrompt, sys, sessionID, last) {
+			if !r.seniorLoop(ctx, st, tier, reviewPrompt, sys, sessionID) {
 				return
 			}
 		case recipe.StepAdversarial:
-			if !r.adversarialLoop(ctx, st, reviewPrompt, sys, sessionID, last) {
+			if !r.adversarialLoop(ctx, st, reviewPrompt, sys, sessionID) {
 				return
 			}
 		}
 	}
+}
+
+// endsThePlan reports whether kind's step is the plan's last review step now:
+// the stop rule's rounds half is spent there and nowhere else, because the
+// mode's rounds are spent only when the last level it enabled has run its own
+// out (the owner's ruling of 2026-11-08, item 6b: a run that enabled level 3
+// stops at the same moment as one that did not, and the senior step is not a
+// stop while an adversarial step follows it).
+//
+// The plan is read here rather than at the step's dispatch because a step's own
+// fix seam rebuilds it: the security escalation turns level 3 on inside the
+// senior loop and puts the adversarial step after the step that is running
+// (security.go, D1507), so a step that ended the plan when the loop dispatched
+// it is one whose rounds are not the mode's last. Reading the plan the loop
+// captured would spend the rounds half while a level still had to run, and
+// finalize would read the level behind through the stop's own split and accept
+// what its floor blocks (heldBackLevel).
+func (r *run) endsThePlan(kind recipe.StepKind) bool {
+	return len(r.plan) > 0 && r.plan[len(r.plan)-1].Kind == kind
 }
 
 // stopNow reports whether the loop must go to finalize rather than start
@@ -3202,7 +3214,7 @@ func (r *run) stopNow() bool {
 //
 // It reports whether the plan may go on to the step after it, which is false
 // for every way the run stops here.
-func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, sys, sessionID string, last bool) bool {
+func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, sys, sessionID string) bool {
 	// Level 2's own reviewer reads the level's focus quoted under the run's
 	// heading (reviewPromptWithFocus), exactly as level 3's does; the bounce's
 	// cheap loop below is level 1's and reads level 1's.
@@ -3258,12 +3270,14 @@ func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, s
 			return false
 		}
 		if v.Verdict == "ship" || round >= r.reviewRounds(st) {
-			if v.Verdict != "ship" && last {
+			if v.Verdict != "ship" && r.endsThePlan(st.Kind) {
 				// The rounds half of the stop rule, at the moment it is spent:
-				// the plan's own rounds for its last review level are gone and
-				// no round shipped, so the loop starts no further round and
-				// finalize decides on what this one left (stopNow is the time
-				// half of the same rule, asked above and below).
+				// this step still ends the plan and no round shipped, so the
+				// plan's own rounds for its last review level are gone, the
+				// loop starts no further round and finalize decides on what
+				// this one left (stopNow is the time half of the same rule,
+				// asked above and below; endsThePlan is why the plan is read
+				// here and not at the step's dispatch).
 				r.stopAt = runstore.StopRoundsSpent
 			}
 			return true
@@ -3286,7 +3300,7 @@ func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, s
 		}
 		if st.Bounce && st.FirstRounds > 0 {
 			r.bounce++
-			if sessionID, ok = r.firstLine(ctx, st.FirstRounds, reviewPromptWithFocus(reviewPrompt, r.levelFocus(policy.LevelL1)), sys, sessionID, false); !ok {
+			if sessionID, ok = r.firstLine(ctx, st.FirstRounds, reviewPromptWithFocus(reviewPrompt, r.levelFocus(policy.LevelL1)), sys, sessionID); !ok {
 				return false
 			}
 		}
@@ -3309,7 +3323,7 @@ func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, s
 // It reports whether the run may go on, which the plan does not ask of it: the
 // adversarial step is the plan's last, so the answer only decides whether the
 // loop returns early or falls out of its own bottom.
-func (r *run) adversarialLoop(ctx context.Context, st planStep, reviewPrompt, sys, sessionID string, last bool) bool {
+func (r *run) adversarialLoop(ctx context.Context, st planStep, reviewPrompt, sys, sessionID string) bool {
 	prompt := AdversarialPrompt(reviewPrompt, r.levelFocus(policy.LevelL3))
 	for round := 1; ; round++ {
 		if r.stopNow() {
@@ -3353,7 +3367,7 @@ func (r *run) adversarialLoop(ctx context.Context, st planStep, reviewPrompt, sy
 			return false
 		}
 		if v.Verdict == "ship" || round >= r.adversarialRounds(st) {
-			if v.Verdict != "ship" && last {
+			if v.Verdict != "ship" && r.endsThePlan(st.Kind) {
 				// The rounds half of the stop rule, exactly as seniorLoop sets
 				// it, and here it is the level that decides readiness: the
 				// mode's own review rounds across every level it enabled are
@@ -3375,7 +3389,7 @@ func (r *run) adversarialLoop(ctx context.Context, st planStep, reviewPrompt, sy
 		}
 		if st.Bounce && st.FirstRounds > 0 {
 			r.bounce++
-			if sessionID, ok = r.firstLine(ctx, st.FirstRounds, reviewPromptWithFocus(reviewPrompt, r.levelFocus(policy.LevelL1)), sys, sessionID, false); !ok {
+			if sessionID, ok = r.firstLine(ctx, st.FirstRounds, reviewPromptWithFocus(reviewPrompt, r.levelFocus(policy.LevelL1)), sys, sessionID); !ok {
 				return false
 			}
 		}
@@ -3602,7 +3616,7 @@ func (r *run) fix(ctx context.Context, v Verdict, sys, sessionID string) (string
 // loop is never the decider, and a bounce's extra rounds must not overwrite the
 // senior round the mode's findings policy is read off (outcome.go,
 // findingsPolicy).
-func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt, sys, sessionID string, last bool) (string, bool) {
+func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt, sys, sessionID string) (string, bool) {
 	for round := 1; round <= rounds; round++ {
 		// Read per round, not once before the loop: the fix at the end of a
 		// round can turn level 3 on (the escalation's fix seam, security.go),
@@ -3686,11 +3700,14 @@ func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt, sys, sess
 			return sessionID, false
 		}
 	}
-	if last {
-		// The rounds half: this was the plan's last review step, every round it
-		// was given has run and none of them shipped, so the mode's review
-		// rounds are spent and finalize decides on the last one (item 1's
-		// rounds half of the stop — the same assignment seniorLoop makes).
+	if r.endsThePlan(recipe.StepFirstLine) {
+		// The rounds half: the cheap loop is the plan's last step — no level
+		// above it is on, so nothing follows it — every round it was given has
+		// run and none of them shipped, so the mode's review rounds are spent
+		// and finalize decides on the last one (item 1's rounds half of the
+		// stop — the same assignment seniorLoop makes). A bounce is not this:
+		// the plan carries the level above it, so the plan's last step is not
+		// this one.
 		r.stopAt = runstore.StopRoundsSpent
 	}
 	return sessionID, true
