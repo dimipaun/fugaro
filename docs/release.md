@@ -290,7 +290,7 @@ Pull requests that touch `.goreleaser.yaml`, `release.yml` or the bump script ru
 
 ## Hotfix releases (a patch of a line that has shipped)
 
-A hotfix is a patch release `vX.Y.Z` (Z of 1 or more) that carries one fix and nothing merged to `main` since `vX.Y.0`. The release gate accepts that one shape off `main` (`scripts/release-gate.sh`; the owner's ruling of 2026-11-09, after `fugaro update` stopped on 0.21.0's credentials service), and `scripts/release.sh X.Y.Z --hotfix --fix <sha>...` runs it:
+A hotfix is a patch release `vX.Y.Z` (Z of 1 or more) that carries one fix and nothing merged to `main` since `vX.Y.0`. `scripts/release.sh X.Y.Z --hotfix --fix <sha>...` runs it, and the release gate accepts that one shape off `main` (`scripts/release-gate.sh`; the owner's ruling of 2026-11-09, after `fugaro update` stopped on 0.21.0's credentials service):
 
 ```sh
 scripts/release.sh X.Y.Z --hotfix --fix <sha> --fix <sha> [--dry-run] [--timeout-minutes N]
