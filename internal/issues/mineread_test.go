@@ -3,6 +3,7 @@ package issues
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -22,13 +23,13 @@ import (
 // listing answers who is on which issue, and reading every record it walks past
 // is the read F7 exists to avoid.
 type countingBucket struct {
-	b        *blobx.Bucket
-	readKeys []string
-	lists    int
+	b            *blobx.Bucket
+	readKeys     []string
+	listPrefixes []string
 }
 
 func (c *countingBucket) List(opts *blob.ListOptions) *blob.ListIterator {
-	c.lists++
+	c.listPrefixes = append(c.listPrefixes, opts.Prefix)
 	return c.b.List(opts)
 }
 
@@ -46,6 +47,24 @@ func mineNumbers(got MineShared) []int {
 	}
 	slices.Sort(out)
 	return out
+}
+
+// seedOccurrences writes n hits on one issue, each under a different reporter
+// digest, so the number of them a row counts is a number of people and the cap
+// on the listing is what that number reads.
+func seedOccurrences(t *testing.T, ctx context.Context, b *blobx.Bucket, number, n int) {
+	t.Helper()
+	raw, err := json.Marshal(Occurrence{Reporter: "hit@example.test", At: issueAt})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < n; i++ {
+		key := occurrenceDigestPrefix(number, fmt.Sprintf("%016x", i)) +
+			issueAt.Add(time.Duration(i)*time.Second).UTC().Format(occurrenceTimeLayout)
+		if _, err := b.Create(ctx, key, raw, sharedJSON); err != nil {
+			t.Fatalf("writing occurrence %d: %v", i, err)
+		}
+	}
 }
 
 // mineRowOf is the one row for an issue, or a failure naming what was there.
@@ -156,8 +175,9 @@ func TestMineUserNotCountedAsOther(t *testing.T) {
 }
 
 // Finding the user's issues is one names-only listing of their own prefix: the
-// index objects are never read, and the two objects a read does take back are
-// the issue's record and the fingerprint entry that names it (F7, F28).
+// index objects are never read, the occurrences are listed per issue, and the
+// two objects a read does take back are the issue's record and the fingerprint
+// entry that names it (F7, F28).
 func TestMineMembershipReadsNoObjects(t *testing.T) {
 	ctx := context.Background()
 	b := sharedBucket(t)
@@ -177,6 +197,11 @@ func TestMineMembershipReadsNoObjects(t *testing.T) {
 			t.Errorf("the read took back the index object %q: the listing answers who is on which issue, and its names are all a reader needs (F7)", key)
 		}
 	}
+	// The two listings are the user's own index and one issue's occurrences,
+	// never a prefix that spans other reporters or other issues (F7).
+	if want := []string{reporterPrefix(Digest(ana)), occurrencePrefix(up.Number)}; !slices.Equal(c.listPrefixes, want) {
+		t.Errorf("the read listed %v, want %v", c.listPrefixes, want)
+	}
 }
 
 // The index listing is capped, and says so; a flood under one digest changes
@@ -185,19 +210,45 @@ func TestMineIndexCapSetsTruncatedAndOtherUsersUnaffected(t *testing.T) {
 	ctx := context.Background()
 	b := sharedBucket(t)
 	ana, bo := "ana@example.test", "bo@example.test"
-	for n := 1; n <= mineIndexCap+1; n++ {
+	// bo's issue takes number 1, and the synthetic entries start past it: an
+	// index entry that names a real issue is another test's subject.
+	theirs := upload(t, ctx, b, hit("update-20261107183012-48213", fingerprint("69"), bo, "0.9.0", issueAt))
+	const first = 2
+	for n := first; n < first+mineIndexCap+1; n++ {
 		if _, err := b.Create(ctx, reporterIndexKey(n, Digest(ana)), nil, sharedJSON); err != nil {
 			t.Fatalf("indexing issue %d: %v", n, err)
 		}
 	}
-	theirs := upload(t, ctx, b, hit("update-20261107183012-48213", fingerprint("69"), bo, "0.9.0", issueAt))
 
-	got, err := ListMine(ctx, b, verified(ana), sharedAt)
+	// The entries past the cap are the ones left out, not the ones before it: a
+	// read that kept the newest and dropped the oldest would set the same
+	// Truncated and answer a different set of issues.
+	numbers, truncated, err := mineIndex(ctx, b, Digest(ana))
+	if err != nil {
+		t.Fatalf("listing the user's index: %v", err)
+	}
+	want := make([]int, 0, mineIndexCap)
+	for n := first; n < first+mineIndexCap; n++ {
+		want = append(want, n)
+	}
+	if !truncated || !slices.Equal(numbers, want) {
+		t.Errorf("the capped listing = %v (truncated=%v), want %v and truncated", numbers, truncated, want)
+	}
+
+	// And the listing is of the user's own prefix, never the whole reporter
+	// directory: the index exists so a launcher's flood degrades only its own
+	// reporter's view, and a read that walked every digest would pay for every
+	// flood at once (F7).
+	c := &countingBucket{b: b}
+	got, err := ListMine(ctx, c, verified(ana), sharedAt)
 	if err != nil {
 		t.Fatalf("reading mine: %v", err)
 	}
 	if !got.Truncated {
 		t.Errorf("the read is not marked truncated past %d entries", mineIndexCap)
+	}
+	if want := []string{reporterPrefix(Digest(ana))}; !slices.Equal(c.listPrefixes, want) {
+		t.Errorf("the read listed %v, want %v: a view lists its own prefix and no wider one (F7)", c.listPrefixes, want)
 	}
 	other, err := ListMine(ctx, b, verified(bo), sharedAt)
 	if err != nil {
@@ -344,6 +395,25 @@ func TestMineBoundedRecordRead(t *testing.T) {
 	}
 	if len(got.Issues) != 0 {
 		t.Errorf("the read answered %d rows, want none: the record is past what a reader takes back", len(got.Issues))
+	}
+}
+
+// The occurrence listing is capped too: an issue a whole team hit is one row
+// either way, and the count is the only thing a longer listing would change, so
+// the names past the cap are not people a row counts (F7).
+func TestMineOccurrenceCapBoundsTheCount(t *testing.T) {
+	ctx := context.Background()
+	b := sharedBucket(t)
+	ana := "ana@example.test"
+	up := upload(t, ctx, b, sharedIssue("update-20261107183012-48213", fingerprint("80")))
+	seedOccurrences(t, ctx, b, up.Number, mineOccurrenceCap+1)
+
+	got, err := ListMine(ctx, b, verified(ana), sharedAt)
+	if err != nil {
+		t.Fatalf("reading mine: %v", err)
+	}
+	if row := mineRowOf(t, got, up.Number); row.OthersHit != mineOccurrenceCap {
+		t.Errorf("others = %d, want %d: the listing stops at the cap, so the names past it are not people a row counts", row.OthersHit, mineOccurrenceCap)
 	}
 }
 
