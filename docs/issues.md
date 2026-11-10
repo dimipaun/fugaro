@@ -115,10 +115,12 @@ credential, so until then an offline listing is the previous account's rows.
 issue: what says an issue is fixed is the `resolved_in` release the shared
 record carries, printed against this machine's own version. The listing is
 therefore as current as the last read of the shared store — an issue closed on
-GitHub stays `submitted` here until a machine's `fugaro update` pass marks the
-record resolved and this user's next `mine` reads that. (The root command's
-once-a-day release check is not issue state, and it runs for this command as it
-does for every other.)
+GitHub stays `submitted` here until the resolve pass marks the record resolved
+and this user's next `mine` reads that. The pass that runs today is the daily
+report's: `fugaro runs digest`, in a person's own terminal, asks GitHub what
+became of the project's filed issues and writes the ones its release fixes back
+as `resolved`. (The root command's once-a-day release check is not issue state,
+and it runs for this command as it does for every other.)
 
 ### Machine-readable output
 
