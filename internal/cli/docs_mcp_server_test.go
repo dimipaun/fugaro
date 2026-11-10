@@ -248,7 +248,10 @@ func TestDocsMCPServerIsWritten(t *testing.T) {
 // what it says now in four files at once -- so what is pinned here is not just
 // that the answers are present but that the folder is not carrying the replaced
 // one: no row calls any answer "not the recommendation", and the tension the
-// replaced answer created is gone.
+// replaced answer created is gone. The same shape recurred on 2026-11-09, when
+// the launch-override fence was ruled and declined within one day and the task
+// channel replaced the execution override for part of it, so those sentences are
+// refused here too.
 func TestDocsMCPServerAnswersAreTheOnesInForce(t *testing.T) {
 	rec := readDoc(t, mcpReconciled)
 	if !strings.Contains(rec, "### The owner's answers, 2026-11-04") {
@@ -352,6 +355,30 @@ func TestDocsMCPServerAnswersAreTheOnesInForce(t *testing.T) {
 	}
 	if !strings.Contains(flattenDoc(readDoc(t, mcpReconciled)), "impersonate the deployer as an operator") {
 		t.Errorf("%s: check 8 does not carry the operator-impersonating-the-deployer reading: the store's name keeps that identity off it, and only a live project can show the name did what it was chosen to do", mcpReconciled)
+	}
+
+	// And the third reversal: the launch-override fence was ruled and declined
+	// on 2026-11-09, and the task channel came and went with it, so the
+	// sentences that stated that channel as the design in force are gone from
+	// every file and one restored from the version before the reversal fails
+	// here. Worth a pin for D922's reason and one of its own: the task channel
+	// is what a reader would implement the ceiling from, and the ruling that put
+	// it there lasted half a day -- the same gap the D922 restatement left, in
+	// the file that states the spend rule rather than the rule for the subtree.
+	for _, path := range mcpDocs() {
+		flat := flattenDoc(readDoc(t, path))
+		for _, stale := range []string{
+			"a field of its own, on the run's own task",
+			"moved the channel and left the rule as it was",
+			"holds no `runWithOverrides`, so nothing it launches reaches the container's environment at all",
+			"written into **the run's own task",
+			"the ceiling read out of the run's own task",
+			"the run's own task carries the ceiling",
+		} {
+			if strings.Contains(flat, stale) {
+				t.Errorf("%s still states the task channel as the design in force (%q): the owner declined the fence later on 2026-11-09 and gave the front door the launcher's permissions, so D924's ceiling rides the execution override its original answer named (`internal/backend/backend.go:124-144`) and nothing about a launch travels in the run's task -- a reader who met the superseded sentence would implement the channel the ruling withdrew", path, stale)
+			}
+		}
 	}
 }
 

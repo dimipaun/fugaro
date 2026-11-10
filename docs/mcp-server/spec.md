@@ -576,15 +576,17 @@ token's spend limit is never sent to the
 agent as its own budget figure. It is applied where the run's ceiling is applied: the run's ceiling
 is `min(the project's configured cap, the token's limit)`, the same "only tighten" merge the budget
 already does between a repository's cap and the installation's. Concretely, a submitted run carries
-the token's limit in **a field of its own, on the run's own task**, and
+the token's limit in **a variable of its own on the execution's environment override**
+(`internal/backend/backend.go:124-144`, the channel F19 records), and
 the run's ceiling is the tighter of that and the job's own — so **the gateway enforces the token's
 spend limit**, the run's ledger charges against it, and a wrong number at the coordinator cannot
-widen a ceiling, because the run takes the tighter side itself. **The answer of 2026-11-04 named the
-execution's environment override as the channel; the owner's ruling of 2026-11-09 on the
-launch-override fence moved the channel and left the rule as it was** (§8): the front door's account
-holds no `runWithOverrides`, so nothing it launches reaches the container's environment at all, and
-the limit travels in the task in the runs bucket beside the marker that says a launch carries one —
-**the task, not "the signed task": nothing signs it** (`docs/design/bucket-iam.md:412`). The one thing the design refuses
+widen a ceiling, because the run takes the tighter side itself. **The channel is the one the answer
+of 2026-11-04 named**: the owner's ruling of 2026-11-09 on the launch-override fence moved it to a
+field on the run's own task for part of that day and **restored it the same day**, when he declined
+the fence and gave the front door the launcher's permissions, overrides included (§8) — so the
+ceiling reaches the container the way the run's other launch values do, and **the rule never
+changed**: it is still the tighter of the token's limit and the job's own, taken by the run itself.
+The one thing the design refuses
 outright is routing the limit through the agent's own `--max-budget-usd` flag: that figure is the
 agent's own estimate of cost, and the repository's own dogfooding notes record that it misprices
 non-Anthropic models by roughly an order of magnitude. A limit enforced there would be a limit
