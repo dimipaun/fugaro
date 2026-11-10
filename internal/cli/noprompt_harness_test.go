@@ -349,7 +349,11 @@ var closedStdinNoFixture = map[string]string{
 	// keeps. state and events are driven to their read here — the fixture's
 	// database holds no node yet, which is the empty case both are written for
 	// — and patch refuses its missing -f before it selects anything, because
-	// the document it applies is the whole of what it has to be handed.
+	// the document it applies is the whole of what it has to be handed. ls
+	// takes no argument and its bare run is the whole command: it lists the
+	// node the fixture's database holds (none) and the cached briefs of the
+	// machine it runs on, which this harness does not fixture.
+	"fugaro orchestrator ls":        "lists what this world's database and this machine's cache directory hold: no orchestrator node here, and the cache files are the machine's own",
 	"fugaro orchestrator state":     "reads project aurora's state node out of the fixture's database, which holds none yet, and prints what an empty state is",
 	"fugaro orchestrator events":    "reads project aurora's audit node out of the fixture's database, which holds none yet: there are no events to print",
 	"fugaro orchestrator patch":     "refuses its missing -f: a patch document is what it applies, and the closed stdin is no document",
