@@ -3354,6 +3354,12 @@ land (approving a work item, setting the goal, closing a decision that
 waits on a person) are confirmed at a real terminal with the project's
 name typed, never by --yes: a session that has none writes nothing.
 
+run is the daemon itself, in the foreground. install, uninstall and
+status are the login unit that keeps it running: the three read no
+project and reach no network, and they write no system path and need no
+root — the unit is one file under your own home and the service manager
+is asked at your own login level.
+
 Usage: `fugaro orchestrator`
 
 Flags:
@@ -3365,9 +3371,12 @@ Flags:
 Subcommands:
 
 - `fugaro orchestrator events` -- Read the orchestrator's audit log
+- `fugaro orchestrator install` -- Install or re-render the login unit that runs the daemon
 - `fugaro orchestrator patch` -- Apply one typed patch document to the orchestrator's state
 - `fugaro orchestrator run` -- Run the project's orchestrator daemon in the foreground
 - `fugaro orchestrator state` -- Print the orchestrator's state: the generated summary of its live node
+- `fugaro orchestrator status` -- Report the login unit that runs the daemon
+- `fugaro orchestrator uninstall` -- Remove the login unit that runs the daemon
 
 ## `fugaro orchestrator events`
 
@@ -3391,6 +3400,45 @@ Flags:
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--since` | string | "" | no | only entries newer than this duration, such as 1h or 30m |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro orchestrator install`
+
+Install or re-render the login unit that runs the daemon
+
+Write the per-user login unit that runs `fugaro orchestrator run` and load
+it, so the daemon starts at every login and is restarted when it stops.
+Nothing else is written: no system path is touched, no root is needed, and
+the service manager is asked at your own login level (launchd on macOS,
+systemd --user on Linux; Windows has neither, and answers so).
+
+The unit names the stable path of this fugaro — Homebrew's opt link and
+never a versioned Cellar path that an upgrade removes — twice: as the
+program to run, and as the `--binary` argument whose version the daemon
+compares with its own before it hands over to a new release.
+
+It is idempotent: a unit that is already there is re-rendered from this
+release's template and the service restarted, which is also what `fugaro
+update` does to an installed unit (and `fugaro update` never installs
+one). It writes no state and migrates none: the daemon's own start-up
+does that.
+
+A unit is code that runs at every login, so this command asks you to type
+the word install at a real terminal, has no flag that stands in for it,
+and refuses in a coding agent's session. Running it yourself, without the
+marker, is the way to do it: whoever can do that can write the file by
+hand anyway.
+
+Usage: `fugaro orchestrator install`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for install |
 
 Subcommands:
 
@@ -3497,6 +3545,55 @@ Flags:
 | `--offline` | bool | `false` | no | print the brief the daemon cached at session start, reaching no network (goes with --brief) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro orchestrator status`
+
+Report the login unit that runs the daemon
+
+Report whether this machine has the login unit that runs the orchestrator
+daemon, where its file is, and whether it is what this release's template
+would write. It changes nothing and reads no project: the file is the
+whole of what it looks at, and `fugaro doctor` reports the same drift as
+an update being due.
+
+Usage: `fugaro orchestrator status`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for status |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro orchestrator uninstall`
+
+Remove the login unit that runs the daemon
+
+Unload the login unit and delete its file, so the daemon stops being
+started at login and stops being restarted. It asks nothing: removing the
+unit takes away code that runs at every login rather than adding it, and
+`fugaro orchestrator install` writes it back after its own typed
+confirmation.
+
+Nothing else is touched: the project's orchestrator state, its lease and
+its audit log are in the database and not in the unit, `fugaro orchestrator
+run` still runs in the foreground without a unit, and a machine with no
+unit installed is not an error — it says so and returns.
+
+Usage: `fugaro orchestrator uninstall`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for uninstall |
 
 Subcommands:
 
