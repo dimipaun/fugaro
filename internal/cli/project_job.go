@@ -578,11 +578,18 @@ func serviceReadRepoConfigAtRef(ctx context.Context, e *cloudEnv, repo, ref stri
 // is signed as (localcfg.Repo.GitHubAppID, which is not a secret). A missing one
 // is a sentinel rather than a message, so that the refusal's words stay with the
 // launch that cannot be decided (serviceReadRefusal).
+//
+// The repository's entry is matched in canonical form (localRepo, which is
+// localcfg.RepoFor), as every other reader of this launch's local config matches
+// it — a repos: entry is spelled the way the installation recorded the remote,
+// and "acme/app.git" is acme/app's entry (repoConfigKey writes through the key
+// that is already there). A raw index would answer this launch with a refusal
+// about a value the config does hold.
 func (e *cloudEnv) serviceReadTarget(repo string) (url, appID string, err error) {
 	if e.lc.CredentialsService != nil {
 		url = e.lc.CredentialsService.URL
 	}
-	if r, ok := e.lc.Repos[repo]; ok {
+	if r, ok := e.localRepo(repo); ok {
 		appID = r.GitHubAppID
 	}
 	if url == "" {
@@ -672,10 +679,10 @@ type launchDocument struct {
 	// cfg is the fugaro.yaml at the ref the run checks out. It is nil when
 	// that ref's tree carries none — a repository with no document anywhere,
 	// which selects no clone workflow and no profile and keeps the
-	// per-repository job (spec.md §2, §7) — and it is nil, with root set, for
-	// a launch with no checkout of the repository at all, which answers
-	// nothing here and leaves the job decision to read the ref at the forge
-	// (repoConfigAtTheRef).
+	// per-repository job (spec.md §2, §7). A launch with no checkout of the
+	// repository at all is one no document is resolved for at all: root is set
+	// only where a checkout answered (withLaunchDocument), and that launch's
+	// job decision reads the ref at the forge instead (repoConfigAtTheRef).
 	cfg *config.Config
 	// problems are the working tree's own: a document at the ref answers for
 	// none of them, and the one refusal that reads them (refuseSharedCheckout)
@@ -705,8 +712,8 @@ type launchDocument struct {
 //
 // A launch with no checkout of the repository is left alone — the daemon's own
 // launches, or a run --repo from a machine that does not hold it: there is
-// nothing to read, the gates judge as they did, and the job decision refuses
-// for the reason it already has.
+// nothing here to read, and that launch's document is the one read at the forge
+// instead (launchConfigWhereTheTreeGivesNone, source 3, D902).
 func withLaunchDocument(ctx context.Context, repo, ref string) context.Context {
 	if _, ok := launchDocumentOf(ctx); ok {
 		return ctx

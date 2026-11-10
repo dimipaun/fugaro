@@ -3190,6 +3190,53 @@ func TestLaunchWithoutCheckoutWithoutARecordedAppIDNamesTheRead(t *testing.T) {
 	}
 }
 
+// TestLaunchWithoutCheckoutFoldsTheRepositoryKeyTheConfigRecords pins that the
+// read's own records are looked up the way every other reader of this launch's
+// local config looks them up. A repos: entry is matched in canonical form
+// (localcfg.RepoFor: ASCII-folded, without a trailing ".git"), because an
+// installation whose entry was written under another spelling of the same
+// remote holds it under that spelling (repoConfigKey's rule) — so an entry
+// spelled "acme/app.git" is acme/app's, and a raw map index here would answer
+// the launch with a refusal that is untrue: "this installation's local config
+// records no github_app_id for acme/app" while it does.
+//
+// Mutation (run, restore): look the App ID up with the raw map index
+// (e.lc.Repos[repo]) — the launch is refused, nothing is minted and nothing is
+// read, although the entry and the service are both there.
+func TestLaunchWithoutCheckoutFoldsTheRepositoryKeyTheConfigRecords(t *testing.T) {
+	f := newProjectJobFixture(t)
+	s := newServiceReadFixture(t)
+	s.use(t, f.cloudFixture)
+	// The fixture's own entry, respelled the way an installation that recorded
+	// the remote rather than the slug holds it.
+	path := os.Getenv("FUGARO_CONFIG")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const entry = `  acme/app: { provider: github, base_branch: main, workflows: [web], github_app_id: "123456789" }`
+	if !strings.Contains(string(data), entry) {
+		t.Fatalf("the fixture's local config no longer holds the repository's entry:\n%s", data)
+	}
+	if err := os.WriteFile(path, []byte(strings.Replace(string(data), entry, strings.Replace(entry, "acme/app:", "acme/app.git:", 1), 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	isolateCache(t)
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir())
+
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261110-130010-abcd", "Add a feature"); err != nil {
+		t.Fatalf("a launch of acme/app whose entry is spelled acme/app.git: %v", err)
+	}
+	profile, provider, _ := launchedProjectJob(t, f.cloudFixture)
+	if profile != "standard" || provider != "github" {
+		t.Fatalf("the launch ran on %s/%s, want the standard/github project job", profile, provider)
+	}
+	if mints, reads := s.counts(); mints != 1 || reads != 1 {
+		t.Errorf("the launch made %d mint(s) and %d read(s), want one of each: the entry names the App, so the read can be asked for", mints, reads)
+	}
+}
+
 // TestProjectJobAgentAuthRefusesAnAgentSessionBeforeTheForgeRead is the
 // credential gate's own half of D902's invariant (spec.md §5): the read this
 // gate makes of the ref's document is made with the OPERATOR's own credential,
