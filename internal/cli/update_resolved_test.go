@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/installrec"
 	"github.com/dimipaun/fugaro/internal/issueresolve"
 	"github.com/dimipaun/fugaro/internal/issues"
@@ -111,6 +112,16 @@ type resolvedBroken struct{}
 
 func (resolvedBroken) Fetch(context.Context, int) (issueresolve.State, error) {
 	return issueresolve.NoVerdict{}, fmt.Errorf("%w: no route to host", issueresolve.ErrTransport)
+}
+
+// resolvedUntouched is the reader of a step that may not reach GitHub at all:
+// one Fetch is the step spending the pass's twenty seconds and its twenty
+// requests (F17), so a call here is a failure and not an answer.
+type resolvedUntouched struct{ t *testing.T }
+
+func (r resolvedUntouched) Fetch(context.Context, int) (issueresolve.State, error) {
+	r.t.Error("the resolved-issues step asked GitHub about an issue in a run that left a step for the person")
+	return issueresolve.NoVerdict{}, errors.New("the step may not reach GitHub here")
 }
 
 // stubUpdateResolve replaces the pass's own wiring, as digestResolveDeps does
@@ -372,6 +383,41 @@ func TestUpdateResolvedPlanOnlyRunsNothing(t *testing.T) {
 	}
 	if r.res.ResolvedIssues != nil {
 		t.Errorf("--plan-only put %+v in the --json document", r.res.ResolvedIssues)
+	}
+}
+
+// TestUpdateResolvedIncompleteRunWritesNothing: a run that did not finish
+// resolves nothing either. What the step does is not an offer to ignore — it
+// advances the installation record and writes the shared store — and it would
+// do both from a run whose own result says it stopped short of the state the
+// release belongs to: the steps a run cannot finish without a person (a
+// secret's value, a policy publish that would loosen the published node) are
+// listed under left_for_you, the run exits 1 over them, and it is the run the
+// person then makes that installed the release.
+//
+// The fact is the one `outcome` records from the loop before this step runs
+// (r.res.LeftForYou = res.Left), so the fixture sets it there — the same fact
+// and the same shape the sibling step's guard is pinned with
+// (TestAdminListUnconfirmedRunWritesNothing, update_adminlist_test.go). A run
+// that reaches the bucket seam, the pass or the store at all is what this
+// fails on: the seam is fatal, the reader fails on its first question, and the
+// step answers with neither a line nor a document field.
+func TestUpdateResolvedIncompleteRunWritesNothing(t *testing.T) {
+	retryEnv(t)
+	stubResolvedBucketFatal(t)
+	stubUpdateResolve(t, resolvedUntouched{t})
+
+	r, out := resolvedRig(t, nil, "")
+	r.res.LeftForYou = []initflow.Left{{
+		Stage: initflow.Secrets, Kind: initflow.LeftCommand, Text: selfCommand() + " secrets set acme/app API_KEY",
+	}}
+	r.updateResolved(t.Context())
+
+	if out.String() != "" {
+		t.Errorf("a run that left a step for the person printed:\n%s", out.String())
+	}
+	if r.res.ResolvedIssues != nil {
+		t.Errorf("a run that left a step for the person put %+v in the --json document", r.res.ResolvedIssues)
 	}
 }
 
