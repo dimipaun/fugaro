@@ -118,8 +118,8 @@ func doctorLayerChecks(ctx context.Context, lc *localcfg.Config, root string, rf
 		// same condition imageCatalogUnreadCheck states, and the two are read
 		// one after the other so they cannot drift.
 		catUnknown := catErr != nil && lc.ImageCatalog == nil
-		out = append(out, imageConfigChecks(ctx, env, rb, slug, rf.Cfg, rf.Res, cat, imap, catUnknown)...)
-		out = append(out, catalogImageChecks(ctx, env, rb, slug, rf.Cfg, cat, imap, catUnknown)...)
+		out = append(out, imageConfigChecks(ctx, env, rb, oi.Repo, slug, rf.Cfg, rf.Res, cat, imap, catUnknown)...)
+		out = append(out, catalogImageChecks(ctx, env, rb, oi.Repo, slug, rf.Cfg, cat, imap, catUnknown)...)
 	}
 	return out
 }
@@ -386,11 +386,11 @@ func imageCatalogUnreadCheck(lc *localcfg.Config, cfg *config.Config, catErr err
 // the other half of that argument (workflowCatalogEntry): a project with no
 // catalog at all is one whose pinned workflows are compared here, because
 // their jobs run the derived image — so the two nils are not one state.
-func imageConfigChecks(ctx context.Context, env *cloudEnv, rb *blobx.Bucket, slug string, cfg *config.Config, res *config.Resolution, cat *config.Catalog, imap map[string]string, catUnknown bool) []doctorCheck {
+func imageConfigChecks(ctx context.Context, env *cloudEnv, rb *blobx.Bucket, repo, slug string, cfg *config.Config, res *config.Resolution, cat *config.Catalog, imap map[string]string, catUnknown bool) []doctorCheck {
 	var out []doctorCheck
 	for _, name := range slices.Sorted(maps.Keys(cfg.Workflows)) {
 		w := cfg.Workflows[name]
-		if _, ok := workflowCatalogEntry(cat, imap, catUnknown, slug, w, catalog.Backend(env.lc.Backend())); ok {
+		if _, ok := workflowCatalogEntry(cat, imap, catUnknown, repo, w, catalog.Backend(env.lc.Backend())); ok {
 			continue
 		}
 		if w.Dockerfile != "" {
@@ -436,10 +436,10 @@ func imageConfigChecks(ctx context.Context, env *cloudEnv, rb *blobx.Bucket, slu
 // warning below (catalogEntryRecord). An entry that is a prebuilt image has
 // nothing to build, and what it is judged on instead is the smoke of the
 // reference it names (prebuiltSmokeChecks).
-func catalogImageChecks(ctx context.Context, env *cloudEnv, rb *blobx.Bucket, slug string, cfg *config.Config, cat *config.Catalog, imap map[string]string, catUnknown bool) []doctorCheck {
+func catalogImageChecks(ctx context.Context, env *cloudEnv, rb *blobx.Bucket, repo, slug string, cfg *config.Config, cat *config.Catalog, imap map[string]string, catUnknown bool) []doctorCheck {
 	var out []doctorCheck
 	for _, name := range slices.Sorted(maps.Keys(cfg.Workflows)) {
-		e, ok := workflowCatalogEntry(cat, imap, catUnknown, slug, cfg.Workflows[name], catalog.Backend(env.lc.Backend()))
+		e, ok := workflowCatalogEntry(cat, imap, catUnknown, repo, cfg.Workflows[name], catalog.Backend(env.lc.Backend()))
 		if !ok {
 			continue
 		}
@@ -579,11 +579,11 @@ func prebuiltSmokeChecks(ctx context.Context, env *cloudEnv, rb *blobx.Bucket, s
 // and the entry returned is the pin's name by itself (no source) for a pin,
 // and nothing at all for one the catalog would have chosen — the caller judges
 // what it can of that, which is the entry it was given or nothing.
-func workflowCatalogEntry(cat *config.Catalog, imap map[string]string, catUnknown bool, slug string, w config.Workflow, be catalog.Backend) (config.Entry, bool) {
+func workflowCatalogEntry(cat *config.Catalog, imap map[string]string, catUnknown bool, repo string, w config.Workflow, be catalog.Backend) (config.Entry, bool) {
 	sel, err := catalog.JobImage(catalog.ImageRequest{
 		Catalog:   cat,
 		ImageMap:  imap,
-		Canonical: slug,
+		Canonical: repo,
 		Workflow:  w,
 		Backend:   be,
 	})

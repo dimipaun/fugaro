@@ -3926,19 +3926,34 @@ func TestSpecCatalogOnlyRepoNeedsNoBaseImage(t *testing.T) {
 }
 
 // TestSpecCheckCoversTheWorkflowsWithoutACatalogImage: the exclusion is per
-// workflow, not per repository. A workflow that keeps its own image
-// definition is not the catalog's (catalog.Applies), so the repository keeps
-// its daily check and the check covers that workflow alone.
+// workflow, not per repository. The project marks no default, which is the one
+// state a workflow that names no entry and needs no tag is not the selection's
+// (O4 b): its job keeps the image this project builds for it, so the repository
+// keeps its daily check and the check covers that workflow alone.
+//
+// The default is what it turns on: with one marked, every workflow of the file
+// runs it whatever its own keys say (D1900), and no workflow of the repository
+// is left for the check. That is why the entry standard is unmarked here and
+// bare — the workflow that names nothing — is pinned instead of left alone.
 //
 // Every entry here is one Fugaro builds, so that the one workflow the check
 // covers is not the catalog's for the reason this test is about: a prebuilt
 // entry on a baked workflow is refused before any of this is computed (D1191).
 func TestSpecCheckCoversTheWorkflowsWithoutACatalogImage(t *testing.T) {
-	in := catalogInputs(t, &config.Catalog{Entries: catalogEntries()})
+	entries := catalogEntries()
+	for i := range entries {
+		if entries[i].Name == "standard" {
+			entries[i].Default = false
+		}
+	}
+	in := catalogInputs(t, &config.Catalog{Entries: entries})
 	w := in.Cfg.Workflows["api"]
 	w.Needs = nil
 	w.Image = config.Image{Tools: config.MiseTools{"node": "24"}}
 	in.Cfg.Workflows["api"] = w
+	bare := in.Cfg.Workflows["bare"]
+	bare.ImageName = "standard"
+	in.Cfg.Workflows["bare"] = bare
 	rs, err := Repo(in)
 	if err != nil {
 		t.Fatal(err)
