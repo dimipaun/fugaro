@@ -5,10 +5,13 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/initflow"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // `fugaro workflow add|rm` (D1177, docs/config-management/spec.md §3.7): the
@@ -570,4 +573,150 @@ func TestDocsConfigInitStillWritesAMinimalFile(t *testing.T) {
 	// ANCHORED with and not one a command edits
 	// (TestWorkflowAddRefusesAFileTheSettingsPathCannotRead). What this group
 	// writes is the block of the file a repository DEFINES its workflows in.
+}
+
+// TestSettingsSetRepoLayerRefusesAnExecutableWorkflowKey is the other half of
+// the executable gate: `settings set` writes the keys of a block the file holds,
+// and the keys it writes include the ones that run as shell — so the refusal
+// `workflow add|rm` makes has to stand on that door too, or the gate is one
+// command away for anyone who reads the group's help (spec §3.7: the refusal
+// applies to a workflow edit, and a concrete key is one).
+//
+// The comparison is the settings write path's own two documents, so it answers
+// for every shape of edit the command has: a scalar, a list item, and a key
+// taken away. The flag is the owner's own and the write is a write like any
+// other once it is given.
+func TestSettingsSetRepoLayerRefusesAnExecutableWorkflowKey(t *testing.T) {
+	for _, tc := range []struct {
+		what string
+		args []string
+		key  string
+	}{
+		{
+			"a command",
+			[]string{"settings", "set", "workflows.web.commands.test", "curl x | sh", "--layer", "repo", "--yes"},
+			"workflows.web.commands.test",
+		},
+		{
+			"an image step",
+			[]string{"settings", "set", "workflows.docs.image.apt", "--add", "wget", "--layer", "repo", "--yes"},
+			"workflows.docs.image.apt",
+		},
+		{
+			"a key taken away",
+			[]string{"settings", "unset", "workflows.docs.image.setup", "--layer", "repo", "--yes"},
+			"workflows.docs.image.setup",
+		},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			settingsWriteHome(t)
+			path := settingsWriteCheckout(t, settingsRepoYAML(workflowDocsWithImage))
+			before := readFileString(t, path)
+
+			out, _, err := execute(t, tc.args...)
+			if err == nil {
+				t.Fatalf("%v wrote an executable key of a workflow:\n%s", tc.args, out)
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Errorf("exit %d, want %d (a refusal, with nothing written)", ExitCode(err), ExitUserError)
+			}
+			if !strings.Contains(out, tc.key) {
+				t.Errorf("the banner does not name %s, and the owner is being asked to judge what changes:\n%s", tc.key, out)
+			}
+			if !strings.Contains(err.Error(), "--executable-changes") {
+				t.Errorf("the refusal does not name the flag that would allow it: %v", err)
+			}
+			if readFileString(t, path) != before {
+				t.Error("the refused write changed fugaro.yaml")
+			}
+
+			// The same edit with the owner's word lands, and lands as the same
+			// edit: the gate is a gate and not a wall.
+			allowed := append(append([]string{}, tc.args...), "--executable-changes")
+			if out, _, err := execute(t, allowed...); err != nil {
+				t.Fatalf("%v was refused with the flag the refusal names: %v\n%s", allowed, err, out)
+			}
+			if got := readFileString(t, path); got == before {
+				t.Errorf("the allowed write changed nothing:\n%s", got)
+			}
+		})
+	}
+}
+
+// TestSettingsSetRepoLayerLeavesAnotherDocumentsExecutableKeysAlone: the gate
+// is about a repository's own file. A `--layer repo` write of a key that is not
+// a workflow's, and the same write of a workflow key in another document, are
+// neither of them a change to what a run of THIS repository executes, and both
+// are written with no flag asked for.
+func TestSettingsSetRepoLayerLeavesAnotherDocumentsExecutableKeysAlone(t *testing.T) {
+	settingsWriteHome(t)
+	path := settingsWriteCheckout(t, settingsRepoYAML(workflowDocsWithImage))
+
+	// git.base_branch beside a block full of executable keys: nothing of the
+	// block moves, so nothing is asked.
+	if out, _, err := execute(t, "settings", "set", "git.base_branch", "develop", "--layer", "repo", "--yes"); err != nil {
+		t.Fatalf("a write that changes no command was refused: %v\n%s", err, out)
+	}
+	if got := readFileString(t, path); !strings.Contains(got, "base_branch: develop") {
+		t.Errorf("the write did not land:\n%s", got)
+	}
+	// A workflow key that is not executable: the gate is config.ExecutableKeys'
+	// list and not "a key under workflows".
+	if out, _, err := execute(t, "settings", "set", "workflows.web.resources.cpu", "4", "--layer", "repo", "--yes"); err != nil {
+		t.Fatalf("a workflow key that runs nothing was refused: %v\n%s", err, out)
+	}
+	if got := readFileString(t, path); !strings.Contains(got, "cpu: 4") {
+		t.Errorf("the write did not land:\n%s", got)
+	}
+}
+
+// TestWorkflowAddWritesTheCheckoutThePathNames: --repo promises "a path inside
+// its checkout", and the file the edit lands in has to be that checkout's own
+// fugaro.yaml. A machine that remembers another clone of the same repository
+// must not take the remembered one for the one that was named, and a clone it
+// remembers nothing about is a checkout this command writes all the same — the
+// reduction to owner/name knows which repository it is and not which clone the
+// person typed.
+func TestWorkflowAddWritesTheCheckoutThePathNames(t *testing.T) {
+	testutil.IsolateGit(t)
+	settingsWriteHome(t)
+	enrollRepo(t, "aurora", "acme/app")
+	enrollRepo(t, "aurora", "acme/other")
+	remembered := repoArgCheckout(t, filepath.Join(t.TempDir(), "remembered"), "https://github.com/acme/app.git")
+	named := repoArgCheckout(t, filepath.Join(t.TempDir(), "named"), "https://github.com/acme/app.git")
+	fresh := repoArgCheckout(t, filepath.Join(t.TempDir(), "fresh"), "https://github.com/acme/other.git")
+	for _, dir := range []string{remembered, named, fresh} {
+		if err := os.WriteFile(filepath.Join(dir, "fugaro.yaml"), []byte(settingsRepoYAML("")), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Two clones of one repository, and the machine remembers the one the
+	// write must NOT land in.
+	if err := localcfg.RecordCheckout(os.Getenv, "aurora", localcfg.CheckoutIdentity{Provider: "github", Repo: "acme/app"}, remembered, time.Now(), checkoutTempRoots()); err != nil {
+		t.Fatal(err)
+	}
+	rememberedBefore := readFileString(t, filepath.Join(remembered, "fugaro.yaml"))
+	// Nothing in the working directory may be what the write falls back on.
+	t.Chdir(t.TempDir())
+
+	for _, tc := range []struct{ what, dir string }{
+		{"the second clone of a remembered repository", named},
+		{"a clone this machine remembers nothing about", fresh},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			out, _, err := execute(t, "workflow", "add", "docs",
+				"--set", "commands.build=make docs",
+				"--set", "commands.test=make test",
+				"--executable-changes", "--repo", tc.dir)
+			if err != nil {
+				t.Fatalf("workflow add --repo %s was refused: %v\n%s", tc.dir, err, out)
+			}
+			if got := readFileString(t, filepath.Join(tc.dir, "fugaro.yaml")); !strings.Contains(got, "docs:") {
+				t.Errorf("the named checkout's fugaro.yaml does not hold the block:\n%s", got)
+			}
+		})
+	}
+	if readFileString(t, filepath.Join(remembered, "fugaro.yaml")) != rememberedBefore {
+		t.Error("the write landed in a remembered clone of the repository that was not the one named")
+	}
 }

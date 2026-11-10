@@ -267,6 +267,18 @@ type settingsWriteOptions struct {
 	removeEntry []string
 	dryRun      bool
 	jsonOut     bool
+	// repoPath is the checkout --repo named when it named a path, and "" when
+	// it is empty or already reads as owner/name. The reduction repoArg makes
+	// loses which clone was pointed at, and a machine may remember several of
+	// one repository, so the path is kept here to be the file the write lands
+	// in (settingsRepoFile).
+	repoPath string
+	// executableChanges is --executable-changes, the owner's own word
+	// (config publish's flag): a repo-layer write that changes a key of a
+	// workflow which runs as shell — commands.*, image.apt, image.setup and
+	// the rest of config.ExecutableKeys — is refused without it (spec §3.7,
+	// workflowExecutableGate).
+	executableChanges bool
 }
 
 // settingsDocKind names the document a write lands in: the local project
@@ -345,6 +357,12 @@ one member at a time. A list emptied by --remove or --remove-entry is refused:
 an absent key and an empty list mean different things to the loader, so use
 unset to remove the key.
 
+A write into a repository's fugaro.yaml that changes a workflow's commands or
+image steps needs --executable-changes: those values run as shell in every run
+of that repository, so the change is the owner's own step exactly as it is for
+` + "`fugaro workflow add|rm`" + ` and ` + "`fugaro config publish`" + ` (spec §3.7). A dry run
+writes nothing and is answered rather than refused.
+
 A stage's Claude account is a key of its own — ` + "`stages.<stage>.claude_account`" + `, one
 per stage name this binary runs (plan, implement, review_first, review,
 adversarial, fix) — and it is how a stage is repointed from one account to
@@ -389,6 +407,7 @@ Every write ends with one line: next: fugaro update.`,
 	f.StringVar(&o.remove, "remove", "", "remove an item from a string-list key")
 	f.StringArrayVar(&o.addEntry, "add-entry", nil, "add one entry to a map or an object list (field=value, once per member the entry has)")
 	f.StringArrayVar(&o.removeEntry, "remove-entry", nil, "remove one entry from a map or an object list (the member's name, or the key field's value)")
+	f.BoolVar(&o.executableChanges, "executable-changes", false, "allow a --layer repo write that changes a workflow's commands or image steps (they run as shell in this repository's runs)")
 	f.BoolVar(&o.dryRun, "dry-run", false, "print what the edit would do and write nothing")
 	f.BoolVar(&o.jsonOut, "json", false, "print the dry run's document (with --dry-run)")
 	return cmd
@@ -413,6 +432,10 @@ Removing a ceiling key is the owner's own step: nothing is asked for it at your
 own terminal, and a coding agent's session is refused it, with the command to
 run yourself (D1552).
 
+Taking away a workflow's commands or image steps changes what a run of that
+repository executes as shell, so it needs --executable-changes exactly as
+writing one does (spec §3.7).
+
 --dry-run says what the removal would do — the key, the layer, the file, the
 value it takes away, and whether it raises a limit — and writes nothing: no
 confirmation, no backup, no change to any file. It is answered with no
@@ -432,6 +455,7 @@ Every write ends with one line: next: fugaro update.`,
 	f.StringVar(&o.repo, "repo", "", "the repository whose fugaro.yaml to edit (owner/name, or a path inside its checkout)")
 	f.BoolVar(&o.yes, "yes", false, "confirm the write without a prompt")
 	f.BoolVar(&o.ask, "ask", false, "in a project whose marks say it is managed, ask the confirmation this removal would otherwise get instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back. Refused where nobody can answer it (a coding agent's session, a pipe, --non-interactive); a no-op with a sentence in a project that is not managed; refused beside --yes, --dry-run and --json")
+	f.BoolVar(&o.executableChanges, "executable-changes", false, "allow a --layer repo write that takes away a workflow's commands or image steps (they run as shell in this repository's runs)")
 	f.BoolVar(&o.dryRun, "dry-run", false, "print what the edit would do and write nothing")
 	f.BoolVar(&o.jsonOut, "json", false, "print the dry run's document (with --dry-run)")
 	return cmd
@@ -780,7 +804,7 @@ func settingsResolveTarget(ctx context.Context, row settings.Row, o settingsWrit
 			project: lc.Name,
 		}, nil
 	default:
-		path, err := settingsRepoFile(ctx, o.repo, lc.Name)
+		path, err := settingsRepoFile(ctx, o.repoPath, o.repo, lc.Name)
 		if err != nil {
 			return settingsTarget{}, err
 		}
@@ -789,9 +813,14 @@ func settingsResolveTarget(ctx context.Context, row settings.Row, o settingsWrit
 }
 
 // settingsRepoFile is the fugaro.yaml a `--layer repo` write lands in: the
-// current directory's checkout when no --repo names one, else the checkout this
-// machine remembers for that repository.
-func settingsRepoFile(ctx context.Context, repo, project string) (string, error) {
+// checkout --repo named when it named one by path (repoPath — the reduction to
+// owner/name loses which clone that was, and a machine may remember several of
+// one repository), else the current directory's checkout when no --repo names
+// one, else the checkout this machine remembers for that repository.
+func settingsRepoFile(ctx context.Context, repoPath, repo, project string) (string, error) {
+	if repoPath != "" {
+		return filepath.Join(repoPath, "fugaro.yaml"), nil
+	}
 	if repo == "" {
 		root, err := gitRead(ctx, ".", "rev-parse", "--show-toplevel")
 		if err != nil {
@@ -1516,6 +1545,9 @@ func settingsWriteCommand(op, key, value string, o settingsWriteOptions, layer s
 		}
 	}
 	parts = append(parts, "--layer", layer)
+	if o.executableChanges {
+		parts = append(parts, "--executable-changes")
+	}
 	if o.repo != "" {
 		parts = append(parts, "--repo", quoteWord(o.repo))
 	}
@@ -1542,6 +1574,9 @@ func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) e
 		return err
 	}
 	var err error
+	if o.repoPath, err = repoArgPath(cmd.Context(), o.repo); err != nil {
+		return err
+	}
 	if o.repo, err = repoArg(cmd.Context(), settingsAim(o.project, o.config), o.repo); err != nil {
 		return err
 	}
@@ -1670,6 +1705,14 @@ func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) e
 	if err := settingsReparse(target, newData); err != nil {
 		return err
 	}
+	// The workflow edit's own refusal (spec §3.7): a repository's commands and
+	// image steps run as shell in every run of it, so a write into its
+	// fugaro.yaml that moves one of them is the owner's own step whatever
+	// command makes it — `settings set` on a concrete key exactly as
+	// `workflow add|rm` and a layer publish are.
+	if err := workflowExecutableGate(cmd, target, o, old, newData); err != nil {
+		return err
+	}
 	oldValue, newValue := settingsValueIn(old, target.keyPath), settingsValueIn(newData, target.keyPath)
 	if entryAddr != nil {
 		// An entry write's own values are the entry's and not the block's: the
@@ -1758,6 +1801,9 @@ func runSettingsUnset(cmd *cobra.Command, args []string, o settingsWriteOptions)
 		return err
 	}
 	var err error
+	if o.repoPath, err = repoArgPath(cmd.Context(), o.repo); err != nil {
+		return err
+	}
 	if o.repo, err = repoArg(cmd.Context(), settingsAim(o.project, o.config), o.repo); err != nil {
 		return err
 	}
@@ -1795,6 +1841,12 @@ func runSettingsUnset(cmd *cobra.Command, args []string, o settingsWriteOptions)
 		return nil
 	}
 	if err := settingsReparse(target, newData); err != nil {
+		return err
+	}
+	// The same refusal as the set path above: taking a key away moves the value
+	// a run gets exactly as writing one does, and a command that is no longer
+	// there is a change to what runs as shell like any other.
+	if err := workflowExecutableGate(cmd, target, o, old, newData); err != nil {
 		return err
 	}
 	oldValue := settingsValueIn(old, target.keyPath)

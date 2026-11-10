@@ -5357,6 +5357,12 @@ one member at a time. A list emptied by --remove or --remove-entry is refused:
 an absent key and an empty list mean different things to the loader, so use
 unset to remove the key.
 
+A write into a repository's fugaro.yaml that changes a workflow's commands or
+image steps needs --executable-changes: those values run as shell in every run
+of that repository, so the change is the owner's own step exactly as it is for
+`fugaro workflow add|rm` and `fugaro config publish` (spec §3.7). A dry run
+writes nothing and is answered rather than refused.
+
 A stage's Claude account is a key of its own — `stages.<stage>.claude_account`, one
 per stage name this binary runs (plan, implement, review_first, review,
 adversarial, fix) — and it is how a stage is repointed from one account to
@@ -5398,6 +5404,7 @@ Flags:
 | `--ask` | bool | `false` | no | in a project whose marks say it is managed, ask the confirmation this write would otherwise get (the y/N) instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back — a widening is the owner's own step and is asked nothing with or without it (D1552). Refused where nobody can answer them (a coding agent's session, a pipe, --non-interactive); a no-op with a sentence in a project that is not managed; refused beside --yes |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--dry-run` | bool | `false` | no | print what the edit would do and write nothing |
+| `--executable-changes` | bool | `false` | no | allow a --layer repo write that changes a workflow's commands or image steps (they run as shell in this repository's runs) |
 | `-h`, `--help` | bool | `false` | no | help for set |
 | `--json` | bool | `false` | no | print the dry run's document (with --dry-run) |
 | `--layer` | string | "" | no | the layer to write (local, project, repo) |
@@ -5426,6 +5433,10 @@ Removing a ceiling key is the owner's own step: nothing is asked for it at your
 own terminal, and a coding agent's session is refused it, with the command to
 run yourself (D1552).
 
+Taking away a workflow's commands or image steps changes what a run of that
+repository executes as shell, so it needs --executable-changes exactly as
+writing one does (spec §3.7).
+
 --dry-run says what the removal would do — the key, the layer, the file, the
 value it takes away, and whether it raises a limit — and writes nothing: no
 confirmation, no backup, no change to any file. It is answered with no
@@ -5444,6 +5455,7 @@ Flags:
 | `--ask` | bool | `false` | no | in a project whose marks say it is managed, ask the confirmation this removal would otherwise get instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back. Refused where nobody can answer it (a coding agent's session, a pipe, --non-interactive); a no-op with a sentence in a project that is not managed; refused beside --yes, --dry-run and --json |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--dry-run` | bool | `false` | no | print what the edit would do and write nothing |
+| `--executable-changes` | bool | `false` | no | allow a --layer repo write that takes away a workflow's commands or image steps (they run as shell in this repository's runs) |
 | `-h`, `--help` | bool | `false` | no | help for unset |
 | `--json` | bool | `false` | no | print the dry run's document (with --dry-run) |
 | `--layer` | string | "" | no | the layer to write (local, project, repo) |

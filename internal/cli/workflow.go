@@ -2,6 +2,9 @@ package cli
 
 import (
 	"fmt"
+	"io"
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -269,6 +272,16 @@ func workflowSets(name string, pairs []string) ([]workflowSet, error) {
 // group writes: a `--layer repo` write with no --layer flag to name, because
 // this group has one target and no other.
 func workflowTarget(cmd *cobra.Command, name string, o workflowOptions) (settingsTarget, localcfg.Selection, *localcfg.Config, error) {
+	// --repo names a path, repoArg reduces it to owner/name to say which
+	// repository it is, and that reduction loses which clone it was: this
+	// command writes the checkout it was pointed at, so the path is kept
+	// (repoArgPath) and is what settingsRepoFile lands in — a machine that
+	// remembers several checkouts of one repository would otherwise take the
+	// last of them, which is not the one named.
+	repoPath, err := repoArgPath(cmd.Context(), o.repo)
+	if err != nil {
+		return settingsTarget{}, localcfg.Selection{}, nil, err
+	}
 	repo, err := repoArg(cmd.Context(), settingsAim(o.project, o.config), o.repo)
 	if err != nil {
 		return settingsTarget{}, localcfg.Selection{}, nil, err
@@ -277,7 +290,7 @@ func workflowTarget(cmd *cobra.Command, name string, o workflowOptions) (setting
 	if err != nil {
 		return settingsTarget{}, sel, lc, err
 	}
-	path, err := settingsRepoFile(cmd.Context(), repo, lc.Name)
+	path, err := settingsRepoFile(cmd.Context(), repoPath, repo, lc.Name)
 	if err != nil {
 		return settingsTarget{}, sel, lc, err
 	}
@@ -327,13 +340,9 @@ func workflowApply(cmd *cobra.Command, w workflowWrite) error {
 	// artifact — and the list is config.ExecutableKeys', so an executable key a
 	// later release adds is gated here with no edit in this file.
 	if changes := workflowExecutableChanges(w.target.keyPath[1], w.old, w.next); len(changes) > 0 {
-		out := cmd.OutOrStdout()
-		fmt.Fprintln(out, "=== EXECUTABLE CHANGES: these run as shell in this repository's runs ===")
-		for _, c := range changes {
-			fmt.Fprintln(out, "  "+pluginwire.Printable(c))
-		}
+		workflowExecutableBanner(cmd.OutOrStdout(), changes)
 		if !w.o.executable {
-			return userErr("nothing was written: the workflow changes commands or image steps (shown above); review them, then run again with --executable-changes")
+			return userErr("%s", workflowExecutableRefusal)
 		}
 	}
 	edit := settingsEdit{
@@ -369,6 +378,89 @@ func workflowApply(cmd *cobra.Command, w workflowWrite) error {
 	}
 	fmt.Fprintln(cmd.OutOrStdout(), "next: fugaro update")
 	return nil
+}
+
+// workflowExecutableBanner prints the executable changes a write is about to
+// make, in the shape `config publish` prints them: one banner, then one line per
+// key. It is the one place the two doors below and `workflow add|rm` say it.
+func workflowExecutableBanner(out io.Writer, changes []string) {
+	fmt.Fprintln(out, "=== EXECUTABLE CHANGES: these run as shell in this repository's runs ===")
+	for _, c := range changes {
+		fmt.Fprintln(out, "  "+pluginwire.Printable(c))
+	}
+}
+
+// workflowExecutableRefusal is the sentence a write that moves an executable key
+// is refused with. It is one constant because it is one refusal: the banner is
+// above it, and the flag that would have allowed it is the same on every door.
+const workflowExecutableRefusal = "nothing was written: the workflow changes commands or image steps (shown above); review them, then run again with --executable-changes"
+
+// workflowExecutableGate is the refusal for the settings write path: a
+// `settings set` or `settings unset` that lands in a repository's fugaro.yaml
+// and moves an executable key of one of its workflows is a workflow edit like
+// any other (spec §3.7), so it needs the owner's --executable-changes exactly as
+// `workflow add|rm` and a layer publish do — and without it the write the gate
+// in workflow.go was added for would be one flag away, through the command the
+// group's own help points people at.
+//
+// The comparison is over the two documents the write path itself compares, so
+// every shape of edit is judged by it — a scalar set, an --add or --remove of a
+// list item, an --add-entry or --remove-entry of a map or an object list — and
+// never by how the command spelled it. A dry run writes nothing and is how the
+// change is read before it is made, so it is answered rather than refused; the
+// write is what is gated.
+func workflowExecutableGate(cmd *cobra.Command, target settingsTarget, o settingsWriteOptions, old, next []byte) error {
+	if target.kind != settingsDocRepo {
+		if o.executableChanges {
+			return userErr("--executable-changes goes with --layer repo: it is the owner's word for a change to a repository's own workflows, whose commands and image steps run as shell in its runs")
+		}
+		return nil
+	}
+	if o.dryRun {
+		return nil
+	}
+	changes := workflowsExecutableChanges(old, next)
+	if len(changes) == 0 {
+		return nil
+	}
+	workflowExecutableBanner(cmd.OutOrStdout(), changes)
+	if !o.executableChanges {
+		return userErr("%s", workflowExecutableRefusal)
+	}
+	return nil
+}
+
+// workflowsExecutableChanges is workflowExecutableChanges for a whole document:
+// every executable key of every workflow block either document holds whose value
+// differs, sorted by block. It is the settings write path's question — the
+// command names one key, and the file may hold any number of blocks — and the
+// names are the union of the two documents', so a block a write adds or removes
+// is compared as well.
+func workflowsExecutableChanges(old, next []byte) []string {
+	var out []string
+	for _, name := range workflowNamesIn(old, next) {
+		out = append(out, workflowExecutableChanges(name, old, next)...)
+	}
+	return out
+}
+
+// workflowNamesIn is every workflow name either document holds, sorted.
+func workflowNamesIn(docs ...[]byte) []string {
+	names := map[string]bool{}
+	for _, data := range docs {
+		var doc map[string]any
+		if yaml.Unmarshal(data, &doc) != nil {
+			continue
+		}
+		blocks, ok := doc["workflows"].(map[string]any)
+		if !ok {
+			continue
+		}
+		for name := range blocks {
+			names[name] = true
+		}
+	}
+	return slices.Sorted(maps.Keys(names))
 }
 
 // workflowExecutableChanges lists each executable key (config.ExecutableKeys)
