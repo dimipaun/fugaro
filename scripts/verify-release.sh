@@ -28,10 +28,11 @@
 #      about what a release publishes: a change to either belongs in images.yml
 #      and reaches this check with it.
 #   4. For a patch tag (Z of 1 or more, the shape docs/release.md's "Hotfix
-#      releases" cut from release/X.Y): every fix the tag carries and main does
-#      not is one main does carry -- every commit of the tag that is not on
-#      origin/main and was cherry-picked with -x (`git cherry-pick -x`, which
-#      records "(cherry picked from commit <sha>)") names an ancestor of
+#      releases" cut from release/X.Y): every commit the tag carries and main
+#      does not is one main does carry -- the fix and the plugin bump the branch
+#      was cut with are both cherry-picked from it, and every commit of the tag
+#      that is not on origin/main and was picked with -x (`git cherry-pick -x`,
+#      which records "(cherry picked from commit <sha>)") names an ancestor of
 #      origin/main -- and main's own plugin version is the tag's or newer, the
 #      same rule scripts/release-gate.sh refuses on. A patch tag whose branch
 #      commits carry no such trailer at all is refused: the fix has to be on
@@ -169,12 +170,12 @@ if [ "$z" -ge 1 ]; then
     n=0
     for sha in $trailers; do
       if ! git merge-base --is-ancestor "$sha" refs/remotes/origin/main; then
-        echo "$tag carries a fix that is not on origin/main: the commit $sha, which some commit of this tag names in its \"(cherry picked from commit ...)\" trailer. A fix has to land on main first, through a PR as usual, so main never loses it (docs/release.md, \"Hotfix releases\")" >&2
+        echo "$tag carries a commit that is not on origin/main: the commit $sha, which some commit of this tag names in its \"(cherry picked from commit ...)\" trailer. A fix has to land on main first, through a PR as usual, so main never loses it (docs/release.md, \"Hotfix releases\")" >&2
         exit 1
       fi
       n=$((n + 1))
     done
-    patch_note="$n cherry-picked fix(es), each on origin/main"
+    patch_note="$n cherry-picked commit(s), each on origin/main"
   fi
   # main's plugin version must be the tag's or newer: the branch is never
   # merged back, so a plugin version only the branch carries leaves main
