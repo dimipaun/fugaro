@@ -13,9 +13,9 @@ builds the same command as a task of [docs/config-management](../config-manageme
 and the owner ruled on 2026-11-10 that **config-management wins**: **G7** builds `fugaro rigor floor`,
 and S7 is closed as its duplicate. S7 carries the marker, keeps its section as the record of what was
 designed — G7's own interface re-reads that record against the tree, as G6 re-reads the `rigor`
-design's — and keeps its number, which is never reused. **S0–S6 and S8–S11 stay open**, and the
-behaviour G7 does not carry is listed under *behaviour not covered by the winners* in the pull request
-that carries this ruling rather than dropped here.
+design's — and keeps its number, which is never reused. **S0–S5 are merged and stay exactly as they
+are, and S6 and S8–S11 stay open**; the behaviour G7 does not carry is listed under *behaviour not
+covered by the winners* in the pull request that carries this ruling rather than dropped here.
 
 ## Order, and what this plan does not own
 

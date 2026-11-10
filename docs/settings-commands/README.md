@@ -14,9 +14,9 @@ command as a task of [docs/config-management](../config-management/implementatio
 (`fugaro rigor floor`) is config-management's **G7**, and the owner ruled on 2026-11-10 that
 **config-management wins** and S7 is closed as G7's duplicate. S7 keeps its section in
 [implementation-plan.md](implementation-plan.md) as the record of what was designed — G7 re-reads that
-record, as G6 re-reads the `rigor` design's — and keeps its number, which is never reused. **S0–S6 and
-S8–S11 stay open**, and the behaviour G7 does not carry is listed under *behaviour not covered by the
-winners* in the pull request that carries this ruling.
+record, as G6 re-reads the `rigor` design's — and keeps its number, which is never reused. **S0–S5 are
+merged and stay exactly as they are, and S6 and S8–S11 stay open**; the behaviour G7 does not carry is
+listed under *behaviour not covered by the winners* in the pull request that carries this ruling.
 
 **Asked by:** the owner, 2026-10-31: "for project level and repo level settings, in fact for ALL
 the settings, you should not expect people to edit the text file directly, but have Fugaro commands
