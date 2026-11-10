@@ -1,0 +1,348 @@
+package cli
+
+import (
+	"context"
+	"errors"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"testing"
+
+	"github.com/dimipaun/fugaro/internal/orchestrator/service"
+)
+
+// The unit's own command tests. Everything here runs against a temporary home
+// and a fake service manager: the real one would run launchctl or systemctl,
+// and no test may, so the interface is what is replaced (orchestratorService)
+// and the seam the two converge steps share (orchestratorReload) is only ever
+// told about a unit, never given a command to run.
+
+// unitFake is a service.Manager that counts instead of doing: the two calls
+// that would reach a machine's own service manager, and nothing else.
+type unitFake struct {
+	platform string
+	reloads  []service.Unit
+	removes  []service.Unit
+}
+
+func (f *unitFake) Platform() string { return f.platform }
+
+func (f *unitFake) Render(func(string) string, string) (service.Unit, error) {
+	return service.Unit{}, errors.New("the fake renders nothing: every test comes through service.Render")
+}
+
+func (f *unitFake) Reload(_ context.Context, u service.Unit) error {
+	f.reloads = append(f.reloads, u)
+	return nil
+}
+
+func (f *unitFake) Remove(_ context.Context, u service.Unit) error {
+	f.removes = append(f.removes, u)
+	return nil
+}
+
+// fakeUnitService puts the fake behind the command family's own seam.
+func fakeUnitService(t *testing.T) *unitFake {
+	t.Helper()
+	f := &unitFake{platform: "test"}
+	old := orchestratorService
+	orchestratorService = func() (service.Manager, error) { return f, nil }
+	t.Cleanup(func() { orchestratorService = old })
+	return f
+}
+
+// unitHome points HOME and the three XDG directories at dir, and returns dir:
+// the unit's path on Linux is XDG_CONFIG_HOME/systemd/user/<name>.service, and
+// a test that walked the developer's own home would be reading their machine.
+func unitHome(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("HOME", filepath.Join(dir, "home"))
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(dir, "home", "config"))
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(dir, "home", "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(dir, "home", "state"))
+	return dir
+}
+
+// currentUnit is the unit this release renders on this machine, and where it
+// goes: what a test compares the file on disk with, computed through the same
+// renderer the command uses.
+func currentUnit(t *testing.T) service.Unit {
+	t.Helper()
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err := service.Render(os.Getenv, runtime.GOOS, stableBinaryPath(exe))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return u
+}
+
+func TestInstallWritesOnlyUnderTheUserHome(t *testing.T) {
+	dir := unitHome(t)
+	f := fakeUnitService(t)
+	typed(t)
+	out, _, err := executeStdin(t, "install\n", "orchestrator", "install")
+	if err != nil {
+		t.Fatalf("install: %v\n%s", err, out)
+	}
+	u := currentUnit(t)
+	if !strings.HasPrefix(u.Path, filepath.Join(dir, "home")) {
+		t.Fatalf("the unit's path %s is not under the person's home", u.Path)
+	}
+	data, err := os.ReadFile(u.Path)
+	if err != nil {
+		t.Fatalf("the unit was not written: %v", err)
+	}
+	if string(data) != u.Text {
+		t.Errorf("%s is not what this release renders:\n--- on disk\n%s\n--- rendered\n%s", u.Path, data, u.Text)
+	}
+	if !strings.Contains(out, u.Path) {
+		t.Errorf("the run does not name the file it writes:\n%s", out)
+	}
+	// Every file this run left, anywhere, is under the person's home: the
+	// property the whole command family is built on — no system path, no
+	// root, nothing outside ~.
+	err = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		if !strings.HasPrefix(p, filepath.Join(dir, "home")) {
+			t.Errorf("the run wrote %s, which is outside the person's home", p)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(f.reloads) != 1 || f.reloads[0].Path != u.Path {
+		t.Errorf("the service manager was reloaded with %v, want one call for %s", f.reloads, u.Path)
+	}
+	if len(f.removes) != 0 {
+		t.Errorf("install removed something: %v", f.removes)
+	}
+}
+
+func TestInstallRefusedUnderAnAgentMarker(t *testing.T) {
+	unitHome(t)
+	f := fakeUnitService(t)
+	typed(t)
+	t.Setenv("CLAUDECODE", "1")
+	out, _, err := executeStdin(t, "install\n", "orchestrator", "install")
+	if err == nil {
+		t.Fatalf("install under a coding agent's marker succeeded:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "CLAUDECODE") {
+		t.Errorf("the refusal does not name the marker: %v", err)
+	}
+	if _, statErr := os.Stat(currentUnit(t).Path); !errors.Is(statErr, os.ErrNotExist) {
+		t.Errorf("a unit was written under a coding agent's marker (stat: %v)", statErr)
+	}
+	if len(f.reloads) != 0 || len(f.removes) != 0 {
+		t.Errorf("a coding agent's session reached the service manager: reloads %v, removes %v", f.reloads, f.removes)
+	}
+}
+
+// TestWindowsIsRefusedNamed: Windows has no launchd and no systemd user unit
+// (D1232), and the refusal names the platform rather than failing somewhere
+// later with a path or a missing command.
+func TestWindowsIsRefusedNamed(t *testing.T) {
+	unitHome(t)
+	f := fakeUnitService(t)
+	typed(t)
+	old := orchestratorGOOS
+	orchestratorGOOS = "windows"
+	t.Cleanup(func() { orchestratorGOOS = old })
+	for _, cmd := range [][]string{
+		{"orchestrator", "install"},
+		{"orchestrator", "uninstall"},
+		{"orchestrator", "status"},
+	} {
+		out, _, err := executeStdin(t, "install\n", cmd...)
+		if err == nil {
+			t.Fatalf("%v on windows succeeded:\n%s", cmd, out)
+		}
+		for _, want := range []string{"windows", "not supported"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("%v: the refusal does not name %q: %v", cmd, want, err)
+			}
+		}
+	}
+	if len(f.reloads) != 0 || len(f.removes) != 0 {
+		t.Errorf("a refused platform reached the service manager: %v %v", f.reloads, f.removes)
+	}
+}
+
+func TestUninstallRemovesWhatInstallWrote(t *testing.T) {
+	unitHome(t)
+	f := fakeUnitService(t)
+	typed(t)
+	if _, _, err := executeStdin(t, "install\n", "orchestrator", "install"); err != nil {
+		t.Fatal(err)
+	}
+	u := currentUnit(t)
+	statusOut, _, err := execute(t, "orchestrator", "status")
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if !strings.Contains(statusOut, "is installed and current") {
+		t.Errorf("status does not report an installed, current unit:\n%s", statusOut)
+	}
+	out, _, err := execute(t, "orchestrator", "uninstall")
+	if err != nil {
+		t.Fatalf("uninstall: %v", err)
+	}
+	if _, statErr := os.Stat(u.Path); !errors.Is(statErr, os.ErrNotExist) {
+		t.Errorf("the unit is still there after uninstall (stat: %v)", statErr)
+	}
+	if len(f.removes) != 1 || f.removes[0].Path != u.Path {
+		t.Errorf("the service manager was told to remove %v, want one call for %s", f.removes, u.Path)
+	}
+	if !strings.Contains(out, u.Path) {
+		t.Errorf("uninstall does not name the file it removed:\n%s", out)
+	}
+	// A second uninstall says there is nothing to remove rather than failing,
+	// and a machine that never had a unit is the same answer.
+	out, _, err = execute(t, "orchestrator", "uninstall")
+	if err != nil {
+		t.Fatalf("uninstall with no unit: %v", err)
+	}
+	if !strings.Contains(out, "nothing to remove") {
+		t.Errorf("uninstall with no unit does not say so:\n%s", out)
+	}
+	if len(f.removes) != 1 {
+		t.Errorf("uninstall with no unit reached the service manager: %v", f.removes)
+	}
+	statusOut, _, err = execute(t, "orchestrator", "status")
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if !strings.Contains(statusOut, "is not installed") {
+		t.Errorf("status does not report the missing unit:\n%s", statusOut)
+	}
+}
+
+// TestInstallRerendersAndRestartsAPreviousVersionUnit: the previous release's
+// template is on disk. One `fugaro orchestrator install` re-renders the file
+// from this release's template and restarts the service, which is what the
+// command promises to mean, and it is also what `fugaro update` does to an
+// installed unit.
+func TestInstallRerendersAndRestartsAPreviousVersionUnit(t *testing.T) {
+	unitHome(t)
+	f := fakeUnitService(t)
+	typed(t)
+	u := currentUnit(t)
+	previous := "[Unit]\nDescription=Fugaro orchestrator (0.20.0)\n\n[Service]\nExecStart=/usr/local/bin/fugaro orchestrator run --binary /usr/local/bin/fugaro\n"
+	if err := os.MkdirAll(filepath.Dir(u.Path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(u.Path, []byte(previous), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := executeStdin(t, "install\n", "orchestrator", "install")
+	if err != nil {
+		t.Fatalf("install: %v", err)
+	}
+	data, err := os.ReadFile(u.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != u.Text {
+		t.Errorf("the unit was not re-rendered from this release's template:\n--- on disk\n%s\n--- rendered\n%s", data, u.Text)
+	}
+	if len(f.reloads) != 1 {
+		t.Errorf("the service was reloaded %d times, want once: %v", len(f.reloads), f.reloads)
+	}
+	if !strings.Contains(out, "changed") {
+		t.Errorf("the run does not say why it re-rendered:\n%s", out)
+	}
+}
+
+func TestInstallIsIdempotent(t *testing.T) {
+	unitHome(t)
+	f := fakeUnitService(t)
+	typed(t)
+	u := currentUnit(t)
+	if _, _, err := executeStdin(t, "install\n", "orchestrator", "install"); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := executeStdin(t, "install\n", "orchestrator", "install")
+	if err != nil {
+		t.Fatalf("the second install: %v", err)
+	}
+	data, err := os.ReadFile(u.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != u.Text {
+		t.Errorf("the second install left a different file:\n%s", data)
+	}
+	if len(f.reloads) != 2 {
+		t.Errorf("two installs reloaded the service %d times, want each to: %v", len(f.reloads), f.reloads)
+	}
+	if !strings.Contains(out, "already this release's template") {
+		t.Errorf("the second install does not report that nothing changed but the restart:\n%s", out)
+	}
+}
+
+// TestInstallUnitPointsAtTheStableBinaryPath is the CLI's half of the path
+// rule: the unit names the package manager's stable link and never a versioned
+// Cellar path, and it names the stable path — not the running process's own
+// resolved executable, which on Linux is the versioned path an upgrade deletes.
+func TestInstallUnitPointsAtTheStableBinaryPath(t *testing.T) {
+	for _, tc := range []struct{ exe, want string }{
+		{"/opt/homebrew/Cellar/fugaro/1.2.3/bin/fugaro", "/opt/homebrew/opt/fugaro/bin/fugaro"},
+		{"/usr/local/Cellar/fugaro/0.21.0/bin/fugaro", "/usr/local/opt/fugaro/bin/fugaro"},
+		{"/home/linuxbrew/.linuxbrew/Cellar/fugaro/1.2.3/bin/fugaro", "/home/linuxbrew/.linuxbrew/opt/fugaro/bin/fugaro"},
+		// Already stable, or not Homebrew's at all: used as it is, because
+		// inventing a link would name a file nobody wrote.
+		{"/opt/homebrew/opt/fugaro/bin/fugaro", "/opt/homebrew/opt/fugaro/bin/fugaro"},
+		{"/usr/local/bin/fugaro", "/usr/local/bin/fugaro"},
+		{"/home/someone/go/bin/fugaro", "/home/someone/go/bin/fugaro"},
+		// A directory that merely carries the name is not a version: without
+		// the version segment there is nothing to strip.
+		{"/opt/homebrew/Cellar/fugaro/bin", "/opt/homebrew/Cellar/fugaro/bin"},
+	} {
+		if got := stableBinaryPath(tc.exe); got != tc.want {
+			t.Errorf("stableBinaryPath(%s) = %s, want %s", tc.exe, got, tc.want)
+		}
+	}
+
+	unitHome(t)
+	fakeUnitService(t)
+	typed(t)
+	if _, _, err := executeStdin(t, "install\n", "orchestrator", "install"); err != nil {
+		t.Fatal(err)
+	}
+	u := currentUnit(t)
+	data, err := os.ReadFile(u.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stable := stableBinaryPath(exe)
+	if n := strings.Count(string(data), stable); n != 2 {
+		t.Errorf("the unit names %s %d times, want twice (the program and --binary):\n%s", stable, n, data)
+	}
+	if strings.Contains(string(data), "Cellar") {
+		t.Errorf("the unit names a versioned Cellar path, which an upgrade removes:\n%s", data)
+	}
+}
+
+// stageSource is one stage file's text, read from the package directory the
+// tests run in.
+func stageSource(t *testing.T, name string) string {
+	t.Helper()
+	data, err := os.ReadFile(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}

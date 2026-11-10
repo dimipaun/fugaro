@@ -54,7 +54,7 @@ const (
 // local writes unmoved over a build that is asked for after both.
 func NeedsBilling(name string) bool {
 	switch name {
-	case Preflight, Project, Plugin, Checkout:
+	case Preflight, Project, Plugin, Checkout, Unit:
 		return false
 	}
 	return true
@@ -118,6 +118,16 @@ const (
 	// It comes after the repository stage, whose onboarding is what the
 	// images it refreshes belong to, and before compute, which stays last.
 	Checkout = "checkout"
+	// Unit is the login unit that runs the orchestrator daemon
+	// (internal/cli/init_orchestrator_stage.go for `setup`, which installs the
+	// first one, and internal/cli/update_unit_stage.go for `update`, which
+	// re-renders one already installed and never installs one). The two are
+	// one stage because the loop takes one stage per name and the door decides
+	// which of them it is (initStages): the owner's ruling Q2 of 2026-11-04
+	// gives the first install to `setup`, and T7's of 2026-11-05 makes
+	// `fugaro update` re-render an installed unit so that one command stays
+	// the whole upgrade.
+	Unit = "unit"
 	// Compute is the Batch backend's installation-level provisioning
 	// (design docs/design/compute-backend.md §8.1 task 6). It is last
 	// because it is the only stage that may not run before everything else
@@ -225,6 +235,21 @@ var order = []slot{
 	// rather than run past that stop, and the loop tells the stage the stops
 	// it is running past for exactly that (PastStops).
 	{name: Checkout, needs: []string{Repository, Layer}, pastStops: []string{Repository}},
+	// The login unit that runs the daemon. It comes after the checkout's own
+	// steps and before compute: the daemon it starts drives the project the
+	// repository stage published and re-reads the policy node every stage
+	// before it wrote, so a run that installed a unit ahead of those would
+	// start a daemon that cannot read what it drives. Like Plugin and
+	// Checkout it writes only this machine's own files — one file under the
+	// person's home — so billing does not gate it (NeedsBilling).
+	//
+	// noYes: --yes never covers it. A unit is code that runs at every login,
+	// so the setup door asks for the typed confirmation (the owner's Q2
+	// answer of 2026-11-04) and the update door, at a terminal, for the
+	// step's own class, which is Typed (T7's ruling of 2026-11-05). In a
+	// managed project the gate's no-prompt rule is what it is everywhere
+	// else, and an agent-driven run writes no unit at all.
+	{name: Unit, needs: []string{Repository, Policy}, noYes: true},
 	// The compute backend's provisioning is money, permanent and owner-run,
 	// so --yes never covers it; it comes last, after every stage that
 	// builds the identity, the registry and the installation it reads.
