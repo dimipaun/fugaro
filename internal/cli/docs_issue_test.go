@@ -14,9 +14,11 @@ package cli
 // these is a sentence a later edit can drop with nothing else in the tree
 // noticing.
 //
-// Mutation (run and restored): take the 30-day sentence out -> the test fails
-// naming "30 days"; reword the GitHub sentence -> fails naming "no GitHub";
-// drop the alias -> fails naming "`fugaro issue list --mine`".
+// Mutation (run and restored): take the 30-day rule sentence out -> the test
+// fails naming "more than 30 days old is hidden" (the section heading above it
+// says "30 days" and does not stand in for the rule); reword the GitHub
+// sentence -> fails naming "no GitHub"; drop the alias -> fails naming
+// "`fugaro issue list --mine`".
 
 import (
 	"strings"
@@ -32,7 +34,7 @@ func TestDocsIssueNamesMine(t *testing.T) {
 		{"`fugaro issue list --mine`", "the alias, which is the same listing and must not drift from it"},
 		{"`--all`", "the flag that shows the rows the 30-day rule hides"},
 		{"`--json`", "the flag a tool reads the versioned document with"},
-		{"30 days", "the rule the finished rows are hidden by"},
+		{"more than 30 days old is hidden", "the rule the finished rows are hidden by, which the section heading alone does not carry"},
 		{"snapshot", "the last successful shared read an offline run prints"},
 		{"identity cache", "who the user is when no credential lookup can run"},
 		{"no GitHub", "D1784: the command reads no GitHub issue state"},
