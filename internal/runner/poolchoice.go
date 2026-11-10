@@ -132,7 +132,11 @@ func (r *run) subscriptionSpread(ctx context.Context) bool {
 		return c.spread
 	}
 	c.read = true
-	if _, found, err := r.projectPolicy(ctx); err != nil || !found {
+	// A project that publishes no pool publishes nothing for the switch to
+	// spread: the member is not read at all, which is every installation
+	// today and the reason a run that names no pool pays no cloud call for
+	// this.
+	if p, found, err := r.projectPolicy(ctx); err != nil || !found || len(p.CraftPools) == 0 {
 		return false
 	}
 	db, err := r.budgetClient(ctx)

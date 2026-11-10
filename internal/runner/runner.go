@@ -4745,6 +4745,23 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 	case res.IsError && opts.Skippable && r.skippable(ctx, stageCtx):
 		r.save(ctx)
 		return res, false, skippedError{fmt.Errorf("the agent reported an error (%s)", res.Subtype)}
+	// The pool member serving this attempt had nothing left (F5, MC5): the
+	// credential that served the call refused it, and nothing about the work
+	// did, so the stage is not failed — it is the attempt the walk's next
+	// member makes, and stage's own loop runs it there. The classifier reads
+	// the signal of the member's own type (poolEndedTheAttempt), which is what
+	// F5 is about: a spent subscription's wording is no API key's signal.
+	//
+	// It comes after the Skippable case above for the account's own reason —
+	// a skipped stage has no next attempt for the walk to serve — and before
+	// the account's case below, because a stage whose craft names a pool is
+	// served by that pool: the walk that chose the member is the one that
+	// moves off it.
+	case r.poolEndedTheAttempt(ctx, name, res):
+		r.notePoolExhausted(name)
+		log.Info("the pool member's own exhaustion ended this attempt, so the stage's next attempt is the pool's next member", "stage", name)
+		r.save(ctx)
+		return res, false, &poolLimitedError{}
 	// The account's own subscription allowance ended this attempt (A7b, spec
 	// §11.3): the attempt was refused by the credential that served it and not
 	// by anything about the work, so with the walk on it is not a failed stage
@@ -4764,18 +4781,6 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 	// failure. Why the stage moved is the line below and the failover line the
 	// next attempt's stage-start check writes; the agent's own words stay in
 	// the stage's transcript, where they already are.
-	// The pool member serving this attempt had nothing left (F5, F23, MC5):
-	// the same shape as the account's own allowance below and for the same
-	// reason — the credential refused the call and nothing about the work did
-	// — with the classifier reading the signal of the *member's own type*
-	// instead of the OAuth run's subscription. It stands before the account's
-	// case because a stage whose craft names a pool is served by that pool:
-	// the walk that chose the member is the one that moves off it.
-	case r.poolEndedTheAttempt(ctx, name, res):
-		r.notePoolExhausted(name)
-		log.Info("the pool member's own exhaustion ended this attempt, so the stage's next attempt is the pool's next member", "stage", name)
-		r.save(ctx)
-		return res, false, &poolLimitedError{}
 	case r.accountEndedTheAttempt(res) && r.accountAuto(ctx):
 		r.noteStageExhausted(name)
 		// The account that served the attempt is the run's own credential's:
