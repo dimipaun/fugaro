@@ -177,7 +177,7 @@ func chainInherit(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 		// loudly, with the figures it asked for itself.
 		if chain, err = chainRead(ctx, env, slug, from); err != nil {
 			if o.continues != "" {
-				return err
+				return userErr("--continues %s: the chain cannot be read (%v), so what it has already spent cannot be established, and a link the records cannot confirm is refused rather than continued from the run named alone. Name a run whose chain is whole, or launch a run that is not part of it", task.ShortRun(o.continues), err)
 			}
 			fmt.Fprintf(warn, "warning: the chain behind this launch could not be read (%v); its own limits cannot be inherited, so this run carries the limits this launch wrote and the per-run caps\n", err)
 			limit = spec.Overrides
@@ -428,7 +428,7 @@ func chainRemaining(chain *runstore.Chain, limit task.Overrides, spec *task.Spec
 		if req, ok := chainLimitAmount(next, d); ok {
 			if req > rem {
 				return task.Overrides{}, userErr("--max-%s %s is above what is left of this chain's %s limit (%s of %s used): a launch can only tighten what a chain has left, never re-open what it spent. Pass %s or less, or raise the chain's limit where it is set",
-					chainDimensionFlag(d), chainAmountText(d, req), chainDimensionWord(d), chainAmountText(d, spent), chainAmountText(d, lim), chainAmountText(d, rem))
+					chainDimensionFlag(d), chainFlagAmount(d, req), chainDimensionWord(d), chainAmountText(d, spent), chainAmountText(d, lim), chainAmountText(d, rem))
 			}
 			spend = req
 		}
@@ -569,6 +569,23 @@ func chainAmountText(d runstore.Dimension, a runstore.Amount) string {
 			return "1 round"
 		}
 		return strconv.Itoa(int(a)) + " rounds"
+	}
+	return strconv.FormatFloat(float64(a), 'f', -1, 64)
+}
+
+// chainFlagAmount is one dimension's amount as the flag that would carry it
+// takes it: the figure alone, with none of chainAmountText's unit words. A
+// refusal that has just named the flag is where the two read differently — the
+// caller typed `--max-usd 4`, and "4 dollars" is the unit said twice — while a
+// figure standing in a sentence of its own reads better with it.
+func chainFlagAmount(d runstore.Dimension, a runstore.Amount) string {
+	switch d {
+	case runstore.USD:
+		return strconv.FormatFloat(pricing.Micros(a).USD(), 'f', -1, 64)
+	case runstore.Tokens, runstore.ReviewRounds:
+		return strconv.FormatInt(int64(a), 10)
+	case runstore.Time:
+		return time.Duration(math.Round(float64(a) * float64(time.Second))).String()
 	}
 	return strconv.FormatFloat(float64(a), 'f', -1, 64)
 }
