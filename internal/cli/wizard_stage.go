@@ -307,6 +307,13 @@ func (s *wizardStage) ask(ctx context.Context) error {
 		}
 		o.name = v
 	}
+	// The bake question (IS7, D1901) is asked after the name and before the
+	// billing one: it is about the project the answers above settled rather
+	// than about an input, and it is the one question of this table a run can
+	// leave open (askBake, setup.go).
+	if err := s.answer(s.askBake()); err != nil {
+		return err
+	}
 	// The billing question is the last of the wizard's questions (W4.3): it is
 	// about the GCP project the answers above settled, and it is asked only
 	// where the answer is one this run acts on (asksBilling, billing_prompt.go).
