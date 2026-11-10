@@ -1,6 +1,6 @@
 # The mobile app's sign-in, pairing and allowlist
 
-**Status: plan only.** No code is implemented, no rules document is changed, no Firebase
+**Status as of 2026-11-10: parked, 2/7 merged; see [docs/status.md](../status.md) for the current table.** No code is implemented, no rules document is changed, no Firebase
 configuration is touched, and **nothing here is approved** — the four documents below are the
 owner's spec, what the repository actually holds, the decisions planning found, and the plan that
 would follow from them. **Owner: Dimi Paun. Date: 2026-10-21.** Read against `main` at `d9dda8f3`

@@ -1,6 +1,6 @@
 # `fugaro settings`: one command to see and change every setting, with `fugaro update` publishing what it changes
 
-**Status: design approved; tasks queue for CLI 0.15.0 (and console 0.117.0).** SD1–SD18 were
+**Status as of 2026-11-10: in progress, about 6/12 merged; see [docs/status.md](../status.md) for the current table.** SD1–SD18 were
 answered by the owner on 2026-10-31 (SD1–SD5 with named answers, the rest as recommended); the
 answers are in [reconciliation.md](reconciliation.md) §3, and the plan is written to them. The
 design's own decisions — everything the audit left open that is not one of its SDs — are

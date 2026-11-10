@@ -1,6 +1,6 @@
 # C3.9's review half: implementation plan
 
-**Nothing here is approved to build, and every decision is answered.** The owner answered
+**Status as of 2026-11-10: done except the owner's live check; see [docs/status.md](../status.md) for the current table.** The owner answered
 [reconciliation.md](reconciliation.md) §3's **D1062–D1075** on 2026-11-01 — D1062–D1071 as recommended,
 D1072 as 0.16.0, D1063 as amended by that day's ruling O1, D1073/D1074 as the review added them, and D1075 as
 the published policy's new top-level key, `verifier_accounts`, copied from the local configuration — so
