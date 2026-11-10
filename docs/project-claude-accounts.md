@@ -300,9 +300,12 @@ read, so **0.9.0's accounts need all four of these**, in this order:
    there is no list to keep, and the publish seeds `allow_repos` from this machine's config — its
    `repos:` map and the shared config (`seedAllowRepos`) — so a repository you had removed with
    `fugaro project repos rm` comes back when the config still names it, and one you had added by
-   hand with `fugaro project repos add` is dropped. The node's `clone_urls` block (no command of
-   this release writes one) and any `routing` block a person wrote are dropped with it: a publish
-   carries those only from a node it replaces. So run this **per installation** before the delete
+   hand with `fugaro project repos add` is dropped. The node's `clone_urls` block and any
+   `routing` block a person wrote are dropped with it: a publish carries those only from a node it
+   replaces. `clone_urls` is the half you can put back, because it now has a writer outside the
+   console — `fugaro project clone-url set` writes the block in your own config file, and the
+   publish that follows takes it from there — while a hand-written `routing` block is yours to
+   write again. So run this **per installation** before the delete
    and keep what it prints:
 
    ```bash

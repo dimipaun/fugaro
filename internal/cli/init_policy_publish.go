@@ -375,7 +375,7 @@ func policyNodeForPublish(ctx context.Context, lc *localcfg.Config, old *project
 	if err := policyContextRefusal(pol, imageContextShipped); err != nil {
 		return nil, nil, nil, err
 	}
-	body, err := policyNodeBytes(pol, base, exists, keepRouting)
+	body, err := policyNodeBytes(pol, base, exists, keepRouting, lc.CloneURLs == nil)
 	if err != nil {
 		return nil, nil, nil, err
 	}
