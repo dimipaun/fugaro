@@ -289,6 +289,13 @@ func TestDockerfileSecretArgRefused(t *testing.T) {
 		"FROM example.invalid/base\nARG -- NPM_TOKEN=1\n",
 		"FROM example.invalid/base\nARG --build-arg NPM_TOKEN=1\n",
 		"FROM example.invalid/base\nARG --x=1 FOO TOKEN\n",
+		// An ENV line's pairs are the parser's own words, so an escaped quote
+		// stays inside the value it is written in and the next pair is a pair.
+		// Read by hand, up to the next quote byte, the value's end is guessed:
+		// the rest of the line is swallowed with it, and the name a build sets
+		// is either never looked at or read out of the middle of a value.
+		"FROM example.invalid/base\nENV A=\"\\\" B=\" NPM_TOKEN=1\n",
+		"FROM example.invalid/base\nENV A=\"a\\\"b\" NPM_TOKEN=1\n",
 	} {
 		_, err := Fetch(ctx, nil, gitprov.KindGitHub, inlineEntry(def))
 		if err == nil {

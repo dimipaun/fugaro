@@ -433,7 +433,7 @@ func instructionNames(inst, rest string, esc byte) []string {
 		}
 		return names
 	}
-	return envNames(rest)
+	return envNames(rest, esc)
 }
 
 // dockerfileWords cuts a line's arguments into the words the parser cuts them
@@ -521,46 +521,42 @@ func dockerfileWords(rest string, esc byte) []string {
 // envNames returns the names an ENV line sets: the modern form is one or more
 // key=value pairs on the one line, the legacy one a single name with the value
 // after it. Both forms are still written, and a Dockerfile mixes them.
-func envNames(rest string) []string {
-	rest = strings.TrimLeft(rest, dockerSpace)
-	if rest == "" {
+//
+// Which form the line is, and where one pair ends and the next begins, is the
+// parser's own reading (parseNameVal): the words are the parser's words
+// (dockerfileWords), the form is decided by whether the first of them holds an
+// '=', and in the key=value form each word is one pair, its name ending at its
+// first '='. Cutting the pairs by hand instead — reading a quoted value up to
+// the next quote byte, and ignoring the escape character — reads the line a
+// build does not: in ENV A="\" B=" NPM_TOKEN=1 the escaped quote is a character
+// of the first value to a build, which then goes on to set NPM_TOKEN.
+func envNames(rest string, esc byte) []string {
+	words := dockerfileWords(rest, esc)
+	if len(words) == 0 {
 		return nil
 	}
-	if eq, sp := strings.IndexByte(rest, '='), strings.IndexAny(rest, dockerSpace); eq < 0 || (sp >= 0 && sp < eq) {
-		// Legacy: ENV name value..., where the name ends at the whitespace.
-		if sp < 0 {
-			return []string{rest}
+	if !strings.Contains(words[0], "=") {
+		// Legacy: ENV name value..., where the name is what stands before the
+		// first whitespace of the line as it was written (the parser splits the
+		// raw text here, not the words).
+		if sp := strings.IndexAny(rest, dockerSpace); sp >= 0 {
+			return []string{rest[:sp]}
 		}
-		return []string{rest[:sp]}
+		return []string{rest}
 	}
 	var names []string
-	for rest != "" {
-		eq := strings.IndexByte(rest, '=')
-		if eq < 0 {
+	for _, word := range words {
+		// A word with no '=' is a syntax error to a build, so nothing after it
+		// is a pair either.
+		name, _, ok := strings.Cut(word, "=")
+		if !ok {
 			break
 		}
-		names = append(names, rest[:eq])
-		rest = strings.TrimLeft(envValue(rest[eq+1:]), dockerSpace)
+		if name != "" {
+			names = append(names, name)
+		}
 	}
 	return names
-}
-
-// envValue cuts one ENV value off the front of s and returns the rest: a
-// quoted value ends at its closing quote, any other at the next whitespace.
-func envValue(s string) string {
-	if s == "" {
-		return s
-	}
-	if q := s[0]; q == '"' || q == '\'' {
-		if i := strings.IndexByte(s[1:], q); i >= 0 {
-			return s[i+2:]
-		}
-		return ""
-	}
-	if i := strings.IndexAny(s, dockerSpace); i >= 0 {
-		return s[i:]
-	}
-	return ""
 }
 
 // credentialMarkers are the substrings that make a variable name
