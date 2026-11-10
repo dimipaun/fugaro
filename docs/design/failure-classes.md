@@ -187,7 +187,7 @@ knows what to do without reading a sentence:
 | `unclassified` | the terminal the run reached has no class of its own (`stage_no_result`'s neighbour: a class the vocabulary does not yet hold). The report prints its count, and that count is the signal to name one. | other | yes | yes |
 
 **Nineteen values, and the set is closed in Go, in the schema and in the digest**, the way
-`runstore.HaltReason` and the six digest flags are: one slice the tests read (`failure.Classes()`,
+`runstore.HaltReason` and the seven digest flags are: one slice the tests read (`failure.Classes()`,
 `internal/failure/failure.go`, built by FC1), the schema's enum, and the report's table all built from
 it (the shape `TestResultSchemaStatusesAgreeWithGo` already uses for `status`).
 
@@ -248,7 +248,7 @@ are the six the one-offs row of §2 counts, that row being the remainder that cl
 
 **What is not in this change.** `fail` keeps its signature and its job (the pull request's report
 reads it); `r.rec.Reason` is not reworded anywhere; the pull request's section, `diagnose`'s output
-and the six digest flags do not move. The one new thing is that the 36 statements become one call,
+and the seven digest flags do not move. The one new thing is that the 36 statements become one call,
 at the site that already knows why the run is stopping.
 
 ### 4.2 How a class is chosen where several apply
