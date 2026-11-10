@@ -58,7 +58,7 @@ which shows **what will be spawned** and spawns it verbatim on a yes from **its 
 Three things this design settles that the ask does not:
 
 1. **Which rows get a pencil is the CLI's answer, never the console's.** S5 keeps the allow-list of
-   writable rows (`settingsGenericKeys` and `settingsGenericPrefixes`, `internal/cli/settings_set.go:95`, `:227`) and
+   writable rows (`settingsGenericKeys` and `settingsGenericPrefixes`, `internal/cli/settings_set.go:95`, `:228`) and
    the registry's `Owner` and `Sensitive` facts (`internal/settings/registry.go:80`). The console
    reads them and keeps no list of its own; the read's own field is the subject of **D1102** and the
    prerequisite **P2**. A row the read marks `sensitive: true` is **hidden** — no key, no value, no

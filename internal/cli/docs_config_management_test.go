@@ -120,8 +120,8 @@ const (
 // sets with the generic path like every other catalog member, so it is one row
 // the registry carries and this list does not.
 const (
-	cfmRegistryRows   = 395
-	cfmAllowlistNamed = 95
+	cfmRegistryRows   = 397
+	cfmAllowlistNamed = 96
 )
 
 func TestDocsConfigManagementIsWritten(t *testing.T) {

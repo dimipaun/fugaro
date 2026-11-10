@@ -129,6 +129,7 @@ var settingsGenericKeys = map[string]bool{
 	"stages.plan.claude_account":         true,
 	"stages.review.claude_account":       true,
 	"stages.review_first.claude_account": true,
+	"stages.triage.claude_account":       true,
 	// A repository's workflows.* (37 rows) and the project layer's profiles.*
 	// (36), in the registry's own order.
 	"workflows.*.profile":                            true,
