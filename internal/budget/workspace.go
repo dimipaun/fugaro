@@ -130,7 +130,8 @@ type WorkspaceRoom struct {
 	// Headroom is what the ceiling still leaves: Settled + Reserved + Headroom
 	// is the ceiling, and it is 0 when the ceiling is reached or passed. It is
 	// the number the service answers a member with, and it is advisory: the
-	// member's gateway stops a run early on it and never decides the cap.
+	// member's gateway holds it for the run and may stop one early on it, while
+	// the cap itself is never the gateway's to decide (W8 owns the stop).
 	Headroom Micros
 }
 

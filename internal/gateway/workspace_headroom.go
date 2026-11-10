@@ -19,9 +19,15 @@ import (
 // answer it is already sending needs no write to deliver.
 //
 // The value is micro-dollars, decimal: what the workspace's own ceiling still
-// leaves. It is ADVISORY. The gateway stops a run early on it and never decides
-// the cap, which is the workspace service's alone: a member that never read the
-// header is still refused by the service when the ceiling is reached.
+// leaves, this month, across all of its members — budget.WorkspaceRoom, read
+// through the service's read-only half. It is the workspace's figure and not
+// the member's own spend, which is why it is written on the answer to the
+// calling member's job service account alone (spec §5) and dropped from the
+// answer the agent is handed (dropResponseHeaders).
+//
+// It is ADVISORY. The workspace service refuses the call at the ceiling
+// whatever a member's gateway believes: a member that never read a header is
+// still cut off there.
 const WorkspaceHeadroomHeader = "X-Fugaro-Workspace-Headroom"
 
 // WorkspaceHeadroom reads the advisory headroom off an answer: what the
@@ -30,9 +36,9 @@ const WorkspaceHeadroomHeader = "X-Fugaro-Workspace-Headroom"
 //
 // An answer with no header is a workspace that states no ceiling, or a call the
 // workspace's service did not pay for. The two are the same thing to a reader
-// that only stops a run early, and neither is a ceiling of zero. A header that
-// is not a non-negative integer is not a number the gateway acts on: it reports
-// no headroom rather than guessing at one.
+// that only compares a call against the room, and neither is a ceiling of zero.
+// A header that is not a non-negative integer is not a number the gateway acts
+// on: it reports no headroom rather than guessing at one.
 func WorkspaceHeadroom(h http.Header) (pricing.Micros, bool) {
 	v := h.Get(WorkspaceHeadroomHeader)
 	if v == "" {
@@ -76,17 +82,26 @@ func (s *Server) DeliveredHeadroom() (pricing.Micros, bool) {
 	return s.wsHeadroom, s.wsHeadroomSet
 }
 
-// WorkspaceStop is the advisory early stop: whether a call whose worst case is w
-// passes the room the workspace's service last delivered, and the sentence the
-// run is stopped with when it does.
+// WorkspaceStop is the advisory early stop's decision: whether a call whose
+// worst case is w passes the room the workspace's service last delivered, and
+// the sentence such a call is reported with when it does.
+//
+// It decides and nothing acts on it yet. The run-side stop is W8's ("the stop",
+// docs/workspaces/implementation-plan.md) and it is not simply a call to this
+// method: ending a run needs a halt reason and a scope that internal/runstore's
+// closed vocabulary and internal/runner's halt classes do not have, and W7's
+// file list carries no wiring file. So no caller in this tree passes this
+// answer on, and the reading of it into a refusal belongs with that vocabulary
+// rather than here. What is built is what W7's interface asks the gateway for:
+// the number, and the comparison — never the cap.
 //
 // It is advisory in both directions, which is what "the gateway never decides
 // the cap" means:
 //
 //   - the ONLY input is the number the service delivered. A gateway that has
-//     been told nothing never stops a run, however much the run has spent: it
-//     holds no workspace ceiling of its own to compare against, and the run's
-//     own cap (Options.Cap) is a different quantity that keeps its own rule.
+//     been told nothing stops nothing, however much the run has spent: it holds
+//     no workspace ceiling of its own to compare against, and the run's own cap
+//     (Options.Cap) is a different quantity that keeps its own rule.
 //   - a stop here is not the enforcement. The service refuses the call itself
 //     when the ceiling is reached, whatever this gateway believes, so a member
 //     whose headroom is stale or absent is stopped by the service and never

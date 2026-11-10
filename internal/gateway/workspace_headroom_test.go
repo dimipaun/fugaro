@@ -1,17 +1,20 @@
 package gateway
 
 // W7: the advisory headroom at the member's end (docs/workspaces/spec.md §5,
-// O1). What these tests hold is that the number is DELIVERED and that it is
-// ADVISORY: it arrives on the answer of a call the workspace's service already
-// proxies, it is written into no node of the member's database, and the member's
-// gateway stops a run early on it without ever deciding the workspace's cap.
+// O1). What these tests hold is that the number is DELIVERED, that it stays
+// inside the run's own process, and that it is ADVISORY: it arrives on the
+// answer of a call the workspace's service already proxies, it is written into
+// no node of the member's database and it is dropped from the answer the agent
+// is handed, and the comparison this gateway makes on it never decides the
+// workspace's cap.
 //
 // The cap itself is the workspace service's: it refuses the call at the ceiling
 // whether or not this gateway ever read a header (TestWorkspaceCapRefusesThe-
 // CallThatWouldExceedIt, internal/credsvc). So the two directions of "never
 // decides the cap" are both here: a gateway told nothing stops nothing however
-// much the run has spent, and a stop made here is a decision the run is told
-// about rather than a halt this gateway imposes.
+// much the run has spent, and the comparison made here is a decision the run
+// would be told about rather than a halt this gateway imposes — the stop that
+// acts on it is W8's, and WorkspaceStop's own doc says so.
 
 import (
 	"net/http"
@@ -88,6 +91,15 @@ func TestHeadroomIsAdvisoryAndTheGatewayNeverDecidesTheCap(t *testing.T) {
 	}
 	if room != wsMicros(t, 1) {
 		t.Fatalf("the delivered headroom is %v, want $1", room.USD())
+	}
+	// And the number stays in this run: the answer the agent was handed does not
+	// carry it. It is the workspace's figure across all of its members, written
+	// for the member's job and for no one else (spec §5), so it is dropped like
+	// the tier, the credential, the switch and the probe (D143) — the agent is
+	// handed the model's answer, and the runner already has the number
+	// in-process.
+	if v := resp.Header.Get(WorkspaceHeadroomHeader); v != "" {
+		t.Fatalf("the agent's own answer carried %s: %s", WorkspaceHeadroomHeader, v)
 	}
 
 	// A call that fits is not a stop, and a call that passes the delivered
@@ -181,5 +193,18 @@ func TestWorkspaceCapIsNotWidenedByAMembersOwnCap(t *testing.T) {
 	}
 	if h.gw.o.Cap != wsMicros(t, 0.5) {
 		t.Fatalf("the run's own cap moved to %v on a delivered headroom of $100", h.gw.o.Cap.USD())
+	}
+}
+
+// The figure the header carries is the workspace's own, so the agent never sees
+// it: the header is dropped from every answer copied on, like the tier, the
+// credential, the switch and the probe
+// (TestProbeHeaderNeverReachesTheAgent). A run's own process reads it from the
+// answer before it is dropped (Server.serviceAnswer →
+// Server.noteWorkspaceHeadroom), which is what DeliveredHeadroom reports, so
+// nothing in the run is given it by way of the agent's conversation.
+func TestWorkspaceHeadroomNeverReachesTheAgent(t *testing.T) {
+	if !dropResponseHeaders[WorkspaceHeadroomHeader] {
+		t.Errorf("%s is not in dropResponseHeaders: the agent would see the workspace's remaining room, which is not a figure it is delivered to", WorkspaceHeadroomHeader)
 	}
 }
