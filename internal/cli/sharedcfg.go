@@ -238,11 +238,11 @@ type SharedAnchor struct {
 // into the shared file would be raising the guardrails that exist to bound it.
 //
 // triage travels the floor's way, one step down (D1854): the switch is what
-// lets the findings a review round's table would have blocked through, so a
-// launcher who could write it into the shared file would be waving the runs of
-// every repository past the findings the owner meant to hold them to, and
-// Shared nils it for the floor's reason — the node the runner reads and fails
-// closed on is its other home.
+// decides whether the findings a review round's table would have blocked are
+// judged at all, so a launcher who could write it into the shared file would be
+// waving the runs of every repository past the findings the owner meant to hold
+// them to. Shared nils it for the floor's reason, and the policy node the
+// runner reads is its other home.
 //
 // default_claude_account, stages and claude_account_auto are the
 // account-choice keys, and they are operator-only for claude_accounts' own

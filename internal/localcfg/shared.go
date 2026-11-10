@@ -161,12 +161,12 @@ func (c *Config) Shared() *Config {
 	// shared file could turn baking off for everyone — every job of the project
 	// cloning again, from one file it can write. ParseShared refuses it besides.
 	s.BakeRepos = nil
-	// Triage travels the catalog's way too, and is dropped here for the floor's
-	// reason: the stage is what judges the findings a review round's table would
-	// have blocked, so a launcher who could write the switch into the shared
-	// file would be waving every teammate's runs past the findings it holds
-	// back — the floor's own decision, one level down. ParseShared refuses it
-	// besides, because a shared config carrying it was not written by the
+	// Triage travels the bake switch's way too, and is dropped here for the
+	// floor's reason: the stage is what judges the findings a review round's
+	// table would have blocked, so a launcher who could write the switch into
+	// the shared file would be waving every teammate's runs past the findings it
+	// holds back — the floor's own decision, one level down. ParseShared refuses
+	// it besides, because a shared config carrying it was not written by the
 	// converge.
 	s.Triage = nil
 	// Orchestrator travels the catalog's way, into the policy node, and is

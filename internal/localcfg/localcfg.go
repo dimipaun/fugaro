@@ -295,14 +295,14 @@ type Config struct {
 	// stage at all (D1854, D1851): the stage weighs the findings the table
 	// would have blocked (D1848), so turning it off is the looser direction and
 	// the key here is the switch's second home beside a repository's own
-	// fugaro.yaml `agent.triage`. It is the owner's policy, written here and
-	// never in fugaro.yaml, and `fugaro update`'s policy stage publishes it into
-	// the published policy node, where the runner reads it. It travels the bake
-	// switch's way and for the floor's reason: the judgement decides which
-	// findings hold a pull request back, so a launcher who could write the
-	// switch into the runs bucket's shared file would be waving every
-	// teammate's runs past a finding the owner meant to block. Shared nils it
-	// and ParseShared refuses the key.
+	// fugaro.yaml `agent.triage`. This key is the owner's answer for the whole
+	// project — the one a repository may not turn back on — and `fugaro update`'s
+	// policy stage publishes it into the published policy node, where the runner
+	// reads it. It travels the bake switch's way and for the floor's reason: the
+	// judgement decides which findings hold a pull request back, so a launcher
+	// who could write the switch into the runs bucket's shared file would be
+	// waving every teammate's runs past a finding the owner meant to block.
+	// Shared nils it and ParseShared refuses the key.
 	//
 	// A repository may turn the stage off for itself (config.Agent.Triage, read
 	// from the base branch) and may never turn it back on under a node that
@@ -1855,8 +1855,8 @@ func (c *Config) BakeReposEffective(published *bool) *bool {
 // file's answer when it writes one, and the published node's otherwise — so a
 // machine whose config predates the key does not publish a node that turns the
 // judge back on for every run of the project. The cost of the other reading is
-// the floor's, one direction over: a machine whose config says nothing about
-// the stage would be turning a decision the owner made back on.
+// the floor's: a machine whose config says nothing about the stage would be
+// undoing a decision the owner made.
 //
 // The answer is a pointer for the bake switch's reason: absent and true are one
 // statement to every reader (config.Agent.TriageOn reads an absent key as on in
