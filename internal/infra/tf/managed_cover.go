@@ -419,7 +419,16 @@ func (c ManagedCover) notCoveredSplit(p *Plan, imports []ImportKey) (all, integr
 		// a create is, and a resource that is not one a managed plan may carry
 		// is refused although its address is listed — otherwise the list would
 		// be a way past every rule about the resource, which is the failure
-		// this gate exists to avoid.
+		// this gate exists to avoid. The same holds for a removal the list does
+		// NOT admit, and for the reasons the delete rule refuses one with: their
+		// answer is about the removal — a refusal, or D1545's warning for a type
+		// D1551 takes — and the resource a replace creates is judged underneath
+		// it all the same. Only an answer that decides the whole change ends the
+		// walk here: a destroy, which has nothing in after to read, and an
+		// integrity removal (RefusesRemovalType's data-bearing or unclassified
+		// type), which refuses the change whatever it creates. That is the side
+		// of the line Cover's own walk stands on, where a removal that is not
+		// content stops at its answer and a content one carries on.
 		// acts is one of managedActions' sets past the switch below, so a set
 		// that names "delete" is a destroy or a replace, and the two are told
 		// apart by how many actions it has.
@@ -441,7 +450,9 @@ func (c ManagedCover) notCoveredSplit(p *Plan, imports []ImportKey) (all, integr
 			// nothing to record but the address, which is no longer an
 			// approval.
 			addRemoval(rc, "actions "+strings.Join(acts, ", ")+": "+notOnDeleteListReason(rc))
-			continue
+			if destroy || RefusesRemovalType(rc.Type) {
+				continue
+			}
 		// The list names an address, and the object a removal takes away is
 		// the one in before: with a moved block that object was at another
 		// address, so a listed address would admit the delete of an unlisted
@@ -451,7 +462,9 @@ func (c ManagedCover) notCoveredSplit(p *Plan, imports []ImportKey) (all, integr
 			continue
 		case removes && !managedRemovalReasons[rc.ActionReason]:
 			addRemoval(rc, "actions "+strings.Join(acts, ", ")+": action_reason "+rc.ActionReason+", which the managed delete rule does not know")
-			continue
+			if destroy || RefusesRemovalType(rc.Type) {
+				continue
+			}
 		// And the last of the list's own rules: the entry names the address,
 		// and it must name the object the plan removes as well — an approval
 		// that survived the delete it was given for, or a plan whose object
@@ -459,7 +472,9 @@ func (c ManagedCover) notCoveredSplit(p *Plan, imports []ImportKey) (all, integr
 		case removes:
 			if ok, why := Approves(c.AllowDelete, rc); !ok {
 				addRemoval(rc, "actions "+strings.Join(acts, ", ")+": "+why)
-				continue
+				if destroy || RefusesRemovalType(rc.Type) {
+					continue
+				}
 			}
 		}
 		if allOf(acts, "no-op", "read") && rc.Change.Importing == nil {

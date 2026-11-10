@@ -186,26 +186,66 @@ func TestDoctorManagedAuditIsSilentOutsideAManagedProject(t *testing.T) {
 // a fault: doctor without --strict still passes, and the installation that is
 // broken is the one whose records cannot be read at all.
 func TestDoctorFlagsAnOutOfTableGrant(t *testing.T) {
-	r := newManagedAuditRig(t, managedAuditOpts{})
 	const grant = "cover: module.installation.google_project_iam_member.extra — this grant is not one the review's grant table holds, so no confirmation of the owner's announced it"
-	r.file(t, "fugaro update", `{"version":1}`, managedmode.AuditWarned, managedAuditTestNow.Add(-2*time.Hour), grant)
-	o := doctorJSON(t)
-	c, ok := doctorCheckByID(o.Checks, "managed-audit")
-	if !ok {
-		t.Fatalf("no managed-audit check: %+v", o.Checks)
-	}
-	if c.OK || c.Severity != "warning" || c.Class != doctorClassActionable {
-		t.Errorf("check = %+v, want a warning the default view prints: a rule the tables did not announce applied, and the session that read it is gone", c)
-	}
-	if !strings.Contains(c.Problem, grant) {
-		t.Errorf("problem = %q, want the rule itself (%q): a count is not something an owner can check against the plan", c.Problem, grant)
-	}
-	if !strings.Contains(c.Problem, "fugaro update") || !strings.Contains(c.Problem, "warned") {
-		t.Errorf("problem = %q, want the record's own command and verdict", c.Problem)
-	}
-	if !o.OK {
-		t.Errorf("doctor failed an installation whose gate admitted every step it ran: a warned apply is a decision, not a fault (%+v)", o.Checks)
-	}
+
+	t.Run("the warned record is the last one", func(t *testing.T) {
+		r := newManagedAuditRig(t, managedAuditOpts{})
+		r.file(t, "fugaro update", `{"version":1}`, managedmode.AuditWarned, managedAuditTestNow.Add(-2*time.Hour), grant)
+		o := doctorJSON(t)
+		c, ok := doctorCheckByID(o.Checks, "managed-audit")
+		if !ok {
+			t.Fatalf("no managed-audit check: %+v", o.Checks)
+		}
+		if c.OK || c.Severity != "warning" || c.Class != doctorClassActionable {
+			t.Errorf("check = %+v, want a warning the default view prints: a rule the tables did not announce applied, and the session that read it is gone", c)
+		}
+		if !strings.Contains(c.Problem, grant) {
+			t.Errorf("problem = %q, want the rule itself (%q): a count is not something an owner can check against the plan", c.Problem, grant)
+		}
+		if !strings.Contains(c.Problem, "fugaro update") || !strings.Contains(c.Problem, "warned") {
+			t.Errorf("problem = %q, want the record's own command and verdict", c.Problem)
+		}
+		if !strings.Contains(c.Problem, "the last managed agent apply") {
+			t.Errorf("problem = %q, want the warned record named as the last apply: it is the newest of the window", c.Problem)
+		}
+		if !o.OK {
+			t.Errorf("doctor failed an installation whose gate admitted every step it ran: a warned apply is a decision, not a fault (%+v)", o.Checks)
+		}
+	})
+
+	// And the warned record is read even when it is NOT the newest. One
+	// `fugaro update` files a record per gated step it applies, so the step
+	// whose rules the tables did not announce is usually followed by clean
+	// ones; a check that looked at the newest record alone would report
+	// nothing — in the default view and under --strict alike — for the very run
+	// that warned, which is the control D1545 leaves an installation with. The
+	// finding is the warned record, and the line has to say so rather than
+	// name the clean step that came after it.
+	t.Run("a clean step follows the warned one", func(t *testing.T) {
+		r := newManagedAuditRig(t, managedAuditOpts{})
+		warned := r.file(t, "fugaro update", `{"version":1}`, managedmode.AuditWarned, managedAuditTestNow.Add(-2*time.Hour), grant)
+		clean := r.file(t, "fugaro update", `{"version":2,"add":["image"]}`, managedmode.AuditAdmitted, managedAuditTestNow.Add(-time.Hour))
+		o := doctorJSON(t)
+		c, ok := doctorCheckByID(o.Checks, "managed-audit")
+		if !ok {
+			t.Fatalf("no managed-audit check: %+v", o.Checks)
+		}
+		if c.OK || c.Severity != "warning" || c.Class != doctorClassActionable {
+			t.Errorf("check = %+v, want the warned record reported although a clean one is newer: the warning is the whole of what the tables still are", c)
+		}
+		if !strings.Contains(c.Problem, grant) {
+			t.Errorf("problem = %q, want the rule itself (%q)", c.Problem, grant)
+		}
+		if !strings.Contains(c.Problem, warned.PlanDigest) || strings.Contains(c.Problem, clean.PlanDigest) {
+			t.Errorf("problem = %q, want the warned record's digest (%q) and not the clean step's (%q)", c.Problem, warned.PlanDigest, clean.PlanDigest)
+		}
+		if !strings.Contains(c.Problem, "an earlier managed agent apply") {
+			t.Errorf("problem = %q, want the sentence to say the warned record is not the last apply: a reader sent to the newest one would check the wrong step", c.Problem)
+		}
+		if !o.OK {
+			t.Errorf("doctor failed an installation whose gate admitted every step it ran: a warned apply is a decision, not a fault (%+v)", o.Checks)
+		}
+	})
 }
 
 // TestDoctorManagedAuditNeverPassesSilentlyOnAReadThatFailed: a family that

@@ -1133,12 +1133,24 @@ func (c Cover) notCoveredSplit(p *Plan, imports []ImportKey) (all, integrity, co
 			add(rc, "no actions")
 			continue
 		case !allOf(acts, "create", "update", "no-op", "read"):
-			if removalContent(rc) {
-				addContent(rc, "actions "+strings.Join(acts, ", "))
+			if !removalContent(rc) {
+				add(rc, "actions "+strings.Join(acts, ", "))
 				continue
 			}
-			add(rc, "actions "+strings.Join(acts, ", "))
-			continue
+			// A removal of a classified, non-data-bearing type: what D1545
+			// records and warns about. A REPLACE is not finished by its warning
+			// — the walk carries on to judge the resource it creates exactly as
+			// a create is, because the warning was the whole answer once and
+			// that made a replace a way past every rule below that D1549 keeps
+			// refusing: a scheduler pointed at another host, a custom role
+			// widened, an image from somewhere else, a resource moved to another
+			// project. Only a plain delete ends here, since it has nothing in
+			// after for those rules to read. ManagedCover's own walk stands on
+			// this side of the line too (managed_cover.go's `if destroy`).
+			addContent(rc, "actions "+strings.Join(acts, ", "))
+			if slices.Equal(acts, []string{"delete"}) {
+				continue
+			}
 		}
 		if allOf(acts, "no-op", "read") && rc.Change.Importing == nil {
 			continue

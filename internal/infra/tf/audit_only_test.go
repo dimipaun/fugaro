@@ -163,6 +163,163 @@ func TestNotCoveredSplitTellsIntegrityFromContent(t *testing.T) {
 	}
 }
 
+// TestAReplaceIsJudgedOnWhatItCreates is the hole D1545's own arm opens if the
+// removal half is the whole of what a replace is told: the delete of a
+// classified, non-data-bearing type is content — recorded and warned — and the
+// resource the replace CREATES has to be judged exactly as a create is, or a
+// replace would be a way past every rule D1549 keeps refusing. Every case below
+// is a plan whose create half the same cover refuses (TestCoverNotCovered
+// carries each as a create) and that a walk stopping at the removal only warns
+// about, which is what a managed project would then apply.
+func TestAReplaceIsJudgedOnWhatItCreates(t *testing.T) {
+	// replaced turns a change a test built as a create into the replace of the
+	// same resource: the object it removes is in before, the one it creates in
+	// after.
+	replaced := func(rc ResourceChange) ResourceChange {
+		rc.Change.Actions = []string{"delete", "create"}
+		rc.Change.Before = map[string]any{"name": "fugaro-something"}
+		return rc
+	}
+	for _, tc := range []struct {
+		name, want string
+		change     ResourceChange
+	}{
+		{"a scheduler pointed at another host", "attacker.example",
+			replaced(sched("https://attacker.example/v2/projects/proj-1/locations/us-east5/jobs/j:run", "fugaro-scheduler@proj-1.iam.gserviceaccount.com"))},
+		{"a custom role that grants the world", "changes a custom role's permissions",
+			replaced(customRole("fugaroJobRunner", "proj-1", []any{"storage.objects.get"}))},
+		{"an image from somewhere else", "evil.example",
+			replaced(job("evil.example/x/y:1", nil, nil))},
+		{"a sink moved to another project", "not this run's",
+			replaced(rc("google_logging_project_sink", map[string]any{"project": "other",
+				"destination": "logging.googleapis.com/projects/proj-1/locations/global/buckets/fugaro"}, map[string]any{}, "create"))},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// Fail loudly if the fixture stops being the arm this is about: a
+			// type D1551 protects refuses the removal itself, and the walk would
+			// then never reach the checks below for a reason of its own.
+			if !removalContent(tc.change) {
+				t.Fatalf("%s is not a replace of a classified, non-data-bearing type, so it no longer exercises this arm", tc.change.Type)
+			}
+			p := &Plan{FormatVersion: "1.2", ResourceChanges: []ResourceChange{tc.change}}
+			integrity, content := testCover.NotCoveredSplit(p, nil)
+			if len(integrity) != 1 || !strings.Contains(integrity[0], tc.want) {
+				t.Errorf("the replace gives integrity %q, want one refusal naming %q: what a replace creates is judged as a create is", integrity, tc.want)
+			}
+			// And the removal half is still D1545's: the warning is what the
+			// session reads and the record holds for the delete the same change
+			// carries.
+			if len(content) != 1 || !strings.Contains(content[0], "actions delete, create") {
+				t.Errorf("the replace gives content %q, want the removal kept as one warning", content)
+			}
+			if got, want := len(testCover.NotCovered(p, nil)), len(integrity)+len(content); got != want {
+				t.Errorf("NotCovered holds %d items, the split holds %d: the halves are the whole answer", got, want)
+			}
+
+			// The same resource DELETED and not replaced is still only the
+			// warning: a plain delete has no after view for the rules below to
+			// read, so the walk stops at D1545's record-and-warn exactly as it
+			// did before this arm carried on for a replace.
+			gone := tc.change
+			gone.Change.Actions = []string{"delete"}
+			gone.Change.After = nil
+			integrity, content = testCover.NotCoveredSplit(&Plan{FormatVersion: "1.2", ResourceChanges: []ResourceChange{gone}}, nil)
+			if len(integrity) != 0 {
+				t.Errorf("the delete gives integrity %q, want nothing: a delete creates no resource for those rules to read", integrity)
+			}
+			if len(content) != 1 || !strings.Contains(content[0], "actions delete") {
+				t.Errorf("the delete gives content %q, want one warning for the removal", content)
+			}
+		})
+	}
+}
+
+// TestAManagedReplaceIsJudgedOnWhatItCreates is the same hole in the managed
+// walk, on the three arms the owner's delete list answers: an address the list
+// does not name, an action_reason the rule does not know and an entry that
+// approves another object are each content for a type D1551 takes (D1545),
+// and each used to end the change there — so a replace the list warned about
+// was never read for the resource it creates, which is the way past every rule
+// notCoveredResource keeps. Every case below is one of those arms whose
+// created half is in another project, so the walk below the arm has something
+// to refuse: the removal stays one warning and the refusal is the create's. A
+// pure delete of the same object is still only the warning, which is the arm
+// the walk is allowed to end at.
+func TestAManagedReplaceIsJudgedOnWhatItCreates(t *testing.T) {
+	// The fixture is a kept resource of a type D1551 does NOT protect, so its
+	// removal is one of D1545's warnings rather than a refusal of its own —
+	// which is what lets these cases reach the arms below instead of stopping
+	// at the classification. replaced removes it from where the fixture has it
+	// and creates it in somebody else's project: the resource rule the created
+	// half must reach is managedProject.
+	job := managedKeptFixture["google_cloud_run_v2_job"]
+	if RefusesRemovalType(job.Type) {
+		t.Fatalf("%s refuses its own removal now, so this fixture no longer exercises the arm: pick a type D1551 leaves to D1545", job.Type)
+	}
+	replaced := func() ResourceChange {
+		rc := job
+		rc.Change.Actions = []string{"delete", "create"}
+		rc.Change.Before = map[string]any{"name": ManagedPrefix + "job"}
+		rc.Change.After = maps.Clone(job.Change.After)
+		rc.Change.After["project"] = "somebody-elses-project"
+		return rc
+	}
+	for _, tc := range []struct {
+		name string
+		// list is the owner's delete list for this arm and reason the
+		// action_reason the plan carries, and says is the arm's own wording in
+		// the warning — the guard that the case reached THIS arm and not
+		// another.
+		list   func(rc ResourceChange) ManagedCover
+		reason string
+		says   string
+	}{
+		{"an address the list does not name", func(ResourceChange) ManagedCover { return managedTestCover() },
+			"replace_because_cannot_update", "not on the owner's delete list"},
+		{"an action_reason the rule does not know", func(rc ResourceChange) ManagedCover {
+			c := managedTestCover()
+			c.AllowDelete = approving(rc)
+			return c
+		}, "something_the_rule_never_heard_of", "does not know"},
+		{"an entry that approves another object", func(rc ResourceChange) ManagedCover {
+			c := managedTestCover()
+			c.AllowDelete = []DeleteEntry{{Address: rc.Address, Before: "another-object"}}
+			return c
+		}, "replace_because_cannot_update", "for another object"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rc := replaced()
+			rc.ActionReason = tc.reason
+			c := tc.list(rc)
+			integrity, content := c.NotCoveredSplit(managedPlan(rc), nil)
+			if len(integrity) != 1 || !strings.Contains(integrity[0], "not this run's") {
+				t.Errorf("%s gives integrity %q, want one refusal of the resource the replace creates", tc.name, integrity)
+			}
+			if len(content) != 1 || !strings.Contains(content[0], tc.says) {
+				t.Errorf("%s gives content %q, want one warning for %s", tc.name, content, tc.says)
+			}
+			if got, want := len(c.NotCovered(managedPlan(rc), nil)), len(integrity)+len(content); got != want {
+				t.Errorf("%s: NotCovered holds %d items, the split holds %d", tc.name, got, want)
+			}
+		})
+	}
+
+	// And a pure delete of the same object is the arm the walk DOES end at:
+	// nothing is created, so there is nothing below to read and the removal's
+	// own warning is the whole answer. The unlisted arm is the one that always
+	// warns, so the case is written on it.
+	gone := replaced()
+	gone.Change.Actions = []string{"delete"}
+	gone.Change.After = nil
+	integrity, content := managedTestCover().NotCoveredSplit(managedPlan(gone), nil)
+	if len(integrity) != 0 {
+		t.Errorf("a delete gives integrity %q, want nothing: only the removal is read", integrity)
+	}
+	if len(content) != 1 || !strings.Contains(content[0], "not on the owner's delete list") {
+		t.Errorf("a delete gives content %q, want the one warning", content)
+	}
+}
+
 // TestDataBearingTypeStaysIntegrityWhenItsRemovalIsListed is D1551 at the
 // cover's type table: a delete of a dropped data-bearing type refuses whatever
 // reason is weighed, so even a LISTED and approved removal — one that passes the
