@@ -142,6 +142,50 @@ func TestFileAtRefusesARefTheRepositoryDoesNotHave(t *testing.T) {
 	}
 }
 
+// TestFileAtRefusesA404ForARepositoryItCannotReach: "Not Found" is what the
+// contents API answers for a path the ref does not carry *and* for a
+// repository this token cannot reach — a name that is not the installation's
+// repository, one outside the App's scope, one deleted after the mint, or a
+// token minted for another repository, which nothing here binds it to. The
+// second is spec.md §7's row for a repository the installation does not hold,
+// and it is a refusal; taking it for the absent-file row would place the run
+// on the per-repository job by a document nobody read. So the answer is taken
+// only where the repository is confirmed, and a confirmation that 404s is a
+// refusal — neither sentinel.
+func TestFileAtRefusesA404ForARepositoryItCannotReach(t *testing.T) {
+	_, err := FileAt(ctx, fileReadOptions(t, "repo_missing.json"), &fakePersonReadTokens{}, "acme/web", "release/1.2", "fugaro.yaml")
+	if err == nil {
+		t.Fatal("a 404 for the repository itself was read as the absent-file answer")
+	}
+	if errors.Is(err, ErrFileNotFound) || errors.Is(err, ErrRefNotFound) {
+		t.Fatalf("err = %v, want neither typed answer: the repository is not one this read can reach", err)
+	}
+	if !strings.Contains(err.Error(), "/repos/acme/web") {
+		t.Fatalf("err = %v, want the refusal to name the repository it could not confirm", err)
+	}
+	if se := statusOf(t, err); se.Status != http.StatusNotFound {
+		t.Fatalf("the wrapped status is %d, want the confirmation's own 404", se.Status)
+	}
+}
+
+// TestFileAtRefusesA404WhereTheRefDoesNotResolve: the other half of the same
+// ambiguity. The read's own body says "Not Found" — a wording that would put a
+// missing ref in the absent-file row if GitHub ever reworded the one that names
+// the ref — so the ref is confirmed too, and a confirmation that does not
+// resolve it is a refusal.
+func TestFileAtRefusesA404WhereTheRefDoesNotResolve(t *testing.T) {
+	_, err := FileAt(ctx, fileReadOptions(t, "ref_gone.json"), &fakePersonReadTokens{}, "acme/web", "release/1.2", "fugaro.yaml")
+	if err == nil {
+		t.Fatal("a 404 for a ref that does not resolve was read as the absent-file answer")
+	}
+	if errors.Is(err, ErrFileNotFound) || errors.Is(err, ErrRefNotFound) {
+		t.Fatalf("err = %v, want neither typed answer: the ref could not be confirmed", err)
+	}
+	if se := statusOf(t, err); se.Status != http.StatusNotFound {
+		t.Fatalf("the wrapped status is %d, want the confirmation's own 404", se.Status)
+	}
+}
+
 // TestFileAtRefusesA404ItCannotRead: a 404 is one of the two typed answers
 // only when its own body says which — a bare "Not Found" for the path, "No
 // commit found …" for the ref — and anything else is Contents's own refusal.
