@@ -40,8 +40,8 @@ request that carries this ruling rather than dropped here.
   needed, so the joint order's position 1 is done for them. What the editor still owes is the
   settings design's own remainder — writing an empty mapping, and expanding a flow `{}` back into a
   block mapping — which is E3's scope and not this plan's. The path this folder once proposed for
-  the editor, `internal/localcfg/edit.go`, was never written. The plan therefore names the **package and the task
-  that landed it**, never a file of its own; the precedent the splice generalised is
+  the editor, `internal/localcfg/edit.go`, was never written. The plan therefore names the **package
+  and the task that landed it**, never a file of its own; the precedent the splice generalised is
   `setGCPProjectLine` (`internal/cli/init_fugaroyaml.go`) — one scalar on one line. **Not** a merge
   of the works' plans: they stay separate plans with separate owners, and the README's joint order
   is what keeps them from colliding.
