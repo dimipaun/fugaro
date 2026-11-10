@@ -72,6 +72,7 @@ Subcommands:
 - `fugaro verify` -- Run and record this repository's build, test or lint command (inside a Fugaro run)
 - `fugaro version` -- Print the fugaro version
 - `fugaro watch` -- Watch the project's spend, repositories and running agents live
+- `fugaro workflow` -- Create and remove a repository's workflow blocks
 - `fugaro workspace` -- Join this project to a workspace, or declare one
 
 ## `fugaro accounts`
@@ -6378,6 +6379,108 @@ Flags:
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | only this repository (owner/name, or a path inside its checkout) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro workflow`
+
+Create and remove a repository's workflow blocks
+
+A repository's fugaro.yaml holds one block per workflow, `workflows.<name>`, and
+this group creates one and takes one away. The block's own keys are
+
+`fugaro settings set`'s, written one concrete key at a time:
+
+    fugaro settings set workflows.web.profile svc --layer repo
+    fugaro settings set workflows.web.commands.test 'go test ./...' --layer repo
+
+`workflow add` writes the keys it is given with --set and refuses a block the file
+already holds; `workflow rm` removes one the file holds. Both write the repository's
+own fugaro.yaml — the one document a coding agent's session may write — and both
+refuse an executable key (commands.build, commands.test, commands.lint,
+commands.fix, commands.render, commands.probe, commands.rerun_failed, image.apt,
+image.setup, image.tools, image.skip_build_scripts) without --executable-changes:
+those values run as shell in every run of this repository.
+
+Every write ends with one line: next: fugaro update.
+
+Usage: `fugaro workflow`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for workflow |
+
+Subcommands:
+
+- `fugaro workflow add` -- Create a repository's workflows.NAME block with the keys --set names
+- `fugaro workflow rm` -- Remove a repository's workflows.NAME block
+
+## `fugaro workflow add`
+
+Create a repository's workflows.NAME block with the keys --set names
+
+Create the block workflows.NAME in the repository's fugaro.yaml, with the keys
+--set names, and refuse a name the file already holds a block for (that block's
+keys are `fugaro settings set workflows.NAME.<key>`'s).
+
+--set takes one FIELD=VALUE per key, FIELD being a key of a workflow without the
+block's name: --set profile=svc, --set commands.test='go test ./...'. A key whose
+value is a list, a map or an object list is not this flag's — settings set writes
+those with --add, --remove, --add-entry and --remove-entry after the block exists.
+
+--repo names the repository whose fugaro.yaml to write (owner/name, or a path
+inside its checkout); without it this writes the current directory's checkout,
+and a directory that is not one is refused.
+
+Usage: `fugaro workflow add NAME --set FIELD=VALUE`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--ask` | bool | `false` | no | in a project whose marks say it is managed, ask the confirmation this write would otherwise get instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back. Refused where nobody can answer it (a coding agent's session, a pipe, --non-interactive); a no-op with a sentence in a project that is not managed; refused beside --yes |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--executable-changes` | bool | `false` | no | allow a change to the block's commands or image steps (they run as shell in this repository's runs) |
+| `-h`, `--help` | bool | `false` | no | help for add |
+| `--project` | string | "" | no | the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config) |
+| `--repo` | string | "" | no | the repository whose fugaro.yaml to edit (owner/name, or a path inside its checkout); default: the current directory's checkout |
+| `--set` | stringArray | `[]` | no | a key of the new block as FIELD=VALUE (e.g. --set commands.test='go test ./...'); repeat it for each key |
+| `--yes` | bool | `false` | no | confirm the write without a prompt |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro workflow rm`
+
+Remove a repository's workflows.NAME block
+
+Remove the block workflows.NAME from the repository's fugaro.yaml, and with it
+every key the block holds. It refuses a name the file holds no block for, and it
+removes nothing else: a block this command does not name is left byte for byte
+as it was.
+
+--repo names the repository whose fugaro.yaml to write (owner/name, or a path
+inside its checkout); without it this writes the current directory's checkout,
+and a directory that is not one is refused.
+
+Usage: `fugaro workflow rm NAME`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--ask` | bool | `false` | no | in a project whose marks say it is managed, ask the confirmation this write would otherwise get instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back. Refused where nobody can answer it (a coding agent's session, a pipe, --non-interactive); a no-op with a sentence in a project that is not managed; refused beside --yes |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--executable-changes` | bool | `false` | no | allow a change to the block's commands or image steps (they run as shell in this repository's runs) |
+| `-h`, `--help` | bool | `false` | no | help for rm |
+| `--project` | string | "" | no | the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config) |
+| `--repo` | string | "" | no | the repository whose fugaro.yaml to edit (owner/name, or a path inside its checkout); default: the current directory's checkout |
+| `--yes` | bool | `false` | no | confirm the write without a prompt |
 
 Subcommands:
 

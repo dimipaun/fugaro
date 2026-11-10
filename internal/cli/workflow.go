@@ -92,8 +92,9 @@ block's name: --set profile=svc, --set commands.test='go test ./...'. A key whos
 value is a list, a map or an object list is not this flag's — settings set writes
 those with --add, --remove, --add-entry and --remove-entry after the block exists.
 
---layer repo without --repo uses the current directory's checkout and refuses
-when the directory is not one.`,
+--repo names the repository whose fugaro.yaml to write (owner/name, or a path
+inside its checkout); without it this writes the current directory's checkout,
+and a directory that is not one is refused.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runWorkflowAdd(cmd, args[0], o)
@@ -115,8 +116,9 @@ every key the block holds. It refuses a name the file holds no block for, and it
 removes nothing else: a block this command does not name is left byte for byte
 as it was.
 
---layer repo without --repo uses the current directory's checkout and refuses
-when the directory is not one.`,
+--repo names the repository whose fugaro.yaml to write (owner/name, or a path
+inside its checkout); without it this writes the current directory's checkout,
+and a directory that is not one is refused.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runWorkflowRm(cmd, args[0], o)

@@ -44,6 +44,10 @@ import (
 // indented two spaces so it lands under `workflows:`.
 const workflowDocs = "  docs:\n    commands:\n      build: make docs\n      test: make test\n"
 
+// workflowDocsWithImage is a block whose image steps are what makes removing it
+// an executable change.
+const workflowDocsWithImage = "  docs:\n    commands:\n      build: make docs\n      test: make test\n    image:\n      apt: [curl]\n      setup: [sh setup.sh]\n"
+
 // workflowAddDocs creates the docs block in the file the write lands in, with
 // the flag the commands it carries require.
 func workflowAddDocs(t *testing.T, extra ...string) (string, string, error) {
@@ -219,6 +223,37 @@ func TestWorkflowRmRefusesAnExecutableBlockWithoutTheOwnersFlag(t *testing.T) {
 		t.Fatalf("the removal is not reachable with the owner's flag: %v", err)
 	}
 	if got := readFileString(t, path); strings.Contains(got, "docs:") {
+		t.Errorf("the flagged removal did not land:\n%s", got)
+	}
+}
+
+// TestWorkflowRmRefusesABlockOfImageStepsWithoutTheOwnersFlag is the SEC
+// sentence at the keys this group's own --set cannot write: a block's
+// image.apt and image.setup are lists, so `settings set --add` writes them, and
+// what this test pins is the other half — the edit that takes such a block away
+// carries them, and the comparison is driven by config.ExecutableKeys rather
+// than by the keys a scalar write can name.
+func TestWorkflowRmRefusesABlockOfImageStepsWithoutTheOwnersFlag(t *testing.T) {
+	settingsWriteHome(t)
+	path := settingsWriteCheckout(t, settingsRepoYAML(workflowDocsWithImage))
+	before := readFileString(t, path)
+
+	out, _, err := execute(t, "workflow", "rm", "docs")
+	if err == nil {
+		t.Fatal("workflow rm removed a block of image steps without --executable-changes")
+	}
+	for _, key := range []string{"workflows.docs.image.apt", "workflows.docs.image.setup"} {
+		if !strings.Contains(out, key) {
+			t.Errorf("the run does not name %s among the executable changes it would make:\n%s", key, out)
+		}
+	}
+	if readFileString(t, path) != before {
+		t.Error("the refused removal changed the file")
+	}
+	if _, _, err := execute(t, "workflow", "rm", "docs", "--executable-changes"); err != nil {
+		t.Fatalf("the removal is not reachable with the owner's flag: %v", err)
+	}
+	if got := readFileString(t, path); strings.Contains(got, "apt") {
 		t.Errorf("the flagged removal did not land:\n%s", got)
 	}
 }
