@@ -20,12 +20,9 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"io"
 	"os"
 	"runtime"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -214,40 +211,22 @@ func issueFile(cmd *cobra.Command, store *issues.Store, i issues.Issue, p issues
 	return err
 }
 
-// issueConfirm is D1720's confirmation: the yes that files. It is reached only
-// with `--ask` passed, and it is `--ask` and nothing else — D1544's one
-// confirmation flag, with no --yes beside it.
+// issueConfirm is D1720's confirmation: the yes that files. It is `--ask` and
+// nothing else — D1544's one confirmation flag, with no --yes beside it — and
+// it is reached only with the flag passed, because issueSubmit answers a run
+// without it by printing the preview and filing nothing.
 //
-// It is not managed_ask.go's askConfirm, and the reason is the default the two
-// commands have: askConfirm answers true for a run that did not pass the flag,
-// because the steps it serves apply unless they are refused, while this one's
-// no-flag answer is that nothing is filed at all. An askConfirm here would file
-// every issue a plain `fugaro issue submit` names, which is the one thing D1720
-// was written against.
-//
-// A session that cannot answer refuses rather than proceeding, and it refuses
-// without touching stdin, so a prompt nobody can answer never becomes a wait
-// nobody can end. The conditions are initflow's own (askConditions), read off
-// the command the caller already has, so a `--json` or a `--non-interactive`
-// added to this command later is answered by the same guard with no second
-// list to keep in step.
+// The read is askAtTerminal's, the package's one read of a confirmation, so
+// this command extends the flag's helper rather than carrying a second body of
+// the same three answers (T1). What it passes as the refusal is its own line
+// (issueAskRefusal, F24), and it is worth saying why that is not askConfirm:
+// askConfirm answers true for a run that did not pass the flag, because the
+// steps it serves apply unless they are refused, while this command's no-flag
+// answer is that nothing is filed at all — an askConfirm here would file every
+// issue a plain `fugaro issue submit` names, which is the one thing D1720 was
+// written against.
 func issueConfirm(cmd *cobra.Command) (bool, error) {
-	c := askConditions(cmd, boolFlag(cmd, "json"), boolFlag(cmd, "non-interactive"))
-	if c.Agent != "" || c.NonInteractive || c.JSON || !c.Terminal {
-		return false, userErr("%s", issueAskRefusal(c))
-	}
-	out := cmd.OutOrStdout()
-	fmt.Fprint(out, "\nFile this issue on github.com as it is shown above? [y/N]: ")
-	line, err := readConfirmLine(cmd.InOrStdin())
-	if err != nil && !errors.Is(err, io.EOF) {
-		return false, userErr("reading the confirmation: %v", err)
-	}
-	switch strings.ToLower(strings.TrimSpace(line)) {
-	case "y", "yes":
-		noteIDETerminalCmd(cmd, out)
-		return true, nil
-	}
-	return false, nil
+	return askAtTerminal(cmd, "\nFile this issue on github.com as it is shown above?", issueAskRefusal)
 }
 
 // issueAskRefusal is why this command's confirmation cannot be answered, in a

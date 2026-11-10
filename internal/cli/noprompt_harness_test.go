@@ -343,6 +343,7 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro image selftest":    "reads its spec from the closed stdin and returns on the EOF",
 	"fugaro image status":      "prints the no-project-config refusal",
 	"fugaro issue list":        "reads this machine's issue folder, which holds nothing in this world, and prints no row",
+	"fugaro issue submit":      "sweeps the issues that are waiting, and this world's issue folder holds none: it prints that nothing is pending",
 	"fugaro managed status":    "prints the no-project-config refusal",
 	"fugaro models ls":         "prints the built-in list with no project selected",
 	// The orchestrator family reads and writes the state its project's daemon
