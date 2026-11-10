@@ -2355,8 +2355,14 @@ func TestRunsLsStateFilter(t *testing.T) {
 	seedRun(t, f, haltID, "", "someone@example.com", false)
 	writeRecord(t, f, haltID, &runstore.Record{Version: 1, RunID: haltID, Repo: "acme/app", Workflow: "web",
 		Status: runstore.StatusHalted, Halt: &runstore.Halt{Reason: runstore.HaltRunCap, Scope: "run"}})
+	// A row's status is the record's own, whatever the word is: --state takes a
+	// status this release writes even when nothing older has ever recorded one.
+	unrevID := today + "-093000-dddd"
+	seedRun(t, f, unrevID, "", "someone@example.com", false)
+	writeRecord(t, f, unrevID, &runstore.Record{Version: 1, RunID: unrevID, Repo: "acme/app", Workflow: "web",
+		Status: runstore.StatusUnreviewed})
 
-	for state, want := range map[string]string{"succeeded": okID, "halted": haltID} {
+	for state, want := range map[string]string{"succeeded": okID, "halted": haltID, "unreviewed": unrevID} {
 		got, _ := lsJSON(t, "--since", "0", "--state", state)
 		if len(got.Runs) != 1 || got.Runs[0].RunID != want {
 			t.Errorf("ls --state %s listed %v, want the one run %s", state, runIDs(got.Runs), want)
