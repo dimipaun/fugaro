@@ -1,6 +1,6 @@
 # Fugaro: status of every spec under docs/
 
-As of 2026-11-10, read from `main`, the open pull requests and each plan's task list (not from the plans' own status lines, which are stale in about 30 folders). Counts come from commit titles and file checks; "about" marks the approximate ones. **Owner-run** means a live check or step that only the owner performs. Each folder whose README status line had gone stale links to this page for its current state.
+As of 2026-11-10, read from `main`, the open pull requests and each plan's task list (not from the plans' own status lines, which are stale in about 30 folders). Counts come from commit titles and file checks; "about" marks the approximate ones. **Owner-run** means a live check or step that only the owner performs. Where a folder's own status line disagrees with its row here, the row is the current one.
 
 ## Done
 

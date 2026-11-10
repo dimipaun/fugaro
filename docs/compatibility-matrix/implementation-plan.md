@@ -1,6 +1,6 @@
 # Implementation plan: the compatibility matrix page
 
-Builds [spec.md](spec.md) **as amended by [reconciliation.md](reconciliation.md)**. **Status as of 2026-11-10: in progress, 1/4 merged; see [docs/status.md](../status.md) for the current table.**: each task needs the owner's explicit go (an answer to a
+Builds [spec.md](spec.md) **as amended by [reconciliation.md](reconciliation.md)**. **Status as of 2026-11-10: in progress, 1/4 merged; see [docs/status.md](../status.md) for the current table.** Each task needs the owner's explicit go (an answer to a
 decision is not that go). The owner's answers that shaped the plan (D1527's Vertex answer is amended after review and was confirmed by the owner on 2026-11-07; D1539's answer is amended after review and was re-asked and answered the same day): D1520 a "Built, not enabled"
 status; D1522 the editions are "Core (MIT)" and "Subscription"; D1537 a data file, one page and an
 evidence test; D1538 an "as of" stamp refreshed by the release procedure; every row's wording is

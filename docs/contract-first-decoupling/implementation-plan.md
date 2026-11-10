@@ -5,7 +5,7 @@ against `origin/main` at `a7eb6ca28`, 2026-11-08.
 
 ## Status
 
-**Status as of 2026-11-10: in progress, 4/7 merged; see [docs/status.md](../status.md) for the current table.** each task below needs the owner's explicit
+**Status as of 2026-11-10: in progress, 4/7 merged; see [docs/status.md](../status.md) for the current table.** Each task below needs the owner's explicit
 go; answering a decision is not approving a task. The owner's answers that shaped this plan, all
 2026-11-08: extend `parallelism` (D1810), graph schema 3 (D1811), amendments as plan nodes with follow-up
 runs (D1812), rigor mode plus one on/off setting (D1813), change requests recorded in the graph document
