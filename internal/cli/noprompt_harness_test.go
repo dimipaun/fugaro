@@ -640,11 +640,13 @@ func closedStdinSetBaseBranch(t *testing.T, f *budgetFixture) {
 }
 
 // closedStdinCloneURLSeed gives the world's own project config the entry the
-// clone_urls removal takes away. Without it the leaf would stop at "this
-// project gives no clone URL for it" and would say nothing about the write.
+// clone_urls removal takes away, beside one it leaves. Without the first the
+// leaf would stop at "this project gives no clone URL for it" and would say
+// nothing about the write; without the second the removal would be the last
+// entry's, which the command refuses for the reason its own refusal gives.
 func closedStdinCloneURLSeed(t *testing.T, f *budgetFixture) {
 	t.Helper()
-	f.appendConfig(t, "clone_urls:\n  github/acme/app: https://github.com/acme/app\n")
+	f.appendConfig(t, "clone_urls:\n  github/acme/app: https://github.com/acme/app\n  github/acme/other: https://github.com/acme/other.git\n")
 }
 
 // closedStdinPoolSeed gives the world the two things a pool write needs to

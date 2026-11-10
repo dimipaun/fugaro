@@ -303,10 +303,11 @@ func policyMigrationForIn(ctx context.Context, lc *localcfg.Config, configPath s
 // A member written but stating no value is not one of them:
 // ImageCatalogEffective is nil for a config that names no catalog and for one
 // that writes an empty catalog, which publishes no member at all (D1156),
-// ImageMapEffective is nil for the same two spellings of the map (D1906), and
-// OrchestratorEffective is nil for a block that sets no key (SetsNothing). The
-// publish would create a policy that admits nothing and carry none of them with
-// it.
+// ImageMapEffective is nil for the same two spellings of the map (D1906),
+// CloneURLsEffective is nil for them too (a block with no entry publishes no
+// member, SD5), and OrchestratorEffective is nil for a block that sets no key
+// (SetsNothing). The publish would create a policy that admits nothing and
+// carry none of them with it.
 //
 // The rule is the publisher's own rows, one member at a time: whatever
 // policyNodeForPublish would put in the node because the file states it is a
@@ -337,6 +338,15 @@ func firstPublishNodeOnlyMembers(lc *localcfg.Config) []string {
 	if lc.TriageEffective(nil) != nil {
 		out = append(out, "the triage switch")
 	}
+	// The clone URLs join them (SD5, D842): the URL a run clones from is the
+	// member the runner computes from the published node, and no job's
+	// environment carries it, so a project whose config writes the block and
+	// which has never published a node has left where its runs clone from in a
+	// file no run reads — the state a cluster with no browser console could not
+	// leave at all before this release (G3).
+	if lc.CloneURLsEffective(nil) != nil {
+		out = append(out, "the clone URLs")
+	}
 	return out
 }
 
@@ -348,8 +358,11 @@ func firstPublishNodeOnlyMembers(lc *localcfg.Config) []string {
 // and the shared config refuses the map and the switches outright. The triage
 // switch joins them (D1854) for the half a repository cannot write: a
 // repository's own file states the switch for itself, and the answer a
-// project's runs read is the node's. So each of them is a member a project that
-// has never published a node has left in a file no run reads.
+// project's runs read is the node's. The clone URLs join them (SD5, D842) for
+// the whole of the member: the runner computes a run's clone URL from the
+// published node, so the block the local config writes reaches no run until the
+// node carries it. So each of them is a member a project that has never
+// published a node has left in a file no run reads.
 //
 // The members that are not node-only are not this stage's to publish here: a
 // budget ceiling, a base branch or a model list reaches every run through the

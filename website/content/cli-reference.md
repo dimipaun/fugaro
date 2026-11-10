@@ -3938,16 +3938,17 @@ This command has no subcommands.
 Take a repository's clone URL away
 
 Remove one entry of the project's clone_urls block, in this machine's
-project config file. The other entries stand, and the block's key stays —
-written with no entry under it when the last one goes, which is how the
-project states that it gives no repository a URL.
+project config file. The other entries stand, and the change reaches a run
+through `fugaro update`.
 
-The key standing is not decoration: a file that says nothing about the block
-keeps the published node's (so a machine whose config predates the key does
-not take the project's clone URLs away), and a file that writes an empty
-block is the statement that there are none. Removing the last entry and
-leaving the key is therefore the only spelling that takes a published block
-away; the change reaches a run through `fugaro update`.
+The last entry is not this command's to take away. An empty block is how a
+project states that it gives no repository a URL, and the one spelling of
+one — an empty mapping, `clone_urls: {}` — is not one this release's editor
+writes; a key left with no entry under it is read as a file that says
+nothing about the block, which keeps the published node's, so removing the
+last entry would change nothing at all. That removal is therefore refused,
+and the refusal names the one line that states it — put `clone_urls: {}` in
+the file by hand, and run `fugaro update`.
 
 Usage: `fugaro project clone-url rm <provider>/<owner>/<name>`
 

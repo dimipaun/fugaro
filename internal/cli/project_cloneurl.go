@@ -217,15 +217,16 @@ func newProjectCloneURLRmCmd() *cobra.Command {
 		Use:   "rm <provider>/<owner>/<name>",
 		Short: "Take a repository's clone URL away",
 		Long: "Remove one entry of the project's clone_urls block, in this machine's\n" +
-			"project config file. The other entries stand, and the block's key stays —\n" +
-			"written with no entry under it when the last one goes, which is how the\n" +
-			"project states that it gives no repository a URL.\n\n" +
-			"The key standing is not decoration: a file that says nothing about the block\n" +
-			"keeps the published node's (so a machine whose config predates the key does\n" +
-			"not take the project's clone URLs away), and a file that writes an empty\n" +
-			"block is the statement that there are none. Removing the last entry and\n" +
-			"leaving the key is therefore the only spelling that takes a published block\n" +
-			"away; the change reaches a run through `fugaro update`.",
+			"project config file. The other entries stand, and the change reaches a run\n" +
+			"through `fugaro update`.\n\n" +
+			"The last entry is not this command's to take away. An empty block is how a\n" +
+			"project states that it gives no repository a URL, and the one spelling of\n" +
+			"one — an empty mapping, `clone_urls: {}` — is not one this release's editor\n" +
+			"writes; a key left with no entry under it is read as a file that says\n" +
+			"nothing about the block, which keeps the published node's, so removing the\n" +
+			"last entry would change nothing at all. That removal is therefore refused,\n" +
+			"and the refusal names the one line that states it — put `clone_urls: {}` in\n" +
+			"the file by hand, and run `fugaro update`.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error { return runProjectCloneURLRm(cmd, args[0], &o) },
 	}
@@ -245,6 +246,19 @@ func runProjectCloneURLRm(cmd *cobra.Command, canonical string, o *projectCloneU
 	}
 	if _, ok := lc.CloneURLs[canonical]; !ok {
 		return userErr("%s gives no clone URL for %s: fugaro project clone-url ls prints the ones it gives", sel.Path, canonical)
+	}
+	// The last entry is not this command's to take away. What it would leave
+	// behind is a block with no entry, whose only spelling is an empty mapping
+	// — `clone_urls: {}` — and a null left under the key by a removal is not
+	// that statement: the loader reads it as a file that says nothing about the
+	// block, which keeps the published node's entries and makes the removal a
+	// no-op that printed a write. Writing the empty mapping is the shared
+	// editor's operation (the settings plan gives it to the editor task, with
+	// S7's `unset` of the last floor as its other caller), and a splice written
+	// by hand here would be the second editor the plan forbids (D847), so the
+	// command refuses and names the line that states it.
+	if len(lc.CloneURLs) == 1 {
+		return userErr("removing %s would leave the clone_urls block with no entry, and that is a statement this release cannot write: an empty block — `clone_urls: {}` — is YAML's only spelling of a project that gives no repository a URL, a key left with no entry under it is one %s reads as saying nothing about the block, and the published node's clone URLs would stand. Nothing was written: put `clone_urls: {}` in %s by hand, then run fugaro update — and take that line out again before the next fugaro project clone-url set, which cannot splice into an empty block", canonical, sel.Path, sel.Path)
 	}
 	next, err := projectCloneURLSplice(sel.Path, func() ([]byte, error) {
 		return yamledit.RemoveKey(old, []string{"clone_urls", canonical})
