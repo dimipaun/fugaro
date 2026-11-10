@@ -935,3 +935,103 @@ func cfmInstallationFacts(t *testing.T) map[string]string {
 	}
 	return out
 }
+
+// cfmGateKey is one setting key a §5 row's cells name, in two spellings: the
+// one the cell writes, checked against the cell so the table and this fixture
+// move together, and a concrete spelling the write path can resolve. `entry`
+// says the write is an `--add-entry` / `--remove-entry` of a block rather than
+// a scalar, because that is the mechanism whose row the write path builds for
+// itself (settingsEntryRow) rather than finding in the registry.
+type cfmGateKey struct {
+	spelling string
+	probe    string
+	entry    bool
+}
+
+// cfmGateAdmittedKeys is the keys each row's admission column carries, and
+// cfmGateRefusedKeys the ones its refuser column does: a row that admits what
+// the write path refuses, or refuses what it writes, is a gate table wider or
+// narrower than the commands it is read from (D1180). Both are keyed by the
+// row's first cell, so a renamed row fails here rather than losing its check.
+//
+// The G4 row is why this exists. Its first draft admitted `ab.*` and
+// `claude_models` as generic layer writes; the tree refuses both -- they are
+// the `fugaro models` family's rows and the family refusal is asked before the
+// allowlist -- so the table claimed cover the write path does not give.
+var cfmGateAdmittedKeys = map[string][]cfmGateKey{
+	"`settings set|unset` with a **concrete** key (§2.1)": {
+		{spelling: "budget.mode", probe: "budget.mode"},
+		{spelling: "budget.per_day_usd", probe: "budget.per_day_usd"},
+	},
+	"`settings set --layer project` (§3.6)": {
+		{spelling: "layer.profiles.*", probe: "layer.profiles.web.commands.rerun_failed", entry: true},
+		{spelling: "layer.defaults.*", probe: "layer.defaults.agent.max_budget_usd"},
+		{spelling: "layer.ab", probe: "layer.ab", entry: true},
+	},
+}
+
+var cfmGateRefusedKeys = map[string][]cfmGateKey{
+	"`settings set --layer project` (§3.6)": {
+		{spelling: "layer.claude_models", probe: "layer.claude_models"},
+		{spelling: "layer.ab.*", probe: "layer.ab.rate"},
+		{spelling: "layer.defaults.agent", probe: "layer.defaults.agent.model"},
+	},
+}
+
+// cfmGateResolve is the write path's own answer for one key: the entry
+// mechanism's row for a block write, and the registry's for a scalar -- the
+// same two resolutions `settings set` itself makes, refusals and all.
+func cfmGateResolve(key cfmGateKey) error {
+	if key.entry {
+		_, err := settingsEntryRow(key.probe)
+		return err
+	}
+	_, err := settingsWriteRow(key.probe)
+	return err
+}
+
+// TestDocsConfigManagementAdmittedKeysPassTheWritePath: every key a §5 row
+// admits is a key the write path really writes, and every key a row refuses is
+// one it really refuses. The table is what the managed build's gate cites
+// (D1180), so a row that admits more than `settings set` does claims cover the
+// agent's session does not have -- and a row that refuses less than the tree
+// does is the same hole read the other way. Each fixture key also has to appear
+// in the cell it belongs to, so a row cannot be reworded out from under it.
+func TestDocsConfigManagementAdmittedKeysPassTheWritePath(t *testing.T) {
+	cells := map[string][]string{}
+	for _, row := range cfmGateTable(t) {
+		if len(row) == 3 {
+			cells[row[0]] = row
+		}
+	}
+	for _, tc := range []struct {
+		name  string
+		fixt  map[string][]cfmGateKey
+		col   int
+		admit bool
+	}{
+		{"admits", cfmGateAdmittedKeys, 1, true},
+		{"refuses", cfmGateRefusedKeys, 2, false},
+	} {
+		for cell, keys := range tc.fixt {
+			row, ok := cells[cell]
+			if !ok {
+				t.Errorf("%s' §5 table has no row %q, and this case pins the keys that row %s: a row renamed is a check that stopped running", cfmSpec, cell, tc.name)
+				continue
+			}
+			for _, key := range keys {
+				if !strings.Contains(row[tc.col], "`"+key.spelling+"`") {
+					t.Errorf("%s' §5 table row %q %s no %q: the fixture and the table have to name the same key, and this one is pinned against a sentence that does not carry it", cfmSpec, cell, tc.name, key.spelling)
+					continue
+				}
+				err := cfmGateResolve(key)
+				if tc.admit && err != nil {
+					t.Errorf("%s' §5 table row %q admits %s and the write path refuses it: %v -- the gate would admit a command whose write is refused before the gate is ever asked", cfmSpec, cell, key.probe, err)
+				}
+				if !tc.admit && err == nil {
+					t.Errorf("%s' §5 table row %q refuses %s and the write path writes it: a row that refuses a key its own command writes is a rule the tree does not have", cfmSpec, cell, key.probe)
+				}
+			}
+		}
+	}
+}

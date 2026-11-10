@@ -210,10 +210,18 @@ and published by a second command. `fugaro config publish`
 the generation (`internal/cli/config_publish.go:255`) and writes the object.
 
 **Recommendation (D1175): every layer entry is a managed entry with a writer** — `profiles.*` (36),
-`defaults.*` (agent, git, rigor), `ab.*` (5) and `claude_models` — reached by the generic writer's §2
-mechanism. The layer's rows already exist in the registry
+`defaults.*` (agent, git, rigor) and `ab.*` (5), the reconciliation's own list: the layer's
+`claude_models` is not one of them, because that key is `fugaro models`' own
+(`internal/settings/registry.go:511`). They are reached by the generic writer's §2 mechanism. The
+layer's rows already exist in the registry
 (`internal/settings/registry.go:411`), so the change is the allowlist and the entry
-mechanism, not a new registry.
+mechanism, not a new registry. **Which of them the generic path writes today is the owner column's
+answer and not this list's**: `fugaro models` owns the five `ab.*` leaves and `defaults.agent`'s
+`model`, `models.*`, `crafts.*.model`, `levels.*` and `recipe`
+(`internal/settings/registry.go:518`, `:625`), and the family refusal is asked before the allowlist
+(`internal/cli/settings_set.go:209`), so those are refused until D1178's owner rename hands them
+over — the `ab` **block** is written now, through §2's entry mechanism, whose row the generic path
+builds itself.
 
 **Recommendation (D1176): the edit's own next step publishes.** `fugaro settings set --layer project`
 already ends with `next: fugaro update` (`internal/cli/settings_set.go:2067`); the
@@ -284,7 +292,7 @@ is visible in a document it produces before it writes; the rows are:
 | `settings set\|unset` with a **concrete** key (§2.1) | Admitted for a key the registry knows at a scope inside the project, where the value lowers no floor and widens no ceiling — **including `budget.mode` and `budget.per_day_usd`**, which D1179 gives the generic path | A widening that takes the typed project name — **D1026**, a `Typed` step is never admitted |
 | `settings set\|unset` with `--add-entry` / `--remove-entry` (§2.2) | Admitted when the entry adds no `allow_data_to` member and no `secrets` member | A `secrets` entry and an `allow_data_to` widening: refused by the widening rule, not by the gate's plan (**D1165**), and the typed project name that widening takes is a `Typed` step (**D1026**, **D846**) |
 | `fugaro workflow add\|rm` (§3.7) | Admitted as a `--layer repo` write, the one document an agent session may write today | An executable-key change (`image.apt`, `image.setup`, `commands.*`) without the owner's flag (**D1177**), and a block the gate cannot read as a plan (**D1026**) |
-| `settings set --layer project` (§3.6) | Admitted for a layer entry a registry row names — `profiles.*`, `defaults.*`, `ab.*` and `claude_models` — through §2's own entry write | A reserved key, and any entry that widens a ceiling or lowers a floor — the typed name (**D1175**, **D1026**) |
+| `settings set --layer project` (§3.6) | Admitted for a `layer.profiles.*` entry, for a `layer.defaults.*` leaf the allowlist carries, and for the `layer.ab` block's entries through §2's own entry write | `layer.claude_models`, and every leaf `fugaro models` owns — `layer.ab.*`, and `layer.defaults.agent`'s `model`, `models.*`, `crafts.*.model`, `levels.*` and `recipe` — which stay that family's until D1178's owner rename (**D1178**); also a reserved key, and any entry that widens a ceiling or lowers a floor — the typed name (**D1175**, **D1026**) |
 | `fugaro rigor set` (§3.1) | Admitted for a mode at or above the resolved mode | `hotfix` (**D834**), a duplicate glob (**D838**), and a floor **lowered or removed** — the typed name, **D1026** |
 | `fugaro rigor floor` (§3.1) | Admitted for an entry the rank rule admits: a floor added, or one raised | A removal or a lowering, which takes the project's name typed at a terminal with nothing standing in for it (**D1170**, **D846**), and a `Typed` step is never admitted (**D1026**) |
 | `fugaro secrets rm`, the secret policy flags (§3.2) | **Nothing** — a secret's removal and its policy are values no plan shows | The whole family: refused in a session, gate or not (**D1171**) |
