@@ -211,10 +211,14 @@ func TestSetupWritesNoAdminList(t *testing.T) {
 // one's, and nothing says which), while the promise the person read said
 // nothing left the machine.
 func TestUpdateInACodingAgentsSessionWritesNoAdminList(t *testing.T) {
-	agentSession(t)
 	currentRelease(t)
 	r := newConvergeRig(t, v4Node())
 	setRoster(t, r, rosterGrant("owner@example.com", "admin", "project"))
+	// The marker last, as the rigs that drive a session do
+	// (agentUpdateCheckout): the fixture's own helpers clear every marker
+	// (upgradeEnv), so a session set before the rig is built is not the
+	// session the door runs in.
+	agentSession(t)
 
 	out, _, err := executeStdin(t, "", "update", "--yes")
 	if err == nil {
@@ -249,8 +253,8 @@ func TestUpdateInACodingAgentsSessionWritesNoAdminList(t *testing.T) {
 // the marker is the first case's, and `r.gate` is the second's.
 func TestAdminListAgentSessionAndTheGate(t *testing.T) {
 	t.Run("a coding agent's session writes nothing", func(t *testing.T) {
-		agentSession(t)
 		e, buf, opened := adminListStepEngine(t, func(*localcfg.Config) {})
+		agentSession(t)
 		e.writeAdminList(context.Background())
 		if *opened {
 			t.Errorf("the step opened the runs bucket in a coding agent's session: the list is the intake's authorization object, and this session applies nothing for it to be the account of")
@@ -260,8 +264,8 @@ func TestAdminListAgentSessionAndTheGate(t *testing.T) {
 		}
 	})
 	t.Run("a managed project's gate stands in for the confirmation", func(t *testing.T) {
-		agentSession(t)
 		e, buf, opened := adminListStepEngine(t, func(*localcfg.Config) {})
+		agentSession(t)
 		e.r.gate = &initGate{managed: true}
 		e.writeAdminList(context.Background())
 		if !*opened {

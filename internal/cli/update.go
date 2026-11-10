@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"os"
 
 	"github.com/spf13/cobra"
 
@@ -156,7 +157,10 @@ func newUpdateCmdWith(o *initOptions) *cobra.Command {
 // Nothing here may fail the update (the HARD RULE, as in update_budget_mode.go):
 // every state that leaves the object as it is — no shared budget backend, a
 // database that is not this installation's, a roster that could not be read or
-// decoded, a bucket that refused the write — is a warning or silence, and the
+// decoded, a bucket that refused the write — is a warning or silence, and so
+// are the two states in which this run is not the act that publishes the list
+// at all: a coding agent's session the managed gate does not stand in for, and
+// a run that did not confirm its steps (both below). In every one of them the
 // object is exactly what the run found. A list that was not written is a list
 // the intake decides on as it is, which is fail closed for the caller and never
 // a reason to stop an upgrade.
@@ -168,6 +172,34 @@ func (e *initEngine) writeAdminList(ctx context.Context) {
 	// exists is not its business, and a project it just created has no admins
 	// to derive from.
 	if o.doorName() != updateDoor.name || o.planOnly {
+		return
+	}
+	// Then the session, for the rule the three steps beside it keep
+	// (pinCredentialsImage, fillCredentialsAudience, selfFlagUnmanaged): this
+	// object is authorization data — who the intake admits to the shared
+	// prefix — and a coding agent's session is not the act that publishes it.
+	// `--yes`'s help says as much: under one of these markers the door "changes
+	// nothing outside this machine, --yes included", and a write the loop never
+	// put through a confirmation would be exactly the exception that promise
+	// does not have. The gate is the one exception (D1016): where the marks say
+	// the project is managed, the gate's own read stands in for the
+	// confirmations this run would have asked for, so the session IS the run
+	// that converges the installation — its stages apply — and the object is
+	// part of what it converges. A session the gate refused never reaches here
+	// at all: its refusal is the run's outcome.
+	//
+	// And a run that did not confirm its steps writes nothing either: a step
+	// the loop could not take is under left_for_you (a secret's value, a policy
+	// publish that would loosen the published node), the run exits 1 over it,
+	// and the person it named runs the door again — that run is the one that
+	// publishes the list. Both refusals leave the object an earlier update
+	// wrote exactly where it is, which is the state this step starts from every
+	// time: the intake decides on the list it has, and the next run that
+	// finishes replaces it.
+	if agentMarker(os.Getenv, r.stdinTerminal()) != "" && !r.gateUnderway() {
+		return
+	}
+	if len(r.res.LeftForYou) > 0 {
 		return
 	}
 	// The roster is a node of the installation's budget database, reached over
