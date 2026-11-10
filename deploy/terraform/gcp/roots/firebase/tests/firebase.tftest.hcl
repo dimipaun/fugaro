@@ -584,7 +584,7 @@ run "TestWorkspaceReadGrant" {
   assert {
     condition = (length(google_project_iam_custom_role.workspace_read) == 1 &&
       contains(google_project_iam_custom_role.workspace_read[0].permissions, "firebasedatabase.instances.get") &&
-      !contains(google_project_iam_custom_role.workspace_read[0].permissions, "firebasedatabase.instances.update"))
+    !contains(google_project_iam_custom_role.workspace_read[0].permissions, "firebasedatabase.instances.update"))
     error_message = "the role is the instance's read and no write: a member's database is the member's, and this grant is IAM's half of that"
   }
 }
