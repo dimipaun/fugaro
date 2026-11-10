@@ -225,7 +225,13 @@ var jsonCases = map[string]jsonCase{
 			f := jsonCloud(t)
 			id := "20260927-100000-abcd"
 			exec := seedRun(t, f, id, "", "", true)
-			f.logging.AddJSONLines(exec, []byte(`{"time":"`+logTime(time.Second)+`","severity":"INFO","message":"stage started","stage":"implement"}`+"\n"))
+			// Two entries, because this is the one run whose --json is a
+			// document a line: one value for the whole output is the reading
+			// the case exists to rule out, so the fixture has to be one a
+			// whole-output check would fail.
+			f.logging.AddJSONLines(exec, []byte(
+				`{"time":"`+logTime(time.Second)+`","severity":"INFO","message":"stage started","stage":"implement"}`+"\n"+
+					`{"time":"`+logTime(2*time.Second)+`","severity":"INFO","message":"stage finished","stage":"implement"}`+"\n"))
 			return []string{"logs", id}
 		},
 	},
@@ -503,6 +509,38 @@ var jsonCases = map[string]jsonCase{
 			return []string{"workspace", "show", "workspace-alpha"}
 		},
 	},
+}
+
+// consoleReadCases are the console reads whose command carries no `--json`
+// flag, keyed the way consoleReadPaths spells it. G7's second half is about the
+// read the console spawns and not about the flag -- a read that filed a log
+// would turn the console's own polling into the churn that evicts the log a
+// person wants after a failure -- so each of these is run the way the console
+// spawns it, the path's own words and no flag, and held to writing no log. A
+// read that needs a rig of its own belongs in jsonCases instead, which is where
+// the fixtures that prepare one live.
+var consoleReadCases = []string{"fugaro version"}
+
+// consoleReadEE is the reason the console reads whose code this build does not
+// carry have no run here: the Subscription Edition's commands are the core
+// tree's paid stubs, and a stub parses no flag and refuses before it does
+// anything (extend.go), so there is no outcome of one to hold to the rule.
+const consoleReadEE = "the command is the Subscription Edition's, and this package builds the core tree, where the name answers with the paid stub (extend.go), a command that parses no flag and refuses before it does anything: there is no run of it here"
+
+// consoleReadExempt are the console reads this package has no run of, with the
+// reason each has none: the Subscription Edition's five, and nothing else --
+// `watch` is the one other read the pin cannot run, and its reason is the one
+// its jsonCases entry already carries, so that one table stays the only place a
+// reader has to look. What keeps this list honest is
+// assertEveryConsoleReadIsHeld, which walks the design's own consoleReadPaths
+// and fails on a read that is in none of the three, on an entry here that is
+// not a console read, and on exemptions that became most of the list.
+var consoleReadExempt = map[string]string{
+	"fugaro coordinator intents": consoleReadEE,
+	"fugaro coordinator show":    consoleReadEE,
+	"fugaro coordinator status":  consoleReadEE,
+	"fugaro graph":               consoleReadEE,
+	"fugaro report":              consoleReadEE,
 }
 
 // jsonCommandPaths walks the tree the released binary builds and returns every
