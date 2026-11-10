@@ -785,6 +785,27 @@ test_a_mint_whose_answer_names_another_repository_is_a_fail() {
   expect_contains "$out" "while the run identity is a run of $SANDBOX_REPO" "another repository: the run it was for"
 }
 
+test_a_mint_whose_answer_is_a_longer_name_ending_in_the_run_repository_is_a_fail() {
+  setup_case doubled
+  # The answer names a repository whose owner happens to be the run's owner
+  # followed by the run's own "<owner>/<name>": "github/acme/acme/sandbox" is a
+  # repository called "acme/sandbox" that belongs to an owner called "acme", and
+  # it is not the run's repository. A row that matched the answer against $REPO
+  # by its tail with a glob would take it; the row strips exactly one segment —
+  # the provider's — and compares the rest, so it does not.
+  python3 - "$dir/state/mint.json" "$SANDBOX_REPO" <<'PY'
+import json, sys
+p, repo = sys.argv[1], sys.argv[2]
+d = json.load(open(p))
+d["repository"] = "github/%s/%s" % (repo.split("/", 1)[0], repo)
+json.dump(d, open(p, "w"))
+PY
+  run96
+  expect_status "$status" 1 "an answer that only ends in the run's repository"
+  expect_contains "$out" "FACT mint: FAIL — " "an answer that only ends in the run's repository: the row"
+  expect_contains "$out" "a token for github/acme/acme/sandbox" "an answer that only ends in the run's repository: the repository the answer named"
+}
+
 test_a_mint_whose_expiry_is_outside_the_hour_is_a_fail() {
   setup_case badexpiry
   python3 - "$dir/state/mint.json" "$SANDBOX_REPO" <<'PY'
@@ -817,12 +838,14 @@ test_a_bundle_whose_one_member_is_not_the_service_account_is_a_fail() {
 
 test_a_service_reachable_without_iam_is_a_fail() {
   setup_case noiam
-  # The call with no identity reached the container: the service answered its own
-  # typed refusal, which is a 403 with no audit line — the same status and the
+  # The call with no identity reached the container: the service's own header
+  # parse refused it (a call with no Authorization header at all fails
+  # RequestFromHTTP, which server.go answers through refuse with
+  # unverified_run_identity) — a 403 with no audit line, the same status and the
   # same unmoved count the front end's own refusal leaves. The body is what tells
   # them apart, and a front-end row that read only the status would call this the
   # outer fence holding.
-  RUN96_ENV=(FAKE96_NOIDENT_BODY='{"error": "unverified_job_identity", "message": "no identity"}')
+  RUN96_ENV=(FAKE96_NOIDENT_BODY='{"error": "unverified_run_identity", "message": "credsvc: the call carries no Authorization header"}')
   run96
   expect_status "$status" 1 "a service without IAM"
   expect_contains "$out" "FACT front-end: FAIL — " "a service without IAM: the row"
@@ -1023,6 +1046,7 @@ t test_the_switch_hook_may_only_name_the_file_it_reads
 t test_a_bundle_with_the_job_as_a_second_member_is_a_fail
 t test_a_bundle_whose_one_member_is_not_the_service_account_is_a_fail
 t test_a_mint_whose_answer_names_another_repository_is_a_fail
+t test_a_mint_whose_answer_is_a_longer_name_ending_in_the_run_repository_is_a_fail
 t test_a_mint_whose_expiry_is_outside_the_hour_is_a_fail
 t test_a_service_reachable_without_iam_is_a_fail
 t test_a_mint_that_answers_other_than_200_is_a_fail

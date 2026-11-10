@@ -37,8 +37,11 @@
 #             mints two Firebase Auth users (deleted again in the same run, and
 #             read back absent), two run identities and ONE real GitHub
 #             installation token, for the sandbox repository.
-# Costs:      three POSTs to the service (one unauthenticated, refused at the
-#             front end), a handful of read-only GitHub API calls and one probe
+# Costs:      four POSTs to the service — three authenticated (the mint, the
+#             pairing case's and the outsider's) and one with no identity at all,
+#             which Cloud Run's own front end refuses before the container runs
+#             (and which the service's header parse refuses instead, if IAM is
+#             off for it) — a handful of read-only GitHub API calls and one probe
 #             against a workflow name that does not exist, which GitHub refuses
 #             before anything could dispatch. No model call, no run, no job
 #             execution.
@@ -247,7 +250,9 @@ finish() {
   # directory this check could not remove is a FAIL, and a block that printed
   # `restore: FAIL` beside `END (exit 0)` would read as a pass (check91.sh reads
   # its own rows the same way). A run that stopped in a guard is exit 2 already.
-  if printf '%s\n' "$facts" | grep -q '|FAIL|' && [ "$status" = 0 ]; then
+  # The pattern is anchored on the verdict field, so a `|FAIL|` inside a detail
+  # (an echoed message, a repository name) is not a fact that failed.
+  if printf '%s\n' "$facts" | grep -qE '^[^|]+\|FAIL\|' && [ "$status" = 0 ]; then
     status=1
   fi
   if [ "$HELP_SHOWN" = yes ]; then
@@ -648,11 +653,13 @@ step_front_end() {
   after=$(audit_lines "jsonPayload.purpose=\"mint\"") || stop "the service's own log could not be read a second time"
   # The status alone cannot tell the two 403s apart, and the line count cannot
   # either: a service deployed WITHOUT IAM lets the call reach the container,
-  # where the account check answers 403 unverified_job_identity and writes no
-  # line for it (internal/credsvc's refuseIdentity) -- the same status and the
-  # same unmoved count the front end's own refusal leaves. The body separates
-  # them: Google's refusal is the platform's HTML, and the service's is its typed
-  # JSON. So the body is read first, and the count decides only what it leaves.
+  # which refuses it at the shared header parse -- a call with no Authorization
+  # header at all fails RequestFromHTTP, and server.go answers that through
+  # refuse with unverified_run_identity and writes no line for it -- the same
+  # status and the same unmoved count the front end's own refusal leaves. The
+  # body separates them: Google's refusal is the platform's HTML, and the
+  # service's is its typed JSON. So the body is read first, and the count
+  # decides only what it leaves.
   refused=$(reader refusal <"$SCRATCH/noident.json" 2>/dev/null) || refused=""
   error=$(field_of error "$refused")
   case "$status" in
@@ -775,14 +782,15 @@ step_mint() {
   # internal/credsvc's MintResponse carries — while this check's own $REPO is the
   # "<owner>/<name>" the config and the budget document use. The two are the same
   # repository in two spellings, so the answer is held to the run's repository by
-  # its tail: exactly one more segment, and the same owner and name.
-  case "$MINT_REPO" in
-  */"$REPO") ;;
-  *)
+  # its tail: ONE segment stripped, and the rest exactly $REPO. Stripping one
+  # rather than matching "*/$REPO" is what makes the comparison the canonical
+  # form's own: "github/acme/acme/sandbox" is a repository called acme/sandbox
+  # under an owner called acme, not this run's, and a glob would take it.
+  MINT_TAIL=${MINT_REPO#*/}
+  if [ "$MINT_TAIL" = "$MINT_REPO" ] || [ "$MINT_TAIL" != "$REPO" ]; then
     fact mint FAIL "the mint answered 200 with a token for $MINT_REPO while the run identity is a run of $REPO (uid r~$SLUG~$RUN): the service minted for a repository the run is not of, and the run identity — with the job's own account — is the whole of what decides which repository a mint is for. The token is in a shell variable and is not printed"
     return 0
-    ;;
-  esac
+  fi
   # The expiry is part of the claim, not decoration: GitHub's installation tokens
   # live an hour and the service mints them with that expiry, so a token that
   # outlives it (or arrives already expired) is a finding about the mint itself.

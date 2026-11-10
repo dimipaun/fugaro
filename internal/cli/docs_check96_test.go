@@ -318,7 +318,7 @@ func TestDocsCheck96IsWrittenAndSaysWhatIsNotYetTrue(t *testing.T) {
 	if !strings.Contains(check, "so this row reads the **body** the call came back with") {
 		t.Errorf("docs/gcp-live-checklist.md's Check 96 no longer says the `front-end` row reads the body the unauthenticated call came back with: the status and the unmoved audit-line count are the same for Cloud Run's own refusal and for a service deployed without IAM, whose `refuseIdentity` answers the same `403` and writes no line either, so without the body the row would pass a service anyone can call")
 	}
-	if body := check96FuncBody(t, readRepoFile(t, check96Script), "step_front_end() {"); !strings.Contains(body, `reader refusal <"$SCRATCH/noident.json"`) || !strings.Contains(body, "BY THE SERVICE") {
+	if body := check96ShellFunc(t, readRepoFile(t, check96Script), "step_front_end() {"); !strings.Contains(body, `reader refusal <"$SCRATCH/noident.json"`) || !strings.Contains(body, "BY THE SERVICE") {
 		t.Errorf("scripts/live-checks/check96.sh's `step_front_end` no longer tells the two `403`s apart by the body (%q): the section states that discrimination as this row's mechanism, and a step that read the status and the line count alone would pass a service deployed without Cloud Run IAM", strings.TrimSpace(body))
 	}
 
@@ -497,6 +497,28 @@ func TestDocsCheck96IsWrittenAndSaysWhatIsNotYetTrue(t *testing.T) {
 // leave their comments, and this guard fails on the missing grant rather than
 // passing on the prose.
 var credentialsDatabaseRoleRE = regexp.MustCompile(`role_id\s*=\s*"` + regexp.QuoteMeta(tf.CredentialsDatabaseRole) + `"|role\s+= "roles/firebasedatabase`)
+
+// check96ShellFunc returns one shell function's body out of scripts/live-checks/
+// check96.sh: from its signature to the `}` that closes it at column 0.
+//
+// check96FuncBody below splits on a top-level `\nfunc `, which is the Go shape
+// and not this file's: pointed at the script it returned everything below the
+// signature, so a pin meant to hold one step in place was satisfied anywhere in
+// the rest of the file, and a refactor that moved the body read out of
+// `step_front_end` would have kept passing.
+func check96ShellFunc(t *testing.T, script, sig string) string {
+	t.Helper()
+	i := strings.Index(script, sig)
+	if i < 0 {
+		t.Fatalf("%s: %s not found — this test's marker has moved", check96Script, sig)
+	}
+	rest := script[i+len(sig):]
+	j := strings.Index(rest, "\n}\n")
+	if j < 0 {
+		t.Fatalf("%s: %s is not closed by a `}` at column 0 — this test's marker has moved", check96Script, sig)
+	}
+	return rest[:j]
+}
 
 // check96FuncBody returns one function's body out of a source file the test
 // already read: from the signature to the next top-level `func `, so a call
