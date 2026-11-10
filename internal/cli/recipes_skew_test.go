@@ -2106,10 +2106,18 @@ func TestStopFractionSinceHasAReleaseBullet(t *testing.T) {
 	if !strings.Contains(bullet, "currently `\""+stopFractionSince+"\"`") {
 		t.Errorf("docs/release.md's stopFractionSince bullet does not carry the constant's release (%q)", stopFractionSince)
 	}
-	for _, want := range []string{"review_stop_fraction", "not tagged yet"} {
+	for _, want := range []string{"review_stop_fraction", "not tagged yet", "config.RepoStopFractionSet", "ProjectLayer.SetsStopFraction"} {
 		if !strings.Contains(bullet, want) {
 			t.Errorf("docs/release.md's stopFractionSince bullet does not say %q", want)
 		}
+	}
+	// The layer's half is the predicate both call sites ask, and the bullet has
+	// to name that one: stopFractionSources and gateStopFraction read
+	// SetsStopFraction, which counts a key written as null where SetsDefault
+	// answers false for it, so a release told to verify the wrong predicate
+	// would judge a layer the gate never reads that way.
+	if strings.Contains(bullet, "SetsDefault") {
+		t.Errorf("docs/release.md's stopFractionSince bullet names SetsDefault, which is not the predicate the gate asks: a layer that writes the key as null sets it and SetsDefault answers false for it")
 	}
 }
 
