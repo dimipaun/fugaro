@@ -148,42 +148,58 @@ func chainInherit(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 	if err != nil {
 		return err
 	}
-	// limit is the chain's own limit: the run that began the chain carries it in
-	// its stored task (D1046), and a chain limit exists only where the launch
-	// that began it set one (D1041). chain is nil for a launch that begins one,
-	// where this launch's own figures are the limit and nothing has been read.
-	var (
-		chain *runstore.Chain
-		limit task.Overrides
-	)
+	var behind chainBehind
 	switch {
 	case from == "":
-		limit = spec.Overrides
+		behind.limit = spec.Overrides
 	default:
-		// A chain read that fails is this launch's to answer, and the two links
-		// answer it differently. The bucket's lifecycle deletes a run's objects
-		// together — its record and its stored task — so a chain whose earlier
-		// records have aged out has no limit left to read either, and a follow-up
-		// on a pull request older than the window a launcher reads is a launch
-		// this CLI has always accepted (TestRunPRRootExpired, resolvePR). D1049
-		// is the same rule stated for the ledger: one read that failed is not a
-		// stopped chain.
+		// A chain read that fails is this launch's to answer, and the errors are
+		// three. A link the bucket no longer holds anything under (ErrChainGap) is
+		// the bucket's own lifecycle: a run's record and its stored task age out
+		// together, so a chain older than the window has a hop with nothing under
+		// it, and a follow-up on such a pull request is a launch this CLI has
+		// always accepted (TestRunPRRootExpired, resolvePR). Every other failed
+		// read — a record that cannot be read, the budget database unreachable, a
+		// link that is not a run id — leaves the chain's figure unknown for a
+		// reason no other object answers, and a launch that carried on would run
+		// past a limit nothing established: it is refused, for every link. D1049
+		// is the same rule stated for the ledger, where the figure a failed read
+		// is charged is the cap: one read that failed is not a chain of nothing.
 		//
-		// A run the caller *named* with --continues is the other case, and T4 is
-		// explicit about it: a link the records cannot confirm is refused rather
-		// than answered as a chain of the named run alone, which would be the
-		// figure a gap leaves behind. resolvePR's link is the launcher's own
-		// finding, not a caller's claim, so the follow-up degrades instead —
-		// loudly, with the figures it asked for itself.
-		if chain, err = chainRead(ctx, env, slug, from); err != nil {
+		// A run the caller *named* with --continues is refused on all three, and
+		// T4 is explicit about it: a link the records cannot confirm is refused
+		// rather than answered as a chain of the named run alone, which would be
+		// the figure a gap leaves behind. resolvePR's link is the launcher's own
+		// finding, not a caller's claim, so a gap in it degrades instead —
+		// loudly, and by what the previous run's stored task still holds.
+		if behind.chain, err = chainRead(ctx, env, slug, from); err != nil {
 			if o.continues != "" {
 				return userErr("--continues %s: the chain cannot be read (%v), so what it has already spent cannot be established, and a link the records cannot confirm is refused rather than continued from the run named alone. Name a run whose chain is whole, or launch a run that is not part of it", task.ShortRun(o.continues), err)
 			}
-			fmt.Fprintf(warn, "warning: the chain behind this launch could not be read (%v); its own limits cannot be inherited, so this run carries the limits this launch wrote and the per-run caps\n", err)
-			limit = spec.Overrides
+			if !errors.Is(err, runstore.ErrChainGap) {
+				return userErr("%s: the chain behind this launch cannot be read (%v), so how much of its limits is left cannot be established, and a run launched without that figure would not be bounded by the chain at all. Nothing was launched: retry, and if the records stay unreadable, launch a run that is not part of this chain", chainFromWord(o, spec), err)
+			}
+			// The previous run's stored task holds what the chain left it, which
+			// bounds what is left now: the chain has only spent more since. A
+			// follow-up that carried nothing here would be bounded by the per-run
+			// caps alone, which is the hole D1052 closes for every other launch
+			// shape (chainRemaining's gap arm writes the figures).
+			prev, perr := readTask(ctx, env, slug, from)
+			switch {
+			case errors.Is(perr, runstore.ErrNotFound):
+				// The whole chain has aged out — the run the read was named for
+				// has no task left either — so there is no figure anywhere to
+				// carry, and this run keeps the limits this launch wrote.
+				fmt.Fprintf(warn, "warning: the chain behind this launch has a gap (%v), and the run it is read from has no stored task left either; this run carries the limits this launch wrote and the per-run caps\n", err)
+			case perr != nil:
+				return perr
+			default:
+				behind.limit, behind.gap = prev.Overrides, true
+				fmt.Fprintf(warn, "warning: the chain behind this launch has a gap (%v), so what it has already spent cannot be read; this run carries what the previous run of the chain was left with, and not the chain's whole limit or nothing\n", err)
+			}
 			break
 		}
-		root, err := readTask(ctx, env, slug, chain.Root)
+		root, err := readTask(ctx, env, slug, behind.chain.Root)
 		switch {
 		case errors.Is(err, runstore.ErrNotFound):
 			// The run that began the chain has no stored task, so the chain
@@ -192,17 +208,11 @@ func chainInherit(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 		case err != nil:
 			return err
 		default:
-			limit = root.Overrides
+			behind.limit = root.Overrides
 		}
 	}
-	// enforced is whether the figures are the budget database's. With the budget
-	// off there is no ledger, the records are the figures and the chain is
-	// UNENFORCED — a report and not a stop (D1046, T10) — so a chain this call
-	// reads as spent warns instead of refusing. A chain this launch begins is the
-	// caller's own figures, and those are always this launcher's to act on.
-	enforced := chain != nil && chain.Enforced
 
-	next, err := chainRemaining(chain, limit, spec, o, enforced, warn)
+	next, err := chainRemaining(behind, spec, o, warn)
 	if err != nil {
 		return err
 	}
@@ -366,43 +376,65 @@ func chainPerRunCaps(ctx context.Context, env *cloudEnv) runstore.PerRunCaps {
 	return caps
 }
 
+// chainBehind is the chain a launch continues as chainInherit resolved it: the
+// read, the chain's own limit as the run that began it stored it, and whether
+// the read stopped at a gap.
+type chainBehind struct {
+	// chain is the read of the chain, nil for a launch that begins one.
+	chain *runstore.Chain
+	// limit is the chain's own limit: the root launch's stored figures, or —
+	// for a first run, and for a chain whose ledger could not be read — what
+	// this launch wrote itself (D1041, D1046).
+	limit task.Overrides
+	// gap is a chain the bucket has aged out from under: the read stopped at a
+	// link it no longer holds a record for, so the chain's own limit is
+	// unreadable too and limit is what the previous run's stored task was left
+	// with — a bound on what is left now, since the chain has only spent more
+	// since — while what it has spent goes unread (D1052, D1049).
+	gap bool
+}
+
 // chainRemaining is a task's overrides as this launch's chain resolves them:
 // each dimension the chain limits becomes limit − used, this launch's own
 // --max-* held under that, and a caller's --used-* raising the charge or
 // refused (D1047, D1048).
 //
-// chain is the read of the chain this launch continues, nil for a launch that
-// begins one; limit is the chain's own limit as the run that began it stored it
-// (or, for a first run, what this launch's own --max-* wrote); enforced is
-// whether a spent chain refuses the launch at all (D1046).
-//
-// A launch that begins a chain — or one whose chain could not be read, where
-// this launch's own figures stand for it — is the one shape with no request
-// apart from the limit: its own --max-* is the chain's limit (D1041) and the
-// remaining is drawn from it, so what it writes is that limit less what the
-// caller stated the chain has used elsewhere (D1048).
-func chainRemaining(chain *runstore.Chain, limit task.Overrides, spec *task.Spec, o *runOptions, enforced bool, warn io.Writer) (task.Overrides, error) {
+// A launch that begins a chain is the one shape with no request apart from the
+// limit: its own --max-* is the chain's limit (D1041) and the remaining is
+// drawn from it, so what it writes is that limit less what the caller stated
+// the chain has used elsewhere (D1048). A chain read that stopped at a gap has
+// the figures a different shape again: it is a chain, so this launch's --max-*
+// is held under what is left, but the spend is unknown and the limit in hand is
+// already a remaining — so it is carried as it stands rather than drawn afresh
+// from a limit nothing read (chainBehind.gap).
+func chainRemaining(b chainBehind, spec *task.Spec, o *runOptions, warn io.Writer) (task.Overrides, error) {
 	next := spec.Overrides
+	begins := b.chain == nil && !b.gap
 	// A launch that begins a chain and states nothing to charge it with has
 	// nothing to resolve: its own figures are the chain's limit and the chain
 	// has used nothing, so rewriting them would only re-render what
 	// chainLimitGate already wrote (a 45m as 45m0s, say) into the task the
 	// run and the record then carry.
-	if chain == nil && !o.used.set() {
+	if begins && !o.used.set() {
 		return next, nil
 	}
+	// enforced is whether the figures are the budget database's (D1046): with
+	// the budget off the chain is UNENFORCED — a report and not a stop (T10) —
+	// so a spent chain warns instead of refusing. A chain this launch begins is
+	// the caller's own figures, and those are always this launcher's to act on.
+	enforced := b.chain != nil && b.chain.Enforced
 	used := map[runstore.Dimension]runstore.Figure{}
-	if chain != nil {
+	if b.chain != nil {
 		for _, d := range chainDimensions() {
-			used[d] = chain.Used(d)
+			used[d] = b.chain.Used(d)
 		}
 	}
 	var err error
-	if used, err = chainUsedRaised(used, o.used, limit); err != nil {
+	if used, err = chainUsedRaised(used, o.used, b.limit); err != nil {
 		return task.Overrides{}, err
 	}
 	for _, d := range chainDimensions() {
-		lim, ok := chainLimitAmount(limit, d)
+		lim, ok := chainLimitAmount(b.limit, d)
 		if !ok {
 			// The chain does not limit this dimension: there is nothing to
 			// inherit it from, and what this launch's own flag asked for (if any)
@@ -413,12 +445,16 @@ func chainRemaining(chain *runstore.Chain, limit task.Overrides, spec *task.Spec
 		spent := runstore.Amount(0)
 		if measured {
 			spent = u.Amount
-		} else {
+		} else if !b.gap {
 			// The chain does not measure this dimension: with the budget off
 			// there is no ledger, and no run record carries a whole-run token
 			// total (D1051, F8). Saying so is the report, and the chain's own
 			// limit then stands for this run — never a figure the read invented,
-			// and never the limit read as unspent.
+			// and never the limit read as unspent. A gap says none of this: the
+			// dimension is unmeasured because the spend could not be read, not
+			// because the chain has no figure, and the limit in hand is the
+			// previous run's remaining rather than the chain's own — the warning
+			// chainInherit printed is the report there, and it is true.
 			fmt.Fprintf(warn, "note: the chain behind this launch does not measure its %s (the budget is off, and a run's record carries no such figure): the chain's own %s limit stands for this run, and nothing enforces it\n",
 				chainDimensionWord(d), chainDimensionWord(d))
 		}
@@ -437,17 +473,33 @@ func chainRemaining(chain *runstore.Chain, limit task.Overrides, spec *task.Spec
 		// itself would refuse every --used-* above zero, and name the caller's
 		// own limit as though it were the work already done.
 		spend := rem
-		if req, ok := chainLimitAmount(next, d); ok && chain != nil {
+		if req, ok := chainLimitAmount(next, d); ok && !begins {
 			if req > rem {
+				if b.gap {
+					// The figures a gap holds are the previous run's remaining and
+					// no spend at all, so the sentence below — which reports an
+					// amount used against the chain's limit — would name a
+					// figure nothing read.
+					return task.Overrides{}, userErr("--max-%s %s is above what the previous run of this chain was left with (%s): the chain's records stop at a link the bucket no longer holds, so what it has already spent cannot be read, and this launch can carry only what that run held. Pass %s or less, or launch a run that is not part of this chain",
+						chainDimensionFlag(d), chainFlagAmount(d, req), chainAmountText(d, rem), chainAmountText(d, rem))
+				}
 				return task.Overrides{}, userErr("--max-%s %s is above what is left of this chain's %s limit (%s of %s used): a launch can only tighten what a chain has left, never re-open what it spent. Pass %s or less, or raise the chain's limit where it is set",
 					chainDimensionFlag(d), chainFlagAmount(d, req), chainDimensionWord(d), chainAmountText(d, spent), chainAmountText(d, lim), chainAmountText(d, rem))
 			}
 			spend = req
 		}
 		if rem <= 0 {
-			if chain == nil {
+			if begins {
 				return task.Overrides{}, userErr("--used-%s %s leaves nothing of this launch's --max-%s %s: the chain would begin with nothing to spend. Lower the figure, or raise the limit",
 					chainDimensionFlag(d), chainAmountText(d, spent), chainDimensionFlag(d), chainAmountText(d, lim))
+			}
+			if b.gap {
+				// Neither of the two below is true here: the budget need not be
+				// off, and the chain's own limit is exactly what the gap left
+				// unread, so naming it (or the root's stored figure) would quote
+				// a number this launch never saw.
+				return task.Overrides{}, userErr("%s: the previous run of this chain was left with nothing of its %s limit, and the chain's records stop at a link the bucket no longer holds, so continuing it would start a run with nothing to spend. Raise the limit in the run that began the chain, or launch a run that is not part of it",
+					chainFromWord(o, spec), chainDimensionWord(d))
 			}
 			if !enforced {
 				fmt.Fprintf(warn, "warning: this chain has nothing left of its %s limit (%s of %s used); the budget is off, so nothing stops this run from spending past it\n",
@@ -455,7 +507,7 @@ func chainRemaining(chain *runstore.Chain, limit task.Overrides, spec *task.Spec
 				continue
 			}
 			return task.Overrides{}, userErr("%s: this chain has nothing left of its %s limit (%s of %s used), so continuing it would start a run with nothing to spend. Raise the limit in the run that began the chain (%s), or launch a run that is not part of it",
-				chainFromWord(o, spec), chainDimensionWord(d), chainAmountText(d, spent), chainAmountText(d, lim), chain.Root)
+				chainFromWord(o, spec), chainDimensionWord(d), chainAmountText(d, spent), chainAmountText(d, lim), b.chain.Root)
 		}
 		if err := setChainLimit(&next, d, spend); err != nil {
 			return task.Overrides{}, err

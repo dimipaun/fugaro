@@ -635,6 +635,16 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 		reused = err == nil && spec.IsFollowUp()
 	case reviewRecipe != nil:
 		slug, spec, err = reviewSpec(ctx, env, o, reviewRecipe, text, total, cmd.ErrOrStderr())
+		// A review job's repeat is the run the stored task is, as a follow-up's
+		// is (prSpec): the reviewSpec above builds the task from the flags and
+		// the checkout, but the launch then writes the chain's remaining into it
+		// (chainInherit), so a repeat that compared the freshly built task would
+		// be refused as a different one as soon as a run behind the chain spent
+		// or a run in flight aged. Reusing the stored task is what makes the
+		// repeat the launch it repeats rather than a second one refused.
+		if err == nil {
+			spec, reused, err = reuseStored(ctx, env, slug, o, 0, text, total, spec)
+		}
 	case prSet:
 		// --review-run, before prSpec and not after it: the findings are part
 		// of the follow-up's text, which is the whole of what prSpec compares
@@ -667,14 +677,8 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 		// own launch — a --run-id repeat is idempotent as any other — refused
 		// when the run ID holds a different one, and built fresh when it holds
 		// nothing.
-		if err == nil && o.continues != "" && o.runID != "" {
-			var have *task.Spec
-			if have, err = storedRepeat(ctx, env, slug, o, 0, text, total); err != nil {
-				return err
-			}
-			if have != nil {
-				spec, reused = have, true
-			}
+		if err == nil && o.continues != "" {
+			spec, reused, err = reuseStored(ctx, env, slug, o, 0, text, total, spec)
 		}
 	}
 	if err != nil {

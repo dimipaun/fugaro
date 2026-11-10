@@ -465,6 +465,111 @@ func TestReviewJobJoinsThePRChain(t *testing.T) {
 	}
 }
 
+// TestReviewJobRepeatIsIdempotent: the figures a review job writes are the
+// chain's at the moment it ran, so a repeat of the same --run-id is answered
+// from the stored task rather than from a chain read made now — the rule a
+// --continues launch's repeat follows (TestRunContinuesARepeatIsIdempotent),
+// and the one a review job needs most, since a review-fix loop relaunches it.
+// The chain spends more between the two calls here, which is exactly what a
+// second read would answer differently, and the repeat is still that task and
+// not the same command refused as a different one.
+func TestReviewJobRepeatIsIdempotent(t *testing.T) {
+	f := chainRig(t)
+	usd := chainUSD
+	seedChainPRRoot(t, f, chainRun, chainSpent, task.Overrides{MaxUSD: &usd})
+	args := []string{"run", "--repo", limitsRepo, "--pr", "7", "--recipe", "review-only", "--run-id", chainFu}
+	if _, _, err := execute(t, args...); err != nil {
+		t.Fatal(err)
+	}
+	if o := chainTask(t, f, chainFu).Overrides; o.MaxUSD == nil || *o.MaxUSD != chainUSD-chainSpent {
+		t.Fatalf("overrides = %+v, want the PR chain's remaining %v dollars", o, chainUSD-chainSpent)
+	}
+	// The chain spends 1.5 dollars more: a fresh read would leave 1.5 where the
+	// stored task says 3.
+	seedChainSpend(t, f, chainRun, 3.5)
+	if out, _, err := execute(t, args...); err != nil || !strings.Contains(out, "already launched") {
+		t.Fatalf("the repeat of a review launch: %v, output:\n%s", err, out)
+	}
+	if o := chainTask(t, f, chainFu).Overrides; o.MaxUSD == nil || *o.MaxUSD != chainUSD-chainSpent {
+		t.Fatalf("overrides = %+v after the repeat, want the stored remaining untouched", o)
+	}
+	if n := len(f.run.Executions()); n != 1 {
+		t.Fatalf("%d executions, want 1", n)
+	}
+}
+
+// TestRunFollowUpCarriesThePreviousRunWhenTheChainHasAGap: a run's record and
+// its stored task age out together, so a chain older than the window the
+// bucket keeps has a hop with nothing under it — and a follow-up on such a pull
+// request is a launch this CLI has always accepted (TestRunPRRootExpired,
+// resolvePR). What it may not do is carry nothing (D1052): the chain's own
+// limit is the run that began it, which is on the far side of the gap, but the
+// previous run's stored task holds what the chain left *it*, and the chain has
+// only spent more since — so that figure bounds this run instead of no figure
+// at all.
+func TestRunFollowUpCarriesThePreviousRunWhenTheChainHasAGap(t *testing.T) {
+	f := chainRig(t)
+	gone, fu1 := wallRunIDAt(95, "090000", "aaaa"), wallRunIDAt(1, "090000", "bbbb")
+	usd, left := chainUSD, 3.0
+	// The run that began the chain: its stored task is all the bucket still
+	// holds of it, and its record is the hop the read stops at.
+	spec := firstRunSpec(gone)
+	spec.Overrides = task.Overrides{MaxUSD: &usd}
+	seedSpec(t, f, spec, false)
+	// The run this follow-up continues, which pushed and holds the chain's
+	// remaining as the chain left it.
+	spec = followUpSpec(fu1, gone, gone, 7)
+	spec.Overrides = task.Overrides{MaxUSD: &left}
+	seedSpec(t, f, spec, false)
+	rec := prRecord(fu1, "", 7, chainSpent)
+	rec.Branch, rec.StartedAt = "fugaro/"+gone, time.Now().Add(-24*time.Hour)
+	rec.FollowUp = &runstore.FollowUp{PR: 7, PreviousRun: gone}
+	writeRecord(t, f, fu1, rec)
+	_, errOut, err := execute(t, "run", "--repo", limitsRepo, "--pr", "7", "--run-id", chainFu, "A task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o := chainTask(t, f, chainFu).Overrides; o.MaxUSD == nil || *o.MaxUSD != left {
+		t.Fatalf("overrides = %+v, want the %v dollars the previous run of the chain holds", o, left)
+	}
+	if got := chainTask(t, f, chainFu).PreviousRun; got != fu1 {
+		t.Fatalf("previous_run = %q, want %s", got, fu1)
+	}
+	if !strings.Contains(errOut, "gap") {
+		t.Fatalf("stderr %q, want the gap the chain's read stopped at named", errOut)
+	}
+}
+
+// TestRunRefusesAChainItCannotRead: a failed chain read that is not a gap — a
+// link that is not a run id, a record that cannot be read, the budget database
+// unreachable — leaves the chain's figure unknown for a reason no other record
+// answers, and a launch that carried on would run past a limit nothing
+// established. Only the missing record degrades (ErrChainGap); everything else
+// stops the launch.
+func TestRunRefusesAChainItCannotRead(t *testing.T) {
+	f := chainRig(t)
+	usd := chainUSD
+	seedChainPRRoot(t, f, chainRun, chainSpent, task.Overrides{MaxUSD: &usd})
+	// The record of the run this follow-up continues, whose link is not a run
+	// id at all: the walk cannot get past it.
+	rec := prRecord(chainRun, "", 7, chainSpent)
+	rec.Branch, rec.StartedAt = "fugaro/"+chainRun, time.Now().Add(-24*time.Hour)
+	rec.FollowUp = &runstore.FollowUp{PR: 7, PreviousRun: "not-a-run-id"}
+	writeRecord(t, f, chainRun, rec)
+	_, _, err := execute(t, "run", "--repo", limitsRepo, "--pr", "7", "--run-id", chainFu, "A task")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a chain the records cannot confirm refused", err)
+	}
+	for _, want := range []string{"the chain behind this launch cannot be read", "is not a run id"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("err = %v, want it to name %q", err, want)
+		}
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Fatalf("%d executions, want none", n)
+	}
+}
+
 // TestRunRefusesAMalformedUsedFigure: the four --used-* flags are parsed once,
 // before anything of the launch exists, so a mistyped figure costs no read and
 // leaves nothing behind. An empty --continues is refused the same way.

@@ -650,6 +650,28 @@ func storedRepeat(ctx context.Context, env *cloudEnv, slug string, o *runOptions
 	return have, nil
 }
 
+// reuseStored answers a launch that names an --run-id with the task that ID
+// already holds, when that task is this call's own launch (storedRepeat):
+// reused true with the stored task, and the chain is not read again, because
+// what the stored task holds is what the chain left the run when it was written
+// (chainInherit) and a chain read now answers another figure as soon as a run
+// behind it spends or a run in flight ages. A run ID that holds nothing is a
+// launch, and pr is the pull request the stored task must carry — 0 for the
+// launch shapes that name none (a review job, --continues).
+func reuseStored(ctx context.Context, env *cloudEnv, slug string, o *runOptions, pr int, text string, total time.Duration, spec *task.Spec) (*task.Spec, bool, error) {
+	if o.runID == "" {
+		return spec, false, nil
+	}
+	have, err := storedRepeat(ctx, env, slug, o, pr, text, total)
+	if err != nil {
+		return nil, false, err
+	}
+	if have == nil {
+		return spec, false, nil
+	}
+	return have, true, nil
+}
+
 // newFollowUpSpec is the task of a new follow-up of chain c: its branch and
 // PR, the previous run it continues, and that run's base branch and
 // workflow; nothing else is inherited.
