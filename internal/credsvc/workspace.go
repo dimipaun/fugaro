@@ -236,14 +236,15 @@ type WorkspaceCaller struct {
 // literal whose fields are all well-formed and which stands for no verified run
 // identity at all.
 //
-// **The member a call names is held to that Verify too, because Member is
-// exported and writable.** A holder of a verified call can point it at another
-// member — `c.Member.Project = other` — and the mark would still be set, so a
-// route that read Member after the mark alone would read the OTHER member's
-// database while the run identity beside it stayed the one Verify checked. The
-// project Verify resolved is therefore kept unexported here and compared, which
-// is the same division the mark makes: the mark says a Verify ran, and this says
-// the member the call names is that Verify's.
+// **What a call names is held to that Verify too, because the fields it is
+// named by are exported and writable.** A holder of a verified call can point
+// it at another member — `c.Member.Project = other` — or at another repository
+// — `c.Identity.Slug = other` — and the mark would still be set, so a route
+// that read either after the mark alone would read the OTHER member's database,
+// or the OTHER repository's admission node and allow-list entry, while the run
+// identity beside it stayed the one Verify checked. Both values Verify resolved
+// are therefore kept unexported here and compared, which is the same division
+// the mark makes: the mark says a Verify ran, and these say what it resolved.
 //
 // A member's Caller is still a WorkspaceCaller: the workspace-wide routes take
 // that type, because the class they admit — the workspace owner's people — holds
@@ -251,26 +252,33 @@ type WorkspaceCaller struct {
 type MemberCall struct {
 	WorkspaceCaller
 	verified bool
-	// member is the project of the member Verify resolved, and it is what the
-	// routes below read: the embedded Member is exported, so the member a route
-	// acts for has to come from a field a caller cannot rewrite.
+	// member is the project of the member Verify resolved and slug is the run
+	// identity's verified repository, and they are what the routes below read:
+	// the embedded Member and Identity are exported, so the member a route acts
+	// for and the repository it asks about have to come from fields a caller
+	// cannot rewrite.
 	member string
+	slug   string
 }
 
 // refuseUnverified holds every route that acts for a member to the mark Verify
-// sets AND to the member it resolved, and those are the two unexported fields'
+// sets AND to what it resolved, and those are the three unexported fields'
 // whole job: a MemberCall whose fields are all plausible and which Verify never
 // produced is a call with no run identity behind it, and a MemberCall whose
-// Member was pointed at another member afterwards names a member no Verify
-// resolved — and the routes behind this check read that member's own policy and
-// serve the workspace's pool. The refusal names no member: the package's rule is
-// that a refusal names the field and never its content.
+// Member or Identity was pointed elsewhere afterwards names a member or a
+// repository no Verify resolved — and the routes behind this check read that
+// member's own policy and serve the workspace's pool for that repository. The
+// refusal names no value: the package's rule is that a refusal names the field
+// and never its content.
 func (c MemberCall) refuseUnverified() error {
 	if !c.verified {
 		return fmt.Errorf("%w: the call did not come from Verify, so no run identity stands behind it and the routes that act for a member are closed", ErrUnverifiedJob)
 	}
 	if c.Member.Project != c.member {
 		return fmt.Errorf("%w: the member this call names is not the member Verify resolved, so the routes that act for a member are closed", ErrUnverifiedJob)
+	}
+	if c.Identity.Slug != c.slug {
+		return fmt.Errorf("%w: the repository this call names is not the one Verify resolved, so the routes that act for a member are closed", ErrUnverifiedJob)
 	}
 	return nil
 }
@@ -547,7 +555,7 @@ func (w *Workspace) Verify(ctx context.Context, req Request) (MemberCall, error)
 		return MemberCall{}, err
 	}
 	caller.Identity = id
-	return MemberCall{WorkspaceCaller: caller, verified: true, member: caller.Member.Project}, nil
+	return MemberCall{WorkspaceCaller: caller, verified: true, member: caller.Member.Project, slug: caller.Identity.Slug}, nil
 }
 
 // WorkspaceWide admits a caller to the routes that answer about the workspace
@@ -605,7 +613,8 @@ func (w *Workspace) Policy(ctx context.Context, c MemberCall) (*projectpolicy.Po
 // (creds.AdmitShared's member leg): the member's `accounts` block is the
 // vocabulary both nodes speak, so the leg is one name lookup. The other is the
 // repository child at the slug the run identity VERIFIED (projectpolicy.PathRepo
-// over Identity.Slug) — `Admissions` in the installation's own cascade, read
+// over the verified slug this call carries unexported, MemberCall.slug) —
+// `Admissions` in the installation's own cascade, read
 // there for the cascade's tier-A admission and here for the pooled credential —
 // whose `credentials.accounts` are the account names an administrator admitted
 // that repository to. A credential the member's policy names but that
@@ -628,9 +637,10 @@ func (w *Workspace) Policy(ctx context.Context, c MemberCall) (*projectpolicy.Po
 // member's database no longer holds.
 //
 // **The slug is the run's own repository, and it is NOT held to the calling job
-// account.** The identity Verify returned carries the slug its own token proved,
-// so the child read here is the run's repository and not one a caller named —
-// but nothing compares it with the repository the calling job account belongs
+// account.** The identity Verify returned carries the slug its own token proved
+// and this route reads the copy Verify kept (MemberCall.slug), so the child read
+// here is the run's repository and not one a caller named — but nothing compares
+// it with the repository the calling job account belongs
 // to. The installation's front door does exactly that
 // (`!bound || ja.Slug != id.Slug`, internal/credsvc/server.go), because its
 // table binds each job account to the repository its service account is derived
@@ -668,7 +678,7 @@ func (w *Workspace) Shared(ctx context.Context, c MemberCall, offered []creds.Sh
 		if !admitted[name] || !projectpolicy.MemberAdmitsShared(policy, name) {
 			return false
 		}
-		repo, ok := canonicalOfSlug(policy.Accounts[name].AllowRepos, c.Identity.Slug)
+		repo, ok := canonicalOfSlug(policy.Accounts[name].AllowRepos, c.slug)
 		return ok && projectpolicy.AdmitRepo(policy.AllowRepos, repo)
 	})
 	return creds.SharedFor(c.member, offered, member), nil
@@ -716,7 +726,10 @@ func canonicalOfSlug(allowRepos []string, slug string) (string, bool) {
 // nothing). The slug is the verified one and not a value a caller supplied: the
 // run identity carries `fs` and `fr`, both of them held to the uid the token's
 // own Firebase project minted, so the node read here is the calling run's own
-// repository. What is not asked is whether that repository is the calling
+// repository — and the slug read is MemberCall.slug, the field Verify set, not
+// the exported Identity it was copied from, so a call whose Identity.Slug was
+// rewritten after Verify is refused by refuseUnverified instead of naming the
+// node to read. What is not asked is whether that repository is the calling
 // ACCOUNT's: the table names a member's job accounts and no repository, so the
 // pairing the installation's front door makes has no slug to be made on here
 // (Shared's own doc, and docs/workspaces/spec.md §8's residual risk 7). The
@@ -729,7 +742,7 @@ func (w *Workspace) admittedOn(ctx context.Context, c MemberCall) (map[string]bo
 	if err != nil {
 		return nil, err
 	}
-	child, found, err := RTDBPolicy{DB: db}.Admissions(ctx, c.Identity.Slug)
+	child, found, err := RTDBPolicy{DB: db}.Admissions(ctx, c.slug)
 	if err != nil {
 		return nil, fmt.Errorf("credsvc: the repository's own admission node could not be read, so the workspace's pool is not served to this run: %w", err)
 	}

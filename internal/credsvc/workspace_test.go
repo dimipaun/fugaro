@@ -598,6 +598,13 @@ func TestWorkspaceServiceRefusesAMemberCallItDidNotProduce(t *testing.T) {
 // the run identity of the first member's run still beside it. The member Verify
 // resolved is therefore kept beside the mark and compared, and a rewritten call
 // is refused before any member's database is read.
+//
+// The sister rewrite is Identity.Slug, and it is the one that reaches a
+// repository rather than a member: it is what the pool asks the member's own
+// two allow_repos legs and the repository's admission child by, so rewriting it
+// serves a sibling repository of the SAME member. That is
+// TestWorkspaceServiceRefusesAMemberCallRetargetedAtAnotherRepository, and the
+// slug is held the same way.
 func TestWorkspaceServiceRefusesAMemberCallRetargetedAtAnotherMember(t *testing.T) {
 	f := newWSFixture(t)
 	ctx := context.Background()
@@ -632,6 +639,66 @@ func TestWorkspaceServiceRefusesAMemberCallRetargetedAtAnotherMember(t *testing.
 	got, err := f.ws.Shared(ctx, f.verifyOK(wsMemberA, wsAccountA), f.offered(wsMemberA))
 	if err != nil || len(got) != 1 {
 		t.Errorf("Shared for the member the account resolved to = (%v, %v), want the pool's one credential", got, err)
+	}
+}
+
+// TestWorkspaceServiceRefusesAMemberCallRetargetedAtAnotherRepository: the
+// mark proves that a Verify ran, and the slug is the second value it does not
+// hold by itself — MemberCall embeds WorkspaceCaller, whose Identity is an
+// exported field, and Identity.Slug is what the pool asks both of the member's
+// allow_repos legs and the repository's own admission child by. So a holder of
+// a verified call can point it at ANOTHER repository of the same member, whose
+// node and whose allow-list entry admit the pooled credential, and be served it
+// while the run identity beside it stayed the one Verify checked. That is not a
+// member crossing — the member's own lists still decide, which is §8's residual
+// risk 7 — but it is a call the service never verified, read as a run on a
+// repository it is not on.
+//
+// The run identity's own slug is therefore kept beside the mark and compared,
+// the routes read THAT field, and a rewritten call is refused before any node is
+// read.
+func TestWorkspaceServiceRefusesAMemberCallRetargetedAtAnotherRepository(t *testing.T) {
+	f := newWSFixture(t)
+	ctx := context.Background()
+	// A's policy names BOTH repositories and only the other one's child admits
+	// the credential: a call the rewrite was allowed to serve would be served,
+	// so what refuses it below is the comparison and not a node that happens to
+	// admit nobody.
+	f.setPolicyOn(wsMemberA, []string{wsRepo, wsRepoOther}, wsShared)
+	f.setAdmissions(wsMemberA, wsSlug)                // the run's own repository admits nobody
+	f.setAdmissions(wsMemberA, wsSlugOther, wsShared) // the sibling repository admits it
+	retargeted := f.verifyOK(wsMemberA, wsAccountA)
+	// Verify reads the member's own outcomes (checkLive), so the paths are
+	// counted from here: what the routes below must not add is a read of any
+	// node.
+	reads := len(f.dbs[wsMemberA].paths)
+	retargeted.Identity.Slug = wsSlugOther
+	if _, err := f.ws.Shared(ctx, retargeted, f.offered(wsMemberA)); !errors.Is(err, ErrUnverifiedJob) {
+		t.Errorf("Shared for a call pointed at another repository = %v, want ErrUnverifiedJob", err)
+	}
+	if _, _, err := f.ws.Policy(ctx, retargeted); !errors.Is(err, ErrUnverifiedJob) {
+		t.Errorf("Policy for a call pointed at another repository = %v, want ErrUnverifiedJob", err)
+	}
+	if err := f.ws.MemberRoute(retargeted, wsMemberA); !errors.Is(err, ErrUnverifiedJob) {
+		t.Errorf("MemberRoute for a call pointed at another repository = %v, want ErrUnverifiedJob", err)
+	}
+	if len(f.dbs[wsMemberA].paths) != reads {
+		t.Errorf("a call pointed at another repository read the member's database (%v, beyond the %d Verify itself made): the slug the call names is checked before any read", f.dbs[wsMemberA].paths, reads)
+	}
+	// A run identity that really is on the sibling repository IS served it, so
+	// the refusals above are the rewrite and not the fixture: the same
+	// deployment, the same account, and the slug in the token rather than a
+	// field assigned after Verify.
+	other, err := f.verify(wsMemberA, wsAccountA, func(c map[string]any) {
+		uid := "r~" + wsSlugOther + "~" + f.run
+		c["sub"], c["user_id"], c["fs"] = uid, uid, wsSlugOther
+	})
+	if err != nil {
+		t.Fatalf("Verify refused a run identity of the member's own project for the sibling repository: %v", err)
+	}
+	got, err := f.ws.Shared(ctx, other, f.offered(wsMemberA))
+	if err != nil || len(got) != 1 || got[0].Name != wsShared {
+		t.Errorf("Shared for the sibling repository = (%v, %v), want the pool's one credential", got, err)
 	}
 }
 
@@ -969,10 +1036,17 @@ func TestWorkspaceServiceRefusesAMembersPersonTheWorkspaceWideRead(t *testing.T)
 // the state a publish does not produce (a child left behind by a policy that
 // named it once, or a hand edit). Without it the admission leg refuses B first
 // — setPolicy writes the two nodes from one account list, so a member whose
-// policy names nothing has a child that names nothing either — and the leg this
-// test is about, the member's own policy, would never be the leg that decides:
-// the whole of the only-tighten rule could be deleted and this test would stay
-// green.
+// policy names nothing has a child that names nothing either — and this test
+// would not have to read B's node at all.
+//
+// **What this test does not isolate is the NAME leg of the policy**, and the
+// next leg down is why: an account a member's policy does not hold has no
+// `allow_repos` either, so the recovered-name leg refuses that call with or
+// without projectpolicy.MemberAdmitsShared, and deleting the name leg alone
+// leaves this test green. The state in which the name leg decides alone is a
+// member with NO policy node at all, whose repository child names the
+// credential, and that is
+// TestWorkspaceSharedRefusesAMemberThatPublishedNoPolicy.
 func TestWorkspaceCredentialIsRefusedWhenTheMembersPolicyExcludesIt(t *testing.T) {
 	f := newWSFixture(t)
 	f.setPolicy(wsMemberA, wsShared)             // A's own policy names the credential
@@ -1028,6 +1102,38 @@ func TestWorkspaceCredentialIsRefusedWhenTheMembersPolicyExcludesIt(t *testing.T
 	f.dbs[wsMemberA].err = errors.New("the database is unavailable")
 	if _, err := f.ws.Shared(ctx, a, f.offered(wsMemberA)); err == nil {
 		t.Error("Shared with an unreadable policy = nil error, want a refusal")
+	}
+}
+
+// TestWorkspaceSharedRefusesAMemberThatPublishedNoPolicy: the state in which
+// the NAME leg of the intersection — projectpolicy.MemberAdmitsShared — is the
+// leg that decides, and the one
+// TestWorkspaceCredentialIsRefusedWhenTheMembersPolicyExcludesIt cannot reach.
+//
+// Where the member HAS a policy node, the name leg is subsumed: an account that
+// node does not hold has no `allow_repos` for the recovered-name leg to match
+// either, so the refusal is the same with or without it. With no policy node at
+// all there is nothing to recover a name from, and the call is refused by the
+// name leg alone — a member that published no policy admits NO credential,
+// which is the reading creds.AdmitShared's member leg makes everywhere else too.
+//
+// The repository child below names the credential, so the admission leg admits
+// it and cannot be what refuses: the fixture is the state a hand edit or a
+// publish whose policy node was removed leaves, and it is written directly for
+// that reason.
+func TestWorkspaceSharedRefusesAMemberThatPublishedNoPolicy(t *testing.T) {
+	f := newWSFixture(t)
+	f.setAdmissions(wsMemberA, wsSlug, wsShared)
+	ctx := context.Background()
+	got, err := f.ws.Shared(ctx, f.verifyOK(wsMemberA, wsAccountA), f.offered(wsMemberA))
+	if err != nil {
+		t.Fatalf("Shared for a member with no published policy: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("Shared = %v, want none: a member that published no policy admits nothing, and its repository's own node is not its policy", got)
+	}
+	if !f.dbs[wsMemberA].read(projectpolicy.PathRepo(wsSlug)) {
+		t.Error("the repository's node was not read: without it the admission leg is the one that could be refusing, and this test would not say which of the two answered")
 	}
 }
 
