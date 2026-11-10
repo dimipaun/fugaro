@@ -560,6 +560,37 @@ func (p *Provider) PullRequest(ctx context.Context, number int) (gitprov.PRInfo,
 	return info, err
 }
 
+// PullRequestByBranch implements gitprov.PRBranchReader: the pull request
+// opened from branch, whatever its state, so `fugaro followups` can tell a
+// merged parent from an open one without trusting a number a job wrote
+// (D1843, F30).
+//
+// It is find's query with the state clause left out, which is what makes a
+// MERGED or DECLINED pull request visible here: find asks for OPEN alone,
+// because its caller is about to create one. The list reply carries the
+// state already, so unlike GitHub one request answers it — but the pull
+// request is still read back through getPull, which is the single place
+// that decides PRMerged from PRClosed and refuses a state it does not know.
+func (p *Provider) PullRequestByBranch(ctx context.Context, branch string) (gitprov.PRInfo, bool, error) {
+	q := url.Values{"q": {fmt.Sprintf(`source.branch.name="%s" AND source.repository.full_name="%s/%s"`,
+		escapeBBQL(branch), escapeBBQL(strings.ToLower(p.o.Workspace)), escapeBBQL(strings.ToLower(p.o.Slug)))},
+		"sort": {"-created_on"}}
+	var page struct {
+		Values []pullRequest `json:"values"`
+	}
+	if err := p.api.Do(ctx, "GET", p.prPath("?"+q.Encode()), nil, &page); err != nil {
+		return gitprov.PRInfo{}, false, fmt.Errorf("finding the pull request for %s: %w", branch, err)
+	}
+	if len(page.Values) == 0 {
+		return gitprov.PRInfo{}, false, nil
+	}
+	_, info, err := p.getPull(ctx, page.Values[0].ID)
+	if err != nil {
+		return gitprov.PRInfo{}, false, err
+	}
+	return info, true, nil
+}
+
 // updateByNumber is EnsurePR for spec.Number: it reads that pull request
 // and changes its draft state only when it is still open on spec.Branch.
 // It never looks a pull request up by branch, and never creates one. It

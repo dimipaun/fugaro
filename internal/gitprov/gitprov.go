@@ -274,6 +274,26 @@ type ContentsReader interface {
 	Contents(ctx context.Context, path, ref string) ([]byte, error)
 }
 
+// PRBranchReader is implemented by a provider that can find the pull request
+// a branch is the source of, whatever its state, which is how `fugaro
+// followups` looks the parent of a run's deferred findings up (D1843, F30):
+// by the run's own launcher-written branch, and never by a pull request
+// number the job-written run record carries, so a job that wrote a record
+// cannot name somebody else's merged pull request as its parent.
+//
+// It is not part of Provider for the reason ContentsReader is not: a host
+// that cannot answer it must keep working everywhere else, and a caller that
+// needs it refuses rather than guesses. The GitHub and Bitbucket adapters and
+// the file-backed test provider implement it.
+type PRBranchReader interface {
+	// PullRequestByBranch reads the pull request whose source branch is
+	// branch, however it ended: found is false when no pull request was ever
+	// opened from that branch. The read is bounded to one request per host
+	// plus one read of the pull request itself, and it is a read of this
+	// repository alone.
+	PullRequestByBranch(ctx context.Context, branch string) (info PRInfo, found bool, err error)
+}
+
 // MaxContentsBytes bounds what one Contents read returns: 1 MiB, GitHub's
 // own ceiling for a contents reply, so the bound a caller applies is the
 // bound the API already applies and no larger.
