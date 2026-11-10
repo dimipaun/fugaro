@@ -173,7 +173,10 @@ func runProjectReposSetProfile(cmd *cobra.Command, o projectReposSetOptions, sel
 	if !config.ProjectNameRE.MatchString(name) {
 		return userErr("--job-profile %s: a profile name must be 1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit", safetext.Field(name))
 	}
-	members := projectReposProfileMembers(cmd, o)
+	members, err := projectReposProfileMembers(cmd, o)
+	if err != nil {
+		return err
+	}
 	if len(members) == 0 {
 		return userErr("--job-profile %s writes the block's keys and none was named: name at least one of --provider, --cpu, --memory, --timeout-class, --secrets, --allow-repos and --claude-accounts (the block is what `fugaro settings` reads and `fugaro project policy publish` publishes)", pluginwire.Printable(name))
 	}
@@ -182,8 +185,10 @@ func runProjectReposSetProfile(cmd *cobra.Command, o projectReposSetOptions, sel
 	// policy's own rules (projectpolicy.validProfiles), so a create that leaves
 	// it out writes a block whose every publish is refused and whose every run
 	// is one no job exists for. The refusal names the profiles the file holds,
-	// as the accounts family's --profile does for the same block.
-	if _, defined := lc.Profiles[name]; !defined && !cmd.Flags().Changed("provider") {
+	// as the accounts family's --profile does for the same block. It asks the
+	// value and not the flag: --provider "" is a create with no provider, and
+	// the empty value is refused above, before this.
+	if _, defined := lc.Profiles[name]; !defined && strings.TrimSpace(o.provider) == "" {
 		return userErr("profiles.%s is not a profile this project defines (it defines %s): a new profile is created with the keys that make it whole, --provider first — a profile with no provider is one no job of it can be deployed, and `fugaro project policy publish` refuses it",
 			pluginwire.Printable(name), projectReposProfileNames(lc))
 	}
@@ -281,20 +286,41 @@ func projectReposEntry(lc *localcfg.Config, canon string) (string, bool) {
 // the order the registry spells them. A flag that was not given writes nothing:
 // a profile is edited key by key, and a member the command line did not name is
 // left exactly as the file holds it.
-func projectReposProfileMembers(cmd *cobra.Command, o projectReposSetOptions) []projectReposMember {
+//
+// A flag that WAS given and names nothing is refused rather than written. An
+// empty value is a value — it is what the file then holds and what every run
+// reads — and for the lists it is worse than that: a whole-list write with no
+// members leaves the key out, and an absent key is a different fact (an absent
+// profiles.NAME.allow_repos is the project's own allow_repos, which widens the
+// profile to every repository the project enrolls). profiles.* is in neither the
+// generic allowlist nor its prefixes, so this command is the only thing that
+// writes one, and the one direction it must not move is this one. The workflows
+// shape refuses the same input (--workflows "").
+func projectReposProfileMembers(cmd *cobra.Command, o projectReposSetOptions) ([]projectReposMember, error) {
 	f := cmd.Flags()
 	var out []projectReposMember
-	add := func(field, flag, value string) {
-		if f.Changed(flag) {
-			out = append(out, projectReposMember{field: field, path: field, value: value})
+	add := func(field, flag, value string) error {
+		if !f.Changed(flag) {
+			return nil
 		}
+		if strings.TrimSpace(value) == "" {
+			return projectReposEmptyScalar(field, flag)
+		}
+		out = append(out, projectReposMember{field: field, path: field, value: value})
+		return nil
 	}
-	add("provider", "provider", o.provider)
+	if err := add("provider", "provider", o.provider); err != nil {
+		return nil, err
+	}
 	if f.Changed("cpu") {
 		out = append(out, projectReposMember{field: "cpu", path: "cpu", value: strconv.Itoa(o.cpu)})
 	}
-	add("memory", "memory", o.memory)
-	add("timeout_class", "timeout-class", o.timeoutClass)
+	if err := add("memory", "memory", o.memory); err != nil {
+		return nil, err
+	}
+	if err := add("timeout_class", "timeout-class", o.timeoutClass); err != nil {
+		return nil, err
+	}
 	for _, l := range []struct {
 		field  string
 		flag   string
@@ -304,11 +330,37 @@ func projectReposProfileMembers(cmd *cobra.Command, o projectReposSetOptions) []
 		{"allow_repos", "allow-repos", o.allowRepos},
 		{"claude_accounts", "claude-accounts", o.claudeAccounts},
 	} {
-		if f.Changed(l.flag) {
-			out = append(out, projectReposMember{field: l.field, path: l.field, list: l.values})
+		if !f.Changed(l.flag) {
+			continue
 		}
+		// `--flag ""` reads as no members at all and `--flag "a,"` as a member
+		// that is the empty string, so both spellings of an empty list are here.
+		empty := len(l.values) == 0
+		for _, v := range l.values {
+			empty = empty || strings.TrimSpace(v) == ""
+		}
+		if empty {
+			return nil, userErr("--%s names profiles.NAME.%s whole, one member per name, and this list has an empty member: a list with nothing in it is not what this flag can write — the key would leave the file, and an absent key is another fact entirely (an absent profiles.NAME.allow_repos is the project's own allow_repos, which widens the profile to every repository the project enrolls). Name the members that stay",
+				l.flag, l.field)
+		}
+		out = append(out, projectReposMember{field: l.field, path: l.field, list: l.values})
 	}
-	return out
+	return out, nil
+}
+
+// projectReposEmptyScalar is the refusal an empty scalar flag gets, in that
+// key's own words: what the flag would write is the empty string, which the file
+// then holds and every run reads — and for the provider it is the profile the
+// new-profile guard exists to keep out.
+func projectReposEmptyScalar(field, flag string) error {
+	switch field {
+	case "provider":
+		return userErr("--%s was given no value, and a profile's provider is what its job's credential is for: an empty one is a value the file then holds, and `fugaro project policy publish` refuses such a profile. Name the provider, or leave --%s off to keep what the file holds", flag, flag)
+	case "memory":
+		return userErr("--%s was given no value, and the memory is what the profile's job is deployed with: an empty one is a value the file then holds and every run reads, not the key's absence. Name the memory (e.g. 4Gi), or leave --%s off to keep what the file holds", flag, flag)
+	default:
+		return userErr("--%s was given no value, and the timeout class is the job's own task timeout: an empty one is a value the file then holds and `fugaro project policy publish` refuses, not the key's absence. Name the duration (e.g. 6h), or leave --%s off to keep what the file holds", flag, flag)
+	}
 }
 
 // projectReposSetMembers applies one profile's keys to the document: the
@@ -339,9 +391,11 @@ func projectReposSetMembers(old []byte, block []string, members []projectReposMe
 //
 // A list written with nothing in it is not expressible here, and that is the
 // loader's own rule rather than this command's: an absent key and an empty one
-// mean different things (a repository's `workflows:` with nothing under it, a
-// profile's `allow_repos:` with nothing in it is refused outright), so the way
-// to take a member away is `fugaro settings unset`.
+// mean different things (a profile's `allow_repos:` written empty is refused
+// outright, and one left out is the project's own allow_repos), so both shapes
+// refuse an empty list before they get here — as does `--workflows` — and the
+// way to take a member away is to name the members that stay (or, for
+// `repos.REPO.workflows`, `fugaro settings unset` on the key itself).
 func projectReposSetList(data []byte, path []string, wanted []string) ([]byte, error) {
 	var have []string
 	if current := settingsValueIn(data, path); current != "" {

@@ -218,6 +218,98 @@ func TestSettingsSetReposScalarWritesTheReposBlock(t *testing.T) {
 	}
 }
 
+// projectReposListConfig is a project config whose one profile carries all
+// three of the lists the profile flags write, so a flag that drops one of them
+// is visible as the key's absence rather than as a write that changed nothing.
+const projectReposListConfig = `profiles:
+  standard:
+    provider: github
+    cpu: 2
+    memory: 4Gi
+    timeout_class: 6h
+    secrets:
+      - acme-db
+    allow_repos:
+      - acme/app
+    claude_accounts:
+      - team-a
+claude_accounts:
+  team-a:
+    allow_data_to:
+      - acme/app
+repos:
+  acme/app:
+    provider: github
+    base_branch: main
+    workflows:
+      - web
+`
+
+// TestProjectReposSetRefusesAnEmptyListFlag: a list flag given nothing is
+// refused, and nothing is written. The write is whole-list, so an empty one
+// leaves the key out of the file — and the absent key is not an empty list:
+// localcfg's own comment on profiles.NAME.allow_repos says an absent one is the
+// PROJECT's allow_repos, "the one direction admission must never move", and the
+// written-empty spelling is refused outright. Nothing else in the CLI writes a
+// profile at all (profiles.* is in neither the generic allowlist nor its
+// prefixes), so this flag is the only way the key could be taken away, and it
+// must not be.
+func TestProjectReposSetRefusesAnEmptyListFlag(t *testing.T) {
+	for _, flag := range []string{"secrets", "allow-repos", "claude-accounts"} {
+		t.Run(flag, func(t *testing.T) {
+			settingsWriteHomeWith(t, projectReposListConfig)
+			path := os.Getenv("FUGARO_CONFIG")
+			before := readFileString(t, path)
+
+			out, _, err := execute(t, "project", "repos", "set", "--job-profile", "standard", "--"+flag, "")
+			if err == nil {
+				t.Fatalf("--%s with nothing in it was written:\n%s", flag, out)
+			}
+			if !strings.Contains(err.Error(), "--"+flag) {
+				t.Errorf("the refusal does not name the flag it refuses: %v", err)
+			}
+			if readFileString(t, path) != before {
+				t.Errorf("the refused write changed the config:\n%s", readFileString(t, path))
+			}
+		})
+	}
+}
+
+// TestProjectReposSetRefusesAnEmptyScalar: a scalar flag given an empty value is
+// refused too, and for the same reason the empty list is: the value is what the
+// file then holds, not the key's absence. --provider is the one the
+// new-profile guard is about — `--job-profile brandnew --provider ""` is a
+// profile with no provider, which is the state the guard's sentence exists to
+// keep out — and a guard that asks whether the flag was given answers yes to it.
+func TestProjectReposSetRefusesAnEmptyScalar(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		flag string
+		args []string
+	}{
+		{"a new profile's provider", "provider", []string{"--job-profile", "brandnew", "--provider", "", "--cpu", "4"}},
+		{"an existing profile's memory", "memory", []string{"--job-profile", "standard", "--memory", ""}},
+		{"an existing profile's timeout class", "timeout-class", []string{"--job-profile", "standard", "--timeout-class", ""}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			settingsWriteHomeWith(t, projectReposListConfig)
+			path := os.Getenv("FUGARO_CONFIG")
+			before := readFileString(t, path)
+
+			out, _, err := execute(t, append([]string{"project", "repos", "set"}, tc.args...)...)
+			if err == nil {
+				t.Fatalf("an empty value was written:\n%s", out)
+			}
+			if !strings.Contains(err.Error(), "--"+tc.flag) {
+				t.Errorf("the refusal does not name the flag it refuses: %v", err)
+			}
+			if readFileString(t, path) != before {
+				t.Errorf("the refused write changed the config:\n%s", readFileString(t, path))
+			}
+		})
+	}
+}
+
 // TestProjectReposSetIsRefusedInACodingAgentsSession: the SEC half. A job
 // profile carries secrets and allow_repos — the lists a run's admission and its
 // mounts are decided by — so the write is the owner's own and the session is
