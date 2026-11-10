@@ -111,10 +111,10 @@ func TestDynamicDeliveryDocsPinned(t *testing.T) {
 	// unrun owner-run check says.
 	register := readDoc(t, liveChecksDoc)
 	for _, c := range []struct {
-		number   string
-		steps    string
-		stepsRef string
-		script   string
+		number     string
+		steps      string
+		stepsRef   string
+		script     string
 		scriptTest string
 	}{{
 		number: "510", steps: check510Steps, stepsRef: check510StepsLink, script: check510Script, scriptTest: check510ScriptTest,
@@ -160,8 +160,11 @@ func TestDynamicDeliveryDocsPinned(t *testing.T) {
 
 	// 4. The register's sections carry what each check settles, by the register's
 	// own naming: U3 and F30 for 510, U4 for 511, each pointing at the decision
-	// it gates.
-	check510Section := flattenDoc(checkSection(t, register, "510"))
+	// it gates. The two sections are read the way the registration halves above
+	// are -- flattened and lowercased -- because the register writes its ids in
+	// caps (**U3**, **DS2.2**) and whether a section spells one in caps or not
+	// is not what a reader of it depends on.
+	check510Section := strings.ToLower(flattenDoc(checkSection(t, register, "510")))
 	for _, want := range []string{
 		"u3", "f30", "versions.add", "secrets.delete", "create", "length", "ds2.2",
 	} {
@@ -169,7 +172,7 @@ func TestDynamicDeliveryDocsPinned(t *testing.T) {
 			t.Errorf("Check 510's section does not say %q: what the check measures (U3, F30) and what it gates (DS2.2's IAM condition shape) are why it is run at all", want)
 		}
 	}
-	check511Section := flattenDoc(checkSection(t, register, "511"))
+	check511Section := strings.ToLower(flattenDoc(checkSection(t, register, "511")))
 	for _, want := range []string{"u4", "heartbeat", "instance", "ds1.5"} {
 		if !strings.Contains(check511Section, want) {
 			t.Errorf("Check 511's section does not say %q: what the check measures (U4) and what it gates (DS1.5's heartbeat) are why it is run at all", want)
