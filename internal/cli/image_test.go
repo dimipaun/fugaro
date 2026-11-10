@@ -496,3 +496,25 @@ func setBucketURL(t *testing.T, f *cloudFixture, u string) {
 		t.Fatal(err)
 	}
 }
+
+// TestImageBuildWritesALog: `fugaro image build` keeps a log (D1352), one step
+// for the image it built, and what was the run's own progress line — the Cloud
+// Build submission, which names the build's log — is in that log rather than on
+// the screen.
+func TestImageBuildWritesALog(t *testing.T) {
+	cloudBuildCheckout(t, false)
+	out, _, err := executeBuild(t, "image", "build", "--base", "b:1")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	reported(t, out, "app")
+	log := writesALog(t, "image-build")
+	for _, want := range []string{"submitted; log:", "built "} {
+		if !strings.Contains(log, want) {
+			t.Errorf("the log holds no %q line:\n%s", want, log)
+		}
+	}
+	if strings.Contains(out, "submitted; log:") {
+		t.Errorf("the default view still prints the run's own progress line:\n%s", out)
+	}
+}
