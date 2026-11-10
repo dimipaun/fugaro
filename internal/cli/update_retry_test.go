@@ -93,6 +93,14 @@ func retrySharedIssue(run, resolvedIn string) issues.Issue {
 	}
 }
 
+// retryIdentity is the verified credential the fixtures' uploads are made
+// under: Upload names the reporter from the identity and refuses one it cannot
+// stand behind (F3), and no test here reads the name back.
+func retryIdentity() issues.Identity {
+	const member = "ana@example.test"
+	return issues.Identity{Address: member, Digest: issues.Digest(member), Source: issues.SourceVerified}
+}
+
 // retryRow is one row of the shared store as the offer reads it: the number the
 // issue was filed under, its fingerprint (the two together are what makes a
 // row this machine's own issue, F8), the release that fixed it, and the command
@@ -137,7 +145,7 @@ func retryBucket(t *testing.T, resolvedIn string) (*blobx.Bucket, int) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = b.Close() })
-	up, err := issues.Upload(t.Context(), b, retrySharedIssue(retryRun, resolvedIn))
+	up, err := issues.Upload(t.Context(), b, retrySharedIssue(retryRun, resolvedIn), retryIdentity())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +174,7 @@ func retrySharedStore(t *testing.T, resolvedIn string) issues.Uploaded {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = b.Close() })
-	up, err := issues.Upload(t.Context(), b, retrySharedIssue("update-20261107183012-48213", resolvedIn))
+	up, err := issues.Upload(t.Context(), b, retrySharedIssue("update-20261107183012-48213", resolvedIn), retryIdentity())
 	if err != nil {
 		t.Fatalf("seeding the shared store: %v", err)
 	}
@@ -423,7 +431,7 @@ func TestUpdateRetryMakesNoCloudWrite(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = b.Close() })
-	up, err := issues.Upload(t.Context(), b, retrySharedIssue(retryRun, retryRelease))
+	up, err := issues.Upload(t.Context(), b, retrySharedIssue(retryRun, retryRelease), retryIdentity())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -578,7 +586,7 @@ func TestUpdateRetryReadsTheCheckoutsStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = b.Close() })
-	up, err := issues.Upload(t.Context(), b, retrySharedIssue(retryRun, retryRelease))
+	up, err := issues.Upload(t.Context(), b, retrySharedIssue(retryRun, retryRelease), retryIdentity())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -629,7 +637,7 @@ func TestUpdateRetrySelectsTheProjectTheRunNamed(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { _ = b.Close() })
-			up, err := issues.Upload(t.Context(), b, retrySharedIssue(retryRun, retryRelease))
+			up, err := issues.Upload(t.Context(), b, retrySharedIssue(retryRun, retryRelease), retryIdentity())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -722,7 +730,7 @@ func TestUpdateRetryAppliesTheRunsBucket(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { _ = b.Close() })
-			up, err := issues.Upload(t.Context(), b, retrySharedIssue(retryRun, retryRelease))
+			up, err := issues.Upload(t.Context(), b, retrySharedIssue(retryRun, retryRelease), retryIdentity())
 			if err != nil {
 				t.Fatal(err)
 			}
