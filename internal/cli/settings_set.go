@@ -58,6 +58,15 @@ var settingsFamilyCommands = map[string]string{
 	// do. Its refusal names that command rather than `fugaro project`, which
 	// writes the project's other policy keys and not this one.
 	"image map": "fugaro image map",
+	// The clone URLs are a family of one command for the image map's reason and
+	// a second one of its own: an entry is keyed by a canonical repository name
+	// and its value is held to the node's own rule — this repository, on this
+	// provider's host, with no credentials (projectpolicy.ValidCloneURLs) —
+	// so the key and the value are checked against each other there and a
+	// generic scalar write could land a URL a publish refuses. `fugaro project
+	// clone-url` is that command, and the refusal names it rather than
+	// `fugaro project`, which writes the project's other policy keys.
+	"project clone-url": "fugaro project clone-url",
 }
 
 // settingsGenericKeys is the allowlist of spec §4.4: the exact keys `settings

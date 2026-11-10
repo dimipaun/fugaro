@@ -128,8 +128,17 @@ const (
 // (D1854), whose owner is the `project` family because `fugaro project policy
 // publish` is what carries it. That last row is the one this paragraph adds:
 // the registry has one row more and the allowlist has not.
+//
+// The settings design's S6 moved the registry's figure once more, by one row
+// and not the allowlist's: the clone URLs a run clones its repository from
+// (settings spec §5.6, SD5, D842) left the policy node for a block of the
+// owner's local config, and its row is one for the whole map whose owner is the
+// `project clone-url` family -- `settings set` can make no cross-key check
+// between an entry's canonical name and its URL, which is the node's own rule
+// (projectpolicy.ValidCloneURLs) -- so it is a row the registry carries and this
+// list does not.
 const (
-	cfmRegistryRows   = 398
+	cfmRegistryRows   = 399
 	cfmAllowlistNamed = 96
 )
 
