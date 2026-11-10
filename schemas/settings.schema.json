@@ -441,6 +441,9 @@
         "claude_accounts.*.allow_data_to": {
           "default": "unset = nobody"
         },
+        "clone_urls": {
+          "default": "unset = none: a run clones from its provider's own URL for its repository (https://github.com/owner/name.git)"
+        },
         "commit_email": {
           "default": "unset = Fugaro's own address"
         },
