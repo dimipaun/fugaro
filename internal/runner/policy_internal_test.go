@@ -350,3 +350,60 @@ func TestRunnerReadsReviewFloorFromNode(t *testing.T) {
 		t.Errorf("ReviewFloor(pro) = %v with no policy node, want nil", got)
 	}
 }
+
+// TestPolicyCeilingCarriesTheBinariesList is D986's read half, beside the
+// floor's: the binary allow rule is the owner-only policy node's, the run
+// reads it at bootstrap and puts it on the ceiling layer (policyCeiling), and
+// the merge is what lets a layer under the ceiling remove an admitted path and
+// never add one. The layers under it are the ones a launcher writes, so the
+// node's list is the only list there is — and a node that names none, or no
+// node at all, admits no binary, which is the behaviour of every installation
+// that has published no binaries block.
+func TestPolicyCeilingCarriesTheBinariesList(t *testing.T) {
+	newRun := func(p *projectpolicy.Policy, found bool) *run {
+		r := &run{
+			cfg:  &config.Config{},
+			spec: &task.Spec{},
+			rec:  &runstore.Record{},
+			d:    Deps{Log: slog.New(slog.DiscardHandler)},
+		}
+		r.projPolicy = policyRead{done: true, policy: p, found: found}
+		return r
+	}
+	const brand, site = "brand/*.png", "website/public/**"
+	node := &projectpolicy.Policy{Binaries: &projectpolicy.Binaries{Allow: []string{brand, site}, MaxBytes: 1048576}}
+	r := newRun(node, true)
+	if err := r.resolvePolicy(context.Background(), r.cfg); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := r.policy.BinariesAllow, []string{brand, site}; !slices.Equal(got, want) {
+		t.Errorf("BinariesAllow = %v, want %v: the list the node carries must reach the effective policy", got, want)
+	}
+	if r.policy.BinariesMaxBytes != 1048576 {
+		t.Errorf("BinariesMaxBytes = %d, want the node's 1048576", r.policy.BinariesMaxBytes)
+	}
+	// The node is the layer the record must name, not the job environment,
+	// which can carry no binaries at all.
+	if got := r.policy.Sources[policy.KeyBinariesAllow]; got != policy.SourcePolicy {
+		t.Errorf("sources[%s] = %q, want %q", policy.KeyBinariesAllow, got, policy.SourcePolicy)
+	}
+
+	for _, tt := range []struct {
+		name  string
+		p     *projectpolicy.Policy
+		found bool
+	}{
+		{"a node with no binaries block", &projectpolicy.Policy{}, true},
+		{"no policy node at all", nil, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			r := newRun(tt.p, tt.found)
+			if err := r.resolvePolicy(context.Background(), r.cfg); err != nil {
+				t.Fatal(err)
+			}
+			if r.policy.BinariesAllow != nil || r.policy.BinariesMaxBytes != 0 {
+				t.Errorf("the effective policy admits binaries: %v, %d", r.policy.BinariesAllow, r.policy.BinariesMaxBytes)
+			}
+		})
+	}
+}

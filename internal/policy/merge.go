@@ -156,39 +156,66 @@ func Merge(ceiling Layer, tighten ...Layer) Effective {
 		}
 
 		if l.AllowedModels != nil {
-			if e.AllowedModels == nil {
-				e.AllowedModels, e.Sources[KeyAllowedModels] = dedupe(l.AllowedModels), src
-			} else {
-				in, running := toSet(l.AllowedModels), toSet(e.AllowedModels)
-				kept := make([]string, 0, len(e.AllowedModels))
-				for _, m := range e.AllowedModels { // running order is kept
-					if in[m] {
-						kept = append(kept, m)
-					}
-				}
-				extra := false
-				for _, v := range l.AllowedModels {
-					if !running[v] {
-						extra = true
-						break
-					}
-				}
-				prev := e.Sources[KeyAllowedModels]
-				if len(kept) < len(e.AllowedModels) {
-					e.AllowedModels, e.Sources[KeyAllowedModels] = kept, src
-				}
-				if extra { // asked for a model the earlier layers had excluded
-					e.Ignored = append(e.Ignored, Ignored{KeyAllowedModels,
-						strings.Join(dedupe(l.AllowedModels), ","),
-						strings.Join(e.AllowedModels, ","), prev})
-				}
-			}
+			e.intersectAllowList(&e.AllowedModels, l.AllowedModels, KeyAllowedModels, src)
 		}
+
+		// The binary allow-list is the same rule over a key whose unset is the
+		// strict end: a layer below the ceiling may remove an admitted path and
+		// may never add one (D986, F10). A disjoint list is the empty one,
+		// which admits nothing — the answer an absent list gives too, so the
+		// two need not be told apart at the check. The cap is the caps rule
+		// beside it: the smaller positive one wins.
+		if l.BinariesAllow != nil {
+			e.intersectAllowList(&e.BinariesAllow, l.BinariesAllow, KeyBinariesAllow, src)
+		}
+		e.tightenInt(&e.BinariesMaxBytes, l.BinariesMaxBytes, KeyBinariesMaxBytes, src)
 	}
 	if len(e.Sources) == 0 {
 		e.Sources = nil
 	}
 	return e
+}
+
+// intersectAllowList applies one layer's allow-list to the running one: the
+// entries the earlier layers had are kept in their order, an entry the layer
+// asks for that they had excluded is dropped and recorded, and a layer that
+// sets the first list establishes it. It is the one rule for both allow-lists
+// this package merges — the models a run may call and the paths it may add a
+// binary at — so the two cannot drift into two answers to "what may a later
+// layer narrow".
+//
+// The two keys' nil does not mean the same thing to a consumer (no models list
+// allows every model, no binaries list admits no binary), and that difference
+// lives at the check rather than here: what this rule owes both of them is
+// that a later layer can only take away.
+func (e *Effective) intersectAllowList(cur *[]string, l []string, key, src string) {
+	if *cur == nil {
+		*cur, e.Sources[key] = dedupe(l), src
+		return
+	}
+	in, running := toSet(l), toSet(*cur)
+	kept := make([]string, 0, len(*cur))
+	for _, v := range *cur { // running order is kept
+		if in[v] {
+			kept = append(kept, v)
+		}
+	}
+	extra := false
+	for _, v := range l {
+		if !running[v] {
+			extra = true
+			break
+		}
+	}
+	prev := e.Sources[key]
+	if len(kept) < len(*cur) {
+		*cur, e.Sources[key] = kept, src
+	}
+	if extra { // asked for an entry the earlier layers had excluded
+		e.Ignored = append(e.Ignored, Ignored{key,
+			strings.Join(dedupe(l), ","),
+			strings.Join(*cur, ","), prev})
+	}
 }
 
 // unionReviewFloor adds l's levels to the effective floor, mode by mode, and

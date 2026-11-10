@@ -167,6 +167,72 @@ func TestAllowedIgnoredPartialAndDisjoint(t *testing.T) {
 	}
 }
 
+// TestBinariesListMergesByIntersection is the binaries half of D986 and F10:
+// the paths a run may add a binary at tighten by intersection, the way every
+// other allow-list in this package does, so a layer below the ceiling can
+// remove an admitted path and can never add one. The key is the owner's policy
+// node's alone — fugaro.yaml refuses it, the shared config refuses it — and
+// the merge is what makes "nothing below the ceiling widens it" a property of
+// this package rather than of the callers that build the layers.
+func TestBinariesListMergesByIntersection(t *testing.T) {
+	const (
+		brand = "brand/*.png"
+		site  = "website/public/**"
+		code  = "internal/**"
+	)
+	e := Merge(Layer{BinariesAllow: []string{brand, site}}, Layer{BinariesAllow: []string{site, code}})
+	if want := []string{site}; !reflect.DeepEqual(e.BinariesAllow, want) {
+		t.Fatalf("BinariesAllow = %v, want %v: a layer below the ceiling grew the list", e.BinariesAllow, want)
+	}
+	if e.Sources[KeyBinariesAllow] != SourceDefaultBranch || len(e.Ignored) != 1 {
+		t.Fatalf("%+v", e)
+	}
+	if want := []Ignored{{KeyBinariesAllow, site + "," + code, site, SourceCeiling}}; !reflect.DeepEqual(e.Ignored, want) {
+		t.Fatalf("Ignored = %+v, want %+v", e.Ignored, want)
+	}
+	// A disjoint list is the empty one, which admits nothing: the same answer
+	// an absent list gives, and not "unset" the way a nil models list is.
+	e = Merge(Layer{BinariesAllow: []string{brand}}, Layer{BinariesAllow: []string{code}})
+	if e.BinariesAllow == nil || len(e.BinariesAllow) != 0 {
+		t.Fatalf("a disjoint list = %#v, want an empty non-nil list", e.BinariesAllow)
+	}
+	// nil is "no layer set a list", and for this key that is the strict end:
+	// it stays nil rather than becoming a list every path passes.
+	if got := Merge(Layer{}, Layer{}).BinariesAllow; got != nil {
+		t.Fatalf("unset must stay nil, got %#v", got)
+	}
+	// A subset is not ignored, and the running order is kept.
+	e = Merge(Layer{BinariesAllow: []string{brand, site, code}}, Layer{BinariesAllow: []string{code, brand}}, Layer{BinariesAllow: []string{brand}})
+	if want := []string{brand}; !reflect.DeepEqual(e.BinariesAllow, want) || len(e.Ignored) != 0 {
+		t.Fatalf("BinariesAllow = %v ignored = %+v, want %v and none", e.BinariesAllow, e.Ignored, want)
+	}
+}
+
+// TestBinariesCapTightensOnly is the cap's half of F10: one project-wide bound
+// in bytes, merged by TightenInt, so a layer below the ceiling may only lower
+// it and a layer that leaves it out passes the ceiling's own through.
+func TestBinariesCapTightensOnly(t *testing.T) {
+	const shipped = 2097152 // D983's default, the node's own to fill
+	e := Merge(Layer{BinariesMaxBytes: shipped}, Layer{BinariesMaxBytes: 262144})
+	if e.BinariesMaxBytes != 262144 || e.Sources[KeyBinariesMaxBytes] != SourceDefaultBranch || len(e.Ignored) != 0 {
+		t.Fatalf("%+v", e)
+	}
+	// A looser cap is dropped and recorded, never applied.
+	e = Merge(Layer{BinariesMaxBytes: 262144}, Layer{BinariesMaxBytes: shipped})
+	if e.BinariesMaxBytes != 262144 || len(e.Ignored) != 1 || e.Ignored[0].Key != KeyBinariesMaxBytes {
+		t.Fatalf("%+v", e)
+	}
+	// 0 and below are unset, not a cap of nothing: a node whose block names no
+	// cap leaves the ceiling's own standing, and the default a written block
+	// takes is the node's to fill (D983), not this layer's.
+	if got := Merge(Layer{BinariesMaxBytes: shipped}, Layer{}); got.BinariesMaxBytes != shipped || len(got.Ignored) != 0 {
+		t.Fatalf("%+v", got)
+	}
+	if got := Merge(Layer{BinariesMaxBytes: shipped}, Layer{BinariesMaxBytes: -1}); got.BinariesMaxBytes != shipped {
+		t.Fatalf("a negative cap = %d, want the ceiling's %d", got.BinariesMaxBytes, shipped)
+	}
+}
+
 // TestReviewFloorMergesTightenOnly is D722's G1: the owner's review-level
 // floor is a union over the layers, so a layer below it can only ever add a
 // level to a rigor mode. The layers under the floor are the ones a launcher
