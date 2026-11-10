@@ -341,3 +341,32 @@ func TestChainRefusesALinkThatRunsInACircle(t *testing.T) {
 		t.Fatalf("err = %v, want the circle named", err)
 	}
 }
+
+// A record the link reaches that the bucket does not have ends the read: it
+// is the only thing that names the run before it, so the runs behind that
+// hop cannot be found, and answering with what was read would root the chain
+// at the hop and drop every run before it -- membership and spend both
+// (F21). The root's record and the middle one's are the two ways that hop
+// sits, and neither may read as a shorter chain that spent less.
+func TestChainRefusesALinkedRunWithNoRecord(t *testing.T) {
+	for _, gone := range []string{chainRoot, chainMid} {
+		t.Run(gone, func(t *testing.T) {
+			b := chainBucket(t)
+			if err := b.Delete(ctx, "runs/acme-app/"+gone+"/result.json"); err != nil {
+				t.Fatal(err)
+			}
+			f := &fakeLedgers{found: map[string]Ledger{
+				chainRoot: {Reserved: 1_000_000},
+				chainMid:  {Reserved: 2_000_000},
+				chainTip:  {Reserved: 3_000_000},
+			}}
+			_, err := ResolveChain(ctx, Open(b, "acme-app", chainTip), f, chainCaps, chainNow)
+			if err == nil {
+				t.Fatalf("a chain whose link reaches %s with no record read as a chain (ledger reads: %v)", gone, f.asked)
+			}
+			if !strings.Contains(err.Error(), gone) {
+				t.Fatalf("err = %v, want the run with no record (%s) named", err, gone)
+			}
+		})
+	}
+}

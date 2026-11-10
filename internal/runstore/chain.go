@@ -85,6 +85,20 @@ type LedgerReader interface {
 // figures the caller resolved — the effective per-run cap and its token twin
 // — and neither is the chain's own limit, which is the root launch's number
 // and lives in its stored task (D1046).
+//
+// **The caller passes the caps it resolved, and a caller whose installation
+// sets no per-run cap refuses the launch instead.** A zero here is a cap that
+// allows nothing, not the absence of one, and this type cannot tell the two
+// apart: with no cap at all the zero it would carry charges an unreadable
+// ledger nothing, which is the one figure D1049 forbids (a missing ledger
+// read as free restores the whole chain's budget, F14). The case is
+// reachable with the budget on: budget.Caps.PerRun reports ok false when
+// neither the repository's nor the global per-run cap is set anywhere, and
+// budget.Session.Admit halts on that only under Enforcing or LocalEnforce,
+// so an observe-mode installation can run — and launch a --max-* chain —
+// with no per-run cap for any hop. Whoever resolves the caps owns that
+// refusal, exactly as Admit already refuses a run whose lease could not be
+// bounded; this read has no honest figure to charge and will not invent one.
 type PerRunCaps struct {
 	USD    pricing.Micros
 	Tokens int64
@@ -145,13 +159,19 @@ func (c *Chain) Remaining(limit Amount, dim Dimension) Figure {
 // The link is followed one record at a time, by name — each run's
 // follow_up.previous_run names the run before it — because a listing is not
 // available and is not what the link is (F21: the job's account is bound to
-// runs/<slug>/ objects and "the runner never lists"). A run whose record the
-// bucket does not have never started, since a run writes result.json as it
-// starts: nothing is read for it and it holds nothing, which is the run a
-// --retry's stored task names (D1045). A record that cannot be read for any
-// other reason, and a link that runs in a circle, end the read with an
-// error: the chain behind either is not knowable, and answering anyway would
-// report a chain the records do not.
+// runs/<slug>/ objects and "the runner never lists").
+//
+// The run the read was named for may have no record at all: it never started,
+// since a run writes result.json as it starts — the run a --retry's stored
+// task names, and the one a --continues names — so nothing is read for it and
+// it holds nothing (D1045). A run the link *reaches* with no record is the
+// other case and ends the read with an error: its record is the only thing
+// that says which run came before it, so with it gone the runs behind that
+// hop cannot be found, and answering anyway would root the chain at the hop
+// and drop every run before it from both the membership and the spend — the
+// same reason a record that cannot be read for any other reason and a link
+// that runs in a circle end the read (F21, T5: a launcher can delete a
+// record, and a chain's figure is never the one a deletion leaves behind).
 //
 // ledgers is the budget database, nil when the budget is off — where the
 // records are the figures and the chain is UNENFORCED (D1046) — perRun is
@@ -165,9 +185,13 @@ func ResolveChain(ctx context.Context, s *Store, ledgers LedgerReader, perRun Pe
 	c := &Chain{Enforced: ledgers != nil, used: make(map[Dimension]Figure, 4)}
 
 	// Walk the link back from the run the caller named, newest first.
+	// linked is whether the id in hand came from a record's link, which is
+	// what tells a hop of the chain apart from the run the read was named
+	// for: the two mean different things when the bucket has no record.
 	var ids []string
 	records := map[string]*Record{}
-	for id := from; id != ""; {
+	id, linked := from, false
+	for id != "" {
 		if _, seen := records[id]; seen {
 			// A record names a run the walk has already passed: a launcher
 			// can write records (F21), and a link that runs in a circle is
@@ -183,7 +207,11 @@ func ResolveChain(ctx context.Context, s *Store, ledgers LedgerReader, perRun Pe
 		}
 		rec, err := s.Sibling(id).ReadRecord(ctx)
 		switch {
+		case errors.Is(err, ErrNotFound) && linked:
+			return nil, fmt.Errorf("the chain of run %s/%s links to run %s, whose record runs/%s/%s/result.json does not have, so the runs behind it cannot be found", s.Slug(), from, id, s.Slug(), id)
 		case errors.Is(err, ErrNotFound):
+			// The run the read was named for never started, so the chain is
+			// it alone and it holds nothing (D1045).
 			ids = append(ids, id)
 			id = ""
 		case err != nil:
@@ -194,7 +222,7 @@ func ResolveChain(ctx context.Context, s *Store, ledgers LedgerReader, perRun Pe
 			if rec.FollowUp == nil {
 				id = ""
 			} else {
-				id = rec.FollowUp.PreviousRun
+				id, linked = rec.FollowUp.PreviousRun, true
 			}
 		}
 	}
@@ -205,6 +233,8 @@ func ResolveChain(ctx context.Context, s *Store, ledgers LedgerReader, perRun Pe
 	for _, id := range ids {
 		rec := records[id]
 		if rec == nil {
+			// Only the run the read was named for can be here, and only
+			// when it never started: it holds nothing (D1045).
 			continue
 		}
 		seconds += chainSeconds(rec, now)
