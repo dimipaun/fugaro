@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"net/url"
 
 	"github.com/spf13/cobra"
 
@@ -189,6 +190,33 @@ func (e *initEngine) writeAdminList(ctx context.Context) {
 	data, err := roleaccess.EncodeAdminList(list)
 	if err != nil {
 		r.warn(fmt.Sprintf("the admin list was not written: the roster's project admins could not be encoded (%s)", safetext.FieldErr(err)))
+		return
+	}
+	// This installation's own runs bucket and no other, the rule every sibling
+	// writer of an installation-scoped object keeps (publishSharedWarn's anchor,
+	// the managed apply's marker and delete list, restore): the list admits its
+	// readers to this project's shared prefix, so it belongs in the bucket this
+	// project's intake reads — the one named after the GCP project, never a
+	// bucket a local config names instead. A hand edit, or a copy of a
+	// teammate's config with the wrong project in it, would otherwise publish
+	// this project's admins into another installation's bucket, where that
+	// installation's intake reads them.
+	//
+	// The bucket is read off both spellings a config can name it in, because
+	// they can disagree and each one alone would be a way past the check: the
+	// URL the write opens (a config's bucket_url is kept as it is, and
+	// fugaro image's buildRecordNote exists because a bucket_url naming another
+	// bucket is a config a person can hold), and, when that URL is not a GCS
+	// one, the name the config declares. A bucket_url off GCS is a path or an
+	// endpoint on this machine — a test's or an emulator's bucket, where every
+	// other write of such a run lands — and not another installation's.
+	target := e.lc.RunsBucketName()
+	if u, err := url.Parse(e.lc.BucketURL()); err == nil && u.Scheme == "gs" {
+		target = u.Host
+	}
+	if own := "fugaro-runs-" + e.lc.GCPProject; target != own {
+		r.warn(fmt.Sprintf("the admin list was not written: the runs bucket is %q, and an object the intake reads belongs in this installation's own, %s. Check runs_bucket and bucket_url in the project config",
+			target, own))
 		return
 	}
 	if fakeEndpointsOnGS(e.lc, e.lc.BucketURL()) {

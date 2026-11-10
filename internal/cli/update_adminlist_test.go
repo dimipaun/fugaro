@@ -8,12 +8,17 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"strings"
 	"testing"
 
 	roleaccess "github.com/dimipaun/fugaro/internal/access"
 	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
 // TestUpdateRewritesListAfterRoleChange: the run that follows a role change
@@ -57,11 +62,109 @@ func TestUpdateRewritesListAfterRoleChange(t *testing.T) {
 	}
 }
 
+// TestAdminListNotWrittenToAnotherInstallationsBucket: the list is an
+// installation-scoped object, and the step keeps the exact-name rule every
+// sibling writer of one keeps — the runs bucket has to be this installation's
+// own, fugaro-runs-<gcp_project>.
+//
+// What it holds back is a config that names a foreign installation's bucket: a
+// hand edit, or a teammate's config file with the wrong project in it. The
+// admins on the list are the ones the intake admits to the shared prefix, so
+// publishing them into another project's bucket is publishing them to that
+// project's intake — and the write would look like a success here, where the
+// bucket it names is reachable, while this project's own intake is left with
+// whatever list an earlier update derived.
+//
+// A config can name that bucket in two places, and they can disagree, so the
+// test moves each of them: the runs bucket it declares, and the URL a write
+// opens (which a converge keeps as it found it). Either one naming another
+// installation's bucket is enough to leave the object alone, and leaving it
+// alone is a warning — the HARD RULE is that nothing about this step stops an
+// upgrade.
+func TestAdminListNotWrittenToAnotherInstallationsBucket(t *testing.T) {
+	for name, mutate := range map[string]func(*localcfg.Config){
+		"the declared runs bucket": func(lc *localcfg.Config) { lc.RunsBucket = "fugaro-runs-other-project" },
+		"the bucket_url it opens":  func(lc *localcfg.Config) { lc.Bucket = "gs://fugaro-runs-other-project" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			out, opened := adminListStep(t, mutate)
+			if opened {
+				t.Errorf("the step opened the runs bucket %s, which is not this installation's own: the admins on the list are the ones the intake admits to this project's shared prefix, and another installation's intake reads its own bucket", "fugaro-runs-other-project")
+			}
+			if !strings.Contains(out, "fugaro-runs-other-project") {
+				t.Errorf("the run does not say which bucket it refused, so a person whose config names the wrong one has nothing to go on:\n%s", out)
+			}
+		})
+	}
+}
+
+// adminListStep runs the step over a config of the test's own, with the roster
+// seeded in a fake database and the bucket opener recorded rather than used. It
+// returns what the run printed and whether the write reached a bucket at all,
+// which is the difference between "the step refused the bucket" and "the step
+// would have written".
+func adminListStep(t *testing.T, mutate func(*localcfg.Config)) (out string, opened bool) {
+	t.Helper()
+	db := gcpfake.NewRTDB(t)
+	db.Set(budget.PathProject, initProjectName)
+	db.Set(budget.PathMark, map[string]any{"managed_by": "fugaro", "version": 1, "project": initProjectName, "gcp_project": initProject})
+	setRosterOn(t, db, rosterGrant("owner@example.com", "admin", "project"))
+	lc := &localcfg.Config{
+		Version: 1, Name: initProjectName, GCPProject: initProject, Region: "us-east5",
+		RunsBucket: "fugaro-runs-" + initProject,
+		Bucket:     "file://" + t.TempDir(),
+		Budget:     &localcfg.Budget{Mode: "enforce", PerRunUSD: 5, RTDBURL: db.URL, FirebaseProject: initProject},
+		Endpoints:  localcfg.Endpoints{NoAuth: true},
+	}
+	mutate(lc)
+	prev := sharedBucketOpener
+	sharedBucketOpener = func(ctx context.Context, url string) (*blobx.Bucket, error) {
+		opened = true
+		return blobx.Open(ctx, url)
+	}
+	t.Cleanup(func() { sharedBucketOpener = prev })
+
+	var buf strings.Builder
+	e := &initEngine{r: &initRun{o: &initOptions{door: updateDoor.name}, w: &buf}, lc: lc, c: &infra.Clients{}}
+	e.writeAdminList(context.Background())
+	return buf.String(), opened
+}
+
+// TestSetupWritesNoAdminList: the step is `fugaro update`'s. `fugaro setup`
+// converges the same installation through the same hook (init_stages.go's
+// outcome), so the door guard is what keeps it out of the list — and what this
+// test holds: the roster below is seeded and the runs bucket is one a write
+// would reach, so a step that ran under the setup door would leave the object.
+func TestSetupWritesNoAdminList(t *testing.T) {
+	r := newConvergeRig(t, v4Node())
+	setRoster(t, r, rosterGrant("owner@example.com", "admin", "project"))
+
+	out, _, err := executeStdin(t, "", "setup", "--yes")
+	if err != nil {
+		t.Fatalf("fugaro setup failed over an installation that exists (%v)\n%s", err, out)
+	}
+	b := adminListBucket(t, r)
+	if _, _, err := b.ReadMaxStrict(context.Background(), roleaccess.PathAdminList, roleaccess.MaxAdminListBytes); !errors.Is(err, blobx.ErrNotExist) {
+		t.Errorf("%s exists after fugaro setup (%v): the roster's admins are the upgrade's to publish, and a project the setup door just created has no roster to derive them from",
+			roleaccess.PathAdminList, err)
+	}
+	if strings.Contains(out, roleaccess.PathAdminList) {
+		t.Errorf("fugaro setup names %s, the object only fugaro update writes:\n%s", roleaccess.PathAdminList, out)
+	}
+}
+
 // setRoster writes the grants node the update reads, as `fugaro project access
 // set` leaves it: the fixture's roster, not this test's own copy of one.
 func setRoster(t *testing.T, r *convergeRig, grants ...map[string]any) {
 	t.Helper()
-	r.db.Set(roleaccess.PathNode, map[string]any{"grants": grants})
+	setRosterOn(t, r.db, grants...)
+}
+
+// setRosterOn is setRoster over any fake database, so the step's own test seeds
+// the roster the same way the converge's does.
+func setRosterOn(t *testing.T, db *gcpfake.RTDB, grants ...map[string]any) {
+	t.Helper()
+	db.Set(roleaccess.PathNode, map[string]any{"grants": grants})
 }
 
 // rosterGrant is one stored grant, in the node's own spelling (store.go's

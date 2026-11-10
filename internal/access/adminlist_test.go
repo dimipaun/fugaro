@@ -123,6 +123,48 @@ func TestAdminListHoldsOnlyProjectScopedAdmins(t *testing.T) {
 	})
 }
 
+// TestAdminsDerivesOnlyWhatItsWriterAccepts: what Admins returns is a document
+// EncodeAdminList writes, whatever the roster holds.
+//
+// The two disagree about exactly one address. Member admits a colon in the
+// local part — it asks for printable ASCII, one "@" and no empty side — while
+// an entry refuses any colon, because an address carrying one is the IAM member
+// spelling the intake cannot match against a claim. So a single grant holding
+// such an address is a roster from which the derivation builds a list its own
+// writer refuses, and a refused list is no object at all: the intake would go
+// on reading the list an earlier update derived, however often the door ran.
+// The person is left off the list instead, which is what every other grant that
+// does not parse gets, and the rest of the roster still reaches the intake.
+func TestAdminsDerivesOnlyWhatItsWriterAccepts(t *testing.T) {
+	grants := []Grant{
+		{User: "user:owner@example.com", Role: RoleAdmin, Scope: Scope{Kind: ScopeProject}},
+		{User: "user:adm:in@example.com", Role: RoleAdmin, Scope: Scope{Kind: ScopeProject}},
+		{User: "user:deputy@example.com", Role: RoleAdmin, Scope: Scope{Kind: ScopeProject}},
+	}
+	// The grant is one the roster itself accepts (canonicalMember folds it to
+	// itself), so nothing before the derivation filters it out.
+	if _, err := canonicalMember("user:adm:in@example.com"); err != nil {
+		t.Fatalf("the fixture's grant is not one the roster reads: %v", err)
+	}
+
+	list := Admins(grants)
+	got := make([]string, 0, len(list))
+	for _, a := range list {
+		got = append(got, a.Email)
+	}
+	want := []string{"deputy@example.com", "owner@example.com"}
+	if !slices.Equal(got, want) {
+		t.Errorf("the list holds %v, want %v: an address the list cannot carry is a person the list does not hold, never a document the writer refuses", got, want)
+	}
+	raw, err := EncodeAdminList(list)
+	if err != nil {
+		t.Fatalf("EncodeAdminList(Admins(grants)): %v: one grant's spelling is not a reason for the intake to keep the list of an earlier update", err)
+	}
+	if strings.Contains(string(raw), "adm:in") {
+		t.Errorf("the encoded list holds the colon-bearing address:\n%s", raw)
+	}
+}
+
 // TestAdminListPathNotLauncherWritable is F32's other half: the object lives
 // outside every path a launcher can write, because the caller the list admits
 // is the one the intake decides against, and a caller who can write the list

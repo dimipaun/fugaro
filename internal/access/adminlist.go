@@ -111,6 +111,15 @@ type adminListDoc struct {
 // person it names is not an admin and is not on the list. A caller that wants
 // to know what the roster held reads it with Read, which refuses an
 // unreadable node.
+//
+// Every entry it derives is one EncodeAdminList accepts, which is a property of
+// this function and not of the roster: the two disagree about exactly one
+// address — Member admits a colon in the local part, and an entry refuses one
+// because it is the IAM member spelling — so a grant holding one would
+// otherwise make the derivation produce a list its own writer refuses, and the
+// object would keep the list of an earlier update for good. The entry is
+// validated here, where it is derived, and a person whose address the list
+// cannot carry is one the list does not hold.
 func Admins(grants []Grant) []Admin {
 	out := make([]Admin, 0, len(grants))
 	for _, g := range grants {
@@ -124,13 +133,16 @@ func Admins(grants []Grant) []Admin {
 		if err != nil {
 			continue
 		}
-		address := strings.TrimPrefix(member, "user:")
-		if slices.ContainsFunc(out, func(a Admin) bool { return a.Email == address }) {
+		entry := Admin{Email: strings.TrimPrefix(member, "user:")}
+		if err := entry.validate(); err != nil {
+			continue
+		}
+		if slices.ContainsFunc(out, func(a Admin) bool { return a.Email == entry.Email }) {
 			// One person, one entry: two grants make the same admin, and the
 			// list is a list of people.
 			continue
 		}
-		out = append(out, Admin{Email: address})
+		out = append(out, entry)
 	}
 	slices.SortFunc(out, compareAdmins)
 	return out
