@@ -746,6 +746,56 @@ func TestUpdateSkipsWithoutAReleaseOrAFugaroCheckout(t *testing.T) {
 	})
 }
 
+// TestUpdateRecognisesACheckoutByItsFugaroYAML (U1, D941/F15): what makes a
+// checkout one of Fugaro's is its fugaro.yaml, and only that. The second
+// disjunct — a .claude/settings.json whose marketplace entry an older fugaro
+// wired — is gone with the step that wrote it (the plugin step, which the
+// plugin stage runs now): a repository that never opted in has no such file and
+// is still a Fugaro checkout, while a checkout whose only mark is the wiring an
+// older release left behind is one Fugaro is not set up in.
+//
+// The wiring's own words go with it: the skip names the file that is missing
+// rather than a settings file the reader cannot see in front of them.
+func TestUpdateRecognisesACheckoutByItsFugaroYAML(t *testing.T) {
+	// The checkout Fugaro is set up in, with nothing ever wired into it: this
+	// stage's one step is still this checkout's to run.
+	t.Run("a fugaro.yaml and no wiring is a checkout", func(t *testing.T) {
+		_, root := upgradeRig(t)
+		if _, err := os.Stat(filepath.Join(root, ".claude", "settings.json")); !os.IsNotExist(err) {
+			t.Fatalf("the fixture is wired, so it proves nothing about a repository that never opted in: %v", err)
+		}
+		e, _ := checkoutEngine(t, &initOptions{yes: true})
+		status, err := checkoutStageOf(t, e).Check(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if status.State == initflow.Skipped && strings.Contains(status.Detail, "not a Fugaro checkout") {
+			t.Errorf("a checkout whose fugaro.yaml is right there was read as none: %+v", status)
+		}
+	})
+
+	// The wiring alone, with no fugaro.yaml: the pin in it is a leftover no
+	// release writes any more, and it is not what makes a checkout one.
+	t.Run("wiring alone is not a checkout", func(t *testing.T) {
+		_, root := upgradeRig(t)
+		if err := os.Remove(filepath.Join(root, "fugaro.yaml")); err != nil {
+			t.Fatal(err)
+		}
+		checkoutFile(t, filepath.Join(root, ".claude", "settings.json"), wiredAt("v0.5.0"))
+		e, _ := checkoutEngine(t, &initOptions{yes: true})
+		status, err := checkoutStageOf(t, e).Check(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if status.State != initflow.Skipped || !strings.Contains(status.Detail, "not a Fugaro checkout") {
+			t.Fatalf("a checkout whose only mark is the wiring an older fugaro wrote is not this run's: %+v", status)
+		}
+		if strings.Contains(status.Detail, "settings.json") {
+			t.Errorf("the skip names a settings file the reader cannot see in front of them: %q", status.Detail)
+		}
+	})
+}
+
 // The steps the checkout stage calls are fugaro upgrade's own, and fugaro
 // upgrade still runs them: the stage added a caller, not a copy.
 func TestUpgradeStillWorks(t *testing.T) {
