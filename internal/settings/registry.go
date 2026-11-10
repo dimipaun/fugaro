@@ -424,6 +424,12 @@ const (
 	// DEFAULT column and the schema's keyDefaults, and a spec of the section's
 	// own would be the document that takes the rows over.
 	docTroubleshoot = "docs/troubleshoot-issue/implementation-plan.md"
+	// docTriage is the document that states the triage stage and the switch
+	// that turns it off (D1854, D1851). It is the work's plan for
+	// docOrchestrator's reason: the stage, its default and the switch's home on
+	// the published node are stated there and nowhere else yet, and a document
+	// of the stage's own would take the row over.
+	docTriage = "docs/post-review-triage/implementation-plan.md"
 )
 
 // layerRow is a row of the project layer's file. The layer is its only store,
@@ -882,6 +888,14 @@ var localRows = []Row{
 	// boolean whose only reader is the resolver, and a family for one key would
 	// be a command family that does nothing the generic write does not.
 	loc("bake_repos", "true: a repository the build can read is baked into the image its job runs", "settings set", docImages),
+	// The triage switch is the other policy key of that shape — a local key the
+	// node is published from — and it is the catalog's rather than the bake
+	// switch's: `fugaro project policy publish` is what carries it, which is why
+	// the owner names the project family and not the generic path. The switch is
+	// the owner's because it decides which of a review round's findings hold a
+	// pull request back (D1854), and no command writes it beyond the publish: an
+	// operator states it in the file and runs the update.
+	loc("triage", "true: a review round's findings are judged by the triage stage in the modes that triage at all, and a written false turns the stage off for the project", "project", docTriage),
 
 	// The orchestrator daemon's own guardrails (D1239, D1234) are the owner's
 	// policy like the catalog above, and one row per member for the catalog's

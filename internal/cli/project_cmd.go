@@ -973,6 +973,20 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 	}
 	imageMap := lc.ImageMapEffective(publishedImageMap)
 	bakeRepos := lc.BakeReposEffective(publishedBake)
+	// The triage switch is kept by that same rule (D1854), and the cost of the
+	// other reading is the floor's, one direction over: the stage is what judges
+	// the findings a review round's table would have blocked, so a publish that
+	// dropped the member would turn the judge back on for every run of the
+	// project — from a machine whose config merely predates the key. A config
+	// that writes the switch replaces what the node holds, and one that writes
+	// neither keeps the node's; the switch is a pointer on both sides because
+	// absent and true are one statement, so a node and a config that both say
+	// nothing publish no member at all.
+	var publishedTriage *bool
+	if old != nil {
+		publishedTriage = old.Triage
+	}
+	triage := lc.TriageEffective(publishedTriage)
 	// The orchestrator block is kept by the same rule (D1239, D1234), with the
 	// catalog's two spellings collapsed into one: a config that states a block
 	// replaces what the node holds — the daemon's guardrails are the owner's own
@@ -1027,6 +1041,7 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		ImageServices:        imageServices,
 		ImageMap:             imageMap,
 		BakeRepos:            bakeRepos,
+		Triage:               triage,
 		Orchestrator:         orchestrator,
 	}
 	switch {

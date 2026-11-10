@@ -237,6 +237,13 @@ type SharedAnchor struct {
 // spawn rates a looping cycle is held to — and a launcher who could write it
 // into the shared file would be raising the guardrails that exist to bound it.
 //
+// triage travels the floor's way, one step down (D1854): the switch is what
+// lets the findings a review round's table would have blocked through, so a
+// launcher who could write it into the shared file would be waving the runs of
+// every repository past the findings the owner meant to hold them to, and
+// Shared nils it for the floor's reason — the node the runner reads and fails
+// closed on is its other home.
+//
 // default_claude_account, stages and claude_account_auto are the
 // account-choice keys, and they are operator-only for claude_accounts' own
 // reason (docs/accounts-add/spec.md §11.1): a key that names the account a
@@ -267,7 +274,7 @@ type SharedAnchor struct {
 // member table are dropped with it, because a shared file that could name a
 // workspace would be one that could join this project to a group nobody here
 // chose. localcfg.Config.Shared nils all four.
-var sharedForbidden = []string{"terraform", "user", "commit_name", "commit_email", "endpoints", "bucket_url", "registry", "providers", "routing", "claude_accounts", "project_secrets", "workflow_secrets", "bitbucket_api_roots", "update_check", "issues", "secret_rotation_days", "secret_expires", "review_floor", "verifier_accounts", "image_catalog", "image_map", "bake_repos", "orchestrator", "default_claude_account", "stages", "claude_account_auto", "credentials", "pools", "crafts", "workspace", "workspace_pin", "workspace_members", "workspace_cap"}
+var sharedForbidden = []string{"terraform", "user", "commit_name", "commit_email", "endpoints", "bucket_url", "registry", "providers", "routing", "claude_accounts", "project_secrets", "workflow_secrets", "bitbucket_api_roots", "update_check", "issues", "secret_rotation_days", "secret_expires", "review_floor", "verifier_accounts", "image_catalog", "image_map", "bake_repos", "triage", "orchestrator", "default_claude_account", "stages", "claude_account_auto", "credentials", "pools", "crafts", "workspace", "workspace_pin", "workspace_members", "workspace_cap"}
 
 // ParseShared validates a published shared config against its anchor and
 // returns it (docs/design/shared-config.md §5). Anyone holding objectAdmin
@@ -520,7 +527,7 @@ func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 // arrived some other way (a merge, a decoder that mapped a key onto a field of
 // its own), and the check a test can hold each field of without a file.
 func sharedNeverPublished(c *localcfg.Config) bool {
-	return c.User != "" || c.CommitName != "" || c.CommitEmail != "" || c.Bucket != "" || c.Registry != "" || c.Endpoints != (localcfg.Endpoints{}) || !reflect.ValueOf(c.Terraform).IsZero() || c.Providers != nil || c.Routing != nil || c.ClaudeAccounts != nil || c.ProjectSecrets != nil || c.WorkflowSecrets != nil || c.BitbucketAPIRoots != nil || c.UpdateCheck != nil || c.Issues != nil || c.SecretRotationDays != 0 || c.SecretExpires != nil || c.ReviewFloor != nil || c.ImageCatalog != nil || c.ImageMap != nil || c.BakeRepos != nil || c.DefaultClaudeAccount != "" || c.ClaudeAccountStages != nil || c.ClaudeAccountAuto || c.Credentials != nil || c.Pools != nil || !reflect.ValueOf(c.Crafts).IsZero() || c.Workspace != "" || !reflect.ValueOf(c.WorkspacePin).IsZero() || c.WorkspaceMembers != nil || c.WorkspaceCap != nil
+	return c.User != "" || c.CommitName != "" || c.CommitEmail != "" || c.Bucket != "" || c.Registry != "" || c.Endpoints != (localcfg.Endpoints{}) || !reflect.ValueOf(c.Terraform).IsZero() || c.Providers != nil || c.Routing != nil || c.ClaudeAccounts != nil || c.ProjectSecrets != nil || c.WorkflowSecrets != nil || c.BitbucketAPIRoots != nil || c.UpdateCheck != nil || c.Issues != nil || c.SecretRotationDays != 0 || c.SecretExpires != nil || c.ReviewFloor != nil || c.ImageCatalog != nil || c.ImageMap != nil || c.BakeRepos != nil || c.Triage != nil || c.DefaultClaudeAccount != "" || c.ClaudeAccountStages != nil || c.ClaudeAccountAuto || c.Credentials != nil || c.Pools != nil || !reflect.ValueOf(c.Crafts).IsZero() || c.Workspace != "" || !reflect.ValueOf(c.WorkspacePin).IsZero() || c.WorkspaceMembers != nil || c.WorkspaceCap != nil
 }
 
 // dropLegacyBaseImages removes a base_images entry of exactly a kind

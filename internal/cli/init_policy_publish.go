@@ -143,6 +143,16 @@ func policyConfigDrift(lc *localcfg.Config, p *projectpolicy.Policy) []policyDri
 	if lc.BakeRepos != nil {
 		add("bake_repos", lc.BakeReposEffective(p.BakeRepos), p.BakeRepos, false)
 	}
+	// The triage switch reaches a run off this node too (D1854), so a config
+	// that states it where the node states the other answer is a difference a
+	// publish closes, and it is compared the bake switch's way: the node's value
+	// is handed to the publisher's keep rule, so a config that writes nothing is
+	// not reported as a difference — nil would read as one against a node that
+	// states either answer — while a written false against a node that says
+	// nothing (or true) is exactly the edit this stage exists to carry.
+	if lc.Triage != nil {
+		add("triage", lc.TriageEffective(p.Triage), p.Triage, false)
+	}
 	// The orchestrator block is compared by the publisher's own keep rule
 	// (D1239, D1234): a config that states a block that sets a key differs from
 	// a node carrying another — or none — so a guardrail-only edit reaches the

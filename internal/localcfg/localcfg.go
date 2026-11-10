@@ -291,6 +291,28 @@ type Config struct {
 	// are one statement, and only a written false has anything to say
 	// (BakeReposEffective).
 	BakeRepos *bool `yaml:"bake_repos,omitempty"`
+	// Triage is whether a review round's findings are judged by the triage
+	// stage at all (D1854, D1851): the stage weighs the findings the table
+	// would have blocked (D1848), so turning it off is the looser direction and
+	// the key here is the switch's second home beside a repository's own
+	// fugaro.yaml `agent.triage`. It is the owner's policy, written here and
+	// never in fugaro.yaml, and `fugaro update`'s policy stage publishes it into
+	// the published policy node, where the runner reads it. It travels the bake
+	// switch's way and for the floor's reason: the judgement decides which
+	// findings hold a pull request back, so a launcher who could write the
+	// switch into the runs bucket's shared file would be waving every
+	// teammate's runs past a finding the owner meant to block. Shared nils it
+	// and ParseShared refuses the key.
+	//
+	// A repository may turn the stage off for itself (config.Agent.Triage, read
+	// from the base branch) and may never turn it back on under a node that
+	// turned it off: the two answers merge tighter-only (policy.Merge), so off
+	// stands wherever it is written and on is the state of saying nothing.
+	//
+	// An absent key is a machine whose file has nothing to say about the stage
+	// and must not turn it back on for the project (TriageEffective); a written
+	// false is the switch.
+	Triage *bool `yaml:"triage,omitempty"`
 	// Orchestrator is the owner's block of the orchestrator daemon's own
 	// guardrails (D1239, D1234): how many runs it may have running at once, how
 	// many it launches in one batch, the rate it may spawn at, and the model
@@ -1824,6 +1846,25 @@ func (c *Config) ImageMapEffective(published map[string]string) map[string]strin
 func (c *Config) BakeReposEffective(published *bool) *bool {
 	if c.BakeRepos != nil {
 		return c.BakeRepos
+	}
+	return published
+}
+
+// TriageEffective is the keep rule for the triage switch, stated here beside
+// the field for the verifier list's and the catalog's reason (D1854): this
+// file's answer when it writes one, and the published node's otherwise — so a
+// machine whose config predates the key does not publish a node that turns the
+// judge back on for every run of the project. The cost of the other reading is
+// the floor's, one direction over: a machine whose config says nothing about
+// the stage would be turning a decision the owner made back on.
+//
+// The answer is a pointer for the bake switch's reason: absent and true are one
+// statement to every reader (config.Agent.TriageOn reads an absent key as on in
+// the two modes that triage at all), so only a written false has anything to
+// say and the publisher omits the member when the answer is nil.
+func (c *Config) TriageEffective(published *bool) *bool {
+	if c.Triage != nil {
+		return c.Triage
 	}
 	return published
 }
