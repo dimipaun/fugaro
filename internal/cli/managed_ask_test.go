@@ -555,6 +555,12 @@ func TestUpdateAskInAProjectThatIsNotManagedIsANoOp(t *testing.T) {
 
 				_, _ = updateRun(t, r, "update") // the rig settled
 				before := len(r.ran(t, "apply"))
+				// Both runs the comparison is between get a log name of their
+				// own: the settled run above took the only one there was, and a
+				// converge without a log cuts nothing on its screen (report.Brief
+				// is the log's), so the unflagged run would be the one the flag
+				// is read against with its rows whole.
+				freeLogName(t)
 				plain, _ := updateRun(t, r, "update")
 				freeLogName(t)
 				mid := len(r.ran(t, "apply"))
