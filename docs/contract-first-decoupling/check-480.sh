@@ -30,7 +30,9 @@
 #   dependent     that run has opened a pull request, and the branch head before
 #                 the follow-up is known;
 #   amendment     the base branch's copy of the contract file differs from the
-#                 branch's, so there IS an amendment to meet;
+#                 branch's — both branches fetched from origin, and the branch's
+#                 head checked against the one the run row names — so there IS an
+#                 amendment to meet;
 #   instructions  the text this check sends names the contract file and carries
 #                 no line of the contract's body — instructions are trusted text,
 #                 so a contract pasted into them is plan text the runner acts on
@@ -448,19 +450,33 @@ read_dependent() {
 # measured here is that it exists: the base branch's copy of the contract file
 # differs from the branch's, so the follow-up has something to take. With nothing
 # amended the check stops before it spends a run.
+#
+# Both heads are fetched, and the branch's copy is read at the fetched head rather
+# than at the commit the run row names: a commit this checkout never fetched makes
+# `git show` fail, which reads as "the branch has no copy of it" — so the guard
+# would pass a base the contract was never amended on and spend a run measuring
+# nothing. The remote's head is compared with the row's for the same reason: they
+# are the same commit or the branch has moved since the run, and a diff taken
+# across the two would answer about a branch state that was never the premise.
 read_amendment() {
+  local branch_head
   AMENDED_HEAD=$(fetch_ref "$BASE") \
     || stop "Check 480 stopped: branch '$BASE' could not be fetched from origin ($(tr '\n' ' ' <"$SCRATCH/fetch.err"))"
   if ! git -C "$ROOT" show "$AMENDED_HEAD:$CONTRACT_FILE" >"$SCRATCH/contract.base" 2>/dev/null; then
     stop "Check 480 stopped: the contract file $CONTRACT_FILE is not on $BASE ($AMENDED_HEAD), so there is no amended contract for the follow-up to conform to. Amend it on $BASE and push, then run this check again"
   fi
+  branch_head=$(fetch_ref "$BRANCH") \
+    || stop "Check 480 stopped: branch '$BRANCH' could not be fetched from origin ($(tr '\n' ' ' <"$SCRATCH/fetch.err"))"
+  if [ "$branch_head" != "$BEFORE_HEAD" ]; then
+    stop "Check 480 stopped: $BRANCH is at $branch_head on origin and the run the plan names pushed $BEFORE_HEAD — the branch has moved since that run, so what the follow-up would continue is not the branch this check measured. Re-run the check"
+  fi
   local before_note="the branch had no copy of it"
-  if git -C "$ROOT" show "$BEFORE_HEAD:$CONTRACT_FILE" >"$SCRATCH/contract.before" 2>/dev/null; then
+  if git -C "$ROOT" show "$branch_head:$CONTRACT_FILE" >"$SCRATCH/contract.before" 2>/dev/null; then
     if cmp -s "$SCRATCH/contract.base" "$SCRATCH/contract.before"; then
-      fact amendment FAIL "the contract file $CONTRACT_FILE is the same on $BASE ($AMENDED_HEAD) and on the branch ($BEFORE_HEAD): there is nothing amended for the dependent to meet, so this check has nothing to measure and sends no run. Amend the contract on $BASE and push it first"
+      fact amendment FAIL "the contract file $CONTRACT_FILE is the same on $BASE ($AMENDED_HEAD) and on the branch ($BRANCH at $branch_head, both fetched): there is nothing amended for the dependent to meet, so this check has nothing to measure and sends no run. Amend the contract on $BASE and push it first"
       stop "the contract is not amended on $BASE. This check measures a launched dependent meeting an amendment, and with nothing amended there is nothing to meet"
     fi
-    before_note="the branch's copy at $BEFORE_HEAD differs"
+    before_note="the branch's copy at $branch_head differs"
   fi
   fact amendment PASS "$CONTRACT_FILE differs between $BASE ($AMENDED_HEAD) and the branch ($before_note), so there is an amendment to take; this check committed and pushed none of it"
 }
