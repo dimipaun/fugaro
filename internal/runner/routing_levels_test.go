@@ -226,8 +226,14 @@ func TestStageRoleAgreesWithConfig(t *testing.T) {
 // (mixedDefaultAccount, and stageSpec is the set the gateway admits for it).
 // A stage read as the coder's would be refused there after the launch had
 // admitted it, or run on a model the reviewer's account does not serve.
+//
+// The slot is only half of it: triage runs the *level's* model where a layer
+// pins one (D1848), which is what config.MixedStageModel answers for it, so a
+// pinned level 2 has to move the senior review and the triage that follows it
+// together — or the launch and the job set admit the stage's Claude account on
+// a model the run's ladder then judges on another.
 func TestRoutingTriageRunsTheReviewersModel(t *testing.T) {
-	const coder, reviewer = "claude-sonnet-5-5", "claude-opus-5"
+	const coder, reviewer, level2 = "claude-sonnet-5-5", "claude-opus-5", "deepseek/chat"
 	a := config.Agent{Models: config.ModelRoles{Coder: coder, Reviewer: reviewer}}
 	r := levelsRun(a, nil)
 	if got := r.stageModel("triage"); got != reviewer {
@@ -241,6 +247,30 @@ func TestRoutingTriageRunsTheReviewersModel(t *testing.T) {
 	}
 	if got, want := r.stageModel("triage"), config.MixedStageModel(a, "triage"); got != want {
 		t.Errorf("the run's model for triage = %q and the launch's = %q: rung 4 and the launch judge the stage on one model", got, want)
+	}
+
+	pinned := config.Agent{
+		Models: config.ModelRoles{Coder: coder, Reviewer: reviewer},
+		Levels: config.ReviewLevels{L2: &config.LevelSetting{Model: level2}},
+	}
+	pr := levelsRun(pinned, nil)
+	if got := pr.stageModel("review"); got != level2 {
+		t.Errorf("stageModel(review) = %q, want level 2's own model %q", got, level2)
+	}
+	if got := pr.stageModel("triage"); got != level2 {
+		t.Errorf("stageModel(triage) = %q, want level 2's own model %q: the senior review and the triage that follows it run one model", got, level2)
+	}
+	if got := pr.stageSpec("triage").Model; got != level2 {
+		t.Errorf("the gateway's model for triage = %q, want level 2's %q: the set the stage's calls are admitted under has to name the model the launch judged it on", got, level2)
+	}
+	if got, want := pr.stageModel("triage"), config.MixedStageModel(pinned, "triage"); got != want {
+		t.Errorf("the run's model for triage = %q and the launch's = %q: a pinned level 2 moves both or neither", got, want)
+	}
+	// The level's pin slot is the review stage's and stays one per level
+	// (pinSlots): triage runs level 2's model without owning a slot of its own,
+	// and a reviewStage entry for it would write that level's model twice.
+	if got, want := len(pr.pinSlots()), len(r.pinSlots()); got != want {
+		t.Errorf("a run with a pinned level 2 has %d pin slots and one without has %d: a level's own slot is one per level", got, want)
 	}
 }
 

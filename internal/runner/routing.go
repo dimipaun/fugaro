@@ -441,6 +441,15 @@ func (r *run) pinSlots() []pinSlot {
 // puts in the plan after the review step.
 const stageAdversarial = string(recipe.StepAdversarial)
 
+// stageTriage is the triage stage's name: the judge that weighs a review
+// round's findings before the fix round takes them (D1851, D1854). The runner
+// does not run the stage yet — T-TR6 and T-TR7a/T-TR7b do — and the ladder has
+// to answer for it already, because it is a stage of a mixed run
+// (config.MixedAccountStages): which model it runs is what rung 4 judges the
+// stage's Claude account on (mixedDefaultAccount), against the model the
+// launch and the job set admitted that account on.
+const stageTriage = "triage"
+
 // reviewStage is one review level's stage: the name the runner opens it
 // under, the level it is, and the role slot it pins when no layer names it a
 // model of its own.
@@ -475,12 +484,34 @@ func stageRole(stage string) config.Role {
 	return config.StageRole(stage)
 }
 
-// stageModel is the model a stage runs: the review level's own model when the
-// stage is a review stage a layer named one for, and the role slot's
-// otherwise.
-func (r *run) stageModel(stage string) string {
+// stageLevel is the review level whose own model a stage runs (L4.5): the
+// level of a review stage, and level 2's for the triage stage.
+//
+// triage is deliberately not one of reviewStages. It runs no review step of
+// its own — config.IsReviewStage leaves it out — and a level's pin slot
+// belongs to the review stage that runs in it (pinSlots), so an entry for
+// triage would give level 2 a second slot and write that level's model twice.
+// What it does share with the senior review is the level it runs: D1848 gives
+// it level 2's model, and config.MixedStageModel — the answer the launch
+// (mixedStageAccount, internal/cli) and the job set (internal/infra) admit a
+// stage's Claude account on — reads that same level for it. A stage answering
+// only its role slot would be judged by rung 4 on a model the launch never
+// saw, which is the drift rung 4 exists to close.
+func stageLevel(stage string) (policy.Level, bool) {
 	if s, ok := reviewStageOf(stage); ok {
-		if m := r.levelModel(s.level); m != "" {
+		return s.level, true
+	}
+	if stage == stageTriage {
+		return policy.LevelL2, true
+	}
+	return "", false
+}
+
+// stageModel is the model a stage runs: the level's own model when the stage
+// runs a review level a layer named one for, and the role slot's otherwise.
+func (r *run) stageModel(stage string) string {
+	if level, ok := stageLevel(stage); ok {
+		if m := r.levelModel(level); m != "" {
 			return m
 		}
 	}
