@@ -205,6 +205,69 @@ func TestPerSecretBeforeBundle(t *testing.T) {
 	})
 }
 
+// TestPerSecretCandidateIsProbed is R6's order on the probe's own path (C1.12):
+// a backed-off per-secret candidate is asked whether it works before real work
+// is routed to it, exactly as a bundle one is, and it is asked WITH the
+// container's value — the credential the call itself would be served by.
+//
+// The probe resolves the candidate the way the call does, and that is the whole
+// of this test: a probe that looked the candidate up in the bundle under its own
+// name would find nothing there (no bundle entry is named by the grammar), so it
+// would not be made at all. The mark would then never move, and the run would be
+// answered the floor — fifteen seconds ahead of itself — on every attempt, which
+// is the loop waitFloor exists to bound and not to cause: a rotated credential
+// whose wait had passed would never be asked and its run would burn its budget
+// waiting for a probe nobody makes.
+//
+// Mutation (run, restore): resolve the probe's credential with b.Lookup(c.Name)
+// instead of s.resolveEntry (probe.go's probeDue). This test is red: the call is
+// answered the typed wait and the upstream sees no probe.
+func TestPerSecretCandidateIsProbed(t *testing.T) {
+	s := newPerSecretSvc(t)
+	name := mustUserName(t, testLauncherSub, testAccount)
+	rotated := fakeCred(t, "rotated")
+	s.dyn.values[name] = rotated
+	// The state a probe is owed for: a backed-off mark whose own wait has passed.
+	s.backedOff(name, s.now.Add(-time.Hour), creds.DefaultBackoffInitial)
+	s.up.Script = []anthropicfake.Reply{
+		{Status: http.StatusOK, Body: `{"type":"message","probe_answer":"probe-answer"}`},
+		anthropicfake.MessageOK(testModel, testUsage),
+	}
+
+	rec, _ := s.serve(t, creds.Credential{Name: name, Tier: creds.TierA})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the answer is %d, want the upstream's 200: a probe that is not made leaves the run waiting for one (%s)", rec.Code, rec.Body)
+	}
+	if got := s.up.Count(); got != 2 {
+		t.Fatalf("the upstream saw %d requests, want the probe and then the run's call", got)
+	}
+	seen := s.up.Seen()
+	if got, want := seen[0].Header.Get("Authorization"), "Bearer "+rotated; got != want {
+		t.Errorf("the probe carried %q, want the container's %q: the probe is made with the credential the call is served by (R6)", got, want)
+	}
+	if got, want := seen[1].Header.Get("Authorization"), "Bearer "+rotated; got != want {
+		t.Errorf("the call carried %q, want %q", got, want)
+	}
+	if m, ok := s.state.mark(name); ok {
+		t.Errorf("the mark is still %+v after a probe that worked: a mark that does not move is a probe that was not made", m)
+	}
+	line, ok := probeLine(t, s.auditLog)
+	if !ok {
+		t.Fatal("a probe wrote no audit line")
+	}
+	checkAuditShape(t, line)
+	for field, want := range map[string]any{
+		"purpose":    PurposeProbe,
+		"credential": name,
+		"tier":       TierA,
+		"status":     StatusOK,
+	} {
+		if got := line[field]; got != want {
+			t.Errorf("the probe's audit line %s = %v, want %q", field, got, want)
+		}
+	}
+}
+
 // TestBundleEntryStillServes is R7's fall, and it is what makes a rotation safe
 // to do at all: a per-secret name whose container is not there — nothing
 // written under it, or a version not yet written — is served by the bundle's
