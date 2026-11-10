@@ -25,9 +25,6 @@ const (
 	ReviewRounds Dimension = "review_rounds"
 )
 
-// Dimensions lists the four, in the order a report prints them.
-func Dimensions() []Dimension { return []Dimension{USD, Tokens, Time, ReviewRounds} }
-
 // Amount is one dimension's figure, in that dimension's own unit and never
 // converted between dimensions: micro-dollars for USD (the unit the ledger
 // keeps money in, so a chain's sum is exact), whole tokens for Tokens,
@@ -165,7 +162,7 @@ func ResolveChain(ctx context.Context, s *Store, ledgers LedgerReader, perRun Pe
 	if from == "" {
 		return nil, errors.New("runstore: a chain read needs the run it resolves from")
 	}
-	c := &Chain{Enforced: ledgers != nil, used: make(map[Dimension]Figure, len(Dimensions()))}
+	c := &Chain{Enforced: ledgers != nil, used: make(map[Dimension]Figure, 4)}
 
 	// Walk the link back from the run the caller named, newest first.
 	var ids []string
