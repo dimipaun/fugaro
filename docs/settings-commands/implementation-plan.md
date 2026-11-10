@@ -24,10 +24,14 @@ first slice is S0–S3.**
   `fugaro.yaml`. Its scope also carries **the one operation S7 cannot do without**: setting a key to
   an **empty mapping** — `review_floor: {}`, written as a mapping node and never as the string
   `"{}"` — and expanding a flow `{}` back into a block mapping when the first entry is written again
-  (S7's `set` after the last `unset`). `internal/yamledit` does not exist yet; the package and the
-  task that lands it are named, and neither is assumed present. **Its owning task is the editor
-  task, and it lands first in the joint order below**; S5–S9 call it, and **no task here writes a
-  second editor** (D847).
+  (S7's `set` after the last `unset`). **The package landed (2026-11-01, #1467 and #1501) and E3 is
+  not done**: it carries the generic operations above — set a scalar, remove a key, add or remove a
+  list item, upsert or remove a sequence item by key — and **neither of the two this bullet names**.
+  An empty `{}` is refused outright (`internal/yamledit/flow.go`: "nothing is written into a
+  collection with no members"), and no operation expands a flow mapping back into a block mapping, so
+  a `review_floor` of nothing cannot be written today and S7 still owes both operations to the shared
+  editor rather than to a fourth copy elsewhere. **Its owning task is the editor task, and it landed
+  first in the joint order below**; S5–S9 call it, and **no task here writes a second editor** (D847).
 - **Files other work owns:** registering the commands in `internal/cli/root.go`, the generated
   `website/content/cli-reference.md`, `plugin/**`, `console/**` and `docs/releases/**` are each
   another work stream's at the time of writing. S1, S10 and every task that adds a command name them,
@@ -45,7 +49,8 @@ first slice is S0–S3.**
 
 **The joint order**, agreed with the `models` and `rigor` designs and the same list in all three:
 **editor → policy stage (S3) → settings read (S0–S2, S4) → layer stage (R0, R1) → set (S5) → rigor
-(R2–R5) and models.**
+(R2–R5, closed on 2026-11-10 to config-management's G0–G2 with G4 and its G6, which build them) and
+models.**
 
 | # | What lands | Owner | Why it sits here |
 | --- | --- | --- | --- |
@@ -54,7 +59,7 @@ first slice is S0–S3.**
 | 3 | The settings read | **S0–S2, S4** | useful before every writer, and it is what makes G1, G2 and G5 visible today |
 | 4 | The layer stage, and the local layer file it publishes | the `rigor` design's **R0, R1** | `settings set --layer project` (S5) needs both the file and its publisher |
 | 5 | `fugaro settings get\|set\|unset` | **S5** | the first writer over all three documents; it comes after 2 and 4 because its `next: fugaro update` line is false until both stages publish |
-| 6 | `fugaro rigor …` (R2–R5) and the `models` writes | the `rigor` and `models` designs | they reuse the editor and both stages, and their keys reach runs through the stage of 2 |
+| 6 | `fugaro rigor …` and the `models` writes | config-management (**G0–G2** with **G4** and **G6**, which build the commands the `rigor` design's R2–R5 designed and the owner closed as their duplicates on 2026-11-10) and the `models` design | they reuse the editor and both stages, and their keys reach runs through the stage of 2 |
 
 ### The files the two designs share
 
@@ -65,14 +70,14 @@ same sentence from its side; neither plan may write "the file exists by then".
 
 | File | Who writes it, in order | Who else touches it | What keeps it one file |
 | --- | --- | --- | --- |
-| `internal/yamledit/*.go` | the editor task (**E3**, position 1) creates it | S5, S6, S7, S8, S9 add an operation **only if one is missing**; the `rigor` design's **R2, R4, R5** call the same package | one editor, generic operations (set a scalar, remove a key, add or remove a list item, upsert or remove a sequence item by key), and D847's cross-document test that all three documents preserve comments, key order and untouched bytes the same way. A second splice written by hand fails the review, not a test |
+| `internal/yamledit/*.go` | the editor task (**E3**, position 1) created it | S5, S6, S7, S8, S9 add an operation **only if one is missing**; config-management's **G0–G2** with **G4** and its **G6** call the same package (the `rigor` design's R2, R4 and R5, closed 2026-11-10, were the callers it was written for) | one editor, generic operations (set a scalar, remove a key, add or remove a list item, upsert or remove a sequence item by key), and D847's cross-document test that all three documents preserve comments, key order and untouched bytes the same way. A second splice written by hand fails the review, not a test |
 | `internal/settings/registry.go` | **S0** creates it (position 3's first task) | S1, S2 and S4 add the cloud and `layer.*` rows; S6–S9 add a row for a key they introduce | one row per key, and every row names the constant that holds the default rather than restating it — `internal/rigor`'s `rigor.Default` for the mode floors, `config`'s constants for the rest. The `rigor` design **reads** this file and writes none of it: its keys' rows land here |
 | `internal/cli/settings_read.go`, `settings_render.go`, `settings_cloud.go` | **S1**, **S2**, **S4** (positions 3 and 4 of the order) | this design only | the read has one implementation and the dedicated families (`rigor show`, `config layer`, `accounts ls`, `secrets ls`) print their own narrow tables. What crosses to the `rigor` design is a rule, not code: the `unpublished` word and `unknown (no checkout on this machine)` |
-| `internal/cli/settings_write.go` | **S5** creates it (position 5) | S6–S9 (this plan) and the `rigor` design's **R4 and R5**, which call it — #1463's plan names it "the shared write helper settings S5 lands" | the five helpers — the diff, the confirmation with the typed project name, the agent-session refusal, `backupFile`, `writeFileAtomic` — exist once. It is why R4 and R5 sit after S5 in the joint order: a second copy is the thing their plans and this one both forbid |
+| `internal/cli/settings_write.go` | **S5** creates it (position 5) | S6–S9 (this plan) and config-management's **G6**, which calls it — #1463's plan names it "the shared write helper settings S5 lands", and the `rigor` design's R4 and R5, closed 2026-11-10, were its callers there | the five helpers — the diff, the confirmation with the typed project name, the agent-session refusal, `backupFile`, `writeFileAtomic` — exist once. It is why G6 sits after S5 in the joint order: a second copy is the thing its plan and this one both forbid |
 | `internal/cli/project_cmd.go` | **S3** (the agent refusal `project policy publish` lacks, SD8) | **S6** (`buildProjectPolicy` takes `credentials.*` and `clone_urls` from the local config), **S9** (the routing silence rules, shared with the publisher); the `models` design's E1 owns the policy node's build | one `buildProjectPolicy`. `TestUpdateStageAndTheExplicitDoorBuildTheSameNode` is the guard: the stage and the explicit door produce the same bytes from one local config, so a second build path cannot appear quietly |
 | `internal/cli/init_policy_publish.go` | **S3** creates it | this design only | it is the policy node's half of the pair. The layer's half is #1463's `internal/cli/init_layer_stage.go`: two objects, two stages, and neither file holds the other's write |
 | `internal/cli/init_stages.go` | **S3** adds the publish to the `Policy` stage's work | the `rigor` design's **R1**, which adds its `Layer` stage to the same list | **the one file both designs edit.** The stages are registered in one list, each design adds its own entry and reorders nothing; S3 is position 2 and R1 is position 4, so whoever lands second rebases onto a list that already has the other's entry. Two stages, not one stage doing both writes: publishing the layer from the policy stage would put the layer's seeding rules under the policy stage's confirmation |
-| `internal/cli/rigor.go` | **whichever of the `rigor` design's R3 and this design's S7 lands first** creates the group | the other adds its own subcommand — `floor` for S7, `set`/`unset`/`show` for R3 | both plans state this sentence; neither may write "the group exists by then". The group holds no key logic of its own, so it is a registration list and not a second place for a rule |
+| `internal/cli/rigor.go` | **whichever of config-management's G6, its G7 and this design's S7 lands first** creates the group | each of the others adds its own subcommand — `set`/`unset` for G6, `floor` for S7 and for G7 (**the same command, an overlap the owner has not settled**); the `rigor` design's R3–R5, closed as duplicates on 2026-11-10, designed those and named this file first | all **three** plans state this sentence — this one, config-management's (G6's and G7's Files lines) and #1463's — and none may write "the group exists by then". The group holds no key logic of its own, so it is a registration list and not a second place for a rule. Who of the three creates it is left to whoever lands first: the ruling of 2026-11-10 reports that overlap rather than deciding it |
 | `internal/rigor/*.go` | the `rigor` design's own tasks | nobody here writes it: S0's rows **read** `rigor.Default` and the mode floors as the constants they already are | the floor's semantics live where the resolver is. A default copied into a registry row would be the fourth copy F12 is about |
 
 ## Gates (every task)
@@ -261,11 +266,13 @@ outside every repository, which is why the agent-session refusal is here.
 
 - **Files (7):** `internal/cli/settings_set.go` (new), `internal/cli/settings_set_test.go` (new),
   `internal/cli/settings_write.go` (new: diff, confirmation, agent refusal, `backupFile`,
-  `writeFileAtomic` — shared with S6–S9 **and with the `rigor` design's R4 and R5**, which write
-  their floors and modes through the same helpers rather than a fourth copy of the triple),
+  `writeFileAtomic` — shared with S6–S9 **and with config-management's G6**, which writes its modes
+  through the same helpers rather than a fourth copy of the triple; the `rigor` design's R4 and R5,
+  closed as G6's duplicates on 2026-11-10, were the callers it was written for),
   `internal/cli/settings_write_test.go` (new),
   `internal/cli/settings.go`, `internal/yamledit/*.go` (only if an operation this task needs is
-  missing from the shared editor — the editor task owns that package and lands it first) and
+  missing from the shared editor — the editor task owns that package and landed it first, on
+  2026-11-01, #1467 and #1501) and
   `internal/yamledit/edit_test.go` (D847's cross-document test, same condition).
 - **Red step:** `TestSettingsSetRefusesAKeyOwnedByAnotherFamily` fails while the subcommand does not
   exist.
@@ -332,8 +339,8 @@ A floor, and its semantics are subtle: an absent key and a written `{}` mean dif
 publish.
 
 - **Files (5):** `internal/cli/rigor_floor.go` (new), `internal/cli/rigor_floor_test.go` (new),
-  `internal/cli/rigor.go` (**the group: whichever of the `rigor` design's R3 and this task lands
-  first creates it, and the other uses it**), `internal/yamledit/*.go` (the `review_floor` operations,
+  `internal/cli/rigor.go` (**the group: whichever of config-management's G6 and G7 and this task
+  lands first creates it, and the others use it**), `internal/yamledit/*.go` (the `review_floor` operations,
   only if they are missing from the shared editor), `internal/cli/settings_write.go` (the shared write
   path).
 - **Red step:** `TestRigorFloorSetWritesTheModeFloor` fails while the subcommand does not exist.

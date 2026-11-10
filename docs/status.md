@@ -1,6 +1,6 @@
 # Fugaro: status of every spec under docs/
 
-As of 2026-11-10, read from `main`, the open pull requests and each plan's task list (not from the plans' own status lines, which are stale in about 30 folders). Counts come from commit titles and file checks; "about" marks the approximate ones. **Owner-run** means a live check or step that only the owner performs. Where a folder's own status line disagrees with its row here, the row is the current one.
+As of 2026-11-10, read from `main`, the open pull requests and each plan's task list (not from the plans' own status lines, which are stale in about 30 folders). Counts come from commit titles and file checks; "about" marks the approximate ones. **Owner-run** means a live check or step that only the owner performs. Each folder's README links to this page for its current state.
 
 ## Done
 
@@ -21,6 +21,8 @@ As of 2026-11-10, read from `main`, the open pull requests and each plan's task 
 | failure-classes | owner Check 350 |
 | website | W3.3 explainer video (parked), owner Check 69 |
 | cloud-senior-review | CSR1 to CSR16 done; CSR17 and CSR18 moved to api-key-review |
+| coordinator | 7/9; P7 and P8 re-planned under mcp-server |
+| in-job-review | historical; delivered through cloud-senior-review, review-levels and api-key-review |
 | how-to | not a spec |
 
 ## In progress, close to done
@@ -61,7 +63,8 @@ As of 2026-11-10, read from `main`, the open pull requests and each plan's task 
 | security-classification | 6/11 | SC3, SC5, SC9 to SC11 |
 | settings-commands | about 6/12 | S6 to S11 |
 | rigor-modes | about 22/40 | T7.1, T7.2, T8.1, T8.3; overlay plan LV1 to LV7 essentially unstarted |
-| rigor-command | 2/10 | R2 to R8 |
+| roles-scopes | 3/12 | RS3 (draft #1994), RS4, RS5, RS6a to RS6c, RS7, RS8, RS10; RS5 (`fugaro user`) not started |
+| rigor-command | 3/10 | R6, R7, W; R2 to R5 closed 2026-11-10 as duplicates of the two winning plans |
 | review-levels-ab-jobmax | about 24/40 | A/B reviewer slot, `/jobmax` skill, `auto_launch` |
 | forge-authorship-images | about 9/25 | about 16, much overlapping image-setup |
 | go-to-market | 4/12 | the cost-estimate half (`fugaro estimate`) |
@@ -70,7 +73,6 @@ As of 2026-11-10, read from `main`, the open pull requests and each plan's task 
 | task-governance | 23/31 | 8 left, all in `ee/governance` |
 | bitbucket-workspace-token | 7/13 | T2.2, T2.4, T2.6, T2.9, owner checks; the proxy chain probably makes T2.2 and T2.9 moot |
 | compatibility-matrix | 1/4 | CM2 (page), CM3, CM4 |
-| roles-scopes | 3/12 | RS3 to RS8, RS10; RS12 is later and not planned here |
 
 ## To do, parked or superseded
 
@@ -82,12 +84,10 @@ As of 2026-11-10, read from `main`, the open pull requests and each plan's task 
 | run-without-checkout | 0/8; its releases shipped without it |
 | composite-commands | 1/10; depends on no-prompt-policy |
 | central-orchestrator | superseded by stateless-orchestrator |
-| coordinator | 7/9; P7 and P8 re-planned under mcp-server |
 | windows-cli | 10/31; superseded by console-windows |
 | mobile-auth | 2/7; parked |
-| repo-image-removal | 2/11; parked by image-setup (D1900) |
-| in-job-review | historical; delivered through other folders |
-| voice-module, backlog, plans | no plan or not a spec |
+| repo-image-removal | **PARKED** (2/11; parked by image-setup, D1900) |
+| voice-module, collateral, backlog, plans | no plan or not a spec |
 
 ## Open points
 
