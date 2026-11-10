@@ -66,7 +66,7 @@ As of 2026-11-10, read from `main`, the open pull requests and each plan's task 
 | roles-scopes | 3/12 | RS3 (draft #1994), RS4, RS5, RS6a to RS6c, RS7, RS8, RS10; RS5 (`fugaro user`) not started |
 | rigor-command | 3/10 | R6, R7, W; R2 to R5 closed 2026-11-10 as duplicates of the two winning plans |
 | review-levels-ab-jobmax | about 24/40 | A/B reviewer slot, `/jobmax` skill, `auto_launch` |
-| forge-authorship-images | about 9/25 | about 16, much overlapping image-setup |
+| forge-authorship-images | 9/25 (A1, A2a, A2b, A3, A4, C3, C4, C7, E1); C8's C8a built; E0 closed as superseded (roles-scopes) | 15; the image-setup overlap is C6 and C8's C8b/C8c, not about 16 — [reconciliation-image-setup.md](forge-authorship-images/reconciliation-image-setup.md) |
 | go-to-market | 4/12 | the cost-estimate half (`fugaro estimate`) |
 | model-ab-testing | 3/18 | the sampler and the pair launch |
 | mobile | about 35/45 | P5.x, P7.2 to P7.5; owner P2.3 and P4.4 |

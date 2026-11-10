@@ -1,6 +1,6 @@
 # Forge, authorship and images
 
-**Status as of 2026-11-10: in progress, about 9/25 merged; see [docs/status.md](../status.md) for the current table.** *The status as first written, kept:* **Status: plan only; nothing is implemented;
+**Status as of 2026-11-10: 9/25 merged (A1, A2a, A2b, A3, A4, C3, C4, C7, E1), 1 closed as superseded (E0, by [docs/roles-scopes](../roles-scopes/)), 15 open — C8's C8a built, C8b/C8c open; the image-setup overlap is four tasks (C3, C4, C6, C8), not sixteen, per [reconciliation-image-setup.md](reconciliation-image-setup.md); see [docs/status.md](../status.md) for the current table.** *The status as first written, kept:* **Status: plan only; nothing is implemented;
 no task is approved.** Decisions D600–D649 are
 **answered** (2026-10-29): every answer is the recommendation except D618, where the owner chose
 shared images across repos, scoped to repos with an identical resolved dependency set (plan C7 and
@@ -16,6 +16,7 @@ owner. **Reconciled against** `origin/main` at `c192e8766` (2026-10-28).
 | [spec.md](spec.md) | The owner's spec, as received, with the name substitutions below |
 | [reconciliation.md](reconciliation.md) | Findings F1–F46 against the code, decisions D600–D649 (answered 2026-10-29), resolutions R1–R4, tensions T1–T6, open items O1–O6, UNVERIFIED U1–U8. **Where it disagrees with `spec.md`, it wins** |
 | [implementation-plan.md](implementation-plan.md) | Slices A (authorship and trailers), B (forge), C (repositories and images, including shared images by dependency-set hash), D (change sets, `ee/`), E (people and tokens), and X1 (the live-check entries); C2, E2 and E3 withdrawn in review; levels L0–L7, the critical path, the shared-files table, Checks 230–235 (233 withdrawn). **Nothing in it is approved** |
+| [reconciliation-image-setup.md](reconciliation-image-setup.md) | The owner's ask of 2026-11-10: every task here against [docs/image-setup-skill](../image-setup-skill/) and the merged code — **9 merged, 1 closed as superseded (E0), 15 open**, the image overlap named task by task (C3, C4, C6, C8), and decisions **D650–D659** for the owner. **Where it disagrees with `implementation-plan.md` about a task's state, it wins** |
 | [shared-images.md](shared-images.md) | The design task C7 asks for and C8 builds: the normalised dependency-set key and what it ignores, the lock under `builds/` and its concurrency, superset reuse and its supply-chain cost, propose-then-confirm on a divergence, the per-repository job update, `fugaro image ls`, the cap warning and the retention clean-up. **C8a is built** (2026-10-30); the cap (**20**, a warning and never a refusal), `images.retention_days` = 30 and the C3/C4 question are ruled (2026-10-29); the job's clone shape is still open |
 
 ## The only deviation from "verbatim"
@@ -38,5 +39,5 @@ No typo was fixed; nothing else was changed.
 
 | Block | Use |
 | --- | --- |
-| **D600–D679** | this work's block. **D600–D649** written (all answered 2026-10-29; D640–D645 added in review round 1, D646–D648 in round 2, D649 in round 3); **D650–D679** reserved and unused. Above the highest decision on `main` (D549, ee-reorg's reserved block D520–D549); no open PR's docs use D600–D679. Another spec reconciliation running at the same time takes its numbers from D550 and Check 210, below this block (it does not reach D600 or Check 230) |
+| **D600–D679** | this work's block. **D600–D649** written (all answered 2026-10-29; D640–D645 added in review round 1, D646–D648 in round 2, D649 in round 3); **D650–D659** written by [reconciliation-image-setup.md](reconciliation-image-setup.md) on 2026-11-10, **awaiting the owner's answers**; **D660–D679** reserved and unused. Taken on 2026-10-28 above the highest decision then on `main` (D549, ee-reorg's reserved block D520–D549), and re-checked on 2026-11-10 when D650–D659 were written: the highest decision on `main` is now D1959 (secrets-brokering/dynamic-delivery's reserved block) and the highest in any open PR is D1945, so D600–D679 is still no other work's. Another spec reconciliation running at the same time takes its numbers from D550 and Check 210, below this block (it does not reach D600 or Check 230) |
 | **Checks 230–249** | this work's block. **230–232 and 234–235** proposed by the plan (written by task X1, run by the owner, NOT RUN); **233** withdrawn in review round 1 (reserved, unused); **236–249** reserved and unused. Above the highest check on `main` (201) |
