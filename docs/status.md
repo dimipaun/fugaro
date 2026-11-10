@@ -35,7 +35,7 @@ As of 2026-11-10, read from `main`, the open pull requests and each plan's task 
 | licensing | 17/23 | owner-run only |
 | credentials-service | about 32/36 | owner checks; Check 96 holds C2.3 |
 | console-dependency-graph | 13/17 | GV3.1, GV3.2, GV4.1 |
-| bitbucket-credentials | 9/12 | T2.6, T2.11; owner Checks 149 and 145; S3 superseded by the secrets-brokering proxy chain (2026-11-10) |
+| bitbucket-credentials | 9/12 | T2.6, T2.11; owner Checks 149 and 145; S3 superseded by the secrets-brokering proxy chain (2026-11-10), except T3.3's trust paths and T3.8's read half, which are kept; D1960–D1962 open (its reconciliation-secrets-brokering.md) |
 
 ## In progress, a lot left
 
@@ -71,7 +71,7 @@ As of 2026-11-10, read from `main`, the open pull requests and each plan's task 
 | model-ab-testing | 3/18 | the sampler and the pair launch |
 | mobile | about 35/45 | P5.x, P7.2 to P7.5; owner P2.3 and P4.4 |
 | task-governance | 24/31 | 7 left: T3.4 (docs), and the rest in `ee/governance` |
-| bitbucket-workspace-token | 7/13 | T2.2, T2.4, T2.6, T2.9, owner checks; the proxy chain probably makes T2.2 and T2.9 moot |
+| bitbucket-workspace-token | 7/13 | T1.4, T2.2, T2.4, T2.6 and T2.7 left; T2.9 superseded by the secrets-brokering proxy chain (2026-11-10); T2.11's step 5 missing from the shipped notes; D1980–D1984 open (its reconciliation-secrets-brokering.md) |
 | compatibility-matrix | 2/4 | CM3, CM4; CM2 (the page) merged |
 
 ## To do, parked or superseded
@@ -91,6 +91,6 @@ As of 2026-11-10, read from `main`, the open pull requests and each plan's task 
 
 ## Open points
 
-1. Overlapping chains to settle: forge-authorship-images against image-setup, repo-image-removal (parked), and bitbucket-workspace-token against the secrets proxy chain.
+1. Overlapping chains to settle: forge-authorship-images against image-setup, and repo-image-removal (parked). **Settled 2026-11-10: bitbucket-workspace-token against the secrets proxy chain.** Each folder now carries a `reconciliation-secrets-brokering.md` reading every task against the merged chain: the workspace-token plan's T2.9 is superseded (the service decides what a run may do, and a check in the job binds nothing) and T2.2 waits for B5.1 (the chain does not make the service admit a shared job), and the credentials plan's S3 is superseded with T3.3's trust paths and T3.8's read half kept. What that reading leaves open is D1960–D1962 and D1980–D1984, each with a recommendation and an empty answer cell.
 2. Slots that passed with nothing shipped: binary-allow-rule, run-without-checkout, run-limit-carry-over, plugin-user-scope. Each needs a release slot or a decision to drop it.
 3. Pull requests #2118 and #2131 are both S3.5 (the key service's infrastructure); one is a duplicate.
