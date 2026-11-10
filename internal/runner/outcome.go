@@ -661,6 +661,16 @@ func (r *run) findingsPolicy() FindingsPolicy {
 	return pol
 }
 
+// ordinaryFindingsPolicy is that policy without the stop: the run's deciding
+// round read by the mode's own row alone, which is the split a round of the
+// run's rounds has whatever the stop later makes of it. It is what the record's
+// tolerated findings are read from, so that the stop's wider split reaches the
+// record only through the acceptance the stop actually made
+// (toleratedRecord, acceptsAtStop).
+func (r *run) ordinaryFindingsPolicy() FindingsPolicy {
+	return findingsPolicyOf(r.rigorCfg, r.reachedRigor(), r.lastSenior.Round, scoresOf(r.lastSenior.Findings), "")
+}
+
 // unreadFix is the last review round the run's record holds where the commit
 // the run publishes is not the one that round read: the fix the round's verdict
 // bought, or the work a stage after it did, is on the branch and no review
@@ -701,7 +711,21 @@ func (r *run) unreadFix() *runstore.ReviewSummary {
 // than an empty one. A run that stopped at the stop keeps the findings its stop
 // accepted here too, because that is what this field is for: the findings the
 // run's mode decided not to fix, whichever moment of the run it decided at.
-func (r *run) toleratedRecord(pol FindingsPolicy) *runstore.ToleratedFindings {
+//
+// The stop's split reaches the record only where the stop is what makes the run
+// ready (acceptsAtStop, last is the deciding round): that is the acceptance
+// Accepted states, and this block is its other half. Where the acceptance was
+// withdrawn — the commit the run publishes is one no review round read, an
+// enabled level under the decider left a finding the stop does not take, the
+// mode rose after the last round — the run's mode did not let those findings
+// through: it is a draft on them, and the split that says what it *would* have
+// let through in a round is the ordinary one. Reading the stop's split anyway
+// would file a finding the mode's own floor blocks as "tolerated by <mode>" in
+// the record and in what fugaro diagnose prints from it.
+func (r *run) toleratedRecord(pol FindingsPolicy, last *runstore.ReviewSummary) *runstore.ToleratedFindings {
+	if pol.AtStop != "" && !pol.acceptsAtStop(last) {
+		pol = r.ordinaryFindingsPolicy()
+	}
 	return runstore.NewTolerated(r.toleratedEntries(pol, r.lastSenior.Findings))
 }
 

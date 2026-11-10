@@ -336,7 +336,9 @@ func TestToleratedRecordKeepsWhatTheModeLetThrough(t *testing.T) {
 	}
 	r := &run{lastSenior: seniorRound{Round: 2, Findings: findings}}
 	pol := findingsPolicyOf(optedIn, rigor.Startup, 2, scoresOf(findings), "")
-	got := r.toleratedRecord(pol)
+	// The deciding round is the second argument because the stop reads it and
+	// these policies carry no stop: nil is the whole of what they ask it for.
+	got := r.toleratedRecord(pol, nil)
 	want := []runstore.ToleratedFinding{
 		{Title: "the retry loop has no backoff", Label: rigor.Nit, Mode: rigor.Startup, Likelihood: 1, Impact: 3, FixCost: 2, Class: rigor.Correctness},
 		{Title: "a long comment restates the function", Label: rigor.Low, Mode: rigor.Startup, Likelihood: 2, Impact: 2, FixCost: 1, Class: rigor.Cosmetic},
@@ -353,7 +355,7 @@ func TestToleratedRecordKeepsWhatTheModeLetThrough(t *testing.T) {
 	const secret = "super-secret-token"
 	r.addSecret(secret)
 	r.lastSenior.Findings = []Finding{{Summary: "the token " + secret + " is logged", Likelihood: 1, Impact: 1, FixCost: 1, Class: "correctness"}}
-	got = r.toleratedRecord(findingsPolicyOf(optedIn, rigor.Startup, 2, scoresOf(r.lastSenior.Findings), ""))
+	got = r.toleratedRecord(findingsPolicyOf(optedIn, rigor.Startup, 2, scoresOf(r.lastSenior.Findings), ""), nil)
 	if got == nil || strings.Contains(got.Findings[0].Title, secret) {
 		t.Fatalf("toleratedRecord left a credential in the record: %+v", got)
 	}
@@ -369,7 +371,7 @@ func TestToleratedRecordKeepsWhatTheModeLetThrough(t *testing.T) {
 		{"poc files nothing so it tolerates nothing", optedIn, rigor.POC},
 		{"a repository that configured nothing", rigor.Config{}, rigor.Pro},
 	} {
-		if pol := findingsPolicyOf(tc.cfg, tc.mode, 2, scoresOf(findings), ""); r.toleratedRecord(pol) != nil {
+		if pol := findingsPolicyOf(tc.cfg, tc.mode, 2, scoresOf(findings), ""); r.toleratedRecord(pol, nil) != nil {
 			t.Errorf("%s: the record kept findings the mode did not tolerate", tc.name)
 		}
 	}
@@ -576,6 +578,13 @@ func TestStopAcceptanceIsWithdrawnByARaiseAtFinalize(t *testing.T) {
 	}
 	if ac := r.acceptedRecord(pol, r.decidingReview()); ac != nil {
 		t.Errorf("the record's accepted block = %+v, want none: the run is a draft, and a block here would file a merge it did not make", ac)
+	}
+	// The tolerated block is the same withdrawal one field along: the stop's
+	// split is not what the record files once the acceptance is gone, because
+	// the finding it would have taken is one the mode's own floor blocks and
+	// the field says what the mode let through (T3.4, D9).
+	if tf := r.toleratedRecord(pol, r.decidingReview()); tf != nil {
+		t.Errorf("the record's tolerated findings = %+v, want none: the stop's acceptance was withdrawn, and the mode that rose at finalize blocks this finding", tf)
 	}
 }
 

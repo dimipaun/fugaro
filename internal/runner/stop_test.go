@@ -481,6 +481,14 @@ func TestStopAtAnOuterLoopsTopReadsTheCheapRoundsRound(t *testing.T) {
 			if ac := rec.Accepted; ac != nil {
 				t.Errorf("the record's accepted block = %+v, want none: the stop accepts a round, and this round did not read what ships", ac)
 			}
+			// The tolerated block is the mode's own split and not the stop's:
+			// the acceptance was withdrawn, and the finding the stop would have
+			// taken is one the mode's own floor blocks — the field says what the
+			// mode let through, and a record that filed the stop's wider split
+			// would report a tolerance no round was given (T3.4, D9).
+			if tf := rec.Tolerated; tf != nil {
+				t.Errorf("the record's tolerated findings = %+v, want none: the stop's acceptance was withdrawn, and startup's own floor blocks this finding", tf)
+			}
 			if pr := onlyPR(t, h.provider); !pr.Draft {
 				t.Errorf("the pull request is not a draft: %+v", pr)
 			}
@@ -538,6 +546,13 @@ func TestStopLetsTheStopThroughOnlyWhereAReviewReadTheCommit(t *testing.T) {
 		}
 		if ac := rec.Accepted; ac != nil {
 			t.Errorf("the record's accepted block = %+v, want none", ac)
+		}
+		// The same withdrawal at the tolerated block, which is what
+		// `fugaro diagnose` prints as "Tolerated by startup": the finding the
+		// stop would have taken is above Startup's floor, and the field says
+		// what the mode let through.
+		if tf := rec.Tolerated; tf != nil {
+			t.Errorf("the record's tolerated findings = %+v, want none: the stop's acceptance was withdrawn, and startup's own floor blocks this finding", tf)
 		}
 		if pr := onlyPR(t, h.provider); !pr.Draft {
 			t.Errorf("the pull request is not a draft: %+v", pr)
@@ -760,6 +775,13 @@ func TestStopDoesNotAcceptTheCatastrophicFindingABouncedCheapRoundLeft(t *testin
 	if ac := rec.Accepted; ac != nil {
 		t.Errorf("the record's accepted block = %+v, want none: the round the stop read is not the run's whole account of what it left", ac)
 	}
+	// The stop's wider split does not reach the tolerated block either: the
+	// acceptance is withdrawn, so the finding the stop would have taken is one
+	// the mode's own floor blocks, and the record files what the mode let
+	// through and never what a withdrawn acceptance would have (T3.4, D9).
+	if tf := rec.Tolerated; tf != nil {
+		t.Errorf("the record's tolerated findings = %+v, want none: the stop's acceptance was withdrawn, and the deciding round's finding is one startup's own floor blocks", tf)
+	}
 	if pr := onlyPR(t, h.provider); !pr.Draft {
 		t.Errorf("the pull request is not a draft: %+v", pr)
 	}
@@ -825,6 +847,13 @@ func TestStopWithdrawsItsAcceptanceForALevelTheStopDoesNotTake(t *testing.T) {
 	if ac := rec.Accepted; ac != nil {
 		t.Errorf("the record's accepted block = %+v, want none: Decide refused the acceptance, and a record that filed one would report a merge the run did not make", ac)
 	}
+	// And no tolerated block either: the acceptance is withdrawn, so the
+	// deciding round's finding is one the mode's own floor blocks, and the
+	// field — which `fugaro diagnose` prints as "Tolerated by startup" — would
+	// otherwise claim a tolerance no round was given.
+	if tf := rec.Tolerated; tf != nil {
+		t.Errorf("the record's tolerated findings = %+v, want none: the stop's acceptance was withdrawn, and level 3's finding is one startup's own floor blocks", tf)
+	}
 	pr := onlyPR(t, h.provider)
 	if !pr.Draft {
 		t.Errorf("the pull request is not a draft: %+v", pr)
@@ -839,6 +868,9 @@ func TestStopWithdrawsItsAcceptanceForALevelTheStopDoesNotTake(t *testing.T) {
 	got := string(raw)
 	if strings.Contains(got, "#### Accepted at the stop") {
 		t.Errorf("the report files an acceptance the run never made:\n%s", got)
+	}
+	if strings.Contains(got, "#### Tolerated") {
+		t.Errorf("the report files the withdrawn acceptance's findings under the tolerance heading, which says the mode let them through:\n%s", got)
 	}
 	if !strings.Contains(got, "first round 1: ship") || !strings.Contains(got, "senior round 1: changes (1 finding)") {
 		t.Errorf("the report does not carry the rounds the case is about:\n%s", got)

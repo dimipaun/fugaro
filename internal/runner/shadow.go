@@ -388,7 +388,7 @@ func (r *run) shadowFinalize(ctx context.Context) error {
 	// classed as a halt and one the agent left empty-handed is `no_commits`.
 	decidedRound := r.decidingReview()
 	ready, reason, class := Decide(records, sha, decidedRound, pol, r.rec.OwnerDecisions)
-	r.rec.Tolerated = r.toleratedRecord(pol)
+	r.rec.Tolerated = r.toleratedRecord(pol, decidedRound)
 	r.rec.Accepted = r.acceptedRecord(pol, decidedRound)
 	if committed && reason == ReasonNoVerifiedTest {
 		reason = "uncommitted changes were committed at finalize, after the last verified test run"

@@ -5008,7 +5008,7 @@ func (r *run) finalize(ctx context.Context) error {
 	pol := r.findingsPolicy()
 	decidedRound := r.decidingReview()
 	ready, reason, class := Decide(records, decided, decidedRound, pol, r.rec.OwnerDecisions)
-	r.rec.Tolerated = r.toleratedRecord(pol)
+	r.rec.Tolerated = r.toleratedRecord(pol, decidedRound)
 	r.rec.Accepted = r.acceptedRecord(pol, decidedRound)
 	if committed && reason == ReasonNoVerifiedTest {
 		reason = "uncommitted changes were committed at finalize, after the last verified test run"
