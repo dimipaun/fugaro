@@ -4461,7 +4461,9 @@ func (r *initRun) gateStopFraction(o *initOptions, repo string, lc *localcfg.Con
 //
 // The half it asks is the key being written rather than the value it holds
 // (gateSecurity's own reading): RepoTriageSet, because a runner older than
-// triageSince is refused by the key whatever it says.
+// triageSince is refused by the key whatever it says. The configuration goes
+// along because the value is what words the way out the refusal offers
+// (refuseTriageSkew's own reading of it).
 func (r *initRun) gateTriage(o *initOptions, repo string, lc *localcfg.Config, cfg *config.Config) error {
 	if o.forget || o.planOnly || cfg == nil {
 		return nil
@@ -4470,7 +4472,7 @@ func (r *initRun) gateTriage(o *initOptions, repo string, lc *localcfg.Config, c
 	if o.printVars {
 		w = r.cmd.ErrOrStderr()
 	}
-	return refuseTriageSkew(repo, cfg.RepoTriageSet, lc.BaseImage(config.BaseKind), w)
+	return refuseTriageSkew(repo, cfg, lc.BaseImage(config.BaseKind), w)
 }
 
 // gateSecurity is fugaro update --repo's gate for securitySince:

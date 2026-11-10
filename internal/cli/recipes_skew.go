@@ -1814,13 +1814,23 @@ const triageSince = "0.22.0"
 const triageKnows = "the triage stage and its switch (agent.triage)"
 
 // triageSubject names, for the gates' messages, which file wrote the key and
-// the way out its author has: the key is a switch, not a behaviour the run
-// depends on — an image that predates the stage runs none at all, which is the
-// answer the key turned off asks for — so removing it is a way out with no image
-// to move.
-func triageSubject(repo string) (subject, alt string) {
-	return "fugaro.yaml's agent.triage of " + repo,
-		"remove agent.triage from fugaro.yaml: a job image that predates the stage runs no triage at all, which is what the key turned off asks for"
+// the way out its author has. The way out is not one sentence for both values
+// of a switch: the absent key means the stage is on (Agent.TriageOn), so a file
+// that wrote true loses nothing by removing the key — the key's absence asks for
+// the answer it wrote — while one that wrote false gives the stage back to its
+// default on the first image that reads the file. Offering the second sentence
+// to the first file, as "which is what the key turned off asks for", offers its
+// author the opposite of what it wrote.
+//
+// written is the key's own field (Agent.Triage): nil is the key absent, which no
+// caller reaches — triageSources gates all three — and reads as false, the
+// branch that has a cost to name.
+func triageSubject(repo string, written *bool) (subject, alt string) {
+	subject = "fugaro.yaml's agent.triage of " + repo
+	if written != nil && *written {
+		return subject, "remove agent.triage from fugaro.yaml: the absent key means the stage on, which is what this file writes, and a job image that predates the stage runs no triage whatever the file says"
+	}
+	return subject, "remove agent.triage from fugaro.yaml only if the off-switch may go with it: a job image that predates the stage runs no triage, and the first image that reads the key finds the stage on again"
 }
 
 // triageSources reports, for the launch's triageSince gate, whether the
@@ -1854,19 +1864,22 @@ func triageImageWarnings(c *config.Config) []config.Problem {
 // once it has one is judged here, by the operator's own converge
 // (refuseRigorSkew's shape and its reason). The states of ref are read as
 // refuseRigorSkew reads them: no base image passes, one that is not a release
-// only warns.
-func refuseTriageSkew(repo string, fromRepo bool, ref string, warn io.Writer) error {
-	if fromRepo {
-		subject, alt := triageSubject(repo)
-		switch rel, ok := releaseOf(ref); {
-		case ref == "":
-		case !ok:
-			fmt.Fprintf(warn, "warning: %s cannot be judged: the installation's base image is %s, which is not a release base image, so whether its runner reads the key is not checked\n",
-				subject, pluginwire.Printable(ref))
-		case imagePredates(rel, triageSince):
-			return userErr("%s needs a job image whose runner knows %s (fugaro %s or later), but the installation's base image is %s, release %s: an older runner decodes the file strictly and refuses the run at bootstrap on a key it does not know. Run fugaro update --base base in your own terminal window to move the installation's base image to a current release, or %s",
-				subject, triageKnows, triageSince, pluginwire.Printable(ref), rel, alt)
-		}
+// only warns. It takes the configuration rather than the one bit gateTriage
+// would pass, because the way out its message offers is worded for the answer
+// the file wrote (triageSubject, Agent.Triage).
+func refuseTriageSkew(repo string, cfg *config.Config, ref string, warn io.Writer) error {
+	if !triageSources(cfg) {
+		return nil
+	}
+	subject, alt := triageSubject(repo, cfg.Agent.Triage)
+	switch rel, ok := releaseOf(ref); {
+	case ref == "":
+	case !ok:
+		fmt.Fprintf(warn, "warning: %s cannot be judged: the installation's base image is %s, which is not a release base image, so whether its runner reads the key is not checked\n",
+			subject, pluginwire.Printable(ref))
+	case imagePredates(rel, triageSince):
+		return userErr("%s needs a job image whose runner knows %s (fugaro %s or later), but the installation's base image is %s, release %s: an older runner decodes the file strictly and refuses the run at bootstrap on a key it does not know. Run fugaro update --base base in your own terminal window to move the installation's base image to a current release, or %s",
+			subject, triageKnows, triageSince, pluginwire.Printable(ref), rel, alt)
 	}
 	return nil
 }
@@ -1880,7 +1893,7 @@ func checkTriageImage(ctx context.Context, env *cloudEnv, slug string, spec *tas
 	if !triageSources(cfg) {
 		return nil
 	}
-	subject, alt := triageSubject(spec.Repo)
+	subject, alt := triageSubject(spec.Repo, cfg.Agent.Triage)
 	return checkImageSince(ctx, env, slug, spec, kind, triageSince, subject, triageKnows, "; or "+alt, warn)
 }
 
@@ -1890,7 +1903,7 @@ func checkCloneTriageImage(lc *localcfg.Config, spec *task.Spec, cfg *config.Con
 	if !triageSources(cfg) {
 		return nil
 	}
-	subject, alt := triageSubject(spec.Repo)
+	subject, alt := triageSubject(spec.Repo, cfg.Agent.Triage)
 	return checkCloneImageSince(lc, spec, triageSince, subject, triageKnows, "; or "+alt, warn)
 }
 

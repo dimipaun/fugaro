@@ -2363,6 +2363,14 @@ func configSkewTriage(value string) string {
 	return strings.Replace(configSkewHead, "agent: { auth: api-key }", "agent: { auth: api-key, triage: "+value+" }", 1)
 }
 
+// triageSwitched is the configuration refuseTriageSkew judges: the repository
+// file's key written at value, which is the pair config.Resolve carries into a
+// run — RepoTriageSet beside the switch's own field. A nil *config.Config is a
+// file that writes no key at all, which is the state the gate passes.
+func triageSwitched(value bool) *config.Config {
+	return &config.Config{RepoTriageSet: true, Agent: config.Agent{Triage: &value}}
+}
+
 // TestLauncherRefusesTriageOnAnOlderImage is triageSince's gate, both halves of
 // it. agent.triage is read by the config decoder and not by the runner's logic:
 // a release before this one decodes fugaro.yaml with KnownFields, so the key
@@ -2411,6 +2419,12 @@ func TestLauncherRefusesTriageOnAnOlderImage(t *testing.T) {
 					t.Errorf("%v lacks %q", err, want)
 				}
 			}
+			// This file wrote the off-switch, so the way out names its cost:
+			// the absent key means the stage on, and removing the key hands
+			// the switch back on the first image that reads it (TriageOn).
+			if !strings.Contains(err.Error(), "only if the off-switch may go with it") {
+				t.Errorf("a file writing agent.triage: false is not told what removing the key costs: %v", err)
+			}
 			if n := len(f.run.Executions()); n != 0 {
 				t.Errorf("%d executions, want none", n)
 			}
@@ -2431,6 +2445,17 @@ func TestLauncherRefusesTriageOnAnOlderImage(t *testing.T) {
 		if !strings.Contains(err.Error(), "fugaro.yaml's agent.triage of acme/other") {
 			t.Errorf("%v lacks the key's own subject", err)
 		}
+		// The way out is worded for the answer this file wrote. `triage: true`
+		// asks for the stage's own default and the absent key means the same
+		// (TriageOn), so nothing this file asked for is turned off by removing
+		// the key: a sentence offering removal as "what the key turned off asks
+		// for" would offer its author the opposite of what it wrote.
+		if !strings.Contains(err.Error(), "the absent key means the stage on") {
+			t.Errorf("%v does not say what removing the key means for a file that wrote true", err)
+		}
+		if strings.Contains(err.Error(), "the key turned off asks for") {
+			t.Errorf("%v offers a file writing agent.triage: true the off-switch's own way out", err)
+		}
 		// The same image, the same repository, a file that writes no key:
 		// nothing to gate, which is the way out the refusal names.
 		testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": configSkewHead + configSkewWorkflow})
@@ -2445,7 +2470,7 @@ func TestLauncherRefusesTriageOnAnOlderImage(t *testing.T) {
 	t.Run("fugaro update --repo", func(t *testing.T) {
 		below := "ghcr.io/dimipaun/fugaro-base:" + shiftRelease(t, triageSince, -1)
 		var warn bytes.Buffer
-		err := refuseTriageSkew("acme/app", true, below, &warn)
+		err := refuseTriageSkew("acme/app", triageSwitched(false), below, &warn)
 		if err == nil {
 			t.Fatal("refuseTriageSkew accepted a base image older than the release that reads the key")
 		}
@@ -2454,28 +2479,35 @@ func TestLauncherRefusesTriageOnAnOlderImage(t *testing.T) {
 				t.Errorf("%v lacks %q", err, want)
 			}
 		}
+		// The way out is the one this file's own answer has, which is what
+		// taking the configuration rather than the presence bit is for: this
+		// one wrote the off-switch, so removing it has a cost and the message
+		// names it.
+		if !strings.Contains(err.Error(), "only if the off-switch may go with it") {
+			t.Errorf("a file writing agent.triage: false is not told what removing the key costs: %v", err)
+		}
 		// The boundary, and the three states that ask nothing of the image.
 		for _, ref := range []string{"ghcr.io/dimipaun/fugaro-base:" + triageSince, "ghcr.io/dimipaun/fugaro-base:" + shiftRelease(t, triageSince, 1)} {
 			var w bytes.Buffer
-			if err := refuseTriageSkew("acme/app", true, ref, &w); err != nil || w.Len() != 0 {
+			if err := refuseTriageSkew("acme/app", triageSwitched(false), ref, &w); err != nil || w.Len() != 0 {
 				t.Errorf("%q: err = %v, warn = %q, want neither", ref, err, w.String())
 			}
 		}
 		for _, c := range []struct {
-			name     string
-			fromRepo bool
-			ref      string
+			name string
+			cfg  *config.Config
+			ref  string
 		}{
-			{"no file writes the key", false, below},
-			{"no base image at all", true, ""},
+			{"no file writes the key", nil, below},
+			{"no base image at all", triageSwitched(true), ""},
 		} {
 			var w bytes.Buffer
-			if err := refuseTriageSkew("acme/app", c.fromRepo, c.ref, &w); err != nil || w.Len() != 0 {
+			if err := refuseTriageSkew("acme/app", c.cfg, c.ref, &w); err != nil || w.Len() != 0 {
 				t.Errorf("%s: err = %v, warn = %q, want neither", c.name, err, w.String())
 			}
 		}
 		var w bytes.Buffer
-		if err := refuseTriageSkew("acme/app", true, "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-1a2b3c", &w); err != nil {
+		if err := refuseTriageSkew("acme/app", triageSwitched(false), "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-1a2b3c", &w); err != nil {
 			t.Errorf("dev base: err = %v, want a warning only", err)
 		}
 		if !strings.Contains(w.String(), "not a release base image") || !strings.Contains(w.String(), "is not checked") {
