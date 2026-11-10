@@ -602,6 +602,47 @@ func TestCancelledNamingLeavesNoIssueBehind(t *testing.T) {
 	}
 }
 
+// An index write the store refuses is the same orphan a refused naming leaves:
+// the record is written and nothing names its fingerprint yet, so it has to go
+// the same way, on a context of its own — otherwise a caller that retries the
+// upload it was told to retry numbers a second issue of that fingerprint beside
+// the first, and the store lists neither of them (F21, F28).
+func TestRefusedIndexWriteLeavesNoIssueBehind(t *testing.T) {
+	ctx := context.Background()
+	g := gcpfake.NewGCS(t)
+	b := g.Bucket(t, "fugaro-issues")
+	ana := "ana@example.test"
+	fp := fingerprint("35")
+	// The first upload of a store takes number 1, so the index entry it writes
+	// for its reporter is this one, and the store refuses that write alone: the
+	// record before it and the fingerprint's entry are written as usual.
+	g.FailObjectWrites("fugaro-issues", reporterIndexKey(1, Digest(ana)), 1)
+
+	issue := sharedIssue("update-20261107183012-48213", fp)
+	if _, err := uploadRaw(ctx, b, issue); err == nil {
+		t.Fatal("an upload reported success for an index write the store refused")
+	}
+	if _, err := readVersion(ctx, b, recordKey(1)); !errors.Is(err, blobx.ErrNotExist) {
+		t.Errorf("the refused attempt left a record at the number it took: %v", err)
+	}
+	if rows, err := ListShared(ctx, b); err != nil || len(rows) != 0 {
+		t.Errorf("the listing after the refused index write = %+v, %v; want nothing", rows, err)
+	}
+	// The retry the contract invites takes the next number — the counter is not
+	// rolled back — and the store holds the bug once.
+	up, err := uploadRaw(ctx, b, issue)
+	if err != nil || up.Number != 2 || up.Attached {
+		t.Fatalf("the retry = %+v, %v; want issue 2", up, err)
+	}
+	rows, err := ListShared(ctx, b)
+	if err != nil || len(rows) != 1 || rows[0].Number != up.Number {
+		t.Errorf("the listing after the retry = %+v, %v; want issue %d once", rows, err, up.Number)
+	}
+	if _, err := readVersion(ctx, b, recordKey(1)); !errors.Is(err, blobx.ErrNotExist) {
+		t.Errorf("the store still has a record at number 1 after the retry: %v", err)
+	}
+}
+
 // The listing leaves out a record its fingerprint's entry does not name: the
 // entry is the truth about a fingerprint (F21), so a record it does not name is
 // not an issue the store holds but the debris of a naming write that never came

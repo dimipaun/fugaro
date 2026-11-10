@@ -273,10 +273,17 @@ func TestMineSkipsMalformedNames(t *testing.T) {
 	up := upload(t, ctx, b, hit("update-20261107183012-48213", fingerprint("70"), bo, "0.9.0", issueAt))
 	upload(t, ctx, b, hit("update-20261107183014-48215", fingerprint("70"), ana, "0.9.0", issueAt.Add(time.Hour)))
 	// An index entry that is not a number, a digest that is not one, and a time
-	// that does not parse: none of them is an issue, a person or a hit.
+	// that does not parse: none of them is an issue, a person or a hit. The
+	// three spellings of the issue 1 this test uploads are the ones a launcher
+	// can write beside its own `0001` (F24): the number is read as a number, so
+	// each would be a second row for the same issue if the name were taken for
+	// what it says rather than having to be the name this store writes.
 	for _, key := range []string{
 		reporterPrefix(Digest(ana)) + "../0007",
 		reporterPrefix(Digest(ana)) + "not-a-number",
+		reporterPrefix(Digest(ana)) + "1",
+		reporterPrefix(Digest(ana)) + "01",
+		reporterPrefix(Digest(ana)) + "00001",
 		occurrencePrefix(up.Number) + "abc/" + sharedAt.Format(occurrenceTimeLayout),
 		occurrencePrefix(up.Number) + Digest("cy@example.test") + "/not-a-time",
 	} {
@@ -289,7 +296,7 @@ func TestMineSkipsMalformedNames(t *testing.T) {
 		t.Fatalf("reading mine: %v", err)
 	}
 	if want := []int{up.Number}; !slices.Equal(mineNumbers(got), want) {
-		t.Errorf("the rows are %v, want %v", mineNumbers(got), want)
+		t.Errorf("the rows are %v, want %v: one row for the issue, and the other spellings of its number are not issues of their own", mineNumbers(got), want)
 	}
 	if row := mineRowOf(t, got, up.Number); row.OthersHit != 1 {
 		t.Errorf("others = %d, want 1: the malformed names are not people", row.OthersHit)

@@ -388,6 +388,18 @@ func Upload(ctx context.Context, b *blobx.Bucket, i Issue, id Identity) (Uploade
 		// issue under it, which a reader skips; an issue with no entry is the
 		// reporter's view quietly missing a row, which nothing repairs.
 		if err := indexReporter(ctx, b, number, Digest(i.Reporter)); err != nil {
+			// The record is written and nothing names it yet, so a refused
+			// index write leaves exactly the orphan a refused naming does, and
+			// it goes the same way: a caller that retries must not number a
+			// second issue of this fingerprint beside the one this attempt
+			// wrote (F21, F28).
+			holds, rerr := settleFailedNaming(ctx, b, key, number, recGen, rec)
+			if rerr != nil {
+				return Uploaded{}, rerr
+			}
+			if holds {
+				return Uploaded{Number: number}, nil
+			}
 			return Uploaded{}, err
 		}
 		named, err := json.Marshal(numberDoc{Format: sharedFormat, Number: number})
@@ -434,8 +446,9 @@ func Upload(ctx context.Context, b *blobx.Bucket, i Issue, id Identity) (Uploade
 // caller's, so their bound has to be their own.
 const namingGrace = 5 * time.Second
 
-// settleFailedNaming drops the issue a naming write that failed left orphaned
-// and reports whether the fingerprint's entry names it after all.
+// settleFailedNaming drops the issue a write that failed between taking the
+// number and naming the fingerprint left orphaned, and reports whether the
+// fingerprint's entry names it after all.
 //
 // The read-back and the delete run on a context detached from the caller's
 // cancellation (F28): a caller that gave up — Ctrl-C while the naming RPC was
