@@ -926,6 +926,21 @@ ceiling is decided.
    gives the per-member table a writer, because the row's job accounts are emails, `Verify` therefore
    has no slug to compare, and a column no command writes would be a check with nothing in it
    ([reconciliation.md](reconciliation.md) §9, O3).
+   **The second way this risk is reachable is the account's class, and it is stated here for the
+   same reason.** The workspace builds each member's verifier from the owner's own table —
+   `JobAccounts` alone, `internal/credsvc/workspace.go`:459 — so the two account classes the
+   member's own installation decides from its own published policy are not asked: the shared-job
+   gate that refuses a shared project job whole under Global Constraint 6
+   (`verifyJob`, `internal/credsvc/auth.go`:682) and the review class, which the installation admits
+   for its own account's pairing alone (`pairReview`, `internal/credsvc/review.go`:330;
+   `offeredToReview`, `internal/credsvc/cascade.go`:139). An account the owner's table names is
+   therefore a per-repository job here whatever the member's own service would call it, and it is
+   served the pool on every repository the member's own lists name. This is not a missing read: the
+   owner's table is the deployment's whole caller rule by design (§4 — a member's own file cannot
+   admit a caller into the workspace's pool), so resolving the member's own lists here would be a
+   second admission rule, and **closing it is an owner decision like the pairing above**. W6 ships
+   it stated and pinned, with no owner answer yet, by
+   `TestWorkspaceAdmitsEveryAccountInTheOwnersTableAsAPerRepositoryJob`.
 
 ## 9. What a workspace never does
 

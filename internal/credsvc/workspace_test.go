@@ -506,9 +506,9 @@ func TestWorkspaceServiceAdmitsTheOwnerOnGcloudsAudience(t *testing.T) {
 	f := newWSFixture(t)
 	ctx := context.Background()
 	gcloud := func(c map[string]any) { c["aud"] = GcloudAudience }
-	owner, err := f.ws.Caller(ctx, f.ownerToken(gcloud))
+	owner, err := f.ws.Owner(ctx, f.ownerToken(gcloud))
 	if err != nil {
-		t.Fatalf("Caller for one of the workspace owner's people on gcloud's audience: %v", err)
+		t.Fatalf("Owner for one of the workspace owner's people on gcloud's audience: %v", err)
 	}
 	if owner.Class != ClassWorkspaceOwner || owner.Account != wsOwner {
 		t.Errorf("the caller resolved to %+v, want the workspace owner's own person", owner)
@@ -557,6 +557,13 @@ func TestWorkspaceServiceAnswersTheConfiguredSpellingOfAnAccount(t *testing.T) {
 // identity at all, which is the state the member's routes read the policy and
 // serve the pool in. The type carries an unexported mark Verify sets and every
 // entry point is held to it, so the literal is refused however plausible it is.
+//
+// **Two literals are forged, and the second is the one that holds the mark.**
+// The first is built out of a caller that resolved and carries neither a run
+// identity nor the unexported values, so the member and slug comparisons refuse
+// it on their own — a rewrite that deleted the mark's own check would leave it
+// refused. The second copies the unexported member and slug from a call Verify
+// really made, so both comparisons pass and only the mark can refuse it.
 func TestWorkspaceServiceRefusesAMemberCallItDidNotProduce(t *testing.T) {
 	f := newWSFixture(t)
 	ctx := context.Background()
@@ -579,6 +586,29 @@ func TestWorkspaceServiceRefusesAMemberCallItDidNotProduce(t *testing.T) {
 	}
 	if len(f.dbs[wsMemberA].paths) != 0 {
 		t.Errorf("the member's database was read for a call with no verified run identity (%v): the mark is checked before any read", f.dbs[wsMemberA].paths)
+	}
+	// The SECOND forged call is the one this test exists for, and the one the
+	// refusals above do not reach: its exported fields come from a caller that
+	// really resolved, and its two unexported values are copied from a call
+	// Verify really made — so the member comparison and the slug comparison
+	// both pass it and the missing mark is the only check left that can refuse
+	// it. Without this literal the mark is held by no test: the first forged
+	// call above is refused by the member comparison, and deleting `verified`
+	// from refuseUnverified would leave every assertion green.
+	verified := f.verifyOK(wsMemberA, wsAccountA)
+	forged = MemberCall{WorkspaceCaller: verified.WorkspaceCaller, member: verified.member, slug: verified.slug}
+	reads := len(f.dbs[wsMemberA].paths)
+	if _, _, err := f.ws.Policy(ctx, forged); !errors.Is(err, ErrUnverifiedJob) {
+		t.Errorf("Policy for a MemberCall forged with the fields of a real one = %v, want ErrUnverifiedJob", err)
+	}
+	if _, err := f.ws.Shared(ctx, forged, f.offered(wsMemberA)); !errors.Is(err, ErrUnverifiedJob) {
+		t.Errorf("Shared for a MemberCall forged with the fields of a real one = %v, want ErrUnverifiedJob", err)
+	}
+	if err := f.ws.MemberRoute(forged, wsMemberA); !errors.Is(err, ErrUnverifiedJob) {
+		t.Errorf("MemberRoute for a MemberCall forged with the fields of a real one = %v, want ErrUnverifiedJob", err)
+	}
+	if len(f.dbs[wsMemberA].paths) != reads {
+		t.Errorf("the member's database was read for a forged call whose member and slug both match (%v, beyond the %d the Verify above made): the mark is checked before any read", f.dbs[wsMemberA].paths, reads)
 	}
 	// The member's own verified call is served with the same fields, so the
 	// refusals above are the missing mark and not the shape of the caller.
@@ -982,20 +1012,28 @@ func TestWorkspaceServiceRefusesAMembersPersonTheWorkspaceWideRead(t *testing.T)
 	if _, err := f.ws.Caller(ctx, f.jobToken(wsMemberPerson)); !errors.Is(err, ErrUnverifiedJob) {
 		t.Fatalf("Caller for a member's own person = %v, want ErrUnverifiedJob", err)
 	}
-	// A member's job may not read the workspace's figures.
+	// A member's job may not read the workspace's figures, and the type the
+	// route takes is what says so rather than a check on Class: Owner refuses
+	// the member's job here, and a member's WorkspaceCaller — the shape the
+	// relabelled call and the bare literal both come down to — is refused by
+	// the mark, because WorkspaceWide admits nothing this package did not
+	// resolve as an owner.
 	job, err := f.ws.Caller(ctx, f.jobToken(wsAccountA))
 	if err != nil {
 		t.Fatalf("Caller for the member's job: %v", err)
 	}
-	if err := f.ws.WorkspaceWide(job); !errors.Is(err, ErrUnverifiedJob) {
-		t.Errorf("WorkspaceWide for a member's job = %v, want ErrUnverifiedJob", err)
+	if _, err := f.ws.Owner(ctx, f.jobToken(wsAccountA)); !errors.Is(err, ErrUnverifiedJob) {
+		t.Errorf("Owner for a member's job = %v, want ErrUnverifiedJob", err)
+	}
+	if err := f.ws.WorkspaceWide(OwnerCall{WorkspaceCaller: job}); !errors.Is(err, ErrUnverifiedJob) {
+		t.Errorf("WorkspaceWide for a caller this service did not resolve as an owner = %v, want ErrUnverifiedJob", err)
 	}
 	// The owner's person may read them, and reaches no member's route: it
 	// holds no run identity, so a route that acts for a member is not open to
 	// it.
-	owner, err := f.ws.Caller(ctx, f.ownerToken())
+	owner, err := f.ws.Owner(ctx, f.ownerToken())
 	if err != nil {
-		t.Fatalf("Caller for one of the workspace owner's people: %v", err)
+		t.Fatalf("Owner for one of the workspace owner's people: %v", err)
 	}
 	if owner.Class != ClassWorkspaceOwner {
 		t.Fatalf("the owner's person is of class %v, want the owner class", owner.Class)
@@ -1134,6 +1172,52 @@ func TestWorkspaceSharedRefusesAMemberThatPublishedNoPolicy(t *testing.T) {
 	}
 	if !f.dbs[wsMemberA].read(projectpolicy.PathRepo(wsSlug)) {
 		t.Error("the repository's node was not read: without it the admission leg is the one that could be refusing, and this test would not say which of the two answered")
+	}
+}
+
+// TestWorkspaceAdmitsEveryAccountInTheOwnersTableAsAPerRepositoryJob pins the
+// second way docs/workspaces/spec.md §8's residual risk 7 is reachable, and it
+// pins it as the SHIPPED behaviour rather than describing it: the workspace
+// builds each member's verifier out of the owner's own table (readMembers,
+// JobAccounts alone), so the two account classes the member's own installation
+// decides from its own published policy are not asked here.
+//
+// The installation refuses a shared project job whole until the phase-3 rules
+// land (Global Constraint 6, verifyJob, internal/credsvc/auth.go:682) and admits
+// a review-only job for its own account's pairing alone (pairReview,
+// internal/credsvc/review.go:330; offeredToReview, internal/credsvc/cascade.go:139).
+// An account the owner's table names is a per-repository job HERE whatever the
+// member's own service would call it: the same account is served the pool on
+// every repository the member's own lists name, and no class question is asked
+// of it at all.
+//
+// The fixture cannot express the member's side — WorkspaceConfig has no field
+// for those two lists, and the service reads no member policy to resolve one —
+// and that absence is the gap: the owner's table is this deployment's whole
+// caller rule by design (spec.md §4), so resolving the member's lists here would
+// be a second admission rule. A change that closes the gap refuses these
+// accounts and has to change this test, which is where the owner's decision
+// about it is read.
+func TestWorkspaceAdmitsEveryAccountInTheOwnersTableAsAPerRepositoryJob(t *testing.T) {
+	f := newWSFixture(t)
+	f.setPolicyOn(wsMemberA, []string{wsRepo, wsRepoOther}, wsShared)
+	ctx := context.Background()
+	// One account, one member, and a run identity of EACH of that member's
+	// repositories: the pool follows the repository the run is on and the
+	// member's own lists, and never a class the account has in its own
+	// installation.
+	for _, slug := range []string{wsSlug, wsSlugOther} {
+		call, err := f.verify(wsMemberA, wsAccountA, func(c map[string]any) {
+			uid := "r~" + slug + "~" + f.run
+			c["sub"], c["user_id"], c["fs"] = uid, uid, slug
+		})
+		if err != nil {
+			t.Fatalf("Verify for a run identity on %s: %v", slug, err)
+		}
+		got, err := f.ws.Shared(ctx, call, f.offered(wsMemberA))
+		if err != nil || len(got) != 1 || got[0].Name != wsShared {
+			t.Errorf("Shared for the owner table's account on %s = (%v, %v), want the pool's one credential: the account is a per-repository job here", slug, got, err)
+		}
 	}
 }
 

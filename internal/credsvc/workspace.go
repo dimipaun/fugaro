@@ -66,7 +66,10 @@ import (
 // member's spend at once — admit the workspace owner's people and no member's
 // job, and the routes that answer about ONE member admit that member's job
 // service account and no person at all. WorkspaceWide and MemberRoute are those
-// two decisions, written once so no route can invent a third.
+// two decisions, written once so no route can invent a third, and each takes the
+// type only its own entry point produces — OwnerCall for the owner, MemberCall
+// for a member — so the class a route admits is carried by a value and not by a
+// field the route re-reads.
 
 // ErrWorkspaceConfig is the refusal of a configuration the workspace's service
 // will not start on. It is not a caller's refusal: it is raised while the
@@ -247,8 +250,9 @@ type WorkspaceCaller struct {
 // the mark makes: the mark says a Verify ran, and these say what it resolved.
 //
 // A member's Caller is still a WorkspaceCaller: the workspace-wide routes take
-// that type, because the class they admit — the workspace owner's people — holds
-// no run identity at all (Verify refuses it).
+// the owner's type, whose only producer is Owner, because the class they admit —
+// the workspace owner's people — holds no run identity at all (Verify refuses
+// it).
 type MemberCall struct {
 	WorkspaceCaller
 	verified bool
@@ -279,6 +283,42 @@ func (c MemberCall) refuseUnverified() error {
 	}
 	if c.Identity.Slug != c.slug {
 		return fmt.Errorf("%w: the repository this call names is not the one Verify resolved, so the routes that act for a member are closed", ErrUnverifiedJob)
+	}
+	return nil
+}
+
+// OwnerCall is a verified workspace owner's caller: one of the workspace
+// owner's own people, resolved by Caller through Owner — its only producer — and
+// the type the workspace-wide routes take.
+//
+// **It exists for MemberCall's reason, and for the write the member guard cannot
+// close.** WorkspaceCaller is exported field by field, and the owner class is
+// decided by its Class alone, so a route that took a bare WorkspaceCaller would
+// admit a MEMBER's verified call relabelled `Class = ClassWorkspaceOwner` — and
+// a literal `WorkspaceCaller{Class: ClassWorkspaceOwner}` a route could write
+// for itself. Those routes are every member's spend at once (the member list,
+// the cap, the rollup), so the class a route admits has to be carried by a value
+// and not by a field: only Owner sets the mark below, and no caller outside this
+// package can build the type at all.
+//
+// The owner's person holds no member and no run identity, so there is nothing
+// else to hold to it: the mark is the whole of the type, and the Class is still
+// checked because it is what the class means.
+type OwnerCall struct {
+	WorkspaceCaller
+	verified bool
+}
+
+// refuseUnverified holds the workspace-wide routes to the mark Owner sets: a
+// call whose fields are all plausible and which Owner never produced stands for
+// no verified owner person, and the routes behind this check answer with every
+// member's figures.
+func (c OwnerCall) refuseUnverified() error {
+	if !c.verified {
+		return fmt.Errorf("%w: the call did not come from the owner's own entry point, so no verified owner person stands behind it and the routes that answer about the workspace are closed", ErrUnverifiedJob)
+	}
+	if c.Class != ClassWorkspaceOwner {
+		return fmt.Errorf("%w: the route answers about the whole workspace, and only the workspace owner's own people may read it", ErrUnverifiedJob)
 	}
 	return nil
 }
@@ -357,6 +397,21 @@ func NewWorkspace(cfg WorkspaceConfig) (*Workspace, error) {
 // the same ASCII rule a presented claim is folded by (foldEmail), so an account
 // that could never be matched is a configuration error here rather than a gate
 // that silently admits nobody.
+//
+// **The verifier is built from the OWNER's table alone, so two account classes
+// the installing member decides from its own published policy are not asked.**
+// The installation refuses a shared project job whole until the phase-3 rules
+// land (Global Constraint 6, verifyJob) and admits a review job for its own
+// account's pairing alone (pairReview, offeredToReview); an account this table
+// names is a per-repository job here whatever the member's own service would
+// call it, and it is served the pool on every repository the member's own lists
+// name. That is stated beside the repository pairing in
+// docs/workspaces/spec.md §8's residual risk 7 and pinned by
+// TestWorkspaceAdmitsEveryAccountInTheOwnersTableAsAPerRepositoryJob. It is not
+// an oversight of the constructor: the owner's table IS this deployment's whole
+// caller rule by design (spec.md §4 — a member's own file cannot admit a caller
+// into the workspace's pool), so reading the member's lists here would be a
+// second admission rule and an owner decision.
 func (w *Workspace) readMembers(cfg WorkspaceConfig) error {
 	seenFirebase := make(map[string]string, len(cfg.Members))
 	for _, m := range cfg.Members {
@@ -558,16 +613,34 @@ func (w *Workspace) Verify(ctx context.Context, req Request) (MemberCall, error)
 	return MemberCall{WorkspaceCaller: caller, verified: true, member: caller.Member.Project, slug: caller.Identity.Slug}, nil
 }
 
+// Owner is Caller for the workspace owner's class, and it is the only producer
+// of the type the workspace-wide routes take: the token is verified by the same
+// front door Verify uses, and a member's job — which Caller resolves as readily
+// as it resolves a person — is refused here, because the routes those calls
+// reach answer with every member's spend at once.
+func (w *Workspace) Owner(ctx context.Context, jobToken string) (OwnerCall, error) {
+	caller, err := w.Caller(ctx, jobToken)
+	if err != nil {
+		return OwnerCall{}, err
+	}
+	if caller.Class != ClassWorkspaceOwner {
+		return OwnerCall{}, fmt.Errorf("%w: the caller is a member's job service account, and the routes that answer about the workspace admit the workspace owner's own people alone", ErrUnverifiedJob)
+	}
+	return OwnerCall{WorkspaceCaller: caller, verified: true}, nil
+}
+
 // WorkspaceWide admits a caller to the routes that answer about the workspace
 // as a whole: the member list, the cap and the rollup, which is every member's
 // spend at once. It admits the workspace owner's people and no member's job,
 // which is the whole of what stops one member's jobs reading every other
 // member's figures (spec.md §4).
-func (w *Workspace) WorkspaceWide(c WorkspaceCaller) error {
-	if c.Class != ClassWorkspaceOwner {
-		return fmt.Errorf("%w: the route answers about the whole workspace, and only the workspace owner's own people may read it", ErrUnverifiedJob)
-	}
-	return nil
+//
+// It takes an OwnerCall rather than a bare caller, so neither a member's
+// verified call relabelled `Class = ClassWorkspaceOwner` nor a
+// WorkspaceCaller literal can reach these routes: the class a caller belongs to
+// is decided once, by Caller, and carried by the type.
+func (w *Workspace) WorkspaceWide(c OwnerCall) error {
+	return c.refuseUnverified()
 }
 
 // MemberRoute admits a caller to a route that answers about ONE member, and it
