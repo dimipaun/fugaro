@@ -26,7 +26,10 @@ import (
 // resolve no model and no credential at all.
 //
 // Everything it cannot convert faithfully it leaves alone and says so, rather
-// than writing a craft key that means something else than the key it came from.
+// than writing a craft key that means something else than the key it came
+// from. What it says is said once, in the run that does the work: a config the
+// migration has nothing left to add to is silent, so `fugaro update` on a
+// converged installation reports the same keys no second time.
 
 // stageCraft is the craft a run stage's own account key belongs to: the craft
 // whose model and access serve the stage. The mapping is the tree's own, not a
@@ -55,10 +58,15 @@ func stageCraft(stage string) string {
 }
 
 // migrateCraftKeys derives the craft vocabulary from the older keys the
-// installation holds, in place, and returns the lines `fugaro update` prints
-// about the keys it could not convert — empty when there is nothing to
-// migrate, and empty again on a second call, which is what makes the door
-// idempotent.
+// installation holds, in place, and returns the lines the caller prints about
+// the keys it could not convert.
+//
+// It returns nothing when there was nothing left to add — the config is
+// converged, or holds none of the older vocabulary — which is what makes the
+// door idempotent in the sense that matters for a person: the keys it could
+// not convert are reported in the run that derives the rest, and not again on
+// every write of the file afterwards. A config that still has an account to
+// convert reports again, because then the run is doing the work again.
 //
 // What it writes is shown by the local config's own diff; only the keys that
 // need a person are returned, because a line per derived key would bury them.
@@ -66,8 +74,13 @@ func migrateCraftKeys(c *localcfg.Config) []string {
 	if c == nil || (len(c.ClaudeAccounts) == 0 && c.DefaultClaudeAccount == "" && len(c.ClaudeAccountStages) == 0) {
 		return nil
 	}
-	notes := deriveCraftCredentials(c)
-	return append(notes, deriveCraftAccesses(c)...)
+	credentials, crafts := len(c.Credentials), c.Crafts
+	refused := deriveCraftCredentials(c)
+	notes := deriveCraftAccesses(c, refused)
+	if len(c.Credentials) == credentials && c.Crafts == crafts {
+		return nil
+	}
+	return notes
 }
 
 // deriveCraftCredentials turns the installation's named Claude accounts into
@@ -76,34 +89,53 @@ func migrateCraftKeys(c *localcfg.Config) []string {
 // credential's value is stored under a name derived from the credential's own
 // (spec §1) — so this adds the typed entry and moves no secret.
 //
-// An account this release's credential cannot stand for is left alone and
-// reported, never converted into something else: an account narrowed by
-// allow_data_to has no counterpart, because config.Credential carries a name
-// and a type and no grant, and writing the entry anyway would drop the
-// data-egress restriction this design makes the credential's own reason to
-// exist (F10, F12, D1628). Where the grant belongs in the new vocabulary is a
-// decision this plan does not answer.
-func deriveCraftCredentials(c *localcfg.Config) []string {
+// It returns, per account, the clause saying why no credential was derived
+// from it (empty when every account converted), for the caller to fold into
+// the line it prints about the crafts that would have named the account.
+//
+// An account's allow_data_to is neither moved nor asked about. The grant is
+// the account entry's own, this migration keeps that entry, and every reader
+// that scopes egress by it (the policy node's accounts.<name>.allow_repos,
+// `fugaro doctor`, the reach each secret is allowed) still reads it there. A
+// credential of this release carries a name and a type and no grant at all,
+// so where a pool member's own allow_data_to lands is F10's and D1627's
+// decision, taken where a member is checked against the repository (MC5, MC6).
+// Deriving only for an account with an EMPTY list would derive for no real
+// installation: `fugaro accounts add` refuses to declare an account without
+// one (accountsAddRepos), so the empty list is the shape no command writes and
+// no profile may bound.
+func deriveCraftCredentials(c *localcfg.Config) map[string]string {
 	if len(c.ClaudeAccounts) == 0 {
 		return nil
 	}
-	var notes []string
 	have := make(map[string]bool, len(c.Credentials))
 	for _, cred := range c.Credentials {
 		have[cred.Name] = true
 	}
-	for _, name := range slices.Sorted(maps.Keys(c.ClaudeAccounts)) {
-		if have[name] {
-			continue
+	// A credential and a pool live in one namespace — a craft's access names
+	// one of them and does not say which — and config.ValidatePools refuses a
+	// pool and a credential of one name. A credential written under a pool's
+	// name would make the file this run writes refuse itself, and a local
+	// config write that fails is `fugaro update` failing (CLAUDE.md's HARD
+	// RULE), so the account is left alone instead.
+	pools := make(map[string]bool, len(c.Pools))
+	for _, p := range c.Pools {
+		if p.Name != "" {
+			pools[p.Name] = true
 		}
-		if allowed := c.ClaudeAccounts[name].AllowDataTo; len(allowed) > 0 {
-			notes = append(notes, fmt.Sprintf("claude_accounts.%s admits only %s (allow_data_to), and a credential of this release carries a name and a type and no such grant, so no credential was derived from it and no craft key names it: its runs keep reaching it through the account keys",
-				name, strings.Join(allowed, ", ")))
+	}
+	var refused map[string]string
+	for _, name := range slices.Sorted(maps.Keys(c.ClaudeAccounts)) {
+		switch {
+		case have[name]:
+			continue
+		case pools[name]:
+			refused = setReason(refused, name, "its name is already a pool's, and a credential and a pool of one name would leave a craft's access naming one of them undecided")
 			continue
 		}
 		cand := config.Credential{Name: name, Type: config.CredentialTypeClaudeOAuth}
 		if ps := config.ValidateCredentials([]config.Credential{cand}); len(ps) > 0 {
-			notes = append(notes, fmt.Sprintf("claude_accounts.%s is not a name that may stand as a credential, so no credential was derived from it: %s", name, ps[0].Message))
+			refused = setReason(refused, name, "it is not a name a credential may carry ("+ps[0].Message+")")
 			continue
 		}
 		// Sliced rather than appended in place: the caller's config may be a
@@ -111,7 +143,18 @@ func deriveCraftCredentials(c *localcfg.Config) []string {
 		// array would reach the config this run still reads.
 		c.Credentials = append(slices.Clone(c.Credentials), cand)
 	}
-	return notes
+	return refused
+}
+
+// setReason records why an account was not converted, keeping the map nil
+// until there is something to say (a nil map reads fine, and a test that
+// compares an all-converted run's map to nil should not see an empty one).
+func setReason(m map[string]string, name, why string) map[string]string {
+	if m == nil {
+		m = map[string]string{}
+	}
+	m[name] = why
+	return m
 }
 
 // deriveCraftAccesses writes the crafts' accesses from the installation's
@@ -133,7 +176,15 @@ func deriveCraftCredentials(c *localcfg.Config) []string {
 // craft whose stages disagree is left unset and reported: implement and fix are
 // one craft (spec §3), and two accounts there cannot be one access — guessing
 // one of them would silently move a stage's runs onto another credential.
-func deriveCraftAccesses(c *localcfg.Config) []string {
+//
+// refused is deriveCraftCredentials' answer: an account no credential was
+// derived for gets no craft key either, whatever its name resolves to
+// elsewhere — an account called `vertex` is the sharpest of those, its name
+// being the built-in credential's, which is the platform's own and not the
+// account's token. The same map is folded into the line about the account, so
+// the reason and the crafts it served are one sentence rather than two that
+// point at each other.
+func deriveCraftAccesses(c *localcfg.Config, refused map[string]string) []string {
 	keys := map[string][]string{}
 	names := map[string][]string{}
 	for _, craft := range config.CraftNames {
@@ -185,7 +236,7 @@ func deriveCraftAccesses(c *localcfg.Config) []string {
 		if name == "" {
 			continue
 		}
-		if !craftAccessDefined(c, name) {
+		if _, refused := refused[name]; refused || !craftAccessDefined(c, name) {
 			skipped[name] = append(skipped[name], craft)
 			continue
 		}
@@ -205,8 +256,12 @@ func deriveCraftAccesses(c *localcfg.Config) []string {
 			strings.Join(unsuffixed, ", "), orAbsent(c.DefaultClaudeAccount)))
 	}
 	for _, name := range slices.Sorted(maps.Keys(skipped)) {
-		notes = append(notes, fmt.Sprintf("the account %s, named by the %s crafts, did not become a credential (see above), so no craft key was written for it: its runs keep reaching it through the account keys alone",
-			name, strings.Join(skipped[name], ", ")))
+		why := refused[name]
+		if why == "" {
+			why = "no credential of this release stands for it"
+		}
+		notes = append(notes, fmt.Sprintf("the account %s, named by the %s crafts, has no craft key: %s — its runs keep reaching it through the account keys alone",
+			name, strings.Join(skipped[name], ", "), why))
 	}
 	return notes
 }
@@ -246,7 +301,11 @@ func orAbsent(name string) string {
 }
 
 // craftAccessDefined is whether name is something a craft's access may resolve
-// to: a credential this config now holds, or the built-in vertex (D1624).
+// to: a credential this config now holds, or the built-in vertex (D1624). A
+// pool's name is not among them — an access naming one would resolve to the
+// pool, which is not the account the stage runs on today — and a name no
+// credential was derived for is dropped by the caller before it is asked, so
+// what is left is a name the resolver finds and the account it stands for.
 func craftAccessDefined(c *localcfg.Config, name string) bool {
 	if config.ValidCredentialRef(name) != "" {
 		return false

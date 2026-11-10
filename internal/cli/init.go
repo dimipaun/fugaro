@@ -3341,14 +3341,13 @@ func (r *initRun) writeLocalConfig(next *localcfg.Config, path string, old []byt
 	}
 	// Every write of the local config converges the craft keys first, so
 	// `fugaro update` is the whole migration and no other command is one: it
-	// adds the credentials and crafts the older account keys name and reports
-	// the keys it cannot convert (init_craft_migrate.go). It runs on the
-	// config about to be written — after the rest of this run's own changes —
-	// and it is idempotent, so a config already holding the crafts is left
-	// alone and nothing is written twice.
-	for _, note := range migrateCraftKeys(next) {
-		fmt.Fprintf(r.w, "note: %s\n", note)
-	}
+	// adds the credentials and crafts the older account keys name
+	// (init_craft_migrate.go). It runs on the config about to be written —
+	// after the rest of this run's own changes — and adds nothing to a config
+	// that already holds them, so nothing is written twice. What it could not
+	// convert is printed with the write it belongs to, and never for a file
+	// this run does not change: the notes describe the file as it now is.
+	migrationNotes := migrateCraftKeys(next)
 	data, err := next.Marshal()
 	if err != nil {
 		return err
@@ -3382,6 +3381,9 @@ func (r *initRun) writeLocalConfig(next *localcfg.Config, path string, old []byt
 		return userErr("writing the local config: %v", err)
 	}
 	fmt.Fprintf(r.w, "wrote %s\n", path)
+	for _, note := range migrationNotes {
+		fmt.Fprintf(r.w, "note: %s\n", note)
+	}
 	if old == nil {
 		r.noteSecondProject()
 	}

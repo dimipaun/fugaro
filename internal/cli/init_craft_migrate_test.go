@@ -15,24 +15,38 @@ import (
 
 // previousInstallation is the local config of an installation at the release
 // before the craft vocabulary: two named Claude accounts, one of them the
-// default for every stage, and a senior review that runs on the other.
+// default for every stage, and a first-line review that runs on the other.
 //
 // The values are this fixture's own and never the spec's example: the spec's
 // "Coder = DeepSeek through OpenRouter, Senior review = Opus through Claude
 // OAuth" describes one installation, and a migration that wrote it into this
 // one would be inventing a configuration nobody chose (reconciliation F17).
+//
+// The accounts carry allow_data_to, which is what `fugaro accounts add` writes
+// for every account it declares (it refuses to declare one without, since a
+// policy cannot bound it): the empty list is the shape no command creates, and
+// a migration that only converted that shape would convert nothing in the
+// installations this door exists for.
 const previousInstallation = `version: 1
 name: aurora
 gcp_project: proj-1234
 region: us-east5
 runs_bucket: fugaro-runs-proj-1234
 claude_accounts:
-  team-a: {}
-  team-b: {}
+  team-a: { allow_data_to: [dimipaun/fugaro] }
+  team-b: { allow_data_to: [dimipaun/fugaro] }
 default_claude_account: team-a
 stages:
   review_first: { claude_account: team-b }
 `
+
+// migratedAccounts is the same installation as the keys the converge rigs
+// append to their own config, so the door's tests read the previous release's
+// shape and not a convenient one.
+const migratedAccounts = "claude_accounts:\n" +
+	"  team-a: { allow_data_to: [dimipaun/fugaro] }\n" +
+	"  team-b: { allow_data_to: [dimipaun/fugaro] }\n" +
+	"default_claude_account: team-a\nstages:\n  review_first: { claude_account: team-b }\n"
 
 // craftStage is the stage whose account a craft stands for, for a test that has
 // to say what each craft's access is: the first stage of the craft's own, in
@@ -74,6 +88,15 @@ func TestCraftMigrationKeepsTheAccountEveryStageRunsOn(t *testing.T) {
 			t.Errorf("claude_accounts.%s did not become a credential: %+v", name, lc.Credentials)
 		}
 	}
+	// The grant an account carries stays where it is. It is not moved into the
+	// credential — a credential of this release has no field for it — and it is
+	// not lost either, because the account entry the grant belongs to is still
+	// in the file this migration only adds to.
+	for _, name := range []string{"team-a", "team-b"} {
+		if got := lc.ClaudeAccounts[name].AllowDataTo; !slices.Equal(got, []string{"dimipaun/fugaro"}) {
+			t.Errorf("claude_accounts.%s.allow_data_to = %v after the migration, want the repositories it admitted before", name, got)
+		}
+	}
 	// The one place that answers "which credential does this craft go out on"
 	// (MC2) is what the test asks: the crafts resolve the credentials the
 	// stages used, and every access names something this config defines.
@@ -111,10 +134,40 @@ func TestCraftMigrationIsIdempotent(t *testing.T) {
 	if !bytes.Equal(once, twice) {
 		t.Errorf("the second migration changed the file:\n%s", lineDiff(string(once), string(twice)))
 	}
+
+	// The same has to hold for a config the migration cannot convert whole.
+	// Its report belongs to the run that does the deriving — the one whose diff
+	// a person reads — and not to every later write of a file the migration
+	// leaves exactly as it is: a note printed on every update stops being read,
+	// and the keys it is about are the same keys every time.
+	left := parseLocalConfig(t, `version: 1
+name: aurora
+gcp_project: proj-1234
+region: us-east5
+runs_bucket: fugaro-runs-proj-1234
+claude_accounts:
+  team-a: { allow_data_to: [dimipaun/fugaro] }
+  team-b: { allow_data_to: [dimipaun/fugaro] }
+default_claude_account: team-a
+stages:
+  implement: { claude_account: team-b }
+`)
+	if notes := migrateCraftKeys(left); len(notes) == 0 {
+		t.Fatal("the run that derived the crafts reported nothing about the craft it could not convert")
+	}
+	if notes := migrateCraftKeys(left); len(notes) != 0 {
+		t.Errorf("a converged config reported the keys it cannot convert again: %v", notes)
+	}
+	// An account that appears later does not: then the run is working on the
+	// file again, and the keys it still cannot convert are news again with it.
+	left.ClaudeAccounts["team-c"] = config.ClaudeAccount{}
+	if notes := migrateCraftKeys(left); len(notes) == 0 {
+		t.Error("a run with an account left to convert reported nothing about the craft it still cannot convert")
+	}
 }
 
-// The three keys the new vocabulary cannot carry are left alone and named, and
-// no craft key is written that would mean something other than the key it came
+// The keys the new vocabulary cannot carry are left alone and named, and no
+// craft key is written that would mean something other than the key it came
 // from. Each case is one line of the migration's own report: the plan says a
 // decision it does not answer is reported and not decided, and each of these is
 // such a decision.
@@ -133,26 +186,54 @@ gcp_project: proj-1234
 region: us-east5
 runs_bucket: fugaro-runs-proj-1234
 claude_accounts:
-  team-a: {}
+  team-a: { allow_data_to: [dimipaun/fugaro] }
 default_claude_account: default
 `,
 			want:  []string{"default"},
 			notes: []string{"default_claude_account"},
 		},
 		{
-			name: "an account narrowed by allow_data_to",
+			// The name is one a pool already holds, and a credential and a pool
+			// share one namespace: config.ValidatePools refuses the two of one
+			// name in the same block, so a credential written here would make
+			// the file this run writes refuse itself — the local config write,
+			// and so `fugaro update`, failing on its own output.
+			name: "an account that is already a pool's name",
 			yaml: `version: 1
 name: aurora
 gcp_project: proj-1234
 region: us-east5
 runs_bucket: fugaro-runs-proj-1234
 claude_accounts:
-  team-a: {}
-  team-b: { allow_data_to: [acme/app] }
-default_claude_account: team-b
+  team-a: { allow_data_to: [dimipaun/fugaro] }
+credentials:
+  - { name: spare, type: claude-oauth }
+pools:
+  - { name: team-a, members: [spare] }
+default_claude_account: team-a
 `,
-			want:  []string{"team-b"},
-			notes: []string{"team-b", "allow_data_to"},
+			want:  []string{"team-a"},
+			notes: []string{"team-a", "pool"},
+		},
+		{
+			// An account may be called `vertex` — the accounts block has no rule
+			// against it — and the credential block has one: vertex is the
+			// built-in credential of that name, the platform's own, which
+			// carries no secret. An access naming it would send the stage's
+			// calls to the built-in credential instead of this account's token,
+			// so nothing names it and the account keeps its stages as they are.
+			name: "an account named vertex",
+			yaml: `version: 1
+name: aurora
+gcp_project: proj-1234
+region: us-east5
+runs_bucket: fugaro-runs-proj-1234
+claude_accounts:
+  vertex: { allow_data_to: [dimipaun/fugaro] }
+default_claude_account: vertex
+`,
+			want:  []string{"vertex"},
+			notes: []string{"vertex", "credential"},
 		},
 		{
 			name: "one craft, two accounts",
@@ -162,8 +243,8 @@ gcp_project: proj-1234
 region: us-east5
 runs_bucket: fugaro-runs-proj-1234
 claude_accounts:
-  team-a: {}
-  team-b: {}
+  team-a: { allow_data_to: [dimipaun/fugaro] }
+  team-b: { allow_data_to: [dimipaun/fugaro] }
 default_claude_account: team-a
 stages:
   implement: { claude_account: team-b }
@@ -187,8 +268,8 @@ gcp_project: proj-1234
 region: us-east5
 runs_bucket: fugaro-runs-proj-1234
 claude_accounts:
-  team-a: {}
-  team-b: {}
+  team-a: { allow_data_to: [dimipaun/fugaro] }
+  team-b: { allow_data_to: [dimipaun/fugaro] }
 default_claude_account: team-a
 stages:
   review: { claude_account: team-b }
@@ -206,21 +287,74 @@ stages:
 					t.Errorf("the migration's report does not mention %s:\n%s", want, report)
 				}
 			}
-			// A credential entry carries a name and a type and no grant, so
-			// deriving one from a narrowed account would drop allow_data_to:
-			// the entry is not written and no craft names the account.
-			got := resolveCrafts(t, lc)
+			// The crafts block itself is read, and not what a craft resolves
+			// to: a craft the migration left unset resolves to the project's
+			// default credential, which is vertex — the fallback is not a craft
+			// key the migration wrote.
 			for _, name := range tc.want {
 				if holdsCredential(lc, name) {
-					t.Errorf("%s became a credential although the new vocabulary cannot carry it: %+v", name, lc.Credentials)
+					t.Errorf("%s became a credential though the config cannot hold one under that name: %+v", name, lc.Credentials)
 				}
-				for craftName, eff := range got {
-					if eff.Access == name {
-						t.Errorf("craft %s names %s, which no credential of this release stands for", craftName, name)
+				for _, craft := range config.CraftNames {
+					if lc.Crafts.Of(craft).Access == name {
+						t.Errorf("crafts.%s.access names %s, which no credential of this release stands for", craft, name)
 					}
 				}
 			}
+			// Whatever the migration refused, the file it produces is one this
+			// release reads: the door re-parses what it is about to write, and
+			// a migration whose output that parse refuses would fail the write
+			// — `fugaro update` refusing itself (CLAUDE.md's HARD RULE).
+			data, err := lc.Marshal()
+			if err != nil {
+				t.Fatal(err)
+			}
+			parseLocalConfigBytes(t, data)
 		})
+	}
+}
+
+// TestCraftMigrationKeepsANarrowedAccount is the shape every real installation
+// has: `fugaro accounts add` writes claude_accounts.<name>.allow_data_to and
+// has no way to declare an account without one, so an installation whose
+// accounts the migration skipped would be every installation — no credential
+// and no craft key derived anywhere.
+//
+// What the grant needs is not the credential: it belongs to the account entry,
+// which this migration keeps and every reader of egress (the policy node's
+// allow_repos, doctor, the reach a secret is allowed) still reads it from.
+func TestCraftMigrationKeepsANarrowedAccount(t *testing.T) {
+	const narrowed = `version: 1
+name: aurora
+gcp_project: proj-1234
+region: us-east5
+runs_bucket: fugaro-runs-proj-1234
+claude_accounts:
+  team-a: { allow_data_to: [acme/app] }
+  team-b: { allow_data_to: [acme/app] }
+default_claude_account: team-a
+stages:
+  review_first: { claude_account: team-b }
+`
+	lc := parseLocalConfig(t, narrowed)
+	if notes := migrateCraftKeys(lc); len(notes) != 0 {
+		t.Fatalf("an account narrowed by allow_data_to is the shape the CLI writes, and the migration reported %v", notes)
+	}
+	for _, name := range []string{"team-a", "team-b"} {
+		if !holdsCredential(lc, name) {
+			t.Errorf("claude_accounts.%s admits two repositories and became no credential: %+v", name, lc.Credentials)
+		}
+	}
+	got := resolveCrafts(t, lc)
+	for craftName, stage := range craftStage {
+		if want := installationAccount(lc, stage); got[craftName].Access != want {
+			t.Errorf("craft %s resolves access %q, want the account its stage %s runs on (%q)", craftName, got[craftName].Access, stage, want)
+		}
+	}
+	// And the grant is still the file's, which is what makes the conversion
+	// safe to make: nothing here moved it and nothing dropped it.
+	if allow := lc.ClaudeAccounts["team-b"].AllowDataTo; !slices.Equal(allow, []string{"acme/app"}) {
+		t.Errorf("claude_accounts.team-b.allow_data_to = %v, want the repositories it admitted before the migration", allow)
 	}
 }
 
@@ -229,8 +363,7 @@ stages:
 // `fugaro update` alone, and doctor is clean afterwards (the HARD RULE, F17).
 func TestUpdateConvergesPreviousInstallation(t *testing.T) {
 	r := newConvergeRig(t, v4NodeWithAccounts())
-	r.appendConfig(t, "claude_accounts:\n  team-a: {}\n  team-b: {}\n"+
-		"default_claude_account: team-a\nstages:\n  review_first: { claude_account: team-b }\n")
+	r.appendConfig(t, migratedAccounts)
 	// The keys go in before the copy the door reads is taken: the rig clears
 	// FUGARO_CONFIG, so the local config `fugaro update` reads and writes is the
 	// one this rig left in the XDG projects directory.
@@ -241,6 +374,16 @@ func TestUpdateConvergesPreviousInstallation(t *testing.T) {
 	for _, name := range []string{"team-a", "team-b"} {
 		if !holdsCredential(written, name) {
 			t.Errorf("after fugaro update, credentials holds no %s: %+v", name, written.Credentials)
+		}
+	}
+	// The grant is the account's and stays its own: the account entry is still
+	// in the file (nothing here removes one), so deriving a credential for a
+	// narrowed account takes no reach from anyone, and the readers that decide
+	// egress — the policy node's allow_repos, doctor, the reach of a secret —
+	// read exactly what they read before.
+	for _, name := range []string{"team-a", "team-b"} {
+		if allow := written.ClaudeAccounts[name].AllowDataTo; !slices.Equal(allow, []string{"dimipaun/fugaro"}) {
+			t.Errorf("after fugaro update, claude_accounts.%s.allow_data_to = %v, want the repositories it admitted before", name, allow)
 		}
 	}
 	got := resolveCrafts(t, written)
@@ -269,8 +412,7 @@ func TestUpdateConvergesPreviousInstallation(t *testing.T) {
 // it produced, and that is what the test reads.
 func TestUpdateIsIdempotent(t *testing.T) {
 	r := newConvergeRig(t, v4NodeWithAccounts())
-	r.appendConfig(t, "claude_accounts:\n  team-a: {}\n  team-b: {}\n"+
-		"default_claude_account: team-a\nstages:\n  review_first: { claude_account: team-b }\n")
+	r.appendConfig(t, migratedAccounts)
 	// The keys go in before the copy the door reads is taken: the rig clears
 	// FUGARO_CONFIG, so the local config `fugaro update` reads and writes is the
 	// one this rig left in the XDG projects directory.
@@ -287,6 +429,43 @@ func TestUpdateIsIdempotent(t *testing.T) {
 	}
 	if written.Crafts != crafts {
 		t.Errorf("a second pass over the file fugaro update wrote rewrites the crafts: %+v, was %+v", written.Crafts, crafts)
+	}
+}
+
+// TestUpdateReportsTheKeysItCannotConvert: what the migration could not
+// convert reaches the person running the one command, and it arrives with the
+// write it belongs to. A report printed before the diff a person is asked to
+// confirm — or on a run that writes nothing, because the file is current
+// already — is one nobody reads, and the keys it is about are the same keys
+// every time.
+func TestUpdateReportsTheKeysItCannotConvert(t *testing.T) {
+	node := v4NodeWithAccounts()
+	// The node carries the stage key too: an account key the node does not
+	// carry is a widening of what the project's runs may reach, and publishing
+	// one needs a typed confirmation at a real terminal (policyAccountWidening).
+	node["claude_account_stages"] = map[string]any{"implement": "team-b"}
+	r := newConvergeRig(t, node)
+	r.appendConfig(t, "claude_accounts:\n"+
+		"  team-a: { allow_data_to: [dimipaun/fugaro] }\n"+
+		"  team-b: { allow_data_to: [dimipaun/fugaro] }\n"+
+		"default_claude_account: team-a\nstages:\n  implement: { claude_account: team-b }\n")
+	registerInstallation(t, r.initRig)
+	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+
+	note := "note: crafts.coder:"
+	if !strings.Contains(out, note) {
+		t.Fatalf("the run did not report the craft whose stages name different accounts:\n%s", out)
+	}
+	if at, wrote := strings.Index(out, note), strings.Index(out, "wrote "+installationConfigPath()); wrote < 0 || at < wrote {
+		t.Errorf("the migration's report is not printed with the write of the config it describes (wrote at %d, note at %d):\n%s", wrote, at, out)
+	}
+	// Its refusal is about the craft key alone: the credentials the accounts
+	// name are derived all the same.
+	written := parseLocalConfigBytes(t, readFile(t, installationConfigPath()))
+	for _, name := range []string{"team-a", "team-b"} {
+		if !holdsCredential(written, name) {
+			t.Errorf("a craft it could not convert left the accounts unconverted too: %+v", written.Credentials)
+		}
 	}
 }
 
