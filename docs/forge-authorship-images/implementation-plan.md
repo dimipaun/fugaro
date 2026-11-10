@@ -472,8 +472,9 @@ from it. **Not sized here** beyond: L, security-sensitive throughout.
 
 - **State:** Kept in part — the shared-key half of the commit is merged with C8a (`SECURITY.md`'s
   paragraph on the shared dependency-layer image, pinned by
-  `internal/cli/docs_shared_images_test.go`); the baked-source half is written nowhere, and
-  `shared-images.md` §1 says so itself. Whether to re-point it at the catalog's images is
+  `internal/cli/docs_shared_images_test.go`); the baked-source half is written nowhere — the design's
+  own "C6 is not written" line predates C8a's paragraph and still holds for that half. Whether to
+  re-point it at the catalog's images is
   [reconciliation-image-setup.md](reconciliation-image-setup.md) §5, D651.
 
 - **Files:** `SECURITY.md`, `website/content/security.md` (regenerated),
