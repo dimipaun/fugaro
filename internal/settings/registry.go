@@ -844,6 +844,24 @@ var localRows = []Row{
 	loc("image_catalog.entries.*.source.image", "none", "project", docImages),
 	loc("image_catalog.entries.*.description", "none", "project", docImages),
 	loc("image_catalog.entries.*.default", "false", "project", docImages),
+	// The repo-to-image map is the catalog's counterpart one step down (D1906):
+	// which entry each of the project's repositories runs, so it is the image
+	// policy too and one row for the whole map because the map's keys are the
+	// project's repositories and its values the entries — a settings read names
+	// the leaf a value came from, and the leaf here is the map. `fugaro image
+	// map set` writes it, which is why the owner names that family: the generic
+	// path writes no image policy, and a person reading the row is sent to the
+	// command that does.
+	loc("image_map", "none: no repository is mapped, and the catalog's default entry decides the image", "image map", docImages),
+	// The bake switch is the setup wizard's question (D1901), answered yes when
+	// it is asked with nothing else, so an installation that never answers it is
+	// told how the absent key reads rather than what a value would be. IS7 asks
+	// it and writes the answer through the generic path — the same key is
+	// changed later with `fugaro settings set bake_repos false`, which is why the
+	// owner is that path rather than a family: there is no cross-key rule for a
+	// boolean whose only reader is the resolver, and a family for one key would
+	// be a command family that does nothing the generic write does not.
+	loc("bake_repos", "true: a repository the build can read is baked into the image its job runs", "settings set", docImages),
 
 	// The orchestrator daemon's own guardrails (D1239, D1234) are the owner's
 	// policy like the catalog above, and one row per member for the catalog's

@@ -634,7 +634,7 @@ const CLI_COMMANDS: readonly CliCommand[] = [
   // caller's own database node, and the second reads the project's own node and
   // writes neither it nor the state file.
   { command: 'managed status', kind: 'allowed', where: 'internal/cli/managed_status.go:174' },
-  { command: 'project policy show', kind: 'allowed', where: 'internal/cli/project_cmd.go:2464' },
+  { command: 'project policy show', kind: 'allowed', where: 'internal/cli/project_cmd.go:2489' },
   // Console 0.119.0's read-only models panel (the owner's ruling of
   // 2026-11-02): the selected project's routes, the models a run can name and
   // each repository's pins, from the project's own configuration and the price

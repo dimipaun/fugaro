@@ -51,6 +51,13 @@ var settingsFamilyCommands = map[string]string{
 	"secrets":     "fugaro secrets",
 	"project":     "fugaro project",
 	"workspace":   "fugaro workspace",
+	// The image map is a family of one command (D1906): the map is the project's
+	// image policy keyed by repository, and `fugaro image map set` is where the
+	// two are written together — the key it lands on and the entry it names are
+	// checked against each other there, which a generic scalar write could not
+	// do. Its refusal names that command rather than `fugaro project`, which
+	// writes the project's other policy keys and not this one.
+	"image map": "fugaro image map",
 }
 
 // settingsGenericKeys is the allowlist of spec §4.4: the exact keys `settings
@@ -92,12 +99,18 @@ var settingsGenericKeys = map[string]bool{
 	"budget.unreachable_grace": true,
 	"budget.mode":              true,
 	"budget.per_day_usd":       true,
-	"base_branch":              true,
-	"max_parallel":             true,
-	"update_check":             true,
-	"commit_name":              true,
-	"commit_email":             true,
-	"layer.default_profile":    true,
+	// The bake switch (D1901) is here by IS7's own interface: the setup wizard
+	// asks the question and writes the answer through this path, and changing it
+	// afterwards is the same write followed by a rebuild notice — the key has no
+	// cross-key rule (the resolver reads the boolean and nothing beside it), so
+	// a family for it would be a command that does what this one does.
+	"bake_repos":            true,
+	"base_branch":           true,
+	"max_parallel":          true,
+	"update_check":          true,
+	"commit_name":           true,
+	"commit_email":          true,
+	"layer.default_profile": true,
 	// D873's account choice (spec §11.1). They are here by name because they
 	// are not §4.4's list: §4.4 predates them, and a registry row no list
 	// carries is a key nobody can write.
@@ -458,7 +471,7 @@ func settingsWriteRowHinted(key string, list bool) (settings.Row, error) {
 		return settings.Row{}, userErr("%s is a sensitive setting, and the generic path never writes one: its value would be printed in the diff this command shows (spec §2.3)", key)
 	}
 	if family, ok := settingsFamilyCommands[row.Owner]; ok {
-		return settings.Row{}, userErr("%s is written by %s, not by the generic path: settings set writes no route, price, rigor mode, floor, account, job profile, credential, clone URL or workspace key", key, family)
+		return settings.Row{}, userErr("%s is written by %s, not by the generic path: settings set writes no route, price, rigor mode, floor, account, job profile, credential, clone URL, image map or workspace key", key, family)
 	}
 	if strings.Contains(key, "*") {
 		return settings.Row{}, userErr("%s varies with a name this command does not take: a key with a * is a map entry, and a map has no generic form", key)

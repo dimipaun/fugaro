@@ -446,6 +446,138 @@ func TestUpdatePublishesTheFirstPolicyNodeForAnOrchestratorBlock(t *testing.T) {
 	}
 }
 
+// imageMapConfigYAML is the owner's repo-to-image map as the file writes it,
+// and the only member of a node this config states: one repository of the
+// project mapped to a catalog entry.
+const imageMapConfigYAML = "image_map:\n  acme/app: universal\n"
+
+// TestUpdatePublishesTheFirstPolicyNodeForAnImageMap is #1656's member for the
+// map (D1906), and the reason the first-publish question is asked of it too: a
+// run looks its own repository up in the map on the published node and nowhere
+// else — the job's environment carries none, and the shared config refuses the
+// key outright — so a project that had never published a node and whose owner
+// had just mapped a repository was told there was nothing to do, and every run
+// of that repository took the catalog's default image instead of the one they
+// mapped it to, with `fugaro project policy publish` as the second command
+// `fugaro update`'s one command must not need.
+func TestUpdatePublishesTheFirstPolicyNodeForAnImageMap(t *testing.T) {
+	f := newProjectFixture(t, imageMapConfigYAML)
+	h := newMigrationRig(t, f, &initOptions{})
+
+	st, err := h.s.Check(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.State != initflow.Todo {
+		t.Fatalf("the check says %s %q, want the first publish left to do", st.State, st.Detail)
+	}
+	if !strings.Contains(st.Detail, "no policy is published") {
+		t.Errorf("the check does not say the project has no node: %q", st.Detail)
+	}
+	if !strings.Contains(st.Detail, "the repo-to-image map") || strings.Contains(st.Detail, "image_catalog") || strings.Contains(st.Detail, "guardrails") {
+		t.Errorf("the check names a member this config does not state: %q", st.Detail)
+	}
+	plan, err := h.s.Plan(context.Background(), initflow.Env{Yes: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.NothingToDo {
+		t.Errorf("the plan leaves the first publish out: %+v", plan)
+	}
+	if v := f.db.Value(projectpolicy.PathShared()); v != nil {
+		t.Fatalf("the preview wrote a node of its own: %v", v)
+	}
+
+	// The write is behind the same confirmation the catalog's first publish
+	// takes, and the diff it prints names the map it creates the node with.
+	fakeTerminal(t)
+	h.cmd.SetIn(strings.NewReader("aurora\n"))
+	out, err := h.apply(t, false)
+	if err != nil {
+		t.Fatalf("the first publish was refused: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "⚠ CONFIRM (project aurora)") {
+		t.Errorf("the first publish was not behind the confirmation:\n%s", out)
+	}
+	if !strings.Contains(out, "this publish creates the node") || !strings.Contains(out, "image_map") {
+		t.Errorf("the diff the operator confirmed does not name the map it creates the node with:\n%s", out)
+	}
+	p := publishedPolicy(t, f)
+	if got := p.ImageMap["acme/app"]; got != "universal" {
+		t.Fatalf("the published node maps acme/app to %q, want the entry the config names: %+v", got, p.ImageMap)
+	}
+}
+
+// TestUpdatePublishesTheFirstPolicyNodeForTheBakeSwitch is the same member
+// class for the switch (D1901): what a run does with a repository's clone is
+// read off the node, so a project whose owner had written `bake_repos: false`
+// and had never published a node was told there was nothing to do, and every
+// job of the project went on cloning again.
+//
+// A written true is a reason to create the node as well, which is the one
+// spelling where this question is asked of a value that changes nothing for a
+// reader (absent and true are one statement, BakesRepos): the publisher's row
+// for the switch is reached by `lc.BakeRepos != nil` and the node it builds
+// carries whatever the file writes, so a first publish that left a written
+// answer behind would be a node that contradicts the file it was built from
+// (the reading `orchestrator: {}` gets is the other one, and it is asked of the
+// effective rule rather than of the key).
+func TestUpdatePublishesTheFirstPolicyNodeForTheBakeSwitch(t *testing.T) {
+	f := newProjectFixture(t, "bake_repos: false\n")
+	h := newMigrationRig(t, f, &initOptions{})
+
+	st, err := h.s.Check(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.State != initflow.Todo {
+		t.Fatalf("the check says %s %q, want the first publish left to do", st.State, st.Detail)
+	}
+	if !strings.Contains(st.Detail, "no policy is published") {
+		t.Errorf("the check does not say the project has no node: %q", st.Detail)
+	}
+	if !strings.Contains(st.Detail, "the bake switch") || strings.Contains(st.Detail, "image_catalog") || strings.Contains(st.Detail, "guardrails") {
+		t.Errorf("the check names a member this config does not state: %q", st.Detail)
+	}
+	plan, err := h.s.Plan(context.Background(), initflow.Env{Yes: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.NothingToDo {
+		t.Errorf("the plan leaves the first publish out: %+v", plan)
+	}
+
+	fakeTerminal(t)
+	h.cmd.SetIn(strings.NewReader("aurora\n"))
+	out, err := h.apply(t, false)
+	if err != nil {
+		t.Fatalf("the first publish was refused: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "this publish creates the node") || !strings.Contains(out, "bake_repos") {
+		t.Errorf("the diff the operator confirmed does not name the switch it creates the node with:\n%s", out)
+	}
+	p := publishedPolicy(t, f)
+	if p.BakeRepos == nil || p.BakesRepos() {
+		t.Fatalf("the published node carries bake_repos %v, want the false the config writes", p.BakeRepos)
+	}
+
+	// The other value of the same key is a reason to create the node too: the
+	// node is built carrying what the file writes, and a member the file states
+	// is one the node has to state for the two to agree.
+	on := newProjectFixture(t, "bake_repos: true\n")
+	h2 := newMigrationRig(t, on, &initOptions{})
+	st, err = h2.s.Check(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.State != initflow.Todo {
+		t.Errorf("the check says %s %q for a written true, want it published like any other member the file states", st.State, st.Detail)
+	}
+	if v := on.db.Value(projectpolicy.PathShared()); v != nil {
+		t.Errorf("the check wrote a node of its own: %v", v)
+	}
+}
+
 // catalogConfigWithNoRepos rewrites the fixture's config so the project lists no
 // repository while the catalog the fixture's extra block states stays: a first
 // publish from it would write a node whose allow-list admits nothing, which is

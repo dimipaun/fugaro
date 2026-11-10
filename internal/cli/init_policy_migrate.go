@@ -292,13 +292,28 @@ func policyMigrationForIn(ctx context.Context, lc *localcfg.Config, configPath s
 //
 // A member written but stating no value is not one of them:
 // ImageCatalogEffective is nil for a config that names no catalog and for one
-// that writes an empty catalog, which publishes no member at all (D1156), and
+// that writes an empty catalog, which publishes no member at all (D1156),
+// ImageMapEffective is nil for the same two spellings of the map (D1906), and
 // OrchestratorEffective is nil for a block that sets no key (SetsNothing). The
-// publish would create a policy that admits nothing and carry neither with it.
+// publish would create a policy that admits nothing and carry none of them with
+// it.
+//
+// The rule is the publisher's own rows, one member at a time: whatever
+// policyNodeForPublish would put in the node because the file states it is a
+// reason to create the node, and that is `lc.X != nil` where the publisher's
+// guard is (the bake switch among them: BakeReposEffective hands back a written
+// answer whatever it is, and the row that compares it is reached by
+// `lc.BakeRepos != nil`).
 func firstPublishNodeOnlyMembers(lc *localcfg.Config) []string {
 	var out []string
 	if lc.ImageCatalogEffective(nil) != nil {
 		out = append(out, "the image_catalog")
+	}
+	if lc.ImageMapEffective(nil) != nil {
+		out = append(out, "the repo-to-image map")
+	}
+	if lc.BakeReposEffective(nil) != nil {
+		out = append(out, "the bake switch")
 	}
 	if lc.OrchestratorEffective(nil) != nil {
 		out = append(out, "the orchestrator's guardrails")
@@ -308,10 +323,12 @@ func firstPublishNodeOnlyMembers(lc *localcfg.Config) []string {
 
 // firstPublishCarriesANodeOnlyMember is whether the local config states
 // something only the node can carry, which is what a first publish is made for:
-// an image catalog (D1156) and the orchestrator's guardrails (D1239) are read
-// out of the published policy and nowhere else — no job's environment carries
-// either — so a project that has never published a node has left what the
-// operator wrote in a file no run reads.
+// an image catalog (D1156), the repo-to-image map (D1906), the bake switch
+// (D1901) and the orchestrator's guardrails (D1239) are read out of the
+// published policy and nowhere else — no job's environment carries any of them,
+// and the shared config refuses the map and the switch outright — so a project
+// that has never published a node has left what the operator wrote in a file no
+// run reads.
 //
 // The members that are not node-only are not this stage's to publish here: a
 // budget ceiling, a base branch or a model list reaches every run through the

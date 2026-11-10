@@ -156,13 +156,13 @@ Without it every later task would invent its own key rule, which is the drift D1
 - **Interface.** One field, `WorkflowSecrets`, a map from a secret's name to a
   `config.ProjectSecret` under the yaml key `workflow_secrets`, validated through
   `config.ValidateWorkflowSecrets` beside `ValidateProjectSecrets`'s call
-  (`localcfg.go:1605`), and dropped by `localcfg/shared.go:79`'s publish path the way
+  (`localcfg.go:1631`), and dropped by `localcfg/shared.go:79`'s publish path the way
   `ProjectSecrets` is. Strict decoding already refuses an unknown field, so a misplaced block is an
   error rather than a silent ignore.
 - **The cross-block half of the key rule is this task's, because this is where `Providers` is
   visible.** W0's `ValidateWorkflowSecrets(secrets)` holds the name-only rules; the two that read the
   operator's configured providers are checked **here**, beside the `ValidateWorkflowSecrets` call in
-  `validate()` (`localcfg.go:1605`), where `lc.Providers` and `lc.ClaudeAccounts` are in hand: a key
+  `validate()` (`localcfg.go:1631`), where `lc.Providers` and `lc.ClaudeAccounts` are in hand: a key
   that is a configured provider's own `secret:` (`config.ProviderBySecret`) or the conventional name
   `config.ReservedProviderSecret` derives from the provider map, refused for the same reason
   `CheckWorkflowProviderSecrets` refuses them in a repository's own workflow. The shape to copy is

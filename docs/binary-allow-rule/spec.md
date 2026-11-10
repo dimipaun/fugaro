@@ -274,7 +274,7 @@ the pull request knows an unreadable file is there without opening the diff. Tha
 **Through the doors that already exist, with no separate command anywhere.**
 
 Both halves are on `main`: `internal/cli/init_stages.go` registers `initflow.Policy`
-(`policyMigrateStage`, `internal/cli/init_policy_migrate.go:694`), and that stage's **publish half**
+(`policyMigrateStage`, `internal/cli/init_policy_migrate.go:711`), and that stage's **publish half**
 is `internal/cli/init_policy_publish.go` — the node built from the local config through
 `buildProjectPolicy` under an ETag guard and a generation guard (D854). The explicit door,
 `fugaro project policy publish`, goes through the same `buildProjectPolicy`, and it is additionally
