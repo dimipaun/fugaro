@@ -786,14 +786,15 @@ func TestCatalogBuildBakesTheMappedReposCheckout(t *testing.T) {
 	}
 }
 
-// TestCatalogBuildBakesNothingWithoutTheMap: a checkout that names no catalog
-// entry of its own and that the project's map does not put on this one — every
-// installation before this release, and one whose operator answered no — is
-// byte for byte what it was: no stage is composed, the copy is the entry's own
-// definition, the smoke is the spec it was, and no line about the bake is
-// printed. A checkout that already names the entry in its own workflow is the
-// one exception, and TestCatalogBuildBakesTheEntryTheCheckoutNames is its
-// case: T1 reading (b) makes that repository's own answer the image it runs.
+// TestCatalogBuildBakesNothingWithoutTheMap: a checkout that the project's map
+// does not put on this entry — every installation before this release, and one
+// whose operator answered the switch no — is byte for byte what it was: no
+// stage is composed, the copy is the entry's own definition, the smoke is the
+// spec it was, and no line about the bake is printed. A repository the map
+// does put on a quiet entry is baked (that is the default's own case), and
+// TestCatalogBuildBakesASharedEntryOnlyWhenAsked and
+// TestCatalogBuildDoesNotBakeForAnUnmappedCheckout are the two the default
+// refuses.
 //
 // This is the half of the HARD RULE that keeps `fugaro update` a one-command
 // upgrade: no path under it writes a definition at all (O1), so nothing about
@@ -840,38 +841,94 @@ func TestCatalogBuildBakesNothingWithoutTheMap(t *testing.T) {
 	}
 }
 
-// TestCatalogBuildBakesTheEntryTheCheckoutNames: the repository's own workflow
-// is the first answer to which image its jobs run (T1 reading (b)), and the
-// bake follows the repository's answer before the project's map — with no map
-// and no `bake_repos` anywhere, a checkout whose workflow names an entry still
-// gets that entry's image composed for it, because that repository runs that
-// image by name and D1901's switch is on until an operator says otherwise.
-func TestCatalogBuildBakesTheEntryTheCheckoutNames(t *testing.T) {
+// TestCatalogBuildBakesASharedEntryOnlyWhenAsked: the entry serves another
+// repository too, and its jobs could read whatever the image carries (F18), so
+// the default writes nothing into it and says which setting asks for the bake
+// anyway. `bake_repos: true` is that answer, and then the build bakes and names
+// the repository that can read the checkout.
+func TestCatalogBuildBakesASharedEntryOnlyWhenAsked(t *testing.T) {
+	shared := "image_map:\n  acme/app: tools\n  acme/other: tools\n"
+	t.Run("the default writes nothing into a shared image", func(t *testing.T) {
+		_, gcs, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildYAML)
+		f.appendConfig(t, shared)
+
+		_, stderr, err := executeBuild(t, "image", "build", "tools", "--base", "b:1")
+		if err != nil {
+			t.Fatalf("%v (%s)", err, stderr)
+		}
+		got, _ := catalogCopy(t, gcs, "tools")
+		if got != catalogBuildInline {
+			t.Errorf("the copy is %q, want the entry's own definition %q: nothing is baked into an image another repository runs without an answer", got, catalogBuildInline)
+		}
+		if !strings.Contains(stderr, "bakes no checkout") || !strings.Contains(stderr, "acme/other") || !strings.Contains(stderr, "bake_repos: true") {
+			t.Errorf("stderr = %q, want the shared entry named and the setting that asks for the bake", stderr)
+		}
+	})
+	t.Run("bake_repos true bakes it and names the reader", func(t *testing.T) {
+		_, gcs, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildYAML)
+		f.appendConfig(t, shared+"bake_repos: true\n")
+
+		_, stderr, err := executeBuild(t, "image", "build", "tools", "--base", "b:1")
+		if err != nil {
+			t.Fatalf("%v (%s)", err, stderr)
+		}
+		dir := "/work/baked/" + mustSlug(gitprov.KindBitbucket, "acme/app")
+		got, _ := catalogCopy(t, gcs, "tools")
+		if baked, ok := imagebake.BakedDir([]byte(got)); !ok || baked != dir {
+			t.Errorf("the copy bakes at %q, %v; want %s: the operator asked for it", baked, ok, dir)
+		}
+		if !strings.Contains(stderr, "acme/other") || !strings.Contains(stderr, "can read this checkout") {
+			t.Errorf("stderr = %q, want the repository that can read the baked checkout named", stderr)
+		}
+	})
+}
+
+// TestCatalogBuildDoesNotBakeForAnUnmappedCheckout: the repository's own
+// workflow names this entry (T1 reading (b)), so this repository runs it — but
+// the project's map does not, and D1901's default is the map's own words
+// ("clone each mapped repository"), so nothing is baked until the project says
+// which repositories run the entry. `bake_repos: true` bakes it with no map at
+// all.
+func TestCatalogBuildDoesNotBakeForAnUnmappedCheckout(t *testing.T) {
 	// The repository's own reference: `image_name: tools` in its workflow
 	// (D1155), and no image_map and no bake_repos in the project at all.
 	repo := strings.Replace(bitbucketYAML, "app: {", "app: { image_name: tools,", 1)
 	if repo == bitbucketYAML {
 		t.Fatal("the fixture workflow has changed shape")
 	}
-	fb, gcs, _ := catalogBuildCheckoutFor(t, repo, catalogBuildYAML, gitprov.KindBitbucket, "")
-
-	_, stderr, err := executeBuild(t, "image", "build", "tools", "--base", "b:1")
-	if err != nil {
-		t.Fatalf("%v (%s)", err, stderr)
-	}
-	dir := "/work/baked/" + mustSlug(gitprov.KindBitbucket, "acme/app")
-	got, _ := catalogCopy(t, gcs, "tools")
-	if baked, ok := imagebake.BakedDir([]byte(got)); !ok || baked != dir {
-		t.Errorf("the copy bakes at %q, %v; want %s: the checkout's own workflow names this entry, so its jobs run it", baked, ok, dir)
-	}
-	if !strings.Contains(stderr, "bakes the checkout of acme/app at "+dir) {
-		t.Errorf("stderr = %q, want the line naming the baked checkout", stderr)
-	}
-	// The entry the checkout does not run is nobody's to bake: building it
-	// composes nothing (TestCatalogBuildBakesNothingWithoutTheMap is the whole
-	// of that case, subtest by subtest).
-	if subs := catalogBuildSubs(t, fb); subs["_CATALOG_TAG"] != sha256Hex([]byte(got)) {
-		t.Errorf("_CATALOG_TAG = %v, want the composed definition's sha256", subs["_CATALOG_TAG"])
+	for name, tc := range map[string]struct {
+		yaml string
+		bake bool
+	}{"no answer anywhere": {}, "the bake asked for without a map": {yaml: "bake_repos: true\n", bake: true}} {
+		t.Run(name, func(t *testing.T) {
+			fb, gcs, f := catalogBuildCheckoutFor(t, repo, catalogBuildYAML, gitprov.KindBitbucket, "")
+			if tc.yaml != "" {
+				f.appendConfig(t, tc.yaml)
+			}
+			_, stderr, err := executeBuild(t, "image", "build", "tools", "--base", "b:1")
+			if err != nil {
+				t.Fatalf("%v (%s)", err, stderr)
+			}
+			dir := "/work/baked/" + mustSlug(gitprov.KindBitbucket, "acme/app")
+			got, _ := catalogCopy(t, gcs, "tools")
+			baked, ok := imagebake.BakedDir([]byte(got))
+			if tc.bake && (!ok || baked != dir) {
+				t.Errorf("the copy bakes at %q, %v; want %s: the project asked for the bake", baked, ok, dir)
+			}
+			if !tc.bake && ok {
+				t.Errorf("the copy bakes at %q; want no bake: the project's map does not put acme/app on tools", baked)
+			}
+			if tc.bake {
+				if !strings.Contains(stderr, "bakes the checkout of acme/app at "+dir) {
+					t.Errorf("stderr = %q, want the line naming the baked checkout", stderr)
+				}
+			} else if !strings.Contains(stderr, "image_map") || !strings.Contains(stderr, "bake_repos: true") {
+				t.Errorf("stderr = %q, want the map named as what asks, and bake_repos: true as the other way", stderr)
+			}
+			if subs := catalogBuildSubs(t, fb); subs["_CATALOG_TAG"] != sha256Hex([]byte(got)) {
+				t.Errorf("_CATALOG_TAG = %v, want the composed definition's sha256", subs["_CATALOG_TAG"])
+			}
+		})
 	}
 }
 
@@ -888,7 +945,7 @@ func TestCatalogBuildNamesTheReposThatCloneAtStart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v (%s)", err, stderr)
 	}
-	if !strings.Contains(stderr, "acme/other") || !strings.Contains(stderr, "clone at job start") {
+	if !strings.Contains(stderr, "acme/other") || !strings.Contains(stderr, "clone their own at job start") {
 		t.Errorf("stderr = %q, want the repositories that clone at job start named", stderr)
 	}
 }

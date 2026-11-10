@@ -7,6 +7,11 @@ import (
 
 // reqApp is the request a build of the "app" entry from acme/app's checkout
 // makes, with the map and the switch each test overrides.
+// bakeOn and bakeOff are the two answered states of D1901's switch; a Request
+// that leaves Bake nil is the project that answered nothing.
+func bakeOn() *bool  { v := true; return &v }
+func bakeOff() *bool { v := false; return &v }
+
 func reqApp() Request {
 	return Request{
 		Entry: "app",
@@ -15,7 +20,7 @@ func reqApp() Request {
 			URL: "https://github.com/acme/app.git", Branch: "main",
 		},
 		Map:  map[string]string{"acme/app": "app"},
-		Bake: true,
+		Bake: bakeOn(),
 	}
 }
 
@@ -64,7 +69,7 @@ func TestDecideClonesTheOtherReposAtStart(t *testing.T) {
 	}
 	// And the same list is what a plan that bakes nothing reports: the entry's
 	// own jobs still clone at start, whichever way the decision went.
-	req.Bake = false
+	req.Bake = bakeOff()
 	if p := Decide(req); len(p.Cloned) != len(want) {
 		t.Errorf("with baking off the plan clones %v at start, want %v: which repositories clone does not depend on the switch", p.Cloned, want)
 	}
@@ -115,27 +120,72 @@ func TestDecideReferenceBeatsTheMap(t *testing.T) {
 	}
 }
 
-// TestDecideBakesTheEntryTheCheckoutNamesWithNoMap: a repository whose own
-// workflow names the entry being built runs that entry's image by its own
-// answer (T1 reading (b)), so the bake belongs there even when the project has
-// no map at all — the map is what answers for a repository that names none,
-// and it is not what makes a repository's own image bakeable. This is the case
-// an installation that predates both fields meets when its checkouts already
-// pin entries, and its next build of one composes a stage for it.
-func TestDecideBakesTheEntryTheCheckoutNamesWithNoMap(t *testing.T) {
+// TestDecideTheDefaultIsTheMaps: the project answered nothing (bake_repos
+// absent), which is every installation predating the field, and D1901's words
+// are "clone each MAPPED repo". So the default bakes a repository the map puts
+// on this entry and nothing else — a checkout that runs the entry by its own
+// workflow's reference is not baked for until the project says so — and a
+// build that composes nothing says which of the two commands asks.
+func TestDecideTheDefaultIsTheMaps(t *testing.T) {
 	req := reqApp()
+	req.Bake = nil
 	req.Map = nil
 	req.Reference = "app"
-	if p := Decide(req); p.Baked == nil {
-		t.Fatalf("Decide baked nothing (%s): the checkout names this entry in its own workflow and the project's switch is on", p.Reason)
-	} else if !p.Notable {
-		t.Error("the plan is not notable: a bake is a line a build prints, and this one changed an entry's definition on a project that set no map")
+	p := Decide(req)
+	if p.Baked != nil {
+		t.Fatalf("Decide baked a checkout into %s on a project that mapped nothing and answered nothing", req.Entry)
 	}
-	// And what the repository does NOT name stays untouched: with no map, an
-	// entry the checkout names nowhere is not the image it runs.
+	if !p.Notable {
+		t.Error("the plan is quiet: a checkout that runs this entry by name and a default that does not bake for it is worth the one line that says which command asks")
+	}
+	if !strings.Contains(p.Reason, "image_map") || !strings.Contains(p.Reason, "bake_repos") {
+		t.Errorf("the reason %q names neither the map nor the switch, so the operator cannot act on it", p.Reason)
+	}
+	// Answered yes, the same project bakes: the switch is the operator's own
+	// answer, and it does not need a map to be one.
+	req.Bake = bakeOn()
+	if p := Decide(req); p.Baked == nil {
+		t.Fatalf("Decide baked nothing (%s): the project asked for the bake by name", p.Reason)
+	}
+	// And an entry the checkout names nowhere is still silent: a build of
+	// another entry has nothing to report.
 	req.Reference = ""
+	req.Bake = nil
 	if p := Decide(req); p.Baked != nil || p.Notable {
-		t.Errorf("Decide baked %+v for an entry the checkout names nowhere and the project does not map", p)
+		t.Errorf("Decide returned %+v for an entry the checkout names nowhere and the project does not map", p)
+	}
+}
+
+// TestDecideBakesNothingIntoASharedImageByDefault: the entry serves another
+// repository as well, which is F18's boundary — whatever is baked into the
+// image is source that repository's jobs can read. The default writes nothing
+// there, and names the repositories the operator would be exposing and the
+// switch that asks for it anyway.
+func TestDecideBakesNothingIntoASharedImageByDefault(t *testing.T) {
+	req := reqApp()
+	req.Bake = nil
+	req.Map = map[string]string{"acme/app": "app", "acme/web": "app"}
+	p := Decide(req)
+	if p.Baked != nil {
+		t.Fatal("Decide baked the checkout into an image another repository's jobs run and can read")
+	}
+	if !p.Notable {
+		t.Error("the plan is quiet about leaving a shared image un-baked")
+	}
+	for _, name := range []string{"acme/web", "bake_repos"} {
+		if !strings.Contains(p.Reason, name) {
+			t.Errorf("the reason %q does not name %s, so the operator cannot tell what the bake would expose or how to ask for it", p.Reason, name)
+		}
+	}
+	// Asked for explicitly, the same bake happens, and the plan still names the
+	// repositories that can then read the checkout.
+	req.Bake = bakeOn()
+	p = Decide(req)
+	if p.Baked == nil {
+		t.Fatalf("Decide baked nothing (%s): the project asked for the bake into a shared image by name", p.Reason)
+	}
+	if len(p.Cloned) != 1 || p.Cloned[0] != "acme/web" {
+		t.Errorf("the plan clones %v at start, want [acme/web]: the note has to name who else can read the baked checkout", p.Cloned)
 	}
 }
 
@@ -143,7 +193,7 @@ func TestDecideBakesTheEntryTheCheckoutNamesWithNoMap(t *testing.T) {
 // image and says so.
 func TestDecideBakeSwitchOff(t *testing.T) {
 	req := reqApp()
-	req.Bake = false
+	req.Bake = bakeOff()
 	p := Decide(req)
 	if p.Baked != nil {
 		t.Fatal("Decide baked a checkout with bake_repos off")
@@ -182,6 +232,7 @@ func TestStageClonesWithTheBuildsOwnCredential(t *testing.T) {
 	for _, want := range []string{
 		"--mount=type=secret,id=git-credentials,uid=1000,required=false",
 		"credential.helper='store --file=/run/secrets/git-credentials'",
+		"case \"$REPO_URL\" in 'https://github.com/acme/app.git') ;;",
 		"clone --quiet --branch \"$BASE_BRANCH\" --single-branch -- \"$REPO_URL\" /work/baked/app-1234abcd",
 		"reset --quiet --hard \"$commit\"",
 		"/usr/local/lib/fugaro/finalize-checkout /work/baked/app-1234abcd",
@@ -210,6 +261,71 @@ func TestStageClonesWithTheBuildsOwnCredential(t *testing.T) {
 	}
 	if !strings.Contains(stage, "case \"$FUGARO_COMMIT\" in *[!0-9a-f]*)") {
 		t.Errorf("the generated stage does not hold FUGARO_COMMIT to a commit ID:\n%s", stage)
+	}
+}
+
+// TestStageRefusesAnotherRepositorysURL: the stage clones the URL it was
+// composed for and no other. A definition is rebuilt by whichever repository the
+// nightly check assigns its entry to (the repository its source names, or the
+// project's first when it has none), which is not always the checkout that
+// composed it: without the guard that rebuild would clone one repository into
+// another's slug path, under the marker and the tag the composed definition
+// gave it, and the smoke — which reads the directory out of the definition and
+// the origin out of the job — would pass on the pairing.
+func TestStageRefusesAnotherRepositorysURL(t *testing.T) {
+	stage, err := Stage(reqApp().Repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The guard compares the build's own argument with the composed URL and
+	// fails the build when they differ, saying which way out there is.
+	if !strings.Contains(stage, `case "$REPO_URL" in 'https://github.com/acme/app.git') ;;`) {
+		t.Fatalf("the stage does not hold REPO_URL to the URL it was composed for:\n%s", stage)
+	}
+	if !strings.Contains(stage, "a rebuild of the entry has to run as the repository whose checkout it bakes") {
+		t.Errorf("the guard's refusal does not say what went wrong or what to do:\n%s", stage)
+	}
+	// And a URL that may not be spelled into a definition is refused rather
+	// than written: the object is read by every build and job of the entry, so
+	// a URL with a credential in it would be copied into the bucket.
+	for name, bad := range map[string]string{
+		"a URL with userinfo":     "https://user:token@github.com/acme/app.git",
+		"a URL that is not https": "http://github.com/acme/app.git",
+		"no host at all":          "https:///acme/app.git",
+		"a shell-quoting hazard":  "https://github.com/acme/it's.git",
+		"a newline":               "https://github.com/acme/app.git\nRUN echo hi",
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := reqApp().Repo
+			r.URL = bad
+			if stage, err := Stage(r); err == nil {
+				t.Fatalf("Stage spelled %q into a definition:\n%s", bad, stage)
+			}
+		})
+	}
+}
+
+// TestBakedSlugIsTheMarkerRepository: a reader that has to know WHICH
+// repository a definition bakes — the nightly rebuild, which runs as one
+// repository and cannot reproduce another's definition — reads the slug, and
+// gets nothing from a definition this package did not compose.
+func TestBakedSlugIsTheMarkerRepository(t *testing.T) {
+	composed, err := Append([]byte("FROM scratch\n"), Decide(reqApp()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	slug, ok := BakedSlug(composed)
+	if !ok || slug != "app-1234abcd" {
+		t.Errorf("BakedSlug(composed) = %q, %v; want app-1234abcd, true", slug, ok)
+	}
+	for name, def := range map[string]string{
+		"an entry's own definition":   "FROM scratch\nRUN echo hi\n",
+		"a marker outside Root":       markerPrefix + "/work/repo\n",
+		"a marker with no repository": markerPrefix + Root + "/\n",
+	} {
+		if slug, ok := BakedSlug([]byte(def)); ok {
+			t.Errorf("BakedSlug(%s) = %q, true; want no repository", name, slug)
+		}
 	}
 }
 
@@ -243,7 +359,7 @@ func TestAppendAndBakedDir(t *testing.T) {
 	// A definition that bakes nothing comes back byte for byte, which is what
 	// keeps an installation that names no entry and is mapped to none exactly
 	// what it had.
-	off, err := Append(own, Decide(func() Request { r := reqApp(); r.Bake = false; return r }()))
+	off, err := Append(own, Decide(func() Request { r := reqApp(); r.Bake = bakeOff(); return r }()))
 	if err != nil {
 		t.Fatal(err)
 	}

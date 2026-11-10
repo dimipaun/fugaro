@@ -286,7 +286,23 @@ func (t *catalogCheckTarget) evaluate(ctx context.Context, e config.Entry, r cat
 	// composed one into it (imagebake, the image setup skill's bake step): the
 	// smoke this job submits is the manual build's own spec, and it has to read
 	// the checkout where the image the build produced actually put it.
+	//
+	// The marker names the checkout the definition was composed with, and a
+	// rebuild reproduces that definition only when it runs as the repository
+	// that checkout is of: a build's REPO_URL is this job's repository's
+	// (r.RepoURL), so a marker for another one means the rebuild would clone
+	// the wrong source into that path, under the same tag and the same smoke
+	// the composed definition carried — a checkout nobody downstream could tell
+	// from the right one. The composed stage refuses that REPO_URL itself; this
+	// refuses it a step earlier, before a build is submitted, where the entry,
+	// the checkout and the command that fixes it can be named.
 	ev.bakedDir, ev.baked = imagebake.BakedDir(def)
+	if ev.baked {
+		if bakedSlug, ok := imagebake.BakedSlug(def); !ok || bakedSlug != r.Slug {
+			return ev, fmt.Errorf("the catalog entry %s carries a baked checkout at %s, and the installed catalog check job rebuilds the entry as %s: a rebuild has to run as the repository whose checkout the entry bakes, so run fugaro image build %s from that repository's checkout",
+				pluginwire.Printable(e.Name), ev.bakedDir, pluginwire.Printable(r.Repo), pluginwire.Printable(e.Name))
+		}
+	}
 
 	checkKey := imagecheck.CatalogCheckKey(slug, e.Name)
 	ev.prevRaw, ev.prevGen, err = t.bucket.Read(ctx, checkKey)

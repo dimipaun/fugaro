@@ -279,12 +279,13 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 	}
 	imageMap := lc.ImageMapEffective(publishedMap)
 	bakeRepos := lc.BakeReposEffective(publishedBake)
-	// A checkout that names no catalog entry and that no map names gets no
-	// stage and no line, which is every installation that predates both
-	// fields; one that already names an entry in its own workflow runs that
-	// entry's image by its own answer (T1 reading (b)), so its build composes
-	// a stage for it and says so. No path under fugaro update writes a
-	// definition at all (O1), which is what keeps it a one-command upgrade.
+	// The switch reaches the rule in all three of its states (answered true,
+	// answered false, answered nothing): the default is the map's, so an
+	// installation that maps nothing composes nothing at all, and one that
+	// maps a repository composes a stage only for an entry nothing else is
+	// mapped to — a shared image is where O3's F18 boundary is (imagebake.
+	// Decide). No path under fugaro update writes a definition at all (O1),
+	// which is what keeps it a one-command upgrade.
 	bakeRepo := imagebake.Repo{Repo: canon, Slug: rs.Slug, URL: repoURL, Branch: cmp.Or(rs.BaseBranch, "main")}
 	bakeRef := bakeReference(cfg)
 	// The image is spelled from the host the installation's registries are
@@ -405,7 +406,7 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 			// repositories the image serves clone at job start).
 			bakePlan := imagebake.Decide(imagebake.Request{
 				Entry: e.Name, Repo: bakeRepo, Reference: bakeRef,
-				Map: imageMap, Bake: bakeRepos == nil || *bakeRepos,
+				Map: imageMap, Bake: bakeRepos,
 			})
 			noteBakePlan(cmd, e.Name, bakePlan)
 			if err := writeCatalogDockerfile(ctx, rb, opener, env.repoProvider(e.Source.Repo, cfg), e, bakePlan); err != nil {
@@ -726,9 +727,9 @@ func noteBakePlan(cmd *cobra.Command, entry string, p imagebake.Plan) {
 	if err != nil {
 		return // Decide refused this slug, so this cannot happen; a note is not worth a refusal of the build
 	}
-	alone := "no other repository this image serves is mapped to it"
+	alone := "no other repository the project maps to it runs it"
 	if len(p.Cloned) > 0 {
-		alone = fmt.Sprintf("the other repositories mapped to it (%s) clone at job start", strings.Join(p.Cloned, ", "))
+		alone = fmt.Sprintf("the other repositories the project maps to it (%s) run this image too, so their jobs can read this checkout, and they clone their own at job start", strings.Join(p.Cloned, ", "))
 	}
 	// What the line claims is what the image carries and where, and not that a
 	// job reads it: the runner opens the image's own work directory today, and

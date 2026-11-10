@@ -44,20 +44,29 @@
 // Nothing is baked unless the entry being built is the image the repository
 // runs — a catalog reference in its own workflow beats the project's map (T1
 // reading (b)), and the map answers for a repository that names none — and the
-// project's bake switch is on (D1901, absent = on).
+// project's answer to D1901 says so.
 //
-// An installation that predates both fields is byte-for-byte what it was, and
-// not because it maps nothing: a checkout of it names no catalog reference
-// either, so the map answers for it and there is no map, and no entry is that
-// checkout's own. A checkout that already names an entry in its workflow is
-// the exception, and it is the intended one: that repository runs that entry's
-// image by its own answer (T1 (b)), so its next build composes the stage for
-// it, and the build says so. Nothing here is written by `fugaro update`, which
-// copies and builds no entry (O1): a bake arrives at a build an operator runs.
+// The default (bake_repos absent, which is every installation predating the
+// field) is narrower than "on": it bakes a repository the project's map puts on
+// this entry, and only into an entry the project puts nothing else on. The map
+// is the only thing a build can read that says which repositories an entry
+// serves, so an entry another repository runs is left alone until an operator
+// writes bake_repos: true — that repository's jobs could read whatever was
+// baked into a shared image (F18), which is the boundary O3 (b) leaves to the
+// operator's own answer. Every refusal says so out loud and names the command
+// that asks for the bake.
+//
+// An installation that predates both fields is byte-for-byte what it was: it
+// maps nothing, so no entry is its own, and no composed stage is ever quiet
+// enough to be mistaken for a bake nobody asked for. Nothing here is written
+// by `fugaro update`, which copies and builds no entry (O1): a bake arrives at
+// a build an operator runs.
 package imagebake
 
 import (
+	"errors"
 	"fmt"
+	"net/url"
 	"regexp"
 	"slices"
 	"strings"
@@ -116,9 +125,11 @@ type Request struct {
 	// Map is the project's effective repo-to-image map (image_map, D1906), keyed
 	// by canonical repository name.
 	Map map[string]string
-	// Bake is the project's effective bake switch (bake_repos, D1901; absent =
-	// true).
-	Bake bool
+	// Bake is the project's effective bake switch (bake_repos, D1901): nil when
+	// the project answered nothing, which is what an installation predating the
+	// field has, and true or false when an operator answered it. The three
+	// states decide differently — see Decide.
+	Bake *bool
 }
 
 // Plan is the bake decision, and the whole of what a build tells a person
@@ -144,13 +155,31 @@ type Plan struct {
 }
 
 // Decide is the rule: a build bakes the repository it runs for, and only when
-// that repository is what this entry serves and the project asks for baking at
-// all.
+// that repository runs this entry and the project asked for the bake.
 //
 // The entry a repository runs is the one its own workflow names, then the map's
 // answer for it, in the resolver's own order (T1 (b); IS1's one resolver), so
 // the bake lands in the image the repository's jobs actually start — a bake in
-// an image they never pull is work nobody reads.
+// an image they never pull is work nobody reads. A repository that runs this
+// entry neither way bakes nothing, and says nothing.
+//
+// # The bake switch, in its three states
+//
+// bake_repos: false bakes nothing. bake_repos: true bakes the repository's own
+// checkout into the entry's image wherever the project says the repository runs
+// it, a shared image among them: that is the operator's own answer to F18, and
+// the build names the other repositories that can then read the checkout.
+//
+// The default — the project answered nothing, which is every installation
+// predating the field — is narrower, and it is D1901's own words: the switch
+// says the generated Dockerfiles clone each MAPPED repository. So the default
+// bakes a repository the project's map puts on this entry, and only into an
+// entry the map puts nothing else on. The map is the only thing a build can
+// read that says who else runs an entry, and its absence is the honest answer
+// to O3's "typically none for a shared image": nothing is baked into an image
+// another repository runs, and nothing is baked for a repository the project
+// never said runs this image, until an operator says so. Both refusals are
+// Notable, and each names the one command that asks.
 func Decide(req Request) Plan {
 	// The other repositories this image serves: they are the clone-at-start
 	// half of O3 (b) and are named whether or not this build bakes.
@@ -172,8 +201,30 @@ func Decide(req Request) Plan {
 		return Plan{Cloned: cloned, Reason: fmt.Sprintf("the repository names the catalog entry %s in its own workflow, so it runs that image and not this one (a catalog reference beats the map)", req.Reference)}
 	case req.Reference == "" && req.Map[req.Repo.Repo] != req.Entry:
 		return Plan{Cloned: cloned, Reason: fmt.Sprintf("the project's image map does not put %s on the catalog entry %s, so its jobs do not run this image", req.Repo.Repo, req.Entry)}
-	case !req.Bake:
-		return Plan{Cloned: cloned, Notable: true, Reason: "the project turned baking off (bake_repos is false in the published policy), so this image carries no checkout and its jobs clone at start"}
+	}
+	// An answered switch decides on its own: false bakes nothing anywhere, and
+	// true bakes the repository's own checkout into an entry other
+	// repositories run as well (Plan.Cloned names them) — that is the
+	// operator's answer to F18.
+	if req.Bake != nil {
+		if !*req.Bake {
+			return Plan{Cloned: cloned, Notable: true, Reason: "the project turned baking off (bake_repos is false in the published policy), so this image carries no checkout and its jobs clone at start"}
+		}
+		baked := req.Repo
+		return Plan{Baked: &baked, Cloned: cloned, Notable: true}
+	}
+	switch {
+	case req.Map[req.Repo.Repo] != req.Entry:
+		// The default is the map's, so a repository the map does not put on
+		// this entry is not baked for by it — including one that runs the
+		// entry by its own workflow's reference, which the map then has to
+		// agree with before anything is written into an image.
+		return Plan{Cloned: cloned, Notable: true, Reason: fmt.Sprintf("the project's image map (image_map) does not put %s on the catalog entry %s, so nothing is baked by default: `fugaro image map set %s %s` says it runs this image, and bake_repos: true asks for the bake without a map", req.Repo.Repo, req.Entry, req.Repo.Repo, req.Entry)}
+	case len(cloned) > 0:
+		// The entry serves another repository: whatever is baked into it is
+		// source that repository's jobs can read (F18), so the default writes
+		// nothing there.
+		return Plan{Cloned: cloned, Notable: true, Reason: fmt.Sprintf("this image serves the other repositories the project maps to it (%s), whose jobs can read whatever is baked into it, so nothing is baked unless the project asks for it: bake_repos: true bakes %s's checkout here", strings.Join(cloned, ", "), req.Repo.Repo)}
 	}
 	baked := req.Repo
 	return Plan{Baked: &baked, Cloned: cloned, Notable: true}
@@ -210,9 +261,23 @@ func Path(slug string) (string, error) {
 // It is written to run as the image's own user, which the base image sets to
 // fugaro and which owns /work: no USER line, so the stage cannot change whom a
 // job's image runs as.
+//
+// The stage clones r.URL and no other URL: the build arguments a catalog build
+// passes are the building repository's, and the ones a REBUILD passes are its
+// own — the nightly check assigns an entry to the repository its source names,
+// or to the project's first when it has none (infra's catalogCheckRepos), which
+// is not always the checkout that composed the definition. Without the check,
+// that rebuild would clone one repository into another's slug path, under the
+// marker and the tag the composed definition gave it, and the smoke would pass
+// on the pairing it read from the two. So the stage refuses a REPO_URL that is
+// not the one it was composed for, and the rebuild fails saying so instead of
+// baking the wrong source.
 func Stage(r Repo) (string, error) {
 	dir, err := Path(r.Slug)
 	if err != nil {
+		return "", err
+	}
+	if err := httpsOrigin(r.URL); err != nil {
 		return "", err
 	}
 	var b strings.Builder
@@ -224,6 +289,8 @@ func Stage(r Repo) (string, error) {
 	b.WriteString("ARG REPO_URL\nARG BASE_BRANCH\nARG FUGARO_COMMIT=\"\"\n")
 	fmt.Fprintf(&b, "RUN --mount=type=secret,id=git-credentials,uid=1000,required=false \\\n"+
 		"    case \"$FUGARO_COMMIT\" in *[!0-9a-f]*) echo \"FUGARO_COMMIT is not a commit ID\" >&2; exit 1 ;; esac \\\n"+
+		" && case \"$REPO_URL\" in '%s') ;; \\\n"+
+		"      *) echo \"this definition bakes one repository's checkout, and REPO_URL is not it: a rebuild of the entry has to run as the repository whose checkout it bakes\" >&2; exit 1 ;; esac \\\n"+
 		" && install -d -m 0755 %s \\\n"+
 		" && GIT_TERMINAL_PROMPT=0 git -c credential.helper= \\\n"+
 		"      -c credential.helper='store --file=/run/secrets/git-credentials' \\\n"+
@@ -236,8 +303,30 @@ func Stage(r Repo) (string, error) {
 		"      || { echo \"commit $commit is no longer reachable: the branch was force-pushed; re-run the build\" >&2; exit 1; }; } \\\n"+
 		" && git -C %s reset --quiet --hard \"$commit\" \\\n"+
 		" && /usr/local/lib/fugaro/finalize-checkout %s\n",
-		Root, dir, dir, dir, dir, dir)
+		r.URL, Root, dir, dir, dir, dir, dir)
 	return b.String(), nil
+}
+
+// httpsOrigin refuses a URL a stage may not spell into a definition: the URL is
+// written into the generated Dockerfile as a quoted shell word and compared
+// against the build's own REPO_URL, so it has to be one word and it must not
+// carry a credential — a definition is copied into the project's bucket and
+// read by every build and job of the entry, and finalize-checkout would refuse
+// the checkout it produced anyway (a userinfo origin fails that contract).
+func httpsOrigin(u string) error {
+	// Nothing here prints the URL: a URL that reached this function may be one
+	// that carries a credential, which is the reason it is refused.
+	parsed, err := url.Parse(u)
+	if err != nil {
+		return errors.New("this repository's clone URL is not a URL")
+	}
+	if parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil {
+		return errors.New("this repository's clone URL is not an https URL without credentials, which is what a generated definition may spell")
+	}
+	if strings.ContainsAny(u, "'\"` \t\r\n\\$") {
+		return errors.New("this repository's clone URL holds a character a generated definition cannot quote")
+	}
+	return nil
 }
 
 // Append is the composed definition: the entry's own bytes with the stage that
@@ -270,14 +359,12 @@ func Append(definition []byte, p Plan) ([]byte, error) {
 	return append(out, stage...), nil
 }
 
-// BakedDir is the directory a composed definition bakes its checkout at, and
-// whether it bakes one at all. It reads the marker line the generated stage
-// starts with, which is the one thing about a definition both the build that
-// wrote it and a reader holding nothing but the bytes can agree on — the smoke
-// spec a build submits (image.SpecForCloud) has to check the checkout where the
-// image actually put it, and the nightly check reads the same object the build
-// wrote.
-func BakedDir(definition []byte) (string, bool) {
+// BakedSlug is the repository slug a composed definition bakes its checkout
+// for, and whether it bakes one at all. A reader that has to know WHICH
+// repository a definition bakes — the nightly rebuild, which runs as one
+// repository and cannot reproduce another's definition — reads this; BakedDir
+// is the path derived from it.
+func BakedSlug(definition []byte) (string, bool) {
 	for line := range strings.Lines(string(definition)) {
 		line = strings.TrimSuffix(line, "\n")
 		rest, ok := strings.CutPrefix(line, markerPrefix)
@@ -291,9 +378,28 @@ func BakedDir(definition []byte) (string, bool) {
 		if !ok {
 			continue
 		}
-		if dir, err := Path(slug); err == nil {
-			return dir, true
+		if _, err := Path(slug); err == nil {
+			return slug, true
 		}
 	}
 	return "", false
+}
+
+// BakedDir is the directory a composed definition bakes its checkout at, and
+// whether it bakes one at all. It reads the marker line the generated stage
+// starts with, which is the one thing about a definition both the build that
+// wrote it and a reader holding nothing but the bytes can agree on — the smoke
+// spec a build submits (image.SpecForCloud) has to check the checkout where the
+// image actually put it, and the nightly check reads the same object the build
+// wrote.
+func BakedDir(definition []byte) (string, bool) {
+	slug, ok := BakedSlug(definition)
+	if !ok {
+		return "", false
+	}
+	dir, err := Path(slug)
+	if err != nil {
+		return "", false
+	}
+	return dir, true
 }

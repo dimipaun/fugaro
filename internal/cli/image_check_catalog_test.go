@@ -794,3 +794,41 @@ func TestCatalogCheckJobSmokesABakedDefinitionWhereTheImagePutIt(t *testing.T) {
 		t.Errorf("the rebuild's smoke is %+v, want the committed checkout of acme/other", spec)
 	}
 }
+
+// TestCatalogCheckJobRefusesADefinitionBakedForAnotherRepository: the generated
+// stage clones the composing repository's own checkout and pins the build to
+// that repository's URL, so a definition that bakes one repository cannot be
+// rebuilt from another checkout (O3 (b)). The nightly check is where that
+// arrives, because it rebuilds an entry as whichever repository the spec
+// assigns it to, and such a rebuild would fail inside the stage — after the
+// build was submitted and paid for. It is refused here, before a build is
+// submitted, and the line says which repository the definition bakes.
+func TestCatalogCheckJobRefusesADefinitionBakedForAnotherRepository(t *testing.T) {
+	f := newCatalogCheckJob(t, catalogCheckSpecFor(t, catalogCheckCatalog("runtime"), 5))
+	// The entry is assigned to acme/other, and the definition bakes acme/app's
+	// checkout: the rebuild's REPO_URL would be acme/other's. (acme/app is not
+	// in this spec — no entry of the catalog names its Dockerfile — so the slug
+	// is derived here, which is the slug a build of it would have composed.)
+	appSlug := mustSlug("bitbucket", "acme/app")
+	baked, err := imagebake.Append([]byte(catalogCheckOtherDef), imagebake.Plan{Baked: &imagebake.Repo{
+		Repo: "acme/app", Slug: appSlug,
+		URL: "https://bitbucket.org/acme/app.git", Branch: "main",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.seed(t, "runtime", "acme/other", string(baked), "sha256:"+strings.Repeat("9", 64))
+
+	lines, err := runCatalogCheck(t)
+	if err == nil || !strings.Contains(err.Error(), "runtime") {
+		t.Fatalf("err = %v, want the entry the check failed for", err)
+	}
+	if got := buildPosts(f.fb); got != 0 {
+		t.Fatalf("builds submitted = %d, want 0: the rebuild cannot run as the repository whose checkout the definition bakes", got)
+	}
+	l := lineFor(t, lines, "runtime")
+	if l.Decision != imagecheck.CheckFailed || l.Severity != "ERROR" ||
+		!strings.Contains(l.Error, "/work/baked/"+appSlug) || !strings.Contains(l.Error, "acme/other") || !strings.Contains(l.Error, "fugaro image build") {
+		t.Fatalf("runtime line = %+v, want the baked checkout, the repository the rebuild would run as and the command that fixes it", l)
+	}
+}
