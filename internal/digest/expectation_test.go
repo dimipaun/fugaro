@@ -65,16 +65,19 @@ func TestScopeDriftFlagOnly(t *testing.T) {
 
 	// A record is untrusted input, so the scope read back is bounded the way
 	// the task parser bounds it: entries past the task's own cap are not read
-	// at all, which can only hide drift. One path past the cap is outside the
-	// scope the reader kept, but the reader never held it, so the flag is not
-	// raised on a list no task could have declared.
+	// at all, and what the reader does with the list is what it does with one
+	// a task could have declared. The kept patterns name the digest's own
+	// package, the entry past the cap names docs, and the run changed a docs
+	// path: a reader that went on reading would hold a pattern no task could
+	// have declared and report the path as in scope, so the flag is raised
+	// here because the only pattern that covers the path was never read.
 	over := make([]string, 0, task.MaxDeclaredPaths+1)
 	for range task.MaxDeclaredPaths {
-		over = append(over, "docs/**")
+		over = append(over, "internal/digest/**")
 	}
-	over = append(over, "internal/runner/runner.go")
-	if got := flagOf(drifted(over, []string{"docs/x.md"})); len(got) != 0 {
-		t.Errorf("entries past the task's own cap were read: %v", got)
+	over = append(over, "docs/**")
+	if got := flagOf(drifted(over, []string{"docs/x.md"})); len(got) != 1 || got[0] != FlagScopeDrift {
+		t.Errorf("a changed path covered only by an entry past the task's own cap = %v, want %s: the scope read back is bounded to what a task could have declared", got, FlagScopeDrift)
 	}
 
 	// A truncated changed-file set can only hide drift, never invent it: the
