@@ -999,7 +999,10 @@ var knownCommands = [][2][]string{
 // coordinator's own account, which is the read mint's second class (BB5), and
 // — only on one that deploys review-only jobs — those jobs' {profile,
 // provider, account} triples, which are the class the service admits a review
-// caller as (C3.9a). No secret ID and no secret value, because the loader
+// caller as (C3.9a), and — only on one whose roster names a launcher — the
+// addresses the launcher class admits (D1938, F25), which is the class the
+// grant route and the intake answer to. No secret ID and no secret value,
+// because the loader
 // derives the container from the project name and reads it as the service's own
 // account, and both job sets are derived from their triples rather than
 // carried. The case below is an allowlist of these, so an environment that
@@ -1015,6 +1018,7 @@ var credentialsServiceEnv = []string{
 	"FUGARO_CREDENTIALS_SERVICE_URL", "FUGARO_JOB_ACCOUNTS",
 	"FUGARO_VERIFIER_ACCOUNTS", "FUGARO_PERSON_ACCOUNTS",
 	"FUGARO_COORDINATOR_ACCOUNT", "FUGARO_REVIEW_JOB_ACCOUNTS",
+	"FUGARO_LAUNCHER_ACCOUNTS",
 }
 
 // CredentialsServiceEnvAwaitingTheModule are the names credentialsServiceEnv
@@ -1024,11 +1028,17 @@ var credentialsServiceEnv = []string{
 // in the same binary — deploy/terraform is embedded — so the order is the
 // cover's and not a release's).
 //
-// It is empty, and that is the state it exists for: its one entry,
-// FUGARO_REVIEW_JOB_ACCOUNTS, left it in the same change that made
-// installation/credentials.tf render it. The service still reads that name as
-// an OPTIONAL value (internal/cli's credentialsServiceConfig), because an
-// installation that deploys no review variant renders no entry at all.
+// Its one entry is FUGARO_LAUNCHER_ACCOUNTS, the launcher class's list (D1938,
+// F25): this task adds the name to the cover, and the change that makes
+// installation/credentials.tf render it takes the entry off this list
+// (DS2.2). The service reads it as an OPTIONAL value the whole time
+// (internal/cli's credentialsServiceConfig), so a deployment that has not
+// moved yet serves the same service with a launcher class that admits nobody
+// rather than failing to start.
+//
+// The entry before it, FUGARO_REVIEW_JOB_ACCOUNTS, left this list in the same
+// change that made installation/credentials.tf render it, and it is the shape
+// the launcher name is following.
 //
 // It is a list with a tripwire and not a carve-out. Two tests hold it: the
 // golden test below fails on a name that is both here and on the plan, and
@@ -1036,7 +1046,7 @@ var credentialsServiceEnv = []string{
 // is here and in the module's own source — so an entry cannot be left behind
 // once the module renders it.
 func CredentialsServiceEnvAwaitingTheModule() []string {
-	return nil
+	return []string{"FUGARO_LAUNCHER_ACCOUNTS"}
 }
 
 // APITargets are the two services the Firebase web key may call, sorted;
