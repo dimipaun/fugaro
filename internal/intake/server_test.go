@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -110,10 +111,17 @@ type fakeStore struct {
 	created    []string
 	deleted    []string
 	calls      []string
+	// foreign are names that are there for Create — it answers ErrExists — and
+	// that Describe and List never answer with. That is what another writer's
+	// container looks like to this intake, and it is not a shape a test invents:
+	// the real Describe is the list call filtered by the labels the intake
+	// writes, so a container the managed deployer pre-created (F35) carries none
+	// and is invisible here. It is what ensure's second read exists for.
+	foreign map[string]bool
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{containers: map[string]Secret{}, values: map[string][]string{}, labels: map[string]map[string]string{}}
+	return &fakeStore{containers: map[string]Secret{}, values: map[string][]string{}, labels: map[string]map[string]string{}, foreign: map[string]bool{}}
 }
 
 func (f *fakeStore) Describe(_ context.Context, id string) (Secret, bool, error) {
@@ -124,7 +132,7 @@ func (f *fakeStore) Describe(_ context.Context, id string) (Secret, bool, error)
 
 func (f *fakeStore) Create(_ context.Context, id string, annotations, labels map[string]string) error {
 	f.calls = append(f.calls, "create "+id)
-	if _, exists := f.containers[id]; exists {
+	if _, exists := f.containers[id]; exists || f.foreign[id] {
 		return ErrExists
 	}
 	f.containers[id] = Secret{ID: id, Annotations: annotations}
@@ -181,8 +189,18 @@ type fixture struct {
 }
 
 // newFixture builds the intake, admitting the addresses as launchers and
-// listing the admins on the derived list.
+// listing the admins on the derived list, with the auditor a test reads back as
+// JSON text.
 func newFixture(t *testing.T, launchers []string, admins []access.Admin) *fixture {
+	t.Helper()
+	lines := &bytes.Buffer{}
+	return newFixtureLogging(t, launchers, admins, slog.NewJSONHandler(lines, &slog.HandlerOptions{Level: slog.LevelInfo}), lines)
+}
+
+// newFixtureLogging is newFixture over a named log handler, for the one thing
+// a test cannot see through a bytes.Buffer: what the intake does when the log
+// itself cannot be written (TestACallThatCannotBeAuditedIsNotReportedAsDone).
+func newFixtureLogging(t *testing.T, launchers []string, admins []access.Admin, h slog.Handler, lines *bytes.Buffer) *fixture {
 	t.Helper()
 	callers, err := credsvc.NewLaunchers(credsvc.LauncherConfig{
 		Audience: testAudience,
@@ -192,8 +210,7 @@ func newFixture(t *testing.T, launchers []string, admins []access.Admin) *fixtur
 	if err != nil {
 		t.Fatalf("building the launcher class: %v", err)
 	}
-	lines := &bytes.Buffer{}
-	audit, err := NewAuditor(slog.NewJSONHandler(lines, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	audit, err := NewAuditor(h)
 	if err != nil {
 		t.Fatalf("building the auditor: %v", err)
 	}
@@ -204,6 +221,20 @@ func newFixture(t *testing.T, launchers []string, admins []access.Admin) *fixtur
 	}
 	return &fixture{srv: srv, store: store, admins: admins, lines: lines}
 }
+
+// brokenHandler is a log that records every level and fails every write: the
+// state the intake's fail-closed rule is about, and one no bytes.Buffer can be.
+type brokenHandler struct{}
+
+func (brokenHandler) Enabled(context.Context, slog.Level) bool { return true }
+
+func (brokenHandler) Handle(context.Context, slog.Record) error {
+	return errors.New("the log is not writable")
+}
+
+func (brokenHandler) WithAttrs([]slog.Attr) slog.Handler { return brokenHandler{} }
+
+func (brokenHandler) WithGroup(string) slog.Handler { return brokenHandler{} }
 
 // member is the fixture every test starts from: one ordinary member and one
 // project admin, with the admin on the derived list.
@@ -580,9 +611,58 @@ func TestRefusesContainerItDidNotCreate(t *testing.T) {
 	}
 }
 
+// TestRefusesAContainerInvisibleToItAndAlreadyThere is R12's window in the
+// shape the deployment actually has it (F35). The intake's Describe IS the list
+// call, filtered by the labels it writes, so a container the managed deployer
+// pre-created — the deployer holds secrets.create unconditionally — is one
+// Create answers ErrExists for and Describe cannot see, either time. Nothing
+// may be written into it, and the second read in ensure is the whole of that
+// refusal: without it the branch would answer 200 and rotate a credential into
+// a container another writer set up to take it away.
+func TestRefusesAContainerInvisibleToItAndAlreadyThere(t *testing.T) {
+	f := member(t)
+	id := secretname.UserPrefix + testOwnerSub + "_api-key"
+	f.store.foreign[id] = true
+	tok := f.token(t, testOwnerEmail, testOwnerSub)
+
+	w := f.post(t, CreatePath, tok, createBody(ScopeUser, "api-key", testValue))
+	if got := errorType(t, w); w.Code != http.StatusConflict || got != ErrorForeignContainer {
+		t.Fatalf("got %d %s, want 409 %s", w.Code, got, ErrorForeignContainer)
+	}
+	// The act the caller asked for did not happen, under any name.
+	for _, call := range f.store.calls {
+		if strings.HasPrefix(call, "version ") {
+			t.Fatalf("a credential was written into a container the intake cannot see: %v", f.store.calls)
+		}
+	}
+	if len(f.store.values) != 0 {
+		t.Fatalf("the intake wrote %v", f.store.values)
+	}
+	if _, ok := f.store.containers[id]; ok {
+		t.Fatal("the intake answered for a container it did not make")
+	}
+	// The line names the container, so an operator has the one handle there is
+	// on a state a person has to look at.
+	if line := audit(t, f); line["id"] != id || line["status"] != ErrorForeignContainer {
+		t.Fatalf("the line is %v, want the container named and %s", line, ErrorForeignContainer)
+	}
+
+	// A version call on the same container is the other half of the same
+	// window: it must find a container it can see, so it is a 404 and not a
+	// write (the accepted consequence of Describe being the filtered list).
+	f.lines.Reset()
+	w = f.post(t, VersionPath, tok, createBody(ScopeUser, "api-key", testValue))
+	if got := errorType(t, w); w.Code != http.StatusNotFound || got != ErrorNoSuchSecret {
+		t.Fatalf("a version into a container the intake cannot see: got %d %s, want 404 %s", w.Code, got, ErrorNoSuchSecret)
+	}
+	if len(f.store.values) != 0 {
+		t.Fatalf("the intake wrote %v", f.store.values)
+	}
+}
+
 // TestOneAuditLinePerCall: every call the intake answers writes exactly one
 // line, and the line names the act, the caller and the status — never a value
-// (G6, G13).
+// the call carried (G6, G13).
 func TestOneAuditLinePerCall(t *testing.T) {
 	f := member(t)
 	memberTok := f.token(t, testOwnerEmail, testOwnerSub)
@@ -720,6 +800,50 @@ func TestARefusedRequestStillWritesItsLine(t *testing.T) {
 			}
 			if line["id"] == nil || line["op"] == "" {
 				t.Fatalf("the line does not name the act: %v", line)
+			}
+		})
+	}
+}
+
+// TestACallThatCannotBeAuditedIsNotReportedAsDone is the fail-closed rule
+// (D143): a call whose one line cannot be written is answered
+// state_unavailable, and that is the answer whether the act landed or was
+// refused. The intake has no rollback — a create has reached Secret Manager by
+// the time the line is due — so the only thing left to refuse is the claim
+// that the call is done, which is what an operator finding a gap in the log
+// has to see instead of a 200.
+func TestACallThatCannotBeAuditedIsNotReportedAsDone(t *testing.T) {
+	id := "fugaro_u_" + testOwnerSub + "_api-key"
+	for _, tc := range []struct {
+		what string
+		body string
+		// landed is what the store holds afterwards: what makes the two cases
+		// different, and the reason the answer cannot depend on it.
+		landed bool
+	}{
+		{"a create that landed", createBody(ScopeUser, "api-key", testValue), true},
+		{"a create that was refused", createBody(ScopeUser, "API-KEY", testValue), false},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			f := newFixtureLogging(t, []string{testOwnerEmail}, nil, brokenHandler{}, &bytes.Buffer{})
+			w := f.post(t, CreatePath, f.token(t, testOwnerEmail, testOwnerSub), tc.body)
+			if got := errorType(t, w); w.Code != http.StatusServiceUnavailable || got != ErrorStateUnavailable {
+				t.Fatalf("got %d %s, want 503 %s", w.Code, got, ErrorStateUnavailable)
+			}
+			// Nothing in the answer reports the call: the refusal carries the
+			// service's own two fields and none of a success's.
+			for _, field := range []string{`"version"`, `"created"`, `"id"`} {
+				if strings.Contains(w.Body.String(), field) {
+					t.Fatalf("the answer carries %s: %s", field, w.Body.String())
+				}
+			}
+			if landed := len(f.store.values) > 0; landed != tc.landed {
+				t.Fatalf("the store holds %v, want the act to have landed = %v", f.store.values, tc.landed)
+			}
+			if tc.landed {
+				if got := f.store.values[id]; len(got) != 1 || got[0] != testValue {
+					t.Fatalf("the store holds %v, want the one value the call carried", got)
+				}
 			}
 		})
 	}
