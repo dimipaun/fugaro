@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/url"
 	"slices"
 	"strings"
 	"sync"
@@ -950,8 +951,11 @@ func providerCall(t *testing.T, target string, scrubs ...string) *call {
 //
 // The upstream is this test's own fake (anthropicfake, loopback), which is where
 // a provider's endpoint is in a hermetic test: the entry's base URL IS that
-// address, so the call really arrives and the headers are read off the request
-// the fake saw.
+// address, the call really arrives, and the headers are read off the request the
+// fake saw. The fixture's host rewriter is what the client is, rather than the
+// fake's own transport, so that the mutation below — which sends the call
+// somewhere else — still reaches this test's fake and no request leaves the
+// machine (Convention 9).
 //
 // Mutation (run, restore): default the auth shape to bearer. The x-api-key row
 // goes red on both assertions — the header the shape names is missing and the
@@ -968,8 +972,12 @@ func TestForwardToAProviderCarriesTheProviderAuthShape(t *testing.T) {
 	} {
 		t.Run(tc.auth, func(t *testing.T) {
 			up, upSrv := anthropicfake.New(t, anthropicfake.MessageOK(testModel, testUsage))
+			base, err := url.Parse(upSrv.URL)
+			if err != nil {
+				t.Fatalf("the fake's URL is not a URL: %v", err)
+			}
 			s := newSvcWith(t, func(_ *svc, c *Config) {
-				c.Client = upSrv.Client()
+				c.Client = &http.Client{Transport: hostRewriter{base: base, rt: http.DefaultTransport}}
 			})
 			e := providerEntryFrom(t, upSrv.URL+"/api", tc.auth)
 			ans, err := s.server.send(context.Background(), providerCall(t, MessagesPath), e)
