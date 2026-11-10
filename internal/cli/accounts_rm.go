@@ -297,7 +297,7 @@ func accountsRmResolve(path string, lc *localcfg.Config, name, want string, old 
 		}
 	}
 	if plan.drop && plan.typed {
-		plan.crafts = accountsRmCraftAccesses(lc, name)
+		plan.crafts = craftsNaming(lc, name)
 	}
 
 	next := old
@@ -371,17 +371,15 @@ func accountsRmTyped(lc *localcfg.Config, name string) bool {
 // accountsRmPoolMember refuses an account whose typed entry is still a pool's
 // member: the entry goes with the account, and a pool left listing a member no
 // block defines is the file this config's own loader refuses — the state the
-// --type guard in `accounts add` exists to keep out of the file. It is the
-// refusal `accounts pool rm` makes for a pool a craft names, at the other end
-// of the same name.
+// --type guard in `accounts add` exists to keep out of the file. The remedy it
+// names is a command the owner can run — `accounts pool rm` for the pool that
+// lists the entry — which is what makes the refusal worth printing.
 //
-// A craft's access is not refused here, and the difference between the two is
-// what makes the refusal worth printing: a pool's members have a command that
-// drops one (`accounts pool rm`), so the owner can act on this, while nothing
-// in this release writes a crafts key — the migration is its only writer
-// (init_craft_migrate.go) and the generic path refuses a family-owned row
-// (settings_set.go) — so pointing at one would be pointing at a hand edit. The
-// entry's own crafts are cleared with it instead (accountsRmCraftAccesses).
+// A craft's access is not refused here: nothing in this release writes a crafts
+// key — the migration is its only writer (init_craft_migrate.go) and the
+// generic path refuses a family-owned row (settings_set.go) — so a refusal
+// would point at a hand edit. The entry's own crafts are cleared with it
+// instead (craftsNaming).
 func accountsRmPoolMember(lc *localcfg.Config, name string) error {
 	var named []string
 	for _, p := range lc.Pools {
@@ -396,9 +394,10 @@ func accountsRmPoolMember(lc *localcfg.Config, name string) error {
 		pluginwire.Printable(name), strings.Join(named, " and "))
 }
 
-// accountsRmCraftAccesses is the crafts whose access names this account's typed
-// entry, in config.CraftNames' order.
-func accountsRmCraftAccesses(lc *localcfg.Config, name string) []string {
+// craftsNaming is the crafts whose access names this credential or pool, in
+// config.CraftNames' order: the keys a removal of that name clears with it
+// (`accounts rm` for a typed entry, `accounts pool rm` for a pool).
+func craftsNaming(lc *localcfg.Config, name string) []string {
 	var out []string
 	for _, craft := range config.CraftNames {
 		if lc.Crafts.Of(craft).Access == name {
@@ -406,6 +405,16 @@ func accountsRmCraftAccesses(lc *localcfg.Config, name string) []string {
 		}
 	}
 	return out
+}
+
+// craftAccessKeys spells those crafts' keys for a sentence: the whole of what a
+// write clears, named one by one so the owner can read which crafts it moved.
+func craftAccessKeys(crafts []string) string {
+	keys := make([]string, 0, len(crafts))
+	for _, craft := range crafts {
+		keys = append(keys, "crafts."+craft+".access")
+	}
+	return strings.Join(keys, " and ")
 }
 
 // accountsRmServing is the profiles that list the account, in the order every
@@ -948,12 +957,8 @@ func accountsRmWhat(plan accountsRmPlan) string {
 		parts = append(parts, fmt.Sprintf("remove credentials.%s (the typed entry the account was declared with)",
 			pluginwire.Printable(plan.name)))
 		if len(plan.crafts) > 0 {
-			keys := make([]string, 0, len(plan.crafts))
-			for _, craft := range plan.crafts {
-				keys = append(keys, "crafts."+craft+".access")
-			}
 			parts = append(parts, fmt.Sprintf("clear %s, which named that entry and would have nothing to spend without it",
-				strings.Join(keys, " and ")))
+				craftAccessKeys(plan.crafts)))
 		}
 	}
 	parts = append(parts,

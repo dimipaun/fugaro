@@ -394,6 +394,76 @@ stages:
 	}
 }
 
+// TestCraftMigrationKeepsAnOwnerWrittenCraftAccess: a crafts.<craft>.access the
+// owner has written is left exactly as it is, and the crafts the owner said
+// nothing about are derived beside it.
+//
+// A craft the owner pointed at another credential must keep spending it. The
+// migration is the only writer of this key (no command writes one, and the
+// generic settings path refuses a family-owned row), and it runs on every write
+// of the installation's config — `fugaro update`, but also the setup and init
+// paths that write the same file — so a pass that dropped or reordered the skip
+// would move that craft's runs onto the account its stages name, on the next
+// write, with nothing printed and nothing to put it back.
+func TestCraftMigrationKeepsAnOwnerWrittenCraftAccess(t *testing.T) {
+	// The coder's stages run on team-a (the project's default). The owner
+	// pointed the craft at team-b, which is what the accounts design could not
+	// say and the crafts block is for.
+	const owned = `version: 1
+name: aurora
+gcp_project: proj-1234
+region: us-east5
+runs_bucket: fugaro-runs-proj-1234
+claude_accounts:
+  team-a: { allow_data_to: [dimipaun/fugaro] }
+  team-b: { allow_data_to: [dimipaun/fugaro] }
+default_claude_account: team-a
+stages:
+  review_first: { claude_account: team-b }
+crafts:
+  coder: { access: team-b }
+`
+	lc := parseLocalConfig(t, owned)
+	if notes := migrateCraftKeys(lc); len(notes) != 0 {
+		t.Fatalf("a craft the owner has already pointed somewhere migrates whole, but the run reported %v", notes)
+	}
+	if got := lc.Crafts.Of(config.CraftCoder).Access; got != "team-b" {
+		t.Errorf("crafts.coder.access = %q after the migration, want the team-b the owner wrote", got)
+	}
+	// The rest of the block is still the migration's: one access the owner wrote
+	// is not a reason to leave the crafts beside it unset.
+	for craftName, want := range map[string]string{
+		config.CraftReview:         "team-b",
+		config.CraftSeniorReview:   "team-a",
+		config.CraftSecurityReview: "team-a",
+	} {
+		if got := lc.Crafts.Of(craftName).Access; got != want {
+			t.Errorf("crafts.%s.access = %q, want the %s its stage runs on", craftName, got, want)
+		}
+	}
+	// And the key survives the file: the next write reads the owner's craft back
+	// and keeps it again, which is what makes the skip worth its lines on the
+	// third write and the tenth as much as on this one.
+	once, err := lc.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := parseLocalConfigBytes(t, once)
+	if notes := migrateCraftKeys(next); len(notes) != 0 {
+		t.Errorf("the second run reported %v", notes)
+	}
+	twice, err := next.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(once, twice) {
+		t.Errorf("the second migration changed the file:\n%s", lineDiff(string(once), string(twice)))
+	}
+	if got := next.Crafts.Of(config.CraftCoder).Access; got != "team-b" {
+		t.Errorf("crafts.coder.access = %q after the file was written and read back, want the team-b the owner wrote", got)
+	}
+}
+
 // TestUpdateConvergesPreviousInstallation: an installation at the previous
 // release with default_claude_account set reaches the craft vocabulary with
 // `fugaro update` alone, and doctor is clean afterwards (the HARD RULE, F17).
