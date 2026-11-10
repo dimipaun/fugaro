@@ -208,6 +208,43 @@ func TestBinariesListMergesByIntersection(t *testing.T) {
 	}
 }
 
+// TestBinariesListIsOnlyTheFirstLayerToWrite is the other half of D986's
+// direction, and the half the intersection rule does not give on its own. No
+// list admits no binary (spec.md §2.1), so a layer that writes one where the
+// layers so far admitted nothing is not narrowing anything: it would be
+// introducing every path it names, which is the widening the plan's red step
+// (a layer below the ceiling that adds a path) names as the thing the task
+// exists to make impossible. The models rule is the opposite and is right to
+// be: no models list allows every model, so the first list there is the
+// tightening one.
+func TestBinariesListIsOnlyTheFirstLayerToWrite(t *testing.T) {
+	e := Merge(Layer{}, Layer{BinariesAllow: []string{"**"}})
+	if e.BinariesAllow != nil {
+		t.Fatalf("BinariesAllow = %v: a layer under the ceiling admitted every binary", e.BinariesAllow)
+	}
+	if want := []Ignored{{KeyBinariesAllow, "**", "", SourceCeiling}}; !reflect.DeepEqual(e.Ignored, want) {
+		t.Fatalf("Ignored = %+v, want %+v", e.Ignored, want)
+	}
+	// The refused list is not a value any layer holds, so no source names one.
+	if len(e.Sources) != 0 {
+		t.Fatalf("sources = %v, want none: the list the layer asked for is not in force", e.Sources)
+	}
+	// A layer that names no path introduces none and lost nothing to.
+	if got := Merge(Layer{}, Layer{BinariesAllow: []string{}}); got.BinariesAllow != nil || len(got.Ignored) != 0 {
+		t.Fatalf("%+v, want no list and nothing ignored", got)
+	}
+	// The ceiling is the layer that writes the list, and its own empty one is a
+	// list: the later layer's paths are then refused against it, which is the
+	// same answer the nil ceiling gives and a different record.
+	e = Merge(Layer{BinariesAllow: []string{}}, Layer{BinariesAllow: []string{"**"}})
+	if e.BinariesAllow == nil || len(e.BinariesAllow) != 0 || e.Sources[KeyBinariesAllow] != SourceCeiling {
+		t.Fatalf("%+v, want the ceiling's empty list standing", e)
+	}
+	if want := []Ignored{{KeyBinariesAllow, "**", "", SourceCeiling}}; !reflect.DeepEqual(e.Ignored, want) {
+		t.Fatalf("Ignored = %+v, want %+v", e.Ignored, want)
+	}
+}
+
 // TestBinariesCapTightensOnly is the cap's half of F10: one project-wide bound
 // in bytes, merged by TightenInt, so a layer below the ceiling may only lower
 // it and a layer that leaves it out passes the ceiling's own through.

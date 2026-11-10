@@ -4,7 +4,14 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"reflect"
 )
+
+// binariesMembers is the block's own member names, read from the carrier's json
+// tags (carrierMembers) so a field this type gains is held to its spelling
+// without a second list — the arrangement the bitbucket_token block and every
+// other carrier here have.
+var binariesMembers = carrierMembers(reflect.TypeOf(Binaries{}))
 
 // Binaries is the project's binary allow rule (D981, D986): the paths a run may
 // add a binary at, and the largest binary it may add at one of them.
@@ -37,6 +44,15 @@ type Binaries struct {
 // the owner believes is published and that admits nothing — the failure mode
 // D982 refuses for the patterns themselves.
 //
+// The member names are checked first, and that check is not the strict decode
+// over again: encoding/json folds a member name by Unicode simple case folding
+// before it matches it, so `{"allow": ["safe/**"], "Allow": ["**"]}` decodes
+// with no unknown member at all and the last spelling wins — a node that means
+// to admit one directory admitting every binary, decided by the order the keys
+// were written in. A member written twice has the same effect one spelling at a
+// time. What a misspelt member costs is what the misspelt pattern costs, and
+// this is the one place it can be refused.
+//
 // A block that names no member is the block it is: the carrier is returned
 // empty, and an empty list admits nothing, which is the answer the absent
 // member gives too. The two spellings are told apart where D987 distinguishes
@@ -46,6 +62,13 @@ type Binaries struct {
 // written `allow: []` is a non-nil empty slice and an absent one is nil, which
 // is how the runner tells a list the owner wrote from one no layer wrote.
 func decodeBinaries(raw json.RawMessage) (*Binaries, error) {
+	names, err := objectMemberNames(raw)
+	if err != nil {
+		return nil, fmt.Errorf("projectpolicy: binaries: %w", err)
+	}
+	if err := checkMemberNames("binaries", names, binariesMembers); err != nil {
+		return nil, fmt.Errorf("projectpolicy: %w", err)
+	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	var b Binaries
