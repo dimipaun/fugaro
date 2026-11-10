@@ -20,7 +20,7 @@ Ground rules:
 
 ## At the start of a session
 
-In a checkout whose project has an orchestrator, run this once before the work of the session, and after the update nudge a session runs at its start (the nudge `docs/plugin-user-scope` designs, which the user's `CLAUDE.md` carries until it ships): a stale installation is the more urgent of the two.
+In a checkout whose project has an orchestrator, run this once before the work of the session, and after any update check you run at its start: a stale installation is the more urgent of the two.
 
 ```bash
 fugaro orchestrator state --brief --offline
@@ -31,7 +31,7 @@ It prints the brief the daemon cached after its last tick together with the time
 Then say at most one sentence about what matters in it:
 - a decision the brief shows waiting on a person: which one, and what it asks;
 - work items still open: the count, and nothing else;
-- a stamp much older than the daemon's tick interval: how old it is, and that the daemon may not be running, which `fugaro doctor` reports.
+- a stamp much older than the daemon's tick interval: how old it is, and that the daemon may not be running.
 
 If the command refuses because there is no cached brief yet, say so in one sentence and carry on: the daemon writes the cache after its first tick, so a project whose daemon has never run has none. The live read — the same command without `--offline` — is the explicit command for when the user asks what the state is now; it is never this print, whose whole point is that it reaches no network. The cached file is a copy the daemon wrote for this print; the store is the Realtime Database.
 
@@ -65,7 +65,7 @@ Keep the ops small and honest: a fact is one thing the loop learned, with the va
 
 - `fugaro orchestrator state --brief` reads the live node and prints the same summary, for when the user asks for the state as it stands now.
 - `fugaro orchestrator state` adds the node's revision and the schema version above the summary; `fugaro orchestrator state --json` prints it as a versioned document, which is where `rev` for a patch comes from.
-- `fugaro orchestrator events --since 1h` reads the audit log: what the daemon, the runs and the sessions did, in the order the server stamped it.
+- `fugaro orchestrator events --since 1h` reads the audit log in the order the server stamped it. The log is the daemon's to write, so a project whose daemon has not ticked has an empty one: an empty log is not evidence that nothing happened.
 
 ## When the command refuses
 

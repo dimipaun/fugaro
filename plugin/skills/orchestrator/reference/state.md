@@ -11,7 +11,7 @@ One document per project, in the project's Firebase Realtime Database, under `or
 |---|---|---|
 | `state` | the document this file describes | the daemon, and sessions and people through `patch` |
 | `lease` | the daemon's claim, so two daemons cannot tick one project at once | the daemon |
-| `audit` | the append-only log `fugaro orchestrator events` reads | the daemon and the commands that land a patch |
+| `audit` | the append-only log `fugaro orchestrator events` reads | the daemon; a project whose daemon has never ticked has an empty log |
 
 `<project>` is the selected project's name; no command takes an orchestrator id of its own. The document itself carries:
 
@@ -28,7 +28,7 @@ One patch is `{"base_rev": N, "ops": [...]}`, at most 64 ops, and the ops apply 
 
 | Op | Payload | Who may send it |
 |---|---|---|
-| `work_item_upsert` | `work_item`: `id` and any of `title`, `repo`, `recipe`, `rigor_tier`, `brief`, `depends_on`, `note`. A new item carries the first five. | a person, a session, the daemon |
+| `work_item_upsert` | `work_item`: `id` and any of `title`, `repo`, `recipe`, `rigor_tier`, `brief`, `depends_on`, `note`. A new item carries a title, a repository, a recipe, a rigor tier and a brief. | a person, a session, the daemon |
 | `work_item_approve` | `approve`: `id`, `spec_digest` | a person only |
 | `work_item_archive` | `archive`: `id`, `outcome` | a person, a session, the daemon |
 | `decision_add` | `decision`: `id`, `question`, `waiting_on` (`person`, `session` or `daemon`) | a person, a session, the daemon — the breaker's own question belongs to the daemon |

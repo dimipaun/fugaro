@@ -116,8 +116,10 @@ func TestOrchestratorSkillNamesOnlyRealCommandsAndFlags(t *testing.T) {
 	}
 	// A parser that stopped finding commands must not make the check above
 	// pass by checking nothing, so the names the skill is for are required.
+	// `fugaro doctor` is deliberately not among them: nothing it reports covers
+	// the daemon, so a session is not sent to it from here.
 	for _, want := range []string{
-		"fugaro orchestrator state", "fugaro orchestrator patch", "fugaro orchestrator events", "fugaro doctor",
+		"fugaro orchestrator state", "fugaro orchestrator patch", "fugaro orchestrator events",
 	} {
 		if !slices.Contains(named, want) {
 			t.Errorf("the skill never names %q, which is one of the commands it teaches (named: %v)", want, named)
@@ -164,12 +166,13 @@ func TestSessionStartPrintsOneScreen(t *testing.T) {
 			t.Errorf("the session-start section never says %q, and the print's first run on a project has no cache:\n%s", want, section)
 		}
 	}
-	// And the print runs the offline read and the diagnostic the session may
-	// already have run, and no third command.
+	// And the print runs the offline read and no second command: a stale stamp
+	// is reported as what it is (the daemon may not be running) rather than
+	// handed to a diagnostic, because no released check reports the daemon.
 	got := commandPaths(newCommandIndex(), section)
 	slices.Sort(got)
 	got = slices.Compact(got)
-	want := []string{"fugaro doctor", "fugaro orchestrator state"}
+	want := []string{"fugaro orchestrator state"}
 	if !slices.Equal(got, want) {
 		t.Errorf("the session-start section runs %v, want %v", got, want)
 	}
