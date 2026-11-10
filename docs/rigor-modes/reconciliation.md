@@ -835,10 +835,10 @@ over `docs/issues.md`'s `fugaro issue mine` section (T-IM7), moved the table's
 pin row from 118 to 119.
 Amended 2026-11-10: `internal/cli/docs_bitbucket_runbook_test.go`, the
 bitbucket-credentials folder's pin over the credentials-service runbook's
-read-consumer section, moved the table's pin row from 119 to 120.
+read-consumer section, moved the table's pin row from 120 to 121.
 Amended 2026-11-10: `internal/cli/docs_bitbucket_security_test.go`, the same
 folder's pin over SECURITY.md's section for the read mint and its two caller
-classes, moved it from 120 to 121.) They
+classes, moved it from 121 to 122.) They
 are named because the figure is a running total of other folders' guards: a folder
 that writes one moves this row in its own commit, and a reader who finds the row
 stale has found a merge that did not.

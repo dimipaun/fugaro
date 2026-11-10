@@ -15,13 +15,16 @@
 #               --consumer-file <path> --rotated-consumer-file <path> \
 #               --successor-consumer-file <path> [--yes]
 #
-#             The three files are the consumer document the bundle holds today,
-#             the same consumer after Bitbucket regenerated its secret, and a
-#             consumer created under the SECOND sandbox account the transfer
-#             goes to. Each is the mapping the bundle's entry holds — key,
-#             secret and workspace, one per line — and none of them is printed,
-#             echoed or passed on a command line: they go into `fugaro creds
-#             set` on stdin, and the shell never holds a value.
+#             Two of the three files exist before the run: the consumer document
+#             the bundle holds today, and a consumer created under the SECOND
+#             sandbox account the transfer goes to. The third — the same
+#             consumer with the secret Bitbucket regenerates — is written BY YOU
+#             at the rotation, when the drill asks for it (below); naming the
+#             path here is saying where you will write it. Each is the mapping
+#             the bundle's entry holds — key, secret and workspace, one per line
+#             — and none of them is printed, echoed or passed on a command line:
+#             they go into `fugaro creds set` on stdin, and the shell never holds
+#             a value.
 # Needs:      bash, mktemp, python3, gcloud, fugaro and curl on PATH. Nothing is
 #             installed and nothing is fetched; if one of those is missing the
 #             script stops with one line naming it.
@@ -31,15 +34,28 @@
 #             name, four times. It deletes nothing and touches no other project.
 # Costs:      four Secret Manager versions, one disabled, and the read mints
 #             around them. No model call, no run, no image, no Terraform.
-# Runs:       by YOU, after the one confirmation line below. No agent runs any
-#             step of it.
+# Runs:       by YOU, after the confirmation line below and one answer at the
+#             rotation. No agent runs any step of it.
+# Asks:       two things, and the second one is what makes the drill measurable:
+#             the confirmation, and — at the rotation — the moment where you
+#             regenerate the consumer's secret at Bitbucket and write the rotated
+#             document. Bitbucket's regeneration is what stops the secret the
+#             bundle holds from being exchangeable, so a run that began with the
+#             rotated document already written would be minting with a dead
+#             secret from its first row: the baseline would be refused and the
+#             drill could measure nothing. So the drill asks, waits for your
+#             answer, holds what you wrote to the consumer file's own key and
+#             workspace, and only then writes it into the bundle. That answer is
+#             needed whether or not you passed --yes: --yes stands for the typed
+#             confirmation, and the regeneration is a step at Bitbucket that no
+#             flag can do for you.
 # Cleanup:    always, including on a Ctrl-C: the scratch directory — which holds
 #             the whole bundle document while the stop is being made, and every
 #             token this run mints — is removed, and the `restore` row says
 #             whether it really went. The bundle is NOT put back the way it was:
 #             it ends holding the successor consumer, which is what the transfer
-#             is, and the `restore` row says so and names the two consumers to
-#             delete at Bitbucket.
+#             is, and the `restore` row says so and names the one consumer to
+#             delete at Bitbucket once the transfer has landed.
 # Output:     progress on stderr, ONE block on stdout headed CHECK 148 RESULT,
 #             to copy back to the coordinator. Exit 0 when every fact passed,
 #             1 when one FAILed, 2 when the run could not tell (a guard stopped
@@ -248,7 +264,20 @@ finish() {
     else
       bundle_state="The bundle is NOT back the way it was: $LEFTOVER"
     fi
-    facts="${facts}"$'\n'"restore|$restore|the scratch directory $([ "$SCRATCH_REMOVED" = yes ] && echo "is gone" || echo "is STILL THERE, at $SCRATCH — remove it yourself"), and the credential files in it $([ "$CREDENTIALS_REMOVED" = yes ] && echo "are gone" || echo "are STILL THERE — remove them yourself"). $bundle_state. Delete the consumers the drill replaced at Bitbucket (the one whose secret you regenerated, and the one the transfer replaced) — the bundle's entry is what the read mint reads, and the consumer at Bitbucket is what Bitbucket authenticates, so an old consumer left alive is a credential that can still be exchanged for tokens for this workspace"
+    # What is owed at Bitbucket, and it is ONE consumer: the rotation regenerates
+    # the secret of the consumer the bundle already holds, and the transfer then
+    # replaces that same consumer's entry with the successor's — so the consumer
+    # to delete is the one the drill replaced, and the successor is the bundle's
+    # entry now and stays. Only the transfer's own write makes the delete safe:
+    # while the bundle still holds the consumer you started with, deleting it at
+    # Bitbucket refuses every read through the service.
+    local owed
+    if [ "$TRANSFERRED" = yes ]; then
+      owed="Delete ONE consumer at Bitbucket: the one this drill replaced — the consumer whose secret you regenerated, which is also the consumer the transfer replaced, since the two steps are one consumer throughout. The successor is the bundle's entry now and stays — deleting it would refuse every read through the service — while the consumer you replaced is still a credential that can be exchanged for tokens for this workspace until it is deleted at Bitbucket"
+    else
+      owed="This run did not confirm that the bundle holds the successor, so no consumer is owed a delete from it: read the entry with fugaro creds ls first. The consumer the bundle names is the one the read mint spends, and deleting it at Bitbucket refuses every read through the service; the one to delete is the one the bundle no longer names"
+    fi
+    facts="${facts}"$'\n'"restore|$restore|the scratch directory $([ "$SCRATCH_REMOVED" = yes ] && echo "is gone" || echo "is STILL THERE, at $SCRATCH — remove it yourself"), and the credential files in it $([ "$CREDENTIALS_REMOVED" = yes ] && echo "are gone" || echo "are STILL THERE — remove them yourself"). $bundle_state. $owed"
   fi
   if [ -z "$PRINTED" ]; then
     PRINTED=1
@@ -423,14 +452,18 @@ step_service() {
   fact service PASS "the read mint is at the address the coordinator job carries; the drill mints there as YOU, which is the person class, so your own address has to be one of the installation's operators"
 }
 
-# step_consumer reads the bundle's listing and the three consumer files. The
-# listing answers the container, its newest version and whether the entry is
-# there — names and metadata, never a value — and the files are read by the
-# reader, which holds the key and the secret and prints only their shape.
+# step_consumer reads the bundle's listing and the two files the drill starts
+# with. The listing answers the container, its newest version and whether the
+# entry is there — names and metadata, never a value — and the files are read by
+# the reader, which holds the key and the secret and prints only their shape. The
+# rotated document is not one of them: it is written at the rotation, once
+# Bitbucket has regenerated the secret (step_rotate_ask asks for it), because a
+# rotated document written before the run starts would mean the secret the bundle
+# holds is already dead.
 step_consumer() {
   local f
-  for f in "$CONSUMER_FILE" "$ROTATED_CONSUMER_FILE" "$SUCCESSOR_CONSUMER_FILE"; do
-    [ -f "$f" ] || stop "the consumer file $f does not exist. The drill needs three of them: the consumer the bundle holds today, the same consumer after Bitbucket regenerated its secret, and the successor created under the second sandbox account"
+  for f in "$CONSUMER_FILE" "$SUCCESSOR_CONSUMER_FILE"; do
+    [ -f "$f" ] || stop "the consumer file $f does not exist. The drill starts with two of them: the consumer the bundle holds today, and the successor created under the second sandbox account. The third — the same consumer with the secret Bitbucket regenerates — is written during the run, at the rotation"
   done
 
   if ! run_capture "$SCRATCH/creds.json" fugaro creds ls --json; then
@@ -449,29 +482,27 @@ step_consumer() {
   fi
   fact read-consumer PASS "the bundle $SECRET is at version ${VERSION:-?} and holds the bitbucket-read-consumer entry: this is the consumer the drill stops, rotates and replaces"
 
-  # The three files, held to each other. The rotation keeps the consumer and
-  # changes its secret, so the rotated file must carry the SAME key and
-  # workspace; the transfer is a consumer created under another account, so the
-  # successor must carry a DIFFERENT key. Neither comparison needs a value: the
-  # reader prints a fingerprint of the key and never the key.
-  local cur rot suc
+  # The two files that exist now, held to each other. The transfer is a consumer
+  # created under another account, so the successor must carry a DIFFERENT key.
+  # The comparison needs no value: the reader prints a fingerprint of the key and
+  # never the key. The rotated document is held to the consumer file the same way
+  # at the rotation, once you have written it.
+  local cur suc
   cur=$(read_shape "$CONSUMER_FILE" "the consumer file")
-  rot=$(read_shape "$ROTATED_CONSUMER_FILE" "the rotated consumer file")
   suc=$(read_shape "$SUCCESSOR_CONSUMER_FILE" "the successor consumer file")
-  local cur_ws rot_ws suc_ws cur_key rot_key suc_key
+  local cur_ws suc_ws cur_key suc_key
   cur_ws=$(field_of workspace "$cur")
-  rot_ws=$(field_of workspace "$rot")
   suc_ws=$(field_of workspace "$suc")
   cur_key=$(field_of keyfp "$cur")
-  rot_key=$(field_of keyfp "$rot")
   suc_key=$(field_of keyfp "$suc")
   REPO_WS=${REPO%%/*}
   [ "$cur_ws" = "$REPO_WS" ] || stop "the consumer file names the workspace '$cur_ws' and --repo names '$REPO'. The consumer is read as the workspace it was created in, and the read mint refuses a repository outside it by name (G11), so the two must agree"
-  [ "$rot_ws" = "$cur_ws" ] || stop "the rotated consumer file names the workspace '$rot_ws' and the consumer file names '$cur_ws': a rotation regenerates the SECRET of the consumer you already have, so the workspace and the key stay"
   [ "$suc_ws" = "$cur_ws" ] || stop "the successor consumer file names the workspace '$suc_ws' and the consumer file names '$cur_ws': the transfer replaces the credential, not the workspace"
-  [ "$rot_key" = "$cur_key" ] || stop "the rotated consumer file carries a DIFFERENT consumer key from the consumer file: a rotation regenerates the secret of the consumer you already have, so the key stays. If you created a second consumer instead, the drill's rotation step is not what you have — create the successor with --successor-consumer-file and rotate the first one at Bitbucket"
   [ "$suc_key" != "$cur_key" ] || stop "the successor consumer file carries the SAME consumer key as the consumer file, so it is the same consumer and the transfer measures nothing: create a consumer under the second sandbox account"
-  fact consumer-files PASS "the three files are one consumer and its regenerated secret (same key and workspace) plus a successor consumer (a different key, the same workspace); the key is compared as a fingerprint and never printed"
+  # Kept for the rotation's own comparison, which cannot be made here: the
+  # rotated document does not exist yet.
+  CONSUMER_KEYFP=$cur_key
+  fact consumer-files PASS "the bundle's consumer and the successor are one consumer and a consumer created under the second sandbox account (a different key, the same workspace); the key is compared as a fingerprint and never printed, and the rotated document is held the same way at the rotation"
 }
 
 # read_shape PATH WHAT — the reader's shape vocabulary for one consumer file.
@@ -636,7 +667,7 @@ step_mint_baseline() {
   if [ "$MINT_STATUS" != 200 ]; then
     local note
     note=$(mint_note)
-    fact repository FAIL "the read mint refused before anything was written: the service answered $MINT_STATUS${MINT_CODE:+ (refused: ${MINT_CODE})}${note}. Check that your own address is one of the installation's operators (the person class), that the bundle holds the consumer, and that the credentials service is on"
+    fact repository FAIL "the read mint refused before anything was written: the service answered $MINT_STATUS${MINT_CODE:+ (refused: ${MINT_CODE})}${note}. Check that your own address is one of the installation's operators (the person class), that the bundle holds the consumer, that the consumer's own key and secret are the ones Bitbucket accepts — the service exchanges them at Bitbucket's OAuth root on every mint, so a secret regenerated at Bitbucket and not yet written into the bundle is refused here, with the exchange's own message rather than the missing consumer's — and that the credentials service is on"
     stop "the baseline read mint was not served, so there is nothing to compare the drill's four writes against"
   fi
   if [ "$MINT_REPO" != same ]; then
@@ -747,11 +778,33 @@ step_restore_consumer() {
   return 1
 }
 
+# step_rotate_ask: the owner's own step, and the one moment the drill waits on a
+# person. It asks for the regeneration, waits for the answer, and holds the file
+# that was written to the consumer file's own key and workspace — which is what
+# makes the document it is about to write the SAME consumer with a new secret
+# rather than a second consumer. It writes nothing itself.
+step_rotate_ask() {
+  owner "regenerate the secret of the read consumer at Bitbucket NOW — the consumer the bundle holds (workspace $REPO_WS): the same consumer, the same key, and Bitbucket's own regenerate step. Then write its document into $ROTATED_CONSUMER_FILE — key, secret and workspace, one per line, the secret Bitbucket just gave you — and type ROTATED. Ctrl-C stops here: the bundle holds the consumer fugaro creds set put back, nothing at Bitbucket has changed, and this drill has written nothing since"
+  local answer=""
+  read -r answer || true
+  if [ "$answer" != ROTATED ]; then
+    stop "the rotation did not run: the drill asked you to regenerate the secret at Bitbucket and write $ROTATED_CONSUMER_FILE, and the answer was '${answer}'. Nothing was written by this step, and nothing at Bitbucket has changed — the bundle holds the consumer it held before the stop. Run the drill again and type ROTATED once the file is written: without the regeneration the drill can measure neither the rotated document nor the refusal of the secret it replaced"
+  fi
+  [ -f "$ROTATED_CONSUMER_FILE" ] || stop "no file at $ROTATED_CONSUMER_FILE after you typed ROTATED, so there is no rotated document to write: the drill does not guess one. Write the consumer's document there — key, secret and workspace, one per line, the secret Bitbucket just gave you — and run the drill again"
+  local rot rot_ws rot_key
+  rot=$(read_shape "$ROTATED_CONSUMER_FILE" "the rotated consumer file")
+  rot_ws=$(field_of workspace "$rot")
+  rot_key=$(field_of keyfp "$rot")
+  [ "$rot_ws" = "$REPO_WS" ] || stop "the rotated consumer file names the workspace '$rot_ws' and the consumer file names '$REPO_WS': a rotation regenerates the SECRET of the consumer you already have, so the workspace and the key stay. Nothing was written by this step"
+  [ "$rot_key" = "$CONSUMER_KEYFP" ] || stop "the rotated consumer file carries a DIFFERENT consumer key from the consumer file: a rotation regenerates the secret of the consumer you already have, so the key stays. If you created a second consumer instead, the drill's rotation step is not what you have — create the successor with --successor-consumer-file and rotate the first one at Bitbucket. Nothing was written by this step"
+}
+
 # step_rotate: the secret regenerated at Bitbucket, written into the bundle, and
 # then the two readings that make the rotation a fact rather than a write — the
 # OLD secret must be refused, and U13 is whether the token minted BEFORE the
 # rotation still reads.
 step_rotate() {
+  step_rotate_ask
   set_consumer "$ROTATED_CONSUMER_FILE" "rotated consumer"
   LEFTOVER="the bundle holds the rotated consumer (the same key with the secret Bitbucket regenerated)"
   if ! mint_want rotate ok "the rotation"; then
@@ -827,6 +880,10 @@ step_rotate() {
 step_transfer() {
   set_consumer "$SUCCESSOR_CONSUMER_FILE" "successor consumer"
   LEFTOVER="the bundle holds the successor consumer, which is the transfer"
+  # The write reported success, so the successor is the bundle's entry and the
+  # consumer the rotation regenerated is no longer named by it: the Restore row's
+  # delete is about that consumer, and it is only safe to name from here.
+  TRANSFERRED=yes
   if ! mint_want transfer ok "the transfer"; then
     fact transfer FAIL "the read mint is not serving the successor ${MINT_WAIT}s after its document was written ($(mint_ok_got)): the successor's own key and secret have to be the ones Bitbucket accepts for $REPO_WS, and a consumer created under another account only reads what that account reads"
     return 1
@@ -960,6 +1017,11 @@ main() {
   MINT_ANSWERED=""
   MINT_NO_CONSUMER=""
   MINT_WAITED=0
+  # The consumer file's own key, kept as a fingerprint (never printed) so the
+  # rotation can hold the rotated document to the same consumer; and whether the
+  # transfer's write landed, which decides whether any consumer is owed a delete.
+  CONSUMER_KEYFP=""
+  TRANSFERRED=no
 
   guard_endpoint "the OAuth root" "$OAUTH_URL"
   guard_endpoint "the API root" "$API_URL"

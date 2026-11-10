@@ -317,6 +317,12 @@ ENTRY = "bitbucket-read-consumer"
 # answers the kill switch, a bundle that fails to load, a failed Bitbucket
 # exchange and a failed audit with that same 503 state_unavailable.
 NO_CONSUMER_MESSAGE = "credsvc: the credentials bundle holds no Bitbucket read consumer"
+# And the other 503 state_unavailable a mint can answer: the exchange with
+# bitbucket.org refusing, which is what a bundle holding a secret Bitbucket will
+# not exchange gets (bitbucket.go's ErrReadBitbucket). The two are different
+# readings of the same status and type, and the section's stop step turns on
+# telling them apart.
+NO_TOKEN_MESSAGE = "credsvc: bitbucket.org did not mint a read token"
 
 
 def mode():
@@ -336,7 +342,7 @@ def holds_entry():
     return any(line.startswith(ENTRY + ":") for line in bundle().splitlines())
 
 
-def consumer_secret():
+def consumer_field(name):
     inside, out = False, None
     for line in bundle().splitlines():
         if line.startswith(ENTRY + ":"):
@@ -345,10 +351,41 @@ def consumer_secret():
         if inside:
             if not line[:1].isspace():
                 break
-            name, _, value = line.strip().partition(":")
-            if name == "secret":
+            field, _, value = line.strip().partition(":")
+            if field == name:
                 out = value.strip().strip('"')
     return out
+
+
+def consumer_secret():
+    return consumer_field("secret")
+
+
+def acceptable():
+    """The consumer pairs this Bitbucket would exchange, which is what the owner
+    has at Bitbucket and nothing else: its OAuth endpoint is asked with the
+    bundle's key and secret on every mint, and a pair it does not hold is
+    refused. The suite writes this file from its own consumer documents and
+    flips it at the moment the owner's regeneration lands -- a secret that has
+    been written into the bundle but not regenerated at Bitbucket is a pair this
+    Bitbucket refuses, exactly as bitbucket.org would."""
+    try:
+        with open(os.path.join(DIR, "bitbucket.json"), encoding="utf-8") as fh:
+            return set(json.load(fh).get("accepted") or [])
+    except (OSError, ValueError):
+        return set()
+
+
+def serving_state():
+    """What one mint does with the bundle's consumer right now. Three states, and
+    the third is the one a check must not read as the second: no entry at all
+    (the stop), an entry whose pair Bitbucket exchanges (the credential is live),
+    and an entry whose pair it refuses -- a secret regenerated at Bitbucket and
+    not yet written, or written and not yet regenerated."""
+    if not holds_entry():
+        return "absent"
+    pair = "%s:%s" % (consumer_field("key") or "", consumer_secret() or "")
+    return "ok" if pair in acceptable() else "refused"
 
 
 def tokens():
@@ -400,14 +437,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
         # the OLD document's answer, and a check that trusted it would report a
         # stop that had not happened.
         if Handler.cache is None or Handler.cache_left <= 0:
-            Handler.cache = holds_entry()
+            Handler.cache = serving_state()
             Handler.cache_left = int(m.get("mint_cache") or 0)
         Handler.cache_left -= 1
         present = Handler.cache
         if m.get("mint") == "always":
-            present = True
+            present = "ok"
         if m.get("mint") == "never":
-            present = False
+            present = "absent"
         # A 200 that is not the mint's document at all, for the bundle whose
         # consumer carries this secret: a proxy, a load balancer or anything else
         # in front of the service answering instead of it. A row that read the
@@ -423,7 +460,21 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
-        if not present:
+        if present == "refused":
+            # The exchange failing: the service presents the bundle's key and
+            # secret at Bitbucket's OAuth root on every mint and answers
+            # ErrReadBitbucket's own sentence when bitbucket.org will not mint
+            # from them (internal/credsvc/bitbucket.go, through refuseRead). It
+            # is the same 503 state_unavailable as the missing consumer's, so
+            # neither the status nor the code tells the two apart -- a bundle
+            # holding a secret Bitbucket has not issued is refused here, and a
+            # drill that ran the baseline on one would have had nothing to
+            # measure.
+            self.answer(int(m.get("mint_refused_status") or 503),
+                        {"error": m.get("mint_refused_error") or "state_unavailable",
+                         "message": m.get("mint_refused_message") or NO_TOKEN_MESSAGE})
+            return
+        if present == "absent":
             # The service's own refusal of a bundle with no read consumer: 503
             # state_unavailable (internal/credsvc/bitbucket.go's ErrReadNoConsumer
             # through refuseRead, wire.go's statuses) carrying that error's own
@@ -565,6 +616,45 @@ write_mode() { # dir [JSON] — the fake Bitbucket's behaviour
   printf '%s\n' "$json" >"$1/state/mode.json"
 }
 
+# doc_field FILE NAME — one field of a consumer document, as the fake Bitbucket
+# reads it out of the bundle.
+doc_field() {
+  sed -n "s/^$2:[[:space:]]*\"\{0,1\}\([^\"]*\)\"\{0,1\}$/\1/p" "$1"
+}
+
+# pair_of FILE — the pair a consumer document names, in the shape the fake's
+# OAuth exchange matches on. The values never leave this suite's own state
+# directory: they are its fixtures, and that none of the sentinels reaches the
+# run's block is one of the tests.
+pair_of() {
+  printf '%s:%s' "$(doc_field "$1" key)" "$(doc_field "$1" secret)"
+}
+
+# write_bitbucket DIR — what this case's Bitbucket would exchange: the pair the
+# bundle holds now, and the successor the transfer creates. It is the fake's own
+# OAuth state and it is deliberately NOT derived from the bundle: a mint that
+# answered on the entry's presence alone would serve a consumer whose secret
+# bitbucket.org has already regenerated away, and that is exactly the reading
+# the drill's baseline row would then report as the live credential.
+write_bitbucket() {
+  local dir=$1 pairs
+  pairs=$(printf '"%s", "%s"' "$(pair_of "$dir/state/consumer.yaml")" "$(pair_of "$dir/state/successor.yaml")")
+  printf '{"accepted": [%s]}\n' "$pairs" >"$dir/state/bitbucket.json"
+}
+
+# bitbucket_rotated DIR — the owner has regenerated the secret of the consumer
+# the bundle holds, which is the moment a rotation leaves the pre-rotation
+# secret dead: from here Bitbucket exchanges the consumer's key with the secret
+# the case's rotated document carries, and the old secret is refused. A drill
+# that wrote the rotated document without asking for that regeneration would
+# therefore be writing a secret this Bitbucket has never issued.
+bitbucket_rotated() {
+  local dir=$1 pairs
+  pairs=$(printf '"%s:%s", "%s"' "$(doc_field "$dir/state/consumer.yaml" key)" \
+    "$(doc_field "$dir/state/rotated.yaml" secret)" "$(pair_of "$dir/state/successor.yaml")")
+  printf '{"accepted": [%s]}\n' "$pairs" >"$dir/state/bitbucket.json"
+}
+
 # claim_entry_present DIR — the listing the check reads says the bundle holds the
 # read consumer, whatever the document says, and the mint keeps serving. It is
 # how a case reaches the stop drill with a document the check cannot strip an
@@ -615,6 +705,7 @@ setup_case() {
   write_consumer "$dir/state/consumer.yaml" "$KEY_SENTINEL" "$SECRET_SENTINEL" "$WORKSPACE"
   write_consumer "$dir/state/rotated.yaml" "$KEY_SENTINEL" "$ROTATED_SENTINEL" "$WORKSPACE"
   write_consumer "$dir/state/successor.yaml" "$SUCCESSOR_KEY_SENTINEL" "$SUCCESSOR_SECRET_SENTINEL" "$WORKSPACE"
+  write_bitbucket "$dir"
   start_fake "$dir"
   write_job "$dir" "http://127.0.0.1:$FAKE_PORT"
   assert_fakes_first "$dir" "the case at hand"
@@ -638,9 +729,49 @@ start_fake() { # start_fake DIR
   return 1
 }
 
+# answers_for DIR — the stream the check reads its answers from. RUN148_STDIN
+# names a file the case wrote; otherwise the answers are produced as the drill
+# asks for them, which is what a case about the rotation needs.
+answers_for() {
+  if [ -n "${RUN148_STDIN:-}" ]; then
+    cat "$RUN148_STDIN"
+    return 0
+  fi
+  owner_answers "$1" "${RUN148_CONFIRM:-}"
+}
+
+# owner_answers DIR [CONFIRMATION] — the two answers the drill reads, in the
+# order it reads them, and the one place this suite plays the owner.
+#
+# The confirmation, when the case has one, is written at once (a run under --yes
+# reads none). The rotation's answer is NOT: it waits for the drill's own prompt
+# for it, and the moment that prompt appears is the moment this case's Bitbucket
+# regenerates the consumer's secret -- the owner's half of a rotation, and the
+# half no flag can do for them. So the flipped Bitbucket and the answer are the
+# same event, which is what makes a drill that wrote the rotated document
+# without asking visible: it writes a secret Bitbucket has not issued, and the
+# mint refuses it.
+owner_answers() {
+  local dir=$1 confirm=${2:-} i=0
+  if [ -n "$confirm" ]; then printf '%s\n' "$confirm"; fi
+  while [ "$i" -lt 1500 ]; do
+    if grep -q 'regenerate the secret of the read consumer' "$dir/err" 2>/dev/null; then
+      bitbucket_rotated "$dir"
+      printf 'ROTATED\n'
+      return 0
+    fi
+    # A case that ends before the rotation leaves this producer with nothing to
+    # answer, so the run's own end is what releases it rather than a timeout.
+    if [ -e "$dir/state/done" ]; then return 0; fi
+    sleep 0.02
+    i=$((i + 1))
+  done
+}
+
 # run148 [ARGS...] — runs the check on the case at hand. RUN148_ARGS adds
-# arguments, RUN148_ENV names environment variables (NAME=value) and RUN148_STDIN
-# is what the confirmation reads. The fakes are FIRST on PATH, and BOTH
+# arguments, RUN148_ENV names environment variables (NAME=value), RUN148_STDIN
+# is a file of answers and RUN148_CONFIRM is the typed confirmation for a case
+# that does not pass --yes. The fakes are FIRST on PATH, and BOTH
 # Bitbucket roots -- the OAuth root and the API root, which the check would
 # otherwise default to the real Bitbucket -- point at this case's fake, so
 # nothing here leaves the machine. RUN148_ENV comes last: a case about an
@@ -659,13 +790,18 @@ run148() {
     CHECK148_API_URL="http://127.0.0.1:$FAKE_PORT/2.0" \
     CHECK148_CACHE_WAIT=0 \
     ${RUN148_ENV[@]+"${RUN148_ENV[@]}"} \
-    "$bash_bin" "$script" ${RUN148_ARGS[@]+"${RUN148_ARGS[@]}"} "$@" <"${RUN148_STDIN:-/dev/null}" 2>"$dir/err") || status=$?
+    "$bash_bin" "$script" ${RUN148_ARGS[@]+"${RUN148_ARGS[@]}"} "$@" 2>"$dir/err" < <(answers_for "$dir")) || status=$?
   # The block is kept as well as captured, so a case kept for inspection has the
   # whole of what the check printed and not only the first line of each failure.
   printf '%s\n' "$out" >"$dir/out"
+  # And the answers' producer is told the run is over: a case that stopped before
+  # the rotation has nothing to answer, and this is what ends it rather than the
+  # poll above running out.
+  : >"$dir/state/done"
   RUN148_ARGS=()
   RUN148_ENV=()
   RUN148_STDIN=""
+  RUN148_CONFIRM=""
   RUN148_PROJECT=""
 }
 
@@ -751,6 +887,16 @@ expect_set_bundle() { # dir what
 expect_entry_gone() { # file what
   grep -q 'bitbucket-read-consumer' "$1" \
     && fail "$2: $1 still holds the entry" || true
+}
+# expect_calls FILE PATTERN N WHAT — the fakes' log carries that many of a call.
+# The writes a drill makes before the step under test are counted as well as the
+# ones after it: what a case about the rotation needs to say is how many times
+# the bundle was set, not whether the drill wrote anything at all.
+expect_calls() { # file pattern n what
+  local got
+  got=$(grep -cE "$2" "$1" 2>/dev/null || true)
+  [ "${got:-0}" = "$3" ] \
+    || fail "$4: expected $3 calls matching '$2', got ${got:-0}: $(tr '\n' ';' <"$1")"
 }
 
 # ------------------------------------------------------------------- the tests
@@ -1161,18 +1307,23 @@ test_a_successor_that_is_the_same_consumer_stops() {
   assert_no_secret "$dir" "same consumer"
 }
 
-# And a rotation that is not a rotation: a successor file with a different key
-# cannot stand for the same consumer's new secret, because the key is what
-# Bitbucket identifies the consumer by.
+# And a rotation that is not a rotation: a document with a different key cannot
+# stand for the same consumer's new secret, because the key is what Bitbucket
+# identifies the consumer by. The reading is the rotation's own, taken after the
+# owner's regeneration: the rotated document is the one step of this drill that
+# cannot exist before the run starts, so nothing about it is read up front.
 test_a_rotation_that_changes_the_key_stops() {
   setup_case keymoved
   write_consumer "$dir/state/rotated.yaml" "$SUCCESSOR_KEY_SENTINEL" "$ROTATED_SENTINEL" "$WORKSPACE"
   default_args
   run148
   expect_status "$status" 2 "rotation changed the key"
-  expect_contains "$out" "FACT consumer-files: FAIL — " "rotation changed the key: the files row fails"
+  expect_contains "$out" "FACT aborted: FAIL — " "rotation changed the key: the run is aborted at the rotation"
   expect_contains "$out" "DIFFERENT consumer key" "rotation changed the key: the row says why"
-  expect_no_bundle_write "$dir" "rotation changed the key"
+  expect_contains "$(cat "$dir/err")" "regenerate the secret of the read consumer" "rotation changed the key: the owner was asked before it was read"
+  # The stop and the restore have written by now; the rotation has not.
+  expect_calls "$dir/state/calls" '^fugaro creds set bitbucket-read-consumer' 1 "rotation changed the key"
+  expect_absent "$(cat "$dir/state/bundle.yaml")" "$ROTATED_SENTINEL" "rotation changed the key: the rotated secret was never written"
   assert_no_secret "$dir" "rotation changed the key"
 }
 
@@ -1185,10 +1336,59 @@ test_a_consumer_for_another_workspace_stops() {
   default_args
   run148
   expect_status "$status" 2 "another workspace"
-  expect_contains "$out" "FACT consumer-files: FAIL — " "another workspace: the files row fails"
+  expect_contains "$out" "FACT aborted: FAIL — " "another workspace: the run is aborted at the rotation"
   expect_contains "$out" "names the workspace" "another workspace: the row says what it found"
-  expect_no_bundle_write "$dir" "another workspace"
+  expect_calls "$dir/state/calls" '^fugaro creds set bitbucket-read-consumer' 1 "another workspace"
+  expect_absent "$(cat "$dir/state/bundle.yaml")" "$ROTATED_SENTINEL" "another workspace: the rotated secret was never written"
   assert_no_secret "$dir" "another workspace"
+}
+
+# THE ROTATION'S OWN ORDER, and the reason the drill cannot start with the
+# rotated document: the owner regenerates the secret at Bitbucket, and that is
+# what stops the secret the bundle holds from being exchangeable. So the drill
+# ASKS for it, at the rotation, and writes nothing until the answer is there --
+# a drill that wrote the rotated document first would be spending a dead secret
+# from its baseline row, and the whole run would measure nothing. Here the owner
+# never answers: the drill must stop with the bundle holding the consumer it
+# restored and not a byte of the rotated document.
+test_the_rotation_waits_for_the_owners_regeneration() {
+  setup_case unrotated
+  default_args
+  RUN148_STDIN=/dev/null
+  run148
+  expect_status "$status" 2 "no answer at the rotation"
+  expect_contains "$out" "FACT aborted: FAIL — " "no answer at the rotation: the run is aborted"
+  expect_contains "$out" "the rotation did not run" "no answer at the rotation: the reason names the step that did not run"
+  expect_contains "$out" "regenerate the secret at Bitbucket" "no answer at the rotation: the reason names what was asked for"
+  expect_contains "$out" "FACT rotate: FAIL — not reached" "no answer at the rotation: the rotation is never measured"
+  # The ask came before the write, and the write never came: the bundle holds the
+  # consumer the restore put back, and the set that would carry the rotated
+  # secret is not in the fakes' log.
+  expect_contains "$(cat "$dir/err")" "regenerate the secret of the read consumer" "no answer at the rotation: the drill asked before it wrote"
+  expect_calls "$dir/state/calls" '^fugaro creds set bitbucket-read-consumer' 1 "no answer at the rotation"
+  expect_contains "$(cat "$dir/state/bundle.yaml")" "$SECRET_SENTINEL" "no answer at the rotation: the bundle holds the consumer it restored"
+  expect_absent "$(cat "$dir/state/bundle.yaml")" "$ROTATED_SENTINEL" "no answer at the rotation: the rotated secret was never written"
+  assert_no_secret "$dir" "no answer at the rotation"
+}
+
+# And the other half of the same fact: what the mint spends is the pair
+# bitbucket.org would exchange, not the entry's presence. A bundle holding a
+# secret this Bitbucket has never issued -- what a drill that wrote the rotated
+# document without the regeneration leaves -- is refused by the exchange, with
+# the same 503 state_unavailable the missing consumer answers with. The baseline
+# row is the one that reads it, and its remedy has to name the exchange.
+test_the_baseline_mint_needs_the_secret_bitbucket_accepts() {
+  setup_case unexchangable
+  write_bundle "$dir/state/bundle.yaml" "$ROTATED_SENTINEL"
+  default_args
+  run148
+  expect_status "$status" 2 "a secret Bitbucket will not exchange"
+  expect_contains "$out" "FACT repository: FAIL — " "a secret Bitbucket will not exchange: the baseline row fails"
+  expect_absent "$out" "FACT repository: PASS" "a secret Bitbucket will not exchange: no PASS for a mint that never happened"
+  expect_contains "$out" "503 (refused: state_unavailable)" "a secret Bitbucket will not exchange: the refusal is the service's own status and code"
+  expect_contains "$out" "the consumer's own key and secret are the ones Bitbucket accepts" "a secret Bitbucket will not exchange: the row names the exchange"
+  expect_absent "$out" "FACT stop: PASS" "a secret Bitbucket will not exchange: nothing below the baseline was measured"
+  assert_no_secret "$dir" "a secret Bitbucket will not exchange"
 }
 
 # A bundle that holds no read consumer at all: there is nothing to stop, rotate
@@ -1275,8 +1475,9 @@ test_the_typed_confirmation_runs_it() {
   RUN148_ARGS=(--installation "$PROJECT" --repo "$REPO"
     --consumer-file "$dir/state/consumer.yaml" --rotated-consumer-file "$dir/state/rotated.yaml"
     --successor-consumer-file "$dir/state/successor.yaml")
-  printf '%s\n' "$PROJECT" >"$dir/state/answer.txt"
-  RUN148_STDIN="$dir/state/answer.txt"
+  # The typed confirmation, and then the answer the rotation asks for: the two
+  # are one stream, in the order the drill reads them.
+  RUN148_CONFIRM="$PROJECT"
   run148
   expect_status "$status" 0 "confirmed"
   expect_contains "$out" "FACT confirm: PASS — " "confirmed: the confirm row passes"
@@ -1559,6 +1760,8 @@ t test_u13_that_never_answered_is_not_a_refusal
 t test_a_successor_that_is_the_same_consumer_stops
 t test_a_rotation_that_changes_the_key_stops
 t test_a_consumer_for_another_workspace_stops
+t test_the_rotation_waits_for_the_owners_regeneration
+t test_the_baseline_mint_needs_the_secret_bitbucket_accepts
 t test_a_bundle_without_the_consumer_stops
 t test_a_job_without_the_service_url_stops
 t test_a_refused_baseline_stops
