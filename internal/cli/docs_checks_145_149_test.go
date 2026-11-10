@@ -15,7 +15,7 @@ import (
 // facts that gate the read mint; 146, the coordinator sweep reading Bitbucket
 // through the service; 148, the read consumer's stop, rotation and ownership
 // transfer (the run-mint half of the number stays parked, the read half is kept
-// — the owner's answer of 2026-11-10, D1961); and 149, the console showing the
+// — the plan's verdict for T3.8, and D1961); and 149, the console showing the
 // stored view on the owner's own machine. 147 is **parked with S3** — the slice
 // that mints run tokens is deferred until a push and pull-request proxy exists —
 // so it stays reserved, and the register must carry neither a row nor a section
@@ -122,7 +122,9 @@ func TestDocsChecks147StaysReserved(t *testing.T) {
 
 	// The block's own statement of itself is read from the plan that claims it:
 	// the block is 145–154, 147 is parked with S3, 148's read half is kept (the
-	// owner's answer of 2026-11-10, D1961) and 150–154 are reserved.
+	// plan's verdict for T3.8, which is what the register's row and section
+	// stand on — D1961's answer cell is still the answering sweep's) and
+	// 150–154 are reserved.
 	//
 	// The pin on 148 is the KEEP and not the plan's checks table row: that row
 	// still reads "148, **parked with S3** ... | reserved |" because the sweep

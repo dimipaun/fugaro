@@ -11220,14 +11220,16 @@ against `belong`**, and **no agent runs any step of it**.
 
 **NOT RUN.** Written by task **T0.2** of the Bitbucket-credentials plan
 ([bitbucket-credentials/implementation-plan.md](bitbucket-credentials/implementation-plan.md), its
-"Checks this plan takes (Checks 145–154)" and its task **T3.8**; D367, and the owner's answer of
-2026-11-10, **D1961**). T3.8's verdict is **superseded in part, kept in part**: the run-mint half
-goes with S3, and the **read half** — the read consumer's own stop, rotation and ownership transfer,
-with **U13** — is kept and brought back into S2 beside **T2.6**, because the read consumer is merged
-and shipped and nothing else exercises its rotation. The script that runs it is this task's —
+"Checks this plan takes (Checks 145–154)" and its task **T3.8**; D367, and **D1961**). The plan's
+verdict for T3.8 is **superseded in part, kept in part**: the run-mint half goes with S3, and the
+**read half** — the read consumer's own stop, rotation and ownership transfer, with **U13** — is
+kept, because the read consumer is merged and shipped and nothing else exercises its rotation. What
+this row and section register is that half, which the folder's own reconciliation already carries as
+live (its "Numbers this work holds": **148** "with only its read half live"), and D1961's answer cell
+is the answering sweep's to fill. The script that runs it is this task's —
 `scripts/live-checks/check148.sh`, with its own test `check148_test.sh` — and the owner runs it
-beside T2.6, whose runbook section (**§12**, "The Bitbucket read consumer: creating it, and stopping,
-rotating and transferring it") it executes step by step.
+beside **T2.6**, whose runbook section (**§12**, "The Bitbucket read consumer: creating it, and
+stopping, rotating and transferring it") it executes step by step.
 
 **What the check measures.** Three changes to the bundle entry `bitbucket-read-consumer`
 (`key`, `secret`, `workspace`), each confirmed against the read mint at
