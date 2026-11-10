@@ -68,8 +68,8 @@ so `fugaro runs ls --json` carries one `reason` string per row and no grouping a
 (`internal/userstats/userstats.go`) counts runs by *person* and buckets every status into
 `succeeded/failed/halted/infra_error/other` (`userstats.go:124`–`136`); `fugaro runs digest` writes
 one closed period's report of one repository into that repository's tree, and its per-run
-"oddities" are six closed flags — `review_calls`, `subagents`, `halt`, `fix_rounds`,
-`repeated_command`, `review_scope_drift` (`internal/digest/digest.go:79`–`97`) — each a property of a
+"oddities" are seven closed flags — `review_calls`, `subagents`, `halt`, `fix_rounds`,
+`repeated_command`, `review_scope_drift`, `scope_drift` (`internal/digest/digest.go:83`–`110`) — each a property of a
 run, none of them a cause. So the owner's own 7-day report had to be built by normalizing this free
 text with a script: **the vocabulary below exists because the arithmetic that answers "where does the
 money go" was done by hand in a shell.**
