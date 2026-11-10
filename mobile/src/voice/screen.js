@@ -267,13 +267,21 @@ export function createVoiceScreen({
    * snapshot's `refused` is the screen's current state, not a history of every
    * refusal it ever made.
    *
+   * `options` is the classification the caller already made, handed on to the
+   * client unchanged: P6.12's dialogue passes `{ verb: 'launch' }` for D162's
+   * pass-through, because the client cannot tell a launch from chatter and the
+   * lapse (S6.3) refuses the one and keeps the other. A caller with nothing to
+   * classify passes nothing, and this screen classifies nothing itself.
+   *
    * @param {unknown} text what the owner said
+   * @param {{action?: object, verb?: string}} [options] what the caller knows
+   *   about it: the client's own options, forwarded
    * @returns {Promise<object>} the client's own verdict, or this screen's refusal
    */
-  async function accept(text) {
+  async function accept(text, options) {
     if (typeof text !== 'string' || text.length === 0) return noteRefusal(refuse(SCREEN_CODES.BAD_TEXT, 'text'));
     if (offline()) return noteRefusal(refuse(SCREEN_CODES.OFFLINE, 'presence'));
-    const sent = await client.send(text);
+    const sent = await client.send(text, options);
     if (sent.ok) lastRefused = null;
     return sent;
   }

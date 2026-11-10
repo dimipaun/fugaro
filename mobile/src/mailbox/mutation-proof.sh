@@ -107,6 +107,9 @@ require_clean mobile/src/accounts/secure-store.js
 require_clean mobile/src/app/root.js
 require_clean mobile/src/licence/state.js
 require_clean mobile/src/licence/index.js
+require_clean mobile/src/text/input.js
+require_clean mobile/src/voice/dialogue.js
+require_clean mobile/src/voice/screen.js
 
 last_outcome=""
 killed=0
@@ -450,10 +453,11 @@ run "the SDK's queue is real, which is what the client's claim rests on (store.j
 
 # 11. The lapse (S6.3; D436, T12; the design is docs/design/lapse-read-only.md
 #     §4). Six guards in client.js, three in state.js -- the refuser this client
-#     gained, and the two readings its table makes -- and one in index.js, the
-#     door that must not hand the rules out. The last two plant what the two
-#     scans exist to catch: a second enforcement in the app, and a rule on the
-#     door.
+#     gained, and the two readings its table makes -- one in index.js, the door
+#     that must not hand the rules out, and three at the hops a launch's
+#     CLASSIFICATION travels (the typed input, the spoken dialogue and the voice
+#     screen P6.12 sends through). The last two plant what the two scans exist
+#     to catch: a second enforcement in the app, and a rule on the door.
 run "the lapse refuses the writes it does not keep (the launch, the merge, the config change)" \
   "    if (refusedByLapse !== null) {
       return spokenRefusal(refusedByLapse, { text: body.text, at, keepText: !isAction });" \
@@ -526,6 +530,24 @@ run "the door hands a rule out to every screen (index.js)" \
   "export { LICENCE_KEYS_ENTRY, LICENCE_KEYS_MAX, LICENCE_KEY_PREFIX, LICENCE_STORE_CODES } from './store.js';
 export { writeOf } from './state.js';" \
   mobile/src/licence/index.js src/licence/verify.test.js
+# The CLASSIFICATION, at each of the three hops a launch takes to the write
+# path (S6.3; review). A launch and an ordinary message are the same bytes in
+# `send`, so the verb the confirm machine just decided is the only thing that
+# lets the lapse refuse one and keep the other: drop it anywhere along the way
+# and a lapsed launch reaches the inbox as chatter. The machine still ANSWERS
+# `pass-through` in each of these, so what fails is the write, not the routing.
+run "the typed launch takes its classification to the write path (input.js)" \
+  "      return send(text, { verb: stepped.verb });" \
+  "      return send(text);" \
+  mobile/src/text/input.js src/text/input.test.js
+run "the spoken launch is handed to the sink WITH its classification (dialogue.js)" \
+  "        const sent = await deliver(text, { verb: stepped.verb });" \
+  "        const sent = await deliver(text);" \
+  mobile/src/voice/dialogue.js src/voice/screen.test.js
+run "the screen passes the classification on instead of swallowing it (screen.js)" \
+  "    const sent = await client.send(text, options);" \
+  "    const sent = await client.send(text);" \
+  mobile/src/voice/screen.js src/voice/screen.test.js
 
 echo
 echo "guards proved: $killed killed, $survivors survived, $unapplied not applied"

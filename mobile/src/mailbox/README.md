@@ -482,7 +482,7 @@ cost of the false refusal is a phone that cannot speak.
 ## The mutation proof
 
 ```sh
-mobile/src/mailbox/mutation-proof.sh     # 68 guards, one planted bug each
+mobile/src/mailbox/mutation-proof.sh     # 71 guards, one planted bug each
 ```
 
 Every mutation disables exactly one guard and must make that guard's own suite
@@ -499,7 +499,13 @@ file and its suite. **Since P6.10 two more files carry guards of their own**:
 `gate.js` with `gate.test.js` (a connection that is not `true`, a consumer that
 is not verified, the unobserved refusal, and `clock-differs` keeping its own
 reason) and `connection.js` with `connection.test.js` (the double's constructor
-is no more generous than the gate). The store's SDK-queue guard is the one
+is no more generous than the gate). **Three more carry the launch's
+classification**, which is the one thing a lapse cannot recover on its own: a
+launch and an ordinary message are the same bytes in `send`, so the verb the
+confirm machine decided is threaded from the screen to the write path --
+`src/text/input.js` with `input.test.js` (the typed launch) and
+`src/voice/dialogue.js` and `src/voice/screen.js` with `screen.test.js` (the
+spoken one, through P6.12's dialogue). The store's SDK-queue guard is the one
 mutation proved **twice** -- against `store.test.js` and against
 `client.test.js` -- because "the SDK queue would have noticed" is the control
 the client's own claim rests on. It finds a working node rather than assuming
@@ -581,6 +587,9 @@ than a claim.
 | a key state the table has not learned is read as working (in `src/licence/state.js`) | `a key state this table has not learned reads as the lapse, and refuses the launch` -- run against `src/licence/state.test.js` |
 | the lapse's rules are reached from a second file (a plant in `src/app/root.js`) | `the lapse's rules are reached by the write path alone` |
 | the door hands a rule out to every screen (a plant in `src/licence/index.js`) | `the door hands out the state's names and none of the write path's rules` -- run against `src/licence/verify.test.js` |
+| the typed launch does not take its classification to the write path (in `src/text/input.js`) | `a launch on a lapsed licence is refused by the client, and never written` -- run against `src/text/input.test.js` |
+| the spoken launch is handed to the sink without its classification (in `src/voice/dialogue.js`) | `a spoken launch on a lapsed licence is refused by the client, and never written` -- run against `src/voice/screen.test.js` |
+| the screen swallows the classification it was given (in `src/voice/screen.js`) | the same test -- run against `src/voice/screen.test.js` |
 
 Two of those mutations **survived** when the proof was first run, and both were
 fixed rather than argued away -- the two guards had no test that could tell them
