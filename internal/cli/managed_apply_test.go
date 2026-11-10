@@ -352,6 +352,66 @@ func TestManagedApplyRunsPastAnOpenGate(t *testing.T) {
 	}
 }
 
+// TestManagedApplyPrintsAContentWarningAndKeepsNoRecordOfIt is D1545's other
+// warning, the one the plan itself raises: a delete of a type D1551 does not
+// call data-bearing and no list of the owner's admits is a content finding, so
+// the gate admits the plan with it in Warnings and `fugaro managed apply`
+// prints them (printWarnings) before it asks anything. What the session reads
+// is the sentence's own account of what happens to them HERE: this command
+// keeps no audit record of them, because it is not in the converge set (D1011,
+// the spec's "not a change to managed apply") and the family `fugaro doctor`
+// reads holds nothing about this apply. The sentence and the family are read
+// back together, so a wording that went on promising a record — or the first
+// record this command ever wrote — fails here rather than in a reader's
+// search for an object that is not there.
+func TestManagedApplyPrintsAContentWarningAndKeepsNoRecordOfIt(t *testing.T) {
+	r, root, _ := managedOpenGateRig(t)
+	// The plan a managed cover can read — the configuration it reads the
+	// provisioners, providers and data sources of, and the provider's own
+	// project — whose one change is the removal of a Run job no entry of the
+	// owner's list approves (the rig's allow list holds nothing), which is a
+	// warning and not a refusal because google_cloud_run_v2_job is classified
+	// and not data-bearing (D1551).
+	b, err := json.Marshal(map[string]any{
+		"format_version": "1.2",
+		"configuration": map[string]any{"provider_config": map[string]any{"google": map[string]any{
+			"name": "google", "full_name": "registry.terraform.io/hashicorp/google",
+			"expressions": map[string]any{"project": map[string]any{"constant_value": initProject}}}}},
+		"resource_changes": []any{map[string]any{
+			"address": "module.managed.google_cloud_run_v2_job.worker", "mode": "managed",
+			"type": "google_cloud_run_v2_job", "name": "worker",
+			"provider_name": "registry.terraform.io/hashicorp/google",
+			"change":        map[string]any{"actions": []string{"delete"}, "before": map[string]any{"name": "worker"}}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.script["show"] = map[string]any{"stdout": string(b)}
+	r.save(t)
+
+	out, errOut, _ := execute(t, "managed", "apply", root)
+	got := out + errOut
+	for _, want := range []string{
+		"the managed gate found ",
+		" warning(s) about this plan and applies it anyway (D1545); this command keeps no audit record of them:",
+		"module.managed.google_cloud_run_v2_job.worker",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the session does not read the plan's own warning, missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "recorded (D1545)") {
+		t.Errorf("the warning still promises a record this command does not write:\n%s", got)
+	}
+	list, err := managedStorage(t, r.gcs).Objects.List(initRunsBucket).Prefix(managedmode.AuditPrefix).Context(context.Background()).Do()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Items) != 0 {
+		t.Errorf("a managed apply wrote %d object(s) under %s, and its own warning says it keeps no record (D1011): %v", len(list.Items), managedmode.AuditPrefix, list.Items)
+	}
+}
+
 // TestManagedApplyWarnsWhenTheMarkerRecordsNoBudget is D1545's one exception to
 // the refusal table above, and the reason the version-1 row is not in it: a
 // version-1 marker that NAMES THIS PROJECT is a managed creation fact, so the
@@ -364,8 +424,8 @@ func TestManagedApplyRunsPastAnOpenGate(t *testing.T) {
 //
 // The warning is asserted where it is written, from Enable.Warning, and not by
 // re-deriving it here: the five pieces are the sentence's own opening, the
-// read's reason, the owner's two commands and the promise that the apply
-// proceeds with it recorded.
+// read's reason, the owner's two commands and what the warning does here — the
+// apply proceeds, and no audit record of it is written.
 func TestManagedApplyWarnsWhenTheMarkerRecordsNoBudget(t *testing.T) {
 	r, root, mints := managedOpenGateRig(t)
 	// The rig's own marker is a version 2, the open gate the test above runs
@@ -381,11 +441,25 @@ func TestManagedApplyWarnsWhenTheMarkerRecordsNoBudget(t *testing.T) {
 		"records no budget amount for " + initProjectName,
 		"fugaro managed flag <gcp-project-id> --budget N --budget-currency CCC",
 		"fugaro setup --create-project --managed --budget N --budget-currency CCC --billing-account ID",
-		"this apply proceeds with that warning recorded",
+		"this apply proceeds on that warning and keeps no audit record of it",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the owner does not read the gate's own warning, missing %q:\n%s", want, got)
 		}
+	}
+	// And the family that warning would be in holds nothing: `fugaro managed apply`
+	// is the one command the audit design cites and does not touch (D1011, the
+	// spec's "not a change to managed apply"), so it is not in the converge set
+	// and the family `fugaro doctor` reads holds nothing about this apply. The
+	// sentence above says exactly that, and this reads the family back to hold
+	// it to it: a wording that went on promising a record would be a reader
+	// sent to an empty prefix.
+	list, err := managedStorage(t, r.gcs).Objects.List(initRunsBucket).Prefix(managedmode.AuditPrefix).Context(context.Background()).Do()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Items) != 0 {
+		t.Errorf("a managed apply wrote %d object(s) under %s, and its own warning says it keeps no record (D1011): %v", len(list.Items), managedmode.AuditPrefix, list.Items)
 	}
 	// And a warning is not a refusal: the run goes on past the gate to the
 	// steps it guards, which is what "the apply proceeds" promises.

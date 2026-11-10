@@ -665,8 +665,15 @@ func (r Request) gateAndApply(ctx context.Context, t *tf.TF, cred Credential, pl
 // the line that matters. It names no flag and no environment variable: these
 // lines are read by the session the gate opened for, and a recipe for reaching
 // past a check has no business in them (DeleteAdvice's own rule).
+//
+// Its first line says what happens to the findings HERE and not what the audit
+// family holds, because its only caller is `fugaro managed apply` — the one
+// command this design cites rather than touches (spec.md §"not a change to
+// managed apply", D1011): it is not in the converge set, so no record of this
+// apply exists for `fugaro doctor` to read, and a line promising one would send
+// the reader to a family that holds nothing about them.
 func printWarnings(w io.Writer, warnings []Refusal) {
-	fmt.Fprintf(w, "the managed gate recorded %d warning(s) about this plan, and applies it with them recorded (D1545):\n", len(warnings))
+	fmt.Fprintf(w, "the managed gate found %d warning(s) about this plan and applies it anyway (D1545); this command keeps no audit record of them:\n", len(warnings))
 	listed := warnings
 	if len(listed) > safetext.FieldListMax {
 		listed = listed[:safetext.FieldListMax]

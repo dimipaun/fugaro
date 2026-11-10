@@ -181,7 +181,7 @@ func ApplyGate(r BudgetRead) (Enable, error) {
 		if reason == "" {
 			reason = "the creation fact records no amount"
 		}
-		warning := fmt.Sprintf("%s has no budget recorded (%s), so the project's own owner can add one by flagging it managed — `fugaro managed flag <gcp-project-id> --budget N --budget-currency CCC`, typed at their own terminal, which replaces this creation fact with the version that records the amount — or a managed project is created with one: `fugaro setup --create-project --managed --budget N --budget-currency CCC --billing-account ID`; this apply proceeds with that warning recorded",
+		warning := fmt.Sprintf("%s has no budget recorded (%s), so the project's own owner can add one by flagging it managed — `fugaro managed flag <gcp-project-id> --budget N --budget-currency CCC`, typed at their own terminal, which replaces this creation fact with the version that records the amount — or a managed project is created with one: `fugaro setup --create-project --managed --budget N --budget-currency CCC --billing-account ID`; this apply proceeds on that warning and keeps no audit record of it",
 			safetext.Field(r.Project), reason)
 		return Enable{read: true, warning: warning}, nil
 	}
