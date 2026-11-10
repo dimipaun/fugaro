@@ -53,10 +53,24 @@ import (
 // `--workflow`, or a checkout with no catalog — is written by no row anywhere, so
 // no document of the gate's names it: that arm submits its build under its lease
 // and is recorded by nothing here. That is also the whole of what a coding
-// agent's session is admitted to: the row above is the catalog entry, so that
+// agent's session is judged for: the row above is the catalog entry, so that
 // session is judged, admitted and recorded for an entry of the catalog and for
-// nothing else this command builds (D1016 — a step the gate has no document for
-// is not a step a session is admitted to).
+// nothing else this command builds.
+//
+// Why the derived arm is unjudged rather than refused. It is a build, and a build
+// is the one thing the policy puts under the budget alone: no confirmation, no
+// session refused for being unable to answer, the caps the only spending limit
+// (docs/no-prompt-policy/spec.md, rules 2 and 4; D1540, D1543). So the derived arm
+// refuses no session — a coding agent's session submits it — and the lease the
+// caller takes immediately before the submission (openBuildLease) is the whole of
+// what bounds it. D1016's read — a step the gate has no document for is not a step
+// a session is admitted to — is `fugaro update`'s: its stages are what the gate's
+// verdict stands in for, and §3.1 of docs/managed-agent-converge/spec.md is the
+// list of commands it is read over. This command is not one of those seven, and
+// the one row it does have is the catalog entry's above (§6 of the removal
+// design, D1206) — so D1016 is not what its derived arm would be refused under,
+// and reading it here would put a refusal in the one command the policy exempts
+// from one.
 //
 // Why the kill switch is read, and read per build. D1013's bound was what made
 // this row admissible rather than a licence, and the kill switch is the part of
