@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"maps"
@@ -17,7 +16,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/imagesurvey"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
-	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
 // imageSurveyDocVersion is the version of the document `fugaro image survey
@@ -55,19 +53,17 @@ type imageSurveyRepo struct {
 }
 
 // imageSurveySetup is what the skill proposes differences against (F16): the
-// entries the project's catalog has, the repository-to-image map the policy
-// node carries and the bake switch (D1901/D1906: absent is true).
+// entries the project's catalog has today.
 //
-// Unread is why ImageMap and BakeRepos are the survey's defaults rather than
-// what this project published: a published node this machine could not read.
-// The two must not look alike — a project that published no map and bakes
-// answers the same values as one whose node was not read — so a setup that was
-// not read says so, exactly as a repository row does.
+// The repository-to-image map and the bake switch (D1901/D1906) are not here.
+// Both are published policy keys that no code in this tree defines or writes —
+// their slice of the plan, IS5, is not implemented — so a report of them would
+// be the v1 document's own defaults on every installation, and freezing a
+// meaning now would bind the key before it exists. They are added as members
+// of this object with IS5, through projectpolicy's typed fields, which is what
+// D784 allows: a member added within a version.
 type imageSurveySetup struct {
-	Catalog   []catalogEntryRow `json:"catalog"`
-	ImageMap  map[string]string `json:"image_map"`
-	BakeRepos bool              `json:"bake_repos"`
-	Unread    string            `json:"unread,omitempty"`
+	Catalog []catalogEntryRow `json:"catalog"`
 }
 
 // openSurveyProvider is OpenProvider, a seam for the survey's reads: the
@@ -89,7 +85,7 @@ func newImageSurveyCmd() *cobra.Command {
 			"repository this machine's project config lists, the signals each one carries\n" +
 			"(its lockfiles and version files, a Dockerfile and its base image, its CI\n" +
 			"file, and the services its compose or Testcontainers files name), and the\n" +
-			"catalog, repository-to-image map and bake setting the project has today.\n\n" +
+			"catalog the project has today.\n\n" +
 			"Nothing is cloned, built or written: each repository is read through the\n" +
 			"code host's own file API with the token this shell holds, at a fixed list of\n" +
 			"paths, and a path that is not there is a signal the repository does not have.\n" +
@@ -230,7 +226,7 @@ func unreadableProvider(kind string) string {
 // use, and a node this machine cannot read is a note rather than a refusal
 // (the rule `fugaro image ls` keeps).
 func surveySetup(ctx context.Context, env *cloudEnv, stderr io.Writer) imageSurveySetup {
-	out := imageSurveySetup{Catalog: []catalogEntryRow{}, ImageMap: map[string]string{}, BakeRepos: true}
+	out := imageSurveySetup{Catalog: []catalogEntryRow{}}
 	cat, err := effectiveCatalog(ctx, env)
 	if err != nil {
 		fmt.Fprintf(stderr, "note: this project's published policy node could not be read (%s), so the catalog below is this machine's own\n", oneLine(err.Error()))
@@ -243,78 +239,7 @@ func surveySetup(ctx context.Context, env *cloudEnv, stderr io.Writer) imageSurv
 			})
 		}
 	}
-	out.ImageMap, out.BakeRepos, out.Unread = surveyPolicySetup(ctx, env)
 	return out
-}
-
-// surveySetupDefaults is the half of every reason the setup can be unread for
-// that says what the two values below then are: not what the project published
-// but what the survey assumes, which is the difference the field exists to
-// keep.
-const surveySetupDefaults = ", so image_map and bake_repos are the survey's own defaults rather than what this project published"
-
-// surveyPolicySetup reads the repository-to-image map and the bake switch out
-// of the project's published policy node, and answers why it could not when
-// the read failed.
-//
-// The node is read as a DOCUMENT rather than through projectpolicy's typed
-// fields: the two keys are the skill's own comparison material, a report is
-// not the place that refuses a node this binary cannot fully decode, and a
-// node it can decode is one it can read these two keys out of. A node that is
-// not there is not a failure either — a project that never published these
-// keys has no map and bakes (D1901's default), which is the truth about it —
-// but a database this machine cannot reach, or a node it cannot decode, is
-// not: the defaults are then the survey's assumption rather than the project's
-// setting, and the reason travels with them so a reader is never shown a
-// project that "bakes" when nothing was read.
-func surveyPolicySetup(ctx context.Context, env *cloudEnv) (map[string]string, bool, string) {
-	imageMap := map[string]string{}
-	bake := true
-	if env.lc.Budget == nil || env.lc.Budget.RTDBURL == "" {
-		// No policy store is configured for this project at all, so there is
-		// nothing published to be unable to read.
-		return imageMap, bake, ""
-	}
-	db, err := newBudgetClient(ctx, env.lc.Budget.RTDBURL, env.lc.Endpoints.NoAuth)
-	if err != nil {
-		return imageMap, bake, "the project's policy database could not be reached (" + oneLine(err.Error()) + ")" + surveySetupDefaults
-	}
-	var raw json.RawMessage
-	found, err := db.Get(ctx, projectpolicy.PathShared(), &raw)
-	if err != nil {
-		return imageMap, bake, "the project's published policy node could not be read (" + oneLine(err.Error()) + ")" + surveySetupDefaults
-	}
-	if !found {
-		return imageMap, bake, ""
-	}
-	var node struct {
-		ImageMap  map[string]string `json:"image_map"`
-		BakeRepos *bool             `json:"bake_repos"`
-	}
-	if json.Unmarshal(raw, &node) != nil {
-		return imageMap, bake, "the project's published policy node is not a document this survey can read" + surveySetupDefaults
-	}
-	// Both halves of the map are the node's own text (an operator writes it by
-	// hand, and a repository name reaches a terminal and an agent's context
-	// from here), so both are printed through pluginwire.Printable.
-	//
-	// An entry that names no image is left out: nothing refuses the node on
-	// this key — image_map is in no other schema and in no projectpolicy
-	// field, so the published document is unvalidated here — and this report's
-	// own schema refuses an empty value (minLength 1), so an owner's "" (or a
-	// JSON null, which decodes to the same empty string) would otherwise make
-	// the survey print a document that fails the contract it is published
-	// under. A mapping to no image is not a mapping this report carries.
-	for repo, image := range node.ImageMap {
-		if image == "" {
-			continue
-		}
-		imageMap[pluginwire.Printable(repo)] = pluginwire.Printable(image)
-	}
-	if node.BakeRepos != nil {
-		bake = *node.BakeRepos
-	}
-	return imageMap, bake, ""
 }
 
 // printImageSurvey is the report a person reads: one block per repository,
@@ -358,16 +283,5 @@ func printImageSurvey(w io.Writer, out imageSurveyOut) error {
 		}
 		fmt.Fprintln(w, line)
 	}
-	if out.Setup.Unread != "" {
-		fmt.Fprintf(w, "unread: %s\n", oneLine(out.Setup.Unread))
-	}
-	fmt.Fprintf(w, "image_map:\n")
-	if len(out.Setup.ImageMap) == 0 {
-		fmt.Fprintf(w, "  none\n")
-	}
-	for _, repo := range slices.Sorted(maps.Keys(out.Setup.ImageMap)) {
-		fmt.Fprintf(w, "  %s  %s\n", oneLine(repo), oneLine(out.Setup.ImageMap[repo]))
-	}
-	fmt.Fprintf(w, "bake_repos: %s\n", presentCell(out.Setup.BakeRepos))
 	return nil
 }

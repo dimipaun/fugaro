@@ -19,6 +19,7 @@ package imagesurvey
 
 import (
 	"context"
+	"errors"
 	"regexp"
 	"slices"
 	"strings"
@@ -65,6 +66,12 @@ type Finding struct {
 type File struct {
 	Path string
 	Data []byte
+	// NoBytes is set for a path the reader answered for without its bytes:
+	// the file is there and the read was refused because of what the file is
+	// (empty, or over gitprov.MaxContentsBytes — the two errors the adapters
+	// name). Only the rules whose signal is the file's own existence can be
+	// answered for it, and Findings does exactly that.
+	NoBytes bool
 }
 
 // rule is one fixed path and how its answer is read.
@@ -173,17 +180,26 @@ func Paths() []string {
 // answer is what a repository HAS, and a missing file is not a mistake of the
 // reader.
 func Findings(files []File) []Finding {
-	byPath := make(map[string][]byte, len(files))
+	byPath := make(map[string]File, len(files))
 	for _, f := range files {
-		byPath[f.Path] = f.Data
+		byPath[f.Path] = f
 	}
 	out := make([]Finding, 0, len(rules))
 	for _, r := range rules {
-		data, ok := byPath[r.path]
+		f, ok := byPath[r.path]
 		if !ok {
 			continue
 		}
-		value, ok := r.read(data)
+		// A file whose bytes were not read answers only the kinds whose
+		// signal is the file's own existence: a package-lock.json of two
+		// megabytes is still a repository whose image carries npm, while a
+		// version or a FROM line nobody could read is not a version or a
+		// base image, and saying it is would be a claim about bytes that
+		// were never read.
+		if f.NoBytes && !presenceOnly(r.kind) {
+			continue
+		}
+		value, ok := r.read(f.Data)
 		if !ok {
 			continue
 		}
@@ -212,8 +228,13 @@ func Findings(files []File) []Finding {
 //
 // A path whose read fails contributes nothing else: a survey is not the place
 // to decide a repository cannot be read from a file it is allowed not to have.
-// A cancelled context is the one failure that is the caller's own, and it stops
-// the read.
+// The one failure that is not "that file is not there" is a read refused
+// because of what the file is — empty, or over gitprov.MaxContentsBytes, which
+// both adapters refuse and neither host would serve — and that file is there:
+// it is recorded with no bytes, so the presence rules answer for it (a
+// package-lock.json of two megabytes is a repository whose image carries npm)
+// and no rule claims anything about bytes nobody read. A cancelled context is
+// the caller's own, and it stops the read.
 func Read(ctx context.Context, r gitprov.ContentsReader, ref string) ([]Finding, int, error) {
 	paths := Paths()
 	files := make([]File, 0, len(paths))
@@ -223,11 +244,23 @@ func Read(ctx context.Context, r gitprov.ContentsReader, ref string) ([]Finding,
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return nil, 0, ctxErr
 			}
+			if errors.Is(err, gitprov.ErrContentsEmpty) || errors.Is(err, gitprov.ErrContentsTooLarge) {
+				files = append(files, File{Path: path, NoBytes: true})
+			}
 			continue
 		}
 		files = append(files, File{Path: path, Data: data})
 	}
 	return Findings(files), len(files), nil
+}
+
+// presenceOnly is whether a kind's signal is the file's own existence, with
+// nothing in it read: a lockfile's manager and a CI file's runner are this
+// package's own constants (the rules' table), so those two kinds are what a
+// file recorded without its bytes can answer. Every other kind takes its value
+// out of the file, and a read that returned none is no answer.
+func presenceOnly(kind string) bool {
+	return kind == KindLockfile || kind == KindCI
 }
 
 // presence is a rule whose answer is the file's own existence, with value as

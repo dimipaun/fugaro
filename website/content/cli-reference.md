@@ -2654,7 +2654,7 @@ Report what a project-level image setup would have to work from: every
 repository this machine's project config lists, the signals each one carries
 (its lockfiles and version files, a Dockerfile and its base image, its CI
 file, and the services its compose or Testcontainers files name), and the
-catalog, repository-to-image map and bake setting the project has today.
+catalog the project has today.
 
 Nothing is cloned, built or written: each repository is read through the
 code host's own file API with the token this shell holds, at a fixed list of

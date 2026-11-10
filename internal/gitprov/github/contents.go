@@ -67,9 +67,9 @@ func (p *Provider) Contents(ctx context.Context, path, ref string) ([]byte, erro
 	case f.Encoding != "base64":
 		return nil, fmt.Errorf("reading %s: the reply is encoded as %s, not base64", at, pluginwire.Printable(f.Encoding))
 	case f.Size <= 0:
-		return nil, fmt.Errorf("reading %s: the reply is %d bytes", at, f.Size)
+		return nil, fmt.Errorf("reading %s: the reply is %d bytes: %w", at, f.Size, gitprov.ErrContentsEmpty)
 	case f.Size > gitprov.MaxContentsBytes:
-		return nil, fmt.Errorf("reading %s: it is %d bytes, more than the %d a definition may be", at, f.Size, gitprov.MaxContentsBytes)
+		return nil, fmt.Errorf("reading %s: it is %d bytes, more than the %d a definition may be: %w", at, f.Size, gitprov.MaxContentsBytes, gitprov.ErrContentsTooLarge)
 	}
 	// GitHub wraps the base64 content at 60 characters with newlines; the
 	// decoder reads it either way, and the size above has already bounded

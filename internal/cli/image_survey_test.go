@@ -19,7 +19,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
 	"github.com/dimipaun/fugaro/internal/imagesurvey"
-	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
 // surveyProvider is one repository's file-backed provider with the reads it
@@ -350,59 +349,6 @@ func TestSurveyNothingReadIsNotNoSignals(t *testing.T) {
 	}
 }
 
-// TestSurveySetupUnreadIsReported: the setup half of the document keeps the
-// same distinction the repository rows keep. A project that published no map
-// and bakes, a project whose node this machine cannot read and a project whose
-// node is published are one document without the reason: the defaults are
-// byte-identical to a setting nobody wrote. The reason travels with them, so a
-// reader is never told a project bakes when nothing was read.
-func TestSurveySetupUnreadIsReported(t *testing.T) {
-	f := newBudgetFixture(t, "")
-	surveyStub(t, map[string]map[string]string{"acme/app": {"Dockerfile": "FROM node:20\n"}})
-
-	// Nothing published at all: the defaults are the truth about the project,
-	// and the setup carries no reason.
-	doc := surveyDoc(t)
-	if doc.Setup.Unread != "" {
-		t.Errorf("a project that published no policy node is reported unread: %q", doc.Setup.Unread)
-	}
-	if len(doc.Setup.ImageMap) != 0 || !doc.Setup.BakeRepos {
-		t.Errorf("setup = %+v, want the empty map and bake_repos true", doc.Setup)
-	}
-
-	// A node that was read: its own values, and still no reason.
-	f.db.Set(projectpolicy.PathShared(), json.RawMessage(`{"image_map": {"acme/app": "base"}, "bake_repos": false}`))
-	doc = surveyDoc(t)
-	if doc.Setup.Unread != "" {
-		t.Errorf("a policy node that was read is reported unread: %q", doc.Setup.Unread)
-	}
-	if got := doc.Setup.ImageMap["acme/app"]; got != "base" || doc.Setup.BakeRepos {
-		t.Errorf("setup = %+v, want the node's own map and bake setting", doc.Setup)
-	}
-
-	// A read the database refused: the same values as the first document, and
-	// the reason that says they are not the project's.
-	f.db.DenyRead(projectpolicy.PathShared())
-	doc = surveyDoc(t)
-	if !strings.Contains(doc.Setup.Unread, "the project's published policy node could not be read") {
-		t.Fatalf("setup.unread = %q, want the reason the node was not read", doc.Setup.Unread)
-	}
-	if !strings.Contains(doc.Setup.Unread, "image_map and bake_repos are the survey's own defaults") {
-		t.Errorf("setup.unread = %q, and a reader has to be told what the two members are then", doc.Setup.Unread)
-	}
-	if len(doc.Setup.ImageMap) != 0 || !doc.Setup.BakeRepos {
-		t.Errorf("an unread setup answers %+v, want the defaults its reason names", doc.Setup)
-	}
-	// And the terminal says it too, before the two members it is about.
-	out, _, err := execute(t, "image", "survey")
-	if err != nil {
-		t.Fatalf("%v\n%s", err, out)
-	}
-	if !strings.Contains(out, "unread: the project's published policy node could not be read") {
-		t.Errorf("the report does not say the setup was not read:\n%s", out)
-	}
-}
-
 // executeSurveyCtx runs the command tree with a context the test controls.
 func executeSurveyCtx(t *testing.T, ctx context.Context, args ...string) (string, error) {
 	t.Helper()
@@ -524,7 +470,7 @@ func bucketTree(t *testing.T, dir string) []string {
 // against schemas/image-survey.schema.json, the contract a consumer reads it
 // by (D784).
 func TestSurveyJSONMatchesSchema(t *testing.T) {
-	f := newBudgetFixture(t, "")
+	f := newCloudFixture(t)
 	f.appendConfig(t, "  acme/service: { provider: bitbucket }\n")
 	surveyStub(t, map[string]map[string]string{
 		"acme/app": {
@@ -533,13 +479,6 @@ func TestSurveyJSONMatchesSchema(t *testing.T) {
 		},
 		"acme/service": {".nvmrc": "20\n"},
 	})
-	// A map an owner wrote by hand, with the two entries no image name is
-	// written for: "" and a JSON null, which decodes to the same empty string.
-	// Nothing refuses the published node on this key, and the schema below
-	// refuses an empty value (minLength 1), so the document has to drop them
-	// rather than carry them and fail its own contract.
-	f.db.Set(projectpolicy.PathShared(), json.RawMessage(
-		`{"image_map": {"acme/app": "base", "acme/blank": "", "acme/none": null}, "bake_repos": false}`))
 
 	out, _, err := execute(t, "image", "survey", "--json")
 	if err != nil {
@@ -586,9 +525,7 @@ func TestSurveyJSONMatchesSchema(t *testing.T) {
 			} `json:"signals"`
 		} `json:"repos"`
 		Setup struct {
-			Catalog   []any             `json:"catalog"`
-			ImageMap  map[string]string `json:"image_map"`
-			BakeRepos bool              `json:"bake_repos"`
+			Catalog []any `json:"catalog"`
 		} `json:"setup"`
 	}
 	if err := json.Unmarshal([]byte(out), &decoded); err != nil {
@@ -611,12 +548,9 @@ func TestSurveyJSONMatchesSchema(t *testing.T) {
 			t.Errorf("no row carries a %q signal, so the schema's enum branch for it is unchecked", want)
 		}
 	}
-	// The node's own values, with the entries that name no image left out: a
-	// document carrying them would fail the schema above.
-	if got := decoded.Setup.ImageMap; len(got) != 1 || got["acme/app"] != "base" {
-		t.Errorf("setup.image_map = %v, want only the entry that names an image", got)
-	}
-	if decoded.Setup.BakeRepos {
-		t.Errorf("setup = %+v, want the node's own bake setting", decoded.Setup)
+	// A project that has published no catalog is the document's own empty
+	// catalog, which is what the schema's array branch is validated on here.
+	if decoded.Setup.Catalog == nil {
+		t.Errorf("setup = %+v, want the catalog member the schema closes over", decoded.Setup)
 	}
 }

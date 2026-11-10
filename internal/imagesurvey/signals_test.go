@@ -3,6 +3,7 @@ package imagesurvey
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -256,6 +257,74 @@ func TestSurveyReadCountsWhatItRead(t *testing.T) {
 	}
 	if got := findings[1]; got.Kind != KindCompose || got.Value != "" {
 		t.Errorf("the compose file answered %+v, want its presence and no service", got)
+	}
+}
+
+// adapterReader is a ContentsReader shaped like the two real adapters rather
+// than like the file-backed fake: a path it holds answers its bytes, a path
+// that is not there answers an error, and an empty file and one over
+// gitprov.MaxContentsBytes answer gitprov's own errors for those two facts,
+// which is what github/contents.go and bitbucket/contents.go refuse with (and
+// what a test using the fake provider never meets, because the fake accepts
+// any size and an empty file).
+type adapterReader struct{ files map[string]string }
+
+func (r *adapterReader) Contents(_ context.Context, path, _ string) ([]byte, error) {
+	data, ok := r.files[path]
+	if !ok {
+		return nil, errors.New("the repository holds no " + path)
+	}
+	switch {
+	case data == "":
+		return nil, fmt.Errorf("reading %s: the reply is empty: %w", path, gitprov.ErrContentsEmpty)
+	case len(data) > gitprov.MaxContentsBytes:
+		return nil, fmt.Errorf("reading %s: it is over the bound: %w", path, gitprov.ErrContentsTooLarge)
+	}
+	return []byte(data), nil
+}
+
+var _ gitprov.ContentsReader = (*adapterReader)(nil)
+
+// TestSurveyReadCountsAFileRefusedForItsSizeOrItsEmptiness: the two refusals
+// that are facts about the file rather than about the path — it is empty, it
+// is over a contents read's bound — are files the repository HAS, and the
+// kinds whose signal is the file's own existence must answer for them: a
+// package-lock.json of two megabytes is a repository whose image still carries
+// npm, and an empty requirements.txt one whose image carries pip. No other
+// kind answers, because its value comes out of bytes nobody read: a compose
+// file over the bound is not a compose file the survey can say names no
+// service.
+func TestSurveyReadCountsAFileRefusedForItsSizeOrItsEmptiness(t *testing.T) {
+	large := strings.Repeat("x", gitprov.MaxContentsBytes+1)
+	r := &adapterReader{files: map[string]string{
+		"package-lock.json":  large,
+		"requirements.txt":   "",
+		"yarn.lock":          "{}",
+		"docker-compose.yml": large,
+		".nvmrc":             "20.11.0\n",
+	}}
+	findings, read, err := Read(context.Background(), r, "")
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	// Five paths answered: the two refusals are answers about a file that is
+	// there, so a repository holding only a lockfile over the bound is a
+	// repository that was read.
+	if read != 5 {
+		t.Errorf("read = %d, want 5: a file refused for its size or its emptiness is a file that is there", read)
+	}
+	got := make([]string, 0, len(findings))
+	for _, f := range findings {
+		got = append(got, strings.TrimSpace(f.Kind+" "+f.Path+" "+f.Value))
+	}
+	want := []string{
+		"lockfile package-lock.json npm",
+		"lockfile yarn.lock yarn",
+		"lockfile requirements.txt pip",
+		"version .nvmrc 20.11.0",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("findings are\n  %s\nwant\n  %s", strings.Join(got, "\n  "), strings.Join(want, "\n  "))
 	}
 }
 

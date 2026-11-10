@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -213,6 +214,34 @@ func TestContentsRefusesWhatItCannotRead(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), path) {
 				t.Fatalf("err = %v, want it to name the file", err)
+			}
+		})
+	}
+}
+
+// TestContentsNamesTheTwoRefusalsAboutTheFileToADifferentCaller: the two
+// refusals that are facts about the file and not about the path — it holds
+// nothing, it is over gitprov.MaxContentsBytes — carry gitprov's own errors
+// as well as their message, because a caller that asks whether a repository
+// HAS a file and never reads its bytes (the survey's lockfiles) must tell
+// them from a path that is not there. A caller that reads a definition keeps
+// refusing either, which is what `errors.Is` here is beside, not instead of.
+func TestContentsNamesTheTwoRefusalsAboutTheFileToADifferentCaller(t *testing.T) {
+	const path = "package-lock.json"
+	ok := func(b []byte) string { return base64.StdEncoding.EncodeToString(b) }
+	for _, tc := range []struct {
+		name  string
+		reply string
+		want  error
+	}{
+		{"a file of no bytes", contentsReply("file", "base64", 0, ""), gitprov.ErrContentsEmpty},
+		{"a file over the bound", contentsReply("file", "base64", gitprov.MaxContentsBytes+1, ok([]byte("FROM x\n"))), gitprov.ErrContentsTooLarge},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := contentsProvider(t, append(mintExchanges(t),
+				contentsExchange(t, "/repos/acme/web/contents/"+path, 200, tc.reply))...)
+			if _, err := p.Contents(ctx, path, ""); !errors.Is(err, tc.want) {
+				t.Fatalf("err = %v, want it to carry %v", err, tc.want)
 			}
 		})
 	}
