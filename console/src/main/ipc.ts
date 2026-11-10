@@ -2341,7 +2341,7 @@ const MAX_SETTING_KEY_LENGTH = 120
  * **`*` is admitted anywhere a letter is, on purpose.** A standalone segment is
  * the spelling the registry uses, but `stages.rev*iew.x` passes this grammar
  * too, and that is the honest shape of the claim: this expression bounds the
- * **word** a key can be, and `internal/cli/settings_set.go:341` refuses any key
+ * **word** a key can be, and `internal/cli/settings_set.go:537` refuses any key
  * carrying a `*` with its own sentence -- "varies with a name this command does
  * not take" -- before the allow-list is consulted. Tightening the segment here
  * would move that refusal from the CLI's words to a schema refusal of this
@@ -2349,7 +2349,7 @@ const MAX_SETTING_KEY_LENGTH = 120
  *
  * **It is a shape and not the allow-list.** Whether the generic write path owns
  * a key is `settingsGenericKeys`/`settingsGenericPrefixes`
- * (`internal/cli/settings_set.go:75`, `:99`) -- the CLI's own list, which the
+ * (`internal/cli/settings_set.go:96`, `:251`) -- the CLI's own list, which the
  * console keeps no copy of (D1102). What this grammar does is keep the argv
  * word a key can be: no space, no dash, no `=`, nothing that could be read as a
  * flag or quoted by a shell, so the key never needs the terminator the value

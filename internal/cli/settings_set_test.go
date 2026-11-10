@@ -1500,9 +1500,10 @@ func TestSettingsSetConcreteKeyOfAnUnlistedRowIsRefused(t *testing.T) {
 
 // TestSettingsSetRefusesAWildcardRowOutsideTheGenericKeys: the pattern lookup
 // resolves a wildcard registry row only for a spelling settingsGenericKeys
-// carries, so a concrete spelling of the project family's `repos.*.*` or the
-// models family's `providers.*.*` is refused like any other key the generic
-// path does not write, and nothing is written.
+// carries, so a concrete spelling of a row outside it — a repository's
+// machine-written `repos.*.vertex`, whose four neighbours are the generic
+// path's (D1173), or the models family's `providers.*.*` — is refused like any
+// other key the generic path does not write, and nothing is written.
 func TestSettingsSetRefusesAWildcardRowOutsideTheGenericKeys(t *testing.T) {
 	_, localPath := settingsWriteHome(t)
 	before := readFileString(t, localPath)
