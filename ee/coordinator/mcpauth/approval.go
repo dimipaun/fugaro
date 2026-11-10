@@ -71,12 +71,15 @@ import (
 // **And the spend is the last thing before the approval.** Every refusal above
 // it — a flow that is not pending, one past its lifetime, a number that is not
 // the flow's, a sign-in that does not verify, a flow another device already
-// approved — leaves the token unspent, so a device that mistyped the number or
-// came back to a flow that was finished can try again with the same session.
-// What the order does not do is leave a spent token behind an unrecorded
-// approval: the write that spends is the write that precedes the approval's
-// own, so a crash between them costs a sign-in and never an approval of a flow
-// nobody proved.
+// approved — leaves the *token* unspent, so a device that mistyped the number
+// or came back to a flow that was finished still holds the session it signed in
+// with. What a number that is not the flow's does spend is the flow itself
+// (serveDeviceApproval): a flow that admits a second guess is a flow whose
+// number can be searched for, and the number is the whole of what ties this act
+// to the screen a person is reading. What the order does not do is leave a
+// spent token behind an unrecorded approval: the write that spends is the write
+// that precedes the approval's own, so a crash between them costs a sign-in and
+// never an approval of a flow nobody proved.
 
 // isDeviceAct answers whether an authorize POST is the approving act, and the
 // ID token's field is what names it.
@@ -90,9 +93,12 @@ import (
 // beside a decision (serveAuthorizeConsent).
 func isDeviceAct(form url.Values) bool { return form.Has("id_token") }
 
-// serveDeviceApproval is the approving act: it checks the flow, checks
-// the number the person read off the screen, spends the ID token, and records
-// the approval on the flow.
+// serveDeviceApproval is the approving act: it reads the flow, verifies the
+// sign-in the act carries, checks the number the person read off the screen,
+// spends the ID token, and records the approval on the flow. The order of those
+// first three is a rule and not the reading order, and a number that is not the
+// flow's ends the flow rather than leaving it to be guessed at again: both
+// carry their own note below.
 //
 // Every refusal here is a page rather than a redirect, and the difference from
 // the page's own answer is who is reading: the device is not the browser the
@@ -118,14 +124,14 @@ func (s *Server) serveDeviceApproval(w http.ResponseWriter, r *http.Request, for
 		refusePage(w, http.StatusBadRequest, "This flow expired before the device approved it. Approve from the page that is still open, and from the device it is paired with.")
 		return
 	}
-	// The number before the token, over the whole value and in constant time:
-	// an act that did not carry this flow's number has not approved this flow,
-	// whatever it carries beside it, and a device act that burned a token on a
-	// mistyped number would cost a person a sign-in for a typo.
-	if subtle.ConstantTimeCompare([]byte(form.Get("number")), []byte(pending.Number)) != 1 {
-		refusePage(w, http.StatusBadRequest, "This approval does not carry the number this flow is showing. The number on the screen that asked and the number on the paired device have to be the same one.")
-		return
-	}
+	// The sign-in before the number, and the order is the rule and not the
+	// reading order: a number judged first is a question this endpoint answers
+	// to a caller who has proved nothing — "wrong" to one guess and something
+	// else to the next — so the six digits become a search with an oracle in
+	// front of it. M5's own number check spent the binding before it judged the
+	// number for exactly that reason (servePageAnswer's note), and this act is
+	// what replaced it, so it takes the same direction.
+	//
 	// The token is canonicalised once, and the value that is verified is the
 	// value that is spent. verifySignIn drops the whitespace a form may carry
 	// around a value, so spending the raw field would spend a *different*
@@ -138,8 +144,39 @@ func (s *Server) serveDeviceApproval(w http.ResponseWriter, r *http.Request, for
 	if err != nil {
 		// The sign-in step, and it is not the client's failure: a device whose
 		// session did not verify is told what to do, and the client is told
-		// nothing that would let it retry in a loop.
+		// nothing that would let it retry in a loop. Nothing is spent here, and
+		// the number the act carried is not answered: a caller with no verified
+		// sign-in learns nothing from this POST, including whether it ended the
+		// flow a person is holding a page for.
 		refusePage(w, http.StatusUnauthorized, "The sign-in was not verified. Approve this flow from a device paired to the installation, and present the Firebase ID token that device's own session produced.")
+		return
+	}
+	// And a number that is not the flow's ends the flow: judged over the whole
+	// value and in constant time, because an act that did not carry this flow's
+	// number has not approved this flow whatever it carries beside it — and
+	// spent, because a flow that stayed open for a second try is the oracle
+	// above with a credential in front of it instead of without one: whoever
+	// holds a session of this project's Firebase and a flow's id walks the six
+	// digits at leisure, and nothing in the flow's lifetime caps it. One flow,
+	// one guess.
+	//
+	// What the miss does not spend is the sign-in. The spend below is the
+	// approval's own, so a mistyped number costs the flow and never a person's
+	// session: they sign in again on a page that asked for a flow of its own,
+	// with the same session they have. The refusal says the flow is over,
+	// because the page that produced it can no longer finish the flow either.
+	if subtle.ConstantTimeCompare([]byte(form.Get("number")), []byte(pending.Number)) != 1 {
+		// The spend is what caps the guesses, so it is not made conditional on
+		// the flow still being there: a flow something else spent between the
+		// read above and this write is over for the same reason this one is,
+		// and the caller gets the same refusal. Only a store that could not
+		// answer at all is a failure of this server rather than of the act.
+		_, err := s.store.TakeRequest(r.Context(), pending.ID)
+		if err != nil && !errors.Is(err, ErrRequestUsed) && !errors.Is(err, ErrRequestNotFound) {
+			refusePage(w, http.StatusInternalServerError, "This approval could not be recorded.")
+			return
+		}
+		refusePage(w, http.StatusBadRequest, "This approval did not carry the number this flow was showing, and a number that is not the flow's ends the flow: one flow takes one guess at its number, so that the number cannot be searched for. Ask the client for a new flow, and read the new page's number off that screen.")
 		return
 	}
 	// A flow that already carries an approval is refused before the token is

@@ -160,8 +160,15 @@ func TestTheNumberNamesOneRequest(t *testing.T) {
 	if rec := ts.deviceApprove(t, bindingA, numberA, approvalToken(t)); rec.Code != http.StatusOK {
 		t.Fatalf("the device's act answered %d (%s); want it to record the approval", rec.Code, strings.TrimSpace(rec.Body.String()))
 	}
-	// A's number beside B's id is refused: the number names one request.
-	if rec := ts.deviceApprove(t, bindingB, numberA, approvalToken(t)); rec.Code == http.StatusOK {
+	// A's number beside another flow's id is refused: the number names one
+	// request. It is a third flow that takes the miss and not B, because a
+	// number that is not the flow's ends the flow it was presented for — B has
+	// its own case below, and a flow can be spent once.
+	bindingC, numberC := ts.startFlow(t, authorizeQuery(clientID, testClientRedirect))
+	if numberA == numberC {
+		t.Skip("the third flow happened to draw A's number, so there is no wrong number to present to it")
+	}
+	if rec := ts.deviceApprove(t, bindingC, numberA, approvalToken(t)); rec.Code == http.StatusOK {
 		t.Errorf("the number of one flow approved another: the number is what ties an approval to the screen the person read it off, and a number that named any pending flow would name none")
 	}
 	// B was not approved, so B's own page mints nothing.
@@ -198,6 +205,86 @@ func TestTheNumberNamesOneRequest(t *testing.T) {
 		"code_verifier": {testVerifier},
 	}); rec.Code != http.StatusOK {
 		t.Errorf("the exchange of the code A's device approval minted answered %d (%s); want a token pair", rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+}
+
+// TestAnUnverifiedSignInLearnsNothingAboutTheNumber is the order of the two
+// checks stated as a fact about the wire: the number is asked of a caller that
+// has already proved a sign-in, so the answer to an act carrying no session is
+// the sign-in's answer whatever number it carries.
+//
+// Read the other way round the POST tells "the number is wrong" from "the
+// number is right" to anybody who holds the flow's id — a value rendered into
+// the page the client's own browser is showing — so the six digits are a search
+// with an oracle in front of it, and the flow's own lifetime is the only bound
+// on it (M5's number check spent the binding before it judged the number for
+// exactly this reason; see servePageAnswer's note). A guess that carries no
+// verified sign-in also ends nothing: an unauthenticated caller cannot spend a
+// flow a person is still holding a page for.
+func TestAnUnverifiedSignInLearnsNothingAboutTheNumber(t *testing.T) {
+	ts := newTestServer(t)
+	clientID, _ := ts.register(t, "an editor", testClientRedirect)
+	binding, number := ts.startFlow(t, authorizeQuery(clientID, testClientRedirect))
+	wrong := "000000"
+	if number == wrong {
+		wrong = "000001"
+	}
+
+	// The same refusal for a number that is the flow's and for one that is not,
+	// and it is the sign-in's: nothing here says whether the guess was right.
+	for _, guess := range []string{wrong, number} {
+		rec := ts.deviceApprove(t, binding, guess, "this-is-not-a-token")
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("an act carrying the number %q and no verified sign-in answered %d (%s); want the sign-in's own refusal: a number judged before the token is a question anybody can ask, and its answer tells the asker whether the guess was right", guess, rec.Code, strings.TrimSpace(rec.Body.String()))
+		}
+	}
+
+	// And the guesses left the flow where it was, which is the same rule seen
+	// from the person's side: the act that does carry a verified sign-in records
+	// the approval.
+	if rec := ts.deviceApprove(t, binding, number, approvalToken(t)); rec.Code != http.StatusOK {
+		t.Errorf("the device's act answered %d (%s); want it to record the approval: an act with no verified sign-in must not end the flow a person is still holding a page for", rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+}
+
+// TestAWrongNumberEndsTheFlow is the other half of the number's rule: a number
+// that is not the flow's ends the flow, so one flow takes one guess and a
+// search has nothing left to run against. Whoever holds a session of this
+// project's Firebase and a flow's id would otherwise walk the six digits at
+// leisure, which is the same oracle as the one an unverified caller is refused.
+//
+// The miss spends the FLOW and not the sign-in — the spend below is the
+// approval's own — so what a typo costs is the flow the person starts again,
+// and never the session they signed in with. Both halves are asserted, because
+// the harsher one is the one that would go unnoticed: a flow that stayed open
+// for a second try is the whole finding back again.
+func TestAWrongNumberEndsTheFlow(t *testing.T) {
+	ts := newTestServer(t)
+	clientID, _ := ts.register(t, "an editor", testClientRedirect)
+	token := approvalToken(t)
+	binding, number := ts.startFlow(t, authorizeQuery(clientID, testClientRedirect))
+	wrong := "000000"
+	if number == wrong {
+		wrong = "000001"
+	}
+
+	if rec := ts.deviceApprove(t, binding, wrong, token); rec.Code != http.StatusBadRequest {
+		t.Fatalf("an act carrying a number the flow is not showing answered %d (%s); want it refused", rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+	// The flow took its one guess: its own number now is refused, and the page
+	// behind it mints nothing.
+	if rec := ts.deviceApprove(t, binding, number, approvalToken(t)); rec.Code == http.StatusOK {
+		t.Errorf("the flow was approved on its own number after a number that was not its own was refused: a flow that survives a miss is one an attacker holding the flow's id can search the six digits against, one flow at a time and with nothing in the flow's lifetime to stop them")
+	}
+	if rec := ts.consent(t, url.Values{"request_id": {binding}, "decision": {"allow"}}); rec.Code == http.StatusFound {
+		t.Errorf("a flow ended by a wrong number answered %d with a redirect to %q: no approved act stands behind it, so the page's answer has nothing to mint from", rec.Code, rec.Header().Get("Location"))
+	}
+
+	// The miss cost the flow and not the sign-in: the token it was presented
+	// with approves a flow of its own.
+	other, otherNumber := ts.startFlow(t, authorizeQuery(clientID, testClientRedirect))
+	if rec := ts.deviceApprove(t, other, otherNumber, token); rec.Code != http.StatusOK {
+		t.Errorf("the token the wrong number was presented with answered %d (%s) on another flow; want it recorded: a typo ends the flow it was presented for, and the sign-in it carried is not spent by it", rec.Code, strings.TrimSpace(rec.Body.String()))
 	}
 }
 
