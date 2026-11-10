@@ -12,6 +12,7 @@ package credsvc
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"net/http"
@@ -893,6 +894,299 @@ func TestServiceSendsTierAOnlyToAnthropicsOwnEndpoint(t *testing.T) {
 	if !strings.HasPrefix(urls[0], "https://api.anthropic.com/") {
 		t.Errorf("the tier-A destination %q is not Anthropic's own endpoint", urls[0])
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Where a provider's call goes, and how its key is sent (AK6b)
+// ---------------------------------------------------------------------------
+
+// providerEntryFrom is a provider entry as a document really produces one: a
+// bundle holding config.ProviderKeySecret at baseURL with the auth shape auth,
+// parsed by the loader that owns every rule about it. The tests below drive send
+// with it rather than making a served call, because no served call reaches the
+// provider path in this release: creds.Select refuses a tier-C candidate and
+// names Check 50 (cascade_test.go's
+// TestProviderKeyEntryIsNotOfferedToAnyOtherCaller holds that end to end), so
+// the forwarding half is tested where its code is.
+func providerEntryFrom(t *testing.T, baseURL, auth string) Entry {
+	t.Helper()
+	b, err := ParseBundle(providerBundleDoc(t, baseURL, auth))
+	if err != nil {
+		t.Fatalf("parsing a bundle holding the provider key: %v", err)
+	}
+	e, ok := b.ProviderKey()
+	if !ok {
+		t.Fatal("the document holds no provider key")
+	}
+	return e
+}
+
+// providerCall is one call as the service reads it: the target the caller asked
+// for (its path and its query), the headers a client sends, and the tokens the
+// caller presented. It goes through readCall — the service's own reader — so the
+// call send is handed is the shape a served call produces and not a struct a
+// test assembled by hand.
+func providerCall(t *testing.T, target string, scrubs ...string) *call {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, target, strings.NewReader(callBody("provider")))
+	if err != nil {
+		t.Fatalf("building the call: %v", err)
+	}
+	req.Header.Set("Anthropic-Version", "2023-06-01")
+	req.Header.Set("Content-Type", "application/json")
+	cl, err := readCall(req, scrubs)
+	if err != nil {
+		t.Fatalf("reading the call: %v", err)
+	}
+	return cl
+}
+
+// TestForwardToAProviderCarriesTheProviderAuthShape is how the key is sent: the
+// bundle's entry names the shape (D1418), and the call is built by the
+// gateway's own provider rule rather than by a second one here
+// (gateway.RouteHeaders) — so the value goes in exactly one header, the one the
+// shape names, and the other spelling is absent. A key sent under both would be
+// the same secret in two places, and one the provider does not read.
+//
+// The upstream is this test's own fake (anthropicfake, loopback), which is where
+// a provider's endpoint is in a hermetic test: the entry's base URL IS that
+// address, so the call really arrives and the headers are read off the request
+// the fake saw.
+//
+// Mutation (run, restore): default the auth shape to bearer. The x-api-key row
+// goes red on both assertions — the header the shape names is missing and the
+// other one is set — and a provider's key reaches an endpoint under a shape the
+// document did not name.
+func TestForwardToAProviderCarriesTheProviderAuthShape(t *testing.T) {
+	for _, tc := range []struct {
+		auth   string
+		header string
+		absent string
+	}{
+		{providerAuthBearer, "Authorization", "x-api-key"},
+		{providerAuthXAPIKey, "x-api-key", "Authorization"},
+	} {
+		t.Run(tc.auth, func(t *testing.T) {
+			up, upSrv := anthropicfake.New(t, anthropicfake.MessageOK(testModel, testUsage))
+			s := newSvcWith(t, func(_ *svc, c *Config) {
+				c.Client = upSrv.Client()
+			})
+			e := providerEntryFrom(t, upSrv.URL+"/api", tc.auth)
+			ans, err := s.server.send(context.Background(), providerCall(t, MessagesPath), e)
+			if err != nil {
+				t.Fatalf("the provider call was not sent: %v", err)
+			}
+			defer ans.resp.Body.Close()
+			if ans.resp.StatusCode != http.StatusOK {
+				t.Fatalf("the provider answered %d, want the fake's 200", ans.resp.StatusCode)
+			}
+			if ans.credential != e.Value() {
+				t.Error("the answer is redacted with a value that is not the entry's")
+			}
+			if n := up.Count(); n != 1 {
+				t.Fatalf("the provider saw %d requests, want 1", n)
+			}
+			req := up.Seen()[0]
+			key := fakeCred(t, "provider-key")
+			want := key
+			if tc.auth == providerAuthBearer {
+				want = "Bearer " + key
+			}
+			if got := req.Header.Get(tc.header); got != want {
+				t.Errorf("the call carried %s = %q, want the key under the shape the document names", tc.header, got)
+			}
+			if got := req.Header.Get(tc.absent); got != "" {
+				t.Errorf("the call also carried %s = %q: one key, one header", tc.absent, got)
+			}
+			// The base URL's own path prefix is kept and the served path is
+			// appended to it — the join the destination test below reads on the
+			// request the service built.
+			if got := req.URL.Path; got != "/api"+MessagesPath {
+				t.Errorf("the provider was called at %q, want the entry's own prefix and the served path", got)
+			}
+			// A provider gets the call's own headers and nothing of this
+			// service's: no run identity, no job token, no X-Fugaro header.
+			for k := range req.Header {
+				if strings.HasPrefix(k, headerPrefixFugaro) {
+					t.Errorf("the call to the provider carries %s", k)
+				}
+			}
+			if got := req.Header.Get("Authorization"); tc.auth == providerAuthXAPIKey && strings.Contains(got, s.jobToken()) {
+				t.Error("the call to the provider carries the job's ID token")
+			}
+		})
+	}
+}
+
+// TestProviderDestinationIsTheProvidersOwnHost: the bundle's base URL is the
+// only place a provider's address exists (D1418) — no task, no policy and no
+// environment tells this service where a provider is, and the run is told
+// nothing about it either — so where the call goes is that entry's own fact
+// joined to the path the service serves. It is read on the request the service
+// built, before any transport could rewrite the host (recordingTransport), which
+// is the only way to tell the provider's own host from Anthropic's.
+//
+// Three things are pinned beside the URL. The call's query follows its path into
+// the provider's URL unless it carries a token the caller presented, in which
+// case it is dropped whole: the rule the other two paths keep, and here it is
+// what keeps a run identity out of a third party's logs. A redirect is not
+// followed — the key is on the request, and Go's client drops Authorization
+// across hosts but not x-api-key — so the 307 is relayed and the Location is
+// never contacted. And the answer names the credential and its tier and never
+// its value: tier C is the third tier an answer can spell, which no served call
+// reaches in this release, and the value it was served by is held out of the
+// body by the gateway's own redaction (cascade.go's answer).
+//
+// Mutation (run, restore): build the provider's destination from
+// upstreamKindAnthropic's address. Every URL assertion goes red — the key is
+// sent to Anthropic's endpoint as though the entry's own base were a comment —
+// and where the call went would be a host nobody chose.
+func TestProviderDestinationIsTheProvidersOwnHost(t *testing.T) {
+	e := providerEntryFrom(t, testProviderBase, providerAuthBearer)
+
+	t.Run("the destination is the entry's own base and the served path", func(t *testing.T) {
+		rec := &recordingTransport{}
+		s := newSvcWith(t, func(_ *svc, c *Config) {
+			c.Client = &http.Client{Transport: rec}
+		})
+		if _, err := s.server.send(context.Background(), providerCall(t, MessagesPath), e); err == nil {
+			t.Fatal("the call was sent: no request may leave a recording transport")
+		}
+		urls := rec.seen()
+		if len(urls) != 1 {
+			t.Fatalf("the service built %d requests, want 1: %v", len(urls), urls)
+		}
+		if want := testProviderBase + MessagesPath; urls[0] != want {
+			t.Errorf("the provider's call was built for %q, want %q: the entry's base URL is where a provider is", urls[0], want)
+		}
+		if anthropic := gateway.AnthropicBase(gateway.Upstream{}); strings.HasPrefix(urls[0], anthropic) {
+			t.Errorf("the provider's call was built for Anthropic's own endpoint (%q), where its key is nobody's business", anthropic)
+		}
+	})
+
+	t.Run("the query follows the call unless it carries a caller token", func(t *testing.T) {
+		token := fakeCred(t, "run-identity")
+		for _, tc := range []struct {
+			name   string
+			target string
+			scrubs []string
+			want   string
+		}{
+			{"a query of the call's own", MessagesPath + "?beta=1", nil, testProviderBase + MessagesPath + "?beta=1"},
+			{"a query carrying the caller's token", MessagesPath + "?mode=" + token, []string{token}, testProviderBase + MessagesPath},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				rec := &recordingTransport{}
+				s := newSvcWith(t, func(_ *svc, c *Config) {
+					c.Client = &http.Client{Transport: rec}
+				})
+				if _, err := s.server.send(context.Background(), providerCall(t, tc.target, tc.scrubs...), e); err == nil {
+					t.Fatal("the call was sent: no request may leave a recording transport")
+				}
+				urls := rec.seen()
+				if len(urls) != 1 {
+					t.Fatalf("the service built %d requests, want 1: %v", len(urls), urls)
+				}
+				if urls[0] != tc.want {
+					t.Errorf("the provider's call was built for %q, want %q", urls[0], tc.want)
+				}
+				if strings.Contains(urls[0], token) {
+					t.Error("the call to the provider carries the run's token in its query")
+				}
+			})
+		}
+	})
+
+	t.Run("a redirect is not followed", func(t *testing.T) {
+		rec := &redirectingTransport{location: "https://elsewhere.invalid" + MessagesPath}
+		s := newSvcWith(t, func(_ *svc, c *Config) {
+			c.Client = &http.Client{Transport: rec}
+		})
+		ans, err := s.server.send(context.Background(), providerCall(t, MessagesPath), e)
+		if err != nil {
+			t.Fatalf("the provider call was not sent: %v", err)
+		}
+		defer ans.resp.Body.Close()
+		if ans.resp.StatusCode != http.StatusTemporaryRedirect {
+			t.Fatalf("the answer is %d, want the provider's own %d relayed", ans.resp.StatusCode, http.StatusTemporaryRedirect)
+		}
+		if urls := rec.seen(); len(urls) != 1 {
+			t.Fatalf("the request was sent %d times (%v): a followed redirect re-sends it, x-api-key and all", len(urls), urls)
+		}
+	})
+
+	t.Run("the answer names the credential and never its value", func(t *testing.T) {
+		s := newSvc(t)
+		key := fakeCred(t, "provider-key")
+		// A provider's own error text, echoing the key it was handed: the case
+		// the redaction exists for.
+		body := `{"type":"error","error":{"type":"authentication_error","message":"invalid key ` + key + `"}}`
+		cl := providerCall(t, MessagesPath)
+		id := Identity{Slug: s.slug, Run: s.run, Job: s.job, JobAccount: testJobSA}
+		ans := &answer{
+			resp: &http.Response{
+				StatusCode: http.StatusBadRequest,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(body)),
+			},
+			credential: key,
+		}
+		rec := httptest.NewRecorder()
+		s.server.answer(context.Background(), rec, id, cl, ans,
+			creds.Credential{Name: config.ProviderKeySecret, Tier: creds.TierC}, nil, nil)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("the answer is %d, want the provider's own %d relayed", rec.Code, http.StatusBadRequest)
+		}
+		if got := rec.Header().Get(HeaderTier); got != TierC {
+			t.Errorf("%s = %q, want %q: a provider's call is the third tier, and C1.16 settles it as money", HeaderTier, got, TierC)
+		}
+		if got := rec.Header().Get(HeaderCredential); got != config.ProviderKeySecret {
+			t.Errorf("%s = %q, want the credential's name %q", HeaderCredential, got, config.ProviderKeySecret)
+		}
+		if strings.Contains(rec.Body.String(), key) {
+			t.Errorf("the answer echoed the credential it was served by:\n%s", rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), redactedValue) {
+			t.Errorf("the answer carries neither the credential nor where it stood:\n%s", rec.Body.String())
+		}
+		for k, vs := range rec.Header() {
+			for _, v := range vs {
+				if strings.Contains(v, key) {
+					t.Errorf("the answer's %s header carries the credential", k)
+				}
+			}
+		}
+	})
+}
+
+// redirectingTransport records the URL of every request it is handed and answers
+// a redirect. A followed redirect is what the second URL would be: the client
+// re-sends the call — the POST, the body and the headers, x-api-key included —
+// to whatever host the Location names, which is nobody's decision but the
+// provider's.
+type redirectingTransport struct {
+	mu       sync.Mutex
+	urls     []string
+	location string
+}
+
+func (r *redirectingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	r.mu.Lock()
+	r.urls = append(r.urls, req.URL.String())
+	r.mu.Unlock()
+	return &http.Response{
+		StatusCode: http.StatusTemporaryRedirect,
+		Header:     http.Header{"Location": []string{r.location}},
+		Body:       http.NoBody,
+		Request:    req,
+	}, nil
+}
+
+func (r *redirectingTransport) seen() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.urls...)
 }
 
 // ---------------------------------------------------------------------------
