@@ -1,6 +1,6 @@
 # Fugaro: status of every spec under docs/
 
-As of 2026-11-10, read from `main`, the open pull requests and each plan's task list (not from the plans' own status lines, which are stale in about 30 folders). Counts come from commit titles and file checks; "about" marks the approximate ones. **Owner-run** means a live check or step that only the owner performs. Each folder's README links to this page for its current state.
+As of 2026-11-10, read from `main`, the open pull requests and each plan's task list (not from the plans' own status lines, which are stale in about 30 folders). Counts come from commit titles and file checks; "about" marks the approximate ones. **Owner-run** means a live check or step that only the owner performs. Each folder whose README status line had gone stale links to this page for its current state.
 
 ## Done
 
@@ -70,6 +70,7 @@ As of 2026-11-10, read from `main`, the open pull requests and each plan's task 
 | task-governance | 23/31 | 8 left, all in `ee/governance` |
 | bitbucket-workspace-token | 7/13 | T2.2, T2.4, T2.6, T2.9, owner checks; the proxy chain probably makes T2.2 and T2.9 moot |
 | compatibility-matrix | 1/4 | CM2 (page), CM3, CM4 |
+| roles-scopes | 3/12 | RS3 to RS8, RS10; RS12 is later and not planned here |
 
 ## To do, parked or superseded
 
@@ -86,7 +87,7 @@ As of 2026-11-10, read from `main`, the open pull requests and each plan's task 
 | mobile-auth | 2/7; parked |
 | repo-image-removal | 2/11; parked by image-setup (D1900) |
 | in-job-review | historical; delivered through other folders |
-| voice-module, collateral, backlog, plans | no plan or not a spec |
+| voice-module, backlog, plans | no plan or not a spec |
 
 ## Open points
 

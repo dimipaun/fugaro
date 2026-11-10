@@ -7,8 +7,7 @@ design's own decisions — everything the audit left open that is not one of its
 **D840–D854**, in [reconciliation.md](reconciliation.md) §4: **every one of the fifteen was answered
 by the owner on 2026-10-31 as recommended**, and **D854 — the stale local copy that could overwrite a
 newer publish — is answered with them: the generation is recorded**, so a stage refuses to publish
-over a published generation that has moved. **D855–D859** are reserved and unused. Nothing is built
-yet.
+over a published generation that has moved. **D855–D859** are reserved and unused.
 
 **Asked by:** the owner, 2026-10-31: "for project level and repo level settings, in fact for ALL
 the settings, you should not expect people to edit the text file directly, but have Fugaro commands

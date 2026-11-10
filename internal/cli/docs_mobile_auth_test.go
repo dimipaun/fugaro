@@ -21,8 +21,8 @@ import (
 // edit can quietly falsify:
 //
 //   - TestDocsMobileAuthDocumentsExist -- the four documents are in the tree,
-//     and the index's status line still says "plan only; no code is
-//     implemented".
+//     the index carries the folder's current status line, and it keeps the
+//     status as first written beside it, labelled as the record it is.
 //   - TestDocsMobileAuthSpecIsTheOwnersText -- spec.md is the owner's text:
 //     its title, its six heading lines (the title and the five sections under
 //     it) and its date line, and none of this folder's apparatus in it -- no
@@ -79,11 +79,13 @@ const (
 	// sentence is pinned rather than left to a reader to find.
 	mobileAuthAnswered = "**Answered 2026-10-22: as recommended"
 
-	// The index's status line, and the sentence that follows it. The line states
+	// The index's status line, and the record it keeps beside it. The line states
 	// the folder's state and points at docs/status.md, which carries the current
-	// table; the sentence after it is the folder's own account of itself.
-	mobileAuthStatus      = "**Status as of 2026-11-10: parked, 2/7 merged; see [docs/status.md](../status.md) for the current table.**"
-	mobileAuthStatusBuilt = "No code is implemented"
+	// table; the paragraph under it is the status as first written, kept, and it
+	// is labelled as the record it is -- the tree has moved since (P0 and P1 are
+	// merged), and the line is where a reader learns that.
+	mobileAuthStatus     = "**Status as of 2026-11-10: parked, 2/7 merged; see [docs/status.md](../status.md) for the current table.**"
+	mobileAuthKeptStatus = "No code is implemented"
 
 	// mobileAuthNeverCarried is the one path these documents cite that is
 	// excused **differently and permanently**, and it is not an entry in the
@@ -118,8 +120,8 @@ func TestDocsMobileAuthDocumentsExist(t *testing.T) {
 	if !strings.Contains(readme, mobileAuthStatus) {
 		t.Errorf("%s no longer carries the status line %q: the folder says of itself what it is, and a reader who lost that line would take the plan for code", mobileAuthReadme, mobileAuthStatus)
 	}
-	if !strings.Contains(readme, mobileAuthStatusBuilt) {
-		t.Errorf("%s's status line no longer says %q: nothing in this folder is built, and the index is where a reader learns it first", mobileAuthReadme, mobileAuthStatusBuilt)
+	if !strings.Contains(readme, mobileAuthKeptStatus) {
+		t.Errorf("%s no longer keeps the status as first written, %q: the index is where a reader learns what this folder was, and a record deleted rather than kept leaves the folder looking as though it had always been where the tree is now", mobileAuthReadme, mobileAuthKeptStatus)
 	}
 	for _, name := range []string{"spec.md", "reconciliation.md", "implementation-plan.md"} {
 		if !strings.Contains(readme, name) {

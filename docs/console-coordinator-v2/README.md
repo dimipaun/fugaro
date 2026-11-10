@@ -1,7 +1,7 @@
 # The Coordinator tab as an action queue, clickable pull requests, an on-demand job list, and a terminal
 
 **Status as of 2026-11-10: done except the owner's Check C0 (profiling); see [docs/status.md](../status.md) for the current table.** The decisions are in
-[reconciliation.md](reconciliation.md); nothing is built yet. The page this replaces is the Coordinator screen as it
+[reconciliation.md](reconciliation.md). The page this replaces is the Coordinator screen as it
 stands on `main` (Bitbucket credentials T1.2, D364): one read, `fugaro coordinator status
 --from-store --all --json`, and one panel per repository, drawn from the view the coordinator's
 sweep last stored.
