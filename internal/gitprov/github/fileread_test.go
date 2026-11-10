@@ -10,6 +10,7 @@ package github
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -48,6 +49,17 @@ func fileReadOptions(t *testing.T, fixture string) Options {
 	t.Helper()
 	srv := httpfixture.Serve(t, filepath.Join("testdata", "fileread", fixture))
 	return Options{AppID: "1234", BaseURL: srv.URL}
+}
+
+// fileReadNowhere is the options for a read that must not be sent anywhere: a
+// fixture holding no exchange, which fails the test if a request is made.
+func fileReadNowhere(t *testing.T) Options {
+	t.Helper()
+	file := filepath.Join(t.TempDir(), "fixture.json")
+	if err := os.WriteFile(file, []byte("[]"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return Options{AppID: "1234", BaseURL: httpfixture.Serve(t, file).URL}
 }
 
 // TestFileAtAsksForTheRefItWasGiven: the read is of the repository and the ref
@@ -105,12 +117,12 @@ func TestFileAtUsesTheTokenSourceItIsGiven(t *testing.T) {
 }
 
 // TestFileAtRefusesARepositoryItCannotName: repo is one "owner/name" and
-// nothing else, refused before anything is sent. The fixture answers one
-// exchange that this test must leave untouched: FileAt takes the repository
-// apart itself, so a name it cannot take apart is never passed on as a path.
+// nothing else, refused before anything is sent — the fixture holds no
+// exchange, so a name that reached a request would fail this test rather than
+// be read as a path.
 func TestFileAtRefusesARepositoryItCannotName(t *testing.T) {
 	for _, repo := range []string{"web", "", "acme/", "/web", "acme/web/extra", "acme//web"} {
-		_, err := FileAt(ctx, fileReadOptions(t, "at_ref.json"), &fakePersonReadTokens{}, repo, "release/1.2", "fugaro.yaml")
+		_, err := FileAt(ctx, fileReadNowhere(t), &fakePersonReadTokens{}, repo, "release/1.2", "fugaro.yaml")
 		if err == nil {
 			t.Fatalf("FileAt for %q was accepted", repo)
 		}
