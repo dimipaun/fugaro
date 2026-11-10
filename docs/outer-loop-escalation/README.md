@@ -4,7 +4,7 @@
 
 **Spec owner:** Dimi Paun
 **Written:** 2026-11-10
-**Base:** `main` at `6a727d43b`
+**Base:** `main` at `d19e2b1cf`
 
 A ladder of rungs R0-R4 in the orchestrator daemon: rebase and re-test, resume, one stronger single pass, merge with
 follow-ups under the existing gate, and split as the last resort. It sits on top of the inner recipe loops and the

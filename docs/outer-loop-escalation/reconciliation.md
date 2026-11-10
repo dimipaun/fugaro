@@ -1,6 +1,6 @@
 # Outer-loop escalation: reconciliation
 
-**Checked against** `main` at `6a727d43b` (fetched 2026-11-10), by symbol and path, not line. Where this page disagrees
+**Checked against** `main` at `d19e2b1cf` (fetched 2026-11-10), by symbol and path, not line. Where this page disagrees
 with [spec.md](spec.md), this page wins. **Spec owner:** Dimi Paun. **Date:** 2026-11-10.
 
 **Numbers this work holds:** decisions **D2030-D2069** (D2030-D2041 used), checks **540-549** (540-541 used). The highest
