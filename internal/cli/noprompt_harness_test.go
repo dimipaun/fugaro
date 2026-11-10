@@ -258,6 +258,7 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	"fugaro creds set":            {args: []string{"NAME"}},
 	"fugaro diagnose":             {args: []string{"run-1"}},
 	"fugaro exec":                 {args: []string{"--bucket", "file:///nonexistent"}},
+	"fugaro followups":            {args: []string{"run-1"}},
 	"fugaro image add":            {args: []string{"base"}},
 	"fugaro image gate":           {args: []string{"--record", "r", "--slug", "s", "--bucket", "file:///nonexistent"}},
 	"fugaro image git-credential": {args: []string{"--out", "git-cred"}},

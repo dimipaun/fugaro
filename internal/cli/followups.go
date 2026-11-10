@@ -177,7 +177,7 @@ func runFollowUps(cmd *cobra.Command, o cloudOptions, ref string, launch bool, m
 	case err != nil:
 		return remote(err)
 	}
-	branch, err := followUpsBranch(runID, parent)
+	branch, err := followUpsBranch(slug, runID, parent)
 	if err != nil {
 		return err
 	}
@@ -306,13 +306,13 @@ func followUpsRepo(ctx context.Context, env *cloudEnv, slug, runID string, paren
 // A branch the launcher would not have written is refused rather than asked
 // about: task.Validate holds the field to BranchRE, and a task.json a hand has
 // edited is not a reason to send an arbitrary string to a code host.
-func followUpsBranch(runID string, parent *task.Spec) (string, error) {
+func followUpsBranch(slug, runID string, parent *task.Spec) (string, error) {
 	if parent.Branch == "" {
 		return gitops.RunBranchPrefix + runID, nil
 	}
 	if !task.BranchRE.MatchString(parent.Branch) {
 		return "", userErr("run %s/%s's task names branch %q, which is not the fugaro/<run id> shape the launcher writes; the pull request this run's findings belong to cannot be looked up",
-			"", task.ShortRun(runID), pluginwire.Printable(parent.Branch))
+			slug, task.ShortRun(runID), pluginwire.Printable(parent.Branch))
 	}
 	return parent.Branch, nil
 }
@@ -364,10 +364,8 @@ func followUpsParent(ctx context.Context, env *cloudEnv, repo, branch string, wa
 
 // followUpGroup is the deferrals one task is filed for: the findings the triage
 // tied together under one group key, or one finding standing alone (D1843,
-// D1850). key is the group's key, which is the finding's own for an ungrouped
-// one.
+// D1850).
 type followUpGroup struct {
-	key      string
 	keys     []string
 	findings []runstore.DeferredFinding
 }
@@ -389,7 +387,7 @@ func followUpsGroups(findings []runstore.DeferredFinding) []followUpGroup {
 			continue
 		}
 		at[key] = len(out)
-		out = append(out, followUpGroup{key: key, keys: []string{f.Key}, findings: []runstore.DeferredFinding{f}})
+		out = append(out, followUpGroup{keys: []string{f.Key}, findings: []runstore.DeferredFinding{f}})
 	}
 	return out
 }
