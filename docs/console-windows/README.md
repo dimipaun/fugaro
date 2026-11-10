@@ -37,7 +37,8 @@ the first two being Part A's `console/test/unit/wslstub.ts` and `console/test/un
 
 **No production file changes** — no Go outside these two test files, no TypeScript, no
 `package.json`, no workflow under `.github/workflows/` — **and `docs/design/desktop-console.md` and
-`console/README.md` are not touched**: their dated notes are Part H's (O7, below).
+`console/README.md` are not touched by it**: their dated notes were Part H's (O7, below), and Part H
+landed them on 2026-11-10.
 
 **The build is the parts' own work, and it started on 2026-10-22.** Everything above describes the
 *planning* pull request, which is what this folder is. The parts then write what their tasks name —
@@ -103,7 +104,7 @@ because they are about *these* documents rather than about the code:
   (Q1–Q17). Four conventions now exist in the tree. **Recommendation: keep the local namespace** —
   every citation names the folder, and moving to D193 onward is a rename with no benefit beyond the
   one this paragraph already gives.
-- **O7 — the three documents that still say Windows is out.** [docs/design/desktop-console.md](../design/desktop-console.md)
+- **O7 — the three documents that still said Windows is out.** [docs/design/desktop-console.md](../design/desktop-console.md)
   §4.2 and its D10 row, [docs/release.md](../release.md)'s console paragraphs and
   [console/README.md](../../console/README.md)'s Linux section all end with a sentence that Windows
   stays out of 0.10.0. The owner's ruling of 2026-10-20 changes the console's Windows *build*, not
@@ -114,10 +115,13 @@ because they are about *these* documents rather than about the code:
   than shipped, so it does not claim a Windows build 0.10.0 does not have. **The other two —
   [docs/design/desktop-console.md](../design/desktop-console.md) §4.2, §7.6's rule 3, the owner-run
   table's signing row and D10's row, and [console/README.md](../../console/README.md)'s Linux
-  section — are still untouched and still say Windows stays out.** They are **Part H**'s (T-H3), and
-  until Part H lands the two are the older, narrower sentence rather than a contradiction: the
-  ruling is a plan, the plan is **approved to build but unbuilt**, and nothing on Windows has shipped
-  (F43, C4).
+  section — carry their notes as of 2026-11-10**, which is what Part H (T-H3) landed: a dated note
+  in each place that read the sentence — the design's four, named above, and the console's own
+  README's Linux section — saying which half of "Windows stays out" moved: the *build* is in by the
+  ruling above (targeted at this folder's **0.110.0**, not at 0.10.0, which shipped without it), the
+  *signing* answer is not, and there is still no Authenticode identity. That closes this item, and it changes nothing above: the ruling is a
+  plan, the plan is **approved to build but unbuilt**, and nothing on Windows has shipped, so the
+  three are a stated limit rather than a contradiction (F43, C4).
 
 ## Related
 
