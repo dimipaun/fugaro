@@ -41,7 +41,6 @@ type migrator func(raw json.RawMessage) (json.RawMessage, Change, error)
 // bumps Version adds exactly one entry here, in the same change.
 var migrators = map[int]migrator{
 	3: migrateV3ToV4,
-	4: migrateV4ToV5,
 }
 
 // tooOld names the versions this Fugaro reads but has no migrator for. The
@@ -227,9 +226,23 @@ func nodeVersion(raw []byte) (int, error) {
 // of it. A caller that diffs the two nodes sees one field, and a key this
 // Fugaro does not model comes back exactly as it was written.
 func migrateV3ToV4(raw json.RawMessage) (json.RawMessage, Change, error) {
-	out, kept, doc, err := bumpVersionField(raw, 3, 4)
-	if err != nil {
-		return nil, Change{}, err
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return nil, Change{}, fmt.Errorf("projectpolicy: the version-3 node is not a JSON object: %w", err)
+	}
+	start, end, ok := versionValueSpan(raw)
+	if !ok {
+		return nil, Change{}, errors.New("projectpolicy: the version-3 node's version field could not be located")
+	}
+	out := make(json.RawMessage, 0, len(raw))
+	out = append(out, raw[:start]...)
+	out = append(out, strconv.Itoa(4)...)
+	out = append(out, raw[end:]...)
+	kept := make([]string, 0, len(doc))
+	for _, name := range sortedStringKeys(doc) {
+		if name != "version" {
+			kept = append(kept, name)
+		}
 	}
 	return out, Change{
 		From:    3,
@@ -238,73 +251,6 @@ func migrateV3ToV4(raw json.RawMessage) (json.RawMessage, Change, error) {
 		Kept:    kept,
 		Note:    bitbucketRepublishNote(doc),
 	}, nil
-}
-
-// migrateV4ToV5 writes the version field version 5 reads, and nothing else.
-//
-// Version 5 changed what a reader must *enforce*, not the node's shape, for the
-// same reason version 4 did: the `binaries` block is a new top-level key, and a
-// version-4 node without one is a version-5 node that admits no binary — which
-// is what every project that never set the key means. So the step edits the
-// node's own bytes, and the entries the owner wrote by hand survive it exactly
-// as migrateV3ToV4's do.
-//
-// It carries no Note, and that is the difference from the step before it: what
-// version 5 reads that the node cannot state (the block itself) is *absent* by
-// default rather than required, so there is nothing for the operator to
-// republish for. A node that migrates with no `binaries` block is a policy this
-// Fugaro reads and enforces as one that admits nothing, and a project that
-// wants a list publishes one (AR1) — never a half-written node the reader
-// refuses.
-func migrateV4ToV5(raw json.RawMessage) (json.RawMessage, Change, error) {
-	out, kept, _, err := bumpVersionField(raw, 4, 5)
-	if err != nil {
-		return nil, Change{}, err
-	}
-	return out, Change{
-		From:    4,
-		To:      5,
-		Changed: "the version field: 4 to 5",
-		Kept:    kept,
-	}, nil
-}
-
-// bumpVersionField rewrites the node's top-level version member from one
-// version to the next, in place, and hands back the keys the step kept beside
-// the document it read them from.
-//
-// The rewrite is a splice of the node's own bytes rather than a decode and a
-// re-encode: a map round trip sorts the keys, compacts the whitespace, escapes
-// <, > and &, and folds a repeated key onto the last one, which is a rewrite of
-// the owner's document and not a migration of it. A caller that diffs the two
-// nodes sees one field, and a key this Fugaro does not model comes back exactly
-// as it was written.
-//
-// Every step of the chain whose version changed only what a reader must enforce
-// is this function and a Change, which is why it is one function and not one
-// per step: the splice, the span lookup and the kept-key list are the same
-// three things each time, and a step that needs more than a version is a step
-// that changed the shape and has to say so itself.
-func bumpVersionField(raw json.RawMessage, from, to int) (json.RawMessage, []string, map[string]json.RawMessage, error) {
-	var doc map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		return nil, nil, nil, fmt.Errorf("projectpolicy: the version-%d node is not a JSON object: %w", from, err)
-	}
-	start, end, ok := versionValueSpan(raw)
-	if !ok {
-		return nil, nil, nil, fmt.Errorf("projectpolicy: the version-%d node's version field could not be located", from)
-	}
-	out := make(json.RawMessage, 0, len(raw))
-	out = append(out, raw[:start]...)
-	out = append(out, strconv.Itoa(to)...)
-	out = append(out, raw[end:]...)
-	kept := make([]string, 0, len(doc))
-	for _, name := range sortedStringKeys(doc) {
-		if name != "version" {
-			kept = append(kept, name)
-		}
-	}
-	return out, kept, doc, nil
 }
 
 // versionValueSpan is the byte span of the value of the node's top-level

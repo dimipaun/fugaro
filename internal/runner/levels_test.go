@@ -276,7 +276,7 @@ func TestLevelsPOCL1Decides(t *testing.T) {
 // meets the same check the launcher's own does (L3.2).
 func TestLevelsBootstrapRefusesBelowFloor(t *testing.T) {
 	b := policyRun(t, criticalCfg(t, 2, "  first_line_review: on\n"), "enforce", "5",
-		`{"version":5,"review_floor":{"critical":["l2"]}}`)
+		`{"version":4,"review_floor":{"critical":["l2"]}}`)
 	spec := &task.Spec{
 		Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Workflow: "app", Task: "Add a feature",
 		ReviewLevels: &config.ReviewLevels{L2: &config.LevelSetting{Off: true}},

@@ -159,7 +159,7 @@ func TestUpdateMigratesAV3PolicyNodeAfterConfirmation(t *testing.T) {
 	if got := nodeVersionOn(t, f.db); got != projectpolicy.Version {
 		t.Fatalf("the node is version %d, want %d", got, projectpolicy.Version)
 	}
-	if !strings.Contains(out, fmt.Sprintf("published (version 3) and rewritten in place as version %d", projectpolicy.Version)) {
+	if !strings.Contains(out, "published (version 3) and rewritten in place as version 4") {
 		t.Errorf("the confirmation diff does not say what it rewrote and as what:\n%s", out)
 	}
 	if !strings.Contains(out, "⚠ CONFIRM (project aurora)") {
@@ -1097,9 +1097,8 @@ func TestUpdatePolicyMigrationVerifiesTheNodeItWrote(t *testing.T) {
 // verification. Migrate short-circuits on a node already at this version, so a
 // run of it over the bytes read back never reaches the reader gate — the gate
 // it ran judged the document the walk was about to write, not what the database
-// now holds. This node is at this Fugaro's own version and unreadable (the
-// budget block is strict), which is the write a version-only check would have
-// called verified.
+// now holds. This node is version 4 and unreadable (the budget block is strict),
+// which is the write a version-only check would have called verified.
 func TestUpdatePolicyMigrationVerifyReadsTheNodeBack(t *testing.T) {
 	f := newProjectFixture(t, "")
 	f.db.Set(projectpolicy.PathShared(), v3Node(nil))

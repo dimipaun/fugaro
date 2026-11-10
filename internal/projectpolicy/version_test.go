@@ -19,7 +19,7 @@ func TestSkewMessagesShareTheSentence(t *testing.T) {
 			t.Errorf("%s does not start with Skew: %q", name, msg)
 		}
 	}
-	if Version != 5 {
+	if Version != 4 {
 		t.Errorf("Version = %d: a version bump needs the plan's skew handling, this test and the CLI's", Version)
 	}
 }
@@ -214,39 +214,5 @@ func TestDecodeRefusesAVersion3Node(t *testing.T) {
 	}
 	if got, want := err.Error(), fmt.Sprintf(Skew, 3, Version); got != want {
 		t.Errorf("Decode of a version-3 node: err = %q, want %q", got, want)
-	}
-}
-
-// TestDecodeRefusesAVersion4Node: version 5 is the binaries block's lockstep
-// (D990), and the bump holds in the direction that matters here — a version-5
-// binary refuses the version-4 node it used to read, with the skew sentence
-// rather than a decode that discovers the member it now models.
-//
-// The direction is the opposite of TestDecodeRefusesAVersion3Node's: a
-// version-4 node is *behind* this reader, not ahead of it, so the move is the
-// publisher's delete-and-publish and not an upgrade. Both nodes below are
-// refused, and the second has no `binaries` at all: what makes a version-4 node
-// unreadable is the version and not the member, and a reader that admitted one
-// without the block would be running a policy the release before it wrote under
-// a shape this one owns.
-func TestDecodeRefusesAVersion4Node(t *testing.T) {
-	for _, raw := range []string{
-		`{"version": 4, "budget": {"mode": "enforce"}, "binaries": {"allow": ["brand/*.png"]}}`,
-		`{"version": 4, "budget": {"mode": "enforce"}}`,
-	} {
-		p, found, err := Decode([]byte(raw))
-		var ve *VersionError
-		if err == nil || p != nil || !found {
-			t.Fatalf("Decode(%s) = (%v, %v, %v), want an error, no policy and found", raw, p, found, err)
-		}
-		if !errors.As(err, &ve) || ve.Found != 4 || ve.Understood != Version {
-			t.Fatalf("Decode(%s): err = %v, want a VersionError found 4, understood %d", raw, err, Version)
-		}
-		if got, want := err.Error(), fmt.Sprintf(Skew, 4, Version); got != want {
-			t.Errorf("Decode(%s): err = %q, want %q", raw, got, want)
-		}
-		if msg := SkewSentence(ve, ReaderCLI); !strings.Contains(msg, "--delete") {
-			t.Errorf("SkewSentence(%d over %d, CLI) = %q, want the older-node remedy the publisher runs, not the upgrade a node ahead of its reader gets", ve.Found, ve.Understood, msg)
-		}
 	}
 }

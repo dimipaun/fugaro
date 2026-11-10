@@ -416,14 +416,17 @@ type Policy struct {
 	// write that one), and the managed publish gate judges the member like
 	// every other key no rule reads.
 	//
-	// It is a pointer because the member's *presence* is a statement: a
-	// written block is how an operator takes an admission away on purpose
-	// (`binaries: {allow: []}`), while a local file that says nothing keeps
-	// the list the node already carries (D987, review_floor's rule). So an
-	// absent member and a written empty block are the same answer at admission
-	// time — both admit nothing — and two different answers at publish time,
-	// and folding them together here would leave the publisher unable to tell
-	// "clear it" from "say nothing".
+	// It is a pointer because the member's presence is a statement: a node
+	// that carries a block — a list, or a cap with no list — is not a node
+	// that carries none, and folding the two together would leave a reader
+	// unable to tell a project that lowered its cap from one that never set
+	// the key. What the presence does *not* say is whether the owner wrote an
+	// empty list, because a node cannot hold one: the database prunes an empty
+	// list and an empty object alike (storesNoMember, internal/cli's
+	// init_policy_publish.go), so D987's "clear it" against "say nothing"
+	// lives in the local file the publisher reads and not on this node (F16).
+	// At admission time the two are one answer either way, and that is
+	// BinariesAllow's.
 	//
 	// The block's own rules are Binaries' decode (binaries.go): the pattern
 	// rule of §2.1, the cap's positivity and ceiling, and the strict member

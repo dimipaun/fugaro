@@ -814,7 +814,7 @@ func TestRunOnceReportsAFailedCycle(t *testing.T) {
 	f := newDaemonFixture(t)
 	// A launch the project's policy does not admit, which is a cycle that fails
 	// after the attempt was committed and with nothing started.
-	publishPolicy(t, f.launchBudgetFixture, `{"version":5,"allow_repos":["github/acme/other"]}`)
+	publishPolicy(t, f.launchBudgetFixture, `{"version":4,"allow_repos":["github/acme/other"]}`)
 	now := f.serverNow(t)
 	item := approvedItem("wi-1", now)
 	f.putState(t, orchestrator.State{

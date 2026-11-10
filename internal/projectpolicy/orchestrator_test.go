@@ -33,7 +33,7 @@ func TestOrchestratorBlockDecodesStrictly(t *testing.T) {
 		{name: "a member the block does not have", block: `{"max_running_count":4}`, want: "unknown field \"max_running_count\""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			p, found, err := Decode([]byte(`{"version":5,"orchestrator":` + tc.block + `}`))
+			p, found, err := Decode([]byte(`{"version":4,"orchestrator":` + tc.block + `}`))
 			if tc.want != "" {
 				if err == nil {
 					t.Fatalf("the block %s was read: %+v", tc.block, p.Orchestrator)
@@ -59,9 +59,9 @@ func TestOrchestratorBlockDecodesStrictly(t *testing.T) {
 // the rule an empty image_catalog is normalized by.
 func TestOrchestratorBlockNormalizesAnEmptyOne(t *testing.T) {
 	for _, raw := range []string{
-		`{"version":5}`,
-		`{"version":5,"orchestrator":{}}`,
-		`{"version":5,"orchestrator":null}`,
+		`{"version":4}`,
+		`{"version":4,"orchestrator":{}}`,
+		`{"version":4,"orchestrator":null}`,
 	} {
 		p, found, err := Decode([]byte(raw))
 		if err != nil || !found || p == nil {
@@ -74,7 +74,7 @@ func TestOrchestratorBlockNormalizesAnEmptyOne(t *testing.T) {
 
 	// A block that does set one key is kept exactly as written, and the keys it
 	// leaves out stay zero for the merge's defaults to fill.
-	p, _, err := Decode([]byte(`{"version":5,"orchestrator":{"batch_size":3}}`))
+	p, _, err := Decode([]byte(`{"version":4,"orchestrator":{"batch_size":3}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func TestOrchestratorBlockNormalizesAnEmptyOne(t *testing.T) {
 // Fugaro reads would depend on the order the keys were written in — the rule
 // every block of this node is held to.
 func TestOrchestratorMemberNamesAreSpelledAsTheBlockSpellsThem(t *testing.T) {
-	_, _, err := Decode([]byte(`{"version":5,"orchestrator":{"Max_Running":4,"max_running":8}}`))
+	_, _, err := Decode([]byte(`{"version":4,"orchestrator":{"Max_Running":4,"max_running":8}}`))
 	if err == nil {
 		t.Fatal("a block naming Max_Running and max_running was read")
 	}
@@ -110,14 +110,13 @@ func TestOrchestratorMemberNamesAreSpelledAsTheBlockSpellsThem(t *testing.T) {
 // Version moves when a *runner* must enforce something it does not know
 // (version.go). Nothing here is enforced by a runner: the block's reader is the
 // orchestrator daemon, which ships in the same release as the key. The keys
-// added to this node without a version bump (verifier_accounts, review_floor,
-// image_catalog) are the same case, and a version moves only when a runner's
-// own enforcement does.
+// added to this node since version 4 (verifier_accounts, review_floor,
+// image_catalog) moved no version either, for the same reason.
 func TestOrchestratorIsUnknownToAReaderThatPredatesIt(t *testing.T) {
-	if Version != 5 {
-		t.Fatalf("the policy Version is %d, and this test's node is written for 5: update both together, deliberately", Version)
+	if Version != 4 {
+		t.Fatalf("the policy Version is %d, and this test's node is written for 4: update both together, deliberately", Version)
 	}
-	raw := []byte(`{"version":5,"budget":{"mode":"observe"},"orchestrator":{"max_running":4,"decision_model_per_class":{"routine":"sonnet"}}}`)
+	raw := []byte(`{"version":4,"budget":{"mode":"observe"},"orchestrator":{"max_running":4,"decision_model_per_class":{"routine":"sonnet"}}}`)
 	p, found, err := Decode(raw)
 	if err != nil || !found || p == nil {
 		t.Fatalf("Decode = (%v, %v, %v), want the node read", p, found, err)

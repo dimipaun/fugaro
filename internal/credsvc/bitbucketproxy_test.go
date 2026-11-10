@@ -264,7 +264,7 @@ func (p *proxyUpstream) answerWith(status int, body string) {
 func proxyPolicyDoc(t *testing.T) string {
 	t.Helper()
 	return `{
-		"version": 5,
+		"version": 4,
 		"budget": ` + testBudgetDoc + `,
 		"allow_repos": ["` + testCanonical(t, testBitbucketRepo) + `"],
 		"accounts": {"default": {"allow_repos": ["` + testCanonical(t, testBitbucketRepo) + `"]}},

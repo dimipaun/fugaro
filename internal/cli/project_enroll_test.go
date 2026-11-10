@@ -482,7 +482,7 @@ func TestProjectSyncNeedsAnAppID(t *testing.T) {
 // the launch creating an execution for a repository that is still admitted.
 func TestProjectRemoveRepoStopsAdmittingTheRepo(t *testing.T) {
 	f := newLaunchBudget(t, "enforce")
-	publishPolicy(t, f, `{"version":5,"allow_repos":["github/acme/app"]}`)
+	publishPolicy(t, f, `{"version":4,"allow_repos":["github/acme/app"]}`)
 	if allow := allowReposOf(t, f.db); !projectpolicy.AdmitRepo(allow, "github/acme/app") {
 		t.Fatalf("allow_repos = %v: the fixture does not start with the repository admitted", allow)
 	}

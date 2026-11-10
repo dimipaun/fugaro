@@ -28,9 +28,13 @@ import (
 // Both members carry omitempty so that a project with no block writes no
 // member at all — the byte-for-byte promise every optional member of this node
 // keeps — and so that a written block never carries a `"allow": null` a person
-// reading the node would have to interpret. A written *empty* block is still a
-// written block: `{"binaries": {}}` is how an operator takes an admission away
-// on purpose (D987), and the pointer on Policy is what tells it from silence.
+// reading the node would have to interpret. A block whose members are both
+// absent is not a state a *node* holds: the Realtime Database stores no member
+// for an empty object or an empty list (storesNoMember, internal/cli's
+// init_policy_publish.go), so `{"binaries": {}}` and `{"binaries": {"allow":
+// []}}` reach a reader as no block at all. What the pointer on Policy tells
+// apart is therefore a node that carries a block — a list, or a cap with no
+// list — from a node that carries none (F16).
 type Binaries struct {
 	Allow    []string `json:"allow,omitempty"`
 	MaxBytes int64    `json:"max_bytes,omitempty"`
@@ -136,12 +140,15 @@ func ValidBinariesMaxBytes(n int64) error {
 // tell that from the key being absent.
 //
 // A block that writes no member at all is kept as a written block and not
-// folded onto the absent member. That is deliberate and it is D987's whole
-// mechanism: `binaries: {allow: []}` is how an operator takes an admission
-// away on purpose, while a local file that says nothing leaves the published
-// list alone, and a reader that normalized the two to nil would leave the
-// publisher unable to tell "clear it" from "say nothing". At admission time
-// the two are one answer — nothing is admitted — and that is BinariesAllow's.
+// folded onto the absent member, because what this reads is a *document* and a
+// document can say it: `binaries: {allow: []}` is how an operator takes an
+// admission away on purpose (D987), while a local file that says nothing
+// leaves the published list alone, and a decoder that normalized the two to nil
+// would leave the publisher unable to tell "clear it" from "say nothing". A
+// node is the narrower thing, and the difference is the database's: it prunes
+// the empty object and the empty list, so a published block that says nothing
+// is a member no node carries (F16). At admission time the two are one answer
+// either way — nothing is admitted — and that is BinariesAllow's.
 func decodeBinaries(raw json.RawMessage) (*Binaries, error) {
 	names, err := objectMemberNames(raw)
 	if err != nil {
@@ -178,9 +185,9 @@ func decodeBinaries(raw json.RawMessage) (*Binaries, error) {
 }
 
 // BinariesAllow is the paths a run of this project may add a binary at, and
-// nothing when the node admits none — which is what an absent member, a
-// written empty block and a project that never published one all answer, and
-// what every node written before this member existed answers byte for byte.
+// nothing when the node admits none — which is what an absent member, a block
+// with no list and a project that never published one all answer, and what
+// every node written before this member existed answers byte for byte.
 //
 // It is a copy, so a caller cannot write through it to the policy it read, and
 // a nil policy answers nothing rather than panicking: the runner holds a

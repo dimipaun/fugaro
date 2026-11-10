@@ -470,7 +470,7 @@ func TestLauncherMintsATokenWhenAPolicyExistsAndTheLocalModeIsOff(t *testing.T) 
 	// an empty allow_repos is deny-all (plan task 1.5), so a policy that names
 	// no repository would refuse the launch before the mint decision these
 	// subtests are about.
-	policy := `{"version":5,"budget":{"mode":"enforce","per_run_usd":5},"allow_repos":["github/acme/*"]}`
+	policy := `{"version":4,"budget":{"mode":"enforce","per_run_usd":5},"allow_repos":["github/acme/*"]}`
 
 	t.Run("no policy, no token", func(t *testing.T) {
 		f := newOffModeBudget(t, "")
@@ -552,7 +552,7 @@ func TestLaunchReadsThePolicyOnce(t *testing.T) {
 	f := newOffModeBudget(t, "")
 	f.appendConfig(t, "budget: { mode: off, per_run_usd: 5, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
 		", firebase_api_key: "+settingsFakeAPIKey+" }\n")
-	publishPolicy(t, f, `{"version":5,"budget":{"mode":"enforce","per_run_usd":5},"allow_repos":["*"]}`)
+	publishPolicy(t, f, `{"version":4,"budget":{"mode":"enforce","per_run_usd":5},"allow_repos":["*"]}`)
 	if _, _, err := runBudget(t); err != nil {
 		t.Fatal(err)
 	}
@@ -587,7 +587,7 @@ func TestLaunchRefusesADeniedPolicyRead(t *testing.T) {
 	f.appendConfig(t, "budget: { mode: off, per_run_usd: 5, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
 		", firebase_api_key: "+settingsFakeAPIKey+" }\n")
 	f.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
-	f.db.Set(projectpolicy.PathShared(), json.RawMessage(`{"version":5,"budget":{"mode":"enforce","per_run_usd":5}}`))
+	f.db.Set(projectpolicy.PathShared(), json.RawMessage(`{"version":4,"budget":{"mode":"enforce","per_run_usd":5}}`))
 	f.db.DenyRead(projectpolicy.PathShared())
 	_, _, err := runBudget(t)
 	if err == nil || ExitCode(err) != ExitUserError {
@@ -617,7 +617,7 @@ func TestLaunchRefusesAPolicyKeyThisFugaroDoesNotKnow(t *testing.T) {
 	f.appendConfig(t, "budget: { mode: off, per_run_usd: 5, rtdb_url: "+f.db.URL+", token_signer: "+testSigner+
 		", firebase_api_key: "+settingsFakeAPIKey+" }\n")
 	f.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
-	f.db.Set(projectpolicy.PathShared(), json.RawMessage(`{"version":5,"allow_repo":["acme/*"]}`))
+	f.db.Set(projectpolicy.PathShared(), json.RawMessage(`{"version":4,"allow_repo":["acme/*"]}`))
 	_, _, err := runBudget(t)
 	if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "allow_repo") {
 		t.Fatalf("err = %v, want a refusal naming the unknown key", err)
@@ -650,7 +650,7 @@ func TestLaunchRefusesAPolicyKeyThisFugaroDoesNotKnow(t *testing.T) {
 // for a policy he wrote himself.
 func TestLaunchClassifiesAMalformedPolicyAsTheUsersOwnError(t *testing.T) {
 	for name, node := range map[string]string{
-		"a budget the decoder refuses": `{"version":5,"budget":{"mode":"nonsense"}}`,
+		"a budget the decoder refuses": `{"version":4,"budget":{"mode":"nonsense"}}`,
 		"a node with no version":       `{"budget":{"mode":"enforce"}}`,
 		"not a JSON object":            `["budget"]`,
 	} {
@@ -1311,15 +1311,15 @@ const proxiedServiceURL = "https://fugaro-credentials-abc-uc.a.run.app"
 // proxy: true — the ONE source of that half (G15), and the pair that makes a
 // run of the repository proxied.
 const proxiedBlock = "credentials_service: { url: " + proxiedServiceURL + " }\n"
-const proxiedPolicy = `{"version":5,"allow_repos":["bitbucket/workspace-a/repo-a"],"bitbucket_token":{"allow_repos":["bitbucket/workspace-a/repo-a"],"proxy":true}}`
-const notProxiedPolicy = `{"version":5,"allow_repos":["bitbucket/workspace-a/repo-a"],"bitbucket_token":{"allow_repos":["bitbucket/workspace-a/repo-a"],"proxy":false}}`
+const proxiedPolicy = `{"version":4,"allow_repos":["bitbucket/workspace-a/repo-a"],"bitbucket_token":{"allow_repos":["bitbucket/workspace-a/repo-a"],"proxy":true}}`
+const notProxiedPolicy = `{"version":4,"allow_repos":["bitbucket/workspace-a/repo-a"],"bitbucket_token":{"allow_repos":["bitbucket/workspace-a/repo-a"],"proxy":false}}`
 
 // proxiedPolicyOtherRepo is a node that brokers Bitbucket access (proxy: true)
 // but names another repository in its bitbucket_token block: the launch's own
 // allow-list admits proxiedRepo, so nothing else refuses it, and what the two
 // halves of proxiedness disagree about is only whether THIS repository's runs
 // are brokered (G15's AdmitRepo, proxiedRepo's last check).
-const proxiedPolicyOtherRepo = `{"version":5,"allow_repos":["bitbucket/workspace-a/repo-a"],"bitbucket_token":{"allow_repos":["bitbucket/workspace-b/repo-b"],"proxy":true}}`
+const proxiedPolicyOtherRepo = `{"version":4,"allow_repos":["bitbucket/workspace-a/repo-a"],"bitbucket_token":{"allow_repos":["bitbucket/workspace-b/repo-b"],"proxy":true}}`
 
 // addProxiedRepo enrolls proxiedRepo in a launch fixture: the local config
 // entry (inside the repos block the fixture writes, which is why the file is
