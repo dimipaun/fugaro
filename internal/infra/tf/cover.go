@@ -69,111 +69,6 @@ var allowedTypes = map[string]bool{
 	"google_storage_bucket_object":            true,
 }
 
-// dataBearingTypes and nonDataBearingTypes classify every entry of allowedTypes
-// under D1551 (docs/no-prompt-policy/reconciliation.md): whether the objects the
-// type holds are data a delete or a replace would destroy, and — by the type's
-// presence in one of the two — whether anybody has decided the question at all.
-//
-// D1545 makes the managed gate audit-only for CONTENT: a refusal about what a
-// plan contains becomes record-and-warn. D1551 is the exception it leaves, and
-// it is scoped to TYPES: a delete or a replace of a resource whose objects hold
-// data is a loss the record-and-warn rule was never meant to take, so its type
-// still refuses. Data-bearing here is exactly D1551's list of nine.
-//
-// The two tables are stated separately and neither is derived from the other by
-// subtraction, deliberately: a type added to allowedTypes by a later module is
-// in NEITHER table and is therefore UNCLASSIFIED, so DataBearingType answers
-// (false, false) for it and RefusesRemovalType refuses its removal — a type
-// refuses until somebody classifies it on purpose, which is D1551's fail-closed
-// direction (an unclassified type behaves like a data-bearing one rather than a
-// non-data-bearing one). TestEveryAllowedTypeIsClassifiedDataBearingOrNot holds
-// the split: every allowedTypes entry is in exactly one table, the two do not
-// overlap, and the nine data-bearing names are D1551's own.
-var dataBearingTypes = map[string]bool{
-	// The budget ledger's instance: D1551 names it by what it holds (the kill
-	// switches, the caps and the mode the whole installation is bounded by).
-	"google_firebase_database_instance": true,
-	// Artifact Registry holds the images a managed project's jobs run; the
-	// repository is the container the image lives in.
-	"google_artifact_registry_repository": true,
-	// The log bucket and the view over it are where a managed project's logs
-	// are kept — deleting the bucket destroys the records in it.
-	"google_logging_project_bucket_config": true,
-	"google_logging_log_view":              true,
-	// D1551 names the key's container: a secret's values live in its versions,
-	// and deleting the secret destroys them.
-	"google_secret_manager_secret": true,
-	// An identity whose keys and grants are lost with it (D1551).
-	"google_service_account": true,
-	// The bucket and the objects in it: the plan's own storage.
-	"google_storage_bucket":        true,
-	"google_storage_bucket_object": true,
-	// A key's own value is the credential an API call carries.
-	"google_apikeys_key": true,
-}
-
-// nonDataBearingTypes is the other half of D1551's classification: every entry
-// of allowedTypes whose removal destroys no data its objects hold. D1551 groups
-// them — the *_iam_member grant types, the Cloud Run job and service, the
-// scheduler, the compute network, the monitoring and logging plumbing, the
-// billing budget, a custom role, an enabled service and the Firebase project —
-// and each is named here one by one so that the classification of every type is
-// a decision rather than a default.
-var nonDataBearingTypes = map[string]bool{
-	"google_artifact_registry_repository_iam_member": true,
-	"google_billing_budget":                          true,
-	"google_cloud_run_v2_job":                        true,
-	"google_cloud_run_v2_job_iam_member":             true,
-	"google_cloud_run_v2_service":                    true,
-	"google_cloud_run_v2_service_iam_member":         true,
-	"google_cloud_scheduler_job":                     true,
-	"google_compute_firewall":                        true,
-	"google_compute_router":                          true,
-	"google_compute_router_nat":                      true,
-	"google_firebase_project":                        true,
-	"google_logging_log_view_iam_member":             true,
-	"google_logging_project_exclusion":               true,
-	"google_logging_project_sink":                    true,
-	"google_monitoring_alert_policy":                 true,
-	"google_monitoring_notification_channel":         true,
-	"google_project_iam_custom_role":                 true,
-	"google_project_iam_member":                      true,
-	"google_project_service":                         true,
-	"google_secret_manager_secret_iam_member":        true,
-	"google_service_account_iam_member":              true,
-	"google_storage_bucket_iam_member":               true,
-}
-
-// DataBearingType classifies a resource type for D1551: whether its objects
-// hold data a delete or a replace would destroy, and whether the type is
-// classified at all. A type in neither table — one added to allowedTypes by a
-// later module and not yet decided — is (false, false): not data-bearing as far
-// as anyone has said, and unclassified, which the caller reads as the
-// fail-closed direction (RefusesRemovalType refuses it).
-//
-// The question is asked of the TYPE and not of the change, because D1551's
-// ruling is about types: it is what makes a type's removal refuse wherever it
-// appears, whether or not the plan says anything else about it.
-func DataBearingType(t string) (dataBearing, classified bool) {
-	if dataBearingTypes[t] {
-		return true, true
-	}
-	if nonDataBearingTypes[t] {
-		return false, true
-	}
-	return false, false
-}
-
-// RefusesRemovalType is D1551's rule as the delete and replace rule reads it: a
-// removal of a data-bearing type refuses, and so does one of an unclassified
-// type — a type added to allowedTypes later refuses until somebody classifies
-// it on purpose. Every other classified, non-data-bearing type is one the
-// managed gate now takes with a warning (D1545).
-func RefusesRemovalType(t string) bool {
-	bearing, classified := DataBearingType(t)
-	return !classified || bearing
-}
-
 // who says what kind of principal a module grants a role to: People are the
 // members the review screen lists (launchers, operators, admins), Accounts the
 // Fugaro service accounts of this run, Deployer the deployer account of D75
@@ -3051,4 +2946,109 @@ func (c Cover) checkSpecs(m map[string]any, unk any, envPath []any, proj string)
 		}
 	}
 	return ""
+}
+
+// dataBearingTypes and nonDataBearingTypes classify every entry of allowedTypes
+// under D1551 (docs/no-prompt-policy/reconciliation.md): whether the objects the
+// type holds are data a delete or a replace would destroy, and — by the type's
+// presence in one of the two — whether anybody has decided the question at all.
+//
+// D1545 makes the managed gate audit-only for CONTENT: a refusal about what a
+// plan contains becomes record-and-warn. D1551 is the exception it leaves, and
+// it is scoped to TYPES: a delete or a replace of a resource whose objects hold
+// data is a loss the record-and-warn rule was never meant to take, so its type
+// still refuses. Data-bearing here is exactly D1551's list of nine.
+//
+// The two tables are stated separately and neither is derived from the other by
+// subtraction, deliberately: a type added to allowedTypes by a later module is
+// in NEITHER table and is therefore UNCLASSIFIED, so DataBearingType answers
+// (false, false) for it and RefusesRemovalType refuses its removal — a type
+// refuses until somebody classifies it on purpose, which is D1551's fail-closed
+// direction (an unclassified type behaves like a data-bearing one rather than a
+// non-data-bearing one). TestEveryAllowedTypeIsClassifiedDataBearingOrNot holds
+// the split: every allowedTypes entry is in exactly one table, the two do not
+// overlap, and the nine data-bearing names are D1551's own.
+var dataBearingTypes = map[string]bool{
+	// The budget ledger's instance: D1551 names it by what it holds (the kill
+	// switches, the caps and the mode the whole installation is bounded by).
+	"google_firebase_database_instance": true,
+	// Artifact Registry holds the images a managed project's jobs run; the
+	// repository is the container the image lives in.
+	"google_artifact_registry_repository": true,
+	// The log bucket and the view over it are where a managed project's logs
+	// are kept — deleting the bucket destroys the records in it.
+	"google_logging_project_bucket_config": true,
+	"google_logging_log_view":              true,
+	// D1551 names the key's container: a secret's values live in its versions,
+	// and deleting the secret destroys them.
+	"google_secret_manager_secret": true,
+	// An identity whose keys and grants are lost with it (D1551).
+	"google_service_account": true,
+	// The bucket and the objects in it: the plan's own storage.
+	"google_storage_bucket":        true,
+	"google_storage_bucket_object": true,
+	// A key's own value is the credential an API call carries.
+	"google_apikeys_key": true,
+}
+
+// nonDataBearingTypes is the other half of D1551's classification: every entry
+// of allowedTypes whose removal destroys no data its objects hold. D1551 groups
+// them — the *_iam_member grant types, the Cloud Run job and service, the
+// scheduler, the compute network, the monitoring and logging plumbing, the
+// billing budget, a custom role, an enabled service and the Firebase project —
+// and each is named here one by one so that the classification of every type is
+// a decision rather than a default.
+var nonDataBearingTypes = map[string]bool{
+	"google_artifact_registry_repository_iam_member": true,
+	"google_billing_budget":                          true,
+	"google_cloud_run_v2_job":                        true,
+	"google_cloud_run_v2_job_iam_member":             true,
+	"google_cloud_run_v2_service":                    true,
+	"google_cloud_run_v2_service_iam_member":         true,
+	"google_cloud_scheduler_job":                     true,
+	"google_compute_firewall":                        true,
+	"google_compute_router":                          true,
+	"google_compute_router_nat":                      true,
+	"google_firebase_project":                        true,
+	"google_logging_log_view_iam_member":             true,
+	"google_logging_project_exclusion":               true,
+	"google_logging_project_sink":                    true,
+	"google_monitoring_alert_policy":                 true,
+	"google_monitoring_notification_channel":         true,
+	"google_project_iam_custom_role":                 true,
+	"google_project_iam_member":                      true,
+	"google_project_service":                         true,
+	"google_secret_manager_secret_iam_member":        true,
+	"google_service_account_iam_member":              true,
+	"google_storage_bucket_iam_member":               true,
+}
+
+// DataBearingType classifies a resource type for D1551: whether its objects
+// hold data a delete or a replace would destroy, and whether the type is
+// classified at all. A type in neither table — one added to allowedTypes by a
+// later module and not yet decided — is (false, false): not data-bearing as far
+// as anyone has said, and unclassified, which the caller reads as the
+// fail-closed direction (RefusesRemovalType refuses it).
+//
+// The question is asked of the TYPE and not of the change, because D1551's
+// ruling is about types: it is what makes a type's removal refuse wherever it
+// appears, whether or not the plan says anything else about it.
+func DataBearingType(t string) (dataBearing, classified bool) {
+	if dataBearingTypes[t] {
+		return true, true
+	}
+	if nonDataBearingTypes[t] {
+		return false, true
+	}
+	return false, false
+}
+
+// RefusesRemovalType is D1551's rule as the delete and replace rule reads it: a
+// removal of a data-bearing type refuses, and so does one of an unclassified
+// type — a type added to allowedTypes later refuses until somebody classifies
+// it on purpose. Every other classified, non-data-bearing type is one the
+// managed gate now takes with a warning (D1545).
+func RefusesRemovalType(t string) bool {
+	bearing, classified := DataBearingType(t)
+	return !classified || bearing
 }
