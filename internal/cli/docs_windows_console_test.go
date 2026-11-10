@@ -777,7 +777,7 @@ func TestDocsWindowsConsoleClaimsAboutOtherFilesAreTrue(t *testing.T) {
 	// 2026-11-10" off the reconciliation's.
 	o7 := flattenDoc(windowsConsoleBlock(t, index, idx, "- **O7 —", "## Related"))
 	if !strings.Contains(o7, "carry their notes as of 2026-11-10") {
-		t.Errorf("%s's O7 item no longer carries %q: Part H (T-H3) landed the notes it owes on 2026-11-10, and an item still reading as outstanding contradicts docs/design/desktop-console.md, console/README.md and docs/release.md at once", index, "carry their notes as of 2026-11-10")
+		t.Errorf("%s's O7 item no longer carries %q: Part H (T-H3) landed the notes it owes on 2026-11-10, and an item still reading as outstanding contradicts the design, the console's own README and docs/release.md at once", index, "carry their notes as of 2026-11-10")
 	}
 	if strings.Contains(o7, "still untouched and still say Windows stays out") {
 		t.Errorf("%s's O7 item says the design and the console's README \"are still untouched and still say Windows stays out\" again: both carry their dated notes as of 2026-11-10, which is what %q records", index, "carry their notes as of 2026-11-10")
