@@ -134,6 +134,11 @@ type treeEntry struct {
 // read answers with, wrapped the same way. The file's path is named in a
 // failure rather than the object id, because the path is what a person reading
 // a refused context has to find.
+//
+// The caller's ceiling is what decides whether this read happens at all, and
+// it was checked against the listing before it. The API client's own bound on
+// a reply is smaller than a context's, so a single file larger than that is
+// refused by the client rather than carried.
 func (p *Provider) blob(ctx context.Context, sha, path string) ([]byte, error) {
 	at := pluginwire.Printable(path)
 	if sha == "" {
