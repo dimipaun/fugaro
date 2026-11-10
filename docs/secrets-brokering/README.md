@@ -49,6 +49,7 @@ None.
 
 ## Related
 
+- [dynamic-delivery/](dynamic-delivery/README.md): the 2026-11-09 addendum (runtime secret delivery through an intake function and slips), reconciled against this spec and Q6; plan only, no task approved.
 - [../credentials-service/](../credentials-service/README.md): the service this spec extends
   (D130–D154, Q6).
 - [../bitbucket-workspace-token/](../bitbucket-workspace-token/README.md): D460–D477; its S2 is

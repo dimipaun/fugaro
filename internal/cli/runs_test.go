@@ -823,11 +823,13 @@ func TestLsPRWarnsUndecidableRun(t *testing.T) {
 	seedSpec(t, f, firstRunSpec(lost), false)
 	putBuildObject(t, f, "runs/"+appSlug+"/"+lost+"/result.json", []byte("{not json"))
 	got, errOut := lsJSON(t, "--pr", "7")
-	if len(got.Runs) != 3 || !strings.Contains(errOut, lost+": result.json is unreadable") || !strings.Contains(errOut, r.fu2+": result.json is unreadable") {
+	// The warnings name each run by its ending, like every other human line
+	// (spec.md §1, D1705).
+	if len(got.Runs) != 3 || !strings.Contains(errOut, task.ShortRun(lost)+": result.json is unreadable") || !strings.Contains(errOut, task.ShortRun(r.fu2)+": result.json is unreadable") {
 		t.Fatalf("ls --pr 7 = %v, stderr %q", runIDs(got.Runs), errOut)
 	}
 	// A run whose record says it is on another PR is off this one: no warning for it.
-	if got, errOut := lsJSON(t, "--pr", "8"); len(got.Runs) != 1 || strings.Contains(errOut, r.fu2) {
+	if got, errOut := lsJSON(t, "--pr", "8"); len(got.Runs) != 1 || strings.Contains(errOut, task.ShortRun(r.fu2)) {
 		t.Fatalf("ls --pr 8 = %v, stderr %q", runIDs(got.Runs), errOut)
 	}
 }
@@ -857,6 +859,8 @@ func TestLsPRColumn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The RUN cell is the run's short form (spec.md §1), so a row is looked up
+	// by that.
 	lines := map[string]string{}
 	for _, l := range strings.Split(human, "\n") {
 		if fields := strings.Fields(l); len(fields) > 0 {
@@ -865,13 +869,13 @@ func TestLsPRColumn(t *testing.T) {
 	}
 	// The BY cell follows the PR column, and none of these runs recorded a
 	// launcher (seedSpec's launch.json carries none): a dash.
-	if l := lines[appSlug+"/"+r.fu1]; !strings.Contains(l, "#7 https://github.com/acme/app/pull/7 (draft)") || !strings.HasSuffix(strings.TrimSpace(l), "-") {
+	if l := lines[task.ShortRun(r.fu1)]; !strings.Contains(l, "#7 https://github.com/acme/app/pull/7 (draft)") || !strings.HasSuffix(strings.TrimSpace(l), "-") {
 		t.Fatalf("finished follow-up line = %q\n%s", l, human)
 	}
-	if l := lines[appSlug+"/"+waiting]; !strings.Contains(l, "#7") || !strings.HasSuffix(strings.TrimSpace(l), "-") {
+	if l := lines[task.ShortRun(waiting)]; !strings.Contains(l, "#7") || !strings.HasSuffix(strings.TrimSpace(l), "-") {
 		t.Fatalf("unlaunched follow-up line = %q\n%s", l, human)
 	}
-	if l := lines[appSlug+"/"+r.plain]; l != "" {
+	if l := lines[task.ShortRun(r.plain)]; l != "" {
 		t.Fatalf("a run off the PR is listed: %q", l)
 	}
 }
@@ -1012,9 +1016,12 @@ func TestLsRecipeColumnDefaultsEmpty(t *testing.T) {
 	if err := printRows(&b, "aurora", rows, nil, time.Now(), false); err != nil {
 		t.Fatal(err)
 	}
+	// The two rows share their last four characters, so the listing extends
+	// each ending until they tell the rows apart (spec.md §3): the row stamped
+	// 100000 — the one without a recipe — is the one ending `00000-abcd`.
 	var line string
 	for _, l := range strings.Split(b.String(), "\n") {
-		if strings.Contains(l, "100000") {
+		if strings.HasPrefix(l, "00000-abcd") {
 			line = l
 		}
 	}
@@ -1034,9 +1041,11 @@ func TestLsAccountColumn(t *testing.T) {
 	if err := printRows(&b, "aurora", rows, nil, time.Now(), false); err != nil || !strings.Contains(b.String(), "ACCOUNT") || !strings.Contains(b.String(), "acme-personal") {
 		t.Fatalf("with a named account:\n%s", b.String())
 	}
+	// As above: the two rows share their last four characters, so the listing
+	// extends the endings until they tell the rows apart.
 	var line string
 	for _, l := range strings.Split(b.String(), "\n") {
-		if strings.Contains(l, "100000") {
+		if strings.HasPrefix(l, "00000-abcd") {
 			line = l
 		}
 	}
@@ -1257,6 +1266,38 @@ func TestRunsLsRUNCellResolves(t *testing.T) {
 	}
 }
 
+// TestRunsLsRepoCellFallsBackToTheSlug: the REPO column is where a listing
+// names a run's repository now that the RUN cell is the ending rather than
+// `<slug>/<run-id>`. A run whose task.json cannot be read names no repository
+// in its task, but the ref the listing is built on still carries the
+// repository's slug — Row.Run is `<slug>/<run-id>` (runview.Join) and rowRef
+// reads it back out — so the cell names that instead of going blank. A row
+// listed with a blank REPO would name no repository at all, which the
+// whole-ID RUN cell used to do for it; a run whose task reads still names the
+// task's own `owner/name`.
+func TestRunsLsRepoCellFallsBackToTheSlug(t *testing.T) {
+	f := newCloudFixture(t)
+	seedRun(t, f, recentRunID(t, 2*time.Minute, "aaaa"), "", "someone@example.com", false)
+	seedCorruptTask(t, f, recentRunID(t, time.Minute, "abcd"))
+
+	out, _, err := execute(t, "runs", "ls", "--since", "0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cells := map[string]string{}
+	for _, l := range strings.Split(out, "\n") {
+		if fields := strings.Fields(l); len(fields) > 1 {
+			cells[fields[0]] = fields[1]
+		}
+	}
+	if got := cells["abcd"]; got != appSlug {
+		t.Errorf("the REPO cell of the run whose task.json is unreadable = %q, want the repository's slug %q:\n%s", got, appSlug, out)
+	}
+	if got := cells["aaaa"]; got != "acme/app" {
+		t.Errorf("the REPO cell of a run whose task reads = %q, want the task's own repository acme/app:\n%s", got, out)
+	}
+}
+
 // TestLsIsGone: the 0.7.0 tombstone was deleted by #350 in 0.7.5 (design
 // generic-tool §5, G17, P3; the owner's 2026-10-14 ruling moved the deletion
 // from 0.8.0 to the next release, which #370 renamed 0.7.5), so there is no
@@ -1451,7 +1492,9 @@ func TestLsLauncherComesFromLaunchJSON(t *testing.T) {
 	}
 	var dashLine string
 	for _, l := range strings.Split(human, "\n") {
-		if strings.Contains(l, "091000") {
+		// The RUN cell is the run's ending, which is what tells the two rows
+		// of this listing apart.
+		if f := strings.Fields(l); len(f) > 0 && f[0] == "bbbb" {
 			dashLine = l
 		}
 	}
@@ -1514,9 +1557,10 @@ func TestLsLauncherShortFormAndClip(t *testing.T) {
 		"ffff": strings.Repeat("c", maxNameCellRunes) + "…"} {
 		found := false
 		for _, l := range strings.Split(out, "\n") {
-			if strings.Contains(l, "-"+id) {
+			// The RUN cell is the run's ending (the four characters above),
+			// and the first cell of the row.
+			if f := strings.Fields(l); len(f) > 0 && f[0] == id {
 				found = true
-				f := strings.Fields(l)
 				if got := f[len(f)-1]; got != want {
 					t.Errorf("run %s: BY = %q, want %q\n%s", id, got, want, out)
 				}
@@ -1755,7 +1799,7 @@ func TestRunsLsParallelOrderStable(t *testing.T) {
 	}
 	var wantWarned []string
 	for _, s := range corrupt {
-		wantWarned = append(wantWarned, s.slug+"/"+s.id)
+		wantWarned = append(wantWarned, s.slug+"/"+task.ShortRun(s.id))
 	}
 	if !slices.Equal(warned, wantWarned) {
 		t.Fatalf("warnings = %v, want %v: the runs are read in slug order, newest first within each", warned, wantWarned)
@@ -2585,7 +2629,14 @@ func TestRunsLsDebtFiltersToDebtTasks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(human, "-aaaa") || strings.Contains(human, "-bbbb") || strings.Contains(human, "-dddd") {
+	// The RUN cell is the run's ending, so the listing is read column by column.
+	listed := map[string]bool{}
+	for _, l := range strings.Split(human, "\n") {
+		if f := strings.Fields(l); len(f) > 0 {
+			listed[f[0]] = true
+		}
+	}
+	if !listed["aaaa"] || !listed["cccc"] || listed["bbbb"] || listed["dddd"] {
 		t.Fatalf("the plain listing's --debt =\n%s", human)
 	}
 }

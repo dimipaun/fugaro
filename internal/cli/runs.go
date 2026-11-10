@@ -668,7 +668,11 @@ func readRunVia(ctx context.Context, env *cloudEnv, rd runcache.Reader, slug, id
 	in := &r.in
 	problem := func(p string) {
 		in.Problem = p
-		r.warning = fmt.Sprintf("warning: run %s/%s: %s\n", slug, id, p)
+		// The warning is a person's line on stderr, so it names the run by its
+		// ending like every other human surface (spec.md §1, D1705), with the
+		// slug beside it: the warning may name a run the listing below does not
+		// show at all (--pr, a window the run fell out of).
+		r.warning = fmt.Sprintf("warning: run %s/%s: %s\n", slug, task.ShortRun(id), p)
 	}
 	raw, err := rd.Read(ctx, s, "task.json")
 	switch {
@@ -696,7 +700,7 @@ func readRunVia(ctx context.Context, env *cloudEnv, rd runcache.Reader, slug, id
 	}
 	if in.Launch == nil && in.Record == nil {
 		if in.CancelMarker, err = s.CancelRequested(ctx); err != nil {
-			return r, fmt.Errorf("checking %s/%s's cancel marker: %w", slug, id, err)
+			return r, fmt.Errorf("checking %s/%s's cancel marker: %w", slug, task.ShortRun(id), err)
 		}
 		if in.Claim, err = absent(s.ReadClaim(ctx)); corruptObject(err) {
 			problem("the launch claim is unreadable: " + err.Error())
@@ -768,7 +772,7 @@ func followExecution(ctx context.Context, env *cloudEnv, r *runObjects, execs ma
 	x, err := env.checkExecution(ctx, hint, name, in.Slug, in.RunID)
 	if err != nil {
 		in.Problem = "not following its execution: " + err.Error()
-		warnf("warning: run %s/%s: %s\n", in.Slug, in.RunID, in.Problem)
+		warnf("warning: run %s/%s: %s\n", in.Slug, task.ShortRun(in.RunID), in.Problem)
 		return nil
 	}
 	in.Exec = x
@@ -891,7 +895,10 @@ func printDoc(w io.Writer, project string, rows []runview.Row, tot runview.Total
 	// that died before bootstrap, has none and does not widen every other
 	// run's columns for it.
 	showMode := slices.ContainsFunc(rows, func(r runview.Row) bool { return r.Rigor != nil })
-	header := "RUN\tSTATUS\tSTAGE\tAGE\tCOST\tPR\tBY"
+	// RUN is the ending a person reads, says and types back (spec.md §1), and
+	// the repository has the column beside it: together the two are what
+	// Row.Run carries as `<slug>/<run-id>` and what --json keeps whole (D1705).
+	header := "RUN\tREPO\tSTATUS\tSTAGE\tAGE\tCOST\tPR\tBY"
 	if showRecipe {
 		header += "\tRECIPE"
 	}
@@ -911,6 +918,7 @@ func printDoc(w io.Writer, project string, rows []runview.Row, tot runview.Total
 		header += "\tMODE"
 	}
 	fmt.Fprintln(tw, header)
+	endings := runEndings(rows)
 	for _, r := range rows {
 		cost := fmt.Sprintf("$%.2f", r.Cost.TotalUSD)
 		if r.Cost.ModelSubscriptionUSD() > 0 {
@@ -921,7 +929,7 @@ func printDoc(w io.Writer, project string, rows []runview.Row, tot runview.Total
 		if !r.Cost.ComputeEstimated {
 			cost += ", compute not estimated" // never "free" (design §10.1)
 		}
-		line := fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s\t%s", oneLine(r.Run), oneLine(statusCell(r)), oneLine(r.Stage), age(now.Sub(r.Created)), cost, prColumn(r), launcherCell(r))
+		line := fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s", oneLine(endings[rowRef(r)]), repoCell(r), oneLine(statusCell(r)), oneLine(r.Stage), age(now.Sub(r.Created)), cost, prColumn(r), launcherCell(r))
 		if showRecipe {
 			name := r.Recipe
 			if name == "" {
@@ -1000,6 +1008,9 @@ func printOwnerWaiting(w io.Writer, rows []runview.Row) error {
 	if _, err := fmt.Fprintln(w, "Waiting on you"); err != nil {
 		return err
 	}
+	// The same rule over the same rows the table above printed, so a run is
+	// named by one ending in both places (task.DisplayRuns, F15).
+	endings := runEndings(rows)
 	for _, r := range rows {
 		od := r.OwnerDecisions
 		if od == nil {
@@ -1009,7 +1020,7 @@ func printOwnerWaiting(w io.Writer, rows []runview.Row) error {
 		if reason == "" {
 			reason = "review is waiting on " + runner.Plural(od.Total, "owner decision")
 		}
-		if _, err := fmt.Fprintf(w, "  %s: %s\n", oneLine(r.Run), oneLine(reason)); err != nil {
+		if _, err := fmt.Fprintf(w, "  %s: %s\n", oneLine(endings[rowRef(r)]), oneLine(reason)); err != nil {
 			return err
 		}
 		for _, d := range od.Decisions {
@@ -1036,6 +1047,52 @@ func printOwnerWaiting(w io.Writer, rows []runview.Row) error {
 // runstore.MaxOwnerDecisionText, and a table line that carried the whole cap
 // for every decision of every run would bury the rows above it.
 const maxOwnerDecisionRunes = 120
+
+// rowRef is the pair a row's RUN cell is computed over (task.Ref): the two
+// halves Row.Run carries, `<slug>/<run-id>` — the repository's storage slug
+// and the run's full ID. It reads them out of Run rather than off RunID,
+// because Run is the pair the listing is built on (F8) and a row assembled
+// without its ID still names the run it is.
+func rowRef(r runview.Row) task.Ref {
+	slug, id, ok := strings.Cut(r.Run, "/")
+	if !ok {
+		return task.Ref{Slug: r.Repo, RunID: r.Run}
+	}
+	return task.Ref{Slug: slug, RunID: id}
+}
+
+// runEndings is what each of rows is shown by: the shortest ending of its run
+// ID that no other listed run's ID also ends with (task.DisplayRuns, spec.md
+// §3, D1706). The endings are computed over exactly the rows passed in — the
+// rule holds over what is shown together, so one run may be shown as `3bb2` in
+// one listing and as `8-3bb2` in the next (F15).
+func runEndings(rows []runview.Row) map[task.Ref]string {
+	refs := make([]task.Ref, 0, len(rows))
+	for _, r := range rows {
+		refs = append(refs, rowRef(r))
+	}
+	return task.DisplayRuns(refs)
+}
+
+// repoCell is a row's REPO cell: the repository the run's task names, in the
+// column the RUN cell gave up when it became the ending. A run whose task.json
+// could not be read names no repository in the task — but its reference still
+// carries the repository's slug, which runview.Join builds into Row.Run as
+// `<slug>/<run-id>` from the ref the listing is built on, and rowRef reads it
+// back out. So the cell falls back to that slug rather than going blank: the
+// row is listed either way, the RUN cell no longer carries the slug (it is the
+// ending now), and a blank cell would leave the row naming no repository at
+// all, which the whole-ID RUN cell used to do for it.
+func repoCell(r runview.Row) string {
+	name := r.Repo
+	if name == "" {
+		name = rowRef(r).Slug
+	}
+	if name == "" {
+		return "-"
+	}
+	return cellOneLine(clipRunes(name, maxNameCellRunes))
+}
 
 // launcherCell is a row's BY cell: who started the run, in the short form a
 // column has room for (the part before the @ of an address, the whole value

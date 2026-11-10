@@ -14,7 +14,7 @@
 //
 // It is a third preload rather than a second document on one of the others for
 // the reason `src/preload/installations.ts` gives: the dashboard's preload
-// exposes twenty-four rows and the picker's six, and this document has no
+// exposes twenty-four rows and the picker's seven, and this document has no
 // business with any of them. Every document of the bundle is served from the
 // same origin (`app://console`), so the only thing that separates their surfaces
 // is that each window is built with its own preload and each channel prefix is

@@ -1,6 +1,6 @@
 # Short run IDs everywhere: implementation plan
 
-**Status: plan only; nothing is implemented; no task is approved.** Every task below needs the owner's explicit go; the owner's answers D1700-D1704 settled questions, they did not approve work. Builds [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md) (F#, D# below refer to it).
+**Status as of 2026-11-10: in progress, 12/14 merged; see [docs/status.md](../status.md) for the current table.** Every task below needs the owner's explicit go; the owner's answers D1700-D1704 settled questions, they did not approve work. Builds [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md) (F#, D# below refer to it).
 
 Owner answers that shaped the plan: D1700 refuse and list on a non-terminal (an agent marker or `--json` counts as one), pick list on a terminal; D1701 four-character minimum; D1702 active runs then 7 days; D1703 runs only; D1704 live tab follows `watch`'s IDs, ordering and wording, not its column set.
 

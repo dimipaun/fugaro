@@ -1,7 +1,6 @@
 # Workspaces: the implementation plan
 
-**Status: design answered by the owner 2026-11-04; plan only; nothing implemented; no task
-approved.** The sixteen decisions in [reconciliation.md](reconciliation.md) §4 (**D1290–D1305**) are
+**Status as of 2026-11-10: in progress, 6/10 merged; see [docs/status.md](../status.md) for the current table.** The sixteen decisions in [reconciliation.md](reconciliation.md) §4 (**D1290–D1305**) are
 **answered**, every one as recommended, so no task below is waiting on a decision any more. **Two of
 them were amended on 2026-11-04, after the design merged and its security review ran** — D1299,
 D1300 and D1301, marked below [reconciliation.md](reconciliation.md) §4 and §8 — and the tasks they

@@ -24,7 +24,7 @@ Four reasons, in the order most people decide on them.
 
 **3. Team control in one place.** Policy lives in the project, not on each laptop. A project layer publishes shared defaults and named workflow profiles that every repository inherits, with rules for what a repository may change; the review loop is chosen from a catalog of recipes; only trusted authors can start a review or a follow-up; the owner decides which repositories' code may be sent to which model provider; spend is capped per stage by default, per run and per project when you turn the budget on, with kill switches; each workflow's job reads only the secrets that workflow mounts. These are enforcement points, not guarantees: the people who operate an installation are trusted, and the [security model](docs/design/v1.md#6-security-model) lists the residual risks.
 
-**4. The newest tools and models, ready to use.** One pinned, multi-architecture base image (Debian, with `mise` for each project's runtimes from its `mise.toml`) carries Claude Code, the tooling agents reach for, and [graphify](docs/base-image.md), so a run starts the same way for everyone and the image is rebuilt when a daily check finds it stale. Codex, Gemini CLI, Pi, Qwen Code, OpenCode, Goose and Crush are installed in it too, ready to be wired in; **today only Claude Code is driven by Fugaro**. You choose the model per role: the coder can be a non-Anthropic model through OpenRouter (a DeepSeek coder and reviewer has run end to end, and it is still marked experimental) while Claude Code stays the harness, and recipes combine a cheap coder with a strong reviewer. See [docs/multi-model.md](docs/multi-model.md) and [docs/recipes.md](docs/recipes.md).
+**4. The newest tools and models, ready to use.** One pinned, multi-architecture base image (Debian, with `mise` for each project's runtimes from its `mise.toml`) carries Claude Code, the tooling agents reach for, and [graphify](docs/base-image.md), so a run starts the same way for everyone and the image is rebuilt when a daily check finds it stale. Claude Code is the harness, and the only one the image carries: the seven others it bundled until 2026-11-09 (Codex, Gemini CLI, Pi, Qwen Code, OpenCode, Goose, Crush) were never driven by anything in Fugaro and cost about 1 GB of every image, so they are gone — **today only Claude Code is driven by Fugaro**. You choose the model per role: the coder can be a non-Anthropic model through OpenRouter (a DeepSeek coder and reviewer has run end to end, and it is still marked experimental) while Claude Code stays the harness, and recipes combine a cheap coder with a strong reviewer. See [docs/multi-model.md](docs/multi-model.md) and [docs/recipes.md](docs/recipes.md).
 
 ## Getting started
 
@@ -195,7 +195,7 @@ A run's coder can be a non-Anthropic model served by OpenRouter — one key for 
 ## Roadmap
 
 - [x] Runner, git providers (GitHub, Bitbucket Cloud), the base image (one, multi-architecture, with mise), the Cloud Run backend and CLI
-- [x] `fugaro setup` and `/fugaro:setup`, the five plugin skills, teammates with no setup
+- [x] `fugaro setup` and `/fugaro:setup`, the six plugin skills, teammates with no setup
 - [x] Follow-up runs, early draft PRs, the shared budget, `fugaro watch` and `fugaro report`, other models through OpenRouter (experimental)
 - [x] Releases with GoReleaser, the Homebrew tap and cosign-signed checksums
 - [ ] Signed base images, verified and pinned by `fugaro setup` (nothing is copied)

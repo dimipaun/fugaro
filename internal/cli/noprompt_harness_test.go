@@ -193,6 +193,20 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	// block; it asks nothing now (D1540) and the diff of that block is the proof
 	// this fixture reaches it.
 	"fugaro accounts add": {args: []string{"team-a", "--repos", "acme/app"}, reaches: "claude_accounts"},
+	// The pool writes are the same kind of edit, and they reach it the same
+	// way: the seed gives the world a credential to list and a pool to remove,
+	// so each runs to its own sentence rather than stopping at the block's own
+	// "no credential of this name is defined here".
+	"fugaro accounts pool add": {
+		args:    []string{"claude-pool", "team-a", "team-b"},
+		reaches: "declare pools.claude-pool.members = [team-a, team-b]",
+		seed:    closedStdinPoolSeed,
+	},
+	"fugaro accounts pool rm": {
+		args:    []string{"claude-pool"},
+		reaches: "remove pools.claude-pool",
+		seed:    closedStdinPoolSeed,
+	},
 	// The settings write used to ask for the project's name over the document it
 	// edits, and what it edits here is the world's own project config. It asks
 	// nothing now (D1540), and the sentence naming the change is the proof this
@@ -206,6 +220,11 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	// project until it is interrupted. --once is its own one snapshot, which is
 	// the run this harness can hold to a deadline.
 	"fugaro watch": {args: []string{"--once"}, reaches: "counted"},
+	// The daemon is the same shape and answers it the same way: it drives the
+	// project until it is stopped, and --once is its own one cycle — the lease
+	// taken for it and released with it. In this world the node holds no work
+	// and no run, so the cycle it reaches is the empty one it prints.
+	"fugaro orchestrator run": {args: []string{"--once"}, reaches: "one cycle as asked (--once)"},
 
 	// The arguments the rest of the tree's leaves require. Each is the shallowest
 	// set that reaches the command's body; what the body answers in this world is
@@ -225,6 +244,7 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	"fugaro image add":            {args: []string{"base"}},
 	"fugaro image gate":           {args: []string{"--record", "r", "--slug", "s", "--bucket", "file:///nonexistent"}},
 	"fugaro image git-credential": {args: []string{"--out", "git-cred"}},
+	"fugaro image map set":        {args: []string{"acme/app", "base"}, reaches: "runs the catalog entry"},
 	"fugaro image promote":        {args: []string{"base"}},
 	"fugaro image record":         {args: []string{"--in", "r", "--digest-from", "a", "--base-digest-from", "b", "--image", "i", "--base", "ba", "--build-id", "x", "--slug", "s", "--bucket", "file:///nonexistent"}},
 	"fugaro image rm":             {args: []string{"base"}},
@@ -293,6 +313,8 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 var closedStdinNoFixture = map[string]string{
 	"fugaro accounts":          "is a name for its four subcommands: a bare run prints its own usage and returns",
 	"fugaro accounts ls":       "selects no project and names the two ways to (--repo, an origin remote)",
+	"fugaro accounts pool":     "is a name for ls, add and rm: a bare run prints its own usage and returns",
+	"fugaro accounts pool ls":  "reads the selected project's own config, which this world's has no pools in, and prints that none are defined",
 	"fugaro backends":          "is a name for its one subcommand: a bare run prints its own usage and returns",
 	"fugaro backends ls":       "lists every backend a project may name, which needs no project",
 	"fugaro backlog add":       "stops at its own D27 field checks, which this world has no values for",
@@ -577,6 +599,14 @@ const closedStdinRetiredWhy = "is the tombstone: it prints the two commands that
 func closedStdinSetBaseBranch(t *testing.T, f *budgetFixture) {
 	t.Helper()
 	f.appendConfig(t, "base_branch: main\n")
+}
+
+// closedStdinPoolSeed gives the world the two things a pool write needs to
+// reach its own edit: a credential a member may name (two of them, so the
+// declaration the fixture asks for is a change) and a pool to remove.
+func closedStdinPoolSeed(t *testing.T, f *budgetFixture) {
+	t.Helper()
+	f.appendConfig(t, "credentials:\n  - name: team-a\n    type: claude-oauth\n  - name: team-b\n    type: claude-oauth\npools:\n  - name: claude-pool\n    members:\n      - team-a\n")
 }
 
 // closedStdinWorld is the state every leaf is run in: one hermetic

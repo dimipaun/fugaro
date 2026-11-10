@@ -57,18 +57,17 @@ python3	python3 --version	all	kit
 gcloud	gcloud --version	all	kit
 docker	docker --version	all	kit
 /opt/fugaro/uv/bin/uv	/opt/fugaro/uv/bin/uv --version	all	kit
-codex	codex --version	all	harness
-gemini	gemini --version	all	harness
-pi	pi --version	all	harness
-qwen	qwen --version	all	harness
-opencode	opencode --version	all	harness
-goose	goose --version	all	harness
-crush	crush --version	all	harness
 graphify	graphify --version	all	harness
-# dsh (DeepSeek Harness, @deepseek-ai/dsh, MIT) is intentionally NOT a row
-# yet (design base-image.md section 6, updated 2026-10-12): the Dockerfile's
-# harness-install loop does not install it either (no npm was available to
-# pin an exact version and regenerate harnesses/package-lock.json). Add
-# "dsh	-	all	harness" (presence-only: its --version credential-safety is
-# unverified) only in the same change that wires the Dockerfile loop and the
-# lockfile -- not before, or the base's own CI smoke fails on tool:dsh.
+# The base carries no coding-agent harness but Claude Code (design
+# base-image.md section 6, image setup skill IS4): the seven that were
+# bundled "so that choosing a harness can later be a configuration decision"
+# -- codex, gemini, pi, qwen, opencode, goose, crush -- are gone, with the
+# install steps that put them there. graphify above stays: it is a
+# Fugaro-side tool on the harness tier, not a coding agent.
+#
+# dsh (DeepSeek Harness, @deepseek-ai/dsh, MIT) was never a row (design
+# base-image.md section 6, updated 2026-10-12): the harness-install loop the
+# base then carried never installed it either. Add "dsh	-	all	harness"
+# (presence-only: its --version credential-safety is unverified) only in the
+# same change that installs it -- not before, or the base's own CI smoke
+# fails on tool:dsh.

@@ -233,6 +233,7 @@ import {
   runRecordChildren,
 } from './screens/run'
 import { refusedState, renderUnavailable } from './screens/degraded'
+import { renderCredentialsSide } from './screens/environment'
 import { READING_STILL_MS, renderReading } from './screens/reading'
 import type { ReadingTab } from './screens/reading'
 import { noCheckoutActionKind, NO_CHECKOUT_SENTENCE, renderNoCheckout } from './screens/nocheckout'
@@ -980,6 +981,15 @@ function refusedScreen(
  *
  * Every string is the main process's, drawn through `sanitizeRefusal`; an
  * answer of any other shape is the console's own "could not read" sentence.
+ *
+ * **A WSL installation gains the credentials line** (T-G5): `renderCredentialsSide`
+ * appends the console's own statement of which side of the boundary the CLI's
+ * credentials are on, and it is called here rather than by a screen because this
+ * line is the only surface that receives the installation's `distro` -- the
+ * field `ActiveInstallation` carries exactly when the installation is a WSL one
+ * (`src/main/installations.ts`, T-D1). Nothing about the three lines above
+ * changes: the statement is added, and the host case draws exactly what it drew
+ * before.
  */
 export function drawInstallation(factory: SkewFactory, reply: unknown): SkewElement {
   const section = factory.create('section')
@@ -1019,6 +1029,7 @@ export function drawInstallation(factory: SkewFactory, reply: unknown): SkewElem
     'installation-version',
     `${typeof version === 'string' ? textOf(version, 'the installation’s version') : 'version not read'} · ${mode}`,
   )
+  renderCredentialsSide(section, factory, reply)
   return section
 }
 

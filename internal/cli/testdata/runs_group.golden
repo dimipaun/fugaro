@@ -1,8 +1,8 @@
 == runs ls --group-by failure_class
-RUN                                             STATUS  STAGE   AGE  COST   PR  BY
-acme-app-dc4d4e59e884fc44/20261109-115900-cccc  failed  verify  1m   $0.50      -
-acme-app-dc4d4e59e884fc44/20261109-115800-bbbb  failed  verify  2m   $1.00      -
-acme-app-dc4d4e59e884fc44/20261109-115700-aaaa  failed  verify  3m   $4.00      -
+RUN   REPO      STATUS  STAGE   AGE  COST   PR  BY
+cccc  acme/app  failed  verify  1m   $0.50      -
+bbbb  acme/app  failed  verify  2m   $1.00      -
+aaaa  acme/app  failed  verify  3m   $4.00      -
 3 runs · ≈ $5.50 billed (model $5.50 + compute $0.00)
 CLASS         RUNS  SHARE  SPEND
 no_commits    2     66.7%  $1.50

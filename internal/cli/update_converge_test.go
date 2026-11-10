@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -136,9 +137,14 @@ func newConvergeRigYAML(t *testing.T, node map[string]any, yaml string) *converg
 	putWorkflowRecordFrom("app", convergePrev, pinnedRef("base", convergePrev))
 	putWorkflowRecordFrom("api", convergePrev, pinnedRef("base", convergePrev))
 
+	// The marketplace an installation one release old has on the machine is the
+	// unpinned one a previous fugaro declared, so the plugin step clears it and
+	// declares it at this release's tag: the clear takes the older install with
+	// it (claude's own record of the removal), and the install that follows the
+	// pinned add is the one that leaves this release's version.
 	f := testutil.NewClaudePluginFake(t, ourMarket, userInstall(convergePrev))
-	f.On(t, "plugins", userInstall(convergeRelease), argsUpdMarket...)
-	f.On(t, "plugins", userInstall(convergeRelease), argsUpdUser...)
+	f.On(t, "plugins", "[]", argsRemove...)
+	f.On(t, "plugins", userInstall(convergeRelease), argsInstall...)
 	useFakeClaude(t, f)
 
 	seedAppSecret(t, r.initRig, "github-app-key")
@@ -220,8 +226,15 @@ func converge(t *testing.T, node map[string]any, stale []string) {
 	// different from the default branch): the job images are built here, from
 	// the repository this run converged, and a skipped cloud step would be a
 	// run refusing to build from a file it did onboard.
-	if n := len(r.builder.specs); n != 2 {
-		t.Errorf("%d job image(s) reached Cloud Build, want the checkout's two workflows: the job images of a repository this run onboarded are refreshed here", n)
+	//
+	// Four builds reach Cloud Build: the repository stage's own first builds
+	// first (the first build of each workflow is billable, and it is confirmed
+	// as every other step of this --yes run is), and then the checkout's cloud
+	// step, which builds the same two because the record it reads is still the
+	// previous release's base -- this rig's, and the whole of what the count
+	// below is.
+	if n := len(r.builder.specs); n != 4 {
+		t.Errorf("%d job image(s) reached Cloud Build, want the checkout's two workflows, built by the repository stage and then by the checkout: the job images of a repository this run onboarded are refreshed here", n)
 	}
 }
 
@@ -280,6 +293,126 @@ func convergeOn(t *testing.T, r *convergeRig, stale []string) string {
 		t.Errorf("the run never names the release it converged to:\n%s", out)
 	}
 	return out
+}
+
+// TestUpdateConvergesPreviousPolicy: an installation whose local project config
+// names a repo-to-image map and the bake switch — the two keys this release
+// adds to the policy node (D1901, D1906) — reaches them with `fugaro update`
+// alone. The node the fixture carries is the previous release's, so neither key
+// is on it, and the run's policy stage is what publishes both: no second
+// command, which is what this test is for (the HARD RULE, F15).
+//
+// The node is read back through internal/projectpolicy's own decoder, so what
+// the assertions are made against is what a run of the project reads — and the
+// keep rule the two keys are published under is the assertion's second half: a
+// file that writes them replaces what the node holds, where a machine whose
+// config is silent about them keeps it (the catalog's rule, D1140).
+func TestUpdateConvergesPreviousPolicy(t *testing.T) {
+	r := newConvergeRig(t, v4Node())
+	// The local config states both, which is all an operator does after this
+	// release: `fugaro image map set` writes the map, and the bake switch is
+	// the setup wizard's answer or `fugaro settings set bake_repos`.
+	r.appendConfig(t, "image_map:\n  acme/app: app\nbake_repos: false\n")
+	// A run selected by its checkout reads the copy registerInstallation made in
+	// the projects directory and not this file (FUGARO_CONFIG is empty here), so
+	// the file is registered again after the append and the run reads what this
+	// test wrote.
+	registerInstallation(t, r.initRig)
+	// The fixture is the release behind, or nothing here has to converge: the
+	// node this installation carries names neither key.
+	if p := convergeNode(t, r); p.ImageMap != nil || p.BakeRepos != nil {
+		t.Fatalf("the fixture's node already carries image_map = %v and bake_repos = %v: it is not an installation whose policy predates both",
+			p.ImageMap, p.BakeRepos)
+	}
+
+	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+
+	p := convergeNode(t, r)
+	want := projectpolicy.ImageMap{"acme/app": "app"}
+	if !reflect.DeepEqual(p.ImageMap, want) {
+		t.Errorf("after one fugaro update, the published node's image_map = %v, want %v: the map the local config names did not reach the node, so a run would fall back to the catalog's default image",
+			p.ImageMap, want)
+	}
+	if p.BakeRepos == nil || *p.BakeRepos {
+		t.Errorf("after one fugaro update, the published node's bake_repos = %v, want a written false: the switch the local config states did not reach the node",
+			p.BakeRepos)
+	}
+	if p.BakesRepos() {
+		t.Error("the published node bakes repos, want it not to: the reader every run uses is what a run would act on")
+	}
+}
+
+// TestEntryServicesOlderReaderConverges: an installation whose local project
+// config declares the services a catalog entry's image provides — the fact this
+// release adds (D1904, IS9) — reaches the published node with `fugaro update`
+// alone, and it reaches it where a reader of the release behind can still read
+// it (F20).
+//
+// Both halves are one test because they are one decision. The node the fixture
+// carries is the previous release's, so no services are on it, and the run's
+// policy stage is what publishes them: no second command, which is the HARD
+// RULE (F15). Where they land is the second half: as the top-level
+// `image_services` key and NOT as a member of the entry — the image_catalog
+// block decodes strictly, so an entry member would make every reader of the
+// release behind refuse the whole policy, and a published node is re-read while
+// runs are in flight (the credentials service reads it per model call). The
+// assertions are made on the raw node, because what an older reader meets is
+// the bytes and not this binary's decoded view of them.
+func TestEntryServicesOlderReaderConverges(t *testing.T) {
+	r := newConvergeRig(t, v4Node())
+	r.appendConfig(t, "image_catalog:\n  entries:\n"+
+		"    - name: app\n      tags: [node, postgres]\n      services: [postgres, redis]\n"+
+		"      source: { kind: image, image: ghcr.io/acme/app:1 }\n")
+	registerInstallation(t, r.initRig)
+	// The fixture is the release behind, or nothing here has to converge.
+	if p := convergeNode(t, r); p.ImageServices != nil {
+		t.Fatalf("the fixture's node already carries image_services = %v: it is not an installation whose policy predates the key", p.ImageServices)
+	}
+
+	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+
+	p := convergeNode(t, r)
+	want := projectpolicy.ImageServices{"app": {"postgres", "redis"}}
+	if !reflect.DeepEqual(p.ImageServices, want) {
+		t.Errorf("after one fugaro update, the published node's image_services = %v, want %v: the services the catalog entry declares did not reach the node, so a launcher that reads the node would start nothing",
+			p.ImageServices, want)
+	}
+	if got := strings.Join(p.ServicesFor("app"), " "); got != "postgres redis" {
+		t.Errorf("the node's own reader answers ServicesFor(app) = %q, want postgres redis", got)
+	}
+
+	// And the entry itself carries no such member: that is what keeps the
+	// bytes readable by a release that does not know the key at all.
+	raw, err := json.Marshal(r.db.Value(projectpolicy.PathShared()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), `"services"`) {
+		t.Errorf("the published node carries an entry member named services, which a reader of the release behind refuses whole:\n%s", raw)
+	}
+	if !strings.Contains(string(raw), `"image_services"`) {
+		t.Errorf("the published node carries no image_services key at all:\n%s", raw)
+	}
+}
+
+// convergeNode is the policy node the fixture's installation carries, decoded
+// by the reader a run of the project uses.
+func convergeNode(t *testing.T, r *convergeRig) *projectpolicy.Policy {
+	t.Helper()
+	v := r.db.Value(projectpolicy.PathShared())
+	if v == nil {
+		t.Fatalf("no policy node at %s", projectpolicy.PathShared())
+	}
+
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, found, err := projectpolicy.Decode(b)
+	if err != nil || !found {
+		t.Fatalf("the node at %s does not decode (found=%v): %v", projectpolicy.PathShared(), found, err)
+	}
+	return p
 }
 
 // TestUpdateConvergesTheOrchestratorRulesFromThePreviousGeneration: an

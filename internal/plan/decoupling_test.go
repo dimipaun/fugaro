@@ -748,6 +748,10 @@ func TestGraphV3CycleStillRefused(t *testing.T) {
 // D1814). A v2 graph prints neither key: both are schema-3 fields and both are
 // omitempty, so an older artifact's read is byte-for-byte what it was.
 func TestTheReadCarriesTheDecouplingRecord(t *testing.T) {
+	// The fixture's contract names a stub, so the read looks for it: the tree it
+	// looks in is one this test owns rather than whatever checkout the test is
+	// run in.
+	checkout(t)
 	g, err := Analyze("graph.json", parseDoc(t, v3Graph), nil)
 	if err != nil {
 		t.Fatalf("Analyze: %v", err)

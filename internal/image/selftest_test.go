@@ -938,6 +938,10 @@ func TestSelftestMiseMissingToolNameIsPrintable(t *testing.T) {
 	}
 }
 
+// The harnesses of the first three paths are gone from the base (image setup
+// skill IS4), and they stay in the list anyway: it is a refusal list, so a
+// derived image that adds one of them back cannot bake its credential in
+// unnoticed.
 func TestSelftestRefusesHarnessCredentialFiles(t *testing.T) {
 	for _, rel := range []string{".codex/auth.json", ".gemini/oauth_creds.json", ".local/share/opencode/auth.json",
 		".config/gcloud/credentials.db", ".config/gcloud/application_default_credentials.json", ".claude/.credentials.json"} {

@@ -218,7 +218,7 @@ func scanRow(ctx context.Context, env *cloudEnv, ro runObjects, in runview.Input
 		// launch.json; a run cancelled while pending has both.
 		cancelled, err := ro.store.CancelRequested(ctx)
 		if err != nil {
-			return scanResult{}, fmt.Errorf("checking %s/%s's cancel marker: %w", in.Slug, in.RunID, err)
+			return scanResult{}, fmt.Errorf("checking %s/%s's cancel marker: %w", in.Slug, task.ShortRun(in.RunID), err)
 		}
 		if cancelled {
 			return scanResult{}, nil

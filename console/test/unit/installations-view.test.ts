@@ -43,15 +43,21 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 import {
+  DISTROS_READING,
+  DISTROS_TITLE,
+  DISTRO_DEFAULT_MARK,
   NO_CHOICE_STATUS,
+  NO_DISTROS,
   NO_INSTALLATION_STATUS,
   ONBOARDING_COPY,
   UNDRAWABLE,
+  isWindowsPlatform,
   mountPicker,
   rowText,
   viewOf,
 } from '../../src/renderer/installations'
 import type {
+  DistrosAnswer,
   InstallationsListRow,
   InstallationView,
   OnboardingState,
@@ -158,7 +164,7 @@ function fakeDocument(): FakeDocument {
 
 /** IDS are the containers the view looks up by name. The first test asserts every
  * one of them is in the document, which is what keeps this fake honest. */
-const IDS = ['picker-status', 'picker-list', 'picker-warnings', 'picker-onboarding'] as const
+const IDS = ['picker-status', 'picker-list', 'picker-warnings', 'picker-onboarding', 'picker-distros'] as const
 
 /** FORM_CONTROLS are the ids and the labels of the add form the owner's ruling
  * removed. They are a value and not a grep in the test below, so the mutation --
@@ -187,6 +193,7 @@ interface Recording {
   readonly reveal: Readonly<Record<string, string>>[]
   readonly calls: string[]
   readonly openExternal: unknown[][]
+  readonly distros: unknown[][]
 }
 
 /** DEFAULT_PATH is the store path the fake answers with, so a refusal's sentence
@@ -200,8 +207,11 @@ function fakeBridge(options: {
   readonly onboard?: OnboardingState
   readonly refusal?: string
   readonly answer?: Partial<
-    Record<'list' | 'choose' | 'checkout' | 'remove' | 'reveal' | 'openExternal', InstallationReply>
+    Record<'list' | 'choose' | 'checkout' | 'remove' | 'reveal' | 'openExternal' | 'distros', InstallationReply>
   >
+  /** distros is what `wslDistributions` answered: `listed` by default, because
+   * the read is about the machine and most cases are not about it. */
+  readonly distros?: DistrosAnswer
 } = {}): { readonly bridge: PickerBridge; readonly recording: Recording } {
   const recording: Recording = {
     choose: [],
@@ -210,6 +220,7 @@ function fakeBridge(options: {
     reveal: [],
     calls: [],
     openExternal: [],
+    distros: [],
   }
   const listAnswer = (): InstallationReply =>
     options.answer?.list ??
@@ -257,6 +268,13 @@ function fakeBridge(options: {
       recording.openExternal.push([...args])
       return options.answer?.openExternal ?? { ok: true, data: { opened: 'https://fugaro.dev/getting-started/' } }
     },
+    // The distro list's read, on the wire like the rest: it takes no arguments,
+    // and what it answers is `wslDistributions`' own value (T-G3).
+    distros: async (...args: readonly unknown[]) => {
+      recording.calls.push('distros')
+      recording.distros.push([...args])
+      return options.answer?.distros ?? { ok: true, data: options.distros ?? { kind: 'listed', distributions: [] } }
+    },
   }
   return { bridge, recording }
 }
@@ -290,13 +308,41 @@ const ONBOARD_CLI: OnboardingState = {
 const ONBOARD_FIRST: OnboardingState = { kind: 'first-installation', command: 'fugaro setup' }
 
 /** mount builds the view over a fresh fake document, and returns the pieces a
- * test needs. Every test starts here. */
-async function mount(options: Parameters<typeof fakeBridge>[0] = {}) {
+ * test needs. Every test starts here.
+ *
+ * `windows` is the host the view is told it is on, and it defaults to the one
+ * this suite is about: almost every case here is a Windows console, which is the
+ * only host that draws a distro section (`isWindowsPlatform`, T-G3). */
+async function mount(options: Parameters<typeof fakeBridge>[0] = {}, windows = true) {
   const document = fakeDocument()
   const { bridge, recording } = fakeBridge(options)
-  const view = mountPicker(document, bridge)
+  const view = mountPicker(document, bridge, windows)
   await view.refresh()
   return { document, recording, view, element: (id: string): FakeElement => document.byId.get(id) as FakeElement }
+}
+
+/** pendingDocument is a document whose distro read has not answered yet, so the
+ * one state a settled fake can never show -- the section's own busy line -- is
+ * observable. `holding` reads what the section carries *now*, and `settle`
+ * answers the read with an empty machine. */
+function pendingDocument(): {
+  readonly document: FakeDocument
+  readonly held: Promise<InstallationReply>
+  holding(): string | null
+  settle(): void
+} {
+  const document = fakeDocument()
+  let release: () => void = () => undefined
+  const held = new Promise<InstallationReply>((resolve) => {
+    release = () => resolve({ ok: true, data: { kind: 'listed', distributions: [] } })
+  })
+  const section = document.byId.get('picker-distros') as FakeElement
+  return {
+    document,
+    held,
+    holding: () => (section.children[1] as FakeElement | undefined)?.textContent ?? null,
+    settle: () => release(),
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -425,7 +471,276 @@ describe('the picker’s document and its view', () => {
     expect(recording.remove).toEqual([{ project: 'fugaro' }])
     // One read to mount, then one after each of the two actions: a view that
     // patched its own list would show an installation the store had refused.
-    expect(recording.calls).toEqual(['list', 'choose', 'list', 'remove', 'list'])
+    // The distro list is read beside each of them -- it is the window's second,
+    // independent read (T-G3) -- so `list` and `distros` alternate, which is the
+    // parallel pair and not a sequence: the two start together.
+    expect(recording.calls).toEqual([
+      'list',
+      'distros',
+      'choose',
+      'list',
+      'distros',
+      'remove',
+      'list',
+      'distros',
+    ])
+  })
+
+  it('draws this machine’s distributions, and marks the one wsl.exe named the default', async () => {
+    // T-G3: the whole of what this window knows about WSL. The names are
+    // `wsl.exe`'s, which is a document's strings, so they are drawn through
+    // `drawn` like every other string this view writes (design section 5.1 rule
+    // 7) -- and the default is the one `--status` named, never the first row
+    // (D2(a)): `Ubuntu` is listed first and is **not** the default here, which is
+    // the arrangement a console that inferred it would draw wrongly.
+    const { element, recording } = await mount({
+      distros: {
+        kind: 'listed',
+        distributions: [
+          { name: 'Ubuntu', isDefault: false },
+          { name: 'Debian', isDefault: true },
+        ],
+      },
+    })
+    // **No arguments**: the row takes none, so the document cannot name a
+    // distribution, a path or a command for this read -- what is drawn is
+    // `wsl.exe`'s answer for this machine and nothing the window asked for.
+    expect(recording.distros).toEqual([[]])
+    const section = element('picker-distros')
+    expect(section.children[0]?.textContent).toBe(DISTROS_TITLE)
+    const items = section.children[1] as FakeElement
+    expect(items.labels()).toEqual(['Ubuntu', `Debian${DISTRO_DEFAULT_MARK}`])
+    // Read-only: the list carries no control, which is what makes it a list
+    // rather than the file dialog the old binary picker offered (F10).
+    for (const item of items.children) expect(item.children).toEqual([])
+  })
+
+  it('draws a distribution’s name through the display sanitizer, as untrusted text', async () => {
+    // A name is `wsl.exe`'s stdout -- a document's string like the CLI's, which is
+    // why it is drawn through `drawn` and **never written raw**: `wsl.exe` lists
+    // whatever a distribution is called, and a name is not a string this console
+    // vouches for. A token-shaped run inside one is redacted, and a name the
+    // sanitizer refuses is the console's own sentence about the class rather than
+    // the string itself.
+    const token = `${inert('gh', 'p_')}${'a'.repeat(36)}`
+    const redacted = await mount({
+      distros: { kind: 'listed', distributions: [{ name: token, isDefault: false }] },
+    })
+    const first = (redacted.element('picker-distros').children[1] as FakeElement).children[0] as FakeElement
+    expect(first.textContent).toBe(TOKEN_PLACEHOLDER)
+    expect(first.textContent ?? '').not.toContain(token)
+
+    // An over-long name is the simplest string the sanitizer refuses.
+    const refused = await mount({
+      distros: { kind: 'listed', distributions: [{ name: 'x'.repeat(70_000), isDefault: false }] },
+    })
+    const long = (refused.element('picker-distros').children[1] as FakeElement).children[0] as FakeElement
+    expect(long.textContent).toBe(UNDRAWABLE)
+  })
+
+  it('draws no distributions and no answer as two different lines', async () => {
+    // An empty machine is an answer and a `wsl.exe` that could not answer is the
+    // absence of one: a window that drew "no distribution is installed" for a
+    // machine where WSL itself is missing would send the operator to install a
+    // distribution into a feature that is not there (T-C4's three outcomes).
+    const empty = await mount({ distros: { kind: 'listed', distributions: [] } })
+    expect(empty.element('picker-distros').children[1]?.textContent).toBe(NO_DISTROS)
+
+    const absent = await mount({
+      distros: { kind: 'absent', reason: 'wsl.exe could not be run: Windows Subsystem for Linux has no installed distributions.' },
+    })
+    expect(absent.element('picker-distros').children[1]?.textContent).toBe(
+      'wsl.exe could not be run: Windows Subsystem for Linux has no installed distributions.',
+    )
+    // The reason is the module's sentence and goes through the door, so a
+    // credential-shaped run inside it is drawn redacted.
+    const refused = await mount({
+      distros: { kind: 'absent', reason: `${inert('gh', 'p_')}${'a'.repeat(36)} could not be read` },
+    })
+    expect(refused.element('picker-distros').children[1]?.textContent).toBe(`${TOKEN_PLACEHOLDER} could not be read`)
+  })
+
+  it('says it is reading the machine’s distributions before the answer lands', async () => {
+    // The section is drawn on mount and the read is a child process, so there is
+    // a moment with no answer: the line is the console's own words, and it is
+    // what keeps the window from showing an empty list for a read in flight --
+    // "no distribution is installed" is an answer, and this is not one yet.
+    expect(DISTROS_READING).not.toBe(NO_DISTROS)
+    const pending = pendingDocument()
+    const { bridge } = fakeBridge({})
+    const done = mountPicker(pending.document, { ...bridge, distros: () => pending.held }, true).refresh()
+    expect(pending.holding()).toBe(DISTROS_READING)
+    pending.settle()
+    await done
+    expect(pending.holding()).toBe(NO_DISTROS)
+  })
+
+  it('draws no distro section and asks for none on a machine that is not Windows', async () => {
+    // `wsl.exe` is a Windows program, so a console on macOS or Linux that asked
+    // would be answered by a spawn failure -- and would draw
+    // "spawn C:\Windows\System32\wsl.exe ENOENT" under a heading that says the
+    // window is showing *this* machine's distributions: a false statement about
+    // the operator's machine, and one that costs a child to make. Off Windows
+    // the section is not drawn at all: no heading, no line, no names.
+    const { element, recording } = await mount(
+      {
+        rows: [row()],
+        distros: { kind: 'listed', distributions: [{ name: 'Ubuntu', isDefault: true }] },
+      },
+      false,
+    )
+
+    // No read was sent, which is the half a drawn-only assertion could not
+    // catch: the bridge is never asked, so nothing can spawn and nothing can
+    // answer a Windows read failure.
+    expect(recording.distros).toEqual([])
+    expect(recording.calls).toEqual(['list'])
+
+    // The container the document declares is left empty, so the heading, the
+    // busy line and the three answers are all absent -- and the rest of the
+    // window is drawn as usual, which is what says the section is gated rather
+    // than the page.
+    expect(element('picker-distros').children).toEqual([])
+    expect(element('picker-list').children).toHaveLength(1)
+  })
+
+  it('gives the controls back when the list has drawn, without waiting for wsl.exe', async () => {
+    // The distro read is two `wsl.exe` queries with a timeout of their own
+    // (`src/main/wsl.ts`), so a cold or hung WSL is up to half a minute of silence
+    // -- and every mutation ends with a re-read of it. A mutation that awaited
+    // that would leave **every control** disabled for the whole of it, after a
+    // click the main process has already applied, which is the opposite of what
+    // the section is for: the list is what `busy` is about, and the distributions
+    // draw themselves when their answer lands (the owner's rule of 2026-10-31).
+    const document = fakeDocument()
+    // The answer a choose leaves behind: the row is still there, so the re-read
+    // draws a control whose state is what this case is about.
+    const chosen: InstallationReply = {
+      ok: true,
+      data: {
+        onboard: { kind: 'none' },
+        rows: [row()],
+        warnings: [],
+        path: DEFAULT_PATH,
+        active: { chosen: true, sentence: 'installation fugaro is chosen' },
+      },
+    }
+    const { bridge, recording } = fakeBridge({ rows: [row()], answer: { choose: chosen } })
+    let answers = true
+    let release: () => void = () => undefined
+    const hung = new Promise<InstallationReply>((resolve) => {
+      release = () => resolve({ ok: true, data: { kind: 'listed', distributions: [] } })
+    })
+    // The first paint's read answers, so the window mounts; every read after it
+    // -- the one the mutation starts -- is the one that never comes back.
+    const view = mountPicker(
+      document,
+      {
+        ...bridge,
+        distros: () => {
+          const answer = bridge.distros()
+          return answers ? answer : hung
+        },
+      },
+      true,
+    )
+    await view.refresh()
+    answers = false
+
+    const list = document.byId.get('picker-list') as FakeElement
+    await (list.children[0] as FakeElement).button('Choose').fire('click')
+
+    // The click landed, the list has drawn, and the controls are enabled again --
+    // while the distro read is still out.
+    const drawn = (document.byId.get('picker-list') as FakeElement).children[0] as FakeElement
+    expect(drawn.button('Choose').disabled).toBe(false)
+    expect(drawn.button('Remove').disabled).toBe(false)
+    expect(recording.calls).toEqual(['list', 'distros', 'choose', 'list', 'distros'])
+
+    // And when it lands the section draws: the read was started, not dropped.
+    release()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect((document.byId.get('picker-distros') as FakeElement).children[1]?.textContent).toBe(NO_DISTROS)
+  })
+
+  it('keeps the latest distro answer when an older read lands after it', async () => {
+    // Two distro reads are out at once as soon as a mutation has run: `reRead`
+    // starts one without awaiting it, so the read before it may still be coming
+    // back. `wsl.exe` is the slowest thing this window asks, so an older answer
+    // landing last is the ordinary order rather than a rare one -- and without a
+    // sequence token the older read wins, drawing "wsl.exe did not answer" over a
+    // machine a newer read has just listed (the owner's rule of 2026-10-31, item
+    // 4: the sequence token covers each section).
+    const document = fakeDocument()
+    const redrawn: InstallationReply = {
+      ok: true,
+      data: {
+        onboard: { kind: 'none' },
+        rows: [row()],
+        warnings: [],
+        path: DEFAULT_PATH,
+        active: { chosen: false, sentence: 'no installation has been chosen' },
+      },
+    }
+    const { bridge } = fakeBridge({ rows: [row()], answer: { remove: redrawn, choose: redrawn } })
+    // Every distro read is held, so the order of the answers is the test's to
+    // choose: the view starts them in this order, and this answers them backwards.
+    const held: ((reply: InstallationReply) => void)[] = []
+    const view = mountPicker(
+      document,
+      { ...bridge, distros: () => new Promise<InstallationReply>((resolve) => held.push(resolve)) },
+      true,
+    )
+    const section = (): FakeElement => document.byId.get('picker-distros') as FakeElement
+    const list = (): FakeElement => document.byId.get('picker-list') as FakeElement
+    const firstDistro = (): string | null =>
+      ((section().children[1] as FakeElement).children[0] as FakeElement).textContent
+
+    // The first paint's read answers, so the window mounts with a machine that
+    // has a distribution.
+    const first = view.refresh()
+    held[0]?.({ ok: true, data: { kind: 'listed', distributions: [{ name: 'Ubuntu', isDefault: true }] } })
+    await first
+    expect(firstDistro()).toBe(`Ubuntu${DISTRO_DEFAULT_MARK}`)
+
+    // Two mutations in a row, each re-reading the list and starting a distro read
+    // of its own: this machine is slow enough that both reads are still out.
+    await (list().children[0] as FakeElement).button('Remove').fire('click')
+    await (list().children[0] as FakeElement).button('Choose').fire('click')
+    expect(held).toHaveLength(3)
+
+    // The newer read answers: this machine has Debian now.
+    held[2]?.({ ok: true, data: { kind: 'listed', distributions: [{ name: 'Debian', isDefault: false }] } })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(firstDistro()).toBe('Debian')
+
+    // The older read answers last, with the refusal a hung `wsl.exe` gets -- and
+    // the section stays the newer read's, rather than the older answer's.
+    held[1]?.({ ok: true, data: { kind: 'absent', reason: 'wsl.exe did not answer' } })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(firstDistro()).toBe('Debian')
+    // Still the list of a machine that answered, and not the refusal paragraph
+    // the older read carried.
+    expect(section().children[1]?.tag).toBe('ul')
+  })
+
+  it('asks the machine’s distributions of a Windows host and of no other', async () => {
+    // `isWindowsPlatform` is the one place the window's platform is asked about,
+    // and these are the spellings it reads: the modern hints first, the
+    // deprecated `navigator.platform` when the modern one is missing **or
+    // blank**, and `false` for a scope with no navigator at all -- which is the
+    // "not Windows" half and never an exception, because a window that could not
+    // tell must draw no section rather than a Windows read failure.
+    expect(isWindowsPlatform({ userAgentData: { platform: 'Windows' } })).toBe(true)
+    expect(isWindowsPlatform({ userAgentData: { platform: '' }, platform: 'Win32' })).toBe(true)
+    expect(isWindowsPlatform({ platform: 'Win32' })).toBe(true)
+    expect(isWindowsPlatform({ userAgentData: { platform: '' }, platform: '' })).toBe(false)
+    expect(isWindowsPlatform({ userAgentData: { platform: 'macOS' }, platform: 'Win32' })).toBe(false)
+    expect(isWindowsPlatform({})).toBe(false)
+    expect(isWindowsPlatform(undefined)).toBe(false)
   })
 
   it('offers only the checkouts the CLI listed, and one button to stop using one', async () => {
@@ -576,7 +891,10 @@ describe('the picker’s document and its view', () => {
       expect(link.attributes.get('type')).toBe('button')
       await link.fire('click')
       expect(recording.openExternal).toEqual([[]])
-      expect(recording.calls).toEqual(['list', 'openExternal'])
+      // The two reads the mount makes, and then nothing else: the link sends
+      // `openExternal` with no arguments and re-reads nothing, which is the
+      // other half of "the address is the main process's".
+      expect(recording.calls).toEqual(['list', 'distros', 'openExternal'])
     }
     // A refusal from the main process is shown as the status line, verbatim.
     const refused = await mount({
@@ -609,7 +927,7 @@ describe('the picker’s document and its view', () => {
     const item = refusedChoose.element('picker-list').children[0] as FakeElement
     await item.button('Choose').fire('click')
     expect(refusedChoose.element('picker-status').textContent).toBe('this console cannot drive the CLI at /usr/local/bin/fugaro')
-    expect(refusedChoose.recording.calls).toEqual(['list', 'choose', 'list'])
+    expect(refusedChoose.recording.calls).toEqual(['list', 'distros', 'choose', 'list', 'distros'])
   })
 
   it('disables every control while a request is in flight, and sends no second choose (review S6)', async () => {
@@ -626,7 +944,7 @@ describe('the picker’s document and its view', () => {
         return original(args)
       },
     }
-    const view = mountPicker(document, held)
+    const view = mountPicker(document, held, true)
     await view.refresh()
     const list = document.byId.get('picker-list') as FakeElement
     const [first, second] = list.children as FakeElement[]

@@ -47,18 +47,9 @@ runner_works() {
 }
 
 # A runner, found rather than assumed. A working one on PATH is the ordinary
-# case; this repository's base image keeps node off PATH on purpose
-# (docs/base-image.md) and holds it under /opt/fugaro, and mise holds the
-# toolchains, so both are tried rather than any one machine's home directory.
-# node@22 is the line package.json's engines declares (>=22 <23).
-if ! runner_works; then
-  for dir in /opt/fugaro/node /opt/node; do
-    if [ -x "$dir/bin/npm" ]; then
-      PATH="$dir/bin:$PATH"
-      break
-    fi
-  done
-fi
+# case; the base carries no node of its own (docs/base-image.md: a project's
+# runtimes come from mise), so mise is tried next rather than any one machine's
+# home directory. node@22 is the line package.json's engines declares (>=22 <23).
 if ! runner_works && command -v mise >/dev/null 2>&1; then
   for tool in node@22 node; do
     dir=$(mise where "$tool" 2>/dev/null || true)
@@ -69,8 +60,9 @@ if ! runner_works && command -v mise >/dev/null 2>&1; then
   done
 fi
 if ! runner_works; then
-  echo "REFUSING: no working node and npm (on PATH, under /opt/fugaro, or through mise);" >&2
-  echo "          the suites below would not run, so their verdicts would be fiction." >&2
+  echo "REFUSING: no working node and npm (on PATH or through mise);" >&2
+  echo "          the base carries none (docs/base-image.md): 'mise use -g node@22' provides" >&2
+  echo "          one -- and without a runner the verdicts below would be fiction." >&2
   exit 2
 fi
 

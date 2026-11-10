@@ -1,11 +1,11 @@
 package images_test
 
 import (
-	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -39,13 +39,10 @@ func TestBaseDockerfileStripsKeysignAndPinsEverything(t *testing.T) {
 			t.Errorf("ARG %s=%s is not a sha256", name, v)
 		}
 	}
-	for _, p := range []string{"MISE", "CLAUDE_CODE", "GH", "YQ", "GCLOUD", "DOCKER_CLI", "CODEX", "OPENCODE", "GOOSE", "CRUSH", "UV"} {
+	for _, p := range []string{"MISE", "CLAUDE_CODE", "GH", "YQ", "GCLOUD", "DOCKER_CLI", "UV"} {
 		if args[p+"_VERSION"] == "" || args[p+"_SHA256_AMD64"] == "" || args[p+"_SHA256_ARM64"] == "" {
 			t.Errorf("%s lacks its version or a per-architecture sha256", p)
 		}
-	}
-	if args["HARNESS_NODE_VERSION"] == "" {
-		t.Error("no HARNESS_NODE_VERSION pin")
 	}
 	for _, must := range []string{
 		"apt-get upgrade -y",
@@ -63,8 +60,8 @@ func TestBaseDockerfileStripsKeysignAndPinsEverything(t *testing.T) {
 			t.Errorf("the Dockerfile lacks %q", must)
 		}
 	}
-	// Every download goes through fetch.sh or install-node: no curl of its
-	// own, and nothing piped into a shell.
+	// Every download goes through fetch.sh: no curl of its own, and nothing
+	// piped into a shell.
 	for _, line := range strings.Split(df, "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), "#") {
 			continue
@@ -90,47 +87,62 @@ func TestBaseDockerfileStripsKeysignAndPinsEverything(t *testing.T) {
 	}
 }
 
-func TestBaseHarnessLockfileMatchesPackageJSON(t *testing.T) {
-	var pkg struct {
-		Dependencies map[string]string `json:"dependencies"`
+// TestBaseHasOnlyClaudeHarness: the base carries Claude Code alone among the
+// coding-agent harnesses (F8, image setup skill IS4). The seven non-Claude
+// harnesses -- codex, gemini, pi, qwen, opencode, goose, crush -- are absent
+// from the presence table, from the Dockerfile's install steps and its ARG
+// pins, and from /etc/fugaro/base.json. They were bundled "so that choosing a
+// harness can later be a configuration decision" (design base-image.md
+// section 6) and nothing in Fugaro ever started one; Claude Code is the one
+// the runner drives, and it stays. graphify is not a coding-agent harness and
+// stays on the harness tier (U5).
+func TestBaseHasOnlyClaudeHarness(t *testing.T) {
+	removed := []string{"codex", "gemini", "pi", "qwen", "opencode", "goose", "crush"}
+	tools, err := image.ParseTools(images.BaseTools)
+	if err != nil {
+		t.Fatal(err)
 	}
-	var lock struct {
-		LockfileVersion int `json:"lockfileVersion"`
-		Packages        map[string]struct {
-			Version      string            `json:"version"`
-			Integrity    string            `json:"integrity"`
-			Dependencies map[string]string `json:"dependencies"`
-		} `json:"packages"`
-	}
-	for path, v := range map[string]any{"base/harnesses/package.json": &pkg, "base/harnesses/package-lock.json": &lock} {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
+	claude := false
+	for _, tool := range tools {
+		if tool.Name == "claude" {
+			claude = true
 		}
-		if err := json.Unmarshal(data, v); err != nil {
-			t.Fatalf("%s: %v", path, err)
-		}
-	}
-	if lock.LockfileVersion < 3 {
-		t.Errorf("lockfileVersion %d, want 3", lock.LockfileVersion)
-	}
-	for name, v := range pkg.Dependencies {
-		if !regexp.MustCompile(`^\d+\.\d+\.\d+$`).MatchString(v) {
-			t.Errorf("%s@%s is not an exact version", name, v)
-		}
-		got := lock.Packages["node_modules/"+name]
-		if got.Version != v || got.Integrity == "" {
-			t.Errorf("the lockfile has %s at %q (integrity %q), package.json says %s", name, got.Version, got.Integrity, v)
+		if slices.Contains(removed, tool.Name) {
+			t.Errorf("tools.tsv still has a %s row (tier %s): the base carries Claude Code alone", tool.Name, tool.Tier)
 		}
 	}
+	if !claude {
+		t.Error("tools.tsv has no claude row: Claude Code is the one harness the base keeps")
+	}
+
 	df := baseDockerfile(t)
-	for _, entry := range []string{"@google/gemini-cli/bundle/gemini.js", "@mariozechner/pi-coding-agent/dist/cli.js", "@qwen-code/qwen-code/cli-entry.js"} {
-		if !strings.Contains(df, entry) {
-			t.Errorf("no wrapper for %s", entry)
+	for _, gone := range []string{
+		// The three npm entry points the harness stage wrapped, and the stage
+		// itself: its lockfile, its install loop and the private Node it ran on.
+		"@google/gemini-cli/bundle/gemini.js",
+		"@mariozechner/pi-coding-agent/dist/cli.js",
+		"@qwen-code/qwen-code/cli-entry.js",
+		"images/base/harnesses/",
+		"npm ci --ignore-scripts",
+		"for h in",
+		// The four binary harnesses and their per-architecture pins.
+		"one codex",
+		"one opencode",
+		"one goose",
+		"one crush",
+	} {
+		if strings.Contains(df, gone) {
+			t.Errorf("the Dockerfile still installs a non-Claude harness: it contains %q", gone)
 		}
-		pkgName := strings.Join(strings.Split(entry, "/")[:2], "/")
-		if _, ok := pkg.Dependencies[pkgName]; !ok {
-			t.Errorf("%s has a wrapper but is not a dependency", pkgName)
+	}
+	for _, arg := range []string{"HARNESS_NODE_VERSION", "CODEX_VERSION", "OPENCODE_VERSION", "GOOSE_VERSION", "CRUSH_VERSION"} {
+		if strings.Contains(df, arg) {
+			t.Errorf("the Dockerfile still pins %s, which only the removed harnesses used", arg)
+		}
+	}
+	for _, field := range []string{"harness_node", "codex", "opencode", "goose", "crush"} {
+		if strings.Contains(df, `"`+field+`"`) {
+			t.Errorf(`/etc/fugaro/base.json still records %q`, field)
 		}
 	}
 }
@@ -244,12 +256,10 @@ func TestFetchRefusesHTTPAndBadSums(t *testing.T) {
 // have carried, so a retry belongs in the script and not in a reviewer's
 // rerun.
 //
-// The retries change nothing about the checks that follow them: fetch.sh
+// The retries change nothing about the check that follows them: fetch.sh
 // still removes a download whose pinned sha256 does not match and exits 1,
-// and install-node.sh still verifies SHASUMS256.txt against its OpenPGP
-// signature and still checks the tarball against SHASUMS256.txt, so a
-// retried download carries no byte the untried one could not, and a failure
-// still fails the build closed.
+// so a retried download carries no byte the untried one could not, and a
+// failure still fails the build closed.
 //
 // The HTTP/1.1 attempt is only ever the second half of an "||" fallback: a
 // first attempt that spoke HTTP/1.1 outright would give up the HTTP/2 the
@@ -347,163 +357,21 @@ func TestFetchFallsBackAndVerifiesTheRetriedBytes(t *testing.T) {
 	}
 }
 
-// aptPackages returns the names in the base Dockerfile's
-// "apt-get install -y --no-install-recommends" list.
-func aptPackages(t *testing.T, df string) map[string]bool {
-	t.Helper()
-	m := regexp.MustCompile(`(?s)apt-get install -y --no-install-recommends \\\n(.*?)\n \&\& rm -rf /var/lib/apt/lists`).FindStringSubmatch(df)
-	if m == nil {
-		t.Fatal("no apt-get install -y --no-install-recommends block in the Dockerfile")
-	}
-	pkgs := map[string]bool{}
-	for _, line := range strings.Split(m[1], "\n") {
-		line = strings.TrimSuffix(strings.TrimSpace(line), `\`)
-		for _, pkg := range strings.Fields(line) {
-			pkgs[pkg] = true
-		}
-	}
-	return pkgs
-}
-
-// install-node.sh runs as root during the base build (design base-image.md
-// section 3) and documents, in its own header comment, the non-essential
-// commands it needs on PATH beyond what every Debian image already has
-// (coreutils, findutils, grep, sed, tar, ...): curl to fetch keys and
-// release files, gpg and dirmngr to build the keyring, gpgv to verify
-// SHASUMS256.txt against it. None of those four ship by default on
-// debian:trixie-slim, and none is a dependency of the others
-// (docker-library/node hit exactly this: gpgv is not pulled in by gnupg).
-// If the base's package list ever drops one, this fails before a build
-// does, which otherwise only happens inside Docker (no daemon here).
-func TestBaseKitProvidesInstallNodeCommands(t *testing.T) {
-	data, err := os.ReadFile("base/install-node.sh")
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := string(data)
-	for _, cmd := range []string{"curl", "gpgv", "gpg", "dirmngr"} {
-		if !strings.Contains(s, cmd) {
-			t.Fatalf("install-node.sh no longer mentions %q; update this test's command list", cmd)
-		}
-	}
-	pkgs := aptPackages(t, baseDockerfile(t))
-	for cmd, pkg := range map[string]string{
-		"curl":    "curl",
-		"gpg":     "gnupg",
-		"dirmngr": "dirmngr",
-		"gpgv":    "gpgv",
-	} {
-		if !pkgs[pkg] {
-			t.Errorf("install-node.sh needs %s (package %s), which the base's apt package list does not install", cmd, pkg)
-		}
-	}
-}
-
-// npm and corepack, once installed into $prefix/bin, are themselves
-// `#!/usr/bin/env node` scripts. install-node.sh runs with the harness
-// Node deliberately off the image's PATH (design base-image.md section 6),
-// so unless the script puts $prefix/bin on its own (never the image's)
-// PATH before calling them, `env` cannot find `node` to run them. This is
-// a static check (no Docker): it would have caught the bug where that PATH
-// line was missing and the harness-Node RUN step failed with "env: 'node':
-// No such file or directory".
-func TestInstallNodePutsPrefixOnPathBeforeNpmAndCorepack(t *testing.T) {
-	data, err := os.ReadFile("base/install-node.sh")
-	if err != nil {
-		t.Fatal(err)
-	}
-	lines := strings.Split(string(data), "\n")
-	pathLine := -1
-	for i, line := range lines {
-		if strings.Contains(line, `PATH="$prefix/bin:$PATH"`) {
-			pathLine = i
-			break
-		}
-	}
-	if pathLine == -1 {
-		t.Fatal(`install-node.sh does not put $prefix/bin on PATH (no PATH="$prefix/bin:$PATH")`)
-	}
-	// Matches an actual invocation ("$prefix/bin/npm" install ...), not a
-	// `[ -x "$prefix/bin/corepack" ]` presence test.
-	callRe := regexp.MustCompile(`"\$prefix/bin/(npm|corepack)"\s+[A-Za-z0-9_-]`)
-	for i, line := range lines {
-		if callRe.MatchString(line) && i < pathLine {
-			t.Errorf("install-node.sh line %d calls %s before putting $prefix/bin on PATH (line %d): %s",
-				i+1, callRe.FindString(line), pathLine+1, strings.TrimSpace(line))
-		}
-	}
-}
-
-// TestDeepSeekHarnessNotHalfWired: dsh (DeepSeek Harness, @deepseek-ai/dsh)
-// must move into tools.tsv, images/base/harnesses/package.json and the
-// Dockerfile's Node-harness install loop together, in one change, or stay
-// out of all three -- never a subset. A first attempt wired the tools.tsv
-// row and the Dockerfile loop entry without a package.json/package-lock.json
-// pin; npm ci then installed nothing for it, and the loop's own "entry
-// point is missing" guard failed the base image's build on every PR
-// (confirmed on PR #302's fugaro-base (amd64/arm64) and docker-tests
-// checks, design base-image.md section 6). This pins that regression
-// against reappearing in either direction: a tools.tsv row with no install
-// step fails the base's own CI smoke; an install-loop entry with no
-// package.json dependency fails npm ci's "entry point is missing" guard.
-func TestDeepSeekHarnessNotHalfWired(t *testing.T) {
-	tools, err := image.ParseTools(images.BaseTools)
-	if err != nil {
-		t.Fatal(err)
-	}
-	inTable := false
-	for _, tool := range tools {
-		if tool.Name == "dsh" {
-			inTable = true
-		}
-	}
-	inLoop := false
-	for _, line := range strings.Split(baseDockerfile(t), "\n") {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "#") {
-			continue // a comment mentioning dsh is not the executable loop
-		}
-		if strings.HasPrefix(trimmed, "for h in") && strings.Contains(trimmed, "dsh:@deepseek-ai/dsh/lib/bin.js") {
-			inLoop = true
-		}
-	}
-	var pkg struct {
-		Dependencies map[string]string `json:"dependencies"`
-	}
-	pkgData, err := os.ReadFile("base/harnesses/package.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := json.Unmarshal(pkgData, &pkg); err != nil {
-		t.Fatal(err)
-	}
-	_, inPackageJSON := pkg.Dependencies["@deepseek-ai/dsh"]
-	if inTable != inLoop || inLoop != inPackageJSON {
-		t.Errorf("dsh is half-wired: tools.tsv row=%v, Dockerfile loop entry=%v, package.json dependency=%v -- all three must move together", inTable, inLoop, inPackageJSON)
-	}
-}
-
-// TestDeepSeekHarnessBakesNoCredential: today's not-yet-bundled DeepSeek
-// Harness notes (tools.tsv, the Dockerfile, package.json/package-lock.json)
-// must not bake a DeepSeek API key, token or auth file into the image or
-// its harness package files (design base-image.md section 9: no secret in
-// any layer) -- and the same must hold once it actually is wired in.
+// TestDeepSeekHarnessBakesNoCredential: the DeepSeek Harness is not bundled
+// (design base-image.md section 6, updated 2026-10-12), and neither its row
+// nor a future install of it may bake a DeepSeek API key, token or auth file
+// into the image (design base-image.md section 9: no secret in any layer).
+// The three files this compared when dsh was a candidate for the Node
+// harness stage are one: the base carries no non-Claude harness and no
+// harness package files (image setup skill IS4).
 func TestDeepSeekHarnessBakesNoCredential(t *testing.T) {
 	df := baseDockerfile(t)
 	tsv, err := os.ReadFile("base/tools.tsv")
 	if err != nil {
 		t.Fatal(err)
 	}
-	pkgJSON, err := os.ReadFile("base/harnesses/package.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	pkgLock, err := os.ReadFile("base/harnesses/package-lock.json")
-	if err != nil {
-		t.Fatal(err)
-	}
 	for _, needle := range []string{"DEEPSEEK_API_KEY", "DEEPSEEK_TOKEN", "deepseek.com/anthropic", ".dsh/auth", ".dsh/credentials"} {
-		for name, content := range map[string]string{"Dockerfile": df, "tools.tsv": string(tsv), "harnesses/package.json": string(pkgJSON), "harnesses/package-lock.json": string(pkgLock)} {
+		for name, content := range map[string]string{"Dockerfile": df, "tools.tsv": string(tsv)} {
 			if strings.Contains(content, needle) {
 				t.Errorf("%s contains %q, which looks like a baked DeepSeek credential or endpoint", name, needle)
 			}
@@ -762,21 +630,5 @@ func TestGraphifyToolsRow(t *testing.T) {
 	}
 	if len(found.Argv) == 0 || found.Argv[0] != "graphify" {
 		t.Errorf("graphify's presence check argv is %v, want it to start with graphify", found.Argv)
-	}
-}
-
-func TestInstallNodeHonoursThePrefix(t *testing.T) {
-	data, err := os.ReadFile("base/install-node.sh")
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := string(data)
-	if !strings.Contains(s, `prefix=${NODE_PREFIX:-/opt/node}`) {
-		t.Error("install-node has no NODE_PREFIX")
-	}
-	for _, line := range strings.Split(s, "\n") {
-		if strings.Contains(line, "/opt/node") && !strings.Contains(line, "NODE_PREFIX") && !strings.HasPrefix(strings.TrimSpace(line), "#") {
-			t.Errorf("a hard-coded /opt/node: %s", line)
-		}
 	}
 }

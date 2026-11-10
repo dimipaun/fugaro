@@ -4,17 +4,20 @@ package cli
 //
 // docs/diagnose-agent/ holds the owner's spec verbatim, a reconciliation with
 // decisions D1600-D1614 answered (D1615-D1619 reserved and unused) and a plan
-// whose Checks 410-412 are taken. Five tasks of that plan are written and five
-// are not, and nothing in the folder is a command or a flag yet, so these tests
-// pin only what rots silently: a decision row with an empty answer cell, a row
-// in the reserved tail, a check number the plan no longer holds, a current
-// status line that stops naming the parts that are built, and a first-written
-// status line dropped rather than kept.
+// whose Checks 410-412 are taken. Six tasks of that plan are written and
+// four are not, and nothing in the folder is a command or a flag yet, so these tests pin
+// only what rots silently: a decision row with an empty answer cell, a row in
+// the reserved tail, a check number the plan no longer holds, a current status
+// line that stops naming the part that is built, and a first-written status line
+// dropped rather than kept.
 //
 // Mutation (run and restored): empty the answer cell of D1605 -> the decisions
 // test fails naming D1605; add a D1615 row -> fails naming D1615; remove
-// "Check 411" from the plan -> the checks test fails; take "T-DG5" or "T-DG7"
-// out of the current status line -> the status test fails naming it.
+// "Check 411" from the plan -> the checks test fails; take "T-DG5" out of the
+// current status line -> the status test fails naming it, and the same for
+// "T-DG3", "T-DG4" and "T-DG7" -- every task named here is one each current status line
+// has to keep naming while its files are in the tree, and each of the last
+// three was dropped by a later line before this guard named it.
 
 import (
 	"os"
@@ -95,20 +98,20 @@ func dgaStatusLine(t *testing.T, f string) string {
 }
 
 // TestDocsDiagnoseAgentStatusAndChecks: the folder states its own state in one
-// current line per document, and that line has to move with the tree. T-DG5's
-// files landed while both said nothing was implemented, so the current line
-// names the tasks that are written and the first-written line is kept below
-// it, still reading as what was true then; T-DG7's landed the same way, which is
-// why the line is checked for both. The clauses checked here are the three a
-// reader decides on: what is built, that the rest of the plan is not approved,
-// and that the folder does not still claim the task its Files line holds is
-// unwritten.
+// current line per document, and that line has to move with the tree. T-DG3's,
+// T-DG4's and T-DG5's files landed while both said nothing was implemented, so
+// the current line names the tasks that are written and the first-written line
+// is kept below it, still reading as what was true then. The clauses checked
+// here are the two a reader decides on: what is built, and that the rest of the
+// plan is not approved. Every task named in the list below has its files in the
+// tree, so a line that stops naming one reads as if that task were not built —
+// which is what happened to T-DG3 and T-DG4 when a later line dropped them.
 func TestDocsDiagnoseAgentStatusAndChecks(t *testing.T) {
 	for _, f := range []string{"README.md", "implementation-plan.md"} {
 		line := dgaStatusLine(t, f)
-		for _, want := range []string{"T-DG5", "T-DG7", "no other task is approved"} {
+		for _, want := range []string{"T-DG3", "T-DG4", "T-DG5", "T-DG7", "no other task is approved"} {
 			if !strings.Contains(line, want) {
-				t.Errorf("%s%s: the current status line does not say %q, so the folder reads as if T-DG5's or T-DG7's files were not in the tree, or as if the tasks after them were approved: %s", dgaDir, f, want, line)
+				t.Errorf("%s%s: the current status line does not say %q, so the folder reads as if that task's files were not in the tree, or as if the rest of the plan were approved: %s", dgaDir, f, want, line)
 			}
 		}
 		if strings.Contains(line, "nothing is implemented") {

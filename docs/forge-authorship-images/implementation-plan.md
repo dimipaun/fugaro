@@ -2,8 +2,7 @@
 
 ## Status
 
-**Plan only. Nothing is implemented. No task is approved: each task needs the owner's own explicit
-go, and answering a decision is not approving a task.** It builds [spec.md](spec.md) **as amended by
+**Status as of 2026-11-10: in progress, about 9/25 merged; see [docs/status.md](../status.md) for the current table.** It builds [spec.md](spec.md) **as amended by
 [reconciliation.md](reconciliation.md)**, which wins where they differ.
 
 **The owner answered D600–D649 on 2026-10-29: every answer is the recommendation except D618**

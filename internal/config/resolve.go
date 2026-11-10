@@ -115,6 +115,7 @@ func Resolve(data []byte, l *ProjectLayer) (*Config, *Resolution, []Problem) {
 		repo.RepoSecuritySet = setsSecurity(tree)
 		repo.RepoLevelsNoneModelSet = setsLevelsNoneModel(tree)
 		repo.RepoPlanningSet = setsPlanning(tree)
+		repo.RepoStopFractionSet = setsStopFraction(tree)
 		res := &Resolution{Sources: map[string]string{}}
 		markLeaves(tree, "", SourceRepo, res.Sources)
 		res.ConfigSHA256 = repo.SHA256()
@@ -164,6 +165,7 @@ func Resolve(data []byte, l *ProjectLayer) (*Config, *Resolution, []Problem) {
 	c.RepoSecuritySet = setsSecurity(tree)
 	c.RepoLevelsNoneModelSet = setsLevelsNoneModel(tree)
 	c.RepoPlanningSet = setsPlanning(tree)
+	c.RepoStopFractionSet = setsStopFraction(tree)
 	applyDefaults(&c)
 	if ps := Validate(&c); len(ps) > 0 {
 		return nil, nil, annotate(ps, res, profileOf)
@@ -460,6 +462,23 @@ func setsGitAuthor(tree map[string]any) bool {
 		return false
 	}
 	_, ok = git["author"]
+	return ok
+}
+
+// setsStopFraction is setsGitAuthor for the agent.review_stop_fraction key:
+// whether the repository's text writes it, at any value. It reads the tree and
+// not the resolved Agent.ReviewStopFraction for the same reason — the key
+// written 0 resolves to the default the key's absence resolves to — and the
+// gate needs the key, because a runner older than stopFractionSince
+// (internal/cli) decodes the file with KnownFields and refuses
+// agent.review_stop_fraction whatever it says. Its answer becomes
+// Config.RepoStopFractionSet.
+func setsStopFraction(tree map[string]any) bool {
+	agent, ok := tree["agent"].(map[string]any)
+	if !ok {
+		return false
+	}
+	_, ok = agent["review_stop_fraction"]
 	return ok
 }
 

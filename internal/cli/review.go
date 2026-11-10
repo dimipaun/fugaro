@@ -338,11 +338,11 @@ func checkReviewHeadIsStill(ctx context.Context, env *cloudEnv, repo, slug strin
 	for _, r := range rows {
 		switch r.Status {
 		case runview.StatusError:
-			return userErr("run %s on PR #%d can't be read (%s), so whether the head is still moving is unknown; see fugaro diagnose %s", r.Run, pr, oneLine(r.Reason), r.Run)
+			return userErr("run %s on PR #%d can't be read (%s), so whether the head is still moving is unknown; see fugaro diagnose %s", task.ShortRun(oneLine(r.Run)), pr, oneLine(r.Reason), task.ShortRun(oneLine(r.Run)))
 		case runview.StatusLaunching, runview.StatusPending, string(runstore.StatusRunning):
-			return userErr("run %s on PR #%d is still %s; a review reads a head that is not moving, so wait for it to finish (fugaro runs ls --pr %d --repo %s) or cancel it", r.Run, pr, r.Status, pr, repo)
+			return userErr("run %s on PR #%d is still %s; a review reads a head that is not moving, so wait for it to finish (fugaro runs ls --pr %d --repo %s) or cancel it", task.ShortRun(oneLine(r.Run)), pr, r.Status, pr, repo)
 		case runview.StatusUnlaunched:
-			fmt.Fprintf(warn, "warning: run %s on PR #%d never launched; leaving it out\n", oneLine(r.Run), pr)
+			fmt.Fprintf(warn, "warning: run %s on PR #%d never launched; leaving it out\n", task.ShortRun(oneLine(r.Run)), pr)
 		}
 	}
 	return nil

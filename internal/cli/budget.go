@@ -901,6 +901,19 @@ func repoScope(r showRepo) string {
 	return r.Slug + "'s"
 }
 
+// runningEndings is the ending each of a document's running entries is shown
+// by, resolved over the whole document: the blocks under the repositories are
+// one screen's listing, so an entry is named by the shortest ending that tells
+// it from every other entry on that screen, whichever repository that entry
+// belongs to (spec.md §3, F15, task.DisplayRuns).
+func runningEndings(runs []showRun) map[task.Ref]string {
+	refs := make([]task.Ref, 0, len(runs))
+	for _, e := range runs {
+		refs = append(refs, task.Ref{Slug: e.Slug, RunID: e.Run})
+	}
+	return task.DisplayRuns(refs)
+}
+
 func printShow(w io.Writer, d *budgetShowDoc, showCompute bool) {
 	mode := d.Mode
 	if mode == "" {
@@ -920,6 +933,13 @@ func printShow(w io.Writer, d *budgetShowDoc, showCompute bool) {
 	fmt.Fprintf(w, "  today: counted %s, spent %s, notional %s (subscription, not billed)\n", usdVal(g.CountedUSD), usdVal(g.SpentUSD), usdVal(g.NotionalUSD))
 	fmt.Fprintf(w, "  headroom: %s\n  kill switch: %s\n", usdText(g.HeadroomUSD), killText(g.Kill))
 	fmt.Fprintf(w, "defaults for repositories without a cap of their own: daily %s, per-run %s\n", usdText(d.Defaults.RepoDailyCapUSD), usdText(d.Defaults.RepoPerRunCapUSD))
+	// The running blocks are one screen's listing of runs, so their endings are
+	// resolved over every entry the screen prints and not block by block: two
+	// repositories whose runs share their last four characters are told apart
+	// here exactly as `runs ls --all` tells them apart, and the pair that
+	// collides is the pair the reader has in front of them (spec.md §3, F15).
+	// --json's own rows keep the full ID (D1705).
+	endings := runningEndings(d.Running)
 	for _, r := range d.Repos {
 		name := r.Slug
 		if r.Repo != "" {
@@ -960,7 +980,7 @@ func printShow(w io.Writer, d *budgetShowDoc, showCompute bool) {
 			if e.Stale {
 				state += " (no heartbeat)"
 			}
-			fmt.Fprintf(tw, "    %s\t%s\t%s\t%s\t%s\n", oneLine(clipRunes(e.Run, 200)), oneLine(clipRunes(e.Workflow, 200)), state, usdVal(e.SpentUSD), oneLine(clipRunes(e.Title, 200)))
+			fmt.Fprintf(tw, "    %s\t%s\t%s\t%s\t%s\n", oneLine(endings[task.Ref{Slug: e.Slug, RunID: e.Run}]), oneLine(clipRunes(e.Workflow, 200)), state, usdVal(e.SpentUSD), oneLine(clipRunes(e.Title, 200)))
 		}
 		_ = tw.Flush()
 	}
@@ -1548,31 +1568,37 @@ func runBudgetSet(cmd *cobra.Command, o *budgetSetOptions) error {
 // ---------------------------------------------------------- kill, resume
 
 type budgetKillOptions struct {
-	cloud  cloudOptions
-	all    bool
-	repo   string
-	reason string
-	yes    bool
+	cloud     cloudOptions
+	all       bool
+	repo      string
+	workspace string
+	reason    string
+	yes       bool
 }
 
 func newBudgetKillCmd(kill bool) *cobra.Command {
 	var o budgetKillOptions
-	use, short, long := "resume (--all | --repo [owner/name]) [--reason TEXT]", "Clear a kill switch (budget admins)",
-		"Clear the project's kill switch (--all) or one repository's (--repo [owner/name]),\n"+
-			"recording who and when. --repo with no value means the repository this checkout\n"+
-			"belongs to, as it does for set. Runs start spending again, so nothing is\n"+
-			"asked for it and a coding agent's session is refused, exactly as a raise is\n"+
-			"(D1542)."
+	use, short, long := "resume (--all | --repo [owner/name] | --workspace <name>) [--reason TEXT]", "Clear a kill switch (budget admins)",
+		"Clear the project's kill switch (--all), one repository's (--repo [owner/name])\n"+
+			"or one workspace's (--workspace <name>), recording who and when. --repo with\n"+
+			"no value means the repository this checkout belongs to, as it does for set.\n"+
+			"Runs start spending again, so nothing is asked for it and a coding agent's\n"+
+			"session is refused, exactly as a raise is (D1542). A workspace is named by\n"+
+			"its own name alone and takes neither of the other scopes."
 	if kill {
-		use, short, long = "kill (--all | --repo [owner/name]) [--reason TEXT]", "Halt every run of the project or of one repository (budget admins)",
-			"Set the project's kill switch (--all) or one repository's (--repo [owner/name]),\n"+
-				"recording who, when and why. --repo with no value means the repository this\n"+
-				"checkout belongs to, as it does for set. show takes owner/name (its empty\n"+
-				"--repo means no repository filter, not a checkout), and preview already\n"+
-				"means this checkout's repository without the flag.\n"+
+		use, short, long = "kill (--all | --repo [owner/name] | --workspace <name>) [--reason TEXT]", "Halt every run of the project, of one repository or of one workspace (budget admins)",
+			"Set the project's kill switch (--all), one repository's (--repo [owner/name]) or\n"+
+				"one workspace's (--workspace <name>), recording who, when and why. --repo with\n"+
+				"no value means the repository this checkout belongs to, as it does for set. show\n"+
+				"takes owner/name (its empty --repo means no repository filter, not a checkout),\n"+
+				"and preview already means this checkout's repository without the flag.\n"+
 				"Runs in flight halt within seconds (a run in its last stage finishes pushing\n"+
 				"its work first) and new runs refuse. Nothing is asked for it: halting runs\n"+
-				"spends nothing, and only a resume is a raise."
+				"spends nothing, and only a resume is a raise. --workspace sets the stop flag\n"+
+				"of the workspace's own service, in the workspace's own database, so every\n"+
+				"member's runs that reach it with its shared credentials halt, and nothing of\n"+
+				"a member's own — its credentials, its caps, its sign-in, its runs that never\n"+
+				"reach the workspace — is touched."
 	}
 	cmd := &cobra.Command{
 		Use: use, Short: short, Long: long, Args: cobra.NoArgs,
@@ -1581,6 +1607,7 @@ func newBudgetKillCmd(kill bool) *cobra.Command {
 	f := cmd.Flags()
 	f.BoolVar(&o.all, "all", false, "the whole project")
 	f.StringVar(&o.repo, "repo", "", "one repository, given as owner/name or a path inside its checkout (no value: this checkout's origin)")
+	f.StringVar(&o.workspace, "workspace", "", "one workspace, named as its own project is; its own service's stop flag, in the workspace's own database, so the project it names has to declare one (workspace_members)")
 	f.StringVar(&o.reason, "reason", "", "why (recorded, shown by budget show and watch)")
 	f.BoolVar(&o.yes, "yes", false, "accepted and ignored: this command asks nothing")
 	addCloudFlags(cmd, &o.cloud)
@@ -1601,18 +1628,21 @@ func runBudgetKill(cmd *cobra.Command, o *budgetKillOptions, kill bool) error {
 	ctx := cmd.Context()
 	// The flag's presence names the scope, not the string it carries: a bare
 	// --repo is a scope with an empty value (see parsePlan).
-	if o.all == cmd.Flags().Changed("repo") {
-		return userErr("name one scope: --all or --repo [owner/name]")
+	scopes := 0
+	for _, named := range []bool{o.all, cmd.Flags().Changed("repo"), cmd.Flags().Changed("workspace")} {
+		if named {
+			scopes++
+		}
+	}
+	if scopes != 1 {
+		return userErr("name one scope: --all, --repo [owner/name] or --workspace <name>")
 	}
 	if utf8.RuneCountInString(o.reason) > maxKillReason {
 		return userErr("--reason is %d characters; keep it to %d", utf8.RuneCountInString(o.reason), maxKillReason)
 	}
-	// The database is opened first, and the run's account follows it: the
-	// scope, the reason, the credential leak refuseHTTP2Debug refuses and the
-	// project selectProject refuses are all answered from the command line,
-	// the environment or this installation's config, reaching no API, so a
-	// refused kill or resume files no log — not even an empty one, which would
-	// be one of the fifty this name keeps (CL3's pruneLogs).
+	if cmd.Flags().Changed("workspace") {
+		return runBudgetKillWorkspace(cmd, o, kill)
+	}
 	lc, db, err := openBudget(ctx, o.cloud)
 	if err != nil {
 		return err
@@ -1665,13 +1695,7 @@ func runBudgetKill(cmd *cobra.Command, o *budgetKillOptions, kill bool) error {
 		Conflict: func() { fmt.Fprintln(sayThrough(rep, out), "changed by someone else meanwhile; reading it again") },
 		Now:      budgetNow,
 	})
-	var ke *budget.KillError
-	switch {
-	case errors.As(err, &ke):
-		return dbErr(lc, err, ke.Write)
-	case errors.Is(err, budget.ErrKillContention):
-		return remote(fmt.Errorf("the kill switch kept changing under the write (%d attempts); run it again", setAttempts))
-	case err != nil:
+	if err := budgetKillWriteErr(lc, err); err != nil {
 		return err
 	}
 	cur := res.Previous

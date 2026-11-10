@@ -1063,3 +1063,316 @@ func TestCatalogRecordCarriesTheContextCommitAndHash(t *testing.T) {
 		}
 	}
 }
+
+// catalogPrebuiltSpec is one smoke-only run of the entry "agent", whose
+// source is a prebuilt image (F10/IS11): the request
+// internal/cli/image_build_catalog.go submits for such an entry. It names the
+// reference the entry's jobs start on and nothing a build has.
+func catalogPrebuiltSpec(t *testing.T) CatalogBuildSpec {
+	t.Helper()
+	slug := catalogSlug(t)
+	return CatalogBuildSpec{
+		Entry: "agent", Slug: slug,
+		Prebuilt:       "docker.io/library/node:22",
+		ServiceAccount: BuildServiceAccountID(slug) + "@proj-1234.iam.gserviceaccount.com",
+		MachineType:    "E2_HIGHCPU_8",
+		Bucket:         "gs://fugaro-runs-proj-1234",
+		Selftest:       []byte(`{"tools_only":true,"tools":"critical"}`),
+	}
+}
+
+// TestPrebuiltEntrySmoked: an entry whose source is a prebuilt image is
+// somebody else's image, used as it is, so there is nothing to build and no
+// Dockerfile, base or credential to read. Its whole Cloud Build run is the
+// smoke of the reference it names and the record of what that smoke resolved
+// (F10): before this, image_build_catalog.go passed such an entry over and
+// nothing ever asserted that the image a job starts on meets the runtime
+// contract, so a job — not a build — was the first thing to find out.
+//
+// The step the run is made of is run here, so this is a statement about what
+// the smoke does and not about what its script says.
+func TestPrebuiltEntrySmoked(t *testing.T) {
+	spec := catalogPrebuiltSpec(t)
+	req, err := CatalogBuildRequest("proj-1234", spec)
+	if err != nil {
+		t.Fatalf("a prebuilt entry's request: %v", err)
+	}
+	// Nothing of a build is in the run: no step clones, builds, pushes or
+	// tags, which is what the smoke and the record alone say.
+	if got, want := stepIDs(req), []string{catalogSmokeStepID, catalogRecordStepID}; !slices.Equal(got, want) {
+		t.Fatalf("the prebuilt run's steps are %v, want %v", got, want)
+	}
+	// The substitutions are only the ones those two steps reference: Cloud
+	// Build refuses a substitution the request does not reference.
+	want := map[string]string{
+		"_IMAGE":        spec.Prebuilt,
+		"_SELFTEST_B64": base64.StdEncoding.EncodeToString(spec.Selftest),
+		"_CATALOG_TAG":  "",
+	}
+	if len(req.Substitutions) != len(want) {
+		t.Errorf("the prebuilt run's substitutions are %v, want %v", req.Substitutions, want)
+	}
+	for k, v := range want {
+		if req.Substitutions[k] != v {
+			t.Errorf("the prebuilt run's %s is %q, want %q", k, req.Substitutions[k], v)
+		}
+	}
+	// It mounts no credential: no step of it reads a repository.
+	if req.AvailableSecrets != nil && len(req.AvailableSecrets.SecretManager) != 0 {
+		t.Errorf("the prebuilt run carries availableSecrets: %v", req.AvailableSecrets)
+	}
+	if got, want := req.ServiceAccount, "projects/proj-1234/serviceAccounts/"+spec.ServiceAccount; got != want {
+		t.Errorf("the prebuilt run's service account is %s, want %s", got, want)
+	}
+	if req.Timeout != "3600s" || req.QueueTtl != "3600s" {
+		t.Errorf("the prebuilt run's bounds are %s/%s, want 3600s/3600s", req.Timeout, req.QueueTtl)
+	}
+	if req.Options == nil || req.Options.MachineType != spec.MachineType || req.Options.Logging != "CLOUD_LOGGING_ONLY" {
+		t.Errorf("the prebuilt run's options are %+v, want %s and CLOUD_LOGGING_ONLY", req.Options, spec.MachineType)
+	}
+
+	smoke, record := req.Steps[0], req.Steps[1]
+	if smoke.Name != "gcr.io/cloud-builders/docker" || smoke.Entrypoint != "bash" {
+		t.Errorf("the smoke step is %s/%s, want the docker builder's bash", smoke.Name, smoke.Entrypoint)
+	}
+	if script := smoke.Args[len(smoke.Args)-1]; strings.Contains(script, "docker push") || strings.Contains(script, "candidate-") || strings.Contains(script, ":latest") {
+		t.Errorf("the smoke step pushes something: %q", script)
+	}
+	// The record step is the one a build's run writes, with the entry's own
+	// reference and the marker that tells the two apart: the same record, read
+	// by the same check and the same doctor, so what was smoked under a
+	// reference is readable afterwards.
+	if !slices.Contains(record.Env, "IMAGE="+spec.Prebuilt) {
+		t.Errorf("the record step's env does not carry the entry's reference: %v", record.Env)
+	}
+	if !slices.Contains(record.Env, "PREBUILT=1") {
+		t.Errorf("the record step's env carries no PREBUILT marker: %v", record.Env)
+	}
+	buildReq, err := CatalogBuildRequest("proj-1234", catalogBuildSpec(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, st := range buildReq.Steps {
+		if st.Id == catalogRecordStepID && slices.Contains(st.Env, "PREBUILT=1") {
+			t.Errorf("a build's record step carries the prebuilt marker: %v", st.Env)
+		}
+	}
+
+	t.Run("a reference a job can start on is smoked and recorded", func(t *testing.T) {
+		got, err := runCatalogSmoke(t, smoke, req.Substitutions, map[string]string{
+			"FAKE_DOCKER_INSPECT": spec.Prebuilt + "@" + catalogSmokeDigest,
+			"FAKE_DOCKER_REPORT":  `{"passed":true,"tools":[{"name":"fugaro","present":true}]}`,
+		})
+		if err != nil {
+			t.Fatalf("the smoke failed although the image passes it: %v\n%s", err, got.out)
+		}
+		// What the step smoked is bytes, not the tag: the selftest runs on the
+		// digest the reference resolved to, and that digest is what the record
+		// carries.
+		if call := got.call("run"); !strings.Contains(call, spec.Prebuilt+"@"+catalogSmokeDigest) {
+			t.Errorf("the selftest ran on %q, want the digest-pinned reference", call)
+		}
+		if call := got.call("run"); !strings.Contains(call, "--network none") {
+			t.Errorf("the selftest ran without --network none: %q", call)
+		}
+		if got.stdin != string(spec.Selftest) {
+			t.Errorf("the selftest read %q on stdin, want the spec's own bytes %q", got.stdin, spec.Selftest)
+		}
+		if got.digest != catalogSmokeDigest {
+			t.Errorf("the step wrote the digest %q to BUILDER_OUTPUT, want %q", got.digest, catalogSmokeDigest)
+		}
+		if !strings.Contains(got.out, "smoked "+spec.Prebuilt+"@"+catalogSmokeDigest) {
+			t.Errorf("the step did not report the reference it smoked:\n%s", got.out)
+		}
+	})
+
+	t.Run("an image with no digest fails the smoke", func(t *testing.T) {
+		// A tag the registry serves nothing pinned for: what a job would start
+		// on is not the bytes that were smoked, so this is not a smoke.
+		got, err := runCatalogSmoke(t, smoke, req.Substitutions, map[string]string{
+			"FAKE_DOCKER_INSPECT":      spec.Prebuilt,
+			"FAKE_DOCKER_INSPECT_EXIT": "1",
+			"FAKE_DOCKER_REPORT":       `{"passed":true}`,
+		})
+		if err == nil {
+			t.Fatalf("the smoke succeeded although the image carries no digest:\n%s", got.out)
+		}
+		if !strings.Contains(got.out, "carries no digest") {
+			t.Errorf("the failure is not the missing digest:\n%s", got.out)
+		}
+	})
+
+	t.Run("an inspect that answers no digest fails the smoke", func(t *testing.T) {
+		// The guard under the inspect: docker answered, and what it printed is
+		// not a digest-pinned reference. The image is then not pinned to the
+		// bytes that were pulled — the smoke would be of whatever the tag
+		// resolved to when the selftest runs — so the step refuses it here,
+		// which is the step that knows what it smoked; the record step's own
+		// sha256 guard would otherwise refuse the run later, with a message
+		// about the record and not about the image.
+		got, err := runCatalogSmoke(t, smoke, req.Substitutions, map[string]string{
+			"FAKE_DOCKER_INSPECT": spec.Prebuilt,
+			"FAKE_DOCKER_REPORT":  `{"passed":true}`,
+		})
+		if err == nil {
+			t.Fatalf("the smoke succeeded although inspect answered no digest:\n%s", got.out)
+		}
+		if !strings.Contains(got.out, "carries no digest") {
+			t.Errorf("the failure is not the missing digest:\n%s", got.out)
+		}
+		// The guard above it, whose message says the registry serves the
+		// reference by tag: this run's inspect succeeded and printed a value
+		// the step would not pin a smoke to.
+		if strings.Contains(got.out, "the registry serves it by tag") {
+			t.Errorf("the failure is the inspect's own, not the value it answered:\n%s", got.out)
+		}
+		if call := got.call("run"); call != "" {
+			t.Errorf("the step smoked a reference it could not pin: %q", call)
+		}
+	})
+
+	t.Run("a report that is not a pass fails the smoke", func(t *testing.T) {
+		got, err := runCatalogSmoke(t, smoke, req.Substitutions, map[string]string{
+			"FAKE_DOCKER_INSPECT": spec.Prebuilt + "@" + catalogSmokeDigest,
+			"FAKE_DOCKER_REPORT":  `{"passed":false,"tools":[{"name":"claude","present":false}]}`,
+		})
+		if err == nil {
+			t.Fatalf("the smoke succeeded although the image failed it:\n%s", got.out)
+		}
+		// The report is printed before the step fails, so the build's log says
+		// which row of the contract the image missed.
+		if !strings.Contains(got.out, `"name":"claude"`) {
+			t.Errorf("the failure does not carry the report:\n%s", got.out)
+		}
+	})
+
+	t.Run("a selftest that cannot run fails the smoke", func(t *testing.T) {
+		got, err := runCatalogSmoke(t, smoke, req.Substitutions, map[string]string{
+			"FAKE_DOCKER_INSPECT":  spec.Prebuilt + "@" + catalogSmokeDigest,
+			"FAKE_DOCKER_REPORT":   `{"passed":false}`,
+			"FAKE_DOCKER_RUN_EXIT": "1",
+		})
+		if err == nil {
+			t.Fatalf("the smoke succeeded although the selftest did not run:\n%s", got.out)
+		}
+		if !strings.Contains(got.out, "failed its smoke test") {
+			t.Errorf("the failure is not the selftest's:\n%s", got.out)
+		}
+	})
+
+	// What a build is, a smoke-only run refuses: a request that named any of
+	// it would be a build whose steps ignore it.
+	for name, mod := range map[string]func(*CatalogBuildSpec){
+		"a base": func(s *CatalogBuildSpec) {
+			s.Base = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-abc"
+		},
+		"a registry image":           func(s *CatalogBuildSpec) { s.Image = "us-east5-docker.pkg.dev/proj-1234/fugaro/agent:latest" },
+		"a context":                  func(s *CatalogBuildSpec) { s.Context = "." },
+		"a definition":               func(s *CatalogBuildSpec) { s.Definition = CatalogDefinition{SourceCommit: strings.Repeat("a", 40)} },
+		"workflow secrets":           func(s *CatalogBuildSpec) { s.WorkflowSecrets = []config.Secret{{Name: "npm-token", Env: "NPM_TOKEN"}} },
+		"a no-smoke run":             func(s *CatalogBuildSpec) { s.NoSmoke = true },
+		"a reference with a quote":   func(s *CatalogBuildSpec) { s.Prebuilt = `docker.io/library/node:22"x` },
+		"a bucket that is not gs://": func(s *CatalogBuildSpec) { s.Bucket = "fugaro-runs-proj-1234" },
+		"no entry":                   func(s *CatalogBuildSpec) { s.Entry = "" },
+		"no repository":              func(s *CatalogBuildSpec) { s.Slug = "" },
+		"no build account":           func(s *CatalogBuildSpec) { s.ServiceAccount = "" },
+		"a build account of another repository": func(s *CatalogBuildSpec) {
+			s.ServiceAccount = BuildServiceAccountID(catalogSlug(t)+"x") + "@proj-1234.iam.gserviceaccount.com"
+		},
+		"a smoke with no tools":    func(s *CatalogBuildSpec) { s.Selftest = []byte(`{"tools":"none"}`) },
+		"a smoke that is not JSON": func(s *CatalogBuildSpec) { s.Selftest = []byte("critical") },
+	} {
+		bad := spec
+		mod(&bad)
+		if _, err := CatalogBuildRequest("proj-1234", bad); err == nil || !strings.Contains(err.Error(), "invalid Cloud Build request") {
+			t.Errorf("%s: err = %v", name, err)
+		}
+	}
+}
+
+// catalogSmokeDigest is the digest the fake docker below answers a prebuilt
+// reference with.
+var catalogSmokeDigest = "sha256:" + strings.Repeat("a", 64)
+
+// catalogSmokeRun is one run of the smoke step's script: the docker calls the
+// step made, the spec its selftest read on stdin, the digest it wrote for the
+// record step and the CLI, and its combined output.
+type catalogSmokeRun struct {
+	calls  []string
+	stdin  string
+	digest string
+	out    string
+}
+
+// call returns the arguments of the step's first docker call whose
+// subcommand is sub, or "".
+func (r catalogSmokeRun) call(sub string) string {
+	for _, c := range r.calls {
+		if strings.HasPrefix(c, sub+" ") {
+			return c
+		}
+	}
+	return ""
+}
+
+// runCatalogSmoke runs the smoke step's script the way Cloud Build would: the
+// step's own env: with its substitution placeholders resolved, a docker faked
+// on PATH to answer what answers states, and a workspace and a BUILDER_OUTPUT
+// of the test's own. The script's $$ escapes are Cloud Build's, so they are
+// resolved here the way Cloud Build resolves them.
+func runCatalogSmoke(t *testing.T, st *cloudbuild.BuildStep, subs, answers map[string]string) (catalogSmokeRun, error) {
+	t.Helper()
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skipf("the smoke step runs bash, which this machine has not: %v", err)
+	}
+	dir := t.TempDir()
+	bin, out := filepath.Join(dir, "bin"), filepath.Join(dir, "out")
+	for _, d := range []string{bin, out} {
+		if err := os.Mkdir(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fake := `#!/bin/sh
+printf '%s\n' "$*" >> "$FAKE_DOCKER_CALLS"
+case "$1" in
+  pull) exit "${FAKE_DOCKER_PULL_EXIT:-0}" ;;
+  image) printf '%s\n' "$FAKE_DOCKER_INSPECT"; exit "${FAKE_DOCKER_INSPECT_EXIT:-0}" ;;
+  run) cat > "$FAKE_DOCKER_STDIN"; printf '%s\n' "$FAKE_DOCKER_REPORT"; exit "${FAKE_DOCKER_RUN_EXIT:-0}" ;;
+esac
+exit 0
+`
+	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte(fake), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	calls, stdin := filepath.Join(dir, "calls"), filepath.Join(dir, "stdin")
+	env := []string{
+		"PATH=" + bin + ":" + os.Getenv("PATH"),
+		"FAKE_DOCKER_CALLS=" + calls, "FAKE_DOCKER_STDIN=" + stdin,
+		"OUT=" + out, "BUILDER_OUTPUT=" + out, "BUILD_ID=8f3c1a2b-0000-4000-8000-000000000001",
+	}
+	for _, e := range st.Env {
+		if strings.HasPrefix(e, "OUT=") {
+			continue
+		}
+		env = append(env, os.Expand(e, func(k string) string { return subs[k] }))
+	}
+	for k, v := range answers {
+		env = append(env, k+"="+v)
+	}
+	script := strings.ReplaceAll(st.Args[len(st.Args)-1], "$$", "$")
+	cmd := exec.Command(bash, "-c", script)
+	cmd.Env = env
+	data, err := cmd.CombinedOutput()
+	run := catalogSmokeRun{out: string(data)}
+	if raw, err := os.ReadFile(calls); err == nil {
+		run.calls = strings.Split(strings.TrimSuffix(string(raw), "\n"), "\n")
+	}
+	if raw, err := os.ReadFile(stdin); err == nil {
+		run.stdin = string(raw)
+	}
+	if raw, err := os.ReadFile(filepath.Join(out, "image-digest")); err == nil {
+		run.digest = strings.TrimSpace(string(raw))
+	}
+	return run, err
+}

@@ -906,7 +906,7 @@ allow. **A second, narrower
 protection already exists for a different half of this risk**: an *older
 CLI* running `fugaro init --repo` against a local config that already sets
 `agent_env` is refused by `localcfg.go`'s own strict YAML decoding
-(`internal/localcfg/localcfg.go:604`, `dec.KnownFields(true)`) before it
+(`internal/localcfg/localcfg.go:630`, `dec.KnownFields(true)`) before it
 ever gets as far as writing anything — that case was never a gap. The gap
 this fix closes is the other direction: a *new* CLI writing a *new* field
 into an *old* image's job environment.

@@ -1,7 +1,6 @@
 # The console's managed-project screens — read-only screens for what the CLI does on a managed project
 
-**Status: plan only; nothing is implemented; the decisions D1470–D1489 are answered 2026-11-07 and
-all tasks are approved 2026-11-07 (owner: "All tasks approved. Jobmax").** This is a design-only
+**Status as of 2026-11-10: done; see [docs/status.md](../status.md) for the current table.** This is a design-only
 folder: it adds no code, no schema, no console source, no test fixture and no workflow, and it edits
 no file outside `docs/console-managed-screens/`. Every command, flag, field, operation and file
 below is a proposal, and **every one of them is approved**: the owner answered **D1470–D1489** on
