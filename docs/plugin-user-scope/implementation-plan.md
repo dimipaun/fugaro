@@ -77,9 +77,11 @@ a follow-up run will use if `main` changed `.github/workflows/` (`CLAUDE.md`).
 session, in a repository whose repository stage returns needs-you, still reaches the plugin step
 (F13). U0 writes that test and nothing else, and it **fails** at the end of the task.
 
-**Files.** `internal/cli/init_checkout_upgrade_test.go` (the harness the F13 case needs already exists
-there), or a new `internal/cli/init_plugin_stage_agent_test.go` if the case reads better beside the plugin
-stage's own tests.
+**Files.** A new `internal/cli/init_plugin_stage_agent_test.go`, holding
+`TestInitPluginStageMovesInAgentSessionAheadOfARepositoryStop` (chosen over a case in
+`internal/cli/init_checkout_upgrade_test.go`: the decision is the plugin *stage*'s, so it reads beside the
+plugin stage's own tests). It ships **red on `main`** — no skip, no build tag: U0's whole point is that
+the claim is tested now.
 
 **Interface.** The test drives the converge with the agent marker set the way
 `internal/initflow/loop.go` applies `LocalUnderAgent`, and a repository fixture whose repository stage
@@ -109,8 +111,10 @@ init_plugin_stage_test.go,checkouts_test.go,cascade_test.go,left_commands_test.g
 emits them; `left_for_you` is no longer the plugin's answer in an agent session; the checkout stage's
 parked-cloud behaviour is untouched.
 
-**Red step.** U0's test, plus a case that a checkout wired by an older Fugaro is still recognised as one
-after `fugaroCheckout` loses its disjunct — written to fail against today's code path.
+**Red step.** `TestInitPluginStageMovesInAgentSessionAheadOfARepositoryStop` — the red U0 landed and left
+running — plus a case that a checkout wired by an older Fugaro is still recognised as one after
+`fugaroCheckout` loses its disjunct, written to fail against today's code path. Both are green at the end
+of this task: the first is the acceptance of the move, not a test this task edits.
 
 **Tests.** `GOFLAGS=-p=2 go test ./internal/cli/ -run
 'TestInitCheckoutUpgrade|TestCheckout|TestCheckouts|TestCascade|TestLeftCommands|TestInitPluginStage'

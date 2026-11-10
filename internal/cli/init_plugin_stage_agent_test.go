@@ -22,23 +22,19 @@ import (
 // the user — its job images are built from the fugaro.yaml the run did not
 // onboard — so the stage is done with what it may do and the run exits 1.
 //
-// What the test decides is the plugin step's position. Today the plugin step
-// lives in the checkout stage, which a coding agent's session never reaches
-// here: the plugin stage — a stage neither LocalUnderAgent nor SelfConfirming —
-// is left whole for the user, the loop stops there, and everything behind it,
-// the repository stage and the checkout's own plugin step included, is blocked.
-// So the plugin stays on the previous release and nothing local moves. U1 is
-// what moves the step into the plugin stage and makes that stage
-// LocalUnderAgent, and this test is the red it turns green.
-//
-// FUTURE (U1, docs/plugin-user-scope/implementation-plan.md): until that move
-// lands this test is red for exactly the reason above — run it with the skip
-// below removed and the first failure reads "the plugin step was left for the
-// user in a coding agent's session ... and the run never reached it" (Claude
-// Code still lists the previous release). U1 removes the skip; it is the only
-// change this test waits on.
+// What the test decides is the plugin step's position, and this test is RED on
+// main by design: U0 ships it failing, and U1 (same plan) is what turns it
+// green. Today the plugin step lives in the checkout stage, which a coding
+// agent's session never reaches here: the plugin stage — a stage neither
+// LocalUnderAgent nor SelfConfirming — is left whole for the user, the loop
+// stops there, and everything behind it, the repository stage and the
+// checkout's own plugin step included, is blocked. So the plugin stays on the
+// previous release (the first failure names it) and nothing local moves. U1
+// moves the step into the plugin stage and makes that stage LocalUnderAgent,
+// and then the assertions below hold: the plugin installs, the repository
+// stage stops needs-you, and the checkout runs past that stop to park its
+// cloud half.
 func TestInitPluginStageMovesInAgentSessionAheadOfARepositoryStop(t *testing.T) {
-	t.Skip("FUTURE (U1, docs/plugin-user-scope/implementation-plan.md): the plugin step still lives in the checkout stage, which a coding agent's session never reaches here — the plugin stage is left whole for the user and blocks the run — so the plugin is not installed and the repository stage stops untested. U1 moves the step into the plugin stage and makes that stage LocalUnderAgent, and removes this skip.")
 	r := newConvergeRigYAML(t, v4Node(), convergeLegacyYAML)
 	currentRelease(t)
 	// The staleness line is once per process; an earlier test's run may have
