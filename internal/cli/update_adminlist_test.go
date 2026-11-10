@@ -130,19 +130,21 @@ func TestAdminListNotWrittenToAnotherInstallationsBucket(t *testing.T) {
 // would have written".
 func adminListStep(t *testing.T, mutate func(*localcfg.Config)) (string, bool) {
 	t.Helper()
-	e, buf, opened := adminListStepEngine(t, mutate)
+	e, buf, opened, _ := adminListStepEngine(t, mutate)
 	e.writeAdminList(context.Background())
 	return buf.String(), *opened
 }
 
 // adminListStepEngine is adminListStep's fixture without the call: the engine,
-// where the step writes what it prints, and whether a bucket was opened. A test
-// that has to say something about the RUN the step is reached by rather than
-// about the step alone — the session it is in (agentSession), the project's
-// gate (r.gate, a managed project's), the steps the loop left for the person
-// (r.res.LeftForYou) — takes the engine, sets that, and calls writeAdminList
-// itself.
-func adminListStepEngine(t *testing.T, mutate func(*localcfg.Config)) (e *initEngine, out *strings.Builder, opened *bool) {
+// where the step writes what it prints, whether a bucket was opened, and the
+// fake database the roster and the installation's marks are seeded in (the
+// fixture's own, as convergeRig.db is the rig's). A test that has to say
+// something about the RUN the step is reached by rather than about the step
+// alone — the session it is in (agentSession), the project's gate (r.gate, a
+// managed project's), the steps the loop left for the person
+// (r.res.LeftForYou), the marks of the database the roster is read out of —
+// takes the engine, sets that, and calls writeAdminList itself.
+func adminListStepEngine(t *testing.T, mutate func(*localcfg.Config)) (e *initEngine, out *strings.Builder, opened *bool, rtdb *gcpfake.RTDB) {
 	t.Helper()
 	db := gcpfake.NewRTDB(t)
 	db.Set(budget.PathProject, initProjectName)
@@ -165,7 +167,7 @@ func adminListStepEngine(t *testing.T, mutate func(*localcfg.Config)) (e *initEn
 	t.Cleanup(func() { sharedBucketOpener = prev })
 
 	buf := &strings.Builder{}
-	return &initEngine{r: &initRun{o: &initOptions{door: updateDoor.name}, w: buf}, lc: lc, c: &infra.Clients{}}, buf, &written
+	return &initEngine{r: &initRun{o: &initOptions{door: updateDoor.name}, w: buf}, lc: lc, c: &infra.Clients{}}, buf, &written, db
 }
 
 // TestSetupWritesNoAdminList: the step is `fugaro update`'s. `fugaro setup`
@@ -253,7 +255,7 @@ func TestUpdateInACodingAgentsSessionWritesNoAdminList(t *testing.T) {
 // the marker is the first case's, and `r.gate` is the second's.
 func TestAdminListAgentSessionAndTheGate(t *testing.T) {
 	t.Run("a coding agent's session writes nothing", func(t *testing.T) {
-		e, buf, opened := adminListStepEngine(t, func(*localcfg.Config) {})
+		e, buf, opened, _ := adminListStepEngine(t, func(*localcfg.Config) {})
 		agentSession(t)
 		e.writeAdminList(context.Background())
 		if *opened {
@@ -264,7 +266,7 @@ func TestAdminListAgentSessionAndTheGate(t *testing.T) {
 		}
 	})
 	t.Run("a managed project's gate stands in for the confirmation", func(t *testing.T) {
-		e, buf, opened := adminListStepEngine(t, func(*localcfg.Config) {})
+		e, buf, opened, _ := adminListStepEngine(t, func(*localcfg.Config) {})
 		agentSession(t)
 		e.r.gate = &initGate{managed: true}
 		e.writeAdminList(context.Background())
@@ -289,7 +291,7 @@ func TestAdminListAgentSessionAndTheGate(t *testing.T) {
 // must not do is publish authorization data out of a run that stopped short of
 // the state the object is derived from.
 func TestAdminListUnconfirmedRunWritesNothing(t *testing.T) {
-	e, buf, opened := adminListStepEngine(t, func(*localcfg.Config) {})
+	e, buf, opened, _ := adminListStepEngine(t, func(*localcfg.Config) {})
 	e.r.res.LeftForYou = []initflow.Left{{
 		Stage: initflow.Secrets, Kind: initflow.LeftCommand, Text: selfCommand() + " secrets set acme/app API_KEY",
 	}}
@@ -299,6 +301,42 @@ func TestAdminListUnconfirmedRunWritesNothing(t *testing.T) {
 	}
 	if strings.Contains(buf.String(), roleaccess.PathAdminList) {
 		t.Errorf("the run names %s, the object it did not write:\n%s", roleaccess.PathAdminList, buf)
+	}
+}
+
+// TestAdminListNotDerivedFromAnotherInstallationsDatabase: the roster is read
+// out of THIS installation's budget database, and the step asks that question
+// before it reads anything (budgetDBUnadopted, the one ownership predicate
+// every reader and writer of that database asks). A local config — a hand edit,
+// or a teammate's config copied with the wrong project in it — whose rtdb_url
+// names another installation's database would otherwise derive THAT
+// installation's admins and publish them as this project's shared-prefix
+// writers: the list is the object that admits a caller to the shared
+// `fugaro_p_` prefix, so it would hand another project's admins this one's
+// secrets, and the run would look like any other success here.
+//
+// The fixture is the database another installation marked (infra's DB.Check:
+// one Firebase project serves one installation, design D3) with that
+// installation's roster in it, so the only thing between the read and the write
+// is the guard. Nothing reaches the bucket, and the run says which database it
+// refused rather than leaving a person to guess why the list never moved.
+func TestAdminListNotDerivedFromAnotherInstallationsDatabase(t *testing.T) {
+	e, buf, opened, db := adminListStepEngine(t, func(*localcfg.Config) {})
+	db.Set(budget.PathMark, map[string]any{"managed_by": "fugaro", "version": 1, "project": "other-installation", "gcp_project": "other-project"})
+	e.writeAdminList(context.Background())
+
+	if *opened {
+		t.Errorf("the step opened the runs bucket over a database that is not this installation's: the admins it derives there are that installation's, and the object it would write admits them to this project's shared prefix")
+	}
+	out := buf.String()
+	if !strings.Contains(out, "other-project") {
+		t.Errorf("the run does not name the GCP project whose mark it read, so a person whose config points at another installation's database has nothing to go on:\n%s", out)
+	}
+	if !strings.Contains(out, "the admin list was not written") {
+		t.Errorf("the run does not say the list was left as it is:\n%s", out)
+	}
+	if strings.Contains(out, roleaccess.PathAdminList) {
+		t.Errorf("the run names %s, the object it did not write:\n%s", roleaccess.PathAdminList, out)
 	}
 }
 
