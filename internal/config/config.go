@@ -580,7 +580,7 @@ type Agent struct {
 	// the base branch turned it off. The owner's published policy node is the
 	// other home (policy.Layer.Triage, merged tighter-only), read beside this
 	// key from the base branch and never from the checkout. Binaries before
-	// 0.22.0 refuse the key (strict decoder), whatever it says, which is what
+	// 0.23.0 refuse the key (strict decoder), whatever it says, which is what
 	// the launch's own gate judges the job image on (internal/cli's
 	// triageSince).
 	Triage *bool `yaml:"triage,omitempty" json:"Triage,omitempty"`

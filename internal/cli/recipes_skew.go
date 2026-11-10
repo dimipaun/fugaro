@@ -1803,10 +1803,14 @@ func checkCloneStopFractionImage(lc *localcfg.Config, spec *task.Spec, cfg *conf
 // loader long before any image is judged. It carries no shipped flag, for
 // noneModelSince's reason: refusing every image that predates the release is
 // the direction this gate wants, and an image with no release tag (a dev
-// build, a hand-pushed one) only warns. It names 0.22.0, the release this work
-// is slotted for ("Sloth"), which is not tagged yet: docs/release.md's
-// Before-you-tag list verifies the number against the tag actually cut.
-const triageSince = "0.22.0"
+// build, a hand-pushed one) only warns. It names 0.23.0, the release this work
+// ships in ("Tapir", the CLI minor after the tagged 0.22.0), which is not
+// tagged yet: docs/release.md's Before-you-tag list verifies the number against
+// the tag actually cut. It is not 0.22.0: that release is tagged (06347d98) and
+// its config reader has no agent.triage, so a gate naming it would admit an
+// image that refuses the key at bootstrap — the failure this gate exists to
+// prevent, arriving after the launch was paid for.
+const triageSince = "0.23.0"
 
 // triageKnows names, for the image gates' messages, what the job image's
 // runner has to know: the stage itself and the key that turns it off. The

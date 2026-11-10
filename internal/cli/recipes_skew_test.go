@@ -2516,7 +2516,7 @@ func TestLauncherRefusesTriageOnAnOlderImage(t *testing.T) {
 	})
 }
 
-// TestTriageSinceHasAReleaseBullet: triageSince names 0.22.0, which is not
+// TestTriageSinceHasAReleaseBullet: triageSince names 0.23.0, which is not
 // tagged, so docs/release.md's Before-you-tag list is what holds the constant to
 // the release actually cut — the job every other *Since constant's bullet does.
 // Nothing else ties the number the gate accepts to the release whose config

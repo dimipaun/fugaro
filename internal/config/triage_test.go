@@ -270,7 +270,7 @@ func TestTriageKeyInSchemas(t *testing.T) {
 // sentence alone. internal/cli's triageSince is the constant the gate reads
 // and the one its own test compares against the release actually cut; this
 // copy is the second reader's, and the two have to name the same release.
-const triageShipsIn = "0.22.0"
+const triageShipsIn = "0.23.0"
 
 // agentProperty is props."agent".properties[name] of a schema document, for a
 // test that has to read the node rather than validate an instance.
