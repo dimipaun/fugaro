@@ -86,6 +86,23 @@ func Merge(ceiling Layer, tighten ...Layer) Effective {
 			}
 		}
 
+		// The triage stage's switch is the one bool the merge speaks, and off
+		// is its stricter value: the owner's node turns the stage off for
+		// every repository of an installation, a repository turns it off for
+		// itself, and neither may turn it back on over the other (D1854). A
+		// layer that writes nothing passes the earlier layers through, which
+		// is a nil Triage and not a false one — the two cannot share a zero
+		// value, which is why the field is a pointer.
+		if l.Triage != nil {
+			switch {
+			case e.Triage == nil || (!*l.Triage && *e.Triage):
+				e.Triage, e.Sources[KeyTriage] = l.Triage, src
+			case *l.Triage && !*e.Triage:
+				e.Ignored = append(e.Ignored, Ignored{KeyTriage,
+					strconv.FormatBool(*l.Triage), strconv.FormatBool(*e.Triage), e.Sources[KeyTriage]})
+			}
+		}
+
 		if l.MaxRunTokens > 0 {
 			switch {
 			case e.MaxRunTokens == 0 || l.MaxRunTokens < e.MaxRunTokens:
