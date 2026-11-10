@@ -63,8 +63,11 @@ func TestRunRecordCarriesTheZeroExpectationInAnUntaggedBuild(t *testing.T) {
 // paths a run changed against this list (D522, D528), so a scope that stayed in
 // the task would be a flag no report could raise.
 //
-// The list is copied and not aliased: the spec is the caller's, and a record
-// sharing its backing array would change under a later write to it.
+// What this pins is the echo, over a record that went the whole way through a
+// run and the store. The copy recordExpectedScope makes on the way is not
+// observable here — the store's JSON round-trip copies the list whatever that
+// function does — so it is pinned by TestRecordExpectedScopeCopiesTheTaskList,
+// which hands the spec and the record to it directly.
 func TestRunRecordCarriesTheTaskExpectedScope(t *testing.T) {
 	scope := []string{"internal/digest/**", "docs/*.md"}
 	spec := &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main",
@@ -76,10 +79,6 @@ func TestRunRecordCarriesTheTaskExpectedScope(t *testing.T) {
 	}
 	if !slices.Equal(rec.ExpectedScope, scope) {
 		t.Fatalf("the record's expected scope = %v, want the task's %v", rec.ExpectedScope, scope)
-	}
-	scope[0] = "internal/runner/**"
-	if rec.ExpectedScope[0] == scope[0] {
-		t.Errorf("the record shares the task's slice: writing the task changed the record")
 	}
 }
 
