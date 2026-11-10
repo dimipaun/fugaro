@@ -122,15 +122,21 @@ func (s *pluginStage) Check(ctx context.Context) (initflow.Status, error) {
 }
 
 // status is the stage's whole answer, and it is one function because Check and
-// Plan have to read the same thing: the gates, then the install's own state
-// (the plugin in the user's own Claude Code, which has been a step of this
-// stage since U1).
+// Plan have to read the same thing: the checkout's gates, then the install's
+// own state (the plugin in the user's own Claude Code, which has been a step of
+// this stage since U1). Deleting the pin did not narrow the gates — what they
+// guard now is the checkout write U5 adds (F24, D955) — and it did not make the
+// install the checkout's either: the machine's plugin is the same one for every
+// checkout, so a checkout this run may not take the write into is not a machine
+// with nothing to install (U1, F13).
 func (s *pluginStage) status(ctx context.Context) (initflow.Status, error) {
 	st, err := s.plan(ctx)
-	if err != nil {
+	switch {
+	case err != nil:
 		return initflow.Status{}, err
-	}
-	if st != nil {
+	case st != nil && st.State == initflow.NeedsYou:
+		// The gates cannot read the checkout at all: the stage stops there, as
+		// it did before the install half was its own, and nothing is installed.
 		return *st, nil
 	}
 	inst := s.install(ctx, initflow.Env{}, true)
@@ -139,21 +145,23 @@ func (s *pluginStage) status(ctx context.Context) (initflow.Status, error) {
 		return initflow.Status{}, errors.New(inst.reason)
 	case inst.state == stepStale:
 		// The plugin in Claude Code is a release behind what this fugaro
-		// installs: something to do (#1836c).
+		// installs: something to do, whatever the gates say (#1836c).
 		return initflow.Status{State: initflow.Todo, Detail: behindLine(inst)}, nil
 	case !s.installs():
 		// A development build has no release plugin to install: the install
 		// half's own skip, and not something to do.
 		return initflow.Status{State: initflow.Skipped, Detail: inst.reason}, nil
-	case inst.state != stepCurrent:
+	case s.found && inst.state != stepCurrent:
 		// Nothing installed on this machine, or a record this fugaro cannot
 		// compare — neither reads as current, which is what --check's own
 		// answer words as a skip because it is about the plugin the machine
-		// already has, where this stage has the install itself to make. The
-		// plugin in Claude Code is the same one for every checkout, so a
-		// checkout this run may not wire is not a machine that needs nothing
-		// (U1, F13).
+		// already has, where this stage has the install itself to make.
 		return initflow.Status{State: initflow.Todo, Detail: "installs the plugin in Claude Code: " + inst.reason}, nil
+	case st != nil:
+		// This checkout is not one to take the write into (or this build has no
+		// release to install): the gate's own skip line is the stage's answer,
+		// and the install half is current or is not a step here.
+		return *st, nil
 	}
 	return initflow.Status{State: initflow.Done, Detail: "No changes: " + inst.reason}, nil
 }

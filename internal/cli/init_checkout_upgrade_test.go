@@ -707,9 +707,11 @@ func TestUpdateFailsOnAnOriginItCannotRead(t *testing.T) {
 
 // A checkout whose fugaro.yaml names another project is not this run's: the job
 // images are not refreshed in it, and nothing writes a pin any more (U2). The
-// plugin stage still puts the same gate on its own half — the machine's install
-// is not one to make from a checkout that is not this project's — which U8
-// drops (D955): until then the step is a named skip and claude does not run.
+// plugin stage keeps the same gate on the half that is the checkout's — the
+// write U5 adds (F24, D955) — but the install is not the checkout's business:
+// the plugin in the user's own Claude Code is the same one for every project,
+// so a checkout this run may not wire is not a machine that needs nothing, and
+// the step still runs.
 func TestUpdateLeavesAnotherProjectsCheckoutAlone(t *testing.T) {
 	_, root := upgradeRig(t)
 	settings := filepath.Join(root, ".claude", "settings.json")
@@ -721,9 +723,8 @@ func TestUpdateLeavesAnotherProjectsCheckoutAlone(t *testing.T) {
 	}
 	testutil.Git(t, root, "remote", "set-url", "origin", "https://github.com/acme/app.git")
 	checkoutFile(t, filepath.Join(root, "fugaro.yaml"), "version: 1\nproject: someoneelse\ngit: { provider: github }\n")
-	// A fake with no call registered: the plugin stage skips before it would
-	// run claude at all, and the check below is that it never does.
 	f := testutil.NewClaudePluginFake(t, "[]", "[]")
+	f.On(t, "plugins", userInstall("0.5.1"), argsInstall...)
 	useFakeClaude(t, f)
 	ran := fakeSteps(t, "", nil)
 
@@ -739,15 +740,13 @@ func TestUpdateLeavesAnotherProjectsCheckoutAlone(t *testing.T) {
 		t.Errorf("the refresh ran in another project's checkout: %q\n%s", *ran, out)
 	}
 	// The cloud half is the line this checkout stage still prints; the wiring
-	// half is not written at all, and the plugin step is a skip, by name.
+	// half is not written at all, and the install half is the plugin stage's
+	// own step line.
 	if !strings.Contains(out.String(), "cloud: skipped: this checkout's fugaro.yaml names another project") {
 		t.Errorf("the cloud step was not skipped by name:\n%s", out)
 	}
-	if !strings.Contains(out.String(), "not aurora: the plugin is not installed from here") {
-		t.Errorf("the plugin step was not skipped by name:\n%s", out)
-	}
-	if calls := f.Calls(t); len(calls) != 0 {
-		t.Errorf("claude ran in another project's checkout: %q\n%s", calls, out)
+	if len(f.Changes(t)) == 0 {
+		t.Errorf("the plugin was not installed: it is the same plugin for every project\n%s", out)
 	}
 }
 
@@ -755,8 +754,9 @@ func TestUpdateLeavesAnotherProjectsCheckoutAlone(t *testing.T) {
 // on: the cloud step is skipped, which is where this differs from fugaro
 // upgrade, whose cloud step fails the same read because there the refresh was
 // asked for by name. The leftover pin is not this run's business any more (U2:
-// nothing writes one), and the plugin step reads no origin either — the same
-// gate U8 drops (D955) — so it too is a skip, with no claude run.
+// nothing writes one), and the plugin in Claude Code, which is the same one for
+// every repository, is still installed: the gate is the checkout write's (F24,
+// D955), not the machine's own install.
 func TestUpdateSkipsCloudOnlyWhereTheCheckoutHasNoOrigin(t *testing.T) {
 	_, root := upgradeRig(t)
 	settings := filepath.Join(root, ".claude", "settings.json")
@@ -768,6 +768,7 @@ func TestUpdateSkipsCloudOnlyWhereTheCheckoutHasNoOrigin(t *testing.T) {
 	}
 	testutil.Git(t, root, "remote", "remove", "origin")
 	f := testutil.NewClaudePluginFake(t, "[]", "[]")
+	f.On(t, "plugins", userInstall("0.5.1"), argsInstall...)
 	useFakeClaude(t, f)
 	ran := fakeSteps(t, "", nil)
 
@@ -785,11 +786,8 @@ func TestUpdateSkipsCloudOnlyWhereTheCheckoutHasNoOrigin(t *testing.T) {
 	if upgradeRead(t, settings) != wiredAt("v0.5.0") {
 		t.Errorf("the checkout's settings moved in a checkout with no origin:\n%s", upgradeRead(t, settings))
 	}
-	if !strings.Contains(out.String(), "this checkout has no origin repository, so it is not one to install the plugin from") {
-		t.Errorf("the plugin step was not skipped by name:\n%s", out)
-	}
-	if calls := f.Calls(t); len(calls) != 0 {
-		t.Errorf("claude ran in a checkout with no origin: %q\n%s", calls, out)
+	if len(f.Changes(t)) == 0 {
+		t.Errorf("the plugin was not installed in a checkout with no origin\n%s", out)
 	}
 }
 

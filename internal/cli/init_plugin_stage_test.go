@@ -282,10 +282,10 @@ func TestInitPluginStagePlanOnlySaysTheInstallRuns(t *testing.T) {
 	)
 	for _, tc := range []struct {
 		name string
-		// noOrigin leaves the checkout without a remote, which is the stage's
-		// own skip: the install still needs a checkout's repository until U8
-		// (D955) drops that. installed is what Claude Code records as
-		// installed.
+		// noOrigin leaves the checkout without a remote, which is the gate's
+		// own skip: it guards the checkout write U5 adds, and the install half
+		// is the machine's, not the checkout's (F24, D955). installed is what
+		// Claude Code records as installed.
 		noOrigin  bool
 		installed string
 		want      initflow.State
@@ -295,8 +295,8 @@ func TestInitPluginStagePlanOnlySaysTheInstallRuns(t *testing.T) {
 			wantSay: "installs the plugin in Claude Code"},
 		{name: "Claude Code's plugin is behind", installed: installedBehind,
 			want: initflow.Todo, wantSay: "Claude Code's own plugin is behind"},
-		{name: "the checkout is not one to install from", noOrigin: true,
-			want: initflow.Skipped, wantSay: "no origin repository"},
+		{name: "the checkout's gate is skipped and the install is not", noOrigin: true,
+			want: initflow.Todo, wantSay: "installs the plugin in Claude Code"},
 		{name: "the installed plugin is this release's", installed: installedAtThisRelease,
 			want: initflow.Done, wantSay: "No changes"},
 	} {
