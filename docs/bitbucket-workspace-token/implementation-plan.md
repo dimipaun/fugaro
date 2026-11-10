@@ -5,6 +5,17 @@ references decisions by `D#` and findings by `F#`.
 
 ## Status
 
+- **2026-11-10: the plan is read against the secrets-brokering proxy chain, task by task.**
+  [reconciliation-secrets-brokering.md](reconciliation-secrets-brokering.md) is that reading, taken
+  on `origin/main` at `256106ec`. It settles the question [status.md](../status.md) leaves open:
+  **T2.9 is moot** (the boundary is `internal/gitproxy/rules.go`'s `Decide` and `CheckPRWrite`,
+  behind `internal/credsvc/bitbucketproxy.go`, and `internal/runner/projectjob.go` has no Bitbucket
+  check) and **T2.2 is not** (the proxy takes the token out of the *job*; it does not make the
+  service admit a *shared* job — `internal/infra/projectjobs.go`'s `SharedJobProvider` still admits
+  `github` alone, and `projectpolicy.SharedBitbucketProfile` has no production caller). It also
+  records that **T1.1's remainder and T1.3 have merged since the 2026-11-07 census was read**
+  (`3bcbd1dd`, #1880). The reading's decisions are **D1980–D1984**, and its block is
+  **D1980–D1999**.
 - **2026-11-07: the state below is the state of 2026-10-27, and the tree has moved a long way since.**
   [status-2026-11-07.md](status-2026-11-07.md) censuses every task in this plan against
   `origin/main`: **T1.2, T2.1** (as the D493 re-plan amended it), **T2.3 and T2.8 are merged**;
@@ -104,6 +115,12 @@ references decisions by `D#` and findings by `F#`.
      refused. `ProjectJobs` skips such a profile today (T2.2).
   4. An installation that sets `FUGARO_BITBUCKET_API_URL` lists that root in `bitbucket_api_roots`
      and republishes before it upgrades, or its cloud runs are refused (T2.8).
+
+  **Amended 2026-11-10:** steps 1 to 3 shipped as B1.13 part one's
+  `docs/secrets-brokering/release-0.14.0-operators.md`. **Step 4 did not** — the list is named
+  nowhere in `docs/releases/` — and it is the one step an installation with a non-default root owes
+  today (decision D1984). Step 3's subject, a Bitbucket profile that gets a shared job, waits for
+  B5.1 with T2.2.
 - Generated pages are never edited by hand. `website/content/security.md` and
   `website/content/cli-reference.md` are regenerated with `go run ./internal/clidoc`, and
   `go test ./internal/clidoc/` holds them current.
@@ -297,6 +314,11 @@ references decisions by `D#` and findings by `F#`.
 
 ### T1.3: Check 180 written into the register (0.13.0; D468 = no)
 
+*Verdict 2026-11-10: **Done**, in `3bcbd1dd` (#1880) — after the 2026-11-07 census was read.
+`docs/gcp-live-checklist.md` has the row and the `## Check 180:` section, `scripts/live-checks/check180.sh`
+and `check180_test.sh` are beside them, and `internal/cli/docs_checks_180_181_test.go` holds the
+registration. The text below is kept as written.*
+
 - **Files:** `docs/gcp-live-checklist.md` (a new `## Check 180` section and its row),
   `docs/coordinator/README.md` (its "highest check section written" pin moves to 180, which
   `docs_coordinator_test.go` compares with the register), and
@@ -326,6 +348,9 @@ references decisions by `D#` and findings by `F#`.
 - **Reviewer tier:** standard.
 
 ### T1.4: Check 180, OWNER-RUN
+
+*Verdict 2026-11-10: **Kept.** Nothing in the proxy chain changes it: the register's row reads
+USER-RUN, NOT RUN, and no Premium sandbox workspace is known (U6).*
 
 - **OWNER-RUN.** The owner follows T1.3's section on the sandbox only. No agent performs any step.
   The owner types the commands the section gives, which are the
@@ -410,6 +435,13 @@ references decisions by `D#` and findings by `F#`.
 
 ### T2.2: Deploy and launch Bitbucket shared jobs (0.13.0)
 
+*Verdict 2026-11-10: **Kept, and it waits for B5.1 (S5).** It is **not** moot: the proxy removes
+the token from the job, and it does not make the service admit a shared job.
+`internal/infra/projectjobs.go`'s `SharedJobProvider` still admits `github` alone and
+`TestProjectJobsSkipBitbucketProfiles` still passes, and this task's own predicate,
+`projectpolicy.SharedBitbucketProfile`, has no production caller. Its subset check reads the block
+BW-T2.1 amended, so nothing in the text below is contradicted by the chain. Decision **D1980**.*
+
 - **Files:**
   - `internal/infra/projectjobs.go`
   - `internal/infra/projectjobs_test.go`
@@ -475,6 +507,11 @@ references decisions by `D#` and findings by `F#`.
 
 ### T2.4: `fugaro doctor` warns about an own copy a shared job ignores (0.13.0)
 
+*Verdict 2026-11-10: **Kept, and it waits for B5.1 (S5)** with T2.2. Its subject is a **shared**
+job's use of the project token, which the proxy does not change: on a proxied per-repository job
+there is no token in the job to be shadowed, and that is the one sentence its text still needs.
+Decision **D1982**.*
+
 - **Files:** `internal/cli/doctor.go` and `internal/cli/doctor_bitbucket_shared_test.go` (new).
 - **Behaviour (D466):** "admitted" means admitted by the **published** node, read the way the
   launcher reads it. For each repository admitted to a profile that mounts the token, doctor checks
@@ -495,6 +532,12 @@ The runner's characterization tests now sit beside the runner check that makes t
 number is not reused.
 
 ### T2.6: Docs: phase 3 serves Bitbucket too (0.13.0)
+
+*Verdict 2026-11-10: **Kept in part — one sliver is owed now.** The phase-3 half waits for S5 with
+T2.2. The `FUGARO_BITBUCKET_API_URL` variables-table row does not name `bitbucket_api_roots`, the
+section still says the root lock "is 0.13.0's (D474, T2.8)" when BW-T2.8 shipped it in 0.14.0, and
+"Bitbucket stays on the per-repository path" says each Bitbucket repository "keeps its own job and
+its own `bitbucket-token`", which the flip (B1.13 part two) makes false. Decision **D1983**.*
 
 - **Files:**
   - `docs/git-providers.md`:
@@ -534,6 +577,10 @@ number is not reused.
 
 ### T2.7: Check 181, OWNER-RUN (0.13.0)
 
+*Verdict 2026-11-10: **Kept.** The register has no row 181 and no `## Check 181:` section;
+`internal/cli/docs_checks_180_181_test.go` says 181 joins them with T2.6's section. It waits for
+T2.6 and S5.*
+
 - **OWNER-RUN, sandbox only.** Check 181 runs as follows:
   1. A Bitbucket profile that mounts `bitbucket-token` admits two allow-listed sandbox
      repositories.
@@ -564,6 +611,13 @@ number is not reused.
 - **Reviewer tier:** opus + mandatory independent review.
 
 ### T2.9: The runner enforces the Bitbucket block on a shared job (0.13.0)
+
+*Verdict 2026-11-10: **Superseded by B1.4 and B1.5.** The check is not in the tree
+(`internal/runner/projectjob.go` has `checkProjectJobAccount` and no Bitbucket check, and the test
+file this task names does not exist), and it should not be: the boundary is
+`internal/gitproxy/rules.go`'s `Decide` and `CheckPRWrite`, behind
+`internal/credsvc/bitbucketproxy.go`, where an agent cannot reach it — a check in the job binds
+nothing the agent cannot bypass (F5). The number closes with T2.5. Decision **D1981**.*
 
 - **Files:** `internal/runner/projectjob.go` (the check, beside `checkProjectJobAccount`),
   `internal/runner/project.go` (the call, at the end of `admissionCheck`, which runs before
@@ -611,6 +665,15 @@ is not built.
 - **Reviewer tier:** opus + mandatory independent review.
 
 ### T2.11: The 0.13.0 lockstep upgrade notes (0.13.0, D477)
+
+*Verdict 2026-11-10: **Superseded by B1.13 part one — with one step missing.**
+`docs/secrets-brokering/release-0.14.0-operators.md` carries the v4 lockstep, the image refresh,
+the republish order and the profile rules. It does **not** carry step 5 below: an installation that
+sets `FUGARO_BITBUCKET_API_URL` lists that root in `bitbucket_api_roots` and republishes before it
+upgrades its runners. The pin is live in every runner built from 0.14.0 on
+(`internal/runner/runner.go`'s `checkBitbucketAPIRoot`, called from `openProvider` for every
+Bitbucket provider outside a local invocation), and `docs/releases/` names neither the variable nor
+the list. Decision **D1984**. The shared-job step waits for S5.*
 
 - **Where it lands.** In **the 0.13.0 release PR** (`/new-release 0.13.0`), not earlier. A
   `docs/releases/v0.13.0.md` merged before the release would show on the website's changelog as if
@@ -752,6 +815,12 @@ not built.
 | **181** | A Bitbucket shared project job end to end, and the allow-list refusal at publish, at deploy and in the runner | the owner, sandbox only | 0.13.0 |
 
 Checks 182–189 are reserved and unused.
+
+**Amended 2026-11-10.** Check 180 is written and registered (T1.3, `3bcbd1dd`); Check 181 still
+waits for T2.6 and S5. **181's "the runner" half is superseded by B1.4 and B1.5** (T2.9, decision
+D1981): what a run may do is decided by `internal/gitproxy/rules.go`'s `Decide` and `CheckPRWrite`
+behind `internal/credsvc/bitbucketproxy.go`, not by a check in the job, so when 181 is written its
+third clause measures the service's refusal and the publish and deploy refusals T2.2 keeps.
 
 ## Considered and declined
 
