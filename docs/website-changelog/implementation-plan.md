@@ -71,6 +71,8 @@ amendment is confirmed; no decision is open.
 
 ### WC4. Check 430: the preview shows three entries and the link (the release performer's, not OWNER-RUN)
 
+**Marked done by the owner on 2026-11-10.** The deployed form of the check was not run by an agent before this mark; the hermetic form of every assertion is WC1's test.
+
 - **What it measures:** after the first release that follows WC1, the `website-preview` channel's changelog page shows exactly three CLI entries, newest first, "See all releases on GitHub" linking the repository's releases page, the latest console line, and no mobile line while no mobile release exists. The hermetic form of every assertion is WC1's test; this check is the deployed form, and it is the release's own "update the website" step (the release performer opens the preview URL before promoting).
 - **Who runs it:** the release performer (the coordinating Claude session, which performs the release's website step), as part of the release; it is not an owner-run check; no new command and no live action beyond the release procedure's own dispatch. **Depends on:** WC1 merged and a release cut.
 
