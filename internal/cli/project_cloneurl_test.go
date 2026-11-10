@@ -154,6 +154,40 @@ func TestProjectCloneURLRmRemovesOneEntryAndKeepsTheRest(t *testing.T) {
 	}
 }
 
+// TestProjectCloneURLRmOfTheLastEntryWritesNothingAndSaysWhy: taking the last
+// entry away is the project's statement that it gives no repository a URL, and
+// that statement is an empty mapping — YAML's only spelling of one. This
+// release writes no form of it (the settings plan gives that operation to the
+// shared editor's own task), and a key left with no entry under it is one the
+// loader reads as a file that says nothing about the block — which keeps the
+// published node's entries, so the removal would be a no-op that printed a
+// write. The command refuses instead, names the line that states it, and leaves
+// the file exactly as it was.
+func TestProjectCloneURLRmOfTheLastEntryWritesNothingAndSaysWhy(t *testing.T) {
+	_, localPath := settingsWriteHomeWith(t, "clone_urls:\n  github/acme/app: https://github.com/acme/app\n")
+	before := readFileString(t, localPath)
+	_, _, err := execute(t, "project", "clone-url", "rm", "github/acme/app")
+	if err == nil {
+		t.Fatal("project clone-url rm took the last entry away, and the block it leaves cannot be written")
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Errorf("exit %d, want %d (a user error: nothing was attempted)", ExitCode(err), ExitUserError)
+	}
+	for _, want := range []string{"clone_urls: {}", localPath, "fugaro update"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	if got := readFileString(t, localPath); got != before {
+		t.Errorf("the refusal wrote the file anyway:\n%s", got)
+	}
+	// And the entry is still the one a publish carries, which is the half the
+	// operator checks: the node keeps it because the file still states it.
+	if got := projectCloneURLBlock(t, localPath)["github/acme/app"]; got != "https://github.com/acme/app" {
+		t.Errorf("clone_urls[github/acme/app] = %q after the refusal, want the entry that was there", got)
+	}
+}
+
 // TestProjectCloneURLRefusesInAnAgentSessionEvenWithYes: the write is a project
 // policy an agent session may not make, --yes included (SD9). It lands outside
 // every repository, which is the half of the fence that refuses a session
