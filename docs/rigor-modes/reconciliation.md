@@ -816,8 +816,10 @@ another in both directions. Amended 2026-11-10:
 pin over `docs/dogfooding.md`'s own reports section, moved the table's row
 from 115 to 116: the folder the page names and the launch it schedules are read
 out of `internal/digest` and `internal/recipe`, so the page and the layout cannot
-drift apart.
-And `internal/cli/docs_dynamic_delivery_test.go`, the dynamic-delivery folder's pin (the register's Checks 510 and 511, their two steps files and the numbers the folder claims, DS0.2), moved the same row once more, from 116 to 117.) They
+drift apart. Amended 2026-11-10:
+`internal/cli/docs_dynamic_delivery_test.go`, the dynamic-delivery folder's pin
+(the register's Checks 510 and 511, their two steps files and the numbers the
+folder claims, DS0.2), moved the same row once more, from 116 to 117.) They
 are named because the figure is a running total of other folders' guards: a folder
 that writes one moves this row in its own commit, and a reader who finds the row
 stale has found a merge that did not.
