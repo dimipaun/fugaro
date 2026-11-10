@@ -47,8 +47,9 @@ func TestVersionSinceCoversEveryVersion(t *testing.T) {
 	}
 	// The rows this line ships, pinned exactly: 1 is the model (0.8.0), 2
 	// the profile gate (0.8.5), 3 the account axis (0.9.0), 4 the Bitbucket
-	// token block (0.14.0). An off-by-one table fails here.
-	for v, want := range map[int]string{1: "0.8.0", 2: "0.8.5", 3: "0.9.0", 4: "0.14.0"} {
+	// token block (0.14.0), 5 the binaries block (0.22.0). An off-by-one table
+	// fails here.
+	for v, want := range map[int]string{1: "0.8.0", 2: "0.8.5", 3: "0.9.0", 4: "0.14.0", 5: "0.22.0"} {
 		if got := VersionSince[v]; got != want {
 			t.Errorf("VersionSince[%d] = %q, want %q", v, got, want)
 		}

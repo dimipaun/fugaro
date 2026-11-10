@@ -1062,15 +1062,12 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		// would drop them"), so a drop here would be a loosening this release
 		// introduced.
 		//
-		// The typed copy is the whole keep, the credentials way and not the
-		// clone_urls way: the block is strict inside, so every value the node can
-		// hold comes back from Decode and goes out of Marshal unchanged, and
-		// there is no spelling left for a document patch to preserve. The one it
-		// looks as though there would be — an empty `allow` list — is not a value
-		// the database holds at all (an RTDB list is an object with numeric keys,
-		// so an empty one is an empty object and is pruned, storesNoMember in
-		// init_policy_publish.go), so the member's presence says "this node
-		// carries a block" and never "the owner wrote an empty list" (F16).
+		// The typed copy is what the diff reads (printPolicyDiff's kept line) and
+		// what the node is built from; the *bytes* are carried over on top of it
+		// (policyNodeBytes), the clone_urls way, because the block's own
+		// spellings are not all a re-encode keeps: a written empty list and the
+		// absent member are different statements (D987), and only the node's own
+		// bytes say which one it is.
 		pol.Binaries = old.Binaries
 	}
 	return pol, keepRouting, nil
@@ -1261,11 +1258,22 @@ func policyNodeBytes(pol *projectpolicy.Policy, oldRaw []byte, exists, keepRouti
 			return nil, userErr("building the policy: %v", err)
 		}
 	}
-	// The binaries member is *not* patched here either, for the credentials
-	// reason: the block is strict inside, so buildProjectPolicy's typed copy
-	// re-encodes every value the node can hold without losing one. Its empty
-	// list is the case that looks like an exception and is not — the database
-	// prunes an empty list, so a node never carries one to preserve (F16).
+	// The binaries member is carried over byte for byte for the same reason and
+	// one of its own: `binaries.allow` is a list whose *empty* spelling is a
+	// statement — a written block that admits nothing, which D987 tells from the
+	// silence a local file that says nothing leaves alone — while an absent
+	// member is that silence. Re-encoding the decoded value writes
+	// `{"binaries": {}}` for it (both members carry omitempty), and an empty
+	// object is not a value the Realtime Database holds: the member would leave
+	// the node, and the publisher could no longer tell "clear it" from "say
+	// nothing" — the one thing Decode keeps the block's presence for.
+	if member, ok, err := jsonMember(oldRaw, "binaries"); err != nil {
+		return nil, userErr("%s cannot be read back as a document, so its binaries block cannot be kept: %v; fix it by hand, or remove it with 'fugaro project policy publish --delete'", projectpolicy.PathShared(), err)
+	} else if ok && !projectpolicy.IsNull(member) {
+		if node, err = patchPolicyJSON(node, "binaries", member); err != nil {
+			return nil, userErr("building the policy: %v", err)
+		}
+	}
 	// The credentials member is *not* patched here, unlike clone_urls and
 	// routing, and that is a deliberate difference rather than an oversight.
 	// Those two are shared with releases that know members this one does not:
@@ -1977,18 +1985,15 @@ func credentialsText(c *projectpolicy.Credentials) string {
 // binariesText is the binaries block as one line, member by member and only the
 // members the node writes: an absent max_bytes is the shipped bound and not a
 // cap of zero (projectpolicy.BinariesMaxBytes), and this line is about what the
-// node says. A block with no list is a block that admits nothing, and the line
-// says exactly that rather than naming a spelling: the decoded value cannot
-// tell an absent `allow` from a written empty one, because the database cannot
-// hold the second (F16), and a line that claimed to would be describing a node
-// state no read can produce.
+// node says. A written empty block prints as the block it is — the spelling
+// that takes an admission away on purpose.
 func binariesText(b *projectpolicy.Binaries) string {
 	if b == nil {
 		return "none"
 	}
 	var parts []string
 	if len(b.Allow) == 0 {
-		parts = append(parts, "no allow list: nothing admitted")
+		parts = append(parts, "allow written empty: nothing admitted")
 	} else {
 		parts = append(parts, "allow "+strings.Join(b.Allow, ", "))
 	}

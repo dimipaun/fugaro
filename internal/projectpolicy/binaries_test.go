@@ -196,18 +196,13 @@ func TestBinariesAbsentAdmitsNothing(t *testing.T) {
 }
 
 // TestBinariesWrittenEmptyAdmitsNothing: the two spellings of an empty block
-// admit nothing at admission time, which is the whole answer a run reads, and
-// Decode keeps the block instead of folding it onto the absent member because
-// what it reads is a *document* and a document can say `binaries: {allow: []}`
-// — D987's spelling for taking an admission away on purpose, where silence in
-// the local file keeps the node's list.
-//
-// A node is narrower than a document, and the difference is the database's
-// rather than this decoder's: it stores no member for an empty object or an
-// empty list, so `{}` and `{"allow": []}` are shapes a published node does not
-// carry and no read of one returns (F16). What a node's member presence does
-// say is that the node carries a block — a list, or a cap with no list — and
-// that is the distinction the pointer keeps.
+// admit nothing at admission time, which is the whole answer a run reads. They
+// are *not* the same answer at publish time (D987): a written block is how an
+// operator takes an admission away on purpose, while silence in the local file
+// keeps the node's list. That difference is the publisher's, and it is why
+// Decode keeps the block here instead of folding it onto the absent member —
+// a reader that normalized this to nil would leave the publisher unable to
+// tell "clear it" from "say nothing".
 func TestBinariesWrittenEmptyAdmitsNothing(t *testing.T) {
 	for _, block := range []string{`{}`, `{"allow": []}`, `{"allow": [], "max_bytes": 1024}`} {
 		t.Run(block, func(t *testing.T) {
@@ -219,7 +214,7 @@ func TestBinariesWrittenEmptyAdmitsNothing(t *testing.T) {
 				t.Errorf("BinariesAllow() = %v, want nothing admitted", got)
 			}
 			if p.Binaries == nil {
-				t.Error("Binaries = nil, and the document wrote a block: the publisher cannot tell a written empty block (clear the list) from a silent file (keep it) if this decoder folds the two together")
+				t.Error("Binaries = nil, and the block was written: the publisher cannot tell a written empty block (clear the list) from a silent file (keep it) if this reader folds the two together")
 			}
 		})
 	}

@@ -18,7 +18,7 @@ import (
 // absent state beside it: a project that names neither publishes neither, and
 // the node of such a project is what it was before the keys existed.
 func TestDecodeReadsTheAccountChoiceMembers(t *testing.T) {
-	p, err := decodeNode(t, `{"version": 4, "default_claude_account": "acme-overflow",`+
+	p, err := decodeNode(t, `{"version": 5, "default_claude_account": "acme-overflow",`+
 		`"claude_account_stages": {"review": "acme-overflow", "adversarial": "acme-personal"}}`)
 	if err != nil {
 		t.Fatal(err)
@@ -32,10 +32,10 @@ func TestDecodeReadsTheAccountChoiceMembers(t *testing.T) {
 	// The default account is a legal value here for the reason it is a legal
 	// key of the accounts block: it is the unsuffixed secret, not a name
 	// claude_accounts reserves.
-	if p, err := decodeNode(t, `{"version": 4, "default_claude_account": "default"}`); err != nil || p.DefaultClaudeAccount != "default" {
+	if p, err := decodeNode(t, `{"version": 5, "default_claude_account": "default"}`); err != nil || p.DefaultClaudeAccount != "default" {
 		t.Errorf("default_claude_account: default = (%v, %v)", p, err)
 	}
-	p, err = decodeNode(t, `{"version": 4}`)
+	p, err = decodeNode(t, `{"version": 5}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +46,7 @@ func TestDecodeReadsTheAccountChoiceMembers(t *testing.T) {
 	// member left with no entry is normalized to nil: the publisher writes
 	// neither, so a node that carries one is a node the reader reads as if it
 	// did not.
-	p, err = decodeNode(t, `{"version": 4, "claude_account_stages": {"review": ""}}`)
+	p, err = decodeNode(t, `{"version": 5, "claude_account_stages": {"review": ""}}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,28 +63,28 @@ func TestDecodeReadsTheAccountChoiceMembers(t *testing.T) {
 func TestDecodeRefusesBadAccountChoiceMembers(t *testing.T) {
 	for name, tc := range map[string]struct{ raw, want string }{
 		"a segment that names no stage": {
-			`{"version": 4, "claude_account_stages": {"bootstrap": "acme-overflow"}}`,
+			`{"version": 5, "claude_account_stages": {"bootstrap": "acme-overflow"}}`,
 			"claude_account_stages.bootstrap: \"bootstrap\" is not a stage of a run"},
 		"a stage the tree does not have yet": {
-			`{"version": 4, "claude_account_stages": {"digest": "acme-overflow"}}`,
+			`{"version": 5, "claude_account_stages": {"digest": "acme-overflow"}}`,
 			"claude_account_stages.digest"},
 		"an account name of the wrong shape": {
-			`{"version": 4, "default_claude_account": "Acme-Overflow"}`,
+			`{"version": 5, "default_claude_account": "Acme-Overflow"}`,
 			"default_claude_account: account name must match"},
 		"a reserved account name": {
-			`{"version": 4, "claude_account_stages": {"review": "bitbucket-token"}}`,
+			`{"version": 5, "claude_account_stages": {"review": "bitbucket-token"}}`,
 			"claude_account_stages.review: this name is reserved"},
 		"an over-long account name": {
-			`{"version": 4, "claude_account_stages": {"review": "` + strings.Repeat("a", 32) + `"}}`,
+			`{"version": 5, "claude_account_stages": {"review": "` + strings.Repeat("a", 32) + `"}}`,
 			"claude_account_stages.review: account name must be at most 31 characters"},
 		"a member that is not a string": {
-			`{"version": 4, "default_claude_account": 7}`,
+			`{"version": 5, "default_claude_account": 7}`,
 			"default_claude_account"},
 		"a stage map that is not an object": {
-			`{"version": 4, "claude_account_stages": ["review"]}`,
+			`{"version": 5, "claude_account_stages": ["review"]}`,
 			"claude_account_stages"},
 		"a stage named twice": {
-			`{"version": 4, "claude_account_stages": {"review": "acme-overflow", "review": "acme-personal"}}`,
+			`{"version": 5, "claude_account_stages": {"review": "acme-overflow", "review": "acme-personal"}}`,
 			"claude_account_stages names \"review\" twice"},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -121,8 +121,8 @@ func TestDecodeRefusesBadAccountChoiceMembers(t *testing.T) {
 func TestDecodeRefusesTheProjectsAnthropicKeyAsAStageAccount(t *testing.T) {
 	for _, value := range []string{config.AnthropicKeyAccount, config.ProviderKeyAccount} {
 		for name, raw := range map[string]string{
-			"the project default": `{"version": 4, "default_claude_account": "` + value + `"}`,
-			"a stage's own":       `{"version": 4, "claude_account_stages": {"review": "` + value + `"}}`,
+			"the project default": `{"version": 5, "default_claude_account": "` + value + `"}`,
+			"a stage's own":       `{"version": 5, "claude_account_stages": {"review": "` + value + `"}}`,
 		} {
 			t.Run(value+"/"+name, func(t *testing.T) {
 				_, found, err := Decode([]byte(raw))
@@ -151,8 +151,8 @@ func TestDecodeRefusesTheProjectsAnthropicKeyAsAStageAccount(t *testing.T) {
 // into a struct.
 func TestDecodeRefusesAMisspeltAccountChoiceMember(t *testing.T) {
 	for _, raw := range []string{
-		`{"version": 4, "Default_Claude_Account": "acme-overflow"}`,
-		`{"version": 4, "Claude_Account_Stages": {"review": "acme-overflow"}}`,
+		`{"version": 5, "Default_Claude_Account": "acme-overflow"}`,
+		`{"version": 5, "Claude_Account_Stages": {"review": "acme-overflow"}}`,
 	} {
 		if _, _, err := Decode([]byte(raw)); err == nil || !strings.Contains(err.Error(), "spells") {
 			t.Errorf("Decode(%s) = %v, want the misspelt-key refusal", raw, err)
@@ -172,7 +172,7 @@ func TestDecodeToleratesTheAccountChoiceMembersUnderAnOlderReadersKeys(t *testin
 			older[k] = true
 		}
 	}
-	p, found, err := decodeWithKeys([]byte(`{"version": 4, "default_claude_account": "acme-overflow",`+
+	p, found, err := decodeWithKeys([]byte(`{"version": 5, "default_claude_account": "acme-overflow",`+
 		`"claude_account_stages": {"review": "acme-overflow"}, "base_branch": "main"}`), older)
 	if err != nil || !found || p == nil {
 		t.Fatalf("Decode under an older reader's keys = (%v, %v, %v), want a policy", p, found, err)
