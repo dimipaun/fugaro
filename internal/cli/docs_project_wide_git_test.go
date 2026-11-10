@@ -336,7 +336,10 @@ func TestDocsStateTheBitbucketProjectTokenReach(t *testing.T) {
 		// stays on the per-repository path keeps its shared-job half, and the
 		// half the flip overtakes is amended by date rather than rewritten.
 		"**Amended 2026-11-10 (D1983): on a proxied repository the job loses its `bitbucket-token` with the flip.**",
-		"whose list `config.ProxiedGitSecretNames` is still `[]string{}` on this tree, so \"keeps its own job and its own `bitbucket-token`\" describes the pre-flip state and every non-proxied repository",
+		// The sentence carries its cross-reference in the right direction: the
+		// section it names is below it on the page, as every other reference to
+		// it in this file says.
+		"whose list `config.ProxiedGitSecretNames` is still `[]string{}` on this tree, so \"keeps its own job and its own `bitbucket-token`\" describes the pre-flip state and every non-proxied repository — on a proxied one the run reads no token and the service puts the credential on the wire (\"What the agent gets\" below)",
 		// And the honest half of the API-root story in 0.12.1: the override is
 		// passed unchecked, a launcher can point it at a host of their own (F7),
 		// and the lock is 0.14.0's -- not 0.13.0's, which is what the sentence
