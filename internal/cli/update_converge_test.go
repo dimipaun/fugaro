@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -312,6 +313,31 @@ func convergeOn(t *testing.T, r *convergeRig, stale []string) string {
 		t.Errorf("the run never names the release it converged to:\n%s", out)
 	}
 	return out
+}
+
+// TestUpdateKeepsAHandWrittenBinariesBlock is the update door's half of the
+// review finding AR0's keep exists for, and the door the probe that found it
+// ran: this release models `binaries` and no key of the operator's config
+// states it (D986), so the policy stage's publish has to carry the node's block
+// over rather than rewrite the node without it — a rewrite that takes the
+// owner's grant away in silence (the list gone, and max_bytes back at the
+// ceiling it was lowered from), where the same node was *refused* while the key
+// was unmodelled ("publishing would drop them"). Both doors build the node
+// through policyNodeForPublish, so this is the same keep the explicit door's
+// TestPublishKeepsTheBinariesListWhenTheLocalFileSaysNothing pins, reached
+// through the one command the HARD RULE says the whole upgrade is.
+func TestUpdateKeepsAHandWrittenBinariesBlock(t *testing.T) {
+	node := v5Node()
+	node["binaries"] = map[string]any{"allow": []string{"brand/*.png"}, "max_bytes": 1048576}
+	r := newConvergeRig(t, node)
+	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	p := convergeNode(t, r)
+	if want := []string{"brand/*.png"}; !slices.Equal(p.BinariesAllow(), want) {
+		t.Errorf("after one fugaro update, the node's binaries.allow = %v, want %v: the run dropped the owner's grant", p.BinariesAllow(), want)
+	}
+	if got := p.BinariesMaxBytes(); got != 1048576 {
+		t.Errorf("after one fugaro update, the node's binaries.max_bytes = %d, want 1048576: the run put the cap back at the ceiling it had been lowered from", got)
+	}
 }
 
 // TestUpdateConvergesPreviousPolicy: an installation whose local project config

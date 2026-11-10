@@ -3547,6 +3547,76 @@ func TestPublishKeepsReviewFloorTheConfigIsSilentAbout(t *testing.T) {
 	}
 }
 
+// TestPublishKeepsTheBinariesListWhenTheLocalFileSaysNothing: the binaries
+// block is the owner's grant of the paths a run may add a binary at and of the
+// cap it is held to, and no key of the operator's config states it (D986 keeps
+// it off `fugaro.yaml` and the shared config), so a publish keeps the node's —
+// the clone_urls and credentials rule.
+//
+// This is a review finding on the version-5 bump rather than a nicety. While
+// the key was unmodelled, a publish over a node carrying it was *refused*
+// (publishedPolicyOf's unknown-key refusal, "publishing would drop them"), so a
+// publish that rewrote such a node without the block would be a loosening this
+// release introduced: the allow list gone, and max_bytes back at the 2 MiB
+// ceiling the owner had lowered it from. Hand-writing the node is the only way
+// to state the block until AR1 gives the operator's config the key, which is
+// why the fixture writes the node and not the file — and the diff has to say
+// the block was kept, because nothing else in it would mention an unchanged
+// member.
+func TestPublishKeepsTheBinariesListWhenTheLocalFileSaysNothing(t *testing.T) {
+	f := newProjectFixture(t, "")
+	f.db.Set(projectpolicy.PathShared(), map[string]any{
+		"version":     projectpolicy.Version,
+		"allow_repos": []string{"github/acme/app"},
+		"binaries":    map[string]any{"allow": []string{"website/public/**", "brand/*.png"}, "max_bytes": 1048576},
+	})
+	out, _, err := execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatalf("the publish refused a node carrying a binaries block: %v", err)
+	}
+	p := publishedPolicy(t, f)
+	if want := []string{"website/public/**", "brand/*.png"}; !slices.Equal(p.BinariesAllow(), want) {
+		t.Errorf("BinariesAllow() = %v, want %v: the publish dropped the owner's grant", p.BinariesAllow(), want)
+	}
+	if got := p.BinariesMaxBytes(); got != 1048576 {
+		t.Errorf("BinariesMaxBytes() = %d, want 1048576: the publish put the cap back at the ceiling it had been lowered from", got)
+	}
+	if raw := nodeJSON(t, f, projectpolicy.PathShared()); !strings.Contains(raw, `"binaries"`) {
+		t.Errorf("the node no longer carries the block:\n%s", raw)
+	}
+	if !strings.Contains(out, "binaries kept: allow website/public/**, brand/*.png, max_bytes 1048576") {
+		t.Errorf("the publish does not say the block was kept:\n%s", out)
+	}
+
+	// A written block whose list is empty is the spelling that takes an
+	// admission away on purpose (D987), and it is kept as what it is: no key of
+	// this release's config could clear the block, so the publisher must not
+	// invent one by folding it onto the absent member — the node would stop
+	// saying that the owner meant it.
+	f.db.Set(projectpolicy.PathShared(), map[string]any{
+		"version":     projectpolicy.Version,
+		"allow_repos": []string{"github/acme/app"},
+		"binaries":    map[string]any{"allow": []string{}},
+	})
+	out, _, err = execute(t, "project", "policy", "publish")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := publishedPolicy(t, f); p.Binaries == nil {
+		t.Error("the publish dropped a written block whose list is empty: the node no longer says the owner took the admission away")
+	}
+	// The member's own bytes, and not a re-encode of them: the empty list is
+	// what makes the block a statement, and `{"binaries": {}}` is not a value
+	// the node holds — the member would leave it and the two spellings would
+	// collapse into one.
+	if raw := nodeJSON(t, f, projectpolicy.PathShared()); !strings.Contains(raw, `"allow":[]`) {
+		t.Errorf("the node's written empty list did not survive the publish:\n%s", raw)
+	}
+	if !strings.Contains(out, "binaries kept: allow written empty: nothing admitted") {
+		t.Errorf("the publish does not say the written empty block was kept:\n%s", out)
+	}
+}
+
 // TestPublishDropsReviewFloorOnPurpose: `review_floor: {}` is how the owner
 // takes a published floor away. Silence about the key keeps the node's floor
 // (the test above), so the written empty object is the spelling that has to
