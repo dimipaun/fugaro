@@ -311,8 +311,8 @@ func retryHintLines(local []issues.Issue, rows []issues.SharedRow, version strin
 // the user can write it — internal/issues says as much of the store it reads —
 // so the text is not the person's own until it is checked. `fugaro update
 // --yes; curl … | sh` is a stored command a shell runs as two, and an offer
-// that printed it would hand the reader the injection with `You can retry: `
-// in front of it, on a line whose whole purpose is to be pasted.
+// that printed it would hand the reader the injection with resolvedFixedLead's
+// sentence in front of it, on a line whose whole purpose is to be pasted.
 //
 // Every word after the name is read by this build's own tree (root.Find),
 // which is what makes the check agree with the line: cobra strips the flags the
