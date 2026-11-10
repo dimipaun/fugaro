@@ -13,6 +13,7 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -247,4 +248,220 @@ func handMinted(t *testing.T, f *fixture, id string, claims licence.Claims) stri
 	return id + "." +
 		base64.RawURLEncoding.EncodeToString(payload) + "." +
 		base64.RawURLEncoding.EncodeToString(signature)
+}
+
+// TestTheMinterRefusesWhatItCannotSign: every claim the minter will not sign is
+// refused **before** the signer is called, and this is the half of the service
+// where that matters most — it is the half that holds the key ring, so a guard
+// that is missing here is a key minted under an environment's id with a claim
+// set nothing downstream checks again. `Seats < 1` is the one the verifier does
+// not catch either way: its own validation does not range-check the seats, so a
+// key for nobody's seat count verifies everywhere.
+//
+// Each case is one guard, and the count of the signer's calls is what says the
+// refusal came first rather than after a signature was already made. A key ring
+// that answers something that is not a signature is the one case where the
+// signer *is* called and its answer is still refused, because that answer would
+// otherwise be written into a key text no verifier accepts.
+func TestTheMinterRefusesWhatItCannotSign(t *testing.T) {
+	f := newFixture(t)
+	valid := Request{
+		Environment:  Production,
+		Tier:         licence.TierTeam,
+		Features:     []string{"seats"},
+		Seats:        1,
+		Organisation: "acme.example",
+		Plan:         paidPlanName,
+		TermDays:     365,
+	}
+	for _, tc := range []struct {
+		name string
+		// size is what the key ring answers instead of a signature, when a case
+		// is about the answer rather than about the request.
+		size int
+		edit func(*Request, *Minter)
+		// signed is how many times the signer must have been asked, and mints
+		// whether the request is one the minter serves.
+		signed int
+		mints  bool
+		// notTheCeiling says the refusal has to be the guard's own and not the
+		// tier ceiling's. An unknown tier has no entry in the ceiling table, so a
+		// missing guard reads the ceiling as zero and refuses the same request by
+		// a rule that is not true of it — and the two have different repairs, a
+		// tier to name and a term to shorten.
+		notTheCeiling bool
+	}{
+		{name: "the request the intake builds", signed: 1, mints: true},
+		{
+			name:          "a tier no key is issued for",
+			edit:          func(r *Request, _ *Minter) { r.Tier = "team-plus" },
+			signed:        0,
+			notTheCeiling: true,
+		},
+		{
+			name:   "no tier at all",
+			edit:   func(r *Request, _ *Minter) { r.Tier = "" },
+			signed: 0,
+		},
+		{
+			name:   "a term of no days",
+			edit:   func(r *Request, _ *Minter) { r.TermDays = 0 },
+			signed: 0,
+		},
+		{
+			name:   "a term that is negative",
+			edit:   func(r *Request, _ *Minter) { r.TermDays = -30 },
+			signed: 0,
+		},
+		{
+			name:   "no seats",
+			edit:   func(r *Request, _ *Minter) { r.Seats = 0 },
+			signed: 0,
+		},
+		{
+			name:   "a negative number of seats",
+			edit:   func(r *Request, _ *Minter) { r.Seats = -3 },
+			signed: 0,
+		},
+		{
+			name:   "no organisation",
+			edit:   func(r *Request, _ *Minter) { r.Organisation = "" },
+			signed: 0,
+		},
+		{
+			name:   "an organisation of whitespace",
+			edit:   func(r *Request, _ *Minter) { r.Organisation = " \t " },
+			signed: 0,
+		},
+		{
+			name:   "no key id for the environment",
+			edit:   func(_ *Request, m *Minter) { m.Keys = Keys{Staging: stagingKeyID} },
+			signed: 0,
+		},
+		{
+			name:   "no signer",
+			edit:   func(_ *Request, m *Minter) { m.Signer = nil },
+			signed: 0,
+		},
+		{name: "a key ring answering a short signature", size: 32, signed: 1},
+		{name: "a key ring answering a long signature", size: 128, signed: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			spy := &signerSpy{priv: f.signer.priv, size: tc.size}
+			minter := Minter{Signer: spy, Keys: f.keys, Environment: Production, Now: f.clock}
+			request := valid
+			if tc.edit != nil {
+				tc.edit(&request, &minter)
+			}
+			minted, err := minter.Mint(context.Background(), request)
+			if spy.calls != tc.signed {
+				t.Errorf("the minter asked the signer %d time(s) for %s, want %d: a claim it will not sign is refused before the key ring is called", spy.calls, tc.name, tc.signed)
+			}
+			if tc.mints {
+				if err != nil {
+					t.Fatalf("the minter refused the request the intake builds: %v", err)
+				}
+				if _, _, err := licence.VerifyAgainst([]byte(minted.Key), f.now, f.ring); err != nil {
+					t.Errorf("the minted key does not verify: %v", err)
+				}
+				if minted.Record.Seats != 1 || minted.Record.Expires.Sub(minted.Record.Issued) != 365*day {
+					t.Errorf("the record is %+v, want the request's seats and term", minted.Record)
+				}
+				return
+			}
+			if err == nil {
+				t.Errorf("the minter served %s, want a refusal before the signer is reached", tc.name)
+				return
+			}
+			if tc.notTheCeiling && errors.Is(err, licence.ErrLifetime) {
+				t.Errorf("the minter refused %s by the tier ceiling, want the guard's own refusal: %v", tc.name, err)
+			}
+		})
+	}
+}
+
+// TestTheIntakeRefusesWhatItsMinterCannotAnswer: the intake holds no signer
+// (Check 174), so every state in which the call to the minter's service cannot
+// be made or cannot be read is a refusal — never a key minted locally and never
+// a half-read answer. Each of them is reachable from a deploy's own
+// configuration, which is why each is guarded where the call is built rather
+// than left to fail as a nil pointer further in.
+func TestTheIntakeRefusesWhatItsMinterCannotAnswer(t *testing.T) {
+	request := Request{
+		Environment:  Production,
+		Tier:         licence.TierTeam,
+		Features:     []string{"seats"},
+		Seats:        1,
+		Organisation: "acme.example",
+		Plan:         paidPlanName,
+		TermDays:     365,
+	}
+	answer := func(status int, body string) http.HandlerFunc {
+		return func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(status)
+			w.Write([]byte(body))
+		}
+	}
+	// A whole key in a body: what a minter answering a refusal carries anyway is
+	// the shape the status is the only guard against, and a 200 with no key in it
+	// is the shape the key is.
+	minted := `{"key":"a.b.c","record":{"source":"","key_id":"production","plan":"","tier":"","features":null,"seats":0,"organisation":"","email":"","issued":"0001-01-01T00:00:00Z","expires":"0001-01-01T00:00:00Z"}}`
+	// Every case whose refusal is a state the call cannot be made in is given a
+	// client that counts being asked to make it, so "refused before the call" is
+	// read rather than inferred from an error the network happened to answer.
+	for _, tc := range []struct {
+		name   string
+		url    string
+		tokens Tokens
+		answer http.HandlerFunc
+		before bool
+	}{
+		{name: "no minter URL at all", tokens: staticTokens("id-token"), before: true},
+		{name: "a minter URL of whitespace", url: "  ", tokens: staticTokens("id-token"), before: true},
+		{name: "no source of ID tokens", url: "https://minter.example", before: true},
+		{name: "a token source that is down", url: "https://minter.example", tokens: failingTokens(), before: true},
+		{name: "a minter that refuses the call", tokens: staticTokens("id-token"), answer: answer(http.StatusForbidden, minted)},
+		{name: "a minter that fails", tokens: staticTokens("id-token"), answer: answer(http.StatusInternalServerError, minted)},
+		{name: "a minter that answers no key", tokens: staticTokens("id-token"), answer: answer(http.StatusOK, `{}`)},
+		{name: "a minter that answers a key under no id", tokens: staticTokens("id-token"), answer: answer(http.StatusOK, `{"key":"a.b.c","record":{"key_id":""}}`)},
+		{name: "a minter whose answer is not one this service reads", tokens: staticTokens("id-token"), answer: answer(http.StatusOK, `{"key":`)},
+		{name: "a minter whose answer carries a field this service does not know", tokens: staticTokens("id-token"), answer: answer(http.StatusOK, `{"key":"a.b.c","record":{"key_id":"production"},"extra":true}`)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &clientSpy{}
+			mints := RemoteMints{URL: tc.url, Tokens: tc.tokens, Client: &http.Client{Transport: client}}
+			if tc.answer != nil {
+				srv := httptest.NewServer(tc.answer)
+				defer srv.Close()
+				mints.URL, mints.Client = srv.URL, srv.Client()
+			}
+			if _, err := mints.Mint(context.Background(), request); err == nil {
+				t.Errorf("the intake's minter client served %s, want a refusal: this half holds no signer, so a call it cannot make is never a key (Check 174)", tc.name)
+			}
+			if tc.before && client.calls != 0 {
+				t.Errorf("the minter client made %d call(s) for %s, want none: the state is one the call cannot be made in, and sending it anyway is how a refusal turns into a mint somewhere else", client.calls, tc.name)
+			}
+		})
+	}
+}
+
+// clientSpy is the transport of a RemoteMints call that must never leave the
+// process: what it answers is never read, and its count is what a test reads to
+// say a refusal came before the request rather than after the network declined
+// it.
+type clientSpy struct{ calls int }
+
+func (c *clientSpy) RoundTrip(*http.Request) (*http.Response, error) {
+	c.calls++
+	return nil, errors.New("this client must not be reached")
+}
+
+// failingTokens is a Tokens whose source is down, which is a state a deploy can
+// be in: the metadata server is unset, unreachable or answering an error, and
+// what the intake must not do is call the minter with no token and then mint
+// locally when it is refused.
+func failingTokens() Tokens {
+	return tokenFunc(func(context.Context, string) (string, error) {
+		return "", errors.New("the metadata server answered nothing")
+	})
 }

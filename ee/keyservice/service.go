@@ -367,6 +367,12 @@ func (s *Service) requestForm(w http.ResponseWriter, r *http.Request) {
 // mint, so a link followed twice mints once, and a link that has expired mints
 // nothing. A request that could not be finished hands the token back, so a link
 // is never spent on a key nobody received.
+//
+// Every link that cannot be followed again loses the address it was about
+// (§7.3): the one this request spends, when the request it spent it for is
+// over, and every other one whose window has closed — a token nobody ever
+// follows is the common case, since an applicant who does not prove the mailbox
+// is the applicant the link exists to filter out.
 func (s *Service) verifyLink(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	token := r.URL.Query().Get("token")
@@ -378,6 +384,15 @@ func (s *Service) verifyLink(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		fail(w, err)
 		return
+	}
+	// §7.3 drops a token's address once it is spent or expires, and this read is
+	// the only sweep the package has: a durable store expires them itself (a
+	// TTL, or D457's period), which is S3.5's, and until it does, a request to
+	// this route is what takes the store's dead links out of it.
+	for _, candidate := range held {
+		if candidate.Used || !s.now().Before(candidate.Expires) {
+			s.dropPersonal(ctx, candidate)
+		}
 	}
 	var pending Verification
 	found := false
@@ -398,6 +413,7 @@ func (s *Service) verifyLink(w http.ResponseWriter, r *http.Request) {
 	}
 	plan, known := s.planFor(pending.Plan)
 	if !known {
+		s.dropPersonal(ctx, pending)
 		answer(w)
 		return
 	}
@@ -416,6 +432,7 @@ func (s *Service) verifyLink(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if paid || held {
+			s.dropPersonal(ctx, pending)
 			answer(w)
 			return
 		}
@@ -434,7 +451,28 @@ func (s *Service) verifyLink(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
+	s.dropPersonal(ctx, pending)
 	answer(w)
+}
+
+// dropPersonal is §7.3's rule at the one place a verification's personal data
+// can go: the link cannot be followed again — it minted, it was refused for
+// good, or its window closed — so the address it was about, its domain and the
+// repositories an application named are dropped, and what is left is the digest,
+// the plan and the instant, none of which is a person.
+//
+// It is called on the way past rather than checked for, and a store that
+// refuses the write is logged and not answered with a failure: the applicant's
+// answer is about a key, not about a bookkeeping write, the key is delivered
+// whatever the store does, and the next follow's sweep is what drops it instead.
+func (s *Service) dropPersonal(ctx context.Context, v Verification) {
+	if v.Email == "" && v.Domain == "" && v.Organisation == "" && len(v.Repositories) == 0 {
+		return
+	}
+	v.Email, v.Domain, v.Organisation, v.Repositories = "", "", "", nil
+	if err := s.store.SaveVerification(ctx, v); err != nil {
+		log.Printf("keyservice: dropping the verification %s's personal data: %v", v.ID, err)
+	}
 }
 
 // applicant reads one of the site's form submissions: an address the intake can

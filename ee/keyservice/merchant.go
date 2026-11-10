@@ -241,8 +241,14 @@ func (s *Service) apply(ctx context.Context, e Event) error {
 		return err
 	}
 	// An event the store is already past does not move it backwards: a replayed
-	// purchase does not resurrect a cancelled subscription (§5.2).
-	if held && !e.OccurredAt.After(sub.At) {
+	// purchase does not resurrect a cancelled subscription (§5.2). What is
+	// excluded is an event *older* than the state and nothing else — an event
+	// tied with the subscription's own instant is not older than it, and it is
+	// ordinary traffic, because a merchant's instants come at second resolution
+	// and a purchase and the cancellation that follows it can share one. Dropping
+	// the tied event instead loses it: nothing is stored for it, and the drop is
+	// before the event id is recorded, so its redelivery is dropped the same way.
+	if held && e.OccurredAt.Before(sub.At) {
 		return nil
 	}
 	switch e.Type {
@@ -285,8 +291,10 @@ func (s *Service) completed(ctx context.Context, e Event, record Record) error {
 	}
 	// §5.2's ordering is re-read here for the same reason it is read in apply: a
 	// redelivery of a purchase must not resurrect the subscription a later
-	// cancellation or a later term has already moved past.
-	if held && !e.OccurredAt.After(sub.At) {
+	// cancellation or a later term has already moved past. It excludes the same
+	// thing it excludes there, an event strictly older than the state, and not a
+	// tie: an event tied with the stored instant is one the merchant meant.
+	if held && e.OccurredAt.Before(sub.At) {
 		return nil
 	}
 	switch e.Type {

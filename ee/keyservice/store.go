@@ -67,6 +67,12 @@ type Application struct {
 // Used is what makes a token single-use, and it is written before the mint: a
 // link followed twice mints once, and a mint that then fails has spent a token
 // rather than left one live.
+//
+// Email, Domain, Organisation and Repositories are **personal data and they go**
+// once the link can no longer be followed (§7.3): the service drops them when it
+// spends the token for good and when the window closes, whether or not the
+// applicant ever followed it, so an address at which nobody proved the mailbox
+// is not kept for ever. What survives is the digest, the plan and the instant.
 type Verification struct {
 	ID           string    `json:"id"`
 	Plan         string    `json:"plan"`

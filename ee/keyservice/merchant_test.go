@@ -157,6 +157,56 @@ func TestReplayedOrOutOfOrderEventIsIgnored(t *testing.T) {
 	}
 }
 
+// TestAnEventTiedWithTheStoredInstantIsNotDropped: §5.2 excludes an event
+// **older** than what the store holds and nothing else. A tie is not a replay:
+// a merchant's instants come at second resolution, so a purchase and the
+// cancellation that follows it can carry the same one, and so can a redelivery
+// of an event the store has already written the instant of. Dropping a tied
+// event loses it for good — nothing is stored for it and the drop happens before
+// the event id is recorded, so its redelivery is dropped the same way — and a
+// cancellation lost that way lets the renewal mint a paid key for a customer who
+// has left.
+func TestAnEventTiedWithTheStoredInstantIsNotDropped(t *testing.T) {
+	f := newFixture(t)
+	f.purchase("evt-1", "acme.example", 5, 365)
+	// The cancellation carries the instant the purchase does: a merchant's
+	// instants are whole seconds, so an event that follows one inside the same
+	// second carries the same one.
+	f.event(Event{ID: "evt-2", Type: EventCancellation, Organisation: "acme.example", OccurredAt: f.now})
+
+	sub, held, err := f.store.Subscription(context.Background(), "sub-acme.example")
+	if err != nil || !held {
+		t.Fatalf("the subscription is %v, held=%v", err, held)
+	}
+	if !sub.Cancelled {
+		t.Error("a cancellation tied with the instant the subscription holds was dropped, want it applied: what does not move the store backwards is an event older than it")
+	}
+	// And the renewal it would have let through does not come.
+	f.advance(365*day - 30*day)
+	if _, renewed, err := f.svc.Renew(context.Background(), "sub-acme.example"); err != nil || renewed {
+		t.Errorf("a subscription cancelled at the instant it holds renewed (renewed=%v, err=%v), want nothing", renewed, err)
+	}
+
+	// The same tie at the repair: the state a failed write left is written from
+	// the record on the redelivery, and the redelivery carries the instant the
+	// subscription already holds.
+	g, store := newFailingStore(t)
+	g.purchase("evt-1", "acme.example", 3, 365)
+	store.refuse = 1
+	change := Event{
+		ID: "evt-2", Type: EventSeatChange, OccurredAt: g.now,
+		Subscription: "sub-acme.example", Organisation: "acme.example", Seats: 5, TermDays: 365,
+	}
+	if rec := g.event(change); rec.Code != http.StatusInternalServerError {
+		t.Fatalf("a seat change whose subscription write failed was answered %d, want 500", rec.Code)
+	}
+	g.event(change)
+	repaired, _, _ := g.store.Subscription(context.Background(), "sub-acme.example")
+	if repaired.Seats != 5 {
+		t.Errorf("the redelivered seat change left %d seat(s), want the 5 its record holds: a redelivery tied with the stored instant is still the redelivery the repair waits for", repaired.Seats)
+	}
+}
+
 // TestAnEventForAnUnknownSubscriptionIsRefused: a cancellation or a seat change
 // the store has no subscription for is an event the service cannot place — it
 // arrived before the purchase it belongs to. Answering 200 drops it for good,

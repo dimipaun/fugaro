@@ -72,11 +72,15 @@ const evaluationDays = 92
 // signerSpy is the minter's Signer in a test: a throwaway key, and the count of
 // what was asked of it, which is how a test says "nothing was minted" without
 // reading the record. Its answer is a real Ed25519 signature, so a key a test
-// reads back is one any released verifier accepts.
+// reads back is one any released verifier accepts — and `size`, when a test sets
+// it, is a key ring that answers that many bytes instead of a signature, the
+// shape a managed key's API is in when it is misconfigured, which the minter has
+// to refuse rather than put into a key text.
 type signerSpy struct {
 	priv  ed25519.PrivateKey
 	calls int
 	err   error
+	size  int
 }
 
 func (s *signerSpy) Sign(_ context.Context, payload []byte) ([]byte, error) {
@@ -84,7 +88,13 @@ func (s *signerSpy) Sign(_ context.Context, payload []byte) ([]byte, error) {
 	if s.err != nil {
 		return nil, s.err
 	}
-	return ed25519.Sign(s.priv, payload), nil
+	signature := ed25519.Sign(s.priv, payload)
+	if s.size > 0 && s.size != len(signature) {
+		answered := make([]byte, s.size)
+		copy(answered, signature)
+		return answered, nil
+	}
+	return signature, nil
 }
 
 // mailSpy records what the intake mailed: the messages are read as the headers
@@ -341,19 +351,39 @@ func (f *fixture) verify(token string) *httptest.ResponseRecorder {
 // mailedToken is the token of the link in the last mail the intake sent.
 func (f *fixture) mailedToken() string {
 	f.t.Helper()
-	if len(f.mail.sent) == 0 {
+	tokens := f.mailedTokens()
+	if len(tokens) == 0 {
 		f.t.Fatal("the intake mailed nothing, so there is no link to follow")
 	}
-	body := f.mail.sent[len(f.mail.sent)-1].Body
-	at := strings.Index(body, "token=")
-	if at < 0 {
-		f.t.Fatalf("the mail carries no verification link: %q", body)
+	return tokens[len(tokens)-1]
+}
+
+// mailedTokens is the token of every verification link the intake has sent, in
+// the order it sent them. A test that is about a link nobody followed needs the
+// link that is not the last one.
+func (f *fixture) mailedTokens() []string {
+	f.t.Helper()
+	out := make([]string, 0, len(f.mail.sent))
+	for _, msg := range f.mail.sent {
+		at := strings.Index(msg.Body, "token=")
+		if at < 0 {
+			f.t.Fatalf("the mail carries no verification link: %q", msg.Body)
+		}
+		token := msg.Body[at+len("token="):]
+		if end := strings.IndexAny(token, " \n\r\t<"); end >= 0 {
+			token = token[:end]
+		}
+		out = append(out, token)
 	}
-	token := body[at+len("token="):]
-	if end := strings.IndexAny(token, " \n\r\t<"); end >= 0 {
-		token = token[:end]
-	}
-	return token
+	return out
+}
+
+// verifications is every pending link the store holds.
+func (f *fixture) verifications() []Verification {
+	f.t.Helper()
+	f.store.mu.Lock()
+	defer f.store.mu.Unlock()
+	return append([]Verification(nil), f.store.verifications...)
 }
 
 // records is every issuance the store holds, oldest first.

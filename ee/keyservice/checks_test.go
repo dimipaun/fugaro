@@ -265,14 +265,17 @@ func TestARepositoryOffTheDeploysHostIsNeverAskedAbout(t *testing.T) {
 	if got := len(f.mail.sent); got != 1 {
 		t.Fatalf("the application mailed %d message(s), want the verification one", got)
 	}
+	// The record is read here, while the link is still pending, because following
+	// it is what drops the applicant's personal data (§7.3). What is stored while
+	// it is pending is the URL on the deploy's own host and never the line.
+	held := f.verifications()
+	if len(held) != 1 || len(held[0].Repositories) != 1 || held[0].Repositories[0] != repositoryURL {
+		t.Errorf("the verification holds %v, want the canonical URL %q: what is stored is the URL on the deploy's own host and never the line", held, repositoryURL)
+	}
 	f.verify(f.mailedToken())
 	records := f.records()
 	if len(records) != 1 {
 		t.Fatalf("the application recorded %d key(s), want one", len(records))
-	}
-	held := f.store.verifications
-	if len(held) != 1 || len(held[0].Repositories) != 1 || held[0].Repositories[0] != repositoryURL {
-		t.Errorf("the verification holds %v, want the canonical URL %q: what is stored is the URL on the deploy's own host and never the line", held, repositoryURL)
 	}
 }
 
@@ -532,5 +535,88 @@ func TestTheTokenExpires(t *testing.T) {
 
 	if got := f.signer.calls; got != 0 {
 		t.Errorf("an expired token signed %d key(s), want none", got)
+	}
+}
+
+// TestASpentVerificationKeepsNoPersonalData: §7.3's rule at the link that was
+// followed. The record of a pending link holds the address it was mailed to —
+// what the key is delivered to — and once the token is spent that address has
+// done its work: what is left is the token's digest, the plan and the instant,
+// none of which is a person. The link's single-use is what keeps the record, so
+// the drop must not take it with it.
+func TestASpentVerificationKeepsNoPersonalData(t *testing.T) {
+	f := newFixture(t)
+	answerBody(t, f.apply(applicantAddress))
+	token := f.mailedToken()
+
+	pending := f.verifications()
+	if len(pending) != 1 {
+		t.Fatalf("the application left %d verification(s), want one", len(pending))
+	}
+	if pending[0].Email != applicantAddress || pending[0].Domain != "acme.example" || pending[0].Organisation == "" {
+		t.Fatalf("the pending link holds %+v, want the address it was mailed to and the domain it was about", pending[0])
+	}
+	if pending[0].ID != digest(token) {
+		t.Errorf("the pending link is keyed by %q, want the token's digest alone (§7.3)", pending[0].ID)
+	}
+
+	answerBody(t, f.verify(token))
+
+	held := f.verifications()
+	if len(held) != 1 {
+		t.Fatalf("the store holds %d verification(s) after the follow, want the one the link was", len(held))
+	}
+	spent := held[0]
+	if spent.Email != "" || spent.Domain != "" || spent.Organisation != "" || len(spent.Repositories) != 0 {
+		t.Errorf("the spent verification holds %+v, want no address, domain, organisation or repositories (§7.3)", spent)
+	}
+	if spent.ID != pending[0].ID || spent.Plan != pending[0].Plan || !spent.Expires.Equal(pending[0].Expires) || !spent.Used {
+		t.Errorf("the spent verification holds %+v, want the digest, the plan, the instant and the spending kept", spent)
+	}
+	if got := len(f.records()); got != 1 {
+		t.Errorf("the spent link recorded %d key(s), want one: the drop is the record's and not the applicant's", got)
+	}
+	// And the token is still spent, so the drop did not hand it back.
+	f.verify(token)
+	if got := f.signer.calls; got != 1 {
+		t.Errorf("following the spent link again signed %d key(s) in all, want the first use's one", got)
+	}
+}
+
+// TestAnUnfollowedLinkLosesItsAddress: the common case §7.3's rule is for — an
+// address at which nobody ever proved the mailbox. The link expires unused and
+// the address it was about goes with it, so the store is a list of applications
+// that were decided and never a list of addresses that were tried.
+func TestAnUnfollowedLinkLosesItsAddress(t *testing.T) {
+	f := newFixture(t)
+	answerBody(t, f.apply("first@one.example"))
+	answerBody(t, f.apply("second@two.example"))
+	tokens := f.mailedTokens()
+	if len(tokens) != 2 {
+		t.Fatalf("the two applications mailed %d link(s), want one each", len(tokens))
+	}
+	if held := f.verifications(); len(held) != 2 {
+		t.Fatalf("the applications left %d verification(s), want two", len(held))
+	}
+
+	f.advance(time.Duration(f.svc.cfg.VerificationTTL) + time.Minute)
+	// The second link is the one followed, so the first is dropped by the sweep
+	// and not by the request that carried it.
+	answerBody(t, f.verify(tokens[1]))
+
+	held := f.verifications()
+	if len(held) != 2 {
+		t.Fatalf("the store holds %d verification(s) after the follow, want both", len(held))
+	}
+	for _, v := range held {
+		if v.Email != "" || v.Domain != "" || v.Organisation != "" || len(v.Repositories) != 0 {
+			t.Errorf("the verification %s holds %+v, want an expired link's address gone too (§7.3)", v.ID, v)
+		}
+	}
+	if held[0].ID != digest(tokens[0]) {
+		t.Errorf("the store's first verification is %q, want the link nobody followed", held[0].ID)
+	}
+	if got := f.signer.calls; got != 0 {
+		t.Errorf("two expired links signed %d key(s), want none", got)
 	}
 }
