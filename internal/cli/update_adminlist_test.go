@@ -62,6 +62,30 @@ func TestUpdateRewritesListAfterRoleChange(t *testing.T) {
 	}
 }
 
+// TestUpdateRevokesWhenTheRosterIsGone: the same lag read the other way. The
+// object is rewritten from the roster on every update, so a roster that is
+// gone — no node at all, which is a roster with no grants (roleaccess.Read's
+// own answer) and never "the list we had" — is a revocation the intake sees at
+// the next `fugaro update`, and the step must not read it as "nothing to do"
+// and leave the object an earlier update derived in place. What that would
+// cost is the fail-closed direction of this step: the intake goes on admitting
+// whoever the stale list names, however often the door runs.
+//
+// The fixture is that staleness: the rig holds no roster node, and the bucket
+// holds a list derived from a roster that had one.
+func TestUpdateRevokesWhenTheRosterIsGone(t *testing.T) {
+	r := newConvergeRig(t, v4Node())
+	setAdminList(t, r, []roleaccess.Admin{{Email: "gone@example.com"}})
+
+	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	// The object is rewritten, not deleted: an absent list and a list that
+	// holds nobody are different documents, and the intake reads the second.
+	assertAdminList(t, r, nil, "after the update that follows the roster's removal")
+	if !strings.Contains(out, "admin list: 0 project admin(s)") {
+		t.Errorf("the run does not say the list now holds no project admin:\n%s", out)
+	}
+}
+
 // TestAdminListNotWrittenToAnotherInstallationsBucket: the list is an
 // installation-scoped object, and the step keeps the exact-name rule every
 // sibling writer of one keeps — the runs bucket has to be this installation's

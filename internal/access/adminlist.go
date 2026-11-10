@@ -106,6 +106,15 @@ type adminListDoc struct {
 // Admins derives the list from the roster: every grant that is an admin of the
 // whole project, as one entry each, sorted by address.
 //
+// The roster's stored grants are the whole input, and the implicit project
+// admins — the GCP project's owners and editors and the budget admins, which
+// hold no stored pair (resolve.go's Input.Implicit, roles.md D689) — are not on
+// the list. An implicit admin may be a group or a service account, and an entry
+// is the address a caller's ID token carries, so the list cannot hold one; a
+// shared-secret writer holds a stored admin grant instead (the plan's DS2.0 and
+// DS2.3). The omission is fail closed: an implicit admin is refused the shared
+// prefix rather than admitted by a grant the roster does not hold.
+//
 // The failures are silent skips rather than errors, and that is the roster's
 // own rule (fail closed): a grant that does not parse grants nothing, so a
 // person it names is not an admin and is not on the list. A caller that wants
