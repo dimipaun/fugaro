@@ -109,7 +109,15 @@ mode=${FAKE_MODE:-default}
 printf 'gcloud %s\n' "$*" >>"$FAKE_LOG_DIR/gcloud.calls"
 
 project=""; format=""; impersonate=""
-member=""; role=""; condition=""; flatten=""
+member=""; role=""; condition=""; flatten=""; verb=""
+
+# has_conditions: whether the policy this fake keeps carries a condition at all,
+# which is what decides whether gcloud insists on --condition=None.
+has_conditions() {
+  awk -F'\t' 'NF >= 3 && $3 != "" { found = 1 } END { exit !found }' \
+    "$state/bindings.tsv" 2>/dev/null
+}
+
 positional=()
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -239,30 +247,55 @@ iam)
 # `projects <verb> <project-id>`: the verb is the second positional word.
 projects)
   case "$sub2" in
-  add-iam-policy-binding)
-    [ "$mode" = binding-add-fails ] && {
+  add-iam-policy-binding | remove-iam-policy-binding)
+    verb=$sub2
+    [ "$mode" = binding-add-fails ] && [ "$verb" = add-iam-policy-binding ] && {
       echo "ERROR: (gcloud.projects.add-iam-policy-binding) the request failed" >&2
       exit 1
     }
-    title=${condition#title=}
-    title=${title%%,*}
-    expr=${condition#*,expression=}
-    printf '%s\t%s\t%s\t%s\n' "$member" "$role" "$title" "$expr" >>"$state/bindings.tsv"
-    ;;
-  remove-iam-policy-binding)
-    [ "$mode" = binding-remove-fails ] && {
+    [ "$mode" = binding-remove-fails ] && [ "$verb" = remove-iam-policy-binding ] && {
       echo "ERROR: (gcloud.projects.remove-iam-policy-binding) the request failed" >&2
       exit 1
     }
-    # Faithful to gcloud's own matching: a binding carrying a condition is
-    # removed by naming that condition, and one carrying none is removed by
-    # naming none — a --condition for an unconditioned binding removes nothing,
-    # which is exactly the mistake a restore has to not make.
-    if [ -n "$condition" ]; then
+    # gcloud's own two refusals around conditions, which are what a check has to
+    # get right rather than be lucky about:
+    #   * a policy that carries a condition refuses an add OR a remove that does
+    #     not say which one it means, unless the caller says --condition=None out
+    #     loud — "Run the command again with --condition=None". Saying nothing
+    #     and saying None are therefore not the same thing, and the fake tells
+    #     them apart the way the real one does.
+    #   * a condition has to carry BOTH a title and an expression, so a removal
+    #     that names only the title is refused and removes nothing.
+    if [ -z "$condition" ] && has_conditions; then
+      echo "ERROR: (gcloud.projects.$verb) The policy contains bindings with conditions, so it must be specified. Run the command again with --condition=None to specify an unconditional binding." >&2
+      exit 1
+    fi
+    if [ -z "$condition" ] || [ "$condition" = None ]; then
+      title=""
+      expr=""
+    else
+      case "$condition" in
+      *,expression=*) ;;
+      *)
+        echo "ERROR: (gcloud.projects.$verb) argument --condition: a condition must specify both a title and an expression (got '$condition')" >&2
+        exit 1
+        ;;
+      esac
       title=${condition#title=}
       title=${title%%,*}
-      awk -F'\t' -v m="$member" -v r="$role" -v t="$title" \
-        '!($1 == m && $2 == r && $3 == t)' "$state/bindings.tsv" >"$state/bindings.tsv.new"
+      expr=${condition#*,expression=}
+    fi
+    if [ "$verb" = add-iam-policy-binding ]; then
+      printf '%s\t%s\t%s\t%s\n' "$member" "$role" "$title" "$expr" >>"$state/bindings.tsv"
+      exit 0
+    fi
+    # Faithful to gcloud's own matching: a conditioned binding is removed by
+    # naming the WHOLE condition — the title alone matches nothing — and one
+    # carrying none is removed by naming None. A --condition for a binding that
+    # carries none removes nothing, which is the mistake a restore must not make.
+    if [ -n "$title" ]; then
+      awk -F'\t' -v m="$member" -v r="$role" -v t="$title" -v e="$expr" \
+        '!($1 == m && $2 == r && $3 == t && $4 == e)' "$state/bindings.tsv" >"$state/bindings.tsv.new"
     else
       awk -F'\t' -v m="$member" -v r="$role" \
         '!($1 == m && $2 == r && $4 == "")' "$state/bindings.tsv" >"$state/bindings.tsv.new"
@@ -698,11 +731,32 @@ test_the_roles_it_grants_are_a_closed_set_of_predefined_roles() {
   distinct=$(grep -o 'role=[^ ]*' "$dir/logs/gcloud.calls" | sort -u | grep -c . || true)
   [ "$distinct" = 3 ] || fail "the roles it grants: expected exactly three roles, got (${distinct}): ${roles}"
   # F30's unconditioned half: exactly one binding, roles/secretmanager.admin,
-  # and no condition on it.
+  # and it says --condition=None — the policy already carries the two conditioned
+  # grants by then, so an add that stayed silent about the condition would be
+  # refused by gcloud and the check would stop before its create row.
   local unconditioned
-  unconditioned=$(grep 'projects add-iam-policy-binding' "$dir/logs/gcloud.calls" | grep -v -- '--condition=' || true)
+  unconditioned=$(grep 'projects add-iam-policy-binding' "$dir/logs/gcloud.calls" | grep -- '--condition=None' || true)
   expect_contains "$unconditioned" "--role=roles/secretmanager.admin" "the unconditioned grant: roles/secretmanager.admin"
-  [ "$(printf '%s\n' "$unconditioned" | grep -c .)" = 1 ] || fail "the unconditioned grant: expected exactly one binding carrying no condition, got: ${unconditioned}"
+  [ "$(printf '%s\n' "$unconditioned" | grep -c .)" = 1 ] || fail "the unconditioned grant: expected exactly one binding added with --condition=None, got: ${unconditioned}"
+}
+
+test_the_bindings_are_removed_with_the_whole_condition() {
+  # The removal form, pinned because getting it wrong is silent: gcloud matches a
+  # removal on the WHOLE condition, refuses a condition that carries no
+  # expression, and refuses a removal from a policy that has conditions unless
+  # --condition=None names the unconditional binding. The check's `|| true`
+  # swallows whatever gcloud says, so a wrong form shows up only as a grant left
+  # on the owner's project and a `restore: FAIL` — which the cases above catch,
+  # and which this one makes legible as the form rather than the outcome.
+  local dir=$work/removal removes
+  prepare "$dir"
+  run_check "$dir"
+  expect_status "$status" 0 "the removal form"
+  removes=$(grep 'projects remove-iam-policy-binding' "$dir/logs/gcloud.calls" || true)
+  expect_contains "$removes" "--role=roles/secretmanager.admin --condition=title=chk510-admin-${stamp},expression=resource.name.startsWith(" "the removal form: the conditioned admin grant's whole condition"
+  expect_contains "$removes" "--role=roles/secretmanager.viewer --condition=title=chk510-viewer-${stamp},expression=resource.name.startsWith(" "the removal form: the conditioned viewer grant's whole condition"
+  expect_contains "$removes" "--role=roles/secretmanager.admin --condition=None" "the removal form: the unconditioned grant, named with None"
+  [ "$(printf '%s\n' "$removes" | grep -c .)" = 3 ] || fail "the removal form: expected exactly three project removals, got: ${removes}"
 }
 
 test_no_human_output_carries_the_token() {
@@ -965,6 +1019,7 @@ t test_help
 t test_dry_run
 t test_happy_path
 t test_the_roles_it_grants_are_a_closed_set_of_predefined_roles
+t test_the_bindings_are_removed_with_the_whole_condition
 t test_no_human_output_carries_the_token
 t test_xtrace_refused
 t test_a_foreign_installation_is_refused

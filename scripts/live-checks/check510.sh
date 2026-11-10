@@ -208,11 +208,19 @@ restore() {
   local args=()
   while IFS='|' read -r member role title conditioned; do
     [ -n "$title" ] || continue
-    # An unconditioned binding has to be removed WITHOUT a condition: gcloud
-    # matches the binding it removes on the condition it was written with, and
-    # passing one for a binding that carries none removes nothing.
+    # The removal names the condition EXACTLY as the add wrote it — gcloud
+    # matches the binding it removes on the whole condition, so a title alone
+    # matches nothing (and gcloud refuses a condition that carries no
+    # expression), which would leave the grant on the owner's project and report
+    # it as removed. An unconditioned binding is named with --condition=None for
+    # the same reason the add states it: the policy carries conditions, so
+    # gcloud refuses a removal that does not say which one it means.
     args=(--member="$member" --role="$role")
-    if [ "$conditioned" = conditioned ]; then args+=(--condition="title=$title"); fi
+    if [ "$conditioned" = conditioned ]; then
+      args+=(--condition="title=$title,expression=$(condition_expression)")
+    else
+      args+=(--condition=None)
+    fi
     gcloud_admin projects remove-iam-policy-binding "$P" "${args[@]}" >/dev/null 2>&1 || true
     if [ "$conditioned" = conditioned ]; then
       if title_present "$title"; then leftover="$leftover binding($member,$role,$title)"; fi
@@ -238,7 +246,7 @@ restore() {
   fi
   if [ -n "$leftover" ]; then
     RESTORE_VERDICT=FAIL
-    RESTORE_NOTE="this check could not confirm what it deleted:$leftover — delete them yourself: gcloud secrets delete <name> --project $P; gcloud iam service-accounts delete <email> --project $P; gcloud projects remove-iam-policy-binding $P --member=<member> --role=<role> (add --condition=title=<title> for the one written under a condition; one this run wrote with no condition is removed by naming none)"
+    RESTORE_NOTE="this check could not confirm what it deleted:$leftover — delete them yourself: gcloud secrets delete <name> --project $P; gcloud iam service-accounts delete <email> --project $P; gcloud projects remove-iam-policy-binding $P --member=<member> --role=<role> (with --condition=None for the one this run wrote with no condition, and with the whole condition — --condition=\"title=<title>,expression=$(condition_expression)\" — for one it wrote under a condition: gcloud matches on both halves, and a title alone removes nothing)"
     return 0
   fi
   RESTORE_VERDICT=PASS
@@ -397,6 +405,15 @@ add_binding() { # add_binding ROLE TITLE conditioned|unconditioned
   if [ "$conditioned" = conditioned ]; then
     how=" under the condition '${title}'"
     args+=(--condition="title=$title,expression=$(condition_expression)")
+  else
+    # --condition=None and not "no --condition at all": once the policy carries a
+    # condition, gcloud refuses to add a binding without one in a
+    # non-interactive shell — its own safety check, and the reason the message
+    # tells you to run the command again with --condition=None. step_bindings has
+    # already written the two conditioned grants by the time this runs, so
+    # leaving it out would stop the check here. check91.sh writes its
+    # unconditional project grants the same way.
+    args+=(--condition=None)
   fi
   if ! gcloud_admin projects add-iam-policy-binding "$P" "${args[@]}" >/dev/null 2>&1; then
     die "could not grant ${role} to ${SA_EMAIL}${how} on ${P}: adding a project binding needs resourcemanager.projects.setIamPolicy, which a project Owner has, and the role has to be one this project can bind — a name that is not a role of the project is refused here the same way. Run 'gcloud projects add-iam-policy-binding $P --member=serviceAccount:$SA_EMAIL --role=$role' here yourself to read the error. Nothing else was written"
@@ -691,7 +708,7 @@ plan() {
   say "  [network, read] the guards: fugaro doctor --project fugaro --all (it reads the installation's config, policy and billing, and the update check, so this is the dry run's one network read) and fugaro version"
   say "  [network, write] gcloud iam service-accounts create ${SA_NAME} (throwaway), then roles/iam.serviceAccountTokenCreator for $ACCOUNT on it"
   say "  [network, write] gcloud secrets create for five probes: ${PROBE_U}, ${PROBE_P}, ${PROBE_N}, ${PROBE_U2}, ${PROBE_N2}"
-  say "  [network, write] gcloud projects add-iam-policy-binding ${P} --role=roles/secretmanager.admin|viewer under the condition: $(condition_expression), then roles/secretmanager.admin again with NO condition (the create row's grant: Secret Manager has no create-only role)"
+  say "  [network, write] gcloud projects add-iam-policy-binding ${P} --role=roles/secretmanager.admin|viewer under the condition: $(condition_expression), then roles/secretmanager.admin again with --condition=None (the create row's grant: Secret Manager has no create-only role, and gcloud refuses an unconditional add on a policy that already carries a condition unless None is said out loud)"
   say "  [network, read] POST .../secrets/<name>:addVersion, DELETE .../secrets/<name>, POST .../secrets?secretId=<name>, GET .../secrets — as ${SA_NAME}, one call per row"
   say "  [network, write] the length bisection's creates (up to ${LENGTH_MAX_PROBE} characters, about 11 calls)"
   say "  [network, write] the restore: the bindings, the account and every container this check made, deleted and read back"
