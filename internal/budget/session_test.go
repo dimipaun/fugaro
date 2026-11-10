@@ -12,6 +12,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
 func refusalOf(t *testing.T, err error) *gateway.Refusal {
@@ -693,6 +694,53 @@ func TestOutcomeWrittenOnce(t *testing.T) {
 	out, _ = f.db.Value(budget.PathOutcome(today(), slug, runID)).(map[string]any)
 	if out["status"] != "halted" {
 		t.Fatalf("the outcome was rewritten: %v", out)
+	}
+}
+
+// TestFinishRecordsTheRunsOwnStatus: the status the runner passes — the run
+// record's own (internal/runner's budget_session.go) — reaches the outcome node
+// unchanged, for every status a run can end with. The database is where a
+// person reads what their runs did, so a status filed as something else is a
+// figure that contradicts the run's own record; before NV0 the words were
+// spelled again here, and the run status a release added was one this package
+// did not know: it was filed as an infrastructure error, a fault that never
+// happened.
+//
+// The vocabulary is derived from runstore's now, and this is the path that makes
+// the claim true end to end. TestOutcomeRuleAcceptsEveryRunStatus holds the
+// deployed rule to the same set, which is the other half: a status this node
+// carries must be one the rules accept, or the write is refused and the run is
+// left with no outcome at all.
+//
+// Hand mutation this fails on: spelling the vocabulary again without a status a
+// record carries (for `unreviewed`, the literal map this file held before NV0),
+// or dropping the terminal predicate (the status `running` is then filed as an
+// infrastructure error).
+func TestFinishRecordsTheRunsOwnStatus(t *testing.T) {
+	for _, status := range runstore.Statuses {
+		if !status.Terminal() {
+			continue // a run that has not ended writes no outcome
+		}
+		t.Run(string(status), func(t *testing.T) {
+			f := newFixture(t)
+			s := f.started(budget.AgentEntry{})
+			s.Finish(context.Background(), string(status))
+			out, _ := f.db.Value(budget.PathOutcome(today(), slug, runID)).(map[string]any)
+			if out == nil || out["status"] != string(status) {
+				t.Fatalf("outcome = %v, want the run's own status %q: the database has to carry the status the record does", out, status)
+			}
+		})
+	}
+	// And a word outside the vocabulary, which no record of this build writes,
+	// is still filed as an infrastructure error rather than sent to a database
+	// whose rules refuse it: a run with no outcome at all is a run a reader
+	// cannot see on a page that counts outcomes.
+	f := newFixture(t)
+	s := f.started(budget.AgentEntry{})
+	s.Finish(context.Background(), "not-a-status")
+	out, _ := f.db.Value(budget.PathOutcome(today(), slug, runID)).(map[string]any)
+	if out == nil || out["status"] != string(runstore.StatusInfraError) {
+		t.Fatalf("outcome = %v, want %q for a status outside the vocabulary", out, runstore.StatusInfraError)
 	}
 }
 
