@@ -57,8 +57,9 @@ func VertexPoolRefusal(pool, member string) string {
 // failover belongs to the credentials service (MC6); what this tree reads the
 // table for is the OAuth subscription allowance's own sentence, by way of
 // signalPhrases and oauthLimitPhrases (subscriptionUsageLimit). The reading
-// helpers below are the table's other half — the auth half is what a failover
-// asks, and their callers are the tests that pin each row until one is built.
+// helpers below are the table's Phrase half; the status and the error type a
+// failover would ask of a row are recorded beside it, and their callers are
+// the tests that pin every row until one is built.
 //
 // F5 is unverified (docs/model-crafts/reconciliation.md §5): the exact set of
 // statuses and bodies each provider returns on exhaustion is not something
@@ -84,9 +85,9 @@ func VertexPoolRefusal(pool, member string) string {
 //     table takes: the OAuth row's phrases are read by the runner through
 //     signalPhrases (oauthLimitPhrases, subscriptionUsageLimit), and the rows
 //     of every type are read by credentialExhaustedText where a failover is
-//     built. A row with no Phrase is a signal this table
-//     records and does not claim to read: Vertex answers with Google's own
-//     error body, which reaches the agent verbatim, and no phrase here guesses
+//     built. A row with no Phrase is a signal this table records and does not
+//     claim to read: Vertex answers with Google's own error body, which
+//     reaches the agent verbatim, and no phrase here guesses
 //     its wording — the stage then fails with those words quoted, which is the
 //     direction to fail in. A row with no Status is a phrase no status
 //     carries: the OAuth subscription allowance is spent inside a session that
