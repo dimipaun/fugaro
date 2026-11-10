@@ -177,6 +177,9 @@ func Resolve(ctx context.Context, deps ResolveDeps, installed string) (res Resul
 	// against that. The link's number is the one this project filed, the
 	// shape check is what makes it safe to build a request from, and it is
 	// what the cursor is keyed by: it is the number GitHub was asked about.
+	// Two records that name one issue are therefore one question, asked once
+	// — the other record meets the same answer on the next pass — rather than
+	// two asks that spend a pass's budget on one answer.
 	rowsAt := make(map[int]SharedRow, len(rows))
 	for _, row := range rows {
 		if row.Status != StatusSubmitted {
