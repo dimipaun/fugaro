@@ -526,7 +526,12 @@ write_instructions() {
 # is your own tool, and the run it sends is the one the pass would have asked you
 # to send.
 launch_followup() {
-  RUN_ID="chk480-$(date -u +%Y%m%d%H%M%S)"
+  # The id is minted in the one shape `fugaro run` admits —
+  # `^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$` (task.ValidRunID) — because the CLI checks
+  # it before it looks at the pull request: an id of any other shape is a launch
+  # refused with "--run-id must look like 20260926-221530-a1b2", which would send
+  # no run at all. `-c480` is check 480 in the four hex characters.
+  RUN_ID="${CHECK480_RUN_ID:-$(date -u +%Y%m%d-%H%M%S)}-c480"
   owner "about to launch ONE follow-up run on PR $PR of $REPO (run id $RUN_ID): the pass proposes its runs and never launches one — this goes because you typed the command"
   if ! fugaro run --pr "$PR" --repo "$REPO" --run-id "$RUN_ID" --json --task-file - <"$INSTRUCTIONS" >"$SCRATCH/launch.json" 2>"$SCRATCH/launch.err"; then
     fact launch FAIL "fugaro run --pr $PR was refused: $(tr '\n' ' ' <"$SCRATCH/launch.err")"
@@ -747,7 +752,7 @@ plan_only() {
   printf '  read the graph:      fugaro plan graph %s\n' "${args[*]}" >&3
   printf '  read the runs:       fugaro runs ls --repo %s --pr <N> --since 0 --json\n' "$REPO" >&3
   printf '  fetch the branches:  git -C %s fetch origin refs/heads/<base> refs/heads/<branch>\n' "$ROOT" >&3
-  printf '  send the follow-up:  fugaro run --pr <N> --repo %s --run-id chk480-<stamp> --json --task-file - (instructions naming the contract file, pasting none of it)\n' "$REPO" >&3
+  printf '  send the follow-up:  fugaro run --pr <N> --repo %s --run-id <YYYYMMDD-HHMMSS>-c480 --json --task-file - (instructions naming the contract file, pasting none of it)\n' "$REPO" >&3
   printf '  wait:                up to %ss, re-reading every %ss\n' "$RUN_SECONDS" "$POLL_SECONDS" >&3
   printf '  then it asserts:     the amended base is an ancestor of the branch; the branch'"'"'s contract file is the base'"'"'s byte for byte; the commits the run itself made touch the dependent'"'"'s own files and no file of the contract'"'"'s\n' >&3
   # Every key the real run records is named here as unmeasured, so the block a

@@ -275,6 +275,13 @@ type check480Fixture struct {
 // branch has it.
 func buildCheck480Fixture(t *testing.T, origin, baseContract, branchContract string) *check480Fixture {
 	t.Helper()
+	// The check and the fake `fugaro` it runs inherit this test's environment,
+	// so the identity and the isolation have to be here rather than on this
+	// test's own git commands: the fake commits into the temp repository too,
+	// and without this it reads whatever identity the machine happens to have —
+	// none, on a CI runner, where its commit then fails and the check measures a
+	// follow-up that never pushed.
+	testutil.IsolateGit(t)
 	work := t.TempDir()
 	f := &check480Fixture{
 		work:       work,
@@ -367,6 +374,16 @@ case "${1:-} ${2:-}" in
   for i in "${!args[@]}"; do
     [ "${args[$i]}" = "--run-id" ] && run_id=${args[$((i+1))]}
   done
+  # The CLI's own rule (task.ValidRunID), and it is checked before anything
+  # else: a check that minted an id of another shape would get no run at all,
+  # so a fake that took any id would let that ship as a green test.
+  case "$run_id" in
+  [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9][0-9][0-9]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]) : ;;
+  *)
+    printf 'fugaro run: --run-id "%s" must look like 20260926-221530-a1b2\n' "$run_id" >&2
+    exit 1
+    ;;
+  esac
   git -C "$SIM" fetch --quiet origin main
   git -C "$SIM" checkout --quiet fugaro/r1
   git -C "$SIM" merge --quiet --no-edit origin/main >/dev/null
@@ -494,17 +511,15 @@ func writeExec(t *testing.T, path, body string) {
 	}
 }
 
-// gitRun runs one git command in dir with an identity of its own: the checkout
-// is a temp directory, and a commit there must not read the machine's config.
+// gitRun runs one git command in dir. The checkout is a temp directory, so the
+// identity and the isolation come from the fixture's testutil.IsolateGit and
+// not from here: the script and the fake it runs inherit the same environment,
+// and a second identity set here would leave those two reading the machine's.
 func gitRun(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(),
-		"GIT_AUTHOR_NAME=check", "GIT_AUTHOR_EMAIL=check@example.invalid",
-		"GIT_COMMITTER_NAME=check", "GIT_COMMITTER_EMAIL=check@example.invalid",
-		"GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_SYSTEM="+os.DevNull,
-	)
+	cmd.Env = os.Environ()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
