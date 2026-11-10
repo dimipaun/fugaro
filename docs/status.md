@@ -52,20 +52,18 @@ As of 2026-11-10, read from `main`, the open pull requests and each plan's task 
 | plugin-user-scope | 1/10 | U1 merged, U2 in a run; `fugaro upgrade` is still on main |
 | run-without-checkout | 3/8 | A0 to A2 merged, A3 (draft #2233) in a run, A4 behind it |
 
-## To do, parked or superseded
+## To do or parked
 
 | Spec | State |
 | --- | --- |
 | composite-commands | 1/10; depends on no-prompt-policy |
-| central-orchestrator | superseded by stateless-orchestrator |
-| windows-cli | 10/31; superseded by console-windows |
 | mobile-auth | 2/7; parked |
 | repo-image-removal | **PARKED** (2/11; parked by image-setup, D1900) |
 | voice-module, collateral, backlog, plans | no plan or not a spec |
 
 ## Open points
 
-1. Overlapping chains to settle: forge-authorship-images against image-setup, repo-image-removal (parked), and bitbucket-workspace-token against the secrets proxy chain.
+1. Overlapping chains to reconcile (owner, 2026-11-10): forge-authorship-images against image-setup, and bitbucket-credentials and bitbucket-workspace-token against secrets-brokering. repo-image-removal stays parked.
 2. Four chains whose release slots passed are now being built (run-limit-carry-over, binary-allow-rule, plugin-user-scope, run-without-checkout). Each still needs a release slot.
 3. Pull requests #2118 and #2131 are both S3.5 (the key service's infrastructure); one is a duplicate.
 
@@ -94,3 +92,5 @@ As of 2026-11-10, read from `main`, the open pull requests and each plan's task 
 | console-windows | owner Check 119; T-H4 merged (#2175). The first real Windows unit run failed 484 tests, its fix chain is not planned yet |
 | short-run-ids | owner SR13; SR12 merged (#2168) |
 | website-changelog | WC4 lands with the next release |
+| central-orchestrator | superseded by stateless-orchestrator |
+| windows-cli | 10/31; superseded by console-windows |
