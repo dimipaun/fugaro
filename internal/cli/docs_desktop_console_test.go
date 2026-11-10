@@ -8569,8 +8569,16 @@ func TestDocsConsoleReleaseSymbolsIsStagedAndPinned(t *testing.T) {
 // dated note, for the reason the other three do: a rewrite would claim more
 // than the ruling does.
 //
-// The mutations that prove it: delete the note, and move it out of the Linux
-// section into the Windows one below it. Each fails here.
+// The Windows section below it is read too, and for T-H4's reason rather than
+// this ruling's: it is the section a reader arrives at asking whether the pack
+// has run, and the only place that answers is the pack job's own document --
+// docs/pending-workflows/README.md's `## console-windows.yml` section -- so the
+// section has to name it rather than leave the reader with a job they cannot
+// find.
+//
+// The mutations that prove it: delete the note, move it out of the Linux
+// section into the Windows one below it, and delete the Windows section's
+// pointer to the pack job's document. Each fails here.
 func TestDocsConsoleReadmeCarriesTheWindowsNote(t *testing.T) {
 	const path = "console/README.md"
 	readme := readDoc(t, path)
@@ -8587,6 +8595,36 @@ func TestDocsConsoleReadmeCarriesTheWindowsNote(t *testing.T) {
 	} {
 		if !strings.Contains(linux, want) {
 			t.Errorf("%s's Linux section no longer carries %q: it opens on \"Windows stays out\", the owner's ruling of 2026-10-20 moves half of that sentence, and the README is the one of the four places a console developer reads first", path, want)
+		}
+	}
+
+	// The Windows section's own pointer, which is T-H4's half of this file's
+	// claim: no `.exe` exists, the job has never run, and what a reader can
+	// learn about it -- whether it is still staged, how it is copied in, why it
+	// is a workflow of its own -- is in the pack job's document, so this section
+	// has to send them there by name.
+	// The section is read from the Windows pack's own heading rather than from
+	// the first "### What is not here" in the file, which is the Linux
+	// section's: the two sections share the subheading, and the pointer belongs
+	// to the Windows one.
+	pack := strings.Index(readme, "### The `--win` pack no longer stops")
+	if pack < 0 {
+		t.Fatalf("%s has no \"### The `--win` pack no longer stops\" heading: this test reads the Windows section from it", path)
+	}
+	rest := readme[pack:]
+	notHere := strings.Index(rest, "### What is not here")
+	if notHere < 0 {
+		t.Fatalf("%s's Windows section has no \"### What is not here\" subheading: this test reads the pointer to the pack job's document out of it", path)
+	}
+	windows := flattenDoc(rest[notHere:])
+	for _, want := range []string{
+		"docs/pending-workflows/README.md",
+		"## console-windows.yml",
+		"staged",
+		"copy-in",
+	} {
+		if !strings.Contains(windows, want) {
+			t.Errorf("%s's Windows section no longer carries %q: the pack has never run, and the pack job's own document is where the status, the copy-in and the reason it is a workflow of its own are written -- a section that stops naming it leaves the reader with a job they cannot find", path, want)
 		}
 	}
 }

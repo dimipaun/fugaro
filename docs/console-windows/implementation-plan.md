@@ -845,12 +845,23 @@ reading the register name by name. **Nothing writes the row into
 [docs/gcp-live-checklist.md](../gcp-live-checklist.md)**: the register's rule is that the phase which
 ships the check writes it, and no phase here is approved.
 
+**The mutation-proof discipline §0 states does not reach these steps, and saying so is part of the
+discipline rather than an excuse from it.** Every task above is finished by planting the bug its red
+step names, watching its guard fail and removing the bug; a checklist a person runs on a Windows machine
+has no guard that can be run that way, and its redness is what step 1's SmartScreen warning is. What
+stands in the discipline's place is what the rest of this section is made of: every row names what must
+be true and the finding or U-row it settles, so a step that passes can be read against the claim it was
+written for, and the installer it needs comes from the by-hand dry run rather than from a release.
+
 **Prerequisites.** A Windows 10 or 11 machine with WSL 2; one distribution with a Linux `fugaro`
 installed by [docs/windows-cli/wsl.md](../windows-cli/wsl.md)'s procedure; a checkout of this
 repository **inside** the distribution (`~/src/fugaro`, not `/mnt/c/...` — the mode-bit trap that file
 records); **the installer, from a manual dispatch of `console-windows.yml`** — a dispatch, because under
 D7(c) the job runs at release time only and a pull request never produces one, which is also why the
-release checklist carries the by-hand dry run; and **no** signing certificate.
+release checklist carries the by-hand dry run (the job's own document is
+[docs/pending-workflows/README.md](../pending-workflows/README.md)'s `## console-windows.yml` section:
+what it runs, the copy-in commands the owner makes, and why it is a workflow of its own rather than a
+leg of the tests job); and **no** signing certificate.
 
 Each step says what to do, what must be true, and which finding or U-row it settles.
 
