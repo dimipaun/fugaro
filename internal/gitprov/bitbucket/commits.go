@@ -80,8 +80,8 @@ func (p *Provider) Commit(ctx context.Context, ref string) (string, error) {
 //
 // The path is read with its trailing slash taken off: a context names a
 // directory, and the catalog's own grammar accepts one written the way its
-// example spells it ("ci/", D1391), where ValidRepoPath's rule is a file's and
-// refuses that slash.
+// example spells it ("ci/", D1391), where validContentsPath's rule is a file's
+// and refuses that slash.
 func (p *Provider) Tree(ctx context.Context, path, ref string, limit gitprov.TreeLimit) ([]gitprov.TreeFile, error) {
 	at := pluginwire.Printable(path)
 	dir := strings.TrimSuffix(path, "/")
