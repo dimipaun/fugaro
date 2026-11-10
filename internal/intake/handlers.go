@@ -348,7 +348,10 @@ func (s *Server) ensure(ctx context.Context, id string, o owner, mustExist bool)
 				// intake cannot account for, so it does not write into it.
 				return false, errForeignContainer
 			}
-			return true, checkShape(id, existing, o)
+			// Found by the second read: the container was there all along and
+			// this call did not make it — which is what Created reports, and
+			// the same answer the found-path below gives for the same state.
+			return false, checkShape(id, existing, o)
 		}
 		return true, nil
 	}

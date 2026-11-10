@@ -118,10 +118,16 @@ type fakeStore struct {
 	// writes, so a container the managed deployer pre-created (F35) carries none
 	// and is invisible here. It is what ensure's second read exists for.
 	foreign map[string]bool
+	// late are names that are there for Create and that the Describe BEFORE it
+	// misses while the Describe after it finds: the list call Describe is has
+	// caught up in between, which is that call's own eventual consistency —
+	// the state a container the intake wrote moments ago is in. ensure's two
+	// reads are not atomic, and this is the window they have.
+	late map[string]Secret
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{containers: map[string]Secret{}, values: map[string][]string{}, labels: map[string]map[string]string{}, foreign: map[string]bool{}}
+	return &fakeStore{containers: map[string]Secret{}, values: map[string][]string{}, labels: map[string]map[string]string{}, foreign: map[string]bool{}, late: map[string]Secret{}}
 }
 
 func (f *fakeStore) Describe(_ context.Context, id string) (Secret, bool, error) {
@@ -133,6 +139,11 @@ func (f *fakeStore) Describe(_ context.Context, id string) (Secret, bool, error)
 func (f *fakeStore) Create(_ context.Context, id string, annotations, labels map[string]string) error {
 	f.calls = append(f.calls, "create "+id)
 	if _, exists := f.containers[id]; exists || f.foreign[id] {
+		return ErrExists
+	}
+	if s, late := f.late[id]; late {
+		delete(f.late, id)
+		f.containers[id] = s
 		return ErrExists
 	}
 	f.containers[id] = Secret{ID: id, Annotations: annotations}
@@ -665,6 +676,45 @@ func TestRefusesAContainerInvisibleToItAndAlreadyThere(t *testing.T) {
 	}
 }
 
+// TestAContainerItFoundLateIsNotReportedAsMadeByThisCall: the other side of
+// the same window, where the second read FINDS the container. Secret Manager's
+// list call — which is what Describe is here — is eventually consistent, so a
+// container this intake wrote a moment ago (or one another writer made with
+// this intake's own shape) can be invisible to the read before Create and
+// visible to the read after it. Create then answered ErrExists, which means
+// this call did NOT make the container: SecretAnswer.Created is "made by this
+// call" (its own doc, and what the found-path of ensure answers for the same
+// outcome), so the answer is a rotation, not a creation.
+func TestAContainerItFoundLateIsNotReportedAsMadeByThisCall(t *testing.T) {
+	f := member(t)
+	id := secretname.UserPrefix + testOwnerSub + "_api-key"
+	f.store.late[id] = Secret{ID: id, Annotations: map[string]string{
+		AnnotationOwnerSub:   testOwnerSub,
+		AnnotationOwnerEmail: testOwnerEmail,
+		AnnotationCreatedBy:  testOwnerEmail,
+	}}
+
+	w := f.post(t, CreatePath, f.token(t, testOwnerEmail, testOwnerSub), createBody(ScopeUser, "api-key", testValue))
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d %s, want 200: the container carries this intake's own shape, so the call is a rotation", w.Code, w.Body.String())
+	}
+	var answer SecretAnswer
+	if err := json.Unmarshal(w.Body.Bytes(), &answer); err != nil {
+		t.Fatalf("the answer is not one: %v (%s)", err, w.Body.String())
+	}
+	if answer.Created {
+		t.Fatalf("the answer reports the container as made by this call: %s", w.Body.String())
+	}
+	// The rotation itself happened: the version is this call's and the store
+	// holds the value it carried.
+	if answer.Version == "" || answer.ID != id {
+		t.Fatalf("the answer is %+v, want the container and a version", answer)
+	}
+	if got := f.store.values[id]; len(got) != 1 || got[0] != testValue {
+		t.Fatalf("the store holds %v, want the one value the call carried", got)
+	}
+}
+
 // TestOneAuditLinePerCall: every call the intake answers writes exactly one
 // line, and the line names the act, the caller and the status — never a value
 // the call carried (G6, G13).
@@ -760,6 +810,167 @@ func TestAValueThatSpellsTheLinesOwnTextStillRecordsTheCall(t *testing.T) {
 			// what a reader greps for.
 			if line["id"] == "" {
 				t.Error("the line names no container")
+			}
+		})
+	}
+}
+
+// TestTheLineNeverCarriesTheValueItRecorded: the scrub is the whole of the
+// rule that the credential a call carried never reaches the log, and the only
+// place it is observable is where the value would otherwise be written — a
+// value that spells part of one of the text fields the line carries (G6, R10).
+// Three fields are the ones a call that carries a value puts text in: the
+// caller's address, the account id, and the container's name. (The owner field
+// is the list's and the sweep's, and those carry no value to scrub: their only
+// caller-controlled text is an address that canonicalAddress accepts, so a
+// credential is refused as the malformed owner it is.) The closed-set fields
+// are the other half of the line's rule and are the test above's.
+func TestTheLineNeverCarriesTheValueItRecorded(t *testing.T) {
+	for _, tc := range []struct {
+		what   string
+		value  string
+		caller string
+		sub    string
+		body   string
+		field  string
+	}{
+		{"the caller's address", testOwnerEmail, testOwnerEmail, testOwnerSub,
+			createBody(ScopeUser, "api-key", testOwnerEmail), "caller"},
+		{"the account id", testOwnerSub, testOwnerEmail, testOwnerSub,
+			createBody(ScopeUser, "api-key", testOwnerSub), "sub"},
+		{"the container's own name", "api-key", testOwnerEmail, testOwnerSub,
+			createBody(ScopeUser, "api-key", "api-key"), "id"},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			f := member(t)
+			w := f.post(t, CreatePath, f.token(t, tc.caller, tc.sub), tc.body)
+			if w.Code != http.StatusOK {
+				t.Fatalf("got %d %s, want 200", w.Code, w.Body.String())
+			}
+			line := audit(t, f)
+			field, _ := line[tc.field].(string)
+			// The field was filled from the call — it is neither empty nor the
+			// value — so the value really was there to be written.
+			if field == "" || field == tc.value {
+				t.Fatalf("the line's %s is %q, so this case proves nothing about the scrub", tc.field, field)
+			}
+			if strings.Contains(f.lines.String(), tc.value) {
+				t.Fatalf("the line carries the value in its %s: %s", tc.field, f.lines.String())
+			}
+		})
+	}
+}
+
+// TestAnAuditorThatWasNotToldTheCallsValueWritesNoLine: Write refuses an
+// auditor that was never armed with the value the call carried, so a handler
+// that forgot is a refusal and not a line a value reached (D143). The event
+// below is one every rule of checked() accepts, so the arming is the only
+// thing that can refuse it — and the armed auditor writing the same event is
+// what says so.
+func TestAnAuditorThatWasNotToldTheCallsValueWritesNoLine(t *testing.T) {
+	ev := AuditEvent{
+		Caller: testOwnerEmail,
+		Sub:    testOwnerSub,
+		Op:     OpCreate,
+		Scope:  string(ScopeUser),
+		ID:     secretname.UserPrefix + testOwnerSub + "_api-key",
+		Status: credsvc.StatusOK,
+	}
+	newLog := func(t *testing.T) (*Auditor, *bytes.Buffer) {
+		t.Helper()
+		lines := &bytes.Buffer{}
+		a, err := NewAuditor(slog.NewJSONHandler(lines, &slog.HandlerOptions{Level: slog.LevelInfo}))
+		if err != nil {
+			t.Fatalf("building the auditor: %v", err)
+		}
+		return a, lines
+	}
+
+	t.Run("unarmed", func(t *testing.T) {
+		a, lines := newLog(t)
+		if err := a.Write(context.Background(), ev); err == nil {
+			t.Fatal("an auditor that was never told what value the call carried wrote the line: a credential could have reached it")
+		}
+		if lines.Len() != 0 {
+			t.Fatalf("the refusal wrote %s", lines.String())
+		}
+	})
+
+	t.Run("armed with the call's value", func(t *testing.T) {
+		a, lines := newLog(t)
+		if err := a.withValue([]byte(testValue)).Write(context.Background(), ev); err != nil {
+			t.Fatalf("the armed auditor refused the event: %v", err)
+		}
+		if lines.Len() == 0 {
+			t.Fatal("the armed auditor wrote no line")
+		}
+	})
+
+	// The option is the other way a line is armed, and it is for a caller that
+	// holds a value this package never sees: an auditor armed that way writes
+	// too, which is what makes the refusal above the arming and not the event.
+	t.Run("armed by the option", func(t *testing.T) {
+		lines := &bytes.Buffer{}
+		a, err := NewAuditor(slog.NewJSONHandler(lines, &slog.HandlerOptions{Level: slog.LevelInfo}),
+			WithAuditScrub(func(s string) string { return s }))
+		if err != nil {
+			t.Fatalf("building the auditor: %v", err)
+		}
+		if err := a.Write(context.Background(), ev); err != nil {
+			t.Fatalf("an auditor armed with its own redaction refused the event: %v", err)
+		}
+		if lines.Len() == 0 {
+			t.Fatal("the armed auditor wrote no line")
+		}
+	})
+}
+
+// TestTheLineRefusesFieldsThisIntakeDoesNotWrite: checked() is the rule that
+// keeps a field something else wrote into out of the log — every field is a
+// closed set or a shape this intake itself built, and a line is refused rather
+// than written when one is not. It is a SHAPE rule and not the value rule (a
+// credential is printable ASCII with no space and would pass most of these);
+// what the value rule rests on is the scrub, and the two orders are the test
+// above and round one's. The control at the end is the same auditor writing a
+// field put right, so a case cannot pass for a reason of its own.
+func TestTheLineRefusesFieldsThisIntakeDoesNotWrite(t *testing.T) {
+	valid := AuditEvent{
+		Caller: testOwnerEmail,
+		Sub:    testOwnerSub,
+		Op:     OpCreate,
+		Scope:  string(ScopeUser),
+		ID:     secretname.UserPrefix + testOwnerSub + "_api-key",
+		Status: credsvc.StatusOK,
+	}
+	for _, tc := range []struct {
+		what string
+		edit func(*AuditEvent)
+	}{
+		{"an act no route serves", func(e *AuditEvent) { e.Op = "read" }},
+		{"a scope this release does not have", func(e *AuditEvent) { e.Scope = "root" }},
+		{"a status no path writes", func(e *AuditEvent) { e.Status = "gone" }},
+		{"a caller that is not one address", func(e *AuditEvent) { e.Caller = "not an address" }},
+		{"an account id no container is built from", func(e *AuditEvent) { e.Sub = "not-a-sub" }},
+		{"a container that is not one this intake writes", func(e *AuditEvent) { e.ID = "other-container" }},
+		{"an owner that is not one address", func(e *AuditEvent) { e.Owner = "not an address" }},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			lines := &bytes.Buffer{}
+			a, err := NewAuditor(slog.NewJSONHandler(lines, &slog.HandlerOptions{Level: slog.LevelInfo}))
+			if err != nil {
+				t.Fatalf("building the auditor: %v", err)
+			}
+			ev := valid
+			tc.edit(&ev)
+			if err := a.withValue([]byte(testValue)).Write(context.Background(), ev); err == nil {
+				t.Fatalf("the line was written with %s: %+v", tc.what, ev)
+			}
+			if lines.Len() != 0 {
+				t.Fatalf("the refusal wrote %s", lines.String())
+			}
+			// The same auditor writes the event the field is right on.
+			if err := a.withValue([]byte(testValue)).Write(context.Background(), valid); err != nil {
+				t.Fatalf("the auditor refused an event every rule accepts: %v", err)
 			}
 		})
 	}
