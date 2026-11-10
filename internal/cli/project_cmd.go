@@ -291,12 +291,17 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 		// project before it starts, which is doctor's allow-list-empty state —
 		// and the diff that shows the empty list prints only after the write, so
 		// it would announce the consequence only once it was in force. It is
-		// said here, before the first write, and a person has to type the
-		// project's name: no flag stands in, and a session with no terminal is
-		// refused (#1674). Asked once across the retries below, because it is a
-		// decision about the document and not about the attempt.
+		// said here, before the first write, and the person at the terminal is
+		// what answers it: no flag stands in (this door takes no --json or
+		// --non-interactive, and confirmEmptyAllowList refuses them and a
+		// coding agent's marker where a command that does carries them),
+		// nothing is typed (T7, docs/no-prompt-policy), and a session with no
+		// terminal — a script's, or a coding agent's — is refused (#1674).
+		// Asked once across the
+		// retries below, because it is a decision about the document and not
+		// about the attempt.
 		if len(pol.AllowRepos) == 0 && !emptyAllowListConfirmed {
-			if err := confirmEmptyAllowList(cmd, lc, agent); err != nil {
+			if err := confirmEmptyAllowList(cmd, lc, askConditions(cmd, boolFlag(cmd, "json"), boolFlag(cmd, "non-interactive"))); err != nil {
 				return publishFailure(err, narrowedSoFar)
 			}
 			emptyAllowListConfirmed = true
@@ -930,6 +935,24 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		publishedCatalog = old.ImageCatalog
 	}
 	imageCatalog := lc.ImageCatalogEffective(publishedCatalog)
+	// The services each entry's image provides are derived from that catalog
+	// (D1904) and not kept member by member, because there is no second place
+	// they are written: an entry carries them in the catalog the operator edits,
+	// and the node carries them as a key of its own (F20's answer, in
+	// projectpolicy). A config that writes a catalog therefore states the whole
+	// block — an entry whose services were removed has them removed on the node,
+	// which is an edit the drift comparison sees. A config that writes no
+	// catalog keeps the node's block, which is the catalog's own keep rule and
+	// its reason: a machine whose config predates the key cannot restate the
+	// services, and deriving from the node's catalog would drop every one of
+	// them — the node's entries cannot carry the member at all.
+	var imageServices projectpolicy.ImageServices
+	switch {
+	case lc.ImageCatalog != nil:
+		imageServices = projectpolicy.ImageServicesFromCatalog(imageCatalog)
+	case old != nil:
+		imageServices = old.ImageServices
+	}
 	// The repo-to-image map and the bake switch are kept by that same rule
 	// (D1906, D1901), and the cost of the other reading is the catalog's: a
 	// machine whose config predates the keys — a teammate's, a CI box's — would
@@ -1001,6 +1024,7 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		ReviewFloor:          floor,
 		VerifierAccounts:     verifierAccounts,
 		ImageCatalog:         imageCatalog,
+		ImageServices:        imageServices,
 		ImageMap:             imageMap,
 		BakeRepos:            bakeRepos,
 		Orchestrator:         orchestrator,

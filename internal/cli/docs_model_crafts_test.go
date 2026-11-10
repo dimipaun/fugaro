@@ -9,18 +9,18 @@ import (
 const modelCraftsDir = "docs/model-crafts/"
 
 // TestDocsModelCrafts pins what the plan promises about itself: the number
-// blocks it reserves, that no task is approved, and that the verbatim spec
-// is still the spec.
+// blocks it reserves, the folder's current status line and its pointer to
+// docs/status.md, and that the verbatim spec is still the spec.
 func TestDocsModelCrafts(t *testing.T) {
 	readme := readDoc(t, modelCraftsDir+"README.md")
-	for _, want := range []string{"D1620–D1639", "Checks 420–429", "plan only; nothing is implemented; no task approved"} {
+	for _, want := range []string{"D1620–D1639", "Checks 420–429", "Status as of 2026-11-10: in progress, 4/10 merged; see [docs/status.md](../status.md) for the current table."} {
 		if !strings.Contains(readme, want) {
 			t.Errorf("%sREADME.md does not state %q", modelCraftsDir, want)
 		}
 	}
 	plan := flattenDoc(readDoc(t, modelCraftsDir+"implementation-plan.md"))
-	if !strings.Contains(plan, "No task is approved") {
-		t.Errorf("the plan does not say no task is approved")
+	if !strings.Contains(plan, "Status as of 2026-11-10: in progress, 4/10 merged; see [docs/status.md](../status.md) for the current table.") {
+		t.Errorf("the plan does not carry the folder's current status line")
 	}
 	rec := readDoc(t, modelCraftsDir+"reconciliation.md")
 	decision := regexp.MustCompile(`(?m)^\| \*\*D(16[0-9]{2})\*\* \|`)

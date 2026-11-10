@@ -168,13 +168,15 @@ type answer struct {
 // send makes one upstream call with one credential, using C1.8's helpers to
 // build the headers: the subscription path for a tier-A credential (whose
 // destination rule, D133, is inside OAuthHeaders and is therefore a check that
-// runs and not a comment), the key path for a tier-B one.
+// runs and not a comment), the key path for a tier-B one, and the provider path
+// for a provider key — whose destination is the base URL the bundle holds
+// (D1418) and whose headers are the gateway's own provider rule.
 //
 // The caller's own tokens are never sent upstream: the job token in
 // Authorization is dropped by the gateway's own deny-list, the run identity by
 // the scrub below, and this contract's headers when the call was read.
 func (s *Server) send(ctx context.Context, cl *call, e Entry) (*answer, error) {
-	dest, err := s.destination(cl)
+	dest, err := s.destination(cl, e)
 	if err != nil {
 		return nil, err
 	}
@@ -185,13 +187,23 @@ func (s *Server) send(ctx context.Context, cl *call, e Entry) (*answer, error) {
 	up := gateway.Upstream{Kind: upstreamKindAnthropic, APIKey: e.Value()}
 	var hdr http.Header
 	var key string
-	if e.Tier == creds.TierA {
+	switch {
+	case e.Kind == KindProvider:
+		// The provider path. It is chosen by KIND and not by tier: exactly one
+		// entry of a document has this kind, and both facts the call needs —
+		// where it goes and how the key is sent — were validated when that entry
+		// was read (providerValue), so neither the destination nor the header
+		// built here can be one the loader refused. The credential is the
+		// entry's own value, and the helper refuses a subscription credential on
+		// a route, as every route's does (D133).
+		hdr, key, err = gateway.RouteHeaders(providerRoute(e), cl.header, scrub)
+	case e.Tier == creds.TierA:
 		// Tier A: the subscription upstream, whose destination check lives in
 		// the helper. BaseURL is "" — Anthropic's real address — and the check
 		// runs on it, on the URL this call really goes to.
 		up = gateway.Upstream{APIKey: e.Value()}
 		hdr, key, err = gateway.OAuthHeaders(up, dest, cl.header, scrub)
-	} else {
+	default:
 		hdr, key, err = gateway.UpstreamHeaders(up, cl.header, scrub)
 	}
 	if err != nil {
@@ -226,9 +238,17 @@ func (s *Server) send(ctx context.Context, cl *call, e Entry) (*answer, error) {
 	return &answer{resp: resp, credential: key}, nil
 }
 
-// destination is where an attempt goes: the upstream's own base, the call's
+// destination is where an attempt goes: the credential's own base, the call's
 // path, and the call's query unless that query carries one of the caller's own
 // tokens.
+//
+// The base is the entry's own when the entry is a provider key — the URL the
+// document holds, which is the only place a provider's address exists (D1418):
+// no task, no policy and no environment tells this service where a provider is,
+// and a run is told nothing about it either — and Anthropic's otherwise. The
+// join is the same one in both cases, and it is the gateway's own: a base may
+// carry a path prefix ("https://openrouter.ai/api"), the call's path is
+// appended to it (withRoute), and the query follows whole.
 //
 // The query is dropped whole rather than edited, and it is dropped when it
 // carries either token the caller presented — the run identity or the job's
@@ -236,17 +256,54 @@ func (s *Server) send(ctx context.Context, cl *call, e Entry) (*answer, error) {
 // over its own token (upstreamQuery, carriesToken), which C1.8's helpers do
 // not cover and which this service therefore has to: a token that reached the
 // query of a call to Anthropic is a token in Anthropic's logs.
-func (s *Server) destination(cl *call) (string, error) {
+func (s *Server) destination(cl *call, e Entry) (string, error) {
 	base := gateway.AnthropicBase(gateway.Upstream{})
+	if e.Kind == KindProvider {
+		base = e.baseURL
+	}
 	if base == "" {
 		return "", errors.New("credsvc: the upstream has no address")
 	}
-	u := base + cl.path
+	u := trimSlash(base) + cl.path
 	if cl.query != "" && !carriesAny(cl.query, cl.scrubs) {
 		u += "?" + cl.query
 	}
 	return u, nil
 }
+
+// providerRoute is the gateway's own Route for a provider key's entry (AK6b):
+// the name it goes by in a log, the base URL the document holds, the auth shape
+// it names, and the entry's value as the credential, read per call.
+//
+// It is a gateway.Route rather than a header set of this file's own so that a
+// provider's call is built by the rule that already exists for one
+// (gateway.RouteHeaders: the provider allow-list of request headers, the
+// caller's own tokens scrubbed out, then AttachCredential, which writes the key
+// under the route's own auth shape and refuses a subscription credential on a
+// route). A second spelling of that rule here is exactly what C1.8 exists to
+// prevent: the two forwarders must not drift.
+//
+// Models and FeePct are left zero: this service does not route by model ID (the
+// bundle holds one provider key and the call's model was already pinned by the
+// project's own allow-list) and it adds no fee (a fee is a run's budget, which
+// lives in the runner's gateway and not here). Neither is read by RouteHeaders.
+func providerRoute(e Entry) *gateway.Route {
+	return &gateway.Route{
+		Name:    e.Name,
+		BaseURL: e.baseURL,
+		Auth:    e.auth,
+		Credential: func() (string, error) {
+			return e.Value(), nil
+		},
+	}
+}
+
+// trimSlash drops a base URL's trailing slashes, so a prefix and a path are
+// joined by exactly one of them. It is internal/gateway's own join over the
+// same input (route.go's trimSlash, which withRoute and AnthropicBase both
+// use), respelled here for the reason carriesAny is: the package does not
+// export it.
+func trimSlash(s string) string { return strings.TrimRight(s, "/") }
 
 // carriesAny reports whether v holds any of the tokens, in any case or
 // percent-encoded, with a bad escape left as it is so it cannot hide one. It

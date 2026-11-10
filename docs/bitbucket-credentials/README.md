@@ -1,6 +1,6 @@
 # Bitbucket support through the credentials service
 
-**Status: plan only; nothing is implemented; no task approved.** The owner answered decisions
+**Status as of 2026-11-10: in progress, 9/12 merged; see [docs/status.md](../status.md) for the current table.** The owner answered decisions
 D360–D367 on 2026-10-26, and D360, D362, D363 and D367 went against the recommendation. Those
 answers approve the reconciliation. Each task of the plan still needs the owner's own explicit go.
 

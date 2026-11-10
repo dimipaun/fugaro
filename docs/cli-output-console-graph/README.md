@@ -1,6 +1,6 @@
 # CLI output cleanup and the console dependency graph: the documents
 
-**Status: plan only; nothing is implemented; no task approved.**
+**Status as of 2026-11-10: in progress, 19/30 merged; see [docs/status.md](../status.md) for the current table.**
 
 **Spec owner: Dimi Paun. Date: 2026-11-06.** Checked against `origin/main` at `57f7d871f`.
 

@@ -976,6 +976,152 @@ func (r *Repo) OriginURL(ctx context.Context) (string, error) {
 	return r.git(ctx, "remote", "get-url", "origin")
 }
 
+// PushURLs returns every URL a push to the checkout's origin remote would go
+// to (`git remote get-url --push --all origin`): the remote's pushurl entries
+// when it has any, and its fetch URL otherwise. git resolves insteadOf and
+// pushInsteadOf here, so each URL is one git opens at push time — and a remote
+// with several pushurls is pushed to at each of them, which is why this is
+// every URL and not the first.
+//
+// origin is the URL OriginURL returned, and the read above is not the whole
+// answer for it: a push may name that URL rather than the remote (gitops'
+// PushFastForward, the checkpoint push, is given the URL, which is what keeps a
+// pushurl set after the read from redirecting it), and git applies the
+// checkout's url.*.insteadOf and url.*.pushInsteadOf rules to whatever URL a
+// push names — while `git remote get-url --push` answers for a *remote*, so on
+// a checkout that sets a pushurl its answer is that pushurl and the rewrite the
+// URL-naming push meets is nowhere in it (measured: git resolves the rules
+// against the remote's fetch URL only while the remote has no pushurl). The
+// rewrite is made here then, and the URLs it produces are added to the read's:
+// a caller holding every URL in this list to its own question refuses a
+// checkout that sends a push elsewhere by either door. The rewrite is made
+// against origin as that read returned it — already rewritten once by git — so
+// a rule matching what another rule produced is applied to it here too
+// (pushRewrite).
+//
+// A checkout can also name a *remote* by that URL: a section
+// [remote "https://github.com/acme/app.git"] is a remote whose name is the URL,
+// and git resolves the URL such a push names to it by name, so the section's own
+// push URL is where the push goes (measured: a push that named the URL landed at
+// the section's pushurl's repository, and at the section's url when it set no
+// pushurl). None of the reads above answers for that — the remote is not named
+// "origin", and the section's push URL is not a rewrite of the URL — so git's
+// own answer for the URL read as a name is added too. A name no remote has is
+// the ordinary case, and git exits 2 for it.
+func (r *Repo) PushURLs(ctx context.Context, origin string) ([]string, error) {
+	out, err := r.git(ctx, "remote", "get-url", "--push", "--all", "origin")
+	if err != nil {
+		return nil, err
+	}
+	var urls []string
+	for _, line := range strings.Split(out, "\n") {
+		if line != "" {
+			urls = append(urls, line)
+		}
+	}
+	// -- so a URL that begins with a dash is a name and never an option.
+	if named, err := r.git(ctx, "remote", "get-url", "--push", "--all", "--", origin); err == nil {
+		for _, line := range strings.Split(named, "\n") {
+			if line != "" && !slices.Contains(urls, line) {
+				urls = append(urls, line)
+			}
+		}
+	} else if exitCode(err) != 2 {
+		return nil, err
+	}
+	rewritten, err := r.pushRewrite(ctx, origin)
+	if err != nil {
+		return nil, err
+	}
+	for _, url := range rewritten {
+		if !slices.Contains(urls, url) {
+			urls = append(urls, url)
+		}
+	}
+	return urls, nil
+}
+
+// pushRewrite returns what a push that names url opens: url through the
+// url.*.insteadOf and url.*.pushInsteadOf rules this checkout's configuration
+// holds — its own, its environment's, and whatever those include — or nothing
+// when no rule applies, which is the ordinary case: such a push opens url
+// itself, the URL the caller already has.
+//
+// git reads the two kinds in an order of its own for a push: a
+// url.*.pushInsteadOf rule is what it applies whenever one of them matches the
+// URL, whatever the url.*.insteadOf rules say and whichever prefix is longer
+// (measured: with a rule of each kind matching the URL a push named, and the
+// insteadOf rule's prefix the longer of the two, the push landed at the
+// pushInsteadOf rule's base), and the insteadOf rules are read only when none
+// of the pushInsteadOf ones matches.
+//
+// Within the kind it read, each rule replaces the prefix it matches with its
+// base, and the rule with the longest matching prefix is the one git applies,
+// measured by pushing to a URL two rules of one kind match (the push landed at
+// the longer rule's base). git does not apply the rules again to what a rule
+// produced (measured: with a rule matching the rewritten URL, the push still
+// landed at the first rule's base), which is why this is one pass and not a
+// loop to a fixed point.
+//
+// Rules of one kind can share that longest prefix — their bases differ, and the
+// order git breaks such a tie in is not documented — so every one of them is
+// returned: the caller holds each to its own question and refuses rather than
+// picking.
+func (r *Repo) pushRewrite(ctx context.Context, url string) ([]string, error) {
+	// git exits 1 for a regexp that matches no key, which is a checkout with no
+	// URL rewrite at all: the common case, and not an error. Anything else is.
+	out, err := r.git(ctx, "config", "--null", "--get-regexp", `^url\..*\.(insteadof|pushinsteadof)$`)
+	if err != nil && exitCode(err) != 1 {
+		return nil, err
+	}
+	var pushRules, plainRules []urlRewrite
+	for _, entry := range strings.Split(out, "\x00") {
+		// git separates the key and the value it found with a newline under
+		// --null, and prints the key's section and last name lowercased with
+		// the rule's base, which is part of a URL, as it was written.
+		key, prefix, ok := strings.Cut(entry, "\n")
+		if !ok {
+			continue
+		}
+		name := strings.TrimPrefix(key, "url.")
+		switch {
+		case strings.HasSuffix(name, ".pushinsteadof"):
+			pushRules = append(pushRules, urlRewrite{prefix: prefix, base: strings.TrimSuffix(name, ".pushinsteadof")})
+		case strings.HasSuffix(name, ".insteadof"):
+			plainRules = append(plainRules, urlRewrite{prefix: prefix, base: strings.TrimSuffix(name, ".insteadof")})
+		}
+	}
+	if rewritten := applyRewrites(url, pushRules); len(rewritten) > 0 {
+		return rewritten, nil
+	}
+	return applyRewrites(url, plainRules), nil
+}
+
+// urlRewrite is one url.<base>.insteadOf or url.<base>.pushInsteadOf rule: the
+// prefix it matches, as the configuration wrote it, and the base that replaces
+// it.
+type urlRewrite struct{ prefix, base string }
+
+// applyRewrites is the rewrite git makes with one kind of rule: the longest
+// prefix any of them matches, every rule that matches it when several do, and
+// nothing when none matches.
+func applyRewrites(url string, rules []urlRewrite) []string {
+	var rewritten []string
+	longest := 0
+	for _, rule := range rules {
+		if !strings.HasPrefix(url, rule.prefix) {
+			continue
+		}
+		switch {
+		case len(rule.prefix) > longest:
+			longest, rewritten = len(rule.prefix), []string{rule.base + url[len(rule.prefix):]}
+		case len(rule.prefix) == longest:
+			rewritten = append(rewritten, rule.base+url[len(rule.prefix):])
+		}
+	}
+	return rewritten
+}
+
 // ShowFile returns the file at path in revision rev (`git show
 // rev:path`), whatever the working tree holds. path must be relative and
 // clean, without "." or ".." segments, and rev must not look like an

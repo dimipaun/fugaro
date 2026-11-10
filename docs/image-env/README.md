@@ -1,7 +1,6 @@
 # An image's `ENV` reaches a run, for operator-owned catalog images — and the runs say what is dropped
 
-**Status: the design is approved and IE1 is implemented (one branch, not merged); IE2, IE3 and IE4
-are not.** The design adds no config key, no wire field, no command and no Terraform; the one schema
+**Status as of 2026-11-10: done except the owner's Check 291; see [docs/status.md](../status.md) for the current table.** The design adds no config key, no wire field, no command and no Terraform; the one schema
 edit it does make is IE2's and it comes with the Go change, never alone (`BATCH_`, O4's answer, joins
 the refused names in `schemas/fugaro.schema.json`'s `env` pattern as well as in
 `config.ReservedEnvPrefixes`, and a test holds the two together). IE1 adds code, and it is the only

@@ -2,7 +2,7 @@
 
 ## Status
 
-**Approved; nothing is implemented yet.** The owner approved every task on 2026-10-30, with these
+**Status as of 2026-11-10: in progress, about 24/40 merged; see [docs/status.md](../status.md) for the current table.** The owner approved every task on 2026-10-30, with these
 exceptions: T2.1 and T2.2 stay draft until the processor is named (O4); O1 and O2 are counsel's; T3.2
 (O6), the checks X1 and X2 write (270–273) and every OWNER-RUN part below are the owner's. The owner
 also named L5.2's model: `claude-opus-5-5` as this repository's level-2 reviewer. *(**Superseded

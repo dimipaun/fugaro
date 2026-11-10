@@ -1,13 +1,14 @@
 # The hosted MCP server: reconciliation and decisions
 
-**Status: design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are built and
-merged on `main`; M5 is built except the paired device M-a asks for, which is M5b and is a hard
-prerequisite before any binary links the front door (the owner's ruling of 2026-11-07); M7 is built
-except the reading of the installation's published state its lists come from, which no task of this
-plan carries; M10 is built except the store's own bucket and its one grant, which are M4's store
-half and not started; M8 is built except the wiring that would serve its four read tools, which is
-the task M5b gates; M9 is not started, and the launch-override fence it was to wait on is declined
-for v1 and left unbuilt (the owner's ruling of 2026-11-09); this folder approves no task.**
+**Status: design answered by the owner 2026-11-04; M1, M2, M3, M4, M6 and M10 are built and merged
+on `main`; the front door M4 creates is OFF on every installation until a release writes the flag
+that turns it on, `fugaro update --mcp-server` (D934); M5 is built except the paired device M-a asks
+for, which is M5b and is a hard prerequisite before any binary links the front door (the owner's
+ruling of 2026-11-07); M7 is built except the reading of the installation's published state its
+lists come from, which no task of this plan carries; M8 is built except the wiring that would serve
+its four read tools, which is the task M5b gates; M9 is not started, and the launch-override fence
+it was to wait on is declined for v1 and left unbuilt (the owner's ruling of 2026-11-09); this
+folder approves no task.**
 
 What the owner's spec ([spec.md](spec.md) §0) says, checked one claim at a time against the code as
 it is at this work's base, and then the decisions the planning found.
@@ -44,7 +45,7 @@ safe to build.
 | --- | --- |
 | F1 | **The front door's home is decided**: the coordinator has **its own resident service** — D196 in [../coordinator/reconciliation.md](../coordinator/reconciliation.md) (the row headed D196 says the owner ruled against the recommendation), and [../coordinator/README.md](../coordinator/README.md):26 says P7 and P8 "do not start yet: they wait on the front-door design review". **Exists**, as a decision; **not built** (F24). |
 | F2 | **A Cloud Run *service* is already admissible in the installer's Terraform cover**: `internal/infra/tf/cover.go:33-34` admits `google_cloud_run_v2_service` and `google_cloud_run_v2_service_iam_member`, added for the credentials service. **Exists** — the new resource type needs no cover change. |
-| F3 | **The coordinator's accounts and grants exist, and they are a job's**: `deploy/terraform/gcp/modules/installation/coordinator.tf:71` (its service account), `:92` with `role = "roles/storage.objectViewer"` at `:96` (the runs bucket — read only), `:113` (the app key secret), `:129` (`google_cloud_run_v2_job`), `:275` (the sweep schedule). There is no Cloud Run *launch* grant and no write grant on the runs bucket. **The lines moved and one claim stopped being true after this folder was written**: the M4 task of [implementation-plan.md](implementation-plan.md) landed its first half as #1716, which added `google_service_account.mcp_server` (`:320`) and the `google_cloud_run_v2_service` front door that runs as it, so "there is **no** `google_cloud_run_v2_service` for the coordinator" is no longer a fact about this tree — the service is the front door's and not the sweep's, and the sweep above is unchanged. |
+| F3 | **The coordinator's accounts and grants exist, and they are a job's**: `deploy/terraform/gcp/modules/installation/coordinator.tf:71` (its service account), `:92` with `role = "roles/storage.objectViewer"` at `:96` (the runs bucket — read only), `:113` (the app key secret), `:129` (`google_cloud_run_v2_job`), `:275` (the sweep schedule). There is no Cloud Run *launch* grant and no write grant on the runs bucket. **The lines moved and one claim stopped being true after this folder was written**: the M4 task of [implementation-plan.md](implementation-plan.md) landed its first half as #1716, which added `google_service_account.mcp_server` (`:324`) and the `google_cloud_run_v2_service` front door that runs as it, so "there is **no** `google_cloud_run_v2_service` for the coordinator" is no longer a fact about this tree — the service is the front door's and not the sweep's, and the sweep above is unchanged. |
 | F4 | **The coordinator's writer holds the project's database admin**: `deploy/terraform/gcp/modules/firebase/iam.tf:138` grants `roles/firebasedatabase.admin` to the coordinator's writer account. |
 | F5 | **Firebase ID-token verification exists, and it is exact**: `internal/credsvc/auth.go:1069` compares the audience to the **bare project id**, `:1072` builds the issuer as `https://securetoken.google.com/<projectId>`, and `:1373` (`GoogleKeysURL`) is the public signing-key endpoint the owner's spec names. Its refusals name the failed check and never the value; `internal/credsvc/audit.go` writes one structured line per act and per refusal. **Exists** — the design's §4 adds no verification of its own. |
 | F6 | **Identity Platform is initialized with no sign-in providers, and a public sign-up path is refused**: `internal/cli/init_firebase.go:582` records "initialized Identity Platform (no sign-in providers)", `:686` calls `refusePublicSignUp` (`:709`) on a project whose config enables any public sign-up path, and `internal/infra/identityplatform.go:32` is the step's own name. **Exists** — and it is what F26 collides with. |
@@ -209,13 +210,15 @@ owner; the rest is not started; this folder approves no task.** **That quotation
 stood on 2026-11-04**: the clause after "asks for" was replaced on 2026-11-07, and the line every
 file carries today reads "...which is M5b and is a hard prerequisite before any binary links the
 front door (the owner's ruling of 2026-11-07); M7 is built except the reading of the installation's
-published state its lists come from, which no task of this plan carries; M10 is built except the
-store's own bucket and its one grant, which are M4's store half and not started; M8 is built except
-the wiring that would serve its four read tools, which is the task M5b gates; M9 is not started, and the launch-override fence it was to wait on is declined for v1 and left unbuilt (the owner's ruling of 2026-11-09)" —
+published state its lists come from, which no task of this plan carries; M8 is built except the
+wiring that would serve its four read tools, which is the task M5b gates; M9 is not started, and the launch-override fence it was to wait on is declined for v1 and left unbuilt (the owner's ruling of 2026-11-09)" —
 **the clauses moving as each task lands** (§4a), each exception added with its own landing because
-the task builds the seam and not the half behind it: M7's reading of the published state, M8's four
-read tools registered on no binary, which is the wiring task M5b gates, and M10's bucket and its one
-grant, which are M4's.
+the task builds the seam and not the half behind it, and removed the same way once the half behind it
+is there: M7's reading of the published state and M8's four read tools registered on no binary are
+open still, which is the wiring task M5b gates, and **M10's exception is the one that has closed** —
+the store's own bucket and its one grant are M4's store half, merged since, and M4's own clause is
+the newest: the front door is built whole and stays OFF until a release writes the flag that turns it
+on.
 
 ### The answer of 2026-11-05
 
@@ -616,9 +619,11 @@ pair` (`docs/workspaces/spec.md:217-219`, its D923). Both agree with §3 and §1
 - **M4 and M6 were cancelled** and **were to be rerun from this amended plan**: M4's draft predates
   the D934 and M-e answers (the cover rule and the meaning of "off"), and M6's predates M-a and H1.
 - **What has happened since, as of the commit this file is read at.** **M1 (#1713), M2 (#1767), M3
-  (#1715), M6 (#1714) and M4's first half (#1716) are merged on `main`** — M4's half being the
+  (#1715), M6 (#1714) and M4 are merged on `main`** — M4's first half (#1716) being the
   account, the front door service and its public invoker binding
-  (`deploy/terraform/gcp/modules/installation/coordinator.tf:320`, `:382`, `:527`) — **because the
+  (`deploy/terraform/gcp/modules/installation/coordinator.tf:324`, `:388`, `:536`), and its store half
+  being the bucket the records live in and the one binding that names the front door's account
+  (`deploy/terraform/gcp/modules/installation/mcpauth_store.tf`) — **because the
   owner approved them one at a time, which is what "may continue" turned into.** **M5 is built** —
   the two metadata documents, the four endpoints and
   the approve step, **except the paired device M-a asks for**, which is **M5b** and is a task of its
@@ -626,13 +631,12 @@ pair` (`docs/workspaces/spec.md:217-219`, its D923). Both agree with §3 and §1
   registry, dormant with the rest of the door) **except the reading of the installation's published
   state its lists come from**: `identity.go` holds the `Roster` seam D933's answer goes through and
   **nothing in the tree implements it over that state, because no task of the plan carries the
-  reading** — **M10 is built** (the audit line, the bounded per-identity record it comes to and
-  revocation from a person's own surface, dormant with the rest of the door) **except the store its
-  records are at rest in**, whose bucket and one grant are M4's store half — **M8 is built** (the
+  reading** — **M10 is built whole**: the audit line, the bounded per-identity record it comes to
+  and revocation from a person's own surface, and **the store its records are at rest in**, whose
+  bucket and one grant M4's store half added — **M8 is built** (the
   four read tools, over the project's own runs and redacted through `internal/safetext`) **except the
   wiring that would serve them**: no binary registers them, which is the wiring M5b gates — **and the
-  rest is not**: M4's store half (`mcpauth_store.tf`, the bucket
-  and its one grant) and M9; **M3's node is in with its parity test while the comment D935 asks
+  rest is not**: M9; **M3's node is in with its parity test while the comment D935 asks
   for above it is not written**; and **what merged as M6 is the draft M-a predates** — no approve-step
   POST and no `TestAnIDTokenInAQueryStringIsRefused`, because M5, which defines the approve step, was
   built after M6 rather than with it. **And one row of an already-merged task
@@ -787,7 +791,7 @@ asks the owner to confirm the mechanism that replaces the override rather than t
 - **D931's grant, and M9's launch path.** D931's one new privilege is still asked for, and it is now
   built by a task of its own — **M11** in [implementation-plan.md](implementation-plan.md) §3, the
   split launcher role, which is where `coordinator.tf`'s deliberate absence of the grant
-  (`:377`) is filled in. **M9 waits on M11 being built**, and so does D931: **the gate is a task, not
+  (`:383`) is filled in. **M9 waits on M11 being built**, and so does D931: **the gate is a task, not
   an answer** — **and one question of that ruling came back the same day: D937**, its premise about the
 run's identity and the content the fence does not cover (§4a's "The premise the ruling got wrong",
 §4b). Everything else is closed (§6 check 0, spec.md §8 and §11).
@@ -1051,7 +1055,9 @@ owner's hands, before the first code task starts:
    than left standing** (§8 of the plan holds the answer: the bucket).
 8. **The store's IAM is what D935 says it is, and only a live project can show it.** No hermetic test
    stands in for this one: the plan's own test reads the plan, and the plan is not the project's
-   policy. With the owner's own credentials, once M4 has been applied by `fugaro update`: **read and
+   policy. With the owner's own credentials, once the release that turns the front door on has been
+   applied by `fugaro update` — the store is created by the front door's own opt-in, which no released
+   `fugaro update` writes yet (D934) —: **read and
    list the store's prefix as a launcher and as a budget admin, and see a refusal** — the two classes
    F32 found the rules cannot exclude from the database; **impersonate the deployer as an operator
    (`gcloud storage ls` under the deployer's account, or with the token-creator grant the installation
@@ -1059,12 +1065,18 @@ owner's hands, before the first code task starts:
    refusal too** — the reading the correction of 2026-11-05 adds, and the one that proves the store's
    name is outside the deployer's conditioned prefix rather than merely written to be; **read one
    record as the front door's own account `mcp_server` — the store's single member, the account M4
-   creates (`deploy/terraform/gcp/modules/installation/coordinator.tf:320`), never the sweep's — and
+   creates (`deploy/terraform/gcp/modules/installation/coordinator.tf:324`), never the sweep's — and
    see it work**; **read the same record as a basic project Viewer and see a refusal**, which is the
    second correction of 2026-11-05: a new bucket carries GCS's convenience bindings for
-   `projectViewer:` until M4 removes them, so the check reads the created policy rather than assuming
-   it is clean (`SECURITY.md:88`, `docs/design/bucket-iam.md:47`,
-   `internal/infra/statebucket.go:140`); and **confirm the store's
+   `projectViewer:` unless something takes them off, so the check reads the created policy rather
+   than assuming it is clean (`SECURITY.md:88`, `docs/design/bucket-iam.md:47`,
+   `internal/infra/statebucket.go:140`). **What takes them off is
+   `internal/infra.RemoveProjectViewers`, the call `fugaro setup` and `fugaro update` already make on
+   the state and runs buckets, and M4's store half is the bucket and its one grant only**: the plan
+   writes none of those bindings — asserted in the module and in the installation plan's own resource
+   changes — and the removal's call site for this bucket belongs to the release that turns the front
+   door on, since no released `fugaro update` writes the `mcp_server` flag that creates the store at
+   all (D934). Until that release, this reading is the one that will show whether it did; and **confirm the store's
    bucket is not the runs bucket**, which is the one placement a prefix of an existing bucket would
    have made readable by both lists. It is
    check 2's shape for a second resource: the claim is about who reaches something, and only the
