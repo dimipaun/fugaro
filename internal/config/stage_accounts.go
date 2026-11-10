@@ -42,6 +42,31 @@ var RunStages = []string{"plan", "implement", "review_first", "review", "adversa
 // review account.
 var MixedAccountStages = []string{"review", "adversarial", "triage"}
 
+// MixedStagePhrase names the mix's stages as a sentence does — "review,
+// adversarial and triage" — and is what every message about the mix joins with.
+// strings.Join(list, " and ") reads as a run-on once the list is three names,
+// and these messages are the launch's own words about which stage may hold the
+// account, printed at a terminal and carried in a refusal.
+func MixedStagePhrase() string { return mixedStageList("and") }
+
+// MixedStageChoice is the same list where the sentence offers a choice:
+// "review, adversarial or triage".
+func MixedStageChoice() string { return mixedStageList("or") }
+
+// mixedStageList is MixedAccountStages joined before conj, with the last name
+// carrying the conjunction. An empty list names nothing and a one-name list is
+// that name: neither is a sentence with a conjunction in it.
+func mixedStageList(conj string) string {
+	switch len(MixedAccountStages) {
+	case 0:
+		return ""
+	case 1:
+		return MixedAccountStages[0]
+	}
+	return strings.Join(MixedAccountStages[:len(MixedAccountStages)-1], ", ") +
+		" " + conj + " " + MixedAccountStages[len(MixedAccountStages)-1]
+}
+
 // IsRunStage reports whether stage is one of RunStages.
 func IsRunStage(stage string) bool {
 	return slices.Contains(RunStages, stage)
@@ -163,14 +188,14 @@ func mixedAccountProblems(stages map[string]string, path string) []Problem {
 		if !slices.Contains(MixedAccountStages, stage) {
 			ps = append(ps, Problem{Path: path + "." + stage + ".claude_account",
 				Message: fmt.Sprintf("an api-key run's %s stage runs on the provider key the gateway holds, so a Claude account named for it would never be used: the one account such a run may hold serves %s and no other stage (docs/design/mixed-credentials.md §11) — name the account for %s, or remove this key",
-					stage, strings.Join(MixedAccountStages, " and "), strings.Join(MixedAccountStages, " or "))})
+					stage, MixedStagePhrase(), MixedStageChoice())})
 		}
 		named[account] = true
 	}
 	if len(named) > 1 {
 		ps = append(ps, Problem{Path: path,
 			Message: fmt.Sprintf("an api-key run holds one provider key and one Claude account, and these keys name %d (%s): name one account for %s, or none",
-				len(named), strings.Join(slices.Sorted(maps.Keys(named)), ", "), strings.Join(MixedAccountStages, " and "))})
+				len(named), strings.Join(slices.Sorted(maps.Keys(named)), ", "), MixedStagePhrase())})
 	}
 	return ps
 }
@@ -222,7 +247,7 @@ func CheckMixBudget(auth, mode, coder, def string, stages map[string]string, rou
 	}
 	return []Problem{{Path: path, Message: fmt.Sprintf(
 		"an api-key run may hold one Claude account for %s only with budget.mode: enforce, and this run resolves %s: the provider key lives in the gateway, which is what routes a call to %s (a provider model is refused in any other mode), so under %s the account named by %s would never be used — set budget.mode: enforce, or remove those keys",
-		strings.Join(MixedAccountStages, " and "), modeName(mode), name, modeName(mode), strings.Join(keys, ", "))}}
+		MixedStagePhrase(), modeName(mode), name, modeName(mode), strings.Join(keys, ", "))}}
 }
 
 // modeName is a resolved budget mode as a person reads it: the merged layers
@@ -244,7 +269,7 @@ func stageAccountUnderOtherAuth(auth string, stages map[string]string, path stri
 		}
 		ps = append(ps, Problem{Path: path + "." + stage + ".claude_account",
 			Message: fmt.Sprintf("a stage account only applies to a run whose agent.auth is oauth or api-key, and this run's is %s: under %s no Claude OAuth credential reaches the run, so the account would never be used — remove the key, or set agent.auth to oauth (the run's one account) or api-key (one account for %s and no other stage)",
-				auth, auth, strings.Join(MixedAccountStages, " and "))})
+				auth, auth, MixedStagePhrase())})
 	}
 	return ps
 }

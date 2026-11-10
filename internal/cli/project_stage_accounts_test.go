@@ -95,8 +95,9 @@ const stageAccountAccountsYAML = "claude_accounts:\n  acme-overflow: { allow_dat
 // half (decision 1: "the rule is the rule at every layer that judges it, and
 // fugaro validate says the same as the run"): the file names api-key, the
 // machine's config names an account for implement, and validate refuses with
-// the sentence the launch refuses with. The permitted mix beside it is the
-// same file and the same account, named for review and adversarial instead.
+// the sentence the launch refuses with — the mix's three stages named as the
+// launch names them. The permitted mix beside it is the same file and the same
+// account, named for the reviews and the triage that follows them instead.
 func TestValidateRefusesAStageAccountOnTheCodersStage(t *testing.T) {
 	_, repo := stageAccountProject(t, stageAccountAccountsYAML+
 		"stages:\n  implement:\n    claude_account: acme-overflow\n")
@@ -104,7 +105,7 @@ func TestValidateRefusesAStageAccountOnTheCodersStage(t *testing.T) {
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d, want a user refusal:\n%s", ExitCode(err), out)
 	}
-	for _, want := range []string{"stages.implement.claude_account", "would never be used", "review and adversarial"} {
+	for _, want := range []string{"stages.implement.claude_account", "would never be used", "review, adversarial and triage"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the refusal does not say %q:\n%s", want, out)
 		}
