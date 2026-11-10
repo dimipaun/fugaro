@@ -271,17 +271,46 @@ func TestMineListsOwnIssuesFirstGroupFirst(t *testing.T) {
 }
 
 func TestMineResolvedBehindShowsUpdateNudge(t *testing.T) {
-	rig := newMineRig(t)
 	useVersion(t, "0.22.0")
-	i := mineRec("1", "sig-a")
-	i.Status = issues.StatusResolved
-	i.ResolvedIn = "0.22.1"
-	rig.upload(i, rig.caller)
-
-	out := rig.mine()
-	if !strings.Contains(out, "fixed in 0.22.1") || !strings.Contains(out, "run `fugaro update`") {
-		t.Errorf("a resolved issue this machine is behind on prints no update nudge:\n%s", out)
+	// A resolved issue this machine is behind on, seeded so that either case
+	// below reads the same row.
+	behind := func(t *testing.T) (*mineRig, issues.Uploaded) {
+		t.Helper()
+		rig := newMineRig(t)
+		i := mineRec("1", "sig-a")
+		i.Status = issues.StatusResolved
+		i.ResolvedIn = "0.22.1"
+		return rig, rig.upload(i, rig.caller)
 	}
+
+	t.Run("the nudge", func(t *testing.T) {
+		rig, _ := behind(t)
+		out := rig.mine()
+		if !strings.Contains(out, "fixed in 0.22.1") || !strings.Contains(out, "run `fugaro update`") {
+			t.Errorf("a resolved issue this machine is behind on prints no update nudge:\n%s", out)
+		}
+	})
+
+	// This machine's own file for the same issue — same number, same
+	// fingerprint, a command this build can run — is still not a suggestion a
+	// behind row may print: the answer there is the update, and a retry beside
+	// it would offer the command that has not been fixed on this machine yet
+	// (F5, O4).
+	t.Run("no retry beside the nudge", func(t *testing.T) {
+		rig, up := behind(t)
+		local := mineRec("1", "sig-a")
+		local.Number, local.Uploaded, local.Status = up.Number, true, issues.StatusResolved
+		local.ResolvedIn, local.FailedCommand = "0.22.1", "fugaro update"
+		rig.save(local)
+
+		out := rig.mine()
+		if !strings.Contains(out, "run `fugaro update`") {
+			t.Fatalf("the behind row lost its nudge:\n%s", out)
+		}
+		if strings.Contains(out, "retry:") {
+			t.Errorf("a behind row offers a retry beside the update nudge (F5, O4):\n%s", out)
+		}
+	})
 }
 
 func TestMineResolvedCoveredShowsLocalCommandOnly(t *testing.T) {
