@@ -29,7 +29,7 @@ func userInstall(v string) string {
 var (
 	argsListMarkets = []string{"plugin", "marketplace", "list", "--json"}
 	argsListPlugins = []string{"plugin", "list", "--json"}
-	argsAdd         = []string{"plugin", "marketplace", "add", "--scope", "user", "dimipaun/fugaro#v0.5.2"}
+	argsAdd         = addUser("0.5.2")
 	argsRemove      = []string{"plugin", "marketplace", "remove", "fugaro", "--scope", "user"}
 	// argsBack is the add that puts back what argsRemove cleared: the plain
 	// source releases before this one declared, which is what ourMarket holds.
@@ -53,6 +53,13 @@ func useFakeClaude(t *testing.T, f *testutil.ClaudePluginFake) {
 		}
 		return f.Bin(), nil
 	}
+}
+
+// addUser is the marketplace add as the step runs it for a release: the fixed
+// argv with Fugaro's own repository at that release's tag (argsAdd is the one
+// the 0.5.2 fixtures use).
+func addUser(v string) []string {
+	return []string{"plugin", "marketplace", "add", "--scope", "user", "dimipaun/fugaro#v" + v}
 }
 
 func callArgs(calls []testutil.ClaudeCall) [][]string {

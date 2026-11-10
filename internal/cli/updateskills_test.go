@@ -3,7 +3,9 @@ package cli
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -23,6 +25,13 @@ func withVersion(t *testing.T, v string) {
 	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
 	t.Setenv(noSkillWarningEnv, "")
 	t.Setenv("CLOUD_RUN_EXECUTION", "")
+	// update-skills is the machine-side half now (U2, D949): it runs the
+	// plugin step, which looks up the claude on PATH. No test may reach the
+	// developer's own — a test that wants one hands the step the fake
+	// (useFakeClaude, after this).
+	oldClaude := claudeLookPath
+	claudeLookPath = func(string) (string, error) { return "", exec.ErrNotFound }
+	t.Cleanup(func() { claudeLookPath = oldClaude })
 }
 
 // skillCheckout makes a Fugaro checkout whose settings hold content ("" for
@@ -81,24 +90,36 @@ func wiredAt(ref string) string {
 	return `{"extraKnownMarketplaces":{"fugaro":{"source":{"source":"github","repo":"dimipaun/fugaro","ref":"` + ref + `"}}},"enabledPlugins":{"fugaro@fugaro":true}}`
 }
 
+// The command is the machine-side half (U2, D949): the plugin is installed or
+// updated in the user's own Claude Code through the fixed claude calls, nothing
+// in the checkout is written, and it needs no credentials and no Terraform.
 func TestUpdateSkillsNeedsNoCredentials(t *testing.T) {
 	withVersion(t, "0.2.0")
 	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", "/nonexistent")
 	t.Setenv("FUGARO_PROJECT", "")
-	root, settings := skillCheckout(t, "")
+	root, settings := skillCheckout(t, wiredAt("v0.1.0"))
+	f := testutil.NewClaudePluginFake(t, "[]", "[]")
+	f.On(t, "plugins", userInstall("0.2.0"), argsInstall...)
+	useFakeClaude(t, f)
 	out, errOut, err := execute(t, "update-skills", "--dir", root)
 	if err != nil {
 		t.Fatalf("%v\n%s", err, errOut)
 	}
-	if !strings.Contains(out, "git diff") || !strings.Contains(out, "v0.2.0") {
+	if !strings.Contains(out, "installed 0.2.0") || !strings.Contains(out, "restart running Claude Code sessions") {
 		t.Errorf("out = %q", out)
 	}
-	if b, _ := os.ReadFile(settings); !strings.Contains(string(b), `"ref": "v0.2.0"`) {
-		t.Errorf("settings = %s", b)
+	want := [][]string{argsListMarkets, argsListPlugins, addUser("0.2.0"), argsInstall, argsListPlugins}
+	if !slices.EqualFunc(callArgs(f.Calls(t)), want, slices.Equal[[]string]) {
+		t.Errorf("calls %q, want %q", callArgs(f.Calls(t)), want)
 	}
-	for _, f := range []string{"project", "region", "repo"} {
-		if newUpdateSkillsCmd().Flags().Lookup(f) != nil {
-			t.Errorf("update-skills has a cloud flag --%s", f)
+	// The pin an older fugaro left is not this command's to move: it comes out
+	// of the run byte for byte as it went in (U2).
+	if got := upgradeRead(t, settings); got != wiredAt("v0.1.0") {
+		t.Errorf("settings = %s, want the leftover pin as it was", got)
+	}
+	for _, fl := range []string{"project", "region", "repo"} {
+		if newUpdateSkillsCmd().Flags().Lookup(fl) != nil {
+			t.Errorf("update-skills has a cloud flag --%s", fl)
 		}
 	}
 }
@@ -145,29 +166,39 @@ func TestUpdateSkillsCheckExitCode(t *testing.T) {
 	}
 }
 
-func TestUpdateSkillsOutsideCheckoutPrintsSnippet(t *testing.T) {
+// Outside a checkout there is no repository to report on — the plugin is this
+// machine's, but the command still reads a checkout for its report — so it says
+// so and writes nothing, anywhere.
+func TestUpdateSkillsOutsideACheckoutSaysSo(t *testing.T) {
 	withVersion(t, "0.2.0")
 	dir := t.TempDir()
 	out, _, err := execute(t, "update-skills", "--dir", dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, `"ref": "v0.2.0"`) || !strings.Contains(out, "not in a checkout") {
+	if !strings.Contains(out, "not in a checkout") {
 		t.Errorf("out = %q", out)
 	}
 	if es, _ := os.ReadDir(dir); len(es) != 0 {
 		t.Errorf("wrote into %s: %v", dir, es)
+	}
+	js, _, _ := execute(t, "update-skills", "--json", "--dir", dir)
+	var got updateSkillsOutput
+	if json.Unmarshal([]byte(js), &got) != nil || got.Checkout || got.Snippet != "" || got.Changed {
+		t.Errorf("json outside a checkout: %q", js)
 	}
 	if _, _, err := execute(t, "update-skills", "--check", "--dir", dir); ExitCode(err) != 1 || !strings.Contains(err.Error(), "not in a checkout") {
 		t.Errorf("--check outside a checkout: %v", err)
 	}
 }
 
+// A dev build has no release tag to install from: the step says so, and
+// nothing anywhere is written.
 func TestUpdateSkillsDevBuildWritesNothing(t *testing.T) {
 	withVersion(t, "dev")
 	root, settings := skillCheckout(t, "")
 	out, _, err := execute(t, "update-skills", "--dir", root)
-	if err != nil || !strings.Contains(out, "<release tag>") || !strings.Contains(out, "dev build") {
+	if err != nil || !strings.Contains(out, "a development build has no release plugin to install") {
 		t.Fatalf("err=%v out=%q", err, out)
 	}
 	if _, err := os.Stat(settings); !os.IsNotExist(err) {
@@ -175,21 +206,38 @@ func TestUpdateSkillsDevBuildWritesNothing(t *testing.T) {
 	}
 }
 
-func TestUpdateSkillsInvalidFileLeftAlone(t *testing.T) {
+// Nothing in the checkout is read for the machine's install, so a file the
+// command cannot parse is neither a refusal nor a rewrite: it comes out byte
+// for byte, and --check is what is left to be told about it.
+func TestUpdateSkillsLeavesAnUnreadableFileAlone(t *testing.T) {
 	withVersion(t, "0.2.0")
-	root, settings := skillCheckout(t, "{ // mine\n}")
-	_, errOut, err := execute(t, "update-skills", "--dir", root)
-	if ExitCode(err) != 1 || !strings.Contains(errOut, `"ref": "v0.2.0"`) || !strings.Contains(err.Error(), "not valid JSON") {
+	const content = "{ // mine\n}"
+	root, settings := skillCheckout(t, content)
+	f := testutil.NewClaudePluginFake(t, "[]", "[]")
+	f.On(t, "plugins", userInstall("0.2.0"), argsInstall...)
+	useFakeClaude(t, f)
+	out, errOut, err := execute(t, "update-skills", "--dir", root)
+	if err != nil {
 		t.Fatalf("err=%v stderr=%q", err, errOut)
 	}
-	if b, _ := os.ReadFile(settings); string(b) != "{ // mine\n}" {
-		t.Errorf("rewritten: %q", b)
+	if !strings.Contains(out, "installed 0.2.0") {
+		t.Errorf("out = %q", out)
+	}
+	if got := upgradeRead(t, settings); got != content {
+		t.Errorf("rewritten: %q, want %q", got, content)
+	}
+	txt, _, err := execute(t, "update-skills", "--check", "--dir", root)
+	if ExitCode(err) != 1 || !strings.Contains(txt, "not usable settings") {
+		t.Errorf("--check: err=%v out=%q", err, txt)
 	}
 }
 
 func TestUpdateSkillsJSON(t *testing.T) {
 	withVersion(t, "0.2.0")
 	root, _ := skillCheckout(t, wiredAt("v0.1.0"))
+	f := testutil.NewClaudePluginFake(t, "[]", "[]")
+	f.On(t, "plugins", userInstall("0.2.0"), argsInstall...)
+	useFakeClaude(t, f)
 	out, _, err := execute(t, "update-skills", "--json", "--dir", root)
 	if err != nil {
 		t.Fatal(err)
@@ -198,20 +246,23 @@ func TestUpdateSkillsJSON(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &got); err != nil {
 		t.Fatalf("not JSON: %v\n%s", err, out)
 	}
-	if !got.Checkout || !got.Changed || got.Ref != "v0.2.0" || got.Report == nil || got.Report.Pin != pluginwire.OK {
+	// changed is whether the install in Claude Code moved, and ref is the
+	// leftover pin the checkout still carries: the command writes no pin, so
+	// the two are no longer the same question (U2, D949).
+	if !got.Checkout || !got.Changed || got.Ref != "v0.1.0" || got.Report == nil || got.Report.Pin != pluginwire.Outdated {
 		t.Errorf("got %+v", got)
 	}
 	out, _, err = execute(t, "update-skills", "--json", "--check", "--dir", root)
-	if err != nil {
-		t.Fatal(err)
-	}
 	got = updateSkillsOutput{}
-	if err := json.Unmarshal([]byte(out), &got); err != nil || got.Report == nil || got.Report.Pin != pluginwire.OK || got.Changed {
-		t.Errorf("check json: %v %+v", err, got)
+	if uerr := json.Unmarshal([]byte(out), &got); uerr != nil || got.Report == nil || got.Report.Pin != pluginwire.Outdated || got.Changed {
+		t.Errorf("check json: %v %+v", uerr, got)
+	}
+	if ExitCode(err) != 1 {
+		t.Errorf("--check on a leftover pin behind this binary: exit = %d, want 1", ExitCode(err))
 	}
 	out, _, _ = execute(t, "update-skills", "--json", "--dir", t.TempDir())
 	got = updateSkillsOutput{}
-	if err := json.Unmarshal([]byte(out), &got); err != nil || got.Checkout || got.Snippet == "" {
+	if err := json.Unmarshal([]byte(out), &got); err != nil || got.Checkout || got.Snippet != "" {
 		t.Errorf("outside json: %v %+v", err, got)
 	}
 }
@@ -376,94 +427,123 @@ func forkAt(repo, ref string) string {
 	return `{"extraKnownMarketplaces":{"fugaro":{"source":{"source":"github","repo":"` + repo + `","ref":"` + ref + `"}}},"enabledPlugins":{"fugaro@fugaro":true}}`
 }
 
+// A leftover pin that names someone else's repository is still *read*, and
+// --check is where it is named: a fork served under the fugaro name is exactly
+// what a person has to be told about (the run itself installs Fugaro's own
+// repository and never rewrites what it finds, U2).
 func TestForkAlreadyAtOurTagIsStillNamed(t *testing.T) {
 	withVersion(t, "0.2.0")
 	root, _ := skillCheckout(t, forkAt("acme/fugaro-fork", "v0.2.0"))
-	out, errOut, err := execute(t, "update-skills", "--dir", root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(errOut, "WARNING") || !strings.Contains(errOut, "acme/fugaro-fork") || !strings.Contains(out, "foreign") {
-		t.Errorf("stdout=%q stderr=%q", out, errOut)
+	txt, errOut, err := execute(t, "update-skills", "--check", "--dir", root)
+	if ExitCode(err) != 1 || !strings.Contains(errOut, "acme/fugaro-fork") || !strings.Contains(txt, "foreign") {
+		t.Errorf("check: err=%v stdout=%q stderr=%q", err, txt, errOut)
 	}
 	// --json: the object says it, stderr still warns.
-	out, errOut, err = execute(t, "update-skills", "--json", "--dir", root)
+	out, errOut, err := execute(t, "update-skills", "--json", "--check", "--dir", root)
 	var got updateSkillsOutput
-	if err != nil || json.Unmarshal([]byte(out), &got) != nil || got.Foreign != "acme/fugaro-fork" || !strings.Contains(errOut, "WARNING") {
+	if ExitCode(err) != 1 || json.Unmarshal([]byte(out), &got) != nil || got.Foreign != "acme/fugaro-fork" || !strings.Contains(errOut, "WARNING") {
 		t.Errorf("json: err=%v out=%q stderr=%q", err, out, errOut)
 	}
-	// --check says it too and exits 1.
-	_, errOut, err = execute(t, "update-skills", "--check", "--dir", root)
-	if ExitCode(err) != 1 || !strings.Contains(errOut, "acme/fugaro-fork") {
-		t.Errorf("check: err=%v stderr=%q", err, errOut)
-	}
 }
 
-func TestForkRefNeedsAllowFork(t *testing.T) {
+// The merge's own flag is gone with the merge (D949, U2): --allow-fork moved
+// the ref of another repository's marketplace, which is a write, and nothing
+// writes any more. A user typing it gets cobra's unknown flag, with no alias
+// and no tombstone — the same shape the deleted merge gets everywhere.
+func TestUpdateSkillsHasNoWriteFlags(t *testing.T) {
 	withVersion(t, "0.2.0")
+	root, settings := skillCheckout(t, forkAt("acme/fugaro-fork", "v0.1.0"))
 	content := forkAt("acme/fugaro-fork", "v0.1.0")
-	root, settings := skillCheckout(t, content)
-	_, errOut, err := execute(t, "update-skills", "--dir", root)
-	if ExitCode(err) != 1 || !strings.Contains(errOut, "acme/fugaro-fork") || !strings.Contains(err.Error(), "--allow-fork") {
-		t.Fatalf("err=%v stderr=%q", err, errOut)
+	_, _, err := execute(t, "update-skills", "--allow-fork", "--dir", root)
+	if ExitCode(err) != 1 || !strings.Contains(err.Error(), "unknown flag") {
+		t.Errorf("--allow-fork: err=%v, want an unknown flag", err)
 	}
-	if b, _ := os.ReadFile(settings); string(b) != content {
-		t.Fatalf("written without --allow-fork: %s", b)
+	for _, fl := range []string{"allow-fork", "pin"} {
+		if newUpdateSkillsCmd().Flags().Lookup(fl) != nil {
+			t.Errorf("update-skills has --%s, which was the write's own flag (U2)", fl)
+		}
 	}
-	out, _, _ := execute(t, "update-skills", "--json", "--dir", root)
-	var got updateSkillsOutput
-	if json.Unmarshal([]byte(out), &got) != nil || got.Error == "" || got.Foreign != "acme/fugaro-fork" {
-		t.Errorf("json refusal: %q", out)
+	f := testutil.NewClaudePluginFake(t, "[]", "[]")
+	f.On(t, "plugins", userInstall("0.2.0"), argsInstall...)
+	useFakeClaude(t, f)
+	if _, _, err := execute(t, "update-skills", "--dir", root); err != nil {
+		t.Fatalf("a fork's leftover pin is no refusal any more (nothing writes it): %v", err)
 	}
-	if _, errOut, err := execute(t, "update-skills", "--allow-fork", "--dir", root); err != nil || !strings.Contains(errOut, "WARNING") {
-		t.Fatalf("allow-fork: err=%v stderr=%q", err, errOut)
-	}
-	if b, _ := os.ReadFile(settings); !strings.Contains(string(b), `"v0.2.0"`) || !strings.Contains(string(b), "acme/fugaro-fork") {
-		t.Errorf("settings = %s", b)
+	if got := upgradeRead(t, settings); got != content {
+		t.Errorf("settings = %s, want the fork's pin as it was", got)
 	}
 }
 
+// A repository string out of the checkout's file reaches the person through
+// --check, so it is escaped there; the run path prints nothing of the file at
+// all, which is the stronger guarantee the deletion bought (U2).
 func TestRepoStringsAreEscaped(t *testing.T) {
 	withVersion(t, "0.2.0")
 	root, _ := skillCheckout(t, forkAt(`a\u001b[2Jb\u202ec`, "v0.2.0"))
-	for _, args := range [][]string{{"update-skills"}, {"update-skills", "--check"}} {
-		out, errOut, _ := execute(t, append(args, "--dir", root)...)
-		if strings.ContainsAny(out+errOut, "\x1b\u202e") || !strings.Contains(out+errOut, `\u001b`) {
-			t.Errorf("%v: raw control characters or no escape: %q %q", args, out, errOut)
-		}
+	txt, errOut, _ := execute(t, "update-skills", "--check", "--dir", root)
+	js, _, _ := execute(t, "update-skills", "--json", "--check", "--dir", root)
+	if strings.ContainsAny(txt+errOut+js, "\x1b\u202e") || !strings.Contains(js, `\u001b`) {
+		t.Errorf("raw control characters in the report: %q %q %q", txt, errOut, js)
+	}
+	f := testutil.NewClaudePluginFake(t, "[]", "[]")
+	f.On(t, "plugins", userInstall("0.2.0"), argsInstall...)
+	useFakeClaude(t, f)
+	out, errOut, err := execute(t, "update-skills", "--dir", root)
+	if err != nil || strings.ContainsAny(out+errOut, "\x1b\u202e") || strings.Contains(out+errOut, "fugaro-fork") {
+		t.Errorf("the run prints the checkout's repository: err=%v out=%q stderr=%q", err, out, errOut)
 	}
 }
 
+// A checkout's leftover pin can say the plugin is disabled there. Nothing in
+// the tree honours that any more — the plugin is the machine's (D949, U2) — so
+// --check reports it as the state of a file, and the run installs the plugin
+// and leaves the file byte for byte.
 func TestDisabledPluginReported(t *testing.T) {
 	withVersion(t, "0.2.0")
-	root, settings := skillCheckout(t, `{"enabledPlugins":{"fugaro@fugaro":false}}`)
-	out, errOut, err := execute(t, "update-skills", "--dir", root)
-	if err != nil || !strings.Contains(errOut, "disabled by this repository") || !strings.Contains(out, "not wired") {
-		t.Fatalf("err=%v out=%q stderr=%q", err, out, errOut)
+	const content = `{"extraKnownMarketplaces":{"fugaro":{"source":{"source":"github","repo":"dimipaun/fugaro","ref":"v0.2.0"}}},"enabledPlugins":{"fugaro@fugaro":false}}`
+	root, settings := skillCheckout(t, content)
+	txt, _, err := execute(t, "update-skills", "--check", "--dir", root)
+	if ExitCode(err) != 1 || !strings.Contains(txt, "disabled by the repository") {
+		t.Fatalf("check: err=%v out=%q", err, txt)
 	}
-	if b, _ := os.ReadFile(settings); !strings.Contains(string(b), `"fugaro@fugaro": false`) {
-		t.Errorf("settings = %s", b)
+	f := testutil.NewClaudePluginFake(t, "[]", "[]")
+	f.On(t, "plugins", userInstall("0.2.0"), argsInstall...)
+	useFakeClaude(t, f)
+	out, _, err := execute(t, "update-skills", "--dir", root)
+	if err != nil || !strings.Contains(out, "installed 0.2.0") {
+		t.Fatalf("err=%v out=%q", err, out)
+	}
+	if got := upgradeRead(t, settings); got != content {
+		t.Errorf("settings = %s, want the file as it was", got)
 	}
 }
 
-func TestUpdateSkillsRefusalsAreUserErrorsWithJSONObject(t *testing.T) {
+// Nothing in the checkout is this command's to refuse or repair: the files that
+// used to stop it (a fork's marketplace, a source that is not GitHub, a file
+// that is not JSON) come out of a run byte for byte, and the document reports
+// no error (U2, D949).
+func TestUpdateSkillsLeavesEveryCheckoutFileAlone(t *testing.T) {
 	withVersion(t, "0.2.0")
 	for name, content := range map[string]string{
-		"invalid": "{ // mine\n}",
-		"git":     `{"extraKnownMarketplaces":{"fugaro":{"source":{"source":"git","url":"https://x.invalid/r.git"}}}}`,
+		"a file that is not JSON":     "{ // mine\n}",
+		"a fork's marketplace":        forkAt("acme/fugaro-fork", "v0.1.0"),
+		"a source that is not GitHub": `{"extraKnownMarketplaces":{"fugaro":{"source":{"source":"git","url":"https://x.invalid/r.git"}}},"enabledPlugins":{"fugaro@fugaro":true}}`,
 	} {
 		root, settings := skillCheckout(t, content)
-		_, errOut, err := execute(t, "update-skills", "--dir", root)
-		if ExitCode(err) != 1 || !strings.Contains(errOut, `"ref": "v0.2.0"`) {
-			t.Errorf("%s: err=%v stderr=%q", name, err, errOut)
+		f := testutil.NewClaudePluginFake(t, "[]", "[]")
+		f.On(t, "plugins", userInstall("0.2.0"), argsInstall...)
+		useFakeClaude(t, f)
+		out, errOut, err := execute(t, "update-skills", "--dir", root)
+		if err != nil || !strings.Contains(out, "installed 0.2.0") {
+			t.Errorf("%s: err=%v out=%q stderr=%q", name, err, out, errOut)
 		}
-		out, _, err := execute(t, "update-skills", "--json", "--dir", root)
+		if got := upgradeRead(t, settings); got != content {
+			t.Errorf("%s: rewritten:\n%s", name, got)
+		}
+		js, _, err := execute(t, "update-skills", "--json", "--dir", root)
 		var got updateSkillsOutput
-		if ExitCode(err) != 1 || json.Unmarshal([]byte(out), &got) != nil || got.Error == "" || got.Snippet == "" {
-			t.Errorf("%s json: err=%v out=%q", name, err, out)
-		}
-		if b, _ := os.ReadFile(settings); string(b) != content {
-			t.Errorf("%s: rewritten", name)
+		if err != nil || json.Unmarshal([]byte(js), &got) != nil || got.Error != "" || !got.Changed {
+			t.Errorf("%s json: err=%v out=%q", name, err, js)
 		}
 	}
 }

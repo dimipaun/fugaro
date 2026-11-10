@@ -98,7 +98,7 @@ func TestInitPluginStageInstallsInClaudeCode(t *testing.T) {
 	if stateOf(res, "plugin") != initflow.Changed || len(res.Left) != 0 {
 		t.Fatalf("stages %+v left %v\n%s", res.Stages, res.Left, out)
 	}
-	want := [][]string{argsListMarkets, argsListPlugins, argsAdd, argsInstall, argsListPlugins}
+	want := [][]string{argsListMarkets, argsListPlugins, addUser("0.2.0"), argsInstall, argsListPlugins}
 	if !slices.EqualFunc(callArgs(f.Calls(t)), want, slices.Equal[[]string]) {
 		t.Fatalf("calls %q, want %q", callArgs(f.Calls(t)), want)
 	}
@@ -134,7 +134,7 @@ func TestInitPluginStageLeavesTheCheckoutsSettingsAlone(t *testing.T) {
 			if got, _ := os.ReadFile(settings); string(got) != content {
 				t.Errorf("the stage rewrote %s:\n%s", settings, got)
 			}
-			if stateOf(res, "plugin") != initflow.Changed || !slices.ContainsFunc(callArgs(f.Calls(t)), func(a []string) bool { return slices.Equal(a, argsAdd) }) {
+			if stateOf(res, "plugin") != initflow.Changed || !slices.ContainsFunc(callArgs(f.Calls(t)), func(a []string) bool { return slices.Equal(a, addUser("0.2.0")) }) {
 				t.Errorf("the machine's own install did not happen: %+v\n%s", res.Stages, out)
 			}
 		})
