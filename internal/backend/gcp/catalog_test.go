@@ -1202,6 +1202,35 @@ func TestPrebuiltEntrySmoked(t *testing.T) {
 		}
 	})
 
+	t.Run("an inspect that answers no digest fails the smoke", func(t *testing.T) {
+		// The guard under the inspect: docker answered, and what it printed is
+		// not a digest-pinned reference. The image is then not pinned to the
+		// bytes that were pulled — the smoke would be of whatever the tag
+		// resolved to when the selftest runs — so the step refuses it here,
+		// which is the step that knows what it smoked; the record step's own
+		// sha256 guard would otherwise refuse the run later, with a message
+		// about the record and not about the image.
+		got, err := runCatalogSmoke(t, smoke, req.Substitutions, map[string]string{
+			"FAKE_DOCKER_INSPECT": spec.Prebuilt,
+			"FAKE_DOCKER_REPORT":  `{"passed":true}`,
+		})
+		if err == nil {
+			t.Fatalf("the smoke succeeded although inspect answered no digest:\n%s", got.out)
+		}
+		if !strings.Contains(got.out, "carries no digest") {
+			t.Errorf("the failure is not the missing digest:\n%s", got.out)
+		}
+		// The guard above it, whose message says the registry serves the
+		// reference by tag: this run's inspect succeeded and printed a value
+		// the step would not pin a smoke to.
+		if strings.Contains(got.out, "the registry serves it by tag") {
+			t.Errorf("the failure is the inspect's own, not the value it answered:\n%s", got.out)
+		}
+		if call := got.call("run"); call != "" {
+			t.Errorf("the step smoked a reference it could not pin: %q", call)
+		}
+	})
+
 	t.Run("a report that is not a pass fails the smoke", func(t *testing.T) {
 		got, err := runCatalogSmoke(t, smoke, req.Substitutions, map[string]string{
 			"FAKE_DOCKER_INSPECT": spec.Prebuilt + "@" + catalogSmokeDigest,
