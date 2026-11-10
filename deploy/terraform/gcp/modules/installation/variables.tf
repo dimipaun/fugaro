@@ -107,7 +107,7 @@ variable "log_bucket_description" {
 }
 
 variable "bucket_lifecycle" {
-  description = "The runs bucket's lifecycle, in days: the three rules the bootstrap set, and the one the bucket's versioning adds (a noncurrent version under runs/ or cache/ is purged this many days after it stops being current)."
+  description = "The runs bucket's lifecycle, in days: the three rules the bootstrap set, and the one the bucket's versioning adds (a noncurrent version under runs/, cache/, locks/, tokens/ or issues/ is purged this many days after it stops being current)."
   type = object({
     runs_days              = optional(number, 90)
     cache_custom_time_days = optional(number, 30)

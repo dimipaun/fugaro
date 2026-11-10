@@ -95,8 +95,8 @@ import (
 // already takes. And it is not a tamper-proof trail: any project-level storage
 // writer can rewrite an object in it. The versioning D1545 gave the bucket
 // (bucket.tf) makes an erasure leave a noncurrent version instead, and the
-// noncurrent rule purges those under runs/ and cache/ and never under fugaro/
-// where the record lives — harder to erase than it was, and still not a
+// noncurrent rule purges the prefixes the bucket's own rules empty and never
+// fugaro/, where the record lives — harder to erase than it was, and still not a
 // boundary.
 
 // managedStatusNow is the day the trail is read about and the clock the read's

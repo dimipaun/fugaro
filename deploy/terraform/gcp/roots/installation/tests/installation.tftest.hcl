@@ -121,8 +121,8 @@ run "bucket_is_marked" {
   assert {
     condition = anytrue([for r in google_storage_bucket.runs.lifecycle_rule :
       one(r.action).type == "Delete" && one(r.condition).days_since_noncurrent_time == 7 &&
-    one(r.condition).matches_prefix == tolist(["runs/", "cache/"])])
-    error_message = "a noncurrent version under runs/ or cache/ must be purged after 7 days, or the versioned bucket grows for ever; fugaro/ and builds/ must have no such rule"
+    one(r.condition).matches_prefix == tolist(["runs/", "cache/", "locks/", "tokens/", "issues/"])])
+    error_message = "a noncurrent version under any prefix the rules above empty — runs/, cache/, locks/, tokens/ or issues/ — must be purged after 7 days, or the versioned bucket grows for ever; fugaro/ and builds/ must have no such rule, since the audit record and a build record are never purged"
   }
   assert {
     condition = anytrue([for r in google_storage_bucket.runs.lifecycle_rule :

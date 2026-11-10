@@ -9,9 +9,9 @@
 # A versioned bucket turns a deletion into a noncurrent version that only an
 # operator holding the object's generation can remove for good, which is the
 # hardening D1545 chose (choice (a)). The lifecycle rules below delete noncurrent
-# versions under runs/ and cache/ so the bucket does not grow without bound;
-# fugaro/ (the marker, the owner's delete list and the audit record) and builds/
-# have no noncurrent rule at all, which is the half the record depends on.
+# versions under every prefix the rules above empty — runs/, cache/, locks/,
+# tokens/ and issues/ — so the bucket does not grow without bound, while fugaro/
+# and builds/ have none: that is the half the record depends on.
 resource "google_storage_bucket" "runs" {
   project  = var.project
   name     = var.runs_bucket
@@ -78,17 +78,17 @@ resource "google_storage_bucket" "runs" {
   # builds/ has no rule: a build record must outlive any age.
 
   # A versioned bucket keeps every deleted object as a noncurrent version, so
-  # the two prefixes the rules above delete in volume need one that purges
-  # those too — without it the bucket grows for ever. The prefix list is what
-  # keeps this rule away from fugaro/ and builds/: the managed audit record and
-  # a build record are the two things here that nobody purges.
+  # every prefix the rules above delete in has to be purged too — without one the
+  # bucket grows for ever. That is runs/ and cache/ by age, and locks/, tokens/
+  # and issues/, which a run's lock release, a token's expiry and a closed issue
+  # empty. fugaro/ and builds/ stay out: the record and a build are never purged.
   lifecycle_rule {
     action {
       type = "Delete"
     }
     condition {
       days_since_noncurrent_time = var.bucket_lifecycle.noncurrent_days
-      matches_prefix             = ["runs/", "cache/"]
+      matches_prefix             = ["runs/", "cache/", "locks/", "tokens/", "issues/"]
     }
   }
 
