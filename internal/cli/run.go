@@ -1009,6 +1009,12 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 		if err := checkCloneStopFractionImage(env.lc, spec, fileCfg, warn); err != nil {
 			return config.Inputs{}, err
 		}
+		// The triage stage's switch, on the same configuration read: a
+		// runner older than triageSince refuses agent.triage at
+		// bootstrap, whatever it says (checkCloneTriageImage).
+		if err := checkCloneTriageImage(env.lc, spec, fileCfg, warn); err != nil {
+			return config.Inputs{}, err
+		}
 	} else {
 		if needsRecipeImage(spec, agentRecipe) {
 			if err := checkRecipeImage(ctx, env, slug, spec, kind, warn); err != nil {
@@ -1123,6 +1129,11 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 		// The same gate as the clone branch's above, and for the same
 		// reason: see checkStopFractionImage.
 		if err := checkStopFractionImage(ctx, env, slug, spec, kind, fileCfg, warn); err != nil {
+			return config.Inputs{}, err
+		}
+		// The same gate as the clone branch's above, and for the same
+		// reason: see checkTriageImage.
+		if err := checkTriageImage(ctx, env, slug, spec, kind, fileCfg, warn); err != nil {
 			return config.Inputs{}, err
 		}
 		// The digest drift, last of this branch's image reads, and the

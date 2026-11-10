@@ -3909,6 +3909,12 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	if err := r.gateStopFraction(o, repo, lc, cfg); err != nil {
 		return err
 	}
+	// agent.triage is the same kind of break on triageSince, in the
+	// repository's own file alone: the key is InRepo, so no layer can carry
+	// it.
+	if err := r.gateTriage(o, repo, lc, cfg); err != nil {
+		return err
+	}
 	// The security: block, in either file, is the same kind of break, on
 	// securitySince: the repository writes it in fugaro.yaml, the project in
 	// the layer file it publishes (D1501).
@@ -4445,6 +4451,26 @@ func (r *initRun) gateStopFraction(o *initOptions, repo string, lc *localcfg.Con
 		w = r.cmd.ErrOrStderr()
 	}
 	return refuseStopFractionSkew(repo, cfg.RepoStopFractionSet, cfg.Layer.SetsStopFraction(), lc.BaseImage(config.BaseKind), w)
+}
+
+// gateTriage is fugaro update --repo's gate for triageSince: refuseTriageSkew,
+// with gateRigor's escapes and for its reason. One file can write the key and
+// not two — agent.triage is repo-scope alone (config.Scopes), so there is no
+// layer half here the way gateStopFraction has one, and the layer's own loader
+// refuses the block before any image is judged.
+//
+// The half it asks is the key being written rather than the value it holds
+// (gateSecurity's own reading): RepoTriageSet, because a runner older than
+// triageSince is refused by the key whatever it says.
+func (r *initRun) gateTriage(o *initOptions, repo string, lc *localcfg.Config, cfg *config.Config) error {
+	if o.forget || o.planOnly || cfg == nil {
+		return nil
+	}
+	w := r.w
+	if o.printVars {
+		w = r.cmd.ErrOrStderr()
+	}
+	return refuseTriageSkew(repo, cfg.RepoTriageSet, lc.BaseImage(config.BaseKind), w)
 }
 
 // gateSecurity is fugaro update --repo's gate for securitySince:
