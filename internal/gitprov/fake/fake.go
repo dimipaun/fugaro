@@ -6,6 +6,8 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 )
 
@@ -88,6 +91,18 @@ type State struct {
 	// read that names one; a branch not here has no files at all.
 	Files    map[string]string            `json:"files,omitempty"`
 	Branches map[string]map[string]string `json:"branches,omitempty"`
+	// Commits is the commit a ref names (gitprov.CommitReader): a branch
+	// name, or "" for the default branch, -> a full commit. A ref it does
+	// not name resolves to a commit derived from the ref (commitOf), so a
+	// test that does not care which commit a branch is at writes no entry
+	// and every read still happens at a commit.
+	Commits map[string]string `json:"commits,omitempty"`
+	// Trees is the tree a commit holds, for a test that needs one ref's
+	// read to answer a different tree than another's: the branch's tree in
+	// Branches and the resolved commit's in Trees. A commit not here sees
+	// the tree of the ref it resolves from, so a test that pins no tree
+	// reads the default branch's whichever commit it read at.
+	Trees map[string]map[string]string `json:"trees,omitempty"`
 }
 
 // Provider is a fake git host.
@@ -380,8 +395,8 @@ func (p *Provider) Repository(context.Context) (gitprov.RepoInfo, error) {
 }
 
 // Contents implements gitprov.ContentsReader: the file at path, at ref, out
-// of State's tree ("" is the default branch). The fake reads those trees and
-// nothing else, so a file one of them does not hold is a failure naming what
+// of the tree that ref sees (treeOf: a branch's own tree, a commit's, or the
+// default branch's). A file the tree does not hold is a failure naming what
 // was read, exactly as the real adapter's 404 is: a caller that ignored the
 // ref or the path could not quietly get the definition it meant to (PIC3).
 func (p *Provider) Contents(_ context.Context, path, ref string) ([]byte, error) {
@@ -390,15 +405,95 @@ func (p *Provider) Contents(_ context.Context, path, ref string) ([]byte, error)
 	if err := p.load(); err != nil {
 		return nil, err
 	}
-	tree := p.State.Files
-	if ref != "" {
-		tree = p.State.Branches[ref]
-	}
-	data, ok := tree[path]
+	data, ok := p.treeOf(ref)[path]
 	if !ok {
 		return nil, fmt.Errorf("fake provider: %s holds no %s", p.Repo, path)
 	}
 	return []byte(data), nil
+}
+
+// Commit implements gitprov.CommitReader: the commit ref names. A ref the
+// state pins (State.Commits) is answered as it is, a ref that is already a
+// full commit is its own commit, and anything else resolves to commitOf's
+// derived commit — so two refs are two commits, and the same ref is the same
+// commit on every call, which is what makes a read at it reproducible.
+func (p *Provider) Commit(_ context.Context, ref string) (string, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if err := p.load(); err != nil {
+		return "", err
+	}
+	return p.commitOf(ref), nil
+}
+
+// commitOf is the commit a ref names: the pinned one, the ref itself when it
+// is already a full commit, and otherwise a hash of the ref.
+func (p *Provider) commitOf(ref string) string {
+	if sha := p.State.Commits[ref]; sha != "" {
+		return sha
+	}
+	if gitops.ValidCommitSHA(ref) {
+		return ref
+	}
+	sum := sha256.Sum256([]byte("fake provider commit: " + ref))
+	return hex.EncodeToString(sum[:])[:40]
+}
+
+// treeOf is the tree a read at ref sees. Trees[ref] is a commit's own tree and
+// Branches[ref] a branch's; a read at a commit sees the tree of the ref that
+// commit belongs to (a read at the commit a branch resolves to is a read of
+// that branch), and a read at anything else sees the default branch's tree,
+// which is what a repository whose branch has not moved looks like.
+//
+// So a test that needs two refs to answer different trees pins the commit in
+// Commits and the tree it holds in Trees; one that does not care writes
+// neither and reads the same tree whichever commit it read at.
+func (p *Provider) treeOf(ref string) map[string]string {
+	if t, ok := p.State.Trees[ref]; ok {
+		return t
+	}
+	if t, ok := p.State.Branches[ref]; ok {
+		return t
+	}
+	for branch, t := range p.State.Branches {
+		if p.commitOf(branch) == ref {
+			return t
+		}
+	}
+	return p.State.Files
+}
+
+// Tree implements gitprov.TreeReader: the files under path, at ref, out of the
+// tree that ref sees (treeOf), each with the path it has relative to path and
+// its bytes. The limit is checked against the whole tree before anything is
+// handed back, as a host's listing is read before its content is, and the
+// entries are sorted by path so a caller's identity over them does not depend
+// on the order a map iterates in.
+func (p *Provider) Tree(_ context.Context, path, ref string, limit gitprov.TreeLimit) ([]gitprov.TreeFile, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if err := p.load(); err != nil {
+		return nil, err
+	}
+	prefix := ""
+	if path != "" && path != "." {
+		prefix = strings.TrimSuffix(path, "/") + "/"
+	}
+	var files []gitprov.TreeFile
+	var total int64
+	for name, data := range p.treeOf(ref) {
+		rel, ok := strings.CutPrefix(name, prefix)
+		if !ok || rel == "" {
+			continue
+		}
+		files = append(files, gitprov.TreeFile{Path: rel, Data: []byte(data)})
+		total += int64(len(data))
+	}
+	if len(files) > limit.MaxFiles || total > limit.MaxBytes {
+		return nil, fmt.Errorf("fake provider: %s holds %d files under %s, %d bytes: %w", p.Repo, len(files), path, total, gitprov.ErrTreeTooLarge)
+	}
+	slices.SortFunc(files, func(a, b gitprov.TreeFile) int { return strings.Compare(a.Path, b.Path) })
+	return files, nil
 }
 
 // PullRequest implements gitprov.Provider. The head is PRState.Head when
