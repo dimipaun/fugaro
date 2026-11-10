@@ -947,16 +947,16 @@ func TestImageBuildManagedAnswersAMarkItCannotRead(t *testing.T) {
 
 // TestPrebuiltEntrySmokedIsJudgedByTheGate: a prebuilt entry's smoke-only run
 // is a billable Cloud Build like any other, so D1013's row judges it — the
-// bound, the kill switch, the entry and the account the run is submitted as
-// are the same facts they are for a build. The two rules that are about a
-// build's own inputs, the base image and the registry the build pushes into,
-// are left out rather than reported as passed: a smoke reads no base and
-// pushes nothing, and a record saying the verdict was reached on them would
-// name values this run does not carry.
+// kill switch, the entry and the account the run is submitted as are the same
+// facts they are for a build (the count bound went with the lease, T4, D1543).
+// The two rules that are about a build's own inputs, the base image and the
+// registry the build pushes into, are left out rather than reported as passed:
+// a smoke reads no base and pushes nothing, and a record saying the verdict was
+// reached on them would name values this run does not carry.
 //
-// The plan document is the invocation's own — the bound, the machine type and
-// the base the operator passed are the command's inputs for the entries it was
-// given — so its digest is the document this admission was made about.
+// The plan document is the invocation's own — the machine type and the base the
+// operator passed are the command's inputs for the entries it was given — so its
+// digest is the document this admission was made about.
 func TestPrebuiltEntrySmokedIsJudgedByTheGate(t *testing.T) {
 	fb, _, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildYAML)
 	w := managedBuildWorld(t, f, managedBuildMarker(1))
