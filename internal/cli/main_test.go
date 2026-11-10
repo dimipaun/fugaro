@@ -15,6 +15,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/orchestrator/service"
 	"github.com/dimipaun/fugaro/internal/report"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
@@ -144,6 +145,15 @@ func TestMain(m *testing.M) {
 		}
 		return blobx.Open(ctx, url)
 	}
+	// The login unit the converge's setup step installs (O9, Q2): the manager
+	// behind it runs launchctl or systemctl, and every setup and update test
+	// that has a terminal reaches that step. A suite run would load a unit
+	// into the developer's own login exactly as easily as it would write
+	// their own config home, so the manager every command gets is the
+	// counting fake, and a test that means to read the calls makes its own
+	// with fakeUnitService. The unit's file is still written, under whatever
+	// home the test isolated — unitHome for a test that reads it back.
+	orchestratorService = func() (service.Manager, error) { return &unitFake{platform: "test"}, nil }
 	// The fake gh of the watch tests links to one wrapper, run once here
 	// before any test can fork (testutil.FakeCommand).
 	cleanupFakes, err := testutil.PrepareFakeCommands()
