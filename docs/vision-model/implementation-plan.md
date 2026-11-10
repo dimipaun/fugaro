@@ -10,8 +10,9 @@ task and the reconciliation disagree, **the reconciliation's findings (F1–F19)
 [reconciliation.md](reconciliation.md), reconciled against `origin/main` at `256106ecf1` and the 36
 open pull requests of 2026-11-10.
 
-Nine tasks, **V0–V8**, each with its files (at most 12), its interfaces, its named tests and the
-command that runs them, its **red step**, what it depends on, its **reviewer tier** and whether it is
+Nine tasks, **V0–V8**, each with its files (at most 12, except V1 at 13, which says why), its
+interfaces, its named tests and the command that runs them, its **red step**, what it depends on, its
+**reviewer tier** and whether it is
 **SEC**, and its commit. Then the levels and the critical path (§1), the shared-files table (§2), what
 is deliberately not in the plan (§3), the release (§4), the owner-run checks (§5) and the gates every
 task opens with (§6).
@@ -93,7 +94,7 @@ names every one.
 | `internal/gateway/gateway.go`, `forward.go`, `export.go` | V4 (L2) | the `Stage`/`RequestPin` field the sentence reads, `pinOf`, and the sentence itself — the credentials service's own caller leaves the field empty and needs no change |
 | `internal/runner/gateway.go`, `internal/runner/gateway_test.go` | V5 (L1), V4 (L2), V7 (L3) | `checkBudget` (V5), `stageSpec` setting the pin's new field (V4), the stage's model arms (V7) — **three writers, three levels** |
 | `internal/cli/recipes_skew.go`, `docs/release.md` | V3 (L2) | the constant, the launch check and the Before-you-tag bullet |
-| `internal/cli/doctor.go`, `internal/cli/models_ls.go`, `internal/cli/models_use.go`, `internal/cli/models.go`, `schemas/models-ls.schema.json` | V6 (L2) | the doctor check, the fourth role row, the fourth role name (`modelsRoleNames`), and the schema's role enum |
+| `internal/cli/doctor.go`, `internal/cli/models_ls.go`, `internal/cli/models_use.go`, `internal/cli/models_write.go`, `schemas/models-ls.schema.json` | V6 (L2) | the doctor check, the fourth role row, the fourth role name (`modelsRoleNames`, `models_write.go:108`) and the pinning-repository scan it drives (`:158`), and the schema's role enum |
 | `internal/runner/routing.go`, `internal/runner/policy.go`, `internal/runner/providers.go` | V7 (L3) | the vision resolution beside `applyRouting` (`policy.go:204`), the pin rewrite, and the route list (`providers.go:113`) |
 | `docs/multi-model.md`, `docs/vision-model/README.md`, `docs/status.md`, `plugin/skills/working/SKILL.md`, `docs/releases/vX.Y.Z.md`, `website/data/release-summaries.yaml` | V8 (L4) | the hand edit's new key, this folder's status line, the status.md row, the skill's model switch, and the release notes |
 
@@ -196,11 +197,13 @@ permission, and the deny list is the one that already exists (F8).
 
 **Level 0. Reviewer tier 2. Not SEC.**
 
-- **Files (12 — at the cap):** `internal/config/config.go`, `internal/config/pins.go`,
+- **Files (13 — one over the cap, and the one over is `model_providers_test.go`: this key belongs to
+  three `{path, model}` role lists in `providers.go`, and that is the file `CheckProviderAuth`'s own
+  list is already tested in):** `internal/config/config.go`, `internal/config/pins.go`,
   `internal/config/scope.go`, `internal/config/validate.go`, `internal/config/providers.go`,
   `internal/config/config_test.go`, `internal/config/pins_test.go`, `internal/config/validate_test.go`,
-  `internal/config/scope_test.go`, `schemas/fugaro.schema.json`, `schemas/settings.schema.json`,
-  `schemas/project-layer.schema.json`.
+  `internal/config/scope_test.go`, `internal/config/model_providers_test.go`, `schemas/fugaro.schema.json`,
+  `schemas/settings.schema.json`, `schemas/project-layer.schema.json`.
 - **Interface:** `ModelRoles.Vision string` (`yaml:"vision"`), `Agent.VisionModel() string` (the slot,
   else `""` — it never falls back to `agent.model`: a coder model is exactly what must not answer),
   `Agent.PinnedModels()` gains it as a fourth entry, `config.pinPaths` gains
@@ -212,6 +215,9 @@ permission, and the deny list is the one that already exists (F8).
   `TestVisionSlotIsNotAModelForAnyExistingRole` (a run with no vision key behaves byte for byte as
   today), `TestVisionSlotIsJudgedOnlyWhenSet` (an empty slot is not a pin problem),
   `TestPinPathsNameTheVisionSlot`, `TestScopeRefusesTheVisionKeyInAProfile`,
+  `TestProviderAuthJudgesTheVisionPin` (the credential rule reaches the fourth slot),
+  `TestScopesGoldenTableNamesTheVisionKey` (`scope_test.go`'s table is an exact two-way match, so the
+  row reddens it until it is written),
   `TestSchemasDecodeTheVisionKey` (all three schemas, the key, and nothing else).
 - **Note:** the calendar-decided slice of the `...Since` discipline (the release the descriptions name)
   is V3's, not this task's.
@@ -318,18 +324,23 @@ owner's only explanation of a dead run.
 
 **Level 2. Reviewer tier 2. Not SEC.**
 
-- **Files (8):** `internal/cli/doctor.go`, `internal/cli/doctor_test.go`, `internal/cli/models_ls.go`,
+- **Files (10):** `internal/cli/doctor.go`, `internal/cli/doctor_test.go`, `internal/cli/models_ls.go`,
   `internal/cli/models_ls_test.go`, `internal/cli/models_use.go`, `internal/cli/models_use_test.go`,
-  `internal/cli/models.go` (`modelsRoleNames`), `schemas/models-ls.schema.json`.
+  `internal/cli/models_write.go` (`modelsRoleNames`), `internal/cli/models_write_test.go`,
+  `internal/cli/models_rm_test.go`, `schemas/models-ls.schema.json`.
 - **Interface:** a `vision-coder` doctor check (`doctor.go:397`/`:580`'s registration shape) reporting
   the coder's image rate, whether the vision slot is set and whether the repository tracks image files;
   `models ls`'s role row for the vision slot; `models use <repo> vision <id>` writing
   `agent.models.vision` through the same `yamledit.SetScalar` path and the same checks (priced, a route,
-  no whitespace).
+  no whitespace). `modelsRoleNames` (`models_write.go:108`) gains the fourth name — its own comment
+  ("the three keys `agent.models` has") moves with it — and so does everything that list drives: the
+  roles `models use` may name and the pinning-repository scan `models rm` reports from
+  (`models_write.go:158`), which is why the vision pin is one more pin a removal names.
 - **Red step:** `TestModelsUseWritesTheVisionSlot` fails while `modelsRoleNames` has three entries.
 - **Tests:** `TestModelsUseWritesTheVisionSlot`, `TestModelsUseRefusesAnUnpricedVisionModel`,
-  `TestModelsLsShowsTheVisionSlot`, `TestDoctorWarnsWhenTheCoderCannotSeeAndTheRepoHasImages`,
-  `TestDoctorSaysNothingWhenTheCoderSees`, `TestModelsLsJSONMatchesSchema`.
+  `TestModelsLsShowsTheVisionSlot`, `TestModelsRmNamesTheVisionPin`,
+  `TestDoctorWarnsWhenTheCoderCannotSeeAndTheRepoHasImages`, `TestDoctorSaysNothingWhenTheCoderSees`,
+  `TestModelsLsJSONMatchesSchema`.
 - **Commit:** `cli: doctor and the models commands know the vision slot (D2011, D2013)`
 
 ## V7. The stage that can see images runs the vision model (D2000, D2002, D2004, D2016). **SEC**
