@@ -335,6 +335,59 @@ func TestUpdateConvergesPreviousPolicy(t *testing.T) {
 	}
 }
 
+// TestEntryServicesOlderReaderConverges: an installation whose local project
+// config declares the services a catalog entry's image provides — the fact this
+// release adds (D1904, IS9) — reaches the published node with `fugaro update`
+// alone, and it reaches it where a reader of the release behind can still read
+// it (F20).
+//
+// Both halves are one test because they are one decision. The node the fixture
+// carries is the previous release's, so no services are on it, and the run's
+// policy stage is what publishes them: no second command, which is the HARD
+// RULE (F15). Where they land is the second half: as the top-level
+// `image_services` key and NOT as a member of the entry — the image_catalog
+// block decodes strictly, so an entry member would make every reader of the
+// release behind refuse the whole policy, and a published node is re-read while
+// runs are in flight (the credentials service reads it per model call). The
+// assertions are made on the raw node, because what an older reader meets is
+// the bytes and not this binary's decoded view of them.
+func TestEntryServicesOlderReaderConverges(t *testing.T) {
+	r := newConvergeRig(t, v4Node())
+	r.appendConfig(t, "image_catalog:\n  entries:\n"+
+		"    - name: app\n      tags: [node, postgres]\n      services: [postgres, redis]\n"+
+		"      source: { kind: image, image: ghcr.io/acme/app:1 }\n")
+	registerInstallation(t, r.initRig)
+	// The fixture is the release behind, or nothing here has to converge.
+	if p := convergeNode(t, r); p.ImageServices != nil {
+		t.Fatalf("the fixture's node already carries image_services = %v: it is not an installation whose policy predates the key", p.ImageServices)
+	}
+
+	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+
+	p := convergeNode(t, r)
+	want := projectpolicy.ImageServices{"app": {"postgres", "redis"}}
+	if !reflect.DeepEqual(p.ImageServices, want) {
+		t.Errorf("after one fugaro update, the published node's image_services = %v, want %v: the services the catalog entry declares did not reach the node, so a launcher that reads the node would start nothing",
+			p.ImageServices, want)
+	}
+	if got := strings.Join(p.ServicesFor("app"), " "); got != "postgres redis" {
+		t.Errorf("the node's own reader answers ServicesFor(app) = %q, want postgres redis", got)
+	}
+
+	// And the entry itself carries no such member: that is what keeps the
+	// bytes readable by a release that does not know the key at all.
+	raw, err := json.Marshal(r.db.Value(projectpolicy.PathShared()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), `"services"`) {
+		t.Errorf("the published node carries an entry member named services, which a reader of the release behind refuses whole:\n%s", raw)
+	}
+	if !strings.Contains(string(raw), `"image_services"`) {
+		t.Errorf("the published node carries no image_services key at all:\n%s", raw)
+	}
+}
+
 // convergeNode is the policy node the fixture's installation carries, decoded
 // by the reader a run of the project uses.
 func convergeNode(t *testing.T, r *convergeRig) *projectpolicy.Policy {
