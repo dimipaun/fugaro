@@ -56,9 +56,10 @@ request that carries this ruling rather than dropped here.
   D836 puts no console task in this plan.
 - **The `rigor` command group is not this plan's any more.** `internal/cli/rigor.go` — the group that
   holds `show`, `set`, `unset` and (SD10) the `floor` subgroup — is created by **whichever of
-  config-management's G6 (`fugaro rigor set`) and the settings design's S7 (`fugaro rigor floor`)
-  lands first**, and the other adds its own subcommand to it: the two winning folders state that one
-  sentence the same way, and which of the two creates the file is theirs to settle, not this plan's.
+  config-management's G6 (`fugaro rigor set`), its G7 and the settings design's S7 (`fugaro rigor
+  floor`) lands first**, and each of the others adds its own subcommand to it: all three folders
+  state that one sentence the same way, and which of the three creates the file is theirs to settle,
+  not this plan's.
   The version that made it "whichever of R3 and S7 lands first" is spent, because **R3 is closed**;
   no task left in this plan touches the file, and **W** takes the wording of its summary line from G6
   rather than from a second sentence of its own.

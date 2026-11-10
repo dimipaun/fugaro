@@ -77,7 +77,7 @@ same sentence from its side; neither plan may write "the file exists by then".
 | `internal/cli/project_cmd.go` | **S3** (the agent refusal `project policy publish` lacks, SD8) | **S6** (`buildProjectPolicy` takes `credentials.*` and `clone_urls` from the local config), **S9** (the routing silence rules, shared with the publisher); the `models` design's E1 owns the policy node's build | one `buildProjectPolicy`. `TestUpdateStageAndTheExplicitDoorBuildTheSameNode` is the guard: the stage and the explicit door produce the same bytes from one local config, so a second build path cannot appear quietly |
 | `internal/cli/init_policy_publish.go` | **S3** creates it | this design only | it is the policy node's half of the pair. The layer's half is #1463's `internal/cli/init_layer_stage.go`: two objects, two stages, and neither file holds the other's write |
 | `internal/cli/init_stages.go` | **S3** adds the publish to the `Policy` stage's work | the `rigor` design's **R1**, which adds its `Layer` stage to the same list | **the one file both designs edit.** The stages are registered in one list, each design adds its own entry and reorders nothing; S3 is position 2 and R1 is position 4, so whoever lands second rebases onto a list that already has the other's entry. Two stages, not one stage doing both writes: publishing the layer from the policy stage would put the layer's seeding rules under the policy stage's confirmation |
-| `internal/cli/rigor.go` | **whichever of config-management's G6 and this design's S7 lands first** creates the group | the other adds its own subcommand — `floor` for S7, `set`/`unset` for G6; the `rigor` design's R3–R5, closed as duplicates on 2026-11-10, designed those and named this file first | all three plans state this sentence; none may write "the group exists by then". The group holds no key logic of its own, so it is a registration list and not a second place for a rule. Which of G6 and S7 creates it is the overlap the ruling of 2026-11-10 reports rather than decides |
+| `internal/cli/rigor.go` | **whichever of config-management's G6, its G7 and this design's S7 lands first** creates the group | each of the others adds its own subcommand — `set`/`unset` for G6, `floor` for S7 and for G7 (**the same command, an overlap the owner has not settled**); the `rigor` design's R3–R5, closed as duplicates on 2026-11-10, designed those and named this file first | all **three** plans state this sentence — this one, config-management's (G6's and G7's Files lines) and #1463's — and none may write "the group exists by then". The group holds no key logic of its own, so it is a registration list and not a second place for a rule. Who of the three creates it is left to whoever lands first: the ruling of 2026-11-10 reports that overlap rather than deciding it |
 | `internal/rigor/*.go` | the `rigor` design's own tasks | nobody here writes it: S0's rows **read** `rigor.Default` and the mode floors as the constants they already are | the floor's semantics live where the resolver is. A default copied into a registry row would be the fourth copy F12 is about |
 
 ## Gates (every task)
@@ -339,8 +339,8 @@ A floor, and its semantics are subtle: an absent key and a written `{}` mean dif
 publish.
 
 - **Files (5):** `internal/cli/rigor_floor.go` (new), `internal/cli/rigor_floor_test.go` (new),
-  `internal/cli/rigor.go` (**the group: whichever of config-management's G6 and this task lands
-  first creates it, and the other uses it**), `internal/yamledit/*.go` (the `review_floor` operations,
+  `internal/cli/rigor.go` (**the group: whichever of config-management's G6 and G7 and this task
+  lands first creates it, and the others use it**), `internal/yamledit/*.go` (the `review_floor` operations,
   only if they are missing from the shared editor), `internal/cli/settings_write.go` (the shared write
   path).
 - **Red step:** `TestRigorFloorSetWritesTheModeFloor` fails while the subcommand does not exist.

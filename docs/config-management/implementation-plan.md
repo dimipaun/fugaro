@@ -212,8 +212,10 @@ landed.
   folder's plan inherits its rules and does not restate them.
 - **Red step.** `TestRigorSetRefusesAModeBelowTheResolvedOne` and `TestRigorSetRefusesHotfix` — each
   fails today because the command does not exist — then `TestRigorSetWritesTheLocalProjectConfig`.
-- **Files (≤8).** a new `internal/cli/rigor.go`, its test, `internal/settings/registry.go` (rows only),
-  and the pin tests for the rigor design's own docs.
+- **Files (≤8).** `internal/cli/rigor.go` (the `fugaro rigor` group: **whichever of this task, G7 and
+  the settings design's S7 lands first creates it**, and each of the others adds its own subcommand to
+  it — all three folders state that one sentence, and none may write "the group exists by then"), its
+  test, `internal/settings/registry.go` (rows only), and the pin tests for the rigor design's own docs.
 - **SEC.** It writes the rigor mode — the depth and the cost every review of a run of this repository is
   held to — through the write path, and where it lowers a floor its gate row refuses it as a `Typed`
   step (D1180).
@@ -226,8 +228,10 @@ landed.
 - **Red step.** `TestRigorFloorRemovalTakesTheProjectNameTyped` — a `--yes` on a removal is **refused**
   with the typed prompt, which fails today because the command does not exist — then
   `TestRigorFloorRefusesAnAgentSession` and `TestRigorFloorAddsAnEntryWithoutTheTypedForm`.
-- **Files (≤6).** `internal/cli/rigor.go` (shared with G6), its own test file, and the local-config
-  editor call.
+- **Files (≤6).** `internal/cli/rigor.go` (the group of G6 above: whichever of G6, this task and the
+  settings design's S7 lands first creates it; **G7 and S7 are the same command**, `fugaro rigor
+  floor`, and that duplication is the overlap the owner has not settled), its own test file, and the
+  local-config editor call.
 - **SEC**: it is the one command here whose step is never admitted under the gate, and its refusal is
   the reason.
 
