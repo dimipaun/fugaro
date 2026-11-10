@@ -1,8 +1,17 @@
-# The runs bucket. The bootstrap created it; fugaro update imports it. Every
-# setting here matches what the bootstrap set, so adopting it changes
-# nothing. It holds runs, caches, locks and build records, so it is never
-# destroyed and never versioned (the lifecycle rules delete old runs and
-# caches for good).
+# The runs bucket. The bootstrap created it; fugaro update imports it. It holds
+# runs, caches, locks and build records, so it is never destroyed.
+#
+# It is VERSIONED, and versioning is the managed audit record's own control
+# (docs/no-prompt-policy/reconciliation.md, F15 and T2's ruling of 2026-11-07):
+# under D1545 the record of a managed apply is what stands in for the person who
+# would have read the plan, and an unversioned bucket made it erasable by
+# whoever applied — the record's writer and its eraser were the same identity.
+# A versioned bucket turns a deletion into a noncurrent version that only an
+# operator holding the object's generation can remove for good, which is the
+# hardening D1545 chose (choice (a)). The lifecycle rules below delete noncurrent
+# versions under runs/ and cache/ so the bucket does not grow without bound;
+# fugaro/ (the marker, the owner's delete list and the audit record) and builds/
+# have no noncurrent rule at all, which is the half the record depends on.
 resource "google_storage_bucket" "runs" {
   project  = var.project
   name     = var.runs_bucket
@@ -12,6 +21,10 @@ resource "google_storage_bucket" "runs" {
   public_access_prevention    = "enforced"
   force_destroy               = false
   labels                      = { fugaro = "managed", fugaro_project = var.fugaro_project }
+
+  versioning {
+    enabled = true
+  }
 
   lifecycle_rule {
     action {
@@ -63,6 +76,21 @@ resource "google_storage_bucket" "runs" {
   }
 
   # builds/ has no rule: a build record must outlive any age.
+
+  # A versioned bucket keeps every deleted object as a noncurrent version, so
+  # the two prefixes the rules above delete in volume need one that purges
+  # those too — without it the bucket grows for ever. The prefix list is what
+  # keeps this rule away from fugaro/ and builds/: the managed audit record and
+  # a build record are the two things here that nobody purges.
+  lifecycle_rule {
+    action {
+      type = "Delete"
+    }
+    condition {
+      days_since_noncurrent_time = var.bucket_lifecycle.noncurrent_days
+      matches_prefix             = ["runs/", "cache/"]
+    }
+  }
 
   lifecycle {
     prevent_destroy = true
