@@ -39,9 +39,12 @@
 //      that may name the rules: the screens reach the STATE through
 //      `licence/index.js`, which hands out the five names, the refusal code and
 //      its sentence and none of the rules (`index.js` states that as the door's
-//      own rule), so what a screen can reach cannot refuse anything. Rule 1
-//      fences what is WRITTEN; this fences what is REFUSED, and it is the same
-//      shape of claim -- a rule is only as good as the second caller it misses.
+//      own rule), so what a screen can reach cannot refuse anything. That half
+//      of the claim is not this pattern's to hold -- the door's own `./state.js`
+//      is not the specifier below -- so `verify.test.js` reads the door's export
+//      statements and refuses those five names there. Rule 1 fences what is
+//      WRITTEN; this fences what is REFUSED, and it is the same shape of claim
+//      -- a rule is only as good as the second caller it misses.
 //
 // **What this scan does NOT claim.** It is about MOBILE's source. The consumer
 // (Go) writes the outbox, the heartbeat and everything else; the rules in

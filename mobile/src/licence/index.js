@@ -82,9 +82,13 @@ export { LICENCE_STATES, LICENCE_STATE_CODES, createLicenceState, licenceSpeech 
 // is the thing an enforcement outside it stops being. The screens need the state
 // (for the banners of §5.3 to §5.5), the code and the sentence; the client needs
 // the rules, and it reaches them as a FILE, because this door names
-// `@noble/curves` and the mailbox suite runs with no `node_modules`. The scan in
-// `verify.test.js` holds the specifier set, so this paragraph and that import
-// line are checked against each other rather than trusted.
+// `@noble/curves` and the mailbox suite runs with no `node_modules`. Two checks
+// in `verify.test.js` hold this paragraph, and each holds a different half of
+// it: the specifier scan holds the import line (the modules this door reaches),
+// and the scan that reads the EXPORT STATEMENTS holds the absences named above
+// -- neither can hold the other's half, because a re-export of a rule changes no
+// specifier, and this file's own `./state.js` is not the `licence/state.js` the
+// mailbox scan forbids.
 
 // The store is reached through the door and not built beside the screen that
 // reads it, for the reason above. The screen S2.1's table names is the caller:

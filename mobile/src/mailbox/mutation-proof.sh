@@ -106,6 +106,7 @@ require_clean mobile/src/mailbox/store.js
 require_clean mobile/src/accounts/secure-store.js
 require_clean mobile/src/app/root.js
 require_clean mobile/src/licence/state.js
+require_clean mobile/src/licence/index.js
 
 last_outcome=""
 killed=0
@@ -448,9 +449,10 @@ run "the SDK's queue is real, which is what the client's claim rests on (store.j
   mobile/src/mailbox/store.js src/mailbox/client.test.js
 
 # 11. The lapse (S6.3; D436, T12; the design is docs/design/lapse-read-only.md
-#     §4). Six guards in client.js and two in state.js -- the refuser this client
-#     gained, and the table it reads. The last one plants the second enforcement
-#     the scan rule above exists to catch.
+#     §4). Six guards in client.js, two in state.js -- the refuser this client
+#     gained, and the table it reads -- and one in index.js, the door that must
+#     not hand the rules out. The last two plant what the two scans exist to
+#     catch: a second enforcement in the app, and a rule on the door.
 run "the lapse refuses the writes it does not keep (the launch, the merge, the config change)" \
   "    if (refusedByLapse !== null) {
       return spokenRefusal(refusedByLapse, { text: body.text, at, keepText: !isAction });" \
@@ -514,6 +516,11 @@ run "the lapse's rules are reached from a second file (the scan)" \
   "import { lapseRefusalAt } from '../licence/state.js';
 export function createRoot({ React, store, View, Text, Pressable, useDemo, screens, onLeaveDemo }) {" \
   mobile/src/app/root.js src/mailbox/write-path.test.js
+run "the door hands a rule out to every screen (index.js)" \
+  "export { LICENCE_KEYS_ENTRY, LICENCE_KEYS_MAX, LICENCE_KEY_PREFIX, LICENCE_STORE_CODES } from './store.js';" \
+  "export { LICENCE_KEYS_ENTRY, LICENCE_KEYS_MAX, LICENCE_KEY_PREFIX, LICENCE_STORE_CODES } from './store.js';
+export { writeOf } from './state.js';" \
+  mobile/src/licence/index.js src/licence/verify.test.js
 
 echo
 echo "guards proved: $killed killed, $survivors survived, $unapplied not applied"
