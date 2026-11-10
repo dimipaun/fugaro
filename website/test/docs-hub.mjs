@@ -26,6 +26,16 @@
 //      own stylesheet to hold it there: a headline with a size of its own or a card this
 //      page painted itself is the page that stops looking like the site, which is the one
 //      thing a redesign of one page can get wrong.
+//   5. **The one entry that is a page of this site is the compatibility matrix** (the
+//      compatibility matrix's plan, `docs/compatibility-matrix/implementation-plan.md` Task
+//      CM2, with the owner's approval of the navigation entry of 2026-11-10). `/compatibility/`
+//      is an entry of the same grid, and the entry count below is the repository's documents
+//      plus it. It is a page and not a repository path because
+//      `website/data/compatibility.yaml` — the file the page renders — is the build's copy of
+//      the matrix, and a reader is owed the matrix. Its title is typed rather than read out of
+//      a heading, which is the one exception to this page's "the title is the document's own"
+//      (`src/pages/docs.astro` says why), and `website/test/compatibility-page.mjs` holds that
+//      word to the page's own `<h1>` from the other side, so the two cannot drift apart.
 //
 // How it reads the page: `npm run check` builds the site and then runs every file in this
 // directory, so the built HTML is in `website/dist/` by the time these cases run. Nothing
@@ -66,6 +76,21 @@ const LINKED = [
   'docs/git-providers.md',
   REFERENCE,
 ]
+
+// The entries the hub carries that are pages of this site rather than documents of this
+// repository — the compatibility matrix, and one entry today (item 5 above). It is written here
+// for the reason `LINKED` is: a hub that quietly stopped linking the page would otherwise pass
+// the count below, and this list is the plan's (Task CM2), not the page's. The entry's own
+// title and path line are held to the page itself by `website/test/compatibility-page.mjs`,
+// which reads this page's built HTML from the other side: the title against the page's `<h1>`,
+// and the path line against the page's route, which is what this entry's link opens. Its
+// `answers` line is the hub's own sentence like every other entry's — the line under a title is
+// this page's summary of what a reader finds there, not the document's own prose — and nothing
+// holds it to the page.
+const HUB_PAGES = ['/compatibility/']
+
+/** Every entry the hub carries: the repository's documents and the pages of this site. */
+const ENTRIES = LINKED.length + HUB_PAGES.length
 
 /** The built docs page: the artifact these cases are about. */
 function builtPage() {
@@ -227,6 +252,19 @@ test("the hub links every guide the plan names, by URL built from site.yaml's re
   // The generated reference is one of those links, and no part of it is on this page.
   assert.ok(!page.includes('href="#cli-reference"') && !/id="cli-reference"/.test(page), 'the hub still points at a rendered CLI reference on this page, and it links the generated file instead')
 
+  // And the entries that are pages of this site rather than repository files: one card, one
+  // route, and the route the plan names. The repository's documents are held above by
+  // `LINKED`, which is the same rule for the entries whose link leaves the site, and neither
+  // list may be emptied by a page that stopped carrying an entry.
+  const routes = [...page.matchAll(/<li class="guide\b[^"]*">([\s\S]*?)<\/li>/g)]
+    .map((match) => /href="(\/[^"]*)"/.exec(match[1])?.[1] ?? '')
+    .filter((href) => href !== '')
+  assert.deepEqual(
+    routes.slice().sort(),
+    HUB_PAGES.slice().sort(),
+    `the docs page links the pages ${JSON.stringify(routes.slice().sort())} and the hub's page entries are ${JSON.stringify(HUB_PAGES.slice().sort())}: the entry for a page of this site is added with the page (the compatibility matrix's plan, Task CM2), and an entry whose route moves changes here in the same commit`,
+  )
+
   // Every absolute URL the page prints is composed from a fact rather than typed: the
   // repository from site.yaml, the canonical origin from site.yaml, and a host the site's
   // own list admits (the same list W1.11's link check resolves against).
@@ -273,7 +311,7 @@ test('the docs page repeats no prose from a document it links', () => {
     href: /href="([^"]*)"/.exec(match[1])?.[1] ?? '',
     answers: normalise(/<p class="answers">([\s\S]*?)<\/p>/.exec(match[1])?.[1] ?? ''),
   }))
-  assert.equal(entries.length, LINKED.length, `the built page carries ${entries.length} hub entries and the hub's guides and the reference are ${LINKED.length}`)
+  assert.equal(entries.length, ENTRIES, `the built page carries ${entries.length} hub entries and the hub's guides, the reference and its ${HUB_PAGES.length} page(s) are ${ENTRIES}`)
 
   const repository = siteFact('repository')
   for (const entry of entries) {
@@ -413,7 +451,7 @@ test("the hub is drawn in the site's shared bold look, and gives the page no sha
   // Every entry is one of the site's cards: `base.css`'s `.card`, which is what makes a card
   // on this page the same box as a card on any other.
   const entries = [...page.matchAll(/<li class="([^"]*)">/g)].map((match) => match[1]).filter((classes) => /\bguide\b/.test(classes))
-  assert.equal(entries.length, LINKED.length, `the built page carries ${entries.length} guide entries and the hub's guides and the reference are ${LINKED.length}`)
+  assert.equal(entries.length, ENTRIES, `the built page carries ${entries.length} guide entries and the hub's guides, the reference and its ${HUB_PAGES.length} page(s) are ${ENTRIES}`)
   for (const classes of entries) {
     assert.match(classes, /(?:^|\s)card(?:\s|$)/, `a guide entry carries ${JSON.stringify(classes)} and not the site's shared \`card\` class: the bold look's card is written once in \`base.css\`, and a card this page drew itself is the page that stops looking like the site`)
   }

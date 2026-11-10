@@ -72,7 +72,8 @@ three READMEs share.
 
 **The joint order**, agreed with the `models` and `rigor` designs and the same list in all three:
 **editor → policy stage (S3) → settings read (S0–S2, S4) → layer stage (R0, R1) → set (S5) → rigor
-(R2–R5) and models.**
+(R2–R5, closed on 2026-11-10 to config-management's G0–G2 with G4 and its G6, which build them) and
+models.**
 
 | # | What lands | Owner | Why it sits here |
 | --- | --- | --- | --- |
@@ -81,7 +82,7 @@ three READMEs share.
 | 3 | The settings read | **S0–S2, S4** | useful before every writer, and it is what makes G1, G2 and G5 visible today |
 | 4 | The layer stage, and the local layer file it publishes | the `rigor` design's **R0, R1** | `settings set --layer project` (S5) needs both the file and its publisher |
 | 5 | `fugaro settings get\|set\|unset` | **S5** | the first writer over all three documents; it comes after 2 and 4 because its `next: fugaro update` line is false until both stages publish |
-| 6 | `fugaro rigor …` (R2–R5) and the `models` writes | the `rigor` and `models` designs | they reuse the editor and both stages, and their keys reach runs through the stage of 2 |
+| 6 | `fugaro rigor …` and the `models` writes | config-management (**G0–G2** with **G4** and **G6**, which build the commands the `rigor` design's R2–R5 designed and the owner closed as their duplicates on 2026-11-10) and the `models` design | they reuse the editor and both stages, and their keys reach runs through the stage of 2 |
 
 **What all three designs rule the same way:**
 

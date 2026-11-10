@@ -3903,6 +3903,12 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	if err := r.gateGitAuthor(o, repo, lc, cfg); err != nil {
 		return err
 	}
+	// agent.review_stop_fraction is the same kind of break on
+	// stopFractionSince, in either file: a launch from outside a checkout
+	// cannot judge the repository's own half, so the converge does.
+	if err := r.gateStopFraction(o, repo, lc, cfg); err != nil {
+		return err
+	}
 	// The security: block, in either file, is the same kind of break, on
 	// securitySince: the repository writes it in fugaro.yaml, the project in
 	// the layer file it publishes (D1501).
@@ -4419,6 +4425,28 @@ func (r *initRun) gateGitAuthor(o *initOptions, repo string, lc *localcfg.Config
 	return refuseGitAuthorSkew(repo, cfg.RepoGitAuthorSet, lc.BaseImage(config.BaseKind), w)
 }
 
+// gateStopFraction is fugaro update --repo's gate for stopFractionSince:
+// refuseStopFractionSkew, with gateRigor's escapes and for its reason. Both
+// files can write the key — the repository's agent.review_stop_fraction and the
+// project layer's defaults.agent.review_stop_fraction — and both are decoded
+// with KnownFields, so each is judged where it is set and the subject names it.
+//
+// Each half is the key being written rather than the value it holds
+// (gateSecurity's own reading): RepoStopFractionSet for the repository's file,
+// and the layer's own SetsStopFraction, which counts a key written as null —
+// SetsDefault would not, and the layer would then be converged onto an image
+// whose runner refuses it at bootstrap for every repository of the project.
+func (r *initRun) gateStopFraction(o *initOptions, repo string, lc *localcfg.Config, cfg *config.Config) error {
+	if o.forget || o.planOnly || cfg == nil {
+		return nil
+	}
+	w := r.w
+	if o.printVars {
+		w = r.cmd.ErrOrStderr()
+	}
+	return refuseStopFractionSkew(repo, cfg.RepoStopFractionSet, cfg.Layer.SetsStopFraction(), lc.BaseImage(config.BaseKind), w)
+}
+
 // gateSecurity is fugaro update --repo's gate for securitySince:
 // refuseSecuritySkew, with gateRigor's escapes and for its reason. Each half is
 // the key being written rather than the rows it holds: a runner older than
@@ -4900,39 +4928,50 @@ var newCloudBuilder = func(ctx context.Context, lc *localcfg.Config) (cloudBuild
 // credential's ID the build's clone reads, which the caller decides: init's
 // first builds read it back out of the spec the apply just ran (B1), while a
 // standalone image refresh resolves it live and checks it against the build
-// account's own grant. It returns the build's ID, also when the wait fails after the submit.
-func (r *initRun) submitAndWait(ctx context.Context, b cloudBuilder, lc *localcfg.Config, cfg *config.Config, spec infra.RepoSpec, name, base, gitSecretID string) (string, error) {
+// account's own grant. It returns the build's ID, also when the wait fails
+// after the submit.
+//
+// ended says the build reached a terminal status — the wait really watched it
+// to its end, whatever that end was. It is false exactly when the build was
+// submitted and the watch was lost (a status read that failed, a cancelled
+// context), where the build may still be running: the caller's lease settles
+// the whole reservation for such a build rather than the time it watched
+// (image_refresh_steps.go, buildLease.settle).
+func (r *initRun) submitAndWait(ctx context.Context, b cloudBuilder, lc *localcfg.Config, cfg *config.Config, spec infra.RepoSpec, name, base, gitSecretID string) (string, bool, error) {
 	bs, err := cloudBuildSpec(spec, cfg, name, base, lc.Build.MachineType, lc.RecordBucketURL(), gitSecretID)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	if cfg.Layer != nil {
 		rb, err := openRecordBucket(ctx, lc.RecordBucketURL())
 		if err != nil {
-			return "", remote(err)
+			return "", false, remote(err)
 		}
 		defer rb.Close()
 		if bs.ProjectLayerSHA256, err = prepareLayerCopy(ctx, rb, spec.Slug, cfg.Layer, base); err != nil {
-			return "", err
+			return "", false, err
 		}
 	}
 	res, err := b.Submit(ctx, bs)
 	switch {
 	case errors.Is(err, gcp.ErrBadBuildSpec):
-		return "", userErr("%v", err)
+		return "", false, userErr("%v", err)
 	case err != nil:
-		return "", remote(err)
+		return "", false, remote(err)
 	}
 	fmt.Fprintf(r.w, "Cloud Build build %s of %s submitted; log: %s\n", oneLine(res.ID), oneLine(res.Image), oneLine(res.LogURL))
 	done, err := b.Wait(ctx, res.ID, 0)
 	if err != nil {
 		// The build was submitted and goes on without us: its ID comes back
-		// with the error.
-		return res.ID, remote(err)
+		// with the error, and so does whether the build really ended — a
+		// terminal status means it did, and its own failure is the whole
+		// story; anything else is a lost watch over one that may still be
+		// running.
+		return res.ID, gcp.TerminalStatus(done.Status), remote(err)
 	}
 	fmt.Fprintf(r.w, "built %s/%s (Cloud Build build %s)\n", spec.Name, name, oneLine(done.ID))
 	r.res.Builds = append(r.res.Builds, done.ID)
-	return done.ID, nil
+	return done.ID, true, nil
 }
 
 // buildImages offers the first image build of each workflow in names, and
@@ -4963,14 +5002,14 @@ func (r *initRun) buildImages(ctx context.Context, lc *localcfg.Config, cfg *con
 		}
 		if !reachable {
 			r.buildsLeft = append(r.buildsLeft, name)
-			r.warn(fmt.Sprintf("the first image build of %s/%s is billable and was not confirmed: it needs the person at a real terminal ("+neverConfirmsBuild(r.conditions().Agent != "")+"), so its job waits for it: in your own terminal window, run fugaro image build --repo %s --workflow %s (it asks for the project's name too), then "+r.o.doorProgram()+" --repo", spec.Name, name, spec.Name, name))
+			r.warn(fmt.Sprintf("the first image build of %s/%s is billable and was not confirmed: it needs the person at a real terminal ("+neverConfirmsBuild(r.conditions().Agent != "")+"), so its job waits for it: in your own terminal window, run fugaro image build --repo %s --workflow %s (it asks nothing), then "+r.o.doorProgram()+" --repo", spec.Name, name, spec.Name, name))
 			continue
 		}
 		if !ok {
-			r.warn(fmt.Sprintf("the first image build of %s/%s was not confirmed (the question was answered no), so its job waits for it: in your own terminal window, run fugaro image build --repo %s --workflow %s (it asks for the project's name too), then "+r.o.doorProgram()+" --repo", spec.Name, name, spec.Name, name))
+			r.warn(fmt.Sprintf("the first image build of %s/%s was not confirmed (the question was answered no), so its job waits for it: in your own terminal window, run fugaro image build --repo %s --workflow %s (it asks nothing), then "+r.o.doorProgram()+" --repo", spec.Name, name, spec.Name, name))
 			continue
 		}
-		if _, err := r.submitAndWait(ctx, b, lc, cfg, spec, name, base, appliedGitSecretID(spec)); err != nil {
+		if _, _, err := r.submitAndWait(ctx, b, lc, cfg, spec, name, base, appliedGitSecretID(spec)); err != nil {
 			return built, err
 		}
 		built++

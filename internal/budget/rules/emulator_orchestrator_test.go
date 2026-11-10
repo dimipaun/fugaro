@@ -21,6 +21,15 @@ package rules
 // the same database, so a refusal here is this node's rule and not an empty
 // tree's.
 //
+// CG6 of the console dependency graph plan (docs/cli-output-console-graph/
+// implementation-plan-graph.md, H7, T2(a) ruled 2026-11-06) adds the rest of
+// the identities a token can carry to both tests below: the graph reads this
+// subtree through the person's IAM credential, so the subtree is granted
+// nothing, and the mailbox consumer's `mc` claim and a pairing session's `pu`
+// claim join the run's and the minter's in being refused it. orchestrator_test.go
+// reads the same denial out of the generated document, in the job with no
+// emulator.
+//
 // What these tests deliberately do not assert is a write-own guarantee. People
 // reach the database with an OAuth Bearer, and IAM bypasses `.write` and
 // `.validate` (reconciliation.md, "What the rules do and do not bind"), so the
@@ -163,6 +172,18 @@ func TestOrchestratorSubtreeIsReadableOnlyBySignedInPeople(t *testing.T) {
 		h.mustReadDenied(run, p)
 		h.mustReadDenied(minted, p)
 	}
+	// Nor are the other two identities a token can carry (CG6 of the console
+	// graph plan, H7): the mailbox consumer's `mc` claim and a pairing session's
+	// `pu` claim. Each reaches a family the rules do grant it first -- the
+	// consumer its mailbox's heartbeat, the session its own pairing request --
+	// so these are refusals of this subtree and not of a token refused
+	// everywhere.
+	h.mustAllow(h.consumer(mbAlice), "alice's heartbeat", put(beat(mbAlice), aHeartbeat()))
+	h.mustAllow(h.pairing(pairUid), "its own pairing request", put(request(pairUid), aRequest()))
+	for _, p := range []string{PathOrchestrator, orchState, orchLease, orchAudit} {
+		h.mustReadDenied(h.consumer(mbAlice), p)
+		h.mustReadDenied(h.pairing(pairUid), p)
+	}
 }
 
 // TestOrchestratorRefusesEveryTokenWriter: the write is `false` for every
@@ -203,22 +224,32 @@ func TestOrchestratorRefusesEveryTokenWriter(t *testing.T) {
 	h.set(orchState, map[string]any{"schemaVersion": 1, "phase": "idle"})
 	h.wantValue(orchState+"/phase", `"idle"`)
 
+	// The two token identities the cases below add hold a write the rules do
+	// grant them elsewhere -- the consumer writes its mailbox's heartbeat, the
+	// pairing session writes its own request -- so their refusals below are this
+	// node's rule and not claims the rules ignore wherever they appear.
+	h.mustAllow(h.consumer(mbAlice), "alice's heartbeat", put(beat(mbAlice), aHeartbeat()))
+	h.mustAllow(h.pairing(pairUid), "its own pairing request", put(request(pairUid), aRequest()))
+
 	for _, c := range []struct {
-		who   string
-		write func() map[string]any
+		who    string
+		client *rtdb.Client
+		write  func() map[string]any
 	}{
-		{"a run's token", func() map[string]any { return put(orchState, map[string]any{"phase": "running"}) }},
-		{"a run's token", func() map[string]any { return put(orchSibling, 1) }},
-		{"a run's token", func() map[string]any { return put(orchState+"/phase", "running") }},
-		{"a run's token", func() map[string]any { return map[string]any{orchState: nil} }},
-		{"a minter-minted token", func() map[string]any { return put(orchState+"/phase", "running") }},
-		{"a minter-minted token", func() map[string]any { return put(orchLease, map[string]any{"until": 1}) }},
+		{"a run's token", run, func() map[string]any { return put(orchState, map[string]any{"phase": "running"}) }},
+		{"a run's token", run, func() map[string]any { return put(orchSibling, 1) }},
+		{"a run's token", run, func() map[string]any { return put(orchState+"/phase", "running") }},
+		{"a run's token", run, func() map[string]any { return map[string]any{orchState: nil} }},
+		{"a minter-minted token", minted, func() map[string]any { return put(orchState+"/phase", "running") }},
+		{"a minter-minted token", minted, func() map[string]any { return put(orchLease, map[string]any{"until": 1}) }},
+		// CG6 of the console graph plan (H7): the rest of the identities the
+		// rules evaluate are refused the write too, an account with no device
+		// node among them.
+		{"a mailbox consumer's token", h.consumer(mbAlice), func() map[string]any { return put(orchState+"/phase", "running") }},
+		{"a pairing session's token", h.pairing(pairUid), func() map[string]any { return put(orchLease, map[string]any{"until": 1}) }},
+		{"a token of an account with no device node", h.unpaired(mbBob), func() map[string]any { return put(orchState+"/phase", "running") }},
 	} {
-		client := run
-		if c.who == "a minter-minted token" {
-			client = minted
-		}
-		h.mustDeny(client, c.who+" writing the orchestrator state", c.write())
+		h.mustDeny(c.client, c.who+" writing the orchestrator state", c.write())
 	}
 	// The phone's own `mu` claim is refused like the rest: a token the rules
 	// admit as a reader is not a writer of this node, and the reconciliation's
