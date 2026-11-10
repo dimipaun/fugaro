@@ -969,9 +969,10 @@ func AuthorProblem(p Person) string {
 // round count and max_budget_usd is the per-stage ceiling the agent is
 // launched with (Spec.Apply), while max_usd, max_tokens, max_time and
 // max_review_rounds bound what a whole chain of runs may spend (D1041,
-// D1042, D1056). They are written by the launcher at the launch that begins
-// a chain and are unset on every other task, so a launch that names none
-// keeps today's per-run caps exactly.
+// D1042, D1056). They belong on the launch that begins a chain and are unset
+// on every other task, so a launch that names none keeps today's per-run
+// caps exactly. Nothing writes one yet: the flags that do are L3 of
+// docs/run-limit-carry-over.
 type Overrides struct {
 	ReviewRounds *int     `json:"review_rounds,omitempty"`
 	MaxBudgetUSD *float64 `json:"max_budget_usd,omitempty"`
@@ -981,9 +982,12 @@ type Overrides struct {
 	// The chain's dollar, token, wall-time and review-round limits, each
 	// nil or empty when the launch set none. They need a runner that knows
 	// them: an older one decodes with DisallowUnknownFields and refuses the
-	// whole task, which is why the launcher gates a launch that would write
-	// one behind checkImageSince with this work's own `…Since` constant
-	// (internal/cli/recipes_skew.go).
+	// whole task, so the launcher must gate a launch that would write one
+	// behind checkImageSince. No launch writes one yet and no such `…Since`
+	// constant exists yet — the four flags and the gate beside
+	// governanceSince in internal/cli/recipes_skew.go are L3 of
+	// docs/run-limit-carry-over — so today nothing can write a member an
+	// older image would refuse.
 	MaxUSD          *float64 `json:"max_usd,omitempty"`
 	MaxTokens       *int64   `json:"max_tokens,omitempty"`
 	MaxTime         string   `json:"max_time,omitempty"`
