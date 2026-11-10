@@ -3778,6 +3778,25 @@ func deployedCatalogEntry(ctx context.Context, env *cloudEnv, slug string, spec 
 		}
 		return config.Entry{}, false, catalogMovedErr(spec.Workflow, name, image)
 	}
+	// A configuration the resolver refuses — this job's own reference, a pin or
+	// the map's entry, naming a name the catalog does not hold — is refused at
+	// launch too. The deploy-time arm refuses it the same way (F7), so the job
+	// cannot have been deployed with what this launcher's file names, and the
+	// image it happens to carry is not the one this configuration asks for:
+	// going on would start the run on it and say nothing. The refusal carries
+	// the resolver's own sentence, which names the entry there is not (a pin)
+	// or the map that points at it (T1 b), and it is the same family as the
+	// moves below because the person's fix is the same one command.
+	//
+	// Only a reference naming an entry the catalog does not hold is refused
+	// here. The resolver's other errors are the tag-cover and docker rules,
+	// which say which entries serve a job rather than which one it runs: an
+	// entry the deployed image is but that no longer covers what the workflow
+	// needs comes out of the lookup above, the coverage check below or the
+	// docker rule, each with the reason the person needs.
+	if speaks && errors.Is(selErr, catalog.ErrUnknownEntry) {
+		return config.Entry{}, false, catalogClaimsErr(spec.Workflow, name, image, selErr)
+	}
 	// The entry the project's configuration NAMES for this job — a pin, or what
 	// the project's map gives the repository (D1155, D1906) — against the entry
 	// its deployed image is: both are claims about the deployed job, and a job
@@ -3786,11 +3805,7 @@ func deployedCatalogEntry(ctx context.Context, env *cloudEnv, slug string, spec 
 	// below instead, by the coverage the choice was made on: the deploy fixed
 	// the job's image, and which entry the rule would choose now is not a claim
 	// about the job (F7).
-	//
-	// A resolver that refused the configuration has no entry to compare, and
-	// the lookup above has already said that the deployed image is none of the
-	// catalog's.
-	if speaks && selErr == nil && sel.Reference && sel.Entry.Name != entry.Name {
+	if speaks && sel.Reference && sel.Entry.Name != entry.Name {
 		return config.Entry{}, false, catalogMovedErr(spec.Workflow, name, image)
 	}
 	// The tags the workflow needs, against the entry the job actually runs:
@@ -3866,6 +3881,17 @@ func catalogEntryOf(cat config.Catalog, image string) (config.Entry, bool) {
 // the one command that does.
 func catalogMovedErr(workflow, job, image string) error {
 	return userErr("workflow %s: the job %s is deployed with the image %s, which this project's image catalog no longer gives it; a job keeps the image it was deployed with, so run `fugaro update` to deploy it again with this project's catalog", workflow, job, image)
+}
+
+// catalogClaimsErr refuses a launch whose own configuration the resolver
+// refuses: the reference this launcher's file makes is one the project's
+// catalog cannot answer, so the job was not deployed with it and no image it
+// carries is the one this file asks for. The resolver's sentence says which
+// reference is wrong (why is its own); what this adds is the deployed image the
+// launch would otherwise have started on, and the one command that deploys the
+// job again once the file and the catalog agree.
+func catalogClaimsErr(workflow, job, image string, why error) error {
+	return userErr("workflow %s: %v; the job %s is deployed with the image %s, and a job keeps the image it was deployed with, so fix the reference above and run `fugaro update` to deploy it again with this project's catalog", workflow, why, job, image)
 }
 
 // launchRun starts spec's execution, stored under slug, at most once, however many CLIs race
