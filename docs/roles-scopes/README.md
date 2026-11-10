@@ -1,6 +1,6 @@
 # User roles and scopes
 
-**Status: plan only; nothing is implemented; no task approved.** Spec owner: Dimi Paun (the owner).
+**Status as of 2026-11-10: in progress, 3/12 merged; see [docs/status.md](../status.md) for the current table.** Spec owner: Dimi Paun (the owner).
 Date: 2026-11-07. Checked against `origin/main` at `91ae90aa3`. **Rounds 1 and 2 of an independent security review are applied (reconciliation §7, §8); no third round has run.**
 
 The spec gives Fugaro three roles (viewer, operator, admin), each granted with a scope (the project, all

@@ -18,13 +18,13 @@ KEPT — Fugaro never deletes a secret or a secret version:
 
 Order of operations:
   1. remove 2 addresses from Terraform's state without destroying them: the addresses no apply can delete (a secret container's prevent_destroy, a job whose deletion_protection the state says is on). Nothing in the cloud is deleted by this step.
-  2. plan, show the plan's own counts and its full delete list, and ask again — the project's name typed at a real terminal, never --yes.
+  2. plan, show the plan's own counts and its full delete list, and ask again — answered by the person at a real terminal, never by --yes.
   3. apply, then delete the 1 orphaned Cloud Run job through the API.
 
 Next command:
   fugaro update --repo . --retire
 ⚠ CONFIRM (project aurora, GCP project proj-1234): retire 3 addresses of proj-1234: remove 2 from Terraform's state (destroying nothing), then apply, then delete 1 Cloud Run job through the API. Delete fugaro-acme-sandbox-app-bmb (us-east5, module.repo.module.workflow["app_bmb"].google_cloud_run_v2_job.this[0]). Fugaro deletes no secret, so these leave Terraform's state and stay in Secret Manager if they are still there: claude-oauth-token-bmb (fugaro-acme-sandbox-claude-oauth-token-bmb-2dfc7765d8e5dd81), unmanaged.
-Type aurora to confirm:   confirmed
+  confirmed
 removed 2 addresses from Terraform's state; nothing was destroyed
 Plan: 0 to import, 1 to create, 1 to update, 0 to forget, 1 to delete.
 
@@ -38,7 +38,7 @@ IAM: 0 bindings match the live ones (adopted), 3 new
 the plan above is the retirement's: 0 imports, 1 creates, 1 updates, 1 deletes, 0 replaces. Deleting:
   delete module.repo.module.workflow["app_bmb"].google_service_account.job
 ⚠ CONFIRM (project aurora, GCP project proj-1234): retire 3 addresses of proj-1234: 2 addresses are already out of Terraform's state (destroying nothing), so what remains is the apply and the delete of 1 Cloud Run job through the API. Delete fugaro-acme-sandbox-app-bmb (us-east5, module.repo.module.workflow["app_bmb"].google_cloud_run_v2_job.this[0]). Fugaro deletes no secret, so these leave Terraform's state and stay in Secret Manager if they are still there: claude-oauth-token-bmb (fugaro-acme-sandbox-claude-oauth-token-bmb-2dfc7765d8e5dd81), unmanaged.
-Type aurora to confirm:   confirmed
+  confirmed
 Still missing for acme/sandbox:
   workflow app (its job is not deployed yet): image not built yet: fugaro image build --repo acme/sandbox --workflow app
   Store each secret with its commands, run in your own terminal window one line at a time; the value comes from stdin or a hidden prompt, never argv:

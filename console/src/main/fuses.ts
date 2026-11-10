@@ -293,8 +293,8 @@ export interface AfterPackContext {
  *
  * `win32` joined it under the owner's ruling of 2026-10-20: the console is built
  * for Windows -- driving the Linux CLI inside a WSL distribution, not a
- * `fugaro.exe` -- and the pack runs at release time only (D7(c), from the
- * staged `docs/pending-workflows/console-windows.yml`), never on a pull
+ * `fugaro.exe` -- and the pack runs at release time only (D7(c), from
+ * `.github/workflows/console-windows.yml`), never on a pull
  * request. Its executable resolution is `win32Executable` below. Signing is
  * still the owner's and nothing here touches it: the installer ships unsigned.
  */

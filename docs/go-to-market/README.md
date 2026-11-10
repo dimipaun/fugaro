@@ -1,6 +1,6 @@
 # Go-to-market (engineering sections)
 
-**Status: plan only; nothing is implemented; no task approved.** D400-D408 were answered by the owner on
+**Status as of 2026-11-10: in progress, 4/12 merged; see [docs/status.md](../status.md) for the current table.** D400-D408 were answered by the owner on
 2026-10-26 (D400, D405 and D406 are not the recommendation), and D409-D412 on 2026-10-30 — D409
 not the recommendation either, D410 the design pass the owner asked for, D411 the owner's own
 instruction that the hero's picture is a real screen of the console and D412 the owner's three

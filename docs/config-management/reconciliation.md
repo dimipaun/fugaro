@@ -19,7 +19,7 @@ project config** — a sentence it prints and exits on — so the figures below
 are counted from the registry in this tree through the same predicate the write path uses, which is
 what the guard at the end of this section re-runs.
 
-- **F1 — the registry is 392 rows and the generic writer carries 172 of them.** 95 by name
+- **F1 — the registry is 395 rows and the generic writer carries 174 of them.** 95 by name
   (`internal/cli/settings_set.go:95`), made of the thirteen §4.4 names (the four budget scalars,
   `base_branch`, `max_parallel`, `update_check`, `commit_name`, `commit_email`, `layer.default_profile`,
   and D873's three account keys — `default_claude_account`, `claude_account_auto` and the wildcard
@@ -31,15 +31,18 @@ what the guard at the end of this section re-runs.
   and writes through this path), and the wildcard blocks
   D1161 gives it — a repository's 37 `workflows.*` rows and the project layer's 36 `profiles.*` ones;
   the layer's five `ab.*` rows are listed beside them, but the models family owns them, so this count
-  does not carry them — and 77 through the nine prefixes
+  does not carry them — and 79 through the nine prefixes
   (`internal/cli/settings_set.go:227`: `agent.`, `git.`, `followup.`, `governance.`, `watch.`,
   `layer.defaults.`, `layer.governance.`, `credentials.`, `clone_urls.`): 13 + 6 + 2 + 1 + 37 + 36 = 95.
-  **220 rows have no generic writer**, and the audit's whole subject is which of them are a defect and
+  **221 rows have no generic writer**, and the audit's whole subject is which of them are a defect and
   which are the installation's own plumbing (F13, D1182). The count moved from 390 by the image setup
   skill's two rows: the map (D1906) is the `image map` family's and one row, so it is not carried here,
-  and the bake switch above is. A key the registry carries and this list does not is refused by
-  `settings set` whatever it is, and a row claiming a family is pointed at that command before this
-  list is asked, so the figures are the allowlist's own and move only when it moves.
+  and the bake switch above is — and it moved again by the stop rule's two rows,
+  `agent.review_stop_fraction` in `fugaro.yaml` and its project-layer key
+  `defaults.agent.review_stop_fraction` (docs/rigor-modes), which the `agent.` and `layer.defaults.`
+  prefixes carry rather than the named list. A key the registry carries and this list does not is
+  refused by `settings set` whatever it is, and a row claiming a family is pointed at that command
+  before this list is asked, so the figures are the allowlist's own and move only when it moves.
 - **F2 — `fugaro rigor` does not exist.** There is no `newRigorCmd` in `internal/cli`, no `rigor` cobra
   command and no `floor` subcommand, while the registry names `rigor` (`internal/settings/registry.go:266`)
   and `rigor floor` (`:682`) as the owners of keys. Two of the registry's owner strings name a command a

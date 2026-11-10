@@ -31,6 +31,11 @@ type imageFile struct {
 // as it is now, before the sync changes it, and the build time from the
 // image's own record. It is never fatal: a problem is logged, and what
 // could not be read is left out. It returns nil when the commit is unknown.
+//
+// The commit it reads is the one the checkout at the work directory is at when
+// it is called, and bootstrap reads that a second time — bakedHead, once the
+// run's own checkout is adopted — because the commit the record has to name is
+// the adopted one's (bootstrap's comment there).
 func (r *run) imageInfo(ctx context.Context) *runstore.ImageInfo {
 	var info runstore.ImageInfo
 	path := r.d.ImageInfoPath
@@ -55,14 +60,8 @@ func (r *run) imageInfo(ctx context.Context) *runstore.ImageInfo {
 			}
 		}
 	}
-	// Only an existing checkout says anything: a run that must clone has
-	// no baked commit.
-	if repo, err := gitops.Open(r.d.WorkDir, gitops.IdentityEnv()); err == nil {
-		if sha, err := strip(repo).HeadSHA(ctx); err == nil {
-			info.BakedCommit = sha
-		} else {
-			r.d.Log.Warn("reading the baked checkout's HEAD failed", "err", r.redact(err.Error()))
-		}
+	if sha := r.bakedHead(ctx); sha != "" {
+		info.BakedCommit = sha
 	}
 	if info.BakedCommit == "" {
 		info.BakedCommit = file.Commit
@@ -71,6 +70,27 @@ func (r *run) imageInfo(ctx context.Context) *runstore.ImageInfo {
 		return nil
 	}
 	return &info
+}
+
+// bakedHead is the HEAD of the checkout at the run's work directory, or "" when
+// there is none to read: only an existing checkout says anything, and a run
+// that must clone has no baked commit.
+//
+// Which checkout that is changes while bootstrap runs: the work directory holds
+// the image's own checkout, or nothing at all, until openBakedCheckout adopts
+// the per-slug one this run's repository was baked at (D1900), and only then is
+// the checkout the run works on known.
+func (r *run) bakedHead(ctx context.Context) string {
+	repo, err := gitops.Open(r.d.WorkDir, gitops.IdentityEnv())
+	if err != nil {
+		return ""
+	}
+	sha, err := strip(repo).HeadSHA(ctx)
+	if err != nil {
+		r.d.Log.Warn("reading the baked checkout's HEAD failed", "err", r.redact(err.Error()))
+		return ""
+	}
+	return sha
 }
 
 // readCapped reads the file at path, failing if it is larger than max.

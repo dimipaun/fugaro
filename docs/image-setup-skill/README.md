@@ -1,6 +1,6 @@
 # Image setup skill
 
-**Status: plan only; no task approved.** T1, O3 and O4 were answered 2026-11-09, all with reading (b), and **IS8b (the bake step) has landed** on the strength of O3's answer alone — nothing else is implemented. Spec owner: Dimi Paun. Received and reconciled 2026-11-09.
+**Status as of 2026-11-10: in progress, 4/14 merged; see [docs/status.md](../status.md) for the current table.** Spec owner: Dimi Paun. Received and reconciled 2026-11-09.
 
 A Fugaro skill that surveys a project's repos, proposes fewer than five project-level images, generates their Dockerfiles and validates them against the runtime contract. Repo-level images are disabled, not removed.
 

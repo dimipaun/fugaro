@@ -9,7 +9,6 @@ package cli
 // which is the same one (G11).
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -20,7 +19,6 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -500,80 +498,50 @@ func writerAsTerminal(t *testing.T) {
 	t.Cleanup(func() { writerIsTerminal = old })
 }
 
-// promptWatch is a run's stdout, watched as it is written: it keeps the bytes
-// that were on the screen at the moment a prompt was printed.
-type promptWatch struct {
-	mu     sync.Mutex
-	buf    bytes.Buffer
-	at     string
-	before string
-	found  bool
-}
-
-func (w *promptWatch) Write(p []byte) (int, error) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	n, err := w.buf.Write(p)
-	if !w.found && strings.Contains(w.buf.String(), w.at) {
-		w.found = true
-		w.before, _, _ = strings.Cut(w.buf.String(), w.at)
-	}
-	return n, err
-}
-
-func (w *promptWatch) String() string {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.buf.String()
-}
-
-// TestConfirmPromptsAreNeverSuppressed: the typed confirmation of an apply is
-// a prompt, not a step: it is on the screen whether or not the reporter is
-// drawing, and nothing is drawn on the line the run is about to read stdin
-// on — a line in flight would swallow it (G1).
-func TestConfirmPromptsAreNeverSuppressed(t *testing.T) {
+// TestUpdateAppliesWithoutAPrompt: the apply takes no confirmation any more
+// (T7): a person at the terminal is the whole of it, nothing is typed — --ask
+// is the flag that puts the review's question back — and every step of the run
+// goes ahead with no prompt on the screen for the reporter to draw over. The
+// account is still the reporter's.
+func TestUpdateAppliesWithoutAPrompt(t *testing.T) {
 	applyingRig(t)
 	fakeTerminal(t)
 	writerAsTerminal(t)
 	// The reporter draws a line in flight only where colour is allowed, and a
-	// `TERM=dumb` console is not (G4): without this the "nothing in flight"
-	// half of this test would pass on a machine whose TERM happens to be dumb,
-	// which is what a build box's is.
+	// `TERM=dumb` console is not (G4): without this a machine whose TERM
+	// happens to be dumb, which is what a build box's is, would take a
+	// different path through the reporter.
 	t.Setenv("TERM", "xterm-256color")
-	watch := &promptWatch{at: "Type " + initProjectName + " to apply to GCP project " + initProject + ": "}
+	var out, errOut bytes.Buffer
 	cmd := NewRootCmd()
-	var errOut bytes.Buffer
 	cmd.SetIn(strings.NewReader(initProjectName + "\n"))
-	cmd.SetOut(watch)
+	cmd.SetOut(&out)
 	cmd.SetErr(&errOut)
 	cmd.SetArgs(NormalizeArgs([]string{"update"}))
-	err := cmd.Execute()
-	out := watch.String()
-	if !watch.found {
-		t.Fatalf("the typed confirmation never reached the screen (err %v):\n%s%s", err, out, errOut.String())
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("the run did not apply with nothing typed: %v\n%s%s", err, out.String(), errOut.String())
 	}
-	if !strings.HasSuffix(watch.before, "\n") {
-		t.Errorf("a line was in flight when the run read stdin, so the prompt is drawn over it: %q", watch.before)
+	if got := out.String(); strings.Contains(got, "Type ") || strings.Contains(got, "[y/N]") {
+		t.Errorf("the apply asked a confirmation, and nothing is typed at one:\n%s", got)
 	}
-	if err != nil {
-		t.Fatalf("the typed name did not confirm the apply: %v\n%s%s", err, out, errOut.String())
+	if !strings.Contains(out.String(), "installation") {
+		t.Errorf("the run printed no account:\n%s", out.String())
 	}
-	if !strings.Contains(out, "installation") {
-		t.Errorf("the run printed no account after the confirmation:\n%s", out)
-	}
-	// The account is the reporter's: the confirmation above was the only
-	// reason this run printed at all before it.
-	if !strings.Contains(out, markDone) {
-		t.Errorf("the run's steps are not the reporter's:\n%s", out)
+	// The account is the reporter's.
+	if !strings.Contains(out.String(), markDone) {
+		t.Errorf("the run's steps are not the reporter's:\n%s", out.String())
 	}
 }
 
 // TestTheRunsOwnWriterTakesTheLineInFlightDown: the converge's own writer is
 // where a person's lines go, and the reporter's line in flight is down before
 // the first byte of one — a frame drawn on the line a prompt is written on
-// swallows the prompt and the answer typed under it (G1). The answer puts the
-// line back: a stage that prompts in the middle of its minutes is still a
-// stage somebody is watching, and one is open across every stage (the loop).
+// swallows the prompt and the answer typed under it (G1). The line comes back
+// on the next whole line the run prints: the answer itself is no line of the
+// run's (T7 removed the confirmations, and a value is read under a prompt the
+// writer keeps down), so a stage that prompts in the middle of its minutes is
+// still a stage somebody is watching, and one is open across every stage (the
+// loop).
 func TestTheRunsOwnWriterTakesTheLineInFlightDown(t *testing.T) {
 	t.Setenv("TERM", "xterm-256color")
 	var out bytes.Buffer
@@ -591,11 +559,17 @@ func TestTheRunsOwnWriterTakesTheLineInFlightDown(t *testing.T) {
 	if got := out.String(); !strings.HasSuffix(got, "\r\x1b[KType aurora: ") {
 		t.Errorf("the run's own line was written over the line in flight: %q", got)
 	}
-	if _, err := run.in.ReadString('\n'); err != nil {
+	if _, err := readConfirmLine(run.in); err != nil {
+		t.Fatal(err)
+	}
+	if got := out.String(); strings.HasSuffix(got, "installation") {
+		t.Errorf("the answer drew the line in flight back: %q", got)
+	}
+	if _, err := fmt.Fprintln(run.w, "nothing was changed"); err != nil {
 		t.Fatal(err)
 	}
 	if got := out.String(); !strings.HasSuffix(got, "installation") {
-		t.Errorf("the answer did not put the line in flight back: %q", got)
+		t.Errorf("the next whole line did not put the line in flight back: %q", got)
 	}
 	step.Done("")
 }
@@ -645,11 +619,12 @@ func TestTheLineStaysDownThroughAWholeQuestion(t *testing.T) {
 
 // TestAMidStageConfirmationIsNeverDrawnOver is the round-3 finding, on the
 // layer stage's re-seed: the confirmation a stage asks is the shared
-// confirmRemoval, which holds the command rather than the run. Asked with a step
-// of the run's own open (a step is open across every stage), it landed on the
-// line the spinner had drawn — the frame and then the banner, with no clear
+// confirmStageWrite, which holds the command rather than the run. Asked with a
+// step of the run's own open (a step is open across every stage), it landed on
+// the line the spinner had drawn — the frame and then the banner, with no clear
 // between them — and the redraw every 100ms kept painting the frame over the
-// prompt and over the name typed under it (G1).
+// banner. Nothing is typed under it now (T7, docs/no-prompt-policy): the banner
+// is the whole of the question, and what answers it is the person being there.
 func TestAMidStageConfirmationIsNeverDrawnOver(t *testing.T) {
 	t.Setenv("TERM", "xterm-256color")
 	clearAgentMarkers(t)
@@ -662,7 +637,7 @@ func TestAMidStageConfirmationIsNeverDrawnOver(t *testing.T) {
 	// which is what makes this a prompt asked mid-stage and not one before the
 	// first step — the shape TestConfirmPromptsAreNeverSuppressed covers.
 	step := run.rep.Step(initflow.Layer)
-	answerAQuestionMidStage(t, run, r.out, "⚠ CONFIRM (project "+initProjectName+"): ", func() error {
+	aStageConfirmsMidStageWithNothingTyped(t, run, r.out, "⚠ CONFIRM (project "+initProjectName+"): ", func() error {
 		_, err := r.s.Apply(context.Background(), initflow.Env{Interactive: true})
 		return err
 	})
@@ -671,8 +646,9 @@ func TestAMidStageConfirmationIsNeverDrawnOver(t *testing.T) {
 
 // TestThePolicyStagesConfirmationIsNeverDrawnOver is the finding's own repro:
 // the policy migration prints its diff through the run's own writer and asks
-// confirmRemoval from inside the step the loop opened for the stage, so the
-// banner's line is the one the frame was drawn on.
+// confirmStageWrite from inside the step the loop opened for the stage, so the
+// banner's line is the one the frame was drawn on. Its confirmation reads
+// nothing (T7): the write it confirms loses no data.
 func TestThePolicyStagesConfirmationIsNeverDrawnOver(t *testing.T) {
 	t.Setenv("TERM", "xterm-256color")
 	clearAgentMarkers(t)
@@ -684,7 +660,7 @@ func TestThePolicyStagesConfirmationIsNeverDrawnOver(t *testing.T) {
 	run := h.s.e.r
 	run.rep = report.New(report.Options{Out: h.out, Getenv: os.Getenv, IsTerminal: writerIsTerminal})
 	step := run.rep.Step(initflow.Policy)
-	answerAQuestionMidStage(t, run, h.out, "⚠ CONFIRM (project "+initProjectName+"): ", func() error {
+	aStageConfirmsMidStageWithNothingTyped(t, run, h.out, "⚠ CONFIRM (project "+initProjectName+"): ", func() error {
 		_, err := h.s.Apply(context.Background(), initflow.Env{Interactive: true})
 		return err
 	})
@@ -741,7 +717,7 @@ func answerAQuestionMidStage(t *testing.T, run *initRun, out *syncBuf, head stri
 	// the run's reader, which production builds over that same stdin
 	// (newInitRun) and which a run this one drives is given (refreshOptions.in).
 	run.cmd.SetIn(answer)
-	run.in = bufio.NewReader(answerReader{r: run, in: answer})
+	run.in = answer
 	done := make(chan error, 1)
 	go func() { done <- ask() }()
 
@@ -800,6 +776,40 @@ func answerAQuestionMidStage(t *testing.T, run *initRun, out *syncBuf, head stri
 	got := out.String()
 	if strings.HasSuffix(got, "\n") {
 		t.Errorf("the stage's line did not come back after the answer: %q", tail(got, 80))
+	}
+}
+
+// aStageConfirmsMidStageWithNothingTyped is answerAQuestionMidStage's shape for
+// the stages whose confirmation asks nothing (T7, docs/no-prompt-policy): the
+// banner is the whole of the question, so there is no prompt to wait for and no
+// answer to type. What is held is the same G1 property — the line in flight was
+// taken down before the banner, so the frame the spinner had drawn is not what
+// the person reads the confirmation on — and that the stage went on by itself
+// instead of putting a question to a session it can read nothing from.
+func aStageConfirmsMidStageWithNothingTyped(t *testing.T, run *initRun, out *syncBuf, head string, ask func() error) {
+	t.Helper()
+	done := make(chan error, 1)
+	go func() { done <- ask() }()
+
+	waitForOutput(t, out, head)
+	shown := out.String()
+	at := strings.Index(shown, head)
+	if before := shown[:at]; !strings.HasSuffix(before, "\r\x1b[K") && !strings.HasSuffix(before, "\n") {
+		t.Errorf("the spinner drew the confirmation over its own line: %q", before)
+	}
+	if nl := strings.Index(shown[at:], "\n"); nl < 0 {
+		t.Fatalf("the confirmation's banner never ended, so it cannot be read as its own line:\n%q", shown[at:])
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("the stage: %v\n%s", err, out.String())
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatalf("the stage is still waiting for something after its confirmation:\n%q", out.String())
+	}
+	if got := out.String(); strings.Contains(got, "Type ") || strings.Contains(got, "[y/N]") {
+		t.Errorf("the stage asked a person to type at the confirmation:\n%s", tail(got, 400))
 	}
 }
 
