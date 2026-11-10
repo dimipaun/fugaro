@@ -2088,9 +2088,9 @@ every brief until the head it demands can be read — which is why §6.5's opera
     (`internal/gitprov/gitprov.go:344`) and still compared against the artifact's own `head_sha` by
     `VerifyReviewArtifact`; the replay refusal, the "a head the forge cannot be asked for refuses the
     brief" rule and `reviewPRHeadSeam` (the tests' seam, `:87`) all stay as CSR10 left them. **No new
-    grant is needed for this read**: the read mint's permissions are the coordinator's read-only set
-    (contents and pull requests read) and the caller is a person the installation already lists, so the
-    task adds no Terraform, no IAM and no operator step.
+    grant is needed for this read**: the read mint's permissions are a set of its own
+    (`github.PersonReadTokenPermissions`: contents, pull requests and metadata, read), and the caller is a
+    person the installation already lists, so the task adds no Terraform, no IAM and no operator step.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestReviewHead|TestFixBrief' -count=1`.
 - **Tests:** `TestReviewHeadReadsThroughTheReadMint` (a stand-in credentials service over `httptest`: the
   call is `POST /v1/github/read-token`, it names the repository and the project's App ID, it carries the
