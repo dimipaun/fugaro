@@ -285,6 +285,10 @@ type run struct {
 	// for this run (accountchoice.go, D874): off unless the owner's published
 	// policy turns it on, and the account each stage has reached.
 	accounts accountChoice
+	// pools is the ordered failover the stage-start pool choice keeps for this
+	// run (poolchoice.go, MC5): off unless a craft's access names a pool, and
+	// the member each stage has reached.
+	pools poolChoice
 	// mu guards halt, cancelled, failReason, failClass, tokens, gatewayTokens
 	// and haltStage: the cancel watcher and, with the gateway, its halt
 	// callback record into them from other goroutines. Whichever of a halt
@@ -2641,7 +2645,7 @@ func (r *run) bootstrap(ctx context.Context) error {
 	if err := r.startBudgetBackend(ctx); err != nil {
 		return err
 	}
-	if err := r.checkBudget(); err != nil {
+	if err := r.checkBudget(ctx); err != nil {
 		// These checks judged the challenger as this run's coder
 		// (applyChallenger), so the policy refusing *that* pin is the arm's
 		// own refusal and is recorded as one (D556) rather than as
@@ -4196,6 +4200,18 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request, opts st
 			req.SessionID, req.Resume = agent.NewSessionID(), false
 			continue
 		}
+		// The pool member serving this attempt had nothing left (F5, MC5), and
+		// the two things the account's own case says hold here: it is a fresh
+		// attempt rather than a resumed one — a session carried across members
+		// would put one member's conversation into another's attempt — and the
+		// stage's stage-start check stops the walk once the pool's own list is
+		// exhausted, so no bound of its own is needed.
+		var spent *poolLimitedError
+		if errors.As(err, &spent) {
+			r.countTokens(res)
+			req.SessionID, req.Resume = agent.NewSessionID(), false
+			continue
+		}
 		var ex *exhaustedError
 		if !errors.As(err, &ex) {
 			return res, ok, err
@@ -4357,6 +4373,14 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 	// own credential cannot serve is refused here rather than run as another
 	// account.
 	if reason := r.checkStageAccount(ctx, name); reason != "" {
+		r.fail("stage " + name + ": " + reason)
+		return agent.Result{}, false, errors.New(reason)
+	}
+	// The stage's own credential or pool (poolchoice.go, MC5): the craft this
+	// stage's calls go out on, the member of its pool this attempt stands on,
+	// and a stage whose pool serves nothing yet or names a member this job
+	// does not hold refused here rather than run as another credential.
+	if reason := r.checkStagePool(ctx, name); reason != "" {
 		r.fail("stage " + name + ": " + reason)
 		return agent.Result{}, false, errors.New(reason)
 	}
@@ -4740,6 +4764,18 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 	// failure. Why the stage moved is the line below and the failover line the
 	// next attempt's stage-start check writes; the agent's own words stay in
 	// the stage's transcript, where they already are.
+	// The pool member serving this attempt had nothing left (F5, F23, MC5):
+	// the same shape as the account's own allowance below and for the same
+	// reason — the credential refused the call and nothing about the work did
+	// — with the classifier reading the signal of the *member's own type*
+	// instead of the OAuth run's subscription. It stands before the account's
+	// case because a stage whose craft names a pool is served by that pool:
+	// the walk that chose the member is the one that moves off it.
+	case r.poolEndedTheAttempt(ctx, name, res):
+		r.notePoolExhausted(name)
+		log.Info("the pool member's own exhaustion ended this attempt, so the stage's next attempt is the pool's next member", "stage", name)
+		r.save(ctx)
+		return res, false, &poolLimitedError{}
 	case r.accountEndedTheAttempt(res) && r.accountAuto(ctx):
 		r.noteStageExhausted(name)
 		// The account that served the attempt is the run's own credential's:

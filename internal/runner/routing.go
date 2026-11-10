@@ -540,6 +540,34 @@ func stageLevel(stage string) (policy.Level, bool) {
 	return "", false
 }
 
+// stageCraft is the craft a stage's calls go out on (F13): the model assignment
+// whose credential or pool serves it, and so the craft whose pool the walk
+// (poolchoice.go) walks and whose access the stage's own checks read.
+//
+// The mapping is F13's and it is finer than the role slots beside it: the
+// first-line review is the review craft, whose model slot is the coder's
+// (reviewStages) — a level 1 review runs the coder's model on the review
+// craft's access, and reading the role here would send those calls out on the
+// coder's credential. triage runs level 2's model and so the senior review's
+// access, which is stageLevel's reason told about a credential.
+//
+// plan is the coder's: it is the coder's own planning and it is not a stage
+// F13 names, and "" is a stage outside the run's vocabulary, for which the walk
+// answers nothing rather than guessing a craft.
+func stageCraft(stage string) string {
+	switch stage {
+	case "plan", "implement", "fix":
+		return config.CraftCoder
+	case "review_first":
+		return config.CraftReview
+	case "review", stageTriage:
+		return config.CraftSeniorReview
+	case stageAdversarial:
+		return config.CraftSecurityReview
+	}
+	return ""
+}
+
 // stageModel is the model a stage runs: the level's own model when the stage
 // runs a review level a layer named one for, and the role slot's otherwise.
 func (r *run) stageModel(stage string) string {

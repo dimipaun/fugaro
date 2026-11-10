@@ -916,10 +916,19 @@ func (r *run) checkManagedDirWritable() error {
 // so an infra_error), an api-key run that enforces without a cap halts (a
 // policy, so a halt), and a run through the gateway needs prices for its
 // models and a managed settings directory it can write.
-func (r *run) checkBudget() error {
+func (r *run) checkBudget(ctx context.Context) error {
 	auth, s := r.cfg.Agent.Auth, r.spend
 	if auth == "vertex" && s.Mode == "enforce" {
 		return errors.New(VertexBudgetRefusal)
+	}
+	// A pool one of the run's crafts goes out on that lists the built-in
+	// Vertex credential is refused here for VertexBudgetRefusal's own reason:
+	// those calls are the project's own GCP service, so the run above this
+	// line's own case cannot cap them either (D1626, F8).
+	if s.Mode == "enforce" {
+		if reason := r.vertexPoolRefusal(ctx); reason != "" {
+			return errors.New(reason)
+		}
 	}
 	// With the backend the caps are the database's too, and the session has
 	// already judged them (Admit): an enforcing run with none halted there.
@@ -932,6 +941,12 @@ func (r *run) checkBudget() error {
 	// repository and api-key auth, whatever the mode: refused before any
 	// call, naming the rule.
 	if err := r.checkProviderModels(); err != nil {
+		return err
+	}
+	// A pool every member of which serves the stage's model as written
+	// (F23, D1637): judged here, before any stage, and not at the stage that
+	// would find out.
+	if err := r.checkPoolModels(ctx); err != nil {
 		return err
 	}
 	// The allow-list bounds the models whatever the credential or the mode. The
