@@ -3639,6 +3639,12 @@ A graph this build does not understand is refused rather than rendered: a
 future schema version, a malformed document, an edge to a node that is not
 there, or a cycle.
 
+When the plan ran the contract-first decoupling pass, the read prints that
+pass's own record too: every edge the pass broke with the contract and the
+integration task that cover it, what the break bought measured before and
+after, and the contract stubs still in the checkout. A plan that broke no
+edge prints none of it.
+
 The read also answers what the planner cannot: each task's level, whether it
 is ready or blocked, and the plan's critical path. A task is ready when every
 task it needs is done, so --done names the tasks that are — an id the graph
