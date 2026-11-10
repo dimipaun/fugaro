@@ -137,9 +137,28 @@ func authOf(t *testing.T, s *perSecretSvc) string {
 // credential here — the name is the grammar's per-user spelling of the account
 // the fixture's bundle also holds — so the answer says which of them served it.
 //
-// Mutation (run, restore): ask the bundle first — in cascade.go's resolveEntry,
-// move the entryFor call above the per-secret read. This test is red: the call
-// carries the bundle's value for a credential a container was written for.
+// Mutation (run, restore): ask the bundle first, for the credential NAME the
+// per-secret name holds — in cascade.go's resolveEntry, ahead of the per-secret
+// read:
+//
+//	if p, err := secretname.Parse(c.Name); err == nil {
+//		if e, ok := entryFor(b, creds.Credential{Name: p.Name, Tier: c.Tier}); ok {
+//			return e, true, nil
+//		}
+//	}
+//
+// (cascade.go needs secretname imported for that line.) This test is red: the
+// call carries the bundle's value for a credential a container was written for,
+// and no container is read at all.
+//
+// Hoisting the entryFor call that is already there, unchanged, is NOT this
+// mutation and leaves this test GREEN — checked, because it is the edit the
+// sentence "ask the bundle first" first suggests. It asks the bundle for the
+// candidate's OWN name (fugaro_u_<id>_<name>), which no entry is under: byName
+// is keyed by the name the cascade speaks (bundle.go), so it finds nothing, and
+// the per-secret read below it happens anyway. The order this test pins is over
+// the name the grammar HOLDS, and a mutation that does not ask for that name
+// does not exercise it.
 func TestPerSecretBeforeBundle(t *testing.T) {
 	t.Run("the container serves the call", func(t *testing.T) {
 		s := newPerSecretSvc(t)
