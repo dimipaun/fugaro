@@ -19,6 +19,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/image"
+	"github.com/dimipaun/fugaro/internal/imagebake"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
@@ -143,11 +144,13 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 	if repo == "" {
 		repo = origin
 	}
-	if a, err1 := task.CanonicalRepo(origin); err1 != nil {
+	canon, err1 := task.CanonicalRepo(origin)
+	if err1 != nil {
 		return userErr("%v", err1)
-	} else if b, err2 := task.CanonicalRepo(repo); err2 != nil {
+	}
+	if b, err2 := task.CanonicalRepo(repo); err2 != nil {
 		return userErr("%v", err2)
-	} else if a != b {
+	} else if canon != b {
 		return userErr("--repo %s is not this checkout's origin (%s); run from %s's checkout", repo, origin, repo)
 	}
 	entries, err := catalogBuildEntries(cmd, cat, name, repo, o.noSmoke)
@@ -239,23 +242,48 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 		return userErr("%v", err)
 	}
 	gitID, selftestJSON := "", []byte(nil)
+	// cloudSelftest is kept beside its JSON: the checkout a build composes the
+	// bake into is the one the smoke then has to find, and the directory is
+	// only known per entry (below).
+	var cloudSelftest image.SelftestSpec
 	var secrets []config.Secret
 	if builds {
 		gitID, err = gitSecretID(ctx, lc, rs, "the catalog build of "+rs.Name)
 		if err != nil {
 			return err
 		}
-		selftest, err := image.SpecForCloud(cfg, workflow, commit, repoURL)
-		if err != nil {
+		if cloudSelftest, err = image.SpecForCloud(cfg, workflow, commit, repoURL); err != nil {
 			return userErr("%v", err)
 		}
-		if selftestJSON, err = json.Marshal(selftest); err != nil {
+		if selftestJSON, err = json.Marshal(cloudSelftest); err != nil {
 			return userErr("%v", err)
 		}
 		if secrets, err = catalogBuildSecrets(cfg); err != nil {
 			return err
 		}
 	}
+	// The bake this build may compose into an entry's Dockerfile (the image
+	// setup skill's bake step, IS8b): the project's repo-to-image map and its
+	// bake switch, read the way the catalog itself was read for this command —
+	// this machine's own project config over the published node's (D1906,
+	// D1901) — and under the same rule for a node that cannot be read, which
+	// the warning above has already said out loud. Nothing here is decided per
+	// entry: which repository a build bakes is the checkout this command is
+	// running in, and each entry only answers whether it is that repository's
+	// image.
+	published, _, _ := env.policy.read(ctx, lc)
+	var publishedMap map[string]string
+	var publishedBake *bool
+	if published != nil {
+		publishedMap, publishedBake = published.ImageMap, published.BakeRepos
+	}
+	imageMap := lc.ImageMapEffective(publishedMap)
+	bakeRepos := lc.BakeReposEffective(publishedBake)
+	// A project that maps nothing gets no line and no stage: the bake is the
+	// map's, and an installation that predates it is byte for byte what it was
+	// (which is what keeps fugaro update a one-command upgrade).
+	bakeRepo := imagebake.Repo{Repo: canon, Slug: rs.Slug, URL: repoURL, Branch: cmp.Or(rs.BaseBranch, "main")}
+	bakeRef := bakeReference(cfg)
 	// The image is spelled from the host the installation's registries are
 	// under and not from a region of this command's own, so a build pushes
 	// exactly where a job's catalog image is pulled from, whichever one the
@@ -368,7 +396,16 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 			if err != nil {
 				return userErr("%v", err)
 			}
-			if err := writeCatalogDockerfile(ctx, rb, opener, env.repoProvider(e.Source.Repo, cfg), e); err != nil {
+			// The bake this entry's definition may carry, decided here where the
+			// entry's name is: the build's own repository, and only when this is
+			// the image that repository's jobs run (O3 reading (b), so the other
+			// repositories the image serves clone at job start).
+			bakePlan := imagebake.Decide(imagebake.Request{
+				Entry: e.Name, Repo: bakeRepo, Reference: bakeRef,
+				Map: imageMap, Bake: bakeRepos == nil || *bakeRepos,
+			})
+			noteBakePlan(cmd, e.Name, bakePlan)
+			if err := writeCatalogDockerfile(ctx, rb, opener, env.repoProvider(e.Source.Repo, cfg), e, bakePlan); err != nil {
 				// A provider opened without the credential its environment did
 				// not carry fails here with its own sentence, which is left
 				// exactly as it is; the hint says where the token actually is
@@ -388,6 +425,18 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 			if err != nil {
 				return remote(err)
 			}
+			// The smoke reads the checkout where this image actually put it: a
+			// composed definition bakes at imagebake.Path, and a smoke still
+			// looking at /work/repo would fail the build this command just
+			// composed — or, worse, pass on a checkout the image never baked.
+			entrySelftest := selftestJSON
+			if dir, baked := imagebake.BakedDir(data); baked && builds {
+				spec := cloudSelftest
+				spec.RepoDir = dir
+				if entrySelftest, err = json.Marshal(spec); err != nil {
+					return userErr("%v", err)
+				}
+			}
 			sum := sha256.Sum256(data)
 			imageRef, err := gcp.SharedCatalogImage(region, lc.GCPProject, e.Name)
 			if err != nil {
@@ -397,7 +446,7 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 			spec.GitSecretID, spec.GitUser, spec.GitHubAppID = gitID, rs.GitUser, rs.GitHubAppID
 			spec.Base, spec.Image = base, imageRef
 			spec.Definition = gcp.CatalogDefinition{SourceCommit: commit, Generation: gen, SHA256: hex.EncodeToString(sum[:])}
-			spec.WorkflowSecrets, spec.Selftest = secrets, selftestJSON
+			spec.WorkflowSecrets, spec.Selftest = secrets, entrySelftest
 		}
 		res, err := b.SubmitCatalog(ctx, spec)
 		switch {
@@ -623,4 +672,61 @@ func catalogBuildBanner(entries []config.Entry, machineType, account, registry s
 	default:
 		return head + "each Dockerfile entry's build reads the Dockerfile copied into the project's bucket, smoke-tests the candidate and promotes the image into " + registry + " and records it, and each prebuilt entry is smoke-tested against the runtime contract alone"
 	}
+}
+
+// bakeReference is the catalog entry the checkout's own workflows name, ""
+// when they name none or a different one each: a repository that names an
+// entry in its workflow runs that entry's image whatever the project's map
+// says (T1 reading (b)), so the bake belongs in that entry's image and not in
+// this one.
+//
+// A workflow that runs the base image or a shared dependency layer names no
+// entry and is skipped: such a job holds no repository source and a checkout
+// baked for it would be read by nobody. Tags a workflow needs (Needs) are not
+// a reference: the tag-cover rule picks an entry per job, and a bake that
+// follows a set of tags would move with a choice this command does not make.
+func bakeReference(cfg *config.Config) string {
+	names := map[string]bool{}
+	for _, name := range slices.Sorted(maps.Keys(cfg.Workflows)) {
+		w := cfg.Workflows[name]
+		if w.Checkout == config.CheckoutClone || w.Checkout == config.CheckoutShared {
+			continue
+		}
+		if w.ImageName != "" {
+			names[w.ImageName] = true
+		}
+	}
+	if len(names) != 1 {
+		return ""
+	}
+	for name := range names {
+		return name
+	}
+	return ""
+}
+
+// noteBakePlan is the line a build prints about its bake decision: the two
+// things a person cannot read off the Dockerfile are that an entry's image
+// bakes one repository and that every other repository it serves clones at its
+// own job start (O3 reading (b)). Which plans are worth a line is the plan's
+// own answer (imagebake.Plan.Notable), so the rule that decides the bake and
+// the rule that decides what is said about it cannot drift apart.
+func noteBakePlan(cmd *cobra.Command, entry string, p imagebake.Plan) {
+	if !p.Notable {
+		return
+	}
+	if p.Baked == nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "note: the catalog entry %s bakes no checkout: %s\n", pluginwire.Printable(entry), p.Reason)
+		return
+	}
+	dir, err := imagebake.Path(p.Baked.Slug)
+	if err != nil {
+		return // Decide refused this slug, so this cannot happen; a note is not worth a refusal of the build
+	}
+	alone := "no other repository this image serves is mapped to it"
+	if len(p.Cloned) > 0 {
+		alone = fmt.Sprintf("the other repositories mapped to it (%s) clone at job start", strings.Join(p.Cloned, ", "))
+	}
+	fmt.Fprintf(cmd.ErrOrStderr(), "note: the catalog entry %s bakes the checkout of %s at %s, so its jobs find the source already there: %s\n",
+		pluginwire.Printable(entry), pluginwire.Printable(p.Baked.Repo), dir, alone)
 }

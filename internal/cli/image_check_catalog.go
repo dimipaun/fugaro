@@ -22,6 +22,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/catalog"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/image"
+	"github.com/dimipaun/fugaro/internal/imagebake"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/infra/managed"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
@@ -211,6 +212,11 @@ type catalogEvaluation struct {
 	// read back from the one object the build itself reads.
 	definitionSHA256     string
 	definitionGeneration int64
+	// bakedDir is the directory the copied definition bakes its checkout at,
+	// and baked whether it bakes one at all (imagebake.BakedDir): the smoke a
+	// rebuild of this entry runs reads the checkout there.
+	bakedDir string
+	baked    bool
 	// inputs are what imagecheck.CheckCatalog decides the entry from: this
 	// run's read of everything a decision needs, which the pass below hands
 	// the library rather than deciding the entry itself.
@@ -276,6 +282,11 @@ func (t *catalogCheckTarget) evaluate(ctx context.Context, e config.Entry, r cat
 	}
 	sum := sha256.Sum256(def)
 	ev.definitionSHA256, ev.definitionGeneration = hex.EncodeToString(sum[:]), gen
+	// Where the definition this job rebuilds bakes its checkout, when a build
+	// composed one into it (imagebake, the image setup skill's bake step): the
+	// smoke this job submits is the manual build's own spec, and it has to read
+	// the checkout where the image the build produced actually put it.
+	ev.bakedDir, ev.baked = imagebake.BakedDir(def)
 
 	checkKey := imagecheck.CatalogCheckKey(slug, e.Name)
 	ev.prevRaw, ev.prevGen, err = t.bucket.Read(ctx, checkKey)
@@ -341,7 +352,7 @@ func (t *catalogCheckTarget) submit(ctx context.Context, e config.Entry, r catal
 	if err != nil {
 		return "", "", err
 	}
-	selftest, err := catalogSmokeSpec(r, rec.SourceCommit)
+	selftest, err := catalogSmokeSpec(r, rec.SourceCommit, ev.bakedDir)
 	if err != nil {
 		return "", "", err
 	}
@@ -366,10 +377,19 @@ func (t *catalogCheckTarget) submit(ctx context.Context, e config.Entry, r catal
 // one. The config is a stub because an entry is not a workflow and
 // SpecForCloud reads a config only to check that the name it is given exists
 // (it reads the same constant for every workflow).
-func catalogSmokeSpec(r catalogCheckRepo, commit string) ([]byte, error) {
+//
+// bakedDir is where the copied definition put the checkout, when it baked one
+// (imagebake.BakedDir of the same bytes this job read): the manual build
+// submits the same directory for the definition it composed, and a rebuild
+// that looked at /work/repo instead would fail the smoke of an image whose
+// checkout is where the engine bakes it.
+func catalogSmokeSpec(r catalogCheckRepo, commit, bakedDir string) ([]byte, error) {
 	spec, err := image.SpecForCloud(&config.Config{Workflows: map[string]config.Workflow{r.Workflow: {}}}, r.Workflow, commit, r.RepoURL)
 	if err != nil {
 		return nil, err
+	}
+	if bakedDir != "" {
+		spec.RepoDir = bakedDir
 	}
 	return json.Marshal(spec)
 }

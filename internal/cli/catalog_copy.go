@@ -9,6 +9,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/catalog"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/imagebake"
 )
 
 // catalogDockerfileType is the copied definition's content type: a
@@ -28,7 +29,16 @@ const catalogDockerfileType = "text/plain; charset=utf-8"
 // builds/catalog/ is outside a launcher's write grant (docs/design/
 // bucket-iam.md), so a refused write is reported with the operator text
 // operatorWriteErr writes, and its lead says what did not happen.
-func writeCatalogDockerfile(ctx context.Context, b *blobx.Bucket, open gitprov.Opener, kind string, e config.Entry) error {
+//
+// bake is the stage this build appends to the definition — the checkout of the
+// repository the build runs for (imagebake, the image setup skill's bake step,
+// IS8b) — and it is composed here rather than added to a build request because
+// the copy is the one definition every reader of this entry reads: the build
+// that pins it, the record it writes, and the nightly check that rebuilds it
+// from the same object. A copy an installation's next build resolves
+// identically is not rewritten, so republishing an unchanged definition does
+// not churn the object either.
+func writeCatalogDockerfile(ctx context.Context, b *blobx.Bucket, open gitprov.Opener, kind string, e config.Entry, bake imagebake.Plan) error {
 	// The key first: a name that is not one is refused before any credential
 	// is used to read a definition, and the refusal is the helper's own
 	// sentence (it does not repeat the name, which is what reached it).
@@ -38,6 +48,9 @@ func writeCatalogDockerfile(ctx context.Context, b *blobx.Bucket, open gitprov.O
 	}
 	data, err := catalog.Fetch(ctx, open, kind, e)
 	if err != nil {
+		return err
+	}
+	if data, err = imagebake.Append(data, bake); err != nil {
 		return err
 	}
 	old, gen, err := b.ReadMax(ctx, key, catalog.MaxDockerfileBytes)

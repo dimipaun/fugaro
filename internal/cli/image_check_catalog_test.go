@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -20,6 +21,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
 	"github.com/dimipaun/fugaro/internal/image"
+	"github.com/dimipaun/fugaro/internal/imagebake"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 )
 
@@ -746,5 +748,49 @@ func TestCatalogCheckJobNeedsItsSpec(t *testing.T) {
 	}
 	if len(lines) != 1 || lines[0].Decision != imagecheck.CheckFailed || lines[0].Severity != "ERROR" {
 		t.Fatalf("lines = %+v", lines)
+	}
+}
+
+// TestCatalogCheckJobSmokesABakedDefinitionWhereTheImagePutIt: a rebuild is
+// submitted from the copy this job reads, and that copy is the one a build
+// composed (imagebake, the image setup skill's bake step, IS8b). The smoke is
+// the manual build's own spec, so it has to read the checkout where the
+// definition put it — /work/baked/<slug> — rather than at /work/repo, or the
+// nightly rebuild of every baked entry fails against an image that is exactly
+// what the build before it verified.
+func TestCatalogCheckJobSmokesABakedDefinitionWhereTheImagePutIt(t *testing.T) {
+	f := newCatalogCheckJob(t, catalogCheckSpecFor(t, catalogCheckCatalog("runtime"), 5))
+	slug := f.slugs["acme/other"]
+	baked, err := imagebake.Append([]byte(catalogCheckOtherDef), imagebake.Plan{Baked: &imagebake.Repo{
+		Repo: "acme/other", Slug: slug,
+		URL: "https://bitbucket.org/acme/other.git", Branch: "main",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The base has moved, which is what the schedule rebuilds for.
+	f.seed(t, "runtime", "acme/other", string(baked), "sha256:"+strings.Repeat("9", 64))
+
+	if _, err := runCatalogCheck(t); err != nil {
+		t.Fatal(err)
+	}
+	if got := buildPosts(f.fb); got != 1 {
+		t.Fatalf("builds submitted = %d, want 1", got)
+	}
+	b64, _ := catalogBuildSubs(t, f.fb)["_SELFTEST_B64"].(string)
+	data, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		t.Fatalf("_SELFTEST_B64 = %q: %v", b64, err)
+	}
+	var spec image.SelftestSpec
+	if err := json.Unmarshal(data, &spec); err != nil {
+		t.Fatal(err)
+	}
+	want := "/work/baked/" + slug
+	if spec.RepoDir != want {
+		t.Errorf("the rebuild's smoke reads %s, want %s: the definition this job read bakes the checkout there", spec.RepoDir, want)
+	}
+	if spec.Commit != catalogCheckCommit || spec.Origin != "https://bitbucket.org/acme/other.git" {
+		t.Errorf("the rebuild's smoke is %+v, want the committed checkout of acme/other", spec)
 	}
 }

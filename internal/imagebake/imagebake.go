@@ -127,6 +127,13 @@ type Plan struct {
 	// Reason is why nothing is baked, as a sentence a build can print. It is
 	// empty when Baked is set.
 	Reason string
+	// Notable is whether a build should say this plan out loud: a bake, and a
+	// project that asked for one and did not get it because its own switch is
+	// off, are both worth a line — and a plan that is quiet because this entry
+	// is not the image the repository runs is not: a build of another entry
+	// says nothing about it, and printing a reason for each of the entries a
+	// project has would read as a failure to the operator who asked for none.
+	Notable bool
 }
 
 // Decide is the rule: a build bakes the repository it runs for, and only when
@@ -151,7 +158,7 @@ func Decide(req Request) Plan {
 	// and baking nothing is the direction that cannot write a path a reader
 	// would not look at.
 	if _, err := Path(req.Repo.Slug); err != nil {
-		return Plan{Cloned: cloned, Reason: fmt.Sprintf("this repository's slug %s is not one this engine can bake: %v", req.Repo.Slug, err)}
+		return Plan{Cloned: cloned, Notable: true, Reason: fmt.Sprintf("this repository's slug %s is not one this engine can bake: %v", req.Repo.Slug, err)}
 	}
 	switch {
 	case req.Reference != "" && req.Reference != req.Entry:
@@ -159,10 +166,10 @@ func Decide(req Request) Plan {
 	case req.Reference == "" && req.Map[req.Repo.Repo] != req.Entry:
 		return Plan{Cloned: cloned, Reason: fmt.Sprintf("the project's image map does not put %s on the catalog entry %s, so its jobs do not run this image", req.Repo.Repo, req.Entry)}
 	case !req.Bake:
-		return Plan{Cloned: cloned, Reason: "the project turned baking off (bake_repos is false in the published policy), so this image carries no checkout and its jobs clone at start"}
+		return Plan{Cloned: cloned, Notable: true, Reason: "the project turned baking off (bake_repos is false in the published policy), so this image carries no checkout and its jobs clone at start"}
 	}
 	baked := req.Repo
-	return Plan{Baked: &baked, Cloned: cloned}
+	return Plan{Baked: &baked, Cloned: cloned, Notable: true}
 }
 
 // markerPrefix begins the marker line the generated stage carries, so the
