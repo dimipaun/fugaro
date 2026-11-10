@@ -130,7 +130,7 @@ const (
 // the registry has one row more and the allowlist has not.
 const (
 	cfmRegistryRows   = 398
-	cfmAllowlistNamed = 96
+	cfmAllowlistNamed = 100
 )
 
 func TestDocsConfigManagementIsWritten(t *testing.T) {
