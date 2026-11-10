@@ -205,7 +205,7 @@ func (r *initRun) askOrdinary(what, notCovered string) (bool, error) {
 			return false, err
 		}
 		if covered {
-			fmt.Fprintf(r.w, "⚠ CONFIRM (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
+			r.willDo(what)
 			if r.gateStandsIn() {
 				fmt.Fprintf(r.w, "  %s\n", initflow.GateOrdinary())
 			} else {
@@ -214,7 +214,7 @@ func (r *initRun) askOrdinary(what, notCovered string) (bool, error) {
 			return true, nil
 		}
 		if r.gateStandsIn() && initflow.PersonAtTheTerminal(r.conditions()) {
-			fmt.Fprintf(r.w, "⚠ CONFIRM (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
+			r.willDo(what)
 			fmt.Fprintf(r.w, "  %s\n", initflow.OwnerProceeded())
 			return true, nil
 		}

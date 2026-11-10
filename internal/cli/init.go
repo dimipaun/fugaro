@@ -2050,6 +2050,17 @@ func (r *initRun) confirm(what, undone string) error {
 	return nil
 }
 
+// willDo prints the note of a step that no confirmation is asked for, in the
+// words the run has for exactly that: "will do" is the converge's own status
+// for a stage with work to do that nobody is asked about (initflow's
+// stateLabel). The ⚠ CONFIRM banner is what a question is shown under, so the
+// two may not be printed for one step — a managed project's own sentence says
+// no confirmation is taken, two lines under a banner that announced one (the
+// owner's feedback of 2026-11-10).
+func (r *initRun) willDo(what string) {
+	fmt.Fprintf(r.w, "will do (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
+}
+
 // confirmNow is the confirmation a step of this run asks now, and it asks
 // nothing: the policy removes the confirmations a person had to type
 // (docs/no-prompt-policy, D1540 and T7), and what answers for the step is what
@@ -2165,15 +2176,20 @@ func (r *initRun) ask(what string) (bool, error) {
 // banner is a note now, not a prompt: what answers for the step is the reader
 // of it (confirmNow), and the only arm that reads is --ask's, which asks the
 // step's own [y/N] through the one sanctioned confirmation helper.
+//
+// The banner is printed only where something follows it that answers for the
+// step: a question, a flag, or a person whose presence is the answer. An arm
+// that asks nothing at all prints the step's note under willDo instead.
 func (r *initRun) askBanner(what string) (bool, error) {
 	if m := agentMarker(os.Getenv, r.stdinTerminal()); m != "" {
 		return false, &initflow.AgentError{Marker: m}
 	}
-	fmt.Fprintf(r.w, "⚠ CONFIRM (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
 	if r.refresh.asksNothing(r.conditions()) {
+		r.willDo(what)
 		fmt.Fprintf(r.w, "  %s\n", initflow.GateOrdinary())
 		return true, nil
 	}
+	fmt.Fprintf(r.w, "⚠ CONFIRM (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
 	ok, err := r.confirmNow(what + "?")
 	if err != nil {
 		return false, err
