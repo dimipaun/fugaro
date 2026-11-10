@@ -1645,6 +1645,40 @@ func settingsLowersRigorFloor(oldValue, newValue string) bool {
 	return rigor.Mode(newValue).Rank() < rigor.Mode(oldValue).Rank()
 }
 
+// settingsRigorBlockKey is the block every member of which is a floor: the
+// layer's own `defaults.rigor`, whose `default` member is settingsRigorFloorKey
+// and whose `areas` member is the list of rules that hold a mode over a path.
+func settingsRigorBlockKey(key string) bool {
+	return strings.TrimPrefix(key, "layer.") == "defaults.rigor"
+}
+
+// settingsRigorBlockRules is layerRigorRules read over the layer this write is
+// about: the two versions are parsed with the target's own anchor, which is the
+// parse settingsReparse has just accepted. It is what classifies an entry write
+// into the rigor block whose member has no row of its own — `areas` is a list,
+// so settingsWriteLookup finds nothing for `layer.defaults.rigor.areas` and the
+// leaf's spelling cannot say what the write takes away — and it reads the rules
+// that leave rather than the member that was named, which is the same judgement
+// the publish door makes (D1026).
+//
+// A document that does not parse answers nil, the call site's fall-back, and
+// that is reachable only for `old`: the new document has just passed
+// settingsReparse, and a local edit of an unreadable one stays unreadable.
+func settingsRigorBlockRules(target settingsTarget, old, next []byte) []string {
+	if target.kind != settingsDocLayer {
+		return nil
+	}
+	prev, problems := config.ParseProjectLayer(old, target.anchor)
+	if len(problems) > 0 {
+		return nil
+	}
+	nl, problems := config.ParseProjectLayer(next, target.anchor)
+	if len(problems) > 0 {
+		return nil
+	}
+	return layerRigorRules(prev, nl)
+}
+
 // settingsTypedWrite reports whether this write is one D846 reserves for the
 // owner's own hand, and the sentence saying what it widens: the write prints it
 // and the dry run carries it as `why`, and it no longer ends by naming a
@@ -1960,6 +1994,20 @@ func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) e
 		// "already reads what was asked for" and demands no typed name, so the
 		// dry run must not classify it as a widening either.
 		typed, why = false, ""
+	}
+	// The rigor block is the one entry write the pure class above cannot always
+	// reach: only `default` has a row of its own to be classified as
+	// (settingsRigorFloorKey), and `areas` — the rules that are floors over a
+	// path — does not, so settingsWriteLookup finds no row for
+	// `layer.defaults.rigor.areas` and removing it would be judged by the block
+	// and read as no widening at all. Where that class admits nothing, the block
+	// is judged by the function the publish door judges it with (layerRigorRules,
+	// D1026), over the two parsed layers: rules that leave are a floor this write
+	// takes away, which is the owner's own step whatever member spells it.
+	if !typed && entryBlock.kind == settingsEntryMap && settingsRigorBlockKey(key) {
+		if rules := settingsRigorBlockRules(target, old, newData); len(rules) > 0 {
+			typed, why = true, rules[0]
+		}
 	}
 	edit := settingsEdit{
 		Path:     target.path,

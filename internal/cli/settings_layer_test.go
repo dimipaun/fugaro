@@ -254,6 +254,57 @@ func TestSettingsSetLayerRigorEntryRemovalIsAFloorRemoval(t *testing.T) {
 	}
 }
 
+// TestSettingsSetLayerRigorEntryRemovingTheAreasIsAFloorRemoval: the block's
+// `areas` member is the other half of the same floor class and not a shape the
+// fence may skip. Removing it takes every rigor rule the layer holds with it —
+// `settingsLayerRigorFloor` holds a critical rule over internal/creds/** — and
+// that is exactly the "a floor lowered or removed" step D1026 reserves, so the
+// write is the typed one and a session asking for it is refused.
+//
+// It is the case the member-by-member reading misses: `areas` is a list and so
+// has no leaf row of its own in the registry (settingsEntryLeafKey reaches the
+// block, and settingsWriteLookup finds no row for
+// `layer.defaults.rigor.areas`), which would leave the write classified by the
+// block and untyped. The floor is judged by the function that judges it at the
+// publish door (layerRigorRules, over the two parsed layers), which reads the
+// rules that leave rather than the member that was named.
+func TestSettingsSetLayerRigorEntryRemovingTheAreasIsAFloorRemoval(t *testing.T) {
+	settingsWriteHome(t)
+	path := settingsWriteLayerFile(t, settingsLayerRigorFloor)
+	before := readFileString(t, path)
+	noTerminal(t)
+
+	doc := settingsDryRunDoc(t, "settings", "set", "layer.defaults.rigor",
+		"--remove-entry", "areas", "--layer", "project")
+	if !doc.Changed {
+		t.Fatalf("the removal of the areas changes nothing, and the file holds them: %+v", doc)
+	}
+	if !doc.Widening || doc.Why == "" {
+		t.Errorf("removing the layer's rigor rules through an entry is not classified as a widening: %+v", doc)
+	}
+	if !strings.Contains(doc.Why, "removes the rigor rule security") {
+		t.Errorf("the sentence does not name the rule the removal takes with it: %q", doc.Why)
+	}
+	if doc.Operation != "remove-entry" {
+		t.Errorf("the dry run does not show the entry the write is about: %+v", doc)
+	}
+
+	// The class is the write's and not the window's: a session asking for the
+	// same removal is refused whatever --yes says, and the file keeps its rules.
+	agentSession(t)
+	out, _, err := execute(t, "settings", "set", "layer.defaults.rigor",
+		"--remove-entry", "areas", "--layer", "project", "--yes")
+	if err == nil {
+		t.Fatalf("a session removed the layer's rigor rules:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "run this yourself at your own terminal") {
+		t.Errorf("the removal was not refused as the owner's own step: %v", err)
+	}
+	if readFileString(t, path) != before {
+		t.Error("the layer file changed under a refused rigor rule removal")
+	}
+}
+
 // TestSettingsSetLayerRefusesAReservedKey: `fugaro config publish` refuses the
 // layer's reserved keys in a coding agent's session (layerReservedRuns), and a
 // layer edit makes the same refusal over its own key — so a session that

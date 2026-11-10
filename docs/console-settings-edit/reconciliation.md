@@ -130,7 +130,7 @@ ruling that `--yes` answers that one too, outside an agent session, and the plan
 task that makes it so — *(Amended 2026-11-07: **P4 has landed**, so `--yes` answers the typed
 confirmation too, outside an agent session, which is the argv the console spawns.)* Every successful
 write ends with `next: fugaro update` (`runSettingsSet`, **S5 #1525**
-`internal/cli/settings_set.go:2019`). *Consequence:*
+`internal/cli/settings_set.go:2067`). *Consequence:*
 the console spawns this and reads its sentences; it writes no document of its own, and it never
 re-implements the diff (**D1103**).
 
@@ -191,7 +191,7 @@ prerequisite **P2**.
 output, no dry run, and no classification.** The flags were `--layer`, `--repo`, `--yes`, `--add` and
 `--remove` and nothing else (`newSettingsSetCmd`, **S5 #1525** `internal/cli/settings_set.go:348`;
 `newSettingsUnsetCmd`, `:420`). Widening is decided inside `settingsTypedWrite` (**S5 #1525**
-`internal/cli/settings_set.go:1650`) — via `settingsCeilingKey` (`internal/cli/settings_set.go:1401`),
+`internal/cli/settings_set.go:1684`) — via `settingsCeilingKey` (`internal/cli/settings_set.go:1401`),
 `settingsLoosens` (`:1399`) and `settingsListSubset` (`:1447`) — and is **never printed as a field**;
 it becomes a prompt. The only outputs are prose on stdout and `userErr`'s exit code. *Consequence:*
 the console cannot ask "is this a widening?" and must not re-derive it — the classification rules
@@ -400,7 +400,7 @@ An answer here is not an approval: the plan's tasks start only when the owner ap
 - **D1107 (ANSWERED by the owner, 2026-11-01, and not as this design recommended: `--yes` is allowed
   for a widening, and there is no console-only hook). S5's widening path needs the project's name
   typed at a terminal, and the console has no terminal. What happens to a widening?** *The problem,
-  stated plainly:* `settingsTypedWrite` (**S5 #1525** `internal/cli/settings_set.go:1650`) marks a
+  stated plainly:* `settingsTypedWrite` (**S5 #1525** `internal/cli/settings_set.go:1684`) marks a
   loosened ceiling, a removed ceiling and a `followup.*` key turned on as the typed form;
   `applySettingsEdit` then calls `confirmTypedStrict` (`internal/cli/budget.go:251`), which requires
   a terminal (`stdinIsTerminal`) and compares the typed line against the project's name, and which

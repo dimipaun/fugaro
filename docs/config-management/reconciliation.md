@@ -80,7 +80,7 @@ what the guard at the end of this section re-runs.
 - **F8 — the editors for the missing shapes already exist and the write path does not call them.**
   `yamledit.UpsertSeqItemByKey` and `RemoveSeqItemByKey` (`internal/yamledit/yamledit.go:294`, `:351`)
   address an object-list entry by its key field, and the write path's dispatch
-  (`internal/cli/settings_set.go:1851`) reaches only `SetScalar`, `AddListItem` and `RemoveListItem`.
+  (`internal/cli/settings_set.go:1885`) reaches only `SetScalar`, `AddListItem` and `RemoveListItem`.
   The gap is one dispatch and one flag pair, not a new editor.
 - **F9 — the settings-write document is version 1 with ten required members, and the console reads it.**
   `schemas/settings-write.schema.json:20` pins `"const": 1`, and `version`, `key`, `layer`, `path`,
@@ -226,7 +226,7 @@ rather than its conclusion.
 - **D1162 (one new flag pair, `--add-entry` / `--remove-entry`, for maps and object lists) — OPEN,
   recommended.**
   Recommendation: `--add` and `--remove` keep writing string-list items
-  (`internal/cli/settings_set.go:1851`) and the new pair carries an entry: for a **map**,
+  (`internal/cli/settings_set.go:1885`) and the new pair carries an entry: for a **map**,
   `--add-entry key=value` and `--remove-entry key`; for an **object list**, the entry's key field and
   its fields, resolved by `yamledit.UpsertSeqItemByKey` and `RemoveSeqItemByKey`
   (`internal/yamledit/yamledit.go:294`, `:351`).
@@ -249,7 +249,7 @@ rather than its conclusion.
 
 - **D1164 (the settings-write document keeps version 1 and gains its entry members as optional ones, and
   the console keeps working unchanged) — OPEN, recommended.**
-  Recommendation: `settingsWriteDocVersion` (`internal/cli/settings_set.go:2228`) and the schema's const
+  Recommendation: `settingsWriteDocVersion` (`internal/cli/settings_set.go:2276`) and the schema's const
   (`schemas/settings-write.schema.json:20`) **stay at `1`**, and the entry write's members — `operation`,
   the entry's key field, the entry's members — are **added as optional members**, none of them required.
   The document's own description is the rule being followed: members are only ever added within a version
@@ -268,7 +268,7 @@ rather than its conclusion.
 - **D1165 (an entry write is classified, confirmed and fenced exactly as a scalar write is) — OPEN,
   recommended.**
   Recommendation: the entry pair goes through the same `settingsTypedWrite` classification
-  (`internal/cli/settings_set.go:1650`) and the same `applySettingsEdit`
+  (`internal/cli/settings_set.go:1684`) and the same `applySettingsEdit`
   (`internal/cli/settings_write.go:86`), so a widening is still the typed project name (**D846**,
   `docs/settings-commands/reconciliation.md:218`), `--yes` still answers it only outside a coding
   agent's session (**D1107**, `internal/cli/settings_write.go:127`) and the agent-session fence
@@ -282,7 +282,7 @@ rather than its conclusion.
 
 - **D1166 (the dry run, the backup and the byte compare-and-swap are the existing ones; no ETag is
   added) — OPEN, recommended.**
-  Recommendation: `--dry-run` prints the one document (`internal/cli/settings_set.go:1971`), the write
+  Recommendation: `--dry-run` prints the one document (`internal/cli/settings_set.go:2019`), the write
   backs the file up through `backupFile` (`internal/cli/init.go:2602`) and refuses a file that moved
   through the compare-and-swap (`internal/cli/settings_write.go:150`). A field never changes meaning;
   the entry fields are members **added** to the document (D1164).
@@ -413,7 +413,7 @@ rather than its conclusion.
 - **D1176 (the edit's own next step publishes; `fugaro config publish` stays, but no edit needs it) —
   OPEN, recommended.**
   Recommendation: a layer write ends with `next: fugaro update`
-  (`internal/cli/settings_set.go:2019`) and `update`'s Layer stage publishes the file every writer here
+  (`internal/cli/settings_set.go:2067`) and `update`'s Layer stage publishes the file every writer here
   has just written — the HARD RULE's own command, not a second one. `config publish` remains the
   operator's door and the door the agent runs under the gate
   ([managed spec](../managed-agent-converge/spec.md) §4.2), so nothing documented is removed; what
