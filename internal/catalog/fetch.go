@@ -156,10 +156,15 @@ func refuseCredentialIn(e config.Entry, data []byte) error {
 			return err
 		}
 	}
-	// The URL is read on the logical lines too, and not on the raw bytes: a
-	// clone URL whose credential is split across a continuation is the URL a
-	// build carries into the layer, so it is the joined one that is read.
-	if urlUserinfoRE.MatchString(strings.Join(lines, "\n")) {
+	// The URL is read twice, because each reading catches text the other does
+	// not. The logical lines catch a URL a build reads but whose credential is
+	// split across a continuation: joining the lines is what makes it one URL
+	// again. The raw bytes catch a URL in a comment inside a continuation, which
+	// dockerfileLines drops with the continuation it belongs to — the definition
+	// is copied into the project's bucket whole, comments and all, so that token
+	// is in the project whether or not a build reads the line it is written on.
+	// (A comment on a line of its own is a logical line and is read by both.)
+	if urlUserinfoRE.MatchString(strings.Join(lines, "\n")) || urlUserinfoRE.Match(data) {
 		return fmt.Errorf("the catalog entry %s: its Dockerfile carries a URL with a credential in its userinfo, the part between // and @; a clone URL with a token in it reaches the image, so mount the credential with RUN --mount=type=secret instead",
 			nameOf(e))
 	}
@@ -270,11 +275,13 @@ func trimContinuation(line string, esc byte) (string, bool) {
 }
 
 // directiveRE is the parser's own idea of a parser directive
-// (DirectiveParser.setComment): a comment whose whole body is key=value. A
+// (DirectiveParser.ParseLine): a comment whose whole body is key=value. A
 // comment that is not one — a plain note, or anything else without the '='
 // shape — is not a directive, and the parser stops looking for directives at
-// the first line that is not one.
-var directiveRE = regexp.MustCompile(`^#\s*([a-zA-Z][a-zA-Z0-9]*)\s*=\s*(.+?)\s*$`)
+// the first line that is not one. The '#' is cut before the match
+// (bytes.CutPrefix) and what follows is left-trimmed of unicode whitespace,
+// which is what the caller does.
+var directiveRE = regexp.MustCompile(`^([a-zA-Z][a-zA-Z0-9]*)\s*=\s*(.+?)\s*$`)
 
 // dockerfileEscape returns the character a definition continues a line with:
 // the parser's own backslash, unless a parser directive before the first
@@ -287,7 +294,7 @@ var directiveRE = regexp.MustCompile(`^#\s*([a-zA-Z][a-zA-Z0-9]*)\s*=\s*(.+?)\s*
 // naming a directive the parser knows ends the block. A blank line, a plain
 // comment and a comment naming anything else (# foo=bar) all end it, so an
 // `# escape=` written after one of them is a comment to a build and is not
-// followed here either. Only `syntax` carries the scan on. What may sit in
+// followed here either. Only `syntax` and `check` carry the scan on. What may sit in
 // front of the '#' is the parser's own reading too: the first physical line of
 // a logical line is stripped of its leading whitespace before the directive is
 // matched, and every line here is a first line (a comment never continues one).
@@ -297,7 +304,7 @@ func dockerfileEscape(data string) byte {
 		if !strings.HasPrefix(line, "#") {
 			break
 		}
-		m := directiveRE.FindStringSubmatch(line)
+		m := directiveRE.FindStringSubmatch(strings.TrimLeftFunc(line[1:], unicode.IsSpace))
 		if m == nil {
 			break
 		}
@@ -310,9 +317,14 @@ func dockerfileEscape(data string) byte {
 				return '`'
 			}
 			return '\\'
-		case "syntax":
-			// A directive the parser knows and this guard has no use for: it
-			// does not end the block, so the scan carries on.
+		case "syntax", "check":
+			// Directives the parser knows and this guard has no use for: they
+			// do not end the block, so the scan carries on. `check` is one of
+			// them from the dockerfile:1.8 frontend on — the pinned
+			// dockerfile:1.10 build has it, and internal/config's
+			// knownDirectives carries the same three names — so a definition
+			// may write `# check=skip=all` in front of its `# escape=` and a
+			// build still honours the escape.
 		default:
 			// A key the parser does not know ends the block with the rest.
 			return '\\'

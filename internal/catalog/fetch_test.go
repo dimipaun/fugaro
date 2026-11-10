@@ -279,6 +279,12 @@ func TestDockerfileSecretArgRefused(t *testing.T) {
 		// A `# syntax=` directive is one the parser knows, so the block goes on
 		// past it and the `# escape=` after it is followed.
 		"# syntax=docker/dockerfile:1\n# escape=`\nFROM example.invalid/base\nARG NPM_`\nTOKEN=1\n",
+		// `check` is a directive the parser knows too, from the dockerfile:1.8
+		// frontend on — the pinned dockerfile:1.10 build has it, and
+		// internal/config's knownDirectives carries the same three names — so a
+		// `# check=` line does not end the block either: the `# escape=` under
+		// it stands, the backtick joins the name, and a build sets NPM_TOKEN.
+		"# syntax=docker/dockerfile:1.10\n# check=skip=all\n# escape=`\nFROM example.invalid/base\nARG NPM_`\nTOKEN=1\n",
 		// The parser takes a leading run of `--`-prefixed words off the front
 		// of a line's arguments as builder flags, and a bare `--` ends the run
 		// (splitCommand's extractBuilderFlags), so the name after one is the
@@ -370,6 +376,12 @@ func TestDockerfileUserinfoURLRefused(t *testing.T) {
 		// The URL is read joined, so a credential split across a continuation
 		// is the credential a build carries into the layer.
 		"FROM example.invalid/base\nRUN git clone https://user:" + token + "\\\n@example.invalid/acme/app.git /work/repo\n",
+		// And the raw bytes are read as well, because a build is not the only
+		// reader: the definition is copied into the project's bucket whole,
+		// comments and all. A comment inside a continuation is dropped with the
+		// continuation it belongs to, so this URL is in no logical line — and the
+		// token is in the project all the same.
+		"FROM example.invalid/base\nRUN echo a \\\n# https://user:" + token + "@example.invalid/x\n b\n",
 	} {
 		_, err := Fetch(ctx, nil, gitprov.KindGitHub, inlineEntry(def))
 		if err == nil {
