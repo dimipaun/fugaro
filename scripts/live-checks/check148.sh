@@ -53,6 +53,16 @@
 # CHECK148_MINT_WAIT is that bound in seconds (default 90, and 0 means one
 # attempt), and the register's section says what it is for.
 #
+# The wait cuts both ways, and the served direction is the one a bound alone
+# cannot settle: the document a write REPLACED answers with a 200 too, so a mint
+# read a moment after the write can be the old credential's mint and read as the
+# new one's. What tells the two apart is the cache's own lifetime — the document
+# a read can be answered from was parsed at or before the write, so a 200 read at
+# or after credsvc.BundleCacheTTL is a read of the document the write made.
+# CHECK148_CACHE_WAIT is that lifetime in seconds (default 40, so the reading is
+# taken clear of the 30-second TTL and of the loop's own step; 0 reads once,
+# which is what the script's own test uses).
+#
 # No secret and no token is printed, and none is on a command line: the
 # consumer files are read by the reader and handed to `fugaro creds set` on
 # stdin, the tokens this run mints are written into 0600 files, and the curl
@@ -143,7 +153,10 @@ SCRATCH_REMOVED=no
 PRINTED=""
 # The files this run writes a credential into and nothing else: the bundle
 # document it reads, the document with the entry taken out, the identity tokens
-# and read tokens it mints, and the curl configs built from them. They are
+# and read tokens it mints, the answers those tokens arrive IN (a mint's body
+# carries the read token and the grant's carries the replaced consumer's own
+# access token, which is a live credential of exactly the kind U13 is about),
+# and the curl configs built from them. They are
 # removed by cleanup and their removal is READ, not assumed — the `restore` row
 # reports it, because a credential file that survived is the one thing an owner
 # has to be told about rather than read a PASS over.
@@ -224,10 +237,17 @@ finish() {
   else
     [ "$SCRATCH_REMOVED" = yes ] || restore=FAIL
     [ "$CREDENTIALS_REMOVED" = yes ] || restore=FAIL
+    # The bundle's own state, as the row can say it: a run that wrote nothing is
+    # not one whose bundle "is not back the way it was", and a row that said so
+    # while its own next clause said nothing was written would be contradicting
+    # itself in the sentence an owner reads first.
+    local bundle_state
     if [ -z "$LEFTOVER" ]; then
-      LEFTOVER="the bundle was not written, so it holds the consumer it held when the run started"
+      bundle_state="The bundle was NOT written: it holds the consumer it held when the run started, and no version was added"
+    else
+      bundle_state="The bundle is NOT back the way it was: $LEFTOVER"
     fi
-    facts="${facts}"$'\n'"restore|$restore|the scratch directory $([ "$SCRATCH_REMOVED" = yes ] && echo "is gone" || echo "is STILL THERE, at $SCRATCH — remove it yourself"), and the credential files in it $([ "$CREDENTIALS_REMOVED" = yes ] && echo "are gone" || echo "are STILL THERE — remove them yourself"). The bundle is NOT back the way it was: $LEFTOVER. Delete the consumers the drill replaced at Bitbucket (the one whose secret you regenerated, and the one the transfer replaced) — the bundle's entry is what the read mint reads, and the consumer at Bitbucket is what Bitbucket authenticates, so an old consumer left alive is a credential that can still be exchanged for tokens for this workspace"
+    facts="${facts}"$'\n'"restore|$restore|the scratch directory $([ "$SCRATCH_REMOVED" = yes ] && echo "is gone" || echo "is STILL THERE, at $SCRATCH — remove it yourself"), and the credential files in it $([ "$CREDENTIALS_REMOVED" = yes ] && echo "are gone" || echo "are STILL THERE — remove them yourself"). $bundle_state. Delete the consumers the drill replaced at Bitbucket (the one whose secret you regenerated, and the one the transfer replaced) — the bundle's entry is what the read mint reads, and the consumer at Bitbucket is what Bitbucket authenticates, so an old consumer left alive is a credential that can still be exchanged for tokens for this workspace"
   fi
   if [ -z "$PRINTED" ]; then
     PRINTED=1
@@ -389,7 +409,7 @@ step_service() {
     # The reader's own line is carried into the reason: a project that lists two
     # coordinator jobs and one that lists none are the same refusal to this
     # check and very different things to an operator.
-    stop "no single coordinator job is deployed in $PROJECT/$REGION: $(head -n 1 "$SCRATCH/reader.err" 2>/dev/null). The job carries the label fugaro_role=coordinator, and this check reads the credentials service's address off it — turn the coordinator on first: fugaro update --firebase-project <id>"
+    stop "no single coordinator job is deployed in $PROJECT/$REGION: $(head -n 1 "$SCRATCH/reader.err" 2>/dev/null). The job carries the label fugaro_role=coordinator, and this check reads the credentials service's address off it — turn the coordinator on first: fugaro update --firebase-project <id> --coordinator, which is the flag that creates the job (and with it the read mint's variable)"
   fi
   job=$(field_of job "$answer")
   if ! run_capture "$SCRATCH/job.json" gcloud run jobs describe "$job" --project "$PROJECT" --region "$REGION" --format=json; then
@@ -497,6 +517,7 @@ mint_once() {
     || stop "the read mint's request could not be built: the identity token is not one header value"
   CREDENTIAL_FILES+=("$SCRATCH/mint-$n.conf")
   MINT_STATUS=$(request "$SCRATCH/mint-$n.json" POST "$SERVICE_URL$READ_PATH" --config "$SCRATCH/mint-$n.conf")
+  CREDENTIAL_FILES+=("$SCRATCH/mint-$n.json")
   local answer
   answer=$(reader mint "$SCRATCH/mint-$n.json" "$SCRATCH/token-$n" "$REPO" 2>"$SCRATCH/reader.err") \
     || stop "the read mint's answer could not be read: $(head -n 1 "$SCRATCH/reader.err" 2>/dev/null). The answer is in the run's scratch directory and is not printed"
@@ -520,10 +541,25 @@ mint_once() {
 mint_want() {
   local n=$1 want=$2 what=$3
   local waited=0 step=5
+  MINT_WAITED=0
   while :; do
     mint_once "$n"
     case "$want" in
-    ok) [ "$MINT_STATUS" = 200 ] && return 0 ;;
+    ok)
+      # The served direction needs the cache waited out as much as the refused
+      # one, and it is the direction a first-200-read would get wrong in silence:
+      # the document this write replaced is served for its own cache lifetime and
+      # answers a 200 too, so a mint read a moment after the write can be the OLD
+      # credential's mint, with the row below claiming it as the new one's. What
+      # makes a 200 readable is the clock rather than the body: the document a
+      # read can be served from was parsed at or before the write, so a 200 read
+      # at or after the cache's lifetime is a read of the document the write
+      # made.
+      if [ "$MINT_STATUS" = 200 ] && [ "$MINT_ANSWERED" = yes ] && [ "$waited" -ge "$CACHE_WAIT" ]; then
+        MINT_WAITED=$waited
+        return 0
+      fi
+      ;;
     refused)
       # Only the service's own no-consumer refusal is a stop, and it takes all
       # three readings: 503, state_unavailable (internal/credsvc/wire.go's status
@@ -543,6 +579,7 @@ mint_want() {
       ;;
     esac
     if [ "$waited" -ge "$MINT_WAIT" ]; then
+      MINT_WAITED=$waited
       return 1
     fi
     local seen="${MINT_STATUS}${MINT_CODE:+ (refused: ${MINT_CODE})}"
@@ -553,10 +590,41 @@ mint_want() {
     if [ "$MINT_STATUS" = 503 ] && [ "$MINT_CODE" = state_unavailable ] && [ "$MINT_NO_CONSUMER" != yes ]; then
       seen="$seen, and not with the no-consumer message this write should have made it answer with"
     fi
-    say "$what: the service answered ${seen}, which is not what this write should have made it answer yet; waiting for the bundle cache (${waited}s of ${MINT_WAIT}s)"
+    local why="which is not what this write should have made it answer yet"
+    if [ "$want" = ok ] && [ "$MINT_STATUS" = 200 ]; then
+      why="which the service can still be answering from the document this write replaced, and only the cache's own lifetime tells the two apart"
+    fi
+    say "$what: the service answered ${seen}, ${why}; waiting for the bundle cache (${waited}s of ${MINT_WAIT}s)"
     sleep "$step"
     waited=$((waited + step))
   done
+}
+
+# mint_note: what the last mint's own answer adds to a row that has to say what
+# it did not get. A timeout has curl's own line, and an answer that is not the
+# mint is one of two things — a body that is not a document at all, or a document
+# that carries no token — which an operator reads differently, so the reader
+# tells them apart (cmd_mint's `answered`).
+mint_note() {
+  local note=""
+  if [ "$MINT_STATUS" = 000 ]; then note=$(curl_note); fi
+  case "$MINT_ANSWERED" in
+  none) note="$note (the answer was not a document at all)" ;;
+  no) note="$note (the answer carried no read token)" ;;
+  esac
+  printf '%s' "$note"
+}
+
+# mint_ok_got: what a row that expected the document a write just made says it
+# got instead. The one answer that has to be spelled out is a 200 read before the
+# cache could have expired: the service did answer a mint, and which document
+# served it is exactly what this run cannot read.
+mint_ok_got() {
+  if [ "$MINT_STATUS" = 200 ] && [ "$MINT_ANSWERED" = yes ]; then
+    printf 'the service answered 200 ${MINT_WAITED}s after the write, which is inside the ${CACHE_WAIT}s the parsed bundle is served for, so this mint may be the credential the write replaced rather than the one it wrote — and only a reading taken once that cache has expired tells the two apart (raise CHECK148_MINT_WAIT above CHECK148_CACHE_WAIT and run it again)'
+    return 0
+  fi
+  printf 'the service answered %s%s' "${MINT_STATUS}${MINT_CODE:+ (refused: ${MINT_CODE})}" "$(mint_note)"
 }
 
 # step_mint_baseline: one mint before anything is written, and its token is kept
@@ -565,13 +633,15 @@ mint_want() {
 step_mint_baseline() {
   mint_once baseline
   if [ "$MINT_STATUS" != 200 ]; then
-    local note=""
-    if [ "$MINT_STATUS" = 000 ]; then note=$(curl_note); fi
+    local note
+    note=$(mint_note)
     fact repository FAIL "the read mint refused before anything was written: the service answered $MINT_STATUS${MINT_CODE:+ (refused: ${MINT_CODE})}${note}. Check that your own address is one of the installation's operators (the person class), that the bundle holds the consumer, and that the credentials service is on"
     stop "the baseline read mint was not served, so there is nothing to compare the drill's four writes against"
   fi
   if [ "$MINT_REPO" != same ]; then
-    fact repository FAIL "the read mint's answer names a repository other than the one this check asked for, which the client refuses as a token minted for another read (G11)"
+    local why
+    why=$(mint_note)
+    fact repository FAIL "the read mint's answer names a repository other than the one this check asked for, which the client refuses as a token minted for another read (G11)${why}"
     stop "the read mint's answer does not name the repository it was asked for"
   fi
   fact repository PASS "the read mint served the person class for $REPO (HTTP 200, the answer names the repository it was asked for and carries an expiry: ${MINT_EXPIRES:-?}) — this token is kept, unprinted, for U13"
@@ -628,12 +698,11 @@ step_stop() {
   if [ "$MINT_STATUS" = 200 ]; then
     fact stop FAIL "the read mint was still served (HTTP 200) ${MINT_WAIT}s after the entry was taken out of the bundle and the version it replaced was disabled: either the service is reading a document that still holds it — another version is enabled, or something else wrote one — or the mint is not reading the bundle at all. Read the bundle with fugaro creds ls and the service's own log before you trust a stop"
   else
-    local note=""
-    if [ "$MINT_STATUS" = 000 ]; then note=$(curl_note); fi
-    if [ "$MINT_ANSWERED" = no ]; then note="$note (the answer was not a document at all)"; fi
+    local note
+    note=$(mint_note)
     local why="this row is a reading this run does not have rather than a stop it measured"
     if [ "$MINT_STATUS" = 503 ] && [ "$MINT_CODE" = state_unavailable ]; then
-      why="the service answered that status and type with a message that is not ErrReadNoConsumer's, and it answers the stop switches it cannot read, the kill switch, a bundle that fails to load, a failed Bitbucket exchange and a failed audit with the same pair — so which of those this is cannot be read from here"
+      why="the service answered that status and type with a message that is not ErrReadNoConsumer's, and it answers the stop switches it cannot read, the kill switch, a bundle that fails to load, a failed Bitbucket exchange, a token whose scopes this route will not hand on and a failed audit with the same pair (among other states) — so which of those this is cannot be read from here"
     fi
     fact stop FAIL "the read mint did not answer with the service's own refusal ${MINT_WAIT}s after the entry was taken out of the bundle: the service answered ${MINT_STATUS}${MINT_CODE:+ (${MINT_CODE})}${note}. The refusal a stop is read on is 503 state_unavailable carrying ErrReadNoConsumer's own message, and ${why} — read the service's own log and the bundle with fugaro creds ls before you trust a stop"
   fi
@@ -670,10 +739,10 @@ step_restore_consumer() {
   set_consumer "$CONSUMER_FILE" "consumer the bundle held before the stop"
   LEFTOVER="the bundle holds the consumer it held before the stop"
   if mint_want restore-consumer ok "the restore"; then
-    fact restore-consumer PASS "fugaro creds set put the read consumer back and the mint is served again (HTTP 200): the stop is a bundle write and its undo is one too"
+    fact restore-consumer PASS "fugaro creds set put the read consumer back and the mint is served again (HTTP 200 after a ${MINT_WAITED}s wait for the bundle cache, which is the wait a write's own document is read on — a mint read sooner can be the document the write replaced): the stop is a bundle write and its undo is one too"
     return 0
   fi
-  fact restore-consumer FAIL "the read mint is not serving ${MINT_WAIT}s after fugaro creds set put the consumer back (the service answered ${MINT_STATUS}${MINT_CODE:+ (refused: ${MINT_CODE})}): the entry this run wrote is not the one the service reads, and the rotation below would measure a bundle that is not serving"
+  fact restore-consumer FAIL "the read mint is not serving the consumer ${MINT_WAIT}s after fugaro creds set put it back ($(mint_ok_got)): the entry this run wrote is not the one the service reads, and the rotation below would measure a bundle that is not serving"
   return 1
 }
 
@@ -685,10 +754,10 @@ step_rotate() {
   set_consumer "$ROTATED_CONSUMER_FILE" "rotated consumer"
   LEFTOVER="the bundle holds the rotated consumer (the same key with the secret Bitbucket regenerated)"
   if ! mint_want rotate ok "the rotation"; then
-    fact rotate FAIL "the read mint is not serving ${MINT_WAIT}s after the rotated document was written (the service answered ${MINT_STATUS}${MINT_CODE:+ (refused: ${MINT_CODE})}): either the new secret is not the one Bitbucket holds — regenerate it and write the file again — or the bundle did not take the write"
+    fact rotate FAIL "the read mint is not serving the rotated document ${MINT_WAIT}s after it was written ($(mint_ok_got)): either the new secret is not the one Bitbucket holds — regenerate it and write the file again — or the bundle did not take the write"
     return 1
   fi
-  fact rotate PASS "the rotated document is live: the read mint is served again (HTTP 200), so the secret this run wrote is the one Bitbucket accepts"
+  fact rotate PASS "the rotated document is live: the read mint is served again on it (HTTP 200 after a ${MINT_WAITED}s wait for the bundle cache, which is the wait a write's own document is read on — a mint read sooner can be the credential this run replaced), so the secret this run wrote is the one Bitbucket accepts"
 
   # The old secret, used the way a consumer is used directly: a
   # client_credentials grant at Bitbucket. It must be refused — a regenerated
@@ -699,13 +768,31 @@ step_rotate() {
   CREDENTIAL_FILES+=("$SCRATCH/grant.conf")
   local status
   status=$(request "$SCRATCH/grant.json" POST "$OAUTH_URL/site/oauth2/access_token" --config "$SCRATCH/grant.conf")
+  CREDENTIAL_FILES+=("$SCRATCH/grant.json")
   local granted
   granted=$(reader grant "$SCRATCH/grant.json" 2>/dev/null || true)
-  if [ "$granted" = yes ]; then
+  case "$granted" in
+  yes)
     fact old-secret FAIL "the secret this run replaced still exchanges for a token (HTTP $status): Bitbucket did not revoke it, so the rotation left a live credential behind. Delete the old secret at Bitbucket or regenerate it again, and do not treat this rotation as done"
-  else
-    fact old-secret PASS "the replaced secret is refused (HTTP $status${granted:+, $granted}): the rotation took, and the copy this run replaced is no longer a credential"
-  fi
+    ;;
+  refused*)
+    # `refused` is the endpoint's own answer about the secret: Bitbucket read it
+    # and would not exchange it, which is the reading a rotation is done on. It
+    # is the word the reader prints for a document it read, and nothing else
+    # prints it — so a request that answered no document at all (`unanswered`,
+    # or a reader that said nothing) cannot reach this row as a PASS.
+    fact old-secret PASS "the replaced secret is refused (HTTP $status, $granted): the rotation took, and the copy this run replaced is no longer a credential"
+    ;;
+  *)
+    local why="the OAuth endpoint answered"
+    if [ "$status" = 000 ]; then
+      why="$why no answer at all$(curl_note)"
+    else
+      why="$why HTTP $status with no token answer to read"
+    fi
+    fact old-secret FAIL "$why, so whether the replaced secret still exchanges for a token is a reading this run does not have — and a rotation whose old secret was never tried is not a rotation this run can call done. Run the grant by hand (the runbook's §12) before you trust it"
+    ;;
+  esac
 
   # U13: the token minted before the rotation, replayed against Bitbucket. It is
   # an OPEN QUESTION and never a verdict — the check records which of the two it
@@ -718,8 +805,17 @@ step_rotate() {
   read=$(reader api "$SCRATCH/api.json" 2>/dev/null || true)
   if [ "$read" = yes ]; then
     fact u13 INFO "U13 measured: the token minted BEFORE the rotation still reads $REPO (HTTP $api_status), so a rotation does not end the tokens already handed out — revoke the old secret at Bitbucket as well as regenerating it, and treat a rotated-away token as live until it expires. This is an open question answered, not a failure"
-  else
+  elif [ "$read" = no ] && { [ "$api_status" = 401 ] || [ "$api_status" = 403 ]; }; then
+    # The refused reading, and only where Bitbucket's own answer is an
+    # authorization one: a document the token may not read is the reading this
+    # question is about, while a 5xx is the API not answering it at all.
     fact u13 INFO "U13 measured: the token minted BEFORE the rotation is refused (HTTP $api_status), so this rotation ended it. Whether that is Bitbucket's rule or this token's age is what the runbook leaves open until Check 145's lifetime reading (U1) is in hand. This is an open question answered, not a failure"
+  else
+    local why="the request did not come back with a document to read"
+    if [ "$read" = no ]; then
+      why="Bitbucket answered HTTP $api_status without the repository in it, which is not an authorization answer about the token"
+    fi
+    fact u13 INFO "U13 NOT measured: whether the token minted BEFORE the rotation still reads $REPO is a reading this run does not have — $why. Run the read by hand after the rotation and record which of the two it gets: the reconciliation carries U13 as UNVERIFIED, and this check is what settles it. An open question left open is not a failure"
   fi
   return 0
 }
@@ -731,10 +827,10 @@ step_transfer() {
   set_consumer "$SUCCESSOR_CONSUMER_FILE" "successor consumer"
   LEFTOVER="the bundle holds the successor consumer, which is the transfer"
   if ! mint_want transfer ok "the transfer"; then
-    fact transfer FAIL "the read mint is not serving ${MINT_WAIT}s after the successor document was written (the service answered ${MINT_STATUS}${MINT_CODE:+ (refused: ${MINT_CODE})}): the successor's own key and secret have to be the ones Bitbucket accepts for $REPO_WS, and a consumer created under another account only reads what that account reads"
+    fact transfer FAIL "the read mint is not serving the successor ${MINT_WAIT}s after its document was written ($(mint_ok_got)): the successor's own key and secret have to be the ones Bitbucket accepts for $REPO_WS, and a consumer created under another account only reads what that account reads"
     return 1
   fi
-  fact transfer PASS "the successor consumer is live: the read mint is served again (HTTP 200) on the second account's own consumer, so the bundle's entry is the credential the mint spends and replacing it is the transfer"
+  fact transfer PASS "the successor consumer is live: the read mint is served again (HTTP 200 after a ${MINT_WAITED}s wait for the bundle cache, so the credential that served it is the successor's rather than the one the rotation left) on the second account's own consumer, so the bundle's entry is the credential the mint spends and replacing it is the transfer"
   return 0
 }
 
@@ -852,6 +948,9 @@ main() {
   API_URL=${CHECK148_API_URL:-https://api.bitbucket.org/2.0}
   CURL_SECONDS=${CHECK148_CURL_SECONDS:-30}
   MINT_WAIT=${CHECK148_MINT_WAIT:-90}
+  # credsvc.BundleCacheTTL is 30 seconds; the reading a write's own document is
+  # read on is taken clear of it and of the loop's own 5-second step.
+  CACHE_WAIT=${CHECK148_CACHE_WAIT:-40}
   MINT_STATUS=""
   MINT_CODE=""
   MINT_REPO=""
@@ -859,6 +958,7 @@ main() {
   MINT_TOKEN=""
   MINT_ANSWERED=""
   MINT_NO_CONSUMER=""
+  MINT_WAITED=0
 
   guard_endpoint "the OAuth root" "$OAUTH_URL"
   guard_endpoint "the API root" "$API_URL"
@@ -1138,7 +1238,10 @@ def cmd_mint(path, tokenout, repo):
         print("token=no")
         print("repo=-")
         print("expires=absent")
-        print("answered=no")
+        # `answered=none` is the answer there was not one: a document that is not
+        # the mint's at all reads as `no` below, and a row that has to say which
+        # of the two it got cannot read that from `answered` alone.
+        print("answered=none")
         print("noconsumer=no")
         return
     code = doc.get("error") if isinstance(doc, dict) else None
@@ -1152,6 +1255,9 @@ def cmd_mint(path, tokenout, repo):
         print("token=no")
         print("repo=-")
         print("expires=absent")
+        # A document, and not the mint's: every path out of this function prints
+        # `answered`, so a row can say which of the two a 200 was.
+        print("answered=no")
         return
     token = doc["token"].strip()
     if not VALUE.fullmatch(token):
@@ -1176,10 +1282,16 @@ def cmd_grantconf(consumer, conf):
 
 
 def cmd_grant(path):
-    """One word: `yes` when Bitbucket exchanged the consumer for a token, and
-    `refused` (with a code from the closed set) when it did not. The shell
-    compares the word, so the word is all that is printed."""
-    doc = load(path, "the token answer")
+    """One word: `yes` when Bitbucket exchanged the consumer for a token,
+    `refused` (with a code from the closed set) when it did not, and
+    `unanswered` when there is no document to read at all -- a timeout, a dropped
+    connection, a proxy's error page. The shell compares the word, so the word is
+    all that is printed, and the third one is what keeps a request that was never
+    answered from being read as the endpoint's own refusal of the secret."""
+    doc = load_or_none(path)
+    if doc is None:
+        print("unanswered")
+        return
     token = doc.get("access_token") if isinstance(doc, dict) else None
     if isinstance(token, str) and token.strip():
         print("yes")
@@ -1195,10 +1307,15 @@ def cmd_apiconf(tokenfile, conf):
 
 
 def cmd_api(path):
-    """One word: `yes` when the token read the repository and `no` when it did
-    not. U13 is which of the two a token minted before the rotation gets, and
-    the shell records that word rather than a verdict about it."""
-    doc = load(path, "the repository answer")
+    """One word: `yes` when the token read the repository, `no` when Bitbucket
+    answered a document that does not carry it, and `unanswered` when there is no
+    document at all. U13 is which of the three a token minted before the rotation
+    gets, and the shell records that word rather than a verdict about it: a
+    request that never came back is not a reading that the token was refused."""
+    doc = load_or_none(path)
+    if doc is None:
+        print("unanswered")
+        return
     if isinstance(doc, dict) and isinstance(doc.get("full_name"), str) and doc["full_name"]:
         print("yes")
         return

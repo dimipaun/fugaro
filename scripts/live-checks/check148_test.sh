@@ -408,6 +408,21 @@ class Handler(http.server.BaseHTTPRequestHandler):
             present = True
         if m.get("mint") == "never":
             present = False
+        # A 200 that is not the mint's document at all, for the bundle whose
+        # consumer carries this secret: a proxy, a load balancer or anything else
+        # in front of the service answering instead of it. A row that read the
+        # status alone would call it the new credential being served.
+        if m.get("mint_junk_for") and consumer_secret() == m["mint_junk_for"]:
+            if m.get("mint_junk_body") == "json":
+                self.answer(200, {"repository": repo})
+                return
+            body = b"<html>the read mint is not here</html>"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if not present:
             # The service's own refusal of a bundle with no read consumer: 503
             # state_unavailable (internal/credsvc/bitbucket.go's ErrReadNoConsumer
@@ -435,6 +450,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.answer(200, {"token": token, "expires_at": "2026-11-10T18:00:00Z", "repository": repo})
 
     def grant(self, body, m):
+        # No answer at all: the endpoint dropped the connection, which is the
+        # reading a row must not take for the endpoint refusing the secret.
+        if m.get("grant_absent") == "none":
+            self.close_connection = True
+            self.wfile.flush()
+            return
         fields = {}
         for pair in body.decode("utf-8", "replace").split("&"):
             name, _, value = pair.partition("=")
@@ -460,6 +481,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
         m = mode()
         if not self.path.startswith("/2.0/repositories/"):
             self.answer(404, {"error": "not_found"})
+            return
+        # And the same for the repository read U13 is measured with: an answer
+        # there is none of, which is not the API refusing the token.
+        if m.get("u13") == "none":
+            self.close_connection = True
+            self.wfile.flush()
             return
         token = (self.headers.get("Authorization") or "").removeprefix("Bearer ")
         if token and token in tokens() and m.get("u13", "live") == "live":
@@ -618,6 +645,11 @@ start_fake() { # start_fake DIR
 # otherwise default to the real Bitbucket -- point at this case's fake, so
 # nothing here leaves the machine. RUN148_ENV comes last: a case about an
 # override names its own.
+#
+# CHECK148_CACHE_WAIT is 0 here: the wait is the real service's 30-second bundle
+# cache, and this fake's stand-in for it is a call count rather than a clock, so
+# every case would only sit out the real wait. The case about the wait sets its
+# own.
 run148() {
   status=0
   out=$(env TMPDIR="$dir/tmp" FAKE148_DIR="$dir/state" FAKE148_PROJECT="${RUN148_PROJECT:-$PROJECT}" \
@@ -625,6 +657,7 @@ run148() {
     PATH="$dir/bin:$PATH" \
     CHECK148_OAUTH_URL="http://127.0.0.1:$FAKE_PORT" \
     CHECK148_API_URL="http://127.0.0.1:$FAKE_PORT/2.0" \
+    CHECK148_CACHE_WAIT=0 \
     ${RUN148_ENV[@]+"${RUN148_ENV[@]}"} \
     "$bash_bin" "$script" ${RUN148_ARGS[@]+"${RUN148_ARGS[@]}"} "$@" <"${RUN148_STDIN:-/dev/null}" 2>"$dir/err") || status=$?
   # The block is kept as well as captured, so a case kept for inspection has the
@@ -978,6 +1011,61 @@ test_a_rotation_that_leaves_the_old_secret_alive_is_a_fail() {
   assert_no_secret "$dir" "leftover secret"
 }
 
+# The served direction, and the half of the cache that a first-200-read gets
+# wrong in silence: the document a write REPLACED answers a 200 too, so the mint
+# this drill reads a moment after a write can be the OLD credential's mint. What
+# tells them apart is the cache's own lifetime, so the row waits it out before
+# it reads the write as served -- and the wait is what a row read on the status
+# alone would never take.
+test_the_served_direction_waits_the_bundle_cache_out() {
+  setup_case okwaits
+  default_args
+  RUN148_ENV=(CHECK148_CACHE_WAIT=5 CHECK148_MINT_WAIT=30)
+  run148
+  expect_status "$status" 0 "the served direction waits"
+  expect_contains "$out" "FACT rotate: PASS — " "the served direction waits: the rotation is read as served"
+  expect_contains "$(cat "$dir/err")" "which the service can still be answering from the document this write replaced" "the served direction waits: the row says why it is waiting"
+  expect_contains "$(cat "$dir/err")" "waiting for the bundle cache" "the served direction waits: the cache is what it waited for"
+  assert_no_secret "$dir" "the served direction waits"
+}
+
+# And an answer that is not the mint at all -- a proxy, a load balancer, anything
+# else answering in front of the service with a 200 and a body that is not the
+# mint's document. The status is 200 and there is no credential in it, so a row
+# read on the status alone calls the wrong secret served.
+test_a_200_that_is_not_the_mint_is_not_a_serve() {
+  setup_case junk200
+  write_mode "$dir" "{\"mint_junk_for\": \"$ROTATED_SENTINEL\"}"
+  default_args
+  run148
+  expect_status "$status" 1 "a 200 that is not the mint"
+  expect_contains "$out" "FACT rotate: FAIL — " "a 200 that is not the mint: the rotate row fails"
+  expect_absent "$out" "FACT rotate: PASS" "a 200 that is not the mint: no PASS for the rotation"
+  expect_contains "$out" "the answer was not a document at all" "a 200 that is not the mint: the row says what it got"
+  # The successor's own secret is not the one this case breaks, so the drill goes
+  # on: the failure is the rotated document's reading and nothing else.
+  expect_contains "$out" "FACT transfer: PASS — " "a 200 that is not the mint: the rest of the drill still ran"
+  assert_no_secret "$dir" "a 200 that is not the mint"
+}
+
+# The other shape of the same 200: a JSON document that parsed and carries no
+# read token. The status is 200 and the body was readable, so a row that
+# distinguishes only "a document" from "not a document" would call this a read
+# of the mint. The row has to say which of the two it got, and this pins the
+# second one.
+test_a_200_without_a_token_is_not_a_serve() {
+  setup_case notoken200
+  write_mode "$dir" "{\"mint_junk_for\": \"$ROTATED_SENTINEL\", \"mint_junk_body\": \"json\"}"
+  default_args
+  run148
+  expect_status "$status" 1 "a 200 without a token"
+  expect_contains "$out" "FACT rotate: FAIL — " "a 200 without a token: the rotate row fails"
+  expect_absent "$out" "FACT rotate: PASS" "a 200 without a token: no PASS for the rotation"
+  expect_contains "$out" "the answer carried no read token" "a 200 without a token: the row says what it got"
+  expect_absent "$out" "the answer was not a document at all" "a 200 without a token: a parsed document is not reported as unreadable"
+  assert_no_secret "$dir" "a 200 without a token"
+}
+
 # U13, the other way: the token minted before the rotation is refused. It is an
 # INFO either way -- the question is open, and the check records which reading
 # it got rather than turning it into a verdict.
@@ -991,6 +1079,43 @@ test_u13_that_ends_the_token_is_recorded_too() {
   expect_contains "$out" "is refused" "u13 dead: the row says what it measured"
   expect_absent "$out" "FACT u13: FAIL" "u13 dead: an open question is not a failure"
   assert_no_secret "$dir" "u13 dead"
+}
+
+# And U13 where the request never came back: a dropped connection is not the API
+# refusing the token, and the row is the one that says a rotation ended it. It
+# records the reading it did not get instead, which keeps the question open
+# rather than answering it with the run's own failure to read.
+test_u13_that_never_answered_is_not_a_refusal() {
+  setup_case u13none
+  write_mode "$dir" '{"u13": "none"}'
+  default_args
+  run148
+  expect_status "$status" 0 "u13 unanswered"
+  expect_contains "$out" "FACT u13: INFO — " "u13 unanswered: the row is an INFO"
+  expect_contains "$out" "U13 NOT measured" "u13 unanswered: the row says the reading is not there"
+  # The row itself, not the whole block: the rotation's own old-secret row says
+  # "is refused" about Bitbucket's answer to the replaced secret, which is a
+  # different reading.
+  local row
+  row=$(printf '%s\n' "$out" | grep '^FACT u13:' || true)
+  expect_absent "$row" "is refused" "u13 unanswered: a non-answer is not recorded as a refusal"
+  assert_no_secret "$dir" "u13 unanswered"
+}
+
+# The replaced secret's own grant, where the OAuth endpoint never answered. The
+# row is the one a rotation is done on, so a request that returned no document
+# cannot be read as the endpoint refusing the secret: the reading is one this run
+# does not have, and the row says so.
+test_a_grant_that_never_answered_is_not_a_pass() {
+  setup_case grantnone
+  write_mode "$dir" '{"grant_absent": "none"}'
+  default_args
+  run148
+  expect_status "$status" 1 "a grant that never answered"
+  expect_contains "$out" "FACT old-secret: FAIL — " "a grant that never answered: the row fails"
+  expect_absent "$out" "the replaced secret is refused" "a grant that never answered: no claim the old secret was refused"
+  expect_contains "$out" "no answer at all" "a grant that never answered: the row says what it got"
+  assert_no_secret "$dir" "a grant that never answered"
 }
 
 # The transfer has to be a DIFFERENT consumer: the same key with another secret
@@ -1054,6 +1179,11 @@ PY
   expect_status "$status" 2 "no consumer"
   expect_contains "$out" "FACT read-consumer: FAIL — " "no consumer: the row fails"
   expect_contains "$out" "holds no bitbucket-read-consumer" "no consumer: the row names the entry"
+  # And the Restore row about a run that wrote nothing: it says the bundle was
+  # not written rather than that the bundle is not back the way it was, which is
+  # the same sentence contradicting its own next clause.
+  expect_contains "$out" "The bundle was NOT written" "no consumer: the Restore row says nothing was written"
+  expect_absent "$out" "The bundle is NOT back the way it was" "no consumer: no claim that a write moved the bundle"
   expect_no_bundle_write "$dir" "no consumer"
   assert_no_secret "$dir" "no consumer"
 }
@@ -1168,6 +1298,11 @@ test_a_project_without_a_coordinator_job_stops() {
   expect_contains "$out" "FACT aborted: FAIL — " "no job: the abort row"
   expect_contains "$out" "no single coordinator job is deployed" "no job: the row says what it found"
   expect_contains "$out" "the project lists 0 coordinator jobs" "no job: the reader's own count reaches the row"
+  # The fix has to be the command that does it: --coordinator is the flag that
+  # creates the job whose environment this check reads the mint's address from,
+  # so a row naming `fugaro update` alone sends the operator back with the same
+  # reading and no job (Check 146's own row names it too).
+  expect_contains "$out" "--coordinator" "no job: the row names the flag that turns the coordinator on"
   expect_no_bundle_write "$dir" "no job"
   assert_no_secret "$dir" "no job"
 }
@@ -1385,8 +1520,13 @@ t test_a_doctor_that_answers_nothing_stops
 t test_a_versions_add_that_landed_and_failed_is_not_reported_as_nothing
 t test_a_versions_disable_that_failed_is_no_claim_about_the_version
 t test_a_creds_set_that_landed_and_failed_is_not_reported_as_nothing
+t test_the_served_direction_waits_the_bundle_cache_out
+t test_a_200_that_is_not_the_mint_is_not_a_serve
+t test_a_200_without_a_token_is_not_a_serve
 t test_a_rotation_that_leaves_the_old_secret_alive_is_a_fail
+t test_a_grant_that_never_answered_is_not_a_pass
 t test_u13_that_ends_the_token_is_recorded_too
+t test_u13_that_never_answered_is_not_a_refusal
 t test_a_successor_that_is_the_same_consumer_stops
 t test_a_rotation_that_changes_the_key_stops
 t test_a_consumer_for_another_workspace_stops
