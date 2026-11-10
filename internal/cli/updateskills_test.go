@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 func withVersion(t *testing.T, v string) {
@@ -24,11 +25,20 @@ func withVersion(t *testing.T, v string) {
 	t.Setenv("CLOUD_RUN_EXECUTION", "")
 }
 
-// skillCheckout makes a checkout whose settings hold content ("" for none).
+// skillCheckout makes a Fugaro checkout whose settings hold content ("" for
+// none): a real repository with a fugaro.yaml, which is the whole of what makes
+// a checkout one Fugaro's steps run in (U1 of
+// docs/plugin-user-scope/implementation-plan.md: fugaroCheckout lost its second
+// disjunct, the .claude/settings.json an older fugaro wired). Its project: is
+// one no test's local config selects, which is what leaves the cloud step
+// skipped for the fixtures that read it rather than run it.
 func skillCheckout(t *testing.T, content string) (root, settings string) {
 	t.Helper()
+	testutil.IsolateGit(t)
 	root = t.TempDir()
-	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
+	testutil.Git(t, root, "init", "--quiet")
+	testutil.Git(t, root, "remote", "add", "origin", "https://github.com/"+skillCheckoutRepo+".git")
+	if err := os.WriteFile(filepath.Join(root, "fugaro.yaml"), []byte(skillCheckoutYAML), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	settings = filepath.Join(root, ".claude", "settings.json")
@@ -42,6 +52,30 @@ func skillCheckout(t *testing.T, content string) (root, settings string) {
 	}
 	return root, settings
 }
+
+// skillCheckoutYAML is the fugaro.yaml of the fixtures above: enough for the
+// checkout gate and for the steps that read the file, naming a project no
+// test's local config selects.
+// plainCheckout is a git checkout Fugaro is not set up in: no fugaro.yaml, so
+// the checkout gate refuses it before any step runs (U1: the wiring an older
+// fugaro left in .claude/settings.json is not a second way of being a Fugaro
+// checkout).
+func plainCheckout(t *testing.T) string {
+	t.Helper()
+	testutil.IsolateGit(t)
+	root := t.TempDir()
+	testutil.Git(t, root, "init", "--quiet")
+	return root
+}
+
+// skillCheckoutRepo is the fixture's origin: a repository no test's local
+// project config lists, so the cloud step, where a mode reads it, finds
+// nothing of its own here and skips (the step's own line says which of the two
+// reasons it is).
+const skillCheckoutRepo = "acme/away"
+
+const skillCheckoutYAML = "version: 1\nproject: aurora\ngit: { provider: github }\n" +
+	"workflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
 
 func wiredAt(ref string) string {
 	return `{"extraKnownMarketplaces":{"fugaro":{"source":{"source":"github","repo":"dimipaun/fugaro","ref":"` + ref + `"}}},"enabledPlugins":{"fugaro@fugaro":true}}`
