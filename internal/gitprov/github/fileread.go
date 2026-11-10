@@ -39,7 +39,8 @@ import (
 // rather than falling back). A caller that read the second as the first would
 // place a run by a document it never read; both keep Contents's own error
 // wrapped, so the status, the URL and GitHub's message stay reachable to
-// whoever reads the failure.
+// whoever reads the failure. A 404 whose own body says neither — see below — is
+// neither answer, and stays Contents's refusal.
 var (
 	// ErrFileNotFound is the repository holding no file at the path asked for,
 	// at a ref it does have (or at its default branch when the caller named
@@ -51,29 +52,56 @@ var (
 	ErrRefNotFound = errors.New("github: the repository has no such ref")
 )
 
-// refNotFoundPrefix is how GitHub words the 404 that is about the ref and not
-// the path: "No commit found for the ref <ref>", and the SHA spelling of the
-// same miss for a ref given as one. Its answer about a path the ref does not
-// carry is a bare "Not Found", so this is the wording that positively selects
-// the ref row, and a message this code does not recognize stays the file row.
-//
-// It is GitHub's prose and can change under this package. A rewording puts a
-// missing ref back in the absent-file row, where this plan had it before the
-// distinction existed, and never the other way round: the row a message has to
-// positively select is the absent-file one, which is what a read that reached
-// the API at all is far likelier to be.
-const refNotFoundPrefix = "No commit found"
+// The two wordings a 404's body is read for, and the reason nothing else is
+// read as either. A body that is not the API's answer object at all — a proxy's
+// page, a GHES front end, a truncated read — and a message reworded past
+// recognition both stay unanswered, which is Contents's own refusal: a read
+// that fails is a refusal, and never a silent placement (D905). Reading either
+// of them as the absent-file row would be exactly that placement, by a document
+// nobody read.
+const (
+	// fileNotFoundMessage is GitHub's whole answer for a path the ref does not
+	// carry, and the only spelling of it this code accepts.
+	fileNotFoundMessage = "Not Found"
+	// refNotFoundPrefix is how GitHub words the 404 about the ref instead:
+	// "No commit found for the ref <ref>", and the SHA spelling of the same
+	// miss for a ref given as one.
+	refNotFoundPrefix = "No commit found"
+)
 
-// refNotFound reports whether body, a 404's own, is GitHub's answer about the
-// ref rather than the path.
-func refNotFound(body string) bool {
+// notFoundAnswer is which of the two a 404's own body says it is.
+type notFoundAnswer int
+
+const (
+	// notFoundUnknown is a body this code cannot classify: not the API's answer
+	// object, or an answer it does not recognize. It is the zero value, which
+	// is what an unreadable body is meant to select.
+	notFoundUnknown notFoundAnswer = iota
+	// notFoundFile is the absent-path answer: the row that selects nothing.
+	notFoundFile
+	// notFoundRef is the absent-ref answer: the row that refuses, naming the ref.
+	notFoundRef
+)
+
+// notFoundAnswerOf reads body, a 404's own, for the answer it carries. Both
+// wordings are GitHub's prose and can change under this package; when either
+// does, the read it named falls back to notFoundUnknown and so to a refusal —
+// the direction that halts a launch rather than the one that places a run by a
+// document nobody read.
+func notFoundAnswerOf(body string) notFoundAnswer {
 	var answer struct {
 		Message string `json:"message"`
 	}
 	if json.Unmarshal([]byte(body), &answer) != nil {
-		return false
+		return notFoundUnknown
 	}
-	return strings.HasPrefix(answer.Message, refNotFoundPrefix)
+	switch {
+	case answer.Message == fileNotFoundMessage:
+		return notFoundFile
+	case strings.HasPrefix(answer.Message, refNotFoundPrefix):
+		return notFoundRef
+	}
+	return notFoundUnknown
 }
 
 // FileAt reads path of repo at ref, mints through ts, and returns the file's
@@ -111,15 +139,20 @@ func FileAt(ctx context.Context, o Options, ts gitprov.TokenSource, repo, ref, p
 			if ref != "" {
 				where = pluginwire.Printable(ref)
 			}
-			if refNotFound(se.Body) {
+			switch notFoundAnswerOf(se.Body) {
+			case notFoundRef:
 				return nil, fmt.Errorf("%w: %s: %w", ErrRefNotFound, where, err)
+			case notFoundFile:
+				return nil, fmt.Errorf("%w: %s at %s: %w", ErrFileNotFound, at, where, err)
 			}
-			return nil, fmt.Errorf("%w: %s at %s: %w", ErrFileNotFound, at, where, err)
 		}
-		// Every other failure — a refused read, 403 included, which is what a
-		// live call with a mint that carries no contents gets — a 5xx, a
-		// non-file entry and a body over the bound all stay Contents's own
-		// refusal, wording and all.
+		// Everything else stays Contents's own refusal, wording and all: a
+		// refused read, 403 included, which is what a live call with a mint
+		// that carries no contents gets; a 5xx; a non-file entry; a body over
+		// the bound; and the 404 whose own body this code cannot read as either
+		// answer above, which is the one that must not become the absent-file
+		// row — the row that selects nothing and leaves the run on the
+		// repository's own job.
 		return nil, err
 	}
 	return data, nil
