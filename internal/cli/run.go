@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	crand "crypto/rand"
 	"encoding/json"
@@ -9,6 +10,9 @@ import (
 	"io"
 	"maps"
 	"math/rand/v2"
+	"net"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"slices"
@@ -23,6 +27,8 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/catalog"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/craft"
+	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -4340,6 +4346,15 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 	}
 	svcAuth, deployed := env.repoServiceAuth(ctx, spec, launchWarn)
 	lspec.Env = credentialsServiceLaunchEnv(env.lc, jobName, spec.Repo, svcAuth, deployed)
+	// The run's slip, asked for exactly where the service's address was just
+	// written: the grant the credentials service keeps for this run, whose id
+	// the job claims at its first call and presents on every call after it
+	// (DS1.3's two routes). It goes on THIS EXECUTION's environment and never
+	// into a stored document: the task object is the repository's own file, a
+	// repeated run ID repeats it byte for byte, and a slip is one run's.
+	if url, ok := credentialsServiceURLOf(lspec.Env); ok {
+		lspec.Env = append(lspec.Env, runSlipEnv(hctx, env, spec, slug, variant, url)...)
+	}
 	// The services the job's own catalog entry declares, on EVERY launch and
 	// empty where the deployed image is no catalog entry (backend.ServicesEnv
 	// states why the key is always written, and why it is not a reserved
@@ -4581,6 +4596,291 @@ func credentialsServiceLaunchEnv(lc *localcfg.Config, job, repo, auth string, de
 		return nil
 	}
 	return []string{envCredentialsServiceURL + "=" + lc.CredentialsService.URL}
+}
+
+// envSlip is the variable a run reads its slip's id from. It is the launcher's
+// half of the name the runner claims the slip by (DS1.5, which reads its own
+// environment), and it is spelled here because passing the id to the job is
+// this task's (DS1.4). It is plain environment and never SecretEnv: the
+// backend that matters refuses SecretEnv outright
+// (backend.LaunchSpec.SecretEnv), and the slip's protection is its binding to
+// the run and to a claim secret rather than its secrecy — the run's own agent
+// can read the runner's environment anyway (F22, reconciliation).
+const envSlip = "FUGARO_SLIP"
+
+// The grant call's own bounds. slipGrantTimeout bounds the whole of it — the
+// launcher's own mint and the call — so a service that hangs cannot eat the
+// hold this launcher took to launch (holdTimeout, half of claimTTL, and the
+// launch call itself is bounded by launchTimeout's two minutes).
+const (
+	slipGrantTimeout = 30 * time.Second
+	// maxSlipAnswerBytes bounds what the grant route may answer, as the read
+	// mint's own bound does (internal/gitprov/github's maxServiceAnswerBytes):
+	// the service is another writer, and an unbounded answer is one a launch
+	// renders into memory.
+	maxSlipAnswerBytes = 16 << 10
+	// maxSlipIDBytes bounds the id this launcher will hand a job. The service's
+	// own bound is on its side of the wire (internal/credsvc's maxSlipIDBytes,
+	// the hex of the bytes it draws), and this one is generous because a
+	// launcher cannot read that constant: an id longer than any id the service
+	// draws is one this launcher will not carry.
+	maxSlipIDBytes = 256
+)
+
+// errSlipRouteAbsent means the credentials service does not serve the grant
+// route at all — a revision built before DS1.3 — rather than refusing this
+// launcher's call. It is the version skew DS1.4 keeps: the run proceeds on the
+// path it took before the slip existed, quietly, because an installation one
+// release behind is the skew `fugaro doctor` reports and the one `fugaro
+// update` converges, and a warning on every launch of it would be noise about
+// something the launcher cannot change (D1945's shape for an older CLI).
+var errSlipRouteAbsent = errors.New("this credentials service does not serve the grant route")
+
+// slipRouteAbsent reports whether status is the answer of a service that does
+// not serve the grant route: the 404 its own router gives a path it does not
+// serve (internal/credsvc's servedRoute, which answers 404 rather than 405 for
+// a route asked with another method), and the 405 an intermediary may give a
+// route it holds for another method. Neither is a refusal of this launcher.
+func slipRouteAbsent(status int) bool {
+	return status == http.StatusNotFound || status == http.StatusMethodNotAllowed
+}
+
+// slipGrant is the grant call a launch makes, and a package variable because
+// TestMain answers it for every test that is not about the slip itself
+// (main_test.go): the call is made on every switched-on launch, and no other
+// test may reach a service or mint a token. A test about the slip replaces it
+// or hands in slipGrantOverService with a service of its own.
+var slipGrant = slipGrantOverService
+
+// slipIdentity mints the launcher's own Google ID token for serviceURL, which
+// is the identity the service's launcher class verifies (DS1.2, D1938).
+//
+// It is the PLAIN mint the read path presents (reviewReadIdentity), for the
+// audience rather than for the token: a plain mint's audience is gcloud's own
+// client id (credsvc.GcloudAudience), which the launcher class admits and which
+// is the only one a person's account can mint — gcloud refuses --audiences for
+// a user account. That a gcloud-audience token replaying a member's own access
+// also gets a slip at this route is accepted and documented rather than
+// refused (D1939, D1944).
+var slipIdentity = func(ctx context.Context, serviceURL string) (string, error) {
+	return personIdentity(ctx, serviceURL, "a run's slip is asked for")
+}
+
+// slipGrantOverService is the grant call: it presents the launcher's own
+// identity token to the grant route and reads the slip's id out of the answer.
+//
+// Nothing here can put a value a caller sent into an error: the identity token
+// is never formatted into one, the request body is the launcher's own names,
+// and the answer is read for its status, its size and its shape alone — the
+// message beside an error code is written for an operator's log and not for a
+// command's output (internal/gitprov/github's read mint drops it for the same
+// reason).
+func slipGrantOverService(ctx context.Context, serviceURL string, req credsvc.SlipGrantRequest) (credsvc.SlipGrantResponse, error) {
+	if err := checkSlipServiceURL(serviceURL); err != nil {
+		return credsvc.SlipGrantResponse{}, err
+	}
+	identity, err := slipIdentity(ctx, serviceURL)
+	if err != nil {
+		return credsvc.SlipGrantResponse{}, err
+	}
+	body, err := json.Marshal(req)
+	if err != nil {
+		return credsvc.SlipGrantResponse{}, errors.New("the grant call's request could not be built")
+	}
+	hreq, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimSuffix(serviceURL, "/")+credsvc.SlipPath, bytes.NewReader(body))
+	if err != nil {
+		return credsvc.SlipGrantResponse{}, errors.New("the grant call's request could not be built")
+	}
+	hreq.Header.Set("Content-Type", "application/json")
+	hreq.Header.Set("Accept", "application/json")
+	hreq.Header.Set("Authorization", "Bearer "+identity)
+	resp, err := slipClient().Do(hreq)
+	if err != nil {
+		return credsvc.SlipGrantResponse{}, errors.New("the installation's credentials service could not be reached")
+	}
+	defer resp.Body.Close()
+	if slipRouteAbsent(resp.StatusCode) {
+		return credsvc.SlipGrantResponse{}, fmt.Errorf("%w: the service answered %d", errSlipRouteAbsent, resp.StatusCode)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return credsvc.SlipGrantResponse{}, fmt.Errorf("the installation's credentials service refused the grant call (%d)", resp.StatusCode)
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxSlipAnswerBytes+1))
+	if err != nil {
+		return credsvc.SlipGrantResponse{}, errors.New("the credentials service's answer could not be read")
+	}
+	if len(data) > maxSlipAnswerBytes {
+		return credsvc.SlipGrantResponse{}, errors.New("the credentials service's answer is larger than a grant's")
+	}
+	var ans credsvc.SlipGrantResponse
+	if err := json.Unmarshal(data, &ans); err != nil {
+		return credsvc.SlipGrantResponse{}, errors.New("the credentials service's answer is not a grant's")
+	}
+	return ans, nil
+}
+
+// slipClient is the client the grant call is made with: it never follows a
+// redirect, because the request carries the launcher's own Google ID token and
+// a followed 307 or 308 would carry it to whatever host the Location named
+// (internal/gitprov's serviceMintClient and internal/gateway's upstreamClient
+// refuse redirects for the same reason), it keeps no cookie jar, and it does
+// not wait on an answer forever.
+func slipClient() *http.Client {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.DisableCompression = true
+	return &http.Client{
+		Transport:     t,
+		Timeout:       slipGrantTimeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+}
+
+// checkSlipServiceURL refuses a URL this launcher will not send its own
+// identity token to: the token is a bearer credential, and over plain http it
+// would travel in cleartext. The rule is internal/gitprov's read-mint rule
+// respelled (that package does not export it): https, or http on a loopback
+// address, which is a test's own service. The refusal carries the URL's shape
+// and never the URL.
+func checkSlipServiceURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
+		return errors.New("the credentials service URL this launch was built with is not a scheme and a host")
+	}
+	switch u.Scheme {
+	case "https":
+		return nil
+	case "http":
+		if ip := net.ParseIP(u.Hostname()); (ip != nil && ip.IsLoopback()) || u.Hostname() == "localhost" {
+			return nil
+		}
+	}
+	return errors.New("the credentials service URL this launch was built with is not https")
+}
+
+// runSlipEnv asks the installation's credentials service for this run's slip
+// and answers the environment entry that hands the job its id, or nothing at
+// all when there is no slip to hand it.
+//
+// Every failure but a refusal of the caller is quiet and the run starts
+// anyway, and that is not a hole in R9's no-downgrade rule: the fence is the
+// service's own, which serves a per-user, pool-owned or shared credential only
+// under a claimed slip and fails closed without one. So a launcher that could
+// not get a slip — no gcloud, a service that is not answering, an answer this
+// launcher will not carry — starts the run it started before this task existed
+// and no more than that. The alternative, failing the launch, would break runs
+// that work today over the grant of a credential they may not even use.
+func runSlipEnv(ctx context.Context, env *cloudEnv, spec *task.Spec, slug, workflow, serviceURL string) []string {
+	req := credsvc.SlipGrantRequest{
+		Slug: slug,
+		Run:  spec.RunID,
+		// The account the run will call as, derived exactly as the doctor's
+		// invoker check and the installation's own root derive it: one account
+		// is dedicated to one job per repository (D1937), and the claim is
+		// checked against it.
+		Account:           gcp.ServiceAccountID(slug, workflow) + "@" + env.lc.GCPProject + ".iam.gserviceaccount.com",
+		Credentials:       slipCredentialNames(ctx, env, spec),
+		MaxRuntimeSeconds: int64(slipRunTime(spec) / time.Second),
+	}
+	sctx, cancel := context.WithTimeout(ctx, slipGrantTimeout)
+	defer cancel()
+	ans, err := slipGrant(sctx, serviceURL, req)
+	switch {
+	case errors.Is(err, errSlipRouteAbsent):
+		return nil
+	case err != nil:
+		fmt.Fprintf(launchWarn, "warning: this run's slip was not granted, so the run starts without one and a credential that only a slip serves is refused at the call: %s\n", oneLine(err.Error()))
+		return nil
+	}
+	if !slipIDUsable(ans.Slip) {
+		fmt.Fprintf(launchWarn, "warning: the installation's credentials service answered the grant call with no usable slip id, so this run starts without a slip and a credential that only a slip serves is refused at the call\n")
+		return nil
+	}
+	if ans.MaxRuntimeSeconds < req.MaxRuntimeSeconds {
+		fmt.Fprintf(launchWarn, "warning: the slip this run was granted is served for %s and the run may live for %s: the service stops issuing at the slip's end, and a credential the run still needs after it is refused\n",
+			(time.Duration(ans.MaxRuntimeSeconds) * time.Second).String(), slipRunTime(spec).String())
+	}
+	return []string{envSlip + "=" + ans.Slip}
+}
+
+// slipCredentialNames are the credentials the run's slip asks the service to
+// serve: what each of the four crafts resolves to for this launch, deduplicated
+// — the same answer `fugaro craft ls` prints and the same one the runner will
+// make its calls with, because the resolution is internal/craft's and not a
+// second rule here (that package's own promise: a launcher and a runner cannot
+// disagree about what one configuration means).
+//
+// The layers are the two that can write a craft's access: the document this
+// run will check out, and the installation's config, which is where the owner
+// creates the credentials and the pools a repository's file only selects among
+// (F12, D1628). The project layer is not read because it cannot change this
+// answer at all: it carries crafts and only their models, since config.Scopes
+// refuses a craft access in a file anyone who can write the runs bucket can
+// write.
+//
+// A craft no layer sets an access for resolves to the default credential, so
+// the ordinary cascade repository asks for its own bundle entry and nothing
+// else — and a slip that named nothing would be a run refused the one
+// credential it has.
+//
+// subscriptionSpread is false and that is not a judgement about the switch: it
+// decides only whether a pool is reported inert, which is the run's own rule
+// about which of a pool's members to skip (D1626, MC5), and it changes no
+// access. An access naming a credential no layer holds is asked for as it
+// stands: the service's answer at the call is what says so.
+func slipCredentialNames(ctx context.Context, env *cloudEnv, spec *task.Spec) []string {
+	var layers []craft.Layer
+	if co := launchFileConfig(ctx, env, spec); co != nil {
+		layers = append(layers, craft.Layer{Name: craft.SourceRepo, Crafts: co.Agent.Crafts})
+	}
+	if env.lc != nil {
+		layers = append(layers, craft.Layer{Name: craft.SourceLocal, Crafts: env.lc.Crafts,
+			Credentials: env.lc.Credentials, Pools: env.lc.Pools, KeyPrefix: craftLocalKeyPrefix})
+	}
+	eff, _ := craft.Resolve(layers, false)
+	names := make([]string, 0, len(config.CraftNames))
+	for _, name := range config.CraftNames {
+		if access := eff[name].Access; access != "" && !slices.Contains(names, access) {
+			names = append(names, access)
+		}
+	}
+	return names
+}
+
+// slipRunTime is how long this run asks to be served for: the run's own
+// ceiling, which is the task's total timeout and what the platform is given as
+// the execution's timeout, and the platform's maximum where the task names
+// none, since that is what the backend would run it for. Asking for the run's
+// own ceiling rather than a guess is what keeps the two from drifting apart: a
+// slip that ends before the run does is a run refused at its next call, and
+// the service clamps what it will grant to its own constant (R10).
+func slipRunTime(spec *task.Spec) time.Duration {
+	if d := launchTimeoutOf(spec); d > 0 {
+		return d
+	}
+	return backend.MaxRunTime
+}
+
+// slipIDUsable reports whether id is one slip id this launcher will put on a
+// job's environment. The id becomes ONE environment entry of the execution, so
+// a value that is empty, longer than any id the service draws, or not one
+// clean printable token would be an entry the service chose rather than the id
+// it granted — and the backend builds the execution's environment out of these
+// entries.
+func slipIDUsable(id string) bool {
+	return id != "" && len(id) <= maxSlipIDBytes && reviewPrintableToken(id)
+}
+
+// credentialsServiceURLOf is the address credentialsServiceLaunchEnv put on
+// this launch, and whether it put one there at all: the slip is asked for
+// exactly where the service's address is, so the two decisions cannot disagree
+// about whether this run has a service to ask.
+func credentialsServiceURLOf(entries []string) (string, bool) {
+	for _, kv := range entries {
+		if url, ok := strings.CutPrefix(kv, envCredentialsServiceURL+"="); ok {
+			return url, url != ""
+		}
+	}
+	return "", false
 }
 
 // releaseClaim drops our own claim after a failed launch, so a retry need
