@@ -113,6 +113,18 @@ type initOptions struct {
 	launchersChanged, operatorsChanged  bool
 	alertEmailChanged, baseImageChanged bool
 
+	// --bake-repos answers the wizard's bake question without a terminal (IS7
+	// of docs/image-setup-skill/implementation-plan.md; D1901): whether a
+	// repository the build can read is baked into the image its job runs. The
+	// switch is the project's, so the answer is written into the local config
+	// (writeConfig) and published from it by the same run. bakeReposChanged is
+	// the flag's own "it was passed", and it has to be separate: an absent key
+	// and a written true are one statement to every reader (localcfg's
+	// BakeRepos) and two different runs to the question, which is asked only
+	// where nobody has answered it.
+	bakeRepos        bool
+	bakeReposChanged bool
+
 	// --firebase-project names a separate Firebase project to build the budget
 	// backend in; empty means the installation's own GCP project, which is the
 	// default (firebaseProject, D7). --budget-mode seeds the mode and
@@ -361,6 +373,7 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 			o.launchersChanged, o.operatorsChanged = f.Changed("launcher"), f.Changed("operator")
 			o.alertEmailChanged, o.baseImageChanged = f.Changed("alert-email"), f.Changed("base-image")
 			o.budgetAdminsChanged = f.Changed("budget-admin")
+			o.bakeReposChanged = f.Changed("bake-repos")
 			r := newInitRun(cmd, o)
 			// A flag that belongs to the other door: refused here, by name,
 			// before anything is read, prompted for or applied, so a script
@@ -447,6 +460,11 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	f.StringVar(&o.imageSource, "image-source", "", "the registry and owner the release images come from: a base kind is resolved and signature-verified there and pinned through the installation's remote repository, a history image is copied from it (default ghcr.io/dimipaun; a fork names its own, such as ghcr.io/acme)")
 	f.StringArrayVar(&o.expectDigests, "expect-digest", nil, "pin the digest of a release image, KIND=sha256:<hex> (KIND is base or history; repeatable): the digest of the source tag's manifest (the index), obtained out of band such as from the release notes. A base kind is cross-checked against it: its digest is verified against the release's cosign signature either way, and the two must agree. For history it is the trust anchor: without it "+d.name+" trusts what the release tag in ghcr.io resolves to now, which is whoever can write that tag")
 	f.StringArrayVar(&o.replaceImages, "replace-image", nil, "KIND (history; repeatable): let the converge replace that image's tag in your registry when it names another image, a release tag or history:latest (never done otherwise, so a hand-pushed history:latest needs it once). A base kind is refused: it is pinned by digest through the remote repository, so nothing of it is ever copied over. It names the intent only: replacing is an ordinary covered step, so --yes covers it in either door and a person at a real terminal without --yes confirms it by being there (a pipe, --json, --non-interactive and a coding agent's session confirm nothing)")
+	// The bake switch (IS7, D1901). Its usage is read on both doors, so it
+	// names no door: what it says about where the question is asked is about
+	// the run that creates the installation, which is the one whose answer is
+	// a project's own.
+	f.BoolVar(&o.bakeRepos, "bake-repos", false, "answer the bake question without a terminal: whether a repository the build can read is baked into the image its job runs (the default is yes, and an absent key means the same). --bake-repos says yes, --bake-repos=false says no, and either one writes the value into the local config this run writes, which the same run publishes. Passing neither asks the question where it can be asked — on a run that creates the installation, and nowhere else: a run with a project config keeps the answer the project's own (the published policy's) and is never asked, which is the rule for a managed project. Either way the answer takes effect in the images built from then on: the build is what bakes a repository in, so the images already built keep what they have until they are rebuilt")
 	f.StringArrayVar(&o.launchers, "launcher", nil, "an IAM member who launches and watches runs (repeatable; default: the local config's, and for a new config you, the authenticated user)")
 	f.StringArrayVar(&o.operators, "operator", nil, "an IAM member who onboards repositories (repeatable; default: the local config's, and for a new config you, the authenticated user)")
 	f.Int64Var(&o.budget, "budget", 0, budgetFlagHelp(d))
@@ -3065,6 +3083,31 @@ func (r *initRun) readOutputs(ctx context.Context, c *infra.Clients, t *tf.TF, w
 	return infra.DecodeOutputs(raw)
 }
 
+// carryBakeAnswer writes the answer this run was given about baking into the
+// local config it is about to write (IS7, D1901) — the wizard's question, or
+// --bake-repos — and returns whether there was an answer to carry.
+//
+// Two writers call it, and they have to agree. One is writeConfig, for a run
+// that reaches its installation. The other is init_project.go's pauseBecause,
+// which writes the local config of the first run that pauses for billing — and
+// that run never reaches writeConfig, because the Project stage is before
+// Installation (init_stages.go). An answer carried only by writeConfig would be
+// lost for good on that path: the rerun reads a config, so the wizard asks it
+// nothing, and an absent key means yes — a person who answered no would get
+// baking on, with no question ever again.
+//
+// It is written because only a written value can carry a no: the value is what
+// the same run's policy stage publishes (init_policy_publish.go reads the file
+// through lc, which writeConfig moves to next at its end).
+func (r *initRun) carryBakeAnswer(next *localcfg.Config) bool {
+	if !r.o.bakeReposChanged {
+		return false
+	}
+	answer := r.o.bakeRepos
+	next.BakeRepos = &answer
+	return true
+}
+
 // writeConfig writes the local config from the installation's outputs and
 // the flags, keeping everything else (repos, the legacy registry, the
 // endpoints) and dropping build.service_account. It shows the diff first,
@@ -3076,6 +3119,7 @@ func (r *initRun) writeConfig(ctx context.Context, lc *localcfg.Config, spec inf
 	}
 	r.res.Outputs = &outs
 	next := *lc
+	carried := r.carryBakeAnswer(&next)
 	if outs.RunsBucket != "" {
 		next.RunsBucket = outs.RunsBucket
 	}
@@ -3182,6 +3226,12 @@ func (r *initRun) writeConfig(ctx context.Context, lc *localcfg.Config, spec inf
 	}
 	if err := r.writeLocalConfig(&next, path, old, confirmed); err != nil {
 		return err
+	}
+	if carried {
+		// The switch answers what the next build does, not what the images
+		// that exist did: the reader of the answer is owed that
+		// (noteBakeRebuild, setup.go).
+		r.noteBakeRebuild()
 	}
 	// The engine's own view of the local config follows the file it just
 	// wrote, the way init_images.go's does after the pin: the stages that run
@@ -3751,6 +3801,11 @@ func (o *initOptions) installationFlags() []string {
 		"--registry-cleanup": o.registryCleanup != "", "--runs-bucket": o.runsBucket != "", "--scheduler-region": o.schedulerRegion != "",
 		"--firebase-project": o.firebase != "", "--budget-mode": o.budgetMode != "", "--budget-admin": o.budgetAdminsChanged,
 		"--create-project": o.createProject, "--managed": o.managed, "--display-name": o.displayName != "", "--parent": o.parent != "", "--link-billing": o.linkBilling != "",
+		// The bake switch is a project-wide setting the local config carries
+		// (IS7, D1901), so a --repo run — which onboards a repository and
+		// writes no local config of its own shape — would drop a value it was
+		// handed. It is refused by name instead, like the flags above it.
+		"--bake-repos": o.bakeReposChanged,
 	}
 	var set []string
 	for _, f := range slices.Sorted(maps.Keys(installationOnly)) {

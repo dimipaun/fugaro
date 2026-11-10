@@ -25,16 +25,22 @@ func modeRank(m string) int {
 	return 0 // unset or unknown: carries no value
 }
 
-// layerName names the i-th layer: 0 is the ceiling, 1 the default branch, and
-// anything after that the run's branch.
+// layerName names the i-th layer: 0 is the ceiling, 1 the default branch, 2
+// the run's branch (its own fugaro.yaml) and anything after that the chain —
+// the launch's own limits, merged last of all (docs/run-limit-carry-over F4).
+// The runner merges three layers today and every name here is the layer it
+// says: the chain layer is the fourth, and it is the only one a launch
+// argument reaches the merge through.
 func layerName(i int) string {
 	switch i {
 	case 0:
 		return SourceCeiling
 	case 1:
 		return SourceDefaultBranch
+	case 2:
+		return SourceBranch
 	}
-	return SourceBranch
+	return SourceChain
 }
 
 // Merge applies layers in order (the ceiling first, then tighten[0] as the
@@ -113,6 +119,17 @@ func Merge(ceiling Layer, tighten ...Layer) Effective {
 					strconv.FormatInt(e.MaxRunTokens, 10), e.Sources[KeyMaxRunTokens]})
 			}
 		}
+
+		// The chain's own two dimensions (docs/run-limit-carry-over D1041)
+		// are the same rule: the smaller positive value wins, and a layer
+		// that writes none of them leaves the earlier layers' alone. Only
+		// the launch's chain layer carries one today, so a key these two
+		// set is never a loser — which is what leaves a caller's
+		// --max-time and --max-review-rounds unrefused by this merge
+		// (D1057) and refused by the launcher's own read of Ignored where
+		// a policy layer under them does set a lower number (D1043).
+		e.tightenDuration(&e.MaxRunTime, l.MaxRunTime, KeyMaxRunTime, src)
+		e.tightenInt(&e.MaxReviewRounds, l.MaxReviewRounds, KeyMaxReviewRounds, src)
 
 		e.tightenInt(&e.MaxOutputCoder, l.MaxOutputCoder, KeyMaxOutputCoder, src)
 		e.tightenInt(&e.MaxOutputReviewer, l.MaxOutputReviewer, KeyMaxOutputReviewer, src)

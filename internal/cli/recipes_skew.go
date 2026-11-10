@@ -749,6 +749,28 @@ const rigorRequestSince = "0.11.1"
 // field too (tierGateSubject), on the same image.
 const governanceSince = "0.13.0"
 
+// launchLimitsSince is the release whose runner knows the four chain limits a
+// launch may write into task.json's overrides (max_usd, max_tokens, max_time,
+// max_review_rounds; docs/run-limit-carry-over §2, D1041). task.Parse decodes
+// with DisallowUnknownFields, so a runner older than this refuses the whole
+// task: a launch that carries one is gated here rather than started on a job
+// that dies at bootstrap.
+const launchLimitsSince = "0.22.0"
+
+// chainLimitsKnows is what such a runner knows, as the gate names it.
+const chainLimitsKnows = "the chain's limits its task carries (max_usd, max_tokens, max_time, max_review_rounds)"
+
+// chainLimitsSubject is what the gate says the launch carries: the four flags
+// that write the four fields. A launch that reuses a stored task — --retry, or
+// a repeated --run-id of one that never launched — carries limits no flag of
+// this call named, which is why the subject names the fields as well as the
+// flags.
+const chainLimitsSubject = "a chain limit (--max-usd, --max-tokens, --max-time, --max-review-rounds)"
+
+// chainLimitsAlt is the gate's other cure: the launch can drop the limits,
+// where the image cannot be brought forward.
+const chainLimitsAlt = "; or drop the chain limits from the launch, which needs a job image whose runner knows them before it can carry one"
+
 // authorSince is the first fugaro release whose runner reads a task's author
 // field (task.Spec.Author, the launcher's identity a launch records for the
 // repositories that opted in, D604/D606): an older runner refuses the field

@@ -99,6 +99,22 @@ func routeAct(path string) (purpose, credential string) {
 		// acts apart, and it is the field an operator greps: a person's read is
 		// not a run's mint even though both are signed with the one key.
 		return PurposeGitHubRead, config.GitHubAppKeySecret
+	case SlipPath:
+		// A grant's line names the launcher and no credential: the act is a
+		// request for a run's grant and not an issuance, so there is no name of
+		// a credential it could carry — the slip it writes holds names, and
+		// which of them a run is later served is another route's answer
+		// (DS1.6). Like the verify and read-mint purposes, its line is written
+		// for a caller that is not a run of this installation at all
+		// (callerWithoutJobPurpose).
+		return PurposeSlipGrant, ""
+	case SlipClaimPath:
+		// A claim's line is an ordinary job-class one and names no credential,
+		// for the grant's reason: the claim answers a claim secret and issues
+		// no credential of the cascade, so there is no name to pair with a
+		// tier — and naming one would be recording a fact the route does not
+		// have.
+		return PurposeSlipClaim, ""
 	case SignPath:
 		// The sign route's credential is the account's review-signing key
 		// (verdict.go), and THAT NAME IS NOT IN THE PATH: it is the caller's
@@ -162,7 +178,7 @@ func servedRoute(r *http.Request) bool {
 		return false
 	}
 	switch r.URL.Path {
-	case MessagesPath, CountTokensPath, MintPath, SignPath, VerifyPath, BitbucketReadPath, GitHubReadPath:
+	case MessagesPath, CountTokensPath, MintPath, SignPath, VerifyPath, BitbucketReadPath, GitHubReadPath, SlipPath, SlipClaimPath:
 		return true
 	}
 	return false
@@ -312,6 +328,16 @@ type Config struct {
 	// probing a credential, which lapses on its own and is never deleted.
 	// *rtdb.Client is one.
 	Probes ProbeLeases
+	// Slips is the grant a launcher asks for and the claim a run makes once
+	// (DS1.1, DS1.3): its own node, its own lifetime and its own store, which
+	// is why it is neither State's nor DB's business — a slip is written before
+	// a run exists and read on every call the run makes, and no selection has
+	// anything to say about it. *creds.RTDBStore is one.
+	//
+	// It is required at construction, like State and Probes and for a stronger
+	// reason than either: a service that cannot write a slip cannot grant a run
+	// its credentials at all, so it is not a service this build starts.
+	Slips creds.SlipStore
 	// Signs is the create-only write the one-signature mark is taken with
 	// (C3.9e, D1074): the sign route's own node, which is why it is neither
 	// DB's business nor State's. It may be nil, and a nil one is a service
@@ -390,6 +416,13 @@ type Verifier interface {
 	// GitHub read is the person's alone, because the coordinator job holds the
 	// App credential itself and mints its own read-only token with it.
 	VerifyPersonCaller(ctx context.Context, tok string) (string, error)
+	// VerifyLauncher admits the caller of the grant route (DS1.3, D1938), which
+	// presents a token and no Request for the same reason as the three above:
+	// the path is answered ahead of RequestFromHTTP. A launcher is a person on
+	// the installation's roster, and what the grant needs of the token beyond
+	// the address is the numeric `sub` — the owner a per-user credential's name
+	// is checked against (R7) and the identity the slip records (DS1.1).
+	VerifyLauncher(ctx context.Context, tok string) (LauncherCaller, error)
 }
 
 // PolicyReader is the published policy as the service reads it: the project's
@@ -522,6 +555,15 @@ func NewServer(cfg Config) (*Server, error) {
 		// transition off that mark). A service that cannot take the lease is
 		// therefore not a service this build starts.
 		return nil, errors.New("credsvc: the service cannot take the probe's one-at-a-time lease, so a backed-off credential could never come back")
+	}
+	if cfg.Slips == nil {
+		// A service that cannot write a slip cannot grant a run anything: the
+		// grant is the only way a run is ever handed the id its calls are bound
+		// to (D1932), so a nil store is a service whose whole purpose is
+		// unreachable rather than one whose slip route refuses — which is the
+		// same statement NewServer makes about State and Probes, and the reason
+		// a deployment has no flag to leave it out.
+		return nil, errors.New("credsvc: the service cannot write a slip, so it can grant no run its credentials")
 	}
 	if cfg.AuditLog == nil {
 		// The same refusal for the same reason one step further along: a probe
@@ -665,7 +707,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// "no admin endpoint" is kept by there being nothing to reach rather
 		// than by a check inside a handler.
 		s.refuse(w, http.StatusNotFound, "not_found",
-			"this service serves POST "+MessagesPath+", "+CountTokensPath+", "+MintPath+", "+SignPath+", "+VerifyPath+", "+BitbucketReadPath+" and "+GitHubReadPath+", and the run's own Bitbucket traffic under "+BitbucketProxyPrefix)
+			"this service serves POST "+MessagesPath+", "+CountTokensPath+", "+MintPath+", "+SignPath+", "+VerifyPath+", "+BitbucketReadPath+", "+GitHubReadPath+", "+SlipPath+" and "+SlipClaimPath+", and the run's own Bitbucket traffic under "+BitbucketProxyPrefix)
 		return
 	}
 	if r.URL.Path == VerifyPath {
@@ -694,6 +736,22 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// readGitHubReadRequest, and the run-identity headers are refused by
 		// name inside the handler.
 		s.githubRead(ctx, w, r)
+		return
+	}
+	if r.URL.Path == SlipPath {
+		// The fourth route answered before the shared parse, and the launcher
+		// class's reason is the other three's: a launcher holds no run identity,
+		// and the run it is asking for does not exist yet (D1937, D1938), so
+		// RequestFromHTTP would refuse the call — for the missing identity
+		// headers — before the class ever read the token. What replaces the
+		// parse is this route's own read of the body (readGrantRequest), and the
+		// run and the repository the call is for are its fields and not headers.
+		//
+		// The CLAIM route is deliberately not here: a claim is the run's own
+		// first call and presents the two identities every other run call does,
+		// so it goes through the shared parse below and is branched on after the
+		// stop switches, exactly as the mint is.
+		s.slipGrant(ctx, w, r)
 		return
 	}
 	req, err := RequestFromHTTP(r)
@@ -784,6 +842,20 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// credential at all.
 		s.refuseCall(ctx, w, id, purpose, credential, "", StatusUnavailable, ErrorStateUnavailable,
 			"the credentials service is stopped by the "+which+" kill switch")
+		return
+	}
+	if r.URL.Path == SlipClaimPath {
+		// The claim (DS1.3, D1941). Everything above it is its admission and
+		// nothing below it is: the run identity and the job's own token have
+		// been verified, the pairing has fixed the repository the run belongs
+		// to, and the operator's stop flag has been read, so a stopped service
+		// claims nothing. It reads the slip the run names and decides from the
+		// record alone — the run it binds, the account it expects and the claim
+		// secret, if it was already claimed — and it consults no policy, no
+		// bundle and no cascade: a slip is a grant, not a credential, and no
+		// tier or admission has anything to say about it. Which of those names a
+		// run is later served is DS1.6's call.
+		s.slipClaim(ctx, w, r, id, req)
 		return
 	}
 	if r.URL.Path == MintPath {
