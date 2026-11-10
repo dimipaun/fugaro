@@ -522,10 +522,12 @@ func TestWindowsConsoleWorkflowIsReleaseTimeOnly(t *testing.T) {
 
 // TestWindowsConsolePackIsNotInTheReleaseGate is D8(a)'s guard: the staged
 // Windows job's check name is not a name the release gate requires, and the
-// file's own header says why -- in the two rulings read together, which are the
-// two reasons it cannot move into console-tests.yml. The gate's list is derived
-// from that workflow's **single** job, and this job never runs on a pull request
-// at all.
+// file's own header says why. The structural reason is the gate's derivation --
+// it reads console-tests.yml's **single** job -- and D7(c)'s release-time-only
+// trigger is stated as a property of this job, not as a difference from that
+// file's triggers: console-tests.yml is dispatched by hand today, so its
+// trigger is not what keeps the Windows pack out of it, and a sentence saying
+// otherwise would be false in the tree it ships in.
 //
 // The gate's list itself is TestReleaseGateRequiresTheConsoleCheck's subject,
 // and it is re-read here rather than restated: the console's names are derived
@@ -535,7 +537,9 @@ func TestWindowsConsoleWorkflowIsReleaseTimeOnly(t *testing.T) {
 // The mutations that prove it: add `console-windows` to scripts/release-gate.sh's
 // `names=(...)` array (and to the `#   ` block above it) and both list cases
 // fail; delete the header's "NOT in the gate" sentence, or its
-// "never on a pull request", and the header case fails by naming the sentence.
+// "never on a pull request", and the header case fails by naming the sentence;
+// put the false "console-tests.yml runs on every pull request" reason back and
+// the forbidden-phrase case fails by naming it.
 func TestWindowsConsolePackIsNotInTheReleaseGate(t *testing.T) {
 	text, path := consoleWorkflowText(t, windowsConsoleWorkflowPath, appliedConsoleWindowsPath)
 
@@ -573,19 +577,22 @@ func TestWindowsConsolePackIsNotInTheReleaseGate(t *testing.T) {
 	}
 
 	// The two rulings, in the header a reader opens rather than in the staging
-	// README they may not. Read together, because they are the two reasons this
-	// job cannot move into console-tests.yml: the gate's list is derived from
-	// that file's single job, and this job never runs on a pull request, which is
-	// the only trigger that file has.
+	// README they may not. The gate's derivation is the structural reason, and
+	// D7(c)'s trigger is this job's own property -- stated as such, because the
+	// two files' triggers do not differ: console-tests.yml's only one is
+	// `workflow_dispatch` since the owner's ruling of 2026-11-07, so a sentence
+	// claiming it runs on every pull request would be a reason that does not hold
+	// in the tree this file ships in.
 	header := flattenDoc(windowsConsoleBlock(t, path, text, "# WHY THIS IS ITS OWN WORKFLOW", "\n# WHAT THIS FILE IS"))
 	for _, want := range []string{
 		"NOT in the gate",
 		"refuses a workflow with more than one job",
 		"names=(...)",
 		"never on a pull request",
+		"workflow_dispatch` today",
 	} {
 		if !strings.Contains(header, want) {
-			t.Errorf("%s's own-workflow section no longer carries %q: the gate's list is derived from console-tests.yml's single job and this job never runs on a pull request, and those two rulings are why the Windows pack cannot join that file (D8(a), D7(c))", path, want)
+			t.Errorf("%s's own-workflow section no longer carries %q: the gate's list is derived from console-tests.yml's single job, this job is never on a pull request, and console-tests.yml is dispatched by hand today -- a reason that treats it as a pull-request workflow is false (D8(a), D7(c))", path, want)
 		}
 	}
 
@@ -599,6 +606,25 @@ func TestWindowsConsolePackIsNotInTheReleaseGate(t *testing.T) {
 	} {
 		if !strings.Contains(section, want) {
 			t.Errorf("docs/pending-workflows/README.md's `console-windows.yml` section no longer carries %q: the owner is the one who copies the file in, and the section is where they read that the pack does not gate a release and does not run on a pull request", want)
+		}
+	}
+
+	// And neither text may reach for the reason that is no longer true:
+	// console-tests.yml stopped running on pull requests in the owner's ruling of
+	// 2026-11-07 (e5d6ba7c), so "it runs on every pull request" is exactly the
+	// sort of claim this work would otherwise record as the owner's reasoning --
+	// a reader would decide on it, and no pinned string above would catch it.
+	// (The same sentence is still in console-tests.yml's own header, which an
+	// agent run may not edit: the file under .github/workflows/ would have to
+	// move with it, and this run cannot push one.)
+	for _, c := range []struct{ what, text string }{
+		{"docs/pending-workflows/console-windows.yml's own-workflow section", header},
+		{"docs/pending-workflows/README.md's `console-windows.yml` section", section},
+	} {
+		for _, forbidden := range []string{"runs on every pull request", "runs on every one", "on every pull request from any branch"} {
+			if strings.Contains(c.text, forbidden) {
+				t.Errorf("%s says %q of a workflow: console-tests.yml's only trigger is workflow_dispatch since the owner's ruling of 2026-11-07, so this is a reason that does not hold in the tree it ships in", c.what, forbidden)
+			}
 		}
 	}
 }
