@@ -817,7 +817,7 @@ pin over `docs/dogfooding.md`'s own reports section, moved the table's row
 from 115 to 116: the folder the page names and the launch it schedules are read
 out of `internal/digest` and `internal/recipe`, so the page and the layout cannot
 drift apart.
-Amended 2026-11-10: `internal/cli/docs_dynamic_delivery_test.go`, the dynamic-delivery folder's pin (the register's Checks 510 and 511, their two steps files and the numbers the folder claims, DS0.2), moved the same row once more, from 116 to 117.
+Amended 2026-11-10: `internal/cli/docs_dynamic_delivery_test.go`, the dynamic-delivery folder's pin (the register's Checks 510 and 511, their two steps files and the numbers the folder claims, DS0.2), moved the table's row from 116 to 117.
 Amended 2026-11-10: `internal/cli/docs_run_without_checkout_test.go`,
 the run-without-checkout folder's pin over A0 having landed — the person read
 set its status lines name and the answer row it was raised by are read

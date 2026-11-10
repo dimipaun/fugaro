@@ -49,18 +49,19 @@ request that carries this ruling rather than dropped here.
   section prints the review floor (F10) and one line saying the mode floors are not built (F9). The
   task that ships T1.5 adds the sensitive-path set to that section; until then no surface here may
   claim to display a floor that does not exist. **R3 designed that section and is closed, so what
-  the caveat binds is whatever surface prints a floor — the `fugaro rigor floor` family (the settings
-  design's S7, config-management's G7), whose read is the one that shows the floor per mode.** Not a
-  blocker.
+  the caveat binds is whatever surface prints a floor — the `fugaro rigor floor` family
+  (config-management's G7, which wins over the settings design's S7, closed as G7's duplicate on
+  2026-11-10), whose read is the one that shows the floor per mode.** Not a blocker.
 - **The console's project view** (plan P6, not built) is not an external dependency of anything:
   D836 puts no console task in this plan.
 - **The `rigor` command group is not this plan's any more.** `internal/cli/rigor.go` — the group that
   holds `show`, `set`, `unset` and (SD10) the `floor` subgroup — is created by **whichever of
-  config-management's G6 (`fugaro rigor set`), its G7 and the settings design's S7 (`fugaro rigor
-  floor`) lands first**, and each of the others adds its own subcommand to it: all three folders
-  state that one sentence the same way, and which of the three creates the file is theirs to settle,
+  config-management's G6 (`fugaro rigor set`) and its G7 (`fugaro rigor floor`) lands first**, and
+  the other adds its own subcommand to it: the two winning folders
+  state that one sentence the same way, and which of the two creates the file is theirs to settle,
   not this plan's.
-  The version that made it "whichever of R3 and S7 lands first" is spent, because **R3 is closed**;
+  The version that made it "whichever of R3 and S7 lands first" is spent, because **R3 and S7 are
+  both closed** — S7, the settings design's `fugaro rigor floor`, as G7's duplicate on 2026-11-10;
   no task left in this plan touches the file, and **W** takes the wording of its summary line from G6
   rather than from a second sentence of its own.
 - **Files other work owns:** registering the command in `internal/cli/root.go`, the generated
@@ -71,7 +72,7 @@ request that carries this ruling rather than dropped here.
 **The `Needs` column is a *code* dependency: what must be merged for that task to build, test and be
 reviewed on its own.** Two of its entries reach into another design — **S5**, the settings task that
 lands the shared write helper (`internal/cli/settings_write.go`), and **the winners' rigor tasks**
-(config-management's **G6** and **G7**, and the settings design's **S7**), which build the commands
+(config-management's **G6** and **G7**), which build the commands
 this plan designed and the owner closed as duplicates on 2026-11-10 — and each is a position in the
 [README](README.md)'s joint order rather than a task in this plan.
 
@@ -79,7 +80,7 @@ this plan designed and the owner closed as duplicates on 2026-11-10 — and each
 | --- | --- | --- |
 | 0 | R0 (merged) | nothing |
 | 1 | R1 (merged) | R0 |
-| 2 | R6 | R1, and the winners' commands it documents (config-management's G6 and G7, the settings design's S7) |
+| 2 | R6 | R1, and the winners' commands it documents (config-management's G6 and G7) |
 | 3 | R7, R8 (merged) | nothing (R7 lands nothing before the owner answers) |
 | 4 | W | R0, R1, S5, and config-management's G6 (its write path, and D834's `hotfix` refusal with the sentence it uses) |
 
@@ -430,8 +431,8 @@ covered by the winners* in the pull request that carries this ruling, for the ow
   the settings design states the same sentence). R3 therefore does **not** assume the file is there,
   and S7 must not either: the task's first commit either creates the group or adds to it, and says
   which in the message. **(R3 is closed, so this is the record of what was designed: the group is
-  config-management's G6's and the settings design's S7's — see "Order, and what this plan does not
-  own".)**
+  config-management's G6's and G7's — S7, which this sentence paired with R3, is closed as G7's
+  duplicate on 2026-11-10; see "Order, and what this plan does not own".)**
 - **The resolution is `rigor.Resolve` and nothing else.** `show` calls
   `rigor.Resolve` (`internal/rigor/resolve.go`) per repository and prints what it returns —
   `internal/rigor` is the one place the modes are ordered and the precedence settled (spec §2), and
@@ -585,8 +586,8 @@ no layer and nothing in the cloud.
 - **Tests:** `GOFLAGS=-p=2 go test ./internal/cli/ -run Docs`, the plugin tests, `npm run check` in
   `website/`.
 - **Depends on:** R1 (the stage whose release notes and `docs/project-layer.md` sentences it writes)
-  and the winners' commands it documents — config-management's **G6** and **G7**, the settings
-  design's **S7** — because nothing here may document a command that does not exist. Not on R7, R8 or
+  and the winners' commands it documents — config-management's **G6** and **G7** — because nothing
+  here may document a command that does not exist. Not on R7, R8 or
   W; the W sentence above is added by the release that carries W, and only then.
 
 ## R7. The hotfix gate D12 names, which does not exist (F13). **SEC**
@@ -686,7 +687,8 @@ changes are the wizard's and the setup skill's.
 sentences keep the names they were written with, because config-management's **G6** re-reads this
 design as its own first step: **R2**'s `EditRigor` is that plan's generic write path over
 `internal/yamledit` (**G0–G2** with **G4**), **R3**'s summary line is the rigor wording of **G6** and
-of the settings design's **S7**, and **R4**'s refusal of `hotfix` (D834) and its
+of the settings design's **S7**, whose winner for the floor is config-management's **G7** (S7 is
+closed as its duplicate, as above), and **R4**'s refusal of `hotfix` (D834) and its
 `TestRigorSetCreatesTheFileWhenNoLayerIsPublished` are **G6**'s.
 
 - **The question is a row of `setupQuestions`, and that is what makes it required.** The wizard's

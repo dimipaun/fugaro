@@ -1,0 +1,547 @@
+package cli
+
+import (
+	"errors"
+	"slices"
+	"strings"
+	"testing"
+
+	managedmode "github.com/dimipaun/fugaro/internal/managed"
+	"github.com/dimipaun/fugaro/internal/settings"
+)
+
+// G4's tests (docs/config-management/implementation-plan.md, D1175): the
+// project layer file's entries are the generic writer's. The layer's blocks are
+// written through the two mechanisms the earlier tasks landed — a concrete
+// spelling of a wildcard row (D1161) and the entry pair (D1162, D1163) — and
+// the refusals `fugaro config publish` makes over the layer document are the
+// ones this edit makes over its own.
+//
+// What each of these holds: the layer file is the document that decides which
+// profile a project's repositories run under, so the two writes that are new
+// here are asserted on the file itself and read back through the loader the
+// runner reads it with, and the two refusals are asserted to be the ones that
+// name what the person reached for rather than the generic allowlist.
+
+// settingsLayerProfiles is a layer file carrying one profile, the shape every
+// executable key of a layer is written through (config.ProjectLayer's
+// profiles.*, spec §3.6).
+const settingsLayerProfiles = "default_profile: web\nprofiles:\n  web:\n    description: the web profile\n    commands:\n      rerun_failed:\n        command: pytest\n        each: pytest {id}\n"
+
+// TestSettingsSetLayerProfileEntryWritesTheLayerFile: an entry of the layer's
+// `profiles.<n>.commands.rerun_failed` reaches the layer file through
+// --add-entry (D1162), which is the mechanism a map's entry has — the
+// registry spells the block's leaves one at a time
+// (`layer.profiles.*.commands.rerun_failed.command`) and holds no row for the
+// block a person names. The entry is addressed by its field and never by
+// position (D1163).
+//
+// The entry is a command, so the owner's --executable-changes is named with it:
+// every executable key of a layer lives in a profile, and this is the document
+// the gate below refuses without it.
+func TestSettingsSetLayerProfileEntryWritesTheLayerFile(t *testing.T) {
+	settingsWriteHome(t)
+	path := settingsWriteLayerFile(t, settingsLayerProfiles)
+	noTerminal(t)
+	out, _, err := execute(t, "settings", "set", "layer.profiles.web.commands.rerun_failed",
+		"--add-entry", "command=pytest -k", "--layer", "project", "--executable-changes")
+	if err != nil {
+		t.Fatalf("the layer's profile entry was refused: %v\n%s", err, out)
+	}
+	got := readFileString(t, path)
+	if !strings.Contains(got, "rerun_failed:") || !strings.Contains(got, "command: pytest -k") {
+		t.Errorf("the layer file does not carry the entry:\n%s", got)
+	}
+	// The file the write produced is the one the loader reads: an entry this
+	// command can write and the run cannot read would be a setting nobody has.
+	l := parseLayerOrFatal(t, got)
+	rf := l.Profiles["web"].Commands.RerunFailed
+	if rf == nil || rf.Command != "pytest -k" {
+		t.Errorf("the loader reads the profile's rerun command as %v, want %q", rf, "pytest -k")
+	}
+	// And the write ends where every layer write ends (D1176): the publish is
+	// `fugaro update`'s own step and not a second command.
+	if !strings.Contains(out, "next: fugaro update") {
+		t.Errorf("the layer write does not end with the next step:\n%s", out)
+	}
+}
+
+// TestSettingsSetLayerAbEntryWritesTheLayerFile: the layer's `ab` block is the
+// third block D1161 names (spec §3.6), and its entries are written the same
+// way: `--add-entry rate=0.05` writes the member the row names, into this
+// machine's own layer file.
+func TestSettingsSetLayerAbEntryWritesTheLayerFile(t *testing.T) {
+	settingsWriteHome(t)
+	path := settingsWriteLayerFile(t, "")
+	noTerminal(t)
+	out, _, err := execute(t, "settings", "set", "layer.ab", "--add-entry", "rate=0.05", "--layer", "project")
+	if err != nil {
+		t.Fatalf("the layer's ab entry was refused: %v\n%s", err, out)
+	}
+	got := readFileString(t, path)
+	if !strings.Contains(got, "rate: 0.05") {
+		t.Errorf("the layer file does not carry the ab entry:\n%s", got)
+	}
+	l := parseLayerOrFatal(t, got)
+	if l.AB == nil || l.AB.Rate != 0.05 {
+		t.Errorf("the loader reads ab.rate as %v, want 0.05", l.AB.Rate)
+	}
+	// The removal is the same mechanism, and it leaves the file a layer: a
+	// member taken away is not an empty mapping.
+	if out, _, err := execute(t, "settings", "set", "layer.ab", "--remove-entry", "rate", "--layer", "project"); err != nil {
+		t.Fatalf("the ab entry was not removable: %v\n%s", err, out)
+	}
+	if got := readFileString(t, path); strings.Contains(got, "rate:") {
+		t.Errorf("the removed ab entry is still in the layer file:\n%s", got)
+	}
+}
+
+// settingsLayerAgentCaps is a layer file whose defaults.agent block holds the
+// spend cap beside another member: the cap is the key these tests write, and
+// the member beside it is what keeps the block a mapping once the cap leaves.
+const settingsLayerAgentCaps = "defaults:\n  agent:\n    max_budget_usd: 25\n    review_rounds: 3\n"
+
+// TestSettingsSetLayerAgentEntryIsClassifiedAsTheLeafItWrites: an entry of the
+// layer's `defaults.agent` block is one member of that block, and the key the
+// write is about is the member's own — `layer.defaults.agent.max_budget_usd`,
+// the row the registry holds and D846's fence reads — and not the block the
+// command line named. So the entry spelling and the leaf spelling of one edit
+// answer the widening question alike, which is what D1165's "classified ...
+// exactly as a scalar write is" means: an entry write that raises a ceiling is
+// a ceiling raised, in the dry run's widening (D1106, the console's tick) and
+// in the class the managed gate judges (settingsOwnerOnlyRule, D1026).
+func TestSettingsSetLayerAgentEntryIsClassifiedAsTheLeafItWrites(t *testing.T) {
+	settingsWriteHome(t)
+	settingsWriteLayerFile(t, settingsLayerAgentCaps)
+	noTerminal(t)
+
+	raised := settingsDryRunDoc(t, "settings", "set", "layer.defaults.agent",
+		"--add-entry", "max_budget_usd=100", "--layer", "project")
+	leaf := settingsDryRunDoc(t, "settings", "set", "layer.defaults.agent.max_budget_usd",
+		"100", "--layer", "project")
+	if !raised.Widening {
+		t.Errorf("raising the cap through an entry is not classified as a widening: %+v", raised)
+	}
+	if raised.Widening != leaf.Widening || raised.Why != leaf.Why {
+		t.Errorf("the entry spelling and the leaf spelling of one edit are classified differently: %+v against %+v", raised, leaf)
+	}
+	// The classification is the leaf's and the window is still the entry's: the
+	// members a person is shown are the entry's own (D1164), and the block
+	// around it is not what changed.
+	if raised.Operation != "add-entry" || raised.Old != "max_budget_usd=25" || raised.New != "max_budget_usd=100" {
+		t.Errorf("the dry run of the entry does not show the entry the write is about: %+v", raised)
+	}
+	// The other direction is unchanged: a cap written below the one the file
+	// holds tightens it, and no tightening asks for the owner's own hand.
+	lowered := settingsDryRunDoc(t, "settings", "set", "layer.defaults.agent",
+		"--add-entry", "max_budget_usd=10", "--layer", "project")
+	if lowered.Widening {
+		t.Errorf("lowering the cap through an entry is classified as a widening: %+v", lowered)
+	}
+}
+
+// TestSettingsSetLayerAgentEntryRemovalIsACeilingRemoval: taking the cap out of
+// the layer's agent block hands the decision back to a looser layer, which is
+// the removal `settings unset` makes and one of the class D846 reserves for the
+// owner — an entry removal that is a ceiling's and not the narrowing an
+// `--add`/`--remove` of a list member is.
+func TestSettingsSetLayerAgentEntryRemovalIsACeilingRemoval(t *testing.T) {
+	settingsWriteHome(t)
+	settingsWriteLayerFile(t, settingsLayerAgentCaps)
+	noTerminal(t)
+
+	doc := settingsDryRunDoc(t, "settings", "set", "layer.defaults.agent",
+		"--remove-entry", "max_budget_usd", "--layer", "project")
+	if !doc.Changed {
+		t.Errorf("the removal of the cap changes nothing, and the file holds it: %+v", doc)
+	}
+	if !doc.Widening {
+		t.Errorf("removing the cap through an entry is not classified as a widening: %+v", doc)
+	}
+	if doc.Old != "max_budget_usd=25" || doc.New != "" {
+		t.Errorf("the document says %q -> %q, and the file holds the cap and the removal leaves the entry gone", doc.Old, doc.New)
+	}
+	// The scalar spelling of the same removal is the same class and carries the
+	// same sentence, so the two doors into one ceiling do not part company.
+	leaf := settingsDryRunDoc(t, "settings", "unset", "layer.defaults.agent.max_budget_usd", "--layer", "project")
+	if !leaf.Widening || doc.Why != leaf.Why {
+		t.Errorf("the entry removal and the leaf removal of one ceiling answer differently: %+v against %+v", doc, leaf)
+	}
+}
+
+// settingsLayerRigorFloor is a layer file holding the mode its runs start
+// from: the floor D20c puts in the layer, with the block's other member beside
+// it, which is what keeps `defaults.rigor` a mapping once the mode leaves.
+const settingsLayerRigorFloor = "defaults:\n  rigor:\n    default: pro\n    areas:\n      - name: security\n        match: internal/creds/**\n        mode: critical\n"
+
+// TestSettingsSetLayerRigorEntryLoweringTheFloorIsAWidening: the layer's
+// `defaults.rigor.default` is a floor, and its widening direction is the
+// ceiling's other way round — a *lower* mode is every run the project's
+// branches starting to review less, which is the step D1026 reserves for the
+// owner's own hand exactly as raising a cap is (spec §5's two rows: `settings
+// set` writes what "lowers no floor", and a floor "lowered or removed — the
+// typed name").
+//
+// The entry spelling is the only one that reaches this floor: the leaf spelling
+// `layer.defaults.rigor.default` is the rigor family's row and is refused with
+// `fugaro rigor set` (the divergence settingsEntryRow documents, D1175), so
+// this classification is the whole of what stands between a session and a
+// lowered floor — the dry run's `widening` (D1106, the console's tick) and the
+// gate's typed rule (settingsOwnerOnlyRule, D1026) both read it.
+//
+// A raise is the direction spec §5 admits for `fugaro rigor set` ("a mode at or
+// above the resolved mode"), and it is asserted here so the fence is a
+// direction and not a refusal of the block.
+func TestSettingsSetLayerRigorEntryLoweringTheFloorIsAWidening(t *testing.T) {
+	settingsWriteHome(t)
+	settingsWriteLayerFile(t, settingsLayerRigorFloor)
+	noTerminal(t)
+
+	lowered := settingsDryRunDoc(t, "settings", "set", "layer.defaults.rigor",
+		"--add-entry", "default=poc", "--layer", "project")
+	if !lowered.Changed {
+		t.Fatalf("the entry writes the mode the file holds and the dry run says nothing changed: %+v", lowered)
+	}
+	if !lowered.Widening || lowered.Why == "" {
+		t.Errorf("lowering the layer's floor through an entry is not classified as a widening: %+v", lowered)
+	}
+	if lowered.Operation != "add-entry" || lowered.Old != "default=pro" || lowered.New != "default=poc" {
+		t.Errorf("the dry run of the entry does not show the entry the write is about: %+v", lowered)
+	}
+
+	raised := settingsDryRunDoc(t, "settings", "set", "layer.defaults.rigor",
+		"--add-entry", "default=critical", "--layer", "project")
+	if raised.Widening {
+		t.Errorf("raising the layer's floor through an entry is classified as a widening: %+v", raised)
+	}
+}
+
+// TestSettingsSetLayerRigorEntryRemovalIsAFloorRemoval: taking the floor out of
+// the layer hands the mode back to a weaker reading, which is the removal
+// `settings unset` makes at the leaf and the second half of the class D1026
+// reserves — "a floor lowered or removed" is one step, not two.
+func TestSettingsSetLayerRigorEntryRemovalIsAFloorRemoval(t *testing.T) {
+	settingsWriteHome(t)
+	path := settingsWriteLayerFile(t, settingsLayerRigorFloor)
+	before := readFileString(t, path)
+	noTerminal(t)
+
+	doc := settingsDryRunDoc(t, "settings", "set", "layer.defaults.rigor",
+		"--remove-entry", "default", "--layer", "project")
+	if !doc.Changed {
+		t.Fatalf("the removal of the floor changes nothing, and the file holds it: %+v", doc)
+	}
+	if !doc.Widening || doc.Why == "" {
+		t.Errorf("removing the layer's floor through an entry is not classified as a widening: %+v", doc)
+	}
+	if doc.Old != "default=pro" || doc.New != "" {
+		t.Errorf("the document says %q -> %q, and the file holds the floor and the removal leaves the entry gone", doc.Old, doc.New)
+	}
+
+	// The class is the write's and not the window's: a session asking for the
+	// same removal is refused whatever --yes says, and the file keeps its floor.
+	agentSession(t)
+	out, _, err := execute(t, "settings", "set", "layer.defaults.rigor",
+		"--remove-entry", "default", "--layer", "project", "--yes")
+	if err == nil {
+		t.Fatalf("a session removed the layer's rigor floor:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "run this yourself at your own terminal") {
+		t.Errorf("the removal was not refused as the owner's own step: %v", err)
+	}
+	if readFileString(t, path) != before {
+		t.Error("the layer file changed under a refused floor removal")
+	}
+}
+
+// TestSettingsSetLayerRigorEntryRemovingTheAreasIsAFloorRemoval: the block's
+// `areas` member is the other half of the same floor class and not a shape the
+// fence may skip. Removing it takes every rigor rule the layer holds with it —
+// `settingsLayerRigorFloor` holds a critical rule over internal/creds/** — and
+// that is exactly the "a floor lowered or removed" step D1026 reserves, so the
+// write is the typed one and a session asking for it is refused.
+//
+// It is the case the member-by-member reading misses: `areas` is a list and so
+// has no leaf row of its own in the registry (settingsEntryLeafKey reaches the
+// block, and settingsWriteLookup finds no row for
+// `layer.defaults.rigor.areas`), which would leave the write classified by the
+// block and untyped. The floor is judged by the function that judges it at the
+// publish door (layerRigorRules, over the two parsed layers), which reads the
+// rules that leave rather than the member that was named.
+func TestSettingsSetLayerRigorEntryRemovingTheAreasIsAFloorRemoval(t *testing.T) {
+	settingsWriteHome(t)
+	path := settingsWriteLayerFile(t, settingsLayerRigorFloor)
+	before := readFileString(t, path)
+	noTerminal(t)
+
+	doc := settingsDryRunDoc(t, "settings", "set", "layer.defaults.rigor",
+		"--remove-entry", "areas", "--layer", "project")
+	if !doc.Changed {
+		t.Fatalf("the removal of the areas changes nothing, and the file holds them: %+v", doc)
+	}
+	if !doc.Widening || doc.Why == "" {
+		t.Errorf("removing the layer's rigor rules through an entry is not classified as a widening: %+v", doc)
+	}
+	if !strings.Contains(doc.Why, "removes the rigor rule security") {
+		t.Errorf("the sentence does not name the rule the removal takes with it: %q", doc.Why)
+	}
+	if doc.Operation != "remove-entry" {
+		t.Errorf("the dry run does not show the entry the write is about: %+v", doc)
+	}
+
+	// The class is the write's and not the window's: a session asking for the
+	// same removal is refused whatever --yes says, and the file keeps its rules.
+	agentSession(t)
+	out, _, err := execute(t, "settings", "set", "layer.defaults.rigor",
+		"--remove-entry", "areas", "--layer", "project", "--yes")
+	if err == nil {
+		t.Fatalf("a session removed the layer's rigor rules:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "run this yourself at your own terminal") {
+		t.Errorf("the removal was not refused as the owner's own step: %v", err)
+	}
+	if readFileString(t, path) != before {
+		t.Error("the layer file changed under a refused rigor rule removal")
+	}
+}
+
+// TestSettingsSetLayerRefusesAReservedKey: `fugaro config publish` refuses the
+// layer's reserved keys in a coding agent's session (layerReservedRuns), and a
+// layer edit makes the same refusal over its own key — so a session that
+// reaches for the project's governance block reads the reason it may not have
+// it, rather than the session fence's "run this yourself". At the owner's own
+// terminal the same key is exactly what the row is for, which is the test
+// beside this one (TestSettingsSetLayersGovernanceBlockIsAWideningThatAsksNothing).
+func TestSettingsSetLayerRefusesAReservedKey(t *testing.T) {
+	settingsWriteHome(t)
+	path := settingsWriteLayerFile(t, "governance:\n  review_ratio: 0.5\n")
+	before := readFileString(t, path)
+	agentSession(t)
+
+	out, _, err := execute(t, "settings", "set", "layer.governance.review_ratio", "0.9", "--layer", "project", "--yes")
+	if err == nil {
+		t.Fatalf("a session wrote a reserved key into the layer file:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "governance.review_ratio") || !strings.Contains(err.Error(), "reserved") {
+		t.Errorf("the refusal does not name the reserved run: %v", err)
+	}
+	if strings.Contains(err.Error(), "refusing to write") {
+		t.Errorf("the session fence answered instead of the reserved key's own refusal: %v", err)
+	}
+	if readFileString(t, path) != before {
+		t.Error("the layer file changed under a refused key")
+	}
+}
+
+// TestSettingsSetLayerRefusesAnExecutableChangeWithoutTheOwnersFlag: the
+// profile keys that run as shell are the reason the layer file is the widest
+// surface this design touches (§3.6, spec §4.2). A layer edit that moves one
+// is refused with `fugaro config publish`'s own comparison and sentence
+// (executableChanges, config.ExecutableKeys), and the owner's flag is what
+// lets it through — exactly as it is on a repository's workflows.
+func TestSettingsSetLayerRefusesAnExecutableChangeWithoutTheOwnersFlag(t *testing.T) {
+	settingsWriteHome(t)
+	path := settingsWriteLayerFile(t, settingsLayerProfiles)
+	before := readFileString(t, path)
+	noTerminal(t)
+
+	out, _, err := execute(t, "settings", "set", "layer.profiles.web.commands.build", "sh build.sh", "--layer", "project")
+	if err == nil {
+		t.Fatalf("an executable key of a profile was written without the owner's flag:\n%s", out)
+	}
+	if !strings.Contains(out, "commands.build") || !strings.Contains(out, "sh build.sh") {
+		t.Errorf("the banner does not name the executable change:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "--executable-changes") {
+		t.Errorf("the refusal does not name the flag that would allow it: %v", err)
+	}
+	if readFileString(t, path) != before {
+		t.Error("the layer file changed under a refused executable change")
+	}
+
+	// The flag is the owner's word and the write lands with it, in the same
+	// document and through the same entry the run reads.
+	out, _, err = execute(t, "settings", "set", "layer.profiles.web.commands.build", "sh build.sh", "--layer", "project", "--executable-changes")
+	if err != nil {
+		t.Fatalf("the layer's build command was refused with the owner's flag: %v\n%s", err, out)
+	}
+	got := readFileString(t, path)
+	l := parseLayerOrFatal(t, got)
+	if got := l.Profiles["web"].Commands.Build; got != "sh build.sh" {
+		t.Errorf("the loader reads the profile's build command as %q:\n%s", got, readFileString(t, path))
+	}
+	if !strings.Contains(out, "commands.build") || !strings.Contains(out, "sh build.sh") {
+		t.Errorf("the write does not report the executable change it made:\n%s", out)
+	}
+}
+
+// settingsLayerProfileCommands is the fixture the unset path's two refusals
+// are read over: one profile whose commands run as shell, and the governance
+// block `fugaro config publish` reserves.
+const settingsLayerProfileCommands = "profiles:\n  web:\n    commands:\n      build: sh build.sh\n      test: pytest\n"
+
+// TestSettingsUnsetLayerRefusesAnExecutableChangeWithoutTheOwnersFlag: the
+// unset path meets the layer's own gate exactly as the set path does
+// (settingsLayerGate, spec §3.6) — taking a profile's command away moves what a
+// run of every repository that takes the profile runs as shell just as writing
+// one does, and the owner's --executable-changes is the word for it on both.
+//
+// It is asserted on `unset` and not only on `set` because the two paths call
+// the gate in two places: a refusal wired to one of them is a layer whose
+// build commands a session can still take away.
+func TestSettingsUnsetLayerRefusesAnExecutableChangeWithoutTheOwnersFlag(t *testing.T) {
+	settingsWriteHome(t)
+	path := settingsWriteLayerFile(t, settingsLayerProfileCommands)
+	before := readFileString(t, path)
+	noTerminal(t)
+
+	out, _, err := execute(t, "settings", "unset", "layer.profiles.web.commands.build", "--layer", "project")
+	if err == nil {
+		t.Fatalf("an executable key of a profile was removed without the owner's flag:\n%s", out)
+	}
+	if !strings.Contains(out, "commands.build") || !strings.Contains(out, "sh build.sh") {
+		t.Errorf("the banner does not name the executable change:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "--executable-changes") {
+		t.Errorf("the refusal does not name the flag that would allow it: %v", err)
+	}
+	if readFileString(t, path) != before {
+		t.Error("the layer file changed under a refused executable change")
+	}
+
+	// The flag is the owner's word and the removal lands with it, in the same
+	// document the loader reads.
+	out, _, err = execute(t, "settings", "unset", "layer.profiles.web.commands.build", "--layer", "project", "--executable-changes")
+	if err != nil {
+		t.Fatalf("the layer's build command was refused the owner's flag: %v\n%s", err, out)
+	}
+	l := parseLayerOrFatal(t, readFileString(t, path))
+	if got := l.Profiles["web"].Commands.Build; got != "" {
+		t.Errorf("the loader still reads the profile's build command as %q:\n%s", got, readFileString(t, path))
+	}
+	if got := l.Profiles["web"].Commands.Test; got != "pytest" {
+		t.Errorf("the removal took the profile's other command with it: test reads %q", got)
+	}
+}
+
+// TestSettingsUnsetLayerRefusesAReservedKeyInASession: the layer gate's other
+// half is read on this path too, and it is the file's own answer rather than
+// the session fence's — a session that takes the project's governance ratio
+// away reads `fugaro config publish`'s reserved-run refusal, and the file keeps
+// the key.
+func TestSettingsUnsetLayerRefusesAReservedKeyInASession(t *testing.T) {
+	settingsWriteHome(t)
+	path := settingsWriteLayerFile(t, settingsLayerProfileCommands+"governance:\n  review_ratio: 0.5\n")
+	before := readFileString(t, path)
+	agentSession(t)
+
+	out, _, err := execute(t, "settings", "unset", "layer.governance.review_ratio", "--layer", "project", "--yes")
+	if err == nil {
+		t.Fatalf("a session removed a reserved key from the layer file:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "governance.review_ratio") || !strings.Contains(err.Error(), "reserved") {
+		t.Errorf("the refusal does not name the reserved run: %v", err)
+	}
+	if strings.Contains(err.Error(), "refusing to write") {
+		t.Errorf("the session fence answered instead of the reserved key's own refusal: %v", err)
+	}
+	if readFileString(t, path) != before {
+		t.Error("the layer file changed under a refused key")
+	}
+}
+
+// TestSettingsSetLayerEntryInAManagedSessionIsRefusedByTheGate: the entry
+// mechanism adds no door of its own (D1180): an entry write of the layer's is
+// the same `settings set --layer project` the gate already judges, so a
+// session's management of the layer stays refused by the rules that refuse it
+// and the refusal is recorded like every other (D1025).
+func TestSettingsSetLayerEntryInAManagedSessionIsRefusedByTheGate(t *testing.T) {
+	r := newSettingsManagedRig(t, settingsMarksManaged)
+	r.managedRunsBucket(t)
+	path := settingsManagedLayerFile(t, minimalAnchored)
+	before := readFileString(t, path)
+	agentSession(t)
+
+	out, _, err := execute(t, "settings", "set", "layer.ab", "--add-entry", "rate=0.05", "--layer", "project", "--yes")
+	if err == nil {
+		t.Fatalf("a session wrote the layer's ab block:\n%s", out)
+	}
+	if !errors.Is(err, managedmode.ErrNotConverged) {
+		t.Fatalf("the entry write was not refused by the gate: %v", err)
+	}
+	if readFileString(t, path) != before {
+		t.Error("the layer file changed under a refused entry write")
+	}
+	recs := r.audits(t)
+	if len(recs) != 1 || recs[0].Verdict != managedmode.AuditRefused {
+		t.Fatalf("the refusal left %+v, want exactly one refused record", recs)
+	}
+}
+
+// TestSettingsLayerEntryBlocksResolveToTheirLeaves: every project-layer block
+// the entry table names is one the registry has rows for, whose layers agree and
+// none of which is Sensitive. Those are the three facts settingsEntryRow reads
+// the row it builds out of, and the table is what says an entry of the block can
+// be written at all: a block whose leaves a later release renames, moves to
+// another layer or marks Sensitive would otherwise be a name that resolves to a
+// row this Fugaro invents rather than reads.
+func TestSettingsLayerEntryBlocksResolveToTheirLeaves(t *testing.T) {
+	blocks := 0
+	for _, pattern := range settingsEntryBlockOrder {
+		if !strings.HasPrefix(pattern, "layer.") {
+			continue
+		}
+		blocks++
+		leaves := 0
+		var layers []string
+		for _, r := range settings.Rows() {
+			if !strings.HasPrefix(r.Key, pattern+".") {
+				continue
+			}
+			leaves++
+			if layers == nil {
+				layers = r.Layers
+				continue
+			}
+			if !slices.Equal(layers, r.Layers) {
+				t.Errorf("%s's leaves disagree about the layers they are set at: %v against %v, and the block's row is built from the first of them", pattern, layers, r.Layers)
+			}
+		}
+		if leaves == 0 {
+			t.Errorf("%s is in the entry table and no registry row names a member of it: an entry write of the block would be refused as one no row names", pattern)
+			continue
+		}
+		if !slices.Contains(layers, settings.LayerProject) {
+			t.Errorf("%s's leaves are set at %v and not at the project layer, so a --layer project write of the block has no layer the row names: the entry would be refused by settingsResolveTarget rather than written", pattern, layers)
+		}
+		if r, ok := settings.Lookup(pattern); ok {
+			t.Errorf("%s is a registry row of its own (%s): a block the registry holds needs no row built for it, and the two would answer the same write differently", pattern, r.Key)
+		}
+	}
+	if blocks == 0 {
+		t.Fatal("the entry table holds no project-layer block, so nothing here is checked")
+	}
+}
+
+// TestSettingsSetLayerCacheEntryIsRefusedByTheKeyFieldRule: the layer's cache is
+// the one block this pair reaches and cannot address (D1163, spec §2.2) — its
+// key field holds a list of files rather than a name — so an entry of it is
+// refused with that sentence rather than with "takes no entry", exactly as a
+// repository's own cache is.
+func TestSettingsSetLayerCacheEntryIsRefusedByTheKeyFieldRule(t *testing.T) {
+	settingsWriteHome(t)
+	path := settingsWriteLayerFile(t, settingsLayerProfiles)
+	before := readFileString(t, path)
+	noTerminal(t)
+
+	out, _, err := execute(t, "settings", "set", "layer.profiles.web.cache", "--add-entry", "key=pip", "--layer", "project")
+	if err == nil {
+		t.Fatalf("a cache entry of the layer was written:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "key field") || !strings.Contains(err.Error(), "a list of files and not a name") {
+		t.Errorf("the refusal is not D1163's key-field rule over the layer's cache: %v", err)
+	}
+	if readFileString(t, path) != before {
+		t.Error("the layer file changed under a refused cache entry")
+	}
+}
