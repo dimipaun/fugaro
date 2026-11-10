@@ -80,6 +80,11 @@ var (
 	// answered with a failure rather than a mint, so the merchant's retry and the
 	// owner's alerting see it (§5.1).
 	ErrNoBuyer = errors.New("keyservice: the event carries no address a key can be mailed to")
+	// ErrNoInstant is an event with no instant of its own. §5.2 orders the
+	// subscription's state by it, so an event without one is one the service
+	// cannot place — and answering it with the service's own clock would make
+	// every redelivery of it outrank the state it must not move.
+	ErrNoInstant = errors.New("keyservice: the event carries no instant of its own")
 )
 
 // Event is one merchant event as the intake reads it. It is the service's own
@@ -189,7 +194,16 @@ func (s *Service) webhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if e.OccurredAt.IsZero() {
-		e.OccurredAt = s.now()
+		// §5.2's ordering is by the subscription's own instant, so an event
+		// without one cannot be placed in it — and stamping it with the service's
+		// clock is worse than refusing it: the stamp is *now*, so every
+		// redelivery of that event is newer than the state it must not move, and
+		// a replayed purchase would rewrite a cancelled subscription and let a
+		// renewal mint a paid key for it. It is refused rather than dropped
+		// silently, so the deploy's mapping of the merchant's payload to this
+		// shape (S3.7) fails visibly instead of minting nothing for a customer.
+		fail(w, fmt.Errorf("%w: the event %s", ErrNoInstant, e.ID))
+		return
 	}
 	if err := s.apply(r.Context(), e); err != nil {
 		fail(w, err)
@@ -359,6 +373,13 @@ func (s *Service) seatChanged(ctx context.Context, e Event, sub Subscription) er
 // address is not one the intake can mail to is refused with ErrNoBuyer rather
 // than minted for — the term would otherwise advance on a key that reached
 // nobody, and the source is spent once, so that term could never be re-minted.
+//
+// The mint and the store write are two writes, as a purchase's are, and the same
+// failure is repaired the same way: the source is recorded before the term is
+// saved, so a store that refuses the save leaves a key in the customer's mailbox
+// and a subscription still ending where it did — and every later trigger finds
+// the source recorded and would stop there. The recorded source carries the end
+// of the term it covers, so what is left is read off the record and written.
 func (s *Service) Renew(ctx context.Context, subscriptionID string) (Minted, bool, error) {
 	sub, held, err := s.store.Subscription(ctx, subscriptionID)
 	if err != nil {
@@ -380,12 +401,14 @@ func (s *Service) Renew(ctx context.Context, subscriptionID string) (Minted, boo
 		return Minted{}, false, nil
 	}
 	source := "renew:" + sub.ID + ":" + sub.Expires.UTC().Format(time.RFC3339)
-	if _, minted, err := s.recorded(ctx, source); err != nil {
+	if record, minted, err := s.recorded(ctx, source); err != nil {
 		return Minted{}, false, err
 	} else if minted {
 		// One mint per (subscription, term, seats) (§5.2): the source names the
-		// term, so a second trigger inside the window finds this and stops.
-		return Minted{}, false, nil
+		// term, so a second trigger inside the window finds this and stops — and
+		// what it stops on is the record, which is where the term's end is if the
+		// first trigger minted and could not save.
+		return Minted{}, false, s.renewed(ctx, sub, record)
 	}
 	to, deliverable := address(sub.Email)
 	if !deliverable {
@@ -401,6 +424,21 @@ func (s *Service) Renew(ctx context.Context, subscriptionID string) (Minted, boo
 		return Minted{}, false, err
 	}
 	return answer, true, nil
+}
+
+// renewed finishes a renewal whose key is already minted and whose term the
+// store did not take: the record names the end of the term it covers and the
+// instant it was issued, so the state the customer paid for is written from it.
+// The subscription's own end is the test — it is what the window and the source
+// are both computed from — and a state the term has already moved past is left
+// alone, so a stale source cannot pull it back.
+func (s *Service) renewed(ctx context.Context, sub Subscription, record Record) error {
+	if !sub.Expires.Before(record.Expires) {
+		return nil
+	}
+	sub.Expires = record.Expires
+	sub.At = record.Issued
+	return s.store.SaveSubscription(ctx, sub)
 }
 
 // mintRequest is the minter's Request for one plan: the claims, and a term in days.

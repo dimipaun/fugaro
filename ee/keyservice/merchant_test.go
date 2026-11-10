@@ -201,6 +201,111 @@ func TestRenewalKeyIssuesThirtyDaysBeforeExpiry(t *testing.T) {
 	}
 }
 
+// TestTheRenewalWhoseTermWasNotSavedIsFinished: the renewal records its source
+// before it saves the term, so a store that refuses the save leaves a key in the
+// customer's mailbox and a subscription still ending where it did — and since
+// the source names the term it covers, every later trigger finds it recorded and
+// would stop there. The subscription would then never renew again, with a live
+// key in a mailbox as the only sign. The retry finishes the term off the record.
+func TestTheRenewalWhoseTermWasNotSavedIsFinished(t *testing.T) {
+	f, store := newFailingStore(t)
+	first := f.purchase("evt-1", "acme.example", 5, 365)
+
+	f.advance(365*day - 30*day)
+	store.refuse = 1
+	if _, renewed, err := f.svc.Renew(context.Background(), "sub-acme.example"); err == nil || renewed {
+		t.Fatalf("a renewal whose term could not be saved answered (renewed=%v, err=%v), want the failure: the trigger has to retry", renewed, err)
+	}
+	if got := len(f.records()); got != 2 {
+		t.Fatalf("the failed renewal recorded %d key(s), want the purchase's and the renewal's", got)
+	}
+	record := f.records()[1]
+	if got := len(f.mail.sent); got != 2 {
+		t.Fatalf("the failed renewal mailed %d message(s), want the key it minted too: the key is in the customer's mailbox whatever the store did", got)
+	}
+	unmoved, _, _ := f.store.Subscription(context.Background(), "sub-acme.example")
+	if !unmoved.Expires.Equal(first.Expires) {
+		t.Fatalf("the failed renewal moved the term's end to %s, want the purchase's %s", unmoved.Expires, first.Expires)
+	}
+
+	// The trigger fires again, which is what the merchant's retry or the next
+	// scheduled one does.
+	if _, renewed, err := f.svc.Renew(context.Background(), "sub-acme.example"); err != nil || renewed {
+		t.Fatalf("the retried renewal answered (renewed=%v, err=%v), want neither: the key was already minted and mailed", renewed, err)
+	}
+	sub, _, _ := f.store.Subscription(context.Background(), "sub-acme.example")
+	if !sub.Expires.Equal(record.Expires) {
+		t.Errorf("the retry left the term ending %s, want the end of the term the renewal key covers (%s): the subscription would otherwise never renew again", sub.Expires, record.Expires)
+	}
+	if !sub.At.Equal(record.Issued) {
+		t.Errorf("the retry left the subscription's instant at %s, want the renewal's own (%s)", sub.At, record.Issued)
+	}
+	if got := len(f.mail.sent); got != 2 {
+		t.Errorf("the retry mailed %d message(s) in all, want the renewal's one alone: the key is delivered once", got)
+	}
+	if got := f.signer.calls; got != 2 {
+		t.Errorf("the retry signed %d key(s) in all, want the purchase's and the renewal's", got)
+	}
+
+	// And the repaired subscription renews again when its own term ends, which is
+	// the whole of what the failed save had cost: the renewal was issued 30 days
+	// into a 395-day key, so the next window opens 365 days after it.
+	f.advance(365 * day)
+	if _, renewed, err := f.svc.Renew(context.Background(), "sub-acme.example"); err != nil || !renewed {
+		t.Errorf("the next term's renewal answered (renewed=%v, err=%v), want the key after the repaired one", renewed, err)
+	}
+}
+
+// TestAnEventWithNoInstantIsRefused: §5.2 orders the subscription's state by the
+// event's own instant, so an event without one cannot be placed in it. Stamping
+// it with the service's clock is the trap: the stamp is *now*, so every
+// redelivery of that event outranks the state it must not move — a replayed
+// purchase rewrites a cancelled subscription, and the renewal that follows mints
+// a paid key for a customer who has left.
+func TestAnEventWithNoInstantIsRefused(t *testing.T) {
+	f := newFixture(t)
+	f.purchase("evt-1", "acme.example", 5, 365)
+	f.advance(day)
+	f.event(Event{ID: "evt-2", Type: EventCancellation, Organisation: "acme.example"})
+	signed, mailed := f.signer.calls, len(f.mail.sent)
+
+	rec := f.deliver(Event{
+		ID:           "evt-3",
+		Type:         EventPurchase,
+		Mode:         ModeFor(f.env),
+		Subscription: "sub-acme.example",
+		Organisation: "acme.example",
+		Email:        buyerAddress("acme.example"),
+		Seats:        9,
+		TermDays:     365,
+	})
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("a purchase carrying no instant was answered %d, want 500: the deploy's mapping is what has to say when an event happened", rec.Code)
+	}
+	if got := f.signer.calls; got != signed {
+		t.Errorf("a purchase carrying no instant signed %d key(s) in all, want the purchase's one", got)
+	}
+	if got := len(f.mail.sent); got != mailed {
+		t.Errorf("a purchase carrying no instant mailed %d message(s) in all, want none of its own", got)
+	}
+	sub, _, err := f.store.Subscription(context.Background(), "sub-acme.example")
+	if err != nil {
+		t.Fatalf("reading the subscription: %v", err)
+	}
+	if !sub.Cancelled {
+		t.Error("a purchase carrying no instant resurrected a cancelled subscription, want the cancellation to stand")
+	}
+	if sub.Seats != 5 {
+		t.Errorf("the subscription holds %d seat(s), want the 5 the customer bought", sub.Seats)
+	}
+
+	// And the renewal a resurrected purchase would have allowed does not happen.
+	f.advance(365*day - 31*day)
+	if _, renewed, err := f.svc.Renew(context.Background(), "sub-acme.example"); err != nil || renewed {
+		t.Errorf("a cancelled subscription renewed (renewed=%v, err=%v), want nothing: the purchase that would have undone the cancellation was refused", renewed, err)
+	}
+}
+
 // TestSeatChangeReissues: §5.3 — `seats` is a claim in the key, so a customer
 // who adds or removes seats holds a key that states the number they bought. The
 // seats move; the term the customer already paid for does not.

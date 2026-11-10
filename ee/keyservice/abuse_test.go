@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -122,6 +123,86 @@ func TestRequestsAreThrottled(t *testing.T) {
 	answerBody(t, f.apply("five@acme.example"))
 	if got := len(f.mail.sent); got != before+1 {
 		t.Errorf("an application one window later mailed %d message(s), want one: a throttle is a limit over a window, not a ban", got-before)
+	}
+}
+
+// TestTheThrottleKeepsNothingARefusedRequestMade: §7.2's limiter is the only
+// state an unauthenticated caller can add to, and the email address is the one
+// thing it chooses: a limiter that wrote down every request would let a stranger
+// grow the intake's memory without limit, one address per post, on requests it
+// refused anyway. And what the window has passed goes: a bucket with nothing
+// left in the window is dropped rather than kept as an empty one, so the map
+// holds what the deploy's own rate allowed and not what was thrown at it.
+func TestTheThrottleKeepsNothingARefusedRequestMade(t *testing.T) {
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	limiter, err := newThrottle(Limits{Requests: 2, Window: time.Hour}, func() time.Time { return now })
+	if err != nil {
+		t.Fatalf("building the limiter: %v", err)
+	}
+	const peer = "ip:203.0.113.7"
+	for i := 0; i < 2; i++ {
+		if !limiter.allow(peer, "address:dev@acme.example") {
+			t.Fatalf("request %d inside the rate was refused, want it allowed", i)
+		}
+	}
+	if got := len(limiter.seen); got != 2 {
+		t.Fatalf("the limiter holds %d bucket(s) after two allowed requests, want the two they made", got)
+	}
+
+	// The peer's rate is spent. A thousand posts from it, each with an address
+	// nobody has seen, are all refused and leave nothing behind.
+	for i := 0; i < 1000; i++ {
+		if limiter.allow(peer, "address:fresh"+strconv.Itoa(i)+"@acme.example") {
+			t.Fatalf("post %d was allowed past the peer's rate, want a refusal", i)
+		}
+	}
+	if got := len(limiter.seen); got != 2 {
+		t.Errorf("the limiter holds %d bucket(s) after a thousand refused posts with fresh addresses, want the two the allowed requests made: a stranger must not be able to grow this map", got)
+	}
+
+	// The window moves: the peer is inside its rate again, and the address of the
+	// request that comes with it is the only new bucket.
+	now = now.Add(time.Hour + time.Second)
+	if !limiter.allow(peer, "address:someone@acme.example") {
+		t.Fatal("the same peer one window later was refused, want the window to move")
+	}
+	if got := len(limiter.seen); got > 3 {
+		t.Errorf("the limiter holds %d bucket(s) after a window moved, want the buckets of the two windows at most", got)
+	}
+}
+
+// TestTheThrottleDropsABucketTheWindowEmptied: a bucket is not kept once the
+// window has passed what it holds. What reads it is a request that is refused
+// anyway — the other bucket is at its limit — and what it must leave behind is
+// that bucket and not an empty one, so a key that applied once a year ago is not
+// a thing the intake carries forever.
+func TestTheThrottleDropsABucketTheWindowEmptied(t *testing.T) {
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	limiter, err := newThrottle(Limits{Requests: 1, Window: time.Hour}, func() time.Time { return now })
+	if err != nil {
+		t.Fatalf("building the limiter: %v", err)
+	}
+	const peer = "ip:203.0.113.7"
+	if !limiter.allow("address:first@acme.example", peer) {
+		t.Fatal("the first request was refused, want it allowed")
+	}
+
+	// One window on, the peer is inside its rate again and its bucket holds the
+	// new request; the first address's bucket holds nothing of the window.
+	now = now.Add(2 * time.Hour)
+	if !limiter.allow("address:second@acme.example", peer) {
+		t.Fatal("a request one window later was refused, want it allowed")
+	}
+	// The stale address comes back, and the peer's rate refuses it — which is
+	// where its emptied bucket is read and dropped.
+	if limiter.allow("address:first@acme.example", peer) {
+		t.Fatal("the peer's rate was spent and the request was allowed, want a refusal")
+	}
+	if _, held := limiter.seen["address:first@acme.example"]; held {
+		t.Error("a bucket whose requests the window has passed is still held, want it dropped when it is next read")
+	}
+	if got := len(limiter.seen); got != 2 {
+		t.Errorf("the limiter holds %d bucket(s), want the peer's and the address the window holds", got)
 	}
 }
 

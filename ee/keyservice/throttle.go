@@ -26,10 +26,15 @@ type Limits struct {
 	Window   time.Duration
 }
 
-// throttle counts what each key has asked for, inside the current window. It
-// holds every key it has seen — an unbounded map trimmed by the window is the
-// honest shape for a single-instance service and a leak on a fleet, which is
-// why the deploy's shared limiter is the store-backed one (S3.7's).
+// throttle counts the requests each key was allowed, inside the current window.
+//
+// What it holds is bounded by the requests the deploy's own rate allows rather
+// than by what a stranger posts: a request that is refused is counted nowhere,
+// so knocking with a fresh email address — the one thing an unauthenticated
+// caller controls — adds no entry, and an entry the window has emptied is
+// dropped. What is left is one bucket per key that was allowed inside the
+// window, which is what a per-key rate is; a bucket nobody asks about again is
+// not swept, and the deploy's shared limiter is the store-backed one (S3.7's).
 type throttle struct {
 	limits Limits
 	now    func() time.Time
@@ -44,27 +49,54 @@ func newThrottle(limits Limits, now func() time.Time) (*throttle, error) {
 	return &throttle{limits: limits, now: now, seen: map[string][]time.Time{}}, nil
 }
 
-// allow answers whether one request may proceed, and counts it either way: a
-// refused request is still a request the key made, so knocking does not buy a
-// fresh allowance. It refuses if any of the keys is at the limit, because the
-// two buckets are two ways of asking the same question.
+// allow answers whether one request may proceed. It refuses if any of the keys
+// is at its limit, because the two buckets are two ways of asking the same
+// question — and a refusal counts the request nowhere.
+//
+// Counting only what is allowed is what keeps knocking from buying a fresh
+// allowance: the bucket that refused is at its limit and stays there while its
+// entries are live, so the same key is refused for the rest of the window
+// whether or not its refusals were written down. What it costs is one entry per
+// *allowed* request, which is the rate the deploy named, rather than one per
+// address a stranger invents.
 func (t *throttle) allow(keys ...string) bool {
 	now := t.now()
 	cutoff := now.Add(-t.limits.Window)
 	t.mu.Lock()
 	defer t.mu.Unlock()
+
+	live := make([][]time.Time, len(keys))
 	allowed := true
-	for _, key := range keys {
-		kept := t.seen[key][:0]
-		for _, at := range t.seen[key] {
-			if at.After(cutoff) {
-				kept = append(kept, at)
-			}
-		}
-		t.seen[key] = append(kept, now)
-		if len(t.seen[key]) > t.limits.Requests {
+	for i, key := range keys {
+		live[i] = trimmed(t.seen[key], cutoff)
+		if len(live[i]) >= t.limits.Requests {
 			allowed = false
 		}
 	}
+	for i, key := range keys {
+		if !allowed {
+			// A refused request writes nothing, and a bucket the window has
+			// emptied goes rather than being kept as an empty one.
+			if len(live[i]) == 0 {
+				delete(t.seen, key)
+			} else {
+				t.seen[key] = live[i]
+			}
+			continue
+		}
+		t.seen[key] = append(live[i], now)
+	}
 	return allowed
+}
+
+// trimmed is what one bucket holds of the current window. It reuses the backing
+// array, which is why every caller either stores the result back or drops it.
+func trimmed(held []time.Time, cutoff time.Time) []time.Time {
+	kept := held[:0]
+	for _, at := range held {
+		if at.After(cutoff) {
+			kept = append(kept, at)
+		}
+	}
+	return kept
 }
