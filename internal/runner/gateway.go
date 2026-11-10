@@ -30,6 +30,138 @@ import (
 // fugaro validate, fugaro update and the runner's bootstrap all say it.
 const VertexBudgetRefusal = "Vertex budgets are not supported yet: use budget.mode observe or off for this repository (see docs/gcp-live-checklist.md, check 20)"
 
+// VertexPoolRefusal is what a pool holding a Vertex member is told under
+// budget.mode: enforce (D1626, F8). It is VertexBudgetRefusal with the reason
+// the pool is refused added in front, so the remedy — the same one — stays
+// spelled once: a pool is admitted where a Vertex run is, and refused where a
+// Vertex run is refused.
+//
+// It is a function and not a constant because the sentence names the member
+// the pool lists, which is the operator's own key: a reader told only that
+// "the pool is refused" would have to find which of its members did it.
+func VertexPoolRefusal(pool, member string) string {
+	return fmt.Sprintf("the pool %s lists the Vertex credential %s, and %s", pool, member, VertexBudgetRefusal)
+}
+
+// The exhaustion signals, one row per credential type (F5, D1634): what a
+// credential of each type says when it has nothing left to serve with, and the
+// one table the runner reads "this credential is spent" from. A pool's
+// failover moves on nothing else: an attempt that ended on a signal here was
+// refused by the credential that served it and not by anything about the work,
+// so the stage's next attempt is the pool's next member; an attempt that ended
+// on anything else is about the work and stops the run where it always did.
+//
+// F5 is unverified (docs/model-crafts/reconciliation.md §5): the exact set of
+// statuses and bodies each provider returns on exhaustion is not something
+// this tree can observe, and the table is deliberately narrow for that reason,
+// leaning the safe way the phrases it inherited from oauthLimitPhrases do. A
+// signal it does not know leaves the stage failing with the agent's own words
+// quoted, while a signal it wrongly knows would move the owner's run off a
+// credential that was answering.
+//
+// Two halves of one signal sit in a row because they arrive by different roads:
+//
+//   - Status and Type are what the upstream answered with, and they are what
+//     the gateway relays — a provider route's error as the status and the API
+//     error type (internal/gateway's providerError), a direct Anthropic answer
+//     verbatim. No code here reads them: the runner never holds an upstream
+//     answer, only the agent's result text. They are the row's own statement
+//     of the signal, and TestPoolExhaustionSignals is what consumes them — it
+//     builds each row's upstream answer from them and asserts that the text
+//     the gateway makes of it is one this table reads. A status a row claims
+//     and a phrase that answer does not produce is a row the test refuses.
+//   - Phrase is what the attempt's own text says about it, matched as a
+//     substring of the lowercased text, and it is the half the runner reads
+//     (credentialExhaustedText). A row with no Phrase is a signal this table
+//     records and does not claim to read: Vertex answers with Google's own
+//     error body, which reaches the agent verbatim, and no phrase here guesses
+//     its wording — the stage then fails with those words quoted, which is the
+//     direction to fail in. A row with no Status is a phrase no status
+//     carries: the OAuth subscription allowance is spent inside a session that
+//     is answering normally, and the only witness is the CLI's own sentence
+//     about it.
+//
+// A credential type absent from the table has no signal at all, and an answer
+// from it is never read as exhaustion.
+var exhaustionSignals = map[string][]exhaustionSignal{
+	config.CredentialTypeClaudeOAuth: {
+		{Status: 429, Type: "rate_limit_error", Phrase: `"type":"rate_limit_error"`,
+			Why: "the subscription's rate limit"},
+		{Phrase: "claude ai usage limit", Why: "the subscription's usage limit"},
+		{Phrase: "hit your limit", Why: "the subscription's usage limit"},
+	},
+	config.CredentialTypeAnthropic: {
+		{Status: 429, Type: "rate_limit_error", Phrase: `"type":"rate_limit_error"`,
+			Why: "the key's rate limit"},
+		{Status: 529, Type: "overloaded_error", Phrase: `"type":"overloaded_error"`,
+			Why: "Anthropic is overloaded"},
+	},
+	config.CredentialTypeOpenRouter: {
+		{Status: 429, Type: "rate_limit_error", Phrase: `"type":"rate_limit_error"`,
+			Why: "the provider's rate limit"},
+		{Status: 402, Type: "invalid_request_error", Phrase: "the provider answered with status 402",
+			Why: "the provider's account is out of credit"},
+	},
+	config.CredentialTypeVertex: {
+		{Status: 429, Type: "rate_limit_error", Why: "the project's quota"},
+		{Status: 503, Type: "overloaded_error", Why: "Vertex is overloaded"},
+	},
+}
+
+// exhaustionSignal is one way one credential type says it is spent.
+type exhaustionSignal struct {
+	// Status is the HTTP status the upstream answers with, 0 for a signal
+	// that is not a status at all.
+	Status int
+	// Type is the API error type that status arrives under, "" when the
+	// status has none of its own.
+	Type string
+	// Phrase is matched as a substring of the lowercased attempt text, "" for
+	// a signal whose wording this table does not claim to know.
+	Phrase string
+	// Why names the signal as a person reads it, for the line that says which
+	// signal moved a run.
+	Why string
+}
+
+// credentialExhaustedText reports whether an attempt's own text says the
+// credential of this type is spent. It is the classifier the pool's failover
+// stands on, and it is closed on purpose: the phrases are shapes rather than
+// English, for the reason the phrases it inherited record.
+func credentialExhaustedText(typ, text string) bool {
+	return exhaustionWhy(typ, text) != ""
+}
+
+// exhaustionWhy names the signal an attempt's text carries, "" when the text
+// carries none: credentialExhaustedText's answer as a clause, for the line
+// that has to say which signal moved a run off a credential.
+func exhaustionWhy(typ, text string) string {
+	if text == "" {
+		return ""
+	}
+	lower := strings.ToLower(text)
+	for _, s := range exhaustionSignals[typ] {
+		if s.Phrase != "" && strings.Contains(lower, s.Phrase) {
+			return s.Why
+		}
+	}
+	return ""
+}
+
+// signalPhrases are the text shapes the credential type's row records, in the
+// order it records them: the table read as a list of phrases, so a reader that
+// has to name the shapes themselves (oauthLimitPhrases) takes them from here
+// rather than restating them.
+func signalPhrases(typ string) []string {
+	var out []string
+	for _, s := range exhaustionSignals[typ] {
+		if s.Phrase != "" {
+			out = append(out, s.Phrase)
+		}
+	}
+	return out
+}
+
 // coderPinPath is where config's own checks point a problem with the coder
 // pin: the first of internal/config's pinPaths, the string every
 // agent.models.* problem carries in its Path. Restated here because config

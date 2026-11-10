@@ -4826,7 +4826,12 @@ func (r *run) stageErrorText(text string) string {
 // agent's own text -- which the skill's own loose "usage limit" match reads
 // there anyway -- while naming an allowance a run never spent is a claim the
 // reason has no business making.
-var oauthLimitPhrases = []string{"claude ai usage limit", "hit your limit", `"type":"rate_limit_error"`}
+//
+// It is the claude-oauth row of exhaustionSignals (F5), which is where those
+// shapes are recorded and where every other credential type's are: the name is
+// kept because this is what the allowance's own readers cite, and it is a view
+// of that one table rather than a second list to keep in step.
+var oauthLimitPhrases = signalPhrases(config.CredentialTypeClaudeOAuth)
 
 // subscriptionUsageLimit reports whether a stage's own text says it stopped on
 // the OAuth account's subscription usage limit rather than on anything about
