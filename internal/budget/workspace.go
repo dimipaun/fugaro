@@ -1,0 +1,423 @@
+package budget
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"regexp"
+	"time"
+
+	"github.com/dimipaun/fugaro/internal/rtdb"
+)
+
+// The workspace's own spend meter (docs/workspaces/spec.md §5; D1301 as amended
+// on 2026-11-04, after the post-merge security review, and reconciliation.md
+// §8's O2). The figure the workspace's cap is measured against is taken where
+// the money is spent — in the workspace's service, on the calls the workspace's
+// own credentials pay for — by RESERVING the room for a call before it is made
+// and SETTLING the call's usage when the response comes back. Reserve and
+// settle are each ONE conditional write of ONE node in the workspace's own
+// database, so two calls at the cap boundary cannot both take the last of the
+// room.
+//
+// It is not a member's ledger and must never be read as one. The member's
+// ledger (PathRun, PathSpendRepo) stays authoritative for the member's own
+// caps: the two are different quantities, each governing its own cap, and
+// neither is renamed into the other. What the two are compared by is the
+// reconciliation alarm (workspace_reconcile.go), which reports a disagreement
+// rather than resolving it in either direction.
+//
+// The node is keyed by the calendar month, because the workspace's cap is
+// monthly (`cap.monthly_micros`, projectpolicy.WorkspaceCap): a new month reads
+// an absent node, so the figure starts empty with no reset step and the months
+// before it stay where they are as history. A call reserved at the last second
+// of a month settles against the month it was RESERVED in — the month whose cap
+// admitted it — which is why a reservation's handle carries its month rather
+// than the settler recomputing one.
+//
+// Money is integer micro-dollars, as everywhere in this package.
+const pathWorkspaceSpend = "workspace_spend"
+
+// monthRE is the spelling of a month segment: MonthKey's own output, and
+// nothing else. A month is a path segment here, so a value that is not one
+// would put the node somewhere else in the tree.
+var monthRE = regexp.MustCompile(`^\d{4}-(0[1-9]|1[0-2])$`)
+
+// MonthKey is the month a moment falls in, in UTC, as the meter's path segment:
+// the workspace's cap is monthly and the workspace's service bills in UTC, so
+// the boundary is UTC midnight on the first of the month.
+func MonthKey(t time.Time) string { return t.UTC().Format("2006-01") }
+
+// PathWorkspaceSpend is one workspace's meter for one month, relative to the
+// workspace's own database root and without a leading slash. The caller passes
+// the raw workspace name (validated long before a path is built, as
+// projectpolicy.PathWorkspace's is) and a month from MonthKey.
+func PathWorkspaceSpend(name, month string) string {
+	if !monthRE.MatchString(month) {
+		panic("budget: " + month + " is not a month from MonthKey")
+	}
+	return pathWorkspaceSpend + "/" + seg("workspace", name) + "/" + month
+}
+
+// WorkspaceCeiling is the workspace's own spend ceiling for the month, as the
+// workspace's record states it. A ceiling that is not set is NOT a ceiling of
+// zero: a ceiling of zero would refuse every call the workspace's credentials
+// pay for, which is not what a workspace that states no cap means.
+type WorkspaceCeiling struct {
+	Monthly Micros
+	Set     bool
+}
+
+// WorkspaceReservation is one call in flight: the member the call belongs to,
+// the room it took and when it was taken. It is what a settle finds by the
+// call's id.
+type WorkspaceReservation struct {
+	Member string `json:"member"`
+	Amount Micros `json:"amount"`
+	At     int64  `json:"at"` // Unix milliseconds, the moment the room was taken
+}
+
+// WorkspaceSpend is the meter node: one month of the workspace's own figure.
+// Members holds what the calls that have settled cost, per member; Reservations
+// holds the room taken for the calls that are still in flight. A member with no
+// entry has spent nothing, and the two maps are written as empty objects rather
+// than left out, so a reader never has to tell "no entry" from "not read".
+type WorkspaceSpend struct {
+	Month        string                          `json:"month"`
+	Members      map[string]Micros               `json:"members"`
+	Reservations map[string]WorkspaceReservation `json:"reservations"`
+}
+
+// Settled is what the calls that have settled cost, over every member, as one
+// figure: the workspace's own count, and the half of it a reconciliation alarm
+// compares against a member's ledger.
+func (s WorkspaceSpend) Settled() Micros {
+	var total Micros
+	for _, m := range s.Members {
+		total = add(total, m)
+	}
+	return total
+}
+
+// Reserved is the room the calls in flight hold.
+func (s WorkspaceSpend) Reserved() Micros {
+	var total Micros
+	for _, r := range s.Reservations {
+		total = add(total, r.Amount)
+	}
+	return total
+}
+
+// OvershootBound is how far past its ceiling the workspace's settled figure can
+// still get, stated as a number rather than as an adjective: the reservations in
+// flight. It is that and not something else because a reservation is only ever
+// taken out of room the ceiling had left (ReserveWorkspaceSpend refuses
+// otherwise) and a settle only ever turns one of those reservations into a
+// settled amount, so `Settled` cannot pass the ceiling except through the calls
+// still in flight — and each of those was admitted at a worst-case price no
+// usage can exceed. A workspace that states no ceiling has no bound to state.
+func (s WorkspaceSpend) OvershootBound() Micros { return s.Reserved() }
+
+// Room is the workspace's figure at one moment, as a caller reports it.
+type WorkspaceRoom struct {
+	// Ceiling is the ceiling the room was computed against; Set false when the
+	// workspace states none, and then Headroom is meaningless.
+	Ceiling WorkspaceCeiling
+	// Settled is what the calls that have settled cost this month.
+	Settled Micros
+	// Reserved is the room the calls in flight hold.
+	Reserved Micros
+	// Headroom is what the ceiling still leaves: Settled + Reserved + Headroom
+	// is the ceiling, and it is 0 when the ceiling is reached or passed. It is
+	// the number the service answers a member with, and it is advisory: the
+	// member's gateway stops a run early on it and never decides the cap.
+	Headroom Micros
+}
+
+// Fits reports whether a reservation of amount may be taken: it does when the
+// workspace states no ceiling, and otherwise only while the settled figure, the
+// room in flight and the new amount together stay within the ceiling. It is the
+// whole of the enforcement, and it is one comparison because the room in flight
+// is part of it: a call is refused before it is made rather than discovered
+// afterwards.
+func (r WorkspaceRoom) Fits(amount Micros) bool {
+	if !r.Ceiling.Set {
+		return true
+	}
+	return add(r.Settled, add(r.Reserved, amount)) <= r.Ceiling.Monthly
+}
+
+// Room is the figure the meter node holds, read against a ceiling.
+func (s WorkspaceSpend) Room(c WorkspaceCeiling) WorkspaceRoom {
+	r := WorkspaceRoom{Ceiling: c, Settled: s.Settled(), Reserved: s.Reserved()}
+	if c.Set {
+		if used := add(r.Settled, r.Reserved); used < c.Monthly {
+			r.Headroom = c.Monthly - used
+		}
+	}
+	return r
+}
+
+// WorkspaceHold is the handle a reservation returns and a settle needs: which
+// workspace, which month the room was taken out of, and which call. A settle
+// takes the month from here rather than from its own clock, so a call taken at
+// the last second of a month settles against the month whose cap admitted it.
+type WorkspaceHold struct {
+	Name   string
+	Month  string
+	Call   string
+	Member string
+	Amount Micros
+}
+
+// WorkspaceReserve is one reservation to take. Now decides the month and stamps
+// the reservation; it is required, so a caller cannot reserve against a month it
+// did not mean.
+type WorkspaceReserve struct {
+	Name    string
+	Call    string
+	Member  string
+	Amount  Micros
+	Ceiling WorkspaceCeiling
+	Now     time.Time
+}
+
+// WorkspaceSettle is one settle to make: what the call actually cost, and the
+// ceiling the room is reported against (the workspace's record may have been
+// narrowed since the reservation was taken, so it is read afresh rather than
+// carried in the hold).
+type WorkspaceSettle struct {
+	Actual  Micros
+	Ceiling WorkspaceCeiling
+}
+
+// WorkspaceSpendDB is the part of a database the meter needs: the workspace's
+// OWN database. *rtdb.Client is one. It is a read with the ETag and one
+// conditional write, and nothing else: the meter takes the whole node and puts
+// it back, so the reservation and the settle are each one write and the
+// workspace's service needs no path-level permission of its own.
+type WorkspaceSpendDB interface {
+	WorkspaceSpendReader
+	GetETag(ctx context.Context, path string, out any) (etag string, found bool, err error)
+	PutIfMatch(ctx context.Context, path, etag string, v any) error
+}
+
+// WorkspaceSpendReader is the read-only half of the same database, for a caller
+// that must hold no write at all: the headroom answer, and the reconciliation
+// alarm's read of the service's own count.
+type WorkspaceSpendReader interface {
+	Get(ctx context.Context, path string, out any) (found bool, err error)
+}
+
+var (
+	// ErrWorkspaceCeilingReached refuses the call that would pass the
+	// workspace's own ceiling. It is a refusal BEFORE the call is made, which
+	// is the whole of the enforcement.
+	ErrWorkspaceCeilingReached = errors.New("the workspace's own ceiling would be passed by this call")
+	// ErrWorkspaceCallReserved refuses a second reservation for a call that
+	// already holds one: one call, one reservation, or the same usage could be
+	// paid for twice.
+	ErrWorkspaceCallReserved = errors.New("this call already holds a reservation in the workspace's meter")
+	// ErrWorkspaceReservationUnknown refuses a settle whose call holds no
+	// reservation. It is a refusal and not a no-op: a usage the meter cannot
+	// place is a usage the service cannot record, and a call whose cost cannot
+	// be recorded spends against a cap the service cannot see.
+	ErrWorkspaceReservationUnknown = errors.New("no reservation for this call in the workspace's meter")
+	// ErrWorkspaceSpendContention: the meter kept changing under SetAttempts
+	// conditional writes.
+	ErrWorkspaceSpendContention = errors.New("the workspace's meter kept changing under the write")
+	// ErrWorkspaceSpendUnreadable: the node is not a figure the meter can read
+	// (a negative amount, a call or a member with no name, a month that is not
+	// the one its path names). It is refused rather than repaired: a negative
+	// amount read as room would fail open.
+	ErrWorkspaceSpendUnreadable = errors.New("the workspace's meter node is not a figure this Fugaro can read")
+)
+
+// ReadWorkspaceSpend reads one month of a workspace's meter. found is false for
+// a month with no node, which is the state every month starts in and not a
+// refusal.
+func ReadWorkspaceSpend(ctx context.Context, db WorkspaceSpendReader, name, month string) (WorkspaceSpend, bool, error) {
+	path := PathWorkspaceSpend(name, month)
+	var s WorkspaceSpend
+	found, err := db.Get(ctx, path, &s)
+	if err != nil {
+		return WorkspaceSpend{}, false, err
+	}
+	if !found {
+		return WorkspaceSpend{}, false, nil
+	}
+	if s.Month != "" && s.Month != month {
+		return WorkspaceSpend{}, true, fmt.Errorf("%w: its month is %q and its path names %q", ErrWorkspaceSpendUnreadable, s.Month, month)
+	}
+	s.Month = month
+	if err := s.validate(); err != nil {
+		return WorkspaceSpend{}, true, err
+	}
+	return s, true, nil
+}
+
+// ReadWorkspaceRoom answers the headroom question for one moment: what the
+// workspace's own ceiling still leaves, this month. It is the number the service
+// delivers to a member and the number the reconciliation alarm counts against a
+// member's ledger, read through the read-only interface so a caller that only
+// asks holds no write.
+func ReadWorkspaceRoom(ctx context.Context, db WorkspaceSpendReader, name string, c WorkspaceCeiling, now time.Time) (WorkspaceRoom, error) {
+	s, _, err := ReadWorkspaceSpend(ctx, db, name, MonthKey(now))
+	if err != nil {
+		return WorkspaceRoom{}, err
+	}
+	return s.Room(c), nil
+}
+
+// validate refuses a node the meter cannot read. A member or a call with no
+// name, or a negative amount, is not a figure: RTDB can hold one, and reading it
+// as room would fail open, which is the same reading negativeState gives a run's
+// own ledger.
+func (s WorkspaceSpend) validate() error {
+	for member, spent := range s.Members {
+		if member == "" {
+			return fmt.Errorf("%w: a member has no name", ErrWorkspaceSpendUnreadable)
+		}
+		if spent < 0 {
+			return fmt.Errorf("%w: member %q holds %d micro-dollars", ErrWorkspaceSpendUnreadable, member, spent)
+		}
+	}
+	for call, r := range s.Reservations {
+		if call == "" || r.Member == "" {
+			return fmt.Errorf("%w: a reservation names no call or no member", ErrWorkspaceSpendUnreadable)
+		}
+		if r.Amount <= 0 {
+			return fmt.Errorf("%w: the reservation for %q holds %d micro-dollars", ErrWorkspaceSpendUnreadable, call, r.Amount)
+		}
+	}
+	return nil
+}
+
+// ReserveWorkspaceSpend takes the room for one call out of the workspace's own
+// month, in one conditional write: the node is read with its ETag, the room is
+// checked and the reservation added, and the node is put back only if nothing
+// else wrote it meanwhile. A lost race is re-read, up to SetAttempts times.
+//
+// ErrWorkspaceCeilingReached is the refusal of a call that would pass the
+// ceiling; the room returned beside it is the figure as it was read, so a caller
+// may still answer a member's headroom question. Any other error means the
+// figure could not be taken at all, and the room is not to be used.
+func ReserveWorkspaceSpend(ctx context.Context, db WorkspaceSpendDB, r WorkspaceReserve) (WorkspaceHold, WorkspaceRoom, error) {
+	if r.Name == "" || r.Call == "" || r.Member == "" {
+		return WorkspaceHold{}, WorkspaceRoom{}, errors.New("budget: a reservation names the workspace, the call and the member")
+	}
+	if r.Amount <= 0 {
+		return WorkspaceHold{}, WorkspaceRoom{}, fmt.Errorf("budget: a reservation of %d micro-dollars takes no room: the amount is the call's worst case and is positive", r.Amount)
+	}
+	if r.Now.IsZero() {
+		return WorkspaceHold{}, WorkspaceRoom{}, errors.New("budget: a reservation states when it was taken: the month it is taken out of is derived from it")
+	}
+	month := MonthKey(r.Now)
+	var hold WorkspaceHold
+	spend, err := updateWorkspaceSpend(ctx, db, r.Name, month, func(s *WorkspaceSpend) error {
+		if _, ok := s.Reservations[r.Call]; ok {
+			return ErrWorkspaceCallReserved
+		}
+		if !s.Room(r.Ceiling).Fits(r.Amount) {
+			return ErrWorkspaceCeilingReached
+		}
+		s.Reservations[r.Call] = WorkspaceReservation{Member: r.Member, Amount: r.Amount, At: r.Now.UnixMilli()}
+		hold = WorkspaceHold{Name: r.Name, Month: month, Call: r.Call, Member: r.Member, Amount: r.Amount}
+		return nil
+	})
+	room := spend.Room(r.Ceiling)
+	if err != nil {
+		if errors.Is(err, ErrWorkspaceCeilingReached) {
+			return WorkspaceHold{}, room, err
+		}
+		return WorkspaceHold{}, WorkspaceRoom{}, err
+	}
+	return hold, room, nil
+}
+
+// SettleWorkspaceSpend records what one call cost, in one conditional write: the
+// reservation is removed and the amount is added to the member's settled figure,
+// so the room the call held becomes money spent in the same transaction that
+// ends it. A settle that cannot be written is an error the caller refuses the
+// call on: a call whose cost the service cannot record spends against a cap it
+// cannot see.
+//
+// The amount recorded is the response's own usage and not the reservation: the
+// reservation is a worst case, and the figure the cap is measured against is
+// what the call really cost. A settle never refuses on the ceiling — the money
+// is spent either way, and a meter that refused to record it would be a meter
+// that under-counts — so the ceiling it is reported against is the one the
+// caller passes.
+func SettleWorkspaceSpend(ctx context.Context, db WorkspaceSpendDB, h WorkspaceHold, s WorkspaceSettle) (WorkspaceRoom, error) {
+	if h.Name == "" || h.Month == "" || h.Call == "" {
+		return WorkspaceRoom{}, errors.New("budget: a settle needs the handle a reservation returned")
+	}
+	if s.Actual < 0 {
+		return WorkspaceRoom{}, fmt.Errorf("budget: a settle records what the call cost, and %d micro-dollars is negative", s.Actual)
+	}
+	spend, err := updateWorkspaceSpend(ctx, db, h.Name, h.Month, func(sp *WorkspaceSpend) error {
+		res, ok := sp.Reservations[h.Call]
+		if !ok {
+			return ErrWorkspaceReservationUnknown
+		}
+		if h.Member != "" && res.Member != h.Member {
+			return fmt.Errorf("%w: the reservation for %q belongs to member %q and the handle names %q", ErrWorkspaceReservationUnknown, h.Call, res.Member, h.Member)
+		}
+		delete(sp.Reservations, h.Call)
+		sp.Members[res.Member] = add(sp.Members[res.Member], s.Actual)
+		return nil
+	})
+	if err != nil {
+		return WorkspaceRoom{}, err
+	}
+	return spend.Room(s.Ceiling), nil
+}
+
+// updateWorkspaceSpend is the one transaction both halves of the meter use: read
+// the month's node with its ETag, let f change it, and put the whole node back
+// only if nothing wrote it meanwhile. RTDB has no server-side transaction, so
+// this is the compare-and-set the budget's other conditional writes use
+// (SetKill), and it is what makes a reservation and a settle each atomic with
+// the workspace's own database.
+//
+// The callback must return BEFORE it changes anything when it refuses, so a
+// refusal leaves the node as it was read and the caller's room is the figure
+// that refused it.
+func updateWorkspaceSpend(ctx context.Context, db WorkspaceSpendDB, name, month string, f func(*WorkspaceSpend) error) (WorkspaceSpend, error) {
+	path := PathWorkspaceSpend(name, month)
+	for attempt := 1; attempt <= SetAttempts; attempt++ {
+		var cur WorkspaceSpend
+		etag, found, err := db.GetETag(ctx, path, &cur)
+		if err != nil {
+			return WorkspaceSpend{}, err
+		}
+		if found && cur.Month != "" && cur.Month != month {
+			return WorkspaceSpend{}, fmt.Errorf("%w: its month is %q and its path names %q", ErrWorkspaceSpendUnreadable, cur.Month, month)
+		}
+		if !found {
+			cur = WorkspaceSpend{}
+		}
+		cur.Month = month
+		if err := cur.validate(); err != nil {
+			return WorkspaceSpend{}, err
+		}
+		if cur.Members == nil {
+			cur.Members = map[string]Micros{}
+		}
+		if cur.Reservations == nil {
+			cur.Reservations = map[string]WorkspaceReservation{}
+		}
+		if err := f(&cur); err != nil {
+			return cur, err
+		}
+		err = db.PutIfMatch(ctx, path, etag, cur)
+		if errors.Is(err, rtdb.ErrPrecondition) {
+			continue
+		}
+		if err != nil {
+			return WorkspaceSpend{}, err
+		}
+		return cur, nil
+	}
+	return WorkspaceSpend{}, ErrWorkspaceSpendContention
+}
