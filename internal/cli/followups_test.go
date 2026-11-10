@@ -374,7 +374,7 @@ func TestFollowupsCarriesTheParentsMode(t *testing.T) {
 		t.Fatalf("the document's rigor = %q, want %q", doc.Tasks[0].Rigor, rigor.Critical)
 	}
 	spec := readSpec(t, f, doc.Tasks[0].RunID)
-	if spec.Rigor != rigor.Critical {
+	if spec.Rigor != string(rigor.Critical) {
 		t.Fatalf("the stored task's rigor = %q, want %q", spec.Rigor, rigor.Critical)
 	}
 }
@@ -422,7 +422,7 @@ func TestFollowupsNeverLowersAFloor(t *testing.T) {
 
 	doc := followUpsDoc(t, parent, "--launch")
 	spec := readSpec(t, f, doc.Tasks[0].RunID)
-	if spec.Rigor != rigor.POC {
+	if spec.Rigor != string(rigor.POC) {
 		t.Fatalf("the stored task's rigor = %q, want the parent's own %q", spec.Rigor, rigor.POC)
 	}
 	// Nothing of the parent's own resolution is carried besides the mode: no
@@ -433,7 +433,7 @@ func TestFollowupsNeverLowersAFloor(t *testing.T) {
 	}
 	// The request is raise-only, so the floors hold whatever the record said:
 	// poc is below the mode a repository that configures nothing resolves.
-	if got := rigor.Resolve(rigor.Config{}, rigor.Request{Mode: spec.Rigor}).Mode; got != rigor.Default {
+	if got := rigor.Resolve(rigor.Config{}, rigor.Request{Mode: rigor.Mode(spec.Rigor)}).Mode; got != rigor.Default {
 		t.Fatalf("the run resolves %q, want its floor %q", got, rigor.Default)
 	}
 
