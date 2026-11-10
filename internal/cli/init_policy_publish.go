@@ -1124,7 +1124,7 @@ func cloneURLsToImport(lc *localcfg.Config, node *projectpolicy.Policy, path str
 	return node.CloneURLs
 }
 
-// importPolicyNodeBlocks is D842/D844's migration: the clone_urls block moved
+// importPolicyNodeCloneURLs is D842/D844's migration: the clone_urls block moved
 // out of the node and into the local config, and the first `fugaro update`
 // after that release copies the node's entries into the file, so the operator
 // has one place to change them and this command publishes it from then on.
@@ -1140,7 +1140,7 @@ func cloneURLsToImport(lc *localcfg.Config, node *projectpolicy.Policy, path str
 // migration that moves a block an operator could see only in the console into a
 // file of their own, and a write they read afterwards is a write they cannot
 // check against what it replaced.
-func (m *policyMigration) importPolicyNodeBlocks(w io.Writer) error {
+func (m *policyMigration) importPolicyNodeCloneURLs(w io.Writer) error {
 	if len(m.importCloneURLs) == 0 {
 		return nil
 	}

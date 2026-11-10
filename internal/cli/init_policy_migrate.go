@@ -534,7 +534,7 @@ func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMi
 			if err := m.recordGeneration(ctx, cmd); err != nil {
 				return err
 			}
-			return m.importPolicyNodeBlocks(w)
+			return m.importPolicyNodeCloneURLs(w)
 		}
 		// The one write of this run is the generation record in this machine's
 		// file: there is no node to rewrite and so nothing for the operator to
@@ -634,7 +634,7 @@ func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMi
 	// this run is publishing the node the local config states, and the block's
 	// home is now the file, so it is written there in the run the operator
 	// confirmed rather than left for the next one.
-	return m.importPolicyNodeBlocks(w)
+	return m.importPolicyNodeCloneURLs(w)
 }
 
 // inflightAnswer is what a door does about the runs a node write finds in
@@ -857,7 +857,7 @@ func (m *policyMigration) confirmReseed(ctx context.Context, cmd *cobra.Command,
 		if err := policyGenerationRecord(w, m.path, m.lc, m.generations.published); err != nil {
 			return err
 		}
-		return m.importPolicyNodeBlocks(w)
+		return m.importPolicyNodeCloneURLs(w)
 	}
 	if err := m.write(ctx); err != nil {
 		return err
@@ -870,7 +870,7 @@ func (m *policyMigration) confirmReseed(ctx context.Context, cmd *cobra.Command,
 	if err := m.recordGeneration(ctx, cmd); err != nil {
 		return err
 	}
-	return m.importPolicyNodeBlocks(w)
+	return m.importPolicyNodeCloneURLs(w)
 }
 
 // printGenerationState is D854's three-way state: what this machine's config was

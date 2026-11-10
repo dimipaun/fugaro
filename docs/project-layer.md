@@ -68,8 +68,9 @@ by hand (`fugaro project repos add`) is dropped, and one you had removed (`fugar
 rm`) comes back when the config still names it. The node's `clone_urls` block and any `routing`
 block a person wrote go with it, since a publish carries them only from a node it replaces —
 `clone_urls` excepted when your own config states a block of its own, which `fugaro project
-clone-url set` writes and the publish that follows takes from there. Repair the list from the diff the publish prints (`fugaro
-project repos add` / `rm`), per installation; a shared job's runs halt in between.
+clone-url set` writes and the publish that follows takes from there. Repair the list from the diff
+the publish prints (`fugaro project repos add` / `rm`), per installation; a shared job's runs halt
+in between.
 
 ### What ties a repository to a project
 
