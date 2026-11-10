@@ -113,7 +113,7 @@ not exist.
 
 | # | Who | Task |
 | --- | --- | --- |
-| 1 | the editor task | `internal/yamledit` — the shared editor package above, and nothing else. **Landed** (2026-11-01, #1467 and #1501), so this position is done |
+| 1 | the editor task | `internal/yamledit` — the shared editor package above, and nothing else. **Landed** (2026-11-01, #1467 and #1501) with every generic operation the callers here needed, so this position is done for them; the settings design's two remaining operations (an empty mapping, and expanding a flow `{}`) are that design's own task's |
 | 2 | settings | the policy stage (S3) |
 | 3 | settings | the read half (S0–S2, S4) |
 | 4 | rigor | the local layer file, then the stage that publishes it: **R0** (the path `LayerFile`, `config publish`'s default and doctor's `local-layer-file` check — no stage yet) and **R1** (the `Layer` stage in `update` that seeds and publishes it, which needs R0's file) |

@@ -36,9 +36,11 @@ request that carries this ruling rather than dropped here.
   `internal/cli/rigor_write.go` this plan does not have, and **R2, R4 and R5 are closed (2026-11-10)
   as duplicates of config-management's G0–G2 with G4 and of its G6**, so the callers are that plan's
   and this one keeps none. **E1 has landed**: `internal/yamledit` is on `main`, created 2026-11-01 by
-  **#1467** and extended by **#1501**, so the joint order's position 1 is done and the two winning
-  plans write through it. The path this folder once proposed for the editor,
-  `internal/localcfg/edit.go`, was never written. The plan therefore names the **package and the task
+  **#1467** and extended by **#1501**, and it carries every generic operation this plan's callers
+  needed, so the joint order's position 1 is done for them. What the editor still owes is the
+  settings design's own remainder — writing an empty mapping, and expanding a flow `{}` back into a
+  block mapping — which is E3's scope and not this plan's. The path this folder once proposed for
+  the editor, `internal/localcfg/edit.go`, was never written. The plan therefore names the **package and the task
   that landed it**, never a file of its own; the precedent the splice generalised is
   `setGCPProjectLine` (`internal/cli/init_fugaroyaml.go`) — one scalar on one line. **Not** a merge
   of the works' plans: they stay separate plans with separate owners, and the README's joint order

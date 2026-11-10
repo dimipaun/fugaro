@@ -24,10 +24,14 @@ first slice is S0–S3.**
   `fugaro.yaml`. Its scope also carries **the one operation S7 cannot do without**: setting a key to
   an **empty mapping** — `review_floor: {}`, written as a mapping node and never as the string
   `"{}"` — and expanding a flow `{}` back into a block mapping when the first entry is written again
-  (S7's `set` after the last `unset`). `internal/yamledit` **landed** (2026-11-01, **#1467** and
-  **#1501**), so E3 is satisfied: the package is on `main` and every task below splices through it.
-  **Its owning task is the editor task, and it landed first in the joint order below**; S5–S9 call
-  it, and **no task here writes a second editor** (D847).
+  (S7's `set` after the last `unset`). **The package landed (2026-11-01, #1467 and #1501) and E3 is
+  not done**: it carries the generic operations above — set a scalar, remove a key, add or remove a
+  list item, upsert or remove a sequence item by key — and **neither of the two this bullet names**.
+  An empty `{}` is refused outright (`internal/yamledit/flow.go`: "nothing is written into a
+  collection with no members"), and no operation expands a flow mapping back into a block mapping, so
+  a `review_floor` of nothing cannot be written today and S7 still owes both operations to the shared
+  editor rather than to a fourth copy elsewhere. **Its owning task is the editor task, and it landed
+  first in the joint order below**; S5–S9 call it, and **no task here writes a second editor** (D847).
 - **Files other work owns:** registering the commands in `internal/cli/root.go`, the generated
   `website/content/cli-reference.md`, `plugin/**`, `console/**` and `docs/releases/**` are each
   another work stream's at the time of writing. S1, S10 and every task that adds a command name them,
