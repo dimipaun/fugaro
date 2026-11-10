@@ -3339,6 +3339,16 @@ func (r *initRun) writeLocalConfig(next *localcfg.Config, path string, old []byt
 		// A shared selection has no file; never write to an empty path.
 		return userErr("there is no local config file to write (a shared config has none): run fugaro setup to create your own local config")
 	}
+	// Every write of the local config converges the craft keys first, so
+	// `fugaro update` is the whole migration and no other command is one: it
+	// adds the credentials and crafts the older account keys name and reports
+	// the keys it cannot convert (init_craft_migrate.go). It runs on the
+	// config about to be written — after the rest of this run's own changes —
+	// and it is idempotent, so a config already holding the crafts is left
+	// alone and nothing is written twice.
+	for _, note := range migrateCraftKeys(next) {
+		fmt.Fprintf(r.w, "note: %s\n", note)
+	}
 	data, err := next.Marshal()
 	if err != nil {
 		return err
