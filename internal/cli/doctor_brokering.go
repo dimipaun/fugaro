@@ -842,12 +842,22 @@ func isBitbucketRefusal(err error) bool {
 //
 // The repository not admitted with proxy: true: a job mounting bitbucket-token
 // is the state the installation is in, and the line is information — the run
-// holds a repository access token directly, which is D462's reach. For a
-// repository the owner proxied, since the flip list names the token (B1.13
-// part two), that same mount is a job applied before the flip: the next deploy
-// of it would fail on a mount whose accessor is gone, and the run would keep
-// reaching the token the service is supposed to hold. That is the warning.
-func doctorBitbucketDirect(ctx context.Context, lc *localcfg.Config, repo, provider string, facts doctorRepoSecrets) []doctorCheck {
+// holds a repository access token directly, which is D462's reach.
+//
+// A repository the owner DID proxy is only half the answer, because the flip
+// that takes the mount and the accessor away fires where the whole switch is
+// on (CredentialsServiceServes): the installation's block, this repository's
+// own record of a root applied with the service on, and its agent.auth being
+// the cascade. A proxied repository the switch holds off — no record, or an
+// auth the service does not serve — keeps its mount and its accessor by
+// design, exactly as a repository the node does not admit, and its line is
+// information for the same reason.
+//
+// Only where the switch is on is a job still mounting bitbucket-token a job
+// applied before the flip: the next deploy of it would fail on a mount whose
+// accessor is gone, and the run would keep reaching the token the service is
+// supposed to hold. That is the warning.
+func doctorBitbucketDirect(ctx context.Context, lc *localcfg.Config, repo, provider, auth string, facts doctorRepoSecrets) []doctorCheck {
 	if provider != gitprov.KindBitbucket || lc.CredentialsService == nil {
 		return nil
 	}
@@ -865,6 +875,11 @@ func doctorBitbucketDirect(ctx context.Context, lc *localcfg.Config, repo, provi
 		return []doctorCheck{{ID: id, Severity: "info",
 			Problem: fmt.Sprintf("%s is a Bitbucket repository that is not proxied: its jobs mount their own %s, so a run of it holds a credential that reaches the repository itself (D462)", printable, config.BitbucketSecret),
 			Fix:     "to broker it instead, add it to the local config's project_secrets entry for " + config.BitbucketSecret + " (allow_data_to with " + printable + ", proxy: true), publish the policy, then re-apply the repository: " + selfCommand() + " update --repo " + quoteWord(repo)}}
+	}
+	if !flipServes(lc, repo, auth) {
+		return []doctorCheck{{ID: id, Severity: "info",
+			Problem: fmt.Sprintf("%s is admitted with proxy: true and the credentials service does not serve it — %s — so its jobs keep their own %s: the flip is per repository, and it drops a mount only where the whole switch is on", printable, flipNotServed(lc, repo, auth), config.BitbucketSecret),
+			Fix:     "nothing to do: these jobs mount and reach their own token, exactly as a repository the policy does not proxy"}}
 	}
 	if lc.Endpoints.NoAuth && lc.Endpoints.Run == "" {
 		return []doctorCheck{{ID: id, Severity: "warning",
@@ -929,6 +944,28 @@ func doctorBitbucketDirect(ctx context.Context, lc *localcfg.Config, repo, provi
 	return []doctorCheck{{ID: id, Severity: "warning",
 		Problem: fmt.Sprintf("%s is proxied, and %s still mounts %s: the job was applied before the flip, so its account's accessor is gone and the next deploy of it fails on the mount", printable, strings.Join(mounting, ", "), config.BitbucketSecret),
 		Fix:     "re-apply the repository so the jobs are deployed without the mount: " + selfCommand() + " update --repo " + quoteWord(repo)}}
+}
+
+// flipServes is the flip's own switch for one repository, judged through the
+// one predicate the plan a re-apply writes is built with
+// (infra.CredentialsServiceServes), so doctor cannot report a stale mount for
+// a repository whose jobs the flip deliberately leaves alone. Two of the
+// switch's three conditions are read here — the local config's per-repository
+// record of a root applied with the service on, and the checkout's agent.auth
+// — and the third, the installation's block, is the caller's own early return:
+// a caller that reached the check at all holds it.
+func flipServes(lc *localcfg.Config, repo, auth string) bool {
+	return infra.CredentialsServiceServes(true, lc.Repos[repo].CredentialsServiceOn(), auth)
+}
+
+// flipNotServed names the condition that holds the switch off, in the words of
+// the state rather than of the predicate: the record first, since a root that
+// was never applied with the service on is the state an operator can act on.
+func flipNotServed(lc *localcfg.Config, repo, auth string) string {
+	if !lc.Repos[repo].CredentialsServiceOn() {
+		return "the local config records no apply of its root with the service on"
+	}
+	return fmt.Sprintf("its agent.auth is %q, and the service serves the %q one", auth, config.AuthCascade)
 }
 
 // doctorModelKeyInAgent is doctor's "model-key-in-agent" check: a model
