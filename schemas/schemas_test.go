@@ -5995,8 +5995,9 @@ func stripDescriptions(v any) any {
 // in both places, so a spec the schema accepts is never one task.Parse then
 // refuses). `max_time` is the exception, and it is total_timeout's own: the
 // pattern states the duration's form and not its sign, because "at least one
-// non-zero digit" is not expressible in one pattern over the four optional
-// components, so a positive duration is the decoder's rule for both.
+// non-zero digit" is no single pattern over `([0-9]+h)?([0-9]+m)?([0-9]+s)?`,
+// so a positive duration is the decoder's rule for both duration members, as
+// the schema's other not-expressible rules are.
 //
 // The four are additive inside version 1: the members are what is added,
 // not a new format, so the version stays 1 and a task carrying none is still

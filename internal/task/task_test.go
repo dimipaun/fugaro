@@ -1627,7 +1627,8 @@ func TestTaskDecodesTheLaunchLimits(t *testing.T) {
 	checkEmpty := func(who string, o Overrides) {
 		t.Helper()
 		if o.MaxUSD != nil || o.MaxTokens != nil || o.MaxTime != "" || o.MaxReviewRounds != nil {
-			t.Errorf("%s: a task with no limits carries %+v", who, o)
+			t.Errorf("%s: a task with no limits carries max_usd=%s max_tokens=%s max_time=%q max_review_rounds=%s",
+				who, limitString(o.MaxUSD), limitString(o.MaxTokens), o.MaxTime, limitString(o.MaxReviewRounds))
 		}
 	}
 	checkEmpty("decoded", plain.Overrides)
