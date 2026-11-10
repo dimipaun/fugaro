@@ -220,16 +220,33 @@ func (o Options) logText(id cmdlog.ID) (string, error) {
 }
 
 // tailOf reads r and returns at most max bytes of its end, the number of bytes
-// it holds, and the read's error. It is read a chunk at a time and the front is
-// dropped as it goes, so a stream of any size costs max bytes of memory — the
-// buffer is slid rather than grown. The whole stream is still read, because
-// what was left out is a number the file has to state (logText), and the reader
-// is a local file the log store wrote.
+// it holds, and the read's error. The whole stream is read, because what was
+// left out is a number the file has to state (logText), and the reader is a
+// local file the log store wrote.
+//
+// The read costs one pass over the stream: the buffer grows to max and is a
+// ring from there, so each byte is copied in once. Dropping the front by
+// sliding the whole buffer down per chunk instead costs max bytes for every
+// chunk read — 32768 copies of a 32 MiB buffer for a 1 GiB log, minutes of
+// memory moves for a diagnosis that exists to explain a failure. The cap bounds
+// the memory, not the log: internal/report/logsink.go puts no limit on what a
+// command may write, so a log many times maxLogBytes is the ordinary case.
+//
+// A ring rather than seeking to the file's end when the reader is an
+// io.Seeker: this package's own reader is not one (cmdlog.Open returns
+// *logFile, which reads and closes), and Open is a seam whose readers are the
+// caller's, so the ring is the one shape that holds for all of them.
 func tailOf(r io.Reader, max int64) ([]byte, int64, error) {
 	if max <= 0 {
 		return nil, 0, nil
 	}
+	// buf is the stream's tail: all of it while the stream fits under max, and
+	// a ring of exactly max bytes once it does not (full says which). at is the
+	// ring's write position, which is also where its oldest byte stands, so the
+	// tail is buf[at:] followed by buf[:at].
 	var buf []byte
+	var at int64
+	var full bool
 	var total int64
 	chunk := make([]byte, 32<<10)
 	if int64(len(chunk)) > max {
@@ -247,10 +264,24 @@ func tailOf(r io.Reader, max int64) ([]byte, int64, error) {
 		if n > 0 {
 			empty = 0
 			total += int64(n)
-			buf = append(buf, chunk[:n]...)
-			if int64(len(buf)) > max {
-				copy(buf, buf[int64(len(buf))-max:])
-				buf = buf[:max]
+			p := chunk[:n]
+			if !full {
+				if room := max - int64(len(buf)); int64(len(p)) > room {
+					buf = append(buf, p[:room]...)
+					p = p[room:]
+					full, at = true, 0
+				} else {
+					buf = append(buf, p...)
+					p = nil
+				}
+			}
+			if len(p) > 0 {
+				// A chunk is at most max bytes, so it wraps at most once
+				c := copy(buf[at:], p)
+				copy(buf, p[c:])
+				if at += int64(len(p)); at >= max {
+					at -= max
+				}
 			}
 		} else if err == nil {
 			empty++
@@ -259,7 +290,12 @@ func tailOf(r io.Reader, max int64) ([]byte, int64, error) {
 			}
 		}
 		if errors.Is(err, io.EOF) {
-			return buf, total, nil
+			if !full {
+				return buf, total, nil
+			}
+			out := make([]byte, 0, max)
+			out = append(out, buf[at:]...)
+			return append(out, buf[:at]...), total, nil
 		}
 		if err != nil {
 			return nil, total, err

@@ -3,6 +3,7 @@ package diagnoseagent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -355,6 +356,47 @@ func TestEvidenceCollectKeepsTheEndOfAnOversizeLog(t *testing.T) {
 	}
 	if !strings.Contains(got, "only its last") {
 		t.Errorf("the log file does not say what was left out: %q", got)
+	}
+}
+
+// TestEvidenceCollectKeepsTheEndOfALogManyTimesTheCap: the store that writes the
+// log caps nothing (internal/report/logsink.go), so a collection meets logs many
+// times maxLogBytes, and the tail is read through a ring rather than by sliding a
+// full buffer down per chunk (tailOf). What the file keeps is still the log's own
+// end, byte for byte, and the note still states the whole length rather than the
+// length kept — a truncated end that read as the whole log would be a lie the
+// diagnosis rests on.
+func TestEvidenceCollectKeepsTheEndOfALogManyTimesTheCap(t *testing.T) {
+	was := maxLogBytes
+	// 100 KiB is not a multiple of the 32 KiB the read loop asks for, so a chunk
+	// lands across the ring's end and the wrap is what this test reads.
+	maxLogBytes = 100 << 10
+	t.Cleanup(func() { maxLogBytes = was })
+
+	getenv := evidenceEnv(t)
+	id := evidenceID()
+	head := "step: the beginning of a very long stream\n"
+	tail := "Step failed: quota exceeded\n"
+	logText := head + strings.Repeat("a line of installation output\n", 64*int(maxLogBytes)/32) + tail
+	ev, err := Collect(context.Background(), id, Options{
+		Version: "v0.5.2", Getenv: getenv, GOOS: "linux",
+		Open: func(cmdlog.ID) (io.ReadCloser, error) { return io.NopCloser(strings.NewReader(logText)), nil },
+	})
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	got := evidenceRead(t, ev.EvidenceDir)[id.String()+".log"]
+	if !strings.HasSuffix(got, logText[len(logText)-int(maxLogBytes):]) {
+		t.Errorf("the log file does not end with the log's own last %d bytes: the tail is not the log's tail", maxLogBytes)
+	}
+	if !strings.Contains(got, tail) {
+		t.Errorf("the log file does not hold the end of the log: %q", got[len(got)-120:])
+	}
+	if strings.Contains(got, head) {
+		t.Errorf("the log file holds the beginning of a log many times the cap: %q", got[:120])
+	}
+	if want := fmt.Sprintf("is %d bytes", len(logText)); !strings.Contains(got, want) {
+		t.Error("the log file does not state the whole length of the log it shortened")
 	}
 }
 
