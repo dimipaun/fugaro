@@ -638,7 +638,9 @@ func TestDocsWindowsConsoleReleaseDocsCarryTheDryRun(t *testing.T) {
 //     the ones the `## console-linux.yml` section already gives, and they are
 //     not: that copy-in deletes the very file those sentences name.
 //   - `docs/release.md` said the console *has* a Windows build, which nothing
-//     has built, while two other documents still say Windows stays out.
+//     has built, while two other documents still said Windows stays out.
+//   - Its own O7 item, and the reconciliation's, went on saying the design's
+//     and the console's README's notes were outstanding after they landed.
 //
 // The mutations that prove it: put "§4 U13" back; put "`SECURITY.md` already
 // says" back; drop `docs/release.md` from the surface list; put the
@@ -743,7 +745,7 @@ func TestDocsWindowsConsoleClaimsAboutOtherFilesAreTrue(t *testing.T) {
 		}
 	}
 	if strings.Contains(release, "the console has a Windows build") {
-		t.Errorf("docs/release.md says the console has a Windows build again: the plan is approved but unbuilt, the pack is red until its Parts B and C land, and docs/design/desktop-console.md and the console's own README still say Windows stays out")
+		t.Errorf("docs/release.md says the console has a Windows build again: the plan is approved but unbuilt, no host has carried a `--win` pack to an artifact, and docs/design/desktop-console.md and the console's own README carry dated notes that say the build half moved and the signing half did not")
 	}
 
 	// 6. And the figure the suite's size is given as, in the two other places it
@@ -757,6 +759,32 @@ func TestDocsWindowsConsoleClaimsAboutOtherFilesAreTrue(t *testing.T) {
 	}
 	if !strings.Contains(recon, "57 `.ts` files") {
 		t.Errorf("docs/console-windows/reconciliation.md's U3 no longer gives the unit suite's size as 57 `.ts` files: the census rule is that a figure travels with the command that returns it, and this is the figure U3 is about")
+	}
+
+	// 7. And the two planning records this landing falsifies. This folder's
+	// README carries O7 as the item that owes the other documents their notes,
+	// and the reconciliation carries it as a finding, and both said in the
+	// present tense that those notes were still outstanding. Landing them turns
+	// that into a false claim about files outside this folder, which is what
+	// this test is for: docs/release.md's twin clause was deleted in this very
+	// change for the identical reason, and a reader who arrives at O7 from the
+	// plan has to be able to trust it as much as that paragraph. There is no
+	// later task that would notice: O7 is the last item of §5 and Part H's
+	// other tasks do not read this folder.
+	//
+	// The mutations that prove it: put "are still untouched and still say
+	// Windows stays out" back in the README's item, and take "Satisfied
+	// 2026-11-10" off the reconciliation's.
+	o7 := flattenDoc(windowsConsoleBlock(t, index, idx, "- **O7 —", "## Related"))
+	if !strings.Contains(o7, "carry their notes as of 2026-11-10") {
+		t.Errorf("%s's O7 item no longer carries %q: Part H (T-H3) landed the notes it owes on 2026-11-10, and an item still reading as outstanding contradicts docs/design/desktop-console.md, console/README.md and docs/release.md at once", index, "carry their notes as of 2026-11-10")
+	}
+	if strings.Contains(o7, "still untouched and still say Windows stays out") {
+		t.Errorf("%s's O7 item says the design and the console's README \"are still untouched and still say Windows stays out\" again: both carry their dated notes as of 2026-11-10, which is what %q records", index, "carry their notes as of 2026-11-10")
+	}
+	reconO7 := flattenDoc(windowsConsoleBlock(t, "docs/console-windows/reconciliation.md", recon, "- **O7 —", "## 6. UNVERIFIED"))
+	if !strings.Contains(reconO7, "Satisfied 2026-11-10") {
+		t.Errorf("docs/console-windows/reconciliation.md's O7 finding is not marked satisfied: the three documents it names all carry the dated note as of 2026-11-10, and a finding left open in the document the plan is written from sends the next reader to write them a second time")
 	}
 }
 

@@ -544,7 +544,12 @@ this folder alone.
 - **O6 — the D-number namespace** (repeated in the README): four conventions now exist in the tree
   and this work takes the folder-local one.
 - **O7 — three documents still say Windows is out** (repeated in the README, F43): they need dated
-  notes, and Part H is where they land.
+  notes, and Part H is where they land. **Satisfied 2026-11-10:** all three carry the dated note now
+  (the design's §4.2, §7.6's rule 3, the owner-run table's signing row and D10's row;
+  [console/README.md](../../console/README.md)'s Linux section; and [docs/release.md](../release.md)'s
+  console paragraph), each saying which half of "Windows stays out" moved — the *build* is in by the
+  owner's ruling of 2026-10-20, the *signing* answer is untouched. This line is the finding as it was
+  read; the notes are where it landed.
 
 ---
 
