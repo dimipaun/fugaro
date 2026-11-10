@@ -1463,9 +1463,19 @@ func TestNoSecretValueReadUnderInternal(t *testing.T) {
 		"credsvc/bundle.go":      "the credentials service's ONE bundle container (Q6): the service attaches the credential upstream, and it is the only Fugaro process that ever holds a model credential's value",
 	}
 	// The reads, by the API each one is spelled with: the google-api client's
-	// Versions.Access, the cloud.google.com/go client's AccessSecretVersion,
-	// and a secretmanager.SecretPayload built or read.
-	reads := []string{".Access(", "AccessSecretVersion", "SecretPayload"}
+	// Versions.Access and the cloud.google.com/go client's AccessSecretVersion.
+	//
+	// A secretmanager.SecretPayload is deliberately not a token here, though it
+	// was one until the intake landed (DS2.1). It is the type a version is
+	// WRITTEN with — AddSecretVersionRequest.Payload, at every site in this tree
+	// that names it (backend/gcp/secrets.go, cli/creds.go, and the intake's own
+	// adapter) — so it caught writers and no reader the two calls above miss:
+	// reading through either client is a call, `.Access(` or
+	// `AccessSecretVersion`, and the payload a read answers with comes back
+	// through one of them. Narrowing the list keeps every reader it found (all
+	// four files below still match) and stops reporting a file that can only
+	// write.
+	reads := []string{".Access(", "AccessSecretVersion"}
 	var found []string
 	root := ".." // internal/
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
