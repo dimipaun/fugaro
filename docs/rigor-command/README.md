@@ -118,7 +118,7 @@ not exist.
 | 3 | settings | the read half (S0–S2, S4) |
 | 4 | rigor | the local layer file, then the stage that publishes it: **R0** (the path `LayerFile`, `config publish`'s default and doctor's `local-layer-file` check — no stage yet) and **R1** (the `Layer` stage in `update` that seeds and publishes it, which needs R0's file) |
 | 5 | settings | set (S5) — the shared write helper the rigor commands call, `internal/cli/settings_write.go`: diff, confirmation, agent-session refusal, backup, atomic write |
-| 6 | config-management and settings | the commands **this plan designed and the owner closed as duplicates of theirs on 2026-11-10**: R2's splice and R4's and R5's `set`, `unset` and `--repo` are config-management's **G6** over **G0–G2** with **G4**, and R3's read is the settings read at position 3, so **each lands where its winner sits above and nothing lands here** — plus the `fugaro rigor floor` both designs claim (**S7** and config-management's **G7**), and the `models` work |
+| 6 | config-management and settings | the commands **this plan designed and the owner closed as duplicates of theirs on 2026-11-10**: R2's splice and R4's and R5's `set`, `unset` and `--repo` are config-management's **G6** over **G0–G2** with **G4**, and R3's read is the settings read at position 3, so **each lands where its winner sits above and nothing lands here** — plus the `fugaro rigor floor` settings' **S7** and config-management's **G7** both designed, which **G7 wins** (S7 closed as its duplicate, 2026-11-10) — and the `models` work |
 
 This work's own tasks keep their levels in [implementation-plan.md](implementation-plan.md); the
 table above is the order the two designs land in together, and a task here that names a settings
