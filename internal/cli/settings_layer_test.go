@@ -96,6 +96,79 @@ func TestSettingsSetLayerAbEntryWritesTheLayerFile(t *testing.T) {
 	}
 }
 
+// settingsLayerAgentCaps is a layer file whose defaults.agent block holds the
+// spend cap beside another member: the cap is the key these tests write, and
+// the member beside it is what keeps the block a mapping once the cap leaves.
+const settingsLayerAgentCaps = "defaults:\n  agent:\n    max_budget_usd: 25\n    review_rounds: 3\n"
+
+// TestSettingsSetLayerAgentEntryIsClassifiedAsTheLeafItWrites: an entry of the
+// layer's `defaults.agent` block is one member of that block, and the key the
+// write is about is the member's own — `layer.defaults.agent.max_budget_usd`,
+// the row the registry holds and D846's fence reads — and not the block the
+// command line named. So the entry spelling and the leaf spelling of one edit
+// answer the widening question alike, which is what D1165's "classified ...
+// exactly as a scalar write is" means: an entry write that raises a ceiling is
+// a ceiling raised, in the dry run's widening (D1106, the console's tick) and
+// in the class the managed gate judges (settingsOwnerOnlyRule, D1026).
+func TestSettingsSetLayerAgentEntryIsClassifiedAsTheLeafItWrites(t *testing.T) {
+	settingsWriteHome(t)
+	settingsWriteLayerFile(t, settingsLayerAgentCaps)
+	noTerminal(t)
+
+	raised := settingsDryRunDoc(t, "settings", "set", "layer.defaults.agent",
+		"--add-entry", "max_budget_usd=100", "--layer", "project")
+	leaf := settingsDryRunDoc(t, "settings", "set", "layer.defaults.agent.max_budget_usd",
+		"100", "--layer", "project")
+	if !raised.Widening {
+		t.Errorf("raising the cap through an entry is not classified as a widening: %+v", raised)
+	}
+	if raised.Widening != leaf.Widening || raised.Why != leaf.Why {
+		t.Errorf("the entry spelling and the leaf spelling of one edit are classified differently: %+v against %+v", raised, leaf)
+	}
+	// The classification is the leaf's and the window is still the entry's: the
+	// members a person is shown are the entry's own (D1164), and the block
+	// around it is not what changed.
+	if raised.Operation != "add-entry" || raised.Old != "max_budget_usd=25" || raised.New != "max_budget_usd=100" {
+		t.Errorf("the dry run of the entry does not show the entry the write is about: %+v", raised)
+	}
+	// The other direction is unchanged: a cap written below the one the file
+	// holds tightens it, and no tightening asks for the owner's own hand.
+	lowered := settingsDryRunDoc(t, "settings", "set", "layer.defaults.agent",
+		"--add-entry", "max_budget_usd=10", "--layer", "project")
+	if lowered.Widening {
+		t.Errorf("lowering the cap through an entry is classified as a widening: %+v", lowered)
+	}
+}
+
+// TestSettingsSetLayerAgentEntryRemovalIsACeilingRemoval: taking the cap out of
+// the layer's agent block hands the decision back to a looser layer, which is
+// the removal `settings unset` makes and one of the class D846 reserves for the
+// owner — an entry removal that is a ceiling's and not the narrowing an
+// `--add`/`--remove` of a list member is.
+func TestSettingsSetLayerAgentEntryRemovalIsACeilingRemoval(t *testing.T) {
+	settingsWriteHome(t)
+	settingsWriteLayerFile(t, settingsLayerAgentCaps)
+	noTerminal(t)
+
+	doc := settingsDryRunDoc(t, "settings", "set", "layer.defaults.agent",
+		"--remove-entry", "max_budget_usd", "--layer", "project")
+	if !doc.Changed {
+		t.Errorf("the removal of the cap changes nothing, and the file holds it: %+v", doc)
+	}
+	if !doc.Widening {
+		t.Errorf("removing the cap through an entry is not classified as a widening: %+v", doc)
+	}
+	if doc.Old != "max_budget_usd=25" || doc.New != "" {
+		t.Errorf("the document says %q -> %q, and the file holds the cap and the removal leaves the entry gone", doc.Old, doc.New)
+	}
+	// The scalar spelling of the same removal is the same class and carries the
+	// same sentence, so the two doors into one ceiling do not part company.
+	leaf := settingsDryRunDoc(t, "settings", "unset", "layer.defaults.agent.max_budget_usd", "--layer", "project")
+	if !leaf.Widening || doc.Why != leaf.Why {
+		t.Errorf("the entry removal and the leaf removal of one ceiling answer differently: %+v against %+v", doc, leaf)
+	}
+}
+
 // TestSettingsSetLayerRefusesAReservedKey: `fugaro config publish` refuses the
 // layer's reserved keys in a coding agent's session (layerReservedRuns), and a
 // layer edit makes the same refusal over its own key — so a session that
