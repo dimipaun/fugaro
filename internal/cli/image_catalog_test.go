@@ -10,10 +10,12 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/catalog"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -353,6 +355,78 @@ func TestImageRmRefusesAnEntryAJobStillPointsAt(t *testing.T) {
 	}
 	if lc.ImageCatalog == nil || len(lc.ImageCatalog.Entries) != 1 || lc.ImageCatalog.Entries[0].Name != "tools" {
 		t.Fatalf("ImageCatalog = %+v, want only tools left", lc.ImageCatalog)
+	}
+}
+
+// publishedMapFixture is catalogFixture with the map in the published policy
+// node: acme/app's jobs run tools, and the file here states no map at all —
+// the shape a machine that did not write the map has, which is every machine
+// the owner did not publish it from (D1906). It returns the database, so a
+// test can break the node the map is read from.
+func publishedMapFixture(t *testing.T) (*cloudFixture, *gcpfake.RTDB) {
+	t.Helper()
+	f := catalogFixture(t)
+	db := gcpfake.NewRTDB(t)
+	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
+	db.Set(projectpolicy.PathShared(), &projectpolicy.Policy{
+		Version:  projectpolicy.Version,
+		Budget:   projectpolicy.Budget{Mode: "off"},
+		ImageMap: projectpolicy.ImageMap{"acme/app": "tools"},
+	})
+	f.appendConfig(t, "budget: { mode: off, rtdb_url: "+db.URL+" }\n")
+	return f, db
+}
+
+// TestImageRmRefusesAnEntryThePublishedMapPointsAt: the map that gives a
+// repository's job an entry is a member of the published node, and the machine
+// that runs the removal is normally not the one that published it, so the file
+// here states no map. A guard reading the file alone saw no mapping, fell back
+// to the catalog's default and removed an entry a job runs — and the node went
+// on pointing acme/app at the entry that is gone, which refuses the checkout's
+// next `fugaro update` and every `fugaro run` of that repository with
+// catalog.UnknownMappedEntryError: a state only another command could repair,
+// against the HARD RULE on update.
+//
+// The second half is a node this machine cannot read. Failing open there
+// deletes an entry the guard could not check, which is the same removal by
+// accident, so the removal is refused instead.
+func TestImageRmRefusesAnEntryThePublishedMapPointsAt(t *testing.T) {
+	_, db := publishedMapFixture(t)
+	// The workflow names nothing: what gives its job tools is the map.
+	catalogCheckout(t, "version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n")
+	path := os.Getenv("FUGARO_CONFIG")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err = execute(t, "image", "rm", "tools")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("exit %d, err %v, want the removal refused: the published map points this repository at the entry", ExitCode(err), err)
+	}
+	for _, want := range []string{"tools", "acme/app", "app"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal %v lacks %q", err, want)
+		}
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Error("a refused rm still wrote the config")
+	}
+
+	db.DenyRead(projectpolicy.PathShared())
+	if _, _, err := execute(t, "image", "rm", "tools"); err == nil {
+		t.Fatal("the removal went ahead without reading the map: an entry a job may run was deleted on an unread node")
+	}
+	after, err = os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Error("a refused rm still wrote the config")
 	}
 }
 

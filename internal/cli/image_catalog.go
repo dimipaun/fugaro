@@ -457,10 +457,12 @@ func newImageRmCmd() *cobra.Command {
 		Short: "Remove an image catalog entry from this machine's project config",
 		Long: "Remove a named image from the project's image catalog, in this machine's\n" +
 			"project config. The removal is refused while a repository's job still runs\n" +
-			"the entry — because a workflow names it (image_name:), or because the\n" +
-			"tag-cover rule picks it for the tags the workflow needs — since that job\n" +
-			"would then be on an image no catalog describes. Point the repository at\n" +
-			"another entry first, run fugaro update, and remove the entry after.\n\n" +
+			"the entry — because a workflow names it (image_name:), because the\n" +
+			"project's image_map gives it to the repository, or because the tag-cover\n" +
+			"rule picks it for the tags the workflow needs — since that job would then\n" +
+			"be on an image no catalog describes. Point the repository at another entry\n" +
+			"first (image_name: in its fugaro.yaml, or fugaro image map set), run\n" +
+			"fugaro update, and remove the entry after.\n\n" +
 			"Nothing is deleted from the registry: the entry's built image stays where\n" +
 			"it is, and the next fugaro update publishes the catalog without the entry.",
 		Args: cobra.ExactArgs(1),
@@ -484,7 +486,19 @@ func runImageRm(cmd *cobra.Command, o cloudOptions, name string) error {
 	if cat == nil || !slices.ContainsFunc(cat.Entries, func(e config.Entry) bool { return e.Name == name }) {
 		return userErr("this project's image catalog has no entry named %s: fugaro image ls lists the entries it has", pluginwire.Printable(name))
 	}
-	who, unasked, err := catalogPointedAt(ctx, onDisk, cat, name)
+	// The map that decides a job's image is the project's *effective* one, and
+	// on a machine whose config does not state one it is the published node's:
+	// the map is a node member, published from whichever machine the owner
+	// wrote it on (D1906), so this file is normally silent about it. Read as
+	// the file alone the guard would see no mapping, fall back to the catalog's
+	// default and remove an entry a job runs; a node this machine cannot read
+	// is refused rather than read as an empty map, because failing open here
+	// deletes something a job may be running.
+	imap, err := effectiveImageMap(ctx, &cloudEnv{lc: onDisk})
+	if err != nil {
+		return remote(policyReadErr(err))
+	}
+	who, unasked, err := catalogPointedAt(ctx, onDisk, cat, imap, name)
 	if err != nil {
 		return err
 	}
@@ -544,14 +558,17 @@ func catalogConfig(ctx context.Context, o cloudOptions) (string, *localcfg.Confi
 
 // catalogPointedAt names the first job that still runs entry, and the
 // repositories whose checkout this machine does not have, whose workflows it
-// therefore cannot judge. A job runs the entry the tag-cover rule picks for
-// it (catalog.Choose): a workflow that names one pins it, and a workflow that
-// needs nothing runs the project's default, so both are pointers at the entry
-// and both are refused.
+// therefore cannot judge. It asks the one resolver every other caller asks
+// (catalog.JobImage), so it sees the mapping the deploy sees: a workflow that
+// names an entry pins it, the project's map gives one to a repository it names
+// (D1906), and a workflow that says nothing runs the catalog's default — each
+// of them a pointer at the entry, and each refused. imap is that mapping, and
+// it is the project's effective one and not this file's: the map is a node
+// member a machine other than this one publishes.
 //
-// A job the rule already refuses is not one of them: it runs no image at all,
-// and a removal cannot leave it on a catalog entry it never had.
-func catalogPointedAt(ctx context.Context, lc *localcfg.Config, cat *config.Catalog, entry string) (string, []string, error) {
+// A job the resolver gives no entry to is not one of them: it runs no catalog
+// image at all, and a removal cannot leave it on an entry it never had.
+func catalogPointedAt(ctx context.Context, lc *localcfg.Config, cat *config.Catalog, imap map[string]string, entry string) (string, []string, error) {
 	var unasked []string
 	for _, repo := range slices.Sorted(maps.Keys(lc.Repos)) {
 		cfg := checkoutConfig(ctx, repo)
@@ -567,7 +584,7 @@ func catalogPointedAt(ctx context.Context, lc *localcfg.Config, cat *config.Cata
 		for _, n := range slices.Sorted(maps.Keys(cfg.Workflows)) {
 			sel, err := catalog.JobImage(catalog.ImageRequest{
 				Catalog:   cat,
-				ImageMap:  lc.ImageMap,
+				ImageMap:  imap,
 				Canonical: repo,
 				Workflow:  cfg.Workflows[n],
 				Backend:   catalog.Backend(lc.Backend()),

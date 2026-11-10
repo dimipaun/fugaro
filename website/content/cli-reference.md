@@ -2653,10 +2653,12 @@ Remove an image catalog entry from this machine's project config
 
 Remove a named image from the project's image catalog, in this machine's
 project config. The removal is refused while a repository's job still runs
-the entry — because a workflow names it (image_name:), or because the
-tag-cover rule picks it for the tags the workflow needs — since that job
-would then be on an image no catalog describes. Point the repository at
-another entry first, run fugaro update, and remove the entry after.
+the entry — because a workflow names it (image_name:), because the
+project's image_map gives it to the repository, or because the tag-cover
+rule picks it for the tags the workflow needs — since that job would then
+be on an image no catalog describes. Point the repository at another entry
+first (image_name: in its fugaro.yaml, or fugaro image map set), run
+fugaro update, and remove the entry after.
 
 Nothing is deleted from the registry: the entry's built image stays where
 it is, and the next fugaro update publishes the catalog without the entry.
