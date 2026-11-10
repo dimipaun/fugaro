@@ -304,7 +304,15 @@ type Server struct {
 	granted     pricing.Micros // lease: the sum of what the lease granted, less what was released
 	flight      *topUp         // lease: the top-up in flight, if any
 	stage       *stageState
-	onLedger    func(Ledger, pricing.Micros) // tests: called after every ledger change
+	// wsHeadroom and wsHeadroomSet are the room the workspace's own service
+	// last delivered on an answer (WorkspaceHeadroomHeader), and whether it
+	// ever delivered one. It is ADVISORY: the run's own cap is Options.Cap
+	// and the workspace's cap is the service's, which refuses the call
+	// itself. A gateway told nothing holds no workspace figure at all, so it
+	// stops no run on the workspace's account.
+	wsHeadroom    pricing.Micros
+	wsHeadroomSet bool
+	onLedger      func(Ledger, pricing.Micros) // tests: called after every ledger change
 }
 
 // stageState is a running stage; its calls hold it until they settle.
