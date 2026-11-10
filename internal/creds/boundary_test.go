@@ -222,8 +222,11 @@ func importPaths(path string) ([]string, error) {
 //     that name (store := &creds.RTDBStore{DB: db}; store.UpdateMark(...)). A
 //     copy, an argument, an index or a method value is none of those, so the
 //     name stops being marks-only and the mention becomes a finding again;
-//   - the store handed to a package that may hold one: the operator's CLI builds
-//     the state the credentials service serves from locally.
+//   - the store handed to the service, which may hold one: the operator's CLI
+//     builds the state the credentials service serves from locally. This is the
+//     service package alone and not the state's own — nothing outside hands that
+//     one a store, and a shape no caller writes is a hole in the guard — and a
+//     plant pins each direction.
 //
 // The list is closed the way the importers are, and Marks and UpdateMark are not
 // slip methods — that distinction is what the lists below are.
@@ -279,11 +282,13 @@ var slipStoreTypes = []string{"RTDBStore", "SlipStore"}
 // does (C1.21). Every other method the store carries is the slip half's.
 var markMethods = []string{"Marks", "UpdateMark"}
 
-// servicePackages are the import paths whose packages may hold a creds store: the
-// state's own package, and the service's. A store a file outside hands to one of
-// them — the operator's CLI building the state the service serves from — is the
-// last of the three exempt shapes.
-var servicePackages = []string{credsPackage, "github.com/dimipaun/fugaro/internal/credsvc"}
+// servicePackage is the one package a file outside may hand a creds store to: the
+// service, which is the operator's CLI building the state the service serves
+// from. The state's own package is deliberately not here (a review of this
+// change): nothing outside hands it a store, so exempting that shape would
+// widen the third hole for a caller that does not exist. The shape is pinned by
+// a plant in each direction, so widening this is an edit a reviewer sees.
+const servicePackage = "github.com/dimipaun/fugaro/internal/credsvc"
 
 // TestBoundaryAllowsSlipsOnlyViaService fails if a file outside slipImporters
 // reaches the slip store — by naming a slip, by naming a creds store's type, or
@@ -420,6 +425,16 @@ func TestBoundaryAllowsSlipsOnlyViaService(t *testing.T) {
 			name: "a store handed to the service, which may hold one",
 			src:  "package x\n\nimport (\n\t\"github.com/dimipaun/fugaro/internal/creds\"\n\t\"github.com/dimipaun/fugaro/internal/credsvc\"\n)\n\nvar c = credsvc.Config{State: &creds.RTDBStore{}}\n",
 			want: false,
+		},
+		{
+			name: "a store handed to the state's own package, which is not the service",
+			src:  "package x\n\nimport \"github.com/dimipaun/fugaro/internal/creds\"\n\nfunc f() { sel := creds.Selector{Store: &creds.RTDBStore{}}; sel.Pick(ctx) }\n",
+			want: true,
+		},
+		{
+			name: "a store bound and used for nothing, which is not the marks either",
+			src:  "package x\n\nimport \"github.com/dimipaun/fugaro/internal/creds\"\n\nvar st = &creds.RTDBStore{}\n",
+			want: true,
 		},
 		{
 			name: "a store whose name escapes to a copy, which the marks shapes do not cover",
@@ -619,12 +634,15 @@ func isStoreMention(n ast.Node, pkg string) bool {
 	return ok && x.Name == pkg && slices.Contains(slipStoreTypes, sel.Sel.Name)
 }
 
-// marksOnlyNames answers the identifiers whose every appearance in the file is a
-// binding of the name or the receiver of a marks call. Appearances are counted
-// rather than scoped, deliberately: the file is all the scan has, and a name
-// with more appearances than the two shapes account for is a name whose uses
-// this rule cannot see — which fails closed, and names nothing a reader cannot
-// check by looking at the file.
+// marksOnlyNames answers the identifiers the file uses only for the marks: at
+// least one marks receiver, and no appearance that is neither a receiver nor
+// another binding of the name. Appearances are counted rather than scoped,
+// deliberately: the file is all the scan has, and a name with more appearances
+// than the two shapes account for is a name whose uses this rule cannot see —
+// which fails closed, and names nothing a reader cannot check by looking at the
+// file. The marks receiver is required rather than left to the count (a review of
+// this change): a name bound once and used for nothing at all satisfies a count
+// that only asks for no other uses, and "no other uses" is not the marks.
 func marksOnlyNames(f *ast.File) map[string]bool {
 	appearances := map[string]int{}
 	bindings := map[string]int{}
@@ -652,7 +670,7 @@ func marksOnlyNames(f *ast.File) map[string]bool {
 	})
 	only := map[string]bool{}
 	for name, n := range appearances {
-		if name != "_" && n == bindings[name]+marks[name] {
+		if name != "_" && marks[name] > 0 && n == bindings[name]+marks[name] {
 			only[name] = true
 		}
 	}
@@ -694,13 +712,14 @@ func storeLiteralType(e ast.Expr, pkg string) ast.Expr {
 	}
 }
 
-// serviceImportNames answers the local names a file binds the packages that may
-// hold a creds store to.
+// serviceImportNames answers the local names a file binds the service package to:
+// its own name unless the import renames it. A blank or dot import binds no name
+// a call can be made through, and a dot import is already a finding of its own.
 func serviceImportNames(f *ast.File) []string {
 	var names []string
 	for _, imp := range f.Imports {
 		path := strings.Trim(imp.Path.Value, `"`)
-		if !slices.Contains(servicePackages, path) {
+		if path != servicePackage {
 			continue
 		}
 		if imp.Name == nil {
