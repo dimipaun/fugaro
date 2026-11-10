@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -2435,6 +2436,101 @@ func TestRefusalMessagesAreNotInterchanged(t *testing.T) {
 	}
 	if !strings.Contains(unreadable.Error(), "topic") {
 		t.Errorf("the unreadable-ref refusal does not name the ref it could not read: %v", unreadable)
+	}
+}
+
+// TestCheckoutWithAnUnreadableRefDocumentRefuses is D905's other half, and the
+// one a read's exit status cannot answer: the ref's tree names a fugaro.yaml
+// and this checkout cannot produce the object of it — one the clone never got
+// (a promisor clone's lazy fetch did not run), one pruned, one corrupt. That
+// is a read that failed, so the launch is refused; it is not a repository
+// without a document, which is the only state that keeps the per-repository
+// job. Reading the two as one places the run on a job the project's policy did
+// not choose, past the claim and the budget token, and nothing downstream
+// catches it: a per-repository job carries no profile to disagree with.
+//
+// Mutation (run, restore): answer errNoConfigAtRef for any failed cat-file
+// (the shape before the tree was asked) — this launch succeeds on the
+// per-repository job and the assertion below fails on it.
+func TestCheckoutWithAnUnreadableRefDocumentRefuses(t *testing.T) {
+	f := newProjectJobFixture(t)
+	dir := projectJobCheckout(t)
+	if err := os.Remove(filepath.Join(dir, "fugaro.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	removeRefDocumentObject(t, dir, "refs/remotes/origin/main")
+
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261110-094000-ffff", "Add a feature")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a user error", err)
+	}
+	if !strings.Contains(err.Error(), "out of this checkout") {
+		t.Errorf("the refusal does not say the read was made from this checkout: %v", err)
+	}
+	if !strings.Contains(err.Error(), "acme/app") || !strings.Contains(err.Error(), "main") {
+		t.Errorf("the refusal does not name the repository and the ref it could not read: %v", err)
+	}
+	if calls := f.run.RunRequests(); len(calls) != 0 {
+		t.Errorf("the refused launch asked Cloud Run for %d job(s): %+v", len(calls), calls)
+	}
+}
+
+// TestFugaroYAMLAtRefTellsAnAbsentFileFromAFailedRead is the reader's own
+// contract, which the launch above and the absent-file case both rest on: the
+// sentinel comes back for a tree that has no fugaro.yaml and for nothing else.
+func TestFugaroYAMLAtRefTellsAnAbsentFileFromAFailedRead(t *testing.T) {
+	ctx := context.Background()
+
+	// A repository whose commit carries no document at all: the definite
+	// answer, and the one state a launch keeps the per-repository job for.
+	absent := t.TempDir()
+	testutil.IsolateGit(t)
+	testutil.Git(t, absent, "init", "-q")
+	testutil.Git(t, absent, "remote", "add", "origin", "git@github.com:acme/app.git")
+	testutil.WriteFiles(t, absent, map[string]string{"README.md": "no document here\n"})
+	testutil.Git(t, absent, "add", "README.md")
+	testutil.Git(t, absent, "commit", "-q", "-m", "the repository without a fugaro.yaml")
+	testutil.Git(t, absent, "update-ref", "refs/remotes/origin/main", "HEAD")
+	if _, err := checkoutFugaroYAMLAtRef(ctx, absent, "main"); !errors.Is(err, errNoConfigAtRef) {
+		t.Errorf("a ref whose tree has no fugaro.yaml: err = %v, want errNoConfigAtRef", err)
+	}
+
+	// The same ref with the file in its tree and its object unreadable: a
+	// failure, never the sentinel.
+	dir := projectJobCheckout(t)
+	removeRefDocumentObject(t, dir, "refs/remotes/origin/main")
+	_, err := checkoutFugaroYAMLAtRef(ctx, dir, "main")
+	if err == nil {
+		t.Fatal("a fugaro.yaml whose object is gone was read without an error")
+	}
+	if errors.Is(err, errNoConfigAtRef) {
+		t.Errorf("a failed read is answered as a repository without a document: %v", err)
+	}
+	if !strings.Contains(err.Error(), "could not read") {
+		t.Errorf("the failure does not say the read failed: %v", err)
+	}
+}
+
+// removeRefDocumentObject deletes the object git would answer
+// rev:fugaro.yaml with, which is how a checkout that holds the ref and cannot
+// produce its document is made without a network. A repository this test
+// created keeps its objects loose, so the file is the blob itself.
+func removeRefDocumentObject(t *testing.T, dir, rev string) {
+	t.Helper()
+	ctx := context.Background()
+	sha, err := gitRead(ctx, dir, "rev-parse", "--verify", "--end-of-options", rev+":fugaro.yaml")
+	if err != nil {
+		t.Fatalf("resolve %s:fugaro.yaml: %v", rev, err)
+	}
+	gitDir, err := gitRead(ctx, dir, "rev-parse", "--absolute-git-dir")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(gitDir, "objects", sha[:2], sha[2:])); err != nil {
+		t.Fatalf("remove the object of %s:fugaro.yaml: %v", rev, err)
+	}
+	if _, err := gitRead(ctx, dir, "cat-file", "-e", sha); err == nil {
+		t.Fatalf("the object of %s:fugaro.yaml is still readable after its removal", rev)
 	}
 }
 

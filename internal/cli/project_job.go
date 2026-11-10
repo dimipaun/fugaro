@@ -331,12 +331,14 @@ func cannotReadConfigAtRef(repo, ref string, cause error) error {
 // composed the same way).
 //
 // It returns (nil, nil) for one definite answer — the ref resolved and its
-// commit carries no fugaro.yaml — because that is a repository with no
-// document: it selects no clone workflow and no profile, so its launch keeps
-// the per-repository job (spec.md §2, §7). Every other failure is an error for
-// the caller to refuse with, cause and all: a ref the checkout does not hold,
-// a project layer that cannot be read, and a document that does not resolve
-// are reads that failed, and D905 refuses rather than falling back.
+// tree carries no fugaro.yaml, which checkoutFugaroYAMLAtRef establishes from
+// the tree rather than from a read that failed — because that is a repository
+// with no document: it selects no clone workflow and no profile, so its launch
+// keeps the per-repository job (spec.md §2, §7). Every other failure is an
+// error for the caller to refuse with, cause and all: a ref the checkout does
+// not hold, a fugaro.yaml the tree names and this checkout cannot produce, a
+// project layer that cannot be read, and a document that does not resolve are
+// reads that failed, and D905 refuses rather than falling back.
 func refConfigAtRef(ctx context.Context, root, ref string) (*config.Config, error) {
 	data, err := checkoutFugaroYAMLAtRef(ctx, root, ref)
 	if err != nil {
@@ -790,6 +792,12 @@ var readFugaroYAMLAtRef = checkoutFugaroYAMLAtRef
 // turn. Nothing is fetched here — a fetch is a network write into a repository
 // this command does not own — so a ref this checkout does not hold is an
 // error rather than a guess at another document.
+//
+// The one error of its own that a caller may read as an answer is
+// errNoConfigAtRef, and it means exactly one state: the ref resolved and its
+// tree has no fugaro.yaml. Every other error — including a fugaro.yaml the
+// tree names but this checkout cannot produce — is a read that failed, and
+// callers refuse on it (D905).
 func checkoutFugaroYAMLAtRef(ctx context.Context, root, ref string) ([]byte, error) {
 	if ref == "" {
 		return nil, errors.New("the launch names no ref")
@@ -805,19 +813,47 @@ func checkoutFugaroYAMLAtRef(ctx context.Context, root, ref string) ([]byte, err
 	if at == "" {
 		return nil, fmt.Errorf("this checkout holds no %s ref (fetch it, or check it out)", ref)
 	}
-	data, err := gitCmd(ctx, root, "cat-file", "blob", at+":fugaro.yaml").Output()
+	// Whether the commit carries the file is asked of its tree, not of the
+	// read's exit status: cat-file fails both for a path the tree does not
+	// have and for a file it does have whose object this checkout cannot
+	// produce — one it never got (a promisor clone whose lazy fetch did not
+	// run), one pruned, one corrupt. Only the first is errNoConfigAtRef's
+	// definite answer, and D905 refuses the second rather than reading it as
+	// it: a launch that did would take the claim and mint the budget token on
+	// a job the project's policy did not choose, with nothing downstream to
+	// catch it (a per-repository job carries no profile).
+	listed, err := gitRead(ctx, root, "ls-tree", at, "--", "fugaro.yaml")
 	if err != nil {
+		return nil, fmt.Errorf("%s's tree could not be read out of this checkout (%s)", at, oneLineCLI(err.Error()))
+	}
+	if listed == "" {
 		return nil, fmt.Errorf("%s has %w", at, errNoConfigAtRef)
 	}
-	return data, nil
+	out, err := gitCmd(ctx, root, "cat-file", "blob", at+":fugaro.yaml").CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("%s names a fugaro.yaml this checkout could not read (%s)", at, oneLineCLI(gitFailure(err, out)))
+	}
+	return out, nil
+}
+
+// gitFailure is a failed git call's own words where it printed any: git puts
+// the reason a read failed on stderr — a missing object, a corrupt one — and
+// that is what tells a refusal's reader whether to fetch or to repair.
+func gitFailure(err error, out []byte) string {
+	if text := strings.TrimSpace(string(out)); text != "" {
+		return text
+	}
+	return err.Error()
 }
 
 // errNoConfigAtRef is checkoutFugaroYAMLAtRef's one definite answer: the ref
-// resolved, and the commit it names carries no fugaro.yaml at all. A caller
-// that can tell it from a read that failed reads it as "this repository has no
-// document" rather than as a refusal — a repository with no document anywhere
-// selects no clone workflow and no profile, so its launch keeps the
-// per-repository job (refConfigAtRef; spec.md §2, §7).
+// resolved, and the tree of the commit it names has no fugaro.yaml in it. It
+// is never a read that failed — checkoutFugaroYAMLAtRef establishes this
+// absence from the tree so that the two cannot be confused. A caller that can
+// tell it from a failure reads it as "this repository has no document" rather
+// than as a refusal: a repository with no document anywhere selects no clone
+// workflow and no profile, so its launch keeps the per-repository job
+// (refConfigAtRef; spec.md §2, §7).
 var errNoConfigAtRef = errors.New("no fugaro.yaml at it")
 
 // checkProjectJobAuthUnknown refuses a launch onto a shared project job whose
