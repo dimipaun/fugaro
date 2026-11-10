@@ -633,14 +633,15 @@ func (c *Config) choiceRefProblem(name string) string {
 	if name == config.DefaultClaudeAccount {
 		return ""
 	}
-	// The project's own Anthropic API key is the other value
-	// config.ValidClaudeAccountRef admits and this key cannot take: it names no
-	// account of any run's, so a key choosing a run's account cannot name it.
-	// The refusal has to stand ahead of the lookup below, whose sentence would
-	// send the operator to a claude_accounts entry that this file's own
-	// ValidateClaudeAccounts refuses — a remedy nobody can carry out.
-	if name == config.AnthropicKeyAccount {
-		return config.AnthropicKeyAccountChoiceMessage
+	// The account axis's non-account values are the others
+	// config.ValidClaudeAccountRef admits and this key cannot take: they name
+	// no account of any run's, so a key choosing a run's account cannot name
+	// either. The refusal has to stand ahead of the lookup below, whose
+	// sentence would send the operator to a claude_accounts entry that this
+	// file's own ValidateClaudeAccounts refuses — a remedy nobody can carry
+	// out.
+	if config.AxisNonAccountValue(name) {
+		return config.NonAccountChoiceMessage(name)
 	}
 	if _, ok := c.ClaudeAccounts[name]; ok {
 		return ""

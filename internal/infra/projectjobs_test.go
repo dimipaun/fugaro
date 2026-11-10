@@ -1285,6 +1285,85 @@ profiles:
 	})
 }
 
+// providerKeyProfileLC is the provider key's own fixture (AK6a): a profile that
+// lists the account axis's second non-account value and no Claude account at
+// all. There is no project_secrets entry for it and there can be none — the
+// credential is the credentials service's, held once for the project — so the
+// profile's own allow_repos is the whole bound of the list the policy publishes
+// for it (projectpolicy's nonAccountSlugs).
+const providerKeyProfileLC = `profiles:
+  standard: { provider: github, cpu: 2, memory: 8Gi, timeout_class: 6h, allow_repos: [github/acme/webapp], claude_accounts: [` + config.ProviderKeyAccount + `] }
+`
+
+// TestProviderKeyJobMountsNothing is the second non-account value's mount half:
+// the job whose account segment is the provider key carries no Claude token,
+// and nothing about the value can put one there. The value names a credential
+// the credentials service holds for the project (AK6b), never an account of the
+// installation's, so there is no token of its own for
+// config.ProjectJobTokenAccount to answer with and no container for
+// projectAccountMount to mount — the answer both the launcher's gate and the
+// runner's re-check are built on (a job holding no token is one an OAuth run
+// must not land on). Its review-only variant mounts nothing at all, which is
+// what makes the value deployable.
+//
+// Mutation (run, restore): let the value fall through projectAccountMount's
+// lookup — the container lookup answers claude_accounts.provider-key--project
+// .allow_data_to, a key config.ValidateClaudeAccounts refuses, so the operator
+// is sent to a remedy nobody can carry out and the installation is refused
+// where it should deploy; and drop the value's arm in ProjectJobTokenAccount —
+// the answer becomes ("", false) only by the profile's list, and a profile that
+// did list it as an account would mount a token the job has not got.
+func TestProviderKeyJobMountsNothing(t *testing.T) {
+	lc := parseLC(t, m4LocalConfig+projectJobRepoLC+m5Additions+providerKeyProfileLC)
+	pr := lc.Profiles["standard"]
+	if got, serves := config.ProjectJobTokenAccount(pr, config.ProviderKeyAccount); serves || got != "" {
+		t.Fatalf("ProjectJobTokenAccount(standard, %s) = (%q, %v), want (\"\", false): the value names the credentials service's credential, not an account whose token a job holds", config.ProviderKeyAccount, got, serves)
+	}
+	secretEnv, env := map[string]string{}, map[string]string{}
+	if err := projectAccountMount(lc, "standard", pr, config.ProviderKeyAccount, secretEnv, env); err != nil {
+		t.Fatalf("the provider key's job was refused a mount: %v — the credential is the service's, so there is no project-wide copy of the value's own to demand", err)
+	}
+	if len(secretEnv) != 0 || len(env) != 0 {
+		t.Fatalf("the provider key's job mounts %v/%v, want nothing: no Claude token reaches a job whose account segment is the value", secretEnv, env)
+	}
+	coding, err := ProjectJobs(lc, "fugaro-runs-proj-1234", false)
+	if err != nil {
+		t.Fatalf("an installation whose only account-axis value is the provider key was refused: %v", err)
+	}
+	job := coding[gcp.ProjectJobName("standard", "github", config.ProviderKeyAccount)]
+	if job.Account != config.ProviderKeyAccount {
+		t.Fatalf("the provider key's job carries the account segment %q, want %q", job.Account, config.ProviderKeyAccount)
+	}
+	token := config.ReservedSecrets[config.ClaudeOAuthToken]
+	if _, mounted := job.SecretEnv[token]; mounted {
+		t.Errorf("the provider key's job mounts %s: the value names no account of the installation's, so there is no token of its own to mount", token)
+	}
+	review, err := ProjectReviewJobs(lc, "fugaro-runs-proj-1234", false)
+	if err != nil {
+		t.Fatalf("ProjectReviewJobs: %v", err)
+	}
+	variant := review[credsvc.ReviewJobName("standard", "github", config.ReviewVariantAccount(config.ProviderKeyAccount))]
+	if variant.Account != config.ProviderKeyAccount {
+		t.Errorf("the provider key's review variant carries the account segment %q, want %q", variant.Account, config.ProviderKeyAccount)
+	}
+	if len(variant.SecretEnv) != 0 {
+		t.Errorf("the provider key's review variant mounts %v: a review variant mounts nothing at all (O1)", variant.SecretEnv)
+	}
+
+	// The module's job.account validation admits the value's literal because
+	// HCL cannot import the Go constant (modules/project/variables.tf), and
+	// nothing else holds the two spellings together.
+	t.Run("the module admits the provider key's literal", func(t *testing.T) {
+		b, err := fs.ReadFile(terraform.FS, "gcp/modules/project/variables.tf")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(b), `var.job.account == "`+config.ProviderKeyAccount+`"`) {
+			t.Errorf("deploy/terraform/gcp/modules/project/variables.tf does not admit config.ProviderKeyAccount (%q) as a job.account value: an installation publishing the value would deploy no job", config.ProviderKeyAccount)
+		}
+	})
+}
+
 // infraReviewAccount is the axis value as the admission speaks it, which is the
 // spelling the variant's own names carry: the axis writes the default account as
 // "" (config.ProjectJobAccounts) and the policy spells it

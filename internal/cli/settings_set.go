@@ -567,9 +567,15 @@ const settingsStageAccountPattern = "stages.*.claude_account"
 //
 // The two values valid here besides a declared account are "default"
 // (config.DefaultClaudeAccount, the unsuffixed account, which every repository
-// may choose) and nothing else: config.AnthropicKeyAccount is refused with the
-// loader's own sentence for it, because it names the project's key rather than
-// any account of a run's.
+// may choose) and nothing else: the account axis's non-account values
+// (config.AnthropicKeyAccount and config.ProviderKeyAccount) are refused with
+// the loader's own sentence for them (config.NonAccountChoiceMessage), because
+// each names a credential the credentials service holds rather than any account
+// of a run's. The sentence is the loader's and not this file's, and it must be:
+// config.ValidClaudeAccountRef admits both (a profile may list either), so
+// without this arm each fell through to the declared-account lookup below and
+// was answered with a sentence prescribing `fugaro accounts add <value>`, which
+// config.ValidateClaudeAccounts refuses — a remedy the owner cannot carry out.
 func settingsStageAccountRule(key, value string, lc *localcfg.Config) error {
 	if value == "" || !settingsPatternMatch(settingsStageAccountPattern, key) {
 		return nil
@@ -581,8 +587,8 @@ func settingsStageAccountRule(key, value string, lc *localcfg.Config) error {
 	if msg := config.ValidClaudeAccountRef(value); msg != "" {
 		return userErr("%s: %s", key, msg)
 	}
-	if value == config.AnthropicKeyAccount {
-		return userErr("%s: %s", key, config.AnthropicKeyAccountChoiceMessage)
+	if config.AxisNonAccountValue(value) {
+		return userErr("%s: %s", key, config.NonAccountChoiceMessage(value))
 	}
 	account, declared := lc.ClaudeAccounts[value]
 	if !declared {
