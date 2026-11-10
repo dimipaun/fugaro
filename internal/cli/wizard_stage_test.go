@@ -165,9 +165,10 @@ func TestWizardStageIsAnInputStage(t *testing.T) {
 	}
 	for _, q := range setupQuestions {
 		if q.missing == "" {
-			// The one question whose answer a run that cannot ask takes
-			// itself (creation is never taken on nobody's behalf: setup.go's
-			// askProjectAnswer).
+			// The one question whose answer a run that cannot ask takes itself:
+			// the bake switch, whose absent key already means yes (IS7,
+			// setup.go's askBake). A flag nobody has to pass is not a missing
+			// input, and naming it would refuse a run whose answer is in hand.
 			if strings.Contains(strings.Join(missing.Flags, "; "), q.flag) {
 				t.Errorf("%s: the refusal names %s, and a run that cannot ask takes that answer itself: %v", q.what, q.flag, missing.Flags)
 			}
