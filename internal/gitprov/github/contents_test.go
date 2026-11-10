@@ -196,7 +196,7 @@ func TestContentsRefusesWhatItCannotRead(t *testing.T) {
 		{"a symlink that is not a file", contentsReply("symlink", "base64", 4, ok([]byte("else"))), "symlink"},
 		{"a submodule", contentsReply("submodule", "base64", 4, ok([]byte("else"))), "submodule"},
 		// Files GitHub serves over 1 MB, and anything else it does not base64.
-		{"an encoding it cannot decode", contentsReply("file", "none", 40, ""), "none"},
+		{"an encoding it cannot decode", contentsReply("file", "utf-16", 40, ""), "utf-16"},
 		{"a declared size of zero", contentsReply("file", "base64", 0, ""), "0 bytes"},
 		{"a declared size over the bound", contentsReply("file", "base64", gitprov.MaxContentsBytes+1, ok([]byte("FROM x\n"))), "more than"},
 		{"content that is not base64", contentsReply("file", "base64", 4, "!!!!not base64!!!!"), "decoding"},
@@ -236,6 +236,9 @@ func TestContentsNamesTheTwoRefusalsAboutTheFileToADifferentCaller(t *testing.T)
 	}{
 		{"a file of no bytes", contentsReply("file", "base64", 0, ""), gitprov.ErrContentsEmpty},
 		{"a file over the bound", contentsReply("file", "base64", gitprov.MaxContentsBytes+1, ok([]byte("FROM x\n"))), gitprov.ErrContentsTooLarge},
+		// The shape GitHub actually answers a file over 1 MB with: an encoding
+		// it will not serve, no content at all, and the file's own size.
+		{"a file the endpoint will not serve", contentsReply("file", "none", gitprov.MaxContentsBytes+1, ""), gitprov.ErrContentsTooLarge},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := contentsProvider(t, append(mintExchanges(t),
@@ -244,5 +247,29 @@ func TestContentsNamesTheTwoRefusalsAboutTheFileToADifferentCaller(t *testing.T)
 				t.Fatalf("err = %v, want it to carry %v", err, tc.want)
 			}
 		})
+	}
+}
+
+// TestContentsReadsTheEncodingNoneAnswerAsTooLarge: GitHub does not serve a
+// file over 1 MB from this endpoint — it answers `"encoding": "none"` with no
+// content and the file's own size, which is the API's whole answer and never
+// the base64 the size gate above was written for. Read as "an encoding this
+// reader cannot decode" it is an error no caller can classify, so a caller that
+// asks only whether the repository HAS the file (the survey's lockfiles, F22)
+// cannot tell a 2 MB package-lock.json from a path that is not there, and a
+// large lockfile is never reported as a signal. The reply is the too-large
+// answer of this endpoint and carries gitprov.ErrContentsTooLarge.
+func TestContentsReadsTheEncodingNoneAnswerAsTooLarge(t *testing.T) {
+	const path = "package-lock.json"
+	// The real answer: encoding none, empty content, size set by the server.
+	p := contentsProvider(t, append(mintExchanges(t),
+		contentsExchange(t, "/repos/acme/web/contents/"+path, 200,
+			contentsReply("file", "none", 2<<20, "")))...)
+	_, err := p.Contents(ctx, path, "")
+	if !errors.Is(err, gitprov.ErrContentsTooLarge) {
+		t.Fatalf("err = %v, want it to carry gitprov.ErrContentsTooLarge, so a caller that reads no bytes tells a file too large to serve from a path that is not there", err)
+	}
+	if !strings.Contains(err.Error(), path) || !strings.Contains(err.Error(), "none") {
+		t.Fatalf("err = %v, want it to name the file and what the reply said", err)
 	}
 }
