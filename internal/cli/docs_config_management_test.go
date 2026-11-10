@@ -104,8 +104,12 @@ const (
 // stages.*.claude_account, one per config.RunStages name (settings_stages_test.go),
 // which are the whole of the growth: planning.decoupling's two rows
 // (registry.go:301, and the layer row at :543) are already on main.
+// DS3.1 of docs/secrets-brokering/dynamic-delivery/ moved it to 393 with the
+// three pools.* rows a pool's owner, its roster and its legacy-open marker
+// need; the generic writer carries none of them, so the gap the audit is about
+// widened by exactly those three.
 const (
-	cfmRegistryRows   = 390
+	cfmRegistryRows   = 393
 	cfmAllowlistNamed = 94
 )
 

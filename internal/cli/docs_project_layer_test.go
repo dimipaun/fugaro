@@ -461,10 +461,10 @@ func TestNoShippedTextNamesTheRetiredOAuthGate(t *testing.T) {
 
 // TestDocsProjectLayerStatesThePolicyVersionItShips: docs/project-layer.md's
 // reference paragraph said, in the present tense, that "the policy is version 2
-// from fugaro 0.8.5" — and the bump to version 4 raises `projectpolicy.Version`
-// (VersionSince[4] = "0.14.0", the release that states the Bitbucket token's
-// block in the node), so the sentence must name the version and release this
-// tree writes. The paragraph now leads with version 4 and keeps version 3 as
+// from fugaro 0.8.5" — and the bump to version 5 raises `projectpolicy.Version`
+// (VersionSince[5] = "0.23.0", the release that gives a pool its owner and the
+// users it serves), so the sentence must name the version and release this
+// tree writes. The paragraph now leads with version 5 and keeps version 4 as
 // the node that came before it, which is what the table says.
 //
 // The version the page names is read from the constants rather than typed
@@ -480,7 +480,7 @@ func TestDocsProjectLayerStatesThePolicyVersionItShips(t *testing.T) {
 	if !ok {
 		t.Fatalf("projectpolicy.VersionSince has no row for Version %d, and this page names the release each version came in", projectpolicy.Version)
 	}
-	want := fmt.Sprintf("**The policy is version %d from fugaro %s, the release that states the Bitbucket token's block in it**", projectpolicy.Version, rel)
+	want := fmt.Sprintf("**The policy is version %d from fugaro %s, the release that gives a pool its owner and the users it serves**", projectpolicy.Version, rel)
 	if !strings.Contains(doc, want) {
 		t.Errorf("docs/project-layer.md does not say %q: the page describes the node this release writes, and projectpolicy.Version/%d is that node", want, projectpolicy.Version)
 	}
