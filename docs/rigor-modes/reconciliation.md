@@ -595,7 +595,8 @@ ceiling), stated in §2 and pinned by a test rather than restated here (D6, D20)
 
 **F38 — Nothing tells a run which paths it will touch, before it touches them.**
 Class: **Gap**. `task.Spec` has no path field and `task.Spec.Overrides` has
-exactly four, none of them a path; `recipe.Step` has five members, none of them a
+none, either (the four the 2026-10-20 amendment counted, and the four chain limits
+L2 of `docs/run-limit-carry-over` added); `recipe.Step` has five members, none of them a
 path; and `internal/plan/footprint.go`'s `Footprint` is what a planner
 *predicts*, read only by `fugaro plan graph` (`internal/cli/plan.go`) and by no
 runner code at all — the file says as much, calling it advisory. Consequence: at
@@ -794,7 +795,7 @@ stale has found a merge that did not.
 | Config scope rows | 103 | `sed -n '/Scopes = \[\]ScopeRow{/,/^}/p' internal/config/scope.go \| grep -c '{Key:'` |
 | Layers a configuration key may be set in | 4 | `sed -n '/The layers a key may be set in/,/^)/p' internal/config/scope.go \| grep -c 'In[A-Z]'` |
 | Blocks the project layer's `defaults:` may set | 4 | `sed -n '/type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -c 'yaml:'` |
-| Fields of `task.Spec.Overrides` | 4 | `sed -n '/type Overrides struct {/,/^}/p' internal/task/task.go \| grep -cE 'yaml:\|json:'` |
+| Fields of `task.Spec.Overrides` | 8 | `sed -n '/type Overrides struct {/,/^}/p' internal/task/task.go \| grep -cE 'yaml:\|json:'` |
 | Fields of `task.Spec` or `recipe.Step` whose name is a path | 0 | `{ sed -n '/^type Spec struct {/,/^}/p' internal/task/task.go; sed -n '/^type Step struct {/,/^}/p' internal/recipe/recipe.go; } \| grep -cE '^[[:space:]]+[A-Z][A-Za-z]*(Path\|Glob\|Dir)'` |
 | Sites that compare a finding's severity to a value | 0 | `git grep -n 'Severity ==' -- internal/runner ':!*_test.go' \| wc -l` |
 | Files in `internal/runner` that mention `Severity` at all | 4 | `git grep -l 'Severity' -- internal/runner ':!*_test.go' \| wc -l` |
@@ -829,11 +830,16 @@ is as small as it is.
 The four layering rows the 2026-10-20 amendment added are these: **4** layers a
 key may be set in (F37), **3** blocks the project layer's closed `defaults:` may
 set (F36 — two at this folder's tree, the third Slice 1's `defaults.rigor`),
-**4** fields of `task.Spec.Overrides` and **0** fields of `task.Spec`
+**8** fields of `task.Spec.Overrides` and **0** fields of `task.Spec`
 or `recipe.Step` whose name is a path (F38). The last row counts *declared
 fields*, which is why its command matches a field name at the start of a line
 rather than any mention: the `Spec` struct's prose mentions a path, and a count of
-prose is not a count of inputs.
+prose is not a count of inputs. Amended 2026-11-10: L2 of
+`docs/run-limit-carry-over` added four chain limits to `task.Spec.Overrides`
+(`MaxUSD`, `MaxTokens`, `MaxTime`, `MaxReviewRounds`, which carry a chain's own
+caps and are set by no flag in this tree), so F38's count and this row move from
+4 to 8 together; the amended row is still **0** paths, since none of the four
+names one.
 
 The five rows the backlog ruling's amendment adds are that ruling's two structural
 facts and their witnesses: **0** blocks of the project layer's `defaults:` name a
