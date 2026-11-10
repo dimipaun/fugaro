@@ -405,6 +405,31 @@ type Policy struct {
 	// existed.
 	ImageMap ImageMap `json:"image_map,omitempty"`
 
+	// Binaries is the rule that says which paths a run may add a binary at and
+	// how large one may be (D981–D983, AR0): the owner's own grant, on this
+	// node and nowhere else. It travels every member's road — the owner writes
+	// it and the run fails closed on it — and it is here rather than in a
+	// repository's `fugaro.yaml` for a sharper reason than most: that file
+	// lives in the checkout the run's own agent writes, so a key there would
+	// let the coder grant itself the payload it is refused by (D986, F1). The
+	// shared config in the runs bucket is refused it too (any launcher can
+	// write that one), and the managed publish gate judges the member like
+	// every other key no rule reads.
+	//
+	// It is a pointer because the member's *presence* is a statement: a
+	// written block is how an operator takes an admission away on purpose
+	// (`binaries: {allow: []}`), while a local file that says nothing keeps
+	// the list the node already carries (D987, review_floor's rule). So an
+	// absent member and a written empty block are the same answer at admission
+	// time — both admit nothing — and two different answers at publish time,
+	// and folding them together here would leave the publisher unable to tell
+	// "clear it" from "say nothing".
+	//
+	// The block's own rules are Binaries' decode (binaries.go): the pattern
+	// rule of §2.1, the cap's positivity and ceiling, and the strict member
+	// reading every block of this node gets.
+	Binaries *Binaries `json:"binaries,omitempty"`
+
 	// BakeRepos is whether a repository is baked into the image its job runs
 	// (D1901): the setup wizard's "Bake your repos into the Docker images?",
 	// asked with the answer yes.
@@ -471,7 +496,7 @@ var knownTopLevelKeys = map[string]bool{
 	"image_map":     true, "bake_repos": true,
 	"default_claude_account": true, "claude_account_stages": true,
 	"crafts": true, "craft_credentials": true, "craft_pools": true,
-	"orchestrator": true,
+	"orchestrator": true, "binaries": true,
 }
 
 // Budget is the ceiling a run is held to. An absent field is zero and means
@@ -1349,6 +1374,13 @@ func decodeWithKeys(raw []byte, keys map[string]bool) (*Policy, bool, error) {
 		if len(p.ImageMap) == 0 {
 			p.ImageMap = nil
 		}
+	}
+	if nraw, ok := doc["binaries"]; ok && !IsNull(nraw) {
+		block, err := decodeBinaries(nraw)
+		if err != nil {
+			return nil, true, err
+		}
+		p.Binaries = block
 	}
 	if braw, ok := doc["bake_repos"]; ok && !IsNull(braw) {
 		if err := json.Unmarshal(braw, &p.BakeRepos); err != nil {

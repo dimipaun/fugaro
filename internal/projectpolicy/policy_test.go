@@ -1242,6 +1242,56 @@ func TestImageCatalogIsUnknownToAReaderThatPredatesIt(t *testing.T) {
 	}
 }
 
+// TestPolicyUnknownKeysStillListsBinariesForAnOlderReader is the wrong
+// direction of the binaries member, and it is the reason the version bump and
+// the member are one change (D990).
+//
+// A reader that predates `binaries` tolerates the key — every unknown
+// top-level key is tolerated (P8) — and lists it in UnknownKeys while decoding
+// past it. That is not a refusal, and for this key it must not be the answer a
+// released runner gives: a version-4 image that read a version-4 node carrying
+// `binaries` would enforce no rule at all while the owner believed a list was
+// published, and the run would end a draft with nothing saying why. The bump
+// to version 5 is what turns that silence into the documented skew
+// (RunnerSkew), so what this test pins is the state the bump exists to remove:
+// the member is known here, and a reader of the release before it would only
+// list it.
+func TestPolicyUnknownKeysStillListsBinariesForAnOlderReader(t *testing.T) {
+	raw := []byte(`{"version": 4, "budget": {"mode": "observe"}, "binaries": {"allow": ["brand/*.png"]}}`)
+	p, found, err := Decode(raw)
+	if err != nil || !found {
+		t.Fatalf("Decode = (%v, %v, %v), want the node read", p, found, err)
+	}
+	if len(p.UnknownKeys) != 0 {
+		t.Errorf("UnknownKeys = %v, want none: binaries is a key this Fugaro reads", p.UnknownKeys)
+	}
+	if want := []string{"brand/*.png"}; !slices.Equal(p.BinariesAllow(), want) {
+		t.Errorf("BinariesAllow() = %v, want %v", p.BinariesAllow(), want)
+	}
+	// The same node at the version this Fugaro writes, so the fixture above is
+	// a version-4 node on purpose: the reader here reads a node one version
+	// below it, which is what Decode's own version check refuses — and the
+	// older reader modelled below is the one that does not.
+	preKey := make(map[string]bool, len(knownTopLevelKeys))
+	for k, v := range knownTopLevelKeys {
+		preKey[k] = v
+	}
+	delete(preKey, "binaries")
+	q, found, err := decodeWithKeys([]byte(`{"version": `+itoa(Version)+`, "binaries": {"allow": ["brand/*.png"]}}`), preKey)
+	if err != nil || !found {
+		t.Fatalf("the reader that predates the key refused the node: (%v, %v, %v)", q, found, err)
+	}
+	if want := []string{"binaries"}; !slices.Equal(q.UnknownKeys, want) {
+		t.Errorf("the reader that predates the key lists UnknownKeys = %v, want %v: that is the node a CLI of that age refuses and a runner of it logs, and the version bump is what makes the runner's answer a skew instead", q.UnknownKeys, want)
+	}
+	// What this model cannot show is the other half — a real version-4 binary
+	// has no decode block for the member and would run with no rule at all
+	// while the owner believed a list was published. There is one decode path
+	// in this package, so the deletion above models the listing and not the
+	// ignoring; the ignoring is what D990's bump refuses, and the version test
+	// beside this one is where that is pinned.
+}
+
 // imageMapNode is the published node the image setup skill's map lands in
 // (D1906): one repository to the catalog entry its jobs run, under the key the
 // node holds it as — escKey's spelling, because RTDB refuses a key containing
