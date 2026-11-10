@@ -467,6 +467,106 @@ func TestListNeverReturnsValue(t *testing.T) {
 	}
 }
 
+// TestListAnswersOnlyTheCallersOwnContainers: the per-user list is the
+// caller's own containers and no other member's. The scope's list call answers
+// every member's — the stored filter is the scope, and the grant cannot name a
+// prefix (F30) — so the name is what says whose a container is: a row answered
+// from another account's name would hand one launcher another member's
+// credential names and account id (R3, R12).
+func TestListAnswersOnlyTheCallersOwnContainers(t *testing.T) {
+	f := member(t)
+	mine := secretname.UserPrefix + testOwnerSub + "_api-key"
+	theirs := secretname.UserPrefix + testOtherSub + "_other-key"
+	f.store.containers[mine] = Secret{ID: mine, Annotations: map[string]string{
+		AnnotationOwnerSub: testOwnerSub, AnnotationOwnerEmail: testOwnerEmail, AnnotationCreatedBy: testOwnerEmail,
+	}}
+	f.store.containers[theirs] = Secret{ID: theirs, Annotations: map[string]string{
+		AnnotationOwnerSub: testOtherSub, AnnotationOwnerEmail: testOtherEmail, AnnotationCreatedBy: testOtherEmail,
+	}}
+
+	w := f.post(t, ListPath, f.token(t, testOwnerEmail, testOwnerSub), `{"scope":"user"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("list: got %d %s", w.Code, w.Body.String())
+	}
+	for _, leak := range []string{theirs, testOtherSub, "other-key"} {
+		if strings.Contains(w.Body.String(), leak) {
+			t.Fatalf("the answer carries another member's container (%s): %s", leak, w.Body.String())
+		}
+	}
+	var answer ListAnswer
+	if err := json.Unmarshal(w.Body.Bytes(), &answer); err != nil {
+		t.Fatalf("the list answer: %v (%s)", err, w.Body.String())
+	}
+	if len(answer.Secrets) != 1 || answer.Secrets[0].ID != mine {
+		t.Fatalf("the list answer is %+v, want only %s", answer.Secrets, mine)
+	}
+}
+
+// TestNonAdminCannotListAnOwnersPrefix: a member named by address is the
+// admin's lookup — the one the offboarding command reads a member's containers
+// through (R10) — and a caller who is not on the derived list reads nothing by
+// it, not another member's and not their own.
+func TestNonAdminCannotListAnOwnersPrefix(t *testing.T) {
+	f := member(t)
+	theirs := secretname.UserPrefix + testOtherSub + "_api-key"
+	f.store.containers[theirs] = Secret{ID: theirs, Annotations: map[string]string{
+		AnnotationOwnerSub: testOtherSub, AnnotationOwnerEmail: testOtherEmail, AnnotationCreatedBy: testOtherEmail,
+	}}
+
+	w := f.post(t, ListPath, f.token(t, testOwnerEmail, testOwnerSub), `{"scope":"user","owner":"`+testOtherEmail+`"}`)
+	if w.Code != http.StatusForbidden || errorType(t, w) != ErrorNotAdmin {
+		t.Fatalf("a member's list of another owner: got %d %s, want 403 %s", w.Code, errorType(t, w), ErrorNotAdmin)
+	}
+	for _, leak := range []string{theirs, testOtherSub, "api-key"} {
+		if strings.Contains(w.Body.String(), leak) {
+			t.Fatalf("a refused list answered with a container (%s): %s", leak, w.Body.String())
+		}
+	}
+
+	// The admin on the derived list reads it, which is what the address is
+	// for: the guard refuses the caller, not the lookup.
+	w = f.post(t, ListPath, f.token(t, testAdminEmail, testAdminSub), `{"scope":"user","owner":"`+testOtherEmail+`"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("the admin's list of another owner: got %d %s", w.Code, w.Body.String())
+	}
+	var answer ListAnswer
+	if err := json.Unmarshal(w.Body.Bytes(), &answer); err != nil {
+		t.Fatalf("the list answer: %v (%s)", err, w.Body.String())
+	}
+	if len(answer.Secrets) != 1 || answer.Secrets[0].ID != theirs {
+		t.Fatalf("the admin's list answer is %+v, want %s", answer.Secrets, theirs)
+	}
+}
+
+// TestNonAdminCannotListTheSharedScope: the project-shared prefix is the
+// derived admin list's (D1935, D1940), so the names under it are read by that
+// list alone.
+func TestNonAdminCannotListTheSharedScope(t *testing.T) {
+	f := member(t)
+	shared := secretname.ProjectPrefix + "openrouter-key"
+	f.store.containers[shared] = Secret{ID: shared, Annotations: map[string]string{AnnotationCreatedBy: testAdminEmail}}
+
+	w := f.post(t, ListPath, f.token(t, testOwnerEmail, testOwnerSub), `{"scope":"shared"}`)
+	if w.Code != http.StatusForbidden || errorType(t, w) != ErrorNotAdmin {
+		t.Fatalf("a member's list of the shared scope: got %d %s, want 403 %s", w.Code, errorType(t, w), ErrorNotAdmin)
+	}
+	if strings.Contains(w.Body.String(), "openrouter-key") {
+		t.Fatalf("a refused list answered with a shared name: %s", w.Body.String())
+	}
+
+	w = f.post(t, ListPath, f.token(t, testAdminEmail, testAdminSub), `{"scope":"shared"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("the admin's list of the shared scope: got %d %s", w.Code, w.Body.String())
+	}
+	var answer ListAnswer
+	if err := json.Unmarshal(w.Body.Bytes(), &answer); err != nil {
+		t.Fatalf("the list answer: %v (%s)", err, w.Body.String())
+	}
+	if len(answer.Secrets) != 1 || answer.Secrets[0].ID != shared || answer.Secrets[0].Scope != ScopeShared {
+		t.Fatalf("the admin's list answer is %+v, want %s in the shared scope", answer.Secrets, shared)
+	}
+}
+
 // TestNoReadMethodExists: the intake's whole reach in Secret Manager is the
 // five calls below, and none of them answers a value; the routes it serves are
 // the four, and none of them reads one (G2).
@@ -580,7 +680,10 @@ func TestAdminDeletesAnotherOwnersPrefix(t *testing.T) {
 
 // TestRefusesContainerItDidNotCreate: a container whose shape is not the
 // intake's own — a TTL, an expiry, a topic, a CMEK, a rotation schedule, or
-// annotations another writer set — is refused before any write (R12, F35).
+// annotations another writer set — is refused before any write, and before it
+// is removed (R12, F35). A delete is a write to an existing container, so the
+// same check is the whole of what stands between another writer's container
+// and its destruction.
 func TestRefusesContainerItDidNotCreate(t *testing.T) {
 	ours := func() map[string]string {
 		return map[string]string{
@@ -599,25 +702,76 @@ func TestRefusesContainerItDidNotCreate(t *testing.T) {
 		{"a topic", Secret{ID: id, Annotations: ours(), Shape: Shape{Topics: []string{"projects/aurora-dev/topics/secrets"}}}},
 		{"a CMEK key", Secret{ID: id, Annotations: ours(), Shape: Shape{CMEK: "projects/aurora-dev/locations/global/keyRings/k/cryptoKeys/key"}}},
 		{"a rotation schedule", Secret{ID: id, Annotations: ours(), Shape: Shape{Rotation: "2592000s"}}},
-		{"another owner's annotation", Secret{ID: id, Annotations: ours(), Shape: Shape{}}},
+		{"another owner's annotation", Secret{ID: id, Annotations: map[string]string{
+			AnnotationOwnerSub: testOwnerSub, AnnotationOwnerEmail: testOtherEmail, AnnotationCreatedBy: testOwnerEmail,
+		}}},
+		// The name says whose container it is (R12), so an owner account the
+		// name does not spell is another writer's.
+		{"an owner account that is not the name's", Secret{ID: id, Annotations: map[string]string{
+			AnnotationOwnerSub: testOtherSub, AnnotationOwnerEmail: testOwnerEmail, AnnotationCreatedBy: testOwnerEmail,
+		}}},
+		// The intake writes this annotation on everything it makes: a
+		// container without it is one it did not make, whatever else it
+		// carries.
+		{"no annotations at all", Secret{ID: id, Annotations: map[string]string{}}},
 		{"an annotation the intake does not write", Secret{ID: id, Annotations: map[string]string{
 			AnnotationOwnerSub: testOwnerSub, AnnotationOwnerEmail: testOwnerEmail, AnnotationCreatedBy: testOwnerEmail, "fugaro_extra": "x",
 		}}},
 	} {
-		if tc.what == "another owner's annotation" {
-			tc.s.Annotations[AnnotationOwnerEmail] = testOtherEmail
-		}
 		f := member(t)
 		f.store.containers[id] = tc.s
 		tok := f.token(t, testOwnerEmail, testOwnerSub)
-		for _, path := range []string{CreatePath, VersionPath} {
-			w := f.post(t, path, tok, createBody(ScopeUser, "api-key", testValue))
+		for _, route := range []struct{ path, body string }{
+			{CreatePath, createBody(ScopeUser, "api-key", testValue)},
+			{VersionPath, createBody(ScopeUser, "api-key", testValue)},
+			{DeletePath, `{"scope":"user","name":"api-key"}`},
+		} {
+			w := f.post(t, route.path, tok, route.body)
 			if w.Code != http.StatusConflict || errorType(t, w) != ErrorForeignContainer {
-				t.Fatalf("%s on a container with %s: got %d %s, want 409 %s", path, tc.what, w.Code, errorType(t, w), ErrorForeignContainer)
+				t.Fatalf("%s on a container with %s: got %d %s, want 409 %s", route.path, tc.what, w.Code, errorType(t, w), ErrorForeignContainer)
 			}
 		}
 		if len(f.store.values) != 0 {
 			t.Fatalf("a container with %s was written into", tc.what)
+		}
+		if len(f.store.deleted) != 0 {
+			t.Fatalf("a container with %s was deleted", tc.what)
+		}
+		if _, ok := f.store.containers[id]; !ok {
+			t.Fatalf("a container with %s was removed", tc.what)
+		}
+	}
+}
+
+// TestARefusedSweepRemovesNothing: the offboarding sweep puts every container
+// of the member's prefix to the shape check before it removes any of them, so
+// a prefix holding one container the intake did not make is refused with the
+// whole sweep undone — the member's own credentials are the ones a half-done
+// sweep would have taken, and nothing would say so (R12, DS2.4).
+//
+// The fake answers a prefix in name order, so the member's own container is
+// the one a check made inside the delete loop would remove before it met the
+// foreign one.
+func TestARefusedSweepRemovesNothing(t *testing.T) {
+	f := member(t)
+	good := secretname.UserPrefix + testOtherSub + "_api-key"
+	foreign := secretname.UserPrefix + testOtherSub + "_bad-key"
+	memberAnnotations := map[string]string{
+		AnnotationOwnerSub: testOtherSub, AnnotationOwnerEmail: testOtherEmail, AnnotationCreatedBy: testOtherEmail,
+	}
+	f.store.containers[good] = Secret{ID: good, Annotations: memberAnnotations}
+	f.store.containers[foreign] = Secret{ID: foreign, Annotations: memberAnnotations, Shape: Shape{TTL: "86400s"}}
+
+	w := f.post(t, DeletePath, f.token(t, testAdminEmail, testAdminSub), `{"scope":"user","owner":"`+testOtherEmail+`"}`)
+	if w.Code != http.StatusConflict || errorType(t, w) != ErrorForeignContainer {
+		t.Fatalf("a sweep of a prefix holding a foreign container: got %d %s, want 409 %s", w.Code, errorType(t, w), ErrorForeignContainer)
+	}
+	if len(f.store.deleted) != 0 {
+		t.Fatalf("a refused sweep deleted %v", f.store.deleted)
+	}
+	for _, id := range []string{good, foreign} {
+		if _, ok := f.store.containers[id]; !ok {
+			t.Fatalf("a refused sweep removed %s", id)
 		}
 	}
 }
