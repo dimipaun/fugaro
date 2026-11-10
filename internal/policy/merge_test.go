@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/rigor"
 )
@@ -729,5 +730,55 @@ func TestABMergeTightenOnly(t *testing.T) {
 	// Equal rates are not ignored, as for every other key.
 	if e := Merge(Layer{ABRate: rate(0.05)}, Layer{ABRate: rate(0.05)}); len(e.Ignored) != 0 {
 		t.Errorf("two equal rates = %v, want nothing ignored", e.Ignored)
+	}
+}
+
+// TestMergeNamesTheChainLayer pins the two things the chain layer needs of
+// this package (docs/run-limit-carry-over F4, D1055): a layer past the run's
+// own file is named "chain" and not "branch" — the number did not come from
+// the branch — and the two members a chain carries get a source of their own.
+// The third layer is still the branch, which is what the runner merges today.
+func TestMergeNamesTheChainLayer(t *testing.T) {
+	chain := Layer{PerRunUSD: 5, MaxRunTokens: 500, MaxRunTime: 90 * time.Minute, MaxReviewRounds: 4}
+	e := Merge(Layer{PerRunUSD: 10, MaxRunTokens: 1000}, Layer{}, Layer{PerRunUSD: 8, MaxRunTokens: 800}, chain)
+	for key, src := range map[string]string{
+		KeyPerRunUSD: SourceChain, KeyMaxRunTokens: SourceChain,
+		KeyMaxRunTime: SourceChain, KeyMaxReviewRounds: SourceChain,
+	} {
+		if e.Sources[key] != src {
+			t.Errorf("%s: source = %q, want %q", key, e.Sources[key], src)
+		}
+	}
+	if e.PerRunUSD != 5 || e.MaxRunTokens != 500 || e.MaxRunTime != 90*time.Minute || e.MaxReviewRounds != 4 {
+		t.Errorf("the chain layer = %+v, want its own four figures", e.Layer)
+	}
+	// The layer under it keeps its own name: a value the run's own file set
+	// is still the branch's, whatever the chain layer above it does.
+	if e := Merge(Layer{PerRunUSD: 10}, Layer{}, Layer{PerRunUSD: 8}); e.Sources[KeyPerRunUSD] != SourceBranch {
+		t.Errorf("the run's own file: source = %q, want %q", e.Sources[KeyPerRunUSD], SourceBranch)
+	}
+	// A chain value looser than the layer under it is dropped and recorded
+	// against the layer that set the lower one — the entry the launcher reads
+	// to refuse a launch argument (D1043) rather than drop it in silence.
+	e = Merge(Layer{PerRunUSD: 10, MaxRunTokens: 1000}, Layer{}, Layer{PerRunUSD: 8, MaxRunTokens: 800},
+		Layer{PerRunUSD: 9, MaxRunTokens: 900})
+	for _, ig := range e.Ignored {
+		if ig.Key == KeyPerRunUSD && ig.Value != "9" || ig.Key == KeyMaxRunTokens && ig.Value != "900" {
+			t.Errorf("Ignored = %+v, want the chain's own looser figures", ig)
+		}
+		if ig.Source != SourceBranch {
+			t.Errorf("Ignored = %+v, want the source of the lower number (%s)", ig, SourceBranch)
+		}
+	}
+	if len(e.Ignored) != 2 || e.PerRunUSD != 8 || e.MaxRunTokens != 800 {
+		t.Errorf("a looser chain layer = %+v (ignored %v), want the branch's 8 and 800", e.Layer, e.Ignored)
+	}
+	// The time and the review rounds have no layer under the chain's own, so
+	// a chain layer that writes them is the one that wins: a chain limit is
+	// never refused against the mode's own number or the run's clock by this
+	// merge (D1057), which is the launcher's own comparison.
+	e = Merge(Layer{}, Layer{}, Layer{}, Layer{MaxRunTime: 30 * time.Minute, MaxReviewRounds: 2})
+	if len(e.Ignored) != 0 || e.Sources[KeyMaxReviewRounds] != SourceChain {
+		t.Errorf("a chain layer alone = %+v (ignored %v), want nothing ignored and the chain named", e.Layer, e.Ignored)
 	}
 }

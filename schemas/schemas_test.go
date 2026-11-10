@@ -2731,8 +2731,11 @@ func TestPolicyRecordSchema(t *testing.T) {
 // The schema's layer names and internal/policy's are one list. The runner
 // writes whichever the merge produced — "policy" for a key the project's
 // published node named (PR #379), the rest for the ceiling, the default
-// branch and the run's branch — so a Go constant the schema does not carry is
-// a stored result.json the repository's own validator rejects. `from` stays
+// branch, the run's branch and the chain (a launch's own limits, merged last
+// of all, F4) — so a Go constant the schema does not carry is a stored
+// result.json the repository's own validator rejects. The chain layer is in
+// all three lists for that reason: the merge names it as a key's source and as
+// the layer a dropped value was asked for from. `from` stays
 // without "policy" on purpose: the node is not a later layer that can ask for
 // a looser value, it *is* the first layer, and its keys are replaced rather
 // than loosened (plan task 1.3, H1). It carries "ceiling" for the one case a
@@ -2774,11 +2777,11 @@ func TestPolicyRecordSchemaLayersAgreeWithGo(t *testing.T) {
 		want []string
 	}{
 		{"policy.sources", enum(at(pol, "sources", "additionalProperties", "enum")),
-			slices.Sorted(slices.Values([]string{policy.SourceCeiling, policy.SourceDefaultBranch, policy.SourceBranch, policy.SourcePolicy}))},
+			slices.Sorted(slices.Values([]string{policy.SourceCeiling, policy.SourceDefaultBranch, policy.SourceBranch, policy.SourceChain, policy.SourcePolicy}))},
 		{"policy.ignored[].source", enum(at(pol, "ignored", "items", "properties", "source", "enum")),
-			slices.Sorted(slices.Values([]string{policy.SourceCeiling, policy.SourceDefaultBranch, policy.SourceBranch, policy.SourcePolicy}))},
+			slices.Sorted(slices.Values([]string{policy.SourceCeiling, policy.SourceDefaultBranch, policy.SourceBranch, policy.SourceChain, policy.SourcePolicy}))},
 		{"policy.ignored[].from", enum(at(pol, "ignored", "items", "properties", "from", "enum")),
-			slices.Sorted(slices.Values([]string{policy.SourceCeiling, policy.SourceDefaultBranch, policy.SourceBranch}))},
+			slices.Sorted(slices.Values([]string{policy.SourceCeiling, policy.SourceDefaultBranch, policy.SourceBranch, policy.SourceChain}))},
 	} {
 		if !slices.Equal(where.got, where.want) {
 			t.Errorf("schema's %s = %v, internal/policy's layers are %v", where.name, where.got, where.want)
