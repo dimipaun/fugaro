@@ -210,10 +210,15 @@ func TestPluginStageNotInAForeignRepo(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir()) // what is installed is this test's, not the machine's
 	dir := repoCheckout(t, githubOrigin, checkoutYAML("github", "oauth", "borealis", ""))
 	t.Chdir(dir)
-	e, _ := stageEngine(t, "", &initOptions{yes: true, onboardRepo: "acme/app"})
+	e, out := stageEngine(t, "", &initOptions{yes: true, onboardRepo: "acme/app"})
 	res := runPlugin(t, e)
-	if st := res.Stages[0]; st.State == initflow.Skipped || !strings.Contains(st.Detail, "installs the plugin in Claude Code") {
+	if st := res.Stages[0]; st.State == initflow.Skipped {
 		t.Fatalf("the stage was skipped whole with the wiring: the install half is the machine's\n%+v", st)
+	}
+	// The install half is the half that ran: nothing here has one, and the
+	// step's own line is the one that says so.
+	if !strings.Contains(out.String(), "claude is not on PATH") {
+		t.Errorf("the install half did not run:\n%s", out)
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".claude")); err == nil {
 		t.Error("settings written into another project's repository")
@@ -222,9 +227,9 @@ func TestPluginStageNotInAForeignRepo(t *testing.T) {
 	d2 := t.TempDir()
 	testutil.Git(t, d2, "init", "-q")
 	t.Chdir(d2)
-	e, _ = stageEngine(t, "", &initOptions{yes: true})
-	if st := runPlugin(t, e).Stages[0]; st.State == initflow.Skipped || !strings.Contains(st.Detail, "installs the plugin in Claude Code") {
-		t.Errorf("no origin: the stage was skipped whole with the wiring\n%+v", st)
+	e, out2 := stageEngine(t, "", &initOptions{yes: true})
+	if st := runPlugin(t, e).Stages[0]; st.State == initflow.Skipped || !strings.Contains(out2.String(), "claude is not on PATH") {
+		t.Errorf("no origin: the stage was skipped whole with the wiring\n%+v\n%s", st, out2)
 	}
 	if _, err := os.Stat(filepath.Join(d2, ".claude")); err == nil {
 		t.Error("settings written into a checkout with no origin")
