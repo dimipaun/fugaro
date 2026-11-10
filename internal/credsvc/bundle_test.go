@@ -1184,6 +1184,24 @@ func TestBundleSchemaMatchesTheLoader(t *testing.T) {
 		{"a read consumer with a field it does not define", readConsumerEntry + ":\n  key: " + fakeCred(t, "x") + "\n  secret: " + fakeCred(t, "y") + "\n  workspace: " + fakeCred(t, "z") + "\n  repositories: [r]\n"},
 		{"a read consumer with an empty field", readConsumerEntry + ":\n  key: " + fakeCred(t, "x") + "\n  secret: \"\"\n  workspace: " + fakeCred(t, "z") + "\n"},
 		{"a read consumer with a field that is not a string", readConsumerEntry + ":\n  key: " + fakeCred(t, "x") + "\n  secret: " + fakeCred(t, "y") + "\n  workspace: 1234\n"},
+		// The provider key's entry (AK6b) is the second value that is not a
+		// string, so the schema names its key too. The rows are the shape both
+		// sides have to agree on, and every one of them is a shape the SCHEMA can
+		// state: a base URL the config check refuses is a row of
+		// TestProviderEntryWithoutItsRoutingFactsIsRefused instead, because the
+		// schema is deliberately the weaker reader of that one field.
+		{"the provider key", string(providerKeyDoc(t, testProviderBase, providerAuthBearer))},
+		{"the provider key beside every other credential", string(providerBundleDoc(t, testProviderBase, providerAuthXAPIKey))},
+		{"a provider key whose value is a string", providerEntry + ": " + fakeCred(t, "x") + "\n"},
+		{"a provider key missing its base URL", string(providerEntryDoc("key: "+fakeCred(t, "x"), "auth: bearer"))},
+		{"a provider key missing its auth shape", string(providerEntryDoc("key: "+fakeCred(t, "x"), "base_url: "+testProviderBase))},
+		{"a provider key with a field it does not define", string(providerEntryDoc("key: "+fakeCred(t, "x"), "base_url: "+testProviderBase, "auth: bearer", "models: [\"x/y\"]"))},
+		{"a provider key with an empty field", string(providerEntryDoc("key: "+fakeCred(t, "x"), "base_url: \"\"", "auth: bearer"))},
+		// The auth shape is a closed set the schema CAN state, and it does
+		// (enum): a schema that accepted any string here would be the weaker
+		// reader of a set the platform defines, which is exactly the drift this
+		// row set exists to catch.
+		{"a provider key with an auth shape outside the two", string(providerEntryDoc("key: "+fakeCred(t, "x"), "base_url: "+testProviderBase, "auth: oauth"))},
 		// The account family's one reserved spelling: it resolves to the git
 		// credential's own key, so the loader refuses it, and the schema has
 		// to refuse it too even though the pattern alone admits it.
