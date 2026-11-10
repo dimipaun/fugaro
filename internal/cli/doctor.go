@@ -31,12 +31,14 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/orchestrator/service"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/preflight"
 	"github.com/dimipaun/fugaro/internal/pricing/catalog"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/runner"
+	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/updatecheck"
 )
@@ -509,6 +511,11 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	}
 
 	o.Checks = append(o.Checks, doctorBaseImage(lc), doctorCosign(lc))
+	// The login unit that runs the orchestrator daemon (O9): the one drift
+	// `fugaro update` re-renders in place, reported here like every other
+	// version drift so the person is told to update rather than handed a second
+	// command. It reads this machine's own file and reaches nothing.
+	o.Checks = append(o.Checks, doctorOrchestratorUnit())
 
 	// The installation's project-wide secret containers, listed once for
 	// doctor's three project-secret checks: the two per-repository ones
@@ -617,6 +624,51 @@ func doctorBaseImage(lc *localcfg.Config) doctorCheck {
 	return doctorCheck{ID: "base-image", OK: false, Severity: "warning",
 		Problem: "the local config has no base_images.base (" + config.MigrationDoc + ")",
 		Fix:     "fugaro image refresh   # in the repository's checkout"}
+}
+
+// doctorOrchestratorUnit reports the login unit that runs the orchestrator
+// daemon when the text on disk is not what this release's template renders
+// (O9, T7's ruling of 2026-11-05).
+//
+// The check is what makes the drift visible where the CLI already reports drift:
+// `fugaro update` re-renders an installed unit in place, so the finding belongs
+// to the update class and its fix is that command (doctorUpdatePrefixes), and an
+// old template is never a second command for the person to remember. It reads
+// one file under the person's own home — the same path `install` writes, through
+// the same renderer — and it writes nothing, ever: doctor measures.
+//
+// A machine with no unit is OK, and so is a platform with no login unit at all
+// (Windows): this check is about a unit that is there and stale, and the machine
+// that never installed one is a project that did not choose the daemon rather
+// than a machine to warn about. Only a file that cannot be read is an unknown,
+// and it is marked as such rather than answered "ok" (unread) and carries its
+// own fix (ownFix): a read that failed is not something `fugaro update` repairs,
+// and the class's line would send the reader to a command that fails the same
+// way.
+func doctorOrchestratorUnit() doctorCheck {
+	const id = "orchestrator-unit"
+	u, err := orchestratorUnit()
+	var un *service.UnsupportedError
+	switch {
+	case errors.As(err, &un):
+		return doctorCheck{ID: id, OK: true}
+	case err != nil:
+		return doctorCheck{ID: id, unread: true, ownFix: true, Severity: "warning",
+			Problem: "the login unit this release would write could not be rendered: " + oneLineCLI(err.Error()),
+			Fix:     "run doctor in a shell with the variables it names set, or write the unit by hand with `" + selfCommand() + " orchestrator install`"}
+	}
+	was, ok, err := unitTextOnDisk(u)
+	if err != nil {
+		return doctorCheck{ID: id, unread: true, ownFix: true, Severity: "warning",
+			Problem: "the login unit at " + safetext.Field(u.Path) + " could not be read: " + oneLineCLI(err.Error()),
+			Fix:     "make " + safetext.Field(u.Path) + " readable, or remove it and run `" + selfCommand() + " orchestrator install`"}
+	}
+	if !ok || was == u.Text {
+		return doctorCheck{ID: id, OK: true}
+	}
+	return doctorCheck{ID: id, Severity: "warning",
+		Problem: "the login unit at " + safetext.Field(u.Path) + " was written from an older template or another binary path, so the daemon it starts is not the one this release would write",
+		Fix:     selfCommand() + " update"}
 }
 
 // doctorPriceCatalog is the built-in provider price catalog's age (design

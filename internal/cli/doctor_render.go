@@ -118,6 +118,7 @@ var doctorShownSecurityIDs = map[string]bool{
 var doctorUpdatePrefixes = []string{
 	"cli-version",
 	"plugin-pin",
+	"orchestrator-unit",
 	"base-image",
 	"image-config-",
 	"policy-rules-skew",
@@ -794,6 +795,12 @@ type doctorShort struct {
 var doctorShorts = map[string]doctorShort{
 	"cli-version": {"a newer Fugaro release is available.", ""},
 	"plugin-pin":  {"the Claude Code plugin is pinned to another version than this Fugaro.", ""},
+	// The login unit the daemon runs under was written from an older template,
+	// and `fugaro update` re-renders it in place (init_stages.go's unit stage),
+	// so the entry carries no fix of its own: the class's command is the whole
+	// fix, and `fugaro orchestrator install` is the by-hand form the check's own
+	// text keeps for --all and --json.
+	"orchestrator-unit": {"the login unit that runs the orchestrator daemon was written from an older template.", ""},
 	// The plugin Claude Code installed is not the checkout's pin, and the
 	// converge's plugin stage writes the pin: `fugaro update` is the command
 	// the line names (CLAUDE.md's hard rule), and the install that follows the
