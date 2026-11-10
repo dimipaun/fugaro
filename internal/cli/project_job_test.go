@@ -2839,6 +2839,7 @@ type serviceReadFixture struct {
 	mu         sync.Mutex
 	mints      int    // read-mint calls the service answered
 	reads      int    // contents calls the forge answered
+	confirm    int    // the repository and the ref an absent file was confirmed against
 	identity   string // the Authorization header the mint was presented with
 	serviceURL string // the URL personIDToken was asked for
 	appID      string // the app_id the mint's body named
@@ -2879,6 +2880,14 @@ func (s *serviceReadFixture) counts() (mints, reads int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.mints, s.reads
+}
+
+// confirmations is how many of confirmAbsent's two questions the forge was
+// asked, read under the same lock.
+func (s *serviceReadFixture) confirmations() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.confirm
 }
 
 func (s *serviceReadFixture) presented() (identity, serviceURL, appID string) {
@@ -2928,6 +2937,23 @@ func (s *serviceReadFixture) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		fmt.Fprintf(w, `{"type":"file","encoding":"base64","size":%d,"content":%q}`,
 			len(s.document), base64.StdEncoding.EncodeToString([]byte(s.document)))
+	case r.URL.Path == "/repos/acme/app":
+		// confirmAbsent's first question, asked of the repository the read was
+		// for: the contents API answers the same {"message":"Not Found"} for a
+		// path the ref does not carry and for a repository this token cannot
+		// reach, and only the first of those is the absent-file row that
+		// selects nothing (fileread.go). A fixture that answers no such route
+		// leaves every absent file a refusal instead, which is the row a
+		// document-less ref never reaches.
+		s.confirm++
+		fmt.Fprint(w, `{"full_name":"acme/app","default_branch":"main"}`)
+	case r.URL.Path == "/repos/acme/app/contents":
+		// And its second, asked of the ref: a 404 body that still says "Not
+		// Found" when the ref is gone is what a rewording of GitHub's own "No
+		// commit found for the ref …" would produce, so the ref is confirmed
+		// rather than believed.
+		s.confirm++
+		fmt.Fprint(w, `[]`)
 	default:
 		http.Error(w, `{"message":"the fixture answers no such route"}`, http.StatusNotFound)
 	}
@@ -2957,6 +2983,120 @@ func TestLaunchWithoutCheckoutReadsTheRefThroughTheService(t *testing.T) {
 	}
 	if mints, reads := s.counts(); mints != 1 || reads != 1 {
 		t.Errorf("the launch made %d mint(s) and %d read(s), want exactly one of each: one read, held for the command and written nowhere", mints, reads)
+	}
+}
+
+// TestLaunchWithoutCheckoutJudgesACloneWorkflowByTheCloneGates is the gates'
+// half of source 3 (spec.md §2, D902), and the reason the read cannot be the
+// job decision's alone: the image gates a launch passes are judged by the
+// workflow's own kind and checkout mode, and a checkout: clone workflow runs
+// the installation's base image — it is never built per repository, so it has
+// no build record for a derived image's gates to find (image_refresh.go), and
+// the shared job exists only for clone workflows (launchProjectJobFor). A
+// launch from outside the checkout whose ref selects one is therefore judged
+// by the clone gates, which it reaches only through the same read the job
+// decision makes.
+//
+// The fixture's build record is removed for exactly this: with it there, the
+// derived-image gates pass a clone workflow on a record the fixture wrote and
+// no real repository has, so the launch looks fine while it is judged as the
+// wrong kind of workflow.
+//
+// Mutation (run, restore): read the document in launchProjectJobFor alone, as
+// the job decision's own — the launch is refused, "has no build record".
+func TestLaunchWithoutCheckoutJudgesACloneWorkflowByTheCloneGates(t *testing.T) {
+	f := newProjectJobFixture(t)
+	s := newServiceReadFixture(t)
+	s.use(t, f.cloudFixture)
+	isolateCache(t)
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir())
+	if err := removeBuildRecord(f.cloudFixture); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261110-130005-ffff", "Add a feature"); err != nil {
+		t.Fatalf("a launch of a checkout: clone workflow from outside its checkout: %v", err)
+	}
+	if profile, provider, _ := launchedProjectJob(t, f.cloudFixture); profile != "standard" || provider != "github" {
+		t.Fatalf("the launch ran on %s/%s, want the standard/github project job the ref's clone workflow selects", profile, provider)
+	}
+	if mints, reads := s.counts(); mints != 1 || reads != 1 {
+		t.Errorf("the launch made %d mint(s) and %d read(s), want one of each: the gates and the job decision share the one read", mints, reads)
+	}
+}
+
+// TestLaunchWithoutCheckoutOnARefWithNoDocumentKeepsThePerRepositoryJob is
+// spec.md §7's other source-3 row: the read answered, and the ref's tree
+// carries no fugaro.yaml at all. A repository with no document selects no
+// clone workflow and no profile — the project layer is never resolved on its
+// own — so the per-repository job is not a fallback here but the answer, the
+// same one the checkout path gives for a repository whose file defines no
+// workflow.
+//
+// It is reachable only where the absent file is CONFIRMED: FileAt answers
+// ErrFileNotFound for a 404 whose body says "Not Found" and only after the
+// repository and the ref have been asked about (github's confirmAbsent), so
+// the fixture answers both — a fixture that answers neither leaves every
+// absent file a refusal, which is the direction that halts a launch rather
+// than the one that places a run.
+//
+// Mutation (run, restore): drop the ErrFileNotFound case from
+// repoConfigAtTheRef — the launch is refused instead of running on its own job.
+func TestLaunchWithoutCheckoutOnARefWithNoDocumentKeepsThePerRepositoryJob(t *testing.T) {
+	f := newProjectJobFixture(t)
+	s := newServiceReadFixture(t)
+	s.document = ""
+	s.use(t, f.cloudFixture)
+	isolateCache(t)
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir())
+
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261110-130006-beef", "Add a feature"); err != nil {
+		t.Fatalf("a launch whose ref carries no fugaro.yaml: %v", err)
+	}
+	perRepo := gcp.JobName(appSlug, "web")
+	calls := f.run.RunRequests()
+	if len(calls) != 1 || calls[0].Job != perRepo {
+		t.Fatalf("the launch made %d jobs.run calls (%+v), want one on the per-repository job %s: a repository with no document selects no profile", len(calls), calls, perRepo)
+	}
+	if mints, reads := s.counts(); mints != 1 || reads != 1 {
+		t.Errorf("the launch made %d mint(s) and %d read(s), want one of each: one read, held for the command and written nowhere", mints, reads)
+	}
+	if got := s.confirmations(); got != 2 {
+		t.Errorf("the absent file was confirmed against %d of the two things it takes (the repository and the ref), want both: an unconfirmed 404 is a refusal", got)
+	}
+}
+
+// TestLaunchWithoutCheckoutNamesAForgeStatusAndNotItsBody: a forge that
+// answers the read with a status Fugaro does not read as one of its own rows
+// is reported by that status and nothing else. httpjson keeps up to 512 bytes
+// of the answer's body (httpjson.maxErrorBody), and GitHub's own words about a
+// failure are not Fugaro's to print — the promise the 403 row already keeps
+// (spec.md §7), kept here for every other status a forge can answer with.
+func TestLaunchWithoutCheckoutNamesAForgeStatusAndNotItsBody(t *testing.T) {
+	f := newProjectJobFixture(t)
+	s := newServiceReadFixture(t)
+	s.status = http.StatusInternalServerError
+	s.message = "the forge's own words about this failure"
+	s.use(t, f.cloudFixture)
+	isolateCache(t)
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir())
+
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261110-130007-cafe", "Add a feature")
+	if ExitCode(err) != ExitRemoteError {
+		t.Fatalf("err = %v, want a remote error: the service answered and the read is what failed", err)
+	}
+	want := "cannot read acme/app's fugaro.yaml at main as yourself: the read that decides the run's job could not be made (HTTP 500). Run it from acme/app's checkout"
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("the refusal is not spec.md §7's:\n got: %v\nwant: %s", err, want)
+	}
+	if strings.Contains(err.Error(), s.message) {
+		t.Errorf("the refusal relays the forge's own body (%q): another writer's words about a failure do not belong in it: %v", s.message, err)
+	}
+	if calls := f.run.RunRequests(); len(calls) != 0 {
+		t.Errorf("the refused launch asked Cloud Run for %d job(s): %+v", len(calls), calls)
 	}
 }
 
