@@ -982,7 +982,20 @@ func (r *Repo) OriginURL(ctx context.Context) (string, error) {
 // pushInsteadOf here, so each URL is one git opens at push time — and a remote
 // with several pushurls is pushed to at each of them, which is why this is
 // every URL and not the first.
-func (r *Repo) PushURLs(ctx context.Context) ([]string, error) {
+//
+// origin is the URL OriginURL returned, and the read above is not the whole
+// answer for it: a push may name that URL rather than the remote (gitops'
+// PushFastForward, the checkpoint push, is given the URL, which is what keeps a
+// pushurl set after the read from redirecting it), and git applies the
+// checkout's url.*.pushInsteadOf rules to whatever URL a push names — while
+// `git remote get-url --push` answers for a *remote*, so on a checkout that
+// sets a pushurl its answer is that pushurl and the rewrite the URL-naming push
+// meets is nowhere in it (measured: git resolves the rules against the remote's
+// fetch URL only while the remote has no pushurl). The rewrite is made here
+// then, and the URLs it produces are added to the read's: a caller holding
+// every URL in this list to its own question refuses a checkout that sends a
+// push elsewhere by either door.
+func (r *Repo) PushURLs(ctx context.Context, origin string) ([]string, error) {
 	out, err := r.git(ctx, "remote", "get-url", "--push", "--all", "origin")
 	if err != nil {
 		return nil, err
@@ -993,7 +1006,57 @@ func (r *Repo) PushURLs(ctx context.Context) ([]string, error) {
 			urls = append(urls, line)
 		}
 	}
+	rewritten, err := r.pushInsteadOf(ctx, origin)
+	if err != nil {
+		return nil, err
+	}
+	for _, url := range rewritten {
+		if !slices.Contains(urls, url) {
+			urls = append(urls, url)
+		}
+	}
 	return urls, nil
+}
+
+// pushInsteadOf returns what a push that names url opens: url through the
+// url.*.pushInsteadOf rules this checkout's configuration holds — its own, its
+// environment's, and whatever those include — or nothing when no rule applies,
+// which is the ordinary case: such a push opens url itself, the URL the caller
+// already has. Each rule replaces the prefix it matches with its base, and the
+// rule with the longest matching prefix is the one git applies, measured by
+// pushing to a URL two rules match (the push landed at the longer rule's base).
+// Rules can share that longest prefix — their bases differ, and the order git
+// breaks such a tie in is not documented — so every one of them is returned:
+// the caller holds each to its own question and refuses rather than picking.
+func (r *Repo) pushInsteadOf(ctx context.Context, url string) ([]string, error) {
+	// git exits 1 for a regexp that matches no key, which is a checkout with no
+	// push rewrite at all: the common case, and not an error. Anything else is.
+	out, err := r.git(ctx, "config", "--null", "--get-regexp", `^url\..*\.pushinsteadof$`)
+	if err != nil && exitCode(err) != 1 {
+		return nil, err
+	}
+	var rewritten []string
+	longest := 0
+	for _, entry := range strings.Split(out, "\x00") {
+		// git separates the key and the value it found with a newline under
+		// --null, and prints the key's section and last name lowercased with
+		// the rule's base, which is part of a URL, as it was written.
+		key, prefix, ok := strings.Cut(entry, "\n")
+		if !ok {
+			continue
+		}
+		base, ok := strings.CutSuffix(strings.TrimPrefix(key, "url."), ".pushinsteadof")
+		if !ok || !strings.HasPrefix(url, prefix) {
+			continue
+		}
+		switch {
+		case len(prefix) > longest:
+			longest, rewritten = len(prefix), []string{base + url[len(prefix):]}
+		case len(prefix) == longest:
+			rewritten = append(rewritten, base+url[len(prefix):])
+		}
+	}
+	return rewritten, nil
 }
 
 // ShowFile returns the file at path in revision rev (`git show

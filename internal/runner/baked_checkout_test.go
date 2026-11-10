@@ -75,6 +75,24 @@ func hostilePushCheckout(t *testing.T, h *harness, dir string) {
 	testutil.Git(t, dir, "config", "remote.origin.pushurl", "file://"+testutil.NewRemote(t, map[string]string{"README.md": "other\n"}))
 }
 
+// rewrittenPushCheckout makes dir a checkout of this run's own repository whose
+// configuration rewrites the URL a push names to another repository's: its
+// origin is a URL of this repository, its pushurl is the same repository in
+// another spelling (the ssh one, which the binding admits), and the rewrite is
+// the only thing that says the run's commits would land elsewhere — with no
+// pushurl set git resolves the rewrite and answers with it, and the pushurl is
+// what puts it out of git's own read of the remote (PushURLs' doc).
+func rewrittenPushCheckout(t *testing.T, h *harness, dir string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	testutil.Git(t, filepath.Dir(dir), "clone", "--quiet", h.remote, dir)
+	testutil.Git(t, dir, "remote", "set-url", "origin", "https://github.com/acme/app.git")
+	testutil.Git(t, dir, "config", "remote.origin.pushurl", "git@github.com:acme/app.git")
+	testutil.Git(t, dir, "config", "url.https://github.com/evil/.pushInsteadOf", "https://github.com/acme/")
+}
+
 // TestBakedCheckoutOriginMismatchRefuses (IS8): the job is for acme/app, and a
 // checkout the image already holds is another repository's — a shared image
 // built for someone else, or a warm container an earlier job or execution left
@@ -86,10 +104,10 @@ func hostilePushCheckout(t *testing.T, h *harness, dir string) {
 // The rows are the ways such a checkout can be another repository's — its
 // origin (the work directory, which the admission check reads too, and the
 // per-slug directory the run would adopt for its own repository on a shared
-// image, which nothing else looks at) and its push URL, which is where the
-// run's own branch actually lands (gitops' Push goes to origin's pushurl when
-// the checkout sets one, and the credential is scoped to the endpoint and not
-// to the path).
+// image, which nothing else looks at) and its push URLs, which are where the
+// run's own branch actually lands: gitops' Push goes to origin's pushurl when
+// the checkout sets one, and a checkpoint (gitops' PushFastForward) pushes by
+// origin's URL, which git rewrites by the checkout's url.*.pushInsteadOf rules.
 //
 // Mutation (run, restore): drop the checkBakedCheckoutOrigin call — the run
 // opens another repository's checkout and fails further down (no fugaro.yaml,
@@ -98,7 +116,11 @@ func hostilePushCheckout(t *testing.T, h *harness, dir string) {
 // openBakedCheckout sets r.d.WorkDir, checking only the work directory's own
 // checkout — the origin rows for the work directory still pass and the
 // per-slug ones fail. Mutation (run, restore): drop the PushURLs loop — the
-// push-URL rows fail while every origin row still passes.
+// push-URL rows fail while every origin row still passes. Mutation (run,
+// restore): gitops' PushURLs returning git's own read alone, without the
+// pushInsteadOf rewrite of the origin URL — the rewrite rows fail: the run goes
+// past the guard and fails further down with a git credential already
+// requested.
 func TestBakedCheckoutOriginMismatchRefuses(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -117,6 +139,12 @@ func TestBakedCheckoutOriginMismatchRefuses(t *testing.T) {
 		{"the directory the run would adopt, by its push URL", func(t *testing.T, h *harness) {
 			hostilePushCheckout(t, h, bakedDir(t, h, repoSlug))
 		}, []string{"pushes to file://"}},
+		{"the work directory's push rewrite", func(t *testing.T, h *harness) {
+			rewrittenPushCheckout(t, h, h.deps.WorkDir)
+		}, []string{"pushes to https://github.com/evil/app.git"}},
+		{"the directory the run would adopt, by its push rewrite", func(t *testing.T, h *harness) {
+			rewrittenPushCheckout(t, h, bakedDir(t, h, repoSlug))
+		}, []string{"pushes to https://github.com/evil/app.git"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newHarness(t, "", nil)
