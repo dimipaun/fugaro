@@ -320,6 +320,15 @@ so its row changes with it, and the plan carries the amended rows:
 | `fugaro image status`, `render`, `gate`, `record`, `promote`, `migrate` | **no row**: the commands do not exist (and `migrate` is not written at all, §3.2) |
 | `fugaro update --repo <r> --retire` | **never admitted.** A retirement is a delete, and D1026's rule that a `Typed` step is never admitted settles it twice over: the gate's first rule refuses a delete, and the typed confirmation is a step no plan gate may carry |
 
+**`fugaro image build`'s derived arm is unjudged, and that is deliberate.** `--workflow`, or a
+checkout with no catalog, is the part of this command the table above writes no row for: nothing of
+the gate's judges, admits or records it, no session is refused for it, and what bounds it is the
+budget lease the command takes from the project's budget database immediately before each submission
+(D1543). The policy that removed the confirmation is where that comes from: a build is the one thing
+it puts under the budget alone — no confirmation, no session refused for being unable to answer, the
+caps the only spending limit — so a session the gate has no document for submits its build like any
+other ([docs/no-prompt-policy/spec.md](../no-prompt-policy/spec.md), rules 2 and 4).
+
 **A Typed step is never admitted (D1026), and a retirement is never admitted** — not for a managed
 project, not for any flag, and not by inheritance from any other row. The row set is the
 managed build's, and this design edits no file of that folder except by the one task that writes the

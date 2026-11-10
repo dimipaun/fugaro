@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -58,17 +59,55 @@ func TestMergeFinishedCreatesNamedRepoBlockInSortedOrder(t *testing.T) {
 }
 
 // Failed matches the design's definition (generic-tool §10.3): failed,
-// halted and infra_error are failures; succeeded and cancelled are not.
+// halted and infra_error are failures; succeeded, cancelled and unreviewed
+// are not — an unreviewed run reached the end of its loop like a succeeded
+// one, with a draft to read instead of a verdict (spec §8.4, D996).
 func TestFinishedRowFailedMatchesDesignStatuses(t *testing.T) {
 	now := time.Now()
 	want := map[string]bool{
-		"succeeded": false, "cancelled": false,
+		"succeeded": false, "cancelled": false, "unreviewed": false,
 		"failed": true, "halted": true, "infra_error": true,
 	}
 	for status, wantFailed := range want {
 		f := FinishedRun{Run: "r1", Slug: "o-r", Status: status, FinishedAt: now}
 		if row := finishedRow(f, now); row.Failed != wantFailed {
 			t.Fatalf("status %q: Failed = %v, want %v", status, row.Failed, wantFailed)
+		}
+	}
+}
+
+// An unreviewed run is not a failure (spec §8.4, D996): nothing failed in it
+// — its tests passed and it pushed the pull request it left a draft — and
+// nothing read it either. The naive widening of isFailure's case list to every
+// status the runstore spells is what this pins against: a watcher must read
+// `unreviewed` as a draft to look at, never as an outage.
+func TestWatchDoesNotCallAnUnreviewedRunAFailure(t *testing.T) {
+	now := time.Now()
+	f := FinishedRun{Run: "r1", Slug: "o-r", Status: string(runstore.StatusUnreviewed), Outcome: string(runstore.OutcomeDraft), FinishedAt: now}
+	if isFailure(f.Status) {
+		t.Fatalf("isFailure(%q) = true, want false: nothing failed in an unreviewed run", f.Status)
+	}
+	if row := finishedRow(f, now); row.Failed {
+		t.Fatalf("the row flags an unreviewed run as a failure: %+v", row)
+	}
+}
+
+// A finished row's status is the runstore word itself, never blank and never a
+// word of watch's own (spec §8.4), so a watcher reads `unreviewed` where the
+// record says it — the row is how the value reaches the screen the moment no
+// client knows the word yet (E2).
+func TestFinishedRowCarriesTheStatusWord(t *testing.T) {
+	now := time.Now()
+	f := FinishedRun{Run: "r1", Slug: "o-r", Status: string(runstore.StatusUnreviewed), FinishedAt: now}
+	if row := finishedRow(f, now); row.Stage != string(runstore.StatusUnreviewed) {
+		t.Fatalf("row.Stage = %q, want %q", row.Stage, runstore.StatusUnreviewed)
+	}
+	// The whole vocabulary travels the same way: a status watch invented a
+	// word for, or dropped, would be a reader disagreeing with the record.
+	for _, s := range runstore.Statuses {
+		f := FinishedRun{Run: "r1", Slug: "o-r", Status: string(s), FinishedAt: now}
+		if row := finishedRow(f, now); row.Stage != string(s) {
+			t.Fatalf("status %q: row.Stage = %q, want the word itself", s, row.Stage)
 		}
 	}
 }

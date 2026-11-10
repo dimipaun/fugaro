@@ -31,7 +31,7 @@ project is one GCP project with its own Firebase, its own Realtime Database, its
 (`internal/budget/model.go:31-33`, `:51`), its own policy node
 (`internal/projectpolicy/paths.go:18-23`, `:29`) and its own identity: the credentials service verifies a
 Firebase ID token whose issuer is that project's own
-(`internal/credsvc/auth.go:1072`), and since #1669 its front door has a **person class** as well as
+(`internal/credsvc/auth.go:1089`, against `firebaseIssuer` at `:1059-1060`), and since #1669 its front door has a **person class** as well as
 its job classes (`internal/credsvc/auth.go:375` `PersonAccounts`, `:890` `VerifyReadCaller`, `:968`
 `VerifyPersonCaller`) — still one installation's people, named in that installation's own config. The
 only cross-project machinery in the tree is the *owner's* machine: `fugaro config list` reads several
@@ -71,8 +71,9 @@ Bitbucket fact.
 ### 2b. Single sign-on (spec §0, second bullet)
 
 **F4 — Identity today is per project, verified from one Firebase. — Exists.**
-`internal/credsvc/auth.go:1072` compares the token's `iss` against
-`"https://securetoken.google.com/" + a.cfg.FirebaseProject`; `:1373` (`GoogleKeysURL`) names the
+`internal/credsvc/auth.go:1089` compares the token's `iss` against
+`firebaseIssuer(a.cfg.FirebaseProject)`, which builds
+`"https://securetoken.google.com/" + a.cfg.FirebaseProject` (`:1059-1060`); `:1390` (`GoogleKeysURL`) names the
 public x509 endpoint the signing keys come from; `:767` records why the issuer is not caller-chosen
 text. The mobile
 app's own sign-in normalises and allow-lists an address (`internal/mobileauth/email.go`,
@@ -309,7 +310,7 @@ it a false one while every sentence around it stays true. **One had moved**: the
 `internal/cli/root.go:191`; the managed-gate set
 (`internal/cli/managed_gate.go:181` and its four callers, `internal/managed/plan.go:217`,
 `internal/managed/budget.go:124`); `internal/runner/stray.go:24`; `internal/credsvc/auth.go:375`,
-`:890`, `:968`, `:258`, `:1072`; `internal/projectpolicy/bitbucket.go:30`, `:75-76`, `:194` and
+`:890`, `:968`, `:258`, `:1089`; `internal/projectpolicy/bitbucket.go:30`, `:75-76`, `:194` and
 `internal/projectpolicy/paths.go:18-23`;
 `internal/backend/gcp/catalog.go:78`; `docs/ee-reorg/spec.md`:7 and `docs/subscriptions/spec.md`:55.
 
@@ -410,8 +411,8 @@ folder and not the rest.**
 - **The pin's issuer was pinned but never checked against the project, over a phrase about keys that
   do not exist.** Three paragraphs said the exchange verifies the token "against the keys the pinned
   Firebase project publishes" — Firebase signing keys are **one global set**
-  (`internal/credsvc/auth.go`:1371-1373 `GoogleKeysURL`), so a project is told from another by its
-  `aud`/`iss` pair and by nothing else, and main already derives the second from the first (`:1072`).
+  (`internal/credsvc/auth.go`:1388-1390 `GoogleKeysURL`), so a project is told from another by its
+  `aud`/`iss` pair and by nothing else, and main already derives the second from the first (`:1089`).
   W1 now requires the pin's two values to agree (with a test), and every paragraph that named
   per-project keys is reworded to Google's published set plus the audience and the pinned issuer.
 - **The member-side binding is a loosening the managed gate refuses, and §6 called W2's stage "the
@@ -457,7 +458,7 @@ The owner answered all seven on **2026-11-04**, and every answer is applied in [
 - **6 — an owner could splice one member's accounts onto another member's database.** The service
   read each member's policy and outcomes from a database URL the owner declares. It is now **derived
   from the Firebase project the verified `iss` names**, and `checkLive`
-  (`internal/credsvc/auth.go`:1196) and its outcomes reader (`RTDBOutcomes`, `:217`) are **per member**,
+  (`internal/credsvc/auth.go`:1213) and its outcomes reader (`RTDBOutcomes`, `:217`) are **per member**,
   chosen by the member the call resolved to. **Adopted**; W6 owns the splice test.
 - **7 — residual risk 6 was understated.** It is not only "a Firebase Auth administrator": anyone who
   can mint a **custom token** for the workspace's project — `signBlob` or `TokenCreator` on **any**
@@ -909,3 +910,64 @@ client of the member's database may read, with W4 and W5 owning the tests), and 
 shipped. The two things that **are** still open are the refusal's **timing** claim, which no hermetic
 test can hold (§6's **U3**), and **which of two credentials a member's run picks** when the member
 holds its own and the workspace holds one too (§7's **V5**).
+
+## 9. Owner decisions this round reported, and the answers of 2026-11-10
+
+**Two gaps the implementation of W6 reported, and the owner answered both on 2026-11-10, each as
+recommended** — the recommendation being this folder's own reading of each, written where the gap is
+stated ([implementation-plan.md](implementation-plan.md) W1 and W6, [spec.md](spec.md) §5 and §8).
+Neither is a decision the design was missing, and neither is closed here: each is a value the
+per-member table does not carry, and the answer to both is that **W6 ships the shape and states the
+gap, and the task that first gives that table a writer takes the value**. Neither answer takes a
+number: **D1306–D1309 stay reserved and unused** (§5).
+
+**O3 — Whether the run's repository is held to the calling job account (review finding N1).** The
+pool asks the repository's own admission child and the member's two canonical `allow_repos` legs, all
+over the slug the run identity verified, and it asks nothing about the repository the **calling job
+account** belongs to — the comparison the installation's own front door makes
+(`internal/credsvc/server.go`:737), because a member's row names its job accounts and no repository
+(`WorkspaceCredentialMember`, `internal/projectpolicy/workspace_credentials.go`:115, `JobAccounts` at
+`:149`). The reach of that is bounded by the member's own lists: both legs are asked over the
+identity's own slug, so a job of one of a member's repositories reaches no other member's pool and no
+repository the member's own lists do not name — what it reaches is another repository of the **same**
+member, admitted by the member itself (spec.md §8's residual risk 7).
+
+- **(A, recommended) The column, in the task that gives the per-member table a writer.** Each job
+  service account carries the repository it is a job of — the pair `credsvc.JobAccount` already
+  carries for the installation's own jobs (`internal/credsvc/server.go`:171-185) — and that task
+  closes the pairing by holding the verified slug to it.
+- **(B) Close it in W6.** The column is this task's file and so is the check; what the column is not
+  is a value any command writes, so every row a deployment could publish today would carry no
+  repository and the check would have nothing to compare.
+
+**Answered 2026-11-10: (A), as recommended** — the pairing is stated and **not enforced** by this
+release, and the column goes to the task that gives `workspace_credentials` a writer. Why: whether
+the owner's per-member table carries a repository per job account is the owner's own declaration to
+decide — which is why §8 left it here rather than enforcing it — and a column no command writes is
+not a check.
+
+**O4 — Which task carries the region of a member's database (`database_region`).** The node carries a
+member's `database_region` (`internal/projectpolicy/workspace_credentials.go`:187) and the service
+derives that member's database host from it (`workspaceDatabase`, `internal/credsvc/workspace.go`),
+because a Firebase project adopted with a **regional** database is named
+`<firebase_project>-default-rtdb.<region>.firebasedatabase.app` and not the legacy default host. No
+command records the value: the four values `workspace member add` writes for this table are the
+member's job accounts, its Firebase project, its `fp` and its exchange URL, with `--repo` beside them
+naming a repository the member contributes and `--yes` confirming the write
+(`internal/cli/workspace.go`:422-429, `--repo` at `:480`),
+`localcfg.WorkspaceMember` has no field for a region (`internal/localcfg/localcfg.go`:541-567), and
+**the node itself has no writer anywhere in the tree** — its own comment says so
+(`internal/projectpolicy/workspace_credentials.go`:101).
+
+- **(A, recommended) The task that gives the node its writer.** The region is one value beside the
+  others that writer publishes, and the derivation this release ships is what keeps a member on a
+  regional database out until it does.
+- **(B) W6 takes the field and the writer.** The writer is `workspace member add` and W2's publish
+  stage, and `internal/localcfg/localcfg.go` is W1's file, one writer (§4's shared-files table), so
+  the option moves a file boundary rather than closing the gap inside this task.
+
+**Answered 2026-11-10: (A), as recommended** — W6 ships the node's shape and the derivation, the
+verb's missing option stays stated (spec.md §5 and the plan's W1), and the region is taken by the
+task that gives the node a writer. Why: the fail-closed half is already in this release — a member on
+a regional database is derived the legacy host and refused rather than served from a database that is
+not its own — and a value no command can write is not one this task can make true by declaring it.

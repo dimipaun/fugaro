@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/dimipaun/fugaro/internal/updatecheck"
 )
@@ -190,6 +191,10 @@ func TestPostLogKeepsTheTailOfTheLog(t *testing.T) {
 	}{
 		{"one line longer than the whole budget", strings.Repeat("x", 3000) + "\n"},
 		{"a boundary that would leave 47 bytes", strings.Repeat("x", 2953) + "\n" + strings.Repeat("y", 47)},
+		// A last line of characters wider than a byte, which is where the cut is
+		// a byte cut in the middle of one: the tail begins at the character the
+		// cut fell in, not at its second byte.
+		{"a line of characters wider than a byte", strings.Repeat("ok\n", 20) + strings.Repeat("→", 3000)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			tail, cut := postLog([]string{tc.log}, nil)
@@ -198,6 +203,9 @@ func TestPostLogKeepsTheTailOfTheLog(t *testing.T) {
 			}
 			if !strings.HasSuffix(tc.log, tail) {
 				t.Errorf("the excerpt is not the end of the log: %q", tail)
+			}
+			if !utf8.ValidString(tail) {
+				t.Errorf("the excerpt is not valid UTF-8: the cut landed inside a character:\n%q", tail[:60])
 			}
 			if len(tail) < postLogBudget/2 {
 				t.Errorf("the excerpt kept %d of the %d byte budget: most of the log given up for a line boundary",
@@ -345,6 +353,28 @@ func TestNewIssueURLCutsLongBody(t *testing.T) {
 		}
 		if !strings.Contains(body, "the update stops half way. the update") {
 			t.Errorf("the link does not carry the finding:\n%q", body)
+		}
+	})
+
+	// The cut is a byte cut and the body is not bytes: a cut inside a multi-byte
+	// character keeps the first bytes of it and drops the rest, and those bytes
+	// are what the browser decodes and GitHub writes into a public issue — a
+	// sequence that is not a text. Roughly half the cuts of a body that is not
+	// ASCII land inside a character, so this row is the difference between a
+	// link that carries the post and one that carries a broken byte sequence.
+	t.Run("the cut lands on a character, never inside one", func(t *testing.T) {
+		for _, unit := range []string{"é", "→", "𝄞"} {
+			i := issueLocal()
+			i.Summary = strings.Repeat(unit, 4000)
+			p := BuildPost(i, nil)
+			if !utf8.ValidString(p.Body) {
+				t.Fatalf("the post of %q is not valid UTF-8, so the cut is not what broke it", unit)
+			}
+			if body := linkBody(t, p); !utf8.ValidString(body) {
+				cut := strings.TrimSuffix(body, newIssueURLCutNotice)
+				t.Errorf("the link's body of %q is not valid UTF-8: the cut landed inside a character:\n%q",
+					unit, cut[max(0, len(cut)-30):])
+			}
 		}
 	})
 

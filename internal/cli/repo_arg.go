@@ -50,22 +50,10 @@ func repoArg(ctx context.Context, o cloudOptions, value string) (string, error) 
 		return value, nil
 	}
 	dir := value
-	fi, err := os.Stat(dir)
+	root, err := repoArgRoot(ctx, dir)
 	if err != nil {
-		// Nothing is at the value and it does not read as owner/name, so it is
-		// refused without being printed: whatever was typed there may have been
-		// meant for another flag, and a refusal never repeats it (this is
-		// task.CanonicalRepo's sentence, and TestSecretsSetNeverEchoes pins it).
-		return "", userErr("--repo: the repository must look like owner/name, or be a path inside a git checkout")
+		return "", err
 	}
-	if !fi.IsDir() {
-		return "", userErr("--repo %s is a file, and a path must be a directory inside a git checkout whose origin names the repository", safetext.Field(dir))
-	}
-	out, err := gitCmd(ctx, dir, "rev-parse", "--show-toplevel").Output()
-	if err != nil {
-		return "", userErr("--repo %s is not inside a git checkout, and a path names a checkout: its origin remote is what says which repository it is", safetext.Field(dir))
-	}
-	root := strings.TrimSpace(string(out))
 	origin, err := gitCmd(ctx, root, "remote", "get-url", "origin").Output()
 	if err != nil {
 		return "", userErr("--repo %s: the checkout at %s has no origin remote, so it names no repository (run from its checkout, or pass --repo owner/name)", safetext.Field(dir), safetext.Field(root))
@@ -83,4 +71,43 @@ func repoArg(ctx context.Context, o cloudOptions, value string) (string, error) 
 		}
 	}
 	return repo, nil
+}
+
+// repoArgRoot is the checkout the path dir names: its git toplevel, or the
+// refusal a value that is not inside one gets. It is repoArg's own first half,
+// and it is here rather than inline in it because the reduction to owner/name
+// loses which clone was named, and a machine that remembers several checkouts
+// of one repository has no way to tell them apart afterwards.
+func repoArgRoot(ctx context.Context, dir string) (string, error) {
+	fi, err := os.Stat(dir)
+	if err != nil {
+		// Nothing is at the value and it does not read as owner/name, so it is
+		// refused without being printed: whatever was typed there may have been
+		// meant for another flag, and a refusal never repeats it (this is
+		// task.CanonicalRepo's sentence, and TestSecretsSetNeverEchoes pins it).
+		return "", userErr("--repo: the repository must look like owner/name, or be a path inside a git checkout")
+	}
+	if !fi.IsDir() {
+		return "", userErr("--repo %s is a file, and a path must be a directory inside a git checkout whose origin names the repository", safetext.Field(dir))
+	}
+	out, err := gitCmd(ctx, dir, "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		return "", userErr("--repo %s is not inside a git checkout, and a path names a checkout: its origin remote is what says which repository it is", safetext.Field(dir))
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// repoArgPath is the checkout --repo names when it names a path, "" when it is
+// empty or already reads as owner/name. It is repoArgRoot asked before repoArg
+// reduces the value, which is the only moment the clone is still known: a
+// command that writes into the checkout it was pointed at asks this rather than
+// taking the last checkout of that repository the machine remembers.
+func repoArgPath(ctx context.Context, value string) (string, error) {
+	if value == "" {
+		return "", nil
+	}
+	if _, err := task.CanonicalRepo(value); err == nil {
+		return "", nil
+	}
+	return repoArgRoot(ctx, value)
 }

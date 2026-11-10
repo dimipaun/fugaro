@@ -308,6 +308,18 @@ func (s *wizardStage) ask(ctx context.Context) error {
 		}
 		o.name = v
 	}
+	// The bake question (IS7, D1901) is asked after the name and before the
+	// billing one: it is about the project the answers above settled rather
+	// than about an input, and it is asked only on a run that creates the
+	// installation — a run on an installation that is already there keeps the
+	// answer the project's own and takes it from its flag or from the
+	// published node, never from this machine (askBake, setup.go).
+	if err := s.askBake(); err != nil {
+		// The question's own no-answer stops the phase here, as the three above
+		// do: the billing question below is not reached, and the rerun resumes
+		// at this one (s.answer).
+		return s.answer(err)
+	}
 	// The billing question is the last of the wizard's questions (W4.3): it is
 	// about the GCP project the answers above settled, and it is asked only
 	// where the answer is one this run acts on (asksBilling, billing_prompt.go).

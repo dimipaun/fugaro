@@ -1022,3 +1022,24 @@ func TestJoinBoundsTheRecordedRigor(t *testing.T) {
 		t.Errorf("a block with an unrankable area reached the row as %+v", got)
 	}
 }
+
+// TestRowElapsedReadsARunInFlight: a run that has not finished is measured
+// from the moment it started to now, and a row that never recorded a start
+// has no elapsed time at all -- the two halves of what a chain reads a
+// running run's time as (runstore.chainSeconds, D1060), so that read has one
+// meaning wherever it is made.
+func TestRowElapsedReadsARunInFlight(t *testing.T) {
+	started := now.Add(-90 * time.Minute)
+	running := Row{Run: spec.RunID, StartedAt: &started}
+	if d, ok := running.Elapsed(now); !ok || d != 90*time.Minute {
+		t.Fatalf("Elapsed(now) = %v, %v; want the 90m since the run started", d, ok)
+	}
+	if d, ok := running.Elapsed(started); !ok || d != 0 {
+		t.Errorf("Elapsed(at its own start) = %v, %v; want none elapsed", d, ok)
+	}
+	// A row whose run never started has no figure: an absent start is not a
+	// start at the zero time, which would read as decades of elapsed time.
+	if d, ok := (Row{Run: spec.RunID}).Elapsed(now); ok || d != 0 {
+		t.Fatalf("Elapsed of a row with no start = %v, %v; want no elapsed time", d, ok)
+	}
+}

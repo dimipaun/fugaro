@@ -1,6 +1,7 @@
 package infra
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -490,11 +491,14 @@ func TestDBDeploysAndThenChangesNothing(t *testing.T) {
 		paths = append(paths, a.Path)
 	}
 	// The rules are last of the database's own writes; the actions after them
-	// are the generation markers, one per family, and none of them may be
-	// written unless the deploy succeeded (TestRulesMarkerOnlyAfterTheRulesDeploy
-	// in internal/cli drives the failing case through init).
+	// are the generation markers, one per family — this binary's rules, the
+	// credentials children, the workspace family and the orchestrator subtree —
+	// none of which may be written unless the deploy succeeded
+	// (TestRulesMarkerOnlyAfterTheRulesDeploy in internal/cli drives the failing
+	// case through init).
 	wantPaths := []string{"fugaro/mark", "fugaro/project", "config/mode", "config/limits", "rules",
-		projectpolicy.PathRulesMarker(), rules.PathCredsRulesMarker(), rules.PathOrchestratorRulesMarker()}
+		projectpolicy.PathRulesMarker(), rules.PathCredsRulesMarker(), rules.PathWorkspaceRulesMarker(),
+		rules.PathOrchestratorRulesMarker()}
 	if !slices.Equal(paths, wantPaths) {
 		t.Fatalf("actions = %v, want %v (the rules last, their marker after them)", paths, wantPaths)
 	}
@@ -507,12 +511,15 @@ func TestDBDeploysAndThenChangesNothing(t *testing.T) {
 	if got := f.Value(rules.PathCredsRulesMarker()); got != json.Number(strconv.Itoa(rules.CredsRulesVersion)) {
 		t.Errorf("%s = %#v, want %d (CredsRulesVersion): the credentials children's generation", rules.PathCredsRulesMarker(), got, rules.CredsRulesVersion)
 	}
+	if got := f.Value(rules.PathWorkspaceRulesMarker()); got != json.Number(strconv.Itoa(rules.WorkspaceRulesVersion)) {
+		t.Errorf("%s = %#v, want %d (WorkspaceRulesVersion): the workspace family's generation", rules.PathWorkspaceRulesMarker(), got, rules.WorkspaceRulesVersion)
+	}
 	if got := f.Value(rules.PathOrchestratorRulesMarker()); got != json.Number(strconv.Itoa(rules.OrchestratorRulesVersion)) {
 		t.Errorf("%s = %#v, want %d (OrchestratorRulesVersion): the orchestrator subtree's generation", rules.PathOrchestratorRulesMarker(), got, rules.OrchestratorRulesVersion)
 	}
 	lim, _ := f.Value(budget.PathLimits).(map[string]any)
-	if len(lim) != 4 || lim["maxReserveMicros"] == nil {
-		t.Errorf("config/limits = %v, want the three markers beside maxReserveMicros", lim)
+	if len(lim) != 5 || lim["maxReserveMicros"] == nil {
+		t.Errorf("config/limits = %v, want the four markers beside maxReserveMicros", lim)
 	}
 	want, _ := rules.Generate()
 	if !SameJSON(f.Rules(), want) {
@@ -521,6 +528,64 @@ func TestDBDeploysAndThenChangesNothing(t *testing.T) {
 	d2 := NewDB(d.c, "aurora", "proj-1234", "")
 	if acts, _, err := d2.Plan(context.Background()); err != nil || len(acts) != 0 {
 		t.Fatalf("a second plan: %v, %v", acts, err)
+	}
+}
+
+// TestDBUpdateCarriesTheWidenedOutcomeStatus: an installation whose deployed
+// rules are the document of the release before NV0 — the outcome's status
+// validator without the run status `unreviewed` (docs/binary-allow-rule's NV0,
+// D994) — converges under one `fugaro update --firebase-project`. The rules
+// stage redeploys a document infra.SameJSON reports as different, whatever the
+// markers say, so the widened validator reaches a database that has not seen it
+// with no bump and no second command: RulesVersion moves for a change that
+// opens a family to a client, and this one admits a value the runs of this
+// release write under a `.write` that does not move, where a bump would drop
+// every published policy on an installation whose owner has not redeployed yet.
+//
+// The previous document is derived from this build's, the way internal/cli's
+// previousRulesDocument derives the release before a family was added: the
+// release behind this one is not in the tree, so the fixture is this document
+// with the one clause removed. The assertion that the deploy puts the clause
+// back is what makes this a convergence test rather than a restatement of
+// SameJSON.
+//
+// Hand mutation this fails on: a plan that leaves a database alone when only
+// the widened validator differs (the installation keeps filing every unreviewed
+// run as an infrastructure error), or a template that loses the clause (the
+// fixture then fails to build, naming the release it is derived from).
+func TestDBUpdateCarriesTheWidenedOutcomeStatus(t *testing.T) {
+	d, f := newDB(t, "")
+	deploy(t, d)
+	gen, err := rules.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The one clause NV0 adds, in the template's own spelling.
+	const clause = " || newData.val() == 'unreviewed'"
+	if !bytes.Contains(gen, []byte(clause)) {
+		t.Fatalf("the generated rules do not accept the run status 'unreviewed': this fixture derives the release before the one that widens the outcome's status validator")
+	}
+	f.SetRules([]byte(strings.Replace(string(gen), clause, "", 1)))
+
+	acts, _, err := d.Plan(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var paths []string
+	for _, a := range acts {
+		paths = append(paths, a.Path)
+	}
+	if !slices.Equal(paths, []string{"rules"}) {
+		t.Fatalf("actions = %v, want the rules deployed over the document the installation still runs", paths)
+	}
+	if err := d.Apply(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !SameJSON(f.Rules(), gen) {
+		t.Error("the deployed rules are not the generated ones after the update")
+	}
+	if !bytes.Contains(f.Rules(), []byte(clause)) {
+		t.Error("the update left the outcome's status validator without 'unreviewed': the installation keeps a database that files every unreviewed run as an infrastructure error it is not")
 	}
 }
 
@@ -758,6 +823,52 @@ func TestFirebasePlanRefusesNewerCredsMarker(t *testing.T) {
 	}
 }
 
+// A workspace marker above this binary's WorkspaceRulesVersion is a newer
+// Fugaro's, and the refusal is the same one the other two markers give: this
+// binary's document does not carry the workspace family that marker describes,
+// so deploying it would take the record, the admitted-token hashes, the meter
+// and the rollup out from under a database that runs with them. Nothing is
+// planned and nothing is written.
+func TestFirebasePlanRefusesNewerWorkspaceMarker(t *testing.T) {
+	d, f := newDB(t, "")
+	deploy(t, d)
+	newer := rules.WorkspaceRulesVersion + 1
+	f.Set(rules.PathWorkspaceRulesMarker(), newer)
+	before, _ := json.Marshal(f.Value(""))
+	puts := len(f.Requests())
+
+	acts, _, err := d.Plan(context.Background())
+	var ue *UserError
+	if !errors.As(err, &ue) {
+		t.Fatalf("Plan = (%v, %v), want a refusal: this binary must not deploy over a newer workspace generation", acts, err)
+	}
+	for _, want := range []string{rules.PathWorkspaceRulesMarker(), strconv.Itoa(newer), strconv.Itoa(rules.WorkspaceRulesVersion)} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	if len(acts) != 0 {
+		t.Errorf("acts = %v, want none", acts)
+	}
+	after, _ := json.Marshal(f.Value(""))
+	if string(before) != string(after) || f.RulePuts() != 1 {
+		t.Errorf("the refusal wrote: database %s -> %s, rules put %d times", before, after, f.RulePuts())
+	}
+	for _, q := range f.Requests()[puts:] {
+		if q.Method == "PUT" || q.Method == "PATCH" {
+			t.Errorf("the refused plan wrote %s /%s", q.Method, q.Path)
+		}
+	}
+	// A marker at this generation plans normally, and one below it is a database
+	// whose rules predate the family: that is the deploy this binary is for.
+	for _, seed := range []int{rules.WorkspaceRulesVersion, rules.WorkspaceRulesVersion - 1} {
+		f.Set(rules.PathWorkspaceRulesMarker(), seed)
+		if _, _, err := NewDB(d.c, "aurora", "proj-1234", "").Plan(context.Background()); err != nil {
+			t.Errorf("a workspace marker at %d is refused: %v", seed, err)
+		}
+	}
+}
+
 // The refusals below each prescribe a remedy, and a remedy has to be a command
 // that runs: the retired verb is a hidden tombstone that prints one sentence and
 // exits 1 (internal/cli/retired.go, W1.2), so a refusal that says "re-run init"
@@ -796,6 +907,13 @@ func TestRefusalsPrescribeACommandThatRuns(t *testing.T) {
 	_, _, err = d2.Plan(context.Background())
 	collect("a credentials marker above this binary's generation", err)
 
+	// The workspace marker above this binary's generation.
+	d3, f3 := newDB(t, "")
+	deploy(t, d3)
+	f3.Set(rules.PathWorkspaceRulesMarker(), rules.WorkspaceRulesVersion+1)
+	_, _, err = d3.Plan(context.Background())
+	collect("a workspace marker above this binary's generation", err)
+
 	// A Firestore release that is not deny-all.
 	fr := gcpfake.NewFirebaseRules(t, "aurora")
 	fr.SeedRelease("rules_version = '2';\nservice cloud.firestore { match /databases/{d}/documents { match /{x=**} { allow read, write: if true; } } }")
@@ -807,8 +925,8 @@ func TestRefusalsPrescribeACommandThatRuns(t *testing.T) {
 	// compare a run against.
 	collect("--budget-mode enforce without the database's global caps", NoCapsForEnforce())
 
-	if len(messages) != 4 {
-		t.Fatalf("collected %d refusal(s), want 4", len(messages))
+	if len(messages) != 5 {
+		t.Fatalf("collected %d refusal(s), want 5", len(messages))
 	}
 	for _, msg := range messages {
 		if !strings.Contains(msg, "fugaro update --firebase-project") {

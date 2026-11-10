@@ -532,9 +532,11 @@ func initOnTTY(t *testing.T, asJSON bool) {
 		// --json confirms no step at all, so the run stops at the first step it
 		// cannot confirm -- the local config write -- and every later stage,
 		// the secrets stage among them, is blocked: --json never prompts, and
-		// here it never gets as far as the hidden read.
-		if !strings.Contains(errOut.String(), "not confirmed (--json confirms no step") {
-			t.Fatalf("no --json refusal: %q", errOut.String())
+		// here it never gets as far as the hidden read. The refusal's own
+		// sentence is one clause on the screen and the whole of it in the log
+		// the failed step names (report.Brief).
+		if whole := errOut.String() + namedLog(t, errOut.String()); !strings.Contains(whole, "not confirmed (--json confirms no step") {
+			t.Fatalf("no --json refusal: %q", whole)
 		}
 		var res convergeJSON
 		if jerr := json.Unmarshal([]byte(out.String()), &res); jerr != nil || res.state("installation") != "failed" || res.state("secrets") != "blocked" {

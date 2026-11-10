@@ -1,22 +1,26 @@
 package runner
 
 import (
+	"slices"
+
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/tier"
 )
 
-// The run's expectation tier: where the task's field is read and how the record
-// gets the block (docs/task-governance/implementation-plan.md T8.1, D330).
+// The run's expectation envelope: where the task's fields are read and how the
+// record gets them (docs/task-governance/implementation-plan.md T8.1, T8.3,
+// D330).
 //
 // The tier is not resolved from layers the way the rigor mode is: it is the
 // launcher's own dispatch decision (spec §3, "the orchestrator attaches an
 // expectation envelope"), and the task carries it as it carries the task text.
 // The runner's part is smaller than the mode's and has one moment: the
 // expectation the run's governance resolved for the tier is read once, at
-// bootstrap, and folded into the record. Nothing acts on it yet — the
-// expected-cost checkpoint is T8.2 — and nothing here is a cap: the deployed
-// per-run cap stays the ceiling whatever a tier expects (G6).
+// bootstrap, and folded into the record, beside the scope the task expected the
+// run to touch. Nothing acts on either yet — the expected-cost checkpoint is
+// T8.2 and the scope-drift flag is the digest's (T8.3) — and nothing here is a
+// cap: the deployed per-run cap stays the ceiling whatever a tier expects (G6).
 
 // recordTier writes the tier the run was dispatched at and the expectation the
 // run's own governance resolved for it. It runs after resolvePolicy, which is
@@ -50,4 +54,23 @@ func (r *run) recordTier() {
 // a repository that wrote nothing.
 func (r *run) tierExpectation(t tier.Tier) policy.TierExpectation {
 	return r.policy.Governance.Tiers.For(t)
+}
+
+// recordExpectedScope writes the scope the task expected the run to touch
+// (T8.3, spec §3). It is the task's own field echoed onto the record and not a
+// decision of the runner's: the digest is handed records and nothing else, and
+// the scope-drift flag compares the paths the run changed against this list
+// (D522, D528). A task that declares no scope records none — the field is
+// absent, never an empty list — and the flag is raised only where a scope was
+// declared, so a launch whose task declares none records what every launch
+// recorded before this field existed.
+//
+// The list is copied rather than aliased: the spec is the caller's, and a
+// record that shared its backing array would change under a later mutation of
+// it.
+func (r *run) recordExpectedScope() {
+	if len(r.spec.ExpectedScope) == 0 {
+		return
+	}
+	r.rec.ExpectedScope = slices.Clone(r.spec.ExpectedScope)
 }
