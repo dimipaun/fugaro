@@ -147,6 +147,54 @@ func TestSettingsSetRefusesAnUndeclaredStageAccount(t *testing.T) {
 	}
 }
 
+// TestSettingsSetRefusesTheAxisValuesThatAreNotAccounts: the stage-account key
+// is an account-CHOICE key, and the account axis's two values that are no
+// account at all (config.AnthropicKeyAccount, config.ProviderKeyAccount) are not
+// accounts a stage may run on — a stage's account is a token the job's
+// environment carries, and neither value's job mounts one (AK5's third door,
+// which AK6a opens for the second value in the same shape).
+//
+// config.ValidClaudeAccountRef admits both, because a profile's claude_accounts
+// entry may list either, so without the arm this write path would answer each
+// with the declared-account lookup's sentence — "declare it with `fugaro
+// accounts add <value> --repos owner/name`", a command refused by
+// config.ValidateClaudeAccounts — and the operator would be sent to a remedy
+// they cannot carry out. The sentence it answers with instead is the loader's
+// own (config.NonAccountChoiceMessage), which is the point: one rule, one
+// wording, on every surface that can write a choice key.
+//
+// Mutation (run, restore): put the sentinel-only condition back — the provider
+// key's subtest goes red on the `accounts add` remedy and on "nothing was
+// written".
+func TestSettingsSetRefusesTheAxisValuesThatAreNotAccounts(t *testing.T) {
+	_, localPath := settingsStageHome(t)
+	before := readFileString(t, localPath)
+	for _, value := range []string{config.AnthropicKeyAccount, config.ProviderKeyAccount} {
+		t.Run(value, func(t *testing.T) {
+			_, _, err := execute(t, "settings", "set", "stages.review.claude_account", value, "--layer", "local", "--yes")
+			if err == nil {
+				t.Fatalf("settings set wrote %s as a stage's account: no job mounts it", value)
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Errorf("exit %d, want %d", ExitCode(err), ExitUserError)
+			}
+			for _, want := range []string{"stages.review.claude_account", "not a Claude account", "drop the key"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal lacks %q: %v", want, err)
+				}
+			}
+			for _, banned := range []string{"accounts add", "claude_accounts", "is not defined here"} {
+				if strings.Contains(err.Error(), banned) {
+					t.Errorf("the refusal names %q: %v — the account lookup's sentence prescribes a claude_accounts entry config.ValidateClaudeAccounts refuses", banned, err)
+				}
+			}
+		})
+	}
+	if readFileString(t, localPath) != before {
+		t.Error("a refused write changed the local config")
+	}
+}
+
 // TestSettingsSetRefusesAStageAccountThatCoversLess: an account whose
 // allow_data_to misses a repository the project onboards is refused, naming the
 // repositories it misses — the launch would otherwise refuse every run of the

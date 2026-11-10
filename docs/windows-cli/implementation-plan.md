@@ -1,6 +1,6 @@
 # The CLI on Windows — implementation plan
 
-**Status: Slice 0 and Slice 1 approved (D16, 2026-10-20); Slice 0 is written; no code is implemented; D1–D6 are answered and D7–D15 are open.** This is the
+**Status as of 2026-11-10: superseded by console-windows, 10/31 merged; see [docs/status.md](../status.md) for the current table.** This is the
 ordered plan that follows [reconciliation.md](reconciliation.md) and answers
 [spec.md](spec.md). Every task names the files it touches, the test it must
 turn red first, the command that proves it, what it depends on, and what kind

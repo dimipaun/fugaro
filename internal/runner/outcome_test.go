@@ -121,7 +121,86 @@ func TestDecideByMode(t *testing.T) {
 		if tc.verdict != "" {
 			last = &runstore.ReviewSummary{Round: tc.round, Verdict: tc.verdict, Findings: len(tc.findings)}
 		}
-		ready, reason, _ := Decide(tc.records, "abc", last, findingsPolicyOf(optedIn, tc.mode, tc.round, tc.findings), nil)
+		ready, reason, _ := Decide(tc.records, "abc", last, findingsPolicyOf(optedIn, tc.mode, tc.round, tc.findings, ""), nil)
+		if ready != tc.ready || reason != tc.reason {
+			t.Errorf("%s: Decide = %v %q, want %v %q", tc.name, ready, reason, tc.ready, tc.reason)
+		}
+	}
+}
+
+// TestDecideAtTheStop is the owner's ruling of 2026-11-08 read through Decide
+// (item 3): a run whose review rounds are spent, or whose clock has reached the
+// configured share of its budget, does not stay a draft because a finding is
+// left — its mode accepts what the last round left, the run is ready and the
+// reason says which half of the stop rule ended the review. The stop widens the
+// mode's own row and nothing else: the gates above the verdict still hold, a
+// mode whose row names no stop keeps the draft it always had, and the findings
+// no mode accepts at its stop are the catastrophic ones.
+func TestDecideAtTheStop(t *testing.T) {
+	pass := verify.Record{Kind: verify.KindTest, HeadSHA: "abc", CleanTree: true, Passed: true}
+	fail := verify.Record{Kind: verify.KindTest, HeadSHA: "abc", CleanTree: true}
+	dirty := verify.Record{Kind: verify.KindTest, HeadSHA: "abc", Passed: true}
+	// A finding above every axis of Startup's ordinary row and below the
+	// override: risk 9 blocks a round, and at the stop it is exactly what
+	// "merge as-is, follow up the rest" accepts.
+	overStartupsFloor := rigor.Score{Likelihood: 3, Impact: 3, FixCost: 1, Class: rigor.Correctness}
+	// Impact 5 with an ordinary class: catastrophic reads the axis, so this
+	// blocks in a round and at the stop alike, and the stop accepts nothing the
+	// override covers.
+	impactFive := rigor.Score{Likelihood: 1, Impact: 5, FixCost: 1, Class: rigor.Correctness}
+	dataLoss := rigor.Score{Likelihood: 1, Impact: 2, FixCost: 1, Class: rigor.DataLoss}
+	cases := []struct {
+		name     string
+		records  []verify.Record
+		cfg      rigor.Config
+		mode     rigor.Mode
+		findings []rigor.Score
+		at       string
+		owner    *runstore.OwnerDecisions
+		ready    bool
+		reason   string
+	}{
+		// Startup's at-the-stop row is stopCatastrophic, so a round it would
+		// have bought another fix round for is accepted once the rounds are
+		// gone — the whole point of the ruling, and of the run merging as-is.
+		{"startup accepts a finding its rounds block on", []verify.Record{pass}, optedIn, rigor.Startup, []rigor.Score{overStartupsFloor}, runstore.StopRoundsSpent, nil, true, "review round 2 left 1 finding, accepted at startup (rounds spent)"},
+		{"startup accepts a whole round at the time threshold", []verify.Record{pass}, optedIn, rigor.Startup, []rigor.Score{overStartupsFloor, small, tiny}, runstore.StopTimeThreshold, nil, true, "review round 2 left 3 findings, accepted at startup (time threshold)"},
+		{"startup blocks impact 5 at the stop", []verify.Record{pass}, optedIn, rigor.Startup, []rigor.Score{impactFive}, runstore.StopRoundsSpent, nil, false, "review round 2 still has 1 finding"},
+		// A round the mode's own rule lets through is the round's own answer and
+		// not the stop's, whatever the clock or the rounds did: the stop renames
+		// nothing the mode already decided, and its reason is the tolerance's.
+		{"a round startup tolerates reads as a tolerance at the stop", []verify.Record{pass}, optedIn, rigor.Startup, []rigor.Score{tiny}, runstore.StopRoundsSpent, nil, true, "review round 2 left 1 finding, tolerated at startup"},
+		{"a round pro tolerates below its floor reads as a tolerance at the stop", []verify.Record{pass}, optedIn, rigor.Pro, []rigor.Score{tiny}, runstore.StopTimeThreshold, nil, true, "review round 2 left 1 finding, tolerated at pro"},
+		// The stop is the mode's, and a task that named a mode is a run in that
+		// mode: D9's opt-in is about filing an item, and the stop files none.
+		{"a task-named startup accepts without the repository opting in", []verify.Record{pass}, rigor.Config{}, rigor.Startup, []rigor.Score{overStartupsFloor}, runstore.StopRoundsSpent, nil, true, "review round 2 left 1 finding, accepted at startup (rounds spent)"},
+		{"poc accepts at its stop too", []verify.Record{pass}, optedIn, rigor.POC, []rigor.Score{overStartupsFloor}, runstore.StopRoundsSpent, nil, true, "review round 2 left 1 finding, accepted at poc (rounds spent)"},
+
+		// The catastrophic finding is the one no stop row accepts, whichever
+		// half of the rule ended the run: the reason is the count's own, and
+		// the pull request stays a draft.
+		{"startup blocks the severity override at the stop", []verify.Record{pass}, optedIn, rigor.Startup, []rigor.Score{catastrophic}, runstore.StopRoundsSpent, nil, false, "review round 2 still has 1 finding"},
+		{"startup blocks a data loss class at the stop", []verify.Record{pass}, optedIn, rigor.Startup, []rigor.Score{dataLoss}, runstore.StopTimeThreshold, nil, false, "review round 2 still has 1 finding"},
+		{"startup blocks a finding it cannot read at the stop", []verify.Record{pass}, optedIn, rigor.Startup, []rigor.Score{unscored}, runstore.StopRoundsSpent, nil, false, "review round 2 still has 1 finding"},
+		{"a catastrophic finding blocks beside an accepted one", []verify.Record{pass}, optedIn, rigor.Startup, []rigor.Score{overStartupsFloor, catastrophic}, runstore.StopRoundsSpent, nil, false, "review round 2 still has 2 findings"},
+		{"hotfix blocks a security class at the stop", []verify.Record{pass}, optedIn, rigor.Hotfix, []rigor.Score{catastrophic}, runstore.StopRoundsSpent, nil, false, "review round 2 still has 1 finding"},
+
+		// Pro and Critical name no stop row, so the draft stopDraft is their
+		// answer: they stop and finalize, and the reason is the count's own.
+		{"pro keeps its draft at the stop", []verify.Record{pass}, optedIn, rigor.Pro, []rigor.Score{small}, runstore.StopRoundsSpent, nil, false, "review round 2 still has 1 finding"},
+		{"critical keeps its draft at the stop", []verify.Record{pass}, optedIn, rigor.Critical, []rigor.Score{small}, runstore.StopTimeThreshold, nil, false, "review round 2 still has 1 finding"},
+		{"a mode the table does not know keeps its draft", []verify.Record{pass}, optedIn, rigor.Mode("wild"), []rigor.Score{tiny}, runstore.StopRoundsSpent, nil, false, "review round 2 still has 1 finding"},
+
+		// The gates above the verdict outrank the stop, exactly as they outrank
+		// the mode's ordinary tolerance: a run that stopped is not a run that
+		// verified, and a question only the owner can answer is not a finding.
+		{"a failing test outranks the stop", []verify.Record{fail}, optedIn, rigor.Startup, []rigor.Score{overStartupsFloor}, runstore.StopRoundsSpent, nil, false, "tests failing on the final commit"},
+		{"no clean test outranks the stop", []verify.Record{dirty}, optedIn, rigor.Startup, []rigor.Score{overStartupsFloor}, runstore.StopRoundsSpent, nil, false, ReasonNoVerifiedTest},
+		{"an owner decision outranks the stop", []verify.Record{pass}, optedIn, rigor.Startup, []rigor.Score{overStartupsFloor}, runstore.StopRoundsSpent, runstore.NewOwnerDecisions([]runstore.OwnerDecision{{Summary: "clear the licence with legal"}}), false, ownerWaitingReason(1)},
+	}
+	for _, tc := range cases {
+		last := &runstore.ReviewSummary{Round: 2, Verdict: "changes", Findings: len(tc.findings)}
+		ready, reason, _ := Decide(tc.records, "abc", last, findingsPolicyOf(tc.cfg, tc.mode, 2, tc.findings, tc.at), tc.owner)
 		if ready != tc.ready || reason != tc.reason {
 			t.Errorf("%s: Decide = %v %q, want %v %q", tc.name, ready, reason, tc.ready, tc.reason)
 		}
@@ -136,10 +215,53 @@ func TestDecideUnscoredFindingBlocksEveryMode(t *testing.T) {
 	pass := verify.Record{Kind: verify.KindTest, HeadSHA: "abc", CleanTree: true, Passed: true}
 	last := &runstore.ReviewSummary{Round: 2, Verdict: "changes", Findings: 2}
 	for _, mode := range rigor.Modes {
-		ready, reason, _ := Decide([]verify.Record{pass}, "abc", last, findingsPolicyOf(optedIn, mode, 2, []rigor.Score{unscored, small}), nil)
+		ready, reason, _ := Decide([]verify.Record{pass}, "abc", last, findingsPolicyOf(optedIn, mode, 2, []rigor.Score{unscored, small}, ""), nil)
 		if ready || reason != "review round 2 still has 2 findings" {
 			t.Errorf("%s: an unscored finding was tolerated: Decide = %v %q", mode, ready, reason)
 		}
+	}
+}
+
+// TestDecideStopBlockingNamesTheLevelThatLeftTheCatastrophicFinding is the
+// stop's one exception read across the run's levels rather than across the one
+// round Decide is given (item 1's "every remaining finding that is not
+// catastrophic"): the round readiness reads is the highest enabled level's, so
+// an enabled level under it that left a finding no mode's stop row takes is a
+// draft whose reason names that level. The count's own reason would point a
+// reader at the deciding round, which holds nothing blocking, which is why this
+// case exists at all.
+func TestDecideStopBlockingNamesTheLevelThatLeftTheCatastrophicFinding(t *testing.T) {
+	pass := verify.Record{Kind: verify.KindTest, HeadSHA: "abc", CleanTree: true, Passed: true}
+	// Startup at its stop accepts this round whole; the run is a draft because
+	// of what the level under it left, and the reason has to say so.
+	last := &runstore.ReviewSummary{Round: 1, Verdict: "changes", Findings: 1}
+	accepted := rigor.Score{Likelihood: 3, Impact: 3, FixCost: 1, Class: rigor.Correctness}
+	for _, tc := range []struct {
+		name     string
+		blocking []runstore.ReviewSummary
+		reason   string
+	}{
+		{"one level", []runstore.ReviewSummary{{Round: 1, Verdict: "changes", Findings: 3, Tier: runstore.TierSenior, Head: "0123456789abcdef0123456789abcdef01234567"}},
+			"review level 2 left a finding the stop does not accept in round 1 on 0123456, so the pull request is a draft"},
+		{"two levels", []runstore.ReviewSummary{
+			{Round: 2, Verdict: "changes", Findings: 1, Tier: runstore.TierSenior, Head: "0123456789abcdef0123456789abcdef01234567"},
+			{Round: 3, Verdict: "changes", Findings: 2, Tier: runstore.TierAdversarial},
+		}, "review level 2 left a finding the stop does not accept in round 2 on 0123456 and review level 3 left a finding the stop does not accept in round 3, so the pull request is a draft"},
+	} {
+		pol := findingsPolicyOf(optedIn, rigor.Startup, 1, []rigor.Score{accepted}, runstore.StopRoundsSpent)
+		pol.StopBlocking = tc.blocking
+		ready, reason, class := Decide([]verify.Record{pass}, "abc", last, pol, nil)
+		if ready || reason != tc.reason {
+			t.Errorf("%s: Decide = %v %q, want a draft %q", tc.name, ready, reason, tc.reason)
+		}
+		if class != failure.ReviewNotConverged {
+			t.Errorf("%s: class = %q, want %q", tc.name, class, failure.ReviewNotConverged)
+		}
+	}
+	// Without it, the same round and policy are the acceptance itself.
+	pol := findingsPolicyOf(optedIn, rigor.Startup, 1, []rigor.Score{accepted}, runstore.StopRoundsSpent)
+	if ready, _, _ := Decide([]verify.Record{pass}, "abc", last, pol, nil); !ready {
+		t.Error("startup did not accept the round it stopped on, so the case above proves nothing")
 	}
 }
 
@@ -165,7 +287,7 @@ func TestDecideToleratesOnlyWhatTheRunCanFile(t *testing.T) {
 		{"a repository that configured critical", optedIn, rigor.Critical, false},
 		{"a repository that configured nothing", rigor.Config{}, rigor.Pro, false},
 	} {
-		ready, reason, _ := Decide([]verify.Record{pass}, "abc", last, findingsPolicyOf(tc.cfg, tc.mode, 2, []rigor.Score{tiny}), nil)
+		ready, reason, _ := Decide([]verify.Record{pass}, "abc", last, findingsPolicyOf(tc.cfg, tc.mode, 2, []rigor.Score{tiny}, ""), nil)
 		if ready != tc.tolerated {
 			t.Errorf("%s: Decide = %v %q, want tolerated %v", tc.name, ready, reason, tc.tolerated)
 			continue
@@ -190,8 +312,8 @@ func TestDecideBlocksAPolicyItCannotPlace(t *testing.T) {
 		name string
 		pol  FindingsPolicy
 	}{
-		{"a split from another round", findingsPolicyOf(optedIn, rigor.Startup, 1, []rigor.Score{tiny})},
-		{"a split from fewer findings than the record counts", findingsPolicyOf(optedIn, rigor.Startup, 2, nil)},
+		{"a split from another round", findingsPolicyOf(optedIn, rigor.Startup, 1, []rigor.Score{tiny}, "")},
+		{"a split from fewer findings than the record counts", findingsPolicyOf(optedIn, rigor.Startup, 2, nil, "")},
 	} {
 		ready, reason, _ := Decide([]verify.Record{pass}, "abc", last, tc.pol, nil)
 		if ready || reason != "review round 2 still has 1 finding" {
@@ -213,8 +335,10 @@ func TestToleratedRecordKeepsWhatTheModeLetThrough(t *testing.T) {
 		{Severity: "minor", Summary: "a long comment restates the function", Likelihood: 2, Impact: 2, FixCost: 1, Class: "cosmetic"},
 	}
 	r := &run{lastSenior: seniorRound{Round: 2, Findings: findings}}
-	pol := findingsPolicyOf(optedIn, rigor.Startup, 2, scoresOf(findings))
-	got := r.toleratedRecord(pol)
+	pol := findingsPolicyOf(optedIn, rigor.Startup, 2, scoresOf(findings), "")
+	// The deciding round is the second argument because the stop reads it and
+	// these policies carry no stop: nil is the whole of what they ask it for.
+	got := r.toleratedRecord(pol, nil)
 	want := []runstore.ToleratedFinding{
 		{Title: "the retry loop has no backoff", Label: rigor.Nit, Mode: rigor.Startup, Likelihood: 1, Impact: 3, FixCost: 2, Class: rigor.Correctness},
 		{Title: "a long comment restates the function", Label: rigor.Low, Mode: rigor.Startup, Likelihood: 2, Impact: 2, FixCost: 1, Class: rigor.Cosmetic},
@@ -231,7 +355,7 @@ func TestToleratedRecordKeepsWhatTheModeLetThrough(t *testing.T) {
 	const secret = "super-secret-token"
 	r.addSecret(secret)
 	r.lastSenior.Findings = []Finding{{Summary: "the token " + secret + " is logged", Likelihood: 1, Impact: 1, FixCost: 1, Class: "correctness"}}
-	got = r.toleratedRecord(findingsPolicyOf(optedIn, rigor.Startup, 2, scoresOf(r.lastSenior.Findings)))
+	got = r.toleratedRecord(findingsPolicyOf(optedIn, rigor.Startup, 2, scoresOf(r.lastSenior.Findings), ""), nil)
 	if got == nil || strings.Contains(got.Findings[0].Title, secret) {
 		t.Fatalf("toleratedRecord left a credential in the record: %+v", got)
 	}
@@ -247,7 +371,7 @@ func TestToleratedRecordKeepsWhatTheModeLetThrough(t *testing.T) {
 		{"poc files nothing so it tolerates nothing", optedIn, rigor.POC},
 		{"a repository that configured nothing", rigor.Config{}, rigor.Pro},
 	} {
-		if pol := findingsPolicyOf(tc.cfg, tc.mode, 2, scoresOf(findings)); r.toleratedRecord(pol) != nil {
+		if pol := findingsPolicyOf(tc.cfg, tc.mode, 2, scoresOf(findings), ""); r.toleratedRecord(pol, nil) != nil {
 			t.Errorf("%s: the record kept findings the mode did not tolerate", tc.name)
 		}
 	}
@@ -419,6 +543,51 @@ func TestModeRaisedAtFinalizeLeavesDraft(t *testing.T) {
 	}
 }
 
+// TestStopAcceptanceIsWithdrawnByARaiseAtFinalize is the stop's acceptance read
+// against the raise that came after every round (T3.5, D22), the other half of
+// the moment above: the round the stop accepts was reviewed under the mode the
+// run started at, and the mode it publishes under is the one that rose at
+// finalize — which no round was held at and no stop answered. The acceptance is
+// withdrawn, so the run is a draft with the raise's own reason rather than ready
+// on a mode's reading of a round it never judged; and the record files no
+// accepted block, which is what the report and the pull request's status line
+// are built from, so neither claims the merge Decide refused.
+//
+// The finding is above Startup's floor, so the policy really is the stop's own
+// split of the round (findingsPolicyOf builds one only for a round the mode's
+// own rule blocks on) and the case reads acceptsAtStop rather than passing it
+// for want of a stop.
+func TestStopAcceptanceIsWithdrawnByARaiseAtFinalize(t *testing.T) {
+	const block = "rigor:\n  default: poc\n  areas:\n    - { name: payments, match: \"internal/payments/**\", mode: startup }\n"
+	r := raisedRun(t, raisedCase{block: block, findings: []Finding{riskNine}, moments: []string{runstore.RigorAtFinalize}})
+	r.stopAt = runstore.StopRoundsSpent
+	if got := r.reachedRigor(); got != rigor.Startup {
+		t.Fatalf("the run resolved %q; want startup, or the case proves nothing", got)
+	}
+	ready, reason := decideOf(t, r)
+	if ready {
+		t.Fatalf("the stop accepted a round under a mode that rose after every round: %q", reason)
+	}
+	const want = "the mode was raised to startup by area payments at finalize, after the last review round"
+	if reason != want {
+		t.Errorf("reason = %q, want %q", reason, want)
+	}
+	pol := r.findingsPolicy()
+	if pol.AtStop == "" {
+		t.Fatal("the policy carries no stop, so nothing here reads the acceptance")
+	}
+	if ac := r.acceptedRecord(pol, r.decidingReview()); ac != nil {
+		t.Errorf("the record's accepted block = %+v, want none: the run is a draft, and a block here would file a merge it did not make", ac)
+	}
+	// The tolerated block is the same withdrawal one field along: the stop's
+	// split is not what the record files once the acceptance is gone, because
+	// the finding it would have taken is one the mode's own floor blocks and
+	// the field says what the mode let through (T3.4, D9).
+	if tf := r.toleratedRecord(pol, r.decidingReview()); tf != nil {
+		t.Errorf("the record's tolerated findings = %+v, want none: the stop's acceptance was withdrawn, and the mode that rose at finalize blocks this finding", tf)
+	}
+}
+
 // TestRaisedModeByLayerAfterARoundStaysReady: the moment the mode rose decides,
 // not the shape of the block that records it. Areas are defaults and not floors
 // (docs/project-layer.md §2), so a declared path can start a run *below* the
@@ -518,7 +687,7 @@ func TestDecideRefusalsCarryTheirClass(t *testing.T) {
 	changes := &runstore.ReviewSummary{Round: 2, Verdict: "changes", Findings: 3}
 	// A round the mode tolerates is ready, not a refusal: it is the one row
 	// below that asserts a class of its own.
-	tolerated := findingsPolicyOf(optedIn, rigor.Startup, 2, []rigor.Score{tiny})
+	tolerated := findingsPolicyOf(optedIn, rigor.Startup, 2, []rigor.Score{tiny}, "")
 	cases := []struct {
 		name    string
 		records []verify.Record

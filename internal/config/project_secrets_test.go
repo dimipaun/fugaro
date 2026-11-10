@@ -307,4 +307,18 @@ func TestProjectSecretReaches(t *testing.T) {
 	if ProjectSecretReaches(nil, ClaudeAccountSecret(DefaultClaudeAccount), "acme/app") {
 		t.Error("the bare claude-oauth-token, which D2 does not sweep in, is reachable with no entry")
 	}
+	// The provider key is the one reserved name whose answer does not depend on
+	// the sweep at all (AK6a): it is a credential of the credentials service's
+	// own document, so no local config can list repositories for it — an entry
+	// cannot even be written, ValidateProjectSecrets admitting only
+	// ReservedSecrets' names and it deliberately not being one of them
+	// (ProviderKeySecret's comment). A name that answered false here would
+	// refuse the one shape the value exists for, and the reach
+	// projectpolicy.DeriveAccounts derives for its axis value is bounded by the
+	// naming profiles' allow_repos and by nothing else.
+	for _, secrets := range []map[string]ProjectSecret{nil, listed} {
+		if !ProjectSecretReaches(secrets, ProviderKeySecret, "acme/app") {
+			t.Errorf("ProjectSecretReaches(%v, %q, \"acme/app\") = false, want every repository: the provider key is held for the whole project, and the profiles that name its axis value are the whole of its bound", secrets, ProviderKeySecret)
+		}
+	}
 }

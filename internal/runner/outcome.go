@@ -2,6 +2,7 @@ package runner
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/policy"
@@ -91,6 +92,36 @@ func Decide(records []verify.Record, finalSHA string, last *runstore.ReviewSumma
 		// a draft and the reason says which round it was (reviewsPart).
 		return false, fmt.Sprintf("review round %d returned no parseable verdict after a retry", last.Round), failure.ReviewUnread
 	case last.Verdict != "ship":
+		if len(pol.StopBlocking) > 0 {
+			// The stop accepts what a run's rounds left it, and the one thing it
+			// accepts nothing of is a catastrophic finding — wherever in the run
+			// it was left. The round Decide is reading is the highest level's,
+			// so a level under it that the stop does not take is a reason this
+			// sentence has to name: a reader who went to the round the count's
+			// own reason points at would find nothing blocking there.
+			return false, stopBlockingReason(pol.StopBlocking), failure.ReviewNotConverged
+		}
+		// The mode takes this round whole — the stop accepts it, or its own row
+		// tolerates it — and the round read an earlier commit than the one the
+		// run publishes: the fix its verdict bought is on the branch and no
+		// review round read it (the time half of the stop is asked at the top of
+		// a loop, after the fix the round before it bought, and the cheap loop
+		// buys one after its last round too). Both of the mode's answers are
+		// about the round, and neither reaches the commit that ships, so the
+		// pull request stays a draft whose reason names the round (BF1m).
+		if pol.UnreadFix != nil && pol.tolerates(last) && !pol.raisedAfterReview() {
+			return false, unreadFixReason(*pol.UnreadFix), failure.ReviewUnread
+		}
+		if pol.acceptsAtStop(last) {
+			// The run stopped without shipping a round, and what the round
+			// left is what the mode accepts at the stop (the owner's ruling
+			// of 2026-11-08): the pull request goes ready rather than
+			// staying a draft, and the reason names the half of the stop
+			// rule that ended the rounds — the record's own two words
+			// (runstore.StopRoundsSpent, StopTimeThreshold).
+			return true, fmt.Sprintf("review round %d left %s, accepted at %s (%s)",
+				last.Round, Plural(len(pol.Tolerated), "finding"), pol.Mode, pol.AtStop), ""
+		}
 		if pol.tolerates(last) && !pol.raisedAfterReview() {
 			return true, fmt.Sprintf("review round %d left %s, tolerated at %s", last.Round, Plural(len(pol.Tolerated), "finding"), pol.Mode), ""
 		}
@@ -121,6 +152,39 @@ func heldBackReason(rs runstore.ReviewSummary) string {
 		reason += fmt.Sprintf(" on %s", shortGitHead(rs.Head))
 	}
 	return reason + ", so the pull request is a draft until every enabled review level ships"
+}
+
+// stopBlockingReason is Decide's reason for a run the stop kept a draft on
+// because a level other than the deciding one left a finding no mode accepts at
+// its stop: the levels, their rounds and the heads those rounds read (D727's
+// formatting), and the fact that the stop is what does not take them. The
+// finding itself is not named here — the pull request's own levels line and
+// review section carry the round — but the level is, because the round Decide
+// otherwise reports is not the one a reader has to go and look at.
+//
+// It says the stop does not accept them rather than counting them: the count on
+// the record is the whole round's, and one blocking finding beside two accepted
+// ones is a round the level's own line already accounts for.
+func stopBlockingReason(rs []runstore.ReviewSummary) string {
+	parts := make([]string, 0, len(rs))
+	for _, r := range rs {
+		part := fmt.Sprintf("review %s left a finding the stop does not accept in round %d", levelNames[reviewLevelOf(r)], r.Round)
+		if r.Head != "" {
+			part += fmt.Sprintf(" on %s", shortGitHead(r.Head))
+		}
+		parts = append(parts, part)
+	}
+	return strings.Join(parts, " and ") + ", so the pull request is a draft"
+}
+
+// unreadFixReason is Decide's reason for a run whose last review round read an
+// earlier commit than the one it publishes: the round whose fix no review read.
+// It is the round rather than the count that is named because the count is the
+// round's own and the run is not a draft on what the round found — the mode
+// takes that — but on the commit the round never saw, which is the head the
+// pull request's own review line prints and the record's last round.
+func unreadFixReason(rs runstore.ReviewSummary) string {
+	return fmt.Sprintf("the fix after review round %d was not reviewed", rs.Round)
 }
 
 // reviewLevelOf is the level a recorded round is a round of: its tier says
@@ -165,6 +229,25 @@ func (r *run) levelsResolved() bool {
 // decided, and Decide keeps the pull request a draft (G4's "every enabled outer
 // level's last verdict is ship" has no verdict at all to read).
 //
+// At the stop (r.stopAt) an enabled level that left no round, in a mode whose
+// row names a stop that accepts what it left (rigor.AcceptsAtStop), is a level
+// the stop cut rather than one the run failed to reach: no new round is started
+// past the stop, so the level above the last one that ran holds none by
+// construction, and readiness reads the highest level that did run. Without
+// that, turning level 3 on would end a Startup run at the time threshold a
+// draft where the same run with level 3 off is ready — the strictness the
+// owner's ruling of 2026-11-08 forbids. A run that stopped for any other reason
+// keeps the answer it always had.
+//
+// The mode's stop row is what gates it, and not the stop alone: Pro and
+// Critical say nothing about the stop, so the stop arranges no answer for them
+// and a level they enabled that never ran is a level the run lacks. Reading
+// past it would decide a Pro run on its first-line round — which advises and
+// never decides — the moment the time threshold falls at the top of level 2's
+// loop, shipping a commit no senior review read. A level 3 the stop cut before
+// it started is the same answer for a Critical run. Both keep the draft, which
+// is what such a run held before the stop rule existed.
+//
 // A run that resolved no levels falls back to the last senior review, which is
 // what every such run recorded before the levels existed and what readiness
 // read then.
@@ -172,18 +255,33 @@ func (r *run) decidingReview() *runstore.ReviewSummary {
 	if !r.levelsResolved() {
 		return seniorReview(r.rec.Reviews)
 	}
+	cutByStop := r.stopAt != "" && rigor.AcceptsAtStop(r.reachedRigor())
 	for _, l := range []policy.Level{policy.LevelL3, policy.LevelL2, policy.LevelL1} {
-		if levelOn(r.levels, l) {
-			return lastRoundOf(r.rec.Reviews, l)
+		if !levelOn(r.levels, l) {
+			continue
+		}
+		if rs := lastRoundOf(r.rec.Reviews, l); rs != nil {
+			return rs
+		}
+		if !cutByStop {
+			return nil
 		}
 	}
 	return nil
 }
 
 // heldBackLevel is the enabled outer level, other than the one that decided,
-// whose last verdict is not `ship`: the pull request is a draft when there is
-// one (D727, G4). It is level 2 when level 3 decided, and nothing when level 2
-// or level 1 decided — level 3 is the only level above either of them.
+// whose last round left the run something the mode blocks on: the pull request
+// is a draft when there is one (D727, G4). It is level 2 when level 3 decided,
+// and nothing when level 2 or level 1 decided — level 3 is the only level above
+// either of them.
+//
+// A level's round is read through the same findings policy the deciding round
+// is read through (levelTolerated), which is what keeps a mode from becoming
+// stricter as levels are turned on: a round whose every finding the mode
+// tolerates counts as shipped, so a level 3 run is not held back by a level 2
+// round level 2 alone would have been ready on. A round the mode blocks on is
+// still the reason, whichever level it is.
 //
 // Level 1 is never one of them. It advises the levels above it and never
 // decides on its own (seniorReview), so a cheap loop that ran out of rounds
@@ -211,11 +309,131 @@ func (r *run) heldBackLevel() *runstore.ReviewSummary {
 		if l == policy.LevelL1 || !levelOn(r.levels, l) || l == reviewLevelOf(*decided) {
 			continue
 		}
-		if rs := lastRoundOf(r.rec.Reviews, l); rs != nil && rs.Verdict != "ship" {
+		rs := lastRoundOf(r.rec.Reviews, l)
+		if rs == nil || rs.Verdict == "ship" {
+			continue
+		}
+		if !r.levelTolerated(l, *rs) {
 			return rs
 		}
 	}
 	return nil
+}
+
+// levelTolerated reports whether the run's own findings policy lets this
+// level's last round through whole: the question tolerates asks of the deciding
+// round, asked of any enabled level's (D727, G4). The policy is built for that
+// level's round — the same mode, the same gate and the same rule the deciding
+// round was read through (findingsPolicyOf), the stop's own row included when
+// the run stopped at it — so no level can be judged by a rule another level's
+// round was not.
+//
+// It answers false for a round the run did not keep: the record's summary
+// counts the findings, and the split needs their scores, so a level whose round
+// the loop did not keep beside its own is a level this cannot read — and one
+// that cannot be read is not tolerated (D4).
+func (r *run) levelTolerated(l policy.Level, rs runstore.ReviewSummary) bool {
+	if rs.Verdict == "ship" {
+		return true
+	}
+	findings, ok := r.levelRound(l, rs.Round)
+	if !ok {
+		return false
+	}
+	pol := findingsPolicyOf(r.rigorCfg, r.reachedRigor(), rs.Round, scoresOf(findings), r.stopAt)
+	return pol.tolerates(&rs)
+}
+
+// stopBlockingLevels is every enabled level other than the deciding one whose
+// last round the stop does not accept whole (FindingsPolicy.StopBlocking): the
+// second half of the ruling's "every remaining finding that is not
+// catastrophic", asked of the run rather than of one round.
+//
+// It is asked only of a run that stopped, and only where the mode's row names a
+// stop (rigor.AcceptsAtStop): those are the runs whose acceptance could
+// otherwise flip a ready pull request whose deciding round did not carry the
+// blocking finding itself. A mode whose stop is a draft — Pro, Critical, the
+// zero mode — keeps Decide's own reasons, unchanged.
+//
+// Level 1 is read only where the run's loop ended on its round — where that
+// round is the last the record holds, so no enabled level above it has read the
+// commit it read or ever will. Everywhere else it is the level the one above it
+// reviewed, which is why heldBackLevel and this function leave it out: a cheap
+// round the outer level reviewed is an input to that level's round, and the
+// stop accepts what the round it decides on left. Where the stop was asked
+// after the cheap round (the bounce's, on the head level 2's fix bought), the
+// deciding round is the outer one *behind* it — read on the commit before that
+// fix — and the cheap round's findings are the run's own, on the commit that
+// ships: a catastrophic one there is a finding the stop accepts nothing of,
+// "wherever in the run it was left" (the ruling of 2026-11-08), and readiness
+// would otherwise file an acceptance over it.
+//
+// A level's round is read through the stop's own policy (levelTolerated with
+// r.stopAt), so "the stop does not accept it" is the same rule the deciding
+// round is read through, and a round the mode's rounds would have blocked on but
+// the stop takes is not read here at all.
+func (r *run) stopBlockingLevels() []runstore.ReviewSummary {
+	if r.stopAt == "" || !r.levelsResolved() || !rigor.AcceptsAtStop(r.reachedRigor()) {
+		return nil
+	}
+	decided := r.decidingReview()
+	if decided == nil {
+		return nil
+	}
+	// The cheap loop's round is the one the record ends on in the bounce the
+	// stop cut: nothing above it ran after it, and the round readiness is
+	// decided on is the level 2 round it followed.
+	endedOnLevel1 := len(r.rec.Reviews) > 0 && reviewLevelOf(r.rec.Reviews[len(r.rec.Reviews)-1]) == policy.LevelL1
+	var out []runstore.ReviewSummary
+	for _, l := range []policy.Level{policy.LevelL1, policy.LevelL2, policy.LevelL3} {
+		if !levelOn(r.levels, l) || l == reviewLevelOf(*decided) {
+			continue
+		}
+		if l == policy.LevelL1 && !endedOnLevel1 {
+			continue
+		}
+		rs := lastRoundOf(r.rec.Reviews, l)
+		if rs == nil || rs.Verdict == "ship" {
+			continue
+		}
+		if !r.levelTolerated(l, *rs) {
+			out = append(out, *rs)
+		}
+	}
+	return out
+}
+
+// levelRound is the level's last round as the loop kept it: the findings the
+// record's summary only counts, for the three levels the loop keeps a round of
+// — level 3 in lastSenior, level 2 in seniorLevelLast (which is the copy level
+// 3 would otherwise overwrite) and level 1 in firstLineLast, the cheap loop's
+// own field whichever of the two things it is doing. The round numbers of the
+// levels are not comparable (each loop counts from 1), which is why the level
+// decides which of the three is read and the number only has to agree with the
+// record's.
+//
+// Level 1's own round is read off firstLineLast and not off lastSenior, which
+// holds it only where the cheap loop decides readiness or where a stop ended
+// the run before level 2 started (firstLine, timeStop): a run that ended on the
+// cheap round with an outer level above it reviewed keeps that level's round in
+// lastSenior, and its own in firstLineLast, which is the field that says what
+// the round nobody above it read left (stopBlockingLevels).
+func (r *run) levelRound(l policy.Level, round int) ([]Finding, bool) {
+	switch l {
+	case policy.LevelL1:
+		if r.firstLineLast.Round == round {
+			return r.firstLineLast.Findings, true
+		}
+	case policy.LevelL2:
+		if r.seniorLevelLast.Round == round {
+			return r.seniorLevelLast.Findings, true
+		}
+	case policy.LevelL3:
+		if r.lastSenior.Round == round {
+			return r.lastSenior.Findings, true
+		}
+	}
+	return nil, false
 }
 
 // FindingsPolicy is the mode's findings policy as Decide is given it
@@ -248,6 +466,35 @@ type FindingsPolicy struct {
 	// Decide blocks on it: the run's highest level approved the change, and a
 	// level the run's mode required did not.
 	HeldBack *runstore.ReviewSummary
+	// AtStop is the half of the stop rule that ended the run's rounds, "" for a
+	// run whose decider stopped for a reason of its own — a shipped round, a
+	// failed stage, a halt. It is not "" exactly when the split above is
+	// rigor.SplitAtStop's rather than rigor.Split's, so the policy says which
+	// rule read the round: Decide's reason names the acceptance instead of the
+	// tolerance, and a run whose round a stop cut is reported as the ruling of
+	// 2026-11-08 has it — merged as-is with what it left.
+	AtStop string
+	// StopBlocking is every enabled level other than the deciding one whose last
+	// round the stop does not accept whole, in the order the levels run
+	// (stopBlockingLevels). It is what the ruling's "every remaining finding that
+	// is not catastrophic" makes of a run whose deciding round is not the only
+	// round the stop found: the stop accepts what any level left it but the
+	// catastrophic finding no mode's row takes, so a level under the decider that
+	// left one is a reason Decide has to name — the round it is reading would not
+	// show it. Empty for every run whose row names no stop, and for every run
+	// that did not stop.
+	StopBlocking []runstore.ReviewSummary
+	// UnreadFix is the last review round the run's record holds, set only where
+	// the commit the run publishes is not the one that round read: the fix the
+	// round's verdict bought — or the work a later stage did — is on the branch
+	// and no review round read it. Both answers the mode gives about a round,
+	// the stop's acceptance and its own tolerance, are answers about the commit
+	// that round read, and neither reaches code no review read: a pull request is
+	// never ready on it (BF1m). nil wherever the last round read the commit that
+	// ships, which is every run whose loop bought no fix after its last round,
+	// and wherever that round recorded no head: a head nobody read is not a
+	// mismatch, and the reason this field earns a run names a fix (unreadFix).
+	UnreadFix *runstore.ReviewSummary
 }
 
 // RigorRaise is the raise a run's mode took during the run (T3.5, D22): the
@@ -314,46 +561,202 @@ func (pol FindingsPolicy) tolerates(last *runstore.ReviewSummary) bool {
 		len(pol.Tolerated) == last.Findings
 }
 
+// acceptsAtStop reports whether the stop is what makes this run ready: the
+// policy is the stop's own split of the deciding round (AtStop, and the split
+// taken from rigor.SplitAtStop), that round did not ship — a shipped round is
+// ready on its own verdict and the stop has nothing to accept for it — the
+// round is one the policy takes whole, no enabled level under the decider left
+// a finding the stop does not take (StopBlocking), no raise after the last
+// round withdrew the mode the split was read under (D22, raisedAfterReview), and
+// the commit the run publishes is the one the run's last review round read
+// (UnreadFix, BF1m): the acceptance is an answer about a round, and a round
+// whose fix nobody read is an answer about code the run did not publish.
+//
+// It is Decide's ready answer and the record's Accepted block stated once: the
+// block says the run merged with what it left, and a record that claimed one
+// where Decide kept the pull request a draft would report an acceptance the run
+// never made.
+func (pol FindingsPolicy) acceptsAtStop(last *runstore.ReviewSummary) bool {
+	return pol.AtStop != "" && last != nil && last.Verdict != "ship" &&
+		len(pol.StopBlocking) == 0 &&
+		pol.UnreadFix == nil &&
+		!pol.raisedAfterReview() &&
+		pol.tolerates(last)
+}
+
 // findingsPolicyOf is the policy Decide is given for one review round: the
 // mode's split of that round's findings, or the zero policy where the run may
 // not tolerate anything at all.
 //
-// D9 is the bound. A mode may not let a finding through where the repository
-// has not asked for the mode, so the split is taken only where both hold: the
-// repository opted in (rigor.Config.Configured — an opt-in read from the base
-// branch, D25) and the mode's rigor.Files row tolerates. Every other run gets
-// the zero policy and decides by the count on the record, exactly as it did
-// before modes existed — the unconfigured repository, which D19 resolves Pro
-// for its budget, and POC, whose account of what it left open is its pull
-// request body's own line (D30). A tolerated finding is recorded in the run's
-// record (Tolerated, T3.4) and named in the pull request's status section,
-// which is all the run does with it: nothing is written into the repository
-// for it (finalize).
-func findingsPolicyOf(cfg rigor.Config, mode rigor.Mode, round int, findings []rigor.Score) FindingsPolicy {
-	if !cfg.Configured() || !rigor.Files(mode).Tolerated {
-		return FindingsPolicy{}
+// D9 is the bound on an ordinary round. A mode may not let a finding through
+// where the repository has not asked for the mode, so the split is taken only
+// where both hold: the repository opted in (rigor.Config.Configured — an opt-in
+// read from the base branch, D25) and the mode's rigor.Files row tolerates.
+// Every other run gets the zero policy and decides by the count on the record,
+// exactly as it did before modes existed — the unconfigured repository, which
+// D19 resolves Pro for its budget, and POC, whose account of what it left open
+// is its pull request body's own line (D30). A tolerated finding is recorded in
+// the run's record (Tolerated, T3.4) and named in the pull request's status
+// section, which is all the run does with it: nothing is written into the
+// repository for it (finalize).
+//
+// atStop is the half of the stop rule that ended the run's rounds, "" for a run
+// that stopped for a reason of its own. It is asked last, and only of a round
+// the mode's own rule blocks on: the stop changes what a run *accepts* — the
+// findings its rounds were gone before it could buy a fix for — and it renames
+// nothing the mode already let through. A round below Pro's floor is tolerated
+// at the stop exactly as it is tolerated in a round, and its reason says so.
+//
+// Where the round is one the mode's own rule blocks on, the mode's row answers
+// what it accepts at the stop (rigor.SplitAtStop, the owner's ruling of
+// 2026-11-08), and only for a mode whose row names a stop (rigor.AcceptsAtStop):
+// POC and Startup accept everything but a catastrophic finding, Hotfix keeps its
+// own row, and Pro, Critical and every name the table does not hold keep the
+// draft, which is the fail-closed zero value. D9's bound is not asked here and
+// does not need to be: it is about filing an item, and the stop accepts
+// findings into the run record and the pull request's body alone. A run whose
+// repository never opted in resolves the default mode (D19), whose row names no
+// stop, so it is a draft at the stop whatever this branch does; a task that
+// named a mode is a run in that mode (rigor.Request.Mode), and the ruling's
+// answer is the mode's.
+func findingsPolicyOf(cfg rigor.Config, mode rigor.Mode, round int, findings []rigor.Score, atStop string) FindingsPolicy {
+	// D9 first, and the mode's own round rule with it: a mode may not let a
+	// finding through where the repository has not asked for the mode, so the
+	// split is taken only where both hold — the repository opted in
+	// (rigor.Config.Configured — an opt-in read from the base branch, D25) and
+	// the mode's rigor.Files row tolerates. Every other run gets the zero
+	// policy and decides by the count on the record, exactly as it did before
+	// modes existed — the unconfigured repository, which D19 resolves Pro for
+	// its budget, and POC, whose account of what it left open is its pull
+	// request body's own line (D30). A tolerated finding is recorded in the
+	// run's record (Tolerated, T3.4) and named in the pull request's status
+	// section, which is all the run does with it: nothing is written into the
+	// repository for it (finalize).
+	ordinary := FindingsPolicy{}
+	if cfg.Configured() && rigor.Files(mode).Tolerated {
+		blocking, tolerated := rigor.Split(mode, findings)
+		ordinary = FindingsPolicy{Mode: mode, Round: round, Blocking: blocking, Tolerated: tolerated}
+		if len(blocking) == 0 {
+			return ordinary
+		}
 	}
-	blocking, tolerated := rigor.Split(mode, findings)
-	return FindingsPolicy{Mode: mode, Round: round, Blocking: blocking, Tolerated: tolerated}
+	if atStop != "" && rigor.AcceptsAtStop(mode) {
+		blocking, accepted := rigor.SplitAtStop(mode, findings)
+		return FindingsPolicy{Mode: mode, Round: round, Blocking: blocking, Tolerated: accepted, AtStop: atStop}
+	}
+	return ordinary
 }
 
 // findingsPolicy is findingsPolicyOf for this run: the last review round the
 // loop read as the decider's, the mode the run resolved, the rigor
 // configuration that mode was read from, the raise the run's mode took during
-// it (noteRigorRaise, rigor.go) and the outer level the deciding one held back,
-// if any.
+// it (noteRigorRaise, rigor.go), the outer level the deciding one held back,
+// if any, and the half of the stop rule the run's rounds ended on, if any.
 func (r *run) findingsPolicy() FindingsPolicy {
-	pol := findingsPolicyOf(r.rigorCfg, r.reachedRigor(), r.lastSenior.Round, scoresOf(r.lastSenior.Findings))
+	pol := findingsPolicyOf(r.rigorCfg, r.reachedRigor(), r.lastSenior.Round, scoresOf(r.lastSenior.Findings), r.stopAt)
 	pol.Raised = r.rigorRaise
 	pol.HeldBack = r.heldBackLevel()
+	pol.StopBlocking = r.stopBlockingLevels()
+	pol.UnreadFix = r.unreadFix()
 	return pol
+}
+
+// ordinaryFindingsPolicy is that policy without the stop: the run's deciding
+// round read by the mode's own row alone, which is the split a round of the
+// run's rounds has whatever the stop later makes of it. It is what the record's
+// tolerated findings are read from, so that the stop's wider split reaches the
+// record only through the acceptance the stop actually made
+// (toleratedRecord, acceptsAtStop).
+func (r *run) ordinaryFindingsPolicy() FindingsPolicy {
+	return findingsPolicyOf(r.rigorCfg, r.reachedRigor(), r.lastSenior.Round, scoresOf(r.lastSenior.Findings), "")
+}
+
+// unreadFix is the last review round the run's record holds where the commit
+// the run publishes is not the one that round read: the fix the round's verdict
+// bought, or the work a stage after it did, is on the branch and no review
+// round read it. It is what the mode's two answers about a round cannot cover
+// (FindingsPolicy.UnreadFix, BF1m).
+//
+// The record's *last* round is the one compared, and not the deciding round the
+// policy is otherwise built from, because a review round moves the head only
+// where a fix follows it: where some round read the commit that ships, every
+// round after it read that same commit, so the last entry is the round that
+// would have had to read it — and in a bounce it is the cheap loop's round,
+// which reads the head level 2's round bought the fix for, while the deciding
+// round's head is the one before that fix by construction.
+//
+// A round that recorded no head — the read of the repository's head failed
+// (reviewedHead) — is not read as an unread fix. An empty head says nothing
+// about which commit the round read, and the reason this field earns a run is a
+// sentence about a fix, so reading it as one would turn a round the mode takes
+// into a draft on a fix nobody can show was left unreviewed. The rule is for the
+// mismatch it can see: the round's head and the commit the run publishes are
+// both known and differ.
+func (r *run) unreadFix() *runstore.ReviewSummary {
+	rs := r.rec.Reviews
+	if len(rs) == 0 {
+		return nil
+	}
+	last := &rs[len(rs)-1]
+	if last.Head == "" || last.Head == r.rec.HeadSHA {
+		return nil
+	}
+	return last
 }
 
 // toleratedRecord is what the run's record keeps of the findings the mode let
 // through (docs/rigor-modes/implementation-plan.md T3.4, D9, F19): one entry
 // per tolerated finding, with the reviewer's own words for it. It is nil when
 // the policy tolerates nothing, so the record carries no block at all rather
-// than an empty one.
+// than an empty one. A run that stopped at the stop keeps the findings its stop
+// accepted here too, because that is what this field is for: the findings the
+// run's mode decided not to fix, whichever moment of the run it decided at.
+//
+// The stop's split reaches the record only where the stop is what makes the run
+// ready (acceptsAtStop, last is the deciding round): that is the acceptance
+// Accepted states, and this block is its other half. Where the acceptance was
+// withdrawn — the commit the run publishes is one no review round read, an
+// enabled level under the decider left a finding the stop does not take, the
+// mode rose after the last round — the run's mode did not let those findings
+// through: it is a draft on them, and the split that says what it *would* have
+// let through in a round is the ordinary one. Reading the stop's split anyway
+// would file a finding the mode's own floor blocks as "tolerated by <mode>" in
+// the record and in what fugaro diagnose prints from it.
+func (r *run) toleratedRecord(pol FindingsPolicy, last *runstore.ReviewSummary) *runstore.ToleratedFindings {
+	if pol.AtStop != "" && !pol.acceptsAtStop(last) {
+		pol = r.ordinaryFindingsPolicy()
+	}
+	return runstore.NewTolerated(r.toleratedEntries(pol, r.lastSenior.Findings))
+}
+
+// acceptedRecord is what the run's record keeps of a stop's acceptance (the
+// owner's ruling of 2026-11-08): the findings the mode accepted because the run
+// had no round left to spend on them, with the round they were left by and the
+// half of the stop rule that ended the run. It is a block of its own rather
+// than a flag on Tolerated's entries because the two facts differ: Tolerated
+// says what the mode would not fix, and this says that the run stopped, why,
+// and what that left open — a reader that only saw the first would read a run
+// merged at its time threshold as a run whose review let the finding go.
+//
+// nil for every run whose stop did not accept the round it ended on: one that
+// stopped for a reason of its own, and one whose stop found a finding the mode
+// blocks on (which is a draft). It is written beside Tolerated and never
+// instead of it, so the pull request's body, the report and the filing path
+// read the accepted findings exactly as they read a tolerated one — and on the
+// same terms: like Tolerated, the block is the mode's own reading of the round
+// the run ended on, and the reasons a pull request is still a draft — no
+// verified test on the final commit, tests failing on it, a decision the run is
+// waiting on the owner for — are Decide's, checked above the verdict and stated
+// in the run's own reason rather than here.
+func (r *run) acceptedRecord(pol FindingsPolicy, last *runstore.ReviewSummary) *runstore.AcceptedFindings {
+	if !pol.acceptsAtStop(last) {
+		return nil
+	}
+	return runstore.NewAccepted(pol.Mode, last.Round, pol.AtStop, r.toleratedEntries(pol, r.lastSenior.Findings))
+}
+
+// toleratedEntries pairs the policy's tolerated scores back with the round's
+// findings, as the record's entries.
 //
 // The pairing is the split's own, without asking the table a second time.
 // rigor.Split appends a finding's score to Tolerated in the reviewer's order,
@@ -362,13 +765,13 @@ func (r *run) findingsPolicy() FindingsPolicy {
 // carries it: walking the round's findings and taking each tolerated score at
 // the next finding it equals pairs the two lists exactly, and the record
 // cannot disagree with the readiness rule about which findings were tolerated.
-func (r *run) toleratedRecord(pol FindingsPolicy) *runstore.ToleratedFindings {
+func (r *run) toleratedEntries(pol FindingsPolicy, findings []Finding) []runstore.ToleratedFinding {
 	if len(pol.Tolerated) == 0 {
 		return nil
 	}
 	entries := make([]runstore.ToleratedFinding, 0, len(pol.Tolerated))
 	next := 0
-	for _, f := range r.lastSenior.Findings {
+	for _, f := range findings {
 		if next == len(pol.Tolerated) {
 			break
 		}
@@ -386,7 +789,7 @@ func (r *run) toleratedRecord(pol FindingsPolicy) *runstore.ToleratedFindings {
 		})
 		next++
 	}
-	return runstore.NewTolerated(entries)
+	return entries
 }
 
 // seniorRound is one senior review round as the loop read it: the round number
