@@ -824,3 +824,10 @@ func retryConfig(t *testing.T, url string) string {
 	}
 	return path
 }
+
+// uploadAsReporter uploads an issue under the verified identity of its own
+// reporter, the way a signed-in member's machine does (issues.Upload takes the
+// identity the reporter index is written under).
+func uploadAsReporter(ctx context.Context, b *blobx.Bucket, i issues.Issue) (issues.Uploaded, error) {
+	return issues.Upload(ctx, b, i, issues.Identity{Address: i.Reporter, Digest: issues.Digest(i.Reporter), Source: issues.SourceVerified})
+}

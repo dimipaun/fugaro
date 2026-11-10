@@ -933,3 +933,17 @@ func Sum(rows []Row) Totals {
 	}
 	return t
 }
+
+// Elapsed is how long the row's run has been going, from the moment it
+// started to now, and false for a row that never recorded a start. It is the
+// one read of a run that has not finished — a chain measures such a run's
+// time against its limit at this same figure (runstore.chainSeconds, stated
+// there as well because that package is imported by this one) — and it is
+// elapsed time and not a deadline: nothing here knows what the run is
+// allowed to take.
+func (r Row) Elapsed(now time.Time) (time.Duration, bool) {
+	if r.StartedAt == nil {
+		return 0, false
+	}
+	return now.Sub(*r.StartedAt), true
+}
