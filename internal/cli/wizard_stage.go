@@ -309,8 +309,10 @@ func (s *wizardStage) ask(ctx context.Context) error {
 	}
 	// The bake question (IS7, D1901) is asked after the name and before the
 	// billing one: it is about the project the answers above settled rather
-	// than about an input, and it is the one question of this table a run can
-	// leave open (askBake, setup.go).
+	// than about an input, and it is asked only on a run that creates the
+	// installation — a run on an installation that is already there keeps the
+	// answer the project's own and takes it from its flag or from the
+	// published node, never from this machine (askBake, setup.go).
 	if err := s.answer(s.askBake()); err != nil {
 		return err
 	}

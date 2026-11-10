@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/initflow"
@@ -59,16 +58,20 @@ first run it asks its questions once, in this order, each with a suggestion
 Enter takes, and writes the local config, so later runs ask nothing: the new
 GCP project's ID (--gcp-project; a project named after this one,
 fugaro-<name>, which Enter takes; never gcloud's default project), the region
-(--region; us-east5) and the project's name (--name; from the repository's
-owner, else this directory's). Every question has its flag, so only the
+(--region; us-east5), the project's name (--name; from the repository's
+owner, else this directory's) and whether a repository the build can read is
+baked into the image its job runs (--bake-repos; yes, which makes jobs start
+faster; asked only where it can be answered, so a run with a project config
+keeps that project's answer). Every question has its flag, so only the
 confirmations below need a terminal at all: without one, or with
 --non-interactive, --yes or --json, the run names every missing flag in one
-error. An ID that already exists is refused before anything is asked or
-changed ("Fugaro only starts fresh: <id> already exists; pick another id"),
-and so is one that already holds a Fugaro installation, with the command that
-uses that installation from this machine instead: fugaro update --gcp-project
-<id> --region <region>, which writes the local config from the installation
-and applies nothing. The one taken ID a first run goes on with is a project an
+error — the bake switch needs no flag there, because an absent key means the
+same as a written yes. An ID that already exists is refused before anything is
+asked or changed ("Fugaro only starts fresh: <id> already exists; pick
+another id"), and so is one that already holds a Fugaro installation, with the
+command that uses that installation from this machine instead: fugaro update
+--gcp-project <id> --region <region>, which writes the local config from the
+installation and applies nothing. The one taken ID a first run goes on with is a project an
 earlier run of fugaro setup created and did not finish (it carries the label
 fugaro_created=true from its creation): the rerun resumes it. The budget
 section of a local config written from an installation (rtdb_url,
@@ -433,11 +436,10 @@ func questionFor(flag string) wizardQuestion {
 // answer with this machine's. --create-project's field is what says the run
 // creates, and settleCreation above has already set it.
 //
-// It is the one question whose input ending is not a Left. Its suggestion is
-// the answer an absent key already means (localcfg.BakeReposEffective,
-// projectpolicy.Policy.BakesRepos), so a run whose input ends here records
-// nothing, says so, and goes on with the answer it would have taken — where
-// every other question stops the phase with promptChoice's noAnswer.
+// The question is asked through the same helper as the three above it (prompt),
+// so an input that ends here stops the phase at this question like any other,
+// and a rerun resumes at it: the row's empty missing is not a licence to answer
+// on nobody's behalf, and this question has no second shape.
 func (s *wizardStage) askBake() error {
 	r, o := s.r, s.r.o
 	if o.bakeReposChanged || o.configOnly || !r.canAsk() || !o.createProject {
@@ -445,27 +447,32 @@ func (s *wizardStage) askBake() error {
 	}
 	q := questionFor("--bake-repos")
 	s.a.asked = append(s.a.asked, q.label)
-	for range 3 {
-		fmt.Fprintf(r.w, "%s [yes]: ", q.label)
-		line, err := r.in.ReadString('\n')
-		if err != nil && !errors.Is(err, io.EOF) {
-			return userErr("reading the answer: %v", err)
-		}
-		if errors.Is(err, io.EOF) && strings.TrimSpace(line) == "" {
-			fmt.Fprintf(r.w, "\nno answer for %q (the input ended): leaving it at the suggestion, and the local config will say nothing about baking — an absent key means a repository the build can read is baked\n", q.label)
-			return nil
-		}
-		switch strings.ToLower(strings.TrimSpace(line)) {
-		case "", "y", "yes", "true":
-			o.bakeRepos, o.bakeReposChanged = true, true
-			return nil
-		case "n", "no", "false":
-			o.bakeRepos, o.bakeReposChanged = false, true
-			return nil
-		}
-		fmt.Fprintln(r.w, "  answer yes or no")
+	var yes bool
+	if _, err := r.prompt(q.label, "yes", func(v string) error {
+		var verr error
+		yes, verr = bakeAnswer(v)
+		return verr
+	}); err != nil {
+		return err
 	}
-	return noAnswer("no usable answer for %q after 3 tries", q.label)
+	o.bakeRepos, o.bakeReposChanged = yes, true
+	return nil
+}
+
+// bakeAnswer is the bake question's own reading of an answer: the two things it
+// has to say — yes and no, which is how the question is asked — and the
+// spellings the same switch is written in elsewhere, since --bake-repos and
+// `fugaro settings set bake_repos` both take true and false for it. The
+// suggestion arrives here as "yes": prompt put the empty answer's own word in
+// its place. Anything else is the error prompt prints before asking again.
+func bakeAnswer(v string) (bool, error) {
+	switch strings.ToLower(v) {
+	case "y", "yes", "true":
+		return true, nil
+	case "n", "no", "false":
+		return false, nil
+	}
+	return false, errors.New("answer yes or no")
 }
 
 // noteBakeRebuild is what a run says once it has written the bake switch: the

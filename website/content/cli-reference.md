@@ -5449,16 +5449,20 @@ first run it asks its questions once, in this order, each with a suggestion
 Enter takes, and writes the local config, so later runs ask nothing: the new
 GCP project's ID (--gcp-project; a project named after this one,
 fugaro-<name>, which Enter takes; never gcloud's default project), the region
-(--region; us-east5) and the project's name (--name; from the repository's
-owner, else this directory's). Every question has its flag, so only the
+(--region; us-east5), the project's name (--name; from the repository's
+owner, else this directory's) and whether a repository the build can read is
+baked into the image its job runs (--bake-repos; yes, which makes jobs start
+faster; asked only where it can be answered, so a run with a project config
+keeps that project's answer). Every question has its flag, so only the
 confirmations below need a terminal at all: without one, or with
 --non-interactive, --yes or --json, the run names every missing flag in one
-error. An ID that already exists is refused before anything is asked or
-changed ("Fugaro only starts fresh: <id> already exists; pick another id"),
-and so is one that already holds a Fugaro installation, with the command that
-uses that installation from this machine instead: fugaro update --gcp-project
-<id> --region <region>, which writes the local config from the installation
-and applies nothing. The one taken ID a first run goes on with is a project an
+error — the bake switch needs no flag there, because an absent key means the
+same as a written yes. An ID that already exists is refused before anything is
+asked or changed ("Fugaro only starts fresh: <id> already exists; pick
+another id"), and so is one that already holds a Fugaro installation, with the
+command that uses that installation from this machine instead: fugaro update
+--gcp-project <id> --region <region>, which writes the local config from the
+installation and applies nothing. The one taken ID a first run goes on with is a project an
 earlier run of fugaro setup created and did not finish (it carries the label
 fugaro_created=true from its creation): the rerun resumes it. The budget
 section of a local config written from an installation (rtdb_url,
@@ -5697,6 +5701,7 @@ Flags:
 | `--allow-fork` | bool | `false` | no | let the plugin-wiring stage move the ref of a fugaro marketplace in .claude/settings.json that names a repository other than dimipaun/fugaro (a fork you host); never done otherwise |
 | `--allow-job-delete` | bool | `false` | no | with --repo: lower the jobs' deletion protection, for offboarding |
 | `--anchor` | bool | `false` | no | in a checkout of an onboarded repository, only write the gcp_project line into its fugaro.yaml, after checking that every workflow's job image was submitted by fugaro 0.4.0 or later and built FROM a release base image of 0.4.0 or later, and that no base image the local config sets is a development or older one (no Terraform, no publish, no image copy; the diff, then --yes writes or a terminal asks) |
+| `--bake-repos` | bool | `false` | no | answer the bake question without a terminal: whether a repository the build can read is baked into the image its job runs (the default is yes, and an absent key means the same). --bake-repos says yes, --bake-repos=false says no, and either one writes the value into the local config this run writes, which the same run publishes. Passing neither asks the question where it can be asked — on a run that creates the installation, and nowhere else: a run with a project config keeps the answer the project's own (the published policy's) and is never asked, which is the rule for a managed project. Either way the answer takes effect in the images built from then on: the build is what bakes a repository in, so the images already built keep what they have until they are rebuilt |
 | `--base` | stringSlice | `[]` | no | copy the release's base image (the only kind: base) into the project's registry now, besides what the checkout's fugaro.yaml needs (comma-separated or repeated) |
 | `--base-image` | stringArray | `[]` | no | a base image the image checks run and builds start from, recorded in the local config under its base kind (repeatable; KIND=IMAGE, or just IMAGE when its repository is named fugaro-<kind>; the kinds you don't name keep theirs) |
 | `--billing-account` | string | "" | no | the billing account the budget is on |
@@ -5887,6 +5892,7 @@ Flags:
 | `--allow-job-delete` | bool | `false` | no | with --repo: lower the jobs' deletion protection, for offboarding |
 | `--anchor` | bool | `false` | no | in a checkout of an onboarded repository, only write the gcp_project line into its fugaro.yaml, after checking that every workflow's job image was submitted by fugaro 0.4.0 or later and built FROM a release base image of 0.4.0 or later, and that no base image the local config sets is a development or older one (no Terraform, no publish, no image copy; the diff, then --yes writes or a terminal asks) |
 | `--ask` | bool | `false` | no | ask for the confirmations a managed project's gate would have stood in for, one step at a time: without it a managed project takes no confirmation at all (the ruling of 2026-11-01), and this is the flag that puts them back for one run — the project's name typed at the review, each step's own, the y/Ns. It is the symmetric half of --yes, which is the same flag for a project that is NOT managed, and the two contradict each other: pass one, or neither. It never weakens the gate, which judges every document and refuses in its own sentence before any prompt, and it never reaches a Typed step (money, permanence, a secret: the owner's own word, which no flag stands in for). In a project whose marks do not answer "managed" it changes nothing and says so, and where no prompt can be answered — a coding agent's session, --json, --non-interactive, no terminal — it refuses the run rather than letting the gate's verdict stand in: a confirmation nobody can answer is never a silent proceed |
+| `--bake-repos` | bool | `false` | no | answer the bake question without a terminal: whether a repository the build can read is baked into the image its job runs (the default is yes, and an absent key means the same). --bake-repos says yes, --bake-repos=false says no, and either one writes the value into the local config this run writes, which the same run publishes. Passing neither asks the question where it can be asked — on a run that creates the installation, and nowhere else: a run with a project config keeps the answer the project's own (the published policy's) and is never asked, which is the rule for a managed project. Either way the answer takes effect in the images built from then on: the build is what bakes a repository in, so the images already built keep what they have until they are rebuilt |
 | `--base` | stringSlice | `[]` | no | copy the release's base image (the only kind: base) into the project's registry now, besides what the checkout's fugaro.yaml needs (comma-separated or repeated) |
 | `--base-image` | stringArray | `[]` | no | a base image the image checks run and builds start from, recorded in the local config under its base kind (repeatable; KIND=IMAGE, or just IMAGE when its repository is named fugaro-<kind>; the kinds you don't name keep theirs) |
 | `--billing-account` | string | "" | no | the billing account the budget is on |

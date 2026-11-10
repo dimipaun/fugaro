@@ -522,15 +522,19 @@ func TestSetupAsksBakeDefaultYes(t *testing.T) {
 		t.Errorf("`maybe` then `n` recorded (answer %v, answered %v), want no", r.o.bakeRepos, r.o.bakeReposChanged)
 	}
 
-	// The input ending here is not a refusal, which is what makes this row's
-	// missing empty: the run goes on with the answer an absent key already
-	// means, records nothing, and says so.
-	r, out = ask("")
-	if r.o.bakeReposChanged {
-		t.Errorf("the input ended at the bake question and the run recorded an answer (%v): nothing was typed, and an absent key already means yes", r.o.bakeRepos)
+	// The input ending here stops the run at this question, exactly as it does
+	// at the three above it: the suggestion is what an absent key means for a
+	// run that cannot ask, and that is not the same thing as a person's input
+	// ending — nothing was typed, so there is no answer to record, and what the
+	// run says is which question it is waiting for. The row's empty missing is
+	// about a run with no terminal at all, not about this one.
+	r, out = wizardRun(t, "", only())
+	err := r.gatherInputs(t.Context())
+	if err == nil || !strings.Contains(err.Error(), bakeQuestion.label) || ExitCode(err) != ExitUserError {
+		t.Errorf("the input ended at the bake question and the run reported %v, want the question named as the one it is waiting for:\n%s", err, out)
 	}
-	if !strings.Contains(out.String(), "the input ended") {
-		t.Errorf("the run neither took the suggestion out loud nor said it left it:\n%s", out)
+	if r.o.bakeReposChanged {
+		t.Errorf("the input ended at the bake question and the run recorded an answer (%v): nothing was typed", r.o.bakeRepos)
 	}
 
 	// Where nobody can be asked there is no question, and the answer the run
