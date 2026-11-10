@@ -304,6 +304,13 @@ func fence(nonce, body string) string {
 	return BlockOpen(nonce) + "\n" + body + BlockClose(nonce)
 }
 
+// runNoEnv is an environment that names no store, for the cases that assert the
+// command line rather than run it: not nil, which the runner resolves to this
+// process's own — where a machine's moved stores and its cloud keys are — but
+// empty, so the payload is the home-relative defaults alone and those cases
+// read the same on every machine instead of borrowing the test runner's shell.
+var runNoEnv = []string{}
+
 // runArgv is the argv Args builds for a complete request, and the evidence
 // folder it was given, for the cases that assert the command line rather than
 // run it.
@@ -316,11 +323,12 @@ func runArgv(t *testing.T) (args []string, evidence string) {
 		Nonce:       NewNonce(),
 		Model:       "claude-sonnet-5-5",
 		Cap:         Cap{Turns: 12, USD: 1},
+		ParentEnv:   runNoEnv,
 		SourceDir:   source,
 		EvidenceDir: evidence,
 	})
 	if err != nil {
-		t.Fatalf("a request that names no environment of its own has no store to follow, so Args cannot fail here: %v", err)
+		t.Fatalf("the environment this request names holds no store to follow, so Args cannot fail here: %v", err)
 	}
 	return args, evidence
 }
@@ -451,12 +459,13 @@ func TestRunArgsIsTheReadOnlyContract(t *testing.T) {
 
 // TestRunArgsAlwaysCarriesACap: a caller that fills no Cap still gets both
 // halves of D1613's bound, because "no cap" is the one request this command
-// must not accept.
+// must not accept. The environment is runNoEnv's, as runArgv's is: what a
+// request names is what the payload follows, and this case is about the cap.
 func TestRunArgsAlwaysCarriesACap(t *testing.T) {
 	source, evidence := runFolders(t)
 	args, err := Args(Request{
 		Handle: runHandle(t, runValue(t, "nocap")), Prompt: "prompt", Nonce: NewNonce(),
-		SourceDir: source, EvidenceDir: evidence,
+		ParentEnv: runNoEnv, SourceDir: source, EvidenceDir: evidence,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -472,7 +481,7 @@ func TestRunArgsAlwaysCarriesACap(t *testing.T) {
 	// is "0.00" to the client, which is not the bound this run was promised.
 	args, err = Args(Request{
 		Handle: runHandle(t, runValue(t, "cents")), Prompt: "prompt", Nonce: NewNonce(),
-		Cap: Cap{Turns: 5, USD: 0.001}, SourceDir: source, EvidenceDir: evidence,
+		Cap: Cap{Turns: 5, USD: 0.001}, ParentEnv: runNoEnv, SourceDir: source, EvidenceDir: evidence,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1014,6 +1023,59 @@ func runRule(path string) string { return "//" + strings.TrimPrefix(filepath.ToS
 // C0 range including ESC, DEL, and the C1 range safetext marks too.
 func isTerminalControl(r rune) bool {
 	return r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f)
+}
+
+// TestRunArgsResolvesTheEnvironmentTheSameWayRunDoes: Args and Run are two doors
+// to one command line, and the environment the deny payload is resolved from is
+// the same one through both — a request that names none means this process's own
+// (Request.ParentEnv, requestEnv). A caller that builds the argv here and starts
+// the child itself would otherwise be handed a payload missing every store the
+// person's shell moved, and would never meet the refusal such a store earns: the
+// missing rule and the missing refusal are one bug, and the second half is the
+// part a caller cannot see in the argv it was handed.
+//
+// The stores move in this process's own environment, because that is the only
+// thing a nil ParentEnv resolves to, and HOME moves with them so that nothing
+// here reads the machine the test happens to run on.
+//
+// Mutation (run and restored): resolve a nil environment to an empty one rather
+// than to os.Environ() (requestEnv, or Args alone) -> both halves fail: the
+// payload carries no rule for the store $GH_CONFIG_DIR names, and with
+// $GNUPGHOME moved to a path no rule can carry, Args answers with a command line
+// where Run refuses.
+func TestRunArgsResolvesTheEnvironmentTheSameWayRunDoes(t *testing.T) {
+	moved := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("GH_CONFIG_DIR", moved)
+	s := newRunSetup(t)
+	// nil is the request that names no environment: what a caller composing a
+	// diagnosis from the person's own shell leaves the field at.
+	s.req.ParentEnv = nil
+	args, err := Args(s.req)
+	if err != nil {
+		t.Fatalf("$GH_CONFIG_DIR names a directory a rule can carry, so there is no refusal to make here: %v", err)
+	}
+	if deny := runReadRules(t, args); !slices.Contains(deny, runRule(moved)+"/**") {
+		t.Errorf("Args built a payload with no rule for this process's $GH_CONFIG_DIR=%s, so a caller that builds its own argv hands the child a payload a store short while Run, resolving the same request, does not: %v", moved, deny)
+	}
+	// The refusal is the other half of that one resolution, and it is the half a
+	// caller cannot read off an argv: with a store moved to a path no rule can
+	// name, both doors refuse instead of answering with a command line that is a
+	// rule short of the contract.
+	t.Setenv("GNUPGHOME", filepath.Join(t.TempDir(), "keys (old)"))
+	_, argsErr := Args(s.req)
+	if argsErr == nil {
+		t.Error("Args built a command line for a store no rule can name, so a caller that starts the child itself runs a diagnosis with that store open and no refusal to tell it so")
+	} else if !strings.Contains(argsErr.Error(), "GNUPGHOME") {
+		t.Errorf("the refusal has to name the store it cannot deny, so a person can move it: %v", argsErr)
+	}
+	block := answer(t, fence(s.nonce, "outcome: bug\nsignature: update config invalid\nbody"))
+	if _, err := s.run(t, block); err == nil {
+		t.Error("Run started the child for a store no rule can name: the two doors disagreed about the environment")
+	}
+	if _, statErr := os.Stat(s.record); statErr == nil {
+		t.Errorf("the child was started although the payload could not name GNUPGHOME: %s", s.did(t))
+	}
 }
 
 // TestRunRefusesAStoreNoRuleCanName: a store a variable has moved to a path no

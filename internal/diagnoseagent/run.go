@@ -610,13 +610,34 @@ type Diagnosis struct {
 // --dangerously-skip-permissions, a permission mode, a settings source of the
 // machine's, an MCP configuration — is absent on purpose, and the value of
 // --tools is what says so.
-func Args(req Request) ([]string, error) { return argsFor(req, req.ParentEnv) }
+//
+// The environment the payload is resolved from is the one Run gives the child
+// (requestEnv): a request that names none means this process's own, and both
+// doors read it the same way, so a caller that builds its argv here and starts
+// the child itself is handed exactly the payload Run would have handed it — one
+// that named fewer stores would be the same diagnosis run with a store open,
+// and it would never meet the refusal such a store earns.
+func Args(req Request) ([]string, error) { return argsFor(req, requestEnv(req.ParentEnv)) }
+
+// requestEnv is the environment one request is composed from: what it names, or
+// this process's own when it names none. Run composes the child's environment
+// from it and the deny payload from it, and Args builds its payload from it
+// too, which is the whole point of it being one function: a nil ParentEnv
+// resolved two ways would answer "where is this store" differently for two
+// callers of the same request.
+func requestEnv(env []string) []string {
+	if env == nil {
+		return os.Environ()
+	}
+	return env
+}
 
 // argsFor is Args with the environment the child's own is composed from passed
 // in, so that the payload's deny rules and the child's environment come from
-// one resolution of it: Run resolves them together, and Args with a nil
-// ParentEnv is a request that names no environment at all, which is what the
-// rules that are home-relative alone are for.
+// one resolution of it. A nil environment is not "no environment" here and is
+// not meant to reach this function: both callers resolve one first
+// (requestEnv), and the rules that are home-relative alone are for a store no
+// variable decides, not for a store the caller's environment moved.
 func argsFor(req Request, parent []string) ([]string, error) {
 	settings, err := childSettingsJSON(parent)
 	if err != nil {
@@ -698,10 +719,7 @@ func Run(ctx context.Context, req Request) (Diagnosis, error) {
 	// The environment is resolved once and used for both: the child's own, and
 	// the deny rules that name the stores it decides. A rule derived from an
 	// environment the child was not given would be a rule about another machine.
-	parent := req.ParentEnv
-	if parent == nil {
-		parent = os.Environ()
-	}
+	parent := requestEnv(req.ParentEnv)
 	// The argv is built before the child starts, and a store the payload cannot
 	// name ends the diagnosis here rather than at the first read of it.
 	args, err := argsFor(req, parent)
