@@ -994,7 +994,12 @@ func TestRecipesSkewRefusesReviewLevelsWithoutABuildRecord(t *testing.T) {
 // nil): the 0.15.0 launch below succeeds.
 func TestRecipesSkewRefusesTheOwnerFloorOnOldImage(t *testing.T) {
 	f := newLaunchBudget(t, "enforce")
-	publishPolicy(t, f, `{"version":5,"allow_repos":["github/acme/*"],"review_floor":{"pro":["l3"]}}`)
+	// The node is the one an installation whose job image is at 0.15.0 holds:
+	// the release before this one writes a version-4 node, and a version-5 node
+	// under that image is refused by policyImageGate (the image's runner cannot
+	// read it) before the floor's own gate is reached — which is not the
+	// refusal this test is about.
+	publishPolicy(t, f, `{"version":4,"allow_repos":["github/acme/*"],"review_floor":{"pro":["l3"]}}`)
 	isolateCache(t)
 	testutil.IsolateGit(t)
 	t.Chdir(t.TempDir())

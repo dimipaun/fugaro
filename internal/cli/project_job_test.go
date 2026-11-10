@@ -87,11 +87,13 @@ func newProjectJobFixtureMode(t *testing.T, mode string) *projectJobFixture {
 		"profiles: { standard: { provider: github, cpu: 2, memory: 4Gi, timeout_class: 6h } }\n"+
 			// A checkout: clone workflow runs the installation's base image,
 			// which the launch gate holds to a release whose runner knows
-			// FUGARO_CHECKOUT and, for the launches in this fixture, reads the
-			// sealed budget token (internal/cli/recipes_skew.go: cloneSince and
-			// sealSince — the fixture publishes a policy, so a launch here
-			// mints whatever the local mode says).
-			"base_images: { base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:"+sealSince+" }\n")
+			// FUGARO_CHECKOUT, reads the sealed budget token and reads the
+			// policy node this release writes (internal/cli/recipes_skew.go:
+			// cloneSince and sealSince; policyImageGate: projectpolicy's
+			// VersionSince — the fixture publishes a policy, so a launch here
+			// mints whatever the local mode says, and the base has to be the
+			// release that introduced the node's version).
+			"base_images: { base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:"+nodeRelease+" }\n")
 	publishPolicy(t, f, projectJobPolicy)
 	// The name is the caller's to compute (the fake cannot import
 	// internal/backend/gcp: that package's own tests import the fake), and

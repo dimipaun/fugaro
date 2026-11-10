@@ -108,7 +108,8 @@ node already carries, while a *written* empty block clears it. That difference i
 publishing does to the node; it never changes what an empty list on the node means, which is: admit
 nothing. **And the node cannot hold the empty spelling**: an RTDB list is an object with numeric
 keys, so the Realtime Database keeps no member for `[]` (the rule `internal/cli`'s `storesNoMember`
-and the fake's own `normalise` both apply), and a written empty block reaches the node as no member
+carries, and the one a test seeding such a node folds by hand, since `internal/gcpfake` keeps the
+empty list it is handed), and a written empty block reaches the node as no member
 at all — the answer it was asking for, since an absent block admits nothing too. The two spellings
 are told apart in the publisher's own file, where silence is the absent key and the written block is
 D987's; on the node they are one write, and every reader of it reads the one answer.

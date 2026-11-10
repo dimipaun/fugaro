@@ -620,17 +620,7 @@ func setAt(n any, p []string, v any) any {
 }
 
 // normalise converts test-supplied Go values (ints, structs) to the JSON
-// model and prunes the members the database stores no value for: a null one,
-// an empty object and an empty list — an RTDB list is an object with numeric
-// keys, so an empty list is an empty object and is pruned the same way. That
-// rule is internal/cli's storesNoMember, and it is what makes a publish's node
-// comparison converge (#1658); the fake held an empty list until this, so a
-// test could read back a member the real database does not have — the
-// `{"binaries": {"allow": []}}` spelling above all, whose whole point in the
-// policy model is being a member that admits nothing.
-//
-// A null *inside* a list is a value and is left alone: what the database drops
-// is a member, not a position.
+// model and prunes nulls and empty objects.
 func normalise(v any) any {
 	switch x := v.(type) {
 	case nil:
@@ -641,15 +631,6 @@ func normalise(v any) any {
 			if c = normalise(c); c != nil {
 				out[k] = c
 			}
-		}
-		if len(out) == 0 {
-			return nil
-		}
-		return out
-	case []any:
-		out := make([]any, 0, len(x))
-		for _, c := range x {
-			out = append(out, normalise(c))
 		}
 		if len(out) == 0 {
 			return nil
@@ -668,8 +649,7 @@ func normalise(v any) any {
 		if err := dec.Decode(&out); err != nil {
 			panic(err)
 		}
-		switch out.(type) {
-		case map[string]any, []any:
+		if _, same := out.(map[string]any); same {
 			return normalise(out)
 		}
 		return out

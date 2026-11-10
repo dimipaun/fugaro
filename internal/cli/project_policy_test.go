@@ -3624,14 +3624,22 @@ func TestPublishKeepsTheBinariesListWhenTheLocalFileSaysNothing(t *testing.T) {
 		t.Errorf("the publish does not say the block was kept:\n%s", out)
 	}
 
-	// An empty list is not a member the node holds, and this is where the
-	// database's own rule is worth a test: an RTDB list is an object with
-	// numeric keys, so `{"allow": []}` is an empty object and a write leaves no
-	// member for it (internal/cli's storesNoMember, and the fake's normalise
-	// after the review finding on this change). A node hand-written with that
-	// spelling therefore reads back exactly like a node nothing was written to,
-	// and a publish over it has no block to keep — what it writes admits
-	// nothing either way, which is the answer the spelling was asking for.
+	// An empty list is not a member the node holds: an RTDB list is an object
+	// with numeric keys, so `{"allow": []}` is an empty object and a write
+	// leaves no member for it (dropAbsentMembers, the rule internal/cli already
+	// keeps the publish's own node comparison to, #1658). A node hand-written
+	// with that spelling therefore reads back exactly like a node nothing was
+	// written to, and a publish over it has no block to keep — what it writes
+	// admits nothing either way, which is the answer the spelling was asking
+	// for.
+	//
+	// The seed is folded here rather than by the fake because the fake is not
+	// the database: gcpfake keeps the empty list it is handed, and teaching it
+	// to fold is not this change's to make — it would move four unrelated
+	// nodes this package seeds and the doctor line one of them pins
+	// (internal/access/store_test.go's foldAsTheDatabaseKeeps says the same
+	// and folds the same way). The fold is the tree's own rule and not a test
+	// convenience: dropAbsentMembers is what the publish compares nodes with.
 	//
 	// The empty block is D987's mechanism and it stays a publish-time one: it
 	// belongs to the file the *publisher* reads (which says nothing, or writes
@@ -3639,11 +3647,17 @@ func TestPublishKeepsTheBinariesListWhenTheLocalFileSaysNothing(t *testing.T) {
 	// Nothing this release deletes or invents a member over it, and a node that
 	// carries a block with a value member in it is still carried over whole
 	// (the assertions above).
-	f.db.Set(projectpolicy.PathShared(), map[string]any{
+	empty := map[string]any{
 		"version":     projectpolicy.Version,
 		"allow_repos": []string{"github/acme/app"},
-		"binaries":    map[string]any{"allow": []string{}},
-	})
+		"binaries":    map[string]any{"allow": []any{}},
+	}
+	if folded, err := json.Marshal(dropAbsentMembers(empty)); err != nil {
+		t.Fatal(err)
+	} else if strings.Contains(string(folded), "binaries") {
+		t.Fatalf("the spelling %s is a member the database keeps: %s", `{"allow": []}`, folded)
+	}
+	f.db.Set(projectpolicy.PathShared(), dropAbsentMembers(empty))
 	out, _, err = execute(t, "project", "policy", "publish")
 	if err != nil {
 		t.Fatal(err)

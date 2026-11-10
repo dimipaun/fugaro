@@ -453,7 +453,12 @@ func newOffModeBudget(t *testing.T, budget string) *launchBudgetFixture {
 	f.appendConfig(t, budget)
 	f.db.Set("fugaro/project", "aurora")
 	f.db.Set("config/mode", "enforce")
-	writeBuildRecord(t, f.cloudFixture, appSlug, "web", releaseSeal)
+	// The record is the policy release's and not the seal's: this fixture is
+	// the one tests publish a policy onto, and the launcher holds a job image
+	// to the release that introduced the node's version (policyImageGate) — a
+	// seal-release record under a published policy is a run that halts at
+	// bootstrap.
+	writeBuildRecord(t, f.cloudFixture, appSlug, "web", releasePolicy)
 	return f
 }
 
@@ -1410,7 +1415,20 @@ func TestLaunchRefusesProxiedRunOnOldImage(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newLaunchBudget(t, "enforce")
 			addProxiedRepo(t, f, tc.base, tc.block, tc.switchOn)
-			publishPolicy(t, f, tc.policy)
+			// The node's version pairs with the image the row launches on. The
+			// rows whose image is `old` are an installation at 0.20.3, and such
+			// an installation holds the version-4 node its own release
+			// published: fugaro update pins the base image before its policy
+			// stage migrates the node, so the two cannot be a version apart. A
+			// version-5 node under that image is refused by policyImageGate —
+			// the image's runner cannot read it — before any of these rows'
+			// gates is reached, which would make every row a test of that gate
+			// instead of the one it names.
+			policy := tc.policy
+			if tc.base == old {
+				policy = strings.Replace(policy, `"version":5`, `"version":4`, 1)
+			}
+			publishPolicy(t, f, policy)
 			_, _, err := execute(t, "run", "--repo", proxiedRepo, "--run-id", budgetRun, "Add a feature")
 			slug := mustSlug("bitbucket", proxiedRepo)
 			switch {
