@@ -30,11 +30,12 @@ summary, and under them what is known about it:
   given the issue one, and this machine's own name for it — `local-<stem>` —
   before that.
 - **The status** is one of `local` (written here and not uploaded yet),
-  `pending`, `submitted`, `resolved`, `dismissed` or `regression`. Only the last
-  two of those are derived: `local` says the issue has no project number yet,
-  and `regression` says the user's own flagged occurrence is on an issue the
-  shared record calls resolved — a failure that came back after the release that
-  fixed it. Another reporter's regression does not make this user's row one.
+  `pending`, `submitted`, `resolved`, `dismissed` or `regression`. Two of those
+  are derived here rather than values of the record: `local` says the issue has
+  no project number yet, and `regression` says the user's own flagged occurrence
+  is on an issue the shared record calls resolved — a failure that came back
+  after the release that fixed it. Another reporter's regression does not make
+  this user's row one.
 - **The times**: when the user hit it, when it was submitted, when it was
   resolved and when it was dismissed. A transition that has not happened prints
   `-`, and the hit time is the user's own — the moment the issue was created
@@ -109,12 +110,14 @@ credential, so until then an offline listing is the previous account's rows.
 
 ### No GitHub is read
 
-`mine` reads no GitHub issue state, and it asks GitHub for nothing: what says an
-issue is fixed is the `resolved_in` release the shared record carries, printed
-against this machine's own version. The listing is therefore as current as the
-last read of the shared store. A teammate who resolves an issue by updating
-first sees it as `submitted` until some machine's `fugaro update` marks the
-record resolved and this user's next `mine` reads that.
+`mine` reads no GitHub issue state and never asks the GitHub API about an
+issue: what says an issue is fixed is the `resolved_in` release the shared
+record carries, printed against this machine's own version. The listing is
+therefore as current as the last read of the shared store — an issue closed on
+GitHub stays `submitted` here until a machine's `fugaro update` pass marks the
+record resolved and this user's next `mine` reads that. (The root command's
+once-a-day release check is not issue state, and it runs for this command as it
+does for every other.)
 
 ### Machine-readable output
 
