@@ -63,7 +63,6 @@ func stageCraft(stage string) string {
 // What it writes is shown by the local config's own diff; only the keys that
 // need a person are returned, because a line per derived key would bury them.
 func migrateCraftKeys(c *localcfg.Config) []string {
-
 	if c == nil || (len(c.ClaudeAccounts) == 0 && c.DefaultClaudeAccount == "" && len(c.ClaudeAccountStages) == 0) {
 		return nil
 	}
