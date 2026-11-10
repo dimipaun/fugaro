@@ -3,12 +3,15 @@ package imagebake
 import (
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
 // reqApp is the request a build of the "app" entry from acme/app's checkout
 // makes, with the map and the switch each test overrides.
-// bakeOn and bakeOff are the two answered states of D1901's switch; a Request
-// that leaves Bake nil is the project that answered nothing.
+// bakeOn and bakeOff are D1901's switch answered; a Request that leaves Bake
+// nil is the project that answered nothing, which is on exactly as bakeOn is
+// (projectpolicy.Policy.BakesRepos).
 func bakeOn() *bool  { v := true; return &v }
 func bakeOff() *bool { v := false; return &v }
 
@@ -120,72 +123,68 @@ func TestDecideReferenceBeatsTheMap(t *testing.T) {
 	}
 }
 
-// TestDecideTheDefaultIsTheMaps: the project answered nothing (bake_repos
-// absent), which is every installation predating the field, and D1901's words
-// are "clone each MAPPED repo". So the default bakes a repository the map puts
-// on this entry and nothing else — a checkout that runs the entry by its own
-// workflow's reference is not baked for until the project says so — and a
-// build that composes nothing says which of the two commands asks.
-func TestDecideTheDefaultIsTheMaps(t *testing.T) {
-	req := reqApp()
-	req.Bake = nil
-	req.Map = nil
-	req.Reference = "app"
-	p := Decide(req)
-	if p.Baked != nil {
-		t.Fatalf("Decide baked a checkout into %s on a project that mapped nothing and answered nothing", req.Entry)
+// TestDecideAnUnsetSwitchIsOn: bake_repos has one meaning in this repository
+// (projectpolicy.Policy.BakesRepos, localcfg.BakeReposEffective): absent is
+// yes, and only a written false turns the bake off. A build that read the
+// absent case any other way would be a second meaning for one field — the same
+// published node telling a settings reader "on" and a build "nothing is
+// baked".
+func TestDecideAnUnsetSwitchIsOn(t *testing.T) {
+	var absent projectpolicy.Policy
+	on := absent.BakesRepos()
+	if !on {
+		t.Fatal("projectpolicy says an absent bake_repos is off: this test's premise is the opposite")
 	}
-	if !p.Notable {
-		t.Error("the plan is quiet: a checkout that runs this entry by name and a default that does not bake for it is worth the one line that says which command asks")
-	}
-	if !strings.Contains(p.Reason, "image_map") || !strings.Contains(p.Reason, "bake_repos") {
-		t.Errorf("the reason %q names neither the map nor the switch, so the operator cannot act on it", p.Reason)
-	}
-	// Answered yes, the same project bakes: the switch is the operator's own
-	// answer, and it does not need a map to be one.
-	req.Bake = bakeOn()
-	if p := Decide(req); p.Baked == nil {
-		t.Fatalf("Decide baked nothing (%s): the project asked for the bake by name", p.Reason)
-	}
-	// And an entry the checkout names nowhere is still silent: a build of
-	// another entry has nothing to report.
-	req.Reference = ""
-	req.Bake = nil
-	if p := Decide(req); p.Baked != nil || p.Notable {
-		t.Errorf("Decide returned %+v for an entry the checkout names nowhere and the project does not map", p)
+	for name, req := range map[string]Request{
+		"the map puts the repository on the entry": reqApp(),
+		"the map names nothing":                    func() Request { r := reqApp(); r.Map = nil; return r }(),
+		"the entry is shared with another repository": func() Request {
+			r := reqApp()
+			r.Map = map[string]string{"acme/app": "app", "acme/web": "app"}
+			return r
+		}(),
+		"the checkout's own workflow names the entry": func() Request { r := reqApp(); r.Map = nil; r.Reference = "app"; return r }(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			req.Bake = nil
+			unset := Decide(req)
+			req.Bake = &on
+			answered := Decide(req)
+			if unset.Baked == nil != (answered.Baked == nil) {
+				t.Fatalf("Decide baked %v with the switch unset and %v with it answered yes: one field, two meanings", unset.Baked, answered.Baked)
+			}
+			if unset.Baked != nil {
+				return
+			}
+			if unset.Notable != answered.Notable || unset.Reason != answered.Reason {
+				t.Errorf("Decide says %q (notable %v) with the switch unset and %q (notable %v) with it answered yes", unset.Reason, unset.Notable, answered.Reason, answered.Notable)
+			}
+		})
 	}
 }
 
-// TestDecideBakesNothingIntoASharedImageByDefault: the entry serves another
+// TestDecideBakesASharedImageAndNamesTheReaders: the entry serves another
 // repository as well, which is F18's boundary — whatever is baked into the
-// image is source that repository's jobs can read. The default writes nothing
-// there, and names the repositories the operator would be exposing and the
-// switch that asks for it anyway.
-func TestDecideBakesNothingIntoASharedImageByDefault(t *testing.T) {
+// image is source that repository's jobs can read. The bake happens (the
+// switch is on unless an operator turns it off), and the plan names the
+// repositories that can read the checkout, which is what the line a build
+// prints says out loud.
+func TestDecideBakesASharedImageAndNamesTheReaders(t *testing.T) {
 	req := reqApp()
 	req.Bake = nil
 	req.Map = map[string]string{"acme/app": "app", "acme/web": "app"}
 	p := Decide(req)
-	if p.Baked != nil {
-		t.Fatal("Decide baked the checkout into an image another repository's jobs run and can read")
-	}
-	if !p.Notable {
-		t.Error("the plan is quiet about leaving a shared image un-baked")
-	}
-	for _, name := range []string{"acme/web", "bake_repos"} {
-		if !strings.Contains(p.Reason, name) {
-			t.Errorf("the reason %q does not name %s, so the operator cannot tell what the bake would expose or how to ask for it", p.Reason, name)
-		}
-	}
-	// Asked for explicitly, the same bake happens, and the plan still names the
-	// repositories that can then read the checkout.
-	req.Bake = bakeOn()
-	p = Decide(req)
 	if p.Baked == nil {
-		t.Fatalf("Decide baked nothing (%s): the project asked for the bake into a shared image by name", p.Reason)
+		t.Fatalf("Decide baked nothing (%s): an unset switch is on", p.Reason)
 	}
 	if len(p.Cloned) != 1 || p.Cloned[0] != "acme/web" {
-		t.Errorf("the plan clones %v at start, want [acme/web]: the note has to name who else can read the baked checkout", p.Cloned)
+		t.Errorf("the plan clones %v at start, want [acme/web]: the note has to name who else reads the baked checkout", p.Cloned)
+	}
+	// Turning it off is the operator's own answer to F18, and it is the one
+	// thing that keeps the checkout out of a shared image.
+	req.Bake = bakeOff()
+	if p := Decide(req); p.Baked != nil {
+		t.Error("Decide baked the checkout into a shared image with bake_repos off")
 	}
 }
 
@@ -326,6 +325,27 @@ func TestBakedSlugIsTheMarkerRepository(t *testing.T) {
 		if slug, ok := BakedSlug([]byte(def)); ok {
 			t.Errorf("BakedSlug(%s) = %q, true; want no repository", name, slug)
 		}
+	}
+}
+
+// TestBakedSlugIsTheLastMarker: a definition can carry more than one marker —
+// composing a definition that already bakes composes a second stage onto it,
+// and an entry's own bytes may spell the line by hand. The stage that runs is
+// the last one, so the checkout a reader looks at is the last marker's; reading
+// the first would open the directory of a stage an earlier one replaced.
+func TestBakedSlugIsTheLastMarker(t *testing.T) {
+	def := markerPrefix + "/work/baked/first-0000aaaa\n" +
+		"FROM scratch\n" +
+		markerPrefix + "/work/baked/second-1111bbbb\n"
+	slug, ok := BakedSlug([]byte(def))
+	if !ok || slug != "second-1111bbbb" {
+		t.Errorf("BakedSlug(%q) = %q, %v; want second-1111bbbb, true: the last stage is the one that runs", def, slug, ok)
+	}
+	// A trailing marker that names nothing this package wrote is skipped, and
+	// the one before it answers.
+	def = markerPrefix + "/work/baked/first-0000aaaa\n" + markerPrefix + "/work/repo\n"
+	if slug, ok := BakedSlug([]byte(def)); !ok || slug != "first-0000aaaa" {
+		t.Errorf("BakedSlug(%q) = %q, %v; want first-0000aaaa, true", def, slug, ok)
 	}
 }
 

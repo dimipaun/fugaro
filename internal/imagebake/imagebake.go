@@ -44,17 +44,18 @@
 // Nothing is baked unless the entry being built is the image the repository
 // runs — a catalog reference in its own workflow beats the project's map (T1
 // reading (b)), and the map answers for a repository that names none — and the
-// project's answer to D1901 says so.
+// project's switch (bake_repos, D1901) is on. Only a written false turns it
+// off: absent and true are one statement everywhere the switch is read
+// (projectpolicy.Policy.BakesRepos, localcfg.BakeReposEffective), so a build
+// reads the absent case — every installation predating the field — the same way
+// the settings, the skill and the publisher do.
 //
-// The default (bake_repos absent, which is every installation predating the
-// field) is narrower than "on": it bakes a repository the project's map puts on
-// this entry, and only into an entry the project puts nothing else on. The map
-// is the only thing a build can read that says which repositories an entry
-// serves, so an entry another repository runs is left alone until an operator
-// writes bake_repos: true — that repository's jobs could read whatever was
-// baked into a shared image (F18), which is the boundary O3 (b) leaves to the
-// operator's own answer. Every refusal says so out loud and names the command
-// that asks for the bake.
+// The bake does land in an image the entry's other repositories run as well,
+// and whatever is baked into it is source their jobs can read (F18). That is
+// the operator's own answer to F18: the switch is on unless they turn it off,
+// and Plan.Cloned carries the repositories that can read the checkout so the
+// line a build prints names them rather than leaving "bake your repos" to read
+// like every repository of the project.
 //
 // An installation that predates both fields is byte-for-byte what it was: it
 // maps nothing, so no entry is its own, and no composed stage is ever quiet
@@ -127,8 +128,9 @@ type Request struct {
 	Map map[string]string
 	// Bake is the project's effective bake switch (bake_repos, D1901): nil when
 	// the project answered nothing, which is what an installation predating the
-	// field has, and true or false when an operator answered it. The three
-	// states decide differently — see Decide.
+	// field has, and true or false when an operator answered it. Nil and true
+	// are one statement — see Decide — which is what the switch means wherever
+	// else it is read (projectpolicy.Policy.BakesRepos).
 	Bake *bool
 }
 
@@ -163,23 +165,17 @@ type Plan struct {
 // an image they never pull is work nobody reads. A repository that runs this
 // entry neither way bakes nothing, and says nothing.
 //
-// # The bake switch, in its three states
+// # The bake switch
 //
-// bake_repos: false bakes nothing. bake_repos: true bakes the repository's own
-// checkout into the entry's image wherever the project says the repository runs
-// it, a shared image among them: that is the operator's own answer to F18, and
-// the build names the other repositories that can then read the checkout.
-//
-// The default — the project answered nothing, which is every installation
-// predating the field — is narrower, and it is D1901's own words: the switch
-// says the generated Dockerfiles clone each MAPPED repository. So the default
-// bakes a repository the project's map puts on this entry, and only into an
-// entry the map puts nothing else on. The map is the only thing a build can
-// read that says who else runs an entry, and its absence is the honest answer
-// to O3's "typically none for a shared image": nothing is baked into an image
-// another repository runs, and nothing is baked for a repository the project
-// never said runs this image, until an operator says so. Both refusals are
-// Notable, and each names the one command that asks.
+// bake_repos: false bakes nothing. Anything else — true, or the project
+// answering nothing, which is every installation predating the field — bakes
+// the repository's own checkout into the entry's image wherever the project
+// says the repository runs it, a shared image among them: that is the
+// operator's own answer to F18, and the build names the other repositories that
+// can then read the checkout (Plan.Cloned). Absent and true decide the same
+// way, because that is what the switch means everywhere else it is read
+// (projectpolicy.Policy.BakesRepos): one published node does not tell a
+// settings reader "on" and a build "nothing is baked".
 func Decide(req Request) Plan {
 	// The other repositories this image serves: they are the clone-at-start
 	// half of O3 (b) and are named whether or not this build bakes.
@@ -202,32 +198,22 @@ func Decide(req Request) Plan {
 	case req.Reference == "" && req.Map[req.Repo.Repo] != req.Entry:
 		return Plan{Cloned: cloned, Reason: fmt.Sprintf("the project's image map does not put %s on the catalog entry %s, so its jobs do not run this image", req.Repo.Repo, req.Entry)}
 	}
-	// An answered switch decides on its own: false bakes nothing anywhere, and
-	// true bakes the repository's own checkout into an entry other
-	// repositories run as well (Plan.Cloned names them) — that is the
-	// operator's answer to F18.
-	if req.Bake != nil {
-		if !*req.Bake {
-			return Plan{Cloned: cloned, Notable: true, Reason: "the project turned baking off (bake_repos is false in the published policy), so this image carries no checkout and its jobs clone at start"}
-		}
-		baked := req.Repo
-		return Plan{Baked: &baked, Cloned: cloned, Notable: true}
+	// Only a written false turns the bake off: bake_repos absent and true are
+	// one statement everywhere else that reads the switch
+	// (projectpolicy.Policy.BakesRepos, localcfg.BakeReposEffective), and a
+	// build that read the absent case as anything else would be a second
+	// meaning for one field.
+	if req.Bake != nil && !*req.Bake {
+		return Plan{Cloned: cloned, Notable: true, Reason: "the project turned baking off (bake_repos is false in the published policy), so this image carries no checkout and its jobs clone at start"}
 	}
-	switch {
-	case req.Map[req.Repo.Repo] != req.Entry:
-		// The default is the map's, so a repository the map does not put on
-		// this entry is not baked for by it — including one that runs the
-		// entry by its own workflow's reference, which the map then has to
-		// agree with before anything is written into an image.
-		return Plan{Cloned: cloned, Notable: true, Reason: fmt.Sprintf("the project's image map (image_map) does not put %s on the catalog entry %s, so nothing is baked by default: `fugaro image map set %s %s` says it runs this image, and bake_repos: true asks for the bake without a map", req.Repo.Repo, req.Entry, req.Repo.Repo, req.Entry)}
-	case len(cloned) > 0:
-		// The entry serves another repository: whatever is baked into it is
-		// source that repository's jobs can read (F18), so the default writes
-		// nothing there.
-		return Plan{Cloned: cloned, Notable: true, Reason: fmt.Sprintf("this image serves the other repositories the project maps to it (%s), whose jobs can read whatever is baked into it, so nothing is baked unless the project asks for it: bake_repos: true bakes %s's checkout here", strings.Join(cloned, ", "), req.Repo.Repo)}
-	}
+	// The bake lands in an image the entry's other repositories run as well
+	// (Plan.Cloned names them): whatever is baked into it is source their jobs
+	// can read (F18). That is the operator's own answer to F18 — the switch is
+	// on unless they turn it off — and the line a build prints names them, so
+	// what the bake exposes is said rather than assumed.
 	baked := req.Repo
 	return Plan{Baked: &baked, Cloned: cloned, Notable: true}
+
 }
 
 // markerPrefix begins the marker line the generated stage carries, so the
@@ -265,8 +251,9 @@ func Path(slug string) (string, error) {
 // The stage clones r.URL and no other URL: the build arguments a catalog build
 // passes are the building repository's, and the ones a REBUILD passes are its
 // own — the nightly check assigns an entry to the repository its source names,
-// or to the project's first when it has none (infra's catalogCheckRepos), which
-// is not always the checkout that composed the definition. Without the check,
+// or, for an inline definition, to the repository the project's map puts it on,
+// falling back to the project's first (infra's catalogCheckRepos), which is not
+// always the checkout that composed the definition. Without the check,
 // that rebuild would clone one repository into another's slug path, under the
 // marker and the tag the composed definition gave it, and the smoke would pass
 // on the pairing it read from the two. So the stage refuses a REPO_URL that is
@@ -364,7 +351,14 @@ func Append(definition []byte, p Plan) ([]byte, error) {
 // repository a definition bakes — the nightly rebuild, which runs as one
 // repository and cannot reproduce another's definition — reads this; BakedDir
 // is the path derived from it.
+//
+// It answers with the LAST marker: a definition that already bakes is composed
+// again by appending, so it can carry several stages and the one that runs is
+// the last. Reading the first would hand a reader the directory of a stage an
+// earlier one replaced — and the repository of a build that is not the one the
+// definition now bakes.
 func BakedSlug(definition []byte) (string, bool) {
+	var found string
 	for line := range strings.Lines(string(definition)) {
 		line = strings.TrimSuffix(line, "\n")
 		rest, ok := strings.CutPrefix(line, markerPrefix)
@@ -379,10 +373,10 @@ func BakedSlug(definition []byte) (string, bool) {
 			continue
 		}
 		if _, err := Path(slug); err == nil {
-			return slug, true
+			found = slug
 		}
 	}
-	return "", false
+	return found, found != ""
 }
 
 // BakedDir is the directory a composed definition bakes its checkout at, and

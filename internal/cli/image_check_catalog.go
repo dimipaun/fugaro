@@ -299,8 +299,15 @@ func (t *catalogCheckTarget) evaluate(ctx context.Context, e config.Entry, r cat
 	ev.bakedDir, ev.baked = imagebake.BakedDir(def)
 	if ev.baked {
 		if bakedSlug, ok := imagebake.BakedSlug(def); !ok || bakedSlug != r.Slug {
-			return ev, fmt.Errorf("the catalog entry %s carries a baked checkout at %s, and the installed catalog check job rebuilds the entry as %s: a rebuild has to run as the repository whose checkout the entry bakes, so run fugaro image build %s from that repository's checkout",
-				pluginwire.Printable(e.Name), ev.bakedDir, pluginwire.Printable(r.Repo), pluginwire.Printable(e.Name))
+			what, fix := "a checkout at "+pluginwire.Printable(ev.bakedDir),
+				fmt.Sprintf("run fugaro image build %s from that repository's checkout", pluginwire.Printable(e.Name))
+			if repo, known := t.bakedRepoFor(bakedSlug); known {
+				what = "the checkout of " + pluginwire.Printable(repo)
+				fix = fmt.Sprintf("map the entry to it (fugaro image map set %s %s) and run fugaro update, or run fugaro image build %s from its checkout",
+					pluginwire.Printable(repo), pluginwire.Printable(e.Name), pluginwire.Printable(e.Name))
+			}
+			return ev, fmt.Errorf("the catalog entry %s bakes %s, but the installed catalog check job rebuilds the entry as %s: a rebuild has to run as the repository whose checkout the entry bakes, so %s",
+				pluginwire.Printable(e.Name), what, pluginwire.Printable(r.Repo), fix)
 		}
 	}
 
@@ -346,6 +353,21 @@ func (t *catalogCheckTarget) evaluate(ctx context.Context, e config.Entry, r cat
 		MaxAge:    config.DefaultMaxAge, Now: t.now, Force: t.force,
 	}
 	return ev, nil
+}
+
+// bakedRepoFor is the repository a baked checkout is of, when this job's spec
+// knows it. The spec lists every repository the catalog builds in — the map is
+// what puts an entry with no repository of its own on one (infra's
+// catalogCheckRepos) — and the marker names the repository that composed the
+// definition. A composing repository this installation does not build in is not
+// in the spec, and the caller falls back to naming the directory.
+func (t *catalogCheckTarget) bakedRepoFor(slug string) (string, bool) {
+	for _, r := range t.spec.Repositories {
+		if r.Slug == slug {
+			return r.Repo, true
+		}
+	}
+	return "", false
 }
 
 // submit submits entry e's rebuild as repository r's build account: the request

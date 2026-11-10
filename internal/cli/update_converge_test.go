@@ -551,7 +551,7 @@ func doctorChecks(t *testing.T, root string) doctorOutput {
 // only at a build an operator runs, and a project that never mapped anything
 // and whose checkouts name no entry keeps byte for byte what it had. What such
 // a build then writes is pinned by TestCatalogBuildBakesTheMappedReposCheckout
-// and TestCatalogBuildDoesNotBakeForAnUnmappedCheckout, and the same bytes are
+// and TestCatalogBuildBakesTheEntryTheCheckoutNames, and the same bytes are
 // what the nightly rebuild reads
 // (TestCatalogCheckJobSmokesABakedDefinitionWhereTheImagePutIt).
 func TestUpdateConvergesImageBake(t *testing.T) {
@@ -583,9 +583,9 @@ func TestUpdateConvergesImageBake(t *testing.T) {
 			Repo: "acme/app", Slug: mustSlug("github", "acme/app"),
 			URL: "https://github.com/acme/app.git", Branch: "main",
 		},
-		// The node's own answer, not BakesRepos(): absent is a third state a
-		// build reads as the map's (imagebake.Decide), and an operator who
-		// wrote true is the answer this test converged.
+		// The node's own switch, and what a build reads it as: a written true
+		// (the answer this test converged) and an absent one decide the same
+		// way (imagebake.Decide, Policy.BakesRepos).
 		Map: p.ImageMap, Bake: p.BakeRepos,
 	})
 	if plan.Baked == nil {

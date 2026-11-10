@@ -804,11 +804,11 @@ func TestCatalogCheckJobSmokesABakedDefinitionWhereTheImagePutIt(t *testing.T) {
 // build was submitted and paid for. It is refused here, before a build is
 // submitted, and the line says which repository the definition bakes.
 func TestCatalogCheckJobRefusesADefinitionBakedForAnotherRepository(t *testing.T) {
-	f := newCatalogCheckJob(t, catalogCheckSpecFor(t, catalogCheckCatalog("runtime"), 5))
-	// The entry is assigned to acme/other, and the definition bakes acme/app's
-	// checkout: the rebuild's REPO_URL would be acme/other's. (acme/app is not
-	// in this spec — no entry of the catalog names its Dockerfile — so the slug
-	// is derived here, which is the slug a build of it would have composed.)
+	// The entry is assigned to acme/other and the definition bakes acme/app's
+	// checkout: the rebuild's REPO_URL would be acme/other's, and the generated
+	// stage would refuse it inside the build — after the build was submitted
+	// and paid for. Here the check refuses it first, and the fix it names is the
+	// one the assignment is made from.
 	appSlug := mustSlug("bitbucket", "acme/app")
 	baked, err := imagebake.Append([]byte(catalogCheckOtherDef), imagebake.Plan{Baked: &imagebake.Repo{
 		Repo: "acme/app", Slug: appSlug,
@@ -817,18 +817,45 @@ func TestCatalogCheckJobRefusesADefinitionBakedForAnotherRepository(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.seed(t, "runtime", "acme/other", string(baked), "sha256:"+strings.Repeat("9", 64))
+	for name, tc := range map[string]struct {
+		cat  *config.Catalog
+		want []string
+	}{
+		// The composing repository is one this installation builds in (the
+		// catalog gives it an entry of its own), so the check names it and the
+		// map command that makes the assignment agree with the definition.
+		"the composing repository is in the spec": {
+			cat:  catalogCheckCatalog("tools", "runtime"),
+			want: []string{"acme/app", "fugaro image map set acme/app runtime"},
+		},
+		// It is not — a repository of the project with no entry of its own — so
+		// the line names the directory the definition bakes, and the build that
+		// composes a definition for the repository the rebuild would run as.
+		"the composing repository is not in the spec": {
+			cat:  catalogCheckCatalog("runtime"),
+			want: []string{"/work/baked/" + appSlug, "fugaro image build runtime"},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newCatalogCheckJob(t, catalogCheckSpecFor(t, tc.cat, 5))
+			f.seed(t, "runtime", "acme/other", string(baked), "sha256:"+strings.Repeat("9", 64))
 
-	lines, err := runCatalogCheck(t)
-	if err == nil || !strings.Contains(err.Error(), "runtime") {
-		t.Fatalf("err = %v, want the entry the check failed for", err)
-	}
-	if got := buildPosts(f.fb); got != 0 {
-		t.Fatalf("builds submitted = %d, want 0: the rebuild cannot run as the repository whose checkout the definition bakes", got)
-	}
-	l := lineFor(t, lines, "runtime")
-	if l.Decision != imagecheck.CheckFailed || l.Severity != "ERROR" ||
-		!strings.Contains(l.Error, "/work/baked/"+appSlug) || !strings.Contains(l.Error, "acme/other") || !strings.Contains(l.Error, "fugaro image build") {
-		t.Fatalf("runtime line = %+v, want the baked checkout, the repository the rebuild would run as and the command that fixes it", l)
+			lines, err := runCatalogCheck(t)
+			if err == nil || !strings.Contains(err.Error(), "runtime") {
+				t.Fatalf("err = %v, want the entry the check failed for", err)
+			}
+			if got := buildPosts(f.fb); got != 0 {
+				t.Fatalf("builds submitted = %d, want 0: the rebuild cannot run as the repository whose checkout the definition bakes", got)
+			}
+			l := lineFor(t, lines, "runtime")
+			if l.Decision != imagecheck.CheckFailed || l.Severity != "ERROR" || !strings.Contains(l.Error, "acme/other") {
+				t.Fatalf("runtime line = %+v, want the failure naming the repository the rebuild would run as", l)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(l.Error, want) {
+					t.Errorf("the line %q does not name %q", l.Error, want)
+				}
+			}
+		})
 	}
 }
