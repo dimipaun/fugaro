@@ -3,6 +3,7 @@ package budget
 import (
 	"fmt"
 	"sort"
+	"time"
 )
 
 // The reconciliation alarm: the workspace's own count against a member's own
@@ -21,13 +22,21 @@ import (
 // hands both here. Nothing in this file does I/O, and nothing in it decides
 // which node of a member's database its ledger is.
 //
-// The bound is a NUMBER and not an adjective. Two figures of one workspace
-// differ legitimately by the calls in flight: a call the service has taken room
-// for and settled may not be in the member's ledger yet, and the other way
-// round, so the reservations in flight are part of the bound — each such call
-// can account for at most its own amount. What is left is the slack the caller
-// states (`WorkspaceReconcileInput.Slack`), which is where a deployment puts
-// whatever rounding it wants to tolerate; zero is exact agreement.
+// The bound is a NUMBER and not an adjective, and it is the COMPARED member's
+// own. Two figures of one member differ legitimately by that member's calls in
+// flight: a call the service has taken room for and settled may not be in the
+// member's ledger yet, and the other way round, so those reservations are part
+// of the bound — each such call can account for at most its own amount. What
+// another member has in flight is not part of it: the member's ledger accounts
+// for the member's calls, so a workspace-wide figure would let one member's
+// under-reporting hide under another member's calls, which is the direction the
+// alarm exists for. What is left is the slack the caller states
+// (`WorkspaceReconcileInput.Slack`), which is where a deployment puts whatever
+// rounding it wants to tolerate; zero is exact agreement.
+//
+// A hold whose call can no longer be in flight (`WorkspaceReservationTTL`) is
+// not calls in flight, so it widens no bound: the comparison is made at
+// `WorkspaceReconcileInput.Now` and reads the meter through `WorkspaceSpend.Live`.
 
 // WorkspaceLedger is one member's side of the comparison: what the member's own
 // ledger holds for the month, or the reason it could not be read.
@@ -63,8 +72,13 @@ type WorkspaceReconcileInput struct {
 	Month string
 	// Spend is the service's own count for the month, as
 	// ReadWorkspaceSpend returns it. Its reservations in flight widen the
-	// bound: they are the disagreement a healthy workspace has.
+	// bound, each member's own for its own comparison: they are the
+	// disagreement a healthy workspace has.
 	Spend WorkspaceSpend
+	// Now is the moment the comparison is made, which is what ages the
+	// reservations: a hold past its age is not a call in flight and widens no
+	// bound. A moment that is not stated expires nothing (WorkspaceSpend.Live).
+	Now time.Time
 	// Slack is what the caller tolerates beyond the calls in flight, in µ$,
 	// for the two sides' rounding. Zero is exact agreement.
 	Slack Micros
@@ -100,6 +114,10 @@ type WorkspaceAlarmMember struct {
 	// Delta is Ledger − Service: negative is a member that counted less than
 	// the service paid for, which is the direction the alarm exists for.
 	Delta Micros
+	// Bound is the bound THIS member was compared against: the member's own
+	// calls in flight plus the caller's slack. It is 0 for an unbound or
+	// unreadable member, which no figure of theirs was compared with.
+	Bound Micros
 	// Why is one of AlarmDisagrees, AlarmUnbound or AlarmUnreadable.
 	Why string
 	// Unreadable is the read's own error, when there was one.
@@ -114,8 +132,10 @@ type WorkspaceAlarmMember struct {
 type WorkspaceAlarm struct {
 	Name  string
 	Month string
-	// Bound is the number the run reported beyond: the reservations in flight
-	// plus the caller's slack.
+	// Bound is the widest bound the run compared any member against: the
+	// largest of the members' own calls in flight, plus the caller's slack. It
+	// is stated for a reader that wants one number; what a member was compared
+	// against is its own (WorkspaceAlarmMember.Bound).
 	Bound    Micros
 	Reported []WorkspaceAlarmMember
 }
@@ -126,7 +146,8 @@ func (a WorkspaceAlarm) Clear() bool { return len(a.Reported) == 0 }
 // ReconcileWorkspace compares the service's own count for one month against each
 // member's own ledger and reports every member whose two figures do not hold.
 func ReconcileWorkspace(in WorkspaceReconcileInput) WorkspaceAlarm {
-	bound := add(in.Spend.Reserved(), in.Slack)
+	spend := in.Spend.Live(in.Now)
+	bound := in.Slack
 	alarm := WorkspaceAlarm{Name: in.Name, Month: in.Month, Bound: bound}
 	seen := map[string]bool{}
 	for _, l := range in.Ledger {
@@ -137,7 +158,11 @@ func ReconcileWorkspace(in WorkspaceReconcileInput) WorkspaceAlarm {
 			continue
 		}
 		seen[l.Member] = true
-		service := in.Spend.Members[l.Member]
+		service := spend.Members[l.Member]
+		// This member's own bound: what ITS calls have in flight is what its
+		// ledger can account for, and another member's calls are not.
+		own := add(spend.ReservedBy(l.Member), in.Slack)
+		bound = max(bound, own)
 		switch {
 		case l.Unbound:
 			alarm.Reported = append(alarm.Reported, WorkspaceAlarmMember{
@@ -151,12 +176,12 @@ func ReconcileWorkspace(in WorkspaceReconcileInput) WorkspaceAlarm {
 			})
 		default:
 			delta := l.Spent - service
-			if !beyond(delta, bound) {
+			if !beyond(delta, own) {
 				continue
 			}
 			alarm.Reported = append(alarm.Reported, WorkspaceAlarmMember{
-				Member: l.Member, Service: service, Ledger: l.Spent, Delta: delta, Why: AlarmDisagrees,
-				Sentence: fmt.Sprintf("member %s's ledger counts %s and the workspace's own count is %s: %s apart, beyond the bound of %s (the calls in flight plus %s of slack)", l.Member, dollars(l.Spent), dollars(service), dollars(abs(delta)), dollars(bound), dollars(in.Slack)),
+				Member: l.Member, Service: service, Ledger: l.Spent, Delta: delta, Why: AlarmDisagrees, Bound: own,
+				Sentence: fmt.Sprintf("member %s's ledger counts %s and the workspace's own count is %s: %s apart, beyond the bound of %s (the member's own calls in flight plus %s of slack)", l.Member, dollars(l.Spent), dollars(service), dollars(abs(delta)), dollars(own), dollars(in.Slack)),
 			})
 		}
 	}
@@ -164,7 +189,7 @@ func ReconcileWorkspace(in WorkspaceReconcileInput) WorkspaceAlarm {
 	// comparison that never happened, and it is reported rather than skipped:
 	// the alarm never trusts a member silently, and a member missing from the
 	// caller's list is not a member that agrees.
-	for member, service := range in.Spend.Members {
+	for member, service := range spend.Members {
 		if seen[member] {
 			continue
 		}
@@ -173,6 +198,7 @@ func ReconcileWorkspace(in WorkspaceReconcileInput) WorkspaceAlarm {
 			Sentence: fmt.Sprintf("member %s's ledger was not read at all, so nothing was compared with the workspace's own count of %s", member, dollars(service)),
 		})
 	}
+	alarm.Bound = bound
 	sort.Slice(alarm.Reported, func(i, j int) bool { return alarm.Reported[i].Member < alarm.Reported[j].Member })
 	return alarm
 }

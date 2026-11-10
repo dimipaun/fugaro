@@ -16,6 +16,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget"
 )
@@ -133,6 +134,57 @@ func TestReconciliationAlarmBoundIsTheCallsInFlightPlusTheStatedSlack(t *testing
 	}
 	if got := wsAlarmReported(t, a, wsMeterMember); !strings.Contains(got.Sentence, "$1.00") {
 		t.Fatalf("the report reads %q and does not state the bound it passed", got.Sentence)
+	}
+}
+
+// The bound a member is compared against is the member's OWN calls in flight,
+// and never the workspace's: what another member has in flight is not a
+// difference this member's ledger can account for, and a workspace-wide bound
+// would let one member's under-reporting hide under another member's calls —
+// the direction the alarm exists for.
+func TestReconciliationAlarmBoundsAMemberByItsOwnCallsInFlight(t *testing.T) {
+	in := budget.WorkspaceReconcileInput{
+		Name:  wsMeterName,
+		Month: budget.MonthKey(wsMeterNow),
+		Now:   wsMeterNow,
+		Spend: wsAlarmSpend(t, map[string]float64{wsMeterMember: 1, wsMeterOther: 3}, map[string]float64{wsMeterOther: 2}),
+		Ledger: []budget.WorkspaceLedger{
+			// $1 short, with nothing of its own in flight.
+			{Member: wsMeterMember, Spent: 0},
+			// $2 short of the service's $3, which its own $2 in flight accounts
+			// for exactly.
+			{Member: wsMeterOther, Spent: wsMeterUSD(t, 1)},
+		},
+	}
+	a := budget.ReconcileWorkspace(in)
+	got := wsAlarmReported(t, a, wsMeterMember)
+	if got.Why != budget.AlarmDisagrees || got.Delta != -wsMeterUSD(t, 1) {
+		t.Fatalf("member %s is reported as %+v, want a $1 disagreement", wsMeterMember, got)
+	}
+	if got.Bound != 0 {
+		t.Fatalf("member %s was compared against %v, want its own calls in flight, of which it has none", wsMeterMember, got.Bound.USD())
+	}
+	if !strings.Contains(got.Sentence, "bound of $0.00") {
+		t.Fatalf("the report reads %q and does not state the member's own bound", got.Sentence)
+	}
+	for _, m := range a.Reported {
+		if m.Member == wsMeterOther {
+			t.Fatalf("member %s is reported although its own calls in flight account for its whole difference: %+v", wsMeterOther, m)
+		}
+	}
+	if a.Bound != wsMeterUSD(t, 2) {
+		t.Fatalf("the alarm's own bound is %v, want the widest a member was compared against ($2)", a.Bound.USD())
+	}
+
+	// And a hold whose call can no longer be in flight is not a call in flight:
+	// it widens no bound either.
+	in.Spend.Reservations["stale"] = budget.WorkspaceReservation{
+		Member: wsMeterMember, Amount: wsMeterUSD(t, 5),
+		At: wsMeterNow.Add(-budget.WorkspaceReservationTTL - time.Minute).UnixMilli(),
+	}
+	got = wsAlarmReported(t, budget.ReconcileWorkspace(in), wsMeterMember)
+	if got.Why != budget.AlarmDisagrees || got.Bound != 0 {
+		t.Fatalf("a hold past its age is still a bound: %+v", got)
 	}
 }
 
