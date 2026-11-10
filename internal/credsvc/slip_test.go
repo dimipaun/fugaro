@@ -31,6 +31,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"math"
 	"net/http"
 	"slices"
 	"strings"
@@ -43,6 +44,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/secretname"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 const (
@@ -391,6 +393,29 @@ func mustUserName(t *testing.T, id, name string) string {
 // ---------------------------------------------------------------------------
 // The grant
 // ---------------------------------------------------------------------------
+
+// TestServiceNeedsASlipStore: the store is required at construction, like the
+// state and the probe lease, and for the reason the guard itself gives — a
+// service that cannot write a slip can grant no run anything, so it is not a
+// service this build starts. Without the guard the grant would reach a nil
+// store and the answer would be a panic, which is a refusal an operator reads
+// as a crash and a run cannot act on.
+func TestServiceNeedsASlipStore(t *testing.T) {
+	var captured *Config
+	newSvcWith(t, func(_ *svc, cfg *Config) { captured = cfg })
+	if captured == nil {
+		t.Fatal("the fixture handed the test no configuration")
+	}
+	without := *captured
+	without.Slips = nil
+	if _, err := NewServer(without); err == nil {
+		t.Error("NewServer accepted a configuration whose slip store is nil")
+	}
+	// And the fixture's own configuration, which has one, is one it accepts.
+	if _, err := NewServer(*captured); err != nil {
+		t.Errorf("NewServer refused the fixture's own configuration: %v", err)
+	}
+}
 
 // TestGrantRefusedForAnotherOwnersToken: R7's owner-only rule, at the one place
 // it can be enforced for a whole run — the grant. A per-user credential is
@@ -750,6 +775,64 @@ func TestClaimExecutionIsOneCleanValue(t *testing.T) {
 	}
 }
 
+// TestGrantSlugIsOneCleanValue: the repository slug a grant names is a name of
+// the launcher's own grammar, but it is ALSO caller text that lands on this
+// service's own line (slipGrant), so it is held to one printable value at the
+// door — the same rule the claim's execution name is held to, for the same
+// reason: token.ValidSegment admits a bidi override (it is neither a control
+// rune nor a space), and a bidi override in a value written raw to the line an
+// operator reads it in rewrites that line. The fixture's handler is the text
+// one, which escapes the rune and would hide the defect, so what is pinned here
+// is the REFUSAL and not the line's bytes.
+//
+// The bound is held to task.Slug's own shape in the same breath: a real slug of
+// the longest the launcher can mint is granted, one byte longer is not.
+func TestGrantSlugIsOneCleanValue(t *testing.T) {
+	s := newSlips(t, testLauncherAccount)
+
+	longest, err := task.Slug("github", "acme/"+strings.Repeat("segment-", 20))
+	if err != nil {
+		t.Fatalf("building the longest slug a launcher can mint: %v", err)
+	}
+	if len(longest) != maxSlipSlugBytes {
+		t.Fatalf("task.Slug's longest slug is %d bytes, want the bound %d: a real launcher's slug must fit the grant", len(longest), maxSlipSlugBytes)
+	}
+	for _, slug := range []string{
+		s.slug,
+		longest,
+	} {
+		granted := s.grantOK(t, grantBody(t, slug, s.run, testJobSA, 3600, testSlipCredential))
+		if got := s.slip(t, granted.Slip).Slug; got != slug {
+			t.Errorf("the record's slug is %q, want %q", got, slug)
+		}
+	}
+
+	for _, slug := range []string{
+		"bidi‮override",
+		strings.Repeat("a", maxSlipSlugBytes+1),
+		"two words",
+		"line\nbreak",
+	} {
+		resp, body := s.grantCall(t, grantBody(t, slug, s.run, testJobSA, 3600, testSlipCredential))
+		wantRefusal(t, resp, body, StatusRequestRefused, ErrorRequestRefused)
+	}
+	// A refused grant writes nothing at all, which is the other half of "the
+	// refusal names the field and never the value".
+	if ids := s.slipIDs(t); len(ids) != 2 {
+		t.Errorf("the four refused grants left %d slips behind, want the two the granted ones wrote: %v", len(ids), ids)
+	}
+	// Nothing a refused call sent reaches the service's own line: the slug of a
+	// refused grant is never written there, which is what the check at the door
+	// is for. (The bidi rune is escaped by the fixture's text handler, so the
+	// refusal above is the assertion that carries the rule; this is the belt to
+	// that braces.)
+	for _, sent := range []string{"bidi‮override", "two words", "line\nbreak"} {
+		if strings.Contains(s.logs.String(), sent) {
+			t.Errorf("a refused grant put what it sent on the service's own line: %s", s.logs.String())
+		}
+	}
+}
+
 // TestMaxSlipRuntimeIsThePlatformMaximum: R10's cap. A slip may serve a run for
 // no longer than a run may live, and that bound is the compute platform's own
 // (backend.MaxRunTime). The cap is spelled in slip.go rather than imported
@@ -772,6 +855,30 @@ func TestMaxSlipRuntimeIsThePlatformMaximum(t *testing.T) {
 	}
 	if sl := s.slip(t, granted.Slip); sl.MaxRuntime != backend.MaxRunTime {
 		t.Errorf("the record's runtime is %s, want the cap %s", sl.MaxRuntime, backend.MaxRunTime)
+	}
+
+	// And the clamp is applied in SECONDS, before the multiply: an ask no
+	// duration can hold is still granted the cap and not refused, and it is not
+	// wrapped into a slip that is expired (a negative or tiny runtime) or one
+	// that never ends. The mutant this pins is `clampRuntime(time.Duration(n) *
+	// time.Second)`, which overflows int64 for the value below.
+	// The three asks: one that wraps NEGATIVE (refused as a request this
+	// contract does not read, which is what the old shape answered), one that
+	// wraps to 290448384 ns — a third of a second, so a slip that is over
+	// before the run could use it, answered 200 — and the cap's own edge.
+	for _, ask := range []int64{math.MaxInt64, 18446744074, cap + 1, maxSlipRuntimeSeconds + 1} {
+		granted := s.grantOK(t, grantBody(t, s.slug, s.run, testJobSA, ask, testSlipCredential))
+		if granted.MaxRuntimeSeconds != cap {
+			t.Errorf("a grant asking for %d seconds is answered %d, want the cap %d", ask, granted.MaxRuntimeSeconds, cap)
+		}
+		if sl := s.slip(t, granted.Slip); sl.MaxRuntime != backend.MaxRunTime {
+			t.Errorf("a grant asking for %d seconds wrote the runtime %s, want the cap %s", ask, sl.MaxRuntime, backend.MaxRunTime)
+		}
+		// And the run can use it: a wrapped runtime would reach the run as a
+		// slip that is already over, so the claim's own answer is read too.
+		if claimed := s.claimOK(t, granted.Slip, claimBody(t, "")); claimed.MaxRuntimeSeconds != cap {
+			t.Errorf("claiming a slip granted for %d seconds is answered the runtime %d, want the cap %d", ask, claimed.MaxRuntimeSeconds, cap)
+		}
 	}
 }
 

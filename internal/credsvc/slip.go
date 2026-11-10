@@ -95,6 +95,19 @@ const slipIDBytes = 16
 // value is a request this contract does not read rather than one to look up.
 const maxSlipIDBytes = 2 * slipIDBytes
 
+// maxSlipSlugBytes bounds the repository slug a grant names: task.Slug's own
+// 63-character shape (a readable part, "-", and sixteen hex of the repository's
+// hash), which is what a launcher's tokens spell.
+//
+// The bound is here, with a printable rule, rather than left to
+// token.ValidSegment — the check the rest of this contract uses — because the
+// slug is caller text that lands on this service's OWN line (slipGrant), and
+// ValidSegment admits a bidi override: it is not a control rune and not a
+// space, so it would rewrite the line an operator reads the slug in. The value
+// is spelled here and TestGrantSlugIsOneCleanValue holds it to what task.Slug
+// really produces.
+const maxSlipSlugBytes = 63
+
 // maxSlipExecutionBytes bounds the Cloud Run execution name a claim reports.
 // It is generous for the real thing — an execution is its job's name and a
 // short suffix, and a job name is at most 49 bytes (ValidJobName) — because the
@@ -186,6 +199,13 @@ func readGrantRequest(body []byte) (SlipGrantRequest, error) {
 	switch {
 	case !token.ValidSegment(req.Slug):
 		return SlipGrantRequest{}, errors.New("the call names no repository slug")
+	case !printableHeaderValue(req.Slug, maxSlipSlugBytes):
+		// The slug is a name of the launcher's own grammar AND text that lands
+		// on this service's own line, which is why it is held to one printable
+		// value here: a bidi override is neither a control rune nor a space, so
+		// ValidSegment admits it, and it would rewrite the line an operator
+		// reads the slug in (the rule internal/safetext states).
+		return SlipGrantRequest{}, fmt.Errorf("the call names a repository slug that is not one printable value (1 to %d ASCII bytes, no space)", maxSlipSlugBytes)
 	case !task.ValidRunID(req.Run):
 		return SlipGrantRequest{}, errors.New("the call names no run id of this installation's shape")
 	case !validAccount(req.Account):
@@ -333,7 +353,7 @@ func (s *Server) slipGrant(ctx context.Context, w http.ResponseWriter, r *http.R
 		s.refuseGrant(ctx, w, caller.Account, StatusUnavailable, ErrorStateUnavailable, "no slip could be written for this call")
 		return
 	}
-	runtime := clampRuntime(time.Duration(req.MaxRuntimeSeconds) * time.Second)
+	runtime := clampRuntime(req.MaxRuntimeSeconds)
 	sl := creds.Slip{
 		ID:              id,
 		Owner:           caller.Sub,
@@ -549,14 +569,34 @@ func checkGrantedNames(names []string, owner string) error {
 	return nil
 }
 
+// maxSlipRuntimeSeconds is maxSlipRuntime in the unit the launcher speaks, and
+// it is the bound the clamp is applied IN: an ask is held to the cap before it
+// is turned into a duration, because a duration is nanoseconds and a large
+// enough ask multiplied first overflows int64 and wraps. The wrapped value is
+// small or negative, so a clamp applied afterwards lets it through as a slip
+// that is expired before it is claimed or one that never ends — the one reading
+// a cap must not have, and the reason this constant exists at all.
+const maxSlipRuntimeSeconds = int64(maxSlipRuntime / time.Second)
+
 // clampRuntime holds a granted runtime to what a slip may serve (R10): a
 // request above the cap is granted the cap rather than refused, and a request
 // at or below it is granted what it asked for.
-func clampRuntime(d time.Duration) time.Duration {
-	if d > maxSlipRuntime {
+//
+// It takes SECONDS rather than a duration for the reason the constant above
+// gives: the cap has to be applied before the multiply, so a launcher asking
+// for a runtime no duration can hold is answered the cap instead of an
+// overflow. A value that is not positive cannot reach here — readGrantRequest
+// refuses it — and one that did is answered 0 rather than the cap, so that a
+// caller which lost that refusal gets a slip that is never live instead of one
+// that outlives what was asked for.
+func clampRuntime(seconds int64) time.Duration {
+	switch {
+	case seconds <= 0:
+		return 0
+	case seconds > maxSlipRuntimeSeconds:
 		return maxSlipRuntime
 	}
-	return d
+	return time.Duration(seconds) * time.Second
 }
 
 // auditGrant records one refused grant: the launcher's own act, written with
