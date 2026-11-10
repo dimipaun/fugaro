@@ -775,8 +775,10 @@ func TestDocsWindowsConsoleClaimsAboutOtherFilesAreTrue(t *testing.T) {
 // Three of the four are read here, each as the block it is made in -- section
 // 4.2's list, section 7.6's rule 3, the owner-run table's Windows-signing row
 // and D10's answer cell. The fourth is the console's own README, read in
-// docs_desktop_console_test.go, the file this package's console boundary
-// allow-list admits to a console/ path.
+// docs_desktop_console_test.go, which is the file this package's console
+// boundary allow-list admits to a path under the console tree -- the reason is
+// written there rather than here, because a Go file in this package may not
+// spell such a path (docs_console_boundary_test.go, Task 0.3 a3).
 //
 // The same ruling reached docs/windows-cli/wsl.md, whose console row says the
 // console is out of scope because it needs a Windows CLI first (O1, F43): the

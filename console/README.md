@@ -4598,8 +4598,17 @@ with a display exercises it against the built app and the frozen menu this run i
 
 ## The Linux build, unsigned (the owner's ruling of 2026-10-20)
 
-**The owner ruled: *"yes, Linux for 0.10.0, unsigned"*.** Windows stays out. The
-ruling is recorded where the answer is — the design's **D10** cell carries it as
+**The owner ruled: *"yes, Linux for 0.10.0, unsigned"*.** Windows stays out —
+**amended 2026-11-10: the *build* half of that moved and the signing half did
+not.** The owner's ruling of 2026-10-20 gives the console a Windows **build**
+too, and it is the *Linux* `fugaro` inside a WSL distribution rather than a
+Windows one, packed by `electron-builder --win` in the staged
+`docs/pending-workflows/console-windows.yml` and run at release time only
+([the Windows section below](#the-windows-pack-unsigned-and-not-yet-run),
+[docs/console-windows/](../docs/console-windows/README.md)); what stays out of
+it is the **signing**, because there is still no Authenticode identity for this
+project and none is planned. The ruling is recorded where the answer is — the
+design's **D10** cell carries it as
 a dated amendment after the 2026-10-15 acceptance it changes — and in its own
 section, [design §7.6](../../docs/design/desktop-console.md), with the four
 places that had read "later" amended in the same commit (§4.1 item 5, §4.2,
