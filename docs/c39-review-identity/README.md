@@ -1,6 +1,6 @@
 # C3.9's review half: a project-scoped review identity, a read-only token set and a signed verdict
 
-**Status: design only; nothing here is approved and no code follows from this folder.** This document
+**Status as of 2026-11-10: done except the owner's live check; see [docs/status.md](../status.md) for the current table.** This document
 set answers one brief: the cloud senior review ([docs/cloud-senior-review/](../cloud-senior-review/), PR
 #1472) cannot run its first slice — **E1 + CSR1 + CSR7 + CSR2** — because it needs a half of the credentials
 service that does not exist and that

@@ -4,7 +4,7 @@
 **Numbers reserved: D1810-D1839, checks 480-489** (D1810-D1823 and checks 480 and 481 used).
 **Typo fixes to the spec:** none.
 
-Status: **plan only; nothing is implemented; no task approved.**
+**Status as of 2026-11-10: in progress, 4/7 merged; see [docs/status.md](../status.md) for the current table.**
 
 | File | What it is |
 | --- | --- |

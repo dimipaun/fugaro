@@ -1,6 +1,6 @@
 # `fugaro issue mine`: implementation plan
 
-**Status: plan only; nothing is implemented; no task is approved.** Each task below needs the owner's explicit go, by name; answering a decision approved none. This plan builds [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md) (which wins).
+**Status as of 2026-11-10: in progress, 4/7 merged; see [docs/status.md](../status.md) for the current table.** Each task below needs the owner's explicit go, by name; answering a decision approved none. This plan builds [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md) (which wins).
 
 **Owner answers that shaped it (2026-11-08):** D1780 the user is the verified credential address, cached for offline display reads (recommended); D1781 three additive date fields on the record (recommended); D1782 "covered" needs the CLI and the installation record at or above `resolved_in` (recommended); D1783 row order: regression, fixed-not-updated, local and pending, submitted, resolved and dismissed (recommended); D1784 **no GitHub access in `mine`: go by `resolved_in` alone (not the recommendation)**.
 

@@ -553,6 +553,219 @@ func TestBundleRefusesConsumerWithoutWorkspace(t *testing.T) {
 	}
 }
 
+// ---
+// The project's provider key (AK6b: F15, D1418)
+// ---
+
+// providerEntry is the bundle key of the project's provider key: the
+// third-party route's credential (F15). It is config.ProviderKeySecret, which
+// AK6a made the credential's logical name on the account axis and which is this
+// document's key for it — the relationship config.AnthropicSecret has with the
+// project's paid key. It is a literal on purpose: the test below holds the
+// constant to it, so a rename of either cannot quietly move the credential's
+// home in the bundle.
+const providerEntry = "provider-key"
+
+// testProviderBase is where a provider entry's calls go, and it is a URL and
+// not a credential: the two routing facts of a provider entry (where the call
+// goes and how the key is sent) are facts and not secrets (D1418), which is why
+// naming them in a test file breaks no rule. This one is what the loader's own
+// check admits and no provider ever served.
+const testProviderBase = "https://provider.example/api"
+
+// providerEntryDoc is a provider entry's document body, one field per line, as
+// `fugaro creds set` writes a structured entry (the read consumer's shape).
+func providerEntryDoc(lines ...string) []byte {
+	doc := providerEntry + ":\n"
+	for _, l := range lines {
+		doc += "  " + l + "\n"
+	}
+	return []byte(doc)
+}
+
+// providerKeyDoc is the entry the tests below drive: a key, its base URL and
+// its auth shape, the key built at run time (Convention 2).
+func providerKeyDoc(t *testing.T, baseURL, auth string) []byte {
+	t.Helper()
+	return providerEntryDoc("key: "+fakeCred(t, "provider-key"), "base_url: "+baseURL, "auth: "+auth)
+}
+
+// providerBundleDoc is the fixture the tests of this and the other files of
+// this package start from — bundleDoc, every credential the platform defines —
+// with the provider key beside it: what a bundle that can reach a provider
+// holds.
+func providerBundleDoc(t *testing.T, baseURL, auth string) []byte {
+	t.Helper()
+	return append(bundleDoc(t), providerKeyDoc(t, baseURL, auth)...)
+}
+
+// TestBundleHoldsAProviderKey is AK6b's red step: the bundle's closed key set
+// gains the project's provider key, and the entry carries the two routing facts
+// a provider call needs — a base URL and an auth shape — which are not
+// credentials (F15, D1418).
+//
+// The facts are ADDITIVE and OPTIONAL fields of one entry's value: a bundle
+// written before this task decodes exactly as it did, no format version moves,
+// and only the entry whose kind is a provider key carries them. That is D1418's
+// ruling, and it is why the provider's base URL never leaves this document: a
+// run is told nothing about the endpoint its call goes to.
+//
+// The entry is in the document and in NEITHER Credentials (what a coding caller
+// is offered: a tier-C entry there would refuse that caller's whole call,
+// checkCandidates) nor Lookup (which answers model credentials), so the only way
+// to it is the accessor that selects by KIND — ProviderKey — which is the rule
+// the App key and the git token already keep, and it is the rule that matters
+// here for the same reason: an account may legally be named "provider-key"
+// (claude-oauth-token-provider-key resolves to that name, and no account name is
+// reserved for this credential), so a lookup by name could not tell the
+// provider's key from the account's token.
+func TestBundleHoldsAProviderKey(t *testing.T) {
+	if config.ProviderKeySecret != providerEntry {
+		t.Fatalf("config.ProviderKeySecret = %q, want %q: the bundle's key for the credential is the name AK6a gave it", config.ProviderKeySecret, providerEntry)
+	}
+	// The closed set's own answer, which is the ONE place a document key becomes
+	// a name, a kind and a tier.
+	name, kind, tier, ok := CredentialKey(config.ProviderKeySecret)
+	if !ok || name != config.ProviderKeySecret || kind != KindProvider || tier != creds.TierC {
+		t.Fatalf("CredentialKey(%q) = (%q, %q, %q, %v), want the provider kind at tier C", config.ProviderKeySecret, name, kind, tier, ok)
+	}
+
+	doc := providerBundleDoc(t, testProviderBase, "bearer")
+	b, err := ParseBundle(doc)
+	if err != nil {
+		t.Fatalf("ParseBundle of a document holding the provider key = %v; the provider key is a credential the bundle may hold (F15, D1418)", err)
+	}
+	e, ok := b.ProviderKey()
+	if !ok {
+		t.Fatal("ProviderKey() found nothing, and the document holds one")
+	}
+	if e.Kind != KindProvider || e.Tier != creds.TierC || e.Key != config.ProviderKeySecret || e.Name != config.ProviderKeySecret {
+		t.Errorf("ProviderKey() = %+v, want the provider kind at tier C, keyed and named %q", e, config.ProviderKeySecret)
+	}
+	if want := fakeCred(t, "provider-key"); e.Value() != want {
+		t.Error("ProviderKey() answered an entry whose value is not the document's")
+	}
+	if e.baseURL != testProviderBase || e.auth != providerAuthBearer {
+		t.Errorf("the entry's routing facts = (%q, %q), want the document's (%q, %q)", e.baseURL, e.auth, testProviderBase, providerAuthBearer)
+	}
+
+	// The exclusions, from the document side: a coding caller's candidates are
+	// Credentials(), and the tier-C entry must not be among them.
+	for _, c := range b.Credentials() {
+		if c.Tier == creds.TierC || c.Name == config.ProviderKeySecret {
+			t.Errorf("Credentials() offers the provider key (%v) to a coding caller", c)
+		}
+	}
+	if e, ok := b.Lookup(config.ProviderKeySecret); ok {
+		t.Errorf("Lookup(%q) answered %+v, and it answers model credentials only", config.ProviderKeySecret, e)
+	}
+
+	// An account named after the credential is a legal account and a different
+	// credential, and the two live in one document: the provider entry is found
+	// by kind and the account by name, so neither hides the other.
+	both, err := ParseBundle(append(providerBundleDoc(t, testProviderBase, "bearer"),
+		[]byte(config.ClaudeAccountSecret(config.ProviderKeySecret)+": "+fakeCred(t, "account")+"\n")...))
+	if err != nil {
+		t.Fatalf("ParseBundle of the provider key beside an account named after it = %v; both are legal keys of the document", err)
+	}
+	if e, ok := both.ProviderKey(); !ok || e.Kind != KindProvider {
+		t.Errorf("ProviderKey() beside an account named after it = (%+v, %v), want the provider entry", e, ok)
+	}
+	if e, ok := both.Lookup(config.ProviderKeySecret); !ok || e.Tier != creds.TierA {
+		t.Errorf("Lookup(%q) beside the provider entry = (%+v, %v), want the account at tier A", config.ProviderKeySecret, e, ok)
+	}
+
+	// The value is scrubbed like every other credential's, and the two routing
+	// facts are not: they are a URL and a word, and a scrub that redacted them
+	// would be redacting the ends of ordinary prose (Secrets).
+	secrets := b.Secrets()
+	hasValue := false
+	for _, v := range secrets {
+		switch v {
+		case fakeCred(t, "provider-key"):
+			hasValue = true
+		case testProviderBase, providerAuthBearer, providerAuthXAPIKey:
+			t.Errorf("Secrets() carries %q, which is a routing fact and not a credential", v)
+		}
+	}
+	if !hasValue {
+		t.Error("Secrets() does not carry the provider key's value")
+	}
+
+	// A document without the entry is found=false and never an empty credential,
+	// which is the state the service refuses on rather than falling back to
+	// something the job holds (D143).
+	plain, err := ParseBundle(bundleDoc(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e, ok := plain.ProviderKey(); ok || e.Value() != "" {
+		t.Errorf("ProviderKey() on a document without the entry = (%+v, %v), want nothing", e, ok)
+	}
+}
+
+// TestProviderEntryWithoutItsRoutingFactsIsRefused: a provider entry that does
+// not carry what a provider call needs is refused, and so is an auth shape
+// outside the two the platform defines. Nothing is defaulted and nothing is
+// dropped: an entry with no base URL is a key this service would have to invent
+// a host for, and an auth shape it does not know is a guess about how a
+// credential is sent — both fail closed (the reviewer's condition 2, §5 of
+// docs/api-key-review/security-review.md).
+//
+// Every refusal names the ENTRY's key and never a field's content. That is why
+// the loader does NOT wrap config.CheckProviderBaseURL's message, which quotes
+// the URL it refused: a base URL is document text a person typed, and the
+// service's refusals are its own sentences (the package's no-echo rule). The
+// rows below are the loader's alone — the schema cannot state the URL rule, so
+// they are not in TestBundleSchemaMatchesTheLoader.
+//
+// The first row is the red step's own shape: before the kind existed, every
+// document here was refused whole as a key that is not a credential name, which
+// is the wrong one of the two diagnoses — the KEY is a credential of the bundle
+// and the FIELD is what is wrong with it.
+func TestProviderEntryWithoutItsRoutingFactsIsRefused(t *testing.T) {
+	key := fakeCred(t, "provider-key")
+	url := testProviderBase
+	for _, tc := range []struct {
+		name string
+		doc  []byte
+		want error
+	}{
+		{"no base URL", providerEntryDoc("key: "+key, "auth: bearer"), ErrBundleBadValue},
+		{"no auth shape", providerEntryDoc("key: "+key, "base_url: "+url), ErrBundleBadValue},
+		{"no key", providerEntryDoc("base_url: "+url, "auth: bearer"), ErrBundleBadValue},
+		{"an empty field", providerEntryDoc("key: "+key, "base_url: \"\"", "auth: bearer"), ErrBundleBadValue},
+		{"a base URL with no scheme", providerEntryDoc("key: "+key, "base_url: provider.example", "auth: bearer"), ErrBundleBadValue},
+		{"a plaintext base URL", providerEntryDoc("key: "+key, "base_url: http://provider.example/api", "auth: bearer"), ErrBundleBadValue},
+		{"a base URL carrying a credential", providerEntryDoc("key: "+key, "base_url: https://user:"+key+"@provider.example/api", "auth: bearer"), ErrBundleBadValue},
+		{"a base URL with a query", providerEntryDoc("key: "+key, "base_url: "+url+"?key="+key, "auth: bearer"), ErrBundleBadValue},
+		{"a base URL with a dot segment", providerEntryDoc("key: "+key, "base_url: https://provider.example/a/../api", "auth: bearer"), ErrBundleBadValue},
+		{"a base URL that is not a string", providerEntryDoc("key: "+key, "base_url: 1234", "auth: bearer"), ErrBundleBadValue},
+		{"an auth shape outside the two", providerEntryDoc("key: "+key, "base_url: "+url, "auth: oauth"), ErrBundleBadValue},
+		{"an auth shape that is only nearly one", providerEntryDoc("key: "+key, "base_url: "+url, "auth: Bearer"), ErrBundleBadValue},
+		{"no auth shape but a default spelled in", providerEntryDoc("key: "+key, "base_url: "+url, "auth: \"\""), ErrBundleBadValue},
+		{"a field the entry does not define", providerEntryDoc("key: "+key, "base_url: "+url, "auth: bearer", "models: [\"x/y\"]"), ErrBundleUnknownField},
+		{"a misspelt field", providerEntryDoc("key: "+key, "baseURL: "+url, "auth: bearer"), ErrBundleUnknownField},
+		{"a value that is not a mapping", []byte(providerEntry + ": " + key + "\n"), ErrBundleBadValue},
+		{"an empty mapping", []byte(providerEntry + ": {}\n"), ErrBundleBadValue},
+		{"the entry twice", append(providerKeyDoc(t, url, "bearer"), providerKeyDoc(t, url, "x-api-key")...), ErrBundleUnknownKey},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ParseBundle(tc.doc)
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("ParseBundle(%q) = %v, %v; want %v", tc.doc, got, err, tc.want)
+			}
+			// The refusal names the entry and carries no field content: not the
+			// URL, not the auth shape, not the key.
+			for _, v := range []string{url, "bearer", key} {
+				if strings.Contains(err.Error(), v) {
+					t.Errorf("the refusal carries document text (%q): %v", v, err)
+				}
+			}
+		})
+	}
+}
+
 // TestBundleGitKindNeverACascadeCandidate: the Bitbucket credential is in the
 // document and is NEVER a credential the cascade may select — the same
 // posture the GitHub App's key has, and for the same reason: a candidate the
@@ -971,6 +1184,24 @@ func TestBundleSchemaMatchesTheLoader(t *testing.T) {
 		{"a read consumer with a field it does not define", readConsumerEntry + ":\n  key: " + fakeCred(t, "x") + "\n  secret: " + fakeCred(t, "y") + "\n  workspace: " + fakeCred(t, "z") + "\n  repositories: [r]\n"},
 		{"a read consumer with an empty field", readConsumerEntry + ":\n  key: " + fakeCred(t, "x") + "\n  secret: \"\"\n  workspace: " + fakeCred(t, "z") + "\n"},
 		{"a read consumer with a field that is not a string", readConsumerEntry + ":\n  key: " + fakeCred(t, "x") + "\n  secret: " + fakeCred(t, "y") + "\n  workspace: 1234\n"},
+		// The provider key's entry (AK6b) is the second value that is not a
+		// string, so the schema names its key too. The rows are the shape both
+		// sides have to agree on, and every one of them is a shape the SCHEMA can
+		// state: a base URL the config check refuses is a row of
+		// TestProviderEntryWithoutItsRoutingFactsIsRefused instead, because the
+		// schema is deliberately the weaker reader of that one field.
+		{"the provider key", string(providerKeyDoc(t, testProviderBase, providerAuthBearer))},
+		{"the provider key beside every other credential", string(providerBundleDoc(t, testProviderBase, providerAuthXAPIKey))},
+		{"a provider key whose value is a string", providerEntry + ": " + fakeCred(t, "x") + "\n"},
+		{"a provider key missing its base URL", string(providerEntryDoc("key: "+fakeCred(t, "x"), "auth: bearer"))},
+		{"a provider key missing its auth shape", string(providerEntryDoc("key: "+fakeCred(t, "x"), "base_url: "+testProviderBase))},
+		{"a provider key with a field it does not define", string(providerEntryDoc("key: "+fakeCred(t, "x"), "base_url: "+testProviderBase, "auth: bearer", "models: [\"x/y\"]"))},
+		{"a provider key with an empty field", string(providerEntryDoc("key: "+fakeCred(t, "x"), "base_url: \"\"", "auth: bearer"))},
+		// The auth shape is a closed set the schema CAN state, and it does
+		// (enum): a schema that accepted any string here would be the weaker
+		// reader of a set the platform defines, which is exactly the drift this
+		// row set exists to catch.
+		{"a provider key with an auth shape outside the two", string(providerEntryDoc("key: "+fakeCred(t, "x"), "base_url: "+testProviderBase, "auth: oauth"))},
 		// The account family's one reserved spelling: it resolves to the git
 		// credential's own key, so the loader refuses it, and the schema has
 		// to refuse it too even though the pattern alone admits it.

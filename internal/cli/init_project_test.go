@@ -23,14 +23,17 @@ const (
 	billingAcc = "0123AB-4567CD-89EF01"
 )
 
-// The three patterns TestTheBillingListIsNarrow reads the tree with: the one
-// call site that lists a caller's billing accounts, and the predicate that
+// The two patterns TestTheBillingListIsNarrow reads the tree with: the one
+// call site that lists a caller's billing accounts, and the value entry that
 // bounds it. They are written on the call and not on the callee's own name so
 // that an aliased import is caught too.
 var (
 	billingListCallRE = regexp.MustCompile(`\.ListWithFallback\(`)
-	canTypeReadRE     = regexp.MustCompile(`\br\.canType\(\)`)
-	canTypeGuardRE    = regexp.MustCompile(`if !r\.canType\(\) \{`)
+	// billingValueReadRE is the answer's own read (valueentry.go): since T7 the
+	// billing answer is a value and not a confirmation, so the predicate that
+	// keeps the list out of a session nobody can answer is the read's own
+	// refusal, made in askBilling before the accounts are asked for.
+	billingValueReadRE = regexp.MustCompile(`\breadValue\(`)
 )
 
 // projectRig is the init rig with the Firebase Management and Cloud
@@ -149,29 +152,23 @@ func (j projectJSON) state(name string) string {
 	return ""
 }
 
-// The flag alone creates nothing; neither does a wrong ID; the typed ID
-// creates exactly one project and adds Firebase, and billing stays the
-// user's.
+// The flag alone creates nothing, and --plan-only creates nothing; the
+// creation is Typed in both doors, so a person at the terminal is the
+// confirmation and nothing is typed under it (T7): exactly one project is
+// created, Firebase is added to it, and billing stays the user's.
 func TestCreateProjectNeedsFlagAndConfirm(t *testing.T) {
 	r := newProjectRig(t)
 
 	// No flag: the project stage is not even registered.
 	// (The installation's own checks then find no such project.)
-	_, _, err := r.run(t, true, newProj+"\n", "--plan-only")
+	_, _, err := r.run(t, true, "", "--plan-only")
 	if err == nil || !strings.Contains(err.Error(), "reading project") {
 		t.Errorf("err = %v", err)
 	}
 	r.nothingDone(t, "no --create-project")
 
-	// The flag, and a wrong confirmation.
-	_, _, err = r.run(t, true, "yes\n", "--create-project")
-	if err == nil {
-		t.Error("an unconfirmed creation exited 0")
-	}
-	r.nothingDone(t, "a wrong confirmation")
-
 	// The flag, with --plan-only: shows the plan and does nothing.
-	out, _, err := r.run(t, true, newProj+"\n", "--create-project", "--plan-only")
+	out, _, err := r.run(t, true, "", "--create-project", "--plan-only")
 	if err != nil && ExitCode(err) != ExitUserError {
 		t.Fatal(err)
 	}
@@ -180,8 +177,8 @@ func TestCreateProjectNeedsFlagAndConfirm(t *testing.T) {
 	}
 	r.nothingDone(t, "--plan-only")
 
-	// The right ID.
-	_, _, _ = r.run(t, true, newProj+"\n", "--create-project", "--display-name", "Fugaro New")
+	// The flag at a person's terminal: the creation goes on with nothing typed.
+	_, _, _ = r.run(t, true, "", "--create-project", "--display-name", "Fugaro New")
 	cs := r.crm.Creates()
 	if len(cs) != 1 || cs[0].ID != newProj || cs[0].DisplayName != "Fugaro New" || cs[0].Parent != "" {
 		t.Fatalf("creates = %+v: want exactly one, with no parent", cs)
@@ -243,8 +240,6 @@ func TestYesNeverLinksBilling(t *testing.T) {
 	}{
 		"--yes, piped":                       {false, billingAcc + "\n", []string{"--yes"}},
 		"--yes --non-interactive":            {true, billingAcc + "\n", []string{"--yes", "--non-interactive"}},
-		"terminal, the project ID not typed": {true, "x\n", nil},
-		"terminal, the wrong account typed":  {true, newProj + "\n", nil},
 		"terminal, --yes, account not typed": {true, "", []string{"--yes"}},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -255,22 +250,22 @@ func TestYesNeverLinksBilling(t *testing.T) {
 		})
 	}
 
-	// The creation's confirmation does not stand for billing's.
+	// A person at the terminal, without --yes: nothing is typed at the link
+	// and nothing is read for it (T7), so the account named by the flag is
+	// the one linked — including where the line on stdin is another account.
 	r := newProjectRig(t)
-	_, _, _ = r.run(t, true, newProj+"\n"+newProj+"\n", "--create-project", "--link-billing", billingAcc)
-	if len(r.crm.Creates()) != 1 || len(r.bill.Links()) != 0 {
-		t.Errorf("creates %d, links %v: the project's ID must not confirm billing", len(r.crm.Creates()), r.bill.Links())
-	}
-
-	// Both confirmations typed: the link is made, to the account named.
-	r = newProjectRig(t)
 	r.bill.AddAccount(billingAcc, true)
-	out, _, _ := r.run(t, true, newProj+"\n"+billingAcc+"\n", "--create-project", "--link-billing", billingAcc)
+	out, _, _ := r.run(t, true, billingAcc+"\n", "--create-project", "--link-billing", billingAcc)
 	if l := r.bill.Links(); len(l) != 1 || l[0] != (gcpfake.Link{Project: newProj, Account: billingAcc}) {
-		t.Errorf("links = %v\n%s", l, out)
+		t.Errorf("links = %v, want the flag's own account\n%s", l, out)
 	}
 }
 
+// TestProjectAndBillingInConfirmationText: what each banner says before the
+// step it stands for, on the run that reads it at a person's terminal. The
+// line on stdin is what a person might type out of habit: nothing is read for
+// either step any more (T7, docs/no-prompt-policy), so the banners are the
+// whole of what the reader has and both steps go on.
 func TestProjectAndBillingInConfirmationText(t *testing.T) {
 	r := newProjectRig(t)
 	t.Setenv("GOOGLE_CLOUD_QUOTA_PROJECT", "my-quota-proj")
@@ -280,7 +275,9 @@ func TestProjectAndBillingInConfirmationText(t *testing.T) {
 			t.Errorf("the creation's confirmation lacks %q:\n%s", want, out)
 		}
 	}
-	r.nothingDone(t, "a declined creation")
+	if cs := r.crm.Creates(); len(cs) != 1 || cs[0].ID != newProj {
+		t.Errorf("creates = %+v, want the project the banner named: nothing is typed under it\n%s", cs, out)
+	}
 
 	r = newProjectRig(t)
 	r.existing(false)
@@ -296,7 +293,9 @@ func TestProjectAndBillingInConfirmationText(t *testing.T) {
 	if !strings.Contains(out, "no parent") {
 		t.Errorf("a create without --parent does not say it has none:\n%s", out)
 	}
-	r.nothingDone(t, "a declined creation")
+	if cs := r.crm.Creates(); len(cs) != 1 || cs[0].Parent != "" {
+		t.Errorf("creates = %+v, want one with no parent", cs)
+	}
 }
 
 // A project an earlier run of fugaro setup created and finished (Firebase and
@@ -888,7 +887,9 @@ func TestRelinkNeverHappens(t *testing.T) {
 }
 
 // A project an earlier run created and did not finish is resumed with every
-// change said to be to that project, each behind its own typed confirmation.
+// change said to be to that project, each behind its own banner — and nothing
+// is typed under either of them (T7, docs/no-prompt-policy), so a person at
+// their terminal reads the two and both steps go on.
 func TestResumedProjectBannersSayResuming(t *testing.T) {
 	r := newProjectRig(t)
 	r.crm.AddProject(newProj, 424242)
@@ -901,22 +902,15 @@ func TestResumedProjectBannersSayResuming(t *testing.T) {
 	}
 	r.nothingDone(t, "the plan")
 
-	out, _, _ = r.run(t, true, newProj+"\n"+billingAcc+"\n", "--create-project", "--link-billing", billingAcc)
+	// Nothing on stdin: the two banners are the whole of it, and the resume
+	// runs to both of its changes.
+	out, _, _ = r.run(t, true, "", "--create-project", "--link-billing", billingAcc)
 	if n := strings.Count(out, "⚠ CONFIRM: resuming project"); n != 2 {
 		t.Errorf("%d confirmations say existing, want 2 (Firebase, billing):\n%s", n, out)
 	}
 	if len(r.crm.Creates()) != 0 || len(r.fb.Adds()) != 1 || len(r.bill.Links()) != 1 {
-		t.Errorf("adds %v links %v", r.fb.Adds(), r.bill.Links())
+		t.Errorf("adds %v links %v, want the resume's two changes and no create", r.fb.Adds(), r.bill.Links())
 	}
-
-	// The ID alone is not enough for billing; and nothing typed does nothing.
-	r = newProjectRig(t)
-	r.crm.AddProject(newProj, 424242)
-	r.crm.SetLabels(newProj, map[string]string{infra.CreatedLabelKey: infra.CreatedLabelValue})
-	r.gcs.AddProject(newProj, 424242)
-	r.bill.SetBilling(newProj, false)
-	_, _, _ = r.run(t, true, "", "--create-project", "--link-billing", billingAcc)
-	r.nothingDone(t, "no typed confirmation")
 }
 
 // A create that times out says what to wait for, and a taken ID's text
@@ -1019,39 +1013,26 @@ func TestCreatedHereUnreadableBillingStillAttempted(t *testing.T) {
 	}
 }
 
-// onRead runs fn the first time the reader is read: the moment the person
-// is at the prompt.
-type onRead struct {
-	r  *strings.Reader
-	fn func()
-}
-
-func (o *onRead) Read(p []byte) (int, error) {
-	if o.fn != nil {
-		o.fn()
-		o.fn = nil
-	}
-	return o.r.Read(p)
-}
-
-// Billing becomes linked between the decision and the write (while the
-// confirmation is typed): the write is not sent.
-func TestBillingLinkedWhileConfirmingIsNotReplaced(t *testing.T) {
+// Billing becomes linked between the decision and the write: the write is not
+// sent. Nothing is read at the confirmation any more (T7), so there is no
+// moment left between the two for a test to take by hand: the flip happens on
+// the fake's own answer to the plan's read of the project's billing info
+// (gcpfake.Billing.AfterBillingReads), and infra.LinkBilling's own read, taken
+// one corner before the write, is what finds the link that appeared in between
+// and refuses to replace it (ProjectLinkGuard). The run reads the link back
+// after that and records it, so what it refuses to do is visible in its own
+// line.
+func TestBillingLinkedWhileTheRunDecidesIsNotReplaced(t *testing.T) {
 	r := newProjectRig(t)
 	r.existing(false)
 	fakeTerminal(t)
-	cmd := NewRootCmd()
-	var out, errOut strings.Builder
-	cmd.SetIn(&onRead{r: strings.NewReader(billingAcc + "\n"), fn: func() { r.bill.SetBilling(newProj, true) }})
-	cmd.SetOut(&out)
-	cmd.SetErr(&errOut)
-	cmd.SetArgs([]string{"setup", "--gcp-project", newProj, "--create-project", "--link-billing", billingAcc})
-	err := cmd.Execute()
+	r.bill.AfterBillingReads(1, func() { r.bill.SetBilling(newProj, true) })
+	out, _, err := r.run(t, true, "", "--create-project", "--link-billing", billingAcc)
 	if n := r.bill.Attempts(); n != 0 {
-		t.Errorf("%d write(s) attempted\n%s", n, out.String())
+		t.Errorf("%d write(s) attempted\n%s", n, out)
 	}
-	if ExitCode(err) != ExitUserError || !strings.Contains(out.String(), "never replaces a link") {
-		t.Errorf("exit %d (%v)\n%s", ExitCode(err), err, out.String())
+	if !strings.Contains(out, "never changes an existing link") {
+		t.Errorf("the run does not report the link it found between the two reads (%v)\n%s", err, out)
 	}
 }
 
@@ -1137,7 +1118,8 @@ func TestFirebaseProjectIsAlwaysTheInstallations(t *testing.T) {
 // W4.3 made the first false for exactly one call site — the wizard's billing
 // question, at a real terminal — so what this test pins is how narrow that
 // reversal is: the account list is asked for from one place in the whole tree,
-// in a file that reads canType() only to refuse. And the second clause is
+// in a file that reaches it only through the value entry that asks for the
+// answer. And the second clause is
 // untouched, in the stage and in the question both: a run over a project that
 // IS linked to an account never prints that account.
 func TestTheBillingListIsNarrow(t *testing.T) {
@@ -1172,22 +1154,27 @@ func TestTheBillingListIsNarrow(t *testing.T) {
 	if want := filepath.ToSlash(filepath.Join(root, "internal", "cli", "billing_prompt.go")); len(callers) != 1 || callers[0] != want {
 		t.Errorf("the caller's billing accounts are listed from %v, want only %s: a second call site is a wider reversal than the owner answered (D6)", callers, want)
 	}
-	// That file reads canType() only to refuse, so the one list call cannot be
-	// reached on a path that skipped it (Global Constraint 8).
+	// That file reads the answer through the value entry and nothing else, so
+	// the one list call cannot be reached on a path that skipped it: a run with
+	// no terminal is refused by readValue itself, naming the flag that supplies
+	// the account, and never reaches the operator's own accounts (D1540, and
+	// Global Constraint 8).
 	b, err := os.ReadFile("billing_prompt.go")
 	if err != nil {
 		t.Fatal(err)
 	}
-	reads, guards := len(canTypeReadRE.FindAll(b, -1)), len(canTypeGuardRE.FindAll(b, -1))
-	if reads == 0 || reads != guards {
-		t.Errorf("billing_prompt.go reads canType() %d time(s), %d of them as a refusal: the account list may be asked for only where canType() says yes", reads, guards)
+	if reads := len(billingValueReadRE.FindAll(b, -1)); reads != 1 {
+		t.Errorf("billing_prompt.go reads a value %d time(s), want the one read the question is answered through", reads)
 	}
-	// And the call is inside askBilling, after the asksBilling() guard that
-	// reads it: the two halves of the condition, in one function, in order.
+	// And the read is inside askBilling, after the asksBilling() guard that
+	// reads the condition and before the list: the two halves of the question,
+	// in one function, in order. A list reached without the read is a list
+	// nobody was asked for.
 	body := funcBody(t, string(b), "func (r *initRun) askBilling(")
-	guard, call := strings.Index(body, "if !r.asksBilling() {"), billingListCallRE.FindStringIndex(body)
-	if guard < 0 || call == nil || call[0] < guard {
-		t.Errorf("askBilling does not reach the account list through its asksBilling() guard (the guard at %d, the call at %v): the question's condition is askedBilling, and the list may be asked for only past it", guard, call)
+	guard, ask := strings.Index(body, "if !r.asksBilling() {"), billingValueReadRE.FindStringIndex(body)
+	call := billingListCallRE.FindStringIndex(body)
+	if guard < 0 || ask == nil || call == nil || ask[0] < guard || call[0] < ask[0] {
+		t.Errorf("askBilling reaches the account list without passing its own value entry (the guard at %d, the read at %v, the call at %v): the question's condition is asksBilling, and the list may be asked for only past a read someone can answer", guard, ask, call)
 	}
 
 	// The half of the old rule that survives. The project is linked to an
