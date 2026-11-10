@@ -1748,20 +1748,37 @@ func TestTheDockerTagAsksTheVMBackendForTheSocket(t *testing.T) {
 			t.Fatalf("ask = %v, err = %v, want neither", ask, err)
 		}
 	})
-	// A workflow that keeps its own image definition is not the catalog's job
-	// at all (D1155): the deploy gave it the image this project builds for the
-	// repository, which no catalog entry is, so the launcher must not judge it
-	// — here the catalog's default is the docker entry, which would otherwise
-	// refuse this launch on Cloud Run and ask a VM for a socket.
-	t.Run("its own image definition is not the catalog's", func(t *testing.T) {
+	// A workflow that keeps its own image definition is the project's job like
+	// any other while the project gives it an image (D1900): the definition
+	// keys are ignored, its job runs the default entry — the docker entry here
+	// — and the launcher judges that entry's tag. The three shapes of the
+	// fixture are the three the deployed image can be in.
+	t.Run("its own image definition is the project's job", func(t *testing.T) {
+		const defined = "{ image: { apt: [jq] }, commands: { build: sh b.sh, test: sh t.sh } }"
 		derived := gcp.ImageName(gcp.DefaultRegistryHost("us-east5", "proj-1234")+"/"+gcp.RegistryRepoID(appSlug), appSlug, "web") + ":latest"
-		for name, codec := range map[string]backend.Codec{"cloud-run": backend.CloudRunCodec(), "cloud-batch": backend.BatchCodec()} {
+		t.Run("still deployed on the repository's own image", func(t *testing.T) {
 			f := newCloudFixture(t)
-			dockerCheckout(t, "{ image: { apt: [jq] }, commands: { build: sh b.sh, test: sh t.sh } }")
-			ask, err := catalogDockerAsk(context.Background(), deployedLaunchEnv(t, f, codec, dockerDefaultCatalogYAML, derived), appSlug, spec)
-			if err != nil || ask {
-				t.Fatalf("%s: ask = %v, err = %v, want neither", name, ask, err)
+			dockerCheckout(t, defined)
+			_, err := catalogDockerAsk(context.Background(), deployedLaunchEnv(t, f, backend.CloudRunCodec(), dockerDefaultCatalogYAML, derived), appSlug, spec)
+			if err == nil || !strings.Contains(err.Error(), "fugaro update") {
+				t.Fatalf("err = %v, want the catalog-moved refusal naming fugaro update: the deploy under the release that honoured the definition key gave this job an image the project no longer gives it", err)
 			}
+		})
+		for name, codec := range map[string]backend.Codec{"cloud-run": backend.CloudRunCodec(), "cloud-batch": backend.BatchCodec()} {
+			t.Run("deployed on the entry's image, "+name, func(t *testing.T) {
+				f := newCloudFixture(t)
+				dockerCheckout(t, defined)
+				ask, err := catalogDockerAsk(context.Background(), deployedLaunchEnv(t, f, codec, dockerDefaultCatalogYAML, "ghcr.io/acme/dind:1"), appSlug, spec)
+				if name == "cloud-run" {
+					if ask || err == nil || !strings.Contains(err.Error(), "Cloud Run gen-2 has no Docker daemon") {
+						t.Fatalf("ask = %v, err = %v, want the docker entry's Cloud Run refusal, which the definition key used to keep this job out of", ask, err)
+					}
+					return
+				}
+				if err != nil || !ask {
+					t.Fatalf("ask = %v, err = %v, want the VM socket the deployed entry's tag asks for", ask, err)
+				}
+			})
 		}
 	})
 }

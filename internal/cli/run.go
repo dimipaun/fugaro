@@ -3681,14 +3681,19 @@ func catalogDockerAsk(ctx context.Context, env *cloudEnv, slug string, spec *tas
 	if !ok {
 		return false, catalogMovedErr(spec.Workflow, name, image)
 	}
-	// The entry the project's images give the job now, against the entry its
-	// deployed image is: a workflow that pins another entry, one the project's
-	// map has moved, and a needed set the rule answers differently all leave a
-	// job deployed with an image this catalog does not give it (D1155, D1906).
+	// The entry the project's configuration NAMES for this job — a pin, or what
+	// the project's map gives the repository (D1155, D1906) — against the entry
+	// its deployed image is: both are claims about the deployed job, and a job
+	// deployed with an image the project no longer names for it is one this
+	// catalog does not give it. An entry the tag-cover rule chose is checked
+	// below instead, by the coverage the choice was made on: the deploy fixed
+	// the job's image, and which entry the rule would choose now is not a claim
+	// about the job (F7).
+	//
 	// A resolver that refused the configuration has no entry to compare, and
 	// the lookup above has already said that the deployed image is none of the
 	// catalog's.
-	if err == nil && sel.Entry.Name != entry.Name {
+	if err == nil && sel.Reference && sel.Entry.Name != entry.Name {
 		return false, catalogMovedErr(spec.Workflow, name, image)
 	}
 	// The tags the workflow needs, against the entry the job actually runs:

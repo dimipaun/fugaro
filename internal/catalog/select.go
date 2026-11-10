@@ -360,6 +360,16 @@ type Selection struct {
 	// Entry is the catalog entry the job runs, the zero value whenever Source
 	// is not SourceCatalog.
 	Entry config.Entry
+	// Reference is true when the project's configuration named this exact
+	// entry for the job — the workflow's own image_name:, or the project's map
+	// (D1155, D1906) — and false when the tag-cover rule chose it from the
+	// tags the job needs or from the catalog's default.
+	//
+	// A caller that judges the image a job is deployed with needs the
+	// difference: a reference is a claim about that job, while a choice from
+	// tags is a claim about the tags, which the deployed entry is checked
+	// against by coverage instead (run.go's catalogDockerAsk).
+	Reference bool
 	// Warnings are the deploy-time sentences about this workflow's image
 	// (D1146, D1900), in order; empty when there is nothing to say.
 	Warnings []string
@@ -429,7 +439,7 @@ func JobImage(req ImageRequest) (Selection, error) {
 		if err != nil {
 			return Selection{}, err
 		}
-		sel = Selection{Source: SourceCatalog, Entry: e.Entry, Warnings: warnOnly(e.Warn)}
+		sel = Selection{Source: SourceCatalog, Entry: e.Entry, Reference: w.ImageName != "", Warnings: warnOnly(e.Warn)}
 	default:
 		name, mapped := req.mappedEntry()
 		if req.Catalog == nil {
@@ -451,7 +461,7 @@ func JobImage(req ImageRequest) (Selection, error) {
 				}
 				return Selection{}, err
 			}
-			sel = Selection{Source: SourceCatalog, Entry: e.Entry}
+			sel = Selection{Source: SourceCatalog, Entry: e.Entry, Reference: true}
 		default:
 			if _, ok := Default(*req.Catalog); !ok {
 				// No default to run and nothing naming one: the repository
