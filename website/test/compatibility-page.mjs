@@ -106,6 +106,28 @@ function facts() {
 }
 
 /**
+ * The file's `as_of`: the one fact on this page the release procedure moves on every release
+ * (`website/data/compatibility.yaml`'s own note, D1538), so nothing here types a release. A plant
+ * whose anchor is the version itself stops being a plant the day that half of the product ships —
+ * the mutation finds no anchor and the case says nothing about the refusal it is for — so the
+ * plants read the file instead.
+ */
+function asOf() {
+  return facts().as_of
+}
+
+/** The release after `version`, which is never the file's own: what a plant that needs one reads. */
+function nextPatch(version) {
+  const parts = version.split('.')
+  return `${parts[0]}.${parts[1]}.${Number(parts[2]) + 1}`
+}
+
+/** `text` as a regular expression, so a value carrying punctuation is matched as itself. */
+function literalRE(text) {
+  return new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+}
+
+/**
  * The legend, as the built page draws it: each item's status, the mark it draws and the word it
  * prints. A mark or a word that is not there is a legend item a reader cannot read, and it is
  * refused rather than read as an empty string — that is the whole point of reading the legend
@@ -511,8 +533,14 @@ test('every refusal fires on the defect it names, on the built page itself', () 
   )
 
   // The as-of line naming a release the file does not: the page's one date-shaped fact, and the
-  // only place a reader learns which build the matrix was read against.
-  refuses(shape(mutated('and the console at v0.120.0.', 'and the console at v0.119.0.')), 'as_of.console', 'an as-of line that does not carry the file\'s release is not refused')
+  // only place a reader learns which build the matrix was read against. Both sides are the file's,
+  // so this case survives the release that moves `as_of.console`.
+  const consoleStamp = `and the console at ${asOf().console}.`
+  refuses(
+    shape(mutated(consoleStamp, `and the console at ${nextPatch(asOf().console)}.`)),
+    'as_of.console',
+    'an as-of line that does not carry the file\'s release is not refused',
+  )
 
   // A forbidden phrase, planted in the lead: the refusal names the phrase and the page.
   refuses(
@@ -604,13 +632,13 @@ const MATRIX_REFUSALS = [
   },
   {
     what: 'a key in as_of nobody reads',
-    edit: (yaml) => yaml.replace(/^ {2}console: v0\.120\.0$/m, '  console: v0.120.0\n  mobile: v0.5.0'),
+    edit: (yaml) => yaml.replace(`  console: ${asOf().console}`, `  console: ${asOf().console}\n  mobile: v0.5.0`),
     wants: [/as_of/, /"mobile"/],
   },
   {
     what: 'an as_of.cli that is not written as a release version',
-    edit: (yaml) => yaml.replace(/^ {2}cli: v0\.20\.3$/m, '  cli: 0.20.3'),
-    wants: [/as_of\.cli/, /v0\.20\.3 \(D1538\)/],
+    edit: (yaml) => yaml.replace(`  cli: ${asOf().cli}`, `  cli: ${asOf().cli.replace(/^v/, '')}`),
+    wants: [/as_of\.cli/, literalRE(JSON.stringify(asOf().cli.replace(/^v/, ''))), /\(D1538\)/],
   },
   {
     what: 'a never_say list with no phrase in it',
