@@ -103,14 +103,6 @@ func retrySharedIssue(run, resolvedIn string) issues.Issue {
 	}
 }
 
-// retryIdentity is the verified credential the fixtures' uploads are made
-// under: Upload names the reporter from the identity and refuses one it cannot
-// stand behind (F3), and no test here reads the name back.
-func retryIdentity() issues.Identity {
-	const member = "ana@example.test"
-	return issues.Identity{Address: member, Digest: issues.Digest(member), Source: issues.SourceVerified}
-}
-
 // retryRow is one row of the shared store as the offer reads it: the number the
 // issue was filed under, its fingerprint (the two together are what makes a
 // row this machine's own issue, F8), the release that fixed it, and the command
