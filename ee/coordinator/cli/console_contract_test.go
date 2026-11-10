@@ -574,6 +574,57 @@ func TestConsoleContractNamesThePersonReadsOwnSet(t *testing.T) {
 	}
 }
 
+// coordinatorConsoleFiles are the console's own files whose comments describe
+// the person reads of this package's commands: the operation list, the spawn
+// allow-list, the preload's method surface and the two halves of the source
+// bridge. They are read here because the rule they state is the contract's own:
+// a person's read resolves the credentials service from the project's published
+// block and reads no environment variable, so the run's own name for the
+// service decides nothing about it, and a console comment that named it would
+// tell a reader the opposite of what `coordinator show` does.
+var coordinatorConsoleFiles = []string{
+	"../../../console/src/main/ipc.ts",
+	"../../../console/src/main/spawn.ts",
+	"../../../console/src/preload/index.ts",
+	"../../../console/src/source/source.ts",
+	"../../../console/src/source/cli.ts",
+}
+
+// TestConsolePersonReadsNeverConsultTheRunsServiceURL: no sentence in the
+// console's own files or in the design's spawn table lends the run's variable a
+// say over a person's read. Every one that did was the same false claim -- that
+// `coordinator show` refuses under `FUGARO_CREDENTIALS_SERVICE_URL`, and that
+// the reads needing no host refuse with it -- which the code contradicts:
+// coordinatorPersonMint reads the project's published block and nothing else,
+// and TestCoordinatorShowNeverReadsTheRunsServiceURL sets the variable and the
+// read succeeds. The console files are checked whole, because the console runs
+// these commands in a person's own shell, where the run's variable is another
+// process's name and has no business in any of them; the design is checked line
+// by line, so that a row or a sentence about one of these three commands cannot
+// carry it.
+func TestConsolePersonReadsNeverConsultTheRunsServiceURL(t *testing.T) {
+	for _, path := range coordinatorConsoleFiles {
+		for i, line := range strings.Split(readFileString(t, path), "\n") {
+			if strings.Contains(line, providers.EnvCredentialsServiceURL) {
+				t.Errorf("%s:%d names %s: the console runs this read in a person's own shell, where the run's variable is the run's and decides nothing about it -- a comment that names it here tells a reader the read refuses where it does not",
+					path, i+1, providers.EnvCredentialsServiceURL)
+			}
+		}
+	}
+	for i, line := range strings.Split(readFileString(t, coordinatorDesignPath), "\n") {
+		if !strings.Contains(line, providers.EnvCredentialsServiceURL) {
+			continue
+		}
+		for _, cmd := range []string{"coordinator show", "coordinator status", "coordinator intents"} {
+			if strings.Contains(line, cmd) {
+				t.Errorf("%s:%d describes %s and names %s: a person's read resolves the credentials service from the project's published block, and this variable decides nothing about it -- not where the read goes, and not whether it happens at all",
+					coordinatorDesignPath, i+1, cmd, providers.EnvCredentialsServiceURL)
+				break
+			}
+		}
+	}
+}
+
 // coordinatorIntentsSection is the contract's §6.16, from its heading to the
 // next heading of its level or above: `coordinator intents`'s document
 // (coordinator v2 C4). It is read apart from §6.13 and §6.15 because the three
