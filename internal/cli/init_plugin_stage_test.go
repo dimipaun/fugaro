@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/initflow"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 const settingsWithOthers = `{
@@ -256,3 +257,72 @@ func TestWiringStageUnreadableConfigIsUnknown(t *testing.T) {
 }
 
 func make1MiB() []byte { return []byte(strings.Repeat("#", maxFugaroYAML+2)) }
+
+// A subdirectory of a checkout is the checkout: the stage reads the working
+// directory the command was typed in and walks up to the one .git is in
+// (pluginwire.Locate), so the checkout's own .claude/settings.json is the file
+// that gets the pin and nothing is written on the way there. The step that
+// moved into this stage ran in whatever directory the command was typed in
+// (U1 of docs/plugin-user-scope/implementation-plan.md), and this is the
+// assertion that the place it writes is the checkout's and not the caller's.
+// Its one residue: the walk stops at $HOME, so a checkout above the user's own
+// home directory is out of reach (reconciliation.md F12).
+func TestWiringStageWiresTheCheckoutFromASubdirectory(t *testing.T) {
+	releaseBuild(t, "0.2.0")
+	dir := repoCheckout(t, githubOrigin, "")
+	settings := filepath.Join(dir, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settings), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(settings, []byte(settingsWithOthers), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sub := filepath.Join(dir, "src", "deep", "down")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(sub)
+
+	e, out := stageEngine(t, "", &initOptions{yes: true})
+	res := runPlugin(t, e)
+	if stateOf(res, "plugin") != initflow.Changed {
+		t.Fatalf("from a subdirectory: %+v\n%s", res.Stages, out)
+	}
+	got, _ := os.ReadFile(settings)
+	if !strings.Contains(string(got), `"ref": "v0.2.0"`) {
+		t.Errorf("the checkout's own settings were not wired from a subdirectory:\n%s", got)
+	}
+	for _, p := range []string{filepath.Join(sub, ".claude"), filepath.Join(dir, "src", ".claude")} {
+		if _, err := os.Stat(p); err == nil {
+			t.Errorf("%s was made: the stage writes the checkout's own settings file and nothing between it and the caller", p)
+		}
+	}
+}
+
+// A linked worktree is a checkout of its own, and the stage wires that one:
+// .git is a file there rather than a directory, which the walk stops on all the
+// same (os.Lstat), so the file that gets the pin is the worktree's own and the
+// checkout it was made from is left alone (reconciliation.md F14).
+func TestWiringStageWiresALinkedWorktree(t *testing.T) {
+	releaseBuild(t, "0.2.0")
+	main := repoCheckout(t, githubOrigin, "")
+	linked := filepath.Join(t.TempDir(), "scratch")
+	testutil.Git(t, main, "worktree", "add", "--quiet", linked)
+	if fi, err := os.Lstat(filepath.Join(linked, ".git")); err != nil || fi.IsDir() {
+		t.Fatalf("the fixture is not a linked worktree: %v %v", fi, err)
+	}
+	t.Chdir(linked)
+
+	e, out := stageEngine(t, "", &initOptions{yes: true})
+	res := runPlugin(t, e)
+	if stateOf(res, "plugin") != initflow.Changed {
+		t.Fatalf("in a linked worktree: %+v\n%s", res.Stages, out)
+	}
+	got, err := os.ReadFile(filepath.Join(linked, ".claude", "settings.json"))
+	if err != nil || !strings.Contains(string(got), `"ref": "v0.2.0"`) {
+		t.Errorf("the worktree's own settings were not wired (err %v):\n%s", err, got)
+	}
+	if _, err := os.Stat(filepath.Join(main, ".claude", "settings.json")); err == nil {
+		t.Errorf("the pin was written in the checkout the worktree was made from, which this command is not in")
+	}
+}
