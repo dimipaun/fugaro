@@ -775,10 +775,10 @@ not-an-asset sentence and the dry run now. T-H3 therefore **completes 3 and 4 an
 rather than rewriting them — and it is why the paragraph says the build is *planned and staged*
 rather than shipped: the ruling is a plan and nothing on Windows has been built (O7).
 **Landed 2026-11-10.** The four edits below are in, and `docs/windows-cli/wsl.md`'s F40 paragraph and
-its console table row with them (O1). The four places that read "Windows stays out" —
+its console table row with them (O1). Each place that read the sentence —
 `docs/design/desktop-console.md` §4.2, §7.6's rule 3, the owner-run table's Windows-signing row and
-D10's row, and `console/README.md`'s Linux section — each carry a dated note of that date saying
-which half moved, so the older, narrower sentence is no longer unqualified anywhere (O7, F43).
+D10's row, and `console/README.md`'s Linux section — carries a dated note of that date saying which
+half moved, so the older, narrower sentence is no longer unqualified anywhere (O7, F43).
 `docs/release.md`'s paragraph was **re-read rather than rewritten**: by then two of its clauses were
 false — the pack had stopped being "red until the `console/` edits its Parts B and C name have
 landed" (they had), and the other documents no longer "still carry the older sentence" — and what

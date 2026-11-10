@@ -792,27 +792,31 @@ func TestDocsWindowsConsoleClaimsAboutOtherFilesAreTrue(t *testing.T) {
 // owes outside docs/console-windows/.
 //
 // The sentence "Windows stays out" is one claim this repository makes in four
-// places (F43), and the owner's ruling of 2026-10-20 moves half of it: the
-// console's Windows *build* is in by that ruling -- the console drives the
-// *Linux* `fugaro` inside a WSL distribution, and the pack is staged as a
-// release-time job -- while the *signing* answer is untouched, because there is
-// still no Authenticode identity and none is planned. Each place keeps its own
-// sentence and gains a dated note that says which half moved: a rewrite would
-// claim more than the ruling does, and a note is the thing a reader can check.
+// documents (F43: this design, docs/release.md, the console's own README and
+// docs/windows-cli/wsl.md), and inside the design it is written four times.
+// The owner's ruling of 2026-10-20 moves half of it: the console's Windows
+// *build* is in by that ruling -- the console drives the *Linux* `fugaro` inside
+// a WSL distribution, and the pack is staged as a release-time job -- while the
+// *signing* answer is untouched, because there is still no Authenticode identity
+// and none is planned. Each place keeps its own sentence and gains a dated note
+// that says which half moved: a rewrite would claim more than the ruling does,
+// and a note is the thing a reader can check.
 //
-// Three of the four are read here, each as the block it is made in -- section
+// The design's four are read here, each as the block it is made in -- section
 // 4.2's list, section 7.6's rule 3, the owner-run table's Windows-signing row
-// and D10's answer cell. The fourth is the console's own README, read in
+// and D10's answer cell -- and so are docs/release.md's paragraph and
+// docs/windows-cli/wsl.md's paragraph and row. The console's own README's
+// section is the one note not read here: it is read in
 // docs_desktop_console_test.go, which is the file this package's console
 // boundary allow-list admits to a path under the console tree -- the reason is
 // written there rather than here, because a Go file in this package may not
 // spell such a path (docs_console_boundary_test.go, Task 0.3 a3).
 //
-// The same ruling reached docs/windows-cli/wsl.md, whose console row says the
-// console is out of scope because it needs a Windows CLI first (O1, F43): the
-// console's own route is what removes that need for the console, while the CLI
-// track's F40 stays true of the CLI. Both the paragraph above that table and
-// the row itself are read here.
+// docs/windows-cli/wsl.md's pair is the same ruling read the other way round: its
+// console row says the console is out of scope because it needs a Windows CLI
+// first, and the console's own route is what removes that need for the console,
+// while the CLI track's F40 stays true of the CLI (O1, F43) -- so both the
+// paragraph above that table and the row itself are read here too.
 //
 // The mutations that prove it: delete one note, move one out of the block it
 // belongs to, and put the release document's "still carry the older sentence"

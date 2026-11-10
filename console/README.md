@@ -4605,11 +4605,14 @@ too, and it is the *Linux* `fugaro` inside a WSL distribution rather than a
 Windows one, packed by `electron-builder --win` in the staged
 `docs/pending-workflows/console-windows.yml` and run at release time only
 ([the Windows section below](#the-windows-pack-unsigned-and-not-yet-run),
-[docs/console-windows/](../docs/console-windows/README.md)); what stays out of
-it is the **signing**, because there is still no Authenticode identity for this
-project and none is planned. The ruling is recorded where the answer is — the
-design's **D10** cell carries it as
-a dated amendment after the 2026-10-15 acceptance it changes — and in its own
+[docs/console-windows/](../docs/console-windows/README.md)); what stays out is
+the **signing**, because there is still no Authenticode identity for this
+project and none is planned. **The build is the plan's and not 0.10.0's**: that
+release shipped without it and the plan's target is **0.110.0** (the console's
+own stream), so "the build half moved" means the build is no longer a later
+phase rather than in any release that has shipped. The ruling is recorded where
+the answer is — the design's **D10** cell carries it as a dated amendment after
+the 2026-10-15 acceptance it changes — and in its own
 section, [design §7.6](../../docs/design/desktop-console.md), with the four
 places that had read "later" amended in the same commit (§4.1 item 5, §4.2,
 §7.5's owner-run row, §9.4's runner bullet and staged-file table). The plan's
