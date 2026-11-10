@@ -427,10 +427,10 @@ func checkEvidenceDir(root *os.Root, name string) error {
 // attacker-influenced and the names are predictable, so what is at the name
 // decides nothing (the rule internal/srctree's writeRecord makes for its own
 // record). A name holding a file is replaced, because a second collection of
-// one run ID is the diagnosis as it is now; a name holding something else — a
-// directory, which Remove cannot take — is refused rather than removed, as
-// internal/srctree refuses an occupied one. The file is 0600 from its first
-// byte.
+// one run ID is the diagnosis as it is now, and so is an empty directory,
+// which Remove takes; a name holding a directory with anything in it is
+// refused by the Remove rather than removed, as internal/srctree refuses an
+// occupied one. The file is 0600 from its first byte.
 func writeEvidence(root *os.Root, dir, name, text string) error {
 	at := filepath.Join(dir, name)
 	if err := root.Remove(at); err != nil && !errors.Is(err, fs.ErrNotExist) {

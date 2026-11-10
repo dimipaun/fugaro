@@ -88,6 +88,12 @@ func evidenceRead(t *testing.T, dir string) map[string]string {
 // pass) nor a shape nobody named (the pattern pass, F4). The log, the config
 // and the doctor output each hold both, so a collector that redacted one of
 // them, or only the exact values, fails here.
+//
+// Each file carries the named secret at a bare position — no key name, no
+// `=` or `:` in front of it — because the pattern pass reads shapes and key
+// names: a named secret planted as `token: <it>` or `API_KEY=<it>` would be
+// redacted with the exact pass dropped, and this test would pass a collector
+// that never redacts what its caller handed it.
 func TestEvidenceCollectWritesTheFolderAndBothPasses(t *testing.T) {
 	getenv := evidenceEnv(t)
 	secret := evidenceValue(t, "planted")
@@ -96,9 +102,10 @@ func TestEvidenceCollectWritesTheFolderAndBothPasses(t *testing.T) {
 
 	logText := "terraform apply: reading the installation\n" +
 		"ERROR: the api refused " + shape + " (403)\n" +
-		"env: ANTHROPIC_API_KEY=" + secret + "\n"
-	configText := "model: sonnet\nclaude_accounts:\n  team-b:\n    token: " + secret + "\n"
-	doctorText := "budget check failed: Authorization: Bearer " + shape + "\n"
+		"the box answered " + secret + " and nothing else\n"
+	configText := "model: sonnet\nclaude_accounts:\n  team-b:\n    # the account is " + secret + "\n"
+	doctorText := "budget check failed: Authorization: Bearer " + shape + "\n" +
+		"the account was " + secret + " and the check stopped\n"
 
 	ev, err := Collect(context.Background(), id, Options{
 		Version: "v0.5.2",
