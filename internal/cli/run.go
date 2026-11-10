@@ -3695,12 +3695,20 @@ func catalogDockerAsk(ctx context.Context, env *cloudEnv, slug string, spec *tas
 // (`catalogDockerAsk` stays as the two composed for the callers that want the
 // answer alone, which is every reader of the tag rule.)
 func deployedCatalogEntry(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec) (config.Entry, bool, error) {
+	// The published node is read for its catalog alone, never as a decision
+	// about this launch (D10, R2-8(a)): a policy this CLI cannot read — a
+	// version ahead of it, a key it does not know — is refused by the launch
+	// gate above launchRun, in its own words, and by the run itself, in the
+	// runner's, and neither is here. A launcher that calls jobs.run directly
+	// must not be stopped by a read this makes to stamp the entry it starts
+	// on (TestPolicySinceGateIsNotOnTheRunnerPath), as project_job.go's own
+	// existence read states it. What a read that fails costs is the published
+	// catalog: this machine's own entry stands, exactly as it does on an
+	// installation that has published no policy.
 	var published *config.Catalog
 	var publishedMap map[string]string
 	var pol *projectpolicy.Policy
-	if p, found, err := env.policy.read(ctx, env.lc); err != nil {
-		return config.Entry{}, false, remote(policyReadErr(err))
-	} else if found {
+	if p, found, err := env.policy.read(ctx, env.lc); err == nil && found && p != nil {
 		pol, published, publishedMap = p, p.ImageCatalog, p.ImageMap
 	}
 	cat := env.lc.ImageCatalogEffective(published)
