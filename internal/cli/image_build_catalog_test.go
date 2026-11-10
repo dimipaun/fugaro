@@ -160,7 +160,15 @@ func catalogBuildCheckoutFor(t *testing.T, repo, catalog, provider, appID string
 // credential path, which a test has no account for.
 func stubCatalogProvider(t *testing.T, files map[string]string) {
 	t.Helper()
-	p := &fake.Provider{Repo: "acme/app", State: fake.State{Files: files}}
+	stubCatalogProviderState(t, fake.State{Files: files})
+}
+
+// stubCatalogProviderState is stubCatalogProvider for a copy that reads more
+// than a file out of the fake: the refs, the commits and the trees an entry
+// that names a build context is resolved through.
+func stubCatalogProviderState(t *testing.T, state fake.State) {
+	t.Helper()
+	p := &fake.Provider{Repo: "acme/app", State: state}
 	was := openCatalogProvider
 	openCatalogProvider = func([]string, func(string)) (string, gitprov.Opener, error) { return "", catalogOpen(p), nil }
 	t.Cleanup(func() { openCatalogProvider = was })
@@ -381,6 +389,87 @@ func TestImageBuildWithACatalogBuildsTheEntry(t *testing.T) {
 	}
 	if !strings.Contains(out, "submitted Cloud Build build") || !strings.Contains(out, "log:") || strings.Contains(out, "@sha256:") {
 		t.Errorf("stdout = %q, want the submitted build and its log and no digest", out)
+	}
+}
+
+// catalogBuildContextYAML is one entry that names a build context: what a
+// build pins and records for one.
+const catalogBuildContextYAML = `image_catalog:
+  entries:
+    - name: base
+      tags: [node]
+      source: { kind: dockerfile, repo: acme/app, path: .fugaro/base.Dockerfile, branch: main, context: ci }
+`
+
+// TestCatalogBuildSubmitsTheContextIdentity: an entry that names a context is
+// submitted with the identity the copy staged beside its Dockerfile — the
+// commit both were read at, and the digest of the tree the build runs on — and
+// the record's own commit is that one rather than the checkout's (D1395,
+// D1400).
+func TestCatalogBuildSubmitsTheContextIdentity(t *testing.T) {
+	fb, gcs, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildContextYAML)
+	// The commit the entry's branch resolves to, which is not this checkout's
+	// HEAD: the fixture is a checkout of a branch of its own.
+	const sha = "3f2b1c0d9e8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c"
+	tree := map[string]string{"Dockerfile": "FROM example.invalid/base\n", "src/main.go": "package main\n"}
+	atCommit := map[string]string{".fugaro/base.Dockerfile": catalogBuildFetched}
+	for p, data := range tree {
+		atCommit["ci/"+p] = data
+	}
+	stubCatalogProviderState(t, fake.State{
+		Branches: map[string]map[string]string{"main": {".fugaro/base.Dockerfile": catalogBuildFetched}},
+		Commits:  map[string]string{"main": sha},
+		Trees:    map[string]map[string]string{sha: atCommit},
+	})
+	f.sm.AllowAccess()
+	putSecretID(t, f.sm, mustSlug(gitprov.KindBitbucket, "acme/app"), config.BitbucketSecret, []byte(catalogTokenPlaceholder))
+
+	if _, stderr, err := executeBuild(t, "image", "build", "base", "--base", "b:1"); err != nil {
+		t.Fatalf("%v (%s)", err, stderr)
+	}
+	// The copy is the definition the resolved commit holds, and the two
+	// objects the entry's identity is read back from are beside it.
+	if got, _ := catalogCopy(t, gcs, "base"); got != catalogBuildFetched {
+		t.Fatalf("the copy is %q, want the definition the commit holds", got)
+	}
+	b := gcs.Bucket(t, catalogBuildBucket)
+	for _, staged := range []struct {
+		key  func(string) (string, error)
+		want string
+	}{
+		{config.CatalogContextCommitKey, sha},
+		{config.CatalogContextHashKey, contextDigestOf(tree)},
+	} {
+		k, err := staged.key("base")
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, _, err := b.Read(context.Background(), k)
+		if err != nil || string(data) != staged.want {
+			t.Errorf("%s holds %q (%v), want %q", k, data, err, staged.want)
+		}
+	}
+	// The build's own record: the commit the definition was read at, and the
+	// context's identity, all three of them the staged values.
+	env := catalogRecordEnv(t, fb)
+	for _, want := range []string{"COMMIT=" + sha, "CONTEXT_COMMIT=" + sha, "CONTEXT_SHA256=" + contextDigestOf(tree)} {
+		if !slices.Contains(env, want) {
+			t.Errorf("the record's env is %v, want it to carry %s", env, want)
+		}
+	}
+	if checkout, _ := headCommit(t); checkout == sha {
+		t.Fatal("the fixture's checkout is the commit the entry resolves to, so nothing here tells the two apart")
+	}
+	// The context is what the request tells the build to run on.
+	if subs := catalogBuildSubs(t, fb); subs["_CONTEXT_DIR"] != "/workspace/src/ci" {
+		t.Errorf("_CONTEXT_DIR = %v, want the checkout's own context directory", subs["_CONTEXT_DIR"])
+	}
+	// The checkout step is made at the context's commit, which is what the
+	// build reads the context from.
+	if st := catalogBuildStep(t, fb, "catalog-context"); st == nil {
+		t.Error("the build has no context step")
+	} else if env, _ := st["env"].([]any); !slices.Contains(env, "COMMIT="+sha) {
+		t.Errorf("the context step's env is %v, want it to check out %s", env, sha)
 	}
 }
 

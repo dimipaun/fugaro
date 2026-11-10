@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -11,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/catalog"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/gitprov"
@@ -135,6 +137,173 @@ func TestCatalogCopyReadsTheDockerfileAndTheContextAtOneCommit(t *testing.T) {
 	if want := contextDigestOf(map[string]string{"Dockerfile": ctxFile}); catalogObject(t, b, config.CatalogContextHashKey, "agent") != want {
 		t.Fatalf("the staged context hash is not the digest of the commit's context tree")
 	}
+}
+
+// contextCopy is the fake provider and bucket a copy of one context entry is
+// exercised against, with the two files the entry's commit holds under "ci".
+func contextCopy(t *testing.T) (*fake.Provider, *blobx.Bucket, config.Entry) {
+	t.Helper()
+	const sha = "3f2b1c0d9e8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c"
+	const def = "FROM example.invalid/base\nRUN true\n"
+	p := &fake.Provider{Repo: "acme/app", State: fake.State{
+		Branches: map[string]map[string]string{"main": {"docker/agent.Dockerfile": def}},
+		Commits:  map[string]string{"main": sha},
+		Trees: map[string]map[string]string{sha: {
+			"docker/agent.Dockerfile": def,
+			"ci/Dockerfile":           "FROM example.invalid/base\n",
+			"ci/src/main.go":          "package main\n",
+		}},
+	}}
+	e := config.Entry{Name: "agent", Source: config.Source{
+		Kind: config.SourceDockerfile, Repo: "acme/app", Path: "docker/agent.Dockerfile",
+		Branch: "main", Context: "ci",
+	}}
+	return p, gcpfake.NewGCS(t).Bucket(t, "fugaro-runs-proj-1234"), e
+}
+
+// contextTree is the tree the copy above reads, keyed by the path the context
+// digest is taken over: relative to the context root.
+func contextTree() map[string]string {
+	return map[string]string{"Dockerfile": "FROM example.invalid/base\n", "src/main.go": "package main\n"}
+}
+
+// TestCatalogCopyStagesTheContextHash: the object the check compares is the
+// digest of the context tree, and it is written with the read-compare-write
+// rule the Dockerfile copy has — a second copy of an unchanged tree leaves the
+// object and its generation alone, and a tree whose file changed stages a
+// different value.
+func TestCatalogCopyStagesTheContextHash(t *testing.T) {
+	ctx := context.Background()
+	p, b, e := contextCopy(t)
+	open := catalogOpen(p)
+	if err := writeCatalogDockerfile(ctx, b, open, gitprov.KindGitHub, e); err != nil {
+		t.Fatalf("writeCatalogDockerfile: %v", err)
+	}
+	key, err := config.CatalogContextHashKey("agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, gen, err := b.Read(ctx, key)
+	if err != nil {
+		t.Fatalf("reading the staged context hash: %v", err)
+	}
+	if want := contextDigestOf(contextTree()); string(data) != want {
+		t.Fatalf("the staged context hash is %q, want the digest of the tree %q", data, want)
+	}
+	if err := writeCatalogDockerfile(ctx, b, open, gitprov.KindGitHub, e); err != nil {
+		t.Fatalf("republishing an unchanged context: %v", err)
+	}
+	if _, again, err := b.Read(ctx, key); err != nil || again != gen {
+		t.Fatalf("an unchanged context rewrote the hash: generation %d, want %d (%v)", again, gen, err)
+	}
+	// The commit the Dockerfile and the context were read at is staged beside
+	// it, and it is the commit the branch resolved to.
+	if got := catalogObject(t, b, config.CatalogContextCommitKey, "agent"); got != p.State.Commits["main"] {
+		t.Errorf("the staged commit is %q, want %q", got, p.State.Commits["main"])
+	}
+	p.State.Trees[p.State.Commits["main"]]["ci/src/main.go"] = "package other\n"
+	if err := writeCatalogDockerfile(ctx, b, open, gitprov.KindGitHub, e); err != nil {
+		t.Fatalf("republishing a changed context: %v", err)
+	}
+	if data, _, err := b.Read(ctx, key); err != nil || string(data) == contextDigestOf(contextTree()) {
+		t.Fatalf("a context whose file changed staged %q (%v)", data, err)
+	}
+}
+
+// TestCatalogCopyBoundsTheContext: a context over the bound is refused by the
+// entry's name before a build is paid for (D1398), and the copy writes nothing
+// at all — not the Dockerfile either, because the definition and the context
+// are resolved before either is staged.
+func TestCatalogCopyBoundsTheContext(t *testing.T) {
+	ctx := context.Background()
+	p, b, e := contextCopy(t)
+	tree := p.State.Trees[p.State.Commits["main"]]
+	for i := 0; i <= catalog.MaxContextFiles; i++ {
+		tree[fmt.Sprintf("ci/file-%05d", i)] = "x"
+	}
+	err := writeCatalogDockerfile(ctx, b, catalogOpen(p), gitprov.KindGitHub, e)
+	if !errors.Is(err, gitprov.ErrTreeTooLarge) {
+		t.Fatalf("err = %v, want the bound's own error", err)
+	}
+	if !strings.Contains(err.Error(), "agent") {
+		t.Errorf("the refusal %q does not name the entry", err)
+	}
+	for _, key := range []func(string) (string, error){config.CatalogDockerfileKey, config.CatalogContextCommitKey, config.CatalogContextHashKey} {
+		k, err := key("agent")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := b.Read(ctx, k); !errors.Is(err, blobx.ErrNotExist) {
+			t.Errorf("a refused context staged %s: %v", k, err)
+		}
+	}
+}
+
+// TestCatalogCopyWithoutAContextIsUnchanged: an entry that names no context
+// stages exactly the object it staged before the key existed — no commit and
+// no digest — and its build still records the checkout's own HEAD (F23).
+func TestCatalogCopyWithoutAContextIsUnchanged(t *testing.T) {
+	ctx := context.Background()
+	// The copy half, on its own: one object, and neither of the two the
+	// context key added.
+	const def = "FROM example.invalid/base\nRUN true\n"
+	b := gcpfake.NewGCS(t).Bucket(t, "fugaro-runs-proj-1234")
+	e := config.Entry{Name: "agent", Source: config.Source{
+		Kind: config.SourceDockerfile, Repo: "acme/app", Path: "docker/agent.Dockerfile", Branch: "main",
+	}}
+	open := catalogOpen(&fake.Provider{Repo: "acme/app", State: fake.State{
+		Branches: map[string]map[string]string{"main": {"docker/agent.Dockerfile": def}},
+		Commits:  map[string]string{"main": "3f2b1c0d9e8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c"},
+	}})
+	if err := writeCatalogDockerfile(ctx, b, open, gitprov.KindGitHub, e); err != nil {
+		t.Fatalf("writeCatalogDockerfile: %v", err)
+	}
+	if got := catalogObject(t, b, config.CatalogDockerfileKey, "agent"); got != def {
+		t.Fatalf("the copy is %q, want %q", got, def)
+	}
+	for _, key := range []func(string) (string, error){config.CatalogContextCommitKey, config.CatalogContextHashKey} {
+		k, err := key("agent")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := b.Read(ctx, k); !errors.Is(err, blobx.ErrNotExist) {
+			t.Errorf("an entry with no context staged %s: %v", k, err)
+		}
+	}
+
+	// And the build's own record: the entry's commit is still the checkout's
+	// HEAD, which is the value a context entry's is not.
+	fb, gcs, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildYAML)
+	stubCatalogProvider(t, map[string]string{".fugaro/base.Dockerfile": catalogBuildFetched})
+	f.sm.AllowAccess()
+	putSecretID(t, f.sm, mustSlug(gitprov.KindBitbucket, "acme/app"), config.BitbucketSecret, []byte(catalogTokenPlaceholder))
+	if _, stderr, err := executeBuild(t, "image", "build", "base", "--base", "b:1"); err != nil {
+		t.Fatalf("%v (%s)", err, stderr)
+	}
+	if got, _ := catalogCopy(t, gcs, "base"); got != catalogBuildFetched {
+		t.Errorf("the copy is %q, want the definition the repository holds", got)
+	}
+	commit, _ := headCommit(t)
+	if env := catalogRecordEnv(t, fb); !slices.Contains(env, "COMMIT="+commit) {
+		t.Errorf("the record's env is %v, want the checkout's HEAD (%s)", env, commit)
+	}
+}
+
+// catalogRecordEnv is the record step's env: the values the build's own record
+// of what it built is written from.
+func catalogRecordEnv(t *testing.T, fb *gcpfake.Build) []string {
+	t.Helper()
+	step := catalogBuildStep(t, fb, "catalog-record")
+	if step == nil {
+		t.Fatal("the build has no record step")
+	}
+	raw, _ := step["env"].([]any)
+	env := make([]string, 0, len(raw))
+	for _, v := range raw {
+		s, _ := v.(string)
+		env = append(env, s)
+	}
+	return env
 }
 
 // catalogObject is the string a catalog key holds for entry, or a failure:
