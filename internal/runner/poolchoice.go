@@ -2,7 +2,6 @@ package runner
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
@@ -116,57 +115,42 @@ type poolSkip struct {
 }
 
 // subscriptionSpread is the project's subscription_spread switch (D1622,
-// D1636), the successor of the ordered failover's own switch: whether a pool
-// may spread a run across two or more Claude OAuth subscriptions. It is off
-// until the owner turns it on, and only consequences follow from it: with it
-// off a pool of two or more subscriptions serves nothing, and inside a mixed
-// pool each subscription member is stepped over (D1626).
+// D1636), the successor of the account walk's own switch: whether a pool may
+// spread a run across two or more Claude OAuth subscriptions. It is off until
+// the owner turns it on, and only consequences follow from it: with it off a
+// pool of two or more subscriptions serves nothing, and inside a mixed pool
+// each subscription member is stepped over (D1626).
 //
-// It is read the way accountAuto reads the switch it succeeds — off the
-// owner's published node, once per run, failing closed — and for the same
-// reason: the value decides which credential serves a stage, so an environment
-// value of a shared job is not where it may come from, and "may this run spend
-// a subscription" is answered "no" by a member that is absent, a member that
-// is not a JSON true, a node this run cannot read and a value that is neither
-// true nor false. projectpolicy's decoder does not carry the member yet, so it
-// is read off the node's document, which tolerates it (P8) exactly as
-// claude_account_auto is; the write that publishes it is not this task's, and
-// a node that never carries it is every installation today.
+// It is read the way accountAuto reads the switch it succeeds — off the owner's
+// published node, once per run, failing closed — and for the same reason: the
+// value decides which credential serves a stage, so an environment value of a
+// shared job is not where it may come from, and "may this run spend a
+// subscription" is answered "no" by a member that is absent, a member that is
+// not a JSON true, a node this run cannot read and a value that is neither true
+// nor false.
+//
+// The member is read as the typed policy's own (projectpolicy.Policy.
+// SubscriptionSpread) rather than off the node's document, which is where the
+// write that publishes it puts it: `fugaro settings set subscription_spread
+// true` is the owner's act, and the publish copies the local config's value
+// into the node. A node that carries it is therefore a node the owner's own CLI
+// wrote, and one whose value the policy reader has already judged — a member
+// that is not a boolean never reaches here, because the publish and the decode
+// both refuse it.
 func (r *run) subscriptionSpread(ctx context.Context) bool {
 	c := &r.pools
 	if c.read {
 		return c.spread
 	}
 	c.read = true
+	p, found, err := r.projectPolicy(ctx)
 	// A project that publishes no pool publishes nothing for the switch to
-	// spread: the member is not read at all, which is every installation
-	// today and the reason a run that names no pool pays no cloud call for
-	// this.
-	if p, found, err := r.projectPolicy(ctx); err != nil || !found || len(p.CraftPools) == 0 {
+	// spread: the member is not read at all, which is every installation today
+	// and the reason a run that names no pool pays no cloud call for this.
+	if err != nil || !found || p == nil || len(p.CraftPools) == 0 || p.SubscriptionSpread == nil {
 		return false
 	}
-	db, err := r.budgetClient(ctx)
-	if err != nil || db == nil {
-		return false
-	}
-	var node map[string]json.RawMessage
-	if _, err := db.Get(ctx, projectpolicy.PathShared(), &node); err != nil {
-		r.d.Log.Warn("policy: the subscription switch could not be read; a pool of subscriptions serves nothing for this run", "node", projectpolicy.PathShared())
-		return false
-	}
-	raw, ok := node["subscription_spread"]
-	if !ok {
-		return false
-	}
-	var on bool
-	if err := json.Unmarshal(raw, &on); err != nil {
-		// A value that is neither true nor false is a person's mistake, and
-		// it is never read as "on". The value itself is not echoed, for the
-		// reason every message about a node's content here gives.
-		r.d.Log.Warn("policy: the subscription switch is not true or false; a pool of subscriptions serves nothing for this run", "node", projectpolicy.PathShared())
-		return false
-	}
-	c.spread = on
+	c.spread = *p.SubscriptionSpread
 	return c.spread
 }
 

@@ -327,6 +327,14 @@ func firstPublishNodeOnlyMembers(lc *localcfg.Config) []string {
 	if lc.TriageEffective(nil) != nil {
 		out = append(out, "the triage switch")
 	}
+	// The pools' subscription switch joins them (F22, D1636): it is read off
+	// the node and nowhere else — a run asks the published policy whether it
+	// may spread a project across subscriptions at all — so a project whose
+	// config writes it and which never published a node has left the owner's
+	// own act in a file no run reads.
+	if lc.SubscriptionSpreadEffective(nil) != nil {
+		out = append(out, "the pools' subscription switch")
+	}
 	return out
 }
 

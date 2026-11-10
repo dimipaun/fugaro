@@ -788,6 +788,27 @@ var localRows = []Row{
 	locLocal("pools.*.name", "required: the name a craft's access speaks", "accounts", docCrafts),
 	locLocal("pools.*.strategy", config.PoolStrategyFailover, "accounts", docCrafts),
 	locLocal("pools.*.members", "required: a pool with no members serves nothing", "accounts", docCrafts),
+	// The pools' subscription switch (F22, D1622, D1636): whether a run may
+	// spread a project across two or more Claude OAuth subscriptions at all.
+	// With it off a pool of two or more subscriptions serves nothing and a
+	// subscription inside a mixed pool is stepped over, which is the state
+	// every installation is in until the owner says otherwise.
+	//
+	// It is the successor of claude_account_auto — the key the account walk's
+	// own switch is written under — and it keeps that switch's refusals: the
+	// local config alone, and the typed form when it is turned on, since
+	// spreading a project over subscriptions is a decision about the terms the
+	// subscriptions are held under. It is a literal rather than a locLocal call
+	// because it carries TypedWhy, which no helper sets.
+	{
+		Key:      "subscription_spread",
+		Layers:   []string{LayerLocal},
+		Merge:    Replace,
+		Default:  unset("false: a run spreads across one subscription at a time"),
+		Owner:    "settings set",
+		Doc:      docCrafts,
+		TypedWhy: "this lets a run spread a project across two or more Claude OAuth subscriptions, which is the owner's own decision about the terms the subscriptions are held under",
+	},
 	locLocal("crafts.coder.model", "required: the coder implements, so a run needs its model", "models", docCrafts),
 	locLocal("crafts.coder.access", "required: the coder's calls go out on a credential or a pool", "accounts", docCrafts),
 	locLocal("crafts.review.model", "the coder's model", "models", docCrafts),

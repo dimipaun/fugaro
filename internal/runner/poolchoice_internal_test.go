@@ -497,3 +497,55 @@ func TestJobEnvHoldsOnlyItsCraftsSecrets(t *testing.T) {
 		t.Fatalf("the stage is served by %s, and the run's only route is %s", member.Name, routes[0].Name)
 	}
 }
+
+// TestSubscriptionSpreadReadsThePublishedSwitch is the read the other tests
+// stand on: `subscriptionSpread` takes the switch off the policy the run
+// published (projectpolicy.Policy.SubscriptionSpread), once per run, and every
+// answer that is not a written true — an absent member, a member the owner
+// wrote false, no policy and no pool at all — is off. It is the write side that
+// puts the member there (`fugaro settings set subscription_spread true`, then
+// the publish or `fugaro update`), so what is pinned here is that the runner
+// reads exactly what that road writes and nothing else.
+//
+// The tests above set `r.pools.spread` directly, because the rule they check is
+// a consequence of the switch's answer rather than of the read; this one is the
+// read itself, and it is the only one that goes through it.
+func TestSubscriptionSpreadReadsThePublishedSwitch(t *testing.T) {
+	ctx := context.Background()
+	on, off := true, false
+	pool := config.Pool{Name: "home", Members: []string{"or-primary"}}
+
+	for _, tc := range []struct {
+		name  string
+		set   *bool
+		pools []config.Pool
+		want  bool
+	}{
+		{name: "written true", set: &on, pools: []config.Pool{pool}, want: true},
+		{name: "written false", set: &off, pools: []config.Pool{pool}},
+		{name: "absent", set: nil, pools: []config.Pool{pool}},
+		{name: "no pool at all", set: &on},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, _ := poolRun(t, poolSpec{access: "home", pools: tc.pools,
+				creds: poolCreds("or-primary"), providers: poolProviders("or-primary"), env: poolEnv("or-primary")})
+			// poolRun stamps the switch as already read (the tests above set
+			// the fact); this test is the read, so it is un-stamped here.
+			r.projPolicy.policy.SubscriptionSpread = tc.set
+			r.pools.read, r.pools.spread = false, false
+
+			if got := r.subscriptionSpread(ctx); got != tc.want {
+				t.Fatalf("subscriptionSpread = %v, want %v", got, tc.want)
+			}
+			if !r.pools.read {
+				t.Error("the switch was not recorded as read, so every stage would ask the policy again")
+			}
+			// Read once per run: the node cannot change under a run, and the
+			// answer decides whether a pool serves anything at all.
+			r.projPolicy.policy.SubscriptionSpread = &off
+			if got := r.subscriptionSpread(ctx); got != tc.want {
+				t.Errorf("the second read = %v, want the first answer (%v)", got, tc.want)
+			}
+		})
+	}
+}

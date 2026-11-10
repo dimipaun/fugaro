@@ -1235,6 +1235,9 @@
         "stages.triage.claude_account": {
           "default": "unset = the project's default account"
         },
+        "subscription_spread": {
+          "default": "unset = false: a run spreads across one subscription at a time"
+        },
         "terraform.alert_email": {
           "default": "unset = none: no budget alert is mailed"
         },
