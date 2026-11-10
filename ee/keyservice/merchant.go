@@ -82,6 +82,16 @@ var (
 	// answered with a failure rather than a mint, so the merchant's retry and the
 	// owner's alerting see it (§5.1).
 	ErrNoBuyer = errors.New("keyservice: the event carries no address a key can be mailed to")
+	// ErrNoClaims is an event that does not say what to mint: a purchase or a
+	// seat change with no organisation, no seats or no term. Those three are the
+	// claims a key would carry and the term it would cover, so an event missing
+	// one is one this service cannot serve — and it is refused, like an event
+	// with no instant, rather than dropped: an event dropped here is a customer
+	// who has paid and receives nothing, with nothing recorded, nothing mailed,
+	// nothing queued and nothing logged, and the merchant never sends it again.
+	// What has to carry the three is the deploy's payload → `Event` mapping
+	// (S3.7).
+	ErrNoClaims = errors.New("keyservice: the event does not say what to mint")
 	// ErrNoInstant is an event with no instant of its own. §5.2 orders the
 	// subscription's state by it, so an event without one is one the service
 	// cannot place — and answering it with the service's own clock would make
@@ -279,7 +289,9 @@ func (s *Service) apply(ctx context.Context, e Event) error {
 // no paid-domain refusal — and the merchant's retry would otherwise stop at the
 // recorded source and leave it that way forever. Here the retry finishes it from
 // the record the mint left, which is the whole of what the event's effect needs:
-// the seats, the term, the address and the end of the term are all in it.
+// the seats, the term, the address and the end of the term are all in it — and
+// what it writes into is the subscription the store holds, never a fresh one, so
+// a state the store has moved on to since is not thrown away by the repair.
 //
 // The same read-then-write limit is why the store, and not this function, is
 // where a durable fix belongs; the Store contract says so and S3.5 is the
@@ -303,15 +315,21 @@ func (s *Service) completed(ctx context.Context, e Event, record Record) error {
 		if !deliverable {
 			return fmt.Errorf("%w: the purchase %s", ErrNoBuyer, e.ID)
 		}
-		return s.store.SaveSubscription(ctx, Subscription{
-			ID:           e.Subscription,
-			Organisation: record.Organisation,
-			Seats:        record.Seats,
-			TermDays:     daysBetween(record.Issued, record.Expires),
-			Email:        to,
-			At:           e.OccurredAt,
-			Expires:      record.Expires,
-		})
+		// The state is written from what the store holds when it holds one, and
+		// never from a fresh subscription: a redelivery is not a second purchase,
+		// and writing the record's fields into a literal drops everything the
+		// subscription has since become — a cancellation that landed on the
+		// purchase's own instant is undone by the very write that repairs the
+		// term, and the renewal then mints a paid key for a customer who has left
+		// (§5.2, §5.3). Only the fields the record is the source of move.
+		sub.ID = e.Subscription
+		sub.Organisation = record.Organisation
+		sub.Seats = record.Seats
+		sub.TermDays = daysBetween(record.Issued, record.Expires)
+		sub.Email = to
+		sub.At = e.OccurredAt
+		sub.Expires = record.Expires
+		return s.store.SaveSubscription(ctx, sub)
 	case EventSeatChange:
 		if !held || sub.Cancelled || sub.Seats == record.Seats {
 			return nil
@@ -328,7 +346,7 @@ func (s *Service) completed(ctx context.Context, e Event, record Record) error {
 // and the seats are the ones the merchant's event names (§5.1).
 func (s *Service) purchased(ctx context.Context, e Event) error {
 	if e.Organisation == "" || e.Seats < 1 || e.TermDays < 1 {
-		return nil
+		return fmt.Errorf("%w: the purchase %s", ErrNoClaims, e.ID)
 	}
 	to, deliverable := address(e.Email)
 	if !deliverable {
@@ -354,7 +372,11 @@ func (s *Service) purchased(ctx context.Context, e Event) error {
 // left of the term, so it ends where the key it replaces ends.
 func (s *Service) seatChanged(ctx context.Context, e Event, sub Subscription) error {
 	if e.Seats < 1 {
-		return nil
+		// The same refusal a purchase without seats gets, and for the same
+		// reason: a seat change that names no seats is one this service cannot
+		// serve, and a customer who has paid for one receives nothing if it is
+		// dropped quietly.
+		return fmt.Errorf("%w: the seat change %s", ErrNoClaims, e.ID)
 	}
 	days := daysBetween(s.now(), sub.Expires)
 	if days < 1 {

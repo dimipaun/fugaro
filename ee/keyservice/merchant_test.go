@@ -207,6 +207,126 @@ func TestAnEventTiedWithTheStoredInstantIsNotDropped(t *testing.T) {
 	}
 }
 
+// TestARedeliveredPurchaseDoesNotResurrectACancelledSubscription: the repair a
+// recorded purchase gets from `completed` writes the term the record describes —
+// the seats, the term and the address — and it must write it *onto* what the
+// store already holds and not into a fresh subscription: a literal drops
+// everything the subscription has become since, and the cancellation that landed
+// on the purchase's own instant is admitted by the guard above, which excludes an
+// event older than the state and not a tie. The renewal that follows then mints a
+// paid key for a customer who has left (§5.2, §5.3).
+func TestARedeliveredPurchaseDoesNotResurrectACancelledSubscription(t *testing.T) {
+	f := newFixture(t)
+	purchase := Event{
+		ID:           "evt-1",
+		Type:         EventPurchase,
+		Mode:         ModeFor(f.env),
+		OccurredAt:   f.now,
+		Subscription: "sub-acme.example",
+		Organisation: "acme.example",
+		Email:        buyerAddress("acme.example"),
+		Seats:        5,
+		TermDays:     365,
+	}
+	f.deliver(purchase)
+	// The cancellation carries the purchase's own instant, so the redelivery
+	// below is tied with the state it finds and not older than it.
+	f.event(Event{ID: "evt-2", Type: EventCancellation, Organisation: "acme.example", OccurredAt: f.now})
+	signed, mailed := f.signer.calls, len(f.mail.sent)
+
+	if rec := f.deliver(purchase); rec.Code != http.StatusOK {
+		t.Fatalf("the redelivered purchase was answered %d, want 200: it is an event the service has already minted for", rec.Code)
+	}
+	sub, held, err := f.store.Subscription(context.Background(), "sub-acme.example")
+	if err != nil || !held {
+		t.Fatalf("the subscription is %v, held=%v", err, held)
+	}
+	if !sub.Cancelled {
+		t.Error("a redelivered purchase resurrected a cancelled subscription, want the cancellation to stand: a redelivery is not a second purchase")
+	}
+	if sub.Seats != 5 || sub.Email != buyerAddress("acme.example") {
+		t.Errorf("the redelivery left %+v, want the record's seats and address written onto the subscription the store holds", sub)
+	}
+	if got := f.signer.calls; got != signed {
+		t.Errorf("the redelivery signed %d key(s) in all, want the purchase's one", got)
+	}
+	if got := len(f.mail.sent); got != mailed {
+		t.Errorf("the redelivery mailed %d message(s) in all, want the purchase's one", got)
+	}
+
+	// And the renewal a resurrected subscription would have allowed does not
+	// happen.
+	f.advance(365*day - 30*day)
+	if _, renewed, err := f.svc.Renew(context.Background(), "sub-acme.example"); err != nil || renewed {
+		t.Errorf("a subscription cancelled at the instant it holds renewed (renewed=%v, err=%v), want nothing", renewed, err)
+	}
+}
+
+// TestAnEventThatDoesNotSayWhatToMintIsRefused: the paid path mints the claims
+// the merchant's event names and covers the term it names, so an event that
+// names none of them is one this service cannot serve — and it is refused, the
+// way an event with no instant and an event with no address are, rather than
+// dropped. A drop is silent in every direction at once: nothing recorded,
+// nothing mailed, nothing queued, nothing logged, and a `200` that tells the
+// merchant never to send it again. A customer who has paid receives nothing and
+// nobody can see it (§5.1).
+func TestAnEventThatDoesNotSayWhatToMintIsRefused(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		event Event
+	}{
+		{name: "a purchase for no organisation", event: Event{ID: "evt-1", Type: EventPurchase, Seats: 5, TermDays: 365}},
+		{name: "a purchase for no seats", event: Event{ID: "evt-1", Type: EventPurchase, Organisation: "acme.example", TermDays: 365}},
+		{name: "a purchase for a negative number of seats", event: Event{ID: "evt-1", Type: EventPurchase, Organisation: "acme.example", Seats: -5, TermDays: 365}},
+		{name: "a purchase for no term", event: Event{ID: "evt-1", Type: EventPurchase, Organisation: "acme.example", Seats: 5}},
+		{name: "a purchase for a negative term", event: Event{ID: "evt-1", Type: EventPurchase, Organisation: "acme.example", Seats: 5, TermDays: -30}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			e := tc.event
+			e.Mode, e.Subscription, e.OccurredAt = ModeFor(f.env), "sub-acme.example", f.now
+			// The address is one the intake can mail to, so the refusal is the
+			// claims' and not the delivery's.
+			e.Email = buyerAddress("acme.example")
+			if rec := f.deliver(e); rec.Code != http.StatusInternalServerError {
+				t.Errorf("%s was answered %d, want 500: the merchant's retry and the owner's alerting are what see an event this service cannot serve", tc.name, rec.Code)
+			}
+			if got := f.signer.calls; got != 0 {
+				t.Errorf("%s signed %d key(s), want none: nothing is minted for an event the service cannot serve", tc.name, got)
+			}
+			if got := len(f.records()); got != 0 {
+				t.Errorf("%s recorded %d key(s), want none", tc.name, got)
+			}
+			if got := len(f.mail.sent); got != 0 {
+				t.Errorf("%s mailed %d message(s), want none", tc.name, got)
+			}
+			if _, held, _ := f.store.Subscription(context.Background(), "sub-acme.example"); held {
+				t.Errorf("%s stored a subscription, want nothing written", tc.name)
+			}
+		})
+	}
+
+	// The same refusal on the reissue path, where the subscription is held and
+	// the event names no seats: the seats the customer holds are the ones they
+	// keep, and the reissue does not happen.
+	f := newFixture(t)
+	f.purchase("evt-1", "acme.example", 5, 365)
+	signed, mailed := f.signer.calls, len(f.mail.sent)
+	if rec := f.event(Event{ID: "evt-2", Type: EventSeatChange, Organisation: "acme.example"}); rec.Code != http.StatusInternalServerError {
+		t.Errorf("a seat change naming no seats was answered %d, want 500", rec.Code)
+	}
+	sub, _, _ := f.store.Subscription(context.Background(), "sub-acme.example")
+	if sub.Seats != 5 {
+		t.Errorf("a seat change naming no seats left the subscription holding %d seat(s), want the 5 the customer bought", sub.Seats)
+	}
+	if got := f.signer.calls; got != signed {
+		t.Errorf("a seat change naming no seats signed %d key(s) in all, want the purchase's one", got)
+	}
+	if got := len(f.mail.sent); got != mailed {
+		t.Errorf("a seat change naming no seats mailed %d message(s) in all, want the purchase's one", got)
+	}
+}
+
 // TestAnEventForAnUnknownSubscriptionIsRefused: a cancellation or a seat change
 // the store has no subscription for is an event the service cannot place — it
 // arrived before the purchase it belongs to. Answering 200 drops it for good,
