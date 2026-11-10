@@ -238,6 +238,15 @@ func Stage(r Repo) (string, error) {
 // definition is appended to, never rewritten: the entry's own Dockerfile is
 // what it is, and one RUN at the end of it runs in the image's last stage —
 // the one every job starts from.
+//
+// An entry whose own Dockerfile already clones (the hand-written definitions
+// of D1208, e.g. images/catalog/*/Dockerfile) gets this stage as well, which
+// pays a second clone for a repository the image already holds. Reading a
+// Dockerfile to find out whether it clones is not a thing this package can do
+// honestly, and the two checkouts are at different paths, so the entry's own
+// bytes are left alone and the duplicate is a cost the person who wrote them
+// can drop — the skill's generated definitions carry no clone of their own,
+// which is what makes the engine's stage the only one.
 func Append(definition []byte, p Plan) ([]byte, error) {
 	if p.Baked == nil {
 		return definition, nil
