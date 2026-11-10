@@ -1,13 +1,14 @@
 # The hosted MCP server: implementation plan
 
-**Status: design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are built and
-merged on `main`; M5 is built except the paired device M-a asks for, which is M5b and is a hard
-prerequisite before any binary links the front door (the owner's ruling of 2026-11-07); M7 is built
-except the reading of the installation's published state its lists come from, which no task of this
-plan carries; M10 is built except the store's own bucket and its one grant, which are M4's store
-half and not started; M8 is built except the wiring that would serve its four read tools, which is
-the task M5b gates; M9 is not started, and the launch-override fence it was to wait on is declined
-for v1 and left unbuilt (the owner's ruling of 2026-11-09); this folder approves no task.**
+**Status: design answered by the owner 2026-11-04; M1, M2, M3, M4, M6 and M10 are built and merged
+on `main`; the front door M4 creates is OFF on every installation until a release writes the flag
+that turns it on, `fugaro update --mcp-server` (D934); M5 is built except the paired device M-a asks
+for, which is M5b and is a hard prerequisite before any binary links the front door (the owner's
+ruling of 2026-11-07); M7 is built except the reading of the installation's published state its
+lists come from, which no task of this plan carries; M8 is built except the wiring that would serve
+its four read tools, which is the task M5b gates; M9 is not started, and the launch-override fence
+it was to wait on is declined for v1 and left unbuilt (the owner's ruling of 2026-11-09); this
+folder approves no task.**
 The design is [spec.md](spec.md), the findings and the fifteen decisions are
 [reconciliation.md](reconciliation.md). **All fifteen were answered on 2026-11-04** — **every one of
 them the recommendation**, with the owner's own detail written into M3, M5, M6 and M9 — and this
@@ -21,9 +22,9 @@ hold `roles/firebasedatabase.admin`, so the rules cannot keep them out. They mov
 IAM names only the front door's own account (`mcp_server`), and §1's last subsection records the
 answer, M2, M3, M4, M5 and M10 are written to it, and §8 is the three candidates for that store —
 **and the answer of the same day that picked the bucket**, which closes the Open item that section
-carried: **nothing waits on it any more, and no task names a store it is not written to.** **This plan
-approves no task, and two things gate the whole plan:** the
-independent SECURITY review of [spec.md](spec.md) §8 (which the coordinator runs), and D921's licence
+carried: **nothing waits on it any more, and no task names a store it is not written to.** **This
+plan approves no task, and two things gate the whole plan:** the independent SECURITY review of
+[spec.md](spec.md) §8 (which the coordinator runs), and D921's licence
 ([reconciliation.md](reconciliation.md) §6, checks 1 and 7). **The second gate is met**: the owner
 read [licence-table.md](licence-table.md) on 2026-11-07 and cleared the dependency set — "Cleared:
 all permissive" — recorded in [licence-gate.md](licence-gate.md), the gate file the check describes,
@@ -160,15 +161,18 @@ is unchanged, and **M1's spend-type finding is M9's to close**, which is where t
 2026-11-05 found the same defect from the other end
 (`ee/coordinator/mcpauth/limits.go:298`) — and **M4 and M6 were cancelled** and were to be rerun from
 this amended plan, because M4's draft predates the D934 and M-e answers and M6's predates M-a and H1.
-**Where the tree has gone since**: **M1 (#1713), M2 (#1767), M3 (#1715), M6 (#1714) and M4's first
-half (#1716) are merged on `main`** — M4's half being the account, the front door service and its
-public invoker binding (`deploy/terraform/gcp/modules/installation/coordinator.tf:320`, `:382`,
-`:527`) — **M5 is built apart from the paired device M-a asks for, which is M5b below and is not
+**Where the tree has gone since**: **M1 (#1713), M2 (#1767), M3 (#1715), M6 (#1714) and M4 are
+merged on `main`** — M4's first half (#1716) being the account, the front door service and its
+public invoker binding (`deploy/terraform/gcp/modules/installation/coordinator.tf:324`, `:388`,
+`:536`), and its store half being the bucket the records live in and the one binding that names the
+front door's account (`deploy/terraform/gcp/modules/installation/mcpauth_store.tf`) — **M5 is built
+apart from the paired device M-a asks for, which is M5b below and is not
 built, M7 is built apart from the reading of the installation's published state its lists come from,
-which no task below carries, M10 is built apart from the store's own bucket and its one grant, which
-are M4's store half below and are not started, **M8 is built apart from the wiring that would serve
+which no task below carries, **M8 is built apart from the wiring that would serve
 its four read tools**, which is the wiring task M5b gates and no task below carries, **and M9 is not
-started**. **What each built task
+started**. **The front door M4 builds is OFF on every installation**: the flag that turns it on,
+`fugaro update --mcp-server`, is the release's own and no released command writes it yet, which is
+D934's answer and not a half-built task. **What each built task
 still owes is named in its own section below**
 ([reconciliation.md](reconciliation.md) §4a, "What has happened since").
 
@@ -269,10 +273,12 @@ a planner who wants them in parallel is asking for four conflicts in the one fil
 answers through. **M5 → M7 → M6** are the three writers of `server.go`, and M6 is off the critical
 path, which is why it takes the third slot rather than the second. **M4 → M5 → M7** are the three
 writers of the service's own entry point (`ee/coordinator/service.go`), and **M4 → M9** are the two
-writers of `coordinator.tf` — M4 creates the service and the
-account, and M9 ends the account's own "one grant" comment and adds the launcher's grant on each
-project job — which is why the two are levels apart. **The grant itself is not a first-slice row**: it
-is written in `module "project"`, which no first-slice task touches at all.
+writers of `coordinator.tf` and of `cover.go` — M4 creates the service and the
+account, and its store half gives the front door's account a kind of its own in the cover beside the
+store's one grant; M9 ends the account's own "two grants" comment and adds the launcher's grant on
+each project job, with the `fugaroJobRunner` row that accepts that kind — which is why the two are
+levels apart. **The grant itself is not a first-slice row**: it is
+written in `module "project"`, which no first-slice task touches at all.
 **M9** waits for a release
 window in which `internal/runner/spend.go` has no other writer (§4), which no level can schedule.
 
@@ -497,7 +503,7 @@ Terraform file rather than any interface any other task builds against.
   accepted and §8 and this section corrected to say what is true. **The owner took the first on
   2026-11-05 — D935, the store of the first kind — and this open item is answered rather than
   standing**: the records leave this database for a store whose IAM names the front door's own account
-  `mcp_server` and no other member — the account M4 creates (`coordinator.tf:320`), never the
+  `mcp_server` and no other member — the account M4 creates (`coordinator.tf:324`), never the
   coordinator's own (`coordinator.tf:71`, the sweep's) — §8's sentence is corrected by the plan's own
   §8, and the node stays closed as a defence in depth. What M5 writes is therefore M2's store and not
   `mcpauth`, and the answer to this item is what decides that.
@@ -516,10 +522,16 @@ Terraform file rather than any interface any other task builds against.
 ### M4 — The coordinator's public service, its own account, its grants and the store (D935)
 **Cancelled on 2026-11-04 and to be rerun from this amended plan**: its draft predates the D934 and
 M-e answers — the meaning of "off" and the collision with the installer's own cover rule — and the
-store D935 moves the records into, which this task creates as a bucket of its own. **Its first half
-landed as #1716** — the account, the front door service and its public invoker binding
-(`deploy/terraform/gcp/modules/installation/coordinator.tf:320`, `:382`, `:527`) — and **its store
-half, `mcpauth_store.tf` with the bucket and its one grant, is not started.**
+store D935 moves the records into, which this task creates as a bucket of its own. **Both halves have
+landed**: its first half as #1716 — the account, the front door service and its public invoker
+binding (`deploy/terraform/gcp/modules/installation/coordinator.tf:324`, `:388`, `:536`) — and
+**its store half as `mcpauth_store.tf` with the bucket and its one grant**, the bucket
+`fugaro-mcpauth-<gcp-project>` and the single `objectAdmin` binding for
+`google_service_account.mcp_server`, published as the installation's own
+`mcpauth_store_bucket` output. **The flag that turns the front door on is still not written**: no
+released `fugaro update` carries `--mcp-server`, so the task is built and every installation keeps
+the front door OFF (D934) — the release that turns it on adds the flag, and the operator section
+below is what that release's notes carry.
 
 - **The amendment's findings (2026-11-04). The review's findings were H3, M-e and D934's cover
   collision; all three are answered above**: the account holds no `firebasedatabase.admin` over
@@ -531,17 +543,20 @@ half, `mcpauth_store.tf` with the bucket and its one grant, is not started.**
   `deploy/terraform/gcp/modules/installation/mcpauth_store.tf` (new: the store and its one grant),
   `deploy/terraform/gcp/modules/installation/outputs.tf`,
   `deploy/terraform/gcp/modules/installation/coordinator_service_test.go` (a plan-level test),
-  `internal/infra/tf/cover.go` (the store's two types, `google_storage_bucket` and
-  `google_storage_bucket_iam_member`, are already covered at
-  `internal/infra/tf/cover.go:64` — **unless this task takes the authoritative-policy route to strip
-  the convenience bindings the floor bullet above describes, in which case
-  `google_storage_bucket_iam_policy` is a type F2's "one does not appear" did not anticipate and
-  belongs in `allowedTypes` on purpose, with the reason written beside it**),
+  `internal/infra/tf/cover.go` (**the two types are already covered, the one GRANT is not: the front
+  door's account is added as a principal kind of its own (`toMCP`) and the objectAdmin row carries
+  that bit, narrowed by `mcpauthStoreGrant` to `fugaro-mcpauth-<the installation's project>` under no
+  condition — corrected 2026-11-09, the review of M4's store half; this is not the `allUsers`
+  widening the M-e finding forbids, which is the member-kind rule `NotCovered` already applies** —
+  and if the task takes the authoritative-policy route to strip
+  the convenience bindings the floor bullet above describes, `google_storage_bucket_iam_policy` is a
+  type F2's "one does not appear" did not anticipate and belongs in `allowedTypes` on purpose, with
+  the reason written beside it),
   `internal/infra/coordinator_service.go`, `internal/infra/coordinator_service_test.go`,
   `ee/coordinator/service.go`.
 - **Interface:** a `google_cloud_run_v2_service` for the coordinator with `allUsers` invoker (D920),
   its own service account, no model credential mounted, and the launch role of M9 **deliberately
-  absent** — the comment at `coordinator.tf:377` says so, and the task that adds it is **M9** itself
+  absent** — the comment at `coordinator.tf:383` says so, and the task that adds it is **M9** itself
   (the fence that would have split the role into one of its own is declined, §3). **And the store of D935, which is this task's because this is the task that writes IAM.**
   The store is **a bucket of its own — `fugaro-mcpauth-<gcp-project>`, a function of the
   project alone, the convention the runs bucket and both state buckets already follow
@@ -971,7 +986,7 @@ this task still owes is its own rerun against M-a and H1 rather than that step.
   state and the two bounds the open registration endpoint is accepted under — owes this wiring
   beside them**: it is where the project's own repository slugs are read, from the
   `FUGARO_COORDINATOR_REPOS` the installation already puts on the front door's own service
-  (`deploy/terraform/gcp/modules/installation/coordinator.tf:491`, "the repositories the front door
+  (`deploy/terraform/gcp/modules/installation/coordinator.tf:500`, "the repositories the front door
   may answer about"), and where a token's own repository filter is applied on top of that list
   rather than instead of it. spec.md §11 carries it as an open item until the owner assigns it.
 
@@ -1198,8 +1213,8 @@ of its own. The table is shorter by one writer and no row, and nothing it lists 
 | `ee/coordinator/mcpauth/server.go` | M5 (L2), M7 (L3), M6 (L4) | M5 mounts the five endpoints; M7 adds the resource handler; M6 adds the authorize endpoint's verifier, off the critical path and therefore in the last of the three slots |
 | `ee/coordinator/mcpauth/tools.go` | M7 (L3), M8 (L4), M9 (L5), M10 (L6) | the registry: each of the three tool tasks registers into it |
 | `ee/coordinator/service.go` | M4 (L0), M5 (L2), M7 (L3) | M4 creates the service's entry point; M5 and M7 mount handlers on it |
-| `deploy/terraform/gcp/modules/installation/coordinator.tf` | M4 (L0), M9 (L5) | M4 creates the service and the account; M9 rewrites the two comments (`:301-320`, `:377`) that describe the account's reach and the absent grant — **the grant itself is not written here**, because the job it goes on is not a resource of this module |
-| `internal/infra/tf/cover.go` | M4 (L0), M9 (L5) | M4 adds the store's two resource types to the cover; **M9 names the front door's account in it** (`MCPServerAccountID`, `fugaro-mcp`) as a kind of its own, with the `fugaroJobRunner` row accepting that kind — **the literal member the project module writes is classified by its spelling and is refused without it** (§3, M9's files) |
+| `deploy/terraform/gcp/modules/installation/coordinator.tf` | M4 (L0), M9 (L5) | M4 creates the service and the account and rewrites the account's own "two grants" comment (`:301-324`) that describes its reach; M9 rewrites the "deliberately absent" comment (`:383`) it ends — **the grant itself is not written here**, because the job it goes on is not a resource of this module |
+| `internal/infra/tf/cover.go` | M4 (L0), M9 (L5) | M4 adds the store's two resource types to the cover and, with its store half, names the front door's account in it as a kind of its own, with the one row that grants it the store; **M9 adds the `fugaroJobRunner` row that accepts that kind** — **the literal member the project module writes is classified by its spelling and is refused without it** (§3, M9's files) |
 | `internal/runner/spend.go` | M9 (L5) alone, but **shared with every other runner task in its release** | the ceiling read out of the variable D924 names on the execution override and its merge; see §5 — which is why the release slot is chosen for the file's other writers, not only for this work |
 | `SECURITY.md` | M4 (L0), M9 (L5), M10 (L6) | a public endpoint, the store and the single grant that keeps it private, the launch grant the front door holds and the accepted v1 risk it carries, the ceiling a run resolves to and how it reaches it, and what the audit does not record — **the repository's standing rule is that a security-relevant change updates it in the same PR** |
 
@@ -1376,8 +1391,8 @@ risk, and never money.
 | --- | --- | --- | --- |
 | **What it is** | a new `google_firebasedatabase_instance`, its own rules publish in the same `update`, its URL in the coordinator's configuration | a `mcpauth` collection in the project's existing database, or a named database of its own | a new bucket (`fugaro-mcpauth-<gcp-project>`, **outside every conditioned prefix**) with every record under `mcpauth/` |
 | **What it costs** | **the most, and it does not work on its own.** The project-level bindings are inherited by every instance, so the new one is readable by every launcher and operator and writable by every admin, budget admin and the history account **until those three bindings are re-scoped** from the project to the default instance alone (`deploy/terraform/gcp/modules/firebase/iam.tf:44`, `:53`, `:81`) — a migration of the access every launcher already uses for `fugaro watch` and `budget show` (`:43`), in the release that also ships a public endpoint. The store code is the closest to what M2 first planned (the database client, key paths), which is the one thing in its favour | **the smallest to add and the one that cannot be made private at all.** `roles/datastore.viewer` is granted project-wide to `local.people ∪ local.admins` (`deploy/terraform/gcp/modules/firebase/iam.tf:65`) and the history account holds `roles/datastore.user` (`:96`); Firestore's data roles have **no per-database and no per-collection narrowing** to re-scope to, so a named database is reached by the same project-level binding as the default one. Getting out would mean withdrawing `datastore.viewer` from the people lists — which takes the spend history's own read with it — and the spend history is not this work's to break | **no transactions and no query language.** The store is objects, written with `internal/blobx`'s generation-matched primitives (`internal/blobx/blobx.go:1`), so the audit record is a prefix listing rather than a query, and each of rotate, replay-detect and revoke is a compare-and-swap that a test has to prove rather than a transaction that gives it. Everything else is a seam the repository already has, and the GCS fake implements the one precondition the store needs (`internal/gcpfake/gcs.go:34`) |
-| **The new Terraform** | one `google_firebasedatabase_instance`, plus the rules publish to it, plus **the re-scoping of the three project-level bindings above**, which is the part that touches what exists | one `google_firestore_database` for a named database, and **none at all** for a collection in the existing one | one `google_storage_bucket` — uniform bucket-level access and public access prevention enforced, because the installer's plan review refuses a bucket without both (`internal/infra/tf/cover.go:2199`) — and one `google_storage_bucket_iam_member`. Both types are already covered (`internal/infra/tf/cover.go:64`), and `fugaro update` applies them with the owner's own rights, so **no new operator permission and no second command**. **The name must not carry `fmgd-`**: the managed deployer's storage role is a project-level binding conditioned on that prefix (`deploy/terraform/gcp/modules/installation/deployer.tf:379`, `:142`) and every operator can act as the deployer (`:501`), so a prefixed name would put the store inside exactly the reach this option exists to leave — the correction of 2026-11-05, and the reason M4's test asserts the name. **And the name is squatting-shaped**: bucket names are global and this one is a function of the project alone, while the deployer holds an **unconditioned** `storage.buckets.create` (`deployer.tf:219`), so M4 **creates** the bucket and a create against a name that already exists **fails the apply** — never adopted, never imported, never read (M2 opens only the name M4 writes into the installation's outputs) |
-| **The IAM binding it needs** | **none that is narrow.** There is no per-instance binding in the shape the rest of this installation uses: the only way to keep the four sets of people out is to stop granting them project-wide, which is the re-scoping above — and that changes what a launcher has today | **not available.** The binding cannot be narrowed to the records, so the store is readable by everyone `datastore.viewer` names and writable by the history account. This is the row that rules Firestore out rather than pricing it | **one binding, one member:** `roles/storage.objectAdmin` for **the front door's own account `mcp_server`** on that bucket, and nothing else — **not the sweep's account** (`google_service_account.coordinator`), which reads runs and never tokens. Every storage grant in this installation **but one** is bucket-scoped (`deploy/terraform/gcp/modules/installation/iam.tf:207`, `:222`, `:238`; `coordinator.tf:92`) — the exception is the managed deployer's conditioned `fugaroDeployerStorage` (`deploy/terraform/gcp/modules/installation/deployer.tf:379`), which is why the store's name stays outside `fmgd-` and out of its reach — so a bucket so named has exactly one **member**. **What is wider than the member list is the floor, and the plan no longer claims otherwise (corrected 2026-11-05):** the project's **Owner and its Editors reach every bucket through their project-level roles** — `SECURITY.md:88` says it of this installation's own buckets, "Project Owners, Editors and anyone with a project-level storage role bypass the bucket's own policy regardless, hardened or not" — and **GCS's convenience bindings give a basic project Viewer the read** until they are taken off the bucket (`internal/gcpfake/gcs.go:250`). Uniform bucket-level access removes neither, so **M4 owns stripping them or refusing the bucket** (M4's fifth bullet, and the reading check 8 adds). What the floor is not: it is not the four sets of people the database grants name — no launcher, no operator, no budget admin and not the history account is admitted by a bucket claim — and that is the whole distance D935 bought. **A prefix of the runs bucket is not this option:** every launcher reads that whole bucket (`deploy/terraform/gcp/modules/installation/iam.tf:222`) and every operator holds `objectAdmin` on it (`:207`), so the records would be readable by both lists — the finding F32 is, one resource over |
+| **The new Terraform** | one `google_firebasedatabase_instance`, plus the rules publish to it, plus **the re-scoping of the three project-level bindings above**, which is the part that touches what exists | one `google_firestore_database` for a named database, and **none at all** for a collection in the existing one | one `google_storage_bucket` — uniform bucket-level access and public access prevention enforced, because the installer's plan review refuses a bucket without both (`internal/infra/tf/cover.go:2199`) — and one `google_storage_bucket_iam_member`. **The two TYPES are already covered (`internal/infra/tf/cover.go:64`) and the one GRANT is not, which the review of 2026-11-09 found and M4's store half fixes** (corrected 2026-11-09): `roles/storage.objectAdmin` on a bucket was a people-only row and the front door's own account was no kind the table knew, so the plan carrying the store was refused item by item and the step that applies it asked its **own typed confirmation** — a second confirmation for a command whose whole rule is one. **The front door's account is now a principal kind of its own (`toMCP`) and the row is narrowed to this store**: `mcpauthStoreGrant` accepts exactly the account, exactly `roles/storage.objectAdmin`, exactly `fugaro-mcpauth-<the installation's project>` and no condition (`internal/infra/tf/cover_grants_test.go`'s `TestMCPAccountIsItsOwnPrincipalKind`, whose negative cases are the runs bucket's objectAdmin, another member on this bucket and a condition), and `internal/infra`'s `TestTheStoreIsNotWhatRefusesTheFrontDoorsPlan` reads a real plan of the installation root to hold it. **That is not the widening the M-e finding forbids**, which is `allUsers` and the service's own invoker binding (§8's M-e, spec.md §8); it is one account, one role and one bucket, added on purpose because the module grants them. `fugaro update` applies them with the owner's own rights, so **no new operator permission and no second command**. **The name must not carry `fmgd-`**: the managed deployer's storage role is a project-level binding conditioned on that prefix (`deploy/terraform/gcp/modules/installation/deployer.tf:379`, `:142`) and every operator can act as the deployer (`:501`), so a prefixed name would put the store inside exactly the reach this option exists to leave — the correction of 2026-11-05, and the reason M4's test asserts the name. **And the name is squatting-shaped**: bucket names are global and this one is a function of the project alone, while the deployer holds an **unconditioned** `storage.buckets.create` (`deployer.tf:219`), so M4 **creates** the bucket and a create against a name that already exists **fails the apply** — never adopted, never imported, never read (M2 opens only the name M4 writes into the installation's outputs) |
+| **The IAM binding it needs** | **none that is narrow.** There is no per-instance binding in the shape the rest of this installation uses: the only way to keep the four sets of people out is to stop granting them project-wide, which is the re-scoping above — and that changes what a launcher has today | **not available.** The binding cannot be narrowed to the records, so the store is readable by everyone `datastore.viewer` names and writable by the history account. This is the row that rules Firestore out rather than pricing it | **one binding, one member:** `roles/storage.objectAdmin` for **the front door's own account `mcp_server`** on that bucket, and nothing else — **not the sweep's account** (`google_service_account.coordinator`), which reads runs and never tokens. Every storage grant in this installation **but one** is bucket-scoped (`deploy/terraform/gcp/modules/installation/iam.tf:207`, `:222`, `:238`; `coordinator.tf:92`) — the exception is the managed deployer's conditioned `fugaroDeployerStorage` (`deploy/terraform/gcp/modules/installation/deployer.tf:379`), which is why the store's name stays outside `fmgd-` and out of its reach — so a bucket so named has exactly one **member**. **What is wider than the member list is the floor, and the plan no longer claims otherwise (corrected 2026-11-05):** the project's **Owner and its Editors reach every bucket through their project-level roles** — `SECURITY.md:88` says it of this installation's own buckets, "Project Owners, Editors and anyone with a project-level storage role bypass the bucket's own policy regardless, hardened or not" — and **GCS's convenience bindings give a basic project Viewer the read** until they are taken off the bucket (`internal/gcpfake/gcs.go:250`). Uniform bucket-level access removes neither, so **M4 owns stripping them or refusing the bucket** (M4's fifth bullet, and the reading check 8 adds) — **and M4's store half landed with the half a plan can take**: the plan writes none of those bindings (asserted in the module and in the installation plan's own resource changes), while taking off the ones GCS attaches at creation is `internal/infra.RemoveProjectViewers`, whose call site for this bucket is the release that turns the front door on, because no released `fugaro update` writes the flag that creates the store. What the floor is not: it is not the four sets of people the database grants name — no launcher, no operator, no budget admin and not the history account is admitted by a bucket claim — and that is the whole distance D935 bought. **A prefix of the runs bucket is not this option:** every launcher reads that whole bucket (`deploy/terraform/gcp/modules/installation/iam.tf:222`) and every operator holds `objectAdmin` on it (`:207`), so the records would be readable by both lists — the finding F32 is, one resource over |
 | **The owner-run live check** | after the re-scoping: read the new instance's `mcpauth` node as a launcher and as a budget admin and expect a refusal — **and then confirm `fugaro watch` and `fugaro report` still work**, which is the half of this option that can break an installation | the same read, which **fails**: the launcher's own credentials reach the documents. The check is what turns this row from a preference into a fact | with a launcher's own credentials and with a budget admin's, read and list the store's prefix and expect a refusal; **impersonate the deployer as an operator and expect a refusal too** — the reading the correction of 2026-11-05 adds; **read and list the prefix as a basic project Viewer and expect a refusal as well** — the reading the floor correction of the same day adds, and the only one that shows the convenience bindings were actually stripped rather than only written away; with the front door's own account `mcp_server`, read one record and expect it to work; and confirm the store's bucket is not the runs bucket (check 8, [reconciliation.md](reconciliation.md) §6) |
 
 **Why the recommendation is the bucket.** The first candidate's IAM cannot be narrowed without

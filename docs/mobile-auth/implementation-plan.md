@@ -1,6 +1,6 @@
 # The mobile app's sign-in, pairing and allowlist — the implementation plan
 
-**Status: plan only; no code is implemented; approval gate open.** This plan follows from
+**Status as of 2026-11-10: parked, 2/7 merged; see [docs/status.md](../status.md) for the current table.** This plan follows from
 [reconciliation.md](reconciliation.md), which wins wherever it disagrees with [spec.md](spec.md).
 **Amended 2026-10-22:** the owner accepted the parts **as recommended**, with **P0 and P1 approved**
 and **P3–P5 ordered after P6.6 and P6.8**; the gate stays open for **every other part** — see

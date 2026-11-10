@@ -133,7 +133,7 @@ This matters here, in three ways:
     not in play for the job, and no `grantRules` row is needed** — which matters more than it looks:
     `toCatalogCheck` is a principal kind of its own, the one row that accepts it being
     `roles/storage.objectUser` on a bucket and only under one repository's records condition
-    (`internal/infra/tf/cover.go:223`, the `catalogRecordsGrant` check at `:1982`), so a grant carrying
+    (`internal/infra/tf/cover.go:244`, the `catalogRecordsGrant` check at `:2096`), so a grant carrying
     this permission to that account is not an ordinary covered change at all; it reaches the owner as a
     question from `fugaro update`, which the HARD RULE says an upgrade must not need.
 - On the installation project, the user path's enablement needs nothing new **there**, because the one
@@ -141,7 +141,7 @@ This matters here, in three ways:
   installation's **people and admins** by the module the backend turns on
   (`deploy/terraform/gcp/modules/firebase/iam.tf:109-115`; the `grantRules` row that covers the grant
   is `roles/serviceusage.serviceUsageConsumer: toPeople | toAccounts` at
-  `internal/infra/tf/cover.go:189`). The only other holder anywhere is the **history account**
+  `internal/infra/tf/cover.go:200`). The only other holder anywhere is the **history account**
   (`:117-121` `history_usage`), whose Firestore client sends that header too (`:102-108`) — and that
   comment is the closest thing in the repo to the open question §3 argues about: it concludes that
   sending the header *"requires serviceusage.services.use on it"*, which is the reading under which
@@ -351,17 +351,17 @@ unprobed half — T8's live run is what confirms it (§9 item 1).
 | Enable `cloudbilling.googleapis.com` | `deploy/terraform/gcp/modules/installation/apis.tf`, in `local.apis` — on the **installation project**, which the lookup's client must name as its quota project **for user credentials** (§1.2), and where the budget backend lives | **Yes**, if the lookup ships, and it is the **only** installation change. A `google_project_service`, already in `allowedTypes` (`internal/infra/tf/cover.go:22`), so no cover change. It is not enabled today. Without the quota project on the user path, this row is not enough and the enablement lands on the operator's own project instead — an operator step (HARD RULE). |
 | Any `google_project_iam_member` granting a billing role | `installation/iam.tf` | **No.** A project grant of `roles/billing.viewer` would not carry the permissions anyway (§1.3). Do not write it. |
 | `roles/serviceusage.serviceUsageConsumer` for the catalog check account | `installation/catalogcheck.tf`, and a new `toCatalogCheck` row in `cover.go`'s `grantRules` | **No, and it would not be an ordinary row** (see below). The job's lookup client passes no quota project, so the job never needs the permission; only the **user** path does, and the person already holds it. |
-| `roles/serviceusage.serviceUsageConsumer` for the operators, so the user path also works **without** a budget backend | `deploy/terraform/gcp/modules/installation/iam.tf` (`var.operators`, as `operator_build_submitter` is granted at `:77-85`) | **No** — the lookup does not run without the backend (§1.2). This row is recorded because it is the one real alternative: it would be **covered by an existing `grantRules` row** (`toPeople`, `internal/infra/tf/cover.go:189`, so no new row and no secret), it grants a permission the same person already has on every installation whose backend is on, and it would let a backend-less installation read a price it has no ledger to spend against. If the owner wants that, it is one `google_project_iam_member` and T5's *"a new grant in a security-sensitive module"* becomes live. |
-| A new `grantRules` row | `internal/infra/tf/cover.go:143` | **No** for the token route. |
-| A new `grantRules` row for a **secret**, if an API key is chosen | `cover.go`'s `google_secret_manager_secret_iam_member` row | **No** — the token route is verified on the **user** path (§1.4, 2026-11-08), and that is the path a key would have existed for; on the job path the same route is T8's live run (§9 item 1), so no key exists today and this row is written only if that run fails. Had a key been needed it would have been a **widening**: that row accepts no `toCatalogCheck` member (`cover.go:233-250`), and the catalog check account is a principal kind of its own (`toCatalogCheck`, `cover.go:127`, matched by `isCatalogCheckMember` at `:753`) which exactly **one** row accepts — the bucket `roles/storage.objectUser` under one repository's records condition (`:223`, `catalogRecordsGrant` at `:1982`), and nothing else. So an API key handed to the job would have meant a new row admitting `toCatalogCheck`: the account's reach would have grown from one repository's records to a secret the lookup reads. |
+| `roles/serviceusage.serviceUsageConsumer` for the operators, so the user path also works **without** a budget backend | `deploy/terraform/gcp/modules/installation/iam.tf` (`var.operators`, as `operator_build_submitter` is granted at `:77-85`) | **No** — the lookup does not run without the backend (§1.2). This row is recorded because it is the one real alternative: it would be **covered by an existing `grantRules` row** (`toPeople`, `internal/infra/tf/cover.go:200`, so no new row and no secret), it grants a permission the same person already has on every installation whose backend is on, and it would let a backend-less installation read a price it has no ledger to spend against. If the owner wants that, it is one `google_project_iam_member` and T5's *"a new grant in a security-sensitive module"* becomes live. |
+| A new `grantRules` row | `internal/infra/tf/cover.go:154` | **No** for the token route. |
+| A new `grantRules` row for a **secret**, if an API key is chosen | `cover.go`'s `google_secret_manager_secret_iam_member` row | **No** — the token route is verified on the **user** path (§1.4, 2026-11-08), and that is the path a key would have existed for; on the job path the same route is T8's live run (§9 item 1), so no key exists today and this row is written only if that run fails. Had a key been needed it would have been a **widening**: that row accepts no `toCatalogCheck` member (`cover.go:254-271`), and the catalog check account is a principal kind of its own (`toCatalogCheck`, `cover.go:137`, matched by `isCatalogCheckMember` at `:795`) which exactly **one** row accepts — the bucket `roles/storage.objectUser` under one repository's records condition (`:244`, `catalogRecordsGrant` at `:2096`), and nothing else. So an API key handed to the job would have meant a new row admitting `toCatalogCheck`: the account's reach would have grown from one repository's records to a secret the lookup reads. |
 
 **Why the `serviceUsageConsumer` row above is the wrong fix even if the job ever did need it.** A
 grant naming `toCatalogCheck` is not covered by init's one confirmation the way `toAccounts` rows are:
 the kind exists so that a grant to this account is accepted only where a row names that exact
 (type, role, condition) on purpose (`internal/infra/tf/cover.go:106-117`), and only the bucket
-`roles/storage.objectUser` row does — under one repository's records condition (`:223`,
-`catalogRecordsGrant` at `:1982`) — so every **other** grant to it is **refused by the plan review and
-asked of the owner** (`:1338` `checkGrant`, whose `toCatalogCheck` case is `:1381-1391`;
+`roles/storage.objectUser` row does — under one repository's records condition (`:244`,
+`catalogRecordsGrant` at `:2096`) — so every **other** grant to it is **refused by the plan review and
+asked of the owner** (`:1442` `checkGrant`, whose `toCatalogCheck` case is `:1485-1495`;
 `TestCatalogCheckAccountIsItsOwnPrincipalKind`, `TestCatalogCheckRecordsGrant`).
 It is the one row an upgrade cannot ship silently, so reaching for it to buy a number used only to
 reserve is the opposite of the smallest change.
@@ -384,7 +384,7 @@ security-sensitive module"* **does not arise**.
 
 One more cover fact the owner should have beside this, because it is the hostile-config surface
 (§5): the plan review validates the *build service account* and the *base images* of a check spec
-(`internal/infra/tf/cover.go:2483` `checkCatalogSpec`, `:2523` `buildAccount`) and **not the machine
+(`internal/infra/tf/cover.go:2603` `checkCatalogSpec`, `:2643` `buildAccount`) and **not the machine
 type**; and the local config's own validation of it is a charset rule, not an allowlist
 (`internal/localcfg/localcfg.go:1364-1365` `machineTypeRE = ^[A-Za-z0-9_-]{1,40}$`, checked at `:1891`).
 A hostile local config can already choose the machine type. §5 says why that is survivable, and what
@@ -617,7 +617,7 @@ The repository, by path and symbol:
 | `deploy/terraform/gcp/modules/installation/iam.tf:35-42,70-83` | `fugaroBuildSubmitter`, and the operator grant |
 | `deploy/terraform/gcp/modules/installation/catalogcheck.tf:24-46,99,125` | The catalog check job and its account's grants |
 | `deploy/terraform/gcp/modules/repo/*.tf`, `modules/repo/catalogcheck.tf:24` | The repository build account and the per-repo actAs grant |
-| `internal/infra/tf/cover.go:22,127,143,189,223,290,753,1982,2483,2523` | `allowedTypes`; the principal kinds (`toCatalogCheck` at `:127`, the comment that makes it one at `:106-117`, `isCatalogCheckMember` at `:753`); `grantRules` (`:143`) with the one row that accepts that kind — `roles/storage.objectUser` at `:223`, checked by `catalogRecordsGrant` at `:1982` — and the `serviceUsageConsumer` row at `:189`; `allowedRoles` (`:290`); `checkCatalogSpec` (`:2483`) and `buildAccount` (`:2523`) |
+| `internal/infra/tf/cover.go:22,137,154,200,244,311,795,2096,2603,2643` | `allowedTypes`; the principal kinds (`toCatalogCheck` at `:137`, the comment that makes it one at `:106-117`, `isCatalogCheckMember` at `:795`); `grantRules` (`:154`) with the one row that accepts that kind — `roles/storage.objectUser` at `:244`, checked by `catalogRecordsGrant` at `:2096` — and the `serviceUsageConsumer` row at `:200`; `allowedRoles` (`:311`); `checkCatalogSpec` (`:2603`) and `buildAccount` (`:2643`) |
 | `internal/localcfg/localcfg.go:1174-1176,1337-1339,1598,1629-1630,1826,1829,2361-2365` | `build.machine_type`/`build.region`, the charset rules, the default, the region fallback |
 | `internal/backend/gcp/prices.go:9-27`; `internal/backend/batch/prices.go:47-79,326-329` | The repo's pinned-price-table precedent, dates included |
 | `docs/plans/2026-09-27-m4-gcp-backend.md:3838` | The repo's own earlier recipe for a catalog read with a bearer token |

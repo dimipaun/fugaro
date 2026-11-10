@@ -364,8 +364,8 @@ plan). Every decision D1540–D1555 is answered (2026-11-07).
   installation project **only on the user path** (where the person already holds `serviceusage.serviceUsageConsumer`)
   and passes none for a service account, which then sends no header at all. A row for the catalog check account was
   considered and rejected: that principal kind is the one `cover.go`'s `grantRules` accepts in exactly one place —
-  `roles/storage.objectUser` on a bucket, under one repository's records condition (`cover.go:223`,
-  `catalogRecordsGrant` at `:1982`) — so a grant of anything else to it would reach the owner as a question from
+  `roles/storage.objectUser` on a bucket, under one repository's records condition (`cover.go:244`,
+  `catalogRecordsGrant` at `:2096`) — so a grant of anything else to it would reach the owner as a question from
   `fugaro update`. **Both facts the
   spike could not verify without a credential were answered by the owner's own probe on 2026-11-08**
   ([billing-price-spike.md](billing-price-spike.md) §8): their OAuth login, no billing role and no API key, read

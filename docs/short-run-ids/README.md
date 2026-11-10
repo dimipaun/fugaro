@@ -1,6 +1,6 @@
 # Short run IDs everywhere: the documents
 
-**Status: plan only; nothing is implemented; no task approved.**
+**Status as of 2026-11-10: in progress, 12/14 merged; see [docs/status.md](../status.md) for the current table.**
 
 **Spec owner: Dimi Paun. Date: 2026-11-08.** Checked against `origin/main` at `e2e22f8b8`. Numbers reserved: **D1700-D1710**, **checks 440-449** (440 and 441 used).
 

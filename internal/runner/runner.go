@@ -482,6 +482,15 @@ type run struct {
 	// returns, which is the only one readiness reads: level 3's where it ran,
 	// level 2's otherwise, and level 1's where no outer level ran at all.
 	lastSenior seniorRound
+	// firstLineLast is level 1's own last round, kept for the same reason
+	// seniorLevelLast is: lastSenior holds it only where the cheap loop decides
+	// readiness itself, and a run the stop ended before an outer level could
+	// start has no outer round for readiness to read. Without this the
+	// findings the stop has to accept at that moment are the empty round the
+	// policy would otherwise be built from, and asking for the outer level
+	// would make the run a draft where the same run without it is ready (the
+	// owner's ruling of 2026-11-08, item 6b).
+	firstLineLast seniorRound
 	// seniorLevelLast is the senior level's own last round, kept beside
 	// lastSenior because level 3 overwrites that one. Readiness is decided on
 	// the highest enabled level, but the decisions the run owes the owner are
@@ -492,6 +501,32 @@ type run struct {
 	// the run would go ready, or end a draft with the question recorded
 	// nowhere and the follow-up that answers it launched blind.
 	seniorLevelLast seniorRound
+	// reviewRoundsRun counts the review rounds the loop has run, over every
+	// enabled level: it is the loop's own count and not a level's, because
+	// the stop rule counts rounds across the levels a run has on (D727's
+	// doubling — the owner's ruling of 2026-11-08, item 6b — is what it
+	// answers). Read by stopNow, and by nothing that decides readiness: a
+	// level's own cap is still its own.
+	reviewRoundsRun int
+	// stopAt is the half of the stop rule that ended the run's rounds, or ""
+	// for a run that has not stopped: runstore.StopRoundsSpent when the last
+	// review step of the plan ended at its cap without shipping, and
+	// runstore.StopTimeThreshold when the fraction of the run's time budget
+	// elapsed before another round. It is the one input readiness reads to
+	// widen a mode's split to its at-the-stop row (findingsPolicyOf), and the
+	// value the record's accepted block and the run's reason carry. Written
+	// between stages only.
+	//
+	// Nothing clears it and nothing has to: every write is on a path that ends
+	// the plan's review rounds, so no round runs after it and no later ship can
+	// leave a stale stop widening a split. The time half is written where the
+	// loop answers stopNow and returns out of the loop it asked in (timeStop,
+	// which every one of those sites goes through), and the rounds half where
+	// the plan's own last review step ends at its cap without shipping
+	// (seniorLoop, adversarialLoop, firstLine) — the one write that returns
+	// true is that last step's, and the step after it is finalize's, which
+	// starts no review at all.
+	stopAt string
 	// ckpt is the checkpoint pushes' state (checkpoint.go).
 	ckpt checkpointState
 	// stageCkptStop is the running stage's checkpointer stop — startCheckpoints'
@@ -1920,6 +1955,12 @@ const bashTimeoutSlack = 2 * time.Minute
 // brings origin/<base> up to date before anything reads it — and the task's
 // own ref is fetched separately either way (CheckoutNewBranch).
 //
+// A checkout the image baked is not always at the work directory: on the
+// shared image D1900 gives every per-repository job it is at a per-slug path
+// under bakedRepoRoot, and bootstrap makes that path the work directory when it
+// is this run's repository's (openBakedCheckout). Every arm below therefore
+// works on r.d.WorkDir alone.
+//
 // remote is where the clone comes from. It is r.cloneURL's answer for this run
 // — computed from task.json, the job's provider and the policy on a project
 // job, the job's environment's remote on a per-repository one (projectjob.go) —
@@ -1937,6 +1978,178 @@ func (r *run) openCheckout(ctx context.Context, remote string, cloneVars map[str
 		return nil, fmt.Errorf("%s is empty and this job has no repository to clone (FUGARO_CHECKOUT=%s with no remote)", r.d.WorkDir, config.CheckoutClone)
 	}
 	return gitops.CloneBlobless(ctx, r.d.WorkDir, remote, "", env, modelCredentialVars...)
+}
+
+// bakedRepoRoot is the directory a shared image keeps the repositories it baked
+// in: one checkout per repository, named by the repository's storage slug
+// (openBakedCheckout). The name is fixed here rather than discovered because
+// both ends of the layout are Fugaro's own code — the bake step writes these
+// directories, and a run of the image reads them here. Nothing writes them yet:
+// the bake step (IS8b, docs/image-setup-skill) waits on the owner's ruling on
+// O3, so this constant and the per-slug arm below are the contract that step has
+// to meet, and until it does every run falls back to the clone. It is a sibling
+// of the work directory and never a path inside it, because the work directory
+// is the run's own checkout and a repository the image merely carries is not
+// part of it.
+const bakedRepoRoot = "baked"
+
+// openBakedCheckout settles the checkout this run finds in its image, before
+// anything of the run can use it.
+//
+// A checkout in the image is not one this run made, and which repository it is
+// a checkout OF is not a property of the path it sits at. The run therefore
+// opens the work directory when it holds a checkout and, otherwise, the
+// directory the image baked this run's own repository at (bakedRepoRoot,
+// named by the run's storage slug) — and never another repository's, which is
+// the half of the shared image's layout that a single clone at a fixed path
+// could not do (D1900: a per-repository job runs the project's catalog image,
+// which bakes the project's repositories and not just this run's, F7).
+// Whichever checkout it opens is then held to the repository its task names
+// (checkBakedCheckoutOrigin); a run with neither clones (openCheckout).
+//
+// Adopting the per-slug directory is what makes it the run's work directory,
+// and everything bootstrap reads about the checkout from there on reads this
+// one: which remote the clone, the fetches and the push name (cloneURL's
+// phase-1 answer), and which remote's credential is scoped to the endpoint git
+// will open (credentialVars). bootstrap therefore calls this before it asks
+// where the run clones from.
+//
+// Only a per-repository job looks. A project job's image bakes no checkout and
+// the run refuses any it finds (checkProjectCheckoutOrigin), so there is nothing
+// for it to adopt. And the run must be able to name the repository its task
+// names under the kind its own slug derives (providerForSlug): a slug no
+// provider kind produces — what `--provider fake` gives a local invocation —
+// names no repository to call a baked directory after and no remote to hold the
+// checkout the run finds to, so such a run looks for neither.
+//
+// A local run whose slug does derive one (`fugaro exec --run <slug>/<id>`) is
+// held to the binding like a cloud one, and deliberately: the slug it was given
+// keys its bucket paths, its locks, its cache and its budget session, so a
+// checkout of another repository is not this run's to work on and push from
+// there either.
+func (r *run) openBakedCheckout(ctx context.Context) error {
+	slug := r.d.Store.Slug()
+	kind, ok := providerForSlug(slug, r.spec.Repo)
+	if !ok {
+		return nil
+	}
+	if _, project := r.projectJob(); project {
+		return nil
+	}
+	repo, err := gitops.Open(r.d.WorkDir, nil)
+	if err != nil {
+		dir := filepath.Join(filepath.Dir(r.d.WorkDir), bakedRepoRoot, slug)
+		// No checkout at the work directory: this run's own repository is at
+		// its own baked path on a shared image, and a run that has none there
+		// either has no baked checkout at all.
+		if repo, err = gitops.Open(dir, nil); err != nil {
+			return nil
+		}
+		// The run's state stays outside the checkout it works on, and from
+		// here the checkout it works on is this one.
+		if err := stateDirOutsideCheckout(dir, r.d.StateDir); err != nil {
+			return err
+		}
+		r.d.WorkDir = dir
+		// A third remote the run's git commands can name, beside the job's own
+		// FUGARO_REMOTE and the origin of a checkout in the work directory:
+		// bootstrap registers both of those before anything can quote them, and
+		// this checkout's origin is only read here. What a remote can carry is
+		// what gets registered, never the path itself (addRemoteSecrets).
+		r.addRemoteSecrets(r.originURL(ctx))
+	}
+	return r.checkBakedCheckoutOrigin(ctx, kind, repo)
+}
+
+// checkBakedCheckoutOrigin refuses a checkout the image already held when it is
+// not this run's repository's (F7, IS8): the run would commit another
+// repository's source under this run's slug, push it with a git credential
+// minted for this run's repository, and open the pull request as this
+// repository's.
+//
+// The refusal is the admission's own remote binding (remoteAdmissionErr), read
+// against the checkout the run is about to work on instead of the remote it was
+// launched with. On a per-repository job a cloud run has had its origin checked
+// there already; what this adds is the origin of the checkout the run actually
+// opens — including the per-slug one openBakedCheckout has just adopted, which
+// admission never saw — and the same check for a local run, which has no
+// admission at all. A remote that names no repository at all — a local path,
+// an empty remote, an scp-like remote whose userinfo is everything in front of
+// its colon — passes exactly as it does there, which is what keeps a local
+// invocation's own checkout usable. An scp-like remote that does name a
+// repository (git@github.com:acme/app.git) is compared like any other, and one
+// naming another repository is refused here as it is there: the binding reads
+// the path a remote names whichever spelling it is written in
+// (remoteRepoPath), and the ssh spelling is no exception to it.
+//
+// It runs where checkProjectCheckoutOrigin does, before the provider is opened,
+// so a refusal means no git credential was ever requested and nothing was
+// fetched.
+//
+// The fetch URL is not the only URL this checkout can send the run's git to.
+// The run's last git command is a push of its own branch to origin
+// (gitops' Push), and git sends that push to the remote's pushurl when the
+// checkout sets one, resolved through insteadOf and pushInsteadOf as well —
+// while the run's git credential is scoped to the remote's endpoint and not to
+// its path (gitops' CredentialURL), so a pushurl naming another repository on
+// the provider's own host carries this repository's credential to it. A
+// checkout whose origin is this run's repository and whose pushurl is not would
+// therefore pass on its origin and push the run's branch into the other
+// repository, which is the same hole by another door: every push URL is held to
+// the binding too. A push URL that is the fetch URL is the ordinary case (no
+// pushurl is set) and is not compared twice.
+//
+// A push that names the origin URL rather than the remote is the third door,
+// and it is the one the two reads above leave open between them. That push is
+// the checkpoint's (gitops' PushFastForward is handed origin's URL, which is
+// what keeps a pushurl set after the read from redirecting it) and it meets the
+// checkout's url.*.pushInsteadOf and url.*.insteadOf rules, while `git remote
+// get-url --push` answers for the *remote*: on a checkout that sets a pushurl
+// the rewrite is nowhere in its answer, so a checkout whose pushurl is this
+// repository and whose configuration rewrites the URL a push names to another
+// one would pass both reads and send every checkpoint into that other
+// repository, with this repository's credential and under this run's slug. The
+// URL that push names is the one this function read, which git's read of the
+// remote has already rewritten once, so a rule matching what another rule
+// produced is a rewrite of this push too. gitops' PushURLs resolves both kinds
+// against the origin URL, in the order git reads them, and returns what they
+// produce with the rest — which is why it is given the URL this function read.
+//
+// A remote named by that URL is the fourth door. A checkout can carry a section
+// [remote "https://github.com/acme/app.git"] — a remote whose name is the URL —
+// with a push URL of its own, and git resolves the URL a push names to a remote
+// by name, so the checkpoint push goes to that section's push URL while both of
+// the reads above answer for the remote named "origin" and for the URL's own
+// rewrite. gitops' PushURLs asks git for the URL read as a name too, so that
+// section's push URL is in the list this function holds to the binding.
+func (r *run) checkBakedCheckoutOrigin(ctx context.Context, kind string, repo *gitops.Repo) error {
+	origin, err := strip(repo).OriginURL(ctx)
+	if err != nil {
+		return fmt.Errorf("the checkout in the image at %s carries no origin this run can read, and this run is for %s: what a run pushes to and works on is decided by the repository its task names and never by a checkout nothing ties to it, so the run stops before any git credential is requested", repo.Dir, r.spec.Repo)
+	}
+	if err := remoteAdmissionErr(origin, kind, r.spec.Repo, r.d.Store.Slug()); err != nil {
+		return fmt.Errorf("the checkout in the image at %s is not this run's repository: %w", repo.Dir, err)
+	}
+	pushURLs, err := strip(repo).PushURLs(ctx, origin)
+	if err != nil {
+		return fmt.Errorf("the checkout in the image at %s carries no push URL this run can read, and this run is for %s: the run's branch is pushed to this checkout's own origin, so a checkout whose push URL cannot be read is one this run cannot say where its work would land, and the run stops before any git credential is requested", repo.Dir, r.spec.Repo)
+	}
+	for _, url := range pushURLs {
+		if url == origin {
+			continue
+		}
+		// The refusal is the binding's decision and not its sentence: every
+		// sentence remoteAdmissionRefusal writes is about the remote the run
+		// *clones* from (the job's environment, or the origin of a checkout in
+		// the work directory), and a push URL is neither of those. The reasons
+		// it refuses for are this one's too — another repository, another host,
+		// an endpoint a credential is scoped to that the launcher writes none
+		// of — so the decision is reused and the sentence is this one's.
+		if err := remoteAdmissionErr(url, kind, r.spec.Repo, r.d.Store.Slug()); err != nil {
+			return fmt.Errorf("the checkout in the image at %s pushes to %s, which is not this run's repository: the run's last git command pushes its branch to origin (gitops' Push), which git sends to the remote's pushurl when the checkout sets one, and a checkpoint pushes by origin's URL (gitops' PushFastForward), which git sends to the remote that URL names when the checkout has one and otherwise rewrites by the checkout's url.*.pushInsteadOf and url.*.insteadOf rules — and the run's git credential is scoped to the remote's endpoint rather than to its path, so the branch would land in another repository with this repository's credential, under the slug %s, while the pull request would be opened for %s: what a run pushes to is decided by the repository its task names and never by a checkout nothing ties to it, so the run stops before any git credential is requested", repo.Dir, remoteDisplay(url), r.d.Store.Slug(), r.spec.Repo)
+		}
+	}
+	return nil
 }
 
 func (r *run) bootstrap(ctx context.Context) error {
@@ -2035,12 +2248,50 @@ func (r *run) bootstrap(ctx context.Context) error {
 		return err
 	}
 
+	// The checkout this run works on, settled before where it clones from is
+	// asked, because D1900 makes every per-repository job run the project's
+	// catalog image, which is shared by the project's repositories and holds
+	// this run's own at its per-slug path and not at the work directory: a
+	// per-repository job's remote is the phase-1 answer, "the origin of a
+	// checkout already in the work directory, else the job's remote"
+	// (cloneURL), and a baked job's environment carries no FUGARO_REMOTE — its
+	// checkout is the only thing that names the repository. Asked the other way
+	// round, that answer is the empty string for exactly the run the adoption
+	// exists for: the credential URL is built from it below, so the bootstrap
+	// fetch, the agent's git and the final push would all run with no git
+	// credential at all (the review finding on this change).
+	//
+	// It is also the other half of checkProjectCheckoutOrigin's question, for
+	// the job that may hold a baked checkout: which repository the one in the
+	// image is a checkout of, and whether this run may work on it at all (a
+	// shared image bakes several). Here rather than in openCheckout, which is
+	// called once the provider below has minted this run's git credential, so a
+	// refusal is still a run that requested nothing.
+	if err := r.openBakedCheckout(ctx); err != nil {
+		return err
+	}
+	// The checkout this run works on is settled only now, and the record's
+	// image has to name the commit that checkout is at. The read above ran
+	// while the work directory held the image's own checkout or nothing at all
+	// — on the shared catalog image every per-repository job runs (D1900) it
+	// holds no checkout of this run's repository — where imageInfo falls back
+	// to the commit the image's own record names, which belongs to whichever
+	// repository the image was built from and not to this run's. Read again
+	// here: after the adoption, and still before the sync below moves the
+	// checkout off the baked commit.
+	if sha := r.bakedHead(ctx); sha != "" {
+		if r.rec.Image == nil {
+			r.rec.Image = &runstore.ImageInfo{}
+		}
+		r.rec.Image.BakedCommit = sha
+	}
 	// Where this run clones from (design §4.1(1), plan task 3.3 step 3). On a
 	// project job the answer is computed from task.json's repository, the
 	// job's own provider and the policy's clone URL for it, so FUGARO_REMOTE
 	// is not read at all and a launcher who overrode it cannot point the run
 	// at another repository; on a per-repository job it is the phase-1 answer
-	// (a checkout's origin, else the job's remote), unchanged.
+	// (a checkout's origin, else the job's remote), unchanged — and that origin
+	// is the adopted checkout's when openBakedCheckout adopted one.
 	remote, err := r.cloneURL(ctx)
 	if err != nil {
 		return err
@@ -2654,7 +2905,8 @@ func (r *run) bootstrap(ctx context.Context) error {
 		r.addSecret(s)
 	}
 	r.budget = Budget{Start: r.rec.StartedAt, Total: wf.Timeouts.Total.Duration,
-		Reserve: wf.Timeouts.FinalizeReserve.Duration, Stage: wf.Timeouts.Stage.Duration, Now: r.d.Now}
+		Reserve: wf.Timeouts.FinalizeReserve.Duration, Stage: wf.Timeouts.Stage.Duration,
+		StopFraction: r.cfg.Agent.ReviewStopFraction, Now: r.d.Now}
 	if r.follow != nil {
 		if err := r.prepareFollowUp(ctx); err != nil {
 			return err
@@ -3124,6 +3376,45 @@ func (r *run) agentLoop(ctx context.Context) {
 	}
 }
 
+// endsThePlan reports whether kind's step is the plan's last review step now:
+// the stop rule's rounds half is spent there and nowhere else, because the
+// mode's rounds are spent only when the last level it enabled has run its own
+// out (the owner's ruling of 2026-11-08, item 6b: a run that enabled level 3
+// stops at the same moment as one that did not, and the senior step is not a
+// stop while an adversarial step follows it).
+//
+// The plan is read here rather than at the step's dispatch because a step's own
+// fix seam rebuilds it: the security escalation turns level 3 on inside the
+// senior loop and puts the adversarial step after the step that is running
+// (security.go, D1507), so a step that ended the plan when the loop dispatched
+// it is one whose rounds are not the mode's last. Reading the plan the loop
+// captured would spend the rounds half while a level still had to run, and
+// finalize would read the level behind through the stop's own split and accept
+// what its floor blocks (heldBackLevel).
+func (r *run) endsThePlan(kind recipe.StepKind) bool {
+	return len(r.plan) > 0 && r.plan[len(r.plan)-1].Kind == kind
+}
+
+// stopNow reports whether the loop must go to finalize rather than start
+// another review or fix round: the configured share of the run's time budget
+// has elapsed (Budget.PastStop) and at least one review round has run.
+//
+// It is the time half of the owner's stop rule of 2026-11-08 (item 2), asked
+// between rounds and never inside one — a round already running is bounded by
+// the finalize reserve, not by this — and it is asked of every review level, so
+// a run that enabled level 3 stops at the same moment as one that did not
+// (item 6b). The guard is what keeps a run whose implement stage ate the budget
+// from being left with nothing reviewed: the loop buys its first review round
+// whatever the clock says, and stops from the second on. A run with no time
+// budget at all has no threshold (Budget.stopAt), so it never stops here.
+//
+// The caller ends the loop through timeStop when it acts on the answer: this
+// asks the question and records nothing, because the half is recorded once,
+// where the loop was ended.
+func (r *run) stopNow() bool {
+	return r.reviewRoundsRun > 0 && r.budget.PastStop()
+}
+
 // seniorLoop is a review step: up to (*run).reviewRounds senior reviews on the
 // reviewer's model, each followed by a fix while it asks for changes. tier is
 // "senior" when a first line came before it, "" otherwise, as runs without a
@@ -3152,6 +3443,15 @@ func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, s
 	// cheap loop below is level 1's and reads level 1's.
 	prompt := reviewPromptWithFocus(reviewPrompt, r.levelFocus(policy.LevelL2))
 	for round := 1; ; round++ {
+		if r.stopNow() {
+			r.timeStop()
+			return false
+		}
+		// The loop counts the review rounds it starts, across every enabled
+		// level: it is what the time half of the stop rule asks before it
+		// fires (stopNow), so a run whose first stage ate its budget still
+		// buys one review of its change before the threshold can end the loop.
+		r.reviewRoundsRun++
 		// The head is read per round rather than once: a fix between two rounds
 		// moves the branch, and the summary keeps the commit *this* round read
 		// (D727), so the levels can be told apart by the head they approved.
@@ -3193,10 +3493,29 @@ func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, s
 			return false
 		}
 		if v.Verdict == "ship" || round >= r.reviewRounds(st) {
+			if v.Verdict != "ship" && r.endsThePlan(st.Kind) {
+				// The rounds half of the stop rule, at the moment it is spent:
+				// this step still ends the plan and no round shipped, so the
+				// plan's own rounds for its last review level are gone, the
+				// loop starts no further round and finalize decides on what
+				// this one left (stopNow is the time half of the same rule,
+				// asked above and below; endsThePlan is why the plan is read
+				// here and not at the step's dispatch).
+				r.stopAt = runstore.StopRoundsSpent
+			}
 			return true
 		}
 		r.afterStage(ctx, "review")
 		if r.pr.gone {
+			return false
+		}
+		if r.stopNow() {
+			// The time half: the share of the run's budget for reviewing has
+			// elapsed, so the fix that would be followed by another review is
+			// not bought. Without this the fix round runs into the run's own
+			// deadline and the run dies of "time budget exhausted during fix"
+			// instead of finalizing what it already has.
+			r.timeStop()
 			return false
 		}
 		if sessionID, ok = r.fix(ctx, v, sys, sessionID); !ok {
@@ -3230,6 +3549,14 @@ func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, s
 func (r *run) adversarialLoop(ctx context.Context, st planStep, reviewPrompt, sys, sessionID string) bool {
 	prompt := AdversarialPrompt(reviewPrompt, r.levelFocus(policy.LevelL3))
 	for round := 1; ; round++ {
+		if r.stopNow() {
+			r.timeStop()
+			return false
+		}
+		// Counted exactly as seniorLoop counts it, and never per level: the
+		// stop rule's guard and its time half are the run's, not a level's
+		// (stopNow).
+		r.reviewRoundsRun++
 		head := r.reviewedHead(ctx)
 		v, parsed, ok := r.adversarialRound(ctx, round, prompt)
 		if !ok {
@@ -3263,10 +3590,21 @@ func (r *run) adversarialLoop(ctx context.Context, st planStep, reviewPrompt, sy
 			return false
 		}
 		if v.Verdict == "ship" || round >= r.adversarialRounds(st) {
+			if v.Verdict != "ship" && r.endsThePlan(st.Kind) {
+				// The rounds half of the stop rule, exactly as seniorLoop sets
+				// it, and here it is the level that decides readiness: the
+				// mode's own review rounds across every level it enabled are
+				// spent, and what level 3 left is what finalize reads.
+				r.stopAt = runstore.StopRoundsSpent
+			}
 			return true
 		}
 		r.afterStage(ctx, stageAdversarial)
 		if r.pr.gone {
+			return false
+		}
+		if r.stopNow() {
+			r.timeStop()
 			return false
 		}
 		if sessionID, ok = r.fix(ctx, v, sys, sessionID); !ok {
@@ -3510,6 +3848,16 @@ func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt, sys, sess
 		// are all the owner's is handed to it rather than stopping the run
 		// here, and the adversarial step the escalation bought is reached.
 		decides := !levelOn(r.levels, policy.LevelL2) && !levelOn(r.levels, policy.LevelL3)
+		if r.stopNow() {
+			// The stop rule's time half, asked of the cheap loop exactly as it
+			// is asked of the outer ones: level 1 is a review level, and a run
+			// whose clock ran out starts no round of it either (item 6b — the
+			// stop is the run's, not one level's).
+			return r.firstLineStop(sessionID)
+		}
+		// Counted as seniorLoop counts its rounds: the stop's guard and its
+		// time half read the run's review rounds, never one level's.
+		r.reviewRoundsRun++
 		head := r.reviewedHead(ctx)
 		req := agent.Request{Prompt: r.reviewPromptWithInput(ctx, reviewPrompt), SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema}
 		res, ok, err := r.stage(ctx, "review_first", req, stageOpts{Skippable: true})
@@ -3534,6 +3882,11 @@ func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt, sys, sess
 		if decides {
 			r.lastSenior = seniorRound{Round: round, Findings: v.Findings}
 		}
+		// Kept whether or not this loop decides: a run the stop ends before
+		// level 2 starts has only this round for finalize to read, and the
+		// findings the mode accepts at the stop are the ones it left
+		// (decidingRound).
+		r.firstLineLast = seniorRound{Round: round, Findings: v.Findings}
 		r.rec.Reviews = append(r.rec.Reviews, sum)
 		r.save(ctx)
 		if r.capReached() {
@@ -3559,12 +3912,77 @@ func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt, sys, sess
 		if r.pr.gone {
 			return sessionID, false
 		}
+		if r.stopNow() {
+			// The time half again, before the fix this round would be followed
+			// by: a fix bought here is one the next round would review, and the
+			// stop says the loop starts neither.
+			return r.firstLineStop(sessionID)
+		}
 		var more bool
 		if sessionID, more = r.fix(ctx, v, sys, sessionID); !more {
 			return sessionID, false
 		}
 	}
+	if r.endsThePlan(recipe.StepFirstLine) {
+		// The rounds half: the cheap loop is the plan's last step — no level
+		// above it is on, so nothing follows it — every round it was given has
+		// run and none of them shipped, so the mode's review rounds are spent
+		// and finalize decides on the last one (item 1's rounds half of the
+		// stop — the same assignment seniorLoop makes). A bounce is not this:
+		// the plan carries the level above it, so the plan's last step is not
+		// this one.
+		r.stopAt = runstore.StopRoundsSpent
+	}
 	return sessionID, true
+}
+
+// firstLineStop ends the cheap loop at the stop rule's time half (item 2),
+// through timeStop, which leaves the round readiness reads where readiness
+// reads it.
+func (r *run) firstLineStop(sessionID string) (string, bool) {
+	r.timeStop()
+	return sessionID, false
+}
+
+// timeStop ends the run's review loop at the stop rule's time half and leaves
+// the round readiness reads where readiness reads it.
+//
+// The stop ends the whole loop, not only the level it is asked in, so where no
+// outer level has reviewed yet the round finalize decides on is the cheap
+// loop's — level 1's. lastSenior is the field every reader of that round goes
+// through (findingsPolicy and the two record blocks), and where the cheap loop
+// decides readiness itself it writes lastSenior already; this is the other
+// case, the level the stop cut before it could start. Without it the policy is
+// built from the empty round lastSenior still holds and the run ends a draft on
+// findings no level recorded, which is the strictness the ruling of 2026-11-08
+// forbids: the same run with the outer level configured off would be ready.
+//
+// Every act on stopNow's answer goes through here, wherever the loop asked it:
+// the cheap loop's own two sites (firstLineStop) and the round an outer level
+// would have started but for the clock — its loop's top, and the fix it would
+// have bought. The hand-over is guarded rather than asked per site because it
+// is the same question at all of them and only one answer can be right: an
+// outer loop's own sites have recorded that level's round already, so
+// outerLevelReviewed is true and lastSenior holds it, and the cheap round is
+// the hand-over exactly where no outer round exists (the top of the first
+// round an enabled outer level never got to start).
+func (r *run) timeStop() {
+	if !r.outerLevelReviewed() {
+		r.lastSenior = r.firstLineLast
+	}
+	r.stopAt = runstore.StopTimeThreshold
+}
+
+// outerLevelReviewed reports whether an enabled level above the cheap one has
+// left a round in the record: where none has, level 1's round is the one
+// readiness reads (decidingReview), and the stop hands it to lastSenior.
+func (r *run) outerLevelReviewed() bool {
+	for _, l := range []policy.Level{policy.LevelL2, policy.LevelL3} {
+		if levelOn(r.levels, l) && lastRoundOf(r.rec.Reviews, l) != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // seniorReview is the last review the readiness rule reads: the latest
@@ -3577,6 +3995,45 @@ func seniorReview(rs []runstore.ReviewSummary) *runstore.ReviewSummary {
 		}
 	}
 	return nil
+}
+
+// decidingRound is the review of one round number that decided: the last
+// review carrying that number that is not the cheap loop's, and the last cheap
+// one where every review of that number is the cheap loop's. It answers for a
+// reader that has the record alone and a round the run named — the accepted
+// block's own round (runstore.AcceptedFindings.Round) and the round a findings
+// policy was split from (FindingsPolicy.Round) — which is why the round comes
+// in and the review is not simply the last one written.
+//
+// The tier is what tells the two apart because the record carries nothing else
+// that does: the levels number their rounds from 1 of their own, so a cheap
+// round and an outer one can carry the same number (a bounce's cheap loop after
+// level 2's round 2), and only the deciding one is a round the stop can have
+// accepted or the policy read. Where no outer level left a round at all — the
+// stop that ended the run before level 2 could start, which is the case this
+// exists for — the cheap round is the deciding one and the only review carrying
+// that number.
+//
+// Its readers are the record's two: the report's accepted section
+// (report.go toleratedSection) and the pull request's review line
+// (prflow.go reviewsPart), both of which have the record and not the run. A run
+// reads the same round through timeStop's lastSenior and decidingReview.
+func decidingRound(rs []runstore.ReviewSummary, round int) *runstore.ReviewSummary {
+	var cheap, deciding *runstore.ReviewSummary
+	for i := range rs {
+		if rs[i].Round != round {
+			continue
+		}
+		if rs[i].Tier == runstore.TierFirst {
+			cheap = &rs[i]
+			continue
+		}
+		deciding = &rs[i]
+	}
+	if deciding != nil {
+		return deciding
+	}
+	return cheap
 }
 
 // recoveredError is an agent error stage left to its caller, having
@@ -4772,8 +5229,10 @@ func (r *run) finalize(ctx context.Context) error {
 	// reason records none (recordOwnerDecisions).
 	r.recordOwnerDecisions(halt)
 	pol := r.findingsPolicy()
-	ready, reason, class := Decide(records, decided, r.decidingReview(), pol, r.rec.OwnerDecisions)
-	r.rec.Tolerated = r.toleratedRecord(pol)
+	decidedRound := r.decidingReview()
+	ready, reason, class := Decide(records, decided, decidedRound, pol, r.rec.OwnerDecisions)
+	r.rec.Tolerated = r.toleratedRecord(pol, decidedRound)
+	r.rec.Accepted = r.acceptedRecord(pol, decidedRound)
 	if committed && reason == ReasonNoVerifiedTest {
 		reason = "uncommitted changes were committed at finalize, after the last verified test run"
 	}

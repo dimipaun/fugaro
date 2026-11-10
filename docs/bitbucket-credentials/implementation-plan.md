@@ -2,7 +2,7 @@
 
 ## Status
 
-**Plan only. Nothing is implemented, and no task is approved.** Each task needs the owner's own
+**Status as of 2026-11-10: in progress, 9/12 merged; see [docs/status.md](../status.md) for the current table.** Each task needs the owner's own
 explicit go, and answering a decision does not approve a task.
 
 The plan builds [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md), and it is

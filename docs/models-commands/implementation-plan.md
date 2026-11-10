@@ -1,6 +1,6 @@
 # `fugaro models`: implementation plan
 
-**The decisions are answered; the tasks queue behind CLI 0.14.1 (0.15.0).** It is written to the owner's answers (D780–D783, 2026-10-30; D784–D795, 2026-10-31, all as recommended)
+**Status as of 2026-11-10: done; see [docs/status.md](../status.md) for the current table.** It is written to the owner's answers (D780–D783, 2026-10-30; D784–D795, 2026-10-31, all as recommended)
 ([reconciliation.md](reconciliation.md) §3). A decision answered the other way changes the tasks that
 cite it. Each task touches at most 12 files, names its tests, starts with a red step and ends at the
 gates below.

@@ -1,6 +1,6 @@
 # Managing every configuration in Fugaro: no configuration file edited by hand
 
-**Status: a design, and nothing is built.** The owner gave the ruling this folder answers on
+**Status as of 2026-11-10: in progress, 5/14 merged; see [docs/status.md](../status.md) for the current table.** The owner gave the ruling this folder answers on
 **2026-11-03** — *"The idea would be not to touch any of the configuration files by hand, be it repo,
 project, or local level, meaning that we should have management commands in Fugaro just like with
 settings."* — and he accepted the audit it rests on, asking for a design with a task plan for
@@ -44,8 +44,8 @@ that decides where a repository's code may go or what a run may cost:
   **do not exist**; `secrets` has no `rm` and no policy flags; `accounts` has no `rm`.
 
 `fugaro settings set` already writes scalars and string lists
-(`internal/cli/settings_set.go:95`): the allowlist carries **172 of the registry's 393 rows** (95 by name
-and 77 through its prefixes), and the remaining **221 rows have no generic writer**
+(`internal/cli/settings_set.go:95`): the allowlist carries **174 of the registry's 395 rows** (95 by name
+and 79 through its prefixes), and the remaining **221 rows have no generic writer**
 ([reconciliation.md](reconciliation.md) §1, F1). The root cause is one sentence: **the
 generic writer handles scalars and string lists only**, and every gap above is a map, an object list, or
 a key the allowlist does not carry.

@@ -1,6 +1,6 @@
 # CLI output cleanup and the console dependency graph: reconciliation
 
-**Status: plan only; nothing is implemented; no task approved. Every decision D1350-D1362 is answered (the owner, 2026-11-06, all the recommendation except D1355). Plans: [implementation-plan-output.md](implementation-plan-output.md) and [implementation-plan-graph.md](implementation-plan-graph.md). Nothing is implemented; no task is approved.**
+**Status as of 2026-11-10: in progress, 19/30 merged; see [docs/status.md](../status.md) for the current table.**
 
 **Spec owner: Dimi Paun. Spec: [spec.md](spec.md), "Fugaro: CLI Output Cleanup and Console Dependency Graph", verbatim. Checked against `origin/main` at `57f7d871f` on 2026-11-06.** Where this file disagrees with `spec.md`, this file wins.
 

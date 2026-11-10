@@ -201,6 +201,267 @@ func TestCatalogFetchIsBounded(t *testing.T) {
 	}
 }
 
+// inlineEntry is a catalog entry whose definition is held in the catalog
+// itself, the other source a credential-shaped definition reaches a build
+// through.
+func inlineEntry(def string) config.Entry {
+	return config.Entry{Name: "agent", Source: config.Source{Kind: config.SourceInline, Inline: def}}
+}
+
+// TestDockerfileSecretArgRefused: a definition that names a credential in an
+// ARG or an ENV is refused wherever it came from — an inline entry and a file
+// fetched out of a repository both reach the same bucket key and the same
+// build — and the refusal names the secret mount a build uses instead. The
+// name is enough on its own: an ARG whose default is empty still carries the
+// value a --build-arg passes through the layer.
+//
+// A definition that names no credential is accepted, so the rule pins the
+// shapes it is about rather than every definition.
+func TestDockerfileSecretArgRefused(t *testing.T) {
+	ctx := context.Background()
+	for _, def := range []string{
+		"FROM example.invalid/base\nARG NPM_TOKEN\nRUN true\n",
+		"FROM example.invalid/base\nARG GIT_TOKEN=value\n",
+		"FROM example.invalid/base\nENV GITHUB_TOKEN=value\n",
+		"FROM example.invalid/base\nENV AWS_SECRET_ACCESS_KEY=value\n",
+		"FROM example.invalid/base\nARG CI_JOB_TOKEN=\"value\"\n",
+		"FROM example.invalid/base\nenv npm_config_//registry.npmjs.org/:_authToken=value\n",
+		"FROM example.invalid/base\nARG FUGARO_BASE\nARG \\\n    DEPLOY_PASSWORD\n",
+		// The continuation joins as the parser joins it: NPM_\ + TOKEN is the
+		// one name NPM_TOKEN a build sets, and a join that inserted a space
+		// would read the harmless NPM. A comment inside a continuation is
+		// dropped with it and the halves join across it, the same way.
+		"FROM example.invalid/base\nARG NPM_\\\nTOKEN\n",
+		"FROM example.invalid/base\nENV GIT_\\\nTOKEN=value\n",
+		"FROM example.invalid/base\nARG NPM\\\n# a comment a build drops\nTOKEN\n",
+		"FROM example.invalid/base\nARG NPM_\\\n\nTOKEN\n",
+		// A lone continuation character continues the line it is alone on the
+		// same way.
+		"FROM example.invalid/base\nARG NPM_\\\n\\\nTOKEN\n",
+		// The parser's `# escape=` directive is honoured, and its key is the
+		// parser's own: case-insensitive, so an upper-case one sets the escape
+		// character too.
+		"# escape=`\nFROM example.invalid/base\nARG NPM_TOKEN`\n=x\n",
+		"# ESCAPE=`\nFROM example.invalid/base\nARG NPM_`\nTOKEN=1\n",
+		// The separator between an instruction and its name is the parser's
+		// own whitespace and not only a space or a tab.
+		"FROM example.invalid/base\nENV\vNPM_TOKEN=1\n",
+		// A byte-order mark is stripped from the first line, where it would
+		// otherwise be part of the instruction's name.
+		"\ufeffARG NPM_TOKEN=1\nFROM example.invalid/base\n",
+		// A comment ends at its own line whatever it ends with, so a backslash
+		// in one continues nothing: the ARG below is read on its own.
+		"FROM example.invalid/base\n# the trailing backslash is text \\\nARG NPM_TOKEN\n",
+		// ONBUILD defers the ARG to a child image, which is the image that
+		// then carries the value.
+		"FROM example.invalid/base\nONBUILD ARG NPM_TOKEN\n",
+		// Every whitespace-separated word of an ARG line is its own build
+		// argument, so a credential-shaped name written second is declared by a
+		// build all the same, with the value a --build-arg of that name carries.
+		"FROM example.invalid/base\nARG FOO TOKEN\n",
+		"FROM example.invalid/base\nARG NODE_VERSION NPM_TOKEN=value\n",
+		"FROM example.invalid/base\nARG FOO TOKEN=\"value\"\n",
+		// The continuation line's own leading whitespace is what separates the
+		// two: a build reads ARG NPM_\ over an indented TOKEN as the two build
+		// arguments NPM_ and TOKEN, and TOKEN is a name a credential is carried
+		// in. Reading it as one harmless name is the guard missing a name a
+		// build sets, so it is pinned here rather than left to the reader.
+		"FROM example.invalid/base\nARG NPM_\\\n    TOKEN\n",
+		"FROM example.invalid/base\nARG NPM_\\\n    TOKEN=value\n",
+		// The parser stops looking for directives at the first line that is not
+		// one, so a blank line, a plain comment and a comment naming something
+		// else all end the block: the `# escape=` under each of them is a
+		// comment to a build, the backslash is the escape character again, and
+		// the two halves of the name join into the one ARG NPM_TOKEN.
+		"# note\n# escape=`\nFROM example.invalid/base\nARG NPM_\\\nTOKEN\n",
+		"\n# escape=`\nFROM example.invalid/base\nARG NPM_\\\nTOKEN\n",
+		"# foo=bar\n# escape=`\nFROM example.invalid/base\nARG NPM_\\\nTOKEN\n",
+		// A `# syntax=` directive is one the parser knows, so the block goes on
+		// past it and the `# escape=` after it is followed.
+		"# syntax=docker/dockerfile:1\n# escape=`\nFROM example.invalid/base\nARG NPM_`\nTOKEN=1\n",
+		// `check` is a directive the parser knows too, from the dockerfile:1.8
+		// frontend on — the pinned dockerfile:1.10 build has it, and
+		// internal/config's knownDirectives carries the same three names — so a
+		// `# check=` line does not end the block either: the `# escape=` under
+		// it stands, the backtick joins the name, and a build sets NPM_TOKEN.
+		"# syntax=docker/dockerfile:1.10\n# check=skip=all\n# escape=`\nFROM example.invalid/base\nARG NPM_`\nTOKEN=1\n",
+		// The parser takes a leading run of `--`-prefixed words off the front
+		// of a line's arguments as builder flags, and a bare `--` ends the run
+		// (splitCommand's extractBuilderFlags), so the name after one is the
+		// name the instruction sets: read without that cut, an ENV's name is
+		// the `--` and the credential name under it is never looked at.
+		"FROM example.invalid/base\nENV -- NPM_TOKEN=1\n",
+		"FROM example.invalid/base\nONBUILD ENV -- NPM_TOKEN=1\n",
+		// The arguments a build parses are the ones splitCommand returns, and
+		// that is the remainder trimmed (strings.TrimSpace(args)): left as the
+		// `--` left it, the space in front of the name is what the legacy form
+		// of an ENV reads as the name, and the variable a build sets —
+		// `ENV -- NPM_TOKEN value` sets NPM_TOKEN to the value `value` — is
+		// never looked at.
+		"FROM example.invalid/base\nENV -- NPM_TOKEN value\n",
+		"FROM example.invalid/base\nENV --  NPM_TOKEN value\n",
+		"FROM example.invalid/base\nONBUILD ENV -- NPM_TOKEN value\n",
+		// The words of a line are cut by runes, as the parser cuts them
+		// (parseWords decodes with utf8.DecodeRuneInString): the whitespace a
+		// build separates words with includes the multi-byte runes, and a reader
+		// that tests one byte at a time sees their bytes as ordinary characters.
+		// Read that way the line below is the one word A=1　NPM_TOKEN=1 and
+		// the pair a build reads second is never looked at.
+		"FROM example.invalid/base\nENV A=1　NPM_TOKEN=1\n",
+		"FROM example.invalid/base\nENV A=1 NPM_TOKEN=1\n",
+		"FROM example.invalid/base\nARG A　NPM_TOKEN\n",
+		"FROM example.invalid/base\nARG -- NPM_TOKEN=1\n",
+		"FROM example.invalid/base\nARG --build-arg NPM_TOKEN=1\n",
+		"FROM example.invalid/base\nARG --x=1 FOO TOKEN\n",
+		// An ENV line's pairs are the parser's own words, so an escaped quote
+		// stays inside the value it is written in and the next pair is a pair.
+		// Read by hand, up to the next quote byte, the value's end is guessed:
+		// the rest of the line is swallowed with it, and the name a build sets
+		// is either never looked at or read out of the middle of a value.
+		"FROM example.invalid/base\nENV A=\"\\\" B=\" NPM_TOKEN=1\n",
+		"FROM example.invalid/base\nENV A=\"a\\\"b\" NPM_TOKEN=1\n",
+		// A credential-shaped name is refused unless the line gives it a path
+		// (pathValue): a name that holds a credential and does not point at one
+		// still carries what --build-arg or the environment puts in the layer.
+		"FROM example.invalid/base\nENV GOOGLE_APPLICATION_CREDENTIALS={\"type\":\"service_account\"}\n",
+		"FROM example.invalid/base\nENV GOOGLE_APPLICATION_CREDENTIALS=$HOME/.config/gcloud/adc.json\n",
+		"FROM example.invalid/base\nENV AWS_SHARED_CREDENTIALS_FILE=credentials.ini\n",
+		"FROM example.invalid/base\nARG API_KEY_PATH\n",
+		// Every trailing carriage return is the parser's to trim
+		// (trimNewline is bytes.TrimRight(src, "\r\n")), so a doubled one does
+		// not hide the continuation: a build reads ARG NPM_TOKEN here.
+		"FROM example.invalid/base\r\r\nARG NPM_\\\r\r\nTOKEN\r\r\n",
+	} {
+		_, err := Fetch(ctx, nil, gitprov.KindGitHub, inlineEntry(def))
+		if err == nil {
+			t.Errorf("the inline definition %q was accepted", def)
+		} else if !strings.Contains(err.Error(), "--mount=type=secret") {
+			t.Errorf("the inline refusal does not name the secret mount: %v", err)
+		}
+		o := &fetchOpener{
+			p:    &fake.Provider{Repo: "acme/app", State: fake.State{Files: map[string]string{"docker/agent.Dockerfile": def}}},
+			cred: fakeCredential(t),
+		}
+		_, err = Fetch(ctx, o.open, gitprov.KindGitHub, dockerfileEntry("agent", "docker/agent.Dockerfile", ""))
+		if err == nil {
+			t.Errorf("the fetched definition %q was accepted", def)
+		} else if !strings.Contains(err.Error(), "--mount=type=secret") {
+			t.Errorf("the fetched refusal does not name the secret mount: %v", err)
+		}
+	}
+	for _, def := range []string{
+		"FROM example.invalid/base\nARG NODE_VERSION=22\nRUN true\n",
+		"FROM example.invalid/base\nENV PATH=/usr/local/bin:$PATH\n",
+		"FROM example.invalid/base\nENV TFLINT_PLUGIN_DIR=/home/fugaro/.tflint.d/plugins\n",
+		"FROM example.invalid/base\nARG REPO_URL\nARG BASE_BRANCH\nRUN git clone \"$REPO_URL\" /work/repo\n",
+		"FROM example.invalid/base\nENV AUTH_MODE=none\n",
+		// An ENV keeps the parser's own reading: the legacy form sets the one
+		// variable its first word names, so ENV NPM_\ over an indented TOKEN is
+		// the variable NPM_ with the value TOKEN=value. The same shape on an
+		// ARG line is refused (above), because an ARG declares every word of it.
+		"FROM example.invalid/base\nENV NPM_\\\n    TOKEN=value\n",
+		// With the parser's escape character set to the backtick, a trailing
+		// backslash is a character in the name and not a join.
+		"# escape=`\nFROM example.invalid/base\nARG NPM_\\\nTOKEN\n",
+		// And with the directive stopped by a plain comment before it, the
+		// backslash is the escape character a build uses: ARG NPM` is the one
+		// build argument named NPM`, and the TOKEN line under it is a word no
+		// ARG line sets, so neither is a name a credential is carried in.
+		"# note\n# escape=`\nFROM example.invalid/base\nARG NPM`\nTOKEN\n",
+		// Several words on an ARG line are several names, and none of these is
+		// credential-shaped.
+		"FROM example.invalid/base\nARG NODE_VERSION GOPATH=/go\n",
+		// A quoted default is one word with blanks in it (the parser's own
+		// reading, parseWords), so the words inside the quotes are part of a
+		// value and not names: a split on whitespace would refuse this
+		// definition over a build argument named credentials that it does not
+		// declare. The same on an ENV line.
+		"FROM example.invalid/base\nARG NOTES=\"no credentials here\"\n",
+		"FROM example.invalid/base\nENV NOTES=\"not a password field\"\n",
+		// The multi-byte whitespace is whitespace inside a quoted stretch to no
+		// one: the quotes are what make it one word, and the words inside them
+		// are a value and not names.
+		"FROM example.invalid/base\nARG NOTES=\"no credentials here\"\n",
+		// A pointer is not a credential: a name that is credential-shaped but is
+		// given a path carries no secret into the layer, and the platform's own
+		// names are pointers. The first of these is the definition
+		// docs/gcp-live-checklist.md's Check 291 builds — an entry that cannot be
+		// renamed and has to be accepted for that check to run at all.
+		"FROM example.invalid/base\nENV NEXUS_BASEURL=https://example.invalid/repository/maven-public/\nENV GOOGLE_APPLICATION_CREDENTIALS=/dev/null\n",
+		"FROM example.invalid/base\nENV GOOGLE_APPLICATION_CREDENTIALS /dev/null\n",
+		"FROM example.invalid/base\nENV AWS_SHARED_CREDENTIALS_FILE=/root/.aws/credentials\n",
+		"FROM example.invalid/base\nENV API_KEY_PATH=/run/secrets/api_key\n",
+		"FROM example.invalid/base\nARG SSH_PRIVATE_KEY_PATH=/home/fugaro/.ssh/id_ed25519\n",
+		"FROM example.invalid/base\nENV X=1 CREDENTIALS_FILE=./creds.json\n",
+		"FROM example.invalid/base\nONBUILD ENV GOOGLE_APPLICATION_CREDENTIALS=/dev/null\n",
+	} {
+		if _, err := Fetch(ctx, nil, gitprov.KindGitHub, inlineEntry(def)); err != nil {
+			t.Errorf("the definition %q was refused: %v", def, err)
+		}
+	}
+}
+
+// TestDockerfileUserinfoURLRefused: a definition that carries a URL with
+// userinfo is refused, inline and fetched alike, and the refusal names the
+// secret mount — the shape the project's own builds use (D1150, the
+// git-credentials mount) rather than a token written into the definition.
+//
+// The token is built at run time and asserted absent from the refusal: a
+// message that named the URL would leak into the log exactly the credential
+// this refusal keeps out of the definition. A URL without userinfo, and the
+// scp-like clone form that can hold no password, are accepted.
+func TestDockerfileUserinfoURLRefused(t *testing.T) {
+	ctx := context.Background()
+	token := fakeCredential(t)
+	for _, def := range []string{
+		"FROM example.invalid/base\nRUN git clone https://user:" + token + "@example.invalid/acme/app.git /work/repo\n",
+		"FROM example.invalid/base\nRUN git clone https://" + token + "@example.invalid/acme/app.git /work/repo\n",
+		"FROM example.invalid/base\nRUN git clone ssh://git:" + token + "@example.invalid/acme/app.git /work/repo\n",
+		"FROM example.invalid/base\nENV DATABASE_URL=postgres://user:" + token + "@db.internal/app\n",
+		// The URL is read joined, so a credential split across a continuation
+		// is the credential a build carries into the layer.
+		"FROM example.invalid/base\nRUN git clone https://user:" + token + "\\\n@example.invalid/acme/app.git /work/repo\n",
+		// And the raw bytes are read as well, because a build is not the only
+		// reader: the definition is copied into the project's bucket whole,
+		// comments and all. A comment inside a continuation is dropped with the
+		// continuation it belongs to, so this URL is in no logical line — and the
+		// token is in the project all the same.
+		"FROM example.invalid/base\nRUN echo a \\\n# https://user:" + token + "@example.invalid/x\n b\n",
+	} {
+		_, err := Fetch(ctx, nil, gitprov.KindGitHub, inlineEntry(def))
+		if err == nil {
+			t.Errorf("the inline definition %q was accepted", def)
+		} else {
+			if !strings.Contains(err.Error(), "--mount=type=secret") {
+				t.Errorf("the inline refusal does not name the secret mount: %v", err)
+			}
+			if strings.Contains(err.Error(), token) {
+				t.Errorf("the refusal carries the credential: %v", err)
+			}
+		}
+		o := &fetchOpener{
+			p:    &fake.Provider{Repo: "acme/app", State: fake.State{Files: map[string]string{"docker/agent.Dockerfile": def}}},
+			cred: fakeCredential(t),
+		}
+		_, err = Fetch(ctx, o.open, gitprov.KindGitHub, dockerfileEntry("agent", "docker/agent.Dockerfile", ""))
+		if err == nil {
+			t.Errorf("the fetched definition %q was accepted", def)
+		} else if strings.Contains(err.Error(), token) {
+			t.Errorf("the fetched refusal carries the credential: %v", err)
+		}
+	}
+	for _, def := range []string{
+		"FROM example.invalid/base\nRUN git clone \"$REPO_URL\" /work/repo\n",
+		"FROM example.invalid/base\nRUN git clone git@example.invalid:acme/app.git /work/repo\n",
+		"FROM example.invalid/base\nRUN curl -fsSL https://example.invalid/tool.tar.gz | tar xz\n",
+		"FROM example.invalid/base\n# see https://example.invalid/issues/1 for person@example.invalid\n",
+	} {
+		if _, err := Fetch(ctx, nil, gitprov.KindGitHub, inlineEntry(def)); err != nil {
+			t.Errorf("the definition %q was refused: %v", def, err)
+		}
+	}
+}
+
 // noReader is a provider of a kind that cannot read a file out of its
 // repository: an opener hands one back for a kind this package's list does
 // not admit, and the fetch must refuse the source rather than call a method

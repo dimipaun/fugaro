@@ -120,7 +120,7 @@ const (
 // sets with the generic path like every other catalog member, so it is one row
 // the registry carries and this list does not.
 const (
-	cfmRegistryRows   = 393
+	cfmRegistryRows   = 395
 	cfmAllowlistNamed = 95
 )
 
@@ -132,7 +132,7 @@ func TestDocsConfigManagementIsWritten(t *testing.T) {
 	}
 	readme := flattenDoc(readDoc(t, cfmReadme))
 	for _, want := range []string{
-		"**Status: a design, and nothing is built.**",
+		"**Status as of 2026-11-10: in progress, 5/14 merged; see [docs/status.md](../status.md) for the current table.**",
 		// The owner's ruling, so the index cannot drift into a paraphrase of it.
 		"not to touch any of the configuration files by hand, be it repo, project, or local level",
 		"we should have management commands in Fugaro just like with settings",
@@ -148,7 +148,7 @@ func TestDocsConfigManagementIsWritten(t *testing.T) {
 	}
 	spec := flattenDoc(readDoc(t, cfmSpec))
 	for _, want := range []string{
-		"**Status: a design, and nothing is built.**",
+		"**Status as of 2026-11-10: in progress, 5/14 merged; see [docs/status.md](../status.md) for the current table.**",
 		// Which document wins when the two disagree, because the spec is the
 		// one a reader meets first and the reconciliation is the one that is
 		// checked against the tree.
@@ -163,7 +163,7 @@ func TestDocsConfigManagementIsWritten(t *testing.T) {
 	// plan reads as fourteen independent tasks, which is the one thing it is not.
 	plan := flattenDoc(readDoc(t, cfmPlan))
 	for _, want := range []string{
-		"**Status: plan only; nothing is implemented; no task approved.**",
+		"**Status as of 2026-11-10: in progress, 5/14 merged; see [docs/status.md](../status.md) for the current table.**",
 		"**G0 → G1 → G2 → G3 → G4 → G5 → G6 → G7 → G8 → G9 → G10 → G11 → G12 → G13.**",
 		// The slot, and why it is that one: the owner asked for this design
 		// built behind managed mode.

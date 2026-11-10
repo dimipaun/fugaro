@@ -1,6 +1,6 @@
 # The independent senior review as a cloud job
 
-**Status: design only, nothing approved.** This is a draft pull request for the owner to read. It adds
+**Status as of 2026-11-10: done (CSR17 and CSR18 moved to api-key-review); see [docs/status.md](../status.md) for the current table.** This is a draft pull request for the owner to read. It adds
 no code, no schema, no command and no recipe; it edits no file outside `docs/` and the tests that pin
 them. The owner has **answered** every decision in [reconciliation.md](reconciliation.md) §4 — D892
 with option (a), D893 with option (c), and **D894 with option (a)** last — and ruled on the seven

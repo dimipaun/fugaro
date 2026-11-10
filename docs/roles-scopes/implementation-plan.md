@@ -1,6 +1,6 @@
 # User roles and scopes: implementation plan
 
-**Status: plan only; nothing is implemented; no task is approved.** Every task below needs the owner's
+**Status as of 2026-11-10: in progress, 3/12 merged; see [docs/status.md](../status.md) for the current table.** Every task below needs the owner's
 explicit go; answering a decision is not approving a task. It builds [spec.md](spec.md) as amended by
 [reconciliation.md](reconciliation.md). Answers that shaped it (2026-11-07): D1580 (CLI and console
 checks first), D1581 (rename and migrate in `update`), D1582 (a lapse limits only Subscription

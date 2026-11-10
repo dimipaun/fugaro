@@ -1,7 +1,6 @@
 # An image's `ENV` reaching a run: implementation plan
 
-**Status: IE1 is implemented (this branch, not merged); IE2, IE3 and IE4 are planned and not
-implemented.** Four tasks, **IE1–IE4**, each with its
+**Status as of 2026-11-10: done except the owner's Check 291; see [docs/status.md](../status.md) for the current table.** Four tasks, **IE1–IE4**, each with its
 files (IE2's is the longest at eight, because a change to the reserved list is a change to its
 schema mirror too), its interfaces, its named tests, its **red step**,
 its **mutation**, its **reviewer tier**, what it depends on, its command and its commit. Written against
