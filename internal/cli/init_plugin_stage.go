@@ -187,25 +187,36 @@ func (s *pluginStage) Check(ctx context.Context) (initflow.Status, error) {
 		// this release and an install that never happened is exactly the state
 		// both halves have to read the same way (#1836c).
 		return initflow.Status{State: initflow.Todo, Detail: behindLine(ch, inst)}, nil
+	case ch != nil && ch.Changed:
+		// The wiring half has work of its own here, and its line is the more
+		// telling of the two: the install half's own line is printed by the
+		// apply either way.
+		d := "adds the Fugaro plugin to " + ch.Path + ", pinned to " + ch.Tag
+		if s.ask {
+			d += "; asks you to type the repository's name first (it is not the project's yet)"
+		}
+		return initflow.Status{State: initflow.Todo, Detail: d}, nil
+	case s.found && s.installs() && inst.state != stepCurrent:
+		// The install half is a step of this stage and it is not up to date:
+		// nothing installed on this machine, or a record this fugaro cannot
+		// compare — neither reads as current, which is what --check's own
+		// answer words as a skip because it is about the plugin the machine
+		// already has, where this stage has the install itself to make. The
+		// plugin in Claude Code is the same one for every checkout, so a
+		// checkout this run may not wire is not a machine that needs nothing
+		// (U1, F13).
+		return initflow.Status{State: initflow.Todo, Detail: "installs the plugin in Claude Code: " + inst.reason}, nil
 	case st != nil:
-		// The wiring half has nothing to do here (its own line says why) and
-		// the install is not behind: the stage is not this checkout's.
+		// This checkout is not one to wire (or this build has no release tag to
+		// pin to), and the install half is current or is not a step here: the
+		// wiring half's own skip line is the stage's answer.
 		return *st, nil
-	case !ch.Changed:
-		d := "No changes: " + ch.Path + " pins the plugin to " + ch.Tag
-		if ch.Disabled {
-			d += " (the repository disables it)"
-		}
-		if inst.state == stepCurrent {
-			d += "; " + inst.reason
-		}
-		return initflow.Status{State: initflow.Done, Detail: d}, nil
 	}
-	d := "adds the Fugaro plugin to " + ch.Path + ", pinned to " + ch.Tag
-	if s.ask {
-		d += "; asks you to type the repository's name first (it is not the project's yet)"
+	d := "No changes: " + ch.Path + " pins the plugin to " + ch.Tag
+	if ch.Disabled {
+		d += " (the repository disables it)"
 	}
-	return initflow.Status{State: initflow.Todo, Detail: d}, nil
+	return initflow.Status{State: initflow.Done, Detail: d + "; " + inst.reason}, nil
 }
 
 // behindLine is the stage's line when the two halves disagree: the pin is not
@@ -221,6 +232,14 @@ func behindLine(ch *pluginwire.Change, inst stepResult) string {
 		pin = "No changes: " + ch.Path + " pins the plugin to " + ch.Tag + "; "
 	}
 	return pin + "Claude Code's own plugin is behind: " + inst.reason + ", and this stage installs " + pluginTag()
+}
+
+// installs: this build has a release to install, so the install half is a step
+// of this stage at all. A development build's own skip is not something to do,
+// whatever the machine's record of the plugin says.
+func (s *pluginStage) installs() bool {
+	_, err := pluginwire.Tag(Version)
+	return err == nil
 }
 
 // pluginTag is this release's plugin tag, or "" for a build that has none
@@ -302,13 +321,20 @@ func (s *pluginStage) Apply(ctx context.Context, env initflow.Env) (initflow.Out
 			// made. The marker is asked for beside the gate because the two
 			// answers are about different things — the gate is a fact about the
 			// project, and this branch is a fact about the session. A coding
-			// agent's session confirms nothing, which is what the default arm
-			// below says; the loop reaches this Apply in one because the stage is
-			// LocalUnderAgent, and the marker is what keeps the prompt out of a
-			// session nobody is typing in.
+			// agent's session confirms nothing, which is the arm below; the loop
+			// reaches this Apply in one because the stage is LocalUnderAgent.
 			fmt.Fprintf(r.w, "  %s\n", initflow.GateOrdinary())
 		case env.Yes:
 			fmt.Fprintln(r.w, "  confirmed by --yes")
+		case agentMarker(os.Getenv, r.stdinTerminal()) != "":
+			// A coding agent's session is not the no-terminal case the default
+			// arm below is about: the write is on this machine's own file, which
+			// is what LocalUnderAgent says the stage does there, and nobody is
+			// here to be asked — the arm the checkout stage's own gate takes,
+			// and the pin it wrote before this stage ran the step (U1). The
+			// line says which session wrote it, so the diff above is not read as
+			// one a person confirmed.
+			fmt.Fprintln(r.w, "  written by this coding agent's session, where there is no prompt to answer")
 		default:
 			// A person at the terminal is asked nothing (T7): the y/N they used
 			// to type is gone, and --ask is the flag that puts the question back.

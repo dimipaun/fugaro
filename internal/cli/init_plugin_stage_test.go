@@ -59,25 +59,31 @@ func runPlugin(t *testing.T, e *initEngine) *initflow.Result {
 }
 
 // The wiring merges only after the owner's own confirmation (T7: a person at
-// the terminal, nothing typed), and a coding agent's session confirms nothing
-// at all: the step is left for the user with nothing written. It shows the
-// diff, and merges only the plugin's two entries into the file, pinned to the
-// binary's tag.
+// the terminal, nothing typed), and a coding agent's session asks nothing at
+// all: the stage is LocalUnderAgent (U1), so the loop applies it there and the
+// write — this machine's own file — is made with nothing read off stdin. It
+// shows the diff, and merges only the plugin's two entries into the file,
+// pinned to the binary's tag.
 func TestWiringStageConfirmsAndMergesOnly(t *testing.T) {
 	releaseBuild(t, "0.2.0")
 	settings := wiringCheckout(t, settingsWithOthers)
 	fakeTerminal(t)
 
-	// A coding agent's session confirms nothing, whatever is on stdin: the
-	// step is the user's and nothing is written.
+	// A coding agent's session asks nothing and writes the pin: "y" on stdin
+	// would be a confirmation nobody is there to give, and no `fugaro
+	// update-skills` is left behind.
 	e, _ := stageEngine(t, "y\n", nil)
 	t.Setenv(agentMarkers[0], "1")
 	res := runPlugin(t, e)
 	got, _ := os.ReadFile(settings)
-	if string(got) != settingsWithOthers || stateOf(res, "plugin") != initflow.NeedsYou || len(res.Left) != 1 || !strings.HasSuffix(res.Left[0].Text, "update-skills") {
+	if stateOf(res, "plugin") != initflow.Changed || len(res.Left) != 0 || !strings.Contains(string(got), `"ref": "v0.2.0"`) {
 		t.Fatalf("agent session: stages %+v left %v\n%s", res.Stages, res.Left, got)
 	}
 	t.Setenv(agentMarkers[0], "")
+	// The checks below read the file as it was before that write.
+	if err := os.WriteFile(settings, []byte(settingsWithOthers), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	// Confirmed: the person is at their terminal, so nothing is typed at all
 	// — "n" on stdin would decline the step if anything were read.
