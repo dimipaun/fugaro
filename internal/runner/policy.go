@@ -308,6 +308,12 @@ func (r *run) policyCeiling(pp *projectpolicy.Policy, env policy.Layer, c Spend)
 	// block leaves the ceiling with no list, which admits no binary at all —
 	// exactly what every installation does today.
 	//
+	// No decoder fills the field yet (projectpolicy.Binaries): this release
+	// lists a node's `binaries` key in UnknownKeys instead of reading it, so
+	// every run today is the node-with-no-block case above. The read is here
+	// because it is the seam the block arrives through, and because a policy
+	// built by hand carries one — which is what AR2's tests below do.
+	//
 	// Unlike the floor these are keys of the merge's own vocabulary, so the
 	// node's are named in `set`: result.json then sources them as "policy" and
 	// not as a ceiling that carries no such value at all.

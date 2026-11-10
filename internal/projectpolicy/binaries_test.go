@@ -1,81 +1,38 @@
 package projectpolicy
 
 import (
-	"strings"
+	"slices"
 	"testing"
 )
 
-// binariesNode wraps a binaries block in the node this binary reads. The node
-// is written raw, the way this package writes every fixture, and the version is
-// the guard such a literal owes: a bump has to come here deliberately rather
-// than leave the test reading a node no reader of this release accepts.
-func binariesNode(t *testing.T, block string) []byte {
-	t.Helper()
+// TestABinariesNodeIsNotReadYet is the state this release ships: `binaries` is
+// a member the node's decoder does not know, so a node that writes one has it
+// listed in UnknownKeys and carries no rule. That is the strict end — the run
+// admits no binary — and it is what keeps a block in force from being one
+// nothing checked: a node like the one below names `/etc/passwd`, `..`, an
+// empty entry and `**`, and a cap of -5, none of which D982's pattern checks,
+// D983's cap or the count and length bounds would let through.
+//
+// The decode, its validation and the version bump that publishes them are the
+// plan's AR0 and land together with the key, beside the member-name check every
+// written block in this package has (a node spelling `Allow` beside `allow`
+// is one encoding/json folds onto the other, so the last of the two would be
+// the rule read). When that lands, this test goes: it is the wrong direction of
+// AR0's own TestPolicyUnknownKeysStillListsBinariesForAnOlderReader, where the
+// reader that lists the key is a version-4 binary and the node is a version-5
+// one.
+func TestABinariesNodeIsNotReadYet(t *testing.T) {
 	if Version != 4 {
-		t.Fatalf("the policy Version is %d, and this test's node is written for 4: update both together, deliberately", Version)
+		t.Fatalf("the policy Version is %d: this test is about the release before the block is read — AR0 lands the decode, its validation and the bump, and deletes this test with them", Version)
 	}
-	return []byte(`{"version": 4, "binaries": ` + block + `}`)
-}
-
-// TestDecodeRefusesFoldedBinariesMembers: the block's member names are held to
-// the spelling the carrier documents, the way the budget block's and the
-// credentials block's are, and this is the half a strict decode does not give.
-// encoding/json folds a member name by Unicode simple case folding before it
-// matches it, so `{"allow": ["safe/**"], "Allow": ["**"]}` has no unknown
-// member in it at all: it decodes, the last spelling wins, and a node that
-// means to admit one directory admits every binary — the failure D982 refuses
-// for the patterns themselves, reached by the spelling of the key. A member
-// written twice is the same rule one spelling at a time, and a member outside
-// the documented names is refused rather than folded onto one.
-func TestDecodeRefusesFoldedBinariesMembers(t *testing.T) {
-	for _, tc := range []struct{ name, block, want string }{
-		{"a case-folded allow beside the real one", `{"allow": ["safe/**"], "Allow": ["**"]}`, "reads as one member"},
-		{"allow written twice", `{"allow": ["safe/**"], "allow": ["**"]}`, `names "allow" twice`},
-		{"max_bytes spelled in another case", `{"allow": ["safe/**"], "Max_Bytes": 1024}`, `spells max_bytes as "Max_Bytes"`},
-		{"a member this Fugaro does not read", `{"allow": ["safe/**"], "cap": 1024}`, "unknown field"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			p, found, err := Decode(binariesNode(t, tc.block))
-			if err == nil || p != nil || !found {
-				t.Fatalf("Decode(%s) = (%v, %v, %v), want a refusal: the node is not the one this reader would act on", tc.block, p, found, err)
-			}
-			if !strings.Contains(err.Error(), tc.want) {
-				t.Errorf("err = %v, want it to contain %q", err, tc.want)
-			}
-		})
+	p, found, err := Decode([]byte(`{"version": 4, "binaries": {"allow": ["/etc/passwd", "..", "", "**"], "max_bytes": -5}}`))
+	if err != nil || !found || p == nil {
+		t.Fatalf("Decode = (%v, %v, %v), want the node read with the key listed", p, found, err)
 	}
-}
-
-// TestDecodeTellsTheWrittenBinariesListFromTheAbsentOne: the two spellings a
-// reader past the publish needs to tell apart, because the runner reads them
-// differently — a written `allow: []` is the owner's list cleared (D987) and
-// comes back as an empty non-nil slice, an absent one is nil, and a node with
-// no block at all carries no carrier. What the three have in common is the
-// answer the check gives them: no path is admitted.
-func TestDecodeTellsTheWrittenBinariesListFromTheAbsentOne(t *testing.T) {
-	p, found, err := Decode(binariesNode(t, `{"allow": [], "max_bytes": 1024}`))
-	if err != nil || !found || p == nil || p.Binaries == nil {
-		t.Fatalf("Decode = (%v, %v, %v), want the block read", p, found, err)
+	if p.Binaries != nil {
+		t.Errorf("Binaries = %+v, want none: nothing validates a block here, so nothing may read one", p.Binaries)
 	}
-	if got := p.Binaries; got.Allow == nil || len(got.Allow) != 0 || got.MaxBytes != 1024 {
-		t.Errorf("the written empty list came back as %#v, want an empty non-nil allow and the cap", got)
-	}
-
-	p, found, err = Decode(binariesNode(t, `{"max_bytes": 1024}`))
-	if err != nil || !found || p == nil || p.Binaries == nil {
-		t.Fatalf("Decode = (%v, %v, %v), want the block read", p, found, err)
-	}
-	if got := p.Binaries; got.Allow != nil || got.MaxBytes != 1024 {
-		t.Errorf("the absent list came back as %#v, want a nil one", got)
-	}
-
-	// A written null and an absent member are one absence — no carrier at all —
-	// and a written empty block is a carrier nothing is set in: the same state
-	// at the check, and the spelling D987 reads as the list cleared at publish.
-	if q, _, err := Decode(binariesNode(t, `null`)); err != nil || q.Binaries != nil {
-		t.Errorf("a null block = (%v, %v), want no carrier", q, err)
-	}
-	if q, _, err := Decode(binariesNode(t, `{}`)); err != nil || q.Binaries == nil || q.Binaries.Allow != nil || q.Binaries.MaxBytes != 0 {
-		t.Errorf("a written empty block = (%v, %v), want the empty carrier", q, err)
+	if want := []string{"binaries"}; !slices.Equal(p.UnknownKeys, want) {
+		t.Errorf("UnknownKeys = %v, want %v: a member this reader does not know is listed, not dropped (P8)", p.UnknownKeys, want)
 	}
 }

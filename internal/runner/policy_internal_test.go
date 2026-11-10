@@ -355,10 +355,13 @@ func TestRunnerReadsReviewFloorFromNode(t *testing.T) {
 // floor's: the binary allow rule is the owner-only policy node's, the run
 // reads it at bootstrap and puts it on the ceiling layer (policyCeiling), and
 // the merge is what lets a layer under the ceiling remove an admitted path and
-// never add one. The layers under it are the ones a launcher writes, so the
-// node's list is the only list there is — and a node that names none, or no
-// node at all, admits no binary, which is the behaviour of every installation
-// that has published no binaries block.
+// never add one. The node's own decoder is the plan's AR0 and is not here yet
+// (projectpolicy.Binaries), so the policies below are built by hand — which is
+// the state this read has until that task lands: nothing populates the field,
+// and every run is the node-with-no-block case. The layers under it are the
+// ones a launcher writes, so the node's list is the only list there is — and a
+// node that names none, or no node at all, admits no binary, which is the
+// behaviour of every installation that has published no binaries block.
 func TestPolicyCeilingCarriesTheBinariesList(t *testing.T) {
 	newRun := func(p *projectpolicy.Policy, found bool) *run {
 		r := &run{

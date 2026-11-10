@@ -338,14 +338,18 @@ type Policy struct {
 	// be a file the subject of the rule can write, and the repository's
 	// fugaro.yaml is inside the checkout the run's own agent writes.
 	//
-	// `fugaro project policy publish` writes it from the owner's project config
-	// and the runner reads the node at bootstrap, putting the block on the
-	// ceiling layer (internal/runner's policyCeiling). Merge intersects the list
-	// and takes the smaller cap, so a layer under the ceiling can remove an
-	// admitted path and can never add one.
+	// Nothing decodes it yet: `binaries` is deliberately not in
+	// knownTopLevelKeys, so a node that writes the key has it listed in
+	// UnknownKeys and this field stays nil, which is the strict end — the run
+	// admits no binary. The member, its validation and the version bump that
+	// publishes them are the plan's AR0 and land together, because a block read
+	// before its patterns, count, lengths and cap are checked would be an
+	// unvalidated rule in force (see internal/projectpolicy/binaries.go).
 	//
-	// An absent member is a project that admits no binary, which is the
-	// behaviour of every installation today.
+	// The runner reads it at bootstrap and puts the block on the ceiling layer
+	// (internal/runner's policyCeiling), where Merge intersects the list and
+	// takes the smaller cap, so a layer under the ceiling can remove an admitted
+	// path and can never add one.
 	Binaries *Binaries `json:"binaries,omitempty"`
 
 	// VerifierAccounts are the identities that may ask the credentials
@@ -485,7 +489,6 @@ var knownTopLevelKeys = map[string]bool{
 	"credentials": true, "base_branch": true,
 	"bitbucket_token": true, "bitbucket_api_roots": true,
 	"review_floor": true, "verifier_accounts": true,
-	"binaries":      true,
 	"image_catalog": true,
 	"image_map":     true, "bake_repos": true,
 	"default_claude_account": true, "claude_account_stages": true,
@@ -1340,13 +1343,6 @@ func decodeWithKeys(raw []byte, keys map[string]bool) (*Policy, bool, error) {
 			return nil, true, err
 		}
 		p.ReviewFloor = floor
-	}
-	if braw, ok := doc["binaries"]; ok && !IsNull(braw) {
-		b, err := decodeBinaries(braw)
-		if err != nil {
-			return nil, true, err
-		}
-		p.Binaries = b
 	}
 	if vraw, ok := doc["verifier_accounts"]; ok && !IsNull(vraw) {
 		if err := json.Unmarshal(vraw, &p.VerifierAccounts); err != nil {
