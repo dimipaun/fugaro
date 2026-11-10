@@ -286,6 +286,12 @@ func (e *initEngine) converge(ctx context.Context) error {
 	if err := e.gateRun(ctx); err != nil {
 		return err
 	}
+	// The door's one line about the runs that are running while it converges,
+	// and the last thing before the first stage writes anything: a person
+	// deciding whether it is safe to update now reads it before the update
+	// starts rather than after. It asks nothing and it refuses nothing, and it
+	// is silent when there is nothing running (update_in_flight.go).
+	e.announceRunsInFlight(ctx)
 	res, err := initflow.Run(ctx, stages, e.options())
 	if err == nil && res != nil && e.r.o.planOnly && res.Failed == nil {
 		e.planOnlyReview(ctx, res.Stages)
@@ -939,7 +945,7 @@ func newInstallationStage(e *initEngine) *engineStage {
 			_, err := e.fillCredentialsAudience(ctx)
 			return err
 		},
-		left: promptLeft(initflow.Installation, "type the project's name to apply", e.r.o.doorName()),
+		left: promptLeft(initflow.Installation, "run the command below: it asks you nothing and the apply goes ahead", e.r.o.doorName()),
 	}
 }
 
@@ -997,7 +1003,7 @@ func newFirebaseStage(e *initEngine) *engineStage {
 			_, err := e.fillCredentialsAudience(ctx)
 			return err
 		},
-		left: promptLeft(initflow.Firebase, "type the project's name at each apply", e.r.o.doorName(), "--firebase-project", e.firebaseProjectWord()),
+		left: promptLeft(initflow.Firebase, "run the command below: it asks you nothing and each apply goes ahead", e.r.o.doorName(), "--firebase-project", e.firebaseProjectWord()),
 	}
 }
 
@@ -1037,9 +1043,9 @@ func newInstallation2Stage(e *initEngine) *engineStage {
 		},
 		leftFor: func() initflow.Left {
 			if e.r.o.firebase != "" {
-				return promptLeft(initflow.Installation2, "type the project's name to apply the history job", e.r.o.doorName(), "--firebase-project", e.firebaseProjectWord())
+				return promptLeft(initflow.Installation2, "run the command below: it asks you nothing and applies the history job", e.r.o.doorName(), "--firebase-project", e.firebaseProjectWord())
 			}
-			return promptLeft(initflow.Installation2, "type the project's name to apply the catalog check job", e.r.o.doorName())
+			return promptLeft(initflow.Installation2, "run the command below: it asks you nothing and applies the catalog check job", e.r.o.doorName())
 		},
 	}
 }

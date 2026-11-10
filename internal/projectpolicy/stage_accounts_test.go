@@ -100,37 +100,45 @@ func TestDecodeRefusesBadAccountChoiceMembers(t *testing.T) {
 }
 
 // TestDecodeRefusesTheProjectsAnthropicKeyAsAStageAccount: the account-choice
-// members name the account a run's stages choose, and the sentinel the account
-// axis spells for the project's own Anthropic API key is not one.
-// config.ValidClaudeAccountRef admits the value, because a profile's
-// claude_accounts entry may name it, so without a case of its own here a node
-// published a default or a stage account no job mounts.
+// members name the account a run's stages choose, and neither of the account
+// axis's non-account values is one — the sentinel this test is named after (the
+// project's own Anthropic API key) and the provider key AK6a added beside it.
+// config.ValidClaudeAccountRef admits both, because a profile's
+// claude_accounts entry may name either, so without a case of its own here a
+// node published a default or a stage account no job mounts.
 //
 // What the test pins is the remedy: the refusal names the move that works
 // (dropping the key) and no claude_accounts entry, which is the one
 // config.ValidateClaudeAccounts refuses.
 //
-// Mutation (run, restore): drop either sentinel arm in Decode — the member is
-// accepted and the subtest goes red.
+// Both values are read in one loop because the rule is one rule
+// (config.NonAccountChoiceMessage answers them together): a third value added
+// to the axis must be refused by these members without anyone remembering to
+// add a row.
+//
+// Mutation (run, restore): drop either arm in Decode — the member is accepted
+// and the subtest goes red.
 func TestDecodeRefusesTheProjectsAnthropicKeyAsAStageAccount(t *testing.T) {
-	for name, raw := range map[string]string{
-		"the project default": `{"version": 4, "default_claude_account": "` + config.AnthropicKeyAccount + `"}`,
-		"a stage's own":       `{"version": 4, "claude_account_stages": {"review": "` + config.AnthropicKeyAccount + `"}}`,
-	} {
-		t.Run(name, func(t *testing.T) {
-			_, found, err := Decode([]byte(raw))
-			if err == nil || !found {
-				t.Fatalf("Decode(%s) = (%v, %v), want a refusal: no job mounts the project's own key as a Claude account", raw, found, err)
-			}
-			for _, banned := range []string{"claude_accounts", "allow_data_to"} {
-				if strings.Contains(err.Error(), banned) {
-					t.Errorf("the refusal names %q: %v — that is the entry config.ValidateClaudeAccounts refuses, so it is a remedy nobody can carry out", banned, err)
+	for _, value := range []string{config.AnthropicKeyAccount, config.ProviderKeyAccount} {
+		for name, raw := range map[string]string{
+			"the project default": `{"version": 4, "default_claude_account": "` + value + `"}`,
+			"a stage's own":       `{"version": 4, "claude_account_stages": {"review": "` + value + `"}}`,
+		} {
+			t.Run(value+"/"+name, func(t *testing.T) {
+				_, found, err := Decode([]byte(raw))
+				if err == nil || !found {
+					t.Fatalf("Decode(%s) = (%v, %v), want a refusal: no job mounts this value as a Claude account", raw, found, err)
 				}
-			}
-			if !strings.Contains(err.Error(), "drop the key") {
-				t.Errorf("the refusal does not name the move that works (dropping the key): %v", err)
-			}
-		})
+				for _, banned := range []string{"claude_accounts", "allow_data_to"} {
+					if strings.Contains(err.Error(), banned) {
+						t.Errorf("the refusal names %q: %v — that is the entry config.ValidateClaudeAccounts refuses, so it is a remedy nobody can carry out", banned, err)
+					}
+				}
+				if !strings.Contains(err.Error(), "drop the key") {
+					t.Errorf("the refusal does not name the move that works (dropping the key): %v", err)
+				}
+			})
+		}
 	}
 }
 

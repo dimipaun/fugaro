@@ -44,7 +44,8 @@ import (
 //     claude-oauth-token family), the GitHub App's private key
 //     (config.GitHubAppKeySecret, C2.1), the upstream Bitbucket credential
 //     (config.BitbucketSecret, D506), the Bitbucket read consumer
-//     (BitbucketReadConsumerSecret, F21) and the review-signing family
+//     (BitbucketReadConsumerSecret, F21), the project's provider key
+//     (config.ProviderKeySecret, AK6b) and the review-signing family
 //     (config.ReviewSigningKeySecret, D1069) — and a key outside that set is
 //     refused rather than ignored: a typo'd key that parsed would be a
 //     credential nobody meant to store, read as nothing and never noticed.
@@ -79,14 +80,21 @@ import (
 // (config.ClaudeAccountSecret), which is what a workflow's `secrets:` would
 // have named and what `fugaro creds set` writes.
 //
-// Four kinds of entry are not model credentials and no cascade ever sees any
-// of them (C2.1, D145, D506, D1069, F21): the App key, which the mint signs a
-// JWT with; the upstream Bitbucket credential, which the git proxy forwards
-// with; the Bitbucket read consumer, which the read mint exchanges for a
-// short-lived token; and the per-account review-signing keys, which the sign
-// route computes a MAC with and the verify route recomputes it with. None has
-// a tier, and Credentials — the whole of what the cascade is offered — answers
-// the model credentials alone.
+// Five kinds of entry are not model credentials and no CODING caller's cascade
+// ever sees any of them (C2.1, D145, D506, D1069, F21, AK6b): the App key,
+// which the mint signs a JWT with; the upstream Bitbucket credential, which the
+// git proxy forwards with; the Bitbucket read consumer, which the read mint
+// exchanges for a short-lived token; the per-account review-signing keys, which
+// the sign route computes a MAC with and the verify route recomputes it with;
+// and the project's provider key, which a call to a third-party provider is
+// forwarded with. Credentials — the whole of what a coding caller is offered —
+// answers the model credentials alone, so a provider key never appears in a
+// candidate list a selection could refuse over (a tier-C entry would refuse the
+// whole call, checkCandidates). The provider key is the one of the five that is
+// a credential a call is spent on, and the one the review half offers: a review
+// run paired with the account axis's value for it is offered it at tier C, and
+// the selection refuses that offer by name until Check 50 runs
+// (docs/api-key-review, D150).
 
 const (
 	// MaxBundleBytes bounds the bundle document before it is parsed. 64 KiB
@@ -244,13 +252,15 @@ func BundleRefusal(err error) string {
 // consumer's name to share.
 const BitbucketReadConsumerSecret = "bitbucket-read-consumer"
 
-// Kind is what a bundle entry is for. The bundle holds five kinds of thing:
+// Kind is what a bundle entry is for. The bundle holds six kinds of thing:
 // the model credentials the cascade selects, each with a tier, the GitHub
 // App's private key, which the mint signs with, the upstream Bitbucket
 // credential the git proxy forwards with (D506), the per-account
-// review-signing keys the verdict routes compute a MAC with (D1069) and the
-// Bitbucket read consumer the read mint exchanges for a token (F21) — the
-// last four are candidates for nothing (C2.1, B1.2).
+// review-signing keys the verdict routes compute a MAC with (D1069), the
+// Bitbucket read consumer the read mint exchanges for a token (F21) and the
+// project's provider key, which a call to a third-party provider is forwarded
+// with (AK6b, F15) — the last five are candidates for nothing on a coding
+// caller's path (C2.1, B1.2).
 type Kind string
 
 const (
@@ -290,6 +300,31 @@ const (
 	// the only reader, and it is not a value this kind hands out: it answers
 	// the key's bytes or a refusal.
 	KindReviewSigning Kind = "review-signing"
+	// KindProvider is the project's provider key: the document key
+	// config.ProviderKeySecret, the third-party provider's credential that a
+	// call routed to that provider is forwarded with (AK6b, F15). It is the one
+	// non-model kind that has a TIER — creds.TierC, the reserved third-party
+	// route — because unlike the four above it is a credential a call is
+	// actually spent on, and the tier is what the cascade's own vocabulary
+	// spells it as: a name that reaches a selection as a tier is refused by
+	// checkCandidates (which names Check 50) rather than read as one more
+	// credential.
+	//
+	// Its value is the second kind that is a mapping rather than a string (the
+	// read consumer's is the first): the key and the two routing facts a
+	// provider call needs — where it goes and how the key is sent
+	// (providerValue). Neither fact is a credential: the base URL is a URL and
+	// the auth shape is one of two words (D1418). Because the facts live here
+	// and not in a run's task or a policy, no run is ever told the endpoint its
+	// call goes to.
+	//
+	// It is not in byName, for AppKey's reason: an account may legally be named
+	// "provider-key" (claude-oauth-token-provider-key is a legal named account,
+	// and no account name is reserved for this credential), so ProviderKey
+	// selects it by KIND. It is in NEITHER Credentials (a coding caller's
+	// candidate list: a tier-C entry in it would refuse the whole call) nor a
+	// probe.
+	KindProvider Kind = "provider"
 )
 
 // readConsumer is the value of the read consumer's entry (F21, D361): the
@@ -314,7 +349,8 @@ type Entry struct {
 	// Kind is what the entry is for: KindModel for a credential the cascade
 	// may select, KindGitHubApp for the App key, KindGit for the upstream
 	// git credential, KindReviewSigning for an account's review-signing key,
-	// KindBitbucketReadConsumer for the Bitbucket read consumer.
+	// KindBitbucketReadConsumer for the Bitbucket read consumer, KindProvider
+	// for the project's provider key.
 	// Credentials answers the model ones alone.
 	Kind Kind
 	// Name is the credential's name: the Claude account's for tier A
@@ -330,16 +366,31 @@ type Entry struct {
 	// (config.ReviewSigningKeySecret, or the rotation's
 	// config.ReviewSigningKeyPreviousSecret), which is the name the sign and
 	// verify lines speak — an account is one half of it rather than the whole,
-	// because one account has two entries.
+	// because one account has two entries. The provider key's is
+	// config.ProviderKeySecret: the credential's own logical name, which the
+	// account axis spells as its own value (config.ProviderKeyAccount) and which
+	// the answer's credential header carries when it is the one that served a
+	// call.
 	Name string
-	// Tier is the cost class (creds.TierA, creds.TierB). It is empty for an
-	// entry that is not a model credential: the App key, the upstream
-	// Bitbucket credential and a review-signing key are spent nowhere, so
-	// none of them has a tier to settle a call against.
+	// Tier is the cost class (creds.TierA, creds.TierB, creds.TierC). It is
+	// empty for an entry that is not a credential a call is spent on: the App
+	// key, the upstream Bitbucket credential, a review-signing key and the read
+	// consumer are spent nowhere, so none of them has a tier to settle a call
+	// against. The provider key is the one non-model kind that has one
+	// (creds.TierC): a call routed to a provider is settled against it.
 	Tier creds.Tier
 	// Key is the document's own key for this credential
 	// (config.ClaudeAccountSecret for a named account). It is not a value.
 	Key string
+	// baseURL and auth are the provider key's two routing facts (KindProvider):
+	// where a call with it goes and how it is sent (providerValue). They are
+	// empty on every other kind's entry, and they are facts and not credentials
+	// — a URL and one of two words (D1418) — which is why they are held as plain
+	// strings: nothing redacts them, and a scrub that did would be redacting the
+	// ends of ordinary prose. They are read by the one path that forwards to a
+	// provider (forward.go) and by nothing else.
+	baseURL string
+	auth    string
 	// value is the credential. It is unexported, there is no accessor that
 	// renders it, and its type prints as a redaction through every verb —
 	// so an Entry logged, printed or panicked on carries a name and a
@@ -416,6 +467,12 @@ type Bundle struct {
 	// entry's value holds the secret as well, so the paths that scrub an
 	// Entry's value cover it.
 	readConsumer *readConsumer
+	// providerKey is the index of the provider key's entry, or -1 when the
+	// document holds none, under the same rule as appKey: one document key, one
+	// entry, a duplicate refused. It is NOT in byName, for appKey's reason: an
+	// account may legally be named "provider-key", so the provider entry is
+	// found by its kind alone (ProviderKey).
+	providerKey int
 	// reviewSigning indexes the review-signing entries by their DOCUMENT KEY
 	// (config.ReviewSigningKeySecret / ReviewSigningKeyPreviousSecret), which
 	// is the name the sign and verify lines speak. A key, not a name: the two
@@ -432,9 +489,15 @@ func (b *Bundle) Entries() []Entry { return slices.Clone(b.entries) }
 
 // Credentials are the bundle's model credentials as the cascade speaks them:
 // names and tiers, never values. It is what the service offers creds.Select
-// after the policy's admissions have narrowed it, and it is the ONLY accessor
-// the cascade reads (candidates), so the App key — which is in the document
-// and in Entries and is not a model credential — cannot become a candidate.
+// after the policy's admissions have narrowed it, and it is the ONLY accessor a
+// coding caller's candidate list is built from (candidates), so the App key —
+// which is in the document and in Entries and is not a model credential —
+// cannot become a candidate. The provider key is the same exclusion for a
+// sharper reason: it is the one other kind that HAS a tier, and a tier-C entry
+// in a coding caller's list would refuse every call that caller makes
+// (checkCandidates names Check 50) rather than be skipped quietly. A review
+// caller's list is the review half's own (reviewOfferings), which is where the
+// provider key is offered.
 func (b *Bundle) Credentials() []creds.Credential {
 	out := make([]creds.Credential, 0, len(b.entries))
 	for _, e := range b.entries {
@@ -555,6 +618,28 @@ func (b *Bundle) BitbucketToken() (Entry, bool) {
 	return b.entries[b.gitToken], true
 }
 
+// ProviderKey answers the bundle's provider key (AK6b, F15): the entry whose
+// document key is config.ProviderKeySecret, the credential a call routed to a
+// third-party provider is forwarded with, beside the two routing facts its
+// value carries (baseURL, auth). found=false is a document that holds none,
+// which the forward refuses on and never falls back from (D143: a fallback
+// would be a credential the installation did not store).
+//
+// It selects by KIND rather than by name, for AppKey's reason, and here the
+// name is one an account may legally have: claude-oauth-token-provider-key
+// resolves to "provider-key", which is this entry's name too, so a lookup by
+// name could not tell the provider's key from that account's token. Exactly one
+// entry answers it — the loader refuses a second document key of the kind as a
+// duplicate — and the value it carries is the credential: unlike the two
+// routing facts beside it, that value is never logged, put in an error or
+// rendered (TestBundleValueNeverInErrorOrLog).
+func (b *Bundle) ProviderKey() (Entry, bool) {
+	if b == nil || b.providerKey < 0 {
+		return Entry{}, false
+	}
+	return b.entries[b.providerKey], true
+}
+
 // BitbucketReadConsumer answers the bundle's Bitbucket read consumer (F21,
 // D361), which is the entry whose document key is BitbucketReadConsumerSecret:
 // the OAuth consumer's key, its secret and the workspace the token it mints
@@ -658,13 +743,18 @@ func (b *Bundle) LogValue() slog.Value { return slog.StringValue(b.String()) }
 // claude-oauth-token-<name> namespace, tier A), the GitHub App's private key
 // (config.GitHubAppKeySecret, C2.1), the upstream Bitbucket credential
 // (config.BitbucketSecret, D506), the Bitbucket read consumer
-// (BitbucketReadConsumerSecret, F21) and the per-account review-signing keys
-// (config.ReviewSigningKeySecret's family, D1069) — the last four are the keys
+// (BitbucketReadConsumerSecret, F21), the project's provider key
+// (config.ProviderKeySecret, AK6b) and the per-account review-signing keys
+// (config.ReviewSigningKeySecret's family, D1069) — the last five are the keys
 // that are not model credentials: their kinds are KindGitHubApp, KindGit,
-// KindBitbucketReadConsumer and KindReviewSigning and they have no tier,
-// because the mint signs a JWT with one, the proxy forwards another, the read
-// mint exchanges the third for a token and the sign route computes a MAC with
-// the fourth, rather than any of them being spent on a call.
+// KindBitbucketReadConsumer, KindProvider and KindReviewSigning, because the
+// mint signs a JWT with one, the proxy forwards another, the read mint
+// exchanges the third for a token, a provider's endpoint is reached with the
+// fourth and the sign route computes a MAC with the fifth, rather than any of
+// them being offered to a coding caller's cascade. Four of the five have no
+// tier — none of them is spent on an Anthropic call — and the provider key is
+// the exception: it is spent, on a route this release does not serve, so its
+// tier is the reserved creds.TierC rather than a name.
 func CredentialKey(key string) (name string, kind Kind, tier creds.Tier, ok bool) {
 	switch {
 	case key == config.GitHubAppKeySecret:
@@ -673,6 +763,21 @@ func CredentialKey(key string) (name string, kind Kind, tier creds.Tier, ok bool
 		return config.BitbucketSecret, KindGit, "", true
 	case key == BitbucketReadConsumerSecret:
 		return BitbucketReadConsumerSecret, KindBitbucketReadConsumer, "", true
+	case key == config.ProviderKeySecret:
+		// The provider key's name is the credential's own logical name, which is
+		// the value the account axis spells for it (config.ProviderKeyAccount)
+		// and the name an answer's credential header carries. Its tier is the
+		// reserved third-party one: a caller that offers it to the cascade is
+		// refused by name (checkCandidates, Check 50) rather than served.
+		//
+		// It is not reserved as an ACCOUNT name, and it cannot be: the account
+		// axis's spelling for this credential is config.ProviderKeyAccount, which
+		// carries a doubled dash that ClaudeAccountNameRE refuses, so no account
+		// is ever named after this entry. An account whose name is the bare
+		// "provider-key" (claude-oauth-token-provider-key) is an ordinary
+		// account, and the bundle holds the two without either hiding the other
+		// (ProviderKey, byName).
+		return config.ProviderKeySecret, KindProvider, creds.TierC, true
 	case key == config.AnthropicSecret:
 		return config.AnthropicSecret, KindModel, creds.TierB, true
 	case key == config.ClaudeOAuthToken:
@@ -788,7 +893,7 @@ func ParseBundle(raw []byte) (*Bundle, error) {
 	if n := len(root.Content) / 2; n > MaxBundleCredentials {
 		return nil, bundleErr(ErrBundleTooMany, "")
 	}
-	b := &Bundle{entries: make([]Entry, 0, len(root.Content)/2), byName: make(map[string]int, len(root.Content)/2), appKey: -1, gitToken: -1, reviewSigning: make(map[string]int, 1)}
+	b := &Bundle{entries: make([]Entry, 0, len(root.Content)/2), byName: make(map[string]int, len(root.Content)/2), appKey: -1, gitToken: -1, providerKey: -1, reviewSigning: make(map[string]int, 1)}
 	for i := 0; i+1 < len(root.Content); i += 2 {
 		k, v := root.Content[i], root.Content[i+1]
 		if k.Kind != yaml.ScalarNode || k.Tag != "!!str" {
@@ -832,6 +937,10 @@ func ParseBundle(raw []byte) (*Bundle, error) {
 			if b.readConsumer != nil {
 				return nil, bundleErr(ErrBundleUnknownKey, k.Value)
 			}
+		} else if kind == KindProvider {
+			if b.providerKey >= 0 {
+				return nil, bundleErr(ErrBundleUnknownKey, k.Value)
+			}
 		} else if kind == KindReviewSigning {
 			if _, dup := b.reviewSigning[k.Value]; dup {
 				return nil, bundleErr(ErrBundleUnknownKey, k.Value)
@@ -844,6 +953,7 @@ func ParseBundle(raw []byte) (*Bundle, error) {
 		// readConsumerValue reads it. The entry's value is the secret, which is
 		// the field of the three that is a credential.
 		value := v.Value
+		baseURL, auth := "", ""
 		if kind == KindBitbucketReadConsumer {
 			rc, err := readConsumerValue(k.Value, v)
 			if err != nil {
@@ -851,6 +961,17 @@ func ParseBundle(raw []byte) (*Bundle, error) {
 			}
 			b.readConsumer = rc
 			value = rc.value.value
+		} else if kind == KindProvider {
+			// The provider key's entry is a mapping too, of the credential and
+			// the two routing facts a provider call needs (providerValue). Only
+			// the credential half is the entry's value, so it is what every path
+			// that scrubs an Entry covers; the base URL and the auth shape are
+			// facts and are carried beside it.
+			pv, err := providerValue(k.Value, v)
+			if err != nil {
+				return nil, err
+			}
+			value, baseURL, auth = pv.key.value, pv.baseURL, pv.auth
 		} else {
 			if v.Kind != yaml.ScalarNode || v.Tag != "!!str" {
 				// A number, a bool, a list or a nested map: the published schema
@@ -871,12 +992,19 @@ func ParseBundle(raw []byte) (*Bundle, error) {
 			b.reviewSigning[k.Value] = len(b.entries)
 		case KindBitbucketReadConsumer:
 			// b.readConsumer is set above, and it is the entry this append is
-			// about: it is not in byName, because the cascade must never be
-			// offered it (Credentials).
+			// about: it is not in byName, because a coding caller's candidate
+			// list must never hold it (Credentials).
+		case KindProvider:
+			// It is not in byName either, and it is not a candidate of a coding
+			// caller: Credentials answers the model kinds alone, because a
+			// tier-C entry in that list would refuse the whole call
+			// (checkCandidates) rather than be skipped. The review half reaches
+			// the entry by its kind (reviewOfferings).
+			b.providerKey = len(b.entries)
 		default:
 			b.byName[name] = len(b.entries)
 		}
-		b.entries = append(b.entries, Entry{Kind: kind, Name: name, Tier: tier, Key: k.Value, value: secret{value: value}})
+		b.entries = append(b.entries, Entry{Kind: kind, Name: name, Tier: tier, Key: k.Value, baseURL: baseURL, auth: auth, value: secret{value: value}})
 	}
 	if len(b.entries) == 0 {
 		return nil, bundleErr(ErrBundleEmpty, "")
@@ -884,10 +1012,11 @@ func ParseBundle(raw []byte) (*Bundle, error) {
 	return b, nil
 }
 
-// readConsumerValue reads the read consumer's entry value, which is the one
-// value of the document that is not a string: a mapping of exactly the three
-// fields readConsumer names, each a non-empty string within the per-credential
-// bound. The document's own key is passed in so every refusal can name it.
+// readConsumerValue reads the read consumer's entry value, which is one of the
+// two values of the document that are not a string (the provider key's is the
+// other): a mapping of exactly the three fields readConsumer names, each a
+// non-empty string within the per-credential bound. The document's own key is
+// passed in so every refusal can name it.
 //
 // Every refusal names the ENTRY's key and never a field's name or content. The
 // field names are three words an operator types and nothing is lost by not
@@ -948,6 +1077,110 @@ func readConsumerValue(entryKey string, v *yaml.Node) (*readConsumer, error) {
 		return nil, bundleErr(ErrBundleBadValue, entryKey)
 	}
 	return rc, nil
+}
+
+// Where a provider entry's calls go and how the key is sent: the two auth
+// shapes the platform defines, which are the gateway's own closed set
+// (route.go's attachCredential, config.ValidateModelProviders). A shape outside
+// them is refused by providerValue rather than defaulted — a default is a guess
+// about how a credential is sent, and the guess that is wrong either sends the
+// key in a header no provider reads or sends it in the one the platform's own
+// contract treats as trust.
+//
+// Neither word is a credential. They are spelled here rather than in
+// internal/gateway because that package exports no constant for them (the
+// gateway compares against its own literals) and because the bundle is the
+// document that defines which spellings a provider entry may name.
+const (
+	providerAuthBearer  = "bearer"
+	providerAuthXAPIKey = "x-api-key"
+)
+
+// providerFacts is a provider key's entry value (AK6b, F15, D1418): the
+// credential and the two routing facts a call to that provider needs — where it
+// goes and how the key is sent. Only key is a credential; baseURL is a URL a
+// person typed into the document and auth is one of two words of the
+// platform's. They are held together because a provider call needs all three:
+// a key with no destination is a call this service would have to invent a host
+// for, and one with no auth shape is a key it would have to guess a header for.
+type providerFacts struct {
+	key     secret
+	baseURL string
+	auth    string
+}
+
+// providerValue reads a provider key's entry value: a mapping of exactly the
+// three fields above, each a non-empty string within the per-credential bound,
+// with the base URL held to the platform's own provider-URL rule
+// (config.CheckProviderBaseURL: https, or http on a loopback host, a path
+// prefix allowed, no credentials, query, fragment or dot segment) and the auth
+// shape held to the closed set of two. The document's own key is passed in so
+// every refusal can name it.
+//
+// Every refusal names the ENTRY's key and never a field's name or content, and
+// the base URL is why that rule needs saying here: config.CheckProviderBaseURL's
+// own message quotes the URL it refused, and a URL is text a person typed into a
+// document that is otherwise all credentials — so its answer is deliberately not
+// wrapped, and the loader answers in its own words instead. Nothing is defaulted
+// and nothing is dropped: an entry missing either fact is refused whole.
+func providerValue(entryKey string, v *yaml.Node) (*providerFacts, error) {
+	if v.Kind != yaml.MappingNode {
+		return nil, bundleErr(ErrBundleBadValue, entryKey)
+	}
+	pf := &providerFacts{}
+	var seenKey, seenBaseURL, seenAuth bool
+	for i := 0; i+1 < len(v.Content); i += 2 {
+		f, fv := v.Content[i], v.Content[i+1]
+		// readConsumerValue's order: the field's NAME is read before its value,
+		// so a field the entry does not define is refused as that rather than as
+		// whatever its value happened to be.
+		if f.Kind != yaml.ScalarNode || f.Tag != "!!str" {
+			return nil, bundleErr(ErrBundleUnknownField, entryKey)
+		}
+		switch f.Value {
+		case "key", "base_url", "auth":
+		default:
+			return nil, bundleErr(ErrBundleUnknownField, entryKey)
+		}
+		if fv.Kind != yaml.ScalarNode || fv.Tag != "!!str" || fv.Value == "" || len(fv.Value) > MaxBundleValueBytes {
+			return nil, bundleErr(ErrBundleBadValue, entryKey)
+		}
+		switch f.Value {
+		case "key":
+			if seenKey {
+				return nil, bundleErr(ErrBundleBadValue, entryKey)
+			}
+			seenKey = true
+			pf.key = secret{value: fv.Value}
+		case "base_url":
+			if seenBaseURL {
+				return nil, bundleErr(ErrBundleBadValue, entryKey)
+			}
+			seenBaseURL = true
+			pf.baseURL = fv.Value
+		case "auth":
+			if seenAuth {
+				return nil, bundleErr(ErrBundleBadValue, entryKey)
+			}
+			seenAuth = true
+			pf.auth = fv.Value
+		}
+	}
+	if !seenKey || !seenBaseURL || !seenAuth {
+		// A missing field is the value's problem and not a field's, as above.
+		return nil, bundleErr(ErrBundleBadValue, entryKey)
+	}
+	// The destination rule is the platform's and it is read from here, not
+	// respelled: an entry whose URL the gateway's own routes would refuse is a
+	// bundle this loader refuses too, so the two cannot drift into disagreeing
+	// about where a credential may be sent.
+	if err := config.CheckProviderBaseURL(pf.baseURL); err != nil {
+		return nil, bundleErr(ErrBundleBadValue, entryKey)
+	}
+	if pf.auth != providerAuthBearer && pf.auth != providerAuthXAPIKey {
+		return nil, bundleErr(ErrBundleBadValue, entryKey)
+	}
+	return pf, nil
 }
 
 // BundleSource reads the bundle document. It is an interface so a test can

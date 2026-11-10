@@ -23,6 +23,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/digest"
 	"github.com/dimipaun/fugaro/internal/failure"
+	"github.com/dimipaun/fugaro/internal/orchestrator/sensitivity"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/rigor"
@@ -823,6 +824,11 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 			},
 			At:       runstore.RigorAtFinalize,
 			Revision: "origin/main"},
+		// And the escalation (docs/security-classification SC6, D1509): the
+		// row of the list in force whose match turned review level 3 on for
+		// the run, and the seam it was decided at.
+		Security: runstore.NewSecurityEscalation(runstore.SecurityAtImplement,
+			sensitivity.Pattern{Name: "credentials", Match: "internal/creds/**", Category: sensitivity.Credentials}),
 		// And the expectation tier the run was dispatched at and the figures
 		// the run's governance resolved for it (docs/task-governance T8.1,
 		// D330): a block a run launched with --tier writes, so a schema that
@@ -1208,6 +1214,90 @@ func TestTierAdversarialInSchema(t *testing.T) {
 	}
 	if err := sch.Validate(bad); err == nil {
 		t.Error("schema accepts a review that followed a negative number of cheap loops")
+	}
+}
+
+// TestSecurityEscalationInSchema: the record's security block is the
+// escalation's own account of why a run's review got harder
+// (docs/security-classification SC6, D1507, D1509), and its vocabulary is
+// internal/runstore's and internal/orchestrator/sensitivity's: a moment the
+// runner can write and the enum lacks is a result.json its own published
+// schema refuses, and a value only the enum knows is a moment no run reaches.
+// The three moments are the escalation's two seams and finalize's own reading
+// of the run's whole diff, which is the one of them that can only leave a
+// refusal (runstore.SecurityAtFinalize).
+// The row's name is bounded exactly as the classifier bounds one, in both
+// directions, so a name the runner legally recorded is never one its own
+// schema calls too long.
+func TestSecurityEscalationInSchema(t *testing.T) {
+	sch := compile(t, "result.schema.json")
+	// The longest name the classifier accepts, in the last category of its
+	// vocabulary: the far end of the block's own bounds in one record.
+	rec := runstore.Record{
+		Version: 1, RunID: "20261108-000000-abcd", Status: runstore.StatusSucceeded, Stage: "finalize",
+		Security: runstore.NewSecurityEscalation(runstore.SecurityAtFix,
+			sensitivity.Pattern{Name: strings.Repeat("a", sensitivity.MaxPatternName), Match: "docs/**", Category: sensitivity.Artifacts}),
+	}
+	data, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(inst); err != nil {
+		t.Fatalf("schema rejects a record carrying the escalation: %v\n%s", err, data)
+	}
+	raw, err := os.ReadFile("result.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Properties struct {
+			Security struct {
+				Properties struct {
+					At       struct{ Enum []string } `json:"at"`
+					Category struct{ Enum []string } `json:"category"`
+					Pattern  struct {
+						Type      string `json:"type"`
+						MinLength int    `json:"minLength"`
+						MaxLength int    `json:"maxLength"`
+					} `json:"pattern"`
+				} `json:"properties"`
+			} `json:"security"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	sec := doc.Properties.Security.Properties
+	if want := []string{runstore.SecurityAtImplement, runstore.SecurityAtFix, runstore.SecurityAtFinalize}; !slices.Equal(sec.At.Enum, want) {
+		t.Errorf("result.schema.json security.at enum = %v, runstore's moments are %v", sec.At.Enum, want)
+	}
+	cats := make([]string, len(sensitivity.Categories))
+	for i, c := range sensitivity.Categories {
+		cats[i] = string(c)
+	}
+	if !slices.Equal(sec.Category.Enum, cats) {
+		t.Errorf("result.schema.json security.category enum = %v, sensitivity.Categories = %v", sec.Category.Enum, cats)
+	}
+	if sec.Pattern.Type != "string" || sec.Pattern.MinLength != 1 || sec.Pattern.MaxLength != sensitivity.MaxPatternName {
+		t.Errorf("result.schema.json security.pattern = %+v, want a string of 1 to sensitivity.MaxPatternName (%d)", sec.Pattern, sensitivity.MaxPatternName)
+	}
+	// The bound the comparison above copies has to be the one the schema
+	// applies: a name one rune past it is a row the classifier refused and no
+	// run can carry.
+	long := []byte(`"pattern":"` + strings.Repeat("a", sensitivity.MaxPatternName) + `"`)
+	if !bytes.Contains(data, long) {
+		t.Fatalf("fixture lacks the literal this test replaces: %s", data)
+	}
+	bad, err := jsonschema.UnmarshalJSON(bytes.NewReader(bytes.Replace(data, long, []byte(`"pattern":"`+strings.Repeat("a", sensitivity.MaxPatternName+1)+`"`), 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(bad); err == nil {
+		t.Errorf("schema accepts a row name of %d runes, one past sensitivity.MaxPatternName", sensitivity.MaxPatternName+1)
 	}
 }
 
@@ -3131,17 +3221,18 @@ func TestTaskSchemaPlanTaskMatchesTheGoRule(t *testing.T) {
 
 // TestTaskSchemaOAuthTokenMatchesTheGoRules ties the task schema's
 // `oauth_token` property to the Go rules it mirrors (config.ClaudeAccountNameRE,
-// config.MaxClaudeAccountNameLen and config.AnthropicKeyAccount): the schema
+// config.MaxClaudeAccountNameLen and the axis's non-account values,
+// config.AnthropicKeyAccount and config.ProviderKeyAccount): the schema
 // pattern and maxLength are separate copies, so without this a change to the Go
 // rule would drift from the schema with only the corpus fixtures noticing. The
 // pattern alone admits 61 characters (it counts repetition units of one or
 // two), which is why the bound is a separate maxLength.
 //
-// The shape rule is one branch of the property's anyOf, the axis's one
-// non-account value being the other (the sentinel is outside the pattern by
-// construction and admitting it must not widen the pattern), so the pattern is
-// read out of the branches — and the branch that is a const is held to the Go
-// constant here, which is what keeps the schema's literal from drifting.
+// The shape rule is one branch of the property's anyOf, the axis's non-account
+// values being the others (both are outside the pattern by construction and
+// admitting them must not widen the pattern), so the pattern is read out of the
+// branches — and the branches that are consts are held to the Go constants
+// here, which is what keeps the schema's literals from drifting.
 func TestTaskSchemaOAuthTokenMatchesTheGoRules(t *testing.T) {
 	data, err := os.ReadFile("task.schema.json")
 	if err != nil {
@@ -3178,21 +3269,23 @@ func TestTaskSchemaOAuthTokenMatchesTheGoRules(t *testing.T) {
 	if len(patterns) != 1 || patterns[0] != config.ClaudeAccountNameRE.String() {
 		t.Errorf("the oauth_token anyOf's pattern branches = %q, want exactly config.ClaudeAccountNameRE %q: the shape rule is not loosened to admit the sentinel", patterns, config.ClaudeAccountNameRE.String())
 	}
-	if len(consts) != 1 || consts[0] != config.AnthropicKeyAccount {
-		t.Errorf("the oauth_token anyOf's const branches = %q, want exactly config.AnthropicKeyAccount %q: the property admits the project's own key only as the sentinel the Go rule admits", consts, config.AnthropicKeyAccount)
+	wantConsts := []string{config.AnthropicKeyAccount, config.ProviderKeyAccount}
+	if len(consts) != len(wantConsts) || consts[0] != wantConsts[0] || consts[1] != wantConsts[1] {
+		t.Errorf("the oauth_token anyOf's const branches = %q, want exactly the axis's non-account values %q: the property admits the project's own key and the project's provider key only as the literals the Go rule admits", consts, wantConsts)
 	}
 }
 
 // TestTaskSchemaRefusesReservedAccountName: a task's oauth_token may not name
 // the account the credentials bundle reserves for the platform's own git
 // credential, and — the other direction of the same cross-reader agreement —
-// it does admit the axis's one non-account value. The decoder is the authority
+// it does admit the axis's non-account values. The decoder is the authority
 // (task.Spec.Validate, through config.ReservedClaudeAccountName and the
-// sentinel's own case) and the schema is its published copy, so both are held
-// to the same fixture here: a name that is legal everywhere else passes both,
-// the reserved name and the sentinel's reference twin fail or pass both. The
-// field is optional and the document is additionalProperties: false, so nothing
-// else in either reader says anything about these names.
+// non-account values' own case) and the schema is its published copy, so both
+// are held to the same fixture here: a name that is legal everywhere else
+// passes both, the reserved name and each non-account value's reference twin
+// fail or pass both. The field is optional and the document is
+// additionalProperties: false, so nothing else in either reader says anything
+// about these names.
 func TestTaskSchemaRefusesReservedAccountName(t *testing.T) {
 	sch := compile(t, "task.schema.json")
 	docFor := func(name string) string {
@@ -3206,8 +3299,10 @@ func TestTaskSchemaRefusesReservedAccountName(t *testing.T) {
 	for name, valid := range map[string]bool{
 		"acme-personal":               true,
 		config.AnthropicKeyAccount:    true,
+		config.ProviderKeyAccount:     true,
 		config.BitbucketSecret:        false,
 		"anthropic-api-key--project2": false, // one character past the sentinel: the const branch is the literal, not a prefix rule
+		"provider-key--project2":      false, // and neither is the provider key's branch
 	} {
 		raw := docFor(name)
 		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(raw))
@@ -3340,21 +3435,22 @@ func TestFugaroSchemaAgentOAuthToken(t *testing.T) {
 
 // TestSchemaRefusesReservedOAuthTokenName: fugaro.yaml's agent.oauth_token
 // may not name the account the credentials bundle reserves for the platform's
-// own git credential, nor the axis's one non-account value (the project's own
-// Anthropic API key, config.AnthropicKeyAccount). The decoder is the authority
-// (config.Validate) and the schema is its published copy, so both are held to
-// the same fixture here: a name that is legal everywhere else passes both, the
-// reserved name and the sentinel fail both, and the decoder refuses them at its
-// own path — a schema that admitted the name, or a decoder that accepted it, is
-// the drift this catches.
+// own git credential, nor either of the axis's non-account values (the
+// project's own Anthropic API key, config.AnthropicKeyAccount, and the
+// project's provider key, config.ProviderKeyAccount). The decoder is the
+// authority (config.Validate) and the schema is its published copy, so both are
+// held to the same fixture here: a name that is legal everywhere else passes
+// both, the reserved name and each non-account value fail both, and the decoder
+// refuses them at its own path — a schema that admitted a name, or a decoder
+// that accepted it, is the drift this catches.
 //
-// The sentinel's row is the deliberate half: a *task's* oauth_token admits it
-// and a repository's document does not. The key is a fact of the installation
-// and of the launch (a review names it as the run's own credential, with
-// --token or the pairing's own account), never of a repository's fugaro.yaml,
-// which speaks of the Claude accounts a repository's runs may use — and
-// config.Validate's own agent.oauth_token rule reads the same shape rule the
-// schema does.
+// The non-account rows are the deliberate half: a *task's* oauth_token admits
+// them and a repository's document does not. Each key is a fact of the
+// installation and of the launch (a review names it as the run's own
+// credential, with --token or the pairing's own account), never of a
+// repository's fugaro.yaml, which speaks of the Claude accounts a repository's
+// runs may use — and config.Validate's own agent.oauth_token rule reads the
+// same shape rule the schema does.
 func TestSchemaRefusesReservedOAuthTokenName(t *testing.T) {
 	sch := compile(t, "fugaro.schema.json")
 	const head = "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { oauth_token: "
@@ -3363,6 +3459,7 @@ func TestSchemaRefusesReservedOAuthTokenName(t *testing.T) {
 		"acme-personal":            true,
 		config.BitbucketSecret:     false,
 		config.AnthropicKeyAccount: false,
+		config.ProviderKeyAccount:  false,
 	} {
 		doc := []byte(head + name + tail)
 		if schemaOK := sch.Validate(yamlInstance(t, doc)) == nil; schemaOK != valid {

@@ -284,11 +284,16 @@ func TestRecipeFollowUpReadsBase(t *testing.T) {
 	if err := h.store.WriteTask(context.Background(), spec); err != nil {
 		t.Fatal(err)
 	}
+	// The follow-up ends on the escalation's adversarial step, and that is this
+	// fixture's own doing rather than the recipe's: the branch's two rounds
+	// arrived on `.fugaro/recipes/two-rounds.yaml`, a row of the floor, and a
+	// follow-up classifies its pull request's whole diff (security.go's
+	// securityBase), so level 3 is on for it and the plan carries the step.
 	rec, err := h.run(t, implement("tidy"), review("changes", 1), fixStep, review("changes", 1))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := stageNames(rec); !eq(got, "implement", "review", "fix", "review") || rec.Recipe.SHA256 != recipe.Sum([]byte(twoRounds)) {
+	if got := stageNames(rec); !eq(got, "implement", "review", "fix", "review", "adversarial") || rec.Recipe.SHA256 != recipe.Sum([]byte(twoRounds)) {
 		t.Fatalf("stages = %v, recipe %+v (the base's two rounds, not the branch's nine)", got, rec.Recipe)
 	}
 }

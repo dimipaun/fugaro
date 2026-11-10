@@ -30,6 +30,7 @@ package cli
 //     per release.
 
 import (
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -51,6 +52,13 @@ const (
 	// vX.Y.Z pattern, the same one console-release.yml runs on, because the
 	// Windows pack is a release-time job and a release is what a tag makes.
 	windowsConsoleReleaseTag = "v[0-9]+.[0-9]+.[0-9]+"
+	// windowsConsoleFollowUpEdits is how many follow-up edits the pack's copy-in
+	// commit needs, as the word the section writes: the site's last section, this
+	// README's own opening line, and the section's own status line, which
+	// TestWindowsConsoleStagingTellsTheOwnerWhatToCopyWhere reads against the
+	// tree in both directions -- so a section that says one fewer sends the owner
+	// away with a line that turns the suite red in their commit.
+	windowsConsoleFollowUpEdits = "Three"
 )
 
 // TestDocsWindowsConsoleReconciliationRecordsTheOwnerAnswers is the answer
@@ -519,22 +527,138 @@ func TestWindowsConsoleWorkflowIsReleaseTimeOnly(t *testing.T) {
 	}
 }
 
-// TestWindowsConsoleStagingTellsTheOwnerWhatToCopyWhere is the two sentences
-// outside docs/console-windows/ that the staging moves, held to the file they
-// describe: the staging README's own section for the pack, and the site page
-// that names it among the pending workflows. Both described a pull-request job
-// before the D7 ruling, and both would be a reader told the wrong thing about a
-// job that runs once per release.
+// TestWindowsConsolePackIsNotInTheReleaseGate is D8(a)'s guard: the staged
+// Windows job's check name is not a name the release gate requires, and the
+// file's own header says why. The structural reason is the gate's derivation --
+// it reads console-tests.yml's **single** job -- and D7(c)'s release-time-only
+// trigger is stated as a property of this job, not as a difference from that
+// file's triggers: console-tests.yml is dispatched by hand today, so its
+// trigger is not what keeps the Windows pack out of it, and a sentence saying
+// otherwise would be false in the tree it ships in.
+//
+// The gate's list itself is TestReleaseGateRequiresTheConsoleCheck's subject,
+// and it is re-read here rather than restated: the console's names are derived
+// from the applied workflow by that test's own derivation, so a tree in which
+// it would fail fails here too, by name.
+//
+// The mutations that prove it: add `console-windows` to scripts/release-gate.sh's
+// `names=(...)` array (and to the `#   ` block above it) and both list cases
+// fail; delete the header's "NOT in the gate" sentence, or its
+// "never on a pull request", and the header case fails by naming the sentence;
+// put the false "console-tests.yml runs on every pull request" reason back and
+// the forbidden-phrase case fails by naming it.
+func TestWindowsConsolePackIsNotInTheReleaseGate(t *testing.T) {
+	text, path := consoleWorkflowText(t, windowsConsoleWorkflowPath, appliedConsoleWindowsPath)
+
+	// The gate, read the way the test that owns it reads it: the `names=(...)`
+	// array and the `#   ` comment block above it, which that script's own
+	// comment asks a reader to keep in step with it.
+	_, required, commented := readReleaseGate(t)
+	for _, c := range []struct {
+		what  string
+		names []string
+	}{
+		{"the names=(...) array", required},
+		{"the `#   ` comment block above it", commented},
+	} {
+		if slices.Contains(c.names, windowsConsoleJobName) {
+			t.Errorf("%s's %s carries %q: the owner's answer to D8 is that the Windows pack does not gate a release -- a red Windows pack is information rather than a blocked release -- and the leg would have to land with a widened derivation, changing which checks gate every tag in this repository (docs/console-windows/reconciliation.md D8(a), finding F41)", releaseGatePath, c.what, windowsConsoleJobName)
+		}
+	}
+
+	// And the tree is in the state TestReleaseGateRequiresTheConsoleCheck
+	// requires: the console's names still derive from the applied workflow, and
+	// none of them is this job's. A derivation that refused would fatal inside
+	// consoleGateCheckNames, which is that test's first half failing here by name.
+	for _, name := range consoleGateCheckNames(t) {
+		if strings.Contains(name, windowsConsoleJobName) {
+			t.Errorf("%s reports the check %q: this test reads the console's names out of the workflow the release gate is derived from, and the Windows pack is a different workflow's job -- a Windows leg there is the gate change D8(a) refuses", appliedConsoleTestsPath, name)
+		}
+	}
+
+	// The derivation itself cannot read this workflow, which is the mechanical
+	// half of "it cannot join the gate": a job the derivation can read is a job a
+	// later edit could add to the names array in one line.
+	if names, err := deriveConsoleCheckNames(text); err == nil {
+		t.Errorf("%s: deriveConsoleCheckNames read the staged Windows workflow and derived %v. The derivation is written for console-tests.yml's shape -- one job with a matrix -- and it refuses anything else so a second job cannot join the gate unnoticed; a Windows job it reads is that refusal lost", path, names)
+	}
+
+	// The two rulings, in the header a reader opens rather than in the staging
+	// README they may not. The gate's derivation is the structural reason, and
+	// D7(c)'s trigger is this job's own property -- stated as such, because the
+	// two files' triggers do not differ: console-tests.yml's only one is
+	// `workflow_dispatch` since the owner's ruling of 2026-11-07, so a sentence
+	// claiming it runs on every pull request would be a reason that does not hold
+	// in the tree this file ships in.
+	header := flattenDoc(windowsConsoleBlock(t, path, text, "# WHY THIS IS ITS OWN WORKFLOW", "\n# WHAT THIS FILE IS"))
+	for _, want := range []string{
+		"NOT in the gate",
+		"refuses a workflow with more than one job",
+		"names=(...)",
+		"never on a pull request",
+		"workflow_dispatch` today",
+	} {
+		if !strings.Contains(header, want) {
+			t.Errorf("%s's own-workflow section no longer carries %q: the gate's list is derived from console-tests.yml's single job, this job is never on a pull request, and console-tests.yml is dispatched by hand today -- a reason that treats it as a pull-request workflow is false (D8(a), D7(c))", path, want)
+		}
+	}
+
+	// And the staging README says the same two things, where the owner reads what
+	// they are about to copy in.
+	section := flattenDoc(consoleReadmeSection(t, readDoc(t, "docs/pending-workflows/README.md"), "## `console-windows.yml`"))
+	for _, want := range []string{
+		"NOT in the gate",
+		"more than one job",
+		"never on a pull request",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("docs/pending-workflows/README.md's `console-windows.yml` section no longer carries %q: the owner is the one who copies the file in, and the section is where they read that the pack does not gate a release and does not run on a pull request", want)
+		}
+	}
+
+	// And neither text may reach for the reason that is no longer true:
+	// console-tests.yml stopped running on pull requests in the owner's ruling of
+	// 2026-11-07 (e5d6ba7c), so "it runs on every pull request" is exactly the
+	// sort of claim this work would otherwise record as the owner's reasoning --
+	// a reader would decide on it, and no pinned string above would catch it.
+	// (The same sentence is still in console-tests.yml's own header, which an
+	// agent run may not edit: the file under .github/workflows/ would have to
+	// move with it, and this run cannot push one.)
+	for _, c := range []struct{ what, text string }{
+		{"docs/pending-workflows/console-windows.yml's own-workflow section", header},
+		{"docs/pending-workflows/README.md's `console-windows.yml` section", section},
+	} {
+		for _, forbidden := range []string{"runs on every pull request", "runs on every one", "on every pull request from any branch"} {
+			if strings.Contains(c.text, forbidden) {
+				t.Errorf("%s says %q of a workflow: console-tests.yml's only trigger is workflow_dispatch since the owner's ruling of 2026-11-07, so this is a reason that does not hold in the tree it ships in", c.what, forbidden)
+			}
+		}
+	}
+}
+
+// TestWindowsConsoleStagingTellsTheOwnerWhatToCopyWhere is what the staging
+// moves outside docs/console-windows/, held to the file it describes: the two
+// sentences -- the staging README's own section for the pack, and the site page
+// that names it, among the pending workflows while the staged copy is here and
+// as the file that runs once the copy-in has removed it -- and the section's
+// status line.
+// Those two both described a pull-request job before the D7 ruling, and both
+// would be a reader told the wrong thing about a job that runs once per release;
+// the status line is the half of "this file is still staged" that the copy-in
+// edits, so it has to say the truth of the tree that commit leaves.
 //
 // The count and the set of names are *not* pinned here: they belong to the
 // staging directory's own guards, which check them against the directory in
-// every state the owner's copy-ins pass through.
+// every state the owner's copy-ins pass through. The status line is pinned here
+// for the opposite reason -- the state its copy-in creates is one no guard that
+// reads the directory can see.
 //
-// The mutation that proves it: change the README section's "release time only"
-// back to "every pull request". It fails here.
+// The mutations that prove it: change the README section's "release time only"
+// back to "every pull request", and flip its status line to `applied, not
+// pending` while the staged copy is still there. Each fails here.
 func TestWindowsConsoleStagingTellsTheOwnerWhatToCopyWhere(t *testing.T) {
 	doc := readDoc(t, "docs/pending-workflows/README.md")
-	section := flattenDoc(consoleReadmeSection(t, doc, "## `console-windows.yml`"))
+	section := flattenDoc(consoleReadmeSection(t, doc, consoleWindowsReadmeHeading))
 	for _, want := range []string{
 		"cp docs/pending-workflows/console-windows.yml .github/workflows/console-windows.yml",
 		"git rm docs/pending-workflows/console-windows.yml",
@@ -549,12 +673,45 @@ func TestWindowsConsoleStagingTellsTheOwnerWhatToCopyWhere(t *testing.T) {
 		}
 	}
 
-	// The site's page names it among the pending workflows and says when it
-	// runs. website/test/readme.mjs checks the set and the count word; this is
-	// the claim inside that sentence, which nothing else reads.
+	// The section states how many follow-up edits its commit needs, and that
+	// count is the list it introduces: the status line read below is one of
+	// them, so a section that says one fewer is an owner told to leave it out.
+	// The mobile-release section is held to its own count the same way, through
+	// the regex that reads the word in either copy-in.
+	if edits := mobileReleaseFollowUpEditsRE.FindAllStringSubmatch(section, -1); len(edits) != 1 || edits[0][1] != windowsConsoleFollowUpEdits {
+		t.Errorf("docs/pending-workflows/README.md's `console-windows.yml` section states how many follow-up edits its copy-in needs %d time(s) (%v), and it is %s: the count and the list it introduces are one claim, and this copy-in needs the site's last section, this README's opening line and the status line below", len(edits), edits, windowsConsoleFollowUpEdits)
+	}
+
+	// The status line is the machine-readable half of "this file is still
+	// pending": it is what the copy-in edits, and the owner who has just run
+	// that commit has to be able to see from this document whether they
+	// finished. So it is read against the tree in both directions rather than
+	// asserted as one fixed sentence -- the rule the shared-tests section's own
+	// line and the mobile-release section's follow -- because the copy-in
+	// removes the staged copy, and a section that kept saying "pending"
+	// afterwards would be sending the reader to a file that is not there. This
+	// read is also the only one that reaches that state:
+	// TestDocsPendingWorkflowsReadmeDescribesEveryStagedFile iterates what the
+	// directory still holds, so the file leaves its set the moment it is copied
+	// in.
+	for _, problem := range consoleWindowsStatusProblems(consoleReadmeSection(t, doc, consoleWindowsReadmeHeading), docExists(t, windowsConsoleWorkflowPath)) {
+		t.Errorf("docs/pending-workflows/README.md's `console-windows.yml` section %s", problem)
+	}
+
+	// The site's page names it and says when it runs -- among the pending
+	// workflows while the staged copy is here, and as the file that runs once
+	// the copy-in has removed it, because the page's list is held to the
+	// directory (website/test/readme.mjs, and
+	// TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere for the other
+	// direction). This is the claim inside that sentence, which nothing else
+	// reads.
 	site := flattenDoc(readDoc(t, "website/README.md"))
+	named := "`" + windowsConsoleWorkflowPath + "`"
+	if !docExists(t, windowsConsoleWorkflowPath) {
+		named = "`" + appliedConsoleWindowsPath + "`"
+	}
 	for _, want := range []string{
-		"`docs/pending-workflows/console-windows.yml`",
+		named,
 		"release time",
 	} {
 		if !strings.Contains(site, want) {
@@ -571,6 +728,90 @@ func TestWindowsConsoleStagingTellsTheOwnerWhatToCopyWhere(t *testing.T) {
 	}
 	if _, ok := rawOn["workflow_dispatch"]; !ok {
 		t.Errorf("%s has no workflow_dispatch trigger, and the staging README tells the owner to dry-run the pack by hand before a tag", path)
+	}
+}
+
+// consoleWindowsReadmeHeading is the section of docs/pending-workflows/README.md
+// that describes the Windows pack: the file's own document, which the copy-in
+// section, the console's README and docs/console-windows/ all point at.
+const consoleWindowsReadmeHeading = "## `console-windows.yml`"
+
+// consoleWindowsStatusProblems reads that section's status line against one
+// state of the tree, and reports every way it can disagree with it: an empty
+// slice when the line is the one that state needs.
+//
+// A file is pending while its staged copy exists -- the half-done copy-in
+// included, where both copies are present and the staged one is still the
+// reviewed text -- and applied once the copy-in has removed it. So the line is
+// edited in the same commit as the `cp`, and a section that kept saying "staged
+// and pending" afterwards would be describing a file that is not there.
+//
+// Both directions are read from one function because this tree can only be in
+// the first: the state the line is *for* is the one the copy-in creates, and no
+// reader that iterates what the directory holds can see it -- the file leaves
+// that set as it is copied in. That is why the state is a parameter rather than
+// a `docExists` call, and why TestWindowsConsoleStagingStateRulesSeeEveryState
+// pins both of them, including the one this repository cannot be in. It is the
+// same rule TestSharedTestsWorkflowStagingStateIsWhatTheReadmeSays applies to
+// `shared-tests.yml`'s own line, and the mobile-release section's line follows.
+//
+// The section's **opening** line is what is read, not the section: the copy-in
+// procedure prints the line it writes, so a search over the whole section would
+// be satisfied by that quote and stay green with the live line saying the
+// opposite.
+func consoleWindowsStatusProblems(section string, staged bool) []string {
+	body := strings.TrimSpace(strings.TrimPrefix(section, consoleWindowsReadmeHeading))
+	stagedCopy, want := "is gone", "**Status: `console-windows.yml` is applied, not pending.**"
+	if staged {
+		stagedCopy, want = "is still there", "**Status: `console-windows.yml` is staged and pending.**"
+	}
+	if strings.HasPrefix(body, want) {
+		return nil
+	}
+	return []string{"does not open with " + want + " while the staged copy " + stagedCopy + ": that line is what the copy-in edits, and it has to be the section's opening claim rather than a sentence quoted further down"}
+}
+
+// TestWindowsConsoleStagingStateRulesSeeEveryState pins that read against both
+// states of the tree and both mistakes, including the state this repository
+// cannot be in: the copy-in, where the staged copy is gone and the line has to
+// have moved with it. Each case asserts the problems *and* that a correct
+// section produces none, so a rule that refused everything would fail here
+// rather than looking strict.
+func TestWindowsConsoleStagingStateRulesSeeEveryState(t *testing.T) {
+	const (
+		stagedLine  = "**Status: `console-windows.yml` is staged and pending.**"
+		appliedLine = "**Status: `console-windows.yml` is applied, not pending.**"
+	)
+	section := func(line string) string {
+		return consoleWindowsReadmeHeading + "\n\n" + line + "\n\nThe rest of the section.\n"
+	}
+	for _, tc := range []struct {
+		name   string
+		staged bool
+		line   string
+		want   string // the line this state needs, and "" when the section is right
+	}{
+		{"staged and pending, the state this branch is in", true, stagedLine, ""},
+		{"copied in and the line moved with it", false, appliedLine, ""},
+		{"copied in, but the section still says staged", false, stagedLine, appliedLine},
+		{"still staged, but the line already says applied", true, appliedLine, stagedLine},
+		{"no status line at all", true, "Nothing has been copied in yet.", stagedLine},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			problems := consoleWindowsStatusProblems(section(tc.line), tc.staged)
+			if tc.want == "" {
+				if len(problems) != 0 {
+					t.Fatalf("problems = %q, want none: this section is the one that state needs", problems)
+				}
+				return
+			}
+			if len(problems) != 1 {
+				t.Fatalf("problems = %q, want exactly one", problems)
+			}
+			if !strings.Contains(problems[0], tc.want) {
+				t.Errorf("the problem does not name %q, the line the tree needs: an owner who is told the line is wrong and not which line to write has to guess, and the two spellings differ by three words in the middle of a long sentence; got %q", tc.want, problems[0])
+			}
+		})
 	}
 }
 
@@ -638,7 +879,9 @@ func TestDocsWindowsConsoleReleaseDocsCarryTheDryRun(t *testing.T) {
 //     the ones the `## console-linux.yml` section already gives, and they are
 //     not: that copy-in deletes the very file those sentences name.
 //   - `docs/release.md` said the console *has* a Windows build, which nothing
-//     has built, while two other documents still say Windows stays out.
+//     has built, while two other documents still said Windows stays out.
+//   - Its own O7 item, and the reconciliation's, went on saying the design's
+//     and the console's README's notes were outstanding after they landed.
 //
 // The mutations that prove it: put "§4 U13" back; put "`SECURITY.md` already
 // says" back; drop `docs/release.md` from the surface list; put the
@@ -743,7 +986,7 @@ func TestDocsWindowsConsoleClaimsAboutOtherFilesAreTrue(t *testing.T) {
 		}
 	}
 	if strings.Contains(release, "the console has a Windows build") {
-		t.Errorf("docs/release.md says the console has a Windows build again: the plan is approved but unbuilt, the pack is red until its Parts B and C land, and docs/design/desktop-console.md and the console's own README still say Windows stays out")
+		t.Errorf("docs/release.md says the console has a Windows build again: the plan is approved but unbuilt, no host has carried a `--win` pack to an artifact, and docs/design/desktop-console.md and the console's own README carry dated notes that say the build half moved and the signing half did not")
 	}
 
 	// 6. And the figure the suite's size is given as, in the two other places it
@@ -758,7 +1001,230 @@ func TestDocsWindowsConsoleClaimsAboutOtherFilesAreTrue(t *testing.T) {
 	if !strings.Contains(recon, "57 `.ts` files") {
 		t.Errorf("docs/console-windows/reconciliation.md's U3 no longer gives the unit suite's size as 57 `.ts` files: the census rule is that a figure travels with the command that returns it, and this is the figure U3 is about")
 	}
+
+	// 7. And the two planning records this landing falsifies. This folder's
+	// README carries O7 as the item that owes the other documents their notes,
+	// and the reconciliation carries it as a finding, and both said in the
+	// present tense that those notes were still outstanding. Landing them turns
+	// that into a false claim about files outside this folder, which is what
+	// this test is for: docs/release.md's twin clause was deleted in this very
+	// change for the identical reason, and a reader who arrives at O7 from the
+	// plan has to be able to trust it as much as that paragraph. There is no
+	// later task that would notice: O7 is the last item of §5 and Part H's
+	// other tasks do not read this folder.
+	//
+	// The mutations that prove it: put "are still untouched and still say
+	// Windows stays out" back in the README's item, and take "Satisfied
+	// 2026-11-10" off the reconciliation's.
+	o7 := flattenDoc(windowsConsoleBlock(t, index, idx, "- **O7 —", "## Related"))
+	if !strings.Contains(o7, "carry their notes as of 2026-11-10") {
+		t.Errorf("%s's O7 item no longer carries %q: Part H (T-H3) landed the notes it owes on 2026-11-10, and an item still reading as outstanding contradicts the design, the console's own README and docs/release.md at once", index, "carry their notes as of 2026-11-10")
+	}
+	if strings.Contains(o7, "still untouched and still say Windows stays out") {
+		t.Errorf("%s's O7 item says the design and the console's README \"are still untouched and still say Windows stays out\" again: both carry their dated notes as of 2026-11-10, which is what %q records", index, "carry their notes as of 2026-11-10")
+	}
+	reconO7 := flattenDoc(windowsConsoleBlock(t, "docs/console-windows/reconciliation.md", recon, "- **O7 —", "## 6. UNVERIFIED"))
+	if !strings.Contains(reconO7, "Satisfied 2026-11-10") {
+		t.Errorf("docs/console-windows/reconciliation.md's O7 finding is not marked satisfied: the three documents it names all carry the dated note as of 2026-11-10, and a finding left open in the document the plan is written from sends the next reader to write them a second time")
+	}
 }
+
+// TestDocsWindowsConsoleNotesSayWhichHalfMoved pins the dated notes this work
+// owes outside docs/console-windows/.
+//
+// The sentence "Windows stays out" is one claim this repository makes in four
+// documents (F43: this design, docs/release.md, the console's own README and
+// docs/windows-cli/wsl.md), and inside the design it is written four times.
+// The owner's ruling of 2026-10-20 moves half of it: the console's Windows
+// *build* is in by that ruling -- the console drives the *Linux* `fugaro` inside
+// a WSL distribution, and the pack is staged as a release-time job -- while the
+// *signing* answer is untouched, because there is still no Authenticode identity
+// and none is planned. Each place keeps its own sentence and gains a dated note
+// that says which half moved: a rewrite would claim more than the ruling does,
+// and a note is the thing a reader can check.
+//
+// The design's four are read here, each as the block it is made in -- section
+// 4.2's list, section 7.6's rule 3, the owner-run table's Windows-signing row
+// and D10's answer cell -- and so are docs/release.md's paragraph and
+// docs/windows-cli/wsl.md's paragraph and row. The console's own README's
+// section is the one note not read here: it is read in
+// docs_desktop_console_test.go, which is the file this package's console
+// boundary allow-list admits to a path under the console tree -- the reason is
+// written there rather than here, because a Go file in this package may not
+// spell such a path (docs_console_boundary_test.go, Task 0.3 a3).
+//
+// docs/windows-cli/wsl.md's pair is the same ruling read the other way round: its
+// console row says the console is out of scope because it needs a Windows CLI
+// first, and the console's own route is what removes that need for the console,
+// while the CLI track's F40 stays true of the CLI (O1, F43) -- so both the
+// paragraph above that table and the row itself are read here too.
+//
+// The mutations that prove it: delete one note, move one out of the block it
+// belongs to, and put the release document's "still carry the older sentence"
+// clause back. Each fails here.
+func TestDocsWindowsConsoleNotesSayWhichHalfMoved(t *testing.T) {
+	const design = "docs/design/desktop-console.md"
+	designDoc := readDoc(t, design)
+
+	// Every note says the same three things, because "which half moved" is only
+	// checkable if the note names both halves and the identity neither one has:
+	// the date, the build half with the path of the file that runs, the signing
+	// half, and the Authenticode identity that does not exist. The path is the
+	// applied one: the notes landed on 2026-11-10, the day the staged copy was
+	// removed, so the staged path they once named is a file that is not there.
+	note := []string{
+		windowsConsoleNoteDate,
+		"the *build* half",
+		"the signing half",
+		"Authenticode",
+		appliedConsoleWindowsPath,
+	}
+	for _, tc := range []struct{ what, start, stop string }{
+		{"section 4.2's Windows bullet", "- **Windows as a *packaged* deliverable**", "\n- **The backing-repository history view**"},
+		{"section 7.6's rule 3", "3. **Windows is untouched.**", "\n4. **What does not come with it.**"},
+		{"the owner-run table's Windows-signing row", "| Windows signing |", "\n"},
+		{"D10's answer cell", "| **D10** |", "\n"},
+	} {
+		block := flattenDoc(windowsConsoleBlock(t, design, designDoc, tc.start, tc.stop))
+		for _, want := range note {
+			if !strings.Contains(block, want) {
+				t.Errorf("%s's %s carries no dated note (%q is missing): the owner's ruling of 2026-10-20 moves half of \"Windows stays out\" -- the build is in, the signing answer is not -- and each of the four places has to say which half, in its own block, rather than being rewritten", design, tc.what, want)
+			}
+		}
+	}
+
+	// docs/windows-cli/wsl.md: the paragraph that sends the console's own
+	// question to the design's D10, and the table row that answers it "out of
+	// scope". Both halves are read there, bounded by the table under them so a
+	// note in the wrong one of the two cannot satisfy both.
+	const wsl = "docs/windows-cli/wsl.md"
+	wslDoc := readDoc(t, wsl)
+	notSubstitute := flattenDoc(windowsConsoleBlock(t, wsl, wslDoc, "What WSL is *not* is a substitute for the port", "\n## Install it, inside WSL"))
+	for _, want := range []string{windowsConsoleNoteDate, "reaches", "wsl.exe", "unsigned"} {
+		if !strings.Contains(notSubstitute, want) {
+			t.Errorf("%s's paragraph about what a Windows CLI would still buy no longer carries %q: the console reaches a WSL-only installation itself, and the sentence that says it cannot is the one this note is for", wsl, want)
+		}
+	}
+	row := flattenDoc(windowsConsoleBlock(t, wsl, wslDoc, "| The desktop console |", "\n"))
+	for _, want := range []string{windowsConsoleNoteDate, "Windows CLI", "no longer", "wsl.exe", "unsigned"} {
+		if !strings.Contains(row, want) {
+			t.Errorf("%s's desktop-console table row no longer carries %q: the row's \"it needs a Windows CLI first\" is half reversed for the console, and the note has to say which half -- the CLI track's F40 stays true of the CLI", wsl, want)
+		}
+	}
+
+	// And the release document, which is where a reader arrives from: it says in
+	// the console paragraph that these places carry the older sentence and that
+	// theirs land with Part H. That was true while they did; after this change it
+	// is the notes rather than the older sentences that a reader finds there.
+	const release = "docs/release.md"
+	releaseDoc := readDoc(t, release)
+	console := flattenDoc(windowsConsoleBlock(t, release, releaseDoc, "- **The console is its own release, `console-vX.Y.Z`, never an asset of the CLI's**", "\n- **Dry-run the Windows pack before the tag, by hand.**"))
+	for _, want := range []string{windowsConsoleNoteDate, "saying which half"} {
+		if !strings.Contains(console, want) {
+			t.Errorf("%s's console paragraph no longer carries %q: it is the paragraph that says which half of \"Windows stays out\" moved, and after Part H's notes land it is what a reader is sent to", release, want)
+		}
+	}
+	for _, gone := range []string{"still carry the older sentence", "its pack is red until"} {
+		if strings.Contains(console, gone) {
+			t.Errorf("%s's console paragraph still says %q: the four places carry their dated notes, and the Parts B and C edits the pack was said to be waiting on have landed -- what has not happened is a run", release, gone)
+		}
+	}
+}
+
+// TestDocsPendingWorkflowsReadmeDescribesEveryStagedFile is T-H4's guard, and it
+// is the staging convention's own rather than this folder's: every workflow
+// still staged under docs/pending-workflows/ is described by a section of that
+// directory's README, by name.
+//
+// The directory is where a workflow change waits for the owner -- no Fugaro run
+// may write under .github/workflows/, because GitHub refuses the push -- and
+// that README is the only place the person who copies a file in reads what it
+// is, which commands copy it in, and whether it is still pending at all. A
+// `.yml` staged there with no section of its own is a file whose copy-in nobody
+// can find. So the guard reads three things per staged file -- the heading that
+// names it, the status line that states its state, and the `cp` line that is its
+// copy-in -- and each is derived from the directory rather than listed, so it
+// holds for every state the owner's copy-ins pass through.
+//
+// The status line is read at the section's **opening**, and the section is not
+// searched: a section quotes its own line the moment an owner is told which line
+// to write -- the console-windows section names both spellings of its own a few
+// paragraphs below the live one -- so `Contains` over the section is satisfied by
+// that quotation and stays green with the live line saying the opposite. The
+// first non-blank line after the heading is where the convention puts it, and
+// both files staged here today open with it (`## shared-tests.yml` above states
+// the rule; `## mobile-release.yml`'s guard reads its own line the same way).
+//
+// **What it cannot read is the state the copy-in creates**, and that gap is
+// filled rather than described: the file leaves this guard's set the moment it
+// is copied in, so a section left saying "staged and pending" over a staged copy
+// that is gone is invisible here, and
+// TestWindowsConsoleStagingTellsTheOwnerWhatToCopyWhere reads that line against
+// the tree in both directions instead. What the guard does read is the other
+// mistake -- a line flipped to `applied, not pending` while the staged copy is
+// still there -- so the two together make the line load-bearing in every state
+// the owner can leave the tree in, which is what the convention asks of it
+// (the `## shared-tests.yml` section above states the rule; the mobile-release
+// section's own guard applies it to its line).
+//
+// The mutations that prove it: delete the heading that names
+// `console-windows.yml`, change its status line to `applied, not pending`, and
+// delete the `cp` line from its copy-in block. Each fails here by naming the
+// file.
+func TestDocsPendingWorkflowsReadmeDescribesEveryStagedFile(t *testing.T) {
+	lines := strings.Split(readDoc(t, pendingWorkflowsReadmePath), "\n")
+	for _, name := range pendingWorkflows(t) {
+		// The heading is read at the start of a line rather than anywhere in the
+		// document, because this README quotes its own headings in prose: the
+		// paragraph at the top points at `## `images.yml``, and a substring
+		// search would take that mention for the section and read the claim it
+		// is made in. The first heading that names the file is the section that
+		// describes it; the ones after it are the records of earlier stagings of
+		// the same name.
+		heading := "## `" + name + "`"
+		start := -1
+		for i, line := range lines {
+			if strings.HasPrefix(line, heading) {
+				start = i
+				break
+			}
+		}
+		if start < 0 {
+			t.Errorf("%s has no %q heading: every workflow staged in this directory is described by a section of this README, and a file staged without one is a file whose copy-in nobody can find", pendingWorkflowsReadmePath, heading)
+			continue
+		}
+		end := len(lines)
+		for i := start + 1; i < len(lines); i++ {
+			if strings.HasPrefix(lines[i], "## ") {
+				end = i
+				break
+			}
+		}
+		// The status line, read where it is: the first non-blank line of the
+		// section, which is where the convention puts it and the only place a
+		// quotation of it cannot be mistaken for it.
+		opening := ""
+		for _, line := range lines[start+1 : end] {
+			if strings.TrimSpace(line) != "" {
+				opening = strings.TrimSpace(line)
+				break
+			}
+		}
+		if !strings.HasPrefix(opening, "**Status:") || !strings.Contains(opening, "staged and pending") {
+			t.Errorf("%s's %q section opens with %q rather than a status line saying the file is staged and pending: the section that describes a staged workflow is also the one that says whether the owner still has to copy it in, and a status left saying something else is a reader sent to a file that is not there", pendingWorkflowsReadmePath, name, opening)
+		}
+		flat := flattenDoc(strings.Join(lines[start:end], "\n"))
+		copyIn := "cp docs/pending-workflows/" + name + " .github/workflows/" + name
+		if !strings.Contains(flat, copyIn) {
+			t.Errorf("%s's %q section carries no copy-in command (%q): this README is where the owner reads how to apply a staged file, so a section without the `cp` line is a change nobody can land", pendingWorkflowsReadmePath, name, copyIn)
+		}
+	}
+}
+
+// windowsConsoleNoteDate is the date the notes T-H3 owes carry: the landing
+// date of the change that wrote them, which is what a reader comparing them
+// against the ruling of 2026-10-20 they record is looking for.
+const windowsConsoleNoteDate = "2026-11-10"
 
 // windowsConsoleBlock is the text from start to the first line after it that
 // begins with stop, or to the end when stop is empty. It is how these tests

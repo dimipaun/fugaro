@@ -905,7 +905,16 @@ var doctorShortsByPrefix = []doctorPrefixShort{
 	// line: it carries the entry, the definition's sha256 and the record's.
 	// The fix stays the check's own either way — the entry's build, which
 	// names the entry the ID does not (the ID names the workflow).
-	{prefix: "image-catalog-", short: doctorShort{problem: "its project image catalog entry has no build, or one built from another definition than the runs bucket holds."}},
+	//
+	// One prefix, four states (doctor_layer.go's catalogImageChecks and
+	// prebuiltSmokeChecks): an entry no build has built, one built from
+	// another definition than the runs bucket holds, a prebuilt entry whose
+	// reference no smoke has been recorded for, and one whose last smoke was
+	// of another reference. The sentence is true of each of them, which is
+	// what an ID-keyed line owes a check: an entry whose source is a prebuilt
+	// image is never built, so a line that offered only a build's states
+	// would name a problem the check cannot report for it at all.
+	{prefix: "image-catalog-", short: doctorShort{problem: "its project image catalog entry has no build or smoke of what its jobs start on, or one of another definition or reference."}},
 	// The sweep's per-instance warnings, one for a member and one for a job
 	// account: doctor numbers their IDs (runs-bucket-iam-1, job-token-grant-2,
 	// token-signers-3) and their own sentence carries the whole triple, so each

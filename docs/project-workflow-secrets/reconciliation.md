@@ -33,7 +33,7 @@ citations the `b3ed1842` paragraph records, because the project catalog check's 
 file: `ProjectSecretCandidate` `:1356` → **`:1374`** and `projectSecretCandidates` `:1323` →
 **`:1341`**. That merge is also where **the owner answered the whole block**: all eighteen decisions
 are closed, every section carries its own answer, and the build is written to them. Three corrections
-rode with it: **D1270** now cites the write path's unknown-key refusal at `settings_set.go:412` (the
+rode with it: **D1270** now cites the write path's unknown-key refusal at `settings_set.go:467` (the
 read path's is `settings.go:170`; the earlier `:410` was right before `fugaro settings set` grew the
 managed gate), **F15's `providerProblems` citation** moved to `validate.go:350`, and **§6** states the
 managed-mode exposure the allow-list does not close.
@@ -130,8 +130,8 @@ blindly.
 **What the code does.** `internal/config/project_secrets.go:168`'s `ValidateProjectSecrets` gives
 the block exactly one key rule (`P1`): *"The only key rule is membership in ReservedSecrets (P1)"* —
 anything else is refused with *"is not a secret Fugaro stores project-wide: only \<the four\>"*. The
-caller is `internal/localcfg/localcfg.go:1605`. The rest of the function is per-entry
-(`invalidAllowDataToEntry`, `:227`) and the `proxy` refusal (D493).
+caller is `internal/localcfg/localcfg.go:1631`. The rest of the function is per-entry
+(`invalidAllowDataToEntry`, `:228`) and the `proxy` refusal (D493).
 
 **Consequence.** A block that accepts a workflow secret's arbitrary name loses the check that
 catches a typo — for *every* name in it, the reserved ones included. D1260 and D1261 exist because
@@ -188,7 +188,7 @@ editing it has misread the design (see [implementation-plan.md](implementation-p
 
 **Claim of the design:** that an entry cannot be validated against a workflow's declaration.
 
-**What the code does.** `internal/localcfg/localcfg.go:1007`'s `Repo` holds `Provider`,
+**What the code does.** `internal/localcfg/localcfg.go:1033`'s `Repo` holds `Provider`,
 `BaseBranch`, `Workflows []string` (names), `GitHubAppID` and `Vertex` — no path, no checkout, no
 parsed `fugaro.yaml`. `localcfg`'s project config is the operator's own file; a repository's secrets
 block lives in the repository.
@@ -271,7 +271,7 @@ drift the shared one exists to prevent, and the narrowness `invalidAllowDataToEn
 
 **What the code does.** `internal/settings/registry.go:644` registers
 `project_secrets.*.allow_data_to` (default `nobody`) and `:645` `project_secrets.*.proxy`, and
-`schemas/settings.schema.json:962` and `:965` publish both. The command that writes them is built:
+`schemas/settings.schema.json:968` and `:971` publish both. The command that writes them is built:
 `fugaro settings set` landed with S5 (`f09f10e5`, #1525) and lives in
 `internal/cli/settings_set.go`, reading the same registry to decide which keys it may write. (This
 finding first said the command did not exist. It does, and D1270's recommendation is what the
@@ -827,10 +827,10 @@ source — no new column, no `--json` field, no format version (F17). One settin
 schema key land in the same task that adds the block (F13), with the row's **Owner** being the family
 that writes it: `secrets`, as `project_secrets.*.allow_data_to`'s own row is (`registry.go:644`), so
 `fugaro secrets set --allow-data-to` writes the new block's list and `settings set` stays out of it —
-the key is not named in `settingsGenericKeys` (`settings_set.go:81`), which is the allowlist that
+the key is not named in `settingsGenericKeys` (`settings_set.go:95`), which is the allowlist that
 decides what the generic path writes, so a row the family owns and the generic path does not carry is
 written by exactly one command. `settings set workflow_secrets.<name>.allow_data_to` today answers
-*"no setting has that name"* (`settings_set.go:412`, the write path's unknown-key refusal; the read
+*"no setting has that name"* (`settings_set.go:467`, the write path's unknown-key refusal; the read
 path's is `settings.go:170`); after W0 it answers as `project_secrets`' own
 row does, and `fugaro secrets set --allow-data-to` is what writes the entry (W3). **No new doctor
 check**: a check that the

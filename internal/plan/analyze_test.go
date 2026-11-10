@@ -24,8 +24,14 @@ import (
 // analyze reads a document the way the CLI does -- Parse, then Analyze -- and
 // fails the test if either refuses. A test that wants the refusal calls Analyze
 // itself.
+//
+// It reads from a checkout the test owns: a graph that names stubs is resolved
+// against the tree the read stands in, and a test that took that tree from the
+// repository it happened to be run in would answer differently there than in a
+// copy of the source with no `.git` above it.
 func analyze(t *testing.T, body string, done ...string) Graph {
 	t.Helper()
+	checkout(t)
 	doc, err := Parse("graph.json", []byte(body))
 	if err != nil {
 		t.Fatalf("Parse: %v", err)

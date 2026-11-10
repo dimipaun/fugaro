@@ -1,6 +1,7 @@
 # Removing the per-repository derived images: the project image catalog is the only image path
 
-**Status: a design, and nothing is built. The owner answered every decision on 2026-11-04.** **Owner
+**Status: a design. R0 and R1 have shipped, and R2–R10 are parked by the image setup skill (D1900); the
+owner answered every decision on 2026-11-04.** **Owner
 2026-11-04: moved to 0.19.0 because the live catalog check found #1701/#1703 first** — superseded by the
 note below. **Owner 2026-11-04 (after the 0.18.0 tag): moved again to 0.20.0 (0.19.0 = config
 management first).** The owner
@@ -13,7 +14,35 @@ that the owner did not object to, each with the date and the reason it rests on
 ([reconciliation.md](reconciliation.md) §4) — so what is still owed is the owner's **approval of the
 plan**, and the one question its residual raises: whether the removal's release may ship the
 per-repository `--retire` as an operator step, or has to fold the retirement into `fugaro update`'s own
-converge. **No task starts before that is picked.**
+converge. **No task starts before that is picked.** *This paragraph is the status as first written, kept:
+R0 and R1 landed without the approval it asks for, and the note below parks R2–R10 rather than
+scheduling them.*
+
+**Amended 2026-11-09: the removal is parked, and its first two tasks have shipped.**
+[docs/image-setup-skill/](../image-setup-skill/README.md) reconciles the same ruling of 2026-11-04
+against the tree, and the owner answered its decisions **D1900–D1906 on 2026-11-09**. **D1900 keeps
+this folder's first half — repo-level images go — and reverses its second**: the disabling is **code
+kept**, not removal. The plan that carries it is
+[implementation-plan.md](../image-setup-skill/implementation-plan.md): its IS1 gives the job spec one
+resolver that returns the project image while a workflow's `image:` block, `dockerfile:` and `rebuild:`
+keys warn and are ignored, and IS2 makes the repo-level image commands answer a notice instead of
+building and stops the per-repo check job being emitted. **Nothing is deleted.** What that moves here:
+
+- **R0 and R1 have shipped, and the status line above is corrected rather than left reading "nothing is
+  built".** R0 is the dogfood repository's catalog entry and its pin — `images/catalog/go/Dockerfile`,
+  `image_name: go` on the `go` workflow of `./fugaro.yaml`, pinned by
+  `TestDogfoodWorkflowPinsTheCatalogEntry` — and R1 is `checkout: baked` keeping both its values, with a
+  prebuilt entry refused on one (`TestBakedWorkflowRefusesAPrebuiltCatalogEntry`). Both are on `main`.
+  Everything this folder designs *after* them is not.
+- **R2–R10 are parked**: deferred, not cancelled, in the shape `docs/bitbucket-credentials/` gives its
+  parked S3. The keys, the commands, the check job, the Scheduler and the per-repository registry stay
+  in the tree and keep working, the plan keeps its task numbers and its order for whenever it is
+  unparked, and **no document here is withdrawn**.
+- **The residual is parked with them.** Its question — whether the removal's release may ship the
+  per-repository `--retire` as an operator step — answers itself while nothing is removed: no release
+  carries a step or a deletion for this folder, and `fugaro update` learns nothing from it.
+- **The live check stays with the removal.** The owner-run live check and the tag it gates are unchanged
+  and unrun; they are what an unparking owes, not what this note settles.
 
 | File | Role |
 | --- | --- |
@@ -62,10 +91,12 @@ only for a workflow that declares none of the derived-image keys, because `catal
 (`internal/catalog/select.go:318`) returns false the moment `image:` or `dockerfile:` is set. So the
 tree carries **two image paths**, and the ruling says one: the catalog's.
 
-**Two repositories carry a per-repository image today and neither may lose it:** this repository, whose
-`go` workflow sets `image.setup` (`./fugaro.yaml:43`), and the sandbox repository. §3 of
+**Two repositories carried a per-repository image when this was written and neither may lose it:** this
+repository, whose `go` workflow set `image.setup`, and the sandbox repository. §3 of
 [spec.md](spec.md) is the order that gets both onto a catalog entry **before** the removal lands, so
-the dogfood pipeline never runs a job whose image does not exist.
+the dogfood pipeline never runs a job whose image does not exist — and **this repository's half has
+since landed**: its `go` workflow sets `image_name: go` (`./fugaro.yaml:64`) on the catalog entry R0
+had built out of `images/catalog/go/Dockerfile`, with the sandbox's half the owner's.
 
 **The gateway enforces the cost cap on this run.** Every figure Claude Code prints about this session's
 own spend is ignored: it misprices non-Anthropic models, here by roughly a factor of twenty-five, and

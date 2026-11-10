@@ -43,8 +43,8 @@ const (
 	// word, and bitbucketCredentialsPlanStatus the plan's. They move together:
 	// an index that says a task is approved while the plan says none is leaves
 	// the two documents disagreeing about the one thing a reader starts from.
-	bitbucketCredentialsReadmeStatus = "**Status: plan only; nothing is implemented; no task approved.**"
-	bitbucketCredentialsPlanStatus   = "**Plan only. Nothing is implemented, and no task is approved.**"
+	bitbucketCredentialsReadmeStatus = "**Status as of 2026-11-10: in progress, 9/12 merged; see [docs/status.md](../status.md) for the current table.**"
+	bitbucketCredentialsPlanStatus   = "**Status as of 2026-11-10: in progress, 9/12 merged; see [docs/status.md](../status.md) for the current table.**"
 
 	// bitbucketCredentialsS3Parked is the amendment of 2026-10-26, after #1104:
 	// the run-token slice is deferred rather than cancelled, and its tasks keep

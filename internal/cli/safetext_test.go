@@ -13,6 +13,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/verify"
 )
 
@@ -101,7 +102,10 @@ func TestViewsStripTerminalControls(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%v: %v (%s)", args, err, errOut)
 		}
-		if args[0] == "runs" && !strings.Contains(out, id) {
+		// The listing names the run by its ending (spec.md §1); the whole id is
+		// the machine's, and the assertions below are about the strings the run
+		// controls reaching the terminal, not about which name is shown.
+		if args[0] == "runs" && !strings.Contains(out, task.ShortRun(id)) {
 			t.Fatalf("runs ls does not list the run it was to be checked on:\n%s", out)
 		}
 		noControls(t, strings.Join(args, " "), out)

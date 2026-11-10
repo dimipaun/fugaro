@@ -1,6 +1,6 @@
 # Project image catalog: implementation plan
 
-**Nothing here is approved to build.** The owner's ruling of 2026-11-02 is explicit: this pull request
+**Status as of 2026-11-10: done; see [docs/status.md](../status.md) for the current table.** The owner's ruling of 2026-11-02 is explicit: this pull request
 is the design, the build tasks are planned in it, and **nothing is built until the owner approves the
 plan** ([spec.md](spec.md) §Owner rulings). Seven decisions are answered — **D1140** (the catalog
 travels in the published policy node under `image_catalog`), **D1146** (a pin acts at deploy time and
@@ -146,7 +146,7 @@ upgrades every launcher before it launches again. The image-catalog gate is spel
   has no `image_catalog` member, so a config that carries a catalog is either dropped or refused by
   strict decoding. `TestOlderCLIRefusesANodeCarryingImageCatalog` is **not** a red step and is not
   claimed as one: the CLI already refuses a node carrying **any** unknown key
-  (`refuseUnknownPolicyKeys`, `internal/cli/project_cmd.go:2836`), so that test passes before the task
+  (`refuseUnknownPolicyKeys`, `internal/cli/project_cmd.go:2861`), so that test passes before the task
   starts — it is kept in the list because it is the pin on the skew staying honest after the key is
   added.
 - **Tests:** `TestPolicyNodeOmitsAnEmptyCatalog`, `TestPolicyNodeCarriesTheCatalogWhenSet`,

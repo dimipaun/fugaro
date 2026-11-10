@@ -95,9 +95,16 @@ const (
 	// which of the plan's tasks are built and which are not, and the fact that
 	// the folder itself approves nothing -- and a file that dropped it would
 	// read as a design somebody may build from, which is the one thing this
-	// folder is not. The built half is the five tasks merged on `main` since
+	// folder is not. The built half is the six tasks merged on `main` since
 	// the answers: a status line that still said "nothing implemented" would be
-	// the folder's one load-bearing false claim. M5's clause is "M5 is built"
+	// the folder's one load-bearing false claim. M4's clause is the newest and
+	// the one with a state of its own: the front door is built whole now -- the
+	// account, the service, its public invoker binding and the store its records
+	// live in -- and it is still OFF on every installation, because the flag
+	// that turns it on is the release's own and no released command writes
+	// `fugaro update --mcp-server` yet, which is D934's answer rather than a
+	// half-built task. A line that said only "M4 is built" would read as a front
+	// door an owner can turn on today. M5's clause is "M5 is built"
 	// and not "M5 is built in this pull request": the line outlives the pull
 	// request, and a phrase that named one would be false on `main` the day it
 	// merged. M5's clause used to carry an exception -- the paired device M-a
@@ -132,18 +139,27 @@ const (
 	// plan implements it over that state, so a line saying M7 were built whole
 	// would claim a control the tree does not perform. The exception is
 	// disclosed in full in §11 of the spec and its own section of the plan,
-	// which the disclosure test below pins. M10's clause has the same shape
-	// again: the audit, the record and the revocation are built, and the store
-	// they are at rest in is M2's bucket-backed one, whose bucket and single
-	// grant in an installation are M4's store half — not started — so a line
-	// saying M10 were built whole would claim a store an installation does not
-	// carry. M8's is the same shape once more: the four read tools are built and
+	// which the disclosure test below pins. M10's clause was that shape until
+	// M4's store half landed: the audit, the record and the revocation are
+	// built, and the store they are at rest in is M2's bucket-backed one, whose
+	// bucket and single grant in an installation are M4's store half — so M10
+	// stood "built except the store", and it is the one clause the store half
+	// closed rather than added. A line that still carried it would be false in
+	// the direction that matters least (a task described as owing less than it
+	// does), which is why it is named here as removed rather than left to look
+	// like an oversight. M8's is the same shape once more: the four read tools are built and
 	// no binary registers them, and the wiring that would serve them is carried
 	// by no task of this plan -- M5b gated it and is built, so the gate is met
 	// and the exception is named for what is missing rather than for what
 	// waits: a line saying M8 were built whole would claim a reach no process
-	// has.
-	mcpStatus = "Status: design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are built and merged on `main`; M5 is built and M5b is built with it — the paired-device approval the owner ruled a task of its own on 2026-11-07 — and what is built of it is the endpoint's half: the authorize POST takes the device's act as a shape of its own, the ID token is spent once and a family ages, all of it proved by the ID token and by no device key, so M-a's first requirement is not met — the endpoint cannot tell a paired device from any other holder of one, which is H1's accepted residual risk — and the delivery of a flow to that device, with no QR of the flow's binding rendered and no launcher reading the page, is built nowhere and carried by no task of this plan; M7 is built except the reading of the installation's published state its lists come from, which no task of this plan carries; M10 is built except the store's own bucket and its one grant, which are M4's store half and not started; M8 is built except the wiring that would serve its four read tools, which no binary has and no task of this plan carries; M9 is not started; this folder approves no task."
+	// has. M9's clause
+	// names a second fact beside "not started", because the task it was waiting
+	// on stopped existing: the launch-override fence was ruled on twice on
+	// 2026-11-09 -- built as a split launcher role first, and declined later the
+	// same day -- so M9 waits on M4 and M7 alone and no task of the plan builds a
+	// fence. A line that still said M9 waited on one would name a task the plan
+	// removed and a control the tree does not have.
+	mcpStatus = "**Status: design answered by the owner 2026-11-04; M1, M2, M3, M4, M6 and M10 are built and merged on `main`; the front door M4 creates is OFF on every installation until a release writes the flag that turns it on, `fugaro update --mcp-server` (D934); M5 is built and M5b is built with it — the paired-device approval the owner ruled a task of its own on 2026-11-07 — and what is built of it is the endpoint's half: the authorize POST takes the device's act as a shape of its own, the ID token is spent once and a family ages, all of it proved by the ID token and by no device key, so M-a's first requirement is not met — the endpoint cannot tell a paired device from any other holder of one, which is H1's accepted residual risk — and the delivery of a flow to that device, with no QR of the flow's binding rendered and no launcher reading the page, is built nowhere and carried by no task of this plan; M7 is built except the reading of the installation's published state its lists come from, which no task of this plan carries; M8 is built except the wiring that would serve its four read tools, which no binary has and no task of this plan carries; M9 is not started, and the launch-override fence it was to wait on is declined for v1 and left unbuilt (the owner's ruling of 2026-11-09); this folder approves no task.**"
 )
 
 func mcpDocs() []string { return []string{mcpReadme, mcpSpec, mcpReconciled, mcpPlan} }
@@ -268,7 +284,10 @@ func TestDocsMCPServerIsWritten(t *testing.T) {
 // what it says now in four files at once -- so what is pinned here is not just
 // that the answers are present but that the folder is not carrying the replaced
 // one: no row calls any answer "not the recommendation", and the tension the
-// replaced answer created is gone.
+// replaced answer created is gone. The same shape recurred on 2026-11-09, when
+// the launch-override fence was ruled and declined within one day and the task
+// channel replaced the execution override for part of it, so those sentences are
+// refused here too.
 func TestDocsMCPServerAnswersAreTheOnesInForce(t *testing.T) {
 	rec := readDoc(t, mcpReconciled)
 	if !strings.Contains(rec, "### The owner's answers, 2026-11-04") {
@@ -372,6 +391,30 @@ func TestDocsMCPServerAnswersAreTheOnesInForce(t *testing.T) {
 	}
 	if !strings.Contains(flattenDoc(readDoc(t, mcpReconciled)), "impersonate the deployer as an operator") {
 		t.Errorf("%s: check 8 does not carry the operator-impersonating-the-deployer reading: the store's name keeps that identity off it, and only a live project can show the name did what it was chosen to do", mcpReconciled)
+	}
+
+	// And the third reversal: the launch-override fence was ruled and declined
+	// on 2026-11-09, and the task channel came and went with it, so the
+	// sentences that stated that channel as the design in force are gone from
+	// every file and one restored from the version before the reversal fails
+	// here. Worth a pin for D922's reason and one of its own: the task channel
+	// is what a reader would implement the ceiling from, and the ruling that put
+	// it there lasted half a day -- the same gap the D922 restatement left, in
+	// the file that states the spend rule rather than the rule for the subtree.
+	for _, path := range mcpDocs() {
+		flat := flattenDoc(readDoc(t, path))
+		for _, stale := range []string{
+			"a field of its own, on the run's own task",
+			"moved the channel and left the rule as it was",
+			"holds no `runWithOverrides`, so nothing it launches reaches the container's environment at all",
+			"written into **the run's own task",
+			"the ceiling read out of the run's own task",
+			"the run's own task carries the ceiling",
+		} {
+			if strings.Contains(flat, stale) {
+				t.Errorf("%s still states the task channel as the design in force (%q): the owner declined the fence later on 2026-11-09 and gave the front door the launcher's permissions, so D924's ceiling rides the execution override its original answer named (`internal/backend/backend.go:124-144`) and nothing about a launch travels in the run's task -- a reader who met the superseded sentence would implement the channel the ruling withdrew", path, stale)
+			}
+		}
 	}
 }
 

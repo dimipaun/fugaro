@@ -41,10 +41,16 @@ import (
 // contain an entry the cascade could fall to.
 func (s *Server) candidates(ctx context.Context, id Identity, canonical string, b *Bundle) ([]creds.Credential, []Tried, error) {
 	// b.Credentials() and never b.Entries(): the bundle holds the GitHub App
-	// key (C2.1) and the upstream Bitbucket token (D506) as well, and neither
-	// is a candidate for anything. A cascade that offered one would attach an
-	// App private key, or the caller's own git token, to an Anthropic call as
-	// its credential, so the filter is the accessor's rather than this loop's.
+	// key (C2.1), the upstream Bitbucket token (D506), the read consumer (F21),
+	// the review-signing keys (D1069) and the provider key (AK6b) as well, and
+	// none of them is a candidate for a caller's Anthropic calls. A cascade that
+	// offered one would attach an App private key, the caller's own git token or
+	// a signing key to an Anthropic call as its credential, and the provider key
+	// would refuse the whole call (a tier-C candidate is refused by
+	// checkCandidates rather than skipped) — so the filter is the accessor's
+	// rather than this loop's. The one caller offered an entry outside
+	// Credentials is a review caller, and it is offered it by its own list
+	// (reviewOfferings).
 	all := b.Credentials()
 	if id.JobClass == ClassReview {
 		// The lookup is guarded although the pairing has already refused an
@@ -57,7 +63,7 @@ func (s *Server) candidates(ctx context.Context, id Identity, canonical string, 
 		if !ok {
 			return nil, nil, fmt.Errorf("%w: the calling account is not one of this service's review job accounts", ErrUnavailable)
 		}
-		out, skipped := reviewCandidates(all, ra.Account)
+		out, skipped := reviewCandidates(reviewOfferings(b), ra.Account)
 		return out, skipped, nil
 	}
 	hasA := false
@@ -87,6 +93,31 @@ func (s *Server) candidates(ctx context.Context, id Identity, canonical string, 
 	return out, skipped, nil
 }
 
+// reviewOfferings is the set a review caller is offered FROM: the bundle's
+// model credentials and, beside them, the project's provider key — the one
+// entry of the bundle that is in no coding caller's list (Credentials) and is
+// in this one (AK6b, F15).
+//
+// The entry is offered and not filtered out, because the pairing is what
+// decides who may be served by it and the LIST is what carries the pairing to
+// the selector: a review run paired with the account axis's value for that
+// credential (config.ProviderKeyAccount) is offered it, and creds.Select then
+// refuses it by name — tier C is the reserved third-party route, and the
+// refusal's sentence names Check 50 (D150, C3.6) — which is the answer the run
+// is owed. Dropping the entry here would answer the same call with the other
+// sentence ("no credential is offered") and would be this file deciding a
+// question that belongs to the selector.
+//
+// The append is safe on the accessor's own copy: Credentials answers a fresh
+// slice, so nothing here writes into the bundle's entries.
+func reviewOfferings(b *Bundle) []creds.Credential {
+	all := b.Credentials()
+	if e, ok := b.ProviderKey(); ok {
+		all = append(all, creds.Credential{Name: e.Name, Tier: e.Tier})
+	}
+	return all
+}
+
 // reviewCandidates is the candidate list of a review caller: the pairing's ONE
 // credential, and nothing else at all.
 //
@@ -96,8 +127,8 @@ func (s *Server) candidates(ctx context.Context, id Identity, canonical string, 
 // by a tier B or C one — so a review call has nothing for the cascade's ladder
 // to fall to even where the policy's `fallback` would allow one (spec §10).
 //
-// The credential is the one the pairing resolved, in one of the axis's two
-// spellings (docs/api-key-review, D1417):
+// The credential is the one the pairing resolved, in one of the axis's three
+// spellings (docs/api-key-review, D1417, D1419):
 //
 //   - an account name, which is the name of the tier-A credential in the
 //     bundle: the pairing resolved it from the published admissions, so the two
@@ -107,7 +138,17 @@ func (s *Server) candidates(ctx context.Context, id Identity, canonical string, 
 //     under its own secret's name (config.AnthropicSecret), and the entry
 //     offered is that one — matched by name AND tier, so a bundle that grew a
 //     second tier-B credential would never have it offered to a review caller
-//     (the class is served by the key it named and by nothing beside it).
+//     (the class is served by the key it named and by nothing beside it);
+//   - config.ProviderKeyAccount, the outage sentinel: it names the project's
+//     provider key, which the bundle holds at tier C under its own logical name
+//     (config.ProviderKeySecret, AK6b). The entry is offered the same way — by
+//     name and tier together — and the offer is where the CALL is refused:
+//     creds.Select does not select a tier-C credential in this release, and its
+//     refusal names Check 50 (checkCandidates, D150). So a review run paired
+//     with this value is answered a typed refusal and reaches no provider
+//     until that check has run, which is what this half is for: the bundle can
+//     hold the key and the service can forward with it, and nothing routes a
+//     Claude model to a third party yet.
 //
 // Every credential it did not offer is reported as not admitted, which is what
 // that reason means for a caller: this call may not be served by it. A new
@@ -129,16 +170,20 @@ func reviewCandidates(all []creds.Credential, account string) ([]creds.Credentia
 // offeredToReview reports whether one credential is the one a review caller
 // paired with account may be served by, and it is the whole of the rule above.
 //
-// The two spellings cannot overlap: config.AnthropicKeyAccount carries a
-// doubled dash, which config.ClaudeAccountNameRE refuses, so no account name is
-// ever the sentinel and neither arm can answer for the other's value. The
-// sentinel's arm matches the tier as well as the name, so what it offers is the
-// project's key at tier B and never a credential that merely goes by that name
-// — the bundle is free to grow entries, and only this rule knows that a review
-// caller paired with the sentinel is served by the key or by nothing.
+// No two of the spellings can overlap: both sentinels carry a doubled dash,
+// which config.ClaudeAccountNameRE refuses, so no account name is ever one of
+// them and no arm can answer for another's value. The sentinels' arms match the
+// tier as well as the name, so what one offers is the project's key at tier B,
+// and what the other offers is the provider key at tier C, and never a
+// credential that merely goes by either name — the bundle is free to grow
+// entries, and only this rule knows that a review caller paired with one of
+// these values is served by that credential or by nothing at all.
 func offeredToReview(c creds.Credential, account string) bool {
-	if account == config.AnthropicKeyAccount {
+	switch account {
+	case config.AnthropicKeyAccount:
 		return c.Tier == creds.TierB && c.Name == config.AnthropicSecret
+	case config.ProviderKeyAccount:
+		return c.Tier == creds.TierC && c.Name == config.ProviderKeySecret
 	}
 	return c.Tier == creds.TierA && c.Name == account
 }
@@ -242,6 +287,12 @@ func settingsOf(p *projectpolicy.Policy) creds.Settings {
 // wireTier is a tier as the wire spells it. It answers "" for a tier this
 // release does not select, which every writer of the contract refuses — so a
 // tier the cascade invented would be a refusal and not a header.
+//
+// Tier C is spelled although this release selects no tier-C credential: the
+// provider key reaches a candidate list as a tier and not as a name (AK6b,
+// F15), so a Tried row that reported it, or an answer that carried it, names
+// the tier the contract spells rather than one it has no word for — the same
+// rule read the other way round.
 func wireTier(t creds.Tier) string {
 	switch t {
 	case creds.TierA:
@@ -252,6 +303,30 @@ func wireTier(t creds.Tier) string {
 		return TierC
 	}
 	return ""
+}
+
+// entryFor resolves a selected candidate to the bundle entry that holds its
+// value. It is a selection by KIND for a tier-C candidate and a lookup by name
+// for every other, and the difference is the accessor's own reason: the provider
+// key is in the document and NOT in byName, because an account may legally be
+// named after it, so a lookup by name alone could answer that account's token
+// where the provider's key was meant — one name, two credentials, and the value
+// attached to a call would be the one nobody chose.
+//
+// It fails closed on both halves: a name the bundle does not hold is not an
+// entry, and a tier-C candidate whose name is not the provider entry's is not
+// an entry either. What it answers is the credential that was selected or
+// nothing, and the caller refuses on nothing rather than forwarding an empty
+// credential (D143).
+func entryFor(b *Bundle, c creds.Credential) (Entry, bool) {
+	if c.Tier == creds.TierC {
+		e, ok := b.ProviderKey()
+		if !ok || e.Name != c.Name {
+			return Entry{}, false
+		}
+		return e, true
+	}
+	return b.Lookup(c.Name)
 }
 
 // unsent is the candidates this call has not already sent to. The mark a
@@ -384,7 +459,7 @@ func (s *Server) forward(ctx context.Context, w http.ResponseWriter, cl *call, s
 				"no credential is usable now and none of the ones this call used may be tried again")
 			return
 		}
-		e, ok := b.Lookup(c.Name)
+		e, ok := entryFor(b, c)
 		if !ok {
 			// Unreachable: the candidates came from this bundle. A refusal
 			// rather than a panic, because the alternative is a service that

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -143,46 +142,62 @@ func coordinatorReadsGitHub(repos []infra.CoordinatorRepo) bool {
 //
 // imports are the import blocks the root's discovery wrote: the run's one
 // confirmation covers an import only when it is one of them.
+//
+// The plan, the gate and the apply are one cycle, run again by
+// propagationRetry exactly as the installation's, the repository's and the
+// compute root's are, and for the same reason: the Firebase root creates the
+// token signer and the bindings that name it in one apply
+// (modules/firebase/iam.tf), so an IAM front end that has not caught up with
+// the account fails the bindings -- and a fresh project's first
+// `fugaro update --firebase-project` would otherwise stop there and ask for a
+// re-run. A retry re-plans and re-judges the new plan; it never applies the
+// saved plan of the failed attempt.
 func (r *initRun) applyRoot(ctx context.Context, c *infra.Clients, t *tf.TF, wd *infra.Workdir, root, what string, imports []tf.ImportKey) (applied, stop bool, err error) {
-	changed, err := t.Plan(ctx, infra.PlanFile)
-	if err != nil {
-		return false, false, remote(err)
+	cycle := func(ctx context.Context) (*tf.Plan, error) {
+		changed, err := t.Plan(ctx, infra.PlanFile)
+		if err != nil {
+			return nil, remote(err)
+		}
+		if !changed {
+			fmt.Fprintf(r.w, "No changes: the %s root matches the plan.\n", root)
+			stop = r.o.planOnly
+			return nil, nil
+		}
+		plan, err := t.Show(ctx, infra.PlanFile)
+		if err != nil {
+			return nil, remote(err)
+		}
+		fmt.Fprint(r.w, tf.Summary(plan))
+		counts := infra.CountPlan(plan)
+		// The managed gate first, and the guard and the confirmation only when it
+		// does not admit this plan (D1016, update_managed.go).
+		gated, err := r.gateStep(ctx, t, imports, r.coverOf(r.coverReasonsFirebase), nil)
+		if err != nil {
+			return plan, err
+		}
+		if !gated {
+			if err := r.guard(ctx, c, plan, r.o.allowDelete); err != nil {
+				return plan, err
+			}
+			if r.o.planOnly {
+				fmt.Fprintf(r.w, "--plan-only: nothing applied; the plan is %s\n", filepath.Join(wd.Root, infra.PlanFile))
+				stop = true
+				return plan, nil
+			}
+			if err := r.confirmOrdinary("applies "+counts.String()+" "+what, "nothing was applied", r.notCoveredFirebase(plan, imports)); err != nil {
+				return plan, err
+			}
+		}
+		if err := r.applyAndRecord(ctx, t); err != nil {
+			return plan, err
+		}
+		applied = true
+		return plan, nil
 	}
-	if !changed {
-		fmt.Fprintf(r.w, "No changes: the %s root matches the plan.\n", root)
-		return false, r.o.planOnly, nil
-	}
-	plan, err := t.Show(ctx, infra.PlanFile)
-	if err != nil {
-		return false, false, remote(err)
-	}
-	fmt.Fprint(r.w, tf.Summary(plan))
-	counts := infra.CountPlan(plan)
-	// The managed gate first, and the guard and the confirmation only when it
-	// does not admit this plan (D1016, update_managed.go).
-	gated, err := r.gateStep(ctx, t, imports, r.coverOf(r.coverReasonsFirebase), nil)
-	if err != nil {
+	if err := propagationRetry(ctx, r.w, "the Firebase step", cycle); err != nil {
 		return false, false, err
 	}
-	if !gated {
-		if err := r.guard(ctx, c, plan, r.o.allowDelete); err != nil {
-			return false, false, err
-		}
-		if r.o.planOnly {
-			fmt.Fprintf(r.w, "--plan-only: nothing applied; the plan is %s\n", filepath.Join(wd.Root, infra.PlanFile))
-			return false, true, nil
-		}
-		if err := r.confirmOrdinary("applies "+counts.String()+" "+what, "nothing was applied", r.notCoveredFirebase(plan, imports)); err != nil {
-			return false, false, err
-		}
-	}
-	if err := t.Apply(ctx, infra.PlanFile); err != nil {
-		return false, false, remote(err)
-	}
-	if err := r.gateApplied(ctx); err != nil {
-		return false, false, err
-	}
-	return true, false, nil
+	return applied, stop, nil
 }
 
 // initFirebase is fugaro update --firebase-project <gcp-project-id>: it adopts the project's own
@@ -580,7 +595,7 @@ func (r *initRun) deployDatabase(ctx context.Context, db *infra.DB, fp string, i
 		what = "writes the database as listed and " + infra.IdentityPlatformStep + ", as you (project owner, editor or budget admin), and then the local config"
 	}
 	if fs.CreatesDatabase() {
-		what += fmt.Sprintf("; this does NOT create the Firestore database: its creation in %s, whose location is permanent and can never be changed, is asked next, separately (the location typed)", infra.FirestoreLocation)
+		what += fmt.Sprintf("; this does NOT create the Firestore database: its creation in %s, whose location is permanent and can never be changed, is asked next, separately (its own confirmation, with nothing typed)", infra.FirestoreLocation)
 	}
 	if err := r.confirmOrdinary(what, "the database was not written", r.firebaseReason()); err != nil {
 		return false, err
@@ -612,32 +627,32 @@ func (r *initRun) deployDatabase(ctx context.Context, db *infra.DB, fp string, i
 }
 
 // confirmLocation is the Firestore database's own confirmation: its location
-// is permanent, so the person types the location itself, at a real terminal.
-// --non-interactive, --json, a pipe and a coding agent never confirm it, and
-// --yes confirms it only where the door owns the step (stepConfirmation,
-// stepClass): D12's answer of 2026-10-20 keeps the location Typed in `setup`,
-// the door that asks for it as a first-time question, and `update` — which
-// meets it as a step of a stage it owns — applies it under --yes. It is the
-// one of the four call sites D12 moves that moves in one door rather than
-// both. Where nothing can confirm it the step is the user's, with the
-// one-line route.
+// is permanent, so the note below is the whole of what a person reads before
+// it is created. The location is typed nowhere (T7, docs/no-prompt-policy):
+// what answers for the step is confirmNow — --ask's own question, --yes where
+// the class takes it, or the person at their own terminal, who reads the note
+// and is asked nothing. --non-interactive, --json, a pipe and a coding agent
+// still confirm it never, and the class is still D12's answer of 2026-10-20
+// (stepConfirmation, stepClass): the location is Typed in `setup`, the door
+// that asks for it as a first-time question, and YesOrTyped in `update`, which
+// meets it as a step of a stage it owns. Where nothing can confirm it the step
+// is the user's, with the one-line route.
 func (r *initRun) confirmLocation() error {
 	fmt.Fprintf(r.w, "⚠ CONFIRM (project %s): the Firestore database is created in %s, and a database's location can NEVER be changed.\n", r.projectName, infra.FirestoreLocation)
 	switch r.stepConfirmation(r.stepClass()) {
 	case stepLeave:
-		lf := promptLeft(initflow.Firebase, "type "+infra.FirestoreLocation+" to confirm the Firestore database's permanent location when asked, after running", r.o.doorName(), "--firebase-project", quoteWord(r.o.firebaseProject()))
+		lf := promptLeft(initflow.Firebase, "run the command below: it prints the note about the Firestore database's permanent location and then creates the database, asking you nothing", r.o.doorName(), "--firebase-project", quoteWord(r.o.firebaseProject()))
 		return &initflow.NeedsYouError{Left: lf}
 	case stepByYes:
 		fmt.Fprintln(r.w, "  confirmed by --yes")
 		return nil
 	}
-	fmt.Fprintf(r.w, "Type %s to create it there: ", infra.FirestoreLocation)
-	line, err := r.in.ReadString('\n')
-	if err != nil && !errors.Is(err, io.EOF) {
-		return userErr("reading the confirmation: %v", err)
+	ok, err := r.confirmNow("create the Firestore database in " + infra.FirestoreLocation + ", a location that can never be changed?")
+	if err != nil {
+		return err
 	}
-	if strings.TrimSpace(line) != infra.FirestoreLocation {
-		return userErr("the location %s was not typed; the Firestore database was not created (nothing was written)", infra.FirestoreLocation)
+	if !ok {
+		return userErr("not confirmed (the Firestore database's location was not confirmed); the Firestore database was not created (nothing was written)")
 	}
 	r.noteIDETerminal()
 	return nil

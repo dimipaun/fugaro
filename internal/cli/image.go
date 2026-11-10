@@ -32,7 +32,7 @@ func newImageCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "image", Short: "Build and inspect a workflow's derived container image"}
 	cmd.AddCommand(newImageBuildCmd(), newImageRenderCmd(), newImageSelftestCmd(), newImageGitCredentialCmd(),
 		newImageGateCmd(), newImageRecordCmd(), newImageCheckCmd(), newImageStatusCmd(), newImageRefreshCmd(),
-		newImageLsCmd(), newImageAddCmd(), newImageRmCmd(), newImagePromoteCmd())
+		newImageLsCmd(), newImageAddCmd(), newImageRmCmd(), newImagePromoteCmd(), newImageMapCmd())
 	return cmd
 }
 
@@ -79,12 +79,17 @@ func newImageBuildCmd() *cobra.Command {
 		Short: "Build a catalog entry's image with Cloud Build, or the workflow's derived image; --local builds the derived one with local Docker",
 		Long: "Build an image with Cloud Build.\n\n" +
 			"With an image catalog published (fugaro image ls lists its entries), it\n" +
-			"builds the catalog entry you name, or every entry whose source is a\n" +
-			"Dockerfile: the entry's Dockerfile is copied into the project's bucket,\n" +
-			"the build reads that one object, mounts the workflow's secrets as file\n" +
-			"secrets, smoke-tests the candidate without network and promotes it into\n" +
-			"the installation's shared registry with a content tag naming the\n" +
-			"definition it built. Run it from the checkout of the entry's own\n" +
+			"submits the catalog entry you name, or every entry of this checkout's\n" +
+			"catalog — one whose Dockerfile is another repository's is passed over.\n" +
+			"An entry whose source is a Dockerfile or an inline definition is built:\n" +
+			"the definition is copied into the project's bucket, the build reads that\n" +
+			"one object, mounts the workflow's secrets as file secrets, smoke-tests\n" +
+			"the candidate without network and promotes it into the installation's\n" +
+			"shared registry with a content tag naming the definition it built. An\n" +
+			"entry whose source is a prebuilt image is not built: its run is the\n" +
+			"smoke of that reference against the runtime contract alone, and the\n" +
+			"record it writes is what fugaro doctor reads back — --no-smoke has\n" +
+			"nothing to leave out of it. Run it from the checkout of the entry's own\n" +
 			"repository: the build account, the provider credential and the secrets\n" +
 			"are that repository's.\n\n" +
 			"Without a catalog — or with --workflow, which selects the per-workflow\n" +

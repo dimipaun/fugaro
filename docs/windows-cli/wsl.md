@@ -32,6 +32,16 @@ console's data source is a CLI it has to be able to run itself (**F40**, and
 [desktop-console.md](../design/desktop-console.md) **D10** owns that decision) —
 and the credential boundary below is a real source of confusion.
 
+**Amended 2026-11-10: the console reaches it, and this page's first reason is
+the CLI's again.** The console's own Windows work finds the *Linux* `fugaro`
+inside a distribution and drives it through `wsl.exe`, so the console no longer
+needs a Windows `fugaro.exe` to read a WSL-only installation
+([console-windows/](../console-windows/README.md)): what a Windows binary still
+buys is the **CLI** — this document's own subject, and **F40**'s question —
+rather than the console. The signing half of that decision is untouched: no
+Authenticode identity exists for this project and none is planned, so the
+console's own Windows installer is unsigned.
+
 ## Install it, inside WSL
 
 1. Install a distribution (WSL 2; Ubuntu is the usual one) and open **its**
@@ -115,7 +125,7 @@ Windows". None of these is fixed by installing WSL, and each is a task in
 | `fugaro doctor` | Does not check `git` or the `gcloud` binary at all (**F26**). |
 | `fugaro secrets set` | The hidden prompt is expected to work through `golang.org/x/term` but is unverified on Windows (**U3**). |
 | CI | No Windows job exists in `.github/workflows/` (**F38**). |
-| The desktop console | Out of scope: it needs a Windows CLI and an Authenticode-grade decision first (**F40**). |
+| The desktop console | Out of scope: it needs a Windows CLI and an Authenticode-grade decision first (**F40**). **Amended 2026-11-10: the first half is no longer true of the console** — it reaches a WSL-only installation itself, driving the *Linux* `fugaro` through `wsl.exe` ([console-windows/](../console-windows/README.md)), so what **F40** still describes is the CLI, which a Windows binary would buy. The Authenticode half stands: there is no identity for this project and none is planned, and the console's own Windows installer is unsigned. |
 
 The per-command promise the plan ends at — which command groups are supported,
 best effort or out of scope on Windows — is [implementation-plan.md §1](implementation-plan.md#1-support-tiers-per-command-group).

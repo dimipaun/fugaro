@@ -41,8 +41,8 @@ gives the background model when it is unset. `fugaro validate` runs them (`inter
 **F6: Exists. Where each key may be set.** `config.Scopes` (`internal/config/scope.go:59-61`) allows
 `agent.models.coder`, `.reviewer` and `.background` in the project layer and the repository; `budget.allowed_models`
 (`:76`) is repository-only in `fugaro.yaml` (a tightening of the owner's ceiling). Providers, prices and routing are
-not `fugaro.yaml` keys at all: they are fields of the local config (`internal/localcfg/localcfg.go:106`, `:109`,
-`:131`) that only the owner writes. *Consequence:* the owner-only boundary in spec §8 is already the code's;
+not `fugaro.yaml` keys at all: they are fields of the local config (`internal/localcfg/localcfg.go:107`, `:110`,
+`:132`) that only the owner writes. *Consequence:* the owner-only boundary in spec §8 is already the code's;
 `models use` writes only `agent.models.<role>`, and only in the repository (D792).
 
 **F7: Conflicts. `price_policy` and `require_zdr` are not yet deployable.** `catalogShipped` is `false`
@@ -73,7 +73,7 @@ repository today. D787 decides how `fugaro update` carries it instead.
 (`internal/cli/init.go:2373`) and `restoreRun.writeConfig` (`internal/cli/restore.go:949`) show a line diff
 (`lineDiff`, `internal/cli/init.go:2629`), back up the old file (`backupFile`, `:2566`, `<file>.bak-<timestamp>`,
 mode 0600) and write atomically (`writeFileAtomic`, `:2602`). Both marshal the whole struct
-(`localcfg.Config.Marshal`, `internal/localcfg/localcfg.go:1558`, `yaml.Marshal`). *Consequence:* the backup,
+(`localcfg.Config.Marshal`, `internal/localcfg/localcfg.go:1584`, `yaml.Marshal`). *Consequence:* the backup,
 diff and atomic write are reused as they are. The marshalling is not, because it drops comments and order
 (F11, D790).
 
@@ -86,7 +86,7 @@ precedent for a targeted edit exists: `setGCPProjectLine` (`internal/cli/init_fu
 of `fugaro.yaml` and keeps the rest.
 
 **F12: Missing. No command lists routes, allow-lists and repository usage together.** `budget prices` lists
-prices; `project policy show` (`newProjectPolicyShowCmd`, `internal/cli/project_cmd.go:2157`) lists the published node; `doctor`'s
+prices; `project policy show` (`newProjectPolicyShowCmd`, `internal/cli/project_cmd.go:2179`) lists the published node; `doctor`'s
 `routing-resolution` check prints the routing. Nothing joins routes, prices, allow-lists and the pins of each
 repository. *Consequence:* `models ls` is new. Adding a route (a new `providers` entry with its URL, auth and
 secret name) is not asked for and stays a hand edit; `models add` extends an existing route only.
@@ -102,8 +102,8 @@ fetch; `layerRoutes` (`internal/cli/layer_resolve.go:357`) resolves the project 
 `agentEnv` (`internal/cli/initsecrets.go:146`), is what `setup`, `update` and `image refresh` read to apply nothing
 in an agent's session. *Consequence:* `models add` and `rm` use it the same way (D789).
 
-**F15: Exists. The node's shape.** `projectpolicy.Policy` (`internal/projectpolicy/policy.go:129`) carries
-`budget.allowed_models` (`Budget`, `:260`), `providers` (`Provider`, `:288`, the same carrier as the local config),
+**F15: Exists. The node's shape.** `projectpolicy.Policy` (`internal/projectpolicy/policy.go:130`) carries
+`budget.allowed_models` (`Budget`, `:261`), `providers` (`Provider`, `:289`, the same carrier as the local config),
 `model_prices` (`Prices`, `internal/projectpolicy/prices.go:34`) and `routing`; it lives at `config/policy/shared`
 (`internal/projectpolicy/paths.go:20`, `PathShared` `:29`) at `Version` 4 (`internal/projectpolicy/version.go:79`).
 *Consequence:* no new node member is needed. The `models` commands change only the local config, and the node

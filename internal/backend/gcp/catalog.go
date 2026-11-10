@@ -1,6 +1,7 @@
 package gcp
 
 import (
+	"cmp"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -37,6 +38,10 @@ const (
 	// catalogContextStepID is the checkout an entry that names a build
 	// context gets, between the copied Dockerfile and the step that pins it.
 	catalogContextStepID = "catalog-context"
+	// catalogSmokeStepID is the whole of a prebuilt entry's run: there is
+	// nothing to build, so the one thing it does is smoke the reference the
+	// entry names against the runtime contract (F10).
+	catalogSmokeStepID = "catalog-smoke"
 )
 
 // catalogContextRoot is where the checkout step clones the entry's
@@ -104,11 +109,21 @@ type CatalogBuildSpec struct {
 	GitSecretID string
 	GitUser     string
 	GitHubAppID string
-	// Base is the fugaro base image the entry's image is built FROM.
+	// Base is the fugaro base image the entry's image is built FROM. A
+	// prebuilt entry is built from nothing, so it names none.
 	Base string
 	// Image is the untagged image in the installation's shared registry:
-	// SharedCatalogImage's value (D1152).
+	// SharedCatalogImage's value (D1152). A prebuilt entry pushes nothing, so
+	// it names none.
 	Image string
+	// Prebuilt is the reference of an entry whose source is a prebuilt image
+	// (config.SourceImage): such an entry has nothing to build — it names an
+	// image somebody else published — so its run is a smoke-only Cloud Build
+	// of that reference (F10), with no Dockerfile to read, no credential to
+	// mount, nothing pushed and no tag moved. It is "" for an entry Fugaro
+	// builds, and a spec that sets it sets none of the build's own inputs
+	// (checkPrebuilt).
+	Prebuilt string
 	// Definition is the copy the build reads and pins.
 	Definition CatalogDefinition
 	// Context is the directory of the entry's repository the build runs on —
@@ -249,14 +264,22 @@ var slugRE = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,127}$`)
 // the record names it.
 var catalogCommitRE = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
-// CatalogBuildRequest is the Cloud Build request of a catalog build in
+// CatalogBuildRequest is the Cloud Build request of a catalog entry in
 // project: the steps images/derived/cloudbuild.yaml states for a derived
 // image, minus the ones only a repository's own image has (source, render,
 // gate, record), plus the catalog build's own (PIC3's read of the copy, the
-// pin, the content tag and the record). Its substitutions are only the ones
-// its steps reference, and each workflow secret is added to availableSecrets
-// and to the build step's secretEnv and nowhere else. It makes no calls.
+// pin, the content tag and the record) — or, for a spec whose entry is a
+// prebuilt image, the smoke-only run catalogPrebuiltRequest builds. Its
+// substitutions are only the ones its steps reference, and each workflow
+// secret is added to availableSecrets and to the build step's secretEnv and
+// nowhere else. It makes no calls.
 func CatalogBuildRequest(project string, s CatalogBuildSpec) (*cloudbuild.Build, error) {
+	if s.Prebuilt != "" {
+		if err := s.checkPrebuilt(project); err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrBadBuildSpec, err)
+		}
+		return catalogPrebuiltRequest(project, s), nil
+	}
 	b, err := embeddedBuild()
 	if err != nil {
 		return nil, err
@@ -364,13 +387,99 @@ func CatalogBuildRequest(project string, s CatalogBuildSpec) (*cloudbuild.Build,
 // BuildRequest's (PIC4). Everything after the request — the POST, the
 // operation it answers with and the queued BuildResult — is Submit's own
 // call (create), so the two paths cannot drift apart in what they send or in
-// how they report it.
+// how they report it. The image that names the build there is the entry's
+// own reference for a prebuilt one, which builds and pushes nothing.
 func (b *Builder) SubmitCatalog(ctx context.Context, s CatalogBuildSpec) (BuildResult, error) {
 	req, err := CatalogBuildRequest(b.project, s)
 	if err != nil {
 		return BuildResult{}, err
 	}
-	return b.create(ctx, s.Image, req)
+	return b.create(ctx, cmp.Or(s.Prebuilt, s.Image), req)
+}
+
+// catalogPrebuiltRequest is the request of an entry whose source is a
+// prebuilt image: the smoke of the reference the entry names and the record
+// of it, and nothing else (F10). There is nothing to build — the image is
+// somebody else's and is used as it is — so no Dockerfile is read, no
+// credential is mounted, nothing is pushed and no tag moves: what the run
+// answers is whether that image meets the runtime contract a job needs, and
+// the record it writes is what makes the answer readable afterwards
+// (fugaro doctor reads it).
+//
+// It carries no availableSecrets at all, where a build's request carries the
+// repository's provider credential: no step of this run reads one, and the
+// build account is named for the record's grant and nothing else.
+func catalogPrebuiltRequest(project string, s CatalogBuildSpec) *cloudbuild.Build {
+	return &cloudbuild.Build{
+		Steps: []*cloudbuild.BuildStep{catalogSmokeStep(s), catalogRecordStep(s)},
+		// Only what those two steps reference: the entry's reference and the
+		// smoke's spec, plus the content tag the record step's own env reads
+		// and leaves empty — Cloud Build refuses a substitution the request
+		// does not reference, and nothing here reads a repository, a base or
+		// a context.
+		Substitutions: map[string]string{
+			"_IMAGE":        s.Prebuilt,
+			"_SELFTEST_B64": base64.StdEncoding.EncodeToString(s.Selftest),
+			"_CATALOG_TAG":  "",
+		},
+		Options: &cloudbuild.BuildOptions{
+			MachineType: s.MachineType,
+			Logging:     "CLOUD_LOGGING_ONLY",
+		},
+		ServiceAccount: "projects/" + project + "/serviceAccounts/" + s.ServiceAccount,
+		// The derived and the catalog builds' own bounds: the timeout the
+		// estimator prices, over a queue wait the lease's deadline also
+		// covers (BuildRequest, and the test that pins all four against
+		// internal/budget's two constants).
+		Timeout:  "3600s",
+		QueueTtl: "3600s",
+	}
+}
+
+// catalogSmokeStep smokes a prebuilt entry's image against the runtime
+// contract: the whole of that entry's run (F10).
+//
+// The image is its author's, so what can be asserted of it is the contract
+// and nothing else: the critical rows of images/base/tools.tsv, which the
+// spec asks for through its tools_only form (the caller renders it), and no
+// checkout to verify, no Fugaro base's hardening and no setuid set of its
+// own, because the image was not built from this tool's base. The first of
+// those rows is fugaro itself, and the smoke is run by it: an image that
+// carries no fugaro fails here rather than a job's start being the first
+// thing to find out.
+//
+// It pulls the reference the entry names and resolves the digest that
+// reference answers with, so what was smoked is bytes and not a tag that
+// moved afterwards. The digest reaches the record step through the workspace
+// (OUT, the one directory this script writes) and the CLI through this step's
+// output (stepOutputs reads it by this step's id). The selftest runs through
+// docker run with no network and no volume, never as a step of its own — a
+// step would be a container on the cloudbuild network, next to the metadata
+// server and the build account's token — as the derived smoke does.
+func catalogSmokeStep(s CatalogBuildSpec) *cloudbuild.BuildStep {
+	// The three values reach the script through env: and are read as quoted
+	// "$$VAR" (the rule images/derived/cloudbuild.yaml states).
+	return &cloudbuild.BuildStep{
+		Id:         catalogSmokeStepID,
+		Name:       "gcr.io/cloud-builders/docker",
+		Entrypoint: "bash",
+		Env:        []string{"IMAGE=${_IMAGE}", "SELFTEST_B64=${_SELFTEST_B64}", "OUT=/workspace/out"},
+		Args: []string{"-c", `set -eu
+install -d -m 0755 "$$OUT"
+docker pull --quiet "$$IMAGE"
+ref=$$(docker image inspect --format '{{index .RepoDigests 0}}' "$$IMAGE") \
+  || { echo "the prebuilt image $$IMAGE carries no digest: the registry serves it by tag and nothing pins what a job would start on" >&2; exit 1; }
+case "$$ref" in *@sha256:*) ;; *) echo "the prebuilt image $$IMAGE carries no digest" >&2; exit 1 ;; esac
+printf '%s\n' "$${ref#*@}" > "$$OUT/image-digest"
+date -u +%Y-%m-%dT%H:%M:%SZ > "$$OUT/built-at"
+printf '%s' "$$SELFTEST_B64" | base64 -d > "$$OUT/selftest.json"
+report=$$(docker run --rm -i --network none "$$ref" fugaro image selftest < "$$OUT/selftest.json") \
+  || { printf '%s\n' "$$report"; echo "the prebuilt image $$IMAGE failed its smoke test" >&2; exit 1; }
+printf '%s\n' "$$report"
+case "$$report" in *'"passed":true'*) ;; *) echo "the prebuilt image $$IMAGE did not pass its smoke test" >&2; exit 1 ;; esac
+printf '%s' "$${ref#*@}" > "$$BUILDER_OUTPUT/output"
+echo "smoked $$ref"`},
+	}
 }
 
 // catalogPinStep is the step that stands in for a derived build's render:
@@ -624,26 +733,49 @@ gcloud artifacts docker tags add "$$IMAGE@$$digest" "$$IMAGE:$$TAG" --quiet`},
 // sibling step's is, and the object's name is percent-encoded byte by byte
 // because the JSON API takes it as a query parameter, where a raw "/" would
 // end the name and any other reserved character could add or split one.
+//
+// One step writes the record of both kinds of catalog entry, because one
+// shape and one reader have to agree: a smoke-only run is submitted with the
+// definition, the context and the base empty (checkPrebuilt refuses a spec
+// that names any of them), so the same env and the same printf carry the
+// entry's own reference in and leave those fields empty — nothing was read and
+// nothing was built from anything — and the image digest it records is the one
+// the smoke resolved. The marker PREBUILT is what tells the script's own run
+// apart: only then is there no base digest to read. Everything else — the key,
+// the field names, the unescaped printf, the encoding and the upload — is the
+// same for both.
 func catalogRecordStep(s CatalogBuildSpec) *cloudbuild.BuildStep {
 	key, _ := CatalogRecordKey(s.Slug, s.Entry) // checked before this is called
+	env := []string{
+		"BUCKET=" + s.Bucket, "KEY=" + key, "ENTRY=" + s.Entry, "IMAGE=" + cmp.Or(s.Prebuilt, s.Image),
+		"GENERATION=" + strconv.FormatInt(s.Definition.Generation, 10),
+		"SHA256=" + s.Definition.SHA256, "COMMIT=" + s.Definition.SourceCommit,
+		"CONTEXT_COMMIT=" + s.ContextCommit, "CONTEXT_SHA256=" + s.ContextSHA256,
+		"BASE=" + s.Base, "TAG=${_CATALOG_TAG}",
+	}
+	// A build's own record step has exactly the variables it had before a
+	// prebuilt entry had one: the marker is added to the smoke-only run's step
+	// and read as an unset variable by the other.
+	if s.Prebuilt != "" {
+		env = append(env, "PREBUILT=1")
+	}
 	return &cloudbuild.BuildStep{
 		Id:         catalogRecordStepID,
 		Name:       "gcr.io/google.com/cloudsdktool/cloud-sdk:slim",
 		Entrypoint: "bash",
-		Env: []string{
-			"BUCKET=" + s.Bucket, "KEY=" + key, "ENTRY=" + s.Entry, "IMAGE=" + s.Image,
-			"GENERATION=" + strconv.FormatInt(s.Definition.Generation, 10),
-			"SHA256=" + s.Definition.SHA256, "COMMIT=" + s.Definition.SourceCommit,
-			"CONTEXT_COMMIT=" + s.ContextCommit, "CONTEXT_SHA256=" + s.ContextSHA256,
-			"BASE=" + s.Base, "TAG=${_CATALOG_TAG}",
-		},
+		Env:        env,
 		Args: []string{"-c", `set -eu
 image_digest=$$(cat /workspace/out/image-digest)
 case "$$image_digest" in sha256:*) ;; *) echo "no pushed digest" >&2; exit 1 ;; esac
-base_digest=$$(cat /workspace/base-digest)
-base_digest=$${base_digest#*@}
-case "$$base_digest" in sha256:*) ;; *) echo "no base digest" >&2; exit 1 ;; esac
 built_at=$$(cat /workspace/out/built-at)
+# A smoke-only run has no base to read: its record carries the same thirteen
+# keys, and the fields only a build has are the empty ones its own env states.
+base_digest=
+if [ -z "$${PREBUILT:-}" ]; then
+  base_digest=$$(cat /workspace/base-digest)
+  base_digest=$${base_digest#*@}
+  case "$$base_digest" in sha256:*) ;; *) echo "no base digest" >&2; exit 1 ;; esac
+fi
 record=$$(mktemp)
 printf '{"version":1,"entry":"%s","source_commit":"%s","context_commit":"%s","context_sha256":"%s","definition_generation":%s,"definition_sha256":"%s","base_ref":"%s","base_digest":"%s","image":"%s","content_tag":"%s","image_digest":"%s","build_id":"%s","built_at":"%s"}' \
   "$$ENTRY" "$$COMMIT" "$$CONTEXT_COMMIT" "$$CONTEXT_SHA256" "$$GENERATION" "$$SHA256" "$$BASE" "$$base_digest" "$$IMAGE" "$$TAG" "$$image_digest" "$BUILD_ID" "$$built_at" > "$$record"
@@ -745,27 +877,8 @@ func (s CatalogBuildSpec) check(project string, reserved map[string]bool) error 
 	if s.Context != "" && !sha256HexRE.MatchString(s.ContextSHA256) {
 		return fmt.Errorf("the context's sum %q is not 64 hex digits", s.ContextSHA256)
 	}
-	if len(s.Selftest) == 0 || !json.Valid(s.Selftest) {
-		return fmt.Errorf("the smoke's spec is not JSON; a catalog build renders nothing, so the caller sends it")
-	}
-	// A catalog image may be built FROM any base (D1151), so its smoke is
-	// the only thing that can assert the runtime contract there, and a spec
-	// asking for no tools would assert the least exactly where the base
-	// guarantees the least. The critical tier is the contract list, and the
-	// runtime contract is reported with it.
-	//
-	// The key is read here rather than through image.SelftestSpec:
-	// internal/image reaches this package (through imagecheck), so the spec
-	// cannot be imported back, and the JSON key is what the caller that
-	// renders the spec and this request agree on.
-	var smoke struct {
-		Tools string `json:"tools"`
-	}
-	if err := json.Unmarshal(s.Selftest, &smoke); err != nil {
-		return fmt.Errorf("the smoke's spec: %w", err)
-	}
-	if smoke.Tools != "critical" && smoke.Tools != "all" {
-		return fmt.Errorf("the smoke's spec asks for no tools (tools: %q), so the catalog image would be smoked without the runtime contract; a catalog image may be built from any base", smoke.Tools)
+	if err := s.checkSmokeSpec(); err != nil {
+		return err
 	}
 	// The build account holds the repository's secrets and writes its
 	// registry; any other account (the retired shared one, another
@@ -792,6 +905,84 @@ func (s CatalogBuildSpec) check(project string, reserved map[string]bool) error 
 			return fmt.Errorf("workflow secret %s: variable %s is already used in the build", ws.Name, ws.Env)
 		}
 		seen[ws.Env] = true
+	}
+	return nil
+}
+
+// checkSmokeSpec refuses a smoke spec that is not JSON, and one that asks for
+// no tools: a catalog image may be built FROM any base (D1151), so its smoke
+// is the only thing that can assert the runtime contract there, and a spec
+// asking for no tools would assert the least exactly where the base
+// guarantees the least. The critical tier is the contract list, and the
+// runtime contract is reported with it — a prebuilt entry's smoke asks for
+// the same tier, and that smoke is its whole check.
+//
+// The key is read here rather than through image.SelftestSpec: internal/image
+// reaches this package (through imagecheck), so the spec cannot be imported
+// back, and the JSON key is what the caller that renders the spec and this
+// request agree on.
+func (s CatalogBuildSpec) checkSmokeSpec() error {
+	if len(s.Selftest) == 0 || !json.Valid(s.Selftest) {
+		return fmt.Errorf("the smoke's spec is not JSON; a catalog build renders nothing, so the caller sends it")
+	}
+	var smoke struct {
+		Tools string `json:"tools"`
+	}
+	if err := json.Unmarshal(s.Selftest, &smoke); err != nil {
+		return fmt.Errorf("the smoke's spec: %w", err)
+	}
+	if smoke.Tools != "critical" && smoke.Tools != "all" {
+		return fmt.Errorf("the smoke's spec asks for no tools (tools: %q), so the catalog image would be smoked without the runtime contract; a catalog image may be built from any base", smoke.Tools)
+	}
+	return nil
+}
+
+// checkPrebuilt refuses a spec whose run smokes a prebuilt reference
+// (Prebuilt) the way check refuses a build's, and refuses the rest of what a
+// build is: a smoke-only run that also named a base, a shared-registry image,
+// a copied definition, a context or workflow secrets would be a build whose
+// steps ignore them, since no step of this request could read, mount or push
+// any of it.
+//
+// It repeats the entry-level checks rather than sharing check's, because
+// check's are interleaved with a build's own in the order its errors are
+// reported in. What it asks for is only what this run reads: the entry (its
+// record's own prefix), the repository the build account belongs to, and the
+// runs bucket. No clone URL, no base branch, no credential secret and no
+// provider — nothing here clones, reads or pushes anything.
+func (s CatalogBuildSpec) checkPrebuilt(project string) error {
+	for _, f := range []struct{ name, v string }{
+		{"catalog entry", s.Entry}, {"repository slug", s.Slug},
+		{"build service account", s.ServiceAccount}, {"runs bucket", s.Bucket},
+	} {
+		if f.v == "" {
+			return fmt.Errorf("the Cloud Build request has no %s", f.name)
+		}
+	}
+	if _, err := config.CatalogDockerfileKey(s.Entry); err != nil {
+		return err
+	}
+	if !bucketURLRE.MatchString(s.Bucket) {
+		return fmt.Errorf("the runs bucket %q is not gs://<bucket>; the smoke's record is written there", s.Bucket)
+	}
+	if err := s.checkSmokeSpec(); err != nil {
+		return err
+	}
+	if want := BuildServiceAccountID(s.Slug) + "@" + project + ".iam.gserviceaccount.com"; s.ServiceAccount != want {
+		return fmt.Errorf("the build service account %s is not the repository's build account %s", s.ServiceAccount, want)
+	}
+	// The record step composes its JSON with printf and no escaping, and the
+	// entry's reference is one of the two values it carries: it is checked
+	// against the same grammar a base is, so a quote, a backslash, a newline
+	// or any other control character in it never reaches that record.
+	if !imageRefRE.MatchString(s.Prebuilt) {
+		return fmt.Errorf("the prebuilt image %q is not a container image reference such as ghcr.io/owner/image:1.2", s.Prebuilt)
+	}
+	if s.Base != "" || s.Image != "" || s.Context != "" || s.Definition != (CatalogDefinition{}) || len(s.WorkflowSecrets) > 0 {
+		return fmt.Errorf("the entry's run smokes the prebuilt image %s and builds nothing, yet the request names a build's inputs: base %q, image %q, context %q, definition %+v, %d workflow secrets", s.Prebuilt, s.Base, s.Image, s.Context, s.Definition, len(s.WorkflowSecrets))
+	}
+	if s.NoSmoke {
+		return fmt.Errorf("the entry's run is the smoke of the prebuilt image %s and nothing else, so there is nothing for --no-smoke to leave out", s.Prebuilt)
 	}
 	return nil
 }

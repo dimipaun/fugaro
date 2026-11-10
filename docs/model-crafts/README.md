@@ -1,6 +1,6 @@
 # Model crafts and credentials
 
-**Status: plan only; nothing is implemented; no task approved.** Spec owner: Dimi Paun. Date: 2026-11-07.
+**Status as of 2026-11-10: in progress, 4/10 merged; see [docs/status.md](../status.md) for the current table.** Spec owner: Dimi Paun. Date: 2026-11-07.
 
 The spec replaces the fixed "OpenRouter coder, Opus reviewer" setup with **credentials**, **pools** and **crafts** (the owner's word for the spec's "roles", which collide with user roles). Most of it exists under other names (named Claude accounts, per-stage accounts, a dormant ordered failover, model routes, review levels); the plan generalises those in place and migrates inside `fugaro update`.
 
