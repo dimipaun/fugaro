@@ -43,6 +43,31 @@ var rwcDocs = []string{"README.md", "spec.md", "reconciliation.md", "implementat
 // than by a file's existence, because the file it lives in predates A0.
 const rwcLandedAccessor = "func PersonReadTokenPermissions() map[string]string"
 
+// rwcLandedReader and its file are the second landing the same status lines are
+// read against: the reader A1 added beside the contents API, and what makes a
+// line still saying the launch cannot read a file at a ref false. It is searched
+// for as a declaration for the same reason as the accessor above, and it is read
+// from the tree rather than assumed from the accessor, because the plan's tasks
+// land one at a time: while A0 is in and A1 is not, "A0 landed" is the true
+// sentence, and it is the sentence A1 falsifies.
+const (
+	rwcLandedReader     = "func FileAt("
+	rwcLandedReaderFile = "internal/gitprov/github/fileread.go"
+)
+
+// rwcNamesLanded reports whether a status line names task among the tasks it
+// says have landed. The search stops at the word "landed" because the same
+// letter-and-number spelling sits on both sides of it: a line reading
+// "A0 landed …; A1–A4 … not started" does contain "A1", and it is exactly the
+// line a check on the whole paragraph would accept.
+func rwcNamesLanded(status, task string) bool {
+	i := strings.Index(status, "landed")
+	if i < 0 {
+		return false
+	}
+	return strings.Contains(status[:i], task)
+}
+
 // rwcStatusParagraph is the paragraph a document opens with about the tree — the
 // one starting **Status:** — flattened so a phrase spanning its wraps is visible.
 // It is the folder's claim about itself rather than about the ask, and it is the
@@ -75,20 +100,27 @@ var rwcRetired = []string{
 	"mints with `github.CoordinatorTokenPermissions()`",
 }
 
-// TestDocsRunWithoutCheckoutStatesA0AsLanded: while A0's accessor is in the tree,
-// every document in the folder says so and none of them still describes the read
-// as refused. A0 is the plan's first task and the one whose absence made the whole
-// design unbuildable, so a folder that has not moved with it is a folder whose
-// first paragraph contradicts the code it cites.
-func TestDocsRunWithoutCheckoutStatesA0AsLanded(t *testing.T) {
+// TestDocsRunWithoutCheckoutStatesTheLandedTasks: while A0's accessor and A1's
+// reader are in the tree, every document in the folder says so and none of them
+// still describes the read as refused. A0 is the plan's first task and the one
+// whose absence made the whole design unbuildable, and A1 is the read the design
+// is for, so a folder that has not moved with either is a folder whose first
+// paragraph contradicts the code it cites. Each is required only while its own
+// declaration is there, so the check moves with the tree task by task instead of
+// reading one landing off the other.
+func TestDocsRunWithoutCheckoutStatesTheLandedTasks(t *testing.T) {
 	if !strings.Contains(readDoc(t, "internal/gitprov/github/apptoken.go"), rwcLandedAccessor) {
 		t.Skipf("A0's accessor is not in the tree: the folder's pre-A0 sentences are the true ones, and these checks read the tree")
 	}
+	a1Landed := strings.Contains(readDoc(t, rwcLandedReaderFile), rwcLandedReader)
 	for _, name := range rwcDocs {
 		path := rwcDir + name
 		status := rwcStatusParagraph(t, path)
-		if !strings.Contains(status, "A0") || !strings.Contains(status, "landed") {
+		if !rwcNamesLanded(status, "A0") {
 			t.Errorf("%s's status line does not say that A0 landed: A0's set is in the tree, so the line is a claim about the tree and the task that made the read possible is the one it has to name", path)
+		}
+		if a1Landed && !rwcNamesLanded(status, "A1") {
+			t.Errorf("%s's status line does not say that A1 landed: %s carries %q, so the line is a claim about the tree and the task that landed the reader this design is for is one it has to name", path, rwcLandedReaderFile, rwcLandedReader)
 		}
 		for _, stale := range []string{"nothing implemented", "no task approved"} {
 			if strings.Contains(status, stale) {
