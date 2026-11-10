@@ -43,22 +43,22 @@ As of 2026-11-10, read from `main`, the open pull requests and each plan's task 
 | --- | --- | --- |
 | stateless-orchestrator | 10/19 | O8 (draft #2064), O9 to O14, O16, O19; owner Checks 300 to 305 |
 | api-key-review | 6/11 | AK6b (draft #2172), AK7, AK9, AK10; owner Check 330 |
-| secrets-brokering | 18/30 | B1.13 flip (draft #2166, held on Check 191), B1.15, B1.16, B2.1 to B5.1; owner Checks 191 and 192. Dynamic-delivery subfolder: DS0.1 merged, five drafts |
+| secrets-brokering | 18/30 | B1.13 flip (draft #2166, held on Check 191), B1.15, B1.16, B2.1 to B5.1; owner Checks 191 and 192. Dynamic-delivery subfolder: DS0.1, DS1.3 and DS2.0 merged, DS2.1 in a run |
 | subscriptions | about 17/51 | about 22 tasks; 10 owner-run |
 | workspaces | 6/10 | W3 and W6 (drafts), W7, W9 |
-| no-prompt-policy | 8/17 | T4 and T7 (drafts), T9 to T13, T15; owner T14 |
-| image-setup-skill | 4/14 | 7 in draft PRs; IS2, IS12, IS13 not started |
-| mcp-server | 8/12 | M4 store (draft #2117), M5b (draft #2114); M9 deferred |
-| diagnose-agent | 5/10 | T-DG7 (draft #2138), T-DG6, T-DG8 to T-DG10 |
+| no-prompt-policy | 9/17 | T4 and T7 (drafts), T9 (draft #2232) to T13; owner T14; T15 merged, and `update` asks nothing (#2082) |
+| image-setup-skill | 5/14 | IS10 merged; IS1 (draft #2170), IS8b and others in draft PRs; IS2, IS12, IS13 not started |
+| mcp-server | 8/12 | M4 store (draft #2117), M5b (draft #2114, a follow-up in a run); M9 deferred |
+| diagnose-agent | 5/10 | T-DG7 (draft #2138, a follow-up in a run), T-DG6, T-DG8 to T-DG10 |
 | troubleshoot-issue | 12/18 | IS6 (draft #2135), IS19 (draft #2115), T-IS7, T-IS9, T-IS11, T-IS12 |
 | periodic-reviews | 7/14 | R7 to R12; owner Checks 136 and 340 |
 | config-management | 5/14 | G3 to G7, G9 rest, G10, G12, G13 |
 | contract-first-decoupling | 4/7 | CD4, CD5, CD7 |
-| issue-mine | 4/7 | T-IM3, T-IM6 (the command), T-IM7 |
+| issue-mine | 5/7 | T-IM3, T-IM7 (in a run); T-IM6 merged |
 | cli-output-console-graph | 19/30 | CL6, CL9 to CL11, CG4 to CG6, CG13 |
 | issues-resolved-on-update | 3/8 | T-RU4 to T-RU8 |
 | catalog-build-context | 2/5 | CB2, CB4, CB5 |
-| post-review-triage | 5/14 | TR3, TR5 to TR10, TR12; waits on BF1m (#1999) |
+| post-review-triage | 6/14 | TR3, TR6 (in a run), TR7 to TR10, TR12; TR5 merged, BF1m (#1999) merged |
 | model-crafts | 4/10 | MC4 to MC7, MC9; owner MC10 |
 | security-classification | 6/11 | SC3, SC5, SC9 to SC11 |
 | settings-commands | about 6/12 | S6 to S11 |
@@ -72,16 +72,16 @@ As of 2026-11-10, read from `main`, the open pull requests and each plan's task 
 | mobile | about 35/45 | P5.x, P7.2 to P7.5; owner P2.3 and P4.4 |
 | task-governance | 24/31 | 7 left: T3.4 (docs), and the rest in `ee/governance` |
 | bitbucket-workspace-token | 7/13 | T2.2, T2.4, T2.6, T2.9, owner checks; the proxy chain probably makes T2.2 and T2.9 moot |
-| compatibility-matrix | 1/4 | CM2 (page), CM3, CM4 |
+| compatibility-matrix | 2/4 | CM3, CM4; CM2 (the page) merged |
 
 ## To do, parked or superseded
 
 | Spec | State |
 | --- | --- |
-| run-limit-carry-over | 0/10; design only |
-| binary-allow-rule | 0/11; its 0.20.0 slot passed |
-| plugin-user-scope | 0/10; `fugaro upgrade` is still on main |
-| run-without-checkout | 0/8; its releases shipped without it |
+| run-limit-carry-over | 4/10; L0 to L3 merged, L4 in a run, L5 onward waiting |
+| binary-allow-rule | 2/11; NV1 and NV2 merged, AR0 (draft #2202) held on the update-ordering fix; AR1 and AR3 to AR5 wait behind it |
+| plugin-user-scope | 1/10; U1 merged, U2 in a run; `fugaro upgrade` is still on main |
+| run-without-checkout | 3/8; A0 to A2 merged, A3 (draft #2233) in a run, A4 behind it |
 | composite-commands | 1/10; depends on no-prompt-policy |
 | central-orchestrator | superseded by stateless-orchestrator |
 | windows-cli | 10/31; superseded by console-windows |
