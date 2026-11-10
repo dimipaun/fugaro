@@ -343,10 +343,10 @@ func TestDocsStateTheBitbucketProjectTokenReach(t *testing.T) {
 		// node does not proxy -- the run reads no token only where that
 		// node admits the repository with `proxy: true`.
 		"A proxy that keeps the token out of the **run's own git traffic** is designed in [docs/secrets-brokering](secrets-brokering/README.md) and **built** (D490, \"What the agent gets\" below): on a repository the published node admits with `proxy: true` the runner reads no token, the run's own git traffic carries none, and the service puts the credential on the wire",
-		// The half that has NOT moved, which the sentence has to keep: every
-		// reach above is the mounted token's value, and the mount -- and the
-		// accessor behind it -- leave with the flip, not with the proxy.
-		"while the job's mount and the accessor behind it leave only with the flip, whose list `config.ProxiedGitSecretNames` is still empty on this tree, so every reach above is one read of the runner's `/proc` away on a proxied repository too.",
+		// The other half, which moved with B1.13 part two: the mount -- and
+		// the accessor behind it -- are gone for a proxied repository, so no
+		// reach above is a read of the runner's `/proc` there.
+		"and the job's mount and the accessor behind it are gone with the flip, whose list `config.ProxiedGitSecretNames` names `bitbucket-token`, so on such a repository no reach above is a read of the runner's `/proc`",
 	} {
 		if !strings.Contains(providers, strings.Join(strings.Fields(want), " ")) {
 			t.Errorf("docs/git-providers.md does not say %q: it is the page an operator reads to opt in to one Bitbucket token for many repositories", want)
