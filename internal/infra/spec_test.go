@@ -778,6 +778,77 @@ func TestSpecStampsNoEntryOnAJobWithNoCatalogEntry(t *testing.T) {
 	}
 }
 
+// jobImageYAML is the webapp with both workflows carrying a repository-level
+// image definition: web an image: block, api a dockerfile: — the two are
+// mutually exclusive in a fugaro.yaml — and both a rebuild: that asks for
+// something the daily check would act on. D1900 keeps every one of them
+// decodable (the config is still the repository's own) and stops acting on
+// any: a project that builds its own images gives every workflow's job the
+// image of the entry the resolver names.
+const jobImageYAML = `version: 1
+project: aurora
+git: { provider: github, base_branch: main }
+agent: { auth: vertex }
+workflows:
+  web:
+    image: { setup: ["apt-get install -y jq"], tools: { node: "24.19.0" }, key_files: [patches] }
+    rebuild: { check: "off" }
+    commands: { build: npm run build, test: npm test }
+  api:
+    dockerfile: api.Dockerfile
+    rebuild: { check: "off" }
+    commands: { build: ./gradlew assemble, test: ./gradlew test }
+`
+
+// TestSpecJobImageIgnoresRepoLevelConfig is D1900 at the job spec, which is
+// where the image is fixed (F7): a workflow with image.setup, a dockerfile:
+// and a rebuild: used to resolve to the per-repository derived tag —
+// gcp.ImageName(registry, slug, workflow) — and now resolves to the entry the
+// project's catalog gives it, the default here. A caller that still built the
+// per-repository name would deploy a job on an image nothing builds.
+//
+// The warning is the person's half of the same rule: one sentence per key
+// written, naming the entry whose image the job now runs, so a repository that
+// meant to keep its own image reads why it did not (D1900).
+//
+// Mutation (run, restore): return gcp.ImageName(...) instead of the resolver's
+// answer in workflow() — this test then fails on the derived tag for both
+// workflows, and carries no warning.
+func TestSpecJobImageIgnoresRepoLevelConfig(t *testing.T) {
+	in := budgetInputs(t, catalogBlock)
+	in.Cfg = parseCfg(t, []byte(jobImageYAML))
+	spec, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(spec.Workflows) != 2 {
+		t.Fatalf("fixture bug: %d workflows, want 2", len(spec.Workflows))
+	}
+	wantWarnings := map[string]int{"web": 2, "api": 2}
+	for name, ws := range spec.Workflows {
+		if ws.CatalogEntry != "base" {
+			t.Errorf("workflow %s runs entry %q, want the catalog's default base: the repository's own keys decide nothing (D1900)", name, ws.CatalogEntry)
+		}
+		if !strings.Contains(ws.Image, "/"+catalogImagePrefix+"base:latest") {
+			t.Errorf("workflow %s's image is %s, want the default entry's; a per-repository tag is the image this reversal took away", name, ws.Image)
+		}
+		var ignored []string
+		for _, w := range ws.Warnings {
+			if strings.HasSuffix(w, "(D1900)") {
+				ignored = append(ignored, w)
+			}
+		}
+		if len(ignored) != wantWarnings[name] {
+			t.Errorf("workflow %s warns %d times about its own keys (%q), want %d: one sentence per key written", name, len(ignored), ignored, wantWarnings[name])
+		}
+		for _, w := range ignored {
+			if !strings.Contains(w, "the entry base") {
+				t.Errorf("workflow %s's warning %q does not name the entry whose image its job runs", name, w)
+			}
+		}
+	}
+}
+
 // sharedYAML is cloneYAML with web on checkout: shared (design
 // forge-authorship-images/shared-images.md §6, route A): a job that runs a
 // shared dependency-layer image and clones the repository's own source at
