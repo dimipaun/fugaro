@@ -141,7 +141,7 @@ whole `internal/cli` or `internal/runner` run.
 - **Commit:** `github: read one file at a ref through the person's read mint`.
 - **Landed:** 2026-11-10: `github.FileAt` and its two sentinels, `ErrFileNotFound` and `ErrRefNotFound`,
   in `internal/gitprov/github/fileread.go` — over `Contents`, a `ServiceHeldKey` provider with the
-  caller's `gitprov.TokenSource` installed — with `fileread_test.go` and the eight
+  caller's `gitprov.TokenSource` installed — with `fileread_test.go` and the nine
   `testdata/fileread/*.json` replays beside it. The read is hermetic (a fake `gitprov.TokenSource` and an
   `httpfixture` replay), so it waited on nothing from A0: what A0 gates is the live path, and A3's
   end-to-end read is the test that exercises it. What A3 calls, and what its messages read, is the two
