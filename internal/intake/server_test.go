@@ -710,10 +710,6 @@ func TestRefusesContainerItDidNotCreate(t *testing.T) {
 		{"an owner account that is not the name's", Secret{ID: id, Annotations: map[string]string{
 			AnnotationOwnerSub: testOtherSub, AnnotationOwnerEmail: testOwnerEmail, AnnotationCreatedBy: testOwnerEmail,
 		}}},
-		// The intake writes this annotation on everything it makes: a
-		// container without it is one it did not make, whatever else it
-		// carries.
-		{"no annotations at all", Secret{ID: id, Annotations: map[string]string{}}},
 		{"an annotation the intake does not write", Secret{ID: id, Annotations: map[string]string{
 			AnnotationOwnerSub: testOwnerSub, AnnotationOwnerEmail: testOwnerEmail, AnnotationCreatedBy: testOwnerEmail, "fugaro_extra": "x",
 		}}},
@@ -739,6 +735,47 @@ func TestRefusesContainerItDidNotCreate(t *testing.T) {
 		}
 		if _, ok := f.store.containers[id]; !ok {
 			t.Fatalf("a container with %s was removed", tc.what)
+		}
+	}
+}
+
+// TestRefusesASharedContainerItDidNotCreate is the same check's shared branch,
+// where the annotation it rests on is the one that says who made the container
+// (R10). A project-shared container has no owner, so who made it is the whole
+// of what it carries: a shared container with no annotations at all, or with
+// an owner's on it, is another writer's, and there is nothing else on it that
+// could say otherwise — which is why this is the branch that holds the rule.
+func TestRefusesASharedContainerItDidNotCreate(t *testing.T) {
+	id := secretname.ProjectPrefix + "openrouter-key"
+	made := map[string]string{AnnotationCreatedBy: testAdminEmail}
+	for _, tc := range []struct {
+		what string
+		s    Secret
+	}{
+		{"no annotations at all", Secret{ID: id, Annotations: map[string]string{}}},
+		{"a TTL", Secret{ID: id, Annotations: made, Shape: Shape{TTL: "86400s"}}},
+		{"an owner's annotations", Secret{ID: id, Annotations: map[string]string{
+			AnnotationCreatedBy: testAdminEmail, AnnotationOwnerSub: testAdminSub, AnnotationOwnerEmail: testAdminEmail,
+		}}},
+	} {
+		f := member(t)
+		f.store.containers[id] = tc.s
+		tok := f.token(t, testAdminEmail, testAdminSub)
+		for _, route := range []struct{ path, body string }{
+			{CreatePath, createBody(ScopeShared, "openrouter-key", testValue)},
+			{VersionPath, createBody(ScopeShared, "openrouter-key", testValue)},
+			{DeletePath, "{\"scope\":\"shared\",\"name\":\"openrouter-key\"}"},
+		} {
+			w := f.post(t, route.path, tok, route.body)
+			if w.Code != http.StatusConflict || errorType(t, w) != ErrorForeignContainer {
+				t.Fatalf("%s on a shared container with %s: got %d %s, want 409 %s", route.path, tc.what, w.Code, errorType(t, w), ErrorForeignContainer)
+			}
+		}
+		if len(f.store.values) != 0 || len(f.store.deleted) != 0 {
+			t.Fatalf("a shared container with %s was written into (%v) or deleted (%v)", tc.what, f.store.values, f.store.deleted)
+		}
+		if _, ok := f.store.containers[id]; !ok {
+			t.Fatalf("a shared container with %s was removed", tc.what)
 		}
 	}
 }
