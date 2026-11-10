@@ -37,9 +37,9 @@ const (
 	// WindowRuns is the most runs of one tier a calibration reads: the last
 	// of them, so a tier that changed shape is calibrated on what it does now.
 	WindowRuns = 20
-	// WindowDays is how far back from the newest run of the report it reads.
-	// The two are a window and not a requirement: whichever holds fewer runs
-	// is the one that counts.
+	// WindowDays is how far back from that tier's newest run it reads. The two
+	// are a window and not a requirement: whichever holds fewer runs is the one
+	// that counts.
 	WindowDays = 14
 	// SuggestionFloor and SuggestionCeiling bound how far a suggestion may
 	// move from the expectation the window's runs carried. A ratio outside
@@ -109,56 +109,63 @@ func Sections(d digest.Digest) []digest.Section {
 // runs of, in the vocabulary's order (plan T8.3, spec §6).
 //
 // The window is the report's own expectations -- every run of the period that
-// carried a tier -- narrowed to the last WindowRuns of them or the last
-// WindowDays, whichever is fewer. The governance-halted runs are left out
-// before the window is cut rather than after: the window is a bound on the
-// sample a median is taken over, and a window of 20 runs of which 8 were
-// halted would otherwise be a median of 12.
+// carried a tier -- read per tier: the plan's window is "per tier, over the
+// last 20 runs or 14 days", so each tier is calibrated on its own runs and on
+// none of another's. One window cut over every tier's expectations at once
+// would be a window of the report rather than of a tier: a busy tier would
+// push a quiet one out of the section entirely, and the busy one would be
+// calibrated on fewer runs than its own last twenty.
 //
 // A tier the window holds no run of gets no row: there is nothing to calibrate
 // it from, and a suggestion invented from nothing would be a figure no run
 // produced.
 func Calibrate(d digest.Digest) []Calibration {
-	window := calibrateWindow(d.Expectations)
-	if len(window) == 0 {
-		return nil
-	}
 	out := make([]Calibration, 0, len(tier.Tiers))
 	for _, t := range tier.Tiers {
-		var runs []digest.Expectation
-		for _, e := range window {
-			if e.Tier == string(t) {
-				runs = append(runs, e)
-			}
-		}
-		if len(runs) > 0 {
-			out = append(out, calibrate(t, runs))
+		if window := calibrateWindow(tierRuns(d.Expectations, t)); len(window) > 0 {
+			out = append(out, calibrate(t, window))
 		}
 	}
 	return out
 }
 
-// calibrateWindow is exp narrowed to the window: the runs that are not
-// governance-halted, then the last WindowRuns of those, and of those the ones
-// no older than WindowDays before the newest. exp is ordered by finish time
-// (digest.Expectation), which is what makes "the last" a fact of the runs and
-// not of the order the records arrived in (G3).
-func calibrateWindow(exp []digest.Expectation) []digest.Expectation {
-	kept := make([]digest.Expectation, 0, len(exp))
+// tierRuns is the digest's expectations of tier t, in finish order: the field
+// is written in that order (digest.Build), and "the last" a window keeps is a
+// fact of the runs rather than of the order a caller handed them over in (G3),
+// so the order is made here instead of trusted.
+func tierRuns(exp []digest.Expectation, t tier.Tier) []digest.Expectation {
+	var out []digest.Expectation
 	for _, e := range exp {
-		if !e.Governance {
+		if e.Tier == string(t) {
+			out = append(out, e)
+		}
+	}
+	slices.SortFunc(out, func(a, b digest.Expectation) int { return a.Finished.Compare(b.Finished) })
+	return out
+}
+
+// calibrateWindow is one tier's runs narrowed to its window: the runs no older
+// than WindowDays before the tier's newest one, and of those the last
+// WindowRuns. The two are a window and not a requirement: whichever holds
+// fewer runs is the one that counts.
+//
+// The governance-halted runs are left out before the sample is cut rather than
+// after: the window bounds the sample a median is taken over, and a window of
+// 20 runs of which 8 were halted would otherwise be a median of 12. The 14 days
+// are measured back from the tier's newest run, halted or not, because what
+// ages is the tier's own last use of it and a tripwire stopping a run does not
+// move that.
+func calibrateWindow(runs []digest.Expectation) []digest.Expectation {
+	if len(runs) == 0 {
+		return nil
+	}
+	cutoff := runs[len(runs)-1].Finished.AddDate(0, 0, -WindowDays)
+	kept := make([]digest.Expectation, 0, len(runs))
+	for _, e := range runs {
+		if !e.Governance && !e.Finished.Before(cutoff) {
 			kept = append(kept, e)
 		}
 	}
-	if len(kept) == 0 {
-		return nil
-	}
-	cutoff := kept[len(kept)-1].Finished.AddDate(0, 0, -WindowDays)
-	i := 0
-	for i < len(kept) && kept[i].Finished.Before(cutoff) {
-		i++
-	}
-	kept = kept[i:]
 	if len(kept) > WindowRuns {
 		kept = kept[len(kept)-WindowRuns:]
 	}

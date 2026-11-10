@@ -244,6 +244,128 @@ func TestCalibrationBounds(t *testing.T) {
 	}
 }
 
+// TestCalibrationWindowIsPerTier (plan T8.3): the window is the tier's own.
+// The plan reads it "per tier, over the last 20 runs or 14 days", so a busy
+// tier may not push a quiet one out of the section and may not shorten the
+// quiet one's window: 25 small runs and 3 medium ones older than every small
+// run of the last twenty give two rows, small on its own last 20 and medium on
+// its 3 -- where one window cut over the report's expectations at once would
+// hold the 20 newest, all small, and print no medium row at all.
+func TestCalibrationWindowIsPerTier(t *testing.T) {
+	var recs []runstore.Record
+	// small: 25 runs ten minutes apart, 1.00x for the five the window drops
+	// and 2.00x for the twenty it keeps.
+	for i := range 25 {
+		billed := 2.0
+		if i < 5 {
+			billed = 1
+		}
+		recs = append(recs, calRecord(t, calRun{
+			id:      fmt.Sprintf("20261021-%06d-%04x", 90000+i, i),
+			at:      calTime(t, "2026-10-21T00:00:00Z").Add(time.Duration(i) * 10 * time.Minute).Format(time.RFC3339),
+			took:    time.Hour,
+			tier:    tier.Small,
+			usd:     1,
+			minutes: 30,
+			billed:  billed,
+		}))
+	}
+	// medium: 3 runs two days earlier, older than every small run the window
+	// keeps, at 1.50x.
+	for i := range 3 {
+		recs = append(recs, calRecord(t, calRun{
+			id:      fmt.Sprintf("20261019-%06d-%04x", 90000+i, i),
+			at:      fmt.Sprintf("2026-10-19T09:%02d:00Z", i),
+			took:    45 * time.Minute,
+			tier:    tier.Medium,
+			usd:     1,
+			minutes: 30,
+			billed:  1.5,
+		}))
+	}
+
+	cal := governance.Calibrate(digest.Build(recs, calPeriod(t)))
+	if len(cal) != 2 {
+		t.Fatalf("the window gave %d rows, want one per tier it holds runs of: %+v", len(cal), cal)
+	}
+	for _, c := range cal {
+		switch c.Tier {
+		case tier.Small:
+			if c.Runs != governance.WindowRuns {
+				t.Errorf("small holds %d runs, want its own last %d", c.Runs, governance.WindowRuns)
+			}
+			if c.CostRatio != 2 {
+				t.Errorf("small's cost ratio = %v, want the 2.00x its last %d runs carry", c.CostRatio, governance.WindowRuns)
+			}
+		case tier.Medium:
+			if c.Runs != 3 {
+				t.Errorf("medium holds %d runs, want the 3 it ran: a window cut over every tier's runs at once would hold none of them", c.Runs)
+			}
+			if c.CostRatio != 1.5 {
+				t.Errorf("medium's cost ratio = %v, want 1.50x", c.CostRatio)
+			}
+		default:
+			t.Errorf("the window holds a %s row and the fixture ran none", c.Tier)
+		}
+	}
+
+	// The report prints both rows, each on its own tier's window.
+	md := calMarkdown(t, recs)
+	for _, row := range []string{
+		"| small | 20 | 2.00x | 2.00x | $1.00 / 30m | $2.00 / 60m |",
+		"| medium | 3 | 1.50x | 1.50x | $1.00 / 30m | $1.50 / 45m |",
+	} {
+		if !strings.Contains(md, row) {
+			t.Errorf("the report holds no %q:\n%s", row, calSection(t, md))
+		}
+	}
+}
+
+// TestCalibrationWindowStopsAtFourteenDays (plan T8.3): the window is the last
+// WindowDays of the tier's own runs as well as its last WindowRuns, whichever
+// is fewer. A year's runs are read here because they are the only period a run
+// older than a fortnight fits in: the two large runs of October are the window
+// and the three of September are outside it, so the ratio is the recent 3.00x
+// and not the 1.00x a reader that kept every run would take.
+func TestCalibrationWindowStopsAtFourteenDays(t *testing.T) {
+	p, err := digest.NewPeriod(digest.ByYear, "2026-10-21")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The fixture's own claim: the cutoff falls between the September runs and
+	// the October ones, so the two halves are on either side of it.
+	cutoff := calTime(t, "2026-10-21T09:00:00Z").AddDate(0, 0, -governance.WindowDays)
+	if !cutoff.After(calTime(t, "2026-09-12T09:00:00Z")) || cutoff.After(calTime(t, "2026-10-20T09:00:00Z")) {
+		t.Fatalf("the fixture no longer straddles the %d-day cutoff %s", governance.WindowDays, cutoff.Format(time.RFC3339))
+	}
+	var recs []runstore.Record
+	for _, r := range []calRun{
+		{id: "20260910-090000-0001", at: "2026-09-10T09:00:00Z", took: 30 * time.Minute, tier: tier.Large, usd: 1, minutes: 30, billed: 1},
+		{id: "20260911-090000-0002", at: "2026-09-11T09:00:00Z", took: 30 * time.Minute, tier: tier.Large, usd: 1, minutes: 30, billed: 1},
+		{id: "20260912-090000-0003", at: "2026-09-12T09:00:00Z", took: 30 * time.Minute, tier: tier.Large, usd: 1, minutes: 30, billed: 1},
+		{id: "20261020-090000-0004", at: "2026-10-20T09:00:00Z", took: 90 * time.Minute, tier: tier.Large, usd: 1, minutes: 30, billed: 3},
+		{id: "20261021-090000-0005", at: "2026-10-21T09:00:00Z", took: 90 * time.Minute, tier: tier.Large, usd: 1, minutes: 30, billed: 3},
+	} {
+		recs = append(recs, calRecord(t, r))
+	}
+
+	cal := governance.Calibrate(digest.Build(recs, p))
+	if len(cal) != 1 {
+		t.Fatalf("the window gave %d rows, want the one tier it holds runs of: %+v", len(cal), cal)
+	}
+	c := cal[0]
+	if c.Runs != 2 {
+		t.Errorf("the large row holds %d runs, want the 2 inside the last %d days", c.Runs, governance.WindowDays)
+	}
+	if !c.CostKnown || c.CostRatio != 3 || !c.DurationKnown || c.DurationRatio != 3 {
+		t.Errorf("the large row's ratios = %v cost (known %v), %v duration (known %v), want 3.00x for both: the runs outside the window are not read",
+			c.CostRatio, c.CostKnown, c.DurationRatio, c.DurationKnown)
+	}
+	if c.SuggestedUSD != 2_000_000 || c.SuggestedMinutes != 60 {
+		t.Errorf("the suggestion = %s / %dm, want $2.00 / 60m (3.00x held at the ceiling)", digest.USD(c.SuggestedUSD), c.SuggestedMinutes)
+	}
+}
+
 // TestCalibrationAppliesNothing (plan T8.3, G9): a suggestion is printed and
 // nothing else. The window says a tier costs twice what it expects, the report
 // says so, and the governance a run is merged under still resolves the figure
