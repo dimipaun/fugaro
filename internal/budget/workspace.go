@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"regexp"
 	"time"
 
@@ -37,6 +38,24 @@ import (
 //
 // Money is integer micro-dollars, as everywhere in this package.
 const pathWorkspaceSpend = "workspace_spend"
+
+// The meter's retries under contention. Every reserve and every settle of a
+// workspace is a read-then-conditional-write of one month's node, so parallel
+// runs in one workspace meet there; the waits are jittered rather than fixed
+// because the collisions are simultaneous by construction.
+const (
+	// WorkspaceSettleAttempts bounds a settle's conditional writes: three times
+	// a reserve's (SetAttempts). The two halves are not symmetric under
+	// contention — a reserve that gives up refuses a call that has not been made
+	// and costs nothing, while a settle that gives up refuses a call that HAS
+	// been paid for, and its usage is then recorded only by a later attempt or
+	// left to age out (WorkspaceReservationTTL) — so the settle retries harder.
+	WorkspaceSettleAttempts = 3 * SetAttempts
+	// workspaceRetryBackoff is the first wait between two attempts, and
+	// workspaceRetryBackoffMax the last: the wait grows with each lost write.
+	workspaceRetryBackoff    = 20 * time.Millisecond
+	workspaceRetryBackoffMax = 250 * time.Millisecond
+)
 
 // WorkspaceReservationTTL is how long room may stay taken for a call that never
 // settles. A reservation is the meter's whole hold on room, and the process
@@ -300,8 +319,9 @@ var (
 	// place is a usage the service cannot record, and a call whose cost cannot
 	// be recorded spends against a cap the service cannot see.
 	ErrWorkspaceReservationUnknown = errors.New("no reservation for this call in the workspace's meter")
-	// ErrWorkspaceSpendContention: the meter kept changing under SetAttempts
-	// conditional writes.
+	// ErrWorkspaceSpendContention: the meter kept changing under every
+	// conditional write the caller's half of the meter is allowed
+	// (SetAttempts for a reserve, WorkspaceSettleAttempts for a settle).
 	ErrWorkspaceSpendContention = errors.New("the workspace's meter kept changing under the write")
 	// ErrWorkspaceSpendUnreadable: the node is not a figure the meter can read
 	// (a negative amount, a call or a member with no name, a month that is not
@@ -379,7 +399,9 @@ func (s WorkspaceSpend) validate() error {
 // ReserveWorkspaceSpend takes the room for one call out of the workspace's own
 // month, in one conditional write: the node is read with its ETag, the room is
 // checked and the reservation added, and the node is put back only if nothing
-// else wrote it meanwhile. A lost race is re-read, up to SetAttempts times.
+// else wrote it meanwhile. A lost race is re-read, with a jittered wait between
+// attempts, up to SetAttempts times: a reserve gives up more readily than a
+// settle (WorkspaceSettleAttempts), whose call has already been paid for.
 //
 // ErrWorkspaceCeilingReached is the refusal of a call that would pass the
 // ceiling; the room returned beside it is the figure as it was read, so a caller
@@ -397,7 +419,7 @@ func ReserveWorkspaceSpend(ctx context.Context, db WorkspaceSpendDB, r Workspace
 	}
 	month := MonthKey(r.Now)
 	var hold WorkspaceHold
-	spend, err := updateWorkspaceSpend(ctx, db, r.Name, month, r.Now, func(s *WorkspaceSpend) error {
+	spend, err := updateWorkspaceSpend(ctx, db, r.Name, month, r.Now, SetAttempts, func(s *WorkspaceSpend) error {
 		if _, ok := s.Reservations[r.Call]; ok {
 			return ErrWorkspaceCallReserved
 		}
@@ -441,7 +463,7 @@ func SettleWorkspaceSpend(ctx context.Context, db WorkspaceSpendDB, h WorkspaceH
 	if s.Now.IsZero() {
 		return WorkspaceRoom{}, errors.New("budget: a settle states when it is made: a hold whose call cannot still be in flight is not the hold it ends")
 	}
-	spend, err := updateWorkspaceSpend(ctx, db, h.Name, h.Month, s.Now, func(sp *WorkspaceSpend) error {
+	spend, err := updateWorkspaceSpend(ctx, db, h.Name, h.Month, s.Now, WorkspaceSettleAttempts, func(sp *WorkspaceSpend) error {
 		res, ok := sp.Reservations[h.Call]
 		if !ok {
 			return ErrWorkspaceReservationUnknown
@@ -475,9 +497,9 @@ func SettleWorkspaceSpend(ctx context.Context, db WorkspaceSpendDB, h WorkspaceH
 // The callback must return BEFORE it changes anything when it refuses, so a
 // refusal leaves the node as it was read — expired holds included — and the
 // caller's room is the figure that refused it.
-func updateWorkspaceSpend(ctx context.Context, db WorkspaceSpendDB, name, month string, now time.Time, f func(*WorkspaceSpend) error) (WorkspaceSpend, error) {
+func updateWorkspaceSpend(ctx context.Context, db WorkspaceSpendDB, name, month string, now time.Time, attempts int, f func(*WorkspaceSpend) error) (WorkspaceSpend, error) {
 	path := PathWorkspaceSpend(name, month)
-	for attempt := 1; attempt <= SetAttempts; attempt++ {
+	for attempt := 1; attempt <= attempts; attempt++ {
 		var cur WorkspaceSpend
 		etag, found, err := db.GetETag(ctx, path, &cur)
 		if err != nil {
@@ -505,6 +527,12 @@ func updateWorkspaceSpend(ctx context.Context, db WorkspaceSpendDB, name, month 
 		}
 		err = db.PutIfMatch(ctx, path, etag, cur)
 		if errors.Is(err, rtdb.ErrPrecondition) {
+			if attempt == attempts {
+				break
+			}
+			if werr := workspaceWait(ctx, workspaceJitter(attempt)); werr != nil {
+				return WorkspaceSpend{}, werr
+			}
 			continue
 		}
 		if err != nil {
@@ -513,4 +541,25 @@ func updateWorkspaceSpend(ctx context.Context, db WorkspaceSpendDB, name, month 
 		return cur, nil
 	}
 	return WorkspaceSpend{}, ErrWorkspaceSpendContention
+}
+
+// workspaceJitter is the wait before the attempt after the n-th lost write: the
+// base grows with n and is spread out, the shape Session.jitter gives a denied
+// write, so two calls that collided on the month's node do not collide again.
+func workspaceJitter(n int) time.Duration {
+	base := min(workspaceRetryBackoff*time.Duration(n), workspaceRetryBackoffMax)
+	return base/2 + time.Duration(rand.Int64N(int64(base)+1))
+}
+
+// workspaceWait waits d, or returns the context's error: a service that is
+// shutting down does not keep retrying a write nobody will serve.
+func workspaceWait(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
 }

@@ -379,6 +379,65 @@ func (c *contendedDB) PutIfMatch(ctx context.Context, path, etag string, v any) 
 	return c.Client.PutIfMatch(ctx, path, etag+"-stale", v)
 }
 
+// flakyDB loses the first losses conditional writes — a node that changed under
+// the write n times and then settled — and counts every attempt.
+type flakyDB struct {
+	*rtdb.Client
+	losses   int
+	attempts int
+}
+
+func (f *flakyDB) PutIfMatch(ctx context.Context, path, etag string, v any) error {
+	f.attempts++
+	if f.losses > 0 {
+		f.losses--
+		return f.Client.PutIfMatch(ctx, path, etag+"-stale", v)
+	}
+	return f.Client.PutIfMatch(ctx, path, etag, v)
+}
+
+// The two halves of the meter are not symmetric under contention: a reserve
+// that loses every attempt it is allowed gives up and refuses a call that has
+// not been made, while a settle that loses the same number keeps trying — its
+// call HAS been paid for, so the usage has to be recorded rather than left to
+// the hold's age.
+func TestWorkspaceCapSettleOutlastsContentionThatRefusesAReserve(t *testing.T) {
+	ctx := context.Background()
+	_, client := wsMeterDB(t)
+	c := wsMeterCeiling(t, 2)
+
+	lost := &flakyDB{Client: client, losses: budget.SetAttempts}
+	if _, _, err := budget.ReserveWorkspaceSpend(ctx, lost, wsMeterReserve(t, "call-1", wsMeterMember, 1, c)); !errors.Is(err, budget.ErrWorkspaceSpendContention) {
+		t.Fatalf("a reserve that lost %d writes came back as %v, want the contention refusal", budget.SetAttempts, err)
+	}
+	if lost.attempts != budget.SetAttempts {
+		t.Fatalf("the reserve wrote %d times, want the bounded %d", lost.attempts, budget.SetAttempts)
+	}
+
+	hold, _, err := budget.ReserveWorkspaceSpend(ctx, client, wsMeterReserve(t, "call-2", wsMeterMember, 1, c))
+	if err != nil {
+		t.Fatalf("Reserve: %v", err)
+	}
+	flaky := &flakyDB{Client: client, losses: budget.SetAttempts}
+	after, err := budget.SettleWorkspaceSpend(ctx, flaky, hold, budget.WorkspaceSettle{Actual: wsMeterUSD(t, 0.25), Ceiling: c, Now: wsMeterNow})
+	if err != nil {
+		t.Fatalf("a settle that lost the same %d writes gave up instead of recording a call that was already paid for: %v", budget.SetAttempts, err)
+	}
+	if after.Settled != wsMeterUSD(t, 0.25) || after.Reserved != 0 {
+		t.Fatalf("after the settle the room reads %v settled and %v reserved, want $0.25 and 0", after.Settled.USD(), after.Reserved.USD())
+	}
+	if flaky.attempts <= budget.SetAttempts {
+		t.Fatalf("the settle wrote %d times, want more than a reserve's %d", flaky.attempts, budget.SetAttempts)
+	}
+
+	// The waits between the attempts are what gives the other writer time to
+	// finish: a contested node is retried after a growing, jittered wait, and
+	// never in a tight loop.
+	if budget.WorkspaceSettleAttempts <= budget.SetAttempts {
+		t.Fatalf("a settle is allowed %d attempts and a reserve %d: the half whose call is already paid for retries no harder", budget.WorkspaceSettleAttempts, budget.SetAttempts)
+	}
+}
+
 // A node that keeps changing under the write is a refusal after a bounded
 // number of attempts, never an unbounded retry: the caller refuses the call.
 func TestWorkspaceCapGivesUpOnAContendedMeter(t *testing.T) {
