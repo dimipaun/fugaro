@@ -1892,12 +1892,11 @@ func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) e
 	if err != nil {
 		return err
 	}
-	// The layer document's own reserved keys, in a coding agent's session
-	// (D1175, spec §4.2). It is after the gate and never instead of it: a
-	// managed project's gate refuses the same key and records that refusal
-	// (D1025), and this is the sentence the project whose marks prove nothing
-	// keeps.
-	if err := settingsLayerReservedGate(cmd, target, key, old, newData); err != nil {
+	// The layer document's own two refusals (D1175, spec §4.2, §3.6), after the
+	// gate and never instead of it: a managed project's gate refuses and records
+	// its own answer for this document, and these are the sentences the project
+	// whose marks prove nothing keeps.
+	if err := settingsLayerGate(cmd, target, o, key, old, newData); err != nil {
 		return err
 	}
 	// --ask, once the marks are read: the sentence it prints, or the refusal
@@ -2007,8 +2006,8 @@ func runSettingsUnset(cmd *cobra.Command, args []string, o settingsWriteOptions)
 	if err != nil {
 		return err
 	}
-	// The layer document's own reserved keys, as on the set path above.
-	if err := settingsLayerReservedGate(cmd, target, key, old, newData); err != nil {
+	// The layer document's own two refusals, as on the set path above.
+	if err := settingsLayerGate(cmd, target, o, key, old, newData); err != nil {
 		return err
 	}
 	if err := askDecide(cmd.OutOrStdout(), askFlags{ask: o.ask, yes: o.yes}, managed.Managed, settingsEditConditions(cmd, edit)); err != nil {

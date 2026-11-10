@@ -411,7 +411,12 @@ const workflowExecutableRefusal = "nothing was written: the workflow changes com
 // write is what is gated.
 func workflowExecutableGate(cmd *cobra.Command, target settingsTarget, o settingsWriteOptions, old, next []byte) error {
 	if target.kind == settingsDocLayer {
-		return layerExecutableGate(cmd, target, o, old, next)
+		// The layer's own gate is settingsLayerGate, and it runs after the
+		// managed gate rather than here: a managed project's session is refused
+		// and recorded by that gate, with its own rule over the profiles block
+		// (settingsProfilesRule, D1025), and a refusal printed before it would
+		// leave the record with nothing to say.
+		return nil
 	}
 	if target.kind != settingsDocRepo {
 		if o.executableChanges {
@@ -437,6 +442,26 @@ func workflowExecutableGate(cmd *cobra.Command, target settingsTarget, o setting
 // file, which is the document this door writes: one constant, because the flag
 // that would have allowed it is the same on both.
 const layerExecutableRefusal = "nothing was written: the layer changes commands or image steps (shown above); review them, then run again with --executable-changes"
+
+// settingsLayerGate is the two refusals a write into this machine's project
+// layer file meets (G4, D1175; spec §3.6), in the order the file's own rules are
+// read: the reserved runs no coding agent's session writes (config publish's
+// layerReservedRuns), and then the executable keys of a profile, which the
+// owner's --executable-changes is the word for.
+//
+// It is read after the managed gate and never instead of it: a managed project's
+// session meets settingsProfilesRule over this same document, is refused by it
+// and leaves the refusal in the record (D1025), and a sentence printed before
+// that read would be an answer with no record behind it.
+func settingsLayerGate(cmd *cobra.Command, target settingsTarget, o settingsWriteOptions, key string, old, newData []byte) error {
+	if target.kind != settingsDocLayer {
+		return nil
+	}
+	if err := settingsLayerReservedGate(cmd, target, key, old, newData); err != nil {
+		return err
+	}
+	return layerExecutableGate(cmd, target, o, old, newData)
+}
 
 // layerExecutableGate is workflowExecutableGate for a write into this machine's
 // project layer file (G4, D1175; spec §3.6). A profile is where a repository's
