@@ -62,12 +62,32 @@ func answering(known map[int]issueresolve.State) *fakeReader {
 	}}
 }
 
-// filedAt files one issue in the store and answers its number and the URL it
-// was filed at: the shape a pass asks GitHub about (F28).
-func filedAt(t *testing.T, ctx context.Context, b *blobx.Bucket, hexPair string) (int, string) {
+// githubOffset is how far a test's GitHub issue number sits from the number
+// the store knows the same record by. The two are different namespaces: the
+// store counts this project's issues from one up, while the repository's
+// issues are in the thousands. Every record a test files therefore carries a
+// link whose number is its own, so a pass that asks GitHub about the store's
+// number — and so resolves a record against an unrelated issue — fails here
+// rather than on somebody's machine.
+const githubOffset = 2000
+
+// filedAt files one issue in the store and answers the number the store knows
+// it by, the GitHub issue number its link names, and that link: the shape a
+// pass asks GitHub about (F28). The reader is asked about the second, and the
+// record is read and written by the first.
+func filedAt(t *testing.T, ctx context.Context, b *blobx.Bucket, hexPair string) (project, github int, url string) {
 	t.Helper()
-	up, url := filedIssue(t, ctx, b, fingerprint(hexPair))
-	return up.Number, url
+	up := upload(t, ctx, b, sharedIssue("update-20261107183012-48213", fingerprint(hexPair)))
+	claim, err := Claim(ctx, b, up.Number, "user:ana@example.test", sharedAt)
+	if err != nil {
+		t.Fatalf("claiming issue %d: %v", up.Number, err)
+	}
+	github = up.Number + githubOffset
+	url = fmt.Sprintf("%s%d", issueURLPrefix, github)
+	if err := RecordSubmitted(ctx, b, claim, url, sharedAt); err != nil {
+		t.Fatalf("filing issue %d: %v", up.Number, err)
+	}
+	return up.Number, github, url
 }
 
 // rewriteURL puts url on a filed record without going through the store's own
@@ -99,11 +119,11 @@ func rewriteURL(t *testing.T, ctx context.Context, b *blobx.Bucket, number int, 
 func TestResolveMarksClosedCompletedAtOrBelowInstalled(t *testing.T) {
 	ctx := context.Background()
 	b := sharedBucket(t)
-	below, belowURL := filedAt(t, ctx, b, "61")
-	equal, _ := filedAt(t, ctx, b, "62")
+	below, belowGH, belowURL := filedAt(t, ctx, b, "61")
+	equal, equalGH, _ := filedAt(t, ctx, b, "62")
 	reader := answering(map[int]issueresolve.State{
-		below: issueresolve.ClosedCompleted{Milestone: "0.21.0"},
-		equal: issueresolve.ClosedCompleted{Milestone: "0.22.0"},
+		belowGH: issueresolve.ClosedCompleted{Milestone: "0.21.0"},
+		equalGH: issueresolve.ClosedCompleted{Milestone: "0.22.0"},
 	})
 
 	res, err := Resolve(ctx, resolveDeps(t, b, reader), "0.22.0")
@@ -147,14 +167,17 @@ func TestResolveMarksClosedCompletedAtOrBelowInstalled(t *testing.T) {
 func TestResolveLeavesMilestoneAboveInstalled(t *testing.T) {
 	ctx := context.Background()
 	b := sharedBucket(t)
-	number, _ := filedAt(t, ctx, b, "63")
+	number, gh, _ := filedAt(t, ctx, b, "63")
 	reader := answering(map[int]issueresolve.State{
-		number: issueresolve.ClosedCompleted{Milestone: "0.23.0"},
+		gh: issueresolve.ClosedCompleted{Milestone: "0.23.0"},
 	})
 
 	res, err := Resolve(ctx, resolveDeps(t, b, reader), "0.22.0")
 	if err != nil {
 		t.Fatalf("resolving: %v", err)
+	}
+	if want := []int{gh}; !slices.Equal(reader.asked, want) {
+		t.Errorf("the pass asked about %v, want %v", reader.asked, want)
 	}
 	if len(res.Fixed) != 0 || res.Quiet != 0 || res.Skipped != "" {
 		t.Errorf("an issue fixed after this release gave %+v", res)
@@ -170,11 +193,11 @@ func TestResolveLeavesMilestoneAboveInstalled(t *testing.T) {
 func TestResolveNotPlannedAndDuplicateAreQuiet(t *testing.T) {
 	ctx := context.Background()
 	b := sharedBucket(t)
-	notPlanned, _ := filedAt(t, ctx, b, "64")
-	duplicate, _ := filedAt(t, ctx, b, "65")
+	notPlanned, notPlannedGH, _ := filedAt(t, ctx, b, "64")
+	duplicate, duplicateGH, _ := filedAt(t, ctx, b, "65")
 	reader := answering(map[int]issueresolve.State{
-		notPlanned: issueresolve.ClosedNotPlanned{},
-		duplicate:  issueresolve.ClosedDuplicate{},
+		notPlannedGH: issueresolve.ClosedNotPlanned{},
+		duplicateGH:  issueresolve.ClosedDuplicate{},
 	})
 
 	res, err := Resolve(ctx, resolveDeps(t, b, reader), "0.22.0")
@@ -204,16 +227,19 @@ func TestResolveNotPlannedAndDuplicateAreQuiet(t *testing.T) {
 func TestResolveNoMilestoneNoVerdictStaysSubmitted(t *testing.T) {
 	ctx := context.Background()
 	b := sharedBucket(t)
-	open, _ := filedAt(t, ctx, b, "66")
-	undecided, _ := filedAt(t, ctx, b, "67")
+	open, openGH, _ := filedAt(t, ctx, b, "66")
+	undecided, undecidedGH, _ := filedAt(t, ctx, b, "67")
 	reader := answering(map[int]issueresolve.State{
-		open:      issueresolve.Open{},
-		undecided: issueresolve.NoVerdict{},
+		openGH:      issueresolve.Open{},
+		undecidedGH: issueresolve.NoVerdict{},
 	})
 
 	res, err := Resolve(ctx, resolveDeps(t, b, reader), "0.22.0")
 	if err != nil {
 		t.Fatalf("resolving: %v", err)
+	}
+	if want := []int{openGH, undecidedGH}; !slices.Equal(reader.asked, want) {
+		t.Errorf("the pass asked about %v, want %v: both issues are checked and left alone", reader.asked, want)
 	}
 	if len(res.Fixed) != 0 || res.Quiet != 0 || res.Skipped != "" {
 		t.Errorf("an issue GitHub decided nothing about gave %+v", res)
@@ -227,16 +253,17 @@ func TestResolveNoMilestoneNoVerdictStaysSubmitted(t *testing.T) {
 
 // A rate limit is not one issue's: every later ask would be refused the same
 // way, so the pass ends rather than spending what is left of its budget on
-// answers it already knows (F8). The issue behind the refusal is asked about
-// next time — its number is recorded as asked either way.
+// answers it already knows (F8). The refused number is recorded as asked with
+// the ones before it, so the next pass reaches the issues this one never got
+// to first and comes back to this one after them.
 func TestResolveStopsOnRateLimit(t *testing.T) {
 	ctx := context.Background()
 	b := sharedBucket(t)
-	first, _ := filedAt(t, ctx, b, "68")
-	refused, _ := filedAt(t, ctx, b, "69")
-	third, _ := filedAt(t, ctx, b, "6a")
+	_, firstGH, _ := filedAt(t, ctx, b, "68")
+	_, refusedGH, _ := filedAt(t, ctx, b, "69")
+	third, _, _ := filedAt(t, ctx, b, "6a")
 	reader := &fakeReader{answer: func(_ context.Context, number int) (issueresolve.State, error) {
-		if number == refused {
+		if number == refusedGH {
 			return issueresolve.NoVerdict{}, fmt.Errorf("%w: GitHub answered 403", issueresolve.ErrRateLimited)
 		}
 		return issueresolve.Open{}, nil
@@ -246,7 +273,7 @@ func TestResolveStopsOnRateLimit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolving: %v", err)
 	}
-	if want := []int{first, refused}; !slices.Equal(reader.asked, want) {
+	if want := []int{firstGH, refusedGH}; !slices.Equal(reader.asked, want) {
 		t.Errorf("the pass asked about %v, want %v: a rate limit ends it", reader.asked, want)
 	}
 	if res.Skipped == "" {
@@ -263,11 +290,11 @@ func TestResolveStopsOnRateLimit(t *testing.T) {
 func TestResolveStopsOnFirstTransportError(t *testing.T) {
 	ctx := context.Background()
 	b := sharedBucket(t)
-	first, _ := filedAt(t, ctx, b, "6b")
-	unreachable, _ := filedAt(t, ctx, b, "6c")
-	third, _ := filedAt(t, ctx, b, "6d")
+	_, firstGH, _ := filedAt(t, ctx, b, "6b")
+	_, unreachableGH, _ := filedAt(t, ctx, b, "6c")
+	third, _, _ := filedAt(t, ctx, b, "6d")
 	reader := &fakeReader{answer: func(_ context.Context, number int) (issueresolve.State, error) {
-		if number == unreachable {
+		if number == unreachableGH {
 			return issueresolve.NoVerdict{}, fmt.Errorf("%w: no route to the host", issueresolve.ErrTransport)
 		}
 		return issueresolve.Open{}, nil
@@ -277,7 +304,7 @@ func TestResolveStopsOnFirstTransportError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolving: %v", err)
 	}
-	if want := []int{first, unreachable}; !slices.Equal(reader.asked, want) {
+	if want := []int{firstGH, unreachableGH}; !slices.Equal(reader.asked, want) {
 		t.Errorf("the pass asked about %v, want %v: the first transport error ends it", reader.asked, want)
 	}
 	if res.Skipped == "" {
@@ -298,7 +325,7 @@ func TestResolveNewIssuesAreNotStarvedByOldOpenOnes(t *testing.T) {
 	for i := 0; i < passIssues+5; i++ {
 		filedAt(t, ctx, b, fmt.Sprintf("%02x", i))
 	}
-	fresh, _ := filedAt(t, ctx, b, "ff")
+	fresh, freshGH, _ := filedAt(t, ctx, b, "ff")
 
 	first := answering(map[int]issueresolve.State{})
 	deps := resolveDeps(t, b, first)
@@ -308,11 +335,11 @@ func TestResolveNewIssuesAreNotStarvedByOldOpenOnes(t *testing.T) {
 	if len(first.asked) != passIssues {
 		t.Errorf("the first pass asked about %d issues, want %d", len(first.asked), passIssues)
 	}
-	if slices.Contains(first.asked, fresh) {
-		t.Fatalf("the first pass reached the new issue %d: %v", fresh, first.asked)
+	if slices.Contains(first.asked, freshGH) {
+		t.Fatalf("the first pass reached the new issue %d: %v", freshGH, first.asked)
 	}
 
-	second := answering(map[int]issueresolve.State{fresh: issueresolve.ClosedCompleted{Milestone: "0.22.0"}})
+	second := answering(map[int]issueresolve.State{freshGH: issueresolve.ClosedCompleted{Milestone: "0.22.0"}})
 	deps.Reader = second
 	res, err := Resolve(ctx, deps, "0.22.0")
 	if err != nil {
@@ -354,18 +381,18 @@ func TestResolvePanicIsSkipped(t *testing.T) {
 func TestResolveIgnoresForeignURLShape(t *testing.T) {
 	ctx := context.Background()
 	b := sharedBucket(t)
-	good, goodURL := filedAt(t, ctx, b, "6f")
-	unlinked, _ := filedAt(t, ctx, b, "70")
-	foreign, _ := filedAt(t, ctx, b, "71")
+	good, goodGH, goodURL := filedAt(t, ctx, b, "6f")
+	unlinked, _, _ := filedAt(t, ctx, b, "70")
+	foreign, _, _ := filedAt(t, ctx, b, "71")
 	rewriteURL(t, ctx, b, unlinked, "")
 	rewriteURL(t, ctx, b, foreign, "https://github.com/someone-else/project/issues/9")
-	reader := answering(map[int]issueresolve.State{good: issueresolve.ClosedCompleted{Milestone: "0.22.0"}})
+	reader := answering(map[int]issueresolve.State{goodGH: issueresolve.ClosedCompleted{Milestone: "0.22.0"}})
 
 	res, err := Resolve(ctx, resolveDeps(t, b, reader), "0.22.0")
 	if err != nil {
 		t.Fatalf("resolving: %v", err)
 	}
-	if want := []int{good}; !slices.Equal(reader.asked, want) {
+	if want := []int{goodGH}; !slices.Equal(reader.asked, want) {
 		t.Errorf("the pass asked about %v, want only %v", reader.asked, want)
 	}
 	if len(res.Fixed) != 1 || res.Fixed[0].Number != good || res.Fixed[0].URL != goodURL {
@@ -391,11 +418,11 @@ func TestResolveIgnoresForeignURLShape(t *testing.T) {
 func TestResolveAgentSessionWritesNothingButReturnsFindings(t *testing.T) {
 	ctx := context.Background()
 	b := sharedBucket(t)
-	fixedNumber, _ := filedAt(t, ctx, b, "72")
-	quietNumber, _ := filedAt(t, ctx, b, "73")
+	fixedNumber, fixedGH, _ := filedAt(t, ctx, b, "72")
+	quietNumber, quietGH, _ := filedAt(t, ctx, b, "73")
 	reader := answering(map[int]issueresolve.State{
-		fixedNumber: issueresolve.ClosedCompleted{Milestone: "0.22.0"},
-		quietNumber: issueresolve.ClosedNotPlanned{},
+		fixedGH: issueresolve.ClosedCompleted{Milestone: "0.22.0"},
+		quietGH: issueresolve.ClosedNotPlanned{},
 	})
 	deps := resolveDeps(t, b, reader)
 	deps.AgentMarker = func() string { return agentenv.AgentMarkers[0] }
@@ -423,10 +450,10 @@ func TestResolveAgentSessionWritesNothingButReturnsFindings(t *testing.T) {
 func TestResolveReaderErrorIsSkipped(t *testing.T) {
 	ctx := context.Background()
 	b := sharedBucket(t)
-	broken, _ := filedAt(t, ctx, b, "74")
-	fixedNumber, _ := filedAt(t, ctx, b, "75")
+	_, brokenGH, _ := filedAt(t, ctx, b, "74")
+	fixedNumber, fixedGH, _ := filedAt(t, ctx, b, "75")
 	reader := &fakeReader{answer: func(_ context.Context, number int) (issueresolve.State, error) {
-		if number == broken {
+		if number == brokenGH {
 			return issueresolve.NoVerdict{}, errors.New("the reader was handed something it could not use")
 		}
 		return issueresolve.ClosedCompleted{Milestone: "0.22.0"}, nil
@@ -436,7 +463,7 @@ func TestResolveReaderErrorIsSkipped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("an error the reader returned came back as the pass's: %v", err)
 	}
-	if want := []int{broken, fixedNumber}; !slices.Equal(reader.asked, want) {
+	if want := []int{brokenGH, fixedGH}; !slices.Equal(reader.asked, want) {
 		t.Errorf("the pass asked about %v, want %v", reader.asked, want)
 	}
 	if res.Skipped == "" {
@@ -453,12 +480,12 @@ func TestResolveReaderErrorIsSkipped(t *testing.T) {
 func TestResolveAlreadyResolvedByAnotherMachineIsNotAnError(t *testing.T) {
 	ctx := context.Background()
 	b := sharedBucket(t)
-	number, url := filedAt(t, ctx, b, "76")
+	number, _, url := filedAt(t, ctx, b, "76")
 	other := sharedAt.Add(time.Minute)
-	reader := &fakeReader{answer: func(c context.Context, n int) (issueresolve.State, error) {
+	reader := &fakeReader{answer: func(c context.Context, _ int) (issueresolve.State, error) {
 		// The other machine gets there between this pass's listing and its
 		// own write.
-		if err := SetResolved(c, b, n, "0.22.0", 0, other); err != nil {
+		if err := SetResolved(c, b, number, "0.22.0", 0, other); err != nil {
 			t.Fatalf("the other machine's write: %v", err)
 		}
 		return issueresolve.ClosedCompleted{Milestone: "0.22.0"}, nil
@@ -488,7 +515,7 @@ func TestResolveAlreadyResolvedByAnotherMachineIsNotAnError(t *testing.T) {
 func TestResolveHitByIsSafeAndCapped(t *testing.T) {
 	ctx := context.Background()
 	b := sharedBucket(t)
-	number, _ := filedAt(t, ctx, b, "77")
+	number, gh, _ := filedAt(t, ctx, b, "77")
 	// The record that filed it is ana@example.test (the fixture's reporter),
 	// and the name of the first hit carries a sequence a terminal would obey.
 	for i, h := range []struct{ run, reporter string }{
@@ -502,7 +529,7 @@ func TestResolveHitByIsSafeAndCapped(t *testing.T) {
 	} {
 		upload(t, ctx, b, hit(h.run, fingerprint("77"), h.reporter, "0.22.0", sharedAt.Add(time.Duration(i+1)*time.Minute)))
 	}
-	reader := answering(map[int]issueresolve.State{number: issueresolve.ClosedCompleted{Milestone: "0.22.0"}})
+	reader := answering(map[int]issueresolve.State{gh: issueresolve.ClosedCompleted{Milestone: "0.22.0"}})
 
 	res, err := Resolve(ctx, resolveDeps(t, b, reader), "0.22.0")
 	if err != nil {

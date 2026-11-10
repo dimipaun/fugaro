@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -25,9 +26,10 @@ import (
 // build cannot read, a panic in the middle of the pass: each is one line in
 // Result.Skipped and nothing else, so `fugaro update` never fails, prompts or
 // waits because of an issue check (F7). And a coding agent's session writes
-// nothing at all (F16d): the findings come back for whoever reads the
-// session's output and the store is left exactly as it is, because a
-// session's writes are the person's own.
+// nothing to the shared store (F16d): the findings come back for whoever
+// reads the session's output and the store is left exactly as it is, because
+// a session's writes are the person's own. (The cursor it keeps is this
+// machine's own cache file, which no one else reads.)
 //
 // The one thing it reads from GitHub is what the reader returns — a state and
 // a release version — and no text of GitHub's is ever carried out of here:
@@ -144,6 +146,16 @@ func Resolve(ctx context.Context, deps ResolveDeps, installed string) (res Resul
 		}
 	}()
 
+	// The order the issues were asked about is the cursor's, which is about
+	// what this machine asked last and not about the issues: a caller prints
+	// these, so they come back in number order, and two machines with
+	// different cursors print the same list. It is deferred so that a pass
+	// that unwound through the recover above hands back the same order as
+	// every other.
+	defer func() {
+		sort.Slice(res.Fixed, func(a, b int) bool { return res.Fixed[a].Number < res.Fixed[b].Number })
+	}()
+
 	now := deps.Now()
 	rows, err := ListShared(ctx, deps.Bucket)
 	if err != nil {
@@ -157,17 +169,31 @@ func Resolve(ctx context.Context, deps ResolveDeps, installed string) (res Resul
 	// project's issue is not one to ask about either (F28): the store is
 	// writable by every launcher, and the number the request is built from
 	// has to be one this project filed.
-	var numbers []int
-	rowAt := make(map[int]SharedRow, len(rows))
+	//
+	// The number asked about is the one the link names, never the record's
+	// own: the store counts this project's issues from one up, while the
+	// repository's issues are in the thousands, so a request built from the
+	// record's number would read an unrelated issue and resolve the record
+	// against that. The link's number is the one this project filed, the
+	// shape check is what makes it safe to build a request from, and it is
+	// what the cursor is keyed by: it is the number GitHub was asked about.
+	rowsAt := make(map[int]SharedRow, len(rows))
 	for _, row := range rows {
-		if row.Status != StatusSubmitted || !projectIssueURL(row.URL) {
+		if row.Status != StatusSubmitted {
 			continue
 		}
-		numbers = append(numbers, row.Number)
-		rowAt[row.Number] = row
+		number, ok := projectIssueNumber(row.URL)
+		if !ok {
+			continue
+		}
+		rowsAt[number] = row
 	}
-	if len(numbers) == 0 {
+	if len(rowsAt) == 0 {
 		return res, nil
+	}
+	numbers := make([]int, 0, len(rowsAt))
+	for number := range rowsAt {
+		numbers = append(numbers, number)
 	}
 	ordered := deps.Cursor.Order(numbers)
 	if len(ordered) > passIssues {
@@ -207,20 +233,15 @@ func Resolve(ctx context.Context, deps ResolveDeps, installed string) (res Resul
 			// keeps a pass from asking about it again before the issues
 			// behind it (F8, F15).
 		case issueresolve.ClosedNotPlanned:
-			res.quiet(ctx, deps, number, ClosedNotPlanned, now)
+			res.quiet(ctx, deps, rowsAt[number], ClosedNotPlanned, now)
 		case issueresolve.ClosedDuplicate:
-			res.quiet(ctx, deps, number, ClosedDuplicate, now)
+			res.quiet(ctx, deps, rowsAt[number], ClosedDuplicate, now)
 		case issueresolve.ClosedCompleted:
 			if updatecheck.AtOrBelow(s.Milestone, installed) {
-				res.fix(ctx, deps, rowAt[number], s.Milestone, now)
+				res.fix(ctx, deps, rowsAt[number], s.Milestone, now)
 			}
 		}
 	}
-	// The order the issues were asked about is the cursor's, which is about
-	// what this machine asked last and not about the issues: a caller prints
-	// these, so they come back in number order, and two machines with
-	// different cursors print the same list.
-	sort.Slice(res.Fixed, func(a, b int) bool { return res.Fixed[a].Number < res.Fixed[b].Number })
 	return res, nil
 }
 
@@ -229,12 +250,12 @@ func Resolve(ctx context.Context, deps ResolveDeps, installed string) (res Resul
 //
 // The write is the store's, so a coding agent's session makes none: the
 // finding is still counted and the record is left where it is (F16d).
-func (r *Result) quiet(ctx context.Context, deps ResolveDeps, number int, reason ClosedAs, now time.Time) {
+func (r *Result) quiet(ctx context.Context, deps ResolveDeps, row SharedRow, reason ClosedAs, now time.Time) {
 	r.Quiet++
 	if deps.AgentMarker() != "" {
 		return
 	}
-	if err := SetClosed(ctx, deps.Bucket, number, reason, 0, now); err != nil {
+	if err := SetClosed(ctx, deps.Bucket, row.Number, reason, 0, now); err != nil {
 		r.note("one issue closed on GitHub could not be set aside")
 	}
 }
@@ -277,6 +298,21 @@ func (r *Result) note(why string) {
 	if r.Skipped == "" {
 		r.Skipped = why
 	}
+}
+
+// projectIssueNumber is the GitHub issue number a record's link names, and
+// whether the link has the one shape a stored link may have (F28). The request
+// the pass makes is built from this number and never from the stored string;
+// projectIssueURL is the rule, and this is the number it proves.
+func projectIssueNumber(url string) (int, bool) {
+	if !projectIssueURL(url) {
+		return 0, false
+	}
+	number, err := strconv.Atoi(strings.TrimPrefix(url, issueURLPrefix))
+	if err != nil {
+		return 0, false
+	}
+	return number, true
 }
 
 // skipNote is why the pass stopped or left one issue alone, in this program's
