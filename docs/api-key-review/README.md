@@ -1,6 +1,7 @@
 # The api-key review path — the independent review served by an API key instead of a subscription account
 
-**Status: AK1–AK5 are implemented on `main` and no task past AK5 is started; the decisions
+**Status: AK1–AK5 and AK6a are implemented on `main` (AK6a merged as #2147, `03c2a22c`); AK6b is
+written and in review; no further task is started; the decisions
 D1410–D1429 are answered 2026-11-07 and all tasks are approved 2026-11-07 (owner: "All tasks
 approved. Jobmax") — except AK9 and AK10, which the security review added and which are written and
 not approved.** Every answer is the recommendation, and the ones that decide the shape are worth a
@@ -9,7 +10,8 @@ second Anthropic key**; **D1413 the key wins when the owner asks for it explicit
 an `oauth` run's review does not move onto an API key; **D1415 a new additive field** on
 `StageTiming`, never a new value on `credential`; and **D1418, answered 2026-11-09: a provider's base
 URL and auth shape go in the bundle**, as additive optional fields. This folder is a design for the
-owner to read, and the five tasks that have landed are its first two levels. **Items 1–5 of
+owner to read, and the six tasks that have landed (AK1–AK5 and AK6a) are its first two levels and the
+first half of the third. **Items 1–5 of
 [implementation-plan.md](implementation-plan.md) §6 are satisfied; item 6 is open and item 7's gate is
 lifted.** What the folder has for item 6 is **the author's own pass** over the merged AK4 and AK5
 ([security-review.md](security-review.md)) — **not the independent review the SEC tier and
@@ -23,6 +25,21 @@ the deployed service is guarded in the same release). **E7 is met as of 2026-11-
 so a `fugaro review --pr N` is
 admitted where it was refused; what no live installation has measured is either cloud path, which is
 **Check 330**.
+
+**Reconciled with `docs/model-crafts` on 2026-11-10** (that folder's **D1638** and **F26**). The owner
+ruled that **api-key-review is NOT superseded by model-crafts; model-crafts builds on it** — so
+**AK1–AK7 stay exactly as planned here**, and model-crafts' **MC5** (credential commands and pool
+selection in the runner) and **MC6** (the credentials service serves Anthropic-key and OAuth pool
+members) **extend what AK6a, AK6b and AK7 build and never replace it**: they are held until AK6b and
+AK7 have merged and they re-decide no axis value, no bundle field, no forwarding rule and no model
+path. **AK9 and AK10 are folded into MC6**: written and not approved here, they are carried there,
+where MC6 is already the task that writes the credentials service's own files. AK9's files (the
+refusals and the note that still say a review is served by a Claude account) and AK10's (the guard on
+the bundle write at `fugaro creds set`) are booked in that folder's plan; **the fold approves nothing
+and unapproves nothing**, and AK10's release precondition travels with it (§6 item 11): the release
+that first ships AK6b's provider entry carries the guard, which MC6 now carries — so that release is
+one that also carries MC6, which lands after AK6b's commit. That is the reading the fold leaves, and
+it is recorded here rather than left to be discovered.
 
 **Asked by:** the repository owner, in a message of **2026-11-07** — "the api-key review path: let's
 start a design". The role is the one the ask's own clauses describe: the person who owns the
@@ -141,7 +158,7 @@ upstreams in one run and asserts the reviewer's call reached Anthropic (**F4**).
 | **D1410–D1429** | this work's block, read on 2026-11-07 over `origin/main` (`aa26f322f`) and every open pull request's head. The highest decision written anywhere on `main` is **D1409** (`docs/catalog-build-context`, merged as #1805), and a `git grep` for the decision numbers in the `D141x` and `D142x` ranges over `main` and over all open heads returns **no path at all**, with positive controls run so that "nothing" is not a broken command. **D1410–D1429 are all written** in [reconciliation.md](reconciliation.md) §7 and **every one of them is answered, as recommended: all on 2026-11-07 except D1418, which the owner answered on 2026-11-09** (the base URL and the auth shape go in the bundle); none is reserved unused. The reading, with its commands, is §8 |
 | **Check 330** | this work's live check (implementation-plan §5), **claimed and not written**: the register carries no `## Check 330` section. The register's highest **written** `## Check` section is **360** (`docs/console-managed-screens`'s, written by its CM12), with **340** (`docs/periodic-reviews`, under its §P8), **291** (`docs/image-env`) and **290** (the mixed-credentials run) written beside it — 330 was taken when the highest written section was **290** and the register has moved above it since, so the number now sits in the gap between `docs/cli-output-console-graph`'s **310–314** and the periodic-reviews block **340–349**, where **315–329** are written by nobody. The claims around it are **292** (`docs/catalog-build-context`, merged as #1805), **306–309** (reserved by `docs/stateless-orchestrator`, whose 300–305 are written), **310–314** (`docs/cli-output-console-graph`), **341–349** (`docs/periodic-reviews`: 341 and 342 taken, 343–349 reserved), **350–359** (`docs/failure-classes`), **361–369** (`docs/console-managed-screens`'s available numbers) and **370** (`docs/security-classification`, with 371–379 available) — and **none of them is 330**, nor does any other document claim it. Like every claim it is **claimed, not reserved**: the register's rule is that a claim is settled at its merge and the later of two **colliding** claims renumbers itself, which 330 does not do. The register's own row and section are written by the task that implements the check (**AK8**), under the number free **at that merge** |
 | **Findings F1–F27** | this folder's own numbering, in [reconciliation.md](reconciliation.md) §1, §2 and §5 — **F25–F27** are the security review's ([security-review.md](security-review.md), 2026-11-09) — taking no number any other work reads |
-| **AK1–AK10** | this folder's task series, in [implementation-plan.md](implementation-plan.md) — the two halves of the old AK6 take the letters **AK6a** and **AK6b** rather than renumbering AK7 and AK8. **AK9 and AK10 are unapproved**, and **AK10 gates AK6b's release** (§6 item 11). Distinct from `docs/cloud-senior-review`'s **CSR1–CSR18** and from `docs/in-job-review`'s **Q1–Q17** on purpose: two series in one tree that share letters would be read as one |
+| **AK1–AK10** | this folder's task series, in [implementation-plan.md](implementation-plan.md) — the two halves of the old AK6 take the letters **AK6a** and **AK6b** rather than renumbering AK7 and AK8. **AK6a is merged** (`03c2a22c`), **AK6b is in review**, **AK7 is not started**, and **AK1–AK7 stay as planned** on the reconciliation of 2026-11-10. **AK9 and AK10 are unapproved**, and **AK10 gates AK6b's release** (§6 item 11) — and **both are folded into `docs/model-crafts`'s MC6** as of 2026-11-10 (§6 item 12, that folder's D1638 and F26): written and not approved here, they are that task's to write. Distinct from `docs/cloud-senior-review`'s **CSR1–CSR18** and from `docs/in-job-review`'s **Q1–Q17** on purpose: two series in one tree that share letters would be read as one |
 
 ## Open items
 
