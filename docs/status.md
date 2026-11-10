@@ -44,7 +44,7 @@ As of 2026-11-10, read from `main`, the open pull requests and each plan's task 
 | rigor-modes | about 22/40 | T7.1, T7.2, T8.1, T8.3; overlay plan LV1 to LV7 essentially unstarted |
 | roles-scopes | 3/12 | RS3 (draft #1994), RS4, RS5, RS6a to RS6c, RS7, RS8, RS10; RS5 (`fugaro user`) not started |
 | review-levels-ab-jobmax | about 24/40 | A/B reviewer slot, `/jobmax` skill, `auto_launch` |
-| forge-authorship-images | about 9/25 | about 16, much overlapping image-setup |
+| forge-authorship-images | 9/25 (A1, A2a, A2b, A3, A4, C3, C4, C7, E1); C8's C8a built; E0 closed as superseded (roles-scopes) | 15; the image-setup overlap is C6 and C8's C8b/C8c, not about 16 — [reconciliation-image-setup.md](forge-authorship-images/reconciliation-image-setup.md) |
 | go-to-market | 4/12 | the cost-estimate half (`fugaro estimate`) |
 | model-ab-testing | 3/18 | the sampler and the pair launch |
 | bitbucket-workspace-token | 7/13 | T1.4, T2.2, T2.4, T2.6 and T2.7 left; T2.9 superseded by the secrets-brokering proxy chain (2026-11-10); T2.11's step 5 missing from the shipped notes; D1980–D1984 open (its reconciliation-secrets-brokering.md) |
