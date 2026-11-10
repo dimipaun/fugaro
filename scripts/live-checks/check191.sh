@@ -891,7 +891,11 @@ step_policy_switch() {
     fact proxied FAIL "the installation has no credentials service this check could read (doctor: ${problem}), and proxy: true is INERT without one — nothing is served, a run of ${REPO} holds the Bitbucket token on its job, and every row below would measure the direct path instead of the proxy. Run 'fugaro update' — it deploys the service on every installation that can hold it — then make sure ${REPO} is on the switch (agent.auth: cascade, a model credential in the bundle, 'fugaro update --repo' for it) and run this check again"
     return 1
     ;;
-  unread | other | "")
+  # `unread | other | ""` and anything else: the reading did not settle the
+  # switch, so it is a row the check could NOT measure rather than a PASS. The
+  # default arm is the fail-closed one on purpose — a state this file does not
+  # know is not a state it may read as on.
+  *)
     unmeasured proxied "fugaro doctor's credentials-service-deployed row could not be read or is one this check does not recognise (state: ${state:-none}; doctor: ${problem:-no line}): whether the credentials-service switch is on for ${REPO} was NOT measured, and every row below would be read about a path this check never settled. Run 'fugaro doctor --project fugaro --json' yourself, read that row, and settle it before anything is launched"
     return 1
     ;;

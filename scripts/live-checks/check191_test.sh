@@ -759,6 +759,17 @@ DOCTOR_EOF
   expect_contains "$out" "FACT proxied: FAIL" "an unread switch: the row is a FAIL"
   expect_contains "$err" "could NOT measure proxied" "an unread switch: the check says it could not measure"
   expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "an unread switch: no run launched"
+  # The other shape: doctor's own arm for a grant it could not settle — a custom
+  # role on the service's or the project's policy that could not be read. It is
+  # not a switch that is off, so the row may not read as one.
+  cat >"$dir/state/doctor.json" <<'DOCTOR_EOF'
+{"ok":false,"checks":[{"id":"credentials-service-deployed","ok":false,"severity":"warning","problem":"the credentials service fugaro-credentials is deployed, and whether workspace-a/repo-a (web) may invoke it could not be checked: a custom role on its or the project's policy could not be read"}],"project":{"name":"fugaro","gcp_project":"fugaro-dev","region":"us-east5"}}
+DOCTOR_EOF
+  run_check "$dir" "$script"
+  expect_status "$status" 2 "doctor's arm for a grant it could not settle"
+  expect_contains "$out" "FACT proxied: FAIL" "an unsettled grant: the row is a FAIL"
+  expect_contains "$out" "state: unread" "an unsettled grant: the row carries the state this check read"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "an unsettled grant: no run launched"
 }
 
 test_happy_path() {
