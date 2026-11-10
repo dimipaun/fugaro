@@ -18,9 +18,11 @@ package credsvc
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -29,6 +31,8 @@ import (
 	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
 	"github.com/dimipaun/fugaro/internal/secretname"
+	"google.golang.org/api/option"
+	secretmanager "google.golang.org/api/secretmanager/v1"
 )
 
 // dynReader is the fixture's Secret Manager: the bundle document the service's
@@ -520,4 +524,156 @@ func TestNoValueInErrors(t *testing.T) {
 			t.Errorf("the refusal is %q, want the read's own class", e.Message)
 		}
 	})
+}
+
+// TestPerSecretValueClassifiesEveryAnswer is the deployment's own reader, and
+// the only test here that is not a fixture of its own: the other tests hand the
+// service a PerSecretSource and so say nothing about how
+// SecretManagerPerSecrets turns an answer from the API into one of R6's three
+// outcomes. That classification is the whole of the read's fail-closed rule — a
+// container that is not there falls to the bundle, and EVERY other answer
+// refuses the call — so a regression that answered an absence for a 403, for a
+// 500 or for a version with no payload would quietly serve, for every run of the
+// installation at once, the bundle's entry for a credential an operator had
+// rotated away (D143).
+//
+// The client is the deployment's own: the real generated Secret Manager client,
+// pointed at a loopback server by the options the deployment's other clients use
+// (internal/cli/managed_test.go's shape), so the request the test reads is the
+// request the service would make — the exact :access path of the container the
+// grammar named. Everything is hermetic: no account, no ADC, no cloud.
+//
+// Mutation (run, restore): answer an absence for the 403 row — dynamicsecrets.go
+// Value's `errors.As(err, &ge) && ge.Code == http.StatusForbidden` case returning
+// "", false, nil. This test is red. The same mutation on the 500 row or on the
+// empty-payload branch is red the same way, and no other test in this package
+// notices either.
+func TestPerSecretValueClassifiesEveryAnswer(t *testing.T) {
+	const project = "fugaro-creds-test"
+	name := mustUserName(t, testLauncherSub, testAccount)
+	value := fakeCred(t, "container")
+	// The request the API client must build from the secret ID the grammar
+	// spelled: one container, named exactly, at its latest version, read the way
+	// the API reads one (a GET of the :access method — the generated client
+	// chooses it for this call, and nothing here sets a body).
+	accessPath := "/v1/projects/" + project + "/secrets/" + name + "/versions/latest:access"
+
+	// payload is the API's own answer shape, with the value base64 in it.
+	payload := func(data string) string { return `{"payload":{"data":"` + data + `"}}` }
+	b64 := func(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }
+	apiError := func(code int, status string) string {
+		return `{"error":{"code":` + strconv.Itoa(code) + `,"message":"the API's own sentence","status":"` + status + `"}}`
+	}
+	answer := func(status int, body string) http.HandlerFunc {
+		return func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(status)
+			_, _ = w.Write([]byte(body))
+		}
+	}
+
+	for _, tc := range []struct {
+		name string
+		// serve is what the container's endpoint answers.
+		serve http.HandlerFunc
+		// wantValue and wantFound are the read's answer; wantErr is the class it
+		// must fail with, and nil is R6's fall to the bundle (the 404 row).
+		wantValue string
+		wantFound bool
+		wantErr   error
+	}{{
+		name:      "the container answers",
+		serve:     answer(http.StatusOK, payload(b64(value))),
+		wantValue: value,
+		wantFound: true,
+	}, {
+		// The absence R7 falls from, and the ordinary case: nothing has been
+		// rotated under this name. It is NOT a failure — the bundle's entry for
+		// the credential the name holds is what serves the call.
+		name:  "the container is not there",
+		serve: answer(http.StatusNotFound, apiError(http.StatusNotFound, "NOT_FOUND")),
+	}, {
+		name:    "the service is not allowed to read it",
+		serve:   answer(http.StatusForbidden, apiError(http.StatusForbidden, "PERMISSION_DENIED")),
+		wantErr: ErrPerSecretUnreadable,
+	}, {
+		name:    "the API failed",
+		serve:   answer(http.StatusInternalServerError, apiError(http.StatusInternalServerError, "INTERNAL")),
+		wantErr: ErrPerSecretUnreadable,
+	}, {
+		// A transport that dies mid-request is not an absence either: nothing was
+		// established about the container, so nothing may be served from it.
+		name: "the connection dies",
+		serve: func(w http.ResponseWriter, _ *http.Request) {
+			h, _, err := w.(http.Hijacker).Hijack()
+			if err != nil {
+				t.Errorf("the fixture could not take the connection: %v", err)
+				return
+			}
+			_ = h.Close()
+		},
+		wantErr: ErrPerSecretUnreadable,
+	}, {
+		// A version with no value is not a credential, and it must not be read as
+		// an absence: an absence would serve the bundle's older value in its place.
+		name:    "the version has no payload",
+		serve:   answer(http.StatusOK, `{}`),
+		wantErr: ErrPerSecretUnreadable,
+	}, {
+		name:    "the payload is not base64",
+		serve:   answer(http.StatusOK, payload("this is not base64 at all !!")),
+		wantErr: ErrPerSecretUnreadable,
+	}, {
+		name:    "the value is larger than the bound",
+		serve:   answer(http.StatusOK, payload(b64(value+strings.Repeat("x", MaxBundleValueBytes)))),
+		wantErr: ErrPerSecretUnreadable,
+	}} {
+		t.Run(tc.name, func(t *testing.T) {
+			var method, path string
+			reads := 0
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				method, path, reads = r.Method, r.URL.Path, reads+1
+				tc.serve(w, r)
+			}))
+			t.Cleanup(srv.Close)
+			svc, err := secretmanager.NewService(context.Background(),
+				option.WithoutAuthentication(), option.WithEndpoint(srv.URL+"/"))
+			if err != nil {
+				t.Fatalf("the fixture's Secret Manager client could not be built: %v", err)
+			}
+
+			got, found, err := SecretManagerPerSecrets{Project: project, Service: svc}.Value(context.Background(), name)
+
+			if reads != 1 {
+				t.Fatalf("the container was asked for %d times, want once", reads)
+			}
+			if method != http.MethodGet || path != accessPath {
+				t.Errorf("the read asked for %s %s, want GET %s: the container is read by the exact name the grammar spelled, at its latest version",
+					method, path, accessPath)
+			}
+			if got != tc.wantValue || found != tc.wantFound {
+				t.Errorf("the read answered (%q, %v), want (%q, %v)", got, found, tc.wantValue, tc.wantFound)
+			}
+			if tc.wantErr == nil {
+				if err != nil {
+					t.Fatalf("the read failed: %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("the failure is %v, want one of %v", err, tc.wantErr)
+			}
+			if found {
+				t.Error("a failed read answered found=true")
+			}
+			// The class and nothing else: no value of either spelling — the
+			// credential itself, and the base64 the API carries it in — reaches a
+			// sentence a run or an operator reads.
+			for _, v := range []string{value, b64(value)} {
+				if strings.Contains(err.Error(), v) {
+					t.Errorf("the failure carries the credential:\n%v", err)
+				}
+			}
+		})
+	}
 }
