@@ -580,6 +580,16 @@ func catalogConfig(ctx context.Context, o cloudOptions) (string, *localcfg.Confi
 // through Selection.Reference, which the map (and a pin) sets and the default's
 // arm does not.
 //
+// The repositories this machine's config does not list are asked last, and the
+// map alone is what can be asked about them: the published node names the
+// repositories the project has, and one of them can be missing here — a
+// teammate's, or one whose repos: entry a person removed on this machine —
+// while its mapping stays in the node, which `fugaro update` publishes and never
+// cross-checks against this file. A value of the map that is the entry is
+// therefore read as the claim it is, whatever key carries it: the removal would
+// leave that repository's deploy and every launch of it refusing with
+// catalog.UnknownMappedEntryError, and nothing on this machine would repair it.
+//
 // A job the resolver gives no entry to is not one of them: it runs no catalog
 // image at all, and a removal cannot leave it on an entry it never had.
 func catalogPointedAt(ctx context.Context, lc *localcfg.Config, cat *config.Catalog, imap map[string]string, entry string) (string, []string, error) {
@@ -617,6 +627,18 @@ func catalogPointedAt(ctx context.Context, lc *localcfg.Config, cat *config.Cata
 			}
 			return fmt.Sprintf("the workflow %s of %s", pluginwire.Printable(n), pluginwire.Printable(repo)), unasked, nil
 		}
+	}
+	// The map names repositories this config need not: the node is the
+	// project's and this file is one machine's, so a mapping whose repository
+	// is not listed above is still a claim about that repository's job, and the
+	// workflow that would say otherwise is not here to read. The values are
+	// swept whatever their keys are, and in key order so the refusal names the
+	// same repository every time.
+	for _, repo := range slices.Sorted(maps.Keys(imap)) {
+		if imap[repo] != entry {
+			continue
+		}
+		return fmt.Sprintf("the job of %s (this project's image_map gives it that entry)", pluginwire.Printable(repo)), nil, nil
 	}
 	return "", unasked, nil
 }

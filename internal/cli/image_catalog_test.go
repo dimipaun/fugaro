@@ -365,13 +365,22 @@ func TestImageRmRefusesAnEntryAJobStillPointsAt(t *testing.T) {
 // test can break the node the map is read from.
 func publishedMapFixture(t *testing.T) (*cloudFixture, *gcpfake.RTDB) {
 	t.Helper()
+	return publishedMapNodesFixture(t, projectpolicy.ImageMap{"acme/app": "tools"})
+}
+
+// publishedMapNodesFixture is publishedMapFixture with the map's own contents
+// stated by the test: the repositories a published map names are not
+// necessarily the ones this machine's config lists, and the guard has to answer
+// about the node's own claim either way.
+func publishedMapNodesFixture(t *testing.T, imap projectpolicy.ImageMap) (*cloudFixture, *gcpfake.RTDB) {
+	t.Helper()
 	f := catalogFixture(t)
 	db := gcpfake.NewRTDB(t)
 	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
 	db.Set(projectpolicy.PathShared(), &projectpolicy.Policy{
 		Version:  projectpolicy.Version,
 		Budget:   projectpolicy.Budget{Mode: "off"},
-		ImageMap: projectpolicy.ImageMap{"acme/app": "tools"},
+		ImageMap: imap,
 	})
 	f.appendConfig(t, "budget: { mode: off, rtdb_url: "+db.URL+" }\n")
 	return f, db
@@ -473,6 +482,52 @@ func TestImageRmRefusesAnEntryTheMapPointsAtWithoutACheckout(t *testing.T) {
 	// The control: the default entry the map gives nobody is still removable.
 	if _, _, err := execute(t, "image", "rm", "base"); err != nil {
 		t.Fatalf("removing the entry no mapping names: %v", err)
+	}
+}
+
+// TestImageRmRefusesAnEntryTheMapGivesARepositoryThisMachineDoesNotList: the
+// published map is the project's, and the repositories it names are not
+// necessarily the ones this machine's config lists — a teammate's repository,
+// or one whose repos: entry a person removed here, keeps its mapping in the
+// node because `fugaro update` publishes the node and never cross-checks the
+// list. A guard that iterated the config's repositories alone therefore removed
+// the entry that mapping names, and the node went on pointing the repository at
+// an entry that is gone: that repository's deploy and every launch of it refuse
+// with catalog.UnknownMappedEntryError until someone runs another command,
+// which is what the HARD RULE on update forbids.
+//
+// The removal of an entry the map gives no repository at all is still allowed,
+// so what refuses here is the mapping and not the repository the config omits.
+func TestImageRmRefusesAnEntryTheMapGivesARepositoryThisMachineDoesNotList(t *testing.T) {
+	publishedMapNodesFixture(t, projectpolicy.ImageMap{"acme/other": "tools"})
+	// No checkout of anything: acme/other is not in this config's repos: at
+	// all, which is the state the guard has to answer about from the node.
+	path := os.Getenv("FUGARO_CONFIG")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err = execute(t, "image", "rm", "tools")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("exit %d, err %v, want the removal refused: the published map gives acme/other the entry, and whether this machine lists that repository is not what makes it a claim", ExitCode(err), err)
+	}
+	for _, want := range []string{"tools", "acme/other", "image_map"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal %v lacks %q", err, want)
+		}
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Error("a refused rm still wrote the config")
+	}
+
+	// The control: the entry the map gives nobody is still removable.
+	if _, _, err := execute(t, "image", "rm", "base"); err != nil {
+		t.Fatalf("removing the entry the map gives nobody: %v", err)
 	}
 }
 
