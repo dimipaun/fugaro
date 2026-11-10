@@ -172,6 +172,72 @@ func TestOpenSourceCheckRefusesAPrivateOrNonOSIRepository(t *testing.T) {
 	}
 }
 
+// TestARepositoryOffTheDeploysHostIsNeverAskedAbout: §4.4's check reads a
+// repository **of the deploy's own code host**, with the deploy's credentials —
+// so a line an unauthenticated stranger typed must never become an address this
+// service dials. What is admitted is one host, one scheme, one `owner/name`
+// path, and the code host is handed the two parts and never the line: a line
+// naming an internal address, a port, a deeper path or another host at all is
+// refused before the first call, and the code host is asked about nothing.
+func TestARepositoryOffTheDeploysHostIsNeverAskedAbout(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		url  string
+	}{
+		{name: "the metadata server", url: "https://169.254.169.254/latest/meta-data/"},
+		{name: "an internal name", url: "https://code.internal.example/acme/widget"},
+		{name: "the merchant's own host", url: "https://elsewhere.example/acme/widget"},
+		{name: "a plain-http address", url: "http://code.example/acme/widget"},
+		{name: "no scheme at all", url: "code.example/acme/widget"},
+		{name: "an scp-style address", url: "git@code.example:acme/widget"},
+		{name: "a port on the deploy's host", url: "https://code.example:8443/acme/widget"},
+		{name: "credentials in the URL", url: "https://token@code.example/acme/widget"},
+		{name: "a query string", url: "https://code.example/acme/widget?per_page=1"},
+		{name: "a fragment", url: "https://code.example/acme/widget#readme"},
+		{name: "a path deeper than a repository", url: "https://code.example/acme/widget/issues/1"},
+		{name: "a traversal", url: "https://code.example/acme/../secret"},
+		{name: "an encoded traversal", url: "https://code.example/acme%2f..%2fsecret"},
+		{name: "a colon in the owner", url: "https://code.example/acme:widget/x"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			answerBody(t, f.applyOpenSource(applicantAddress, tc.url))
+
+			if got := len(f.host.asked); got != 0 {
+				t.Errorf("%s asked the code host about %v, want nothing: what an applicant typed is not an address the service dials (§4.4, §7.2)", tc.name, f.host.asked)
+			}
+			if got := f.signer.calls; got != 0 {
+				t.Errorf("%s signed %d key(s), want none", tc.name, got)
+			}
+			if got := len(f.mail.sent); got != 0 {
+				t.Errorf("%s mailed %d message(s), want none", tc.name, got)
+			}
+		})
+	}
+
+	// And the line the check does read is read as two parts: the host is
+	// lowercased and a `.git` suffix is the same repository, so what the code
+	// host is asked about is the repository the applicant named and not the
+	// spelling of it.
+	f := newFixture(t)
+	answerBody(t, f.applyOpenSource(applicantAddress, "https://Code.Example/acme/widget.git"))
+	if got := len(f.host.asked); got != 1 || f.host.asked[0] != "acme/widget" {
+		t.Fatalf("the code host was asked %v, want the repository's two parts alone", f.host.asked)
+	}
+	if got := len(f.mail.sent); got != 1 {
+		t.Fatalf("the application mailed %d message(s), want the verification one", got)
+	}
+	f.verify(f.mailedToken())
+	records := f.records()
+	if len(records) != 1 {
+		t.Fatalf("the application recorded %d key(s), want one", len(records))
+	}
+	held := f.store.verifications
+	if len(held) != 1 || len(held[0].Repositories) != 1 || held[0].Repositories[0] != repositoryURL {
+		t.Errorf("the verification holds %v, want the canonical URL %q: what is stored is the URL on the deploy's own host and never the line", held, repositoryURL)
+	}
+}
+
 // TestAnApplicationOverTheRepositoryCapIsRefused: the count is the deploy's,
 // because each repository it names is a call into the deploy's code-host
 // credentials made on the strength of one unauthenticated post — and the form's

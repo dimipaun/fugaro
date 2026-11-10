@@ -91,6 +91,13 @@ type Config struct {
 	VerificationTTL time.Duration
 	// MerchantSecret is the merchant of record's signing secret (§5.2).
 	MerchantSecret []byte
+	// CodeHosts are the hosts whose repositories the open-source check reads, as
+	// hosts — `code.example`, never a URL. §4.4's check reads a host's own API
+	// with the deploy's credentials, so a line naming any other host is refused
+	// rather than looked up: nothing an applicant types is an address this
+	// service dials (§7.2). It is configuration because the deploy's code host
+	// is (D442's merchant is not it).
+	CodeHosts []string
 	// MaxRepositories is how many repositories one open-source application may
 	// name. Each one is a call into the deploy's own code-host credentials, made
 	// on the strength of an unauthenticated form post, so the bound belongs to
@@ -165,6 +172,15 @@ func New(cfg Config, deps Deps) (*Service, error) {
 	}
 	if cfg.MaxRepositories < 1 {
 		return nil, errors.New("the intake's repository cap is not set, and an open-source application that names a thousand repositories is a thousand calls into the deploy's code-host credentials")
+	}
+	cfg.CodeHosts = lowerAll(cfg.CodeHosts)
+	if len(cfg.CodeHosts) == 0 {
+		return nil, errors.New("the intake reads repositories from no host, and §4.4's check would then read whatever an applicant typed")
+	}
+	for _, host := range cfg.CodeHosts {
+		if strings.ContainsAny(host, "/:") {
+			return nil, fmt.Errorf("the intake is configured to read repositories from %q, and a host is a name and not a URL", host)
+		}
 	}
 	switch {
 	case deps.Store == nil:
@@ -275,15 +291,30 @@ func (s *Service) freeSeatForm(w http.ResponseWriter, r *http.Request) {
 // maxFormBytes and that alone is not a bound on the work: 16 KiB of short URLs
 // is more repositories than the deploy's code-host credentials should be asked
 // about on the strength of one unauthenticated post.
+//
+// Every line is read against the deploy's own code host before any of them is
+// asked about (§4.4): one line the host does not serve refuses the whole
+// application, so the record is never a list with a stranger's address in it.
 func (s *Service) openSourceForm(w http.ResponseWriter, r *http.Request) {
 	form, email, domain, ok := s.applicant(w, r)
 	if !ok {
 		return
 	}
-	repositories := splitLines(form.Get("repositories"))
-	if len(repositories) == 0 || len(repositories) > s.cfg.MaxRepositories {
+	lines := splitLines(form.Get("repositories"))
+	if len(lines) == 0 || len(lines) > s.cfg.MaxRepositories {
 		answer(w)
 		return
+	}
+	repositories := make([]RepositoryRef, 0, len(lines))
+	named := make([]string, 0, len(lines))
+	for _, line := range lines {
+		repository, served := s.repository(line)
+		if !served {
+			answer(w)
+			return
+		}
+		repositories = append(repositories, repository)
+		named = append(named, repository.URL)
 	}
 	organisation, passed := s.openSourceControl(r.Context(), OpenSource{Email: email, Repositories: repositories})
 	if !passed {
@@ -295,7 +326,10 @@ func (s *Service) openSourceForm(w http.ResponseWriter, r *http.Request) {
 		Email:        email,
 		Domain:       domain,
 		Organisation: organisation,
-		Repositories: repositories,
+		// What is stored is the canonical URL of each repository on the deploy's
+		// own host, and never the line the applicant typed: the record is what a
+		// person reads and what a later check would re-read (§4.4, §7.3).
+		Repositories: named,
 	}); err != nil {
 		fail(w, err)
 		return

@@ -247,7 +247,7 @@ func TestTheOpenSourceCheckRefusesWithoutProofs(t *testing.T) {
 	f := newFixture(t)
 	svc, err := New(f.svc.cfg, Deps{
 		Store:    f.store,
-		Mints:    Minter{Signer: f.signer, Keys: f.keys, Now: f.clock},
+		Mints:    Minter{Signer: f.signer, Keys: f.keys, Environment: Production, Now: f.clock},
 		Mailer:   f.mail,
 		CodeHost: f.host,
 		Proofs:   nil,

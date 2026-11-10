@@ -49,7 +49,7 @@ func TestTheMinterTakesNoDateFromItsCaller(t *testing.T) {
 // verifier a released build carries.
 func TestTheMinersCeilingsAreTheVerifiers(t *testing.T) {
 	f := newFixture(t)
-	minter := Minter{Signer: f.signer, Keys: f.keys, Now: f.clock}
+	minter := Minter{Signer: f.signer, Keys: f.keys, Environment: Production, Now: f.clock}
 	request := func(tier string, days int) Request {
 		return Request{
 			Environment:  Production,
@@ -120,6 +120,58 @@ func TestTheMinersCeilingsAreTheVerifiers(t *testing.T) {
 	}
 }
 
+// TestAMinterSignsForItsOwnEnvironmentOnly: D459(a) rules one project and one
+// key ring for both environments, so the two key ids are the whole of what
+// keeps a staging key out of production and a production key out of a test
+// (Check 179). The minter's environment is therefore its own and never the
+// request's: a minter that read it off the caller would sign a production key
+// for whoever could reach it, and a minter built with none signs nothing at all.
+func TestAMinterSignsForItsOwnEnvironmentOnly(t *testing.T) {
+	f := newFixture(t)
+	request := func(env Environment) Request {
+		return Request{
+			Environment:  env,
+			Tier:         licence.TierTeam,
+			Features:     []string{"seats"},
+			Seats:        1,
+			Organisation: "acme.example",
+			Plan:         paidPlanName,
+			TermDays:     365,
+		}
+	}
+	staging := Minter{Signer: f.signer, Keys: f.keys, Environment: Staging, Now: f.clock}
+
+	if _, err := staging.Mint(context.Background(), request(Production)); err == nil {
+		t.Error("a staging minter served a production request, want a refusal: the key id it would sign under is the whole of what keeps the pairs apart (§2, §5.4)")
+	}
+	if _, err := staging.Mint(context.Background(), request("")); err == nil {
+		t.Error("a staging minter served a request naming no environment, want a refusal")
+	}
+	if got := f.signer.calls; got != 0 {
+		t.Errorf("the refused requests signed %d key(s), want none", got)
+	}
+
+	minted, err := staging.Mint(context.Background(), request(Staging))
+	if err != nil {
+		t.Fatalf("minting for the minter's own environment: %v", err)
+	}
+	if id, _, _ := strings.Cut(minted.Key, "."); id != stagingKeyID {
+		t.Errorf("the staging minter answered a key under the id %q, want %q: the id is what a released verifier reads, and the production one is what it accepts (§2, §5.4)", id, stagingKeyID)
+	}
+	if minted.Record.KeyID != stagingKeyID {
+		t.Errorf("the record names the key id %q, want the staging one", minted.Record.KeyID)
+	}
+
+	// A minter built with no environment of its own is the shape a shared
+	// staging minter would be, and it mints nothing at all.
+	bare := Minter{Signer: f.signer, Keys: f.keys, Now: f.clock}
+	for _, env := range []Environment{Production, Staging, ""} {
+		if _, err := bare.Mint(context.Background(), request(env)); err == nil {
+			t.Errorf("a minter with no environment served a %q request, want a refusal", env)
+		}
+	}
+}
+
 // TestTheIntakeMintsThroughTheMinterService: §3.2 — the intake reaches the
 // minter over its own route with an ID token, and the two halves' wire shape is
 // this package's. The minter's route is unauthenticated at the application
@@ -127,7 +179,7 @@ func TestTheMinersCeilingsAreTheVerifiers(t *testing.T) {
 // Terraform that holds it is S3.5's (Check 174).
 func TestTheIntakeMintsThroughTheMinterService(t *testing.T) {
 	f := newFixture(t)
-	minter := Minter{Signer: f.signer, Keys: f.keys, Now: f.clock}
+	minter := Minter{Signer: f.signer, Keys: f.keys, Environment: Production, Now: f.clock}
 	var presented string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		presented = r.Header.Get("Authorization")

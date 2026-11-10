@@ -85,11 +85,17 @@ type Verification struct {
 // Expires is the term's end and not the key's: a renewal key is minted inside
 // the window before it and covers the term after it, so the two are separately
 // true and Renew's arithmetic is the whole of the difference.
+//
+// Email is the buyer's own address as the purchase carried it, and it is kept
+// because a renewal is minted months later with nothing but this record to
+// deliver the key to: the event that carried the address is long gone, and a
+// key minted with no address reaches nobody (§5.1, §5.3).
 type Subscription struct {
 	ID           string    `json:"id"`
 	Organisation string    `json:"organisation"`
 	Seats        int       `json:"seats"`
 	TermDays     int       `json:"term_days"`
+	Email        string    `json:"email"`
 	At           time.Time `json:"at"`
 	Expires      time.Time `json:"expires"`
 	Cancelled    bool      `json:"cancelled"`
@@ -99,6 +105,17 @@ type Subscription struct {
 // (Source for an issuance, ID for the rest), except for an issuance the store
 // already holds under that source, which is ErrAlreadyRecorded -- so two
 // deliveries of one event in flight at once cannot both mint (§5.2).
+//
+// Nothing here is a transaction, and that is a limit this contract states
+// rather than hides: every check that reads a list and then writes — §4.2's one
+// free key per domain, §4.3's paid-domain refusal, §4.4's proof of control — is
+// read-then-write, so two applications arriving together can both pass it, and
+// a purchase's mint and its subscription are two writes rather than one. What
+// bounds the first is that both applicants must be at the same domain and that
+// the owner sees both in the queue; what bounds the second is `apply`, which
+// finishes the state the record describes when the merchant redelivers. A
+// backend that can express either pair as one write closes it, which is why the
+// interface is small enough to be given one (S3.5).
 type Store interface {
 	SaveIssuance(ctx context.Context, r Record) error
 	Issuances(ctx context.Context) ([]Record, error)

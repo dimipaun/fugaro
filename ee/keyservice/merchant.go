@@ -203,10 +203,10 @@ func (s *Service) webhook(w http.ResponseWriter, r *http.Request) {
 // both are refusals to act rather than errors — a redelivery and a late event
 // are the merchant's ordinary traffic.
 func (s *Service) apply(ctx context.Context, e Event) error {
-	if _, held, err := s.recorded(ctx, e.ID); err != nil {
+	if record, held, err := s.recorded(ctx, e.ID); err != nil {
 		return err
 	} else if held {
-		return nil
+		return s.completed(ctx, e, record)
 	}
 	sub, held, err := s.store.Subscription(ctx, e.Subscription)
 	if err != nil {
@@ -237,6 +237,56 @@ func (s *Service) apply(ctx context.Context, e Event) error {
 	}
 }
 
+// completed is the second half of an event whose mint is already recorded, and
+// §5.2's idempotency guard is what a redelivery of one meets. What it is for is
+// the write the first delivery did not finish: a purchase mints and *then* saves
+// the subscription, so a store failure between the two leaves a customer with a
+// delivered key and no state — no renewal, no seat changes, no cancellation, and
+// no paid-domain refusal — and the merchant's retry would otherwise stop at the
+// recorded source and leave it that way forever. Here the retry finishes it from
+// the record the mint left, which is the whole of what the event's effect needs:
+// the seats, the term, the address and the end of the term are all in it.
+//
+// The same read-then-write limit is why the store, and not this function, is
+// where a durable fix belongs; the Store contract says so and S3.5 is the
+// backend that can.
+func (s *Service) completed(ctx context.Context, e Event, record Record) error {
+	sub, held, err := s.store.Subscription(ctx, e.Subscription)
+	if err != nil {
+		return err
+	}
+	// §5.2's ordering is re-read here for the same reason it is read in apply: a
+	// redelivery of a purchase must not resurrect the subscription a later
+	// cancellation or a later term has already moved past.
+	if held && !e.OccurredAt.After(sub.At) {
+		return nil
+	}
+	switch e.Type {
+	case EventPurchase:
+		to, deliverable := address(record.Email)
+		if !deliverable {
+			return fmt.Errorf("%w: the purchase %s", ErrNoBuyer, e.ID)
+		}
+		return s.store.SaveSubscription(ctx, Subscription{
+			ID:           e.Subscription,
+			Organisation: record.Organisation,
+			Seats:        record.Seats,
+			TermDays:     daysBetween(record.Issued, record.Expires),
+			Email:        to,
+			At:           e.OccurredAt,
+			Expires:      record.Expires,
+		})
+	case EventSeatChange:
+		if !held || sub.Cancelled || sub.Seats == record.Seats {
+			return nil
+		}
+		sub.Seats = record.Seats
+		sub.At = e.OccurredAt
+		return s.store.SaveSubscription(ctx, sub)
+	}
+	return nil
+}
+
 // purchased mints the first key of a subscription and records the term it
 // covers. The mint happens through the minter and never through a signer here,
 // and the seats are the ones the merchant's event names (§5.1).
@@ -257,6 +307,7 @@ func (s *Service) purchased(ctx context.Context, e Event) error {
 		Organisation: e.Organisation,
 		Seats:        e.Seats,
 		TermDays:     e.TermDays,
+		Email:        to,
 		At:           e.OccurredAt,
 		Expires:      minted.Record.Expires,
 	})
@@ -301,6 +352,13 @@ func (s *Service) seatChanged(ctx context.Context, e Event, sub Subscription) er
 // Nothing is minted for a cancelled subscription, and nothing is withdrawn from
 // one: the key the customer holds keeps working until it expires, because the
 // service has no revocation (S2.1, §5.3).
+//
+// The key is mailed, and mailed to the address the subscription kept from its
+// purchase: the renewal happens months after the event that carried the address
+// and the record is the only place it still is (§5.1). A subscription whose
+// address is not one the intake can mail to is refused with ErrNoBuyer rather
+// than minted for — the term would otherwise advance on a key that reached
+// nobody, and the source is spent once, so that term could never be re-minted.
 func (s *Service) Renew(ctx context.Context, subscriptionID string) (Minted, bool, error) {
 	sub, held, err := s.store.Subscription(ctx, subscriptionID)
 	if err != nil {
@@ -329,7 +387,11 @@ func (s *Service) Renew(ctx context.Context, subscriptionID string) (Minted, boo
 		// term, so a second trigger inside the window finds this and stops.
 		return Minted{}, false, nil
 	}
-	answer, err := s.mint(ctx, s.mintRequest(s.cfg.Paid, sub.Organisation, sub.Seats, days), "", source)
+	to, deliverable := address(sub.Email)
+	if !deliverable {
+		return Minted{}, false, fmt.Errorf("%w: the subscription %s", ErrNoBuyer, sub.ID)
+	}
+	answer, err := s.mint(ctx, s.mintRequest(s.cfg.Paid, sub.Organisation, sub.Seats, days), to, source)
 	if err != nil {
 		return Minted{}, false, err
 	}

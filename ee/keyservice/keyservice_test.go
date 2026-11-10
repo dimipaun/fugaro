@@ -102,20 +102,23 @@ func (m *mailSpy) Send(_ context.Context, msg Message) error {
 	return nil
 }
 
-// hostSpy is the code host's API in a test: what each URL answers, and what was
-// asked for.
+// hostSpy is the code host's API in a test: what each repository answers, and
+// what was asked for. It is keyed by the two parts — what the contract hands an
+// implementation (§4.4) — and never by a URL, so a test that a hostile line was
+// refused has the absence of a call to read.
 type hostSpy struct {
 	repos map[string]Repository
 	asked []string
 }
 
-func (h *hostSpy) Repository(_ context.Context, url string) (Repository, error) {
-	h.asked = append(h.asked, url)
-	repo, known := h.repos[url]
+func (h *hostSpy) Repository(_ context.Context, owner, repo string) (Repository, error) {
+	named := owner + "/" + repo
+	h.asked = append(h.asked, named)
+	answer, known := h.repos[named]
 	if !known {
-		return Repository{}, fmt.Errorf("%w: %s", ErrRepository, url)
+		return Repository{}, fmt.Errorf("%w: %s", ErrRepository, named)
 	}
-	return repo, nil
+	return answer, nil
 }
 
 // proofSpy answers the proof of control a test sets. What counts as proof is
@@ -215,13 +218,13 @@ func newFixtureWith(t *testing.T, env Environment, edit func(*fixture)) *fixture
 	f.store = &Memory{}
 	f.mail = &mailSpy{}
 	f.host = &hostSpy{repos: map[string]Repository{
-		repositoryURL:    {Public: true, Licence: "MIT"},
-		repositoryTwoURL: {Public: true, Licence: "Apache-2.0"},
-		privateURL:       {Public: false, Licence: "MIT"},
-		unlicensedURL:    {Public: true, Licence: "LicenseRef-Proprietary"},
+		"acme/widget":      {Public: true, Licence: "MIT"},
+		"acme/gadget":      {Public: true, Licence: "Apache-2.0"},
+		"acme/private":     {Public: false, Licence: "MIT"},
+		"acme/proprietary": {Public: true, Licence: "LicenseRef-Proprietary"},
 	}}
 	f.proofs = &proofSpy{proved: true, organisation: openSourceOrg}
-	f.recording = &recordingMints{inner: Minter{Signer: f.signer, Keys: f.keys, Now: f.clock}}
+	f.recording = &recordingMints{inner: Minter{Signer: f.signer, Keys: f.keys, Environment: env, Now: f.clock}}
 	f.cfg = &Config{
 		Environment: env,
 		Keys:        f.keys,
@@ -238,6 +241,10 @@ func newFixtureWith(t *testing.T, env Environment, edit func(*fixture)) *fixture
 		FreeMailDomains: []string{"gmail.example", "outlook.example"},
 		VerificationTTL: 24 * time.Hour,
 		MerchantSecret:  f.secret,
+		// The deploy's own code host, which §4.4's check reads and no other: the
+		// fixture's repositories are all on it, so a test that names a repository
+		// elsewhere reads that the line was refused before any call.
+		CodeHosts:       []string{"code.example"},
 		MaxRepositories: 8,
 		Throttle:        Limits{Requests: 50, Window: time.Hour},
 	}

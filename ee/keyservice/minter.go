@@ -114,10 +114,18 @@ type Mints interface {
 
 // Minter is the half that signs. It is built once per process and it signs
 // through a key whose private half it never holds.
+//
+// Environment is the minter's own, and not the request's. D459(a) rules one
+// project and one key ring for both environments — which is what makes the two
+// spellings of a key id a thing that has to be held apart here: a minter that
+// took the environment from its caller would sign a production key for whoever
+// could reach it, and no test or code would say so. A minter built with the
+// environment unset signs nothing at all (§2, §3.3, Check 179).
 type Minter struct {
-	Signer Signer
-	Keys   Keys
-	Now    func() time.Time
+	Signer      Signer
+	Keys        Keys
+	Environment Environment
+	Now         func() time.Time
 }
 
 // tierMaxTerm is the longest term a key of each tier may be given, and it is a
@@ -145,6 +153,9 @@ var tierMaxTerm = map[string]time.Duration{
 // what the key carries, so the signature covers exactly what a verifier reads
 // (S2.1's own rule; ee/licence/mint/mint.go does the same in the owner's tool).
 func (m Minter) Mint(ctx context.Context, req Request) (Minted, error) {
+	if req.Environment != m.Environment {
+		return Minted{}, fmt.Errorf("this minter signs for the %s environment and the request names %q, and the key id it would sign under is the whole of what keeps the two apart", m.Environment, req.Environment)
+	}
 	maximum, known := tierMaxTerm[req.Tier]
 	if !known {
 		return Minted{}, fmt.Errorf("the tier %q is not one a key can be issued for", req.Tier)
@@ -162,7 +173,7 @@ func (m Minter) Mint(ctx context.Context, req Request) (Minted, error) {
 	if strings.TrimSpace(req.Organisation) == "" {
 		return Minted{}, errors.New("a key with no organisation does not verify, so it is not minted")
 	}
-	keyID, err := m.Keys.For(req.Environment)
+	keyID, err := m.Keys.For(m.Environment)
 	if err != nil {
 		return Minted{}, err
 	}

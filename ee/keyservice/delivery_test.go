@@ -15,6 +15,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -82,6 +83,192 @@ func TestAnUndeliveredPaidKeyIsNotRecorded(t *testing.T) {
 	}
 	if got := len(f.mail.sent); got != 1 || f.mail.sent[0].To != buyerAddress("acme.example") {
 		t.Errorf("the redelivered purchase mailed %+v, want the key to the buyer's own address", f.mail.sent)
+	}
+}
+
+// TestARenewalKeyIsMailedToTheBuyer: a renewal is minted months after the event
+// that carried the buyer's address, so the subscription is the only place it
+// still is — and a renewal minted with no address is a key that reaches nobody
+// while the term advances and the source is spent, which is a term the customer
+// paid for and can never be re-minted (§5.1, §5.3).
+func TestARenewalKeyIsMailedToTheBuyer(t *testing.T) {
+	f := newFixture(t)
+	f.purchase("evt-1", "acme.example", 5, 365)
+	held := len(f.mail.sent)
+
+	f.advance(365*day - 30*day)
+	minted, renewed, err := f.svc.Renew(context.Background(), "sub-acme.example")
+	if err != nil || !renewed {
+		t.Fatalf("the renewal minted (renewed=%v, err=%v), want the next key", renewed, err)
+	}
+	if got := len(f.mail.sent); got != held+1 {
+		t.Fatalf("the renewal mailed %d message(s) in all, want the purchase's and the renewal's", got)
+	}
+	last := f.mail.sent[len(f.mail.sent)-1]
+	if last.To != buyerAddress("acme.example") {
+		t.Errorf("the renewal was mailed to %q, want the buyer's own address, which the subscription kept from its purchase", last.To)
+	}
+	if last.Subject != keySubject || !strings.Contains(last.Body, minted.Key) {
+		t.Errorf("the renewal mail is %q carrying %q, want it to carry the key %q: the mail is the only place a key text exists (§7.3)", last.Subject, last.Body, minted.Key)
+	}
+	if got := len(f.records()); got != 2 {
+		t.Errorf("the record holds %d key(s), want the purchase's and the renewal's", got)
+	}
+	if got := f.records()[1].Email; got != buyerAddress("acme.example") {
+		t.Errorf("the renewal's record holds the address %q, want the buyer's", got)
+	}
+
+	// A subscription the store holds with no address a key can be mailed to is
+	// refused rather than renewed into the void.
+	f.store.SaveSubscription(context.Background(), Subscription{
+		ID: "sub-anonymous.example", Organisation: "anonymous.example", Seats: 1, TermDays: 365,
+		At: f.now.Add(-365 * day), Expires: f.now.Add(day),
+	})
+	if _, renewed, err := f.svc.Renew(context.Background(), "sub-anonymous.example"); !errors.Is(err, ErrNoBuyer) || renewed {
+		t.Errorf("a renewal for a subscription with no address minted (renewed=%v, err=%v), want ErrNoBuyer: the term would advance on a key nobody received", renewed, err)
+	}
+	if got := len(f.records()); got != 2 {
+		t.Errorf("the refused renewal recorded %d key(s) in all, want the two the customer holds", got)
+	}
+}
+
+// failingSubscriptions is the store as a deployment that cannot write one
+// subscription: what §5.2's two writes make possible, so that a test can hold
+// the redelivery to finishing it.
+type failingSubscriptions struct {
+	*Memory
+	refuse int
+}
+
+func (f *failingSubscriptions) SaveSubscription(ctx context.Context, sub Subscription) error {
+	if f.refuse > 0 {
+		f.refuse--
+		return errors.New("the store refused the write")
+	}
+	return f.Memory.SaveSubscription(ctx, sub)
+}
+
+// newFailingStore is the fixture whose subscription writes can be made to fail
+// from the next one on, so that a test chooses which write the deployment loses.
+func newFailingStore(t *testing.T) (*fixture, *failingSubscriptions) {
+	t.Helper()
+	f := newFixtureWith(t, Production, func(f *fixture) {
+		f.store = &Memory{}
+		f.deps.Store = &failingSubscriptions{Memory: f.store}
+	})
+	return f, f.deps.Store.(*failingSubscriptions)
+}
+
+// TestAPurchaseWhoseSubscriptionWriteFailedIsCompleted: the paid path mints and
+// then saves the subscription, and the Store contract has no transaction to make
+// the two one write — so the failure between them is real: a customer holds a
+// key the store has no state for, which is no renewal, no seat change, no
+// cancellation and no paid-domain refusal. The merchant redelivers, and what the
+// redelivery must do is finish the state from the record the mint left rather
+// than stop at the recorded source. Nothing is minted or mailed twice.
+func TestAPurchaseWhoseSubscriptionWriteFailedIsCompleted(t *testing.T) {
+	f, store := newFailingStore(t)
+	store.refuse = 1
+	event := Event{
+		ID:           "evt-1",
+		Type:         EventPurchase,
+		OccurredAt:   f.now,
+		Subscription: "sub-acme.example",
+		Organisation: "acme.example",
+		Seats:        5,
+		TermDays:     365,
+	}
+	if rec := f.event(event); rec.Code != http.StatusInternalServerError {
+		t.Fatalf("a purchase whose subscription write failed was answered %d, want 500: the merchant's retry is what finishes it", rec.Code)
+	}
+	if _, held, _ := f.store.Subscription(context.Background(), "sub-acme.example"); held {
+		t.Fatal("the failed write left a subscription, want the event for the redelivery")
+	}
+	if got := len(f.records()); got != 1 {
+		t.Fatalf("the failed purchase recorded %d key(s), want the one the customer holds", got)
+	}
+	record := f.records()[0]
+	mailed, signed := len(f.mail.sent), f.signer.calls
+
+	rec := f.event(event)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the redelivered purchase was answered %d, want 200: the write it was waiting for succeeded", rec.Code)
+	}
+	sub, held, err := f.store.Subscription(context.Background(), "sub-acme.example")
+	if err != nil || !held {
+		t.Fatalf("the redelivered purchase left no subscription (held=%v, err=%v), want the state the record describes", held, err)
+	}
+	if sub.Organisation != "acme.example" || sub.Seats != 5 || sub.TermDays != 365 {
+		t.Errorf("the repaired subscription is %+v, want the record's own organisation, seats and term", sub)
+	}
+	if !sub.Expires.Equal(record.Expires) {
+		t.Errorf("the repaired subscription expires %s, want the key's own term %s", sub.Expires, record.Expires)
+	}
+	if sub.Email != buyerAddress("acme.example") {
+		t.Errorf("the repaired subscription holds the address %q, want the buyer's, which the renewal needs", sub.Email)
+	}
+	if got := len(f.mail.sent); got != mailed {
+		t.Errorf("the redelivery mailed %d message(s) in all, want the purchase's one: the key is delivered once", got)
+	}
+	if got := f.signer.calls; got != signed {
+		t.Errorf("the redelivery signed %d key(s) in all, want the purchase's one", got)
+	}
+	if got := len(f.records()); got != 1 {
+		t.Errorf("the redelivery recorded %d key(s), want the one already held", got)
+	}
+
+	// And the state the repair wrote is live: the domain now holds a paid
+	// subscription, which is what §4.3's refusal reads.
+	answerBody(t, f.apply(applicantAddress))
+	if queued := f.queued(); len(queued) != 0 {
+		t.Errorf("a free-seat application from a repaired domain was queued (%+v), want the paid-domain refusal", queued)
+	}
+	if got := len(f.mail.sent); got != mailed {
+		t.Errorf("the free-seat application mailed %d message(s) in all, want none: the domain has bought", got)
+	}
+
+	// A replay of the same purchase does not resurrect state the store has moved
+	// past: a cancellation that lands later is not undone by the redelivery.
+	f.advance(day)
+	f.event(Event{ID: "evt-2", Type: EventCancellation, Organisation: "acme.example"})
+	f.event(event)
+	cancelled, _, _ := f.store.Subscription(context.Background(), "sub-acme.example")
+	if !cancelled.Cancelled {
+		t.Error("a redelivered purchase resurrected a cancelled subscription, want the cancellation to stand: an event the store is past does not move it backwards (§5.2)")
+	}
+}
+
+// TestASeatChangeWhoseSubscriptionWriteFailedIsCompleted: the same failure on
+// the reissue path, where the record holds the seats the customer asked for and
+// the subscription still holds the old ones.
+func TestASeatChangeWhoseSubscriptionWriteFailedIsCompleted(t *testing.T) {
+	f, store := newFailingStore(t)
+	f.purchase("evt-1", "acme.example", 3, 365)
+
+	f.advance(day)
+	store.refuse = 1
+	event := Event{
+		ID: "evt-2", Type: EventSeatChange, OccurredAt: f.now,
+		Subscription: "sub-acme.example", Organisation: "acme.example", Seats: 5, TermDays: 365,
+	}
+	if rec := f.event(event); rec.Code != http.StatusInternalServerError {
+		t.Fatalf("a seat change whose subscription write failed was answered %d, want 500", rec.Code)
+	}
+	if got := len(f.records()); got != 2 {
+		t.Fatalf("the seat change recorded %d key(s), want the reissue's too: the mint is what the customer holds", got)
+	}
+	mailed, signed := len(f.mail.sent), f.signer.calls
+
+	f.event(event)
+	sub, _, _ := f.store.Subscription(context.Background(), "sub-acme.example")
+	if sub.Seats != 5 {
+		t.Errorf("the repaired subscription holds %d seat(s), want the 5 the reissued key states (§5.3)", sub.Seats)
+	}
+	if got := len(f.mail.sent); got != mailed {
+		t.Errorf("the redelivery mailed %d message(s) in all, want the reissue's one", got)
+	}
+	if got := f.signer.calls; got != signed {
+		t.Errorf("the redelivery signed %d key(s) in all, want the reissue's one", got)
 	}
 }
 
