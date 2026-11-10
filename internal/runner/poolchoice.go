@@ -94,8 +94,11 @@ const poolVertexAuth = "vertex"
 const (
 	// poolSkipNotAdmitted is F10's and D1627's skip: the member serves a
 	// provider the repository is not admitted to, so its key is not in this
-	// job and the repository's code is never given to it.
-	poolSkipNotAdmitted = "the repository is not admitted to this member, so its secret is not in this job (allow_data_to)"
+	// job and the repository's code is never given to it. It names both lists
+	// because a member is a credential of either kind and the rule is one
+	// rule: a provider's allow_data_to and a Claude account's allow_repos are
+	// the same "which repositories may this credential be given".
+	poolSkipNotAdmitted = "this repository is not one the member may be given this repository's code for (allow_data_to for a provider, allow_repos for a Claude account)"
 	// poolSkipSubscription is D1626's inert member: the switch that spreads a
 	// run across subscriptions is off, so a subscription inside a pool that
 	// also holds another kind is stepped over.
@@ -398,11 +401,11 @@ func (r *run) checkPoolModels(ctx context.Context) error {
 			continue
 		}
 		model := r.stageModel(stage)
-		if key := pool.Name + "\x00" + model; judged[key] {
+		key := pool.Name + "\x00" + model
+		if judged[key] {
 			continue
-		} else {
-			judged[key] = true
 		}
+		judged[key] = true
 		ps = append(ps, config.PoolModelProblems(pool, creds, model, r.modelProviders(), policy.CraftAccessKey(name))...)
 	}
 	if len(ps) == 0 {
@@ -435,12 +438,12 @@ func (r *run) checkStagePool(ctx context.Context, stage string) string {
 	}
 	if len(candidates) == 0 {
 		return fmt.Sprintf("the pool %q lists %s and this repository is admitted to none of them: every member's own allow_data_to — or, for a Claude account, its allow_repos — leaves this repository out, and a member is skipped rather than used. List a member this repository may be served by, or name a credential the stage can go out on directly",
-			pool.Name, quotes(memberNames(pool, creds)))
+			pool.Name, strings.Join(memberNames(config.PoolMembers(pool, creds)), ", "))
 	}
 	at := r.pools.failovers[stage]
 	if at >= len(candidates) {
 		return fmt.Sprintf("every member of the pool %q has already refused this stage: the run stood on %d of them (%s), and the pool holds no further one",
-			pool.Name, len(candidates), strings.Join(candidateNames(candidates), ", "))
+			pool.Name, len(candidates), strings.Join(memberNames(candidates), ", "))
 	}
 	m := candidates[at]
 	if at > 0 {
@@ -473,34 +476,14 @@ func oauthMembers(pool config.Pool, creds []config.Credential) int {
 	return n
 }
 
-// memberNames are the pool's members' names, in its order.
-func memberNames(pool config.Pool, creds []config.Credential) []string {
-	ms := config.PoolMembers(pool, creds)
+// memberNames are the given members' names, in the order they came in: a pool's
+// order for the pool's members, the walk's for the ones it may stand on.
+func memberNames(ms []config.PoolMember) []string {
 	out := make([]string, len(ms))
 	for i, m := range ms {
 		out[i] = m.Name
 	}
 	return out
-}
-
-// candidateNames are the names of the members the walk may stand on, in order.
-func candidateNames(ms []config.PoolMember) []string {
-	out := make([]string, len(ms))
-	for i, m := range ms {
-		out[i] = m.Name
-	}
-	return out
-}
-
-// quotes renders names as a comma-separated list, each in quotes. It is
-// strings.Join over the printed names rather than a second vocabulary: what a
-// message about a pool has to say is the names the owner wrote.
-func quotes(names []string) string {
-	out := make([]string, len(names))
-	for i, n := range names {
-		out[i] = fmt.Sprintf("%q", n)
-	}
-	return strings.Join(out, ", ")
 }
 
 // notePoolExhausted records that the attempt of stage that has just ended was
