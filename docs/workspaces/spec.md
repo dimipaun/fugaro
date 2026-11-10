@@ -369,10 +369,14 @@ effective set is the **intersection** of:
 - the workspace credential's allow-list;
 - the member's own policy, which may refuse a provider or a credential the workspace holds;
 - **the repository the run is on**, as the member's own database admits it: the repository's own
-  admission child, read from the member's database at the slug the run identity's `fs` verified,
-  and the member's two `allow_repos` legs asked over the canonical name recovered from that child's
-  account list — the **run's** repository, which §8's residual risk 7 is about: nothing holds that
-  slug to the repository the calling job account belongs to.
+  admission child, read from the member's database at the slug the run identity's `fs` verified, is
+  the **gate** — the account names it holds are the ones the workspace credential's allow-list is
+  asked against, and a credential that child does not name is not served — and the member's two
+  `allow_repos` legs are asked over the canonical name **recovered from the member's own policy**
+  rather than from that child: the child holds account names and no repository, so the name is the
+  entry of the account's `allow_repos` whose `task.Slug` is the verified slug (§5) — the **run's**
+  repository, which §8's residual risk 7 is about: nothing holds that slug to the repository the
+  calling job account belongs to.
 
 The member's policy is always the tighter side, because that is what "only tighten" means
 (`internal/policy/merge.go`). A credential the workspace holds and the member's policy excludes is
@@ -461,9 +465,11 @@ its **exchange URL** — and each is the workspace owner's own declaration, made
 owner's machine (`workspace member add`, W1) and converged by the owner's `fugaro update` (W2's stage
 writes the record; W3's root of the workspace's own project and W6's service carry the table).
 **The table has no writer in the tree yet, and the region is the one value of it no command
-records** — stated rather than implied. `workspace member add`'s options are the member's job
-accounts, its Firebase project, its `fp` and its exchange URL, so the **region** is not among them
-(§6), and the per-member credentials node itself has no writer at all:
+records** — stated rather than implied. `workspace member add` takes the member's job accounts, its
+Firebase project, its `fp` and its exchange URL, `--repo` (a repository the member contributes,
+repeatable) and `--yes` — the first four are the values this table holds, `--repo` is the member's
+contribution to the workspace, and the **region** is in none of them (§6) — and the per-member
+credentials node itself has no writer at all:
 `WorkspaceCredentials`'s own comment says so
 (`internal/projectpolicy/workspace_credentials.go`:101, "This node has no writer in the tree"). The
 command that records a region, and the publish path that fills the table, are therefore a later
@@ -892,9 +898,11 @@ ceiling is decided.
 7. A shared credential is served where the member's own service would refuse it: **the run's
    repository is not held to the calling job account.** The workspace's service asks the repository
    from the **slug the run identity verified** — the repository's own admission child, the node that
-   repository's administrator published (projectpolicy.PathRepo), and the member's two canonical
-   `allow_repos` legs over the name recovered from that child's account list, so a child stale
-   against the policy it was derived from is refused here — and nothing ties that slug to the account
+   repository's administrator published (projectpolicy.PathRepo), gates the account names asked, and
+   the member's two canonical `allow_repos` legs are asked over the name recovered from the member's
+   **own policy**, the entry of the account's `allow_repos` whose `task.Slug` is that slug (the child
+   itself holds names and no repository) — so a child stale against the policy it was derived from is
+   refused here, and nothing ties that slug to the account
    that called: the per-member table names a member's job service accounts and no repository, so an
    account admitted for one repository can present a run identity of **another** repository of the
    same member and be served that repository's admissions, where the member's own front door refuses
