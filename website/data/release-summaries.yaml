@@ -25,6 +25,7 @@
 version: 1
 
 summaries:
+  v0.22.1: fugaro update can build job images in us-east5 again, and a build whose cost cannot be estimated now runs with one warning instead of stopping.
   v0.22.0: Every run is now named by the last four characters of its ID wherever a person reads it, and every command that takes a run accepts that short ID or any unique ending, a run that did not succeed carries a failure class you can group in fugaro runs ls and count in the digest report, fugaro security paths prints the list of paths a repository's runs treat as security-sensitive, and one fugaro update converges the orchestrator's state subtree, the launchers' access to the shared issue store and a managed project's own marks.
   v0.21.0: A change can now be reviewed in the cloud by its own read-only job, long tasks get a three-hour default budget so they finish without a per-run override, runs record why they failed, and a person on a managed project is never asked to type anything.
   v0.20.3: A run that reviews on your Claude subscription now starts on the job that holds its token, and a managed project's own update retires what it created.
