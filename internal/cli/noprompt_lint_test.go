@@ -735,11 +735,13 @@ var notADecisionSites = map[string]string{
 // docs/no-prompt-policy/implementation-plan.md that removes it. It is the
 // allow-list of the transition and it is meant to reach empty: nothing here is
 // a decision the policy wants kept, and the task named beside a site deletes
-// its entry in the same commit that deletes the read. The files the plan names
-// as T15's (`update_workspace.go`, the `Typed` init stages of
-// `init_credentials.go` and `init_compute.go`) reach their reads through
-// `confirmTypedStrict` and `askTyped`, so their entries are the helpers' own
-// sites in `budget.go` and `init.go` — the read is what the lint holds.
+// its entry in the same commit that deletes the read. The files T15 took
+// (`update_workspace.go` and the `Typed` init stages of `init_credentials.go`
+// and `init_compute.go`) reach no site of their own: the workspace write's
+// confirmation is confirmStageWrite or the widening's own arm beside it, and
+// the converge loop's `askTyped` is a banner and confirmNow rather than a read
+// — so the entries below are the helpers' sites in `budget.go` and their
+// callers elsewhere, which is what the lint holds.
 var pendingSites = map[string]string{
 	"budget.go:confirmTyped":       "T3",
 	"budget.go:confirmTypedStrict": "T3",
@@ -749,14 +751,13 @@ var pendingSites = map[string]string{
 	// init_policy_migrate.go: their writes take confirmStageWrite now, which
 	// asks nothing of a person and reads no line). This one stays because its
 	// callers do not: confirmRemoval is defined in a file T6 owns, and
-	// project_enroll.go (T6) and update_workspace.go (T15) still call it —
-	// upgrade.go's own caller went with T5 — so the entry outlives T6 and
-	// belongs to the task that removes the last caller. Deleting it here would
-	// not compile. The deletions that keep it in the same family —
-	// project_cmd.go's `policy publish --delete` and project_enroll.go's
-	// allow-list removal — are data loss, which the ruling of 2026-11-06 leaves
-	// typed where --yes does not stand in, so no task of the plan removes them
-	// and this entry is not theirs.
+	// project_cmd.go's own `policy publish --delete` and project_enroll.go
+	// still call it — update_workspace.go's caller went with T15 and
+	// upgrade.go's with T5 — so the entry outlives T6 and belongs to the task
+	// that removes the last caller. Deleting it here would not compile. The
+	// deletions that keep it in the same family are data loss, which the ruling
+	// of 2026-11-06 leaves typed where --yes does not stand in, so no task of
+	// the plan removes them and this entry is not theirs.
 	"project_cmd.go:confirmRemoval": "T6's file, whose callers T6 and T15 remove",
 }
 
