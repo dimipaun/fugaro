@@ -60,12 +60,12 @@ func dockerfileEntry(name, path, branch string) config.Entry {
 	}}
 }
 
-// TestCatalogFetchRejectsAPathOutsideTheRepository: the path a source names
+// TestCatalogResolveRejectsAPathOutsideTheRepository: the path a source names
 // is read out of a repository through the contents API, so anything that is
 // not one clean relative path inside it is refused before a provider is
 // even opened (the fetch's own bound on a SEC read path: PIC1 refuses the
 // same values at publish time, and this is where one reaches an API).
-func TestCatalogFetchRejectsAPathOutsideTheRepository(t *testing.T) {
+func TestCatalogResolveRejectsAPathOutsideTheRepository(t *testing.T) {
 	ctx := context.Background()
 	for _, path := range []string{
 		"../docker/agent.Dockerfile",
@@ -81,7 +81,7 @@ func TestCatalogFetchRejectsAPathOutsideTheRepository(t *testing.T) {
 	} {
 		o := &fetchOpener{p: &fake.Provider{Repo: "acme/app"}, cred: fakeCredential(t)}
 		e := dockerfileEntry("agent", path, "")
-		if _, err := Fetch(ctx, o.open, gitprov.KindGitHub, e); err == nil {
+		if _, err := Resolve(ctx, o.open, gitprov.KindGitHub, e); err == nil {
 			t.Fatalf("the path %q was accepted", path)
 		}
 		if len(o.opened) != 0 {
@@ -90,12 +90,12 @@ func TestCatalogFetchRejectsAPathOutsideTheRepository(t *testing.T) {
 	}
 }
 
-// TestCatalogFetchRefusesARefTheCatalogWouldRefuse: the branch a source
+// TestCatalogResolveRefusesARefTheCatalogWouldRefuse: the branch a source
 // names is held to the rule the catalog's own validation applies
 // (config.ValidBranchName) and not to a narrower one of this package's, so a
 // ref the catalog refuses never reaches a provider and this guard cannot
 // drift below what the catalog checked.
-func TestCatalogFetchRefusesARefTheCatalogWouldRefuse(t *testing.T) {
+func TestCatalogResolveRefusesARefTheCatalogWouldRefuse(t *testing.T) {
 	ctx := context.Background()
 	for _, branch := range []string{
 		"../main",
@@ -108,7 +108,7 @@ func TestCatalogFetchRefusesARefTheCatalogWouldRefuse(t *testing.T) {
 	} {
 		o := &fetchOpener{p: &fake.Provider{Repo: "acme/app"}, cred: fakeCredential(t)}
 		e := dockerfileEntry("agent", "docker/agent.Dockerfile", branch)
-		if _, err := Fetch(ctx, o.open, gitprov.KindGitHub, e); err == nil {
+		if _, err := Resolve(ctx, o.open, gitprov.KindGitHub, e); err == nil {
 			t.Fatalf("the branch %q was accepted", branch)
 		}
 		if len(o.opened) != 0 {
@@ -117,11 +117,11 @@ func TestCatalogFetchRefusesARefTheCatalogWouldRefuse(t *testing.T) {
 	}
 }
 
-// TestCatalogFetchUsesTheExistingCredentialAndLogsNone: a dockerfile source
+// TestCatalogResolveUsesTheExistingCredentialAndLogsNone: a dockerfile source
 // is read through the provider the opener returns — the project's existing
 // credential, at the repository and branch the entry names — and neither the
 // bytes nor a failure carries any of that credential.
-func TestCatalogFetchUsesTheExistingCredentialAndLogsNone(t *testing.T) {
+func TestCatalogResolveUsesTheExistingCredentialAndLogsNone(t *testing.T) {
 	ctx := context.Background()
 	const def = "FROM example.invalid/base\nRUN true\n"
 	cred := fakeCredential(t)
@@ -135,28 +135,28 @@ func TestCatalogFetchUsesTheExistingCredentialAndLogsNone(t *testing.T) {
 
 	// The default branch holds nothing: a fetch that ignored the branch (or
 	// read another repository) cannot produce the definition below.
-	if _, err := Fetch(ctx, o.open, gitprov.KindGitHub, dockerfileEntry("agent", "docker/agent.Dockerfile", "")); err == nil {
+	if _, err := Resolve(ctx, o.open, gitprov.KindGitHub, dockerfileEntry("agent", "docker/agent.Dockerfile", "")); err == nil {
 		t.Fatal("the file was read from the default branch")
 	}
 	if want := []string{"github:acme/app"}; !slices.Equal(o.opened, want) {
 		t.Fatalf("opened %v, want %v", o.opened, want)
 	}
-	data, err := Fetch(ctx, o.open, gitprov.KindGitHub, e)
+	src, err := Resolve(ctx, o.open, gitprov.KindGitHub, e)
 	if err != nil {
-		t.Fatalf("Fetch: %v", err)
+		t.Fatalf("Resolve: %v", err)
 	}
-	if string(data) != def {
-		t.Fatalf("data = %q, want %q", data, def)
+	if string(src.Dockerfile) != def {
+		t.Fatalf("the definition = %q, want %q", src.Dockerfile, def)
 	}
 	if want := []string{"github:acme/app", "github:acme/app"}; !slices.Equal(o.opened, want) {
 		t.Fatalf("opened %v, want %v", o.opened, want)
 	}
-	if strings.Contains(string(data), cred) {
-		t.Fatal("the credential reached the fetched bytes")
+	if strings.Contains(string(src.Dockerfile), cred) {
+		t.Fatal("the credential reached the read bytes")
 	}
 
 	missing := dockerfileEntry("agent", "docker/absent.Dockerfile", "release")
-	_, err = Fetch(ctx, o.open, gitprov.KindGitHub, missing)
+	_, err = Resolve(ctx, o.open, gitprov.KindGitHub, missing)
 	if err == nil {
 		t.Fatal("a file the repository does not hold was read")
 	}
@@ -171,14 +171,14 @@ func TestCatalogFetchUsesTheExistingCredentialAndLogsNone(t *testing.T) {
 	}
 }
 
-// TestCatalogFetchPrintsThePathEscaped: the path a source names is a value a
+// TestCatalogResolvePrintsThePathEscaped: the path a source names is a value a
 // person reads back in a failure, and gitprov.ValidRepoPath deliberately
 // allows formatting (bidi) characters in one, so the resolver escapes it on
 // its way into the message rather than printing whatever it was given.
-func TestCatalogFetchPrintsThePathEscaped(t *testing.T) {
+func TestCatalogResolvePrintsThePathEscaped(t *testing.T) {
 	const bidi = "docker/agent\u202ename.Dockerfile"
 	o := &fetchOpener{p: quietReader{}, cred: fakeCredential(t)}
-	_, err := Fetch(context.Background(), o.open, gitprov.KindGitHub, dockerfileEntry("agent", bidi, ""))
+	_, err := Resolve(context.Background(), o.open, gitprov.KindGitHub, dockerfileEntry("agent", bidi, ""))
 	if err == nil || !strings.Contains(err.Error(), `\u202e`) {
 		t.Fatalf("err = %v, want the path escaped", err)
 	}
@@ -187,10 +187,10 @@ func TestCatalogFetchPrintsThePathEscaped(t *testing.T) {
 	}
 }
 
-// TestCatalogFetchIsBounded: a definition larger than the bound is refused
+// TestCatalogResolveIsBounded: a definition larger than the bound is refused
 // whatever its source, so nothing but a Dockerfile's worth of bytes reaches
 // the bucket a build reads.
-func TestCatalogFetchIsBounded(t *testing.T) {
+func TestCatalogResolveIsBounded(t *testing.T) {
 	ctx := context.Background()
 	big := strings.Repeat("RUN true\n", MaxDockerfileBytes/9+2)
 	if len(big) <= MaxDockerfileBytes {
@@ -200,10 +200,10 @@ func TestCatalogFetchIsBounded(t *testing.T) {
 		p:    &fake.Provider{Repo: "acme/app", State: fake.State{Files: map[string]string{"docker/agent.Dockerfile": big}}},
 		cred: fakeCredential(t),
 	}
-	if _, err := Fetch(ctx, o.open, gitprov.KindGitHub, dockerfileEntry("agent", "docker/agent.Dockerfile", "")); err == nil {
+	if _, err := Resolve(ctx, o.open, gitprov.KindGitHub, dockerfileEntry("agent", "docker/agent.Dockerfile", "")); err == nil {
 		t.Fatal("an oversized definition was fetched")
 	}
-	if _, err := Fetch(ctx, o.open, gitprov.KindGitHub, config.Entry{Name: "agent", Source: config.Source{Kind: config.SourceInline, Inline: big}}); err == nil {
+	if _, err := Resolve(ctx, o.open, gitprov.KindGitHub, config.Entry{Name: "agent", Source: config.Source{Kind: config.SourceInline, Inline: big}}); err == nil {
 		t.Fatal("an oversized inline definition was written from state")
 	}
 }
@@ -402,7 +402,8 @@ func (noTreeReader) Commit(context.Context, string) (string, error) {
 
 // TestCatalogResolveRefusesAProviderWithoutATreeReader: a provider that reads
 // a file but no directory is refused by name rather than read as an empty
-// context, which is the same rule Fetch has for a provider with no file read.
+// context, which is the same rule the read has for a provider with no file
+// read (TestCatalogResolveRefusesAProviderWithoutAReader).
 func TestCatalogResolveRefusesAProviderWithoutATreeReader(t *testing.T) {
 	o := &fetchOpener{p: noTreeReader{}, cred: fakeCredential(t)}
 	_, err := Resolve(context.Background(), o.open, gitprov.KindGitHub, contextEntry("ci"))
@@ -620,7 +621,7 @@ func TestDockerfileSecretArgRefused(t *testing.T) {
 		// not hide the continuation: a build reads ARG NPM_TOKEN here.
 		"FROM example.invalid/base\r\r\nARG NPM_\\\r\r\nTOKEN\r\r\n",
 	} {
-		_, err := Fetch(ctx, nil, gitprov.KindGitHub, inlineEntry(def))
+		_, err := Resolve(ctx, nil, gitprov.KindGitHub, inlineEntry(def))
 		if err == nil {
 			t.Errorf("the inline definition %q was accepted", def)
 		} else if !strings.Contains(err.Error(), "--mount=type=secret") {
@@ -630,7 +631,7 @@ func TestDockerfileSecretArgRefused(t *testing.T) {
 			p:    &fake.Provider{Repo: "acme/app", State: fake.State{Files: map[string]string{"docker/agent.Dockerfile": def}}},
 			cred: fakeCredential(t),
 		}
-		_, err = Fetch(ctx, o.open, gitprov.KindGitHub, dockerfileEntry("agent", "docker/agent.Dockerfile", ""))
+		_, err = Resolve(ctx, o.open, gitprov.KindGitHub, dockerfileEntry("agent", "docker/agent.Dockerfile", ""))
 		if err == nil {
 			t.Errorf("the fetched definition %q was accepted", def)
 		} else if !strings.Contains(err.Error(), "--mount=type=secret") {
@@ -683,7 +684,7 @@ func TestDockerfileSecretArgRefused(t *testing.T) {
 		"FROM example.invalid/base\nENV X=1 CREDENTIALS_FILE=./creds.json\n",
 		"FROM example.invalid/base\nONBUILD ENV GOOGLE_APPLICATION_CREDENTIALS=/dev/null\n",
 	} {
-		if _, err := Fetch(ctx, nil, gitprov.KindGitHub, inlineEntry(def)); err != nil {
+		if _, err := Resolve(ctx, nil, gitprov.KindGitHub, inlineEntry(def)); err != nil {
 			t.Errorf("the definition %q was refused: %v", def, err)
 		}
 	}
@@ -716,7 +717,7 @@ func TestDockerfileUserinfoURLRefused(t *testing.T) {
 		// token is in the project all the same.
 		"FROM example.invalid/base\nRUN echo a \\\n# https://user:" + token + "@example.invalid/x\n b\n",
 	} {
-		_, err := Fetch(ctx, nil, gitprov.KindGitHub, inlineEntry(def))
+		_, err := Resolve(ctx, nil, gitprov.KindGitHub, inlineEntry(def))
 		if err == nil {
 			t.Errorf("the inline definition %q was accepted", def)
 		} else {
@@ -731,7 +732,7 @@ func TestDockerfileUserinfoURLRefused(t *testing.T) {
 			p:    &fake.Provider{Repo: "acme/app", State: fake.State{Files: map[string]string{"docker/agent.Dockerfile": def}}},
 			cred: fakeCredential(t),
 		}
-		_, err = Fetch(ctx, o.open, gitprov.KindGitHub, dockerfileEntry("agent", "docker/agent.Dockerfile", ""))
+		_, err = Resolve(ctx, o.open, gitprov.KindGitHub, dockerfileEntry("agent", "docker/agent.Dockerfile", ""))
 		if err == nil {
 			t.Errorf("the fetched definition %q was accepted", def)
 		} else if strings.Contains(err.Error(), token) {
@@ -744,7 +745,7 @@ func TestDockerfileUserinfoURLRefused(t *testing.T) {
 		"FROM example.invalid/base\nRUN curl -fsSL https://example.invalid/tool.tar.gz | tar xz\n",
 		"FROM example.invalid/base\n# see https://example.invalid/issues/1 for person@example.invalid\n",
 	} {
-		if _, err := Fetch(ctx, nil, gitprov.KindGitHub, inlineEntry(def)); err != nil {
+		if _, err := Resolve(ctx, nil, gitprov.KindGitHub, inlineEntry(def)); err != nil {
 			t.Errorf("the definition %q was refused: %v", def, err)
 		}
 	}
@@ -773,13 +774,13 @@ func TestCatalogReadableNamesTheKindsThatReadAFile(t *testing.T) {
 	}
 }
 
-// TestCatalogFetchRefusesAProviderWithoutAReader: the refusal is the one
+// TestCatalogResolveRefusesAProviderWithoutAReader: the refusal is the one
 // sentence, so an operator who meets the limit at `fugaro image add` meets
 // the one the build itself would have given.
-func TestCatalogFetchRefusesAProviderWithoutAReader(t *testing.T) {
+func TestCatalogResolveRefusesAProviderWithoutAReader(t *testing.T) {
 	o := &fetchOpener{p: noReader{}, cred: fakeCredential(t)}
 	e := dockerfileEntry("agent", "docker/agent.Dockerfile", "main")
-	_, err := Fetch(context.Background(), o.open, "gitlab", e)
+	_, err := Resolve(context.Background(), o.open, "gitlab", e)
 	if err == nil {
 		t.Fatal("a provider with no reader was asked for a file")
 	}

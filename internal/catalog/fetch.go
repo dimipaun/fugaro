@@ -68,9 +68,17 @@ type Source struct {
 	ContextHash string
 }
 
-// Resolve is Fetch's sibling for a caller that stages what it reads: the
-// Dockerfile bytes, the commit the entry's branch resolved to, and the digest
-// of the context that commit holds (D1394, D1395, D1401).
+// Resolve resolves e's source into what a copy stages (D1394, D1395, D1401):
+// the Dockerfile bytes a build reads, the commit the entry's branch resolved
+// to, and the digest of the context that commit holds.
+//
+// A repository reference is read out of the named repository, at the commit
+// the named branch resolves to, through the provider the opener returns — the
+// project's existing credentials, and no other access (F9) — and an inline
+// definition is taken from the entry itself, with no repository involved. open
+// and kind are the project's git provider opener and kind (gitprov.KindGitHub
+// or KindBitbucket, both of which read a file); a kind whose provider cannot
+// read one (Readable) is refused, and an inline entry needs neither.
 //
 // The ref is resolved once and both reads happen at the commit it answered, so
 // the Dockerfile a build reads and the context it builds on are one revision
@@ -78,10 +86,16 @@ type Source struct {
 // at the moment of each read, and a copy whose two reads landed either side of
 // a push would stage a definition and a context that never existed together.
 //
-// Everything Fetch's own reads refuse, this refuses the same way and with the
-// same sentences: the validation of the repository, the path and the ref, the
+// What the reads below refuse, this refuses the same way and with the same
+// sentences: the validation of the repository, the path and the ref, the
 // credential, the definition that carries one, and the ceiling a definition
-// may be. What is added is the context's own read and the bound above.
+// may be. The credential the opener returns is dropped here — nothing in this
+// function writes it, returns it or puts it in a failure — and what a caller
+// prints is the entry's repository and path and the file's own bytes, through
+// pluginwire.Printable, the rule every value that reaches a log follows: the
+// catalog's own validation is not this package's to rely on, and a name or a
+// repository that carried an escape sequence would carry it into whatever
+// reads the message.
 func Resolve(ctx context.Context, open gitprov.Opener, kind string, e config.Entry) (Source, error) {
 	switch e.Source.Kind {
 	case config.SourceInline:
@@ -156,43 +170,7 @@ func contextDigest(files []gitprov.TreeFile) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// Fetch resolves e's source into the Dockerfile bytes a catalog build reads
-// (D1140, PIC3): a repo reference is read out of the named repository, at the
-// commit the named branch resolves to, through the provider the opener
-// returns — the project's existing credentials, and no other access (F9) — and
-// an inline definition is taken from the entry itself, with no repository
-// involved.
-//
-// open and kind are the project's git provider opener and kind
-// (gitprov.KindGitHub or KindBitbucket, both of which read a file). A kind
-// whose provider cannot read one (Readable) is refused: an inline entry needs
-// neither.
-//
-// The credential the opener returns is dropped here: nothing in this
-// function writes it, returns it or puts it in a failure — what a caller
-// prints is the entry's repository and path, and the file's own bytes. Those
-// two are printed through pluginwire.Printable, the rule every value that
-// reaches a log follows: the catalog's own validation is not this package's
-// to rely on, and a name or a repository that carried an escape sequence
-// would carry it into whatever reads the message.
-//
-// A caller that stages what it reads wants Resolve instead, which is this read
-// plus the commit it happened at and the context's own identity.
-func Fetch(ctx context.Context, open gitprov.Opener, kind string, e config.Entry) ([]byte, error) {
-	switch e.Source.Kind {
-	case config.SourceInline:
-		return definition(e, []byte(e.Source.Inline))
-	case config.SourceDockerfile:
-		data, _, _, err := fetchDockerfileAt(ctx, open, kind, e)
-		return data, err
-	case config.SourceImage:
-		return nil, fmt.Errorf("the catalog entry %s has no Dockerfile: its source is a prebuilt image, so there is nothing to build or copy", nameOf(e))
-	default:
-		return nil, fmt.Errorf("the catalog entry %s has no source kind this build knows (%s)", nameOf(e), strings.Join(config.SourceKinds, ", "))
-	}
-}
-
-// fetchDockerfile reads a dockerfile source's file out of its repository, at
+// fetchDockerfileAt reads a dockerfile source's file out of its repository, at
 // the commit its branch resolves to, and answers with that commit as well: it
 // is what the read happened at, so it is what a caller records and what the
 // context beside the file is read at.
@@ -276,9 +254,9 @@ func resolveRef(ctx context.Context, p gitprov.Provider, e config.Entry) (string
 	return commit, nil
 }
 
-// definition is what both of Fetch's Dockerfile sources hand back: bytes
-// bounded to what a build may read, which carry no credential in their own
-// text. It is one function for the two sources because the objection to a
+// definition is what both of a source's shapes hand back: bytes bounded to
+// what a build may read, which carry no credential in their own text. It is
+// one function for the two sources because the objection to a
 // definition that names a credential is not to how the file was found — an
 // inline entry and a fetched one reach the same bucket key and the same build.
 func definition(e config.Entry, data []byte) ([]byte, error) {
@@ -898,7 +876,7 @@ var urlUserinfoRE = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.\-]*://[^/?#\s@]+@`)
 // It is the offline half of the read, for a caller that has no provider open
 // and no credential to open one with, and must still refuse a dockerfile
 // source before anything is built (fugaro image add, fugaro validate). What a
-// read actually gets is the type assertion in fetchDockerfile, which stays
+// read actually gets is the type assertion in fetchDockerfileAt, which stays
 // where it is: an opener may return a provider of a kind this list admits and
 // that still cannot answer, and then the read is what refuses it.
 func Readable(kind string) bool {
@@ -910,7 +888,7 @@ func Readable(kind string) bool {
 }
 
 // UnreadableRefusal is the refusal a dockerfile source on a provider that
-// cannot read a file gets, in one place: fetchDockerfile's own refusal and
+// cannot read a file gets, in one place: fetchDockerfileAt's own refusal and
 // the commands that refuse the source before a build ever starts (fugaro
 // image add, fugaro validate) print the same sentence, so an operator who
 // meets it early meets the one the build would have given.
