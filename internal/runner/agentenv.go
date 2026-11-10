@@ -319,20 +319,6 @@ func (r *run) stageOnProviderRoute(model, background string) bool {
 	return false
 }
 
-// reviewPostureStage reports whether stage is launched under the review
-// posture (D894(a)): the review stages a run runs, and the triage judge.
-//
-// The judge is not a review stage — config.IsReviewStage leaves it out,
-// because it runs no review step and owns no review level's pin slot
-// (stageLevel) — but it is the other stage of a run that reads a round's
-// findings and must touch nothing: no hook of the checkout it was shown text
-// from, no MCP server, and no tool that would run or write anything (F25).
-// The posture is the strictest one this package has, and every part of it is a
-// restriction, so a stage that asks for it can only be given less.
-func reviewPostureStage(stage string) bool {
-	return config.IsReviewStage(stage) || stage == stageTriage
-}
-
 // writeManagedSettings writes the managed settings for stage: the gateway's
 // variables, the pins, and the stage's deny list — the web tools for every
 // stage, and the binary reads for a review stage, whose reviewer would
@@ -380,13 +366,17 @@ func (r *run) writeManagedSettings(stage string, pins map[string]string) error {
 			vars[k] = v
 		}
 	}
-	write, deny := agent.WriteManagedSettings, agent.DenyRules(true, reviewPostureStage(stage))
-	if r.review || reviewPostureStage(stage) {
+	write, deny := agent.WriteManagedSettings, agent.DenyRules(true, config.IsReviewStage(stage))
+	if r.review || stage == stageTriage {
 		// A review-mode run's stage reads a pull request's own head, so the
 		// settings it is launched under are the review posture (D894(a)):
 		// managed hooks only, no project MCP server, and setting sources
 		// from the user and managed levels alone. A coding run's own stages
-		// — its in-loop review rounds included — keep the file they had.
+		// — its in-loop review rounds included — keep the file they had, and
+		// the triage judge is the one stage of such a run that joins the
+		// review-mode one here: it reads a round's findings and must touch
+		// nothing, so no hook of the checkout it was shown text from runs
+		// while it reads (F25).
 		write = agent.WriteReviewManagedSettings
 		if r.reviewJob() {
 			// The independent review job is the one review stage that runs

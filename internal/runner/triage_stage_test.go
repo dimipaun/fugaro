@@ -387,11 +387,30 @@ func TestShadowTriageWritesNoDeferred(t *testing.T) {
 // list and the empty setting-source list — both non-nil, because a nil list is
 // the CLI's own default set and would hand the stage every tool and the user's
 // own settings — and it runs in a directory of its own rather than in the
-// checkout under review.
+// checkout under review. The managed settings it is launched under are the
+// review posture, which is the third of F29's parts and the one that keeps a
+// hook of the checkout out of a stage that reads its text.
 func TestTriageRequestHasNoToolsAndNoSettingsSources(t *testing.T) {
-	h := newHarness(t, startupCfg(t, 1, ""), nil)
-	if _, err := h.run(t, implement("feature"), reviewScored("changes", blockingFinding()), triageStep("block")); err != nil {
+	// A gateway harness, because the managed settings file is what a stage
+	// launched without one never writes at all (writeManagedSettings returns
+	// before it writes anything when there is no gateway and no stage
+	// account), and this test reads that file as the judge starts.
+	h := newGW(t, triageOn(t, gwConfig(t, "rigor:\n  default: startup\n")), "observe", "").harness
+	var posture string
+	read := func(inner step) step {
+		return func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+			_, _, raw := settingsEnv(t, h)
+			posture = raw
+			return inner(t, ctx, req)
+		}
+	}
+	if _, err := h.run(t, implement("feature"), reviewScored("ship", blockingFinding()), read(triageStep("block"))); err != nil {
 		t.Fatal(err)
+	}
+	for _, key := range []string{"disableAllHooks", "allowManagedHooksOnly", "allowManagedMcpServersOnly", "allowedMcpServers"} {
+		if !strings.Contains(posture, key) {
+			t.Errorf("the judge's managed settings carry no %s: %s", key, posture)
+		}
 	}
 	calls := triageCalls(h.agent.calls)
 	if len(calls) != 1 {
