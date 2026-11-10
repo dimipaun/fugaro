@@ -29,9 +29,11 @@ import (
 // upgrade, and an offer to retry something is not worth an installation that
 // stops half way.
 
-// retryOfferPrefix is the offer's line, the one a person reads and copies
-// from. The command follows it, printed as data.
-const retryOfferPrefix = "You can retry: "
+// The offer's line is resolvedFixedLine's (update_resolved.go), built there
+// and not here because the resolved-issues step says the same thing about the
+// issues it fixes: the spec's sentence for an issue a release fixed and the
+// command it failed on, which is one sentence about one issue and may not
+// drift into two.
 
 // updateRetryBucket opens the runs bucket the shared store is read from: the
 // selected project's own bucket, which is where the issues prefix lives
@@ -283,7 +285,10 @@ func retryHintLines(local []issues.Issue, rows []issues.SharedRow, version strin
 		if !ok {
 			continue
 		}
-		lines = append(lines, retryOfferPrefix+command)
+		// The offer is this machine's own command, so it is the wording that
+		// suggests trying it again (O4): the offer exists for the person who
+		// ran it.
+		lines = append(lines, resolvedFixedLine(i.Number, command, true))
 		mark = append(mark, i)
 	}
 	return lines, mark

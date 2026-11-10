@@ -378,6 +378,15 @@ func (e *initEngine) outcome(ctx context.Context, res *initflow.Result, runErr e
 	// leaves behind — and it returns no error either: the list is a derived
 	// object, and failing an upgrade over one is what the HARD RULE forbids.
 	e.writeAdminList(ctx)
+	// And T-RU5's, the fourth and last: what this release fixes about the
+	// project's filed issues, which is a step of the run and not of the door
+	// (update_resolved.go) because --json's document carries it and is printed
+	// on the next line. It is reached on the same path the three above are —
+	// the converge applied everything it had — and it is the one of the four
+	// that no mode has to exclude twice: what it writes to the shared store is
+	// the store's own guarded write, and what it prints is a line nobody has
+	// to act on.
+	r.updateResolved(ctx)
 	if err := r.printResult(); err != nil {
 		return err
 	}
