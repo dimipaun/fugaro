@@ -356,9 +356,9 @@ run "the poll's observation is kept for the gate" \
   "    observation = Object.freeze({ beat, heartbeat, verified: verdicts.result.heartbeat });" \
   "    observation = null;"
 run "the owner is TOLD: the refusal speaks" \
-  "    const message = offlineSpeech(verdict.code);
+  "    const message = offlineSpeech(verdict.code) ?? licenceSpeech(verdict.code);
     const said = await speaker.speak(message);" \
-  "    const message = offlineSpeech(verdict.code);
+  "    const message = offlineSpeech(verdict.code) ?? licenceSpeech(verdict.code);
     const said = { ok: true };"
 run "a gated utterance is kept as unsent text" \
   "    if (keepText) unsent.push(Object.freeze({ text, at, code: verdict.code }));" \

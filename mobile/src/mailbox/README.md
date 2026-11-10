@@ -482,11 +482,13 @@ cost of the false refusal is a phone that cannot speak.
 ## The mutation proof
 
 ```sh
-mobile/src/mailbox/mutation-proof.sh     # 57 guards, one planted bug each
+mobile/src/mailbox/mutation-proof.sh     # 66 guards, one planted bug each
 ```
 
 Every mutation disables exactly one guard and must make that guard's own suite
-fail: `client.js` and `client.test.js` for most of them, and -- since the fix
+fail: `client.js` and `client.test.js` for most of them -- and, since S6.3,
+`src/licence/state.js` with `state.test.js` for the lapse's table (the kept set
+that closes, and the kept write that is never read) -- and -- since the fix
 round for PR #604 -- `mac.js` with `mac.test.js` (the tag comparison),
 `store.js` with `store.test.js` and, for the read's own-key rule, with
 `client.test.js` (its consequence for the outbox), and `src/app/root.js` with
@@ -565,6 +567,16 @@ than a claim.
 | a client with no connection port is built, and refuses to send (the review's BLOCKER) | `a client built without a connection refuses to send, and says why (the review's BLOCKER)` |
 | a clock that disagrees is its own reason, not offline's (in `gate.js`) | `a live, verified consumer may be sent to, and nothing else may` |
 | the store's SDK holds a write made with no connection (in `store.js`) | `a write made with no connection is held, not refused, and not stored` -- and, run against `client.test.js`, `the client never relies on the SDK's offline queue: nothing is ever issued` |
+| **The lapse (S6.3)** | |
+| the lapse refuses the writes it does not keep | `after the grace a launch is refused, and nothing is minted, signed or written` |
+| the lapse is asked about the ACTION RECORD, not only about the verb | `after the grace a merge is refused, and a confirm of one, while a cancel is written` |
+| the licence's refusal is spoken in the licence's own words | `after the grace a launch is refused, and nothing is minted, signed or written` |
+| a refused action is not kept as unsent text at a lapse either | `after the grace a merge is refused, and a confirm of one, while a cancel is written` |
+| the lapse is asked BEFORE the connection | `after the grace a launch is refused, and nothing is minted, signed or written` |
+| a licence port that cannot be asked is a wiring failure | `a licence port that cannot be asked is a wiring failure, like every other port` |
+| a kept write is kept without reading the licence store (in `src/licence/state.js`) | `the write path reads the port for the writes a lapse could refuse, and never for the ones it keeps` -- run against `src/licence/state.test.js` |
+| the kept set is closed: a write it does not name is refused at a lapse (in `src/licence/state.js`) | `a lapse keeps the message, the cancel and the kill switch, and refuses the launch, the merge and the configuration` -- run against `src/licence/state.test.js` |
+| the lapse's rules are reached from a second file (a plant in `src/app/root.js`) | `the lapse's rules are reached by the write path alone` |
 
 Two of those mutations **survived** when the proof was first run, and both were
 fixed rather than argued away -- the two guards had no test that could tell them

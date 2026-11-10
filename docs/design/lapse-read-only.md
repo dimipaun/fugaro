@@ -205,7 +205,7 @@ Three consequences the build inherits:
 
 The app's entire write set is **two Realtime Database paths** — its mailbox's inbox node and the
 `acked` flag (`mobile/src/mailbox/paths.js:119`) — and every utterance that reaches them passes
-through one function, the mailbox client's `send` (`mobile/src/mailbox/client.js:559`). The mailbox
+through one function, the mailbox client's `send` (`mobile/src/mailbox/client.js:629`). The mailbox
 client is the app's only write path (`.claude/rules/mobile.md`, and `write-path.test.js` is the scan
 that holds it).
 
@@ -250,7 +250,7 @@ lapse removes no view — the app has no paid view to remove.
 **In the mailbox client's `send`, beside the connection gate, before anything is minted, signed or
 written.** `send` is the one function every utterance passes through, and it already refuses in a
 shape the app speaks: `{ok: false, code, field}` with a code from `CLIENT_CODES`
-(`mobile/src/mailbox/client.js:145`, refused through `gateRefusal` at `:520`). A licence refusal is
+(`mobile/src/mailbox/client.js:183`, refused through `spokenRefusal` at `:580`). A licence refusal is
 one more code, so a screen and the voice path render it the way they render the offline refusal, and
 neither needs a licence concept of its own. Nothing is written, no id is minted and the key is not
 touched by a refused utterance, exactly as the existing ordering guarantees ("the gate is here,
@@ -258,7 +258,7 @@ before anything is minted or signed").
 
 The refusal's text follows the existing rule: a gated utterance is kept only as unsent text the user
 can resend (`unsent()`), never in the outbox, and the app never sends it on its own
-(`mobile/src/mailbox/client.js:456`).
+(`mobile/src/mailbox/client.js:510`).
 
 A **launch** is the one hard case here, because it is an ordinary message: the client cannot tell a
 launch from chatter at the write path, so the verb an utterance was **classified** as must reach the
