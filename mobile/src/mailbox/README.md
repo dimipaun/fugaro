@@ -25,11 +25,11 @@ const client = createMailboxClient({
 });
 
 await client.send('run 42 finished');   // ONE signed inbox message, fresh id
-await client.licenceRefusal('run it', { verb: 'launch' });   // the licence's answer, and no write
 await client.flush();                   // re-deliver what the outbox has not answered
 await client.poll();                    // reads, verifies, speaks, acks, reports presence
 client.pending();                       // the records the outbox has not answered, still retried
 client.unsent();                        // D167's unsent text: what the gate or the licence refused
+client.licenceRefusal('run it', { verb: 'launch' });   // one write's answer, and NO write
 ```
 
 ## The write set is exactly two paths (D113)
@@ -522,8 +522,9 @@ confirm machine decided is threaded from the screen to the write path --
 `src/voice/dialogue.js` and `src/voice/screen.js` with `screen.test.js` (the
 spoken one, through P6.12's dialogue) -- and **the fourth is that same screen's
 offline door**, where the licence's answer has to beat the screen's own (the
-masking §5.7 forbids), with `screen.test.js` again. (The licence question's own
-classification is a `client.js` guard, proved against `client.test.js`.) The store's SDK-queue guard is the one
+masking §5.7 forbids), with `screen.test.js` again. (The licence question's
+own classification is a `client.js` guard, proved against `client.test.js`.)
+The store's SDK-queue guard is the one
 mutation proved **twice** -- against `store.test.js` and against
 `client.test.js` -- because "the SDK queue would have noticed" is the control
 the client's own claim rests on. It finds a working node rather than assuming
