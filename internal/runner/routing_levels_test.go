@@ -269,8 +269,13 @@ func TestRoutingTriageRunsTheReviewersModel(t *testing.T) {
 	// The level's pin slot is the review stage's and stays one per level
 	// (pinSlots): triage runs level 2's model without owning a slot of its own,
 	// and a reviewStage entry for it would write that level's model twice.
-	if got, want := len(pr.pinSlots()), len(r.pinSlots()); got != want {
-		t.Errorf("a run with a pinned level 2 has %d pin slots and one without has %d: a level's own slot is one per level", got, want)
+	for _, s := range reviewStages {
+		if s.stage == stageTriage {
+			t.Error("reviewStages has a triage entry: pinSlots gives every entry a slot of its own, so level 2's model would be pinned twice")
+		}
+	}
+	if got, want := len(pr.pinSlots()), 3+len(reviewStages); got != want {
+		t.Errorf("%d pin slots, want the three role slots and one per review level (%d): a level's model is pinned once (pinSlots)", got, want)
 	}
 }
 
