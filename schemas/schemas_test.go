@@ -2234,6 +2234,53 @@ func TestResultSchemaCheckpointAgreeWithGo(t *testing.T) {
 	}
 }
 
+// TestResultSchemaStatusesAgreeWithGo pins result.schema.json's status enum to
+// runstore.Statuses, in both directions: a status the runner can write but the
+// enum lacks is a result.json every consumer validating against the published
+// schema refuses — and the enum was a hand-written copy, exactly the shape
+// no_credential had before the halt-reason pin above was written — while a
+// value only the enum knows is a status no run can produce.
+//
+// The Go side is runstore's own slice and not a list written here: a second
+// list is a second place to forget, and the drift stays invisible until a
+// record renders as a word its writer never meant. Mutation (run, restored):
+// drop a value from the enum, or add a Status constant without the enum, and
+// this names the side that has it.
+func TestResultSchemaStatusesAgreeWithGo(t *testing.T) {
+	want := make([]string, len(runstore.Statuses))
+	for i, s := range runstore.Statuses {
+		want[i] = string(s)
+	}
+	if len(want) == 0 {
+		t.Fatal("runstore.Statuses is empty: this test proves nothing")
+	}
+	data, err := os.ReadFile("result.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	node, _ := doc["properties"].(map[string]any)
+	node, _ = node["status"].(map[string]any)
+	raw, ok := node["enum"].([]any)
+	if !ok {
+		t.Fatal(`result.schema.json: status has no enum`)
+	}
+	var got []string
+	for _, v := range raw {
+		s, ok := v.(string)
+		if !ok {
+			t.Fatalf("result.schema.json: status enum entry %v is not a string", v)
+		}
+		got = append(got, s)
+	}
+	if !sameStrings(got, want) {
+		t.Errorf("result.schema.json status = %v, internal/runstore's Statuses = %v", got, want)
+	}
+}
+
 // TestResultSchemaHaltReasonsAgreeWithGo pins result.schema.json's halt.reason
 // enum to the HaltReason constants in internal/runstore, in both directions:
 // a reason the Go side can write but the enum lacks is a result.json a

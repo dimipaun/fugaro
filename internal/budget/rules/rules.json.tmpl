@@ -248,7 +248,7 @@
           "$run": {
             ".write": "RUN && DAYOK && !data.exists()",
             ".validate": "newData.hasChildren(['status', 'requestedBy'])",
-            "status": { ".validate": "newData.isString() && (newData.val() == 'succeeded' || newData.val() == 'failed' || newData.val() == 'halted' || newData.val() == 'cancelled' || newData.val() == 'infra_error' || newData.val() == 'none') && RBOK" },
+            "status": { ".validate": "newData.isString() && (newData.val() == 'succeeded' || newData.val() == 'failed' || newData.val() == 'unreviewed' || newData.val() == 'halted' || newData.val() == 'cancelled' || newData.val() == 'infra_error' || newData.val() == 'none') && RBOK" },
             "requestedBy": { ".validate": "STR && RBOK" },
             "$other": { ".validate": false }
           }

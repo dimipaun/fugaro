@@ -4710,7 +4710,7 @@ Flags:
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | only this repository (owner/name, or a path inside its checkout) |
 | `--since` | string | `7d` | no | only runs started within this long (7d, 36h, 90m; 0 for all) |
-| `--state` | string | "" | no | only runs in this state (cancelled, error, failed, halted, infra_error, launching, pending, running, succeeded, unlaunched) |
+| `--state` | string | "" | no | only runs in this state (cancelled, error, failed, halted, infra_error, launching, pending, running, succeeded, unlaunched, unreviewed) |
 | `--watch` | bool | `false` | no | redraw until every run has settled |
 
 Subcommands:

@@ -35,11 +35,36 @@ const (
 	// refusing a pull request before checkout (no PR of its own ever
 	// exists): a policy decision the runner made correctly, not an
 	// infrastructure fault.
-	StatusFailed     Status = "failed"
+	StatusFailed Status = "failed"
+	// StatusUnreviewed is a run that finished its loop, pushed and opened
+	// (or updated) its pull request, and that no review verdict exists for:
+	// a senior review round that answered nothing after its retry, or a run
+	// whose review never produced a senior round at all. Nothing failed —
+	// its tests passed — and nothing read it either, which is the state the
+	// label names.
+	StatusUnreviewed Status = "unreviewed"
 	StatusInfraError Status = "infra_error"
 	StatusCancelled  Status = "cancelled"
 	StatusHalted     Status = "halted" // a budget or token limit stopped the run
 )
+
+// Statuses is the whole vocabulary, in source order. It is the one spelling of
+// the set: result.schema.json's status enum, internal/digest's closed set and
+// the statuses the budget database accepts in an outcome (internal/budget's
+// outcomeStatuses, built from these, less the one status no ending run writes)
+// are each held to it, so a reader of a run record and the run that wrote it
+// cannot drift apart. Nothing in this tree writes a word outside it, and the
+// two places a record crosses its boundary refuse one rather than let it be
+// read as a status later: a strict reader validates against the schema, and the
+// database's rules refuse the outcome.
+var Statuses = []Status{StatusRunning, StatusSucceeded, StatusFailed, StatusUnreviewed, StatusInfraError, StatusCancelled, StatusHalted}
+
+// Terminal reports whether a run carrying this status has ended. Running is the
+// one status that has not, which is what the budget database's outcome
+// vocabulary needs: a run writes its outcome as it ends, so `running` is a
+// status no outcome carries — and one the rules refuse there, where a run that
+// ended with its outcome refused would show as a fault that never happened.
+func (s Status) Terminal() bool { return s != StatusRunning }
 
 // HaltReason says which limit halted a run.
 type HaltReason string

@@ -1,6 +1,7 @@
 package infra
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -521,6 +522,64 @@ func TestDBDeploysAndThenChangesNothing(t *testing.T) {
 	d2 := NewDB(d.c, "aurora", "proj-1234", "")
 	if acts, _, err := d2.Plan(context.Background()); err != nil || len(acts) != 0 {
 		t.Fatalf("a second plan: %v, %v", acts, err)
+	}
+}
+
+// TestDBUpdateCarriesTheWidenedOutcomeStatus: an installation whose deployed
+// rules are the document of the release before NV0 — the outcome's status
+// validator without the run status `unreviewed` (docs/binary-allow-rule's NV0,
+// D994) — converges under one `fugaro update --firebase-project`. The rules
+// stage redeploys a document infra.SameJSON reports as different, whatever the
+// markers say, so the widened validator reaches a database that has not seen it
+// with no bump and no second command: RulesVersion moves for a change that
+// opens a family to a client, and this one admits a value the runs of this
+// release write under a `.write` that does not move, where a bump would drop
+// every published policy on an installation whose owner has not redeployed yet.
+//
+// The previous document is derived from this build's, the way internal/cli's
+// previousRulesDocument derives the release before a family was added: the
+// release behind this one is not in the tree, so the fixture is this document
+// with the one clause removed. The assertion that the deploy puts the clause
+// back is what makes this a convergence test rather than a restatement of
+// SameJSON.
+//
+// Hand mutation this fails on: a plan that leaves a database alone when only
+// the widened validator differs (the installation keeps filing every unreviewed
+// run as an infrastructure error), or a template that loses the clause (the
+// fixture then fails to build, naming the release it is derived from).
+func TestDBUpdateCarriesTheWidenedOutcomeStatus(t *testing.T) {
+	d, f := newDB(t, "")
+	deploy(t, d)
+	gen, err := rules.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The one clause NV0 adds, in the template's own spelling.
+	const clause = " || newData.val() == 'unreviewed'"
+	if !bytes.Contains(gen, []byte(clause)) {
+		t.Fatalf("the generated rules do not accept the run status 'unreviewed': this fixture derives the release before the one that widens the outcome's status validator")
+	}
+	f.SetRules([]byte(strings.Replace(string(gen), clause, "", 1)))
+
+	acts, _, err := d.Plan(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var paths []string
+	for _, a := range acts {
+		paths = append(paths, a.Path)
+	}
+	if !slices.Equal(paths, []string{"rules"}) {
+		t.Fatalf("actions = %v, want the rules deployed over the document the installation still runs", paths)
+	}
+	if err := d.Apply(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !SameJSON(f.Rules(), gen) {
+		t.Error("the deployed rules are not the generated ones after the update")
+	}
+	if !bytes.Contains(f.Rules(), []byte(clause)) {
+		t.Error("the update left the outcome's status validator without 'unreviewed': the installation keeps a database that files every unreviewed run as an infrastructure error it is not")
 	}
 }
 
