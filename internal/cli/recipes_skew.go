@@ -755,7 +755,7 @@ const governanceSince = "0.13.0"
 // with DisallowUnknownFields, so a runner older than this refuses the whole
 // task: a launch that carries one is gated here rather than started on a job
 // that dies at bootstrap.
-const launchLimitsSince = "0.23.0"
+const launchLimitsSince = "0.22.0"
 
 // chainLimitsKnows is what such a runner knows, as the gate names it.
 const chainLimitsKnows = "the chain's limits its task carries (max_usd, max_tokens, max_time, max_review_rounds)"

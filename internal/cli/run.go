@@ -729,7 +729,7 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 	// refused as a different task rather than silently dropped, and before
 	// the gates that read the task (freshLaunchGates judges the image on the
 	// fields this writes).
-	if err := chainLimitGate(ctx, env, o, spec, warn); err != nil {
+	if err := chainLimitGate(ctx, env, o, spec, reused, warn); err != nil {
 		return launchResult{}, err
 	}
 	// The compression image gate's own condition, resolved here beside the
@@ -873,8 +873,17 @@ func chainLimitsAsk(spec *task.Spec) bool {
 //     --total-timeout, else the workflow's timeouts.total when this launcher
 //     can read the checkout; a launcher that can read neither writes the chain
 //     limit alone and leaves the composition to the runner's bootstrap (L5).
-func chainLimitGate(ctx context.Context, env *cloudEnv, o *runOptions, spec *task.Spec, warn io.Writer) error {
-	if o.retry != "" || !o.limits.set() {
+//
+// A launch that reuses a stored follow-up (reused) writes nothing here: the
+// limits such a task carries were merged, refused and composed when it was
+// written, and what this call's flags claim is compared byte for byte against
+// them (storedFollowUp), so there is no figure left to judge — while the merge
+// and the clock both depend on the environment this call happens to read (the
+// policy as it stands now, the checkout in hand now), and re-deriving them
+// would refuse a task that is not changing, or write a different composition
+// into a run that has already started.
+func chainLimitGate(ctx context.Context, env *cloudEnv, o *runOptions, spec *task.Spec, reused bool, warn io.Writer) error {
+	if o.retry != "" || reused || !o.limits.set() {
 		return nil
 	}
 	c := chainLimitPolicyOf(ctx, env, spec, launchLevelsConfig(ctx, env, spec))

@@ -522,13 +522,18 @@ func prSpec(ctx context.Context, env *cloudEnv, o *runOptions, text string, tota
 // construction.
 //
 // The wall time is the one field two flags write: --max-time and
-// --total-timeout compose as the smaller of the two, and the clock they compose
-// with is the same launchClockOf the gate reads — the flag this call gives, else
-// the checkout's own workflows.<w>.timeouts.total — so repeating
-// `--total-timeout 6h --max-time 90m` finds the composed 1h30m0s and not the 6h
-// it typed. A launcher that can resolve no clock at all writes the chain's
-// figure alone, exactly as the gate does.
-func repeatOverrides(ctx context.Context, env *cloudEnv, have *task.Spec, o *runOptions, total time.Duration) task.Overrides {
+// --total-timeout compose as the smaller of the two (chainLimitGate), and the
+// clock they composed with is the stored task's own — the smaller of the two
+// is what that gate wrote as total_timeout, the field the backend's override
+// reads. The repeat reads it back rather than resolving a clock of its own,
+// because this call's environment is not the launch's: the checkout in hand
+// now need not be the one that launch read, and there need not be one at all.
+// So repeating `--total-timeout 6h --max-time 90m` finds the composed 1h30m0s
+// and not the 6h it typed, and a launch that could resolve no clock — the
+// chain's figure written alone, the composition left to the runner (L5) — is
+// repeated as it stands rather than gaining a clock from wherever the repeat
+// is run.
+func repeatOverrides(have *task.Spec, o *runOptions, total time.Duration) task.Overrides {
 	var want task.Overrides
 	if o.limits.usd != nil {
 		want.MaxUSD = o.limits.usd
@@ -541,16 +546,10 @@ func repeatOverrides(ctx context.Context, env *cloudEnv, have *task.Spec, o *run
 	}
 	if o.limits.time > 0 {
 		want.MaxTime = o.limits.time.String()
-		// The clock a first launch of this follow-up resolves: its own
-		// --total-timeout, else the checkout's workflow. The probe is the
-		// stored task with the overrides this call's flags claim, which is
-		// the state chainLimitGate composes the clock from.
-		probe := *have
-		probe.Overrides = task.Overrides{}
-		if total > 0 {
-			probe.Overrides.TotalTimeout = total.String()
-		}
-		if clock := launchClockOf(ctx, env, &probe); clock > 0 {
+		// The clock the launch composed with, as it wrote it: min is
+		// idempotent, so composing it once more with this call's figure
+		// answers the same figure the launch stored.
+		if clock := launchTimeoutOf(have); clock > 0 {
 			want.TotalTimeout = min(clock, o.limits.time).String()
 		}
 		return want
@@ -573,7 +572,7 @@ func storedFollowUp(ctx context.Context, env *cloudEnv, slug string, o *runOptio
 	if err != nil {
 		return nil, err
 	}
-	want := repeatOverrides(ctx, env, have, o, total)
+	want := repeatOverrides(have, o, total)
 	a, err1 := json.Marshal(have.Overrides)
 	b, err2 := json.Marshal(want)
 	if err := errors.Join(err1, err2); err != nil {

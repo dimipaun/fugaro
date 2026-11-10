@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -300,6 +301,50 @@ func TestRunPRRepeatCarriesTheChainLimits(t *testing.T) {
 	}
 }
 
+// TestRunPRRepeatIsIdempotentWhereNoClockResolves: a repeat is compared against
+// the stored task and not against what this call can resolve here, and the
+// clock is the field that proves it. A launch made outside the repository's
+// checkout resolves no clock of its own — --max-time is written alone, and the
+// composition is the runner's at bootstrap — so a repeat of it from the same
+// place finds a stored task whose clock this call cannot re-derive, and a
+// repeat of it made later from inside the checkout resolves one the launch
+// never had. Both are the same task, and neither may write a different
+// composition into a run that has started.
+func TestRunPRRepeatIsIdempotentWhereNoClockResolves(t *testing.T) {
+	f := newCloudFixture(t)
+	limitsImage(t, f)
+	seedRoot(t, f, rootID, time.Now().Add(-72*time.Hour))
+	limitsCheckout(t)
+	inCheckout, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(t.TempDir()) // --repo names the repository; no checkout resolves a clock
+	args := []string{"run", "--repo", limitsRepo, "--pr", "7", "--run-id", fuID, "--max-time", "90m"}
+	if _, _, err := execute(t, args...); err != nil {
+		t.Fatal(err)
+	}
+	if o := readSpec(t, f, fuID).Overrides; o.MaxTime != "1h30m0s" || o.TotalTimeout != "" {
+		t.Fatalf("overrides = %+v, want the chain's 1h30m0s alone (no clock here to compose it with)", o)
+	}
+	if out, _, err := execute(t, args...); err != nil || !strings.Contains(out, "already launched") {
+		t.Fatalf("the repeat with no clock of its own: %v, output:\n%s", err, out)
+	}
+	// The same repeat with the checkout in hand, where workflows.web.timeouts.total
+	// (2h) would resolve: the stored task is the run's truth, so the repeat is
+	// still that task and not one carrying a clock this call invented.
+	t.Chdir(inCheckout)
+	if out, _, err := execute(t, args...); err != nil || !strings.Contains(out, "already launched") {
+		t.Fatalf("the repeat from inside the checkout: %v, output:\n%s", err, out)
+	}
+	if o := readSpec(t, f, fuID).Overrides; o.MaxTime != "1h30m0s" || o.TotalTimeout != "" {
+		t.Fatalf("overrides = %+v after the repeats, want them untouched", o)
+	}
+	if n := len(f.run.Executions()); n != 1 {
+		t.Fatalf("%d executions, want 1", n)
+	}
+}
+
 // limitsLaunch launches args under runID and answers the clock the backend was
 // asked for it.
 func limitsLaunch(t *testing.T, f *cloudFixture, runID string, args ...string) time.Duration {
@@ -462,13 +507,13 @@ func TestLaunchLimitsSinceIsTheReleaseTheChecklistNames(t *testing.T) {
 
 // TestLaunchLimitsSinceIsTheNextRelease: the constant is written out rather
 // than read from anything, because nothing in the tree knows which release
-// carries this work. The four members ship in the release after v0.22.0, the
-// newest tag in docs/releases, which is where the next CLI release's number
-// comes from — nothing numbered this work's slot the way the periodic-reviews
-// plan numbered 0.22.0 for jobsSince. A renumbering moves this and the bullet
-// together.
+// carries this work. The four members ship in 0.22.0, the release
+// docs/release-streams.yaml names as the next one after the current 0.21.0
+// (docs/releases/v0.22.0.md is the notes main is assembling), which is the
+// release the five sibling constants merged in the same window name too. A
+// renumbering moves this and the bullet together.
 func TestLaunchLimitsSinceIsTheNextRelease(t *testing.T) {
-	if launchLimitsSince != "0.23.0" {
-		t.Errorf("launchLimitsSince = %q: the four chain limits ship in the release after v0.22.0, the newest tag in docs/releases", launchLimitsSince)
+	if launchLimitsSince != "0.22.0" {
+		t.Errorf("launchLimitsSince = %q: the four chain limits ship in 0.22.0, the release docs/release-streams.yaml names as the next CLI release", launchLimitsSince)
 	}
 }
