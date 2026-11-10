@@ -335,6 +335,53 @@ func TestUpdateConvergesPreviousPolicy(t *testing.T) {
 	}
 }
 
+// TestUpdateConvergesNoCatalogDefault is O4 reading (b) at the door the HARD
+// RULE is about: a project whose image catalog marks no default still converges
+// with `fugaro update` alone. The catalog is the one thing that could take the
+// per-repository image away, so a project that publishes entries without
+// choosing one has to keep the images its workflows were built as — every job
+// on the per-repository tag, and the images stage rebuilding exactly those —
+// rather than stopping on a project that names no entry for a workflow.
+//
+// The alternative the plan rejected, a resolver that refuses when no default
+// exists, would leave this installation needing a second command: `fugaro
+// image build` and a catalog edit before the next `fugaro update`.
+func TestUpdateConvergesNoCatalogDefault(t *testing.T) {
+	const entry = "tools"
+	r := newConvergeRig(t, v4Node())
+	r.appendConfig(t, "image_catalog:\n  entries:\n    - name: "+entry+"\n      tags: [node]\n      source: { kind: inline, inline: \"FROM scratch\\n\" }\n")
+	registerInstallation(t, r.initRig)
+	if p := convergeNode(t, r); p.ImageCatalog != nil {
+		t.Fatalf("the fixture's node already carries a catalog (%v): it is not an installation whose policy predates it", p.ImageCatalog)
+	}
+
+	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+
+	p := convergeNode(t, r)
+	if p.ImageCatalog == nil || len(p.ImageCatalog.Entries) != 1 || p.ImageCatalog.Entries[0].Name != entry {
+		t.Fatalf("after one fugaro update, the published node's image_catalog = %+v, want the one local entry: the catalog did not reach the node", p.ImageCatalog)
+	}
+	for _, e := range p.ImageCatalog.Entries {
+		if e.Default {
+			t.Errorf("after one fugaro update, the published entry %s is the default, want none: the project's config named no entry for its workflows", e.Name)
+		}
+	}
+	if n := len(r.builder.specs); n != 2 {
+		t.Fatalf("%d job image(s) reached Cloud Build, want the checkout's two workflows: with no catalog default every workflow keeps its own image", n)
+	}
+	// The pin the fixture records carries a digest the fake source registry
+	// answers differently, so what is compared is the repo:tag the pin names.
+	pinned, _, _ := strings.Cut(pinnedRef("base", convergeRelease), "@")
+	for _, s := range r.builder.specs {
+		if strings.Contains(s.Image, "catalog-"+entry) {
+			t.Errorf("workflow %s was built as %s, want the repository's own derived image: no catalog entry is this project's default, so no job runs one (O4 b)", s.Workflow, s.Image)
+		}
+		if base, _, _ := strings.Cut(s.Base, "@"); base != pinned {
+			t.Errorf("workflow %s was built from %s, want this release's pinned base %s: the rebuild is the per-repository image's", s.Workflow, s.Base, pinned)
+		}
+	}
+}
+
 // convergeNode is the policy node the fixture's installation carries, decoded
 // by the reader a run of the project uses.
 func convergeNode(t *testing.T, r *convergeRig) *projectpolicy.Policy {
