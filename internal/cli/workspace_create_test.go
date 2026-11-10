@@ -362,9 +362,16 @@ func TestUpdateConvergesASplitWorkspaceOwnerInOneCommand(t *testing.T) {
 
 	out := convergeOn(t, r, []string{"policy-rules-skew", "policy-older-than-binary", "plugin-pin"})
 
+	// The step's line is the first clause of its reason and the log the whole of
+	// it (report.Brief), so the owner sees the skip on the screen and reads why
+	// it did not run — the pair, the config key and the way out — in the log.
+	if !strings.Contains(out, "– skipped      workspace-project this installation declares a workspace of its own") {
+		t.Errorf("the update's screen does not show the workspace's own project skipped for the split:\n%s", out)
+	}
+	whole := out + newestLog(t, "update")
 	for _, want := range []string{"workspace-project", "its Firebase is another project's", "budget.firebase_project", "fugaro update --firebase-project " + initProject} {
-		if !strings.Contains(out, want) {
-			t.Errorf("the update's output does not carry %q:\n%s", want, out)
+		if !strings.Contains(whole, want) {
+			t.Errorf("the update's account does not carry %q:\n%s", want, whole)
 		}
 	}
 	// Nothing reached the workspace's own root: the stage skipped before
@@ -380,8 +387,8 @@ func TestUpdateConvergesASplitWorkspaceOwnerInOneCommand(t *testing.T) {
 	// The stage behind it ran: the update read the node the previous release
 	// left, found it carrying what this installation declares and went on to
 	// the layer, the checkout and the rest (convergeOn's own assertions).
-	if !strings.Contains(out, "carries what this installation declares") {
-		t.Errorf("the update's output does not carry the record stage's own line, so the run did not reach it:\n%s", out)
+	if !strings.Contains(whole, "carries what this installation declares") {
+		t.Errorf("the update's account does not carry the record stage's own line, so the run did not reach it:\n%s", whole)
 	}
 	if r.db.Value(projectpolicy.PathWorkspace(initProjectName)) == nil {
 		t.Errorf("the workspace record the previous release published is gone")
