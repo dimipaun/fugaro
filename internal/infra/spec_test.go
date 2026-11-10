@@ -3619,6 +3619,52 @@ func TestFilledProxiedListDropsMountAndAccessor(t *testing.T) {
 	}
 }
 
+// TestFilledProxiedListDropsMountAndAccessorOnTheRealList is B1.13 part two's
+// red step: the same drop as the test above, read off config.ProxiedGitSecretNames
+// as this branch spells it rather than off a list a test filled in for the
+// duration. It is the release's own guard — the flip is the constant, so the
+// constant is what the drop has to be observed against — and it fails while the
+// list is still empty, which is the state B1.8 ships.
+func TestFilledProxiedListDropsMountAndAccessorOnTheRealList(t *testing.T) {
+	if !slices.Contains(config.ProxiedGitSecretNames, config.BitbucketSecret) {
+		t.Fatalf("config.ProxiedGitSecretNames = %v does not name %s: the flip is B1.13 part two, and until it fills the list a proxied repository's job keeps the mount and the accessor this test is written to see go", config.ProxiedGitSecretNames, config.BitbucketSecret)
+	}
+	spec, err := Repo(proxiedSandboxInputs(t, proxiedLocalEntry, publishedNode(t, true, "acme/sandbox")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !spec.BitbucketProxied {
+		t.Fatal("BitbucketProxied = false for a repository the node admits with proxy: true: the assertions below would pass vacuously")
+	}
+	if got := spec.Workflows["web"].SecretEnv[bitbucketTokenEnv]; got != config.BitbucketSecret {
+		t.Fatalf("the spec's web job mounts %s -> %q, want %s: the fixture must carry the mount the drop takes away", bitbucketTokenEnv, got, config.BitbucketSecret)
+	}
+	f := newCloud(t)
+	ready, _, _ := readinessOf(t, f, spec)
+	ws := ready.Workflows["web"]
+	if _, mounted := ws.SecretEnv[bitbucketTokenEnv]; mounted {
+		t.Errorf("a proxied repository's job still mounts %s -> %q: the service holds the token for it, so the account keeps no accessor and the mount goes with it (D500, D502)", bitbucketTokenEnv, ws.SecretEnv[bitbucketTokenEnv])
+	}
+	if id, named := ws.SecretIDs[config.BitbucketSecret]; named {
+		t.Errorf("a proxied repository's job still names the token's secret %q, want none: it has no mount of it left to point at", id)
+	}
+	if got := ws.Env[runner.SecretEnvsVar]; strings.Contains(got, bitbucketTokenEnv) {
+		t.Errorf("a proxied repository's job's %s = %q, want the variables that are left: the redactor masks exactly what the job mounts", runner.SecretEnvsVar, got)
+	}
+	if slices.Contains(ready.Addresses(), bitbucketTokenAccessor) {
+		t.Errorf("the plan still produces %s, want it gone: the job's account reads no token, so it needs no accessor on one (D500, G1)", bitbucketTokenAccessor)
+	}
+	if ready.Secrets[config.BitbucketSecret] == "" {
+		t.Error("the token's container left rs.Secrets: the build account clones with it and its versions are the operator's to store (D148, F3)")
+	}
+	if ready.Check == nil {
+		t.Fatal("the fixture deploys no check job: the assertion below would pass vacuously")
+	}
+	if got := ready.Check.SecretEnv[bitbucketTokenEnv]; got != config.BitbucketSecret {
+		t.Errorf("the check job's SecretEnv = %v, want %s -> %s kept: it runs as the build account, which keeps its accessor (D148, F3)", ready.Check.SecretEnv, bitbucketTokenEnv, config.BitbucketSecret)
+	}
+}
+
 // TestFilledProxiedListKeepsNonProxiedRepositories: with the list filled, a
 // Bitbucket repository the node does not admit — and every repository of an
 // installation that did not opt in — keeps its accessor and its mount (G9).
