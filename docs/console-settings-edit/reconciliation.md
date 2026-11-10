@@ -383,8 +383,8 @@ An answer here is not an approval: the plan's tasks start only when the owner ap
   values; **(c)** the console performs the write and reads the CLI's prompt behaviour from the exit
   code. *Recommendation:* **(a)**. **(b)** is the option the brief forbids and the one that is wrong
   on the merits: widening is `settingsCeilingKey` (`internal/cli/settings_set.go:1366`) **and**
-  `settingsLoosens` (`:1398`) **and** `settingsListSubset` (`:1446`) **and** `settingsTypedWrite`
-  (`:1467`), including the deliberate "a form this Fugaro does not know how to compare is treated as
+  `settingsLoosens` (`:1516`) **and** `settingsListSubset` (`:1564`) **and** `settingsTypedWrite`
+  (`:1585`), including the deliberate "a form this Fugaro does not know how to compare is treated as
   a loosening" rule — a TypeScript re-implementation would answer *narrowing* where the CLI answers
   *widening*, which is the one direction that must never be got wrong. **(c)** is refused because a
   widening's failure mode is a refusal **after** the operator confirmed a dialog that could not have
