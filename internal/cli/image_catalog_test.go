@@ -531,6 +531,50 @@ func TestImageRmRefusesAnEntryTheMapGivesARepositoryThisMachineDoesNotList(t *te
 	}
 }
 
+// TestImageRmAllowsAnEntryAListedRepositoriesJobDoesNotRun: the sweep over the
+// map's values is for the repositories this machine's config does not list, and
+// a repository it DOES list was already judged by the resolver asked above it:
+// a workflow's own image_name: beats the map (T1 b), and a clone or shared
+// workflow runs the installation's own image and never an entry. A sweep that
+// read a listed key as a claim too refused the removal of an entry no job runs
+// — the direction D1145 does not forbid, and the entry the person is removing
+// because nothing uses it.
+//
+// The control is this file's TestImageRmRefusesAnEntryThePublishedMapPointsAt:
+// the same fixture with the workflow silent, where the map IS the job's answer
+// and the removal is refused. What tells the two apart is the workflow, not the
+// key.
+func TestImageRmAllowsAnEntryAListedRepositoriesJobDoesNotRun(t *testing.T) {
+	for _, tc := range []struct {
+		name, yaml string
+	}{
+		// base is the catalog's default and another entry of the catalog, so
+		// the workflow's job runs an image no removal here touches.
+		{"a workflow that names another entry", "version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  app: { image_name: base, commands: { build: sh build.sh, test: sh test.sh } }\n"},
+		{"a clone workflow", "version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  app: { checkout: clone, commands: { build: sh build.sh, test: sh test.sh } }\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			publishedMapFixture(t)
+			catalogCheckout(t, tc.yaml)
+
+			if _, _, err := execute(t, "image", "rm", "tools"); err != nil {
+				t.Fatalf("removing the entry this repository's job does not run: %v", err)
+			}
+			data, err := os.ReadFile(os.Getenv("FUGARO_CONFIG"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			lc, err := localcfg.Parse(data)
+			if err != nil {
+				t.Fatalf("the config after the rm: %v\n%s", err, data)
+			}
+			if lc.ImageCatalog == nil || len(lc.ImageCatalog.Entries) != 1 || lc.ImageCatalog.Entries[0].Name != "base" {
+				t.Fatalf("ImageCatalog = %+v, want tools gone and base left", lc.ImageCatalog)
+			}
+		})
+	}
+}
+
 // TestImageCatalogGateIsSpelledApartFromThePriceCatalog: the image family's
 // skew gate is the image catalog's own pair (D1156), so it judges an image
 // document by the release that reads image_catalog and never by the price

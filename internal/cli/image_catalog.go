@@ -586,9 +586,12 @@ func catalogConfig(ctx context.Context, o cloudOptions) (string, *localcfg.Confi
 // teammate's, or one whose repos: entry a person removed on this machine —
 // while its mapping stays in the node, which `fugaro update` publishes and never
 // cross-checks against this file. A value of the map that is the entry is
-// therefore read as the claim it is, whatever key carries it: the removal would
-// leave that repository's deploy and every launch of it refusing with
-// catalog.UnknownMappedEntryError, and nothing on this machine would repair it.
+// therefore read as the claim it is, whatever key carries it, for a repository
+// that is not listed here: the removal would leave that repository's deploy and
+// every launch of it refusing with catalog.UnknownMappedEntryError, and nothing
+// on this machine would repair it. A key this config lists is not read that
+// way, because the resolver above already answered about that repository, and
+// its answer is what its job is.
 //
 // A job the resolver gives no entry to is not one of them: it runs no catalog
 // image at all, and a removal cannot leave it on an entry it never had.
@@ -633,9 +636,15 @@ func catalogPointedAt(ctx context.Context, lc *localcfg.Config, cat *config.Cata
 	// is not listed above is still a claim about that repository's job, and the
 	// workflow that would say otherwise is not here to read. The values are
 	// swept whatever their keys are, and in key order so the refusal names the
-	// same repository every time.
+	// same repository every time, and the keys this config DOES list are
+	// skipped: the resolver answered about those above, and its answer is the
+	// job's — a workflow that names an entry beats the map (T1 b), and a clone
+	// or shared job runs the installation's own image and no entry at all.
 	for _, repo := range slices.Sorted(maps.Keys(imap)) {
 		if imap[repo] != entry {
+			continue
+		}
+		if _, listed := lc.Repos[repo]; listed {
 			continue
 		}
 		return fmt.Sprintf("the job of %s (this project's image_map gives it that entry)", pluginwire.Printable(repo)), nil, nil
