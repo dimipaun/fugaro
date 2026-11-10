@@ -241,6 +241,21 @@ func TestLengthLimit(t *testing.T) {
 	if got, err := secretname.Project(strings.Repeat("a", secretname.MaxIDLen)); err == nil {
 		t.Errorf("Project of a %d-character name = %q, want a refusal", secretname.MaxIDLen, got)
 	}
+	// The read side holds the same bound, and it is the side the caller
+	// cannot be trusted about: an ID Project would refuse may not parse
+	// either, or a name the grammar never builds would read back as one of
+	// its own — and the longest ID Project does build must still parse.
+	overLong := secretname.UserPrefix + "1_" + strings.Repeat("a", secretname.MaxIDLen)
+	_, err = secretname.Parse(overLong)
+	if err == nil {
+		t.Errorf("Parse of a %d-character secret ID was accepted", len(overLong))
+	} else if !strings.Contains(err.Error(), strconv.Itoa(secretname.MaxIDLen)) {
+		t.Errorf("the refusal of an over-long secret ID does not name the limit %d: %v", secretname.MaxIDLen, err)
+	}
+	longestProject := mustProject(t, strings.Repeat("a", secretname.MaxIDLen-len(secretname.ProjectPrefix)))
+	if _, err := secretname.Parse(longestProject); err != nil {
+		t.Errorf("Parse of the longest project secret ID (%d characters): %v", len(longestProject), err)
+	}
 }
 
 // R1: every ID User and Project build parses back to the pair it was built
