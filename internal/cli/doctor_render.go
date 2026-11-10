@@ -856,8 +856,8 @@ var doctorShorts = map[string]doctorShort{
 	// workflow, the service) to --all and --json. The fix stays the check's own:
 	// it names the container or the repository the command needs. The two whose
 	// only state is information (bundle-bitbucket-token with nothing proxied,
-	// bitbucket-direct before the flip) are counted rather than printed, so
-	// their entries are here for the warning state beside them.
+	// bitbucket-direct on a repository nobody proxied) are counted rather than
+	// printed, so their entries are here for the warning state beside them.
 	//
 	// credentials-service-deployed is the one whose read failures are the audit
 	// class, so they never reach this sentence: what reaches it is the four

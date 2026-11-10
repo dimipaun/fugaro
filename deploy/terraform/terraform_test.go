@@ -4761,11 +4761,11 @@ func TestServiceHeldSecretsMatchTheCredentialsService(t *testing.T) {
 // var.bitbucket_proxied is true. Every other Bitbucket repository — of an
 // installation that opted in or not — keeps both (G9).
 //
-// Both sides are empty today. The flip is B1.13 part two, after the owner's go
-// on Check 191 (D500, G1), and it fills Go's list and this literal in one
-// commit: with the module's list filled and Go's empty (or the reverse), one
-// side plans a drop the other does not produce, which is the drift this test
-// refuses.
+// Both sides name the Bitbucket token since the flip (B1.13 part two; the
+// release the proxy chain ships in, the owner's ruling of 2026-11-09), and the
+// test holds them to each other: with the module's list filled and Go's empty
+// (or the reverse), one side plans a drop the other does not produce, which is
+// the drift this test refuses.
 func TestProxiedGitSecretNamesMatchTheModule(t *testing.T) {
 	const path = "gcp/modules/workflow/sa.tf"
 	b, err := os.ReadFile(path)
@@ -4827,22 +4827,24 @@ func TestProxiedGitSecretNamesMatchTheModule(t *testing.T) {
 	}
 }
 
-// TestEmptyProxiedListChangesNothing pins the state B1.8 ships: the flip list
-// is empty on both sides, and with it empty and the per-repository input
-// defaulting to false, no job loses an accessor or a mount for any input. It
-// is the other half of the flip's guard — TestProxiedGitSecretNamesMatchTheModule
-// holds the two lists to each other, this holds the wiring that decides when
-// either can bite.
+// TestProxiedGitDropIsKeyedOnTheFactAndOffByDefault pins the wiring that
+// decides when the flip can bite, now that the list carries the token (B1.13
+// part two, D500). It is the other half of the flip's guard —
+// TestProxiedGitSecretNamesMatchTheModule holds the two lists to each other,
+// this holds the per-repository input and the opt-in they are read behind, so
+// that filling the list moved a proxied repository's job and nothing else.
 //
 // The mutations it refuses are the ones that would move a real installation's
 // job: a `bitbucket_proxied` that defaults to true, or that a repository root
 // has to write (either creates a drop for a repository nobody proxied), a
 // dropped pass-down (the workflow module then plans with false and a proxied
-// repository keeps the token), and a clause that reads the list or the input
-// directly rather than the per-mount local.
-func TestEmptyProxiedListChangesNothing(t *testing.T) {
-	if len(config.ProxiedGitSecretNames) != 0 {
-		t.Errorf("config.ProxiedGitSecretNames = %v: the flip is B1.13 part two, after the owner's go on Check 191 (D500), so nothing may fill it here", config.ProxiedGitSecretNames)
+// repository keeps the token), a clause that reads the list or the input
+// directly rather than the per-mount local, and the list emptied again — which
+// would leave a proxied repository's job mounting a token its run no longer
+// reads.
+func TestProxiedGitDropIsKeyedOnTheFactAndOffByDefault(t *testing.T) {
+	if !slices.Contains(config.ProxiedGitSecretNames, config.BitbucketSecret) {
+		t.Errorf("config.ProxiedGitSecretNames = %v does not name %s: the flip is B1.13 part two, and a list without it leaves a proxied repository's job mounting the token its runner no longer reads (D500)", config.ProxiedGitSecretNames, config.BitbucketSecret)
 	}
 
 	for _, tc := range []struct{ path, want string }{
@@ -4885,9 +4887,9 @@ func TestEmptyProxiedListChangesNothing(t *testing.T) {
 	}
 
 	// The list and the input are read in one place, the per-mount local both
-	// clauses use: with the list empty that local is false for every env of
-	// every workflow, which is what makes this release a no-op, and it is what
-	// the guard tftest runs plan.
+	// clauses use: with the list filled that local is true for a proxied
+	// repository's Bitbucket mount and false for every other mount of it, and
+	// for every mount of a repository the node does not admit.
 	sb, err := fs.ReadFile(FS, "gcp/modules/workflow/sa.tf")
 	if err != nil {
 		t.Fatal(err)
@@ -4895,8 +4897,8 @@ func TestEmptyProxiedListChangesNothing(t *testing.T) {
 	scode := stripComments(string(sb))
 	if m := regexp.MustCompile(`proxied_git_secret_names\s*=\s*\[([^\]]*)\]`).FindStringSubmatch(scode); m == nil {
 		t.Error("gcp/modules/workflow/sa.tf declares no proxied_git_secret_names list")
-	} else if strings.TrimSpace(m[1]) != "" {
-		t.Errorf("gcp/modules/workflow/sa.tf: proxied_git_secret_names = [%s]: the flip is B1.13 part two, after the owner's go on Check 191 (D500), so nothing may fill it here", m[1])
+	} else if !strings.Contains(m[1], `"`+config.BitbucketSecret+`"`) {
+		t.Errorf("gcp/modules/workflow/sa.tf: proxied_git_secret_names = [%s] does not name %s: the flip is B1.13 part two, and the literal is the module's half of it", m[1], config.BitbucketSecret)
 	}
 	for _, clause := range []struct{ name, want string }{
 		{"the job's accessor set", "|| local.is_proxied_git[env]"},

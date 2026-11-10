@@ -109,16 +109,17 @@ locals {
   # of a PROXIED repository's job alone, and every other Bitbucket repository —
   # of an installation that opted in or not — keeps both (G9).
   #
-  # It is EMPTY until the flip, which is B1.13 part two, after the owner's go
-  # on Check 191: config.ProxiedGitSecretNames is the switch, this literal is
-  # held to it by deploy/terraform's TestProxiedGitSecretNamesMatchTheModule,
-  # and the flip fills both in one commit. Filling it early would take the
-  # accessor off a job whose runner still reads the token from its own mount
-  # (B1.7 is what moves that read to the service), and a mount the account
-  # cannot resolve is a job Cloud Run refuses to create — every run of a
-  # proxied repository would fail. Until then nothing moves, whatever the node
-  # admits.
-  proxied_git_secret_names = []
+  # It is FILLED, which is the flip itself (B1.13 part two, D500): the release
+  # the proxy chain ships in — 0.23.0, the owner's ruling of 2026-11-09 —
+  # carries it behind the owner's Check 191 and their go on it.
+  # config.ProxiedGitSecretNames is the switch, this literal is held to it by
+  # deploy/terraform's TestProxiedGitSecretNamesMatchTheModule, and the two are
+  # filled in one commit. It moves nothing on its own: the repository's own
+  # input (bitbucket_proxied, false for every repository the published node does
+  # not admit with `proxy: true`) and the installation's opt-in gate every
+  # clause below, and the runner reads no token on a proxied repository (B1.7),
+  # so the accessor and the mount go together with nothing left reading them.
+  proxied_git_secret_names = ["bitbucket-token"]
 
   # One entry per mount: this mount is a proxied git credential exactly when
   # the node admits the repository AND its logical name is one the list names.

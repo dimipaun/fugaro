@@ -1922,11 +1922,11 @@ func (rs RepoSpec) Addresses() []string {
 // proxied is the repository's own fact (RepoSpec.BitbucketProxied), and it is
 // the second way a mount comes to be held: a name config.ProxiedGitSecretNames
 // lists is the credentials service's for a repository the published node
-// admits with proxy: true (B1.8, D500), and for that repository alone — the
-// same name in another repository's spec, proxied false, keeps its accessor
-// (G9). It is a parameter rather than a read of the spec so that this function
-// stays the one statement of the module's rule, and so that the rule is
-// visible where it is called.
+// admits with proxy: true (B1.8, B1.13 part two, D500), and for that
+// repository alone — the same name in another repository's spec, proxied
+// false, keeps its accessor (G9). It is a parameter rather than a read of the
+// spec so that this function stays the one statement of the module's rule, and
+// so that the rule is visible where it is called.
 //
 // It is the same question modules/workflow/sa.tf's job_secret_names asks, one
 // mount at a time, and it is written the same way — a name survives if ANY

@@ -160,22 +160,12 @@ func (r *brokeringRig) jobMountingToken(t *testing.T, job string) string {
 	return job
 }
 
-// flipProxiedGitList turns the proxy's flip on for the duration of one test:
-// the list is the release-time switch B1.13 part two fills.
-func flipProxiedGitList(t *testing.T, names ...string) {
-	t.Helper()
-	old := config.ProxiedGitSecretNames
-	config.ProxiedGitSecretNames = names
-	t.Cleanup(func() { config.ProxiedGitSecretNames = old })
-}
-
-// TestDoctorBrokeringMountedTokenOnFlippedInstallation: the red step. Once the
-// flip has happened (config.ProxiedGitSecretNames names the token), a proxied
-// repository's job must have given the mount up: a job that still mounts it
+// TestDoctorBrokeringMountedTokenOnFlippedInstallation: the red step. With the
+// flip list naming the token (B1.13 part two), a proxied repository's job must
+// have given the mount up: a job that still mounts it
 // was applied before the flip, and the next deploy of that job would fail on a
 // mount whose accessor is gone. Doctor warns.
 func TestDoctorBrokeringMountedTokenOnFlippedInstallation(t *testing.T) {
-	flipProxiedGitList(t, config.BitbucketSecret)
 	r := newBrokeringRig(t)
 	job := r.jobMountingBitbucketToken(t)
 
@@ -1205,10 +1195,11 @@ func TestDoctorBitbucketTokenRoots(t *testing.T) {
 }
 
 // TestDoctorBrokeringBitbucketDirect: the repository's own side of the flip.
-// Before it — no project_secrets entry admits the repository, or the release
-// that fills the flip list has not shipped — a job mounting bitbucket-token is
-// the state the installation is in, and the line is information. Only after
-// the flip is that same mount a job applied before it.
+// On a repository no project_secrets entry admits, a job mounting
+// bitbucket-token is the state the installation is in, and the line is
+// information. On a repository the owner proxied — the flip list names the
+// token since B1.13 part two — that same mount is a job applied before the
+// flip.
 func TestDoctorBrokeringBitbucketDirect(t *testing.T) {
 	t.Run("not proxied", func(t *testing.T) {
 		r := newBrokeringDirectRig(t)
@@ -1228,24 +1219,7 @@ func TestDoctorBrokeringBitbucketDirect(t *testing.T) {
 		}
 	})
 
-	t.Run("proxied, before the flip", func(t *testing.T) {
-		r := newBrokeringRig(t)
-		r.jobMountingBitbucketToken(t)
-		o, err := r.doctor(t)
-		if err != nil {
-			t.Fatalf("doctor: %v", err)
-		}
-		cs := checksByID(o, "bitbucket-direct")
-		if len(cs) != 1 || cs[0].OK || cs[0].Severity != "info" {
-			t.Fatalf("bitbucket-direct = %+v, want one informational line", cs)
-		}
-		if !strings.Contains(cs[0].Problem, "flip list has not shipped") {
-			t.Errorf("the line does not say the flip has not shipped: %q", cs[0].Problem)
-		}
-	})
-
-	t.Run("proxied and flipped, the mount given up", func(t *testing.T) {
-		flipProxiedGitList(t, config.BitbucketSecret)
+	t.Run("proxied, the job's mount given up", func(t *testing.T) {
 		r := newBrokeringRig(t)
 		// The job the flip's own re-apply deploys: the same name, no mount.
 		job := gcp.JobName(mustSlug("bitbucket", "workspace-a/repo-a"), "app")
@@ -1264,7 +1238,6 @@ func TestDoctorBrokeringBitbucketDirect(t *testing.T) {
 	})
 
 	t.Run("a named account's variant job", func(t *testing.T) {
-		flipProxiedGitList(t, config.BitbucketSecret)
 		r := newBrokeringRig(t)
 		addClaudeAccounts(t, r.doctorRig, "claude_accounts:\n  workspace-a-team:\n    allow_data_to: [workspace-a/repo-a]\n")
 		putProjectSecret(t, r.sm, "aurora", config.ClaudeAccountSecret("workspace-a-team"), []byte("account-token"))
@@ -1792,9 +1765,8 @@ func TestDoctorBrokeringStatesOnTheOneScreen(t *testing.T) {
 		counted(t, def, "`fugaro doctor --all`")
 	})
 
-	// Before the flip a proxied repository's own mount is the installation's
-	// state, and a repository nobody proxied is holding its token by design:
-	// both are information, both are counted, neither is an item.
+	// A repository nobody proxied is holding its token by design — before the
+	// flip and after it — so its line is information, counted and not an item.
 	t.Run("the repository holds its own token", func(t *testing.T) {
 		r := newBrokeringDirectRig(t)
 		o, err := r.doctor(t)
@@ -1813,7 +1785,6 @@ func TestDoctorBrokeringStatesOnTheOneScreen(t *testing.T) {
 	})
 
 	t.Run("a job still mounts the token after the flip", func(t *testing.T) {
-		flipProxiedGitList(t, config.BitbucketSecret)
 		r := newBrokeringRig(t)
 		job := r.jobMountingBitbucketToken(t)
 
@@ -1869,7 +1840,6 @@ func TestDoctorBrokeringStatesOnTheOneScreen(t *testing.T) {
 // a check that passed or a measurement doctor made, and neither is an item or a
 // count.
 func TestDoctorBrokeringCleanInstallationIsOneLine(t *testing.T) {
-	flipProxiedGitList(t, config.BitbucketSecret)
 	r := newBrokeringRig(t)
 	r.svcs.AddService(infra.CredentialsServiceName)
 	r.svcs.SetServicePolicy(infra.CredentialsServiceName,
@@ -1973,7 +1943,6 @@ func TestDoctorBrokeringStrictFailsTheWarnings(t *testing.T) {
 			setup: func(*testing.T, *brokeringRig) {}},
 		{name: "a job still mounts the token after the flip", id: "bitbucket-direct", red: true,
 			setup: func(t *testing.T, r *brokeringRig) {
-				flipProxiedGitList(t, config.BitbucketSecret)
 				r.jobMountingBitbucketToken(t)
 			}},
 		{name: "a container older than the period", id: "secret-rotation-age", red: true,

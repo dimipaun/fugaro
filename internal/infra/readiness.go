@@ -287,10 +287,10 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 			// mount up and every other Bitbucket repository keeps it (G9).
 			// Both halves are read — the fact from the published node, the
 			// names from config.ProxiedGitSecretNames — because either alone
-			// would be a drop nobody asked for. The list is empty on this
-			// branch, which is B1.13 part two's switch: this loop is inert
-			// until that release fills it, and the accessor half in
-			// modules/workflow/sa.tf turns on with it.
+			// would be a drop nobody asked for. The list names the Bitbucket
+			// token since the flip (B1.13 part two), so this loop drops the
+			// mount for a proxied repository and for no other, and the
+			// accessor half in modules/workflow/sa.tf drops with it.
 			if spec.BitbucketProxied {
 				for _, logical := range config.ProxiedGitSecretNames {
 					dropMount(ws, logical)

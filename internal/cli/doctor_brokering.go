@@ -840,14 +840,13 @@ func isBitbucketRefusal(err error) bool {
 // doctorBitbucketDirect is doctor's "bitbucket-direct" check: this checkout's
 // repository is a Bitbucket one, and what its jobs hold of the token.
 //
-// Before the flip — the repository not admitted with proxy: true, or
-// config.ProxiedGitSecretNames not naming the token yet — a job mounting
-// bitbucket-token is the state the installation is in, and the line is
-// information: the run holds a repository access token directly, which is
-// D462's reach. After the flip, for a repository the owner proxied, that same
-// mount is a job applied before the flip: the next deploy of it would fail on
-// a mount whose accessor is gone, and the run would keep reaching the token
-// the service is supposed to hold. That is the warning.
+// The repository not admitted with proxy: true: a job mounting bitbucket-token
+// is the state the installation is in, and the line is information — the run
+// holds a repository access token directly, which is D462's reach. For a
+// repository the owner proxied, since the flip list names the token (B1.13
+// part two), that same mount is a job applied before the flip: the next deploy
+// of it would fail on a mount whose accessor is gone, and the run would keep
+// reaching the token the service is supposed to hold. That is the warning.
 func doctorBitbucketDirect(ctx context.Context, lc *localcfg.Config, repo, provider string, facts doctorRepoSecrets) []doctorCheck {
 	if provider != gitprov.KindBitbucket || lc.CredentialsService == nil {
 		return nil
@@ -862,27 +861,21 @@ func doctorBitbucketDirect(ctx context.Context, lc *localcfg.Config, repo, provi
 	}
 	entry, ok := lc.ProjectSecrets[config.BitbucketSecret]
 	proxied := ok && entry.Proxy && entry.AllowsData(repo)
-	flipped := slices.Contains(config.ProxiedGitSecretNames, config.BitbucketSecret)
 	if !proxied {
 		return []doctorCheck{{ID: id, Severity: "info",
 			Problem: fmt.Sprintf("%s is a Bitbucket repository that is not proxied: its jobs mount their own %s, so a run of it holds a credential that reaches the repository itself (D462)", printable, config.BitbucketSecret),
 			Fix:     "to broker it instead, add it to the local config's project_secrets entry for " + config.BitbucketSecret + " (allow_data_to with " + printable + ", proxy: true), publish the policy, then re-apply the repository: " + selfCommand() + " update --repo " + quoteWord(repo)}}
 	}
-	if !flipped {
-		return []doctorCheck{{ID: id, Severity: "info",
-			Problem: fmt.Sprintf("%s is admitted with proxy: true and its jobs still mount their own %s: the release that fills the proxy's flip list has not shipped, so the service does not forward the credential yet", printable, config.BitbucketSecret),
-			Fix:     "nothing to do: re-apply the repository with " + selfCommand() + " update --repo " + quoteWord(repo) + " once the release that flips the proxy is installed"}}
-	}
 	if lc.Endpoints.NoAuth && lc.Endpoints.Run == "" {
 		return []doctorCheck{{ID: id, Severity: "warning",
-			Problem: fmt.Sprintf("%s is proxied and flipped, and the deployed jobs could not be read (a test configuration), so whether a job still mounts %s could not be checked", printable, config.BitbucketSecret),
+			Problem: fmt.Sprintf("%s is proxied, and the deployed jobs could not be read (a test configuration), so whether a job still mounts %s could not be checked", printable, config.BitbucketSecret),
 			Fix:     "rerun doctor with the Cloud Run API available"}}
 	}
 	be, err := gcp.New(ctx, gcp.Options{GCPProject: lc.GCPProject, Region: lc.Region, LogView: lc.LogView,
 		Endpoints: gcp.Endpoints{Run: lc.Endpoints.Run, NoAuth: lc.Endpoints.NoAuth}})
 	if err != nil {
 		return []doctorCheck{{ID: id, Severity: "warning",
-			Problem: fmt.Sprintf("%s is proxied and flipped, and the Cloud Run API could not be reached (%s), so whether a job still mounts %s could not be checked", printable, oneLineCLI(err.Error()), config.BitbucketSecret),
+			Problem: fmt.Sprintf("%s is proxied, and the Cloud Run API could not be reached (%s), so whether a job still mounts %s could not be checked", printable, oneLineCLI(err.Error()), config.BitbucketSecret),
 			Fix:     "rerun doctor with your credentials available"}}
 	}
 	// Every job the repository was deployed as, not only each workflow's
@@ -930,11 +923,11 @@ func doctorBitbucketDirect(ctx context.Context, lc *localcfg.Config, repo, provi
 		return []doctorCheck{{ID: id, OK: true}}
 	case len(mounting) == 0:
 		return []doctorCheck{{ID: id, Severity: "warning",
-			Problem: fmt.Sprintf("%s is proxied and flipped, and whether %s still mounts %s could not be checked: the deployed jobs could not be read", printable, strings.Join(unknown, ", "), config.BitbucketSecret),
+			Problem: fmt.Sprintf("%s is proxied, and whether %s still mounts %s could not be checked: the deployed jobs could not be read", printable, strings.Join(unknown, ", "), config.BitbucketSecret),
 			Fix:     "rerun doctor with the Cloud Run API available"}}
 	}
 	return []doctorCheck{{ID: id, Severity: "warning",
-		Problem: fmt.Sprintf("%s is proxied and flipped, and %s still mounts %s: the job was applied before the flip, so its account's accessor is gone and the next deploy of it fails on the mount", printable, strings.Join(mounting, ", "), config.BitbucketSecret),
+		Problem: fmt.Sprintf("%s is proxied, and %s still mounts %s: the job was applied before the flip, so its account's accessor is gone and the next deploy of it fails on the mount", printable, strings.Join(mounting, ", "), config.BitbucketSecret),
 		Fix:     "re-apply the repository so the jobs are deployed without the mount: " + selfCommand() + " update --repo " + quoteWord(repo)}}
 }
 
