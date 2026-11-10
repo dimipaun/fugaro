@@ -88,7 +88,9 @@ type State struct {
 	// Files is the repository's file tree at its default branch (gitprov.
 	// ContentsReader, PIC3): a path relative to the repository's root ->
 	// the file's bytes. Branches is the same tree per named branch, for a
-	// read that names one; a branch not here has no files at all.
+	// read that names one; a branch not here is a ref this repository has
+	// nothing at (treeOf), which is a read that fails rather than one that
+	// quietly answers the default branch's files.
 	Files    map[string]string            `json:"files,omitempty"`
 	Branches map[string]map[string]string `json:"branches,omitempty"`
 	// Commits is the commit a ref names (gitprov.CommitReader): a branch
@@ -100,8 +102,9 @@ type State struct {
 	// Trees is the tree a commit holds, for a test that needs one ref's
 	// read to answer a different tree than another's: the branch's tree in
 	// Branches and the resolved commit's in Trees. A commit not here sees
-	// the tree of the ref it resolves from, so a test that pins no tree
-	// reads the default branch's whichever commit it read at.
+	// the tree of the branch that resolves to it — a read at the commit a
+	// branch is at is a read of that branch — so a test that pins no tree
+	// and reads at a resolved commit reads the tree of the ref it came from.
 	Trees map[string]map[string]string `json:"trees,omitempty"`
 }
 
@@ -439,16 +442,26 @@ func (p *Provider) commitOf(ref string) string {
 	return hex.EncodeToString(sum[:])[:40]
 }
 
-// treeOf is the tree a read at ref sees. Trees[ref] is a commit's own tree and
-// Branches[ref] a branch's; a read at a commit sees the tree of the ref that
-// commit belongs to (a read at the commit a branch resolves to is a read of
-// that branch), and a read at anything else sees the default branch's tree,
-// which is what a repository whose branch has not moved looks like.
+// treeOf is the tree a read at ref sees: the default branch's own tree for a
+// read that names no ref, Trees[ref] for a commit whose tree the test pinned,
+// Branches[ref] for a branch, and the tree of the branch that resolves to ref
+// for a read at a resolved commit (a read at the commit a branch is at is a
+// read of that branch).
+//
+// A ref none of those name is the default branch's tree when the state models
+// no branch at all — a test that pins only Files is a repository with one
+// branch, and reads them at whatever ref it names — and nil when the state
+// does model branches: there, a read at a branch that does not exist, or at a
+// commit no branch is at, fails as the host's 404 does rather than quietly
+// answering the default branch's files.
 //
 // So a test that needs two refs to answer different trees pins the commit in
-// Commits and the tree it holds in Trees; one that does not care writes
-// neither and reads the same tree whichever commit it read at.
+// Commits and the tree it holds in Trees; one that pins only Files writes
+// nothing else and reads them whichever ref it names.
 func (p *Provider) treeOf(ref string) map[string]string {
+	if ref == "" {
+		return p.State.Files
+	}
 	if t, ok := p.State.Trees[ref]; ok {
 		return t
 	}
@@ -460,7 +473,10 @@ func (p *Provider) treeOf(ref string) map[string]string {
 			return t
 		}
 	}
-	return p.State.Files
+	if len(p.State.Branches) == 0 {
+		return p.State.Files
+	}
+	return nil
 }
 
 // Tree implements gitprov.TreeReader: the files under path, at ref, out of the

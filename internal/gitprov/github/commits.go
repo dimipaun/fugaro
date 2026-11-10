@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/gitprov/httpjson"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 )
 
@@ -22,6 +23,15 @@ var (
 // the entries that arrive, so this is the ceiling past which the reply itself
 // is incomplete and nothing may be read out of it.
 const maxTreeEntries = 100_000
+
+// maxBlobBytes is the largest file this adapter can read out of a tree: one
+// blob reply carries the file base64-encoded inside a JSON object, and the
+// client that reads the reply bounds it at httpjson.MaxReplyBytes, so a file
+// over three quarters of that has no reply that holds it. The caller's own
+// ceiling can be larger — a context's is — and this is the one this adapter
+// cannot go past: a file over it is refused by name before the read rather
+// than left to surface as a truncated reply's decoding error.
+const maxBlobBytes = httpjson.MaxReplyBytes / 4 * 3
 
 // Commit implements gitprov.CommitReader: the commit a ref names, through
 // GET /repos/{owner}/{repo}/commits/{ref} — the ref one escaped path segment,
@@ -74,9 +84,15 @@ func (p *Provider) Commit(ctx context.Context, ref string) (string, error) {
 // A path that is not a directory is not an error of this read's to tell from
 // an empty one: both answer with no entries, and the caller refuses a context
 // with no files in it.
+//
+// The path is read with its trailing slash taken off: a context names a
+// directory, and the catalog's own grammar accepts one written the way its
+// example spells it ("ci/", D1391), where ValidRepoPath's rule is a file's and
+// refuses that slash.
 func (p *Provider) Tree(ctx context.Context, path, ref string, limit gitprov.TreeLimit) ([]gitprov.TreeFile, error) {
 	at := pluginwire.Printable(path)
-	if path != "" && path != "." && !gitprov.ValidRepoPath(path) {
+	dir := strings.TrimSuffix(path, "/")
+	if dir != "" && dir != "." && !gitprov.ValidRepoPath(dir) {
 		return nil, fmt.Errorf("reading %s: the path is not a relative directory path inside the repository", at)
 	}
 	var listing struct {
@@ -91,8 +107,8 @@ func (p *Provider) Tree(ctx context.Context, path, ref string, limit gitprov.Tre
 			at, pluginwire.Printable(ref), maxTreeEntries, gitprov.ErrTreeTooLarge)
 	}
 	prefix := ""
-	if path != "" && path != "." {
-		prefix = strings.TrimSuffix(path, "/") + "/"
+	if dir != "" && dir != "." {
+		prefix = dir + "/"
 	}
 	var files []gitprov.TreeFile
 	var total int64
@@ -107,8 +123,11 @@ func (p *Provider) Tree(ctx context.Context, path, ref string, limit gitprov.Tre
 		// The listing's size is the file's own — git knows it without reading
 		// the object — so the ceiling is decided here, before the read.
 		if len(files)+1 > limit.MaxFiles || total+e.Size > limit.MaxBytes {
-			return nil, fmt.Errorf("reading %s: the tree at %s holds more than %d files or more than %d bytes: %w",
-				at, pluginwire.Printable(ref), limit.MaxFiles, limit.MaxBytes, gitprov.ErrTreeTooLarge)
+			return nil, overLimit(at, ref, limit)
+		}
+		if e.Size > maxBlobBytes {
+			return nil, fmt.Errorf("reading %s: the file is %d bytes and one blob read carries at most %d: %w",
+				pluginwire.Printable(e.Path), e.Size, maxBlobBytes, gitprov.ErrTreeTooLarge)
 		}
 		data, err := p.blob(ctx, e.SHA, e.Path)
 		if err != nil {
@@ -116,8 +135,23 @@ func (p *Provider) Tree(ctx context.Context, path, ref string, limit gitprov.Tre
 		}
 		files = append(files, gitprov.TreeFile{Path: rel, Data: data})
 		total += int64(len(data))
+		// The bytes that arrived are what the ceiling is about, and the
+		// listing is only what they were checked against: a host that
+		// understated a file's size is over the caller's ceiling all the same.
+		if total > limit.MaxBytes {
+			return nil, overLimit(at, ref, limit)
+		}
 	}
 	return files, nil
+}
+
+// overLimit is the refusal a tree read makes when what it found is over the
+// caller's ceiling: the same sentence for the count the listing announced and
+// for the bytes that arrived, because the caller has one ceiling and one thing
+// to do about it.
+func overLimit(at, ref string, limit gitprov.TreeLimit) error {
+	return fmt.Errorf("reading %s: the tree at %s holds more than %d files or more than %d bytes: %w",
+		at, pluginwire.Printable(ref), limit.MaxFiles, limit.MaxBytes, gitprov.ErrTreeTooLarge)
 }
 
 // treeEntry is one entry of the git tree API's reply. Size is a file's own and
@@ -136,9 +170,9 @@ type treeEntry struct {
 // a refused context has to find.
 //
 // The caller's ceiling is what decides whether this read happens at all, and
-// it was checked against the listing before it. The API client's own bound on
-// a reply is smaller than a context's, so a single file larger than that is
-// refused by the client rather than carried.
+// it was checked against the listing before it — along with this adapter's own
+// per-file bound, which is smaller than a context's (maxBlobBytes), so a file
+// too large for one reply is refused by Tree and never reaches here.
 func (p *Provider) blob(ctx context.Context, sha, path string) ([]byte, error) {
 	at := pluginwire.Printable(path)
 	if sha == "" {

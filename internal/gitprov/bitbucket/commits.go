@@ -21,12 +21,14 @@ var (
 // the API's own maximum, so a context costs as few requests as it can.
 const srcPageLen = 100
 
-// maxSrcPages bounds the pages a listing walks. A context is bounded by its
-// caller's own file ceiling long before this many pages of it arrive, so the
-// bound is here for the case the caller's is not what stops the walk: an API
-// that keeps answering with a next page. It is a page count and not a file
-// count because the walk stops on the first page whose entries are over the
-// caller's limit.
+// maxSrcPages bounds the pages a listing walks. The caller's own ceiling is
+// checked as each page's entries arrive, so a directory over it stops the walk
+// on the page that took it over; this bound is for the case the caller's is
+// not what stops it — an API that keeps answering with a next page, or a
+// context whose every entry is a directory and so counts against no file
+// ceiling at all. It is a page count and not a file count because the file
+// count is the caller's, and one page holds a hundred entries whatever the
+// caller asked for.
 const maxSrcPages = 200
 
 // Commit implements gitprov.CommitReader: the commit a ref names, through
@@ -63,7 +65,8 @@ func (p *Provider) Commit(ctx context.Context, ref string) (string, error) {
 // /2.0/repositories/{workspace}/{repo}/src/{commit}/{path}/?pagelen=100&recursive=true
 // answers the directory's entries, each with its path, its type and its own
 // size, so a tree over the caller's ceiling is refused before a file of it is
-// read. The listing is walked page by page, bounded by maxSrcPages.
+// read — the walk itself stops on the page that took it over, and maxSrcPages
+// bounds a listing the caller's ceiling does not.
 //
 // What comes back is each file's path relative to path — the identity a
 // context's digest is taken over, which must not move when the context is
@@ -74,21 +77,27 @@ func (p *Provider) Commit(ctx context.Context, ref string) (string, error) {
 // A path that is not a directory is not an error of this read's to tell from
 // an empty one: both answer with no entries, and the caller refuses a context
 // with no files in it.
+//
+// The path is read with its trailing slash taken off: a context names a
+// directory, and the catalog's own grammar accepts one written the way its
+// example spells it ("ci/", D1391), where ValidRepoPath's rule is a file's and
+// refuses that slash.
 func (p *Provider) Tree(ctx context.Context, path, ref string, limit gitprov.TreeLimit) ([]gitprov.TreeFile, error) {
 	at := pluginwire.Printable(path)
-	if path != "" && path != "." && !validContentsPath(path) {
+	dir := strings.TrimSuffix(path, "/")
+	if dir != "" && dir != "." && !validContentsPath(dir) {
 		return nil, fmt.Errorf("reading %s: the path is not a relative directory path inside the repository", at)
 	}
 	if !validContentsRef(ref) {
 		return nil, fmt.Errorf("reading %s: the ref is not a commit or a branch name (%s)", at, pluginwire.Printable(ref))
 	}
-	entries, err := p.srcListing(ctx, path, ref)
+	entries, err := p.srcListing(ctx, dir, ref, limit)
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: listing the directory at %s: %w", at, pluginwire.Printable(ref), err)
 	}
 	prefix := ""
-	if path != "" && path != "." {
-		prefix = strings.TrimSuffix(path, "/") + "/"
+	if dir != "" && dir != "." {
+		prefix = dir + "/"
 	}
 	var files []gitprov.TreeFile
 	var total int64
@@ -100,24 +109,20 @@ func (p *Provider) Tree(ctx context.Context, path, ref string, limit gitprov.Tre
 		if !ok || rel == "" {
 			continue
 		}
-		// The listing's size is the file's own, so the ceiling is decided
-		// here, before the read.
-		if len(files)+1 > limit.MaxFiles || total+e.Size > limit.MaxBytes {
-			return nil, fmt.Errorf("reading %s: the directory at %s holds more than %d files or more than %d bytes: %w",
-				at, pluginwire.Printable(ref), limit.MaxFiles, limit.MaxBytes, gitprov.ErrTreeTooLarge)
-		}
 		// The read is bounded by what the ceiling has left, so a listing that
 		// understated a file's size cannot carry the tree over it.
 		data, _, err := p.srcFile(ctx, e.Path, ref, limit.MaxBytes-total)
 		if err != nil {
 			return nil, fmt.Errorf("reading %s: %w", pluginwire.Printable(e.Path), err)
 		}
-		if int64(len(data)) > limit.MaxBytes-total {
+		files = append(files, gitprov.TreeFile{Path: rel, Data: data})
+		total += int64(len(data))
+		// The bytes that arrived are what the ceiling is about, and the
+		// listing is only what they were checked against (srcListing).
+		if total > limit.MaxBytes {
 			return nil, fmt.Errorf("reading %s: the directory at %s holds more than %d files or more than %d bytes: %w",
 				at, pluginwire.Printable(ref), limit.MaxFiles, limit.MaxBytes, gitprov.ErrTreeTooLarge)
 		}
-		files = append(files, gitprov.TreeFile{Path: rel, Data: data})
-		total += int64(len(data))
 	}
 	return files, nil
 }
@@ -134,9 +139,21 @@ type srcEntry struct {
 // page, and answers every entry it holds. The listing is the directory's and
 // its subdirectories' (recursive=true), each entry carrying its path from the
 // repository root, which is the path a file read is made with.
-func (p *Provider) srcListing(ctx context.Context, path, rev string) ([]srcEntry, error) {
+//
+// The caller's ceiling is applied as the entries arrive, not after the walk:
+// the files under path are counted and their sizes summed page by page, and
+// the page that takes either over the ceiling ends the walk with the refusal —
+// so a context over it costs the pages up to that one and no file read, and
+// maxSrcPages is left to bound a listing the ceiling does not.
+func (p *Provider) srcListing(ctx context.Context, path, rev string, limit gitprov.TreeLimit) ([]srcEntry, error) {
+	prefix := ""
+	if path != "" && path != "." {
+		prefix = path + "/"
+	}
 	next := p.srcListingURL(path, rev)
 	var entries []srcEntry
+	var files int
+	var total int64
 	for page := 0; next != ""; page++ {
 		if page >= maxSrcPages {
 			return nil, fmt.Errorf("the listing is longer than the %d pages this read walks", maxSrcPages)
@@ -147,6 +164,20 @@ func (p *Provider) srcListing(ctx context.Context, path, rev string) ([]srcEntry
 		link, err := p.api.DoPage(ctx, http.MethodGet, next, nil, &listing)
 		if err != nil {
 			return nil, err
+		}
+		for _, e := range listing.Values {
+			if e.Type != "commit_file" {
+				continue
+			}
+			if rel, ok := strings.CutPrefix(e.Path, prefix); !ok || rel == "" {
+				continue
+			}
+			files++
+			total += e.Size
+			if files > limit.MaxFiles || total > limit.MaxBytes {
+				return nil, fmt.Errorf("the directory at %s holds more than %d files or more than %d bytes: %w",
+					pluginwire.Printable(rev), limit.MaxFiles, limit.MaxBytes, gitprov.ErrTreeTooLarge)
+			}
 		}
 		entries = append(entries, listing.Values...)
 		next = link

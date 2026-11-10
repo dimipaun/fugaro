@@ -411,6 +411,84 @@ func TestCatalogResolveRefusesAProviderWithoutATreeReader(t *testing.T) {
 	}
 }
 
+// noCommitReader reads a file and a directory but cannot resolve a ref: the
+// shape a host without a commit read has, which the resolver refuses rather
+// than reading at the branch it could not pin.
+type noCommitReader struct{ gitprov.Provider }
+
+func (noCommitReader) Contents(context.Context, string, string) ([]byte, error) {
+	return []byte(agentDockerfile), nil
+}
+
+func (noCommitReader) Tree(context.Context, string, string, gitprov.TreeLimit) ([]gitprov.TreeFile, error) {
+	return []gitprov.TreeFile{{Path: "Dockerfile", Data: []byte(agentDockerfile)}}, nil
+}
+
+// TestCatalogResolveRefusesAProviderWithoutACommitReader: a provider that
+// reads a file and a directory but cannot say which commit either was read at
+// is refused by name — the alternative is a copy that stages the branch's
+// bytes under a commit it never resolved, which is the failure D1394 exists to
+// prevent.
+func TestCatalogResolveRefusesAProviderWithoutACommitReader(t *testing.T) {
+	o := &fetchOpener{p: noCommitReader{}, cred: fakeCredential(t)}
+	_, err := Resolve(context.Background(), o.open, gitprov.KindGitHub, contextEntry("ci"))
+	if err == nil || !strings.Contains(err.Error(), "agent") || !strings.Contains(err.Error(), "commit") {
+		t.Fatalf("err = %v, want a refusal naming the entry and the commit it cannot resolve", err)
+	}
+}
+
+// shortCommitReader answers a ref with an abbreviated hash, which is what a
+// host that resolved a ref loosely would give: a value that is not a commit
+// and that a build's `git fetch`, its revision label and its record would each
+// read as something else.
+type shortCommitReader struct{ gitprov.Provider }
+
+func (shortCommitReader) Contents(context.Context, string, string) ([]byte, error) {
+	return nil, errors.New("the definition was read at a ref that is not a commit")
+}
+
+func (shortCommitReader) Tree(context.Context, string, string, gitprov.TreeLimit) ([]gitprov.TreeFile, error) {
+	return nil, errors.New("the context was read at a ref that is not a commit")
+}
+
+func (shortCommitReader) Commit(context.Context, string) (string, error) {
+	return "3f2b1c0", nil
+}
+
+// TestCatalogResolveRefusesARefThatIsNotAFullCommit: the resolved value is
+// held to a full commit before anything is read with it, so a provider that
+// answered an abbreviated hash is refused by name rather than carried into a
+// build, a label and a record that each want a commit. The reads below fail
+// loudly, which is what says neither was made.
+func TestCatalogResolveRefusesARefThatIsNotAFullCommit(t *testing.T) {
+	o := &fetchOpener{p: shortCommitReader{}, cred: fakeCredential(t)}
+	_, err := Resolve(context.Background(), o.open, gitprov.KindGitHub, contextEntry("ci"))
+	if err == nil || !strings.Contains(err.Error(), "agent") || !strings.Contains(err.Error(), "not a full commit") {
+		t.Fatalf("err = %v, want a refusal naming the entry and the value it cannot use", err)
+	}
+}
+
+// TestCatalogResolveReadsAContextWrittenWithItsTrailingSlash: a context is a
+// directory, and the catalog's grammar takes one written the way the key's own
+// example spells it — "ci/" (D1391) — so the read resolves the same tree and
+// stages the same identity as the same context written without the slash.
+func TestCatalogResolveReadsAContextWrittenWithItsTrailingSlash(t *testing.T) {
+	ctx := context.Background()
+	files := contextFiles()
+	plain, err := Resolve(ctx, (&fetchOpener{p: contextProvider(files), cred: fakeCredential(t)}).open, gitprov.KindGitHub, contextEntry("ci"))
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	slashed, err := Resolve(ctx, (&fetchOpener{p: contextProvider(files), cred: fakeCredential(t)}).open, gitprov.KindGitHub, contextEntry("ci/"))
+	if err != nil {
+		t.Fatalf("Resolve of a context written with its trailing slash: %v", err)
+	}
+	if slashed.ContextHash != plain.ContextHash || slashed.Commit != plain.Commit {
+		t.Errorf("the context \"ci/\" resolved %q at %q, want the same as \"ci\": %q at %q",
+			slashed.ContextHash, slashed.Commit, plain.ContextHash, plain.Commit)
+	}
+}
+
 // inlineEntry is a catalog entry whose definition is held in the catalog
 // itself, the other source a credential-shaped definition reaches a build
 // through.
