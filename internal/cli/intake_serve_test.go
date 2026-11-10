@@ -90,6 +90,25 @@ func fakeIntake(t *testing.T, dir string) {
 	t.Cleanup(func() { intakeTest = nil })
 }
 
+// refuseIntakeWiring stands in for the two constructors so that neither can be
+// reached quietly: an environment the builder should have refused by name is
+// refused before anything is built, and a case that only asked for "an error"
+// would pass on a failure that came from Google instead.
+func refuseIntakeWiring(t *testing.T) {
+	t.Helper()
+	intakeTest = &intakeWiring{
+		secrets: func(context.Context, string) (intake.SecretStore, error) {
+			t.Error("the builder reached Secret Manager for an environment it must refuse first")
+			return nil, errors.New("reached Secret Manager")
+		},
+		bucket: func(context.Context, string) (*blobx.Bucket, error) {
+			t.Error("the builder opened a bucket for an environment it must refuse first")
+			return nil, errors.New("reached the bucket")
+		},
+	}
+	t.Cleanup(func() { intakeTest = nil })
+}
+
 // TestIntakeServeConfigBuildsFromAFullEnvironment: the four names build a
 // configuration the intake accepts, and each piece reaches where it is meant
 // to. The admin list is the one check that is more than non-nil: it is read
@@ -194,17 +213,35 @@ func TestIntakeServeStartsWithoutTheLauncherList(t *testing.T) {
 // service's own URL (a process that admits nobody, or a token minted for
 // another service), and a runs bucket that is not a bucket name (a read that
 // would reach somewhere else).
+//
+// The wiring is the stand-in that fails this test if either constructor is
+// reached, so a case below cannot pass on an error that came from Google
+// instead of from the guard it names: every refusal here happens before
+// anything is built, which is the order this pins too.
 func TestIntakeServeRefusesAMalformedVariable(t *testing.T) {
+	refuseIntakeWiring(t)
 	for _, tc := range []struct {
 		name string
 		set  map[string]string
+		// names is the variable the refusal must name, so that the operator
+		// reads which entry on the service is wrong. Empty for a case whose
+		// refusal is the launcher class's own sentence.
+		names string
 	}{
-		{"the audience is not https", map[string]string{envIntakeURL: "http://fugaro-intake-abcde-uc.a.run.app"}},
-		{"the audience carries a path", map[string]string{envIntakeURL: "https://fugaro-intake-abcde-uc.a.run.app/v1"}},
-		{"the audience is another scheme", map[string]string{envIntakeURL: "gs://fugaro-intake"}},
-		{"the bucket is a URL", map[string]string{envRunsBucket: "gs://fugaro-runs-proj-1234"}},
-		{"the bucket carries a path", map[string]string{envRunsBucket: "fugaro-runs-proj-1234/runs"}},
-		{"the launcher list is not a list", map[string]string{envLauncherAccounts: `{"launchers":["person-1@example.com"]}`}},
+		{"the audience is not https", map[string]string{envIntakeURL: "http://fugaro-intake-abcde-uc.a.run.app"}, envIntakeURL},
+		{"the audience carries a path", map[string]string{envIntakeURL: "https://fugaro-intake-abcde-uc.a.run.app/v1"}, envIntakeURL},
+		{"the audience is another scheme", map[string]string{envIntakeURL: "gs://fugaro-intake"}, envIntakeURL},
+		{"the bucket is a URL", map[string]string{envRunsBucket: "gs://fugaro-runs-proj-1234"}, envRunsBucket},
+		{"the bucket carries a path", map[string]string{envRunsBucket: "fugaro-runs-proj-1234/runs"}, envRunsBucket},
+		// A '@' is what a URL reads as userinfo and everything after it as the
+		// host: "gs://fugaro-runs@evil.example" would read the admin list out of
+		// a bucket the deployment never named. '?' and '#' move the URL's query
+		// and fragment the same way, and upper case is no bucket name either.
+		{"the bucket carries a '@'", map[string]string{envRunsBucket: "fugaro-runs@evil.example"}, envRunsBucket},
+		{"the bucket carries a '?'", map[string]string{envRunsBucket: "fugaro-runs-proj-1234?x=1"}, envRunsBucket},
+		{"the bucket carries a '#'", map[string]string{envRunsBucket: "fugaro-runs-proj-1234#x"}, envRunsBucket},
+		{"the bucket is not lower case", map[string]string{envRunsBucket: "Fugaro-Runs-Proj-1234"}, envRunsBucket},
+		{"the launcher list is not a list", map[string]string{envLauncherAccounts: `{"launchers":["person-1@example.com"]}`}, envLauncherAccounts},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			env := map[string]string{}
@@ -214,10 +251,12 @@ func TestIntakeServeRefusesAMalformedVariable(t *testing.T) {
 			for n, v := range tc.set {
 				env[n] = v
 			}
-			// No wiring stand-in: every refusal below comes before the builder
-			// reaches Google for anything, which is the order this pins too.
-			if _, err := intakeServiceConfig(context.Background(), envFrom(env), io.Discard); err == nil {
+			_, err := intakeServiceConfig(context.Background(), envFrom(env), io.Discard)
+			if err == nil {
 				t.Fatal("want a refusal")
+			}
+			if tc.names != "" && !strings.Contains(err.Error(), tc.names) {
+				t.Fatalf("err = %v, want a refusal naming %s", err, tc.names)
 			}
 		})
 	}

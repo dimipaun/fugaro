@@ -49,8 +49,8 @@
 // be written turns the answer into state_unavailable: an act no operator can
 // read afterwards is not one this service reports as done. No line carries a
 // credential: the line's fields are the act, the caller, the container's name
-// and the status, and the value the call carried is scrubbed out of every
-// field before anything else looks at them.
+// and the status, and the value the call carried is scrubbed out of every field
+// that carries text before the line is written.
 package intake
 
 import (
@@ -472,13 +472,22 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // a header and a body are another writer's text, and a service that reads all
 // of what it is handed is one a caller can spend.
 const (
-	// maxBodyBytes bounds a request's body. Secret Manager's own payload limit
-	// is 64 KiB, so a credential and the JSON around it fit inside the bound
-	// with room for the name.
-	maxBodyBytes = 72 << 10
 	// maxValueBytes bounds the credential itself, at Secret Manager's own
 	// limit.
 	maxValueBytes = 64 << 10
+	// envelopeBytes is the JSON the credential sits in on a create or a version:
+	// the scope, the container's name at the longest Secret Manager allows one
+	// (secretname.MaxIDLen, 255 bytes), and the quoting around all three.
+	envelopeBytes = 1 << 10
+	// maxBodyBytes bounds a request's body, and it is maxValueBytes seen one
+	// layer out: a credential travels base64 inside that envelope, which is
+	// four characters for every three bytes of it, so the body bound is that
+	// encoding plus the envelope and nothing more. It is written as the
+	// arithmetic and not as a round number because the two bounds are one rule:
+	// a body bound narrower than this makes the value rule below dead code and
+	// the real maximum of a credential whatever happened to fit, which is a
+	// limit neither the caller nor the operator can read anywhere.
+	maxBodyBytes = (maxValueBytes+2)/3*4 + envelopeBytes
 	// maxTokenBytes bounds a presented token before it is parsed: the same
 	// 8 KiB the credentials service bounds the same Authorization header's
 	// token by (credsvc's maxTokenBytes, wire.go's bearerFromHTTP). A Google
@@ -490,8 +499,8 @@ const (
 
 // call is one request to one of the four routes. It carries the audit event
 // being built and the value the call brought, so that the one line a call
-// writes is armed with the value before anything else looks at the event: a
-// handler cannot write a line without saying which credential it held.
+// writes is armed with the value by the time it is written: a handler cannot
+// write a line without saying which credential it held.
 type call struct {
 	s     *Server
 	w     http.ResponseWriter
@@ -552,6 +561,27 @@ func (c *call) body(r *http.Request, out any) bool {
 		return false
 	}
 	return true
+}
+
+// nameScope records the scope a call is about on its line, and leaves the field
+// empty for a scope this release does not have: the event's own rule is that a
+// field the intake cannot read is empty, and a scope outside the closed set
+// copied into it would be refused by the auditor's shape rule — after the route
+// had decided, which answers the caller state_unavailable in place of the 400
+// it is owed, and leaves the call unrecorded.
+func (c *call) nameScope(scope Scope) {
+	if validScope(scope) {
+		c.ev.Scope = string(scope)
+	}
+}
+
+// nameOwner records the member an admin's call named, and leaves the field
+// empty for anything that is not an address: nameScope's reason, for the
+// line's other field rule.
+func (c *call) nameOwner(address string) {
+	if _, ok := canonicalAddress(address); ok {
+		c.ev.Owner = address
+	}
 }
 
 // fail maps a handler's error to the answer's refusal, or reports
@@ -692,10 +722,10 @@ type Auditor struct {
 type AuditOption func(*Auditor)
 
 // WithAuditScrub arms the auditor with a redaction applied to every field of
-// every event before anything else looks at it. It exists for the unit tests
-// and for a caller that holds a value this package does not: the call paths
-// arm the line through withValue, and a value the intake never sees is one no
-// rule here can recognise.
+// every event that carries text (Write, and the four it names), before the line
+// is written. It exists for the unit tests and for a caller that holds a value
+// this package does not: the call paths arm the line through withValue, and a
+// value the intake never sees is one no rule here can recognise.
 func WithAuditScrub(f func(string) string) AuditOption {
 	return func(a *Auditor) {
 		if f != nil {
@@ -728,10 +758,10 @@ func NewAuditor(h slog.Handler, opts ...AuditOption) (*Auditor, error) {
 func noScrub(s string) string { return s }
 
 // withValue arms the line with the credential this call carried: every field
-// is passed through the scrub before it is written, so a value that reached
-// one by a bug is removed here rather than written into a log an operator
-// reads and greps. The auditor it answers is a copy, so one call's value
-// cannot reach another's line.
+// that carries text is passed through the scrub before it is written, so a
+// value that reached one by a bug is removed here rather than written into a
+// log an operator reads and greps. The auditor it answers is a copy, so one
+// call's value cannot reach another's line.
 //
 // A value that is short enough to be a substring of the line's own text
 // over-redacts that text, and that is the safe direction: a mangled line is
@@ -746,26 +776,41 @@ func (a *Auditor) withValue(value []byte) *Auditor {
 	return &armed
 }
 
-// Write writes the call's one line. It refuses an event whose fields are not
-// ones this intake writes, and an auditor that was not armed with the call's
-// value: the field rules cannot tell a value from a name, so an unarmed line
-// is one a value could reach, and a call that cannot be recorded is not made.
+// Write writes the call's one line. The fields are put to this package's rules
+// first, and the call's value is scrubbed out of them after that: the rules are
+// about SHAPE — a closed set, an address, a name this intake builds — and the
+// shape is the one the intake itself put in the field, before any redaction
+// touched it. The order is the whole of a distinction the two rules need. A
+// credential is bytes the caller chose, so one byte of it can spell part of any
+// field here: scrubbing first would hand the rules a field they refuse, and the
+// call would answer state_unavailable — with no line at all — for an act that
+// had already landed in Secret Manager, which is the one outcome worse than a
+// mangled line. What the scrub can do to an accepted field is over-redact it
+// (withValue's own direction), and a mangled line is readable enough to act on.
+//
+// It refuses an event whose fields are not ones this intake writes, and an
+// auditor that was not armed with the call's value: the field rules cannot tell
+// a value from a name, so an unarmed line is one a value could reach, and a
+// call that cannot be recorded is not made.
 func (a *Auditor) Write(ctx context.Context, ev AuditEvent) error {
 	if a.scrub == nil {
 		return errors.New("intake: the audit line was not armed with the call's value, so a value could reach it: the call must not be reported as done")
 	}
-	ev = AuditEvent{
-		Caller: a.scrub(ev.Caller),
-		Sub:    a.scrub(ev.Sub),
-		Op:     a.scrub(ev.Op),
-		Scope:  a.scrub(ev.Scope),
-		ID:     a.scrub(ev.ID),
-		Owner:  a.scrub(ev.Owner),
-		Status: a.scrub(ev.Status),
-	}
 	if err := checked(ev); err != nil {
 		return err
 	}
+	// The four fields that carry text a caller or Google produced are scrubbed
+	// and may be over-redacted. Op, Scope and Status are NOT: they hold one of
+	// this package's own words, and a word a credential happens to spell —
+	// "create", "user", "ok" — would otherwise be written into the line as
+	// "[redacted]", which is a line no reader can grep by act or by status. The
+	// closed sets above are what make them safe, and they are a stronger rule
+	// than removing a substring: a field holding anything else is refused
+	// rather than written.
+	ev.Caller = a.scrub(ev.Caller)
+	ev.Sub = a.scrub(ev.Sub)
+	ev.ID = a.scrub(ev.ID)
+	ev.Owner = a.scrub(ev.Owner)
 	return a.line(ctx, slog.LevelInfo, auditMessage,
 		slog.String("caller", safetext.OneLine(ev.Caller)),
 		slog.String("sub", safetext.OneLine(ev.Sub)),
@@ -793,12 +838,15 @@ func (a *Auditor) line(ctx context.Context, level slog.Level, msg string, attrs 
 	return nil
 }
 
-// checked holds an event to the rules of its fields, after the scrub has run,
-// and answers the error naming the field that is not one this intake can
-// record — never what it held. Every field is a closed set or a shape the
-// intake itself built, which is the second half of the no-value rule: the
-// scrub removes a value that reached a field, and these rules are why one
-// cannot reach one.
+// checked holds an event to the rules of its fields and answers the error
+// naming the field that is not one this intake can record — never what it held.
+// Every field is a closed set or a shape the intake itself built, so a field
+// something else wrote into is refused rather than recorded.
+//
+// It runs before the scrub and not after (Write, and that order's own reason):
+// these rules are about SHAPE, and the shape is the one the intake wrote, so a
+// credential that happens to spell one of their words cannot make them refuse
+// the call's line.
 func checked(ev AuditEvent) error {
 	switch {
 	case !validOp(ev.Op):

@@ -244,6 +244,17 @@ func errorType(t *testing.T, w *httptest.ResponseRecorder) string {
 	return e.Error
 }
 
+// errorMessage reads a refusal's own sentence, and fails the test on an answer
+// that is not one.
+func errorMessage(t *testing.T, w *httptest.ResponseRecorder) string {
+	t.Helper()
+	var e credsvc.WireError
+	if err := json.Unmarshal(w.Body.Bytes(), &e); err != nil {
+		t.Fatalf("the answer is not a refusal: %v (%s)", err, w.Body.String())
+	}
+	return e.Message
+}
+
 // audit is the call's one line, as the operator reads it, and fails the test
 // unless the call wrote exactly one.
 func audit(t *testing.T, f *fixture) map[string]any {
@@ -626,9 +637,140 @@ func TestOneAuditLinePerCall(t *testing.T) {
 	}
 }
 
-// TestNothingIsWrittenWithoutAPrefixToWriteItUnder: a caller the class refuses
-// before its account id is read writes nothing, and an unknown route is not
-// one of the intake's acts.
+// TestAValueThatSpellsTheLinesOwnTextStillRecordsTheCall: the line carries one
+// of this package's own words, an account id and a container name, and a
+// credential is bytes the caller chose — one byte is enough to spell part of
+// any of them. An audit line the auditor refused for that would answer
+// state_unavailable for a call whose act had already landed: an act in Secret
+// Manager that no operator could read afterwards, which is worse than the
+// over-redaction of a text field and is what this pins. The value is a word or
+// a digit here, never a credential.
+func TestAValueThatSpellsTheLinesOwnTextStillRecordsTheCall(t *testing.T) {
+	// "1" is a byte of the account id and therefore of the container's name,
+	// "e" and "key" are bytes of that name, and "create", "user" and "ok" are
+	// the line's own closed-set values.
+	for _, value := range []string{"1", "e", "ok", "user", "create", "key"} {
+		t.Run(value, func(t *testing.T) {
+			f := member(t)
+			id := "fugaro_u_" + testOwnerSub + "_api-key"
+			w := f.post(t, CreatePath, f.token(t, testOwnerEmail, testOwnerSub), createBody(ScopeUser, "api-key", value))
+			if w.Code != http.StatusOK {
+				t.Fatalf("got %d %s, want 200: the credential is in the store, so the call must be answered and recorded as the act it was", w.Code, w.Body.String())
+			}
+			if got := f.store.values[id]; len(got) != 1 || got[0] != value {
+				t.Fatalf("the store holds %d values, want the one the call carried", len(got))
+			}
+			line := audit(t, f)
+			if line["op"] != OpCreate {
+				t.Errorf("the line's op is %v, want %q: the act is the line's own word and never the value's", line["op"], OpCreate)
+			}
+			if line["scope"] != string(ScopeUser) {
+				t.Errorf("the line's scope is %v, want %q", line["scope"], ScopeUser)
+			}
+			if line["status"] != credsvc.StatusOK {
+				t.Errorf("the line's status is %v, want %q", line["status"], credsvc.StatusOK)
+			}
+			// The name is a text field and may be over-redacted by the value:
+			// a mangled name is readable enough to act on, and the act above is
+			// what a reader greps for.
+			if line["id"] == "" {
+				t.Error("the line names no container")
+			}
+		})
+	}
+}
+
+// TestARefusedRequestStillWritesItsLine: the scope and the owner a call names
+// go on the line, so a scope or an owner this release does not have is refused
+// as the request it is — 400 request_refused and one line — and not answered
+// state_unavailable with no line at all. A record a caller can suppress by
+// sending a scope the intake does not serve is not a record.
+func TestARefusedRequestStillWritesItsLine(t *testing.T) {
+	f := member(t)
+	memberTok := f.token(t, testOwnerEmail, testOwnerSub)
+	adminTok := f.token(t, testAdminEmail, testAdminSub)
+	value := b64(testValue)
+	for _, tc := range []struct {
+		what string
+		path string
+		tok  string
+		body string
+	}{
+		{"an unknown scope on a create", CreatePath, memberTok, `{"scope":"root","name":"api-key","value":"` + value + `"}`},
+		{"an unknown scope on a version", VersionPath, memberTok, `{"scope":"root","name":"api-key","value":"` + value + `"}`},
+		{"an unknown scope on a list", ListPath, memberTok, `{"scope":"root"}`},
+		{"an unknown scope on a delete", DeletePath, memberTok, `{"scope":"root","name":"api-key"}`},
+		{"an unknown scope on a sweep", DeletePath, adminTok, `{"scope":"root","owner":"` + testOtherEmail + `"}`},
+		{"a malformed owner on an admin's list", ListPath, adminTok, `{"scope":"user","owner":"not an address"}`},
+		{"a malformed owner on a sweep", DeletePath, adminTok, `{"scope":"user","owner":"not an address"}`},
+		{"an owner on the shared scope", ListPath, adminTok, `{"scope":"shared","owner":"` + testOtherEmail + `"}`},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			f.lines.Reset()
+			w := f.post(t, tc.path, tc.tok, tc.body)
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("got %d %s, want 400: the request is what is wrong here", w.Code, w.Body.String())
+			}
+			if got := errorType(t, w); got != ErrorRequestRefused {
+				t.Fatalf("the refusal is %s, want %s", got, ErrorRequestRefused)
+			}
+			line := audit(t, f)
+			if line["status"] != ErrorRequestRefused {
+				t.Fatalf("the line's status is %v, want %s", line["status"], ErrorRequestRefused)
+			}
+			if line["id"] == nil || line["op"] == "" {
+				t.Fatalf("the line does not name the act: %v", line)
+			}
+		})
+	}
+}
+
+// TestTheBodyBoundLeavesTheValueBoundReachable: the two bounds are one rule
+// seen twice — a credential travels base64 in a JSON body — so the body bound
+// has to be wide enough for Secret Manager's own value bound. A body bound
+// narrower than the encoding of the value bound makes the value rule dead code
+// and the real maximum whatever happens to fit, which is a limit neither the
+// caller nor the operator can read anywhere.
+func TestTheBodyBoundLeavesTheValueBoundReachable(t *testing.T) {
+	f := member(t)
+	tok := f.token(t, testOwnerEmail, testOwnerSub)
+	id := "fugaro_u_" + testOwnerSub + "_api-key"
+
+	// Exactly Secret Manager's own limit: a body the bound admits and a value
+	// the value rule admits.
+	w := f.post(t, CreatePath, tok, createBody(ScopeUser, "api-key", strings.Repeat("k", maxValueBytes)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("a credential of exactly %d bytes: got %d %s, want 200", maxValueBytes, w.Code, w.Body.String())
+	}
+	if got := f.store.values[id]; len(got) != 1 || len(got[0]) != maxValueBytes {
+		t.Fatalf("the store holds %d values, want one of %d bytes", len(got), maxValueBytes)
+	}
+
+	// One byte over: refused by the value's own rule and not by the body's,
+	// which is what makes that rule a rule.
+	f.lines.Reset()
+	w = f.post(t, CreatePath, tok, createBody(ScopeUser, "api-key", strings.Repeat("k", maxValueBytes+1)))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("a credential of %d bytes: got %d %s, want 400", maxValueBytes+1, w.Code, w.Body.String())
+	}
+	if msg := errorMessage(t, w); !strings.Contains(msg, "Secret Manager allows at most") {
+		t.Fatalf("the refusal is %q, want the value's own bound", msg)
+	}
+
+	// And a body past the body bound is still refused before anything reads it.
+	f.lines.Reset()
+	w = f.post(t, CreatePath, tok, strings.Repeat("x", maxBodyBytes+1))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("a body of %d bytes: got %d, want 400", maxBodyBytes+1, w.Code)
+	}
+	if msg := errorMessage(t, w); !strings.Contains(msg, "body is over the intake's bound") {
+		t.Fatalf("the refusal is %q, want the body's own bound", msg)
+	}
+}
+
+// TestUnknownRouteIsNotAnAct: a route this intake does not serve names no act
+// of its own, so it is refused and writes no line at all — the four routes are
+// the whole surface, and every line this process writes is one of them.
 func TestUnknownRouteIsNotAnAct(t *testing.T) {
 	f := member(t)
 	w := f.post(t, "/v1/secrets/read", f.token(t, testOwnerEmail, testOwnerSub), createBody(ScopeUser, "api-key", testValue))

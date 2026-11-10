@@ -40,9 +40,9 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/intake"
@@ -197,10 +197,15 @@ func intakeServiceConfig(ctx context.Context, getenv func(string) string, errw i
 	}
 	// The bucket is addressed the way this repository addresses it: the module
 	// passes the bucket's own name and the scheme is GCS's (openBkt,
-	// history_rollover.go). A name carrying a separator or a space is a
-	// deployment that would reach somewhere else, and it is refused here
-	// rather than resolved into a URL.
-	if strings.ContainsAny(bucketName, "/: ") {
+	// history_rollover.go). The name is held to that repository's own charset
+	// rule (gcp.ValidBucketName) rather than to a list of separators, because a
+	// byte outside it is what turns the name into a URL: a '@' is read as
+	// userinfo and everything after it as the HOST, so
+	// "gs://fugaro-runs@evil.example" would read the derived admin list out of
+	// a bucket this deployment never named, and '?' and '#' move the query and
+	// the fragment the same way. A name that is not one is refused here rather
+	// than resolved into a URL.
+	if !gcp.ValidBucketName(bucketName) {
 		return intake.Config{}, userErr("%s is not the runs bucket's name: the installation module passes the bucket's own name (fugaro-runs-<gcp-project>), never a URL", envRunsBucket)
 	}
 

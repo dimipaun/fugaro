@@ -73,7 +73,7 @@ func (s *Server) set(w http.ResponseWriter, r *http.Request, op string) {
 	if !c.body(r, &req) {
 		return
 	}
-	c.ev.Scope = string(req.Scope)
+	c.nameScope(req.Scope)
 	value, err := decodeValue(req.Value)
 	if err != nil {
 		c.fail(err)
@@ -115,13 +115,13 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 	if !c.body(r, &req) {
 		return
 	}
-	c.ev.Scope = string(req.Scope)
+	c.nameScope(req.Scope)
 	switch req.Scope {
 	case ScopeUser:
 		if req.Owner != "" {
 			// A member named by address: the admin's lookup, and the one the
 			// offboarding command reads a member's containers through.
-			c.ev.Owner = req.Owner
+			c.nameOwner(req.Owner)
 			if err := s.adminOnly(r.Context(), caller); err != nil {
 				c.fail(err)
 				return
@@ -182,7 +182,7 @@ func (s *Server) remove(w http.ResponseWriter, r *http.Request) {
 	if !c.body(r, &req) {
 		return
 	}
-	c.ev.Scope = string(req.Scope)
+	c.nameScope(req.Scope)
 	switch {
 	case req.Name == "" && req.Owner == "":
 		c.fail(fmt.Errorf("%w: a delete names exactly one of a credential's name or the owner of a prefix to sweep", errRequestRefused))
@@ -193,7 +193,7 @@ func (s *Server) remove(w http.ResponseWriter, r *http.Request) {
 			c.fail(fmt.Errorf("%w: only a per-user container has an owner to sweep, and this call names the %s scope", errRequestRefused, pluginwire.Printable(string(req.Scope))))
 			return
 		}
-		c.ev.Owner = req.Owner
+		c.nameOwner(req.Owner)
 		if err := s.adminOnly(r.Context(), caller); err != nil {
 			c.fail(err)
 			return
