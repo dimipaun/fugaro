@@ -2422,6 +2422,49 @@ func TestCheckoutWithoutTheFileStillResolvesTheRefsRecipe(t *testing.T) {
 	}
 }
 
+// TestCheckoutWithoutTheFileStillResolvesTheRefsWorkflow is the workflow's own
+// half of the same finding, and the one a reader met first: resolveWorkflow ran
+// with the checkout closure bound before withLaunchDocument, so a checkout whose
+// tree has no fugaro.yaml and whose ref's document names exactly one workflow
+// was refused with "cannot tell which workflow of acme/app to run; pass
+// --workflow" — where the same launch with the file in the tree resolves that
+// same document (spec.md §7: decided as if the file were in the tree). The
+// local config names no workflow for this repository, which is what leaves the
+// file as the only place the answer can come from.
+//
+// Both launch shapes that resolve a workflow through it are pinned: a first
+// run (resolveAttemptPlan) and a review (reviewSpec, the same read with the
+// same ordering).
+//
+// Mutation (run, restore): move the withLaunchDocument call in either spec
+// builder below its resolveWorkflow — that shape's launch is refused.
+func TestCheckoutWithoutTheFileStillResolvesTheRefsWorkflow(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		run  string
+	}{
+		{"a first run", []string{"run", "--repo", "acme/app", "--run-id", "20261110-110000-aaaa", "Add a feature"}, "20261110-110000-aaaa"},
+		{"a review", []string{"run", "--repo", "acme/app", "--run-id", "20261110-110001-bbbb", "--recipe", "review-only", "--pr", "7"}, "20261110-110001-bbbb"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newProjectJobFixture(t)
+			rewriteConfig(t, "acme/app: { provider: github, base_branch: main, workflows: [web] }",
+				"acme/app: { provider: github, base_branch: main }")
+			dir := projectJobCheckout(t)
+			if err := os.Remove(filepath.Join(dir, "fugaro.yaml")); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := execute(t, tc.args...); err != nil {
+				t.Fatalf("a launch whose ref names one workflow and whose tree has no fugaro.yaml: %v", err)
+			}
+			if got := readSpecOf(t, f.cloudFixture, appSlug, tc.run).Workflow; got != "web" {
+				t.Fatalf("the task's workflow = %q, want the web the ref's fugaro.yaml names", got)
+			}
+		})
+	}
+}
+
 // TestNoCheckoutGitHubRefusalNamesTheCheckoutAndTheRef is D912's first
 // message: a launch with no checkout of the repository anywhere, on a project
 // that has published a profile, is refused — the provider is one a shared job

@@ -1637,19 +1637,6 @@ func resolveAttemptPlan(ctx context.Context, env *cloudEnv, o *runOptions, total
 	if err != nil {
 		return nil, err
 	}
-	workflow, err := resolveWorkflow(env, repo, o.workflow, checkout)
-	if err != nil {
-		return nil, err
-	}
-	var totalOverride string
-	if total > 0 {
-		if c := checkout(); c != nil {
-			if w, ok := c.Workflows[workflow]; ok && total <= w.Timeouts.FinalizeReserve.Duration {
-				return nil, userErr("--total-timeout %s must be longer than workflow %s's timeouts.finalize_reserve %s", total, workflow, w.Timeouts.FinalizeReserve.Duration)
-			}
-		}
-		totalOverride = total.String()
-	}
 	// The base branch is resolved before the ref. An explicit ref is the
 	// branch the run is cut from, not its base, and the file that decides a
 	// base under one is the file at that ref — which only the runner reads,
@@ -1663,15 +1650,35 @@ func resolveAttemptPlan(ctx context.Context, env *cloudEnv, o *runOptions, total
 	} else {
 		base = specBaseBranch(env.layersBaseBranch(ctx, repo))
 	}
-	// The launch's own document, resolved here and not left to finishLaunch:
-	// the plan below reads it too (chooseRecipe), and a plan that read the
-	// working tree while the launch read the ref's file writes a task whose
-	// recipe is not the one the run applies — the runner resolves agent.recipe
-	// at the ref it clones. Here, because the ref the read is made at is what
-	// the two lines above resolve. Idempotent, so finishLaunch's own call — the
-	// one a launch shape with no attempt plan behind it (a follow-up, a review,
-	// a retry, the daemon's) still needs — answers with this same document.
+	// The launch's own document, resolved here and before every reader of it,
+	// and not left to finishLaunch: the plan's readers below are the launch's —
+	// the workflow, the total-timeout check, the recipe — and a reader that
+	// judged the working tree while the launch judged the ref's file decides by
+	// a document the run never reads, which is what the runner resolves after
+	// cloning (the workflow and agent.recipe among it). Here, because the ref
+	// the read is made at is what the two lines above resolve. Idempotent, so
+	// finishLaunch's own call — the one a launch shape with no attempt plan
+	// behind it (a follow-up, a review, a retry, the daemon's) still needs —
+	// answers with this same document.
 	ctx = withLaunchDocument(ctx, repo, ref)
+	// The closure above is bound to the working tree and memoizes it, so it is
+	// built again over the ctx that carries the launch's document: every reader
+	// below is one of the launch's, and what they resolve is written into the
+	// task the runner applies at the ref.
+	checkout = checkoutOf(ctx, repo)
+	workflow, err := resolveWorkflow(env, repo, o.workflow, checkout)
+	if err != nil {
+		return nil, err
+	}
+	var totalOverride string
+	if total > 0 {
+		if c := checkout(); c != nil {
+			if w, ok := c.Workflows[workflow]; ok && total <= w.Timeouts.FinalizeReserve.Duration {
+				return nil, userErr("--total-timeout %s must be longer than workflow %s's timeouts.finalize_reserve %s", total, workflow, w.Timeouts.FinalizeReserve.Duration)
+			}
+		}
+		totalOverride = total.String()
+	}
 	me, err := env.lc.Me(ctx)
 	if err != nil {
 		return nil, userErr("%v", err)
@@ -1685,11 +1692,6 @@ func resolveAttemptPlan(ctx context.Context, env *cloudEnv, o *runOptions, total
 	if err != nil {
 		return nil, err
 	}
-	// The closure above is bound to the working tree and memoizes it, so it is
-	// built again over the ctx that carries the launch's document: the reader
-	// below is one of the launch's, and the recipe it resolves is written into
-	// the task the runner applies at the ref.
-	checkout = checkoutOf(ctx, repo)
 	root := checkoutRoot(ctx, repo)
 	rcp, mode, err := chooseRecipe(ctx, env, o.recipe, checkout, root, warn, forAttempts)
 	if err != nil {
@@ -1956,17 +1958,6 @@ func reviewSpec(ctx context.Context, env *cloudEnv, o *runOptions, rr *resolvedR
 	if err != nil {
 		return "", nil, err
 	}
-	workflow, err := resolveWorkflow(env, repo, o.workflow, checkout)
-	if err != nil {
-		return "", nil, err
-	}
-	if total > 0 {
-		if c := checkout(); c != nil {
-			if w, ok := c.Workflows[workflow]; ok && total <= w.Timeouts.FinalizeReserve.Duration {
-				return "", nil, userErr("--total-timeout %s must be longer than workflow %s's timeouts.finalize_reserve %s", total, workflow, w.Timeouts.FinalizeReserve.Duration)
-			}
-		}
-	}
 	// The layers, and the field, as a first run's (resolveAttemptPlan) with
 	// one case short: a review run reads its own configuration from the branch
 	// it is cut from — the runner's readBaseConfig refuses a file whose base
@@ -1978,6 +1969,23 @@ func reviewSpec(ctx context.Context, env *cloudEnv, o *runOptions, rr *resolvedR
 	if ref == "" {
 		b, source := launchBaseBranch(ctx, env, repo)
 		base, ref = resolvedBaseBranch(b, source), b
+	}
+	// As resolveAttemptPlan: the launch's own document before the readers
+	// below, which are the launch's too (the workflow and the total-timeout
+	// check), and the closure rebuilt over it — the one above is bound to the
+	// working tree and memoizes it.
+	ctx = withLaunchDocument(ctx, repo, ref)
+	checkout = checkoutOf(ctx, repo)
+	workflow, err := resolveWorkflow(env, repo, o.workflow, checkout)
+	if err != nil {
+		return "", nil, err
+	}
+	if total > 0 {
+		if c := checkout(); c != nil {
+			if w, ok := c.Workflows[workflow]; ok && total <= w.Timeouts.FinalizeReserve.Duration {
+				return "", nil, userErr("--total-timeout %s must be longer than workflow %s's timeouts.finalize_reserve %s", total, workflow, w.Timeouts.FinalizeReserve.Duration)
+			}
+		}
 	}
 	me, err := env.lc.Me(ctx)
 	if err != nil {
@@ -3338,6 +3346,10 @@ func retrySpec(ctx context.Context, env *cloudEnv, ref string) (string, *task.Sp
 	if spec.RunID != runID {
 		return "", nil, userErr("run %s/%s holds the task of run %s; it can't be retried", slug, runID, spec.RunID)
 	}
+	// A stored task this old may name no workflow at all, and the reader below
+	// is a reader of the launch's document like any other: the ref is this
+	// task's own, so the document is the one the retried run resolves.
+	ctx = withLaunchDocument(ctx, spec.Repo, spec.Ref)
 	checkout := checkoutOf(ctx, spec.Repo)
 	if spec.Workflow == "" {
 		if spec.Workflow, err = resolveWorkflow(env, spec.Repo, "", checkout); err != nil {
