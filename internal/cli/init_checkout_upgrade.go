@@ -267,6 +267,12 @@ func (s *checkoutStage) detail(steps []plannedStep, loc pluginwire.Location) str
 // Anything else is something for the apply, which reports it in the step's own
 // words — and a step that fails in its check mode fails the stage here, at the
 // same point the apply would.
+//
+// The cloud step's own verdict is the one thing that check mode cannot settle
+// on its own: it reads fugaro.yaml and the local config and never a build
+// record, so the run that is taking this checkout to this release — the run
+// whose job images move with it — has to be asked about separately
+// (initEngine.checkoutBehind).
 func (s *checkoutStage) Check(ctx context.Context) (initflow.Status, error) {
 	loc, why := s.checkout()
 	if why != "" {
@@ -290,6 +296,19 @@ func (s *checkoutStage) Check(ctx context.Context) (initflow.Status, error) {
 		case stepFailed:
 			return initflow.Status{}, errors.New(r.reason)
 		case stepCurrent:
+			if p.step.name == "cloud" && s.e.checkoutBehind {
+				// The cloud step's own check reads fugaro.yaml and the local
+				// config and never a build record (cloudCheck), so it cannot
+				// see the job images the refresh moves: a run that is taking
+				// this checkout to this release is one whose job images move
+				// with it (initEngine.checkoutBehind), and what they are on is
+				// the apply's to say, not this check's. The step is the only
+				// one this stage has, so dropping it here is dropping the
+				// stage — which is what a run that stopped refreshing the
+				// repository's job images on an upgrade was doing.
+				todo = true
+				break
+			}
 			current = append(current, p.step.name)
 		default:
 			todo = true

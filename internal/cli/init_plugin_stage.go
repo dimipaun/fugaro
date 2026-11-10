@@ -167,7 +167,24 @@ func (s *pluginStage) plan1(ctx context.Context) (*pluginwire.Change, *initflow.
 	return ch, nil, nil
 }
 
+// Check is check plus the one fact a later stage reads off this stage: a
+// plugin stage with something to do is this run taking the checkout — and this
+// machine's plugin — to this release, and the checkout's own cloud half, the
+// job images built FROM the base the images stage pins in this same run, is
+// what moves with it (init_checkout_upgrade.go's Check reads
+// initEngine.checkoutBehind). Set and never cleared, which is why the flag is
+// not simply assigned: the run's own writes move what it was read from — this
+// stage's pin write and the install that clears the version behind it — and
+// the execution pass checks this stage again after the apply that changed both.
 func (s *pluginStage) Check(ctx context.Context) (initflow.Status, error) {
+	st, err := s.check(ctx)
+	if err == nil && st.State == initflow.Todo {
+		s.e.checkoutBehind = true
+	}
+	return st, err
+}
+
+func (s *pluginStage) check(ctx context.Context) (initflow.Status, error) {
 	ch, st, err := s.plan(ctx)
 	switch {
 	case err != nil:

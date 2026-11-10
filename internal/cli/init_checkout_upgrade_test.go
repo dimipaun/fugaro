@@ -166,6 +166,63 @@ func TestUpdateRunsPinPluginAndImages(t *testing.T) {
 	}
 }
 
+// The run that moves the checkout runs its cloud half even where the cloud
+// step's own check reads a finished one. That is the state a full converge
+// leaves behind: the images stage pins THIS release's base in the local config
+// before the checkout stage is checked, and the cloud step's check reads
+// fugaro.yaml and the local config and never a build record (cloudCheck, U9)
+// — while the job images are built FROM that base and are exactly what a run
+// taking the checkout to this release moves. The plugin stage is where the
+// checkout stage reads that this run is such a one (initEngine.checkoutBehind),
+// and where it reads that it is not: a checkout already at this release writes
+// nothing and builds nothing, which is what keeps the one command safe to run
+// twice.
+func TestUpdateRunsTheCheckoutTheCloudStepCannotSee(t *testing.T) {
+	t.Run("a checkout behind this release", func(t *testing.T) {
+		r, root := upgradeRig(t)
+		settings := filepath.Join(root, ".claude", "settings.json")
+		checkoutFile(t, settings, wiredAt("v0.5.0"))
+		// The images stage's own write, in the converge this run is part of.
+		r.appendConfig(t, "image_source: ghcr.io/dimipaun\nbase_images: {base: "+pinnedRef("base", "0.5.1")+"}\n")
+		f := testutil.NewClaudePluginFake(t, "[]", "[]")
+		f.On(t, "plugins", userInstall("0.5.1"), argsInstall...)
+		useFakeClaude(t, f)
+		ran := fakeSteps(t, "", nil)
+
+		e, out := checkoutEngine(t, &initOptions{yes: true})
+		res := updateStages(t, e, initflow.Plugin, checkoutStageName)
+		if res.Failed != nil || len(res.Left) != 0 {
+			t.Fatalf("the run did not finish: failed %+v, left %+v\n%s", res.Failed, res.Left, out)
+		}
+		if want := []string{"base", "check job", "builds"}; !slices.Equal(*ran, want) {
+			t.Errorf("the run that moves the checkout did not refresh its job images: steps %q, want %q\n%s", *ran, want, out)
+		}
+	})
+
+	t.Run("a checkout already at this release", func(t *testing.T) {
+		r, root := upgradeRig(t)
+		settings := filepath.Join(root, ".claude", "settings.json")
+		checkoutFile(t, settings, wiredAt("v0.5.1"))
+		checkoutFile(t, filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), "plugins", "installed_plugins.json"),
+			`{"version":2,"plugins":{"fugaro@fugaro":[{"scope":"user","version":"0.5.1"}]}}`)
+		r.appendConfig(t, "image_source: ghcr.io/dimipaun\nbase_images: {base: "+pinnedRef("base", "0.5.1")+"}\n")
+		useFakeClaude(t, testutil.NewClaudePluginFake(t, "[]", "[]"))
+		ran := fakeSteps(t, "", nil)
+
+		e, out := checkoutEngine(t, &initOptions{yes: true})
+		res := updateStages(t, e, initflow.Plugin, checkoutStageName)
+		if res.Failed != nil || len(res.Left) != 0 {
+			t.Fatalf("a current checkout was not done: failed %+v, left %+v\n%s", res.Failed, res.Left, out)
+		}
+		if got := stateOf(res, checkoutStageName); got != initflow.Done {
+			t.Errorf("the checkout stage is %q on a checkout already at this release, want %q\n%s", got, initflow.Done, out)
+		}
+		if len(*ran) != 0 {
+			t.Errorf("a checkout already at this release refreshed its job images: %q\n%s", *ran, out)
+		}
+	})
+}
+
 // The billable build is not covered by the run's one confirmation: the review
 // screen lists it, and a run with no terminal and without --yes leaves the
 // checkout's steps for the user, running nothing.
