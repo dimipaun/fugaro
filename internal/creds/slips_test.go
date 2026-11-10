@@ -3,6 +3,7 @@ package creds
 import (
 	"encoding/json"
 	"errors"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -62,6 +63,27 @@ func rawNode(t *testing.T, db *fakeDB, path string) json.RawMessage {
 		t.Fatalf("reading /%s: found=%v err=%v", path, found, err)
 	}
 	return raw
+}
+
+// mustJSON is a value as the database would hold it.
+func mustJSON(t *testing.T, v any) json.RawMessage {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+// decodeNode is a stored node as its members rather than as its bytes, so two
+// nodes can be compared without depending on key order or number type.
+func decodeNode(t *testing.T, raw json.RawMessage) map[string]any {
+	t.Helper()
+	var node map[string]any
+	if err := json.Unmarshal(raw, &node); err != nil {
+		t.Fatal(err)
+	}
+	return node
 }
 
 // A slip is claimed once and once only, and the claim is a compare-and-set
@@ -199,6 +221,110 @@ func TestClaimIsOnce(t *testing.T) {
 	}
 	if matches != 1 {
 		t.Fatalf("%d of the answered secrets match the slip's claim hash; want the winner's one", matches)
+	}
+}
+
+// A slip is claimed once even when the claim on it is not the one this package
+// writes, and a claim at the zero instant never becomes one at all.
+//
+// Both halves are the same failure read from two sides (a review of this
+// change). A record that carries a claim in ONE field — a hash with no instant,
+// an account with no hash — is what a hand-edit or an older release leaves, and
+// a fence that asks only for the instant reads it as unclaimed: the second claim
+// is granted, it replaces the hash, and the runner that claimed first is locked
+// out while the secret it was answered opens nothing. And a claim made AT the
+// zero instant writes that same half-claim, so it is refused before the write
+// rather than read back as an unclaimed slip.
+func TestClaimRefusesAClaimTheRecordAlreadyCarries(t *testing.T) {
+	// The record as this package writes it, so each case below can state the one
+	// member it leaves out: the fake takes a value, and the strict decoder reads
+	// the same names back.
+	unclaimed := func() map[string]any {
+		return map[string]any{
+			"owner":            slipOwner,
+			"slug":             run.Slug,
+			"run":              run.ID,
+			"expected_account": slipAccount,
+			"allowed":          []string{slipSecretID},
+			"pool":             "team-pool",
+			"max_runtime":      int64(90 * time.Minute),
+		}
+	}
+
+	held, err := newClaimSecret()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		name string
+		// claim is what the record carries beyond the unclaimed fields above.
+		claim map[string]any
+	}{
+		{
+			name:  "a hash with no instant",
+			claim: map[string]any{"claim_hash": ClaimSecretHash(held)},
+		},
+		{
+			name:  "a hash with an instant that did not arrive",
+			claim: map[string]any{"claim_hash": ClaimSecretHash(held), "claimed": map[string]any{"account": slipAccount, "at": time.Time{}}},
+		},
+		{
+			name:  "an account with no hash",
+			claim: map[string]any{"claimed": map[string]any{"account": slipAccount}},
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			db := newFakeDB()
+			st := slipStore(db)
+			node := unclaimed()
+			for k, v := range c.claim {
+				node[k] = v
+			}
+			db.put(PathSlip("s-held"), node)
+
+			_, secret, err := st.Claim(ctx, "s-held", run, slipAccount, now)
+			if !errors.Is(err, ErrSlipClaimed) {
+				t.Fatalf("claiming a slip the record already carries a claim on answered %v; want ErrSlipClaimed — the fence is the record, not the instant, or a half-written claim is claimed over and the first runner is locked out", err)
+			}
+			if secret != "" {
+				t.Fatal("a refused claim answered a claim secret")
+			}
+			// Nothing was written: the node is the one the test stated, which is
+			// what an error that wrote anyway would not be. Both sides are read
+			// back through the same decoding, so the comparison is of the record's
+			// members and not of the encoding the fake happens to hold.
+			want := decodeNode(t, mustJSON(t, node))
+			if got := decodeNode(t, rawNode(t, db, PathSlip("s-held"))); !reflect.DeepEqual(got, want) {
+				t.Fatalf("the refused claim rewrote the node: got %v; want %v", got, want)
+			}
+		})
+	}
+
+	// A claim at the zero instant is refused where the caller's mistake is, and
+	// the slip is left unclaimed rather than half claimed.
+	db := newFakeDB()
+	st := slipStore(db)
+	sl := testSlip("s-zero")
+	if err := st.Create(ctx, sl); err != nil {
+		t.Fatalf("creating the slip: %v", err)
+	}
+	if _, secret, err := st.Claim(ctx, sl.ID, run, slipAccount, time.Time{}); !errors.Is(err, ErrSlipMalformed) {
+		t.Fatalf("a claim at the zero instant answered %v; want ErrSlipMalformed — the record it would write is the half-claim Create refuses, and one every reader here takes for an unclaimed slip", err)
+	} else if secret != "" {
+		t.Fatal("a claim at the zero instant answered a claim secret")
+	}
+	after, found, err := st.Slip(ctx, sl.ID)
+	if err != nil || !found {
+		t.Fatalf("reading the slip: found=%v err=%v", found, err)
+	}
+	if after.isClaimed() {
+		t.Fatalf("the refused claim wrote a claim onto the slip: %+v", after.Claimed)
+	}
+	// And the slip is still the unclaimed grant it was, so the run claims it with
+	// an instant that is real: the refusal declined one claim, it did not take
+	// the slip away.
+	if _, secret, err := st.Claim(ctx, sl.ID, run, slipAccount, now); err != nil || secret == "" {
+		t.Fatalf("claiming the slip with a real instant answered secret=%q err=%v; want the claim the zero instant did not take", secret, err)
 	}
 }
 

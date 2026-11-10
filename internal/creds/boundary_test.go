@@ -217,27 +217,36 @@ func importPaths(path string) ([]string, error) {
 //
 //   - the store built inline as the receiver of a marks call, and never held:
 //     (&creds.RTDBStore{DB: db}).Marks(ctx);
-//   - the store bound to a name the file uses only for the marks: every other
+//   - the store bound to a name a FUNCTION uses only for the marks: every other
 //     appearance of that identifier is a marks receiver or another binding of
 //     that name (store := &creds.RTDBStore{DB: db}; store.UpdateMark(...)). A
 //     copy, an argument, an index or a method value is none of those, so the
-//     name stops being marks-only and the mention becomes a finding again;
+//     name stops being marks-only and the mention becomes a finding again. The
+//     binding has to be one a function body holds: a name at package level, and a
+//     struct field, are reachable from the package's other files — this scan reads
+//     one file at a time — so neither is ever exempt, however it is used;
 //   - the store handed to the service, which may hold one: the operator's CLI
 //     builds the state the credentials service serves from locally. This is the
 //     service package alone and not the state's own — nothing outside hands that
 //     one a store, and a shape no caller writes is a hole in the guard — and a
-//     plant pins each direction.
+//     plant pins each direction. It is drawn at a function body for the reason
+//     above.
 //
 // The list is closed the way the importers are, and Marks and UpdateMark are not
 // slip methods — that distinction is what the lists below are.
 //
-// The limit is the one no parse can pass, and it is narrower than it was: a
+// The limits are the ones no parse can pass, and they are narrower than they
+// were. A store that crosses a file boundary is caught in the file that writes
+// it, because writing it is the only way to have one (there is no exported
+// constructor in this package, and a function that answers one writes its type in
+// its signature): the package-level name and the struct field are the shapes that
+// cross, and both are findings whatever they are used for. What is left is a
 // store that arrives from a package that may hold one (internal/credsvc) — as an
-// argument, or as a result whose signature this file does not write — is not
-// followed, and neither is one carried in an interface beside which this
-// package's name is never written. Closing that means making the store type
-// unnameable outside the service, which is a change to the marks API
-// internal/cli reads through today, and it is reported rather than made here.
+// argument, or as a result whose signature this file does not write — and one
+// carried in an interface beside which this package's name is never written.
+// Closing that means making the store type unnameable outside the service, which
+// is a change to the marks API internal/cli reads through today, and it is
+// reported rather than made here.
 
 // slipImporters is the ONE-LIST of directories whose files may reach the slip
 // store. It is deliberately not credsImporters: a fourth entry, or an entry
@@ -299,7 +308,16 @@ func TestBoundaryAllowsSlipsOnlyViaService(t *testing.T) {
 	for _, c := range []struct {
 		name string
 		src  string
-		want bool
+		// also is a second file of the same package. Two of the shapes below are
+		// about what a per-file scan cannot see on its own, and a plant for one is
+		// only the shape if the other file is there (a review of this change).
+		also string
+		// wantFile is the file the finding has to be on, for the plants whose point
+		// is WHICH file is reported: a package's files are read one at a time, so a
+		// shape that crosses the boundary has to be caught in the file that writes
+		// it rather than in the one that uses it.
+		wantFile string
+		want     bool
 	}{
 		{
 			name: "a package holding a slip",
@@ -422,9 +440,14 @@ func TestBoundaryAllowsSlipsOnlyViaService(t *testing.T) {
 			want: false,
 		},
 		{
-			name: "a store handed to the service, which may hold one",
-			src:  "package x\n\nimport (\n\t\"github.com/dimipaun/fugaro/internal/creds\"\n\t\"github.com/dimipaun/fugaro/internal/credsvc\"\n)\n\nvar c = credsvc.Config{State: &creds.RTDBStore{}}\n",
+			name: "a store handed to the service from a function, which may hold one",
+			src:  "package x\n\nimport (\n\t\"github.com/dimipaun/fugaro/internal/creds\"\n\t\"github.com/dimipaun/fugaro/internal/credsvc\"\n)\n\nfunc f() credsvc.Config { return credsvc.Config{State: &creds.RTDBStore{}} }\n",
 			want: false,
+		},
+		{
+			name: "a store handed to the service at package level, which another file can claim through",
+			src:  "package x\n\nimport (\n\t\"github.com/dimipaun/fugaro/internal/creds\"\n\t\"github.com/dimipaun/fugaro/internal/credsvc\"\n)\n\nvar c = credsvc.Config{State: &creds.RTDBStore{}}\n",
+			want: true,
 		},
 		{
 			name: "a store handed to the state's own package, which is not the service",
@@ -441,14 +464,48 @@ func TestBoundaryAllowsSlipsOnlyViaService(t *testing.T) {
 			src:  "package x\n\nimport \"github.com/dimipaun/fugaro/internal/creds\"\n\nfunc f() { st := &creds.RTDBStore{}; st.Marks(ctx); s2 := st; _ = s2 }\n",
 			want: true,
 		},
+		{
+			name: "a store bound at package level and used only for the marks",
+			src:  "package x\n\nimport \"github.com/dimipaun/fugaro/internal/creds\"\n\nvar st = &creds.RTDBStore{DB: db}\n\nfunc f() { st.Marks(ctx) }\n",
+			want: true,
+		},
+		{
+			name:     "a store bound at package level and claimed through in another file",
+			src:      "package x\n\nimport \"github.com/dimipaun/fugaro/internal/creds\"\n\nvar st = &creds.RTDBStore{DB: db}\n\nfunc f() { st.Marks(ctx) }\n",
+			also:     "package x\n\nfunc g() { st.End(\"s-1\") }\n",
+			wantFile: "planted.go",
+			want:     true,
+		},
+		{
+			name: "a store held as a struct field and used only for the marks",
+			src:  "package x\n\nimport \"github.com/dimipaun/fugaro/internal/creds\"\n\ntype t struct{ st *creds.RTDBStore }\n\nfunc (x t) f() { x.st.Marks(ctx) }\n",
+			want: true,
+		},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			found := slipReferences("planted.go", "planted.go", []byte(c.src))
+			// A plant is one file, or a package of them. The two-file shapes are read
+			// the way the module is: file by file, which is what they are here to
+			// hold.
+			files := []string{c.src}
+			if c.also != "" {
+				files = append(files, c.also)
+			}
+			var found []string
+			for i, src := range files {
+				rel := "planted.go"
+				if i > 0 {
+					rel = "also.go"
+				}
+				found = append(found, slipReferences(rel, rel, []byte(src))...)
+			}
 			if c.want && len(found) == 0 {
 				t.Fatal("the scan read a source that reaches the slip store as reaching nothing: a scan that cannot fail is not a scan")
 			}
 			if !c.want && len(found) > 0 {
 				t.Fatalf("the scan refused a source that does not reach the slip store: %v", found)
+			}
+			if c.wantFile != "" && !slices.ContainsFunc(found, func(s string) bool { return strings.HasPrefix(s, c.wantFile+" ") }) {
+				t.Fatalf("the finding is not on %s, the file that writes the store: %v", c.wantFile, found)
 			}
 		})
 	}
@@ -564,49 +621,77 @@ func exemptStoreMentions(f *ast.File, pkg string) map[ast.Node]bool {
 		}
 		return true
 	})
-	// A store bound to a name the file uses only for the marks: every other
+	// A store bound to a name a function uses only for the marks: every other
 	// appearance of that identifier is a marks receiver or another binding of the
 	// name. A copy, an argument, an index or a method value is none of those, so
 	// the name stops being marks-only and the mention stays a finding.
+	//
+	// The binding has to be one a FUNCTION body holds (a review of this change).
+	// A name bound at package level is reachable from the package's other files,
+	// and this scan reads one file at a time: `var st = &creds.RTDBStore{}` with
+	// st.Marks(ctx) here and st.End(id) in another file of the package would be
+	// exempt by the marks rule while the second file is what claims. A package
+	// level name is therefore never exempt, which is the shape that crosses a
+	// file boundary and the reason the exemption is drawn here rather than over
+	// the package.
 	only := marksOnlyNames(f)
-	ast.Inspect(f, func(n ast.Node) bool {
-		switch d := n.(type) {
-		case *ast.AssignStmt:
-			for i, rhs := range d.Rhs {
-				if id, ok := identAt(d.Lhs, i); ok && only[id.Name] {
-					storeMentions(allowed, rhs, pkg)
+	for _, body := range functionBodies(f) {
+		ast.Inspect(body, func(n ast.Node) bool {
+			switch d := n.(type) {
+			case *ast.AssignStmt:
+				for i, rhs := range d.Rhs {
+					if id, ok := identAt(d.Lhs, i); ok && only[id.Name] {
+						storeMentions(allowed, rhs, pkg)
+					}
+				}
+			case *ast.ValueSpec:
+				for i, v := range d.Values {
+					if i < len(d.Names) && only[d.Names[i].Name] {
+						storeMentions(allowed, v, pkg)
+					}
 				}
 			}
-		case *ast.ValueSpec:
-			for i, v := range d.Values {
-				if i < len(d.Names) && only[d.Names[i].Name] {
-					storeMentions(allowed, v, pkg)
-				}
-			}
-		}
-		return true
-	})
+			return true
+		})
+	}
 	// A store handed to a package that may hold one — the operator's CLI builds
-	// the state the credentials service serves from.
+	// the state the credentials service serves from. It is drawn at a function
+	// body for the reason above: a package-level hand-off is a store another file
+	// can claim through.
 	held := serviceImportNames(f)
-	ast.Inspect(f, func(n ast.Node) bool {
-		switch d := n.(type) {
-		case *ast.CompositeLit:
-			if namesPackage(d.Type, held) {
-				for _, el := range d.Elts {
-					storeMentions(allowed, el, pkg)
+	for _, body := range functionBodies(f) {
+		ast.Inspect(body, func(n ast.Node) bool {
+			switch d := n.(type) {
+			case *ast.CompositeLit:
+				if namesPackage(d.Type, held) {
+					for _, el := range d.Elts {
+						storeMentions(allowed, el, pkg)
+					}
+				}
+			case *ast.CallExpr:
+				if namesPackage(d.Fun, held) {
+					for _, arg := range d.Args {
+						storeMentions(allowed, arg, pkg)
+					}
 				}
 			}
-		case *ast.CallExpr:
-			if namesPackage(d.Fun, held) {
-				for _, arg := range d.Args {
-					storeMentions(allowed, arg, pkg)
-				}
-			}
-		}
-		return true
-	})
+			return true
+		})
+	}
 	return allowed
+}
+
+// functionBodies answers the bodies of the functions a file declares, which is
+// where a binding the scan exempts has to be: a name a function holds cannot be
+// read by another file, and a name at package level can.
+func functionBodies(f *ast.File) []*ast.BlockStmt {
+	var bodies []*ast.BlockStmt
+	for _, decl := range f.Decls {
+		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Body != nil {
+			bodies = append(bodies, fn.Body)
+		}
+	}
+	return bodies
 }
 
 // storeMentions adds every mention of a creds store type in an expression to a
@@ -640,9 +725,12 @@ func isStoreMention(n ast.Node, pkg string) bool {
 // deliberately: the file is all the scan has, and a name with more appearances
 // than the two shapes account for is a name whose uses this rule cannot see —
 // which fails closed, and names nothing a reader cannot check by looking at the
-// file. The marks receiver is required rather than left to the count (a review of
-// this change): a name bound once and used for nothing at all satisfies a count
-// that only asks for no other uses, and "no other uses" is not the marks.
+// file. Where the binding has to be is the caller's question, not this one: a
+// name bound in a function body can be exempt (exemptStoreMentions) and a name
+// at package level cannot. The marks receiver is required rather than left to the
+// count (a review of this change): a name bound once and used for nothing at all
+// satisfies a count that only asks for no other uses, and "no other uses" is not
+// the marks.
 func marksOnlyNames(f *ast.File) map[string]bool {
 	appearances := map[string]int{}
 	bindings := map[string]int{}

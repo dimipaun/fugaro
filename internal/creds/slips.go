@@ -132,9 +132,28 @@ func (s Slip) Expires() time.Time { return s.Claimed.At.Add(s.MaxRuntime) }
 //
 // An unclaimed slip is never live. That is R9's fail-closed rule read at the
 // store: a credential served only under a claimed slip is a credential a
-// slip-less call cannot reach, and a record nobody has claimed is nobody's.
+// slip-less call cannot reach, and a record nobody has claimed is nobody's. A
+// record that carries a claim with no instant is not live either, its runtime
+// measured from an instant that never arrived — which is why what counts as
+// claimed is asked of the record (isClaimed) rather than of the instant.
 func (s Slip) Live(now time.Time) bool {
-	return !s.Claimed.At.IsZero() && now.Before(s.Expires())
+	return s.isClaimed() && now.Before(s.Expires())
+}
+
+// isClaimed reports whether a record carries a claim, in either of the two
+// fields a claim is written in.
+//
+// It is the whole of what a claim is rather than the instant alone (a review of
+// this change). A record whose hash and instant did not both arrive is still one
+// a claim was written to, and a reader that asks only for the instant reads it
+// as unclaimed: a second claim is then granted, it replaces the first claim's
+// hash, and the runner that claimed first is locked out while the secret it was
+// answered opens nothing — the once-only fence of D1941 gone with no error
+// anywhere. Create refuses such a record (checkWritable), so the ones that exist
+// are a hand-edit or a release that wrote differently, which is exactly when a
+// reader must not decide from one field.
+func (s Slip) isClaimed() bool {
+	return s.ClaimHash != "" || s.Claimed != (Claim{})
 }
 
 // ClaimMatches reports whether secret is the claim secret this slip was claimed
@@ -202,18 +221,25 @@ var (
 	// runtime would never end. Unclaimed is the zero Claim in every field, so a
 	// record carrying a claimant's account with no instant, or an instant with no
 	// account, is refused as well: neither is a state a claim can be read from.
+	// Claim answers it too, for a claim at the zero instant: that write would
+	// leave exactly the half-claim this refuses.
 	ErrSlipMalformed = errors.New("creds: a slip must name its id, owner, run, expected account and a positive max runtime, and must be unclaimed")
 	// ErrSlipClaimed is a second claim of a slip a run already holds. It is the
 	// refusal D1941 exists for: the first claim keeps the secret, and a later
 	// claimant — another launcher that minted the same run identity, F28 — is
-	// told the slip is taken rather than handed a working one.
+	// told the slip is taken rather than handed a working one. It is asked of the
+	// RECORD rather than of the instant it was claimed at (Slip.isClaimed): a
+	// record that carries a claim in either field is a slip taken, so one that
+	// was half written cannot be claimed over.
 	ErrSlipClaimed = errors.New("creds: the slip has already been claimed")
 	// ErrSlipExpired is a CLAIMED slip whose max runtime has passed since it was
 	// claimed. Only a claimed slip can expire: the runtime is measured from the
 	// claim (Slip.Expires), so an unclaimed record has no expiry at all — it is
 	// not live (Slip.Live), so it serves nothing until the run it names claims
 	// it, and a claim of one is either granted to that run or refused as the
-	// identity it does not name, never as expired. The service cannot expire an
+	// identity it does not name, never as expired. A record that carries a claim
+	// with no instant is not expired either: nothing measured a runtime from, so
+	// Claim refuses it as taken (ErrSlipClaimed). The service cannot expire an
 	// unclaimed slip either: the record carries no creation time to measure
 	// from, which is deliberate (a grant that waits for a slot must not lose the
 	// runtime it was granted).
@@ -305,15 +331,15 @@ func (s *RTDBStore) Create(ctx context.Context, sl Slip) error {
 // struct rather than the instant alone: a record carrying a claimant's account
 // and no instant, or an instant and no account, is a claim nobody made just as
 // surely as one carrying both, and it is a state no reader can decide from —
-// Live keys on the instant, while the account is what an operator reading the
-// node takes for who asked for the run.
+// which is why the question is asked in one place, Slip.isClaimed, by this
+// writer, by Claim and by Live.
 func (sl Slip) checkWritable() error {
 	switch {
 	case sl.Owner == "", sl.Slug == "", sl.Run == "", sl.ExpectedAccount == "":
 		return fmt.Errorf("creds: writing the slip %q: %w", sl.ID, ErrSlipMalformed)
 	case sl.MaxRuntime <= 0:
 		return fmt.Errorf("creds: writing the slip %q: %w", sl.ID, ErrSlipMalformed)
-	case sl.ClaimHash != "" || sl.Claimed != (Claim{}):
+	case sl.isClaimed():
 		return fmt.Errorf("creds: writing the slip %q: %w", sl.ID, ErrSlipMalformed)
 	}
 	return nil
@@ -350,11 +376,19 @@ func (s *RTDBStore) Slip(ctx context.Context, id string) (Slip, bool, error) {
 //
 // The refusals are ordered so that the answer says the most useful true thing:
 // an id that names nothing is ErrNoSlip, a caller the slip does not name is
-// ErrSlipIdentity (G3 — the id alone is never enough), a slip whose runtime has
-// passed since it was claimed is ErrSlipExpired, and only then is a slip
-// another run already holds ErrSlipClaimed. The expiry is asked before the
-// claim flag on purpose: a dead slip is dead whatever else it is, and a caller
-// reading the refusal learns the fact it can act on.
+// ErrSlipIdentity (G3 — the id alone is never enough), a slip claimed at an
+// instant whose runtime has since passed is ErrSlipExpired, and then a slip the
+// record already carries a claim on is ErrSlipClaimed. The expiry is asked
+// before the claim flag on purpose: a dead slip is dead whatever else it is, and
+// a caller reading the refusal learns the fact it can act on. What counts as
+// taken is asked of the record rather than of the instant (Slip.isClaimed), so a
+// claim that arrived with no instant is refused as taken rather than as expired
+// — no runtime was ever measured from it — and cannot be claimed over.
+//
+// A claim is also where the instant enters the record, and an instant that is
+// zero is refused rather than written: the record it would leave is the
+// half-claim Create refuses, and one this package's readers — isClaimed, and so
+// Live and the next claim — would take for an unclaimed slip.
 //
 // The write is the package's cas — read the node, decide from it, write under
 // the ETag that was read, and re-read and re-decide if the database answers
@@ -384,8 +418,18 @@ func (s *RTDBStore) Claim(ctx context.Context, id string, run Run, account strin
 			return Slip{}, fmt.Errorf("creds: claiming the slip %q: %w", id, ErrSlipIdentity)
 		case !prev.Claimed.At.IsZero() && !prev.Live(now):
 			return Slip{}, fmt.Errorf("creds: claiming the slip %q: %w", id, ErrSlipExpired)
-		case !prev.Claimed.At.IsZero():
+		case prev.isClaimed():
+			// The record decides, not the instant: a claim that arrived with no
+			// instant is not a slip that expired — nothing measured a runtime
+			// from — it is one already taken, and it is refused as taken.
 			return Slip{}, fmt.Errorf("creds: claiming the slip %q: %w", id, ErrSlipClaimed)
+		case now.IsZero():
+			// A claim at the zero instant would write the half-claim Create
+			// refuses, and one this package then reads as unclaimed: its expiry
+			// is the zero time plus the runtime, long past, so it is never live
+			// and the next claim would be granted over it. Refused here, where
+			// the caller's mistake is, as the empty id is.
+			return Slip{}, fmt.Errorf("creds: claiming the slip %q: %w", id, ErrSlipMalformed)
 		}
 		prev.ClaimHash = ClaimSecretHash(secret)
 		prev.Claimed = Claim{Account: account, At: now}
