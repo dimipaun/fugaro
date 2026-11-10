@@ -1015,10 +1015,11 @@ func TestDocsWindowsConsoleNotesSayWhichHalfMoved(t *testing.T) {
 // `cp` line that is its copy-in -- and each is derived from the directory rather
 // than listed, so it holds for every state the owner's copy-ins pass through.
 //
-// The mutations that prove it: delete the `## `console-windows.yml`` heading,
-// change its status line to `applied, not pending`, and delete the `cp` line
-// from its copy-in block. Each fails here by naming the file, and the second is
-// the edit a copy-in that forgot to update this README leaves behind.
+// The mutations that prove it: delete the heading that names
+// `console-windows.yml`, change its status line to `applied, not pending`, and
+// delete the `cp` line from its copy-in block. Each fails here by naming the
+// file, and the second is the edit a copy-in that forgot to update this README
+// leaves behind.
 func TestDocsPendingWorkflowsReadmeDescribesEveryStagedFile(t *testing.T) {
 	lines := strings.Split(readDoc(t, pendingWorkflowsReadmePath), "\n")
 	for _, name := range pendingWorkflows(t) {
