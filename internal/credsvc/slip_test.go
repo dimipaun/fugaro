@@ -37,6 +37,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
@@ -693,6 +694,31 @@ func TestJobRefusedOnGrantAndLauncherOnClaim(t *testing.T) {
 	}
 	if s.audit.Len() != 0 {
 		t.Errorf("a call refused before its caller was verified wrote an audit line: %s", s.audit.String())
+	}
+}
+
+// TestMaxSlipRuntimeIsThePlatformMaximum: R10's cap. A slip may serve a run for
+// no longer than a run may live, and that bound is the compute platform's own
+// (backend.MaxRunTime). The cap is spelled in slip.go rather than imported
+// there, so that the service's binary carries no compute platform, and this is
+// what holds the two spellings together: a value that drifted would either end
+// a run the platform still lets work or grant a slip no run could use up.
+//
+// The request is CLAMPED rather than refused — a launcher asking for more is
+// asking for the most there is — so the second half of the test is that the
+// answer and the record both carry the cap and not what was asked for.
+func TestMaxSlipRuntimeIsThePlatformMaximum(t *testing.T) {
+	if maxSlipRuntime != backend.MaxRunTime {
+		t.Errorf("a slip may serve for %s, want the platform's own maximum %s", maxSlipRuntime, backend.MaxRunTime)
+	}
+	s := newSlips(t, testLauncherAccount)
+	cap := int64(backend.MaxRunTime / time.Second)
+	granted := s.grantOK(t, grantBody(t, s.slug, s.run, testJobSA, cap+3600, testSlipCredential))
+	if granted.MaxRuntimeSeconds != cap {
+		t.Errorf("a grant asking for %d seconds is answered %d, want the cap %d", cap+3600, granted.MaxRuntimeSeconds, cap)
+	}
+	if sl := s.slip(t, granted.Slip); sl.MaxRuntime != backend.MaxRunTime {
+		t.Errorf("the record's runtime is %s, want the cap %s", sl.MaxRuntime, backend.MaxRunTime)
 	}
 }
 
