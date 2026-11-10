@@ -652,6 +652,54 @@ func TestFirebaseModuleGrantsNothingToSignerOrJobs(t *testing.T) {
 	}
 }
 
+// The Firebase root's own half of W7's grant. What the binding IS — the one
+// read-only role and the one member — is pinned by the module's runs in
+// roots/firebase/tests/firebase.tftest.hcl, but a root run's assertions cannot
+// reach into a child module (that file says so), so the line that carries the
+// member's pinned workspace account from the root's variable to the module's is
+// pinned here. A root that dropped it would leave every one of those runs green
+// and the member in no workspace.
+func TestFirebaseRootPassesTheWorkspacePinToTheModule(t *testing.T) {
+	const path = "gcp/roots/firebase/main.tf"
+	b, err := fs.ReadFile(FS, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, ok := moduleBody(path, stripComments(string(b)), "firebase")
+	if !ok {
+		t.Fatalf("%s: no module \"firebase\" block", path)
+	}
+	if !hasAttr(body, "workspace_service_account", "var.workspace_service_account") {
+		t.Errorf("%s: the module \"firebase\" block does not pass workspace_service_account, so the account a member's own config pins never reaches the read-only role (W7)", path)
+	}
+
+	// And the root declares the variable the pass-through reads: one without the
+	// other is a plan that fails, or a pin nothing acts on.
+	vb, err := fs.ReadFile(FS, "gcp/roots/firebase/variables.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !regexp.MustCompile(`(?m)^variable\s+"workspace_service_account"\s*\{`).MatchString(stripComments(string(vb))) {
+		t.Error("gcp/roots/firebase/variables.tf does not declare workspace_service_account, which roots/firebase/main.tf passes to the module")
+	}
+}
+
+// moduleBody is the body of a `module "<name>" { ... }` block, or false when
+// the source declares none. It is the module-call twin of resourceBlocks: same
+// comment stripping, same brace matching.
+func moduleBody(path, code, name string) (string, bool) {
+	m := regexp.MustCompile(`(?m)^\s*module\s+"` + regexp.QuoteMeta(name) + `"\s*\{`).FindStringIndex(code)
+	if m == nil {
+		return "", false
+	}
+	open := m[1] - 1
+	end := matchBrace(code, open)
+	if end < 0 {
+		return "", false
+	}
+	return code[open+1 : end], true
+}
+
 // Nobody may act as the history account (it holds firebasedatabase.admin on
 // the FP): no iam member in the installation module names it, and none grants
 // serviceAccountUser or serviceAccountTokenCreator on it.

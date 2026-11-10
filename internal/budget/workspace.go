@@ -202,8 +202,14 @@ func (s WorkspaceSpend) expired(r WorkspaceReservation, now time.Time) bool {
 // ever taken out of room the ceiling had left (ReserveWorkspaceSpend refuses
 // otherwise) and a settle only ever turns one of those reservations into a
 // settled amount, so `Settled` cannot pass the ceiling except through the calls
-// still in flight — and each of those was admitted at a worst-case price no
-// usage can exceed. A workspace that states no ceiling has no bound to state.
+// still in flight — and each of those was admitted at the call's own worst case
+// (WorkspaceReserve.Amount, which is what the service reserves), so no usage of
+// that call can exceed it without the caller having named a worst case the call
+// went past. A settle that records more than the reservation it ends is the one
+// way past this bound, and it is past it by the difference: the figure is the
+// call's real cost either way, and counting the difference is the safe
+// direction (the reconciliation alarm reports it rather than hiding it). A
+// workspace that states no ceiling has no bound to state.
 func (s WorkspaceSpend) OvershootBound(now time.Time) Micros { return s.Live(now).Reserved() }
 
 // Room is the workspace's figure at one moment, as a caller reports it.
@@ -453,6 +459,12 @@ func ReserveWorkspaceSpend(ctx context.Context, db WorkspaceSpendDB, r Workspace
 // is spent either way, and a meter that refused to record it would be a meter
 // that under-counts — so the ceiling it is reported against is the one the
 // caller passes.
+//
+// The room it reports is the room of the month the call was counted against,
+// which is the month its reservation was taken in: a settle that crosses the
+// month boundary reports the month the call belonged to, and the new month's
+// room is a fresh read (ReadWorkspaceRoom at the new month) rather than a figure
+// this settle wrote.
 func SettleWorkspaceSpend(ctx context.Context, db WorkspaceSpendDB, h WorkspaceHold, s WorkspaceSettle) (WorkspaceRoom, error) {
 	if h.Name == "" || h.Month == "" || h.Call == "" {
 		return WorkspaceRoom{}, errors.New("budget: a settle needs the handle a reservation returned")
@@ -495,8 +507,9 @@ func SettleWorkspaceSpend(ctx context.Context, db WorkspaceSpendDB, h WorkspaceH
 // then the read's alone.
 //
 // The callback must return BEFORE it changes anything when it refuses, so a
-// refusal leaves the node as it was read — expired holds included — and the
-// caller's room is the figure that refused it.
+// refusal writes nothing: the node the caller is handed back is the LIVE one
+// (f runs on the node Live returned), which is the figure the refusal was made
+// against and the figure the caller reports.
 func updateWorkspaceSpend(ctx context.Context, db WorkspaceSpendDB, name, month string, now time.Time, attempts int, f func(*WorkspaceSpend) error) (WorkspaceSpend, error) {
 	path := PathWorkspaceSpend(name, month)
 	for attempt := 1; attempt <= attempts; attempt++ {

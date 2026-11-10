@@ -261,7 +261,11 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 	}
 	// Refused here, before the first apply, whatever the installation module
 	// accepts.
-	if _, err := infra.Firebase(spec, infra.FirebaseInputs{FP: fp, Admins: admins, BudgetAdmins: r.budgetAdmins(lc)}); err != nil {
+	// Every input the apply below passes is passed here too, the workspace pin's
+	// account included: this call is the gate that runs before the installation
+	// root is applied, so a value the Firebase root would refuse has to be
+	// refused here rather than after an apply has already touched the state.
+	if _, err := infra.Firebase(spec, infra.FirebaseInputs{FP: fp, Admins: admins, BudgetAdmins: r.budgetAdmins(lc), WorkspaceServiceAccount: lc.WorkspacePin.ServiceAccount}); err != nil {
 		return initErr(err)
 	}
 

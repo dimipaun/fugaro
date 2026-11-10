@@ -923,7 +923,7 @@ var RolePermissions = map[string][]string{
 	// installation's database. credentials.tf lists both permissions with their
 	// reasons; TestCredentialsDatabaseRoleIsTheTwoDataPermissions is the pin.
 	CredentialsDatabaseRole: {"firebasedatabase.instances.get", "firebasedatabase.instances.update"},
-	// The member's read of the workspace's account table (docs/workspaces/
+	// The workspace's read of the MEMBER's database (docs/workspaces/
 	// spec.md §5, W7; workspace_access.go): the ONE permission a member's own
 	// Fugaro installation binds, so the workspace's credentials service can
 	// read the member's ledger for the reconciliation alarm. It is the read

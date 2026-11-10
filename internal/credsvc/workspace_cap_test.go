@@ -399,18 +399,32 @@ func TestHeadroomIsDeliveredByTheServiceAndWrittenNowhere(t *testing.T) {
 }
 
 // A member the workspace cannot resolve as a caller is refused at the front
-// door, so its calls are never served and never counted: the meter is asked
-// nothing, and the workspace's figure stays where it was.
+// door, so its calls are never served and never counted: a call that resolved
+// to no member is refused by the meter before it asks the database anything, and
+// the workspace's figure stays where it was.
 func TestMemberThatCannotBeResolvedIsRefusedAtTheFrontDoor(t *testing.T) {
 	ctx := context.Background()
-	db, client := wsMeterDB(t)
+	db, meterDB, fenced := wsFenced(t)
 	wsSeedRecord(t, db, 2)
 	f := newWSFixture(t)
-	m := wsMeter(t, client)
+	m := wsMeter(t, meterDB)
 
 	// An account no member of the workspace binds.
 	if _, err := f.verify(wsMemberA, wsAccountOut); err == nil {
 		t.Fatalf("Verify admitted %v, which the workspace's table does not bind", wsAccountOut)
+	}
+	// The meter's own half of the same refusal: a call that resolved to no
+	// member names nobody the workspace's figure could count it against, so the
+	// reservation is refused — and refused without a write, which is what the
+	// fence records.
+	if _, _, err := m.Reserve(ctx, "", "call-1", wsMicros(t, 1)); err == nil {
+		t.Fatal("the meter took a reservation for a call that resolved to no member")
+	}
+	if len(fenced.writes) != 0 {
+		t.Fatalf("a refused caller's call was written to the workspace's database: %v", fenced.writes)
+	}
+	if len(fenced.outside) != 0 {
+		t.Fatalf("the meter reached outside the workspace's own tree for a refused caller: %v", fenced.outside)
 	}
 	room, err := m.Room(ctx)
 	if err != nil {
@@ -446,8 +460,17 @@ func TestWorkspaceCapSettlesACallAgainstTheMonthItWasReservedIn(t *testing.T) {
 		t.Fatalf("Reserve: %v", err)
 	}
 	now = now.Add(5 * time.Second) // midnight passes into the next month
-	if _, err := m.Settle(ctx, hold, wsMicros(t, 0.25)); err != nil {
+	after, err := m.Settle(ctx, hold, wsMicros(t, 0.25))
+	if err != nil {
 		t.Fatalf("Settle across the month boundary: %v", err)
+	}
+	// The room the settle reports is the room of the month the call was counted
+	// against (budget.SettleWorkspaceSpend), and this pins it so the wiring that
+	// delivers the number (W8) sees the boundary: a settle that crossed it
+	// reports the month the call belonged to, and the month the member's NEXT
+	// call belongs to is a fresh read rather than this figure.
+	if after.Settled != wsMicros(t, 0.25) {
+		t.Fatalf("the settle reported %v of the new month, and the call it recorded belongs to the month it was reserved in", after.Settled.USD())
 	}
 	if _, ok := db.Value(budget.PathWorkspaceSpend(wsWorkspace, budget.MonthKey(reserved))).(map[string]any); !ok {
 		t.Fatal("the call did not settle against the month it was reserved in")

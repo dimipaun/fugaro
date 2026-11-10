@@ -81,6 +81,12 @@ func NewWorkspaceMeter(cfg WorkspaceMeterConfig) (*WorkspaceMeter, error) {
 // would refuse every call the workspace's credentials pay for — and a record
 // that cannot be read at all is an error, because a service that cannot know
 // the ceiling must not spend against it.
+//
+// A record that is ABSENT is read the same way, as no ceiling, and it is not a
+// hole through the cap: the workspace's member table lives in that record, so a
+// workspace with none binds no member, resolves no caller and reaches this
+// meter with no call at all (the front door, internal/credsvc's own). A record
+// that is there and unreadable is the error above.
 func (m *WorkspaceMeter) Ceiling(ctx context.Context) (budget.WorkspaceCeiling, error) {
 	var raw json.RawMessage
 	found, err := m.db.Get(ctx, projectpolicy.PathWorkspace(m.name), &raw)
