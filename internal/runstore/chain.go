@@ -323,19 +323,31 @@ func recordUSD(rec *Record) Amount {
 // A run still in flight has no finished_at and is measured to now — the same
 // read runview.Row.Elapsed makes, stated here as well because runview
 // imports this package and this one cannot call it back.
+//
+// Every number here is a record's, and a record is a launcher's own text
+// (F21, T2), so none of them may take time off the chain: a finished_at
+// before the started_at, a stage duration written as negative, and a run in
+// flight whose start sits after now (a clock skew) would each subtract from
+// the chain's figure and hand a --max-time chain time it has spent, which is
+// the direction D1060 exists to close. A negative stage duration counts
+// nothing, the elapsed time floors at zero, and the run's own figure floors
+// with them — a record that runs backwards holds no time, the same way one
+// whose cost_usd it cannot hold counts nothing (recordUSD).
 func chainSeconds(rec *Record, now time.Time) Amount {
 	var stages float64
 	for _, st := range rec.Stages {
-		stages += st.DurationS
+		if st.DurationS > 0 {
+			stages += st.DurationS
+		}
 	}
 	var elapsed float64
 	switch {
 	case rec.StartedAt.IsZero():
 		// No start was recorded: there is no elapsed time to take.
 	case rec.FinishedAt != nil:
-		elapsed = rec.FinishedAt.Sub(rec.StartedAt).Seconds()
+		elapsed = math.Max(0, rec.FinishedAt.Sub(rec.StartedAt).Seconds())
 	default:
-		elapsed = now.Sub(rec.StartedAt).Seconds()
+		elapsed = math.Max(0, now.Sub(rec.StartedAt).Seconds())
 	}
-	return Amount(math.Max(elapsed, stages))
+	return Amount(math.Max(0, math.Max(elapsed, stages)))
 }

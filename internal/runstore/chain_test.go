@@ -434,3 +434,64 @@ func TestChainUnreadableLedgerWithNoBoundIsUnmeasured(t *testing.T) {
 		t.Fatalf("Charged = %+v, want the run whose ledger could not be read", c.Charged)
 	}
 }
+
+// Time is one figure a launcher cannot talk the chain out of. A record is a
+// launcher's own text (F21), so its finished_at can sit before its
+// started_at and a stage's duration_s can be negative, and a run still in
+// flight can carry a start after the moment the read is taken at; none of
+// those may hand the chain its time back -- a --max-time chain reads spent,
+// never refunded (D1060) -- so a run that runs backwards contributes nothing,
+// while a positive stage duration the same record carries still counts.
+func TestChainTimeCannotBeLoweredByAForgeableRecord(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		run  string
+		edit func(*Record)
+		want Amount
+	}{
+		{
+			// The middle run's twenty minutes run backwards and both of its
+			// stages say they took negative time: the run counts nothing, and
+			// the chain never reads less than its other two runs spent.
+			name: "a finished_at before the started_at",
+			run:  chainMid,
+			edit: func(r *Record) {
+				at := time.Date(2026, 1, 1, 9, 0, 0, 0, time.UTC)
+				r.FinishedAt = &at
+				for i := range r.Stages {
+					r.Stages[i].DurationS = -4_000
+				}
+			},
+			want: 2_700,
+		},
+		{
+			// A stage duration written as negative counts nothing: the middle
+			// run contributes the 200s of its other stage rather than
+			// 999_800s less than that.
+			name: "a negative stage duration",
+			run:  chainMid,
+			edit: func(r *Record) {
+				at := r.StartedAt
+				r.FinishedAt = &at
+				r.Stages[0].DurationS = -1_000_000
+			},
+			want: 2_900,
+		},
+		{
+			// The run in flight started after chainNow -- a clock skew -- and
+			// contributes nothing rather than a negative age.
+			name: "a start after the moment of the read",
+			run:  chainTip,
+			edit: func(r *Record) { r.StartedAt = chainNow.Add(time.Hour) },
+			want: 2_100,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := chainBucket(t)
+			forge(t, b, tc.run, tc.edit)
+			if got := chainOf(t, b, chainTip, &fakeLedgers{}).Used(Time); !got.Measured || got.Amount != tc.want {
+				t.Fatalf("Used(time) = %+v, want %v: a record cannot take time off the chain", got, tc.want)
+			}
+		})
+	}
+}
