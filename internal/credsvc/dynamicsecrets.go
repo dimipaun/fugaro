@@ -6,11 +6,23 @@ package credsvc
 // A credential an operator wrote into the bundle is served by the bundle, as it
 // always was. A credential a person rotated through the intake (DS2.1) lives in
 // a Secret Manager container of its own, named by the one grammar
-// (internal/secretname: fugaro_u_<id>_<name> and fugaro_p_<name>), and the
-// service reads it with the accessor DS2.2 conditions on those two prefixes —
-// so the fence around this read is IAM's and not this file's: a container
-// outside the grammar's prefixes is not readable here whatever this file does
+// (internal/secretname: fugaro_u_<id>_<name> and fugaro_p_<name>), and this file
+// reads it by that exact name — never by a listing, and never by building one
 // (D1931, G2, G12).
+//
+// The fence around this read is IAM's and not this file's, and it is NOT on this
+// tree yet. The service's account holds one unconditioned accessor, on the
+// bundle's container alone (Q6, modules/installation/credentials.tf, which
+// TestCredentialsServiceGrantsAreTheOneBundle keeps true), and the
+// prefix-conditioned accessor over the grammar's two prefixes is DS2.2's task —
+// one that also deploys the intake that writes these containers, and that is
+// gated on the owner's own live check (DS0.3). So nothing on this tree serves a
+// per-secret container's value: a read is either refused, which is a permission
+// failure and the class below (the call fails closed), or answered as an
+// absence, which is R7's fall to the bundle's entry — and no candidate list
+// carries a per-secret name at all until the slip's own does (DS1.6). The two
+// land together; until then a per-secret name behaves exactly as it did before
+// this file existed (G7, G12).
 //
 // R6: nothing moves. `fugaro update` cannot read the bundle's values (they were
 // written by hand, and the people who wrote them cannot read them back), so a
@@ -78,11 +90,14 @@ type PerSecretSource interface {
 
 // SecretManagerPerSecrets reads a per-secret container as the service's own
 // service account: projects/<project>/secrets/<secret ID>/versions/latest
-// :access, under the accessor whose IAM condition is the grammar's two prefixes
-// (DS2.2, F18). It is the same client and the same project the bundle is read
-// with, and nothing else about it is the service's: it holds no listing, no
-// write and no version it can name, so the only containers it can reach are the
-// ones the grammar spells.
+// :access, by the exact ID the grammar spelled and with nothing else asked of
+// the API — no listing, no write, no version named. It is the same client and
+// the same project the bundle is read with.
+//
+// What that account may reach is IAM's and is DS2.2's: until the
+// prefix-conditioned accessor lands, the account holds no grant on any container
+// but the bundle's, so a per-secret read answers a permission failure (the class
+// below) or an absence, and serves no value (the file's header).
 type SecretManagerPerSecrets struct {
 	// Project is the GCP project the containers live in.
 	Project string
