@@ -420,6 +420,19 @@ func TestMineOfflineWithoutSnapshotShowsLocalOnly(t *testing.T) {
 
 func TestMineAgentSessionReadsLocalOnly(t *testing.T) {
 	rig := newMineRig(t)
+	useVersion(t, "0.22.1")
+	// A resolved issue and this machine's own file for it, so the session has
+	// a `cli_only` row to print: its command is the local file's, and the
+	// shared record's — a command this build can run just as well — is not
+	// what reaches the terminal (F8, O4).
+	fixed := mineRec("1", "sig-a")
+	fixed.Status, fixed.ResolvedIn, fixed.FailedCommand = issues.StatusResolved, "0.22.1", "fugaro doctor"
+	up := rig.upload(fixed, rig.caller)
+	local := mineRec("1", "sig-a")
+	local.Number, local.Uploaded, local.Status = up.Number, true, issues.StatusResolved
+	local.ResolvedIn, local.FailedCommand = "0.22.1", "fugaro update"
+	rig.save(local)
+
 	// One read as a person first, so the identity cache holds the credential's
 	// last answer and the successful read wrote the snapshot: on this machine
 	// the identity resolves without the lookup the guard also forbids, which is
@@ -445,6 +458,12 @@ func TestMineAgentSessionReadsLocalOnly(t *testing.T) {
 	}
 	if !strings.Contains(out, pending.LocalID) {
 		t.Errorf("a coding agent's session drops the local rows:\n%s", out)
+	}
+	if !strings.Contains(out, "retry: fugaro update") {
+		t.Errorf("a coding agent's session drops the retry on a cli_only row (F8, O4):\n%s", out)
+	}
+	if strings.Contains(out, "fugaro doctor") {
+		t.Errorf("a coding agent's session suggested the shared record's command:\n%s", out)
 	}
 	// The write the guarded build skips: the issue this machine just diagnosed
 	// is still its own file.
