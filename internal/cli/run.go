@@ -653,6 +653,15 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 	// later because a reader that starts after this one is a reader that
 	// judged the launch on another file.
 	ctx = withLaunchDocument(ctx, spec.Repo, spec.Ref)
+	// The one read a launch with no checkout of the repository makes of that
+	// document at the forge (project_job.go) is shared by its two readers —
+	// the image gates below, which need the workflow's own kind and checkout
+	// mode, and the job decision — so it is installed here, before either: a
+	// cache installed inside one of them is not the other's, and the two
+	// would cost two mints where spec.md §6 allows one (D904). The daemon's
+	// own launches install one in the same place and for the same reason
+	// (orchestrator_launcher's Launch).
+	ctx = withServiceReadCache(ctx)
 	var layerData []byte
 	var err error
 	if o.retry == "" && !reused {
@@ -838,13 +847,32 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 	// nothing in the bucket under a run id that never gets a task. A
 	// launch with no --attach does nothing here at all.
 	agentRecipe, kind, clone, shared := "", "", false, false
-	// mode is the same answer for baseBranchSkew, and nil where clone is
-	// false for the other gates because nothing was read: a launch for
-	// another repository from a checkout that is not its own reads no
-	// workflow of it, and baseBranchSkew asks both judges there rather
-	// than take the one a derived workflow would use (its comment has why).
+	// mode is the same answer for baseBranchSkew, and nil where no workflow
+	// was read at all — a repository no shared job serves, a project that
+	// published no profile, a ref whose tree carries no document, and a
+	// checkout whose document could not be read: baseBranchSkew asks both
+	// judges there rather than take the one a derived workflow would use
+	// (its comment has why).
 	var mode *bool
-	if co := checkoutConfig(ctx, spec.Repo); co != nil {
+	co := checkoutConfig(ctx, spec.Repo)
+	if co == nil {
+		// The working tree gave no document. Where the machine holds no
+		// checkout of the repository at all, this launch's document is the one
+		// read at the forge (source 3, D902) — the same read the job decision
+		// makes, memoized, so a launch costs one mint — because the workflow's
+		// kind and checkout mode are what the image gates below are judged by:
+		// a checkout: clone workflow runs the installation's base image and
+		// has no build record, so judging it as a derived image refuses it for
+		// a record it can never have (image_refresh.go). Where that read
+		// fails, this refuses in the decision's own words rather than judging
+		// an image by a workflow nobody read.
+		cfg, err := env.launchConfigWhereTheTreeGivesNone(ctx, spec)
+		if err != nil {
+			return config.Inputs{}, err
+		}
+		co = cfg
+	}
+	if co != nil {
 		agentRecipe = co.Agent.Recipe
 		if w, ok := co.Workflows[spec.Workflow]; ok {
 			kind = w.BaseKind()
