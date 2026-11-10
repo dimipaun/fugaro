@@ -442,11 +442,11 @@ func (r *run) pinSlots() []pinSlot {
 const stageAdversarial = string(recipe.StepAdversarial)
 
 // stageTriage is the triage stage's name: the judge that weighs a review
-// round's findings before the fix round takes them (D1851, D1854). The runner
-// does not run the stage yet — T-TR6 and T-TR7a/T-TR7b do — and the ladder has
-// to answer for it already, because it is a stage of a mixed run
-// (config.MixedAccountStages): which model it runs is what rung 4 judges the
-// stage's Claude account on (mixedDefaultAccount), against the model the
+// round's findings before the fix round takes them (D1851, D1854). The stage
+// runs in shadow — what it answers is logged and nothing acts on it until
+// T-TR7b — and the ladder answers for it as it does for every stage of a mixed
+// run (config.MixedAccountStages): which model it runs is what rung 4 judges
+// the stage's Claude account on (mixedDefaultAccount), against the model the
 // launch and the job set admitted that account on.
 const stageTriage = "triage"
 
