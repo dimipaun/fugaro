@@ -129,6 +129,67 @@ export const WRITES = Object.freeze({
  * allows after the grace. Everything else is refused -- see the header. */
 export const LAPSE_KEPT_WRITES = Object.freeze([WRITES.MESSAGE, WRITES.CANCEL, WRITES.KILL_SWITCH]);
 
+/** The write each verb the app classifies an utterance as makes. The verbs are
+ * `shared/confirm`'s closed set -- its three destructive ones, D162's launch,
+ * and the ones it refuses outright -- plus this module's own name for a
+ * configuration change, which no command has yet and which §4.2 names as a row
+ * of the lapse's table rather than as a command. */
+const WRITE_OF_VERB = Object.freeze({
+  cancel: WRITES.CANCEL,
+  confirm: WRITES.CANCEL,
+  merge: WRITES.MERGE,
+  launch: WRITES.LAUNCH,
+  config: WRITES.CONFIG,
+  kill: WRITES.KILL_SWITCH,
+  'kill-switch': WRITES.KILL_SWITCH,
+});
+
+/**
+ * The write one utterance makes, as the classes above name it.
+ *
+ * It is here rather than in the client because the classification is the
+ * design's table (§4.2) and the table belongs in one place: the client hands in
+ * what the caller handed IT -- a verb for a message, an action record for the
+ * three verbs that travel as records -- and gets back the class the lapse is
+ * about. Nothing here is trusted: the record's fields are read and never
+ * written, and the schema refuses a malformed record later in the same call.
+ *
+ * **Everything it cannot name is `null`, which is not a class this table keeps**
+ * -- so after a lapse an utterance this module cannot classify is refused
+ * rather than let through. A verb nobody wrote, an action record that is not an
+ * object, an action verb that is not one of P6.3's three: each is refused at a
+ * lapse and untouched at every other state, where this module has no opinion.
+ *
+ * @param {object} [utterance]
+ * @param {unknown} [utterance.verb] the verb a message was classified as
+ * @param {unknown} [utterance.action] the action record the write carries
+ * @returns {string|null} one of `WRITES`, or `null` for a write it cannot name
+ */
+export function writeOf({ verb, action } = {}) {
+  if (action !== undefined) return actionWriteOf(action);
+  // No classification at all is ordinary chatter -- and every read the app
+  // speaks -- which is the write a lapse keeps.
+  if (verb === undefined || verb === null) return WRITES.MESSAGE;
+  return Object.hasOwn(WRITE_OF_VERB, verb) ? WRITE_OF_VERB[verb] : null;
+}
+
+/** actionWriteOf reads D169's action record: its verb, and -- for a `confirm`,
+ * which may name either -- the target it names. A merge, and a confirmation of
+ * one, is a repository write; a cancel, and a confirmation of one, is not. The
+ * record's own shape is P6.3's and is validated by the schema before it is
+ * written, so this reads two fields and never trusts them. */
+function actionWriteOf(action) {
+  if (action === null || typeof action !== 'object' || Array.isArray(action)) return null;
+  if (action.verb === 'merge') return WRITES.MERGE;
+  if (action.verb === 'cancel') return WRITES.CANCEL;
+  if (action.verb !== 'confirm') return null;
+  const target = action.target;
+  const repository =
+    target !== null && typeof target === 'object' && !Array.isArray(target) &&
+    (target.repo !== undefined || target.pr !== undefined);
+  return repository ? WRITES.MERGE : WRITES.CANCEL;
+}
+
 /**
  * What the owner is told when a write is refused, one sentence per code.
  *

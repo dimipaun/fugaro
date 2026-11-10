@@ -64,6 +64,7 @@ import {
   licenceSpeech,
   licenceState,
   lapseRefusal,
+  writeOf,
 } from './state.js';
 import { GRACE_DAYS, createLicenceVerifier } from './verify.js';
 
@@ -259,6 +260,70 @@ test('a lapse keeps the message, the cancel and the kill switch, and refuses the
 function refusedWrite() {
   return Object.freeze({ ok: false, code: LICENCE_STATE_CODES.LAPSED, field: 'licence' });
 }
+
+// --- the classification the write path hands in -----------------------------
+
+test('the verb a message was classified as names the write it makes', () => {
+  // The app's closed verb set, as §4.2's table reads it: the two a lapse
+  // refuses, the three it keeps. A message with no classification at all is
+  // chatter -- and every read the app speaks -- which is a kept write.
+  assert.equal(writeOf({}), WRITES.MESSAGE, 'an unclassified utterance is a message');
+  assert.equal(writeOf({ verb: 'launch' }), WRITES.LAUNCH, 'D162’s pass-through is the launch');
+  assert.equal(writeOf({ verb: 'config' }), WRITES.CONFIG);
+  assert.equal(writeOf({ verb: 'merge' }), WRITES.MERGE);
+  assert.equal(writeOf({ verb: 'cancel' }), WRITES.CANCEL);
+  assert.equal(writeOf({ verb: 'confirm' }), WRITES.CANCEL, 'a confirmation with no record names nothing else');
+  assert.equal(writeOf({ verb: 'kill' }), WRITES.KILL_SWITCH);
+  assert.equal(writeOf({ verb: 'kill-switch' }), WRITES.KILL_SWITCH, 'the switch is kept whichever spelling arrives');
+
+  // A verb nobody wrote is a write this table cannot name, and that is refused
+  // after a lapse rather than guessed at: the classification is the CALLER's,
+  // so an unrecognised one is a caller the table cannot vouch for.
+  assert.equal(writeOf({ verb: 'a-verb-nobody-wrote' }), null);
+  assert.equal(writeOf({ verb: 'toString' }), null, 'and a name off the prototype is not a verb this table knows');
+  assert.deepEqual(lapseRefusal(LICENCE_STATES.LAPSED, writeOf({ verb: 'a-verb-nobody-wrote' })), refusedWrite());
+});
+
+test('an action record is classified by its verb and, for a confirm, by its target', () => {
+  // D169's three verbs travel as records rather than as verbs (`client.js` says
+  // why), so the record is what the write path has to read. Its fields are read
+  // and never trusted: the schema validates the record later in the same call,
+  // and a record this module cannot classify is refused at a lapse like any
+  // other unnameable write.
+  assert.equal(writeOf({ action: { verb: 'cancel', target: { run: 'run-42' } } }), WRITES.CANCEL);
+  assert.equal(writeOf({ action: { verb: 'merge', target: { repo: 'acme/site', pr: 7 } } }), WRITES.MERGE);
+
+  // A `confirm` is the one verb whose class is its target's: confirming a merge
+  // is a repository write, confirming a cancel is not (§4.2's `merge` row).
+  assert.equal(
+    writeOf({ action: { verb: 'confirm', target: { repo: 'acme/site', pr: 7 } } }),
+    WRITES.MERGE,
+    'a confirmation naming a repository is the repository write',
+  );
+  assert.equal(
+    writeOf({ action: { verb: 'confirm', target: { run: 'run-42' } } }),
+    WRITES.CANCEL,
+    'a confirmation naming a run is the cancel it confirms',
+  );
+
+  for (const [reason, action] of [
+    ['not an object', 'cancel'],
+    ['null', null],
+    ['an array', []],
+    ['an unknown verb', { verb: 'a-verb-nobody-wrote', target: { run: 'run-42' } }],
+    ['no verb at all', { target: { run: 'run-42' } }],
+  ]) {
+    assert.equal(writeOf({ action }), null, `an action record that is ${reason} is not a write this table names`);
+  }
+
+  // The action record wins over a verb handed in beside it: what the write
+  // carries is what it does.
+  assert.equal(
+    writeOf({ verb: 'launch', action: { verb: 'cancel', target: { run: 'run-42' } } }),
+    WRITES.CANCEL,
+    'the record is what is being written',
+  );
+});
 
 test('the refusal is a sentence that names the state and the way out, and no figure', () => {
   const said = licenceSpeech(LICENCE_STATE_CODES.LAPSED);
