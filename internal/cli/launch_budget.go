@@ -5,6 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
+	"slices"
+	"strconv"
 	"sync"
 	"time"
 
@@ -20,11 +23,16 @@ import (
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/policy"
+	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/task"
+
+	"github.com/spf13/cobra"
 )
 
 // The launcher's part of the budget backend (M9b R5):
@@ -272,6 +280,255 @@ func (p *policyReadOnce) exists(ctx context.Context, lc *localcfg.Config) (bool,
 func olderPolicyNode(err error) bool {
 	var ve *projectpolicy.VersionError
 	return errors.As(err, &ve) && ve.Found < ve.Understood
+}
+
+// chainLimits is the four --max-* flags of one launch, parsed once
+// (chainLimitsFlag): the chain's dollar, token, wall-time and review-round
+// limits (docs/run-limit-carry-over §2, D1041, D1042). Every dimension is
+// optional and a launch that names none carries no chain at all: the task is
+// then byte-identical to what the previous release wrote and the run gets
+// today's per-run caps, which is what makes the feature opt-in.
+//
+// The four are the launcher's own numbers and never the caller's: they are
+// written into the task's overrides (finishLaunch) and the runner merges them
+// again at bootstrap as the last tighten-only layer (D1044), so a task written
+// by hand or by an older CLI reaches it unchecked too.
+type chainLimits struct {
+	usd    *float64
+	tokens *int64
+	time   time.Duration
+	rounds *int
+}
+
+// set reports whether this launch names any of the four.
+func (c chainLimits) set() bool {
+	return c.usd != nil || c.tokens != nil || c.time > 0 || c.rounds != nil
+}
+
+// layer is the four limits as the policy layer they merge as: the chain layer,
+// merged last and under every layer above (policy.SourceChain).
+func (c chainLimits) layer() policy.Layer {
+	l := policy.Layer{MaxRunTime: c.time}
+	if c.usd != nil {
+		l.PerRunUSD = *c.usd
+	}
+	if c.tokens != nil {
+		l.MaxRunTokens = *c.tokens
+	}
+	if c.rounds != nil {
+		l.MaxReviewRounds = int64(*c.rounds)
+	}
+	return l
+}
+
+// chainLimitsFlag parses the four --max-* flags of a launch, once, for every
+// launch shape below. The syntax is refused here — before openCloud, so a
+// mistyped number costs no cloud call — and a value that would loosen is
+// refused later, against the policy this launch resolves (chainLimitRefusal):
+// the two are different refusals because only the second needs a read.
+func chainLimitsFlag(cmd *cobra.Command, o *runOptions) error {
+	f := cmd.Flags()
+	if f.Changed("max-usd") {
+		v, err := strconv.ParseFloat(o.maxUSD, 64)
+		if err != nil {
+			return userErr("--max-usd %q must be a number of dollars, such as 5 or 12.5", o.maxUSD)
+		}
+		if !(v > 0) || math.IsInf(v, 0) {
+			return userErr("--max-usd %s must be greater than 0", o.maxUSD)
+		}
+		o.limits.usd = &v
+	}
+	if f.Changed("max-tokens") {
+		v, err := strconv.ParseInt(o.maxTokens, 10, 64)
+		if err != nil {
+			return userErr("--max-tokens %q must be a whole number of tokens, such as 900000", o.maxTokens)
+		}
+		if v <= 0 {
+			return userErr("--max-tokens %d must be greater than 0", v)
+		}
+		o.limits.tokens = &v
+	}
+	if f.Changed("max-time") {
+		d, err := time.ParseDuration(o.maxTime)
+		if err != nil {
+			return userErr("--max-time %q must be a duration such as 45m or 2h", o.maxTime)
+		}
+		if d <= 0 {
+			return userErr("--max-time %s must be greater than 0", o.maxTime)
+		}
+		o.limits.time = d
+	}
+	if f.Changed("max-review-rounds") {
+		n, err := strconv.Atoi(o.maxReviewRounds)
+		if err != nil {
+			return userErr("--max-review-rounds %q must be a whole number of rounds, such as 3", o.maxReviewRounds)
+		}
+		o.limits.rounds = &n
+	}
+	return nil
+}
+
+// chainLimitPolicy is the effective policy a launch's chain limits are merged
+// under, and the rigor mode the run resolves: the ceiling, the default branch's
+// fugaro.yaml and the run's own file, in the order the runner merges them at
+// bootstrap (internal/runner's resolvePolicy, D1044).
+//
+// The launcher resolves it rather than trusting the launch's own numbers
+// because the refusal of a loosening limit is the launcher's (D1043): the
+// repository layer's looser values are dropped and recorded, which is right
+// for a file a team wrote once, and wrong for a number a caller typed at a
+// terminal a second ago — a silent drop tells them their limit took effect
+// when it did not.
+type chainLimitPolicy struct {
+	ceiling policy.Layer
+	// under is the default branch's layer and the run's own, in that order,
+	// and always two entries: a launch the launcher could not read a file for
+	// merges the zero layer, so the chain layer is the fourth whatever the
+	// launch resolved.
+	under []policy.Layer
+	// fromNode names the keys the project's published policy node set, which
+	// are the ceiling's own only by name: the merge calls its first layer
+	// "ceiling", and a figure the node wrote must be reported as the node's
+	// (H1, internal/runner's policySources says the same at bootstrap).
+	fromNode map[string]bool
+	mode     rigor.Mode
+}
+
+// chainLimitPolicyOf resolves the layers above for a launch. cfg is the file
+// the run will read (launchLevelsConfig), which is never nil: a launcher with
+// no checkout of the repository merges the project layer the task carries.
+func chainLimitPolicyOf(ctx context.Context, env *cloudEnv, spec *task.Spec, cfg *config.Config) chainLimitPolicy {
+	mode := rigor.Resolve(cfg.RigorConfig(), rigor.Request{Mode: rigor.Mode(spec.Rigor), Paths: spec.Paths}).Mode
+	c := chainLimitPolicy{
+		ceiling: modeScaledCeiling(ceilingLayer(env.lc), mode),
+		under:   []policy.Layer{defaultBranchPolicyLayer(ctx, spec.Repo), runner.FileLayer(cfg)},
+		mode:    mode,
+	}
+	// The node is what the owner says now, where the ceiling is the copy the
+	// job was deployed with, and the runner reads it that way at bootstrap
+	// (H1, internal/runner's policyCeiling): a launch judged against the older
+	// copy would refuse a limit the run would carry, or accept one the node
+	// lowers. A read that fails is the gate's own refusal a few lines further
+	// on (launchPolicyGates): this fails towards the environment's figures
+	// rather than refusing a launch twice.
+	p, found, err := env.policy.read(ctx, env.lc)
+	if err != nil || !found || p == nil {
+		return c
+	}
+	c.fromNode = map[string]bool{}
+	if v := p.Budget.PerRunUSD; v > 0 {
+		c.ceiling.PerRunUSD, c.fromNode[policy.KeyPerRunUSD] = v, true
+	}
+	if v := p.Budget.MaxRunTokens; v > 0 {
+		c.ceiling.MaxRunTokens, c.fromNode[policy.KeyMaxRunTokens] = v, true
+	}
+	return c
+}
+
+// modeScaledCeiling is the ceiling the runner's bootstrap merge will build for
+// this run: the deployed dollar cap scaled by the run's own rigor mode
+// (config.RigorBudgetCap, D16, plan T6.1), and nothing else touched.
+//
+// The launcher's own ceiling is the deployed figure, and the runner's is not:
+// envCeiling scales the cap by the mode, so a run of mode Pro starts from 85%
+// of it. Judging the merge's chain layer against the unscaled cap accepts a
+// --max-usd between the two and writes it into the task, where the runner's own
+// merge then drops it as looser than the ceiling — the silent drop D1043 exists
+// to prevent, with the launcher reporting a figure that never took effect. Only
+// the dollars are scaled, and only the ceiling's own cap: the token ceiling is
+// the deployed one (envCeiling), and a cap the published node sets is the
+// owner's word taken exactly as it stands (policyCeiling, H1) — which is why
+// this runs before the node's keys are folded in above it.
+func modeScaledCeiling(l policy.Layer, mode rigor.Mode) policy.Layer {
+	if l.PerRunUSD <= 0 {
+		return l
+	}
+	deployed, err := pricing.FromUSD(l.PerRunUSD)
+	if err != nil {
+		return l
+	}
+	l.PerRunUSD = config.RigorBudgetCap(mode, deployed).USD()
+	return l
+}
+
+// merge merges the launch's chain layer under the policy above and returns the
+// effective policy. The ignored entries it appends past base's are the chain
+// layer's own — Merge appends them in layer order — and they are the ones the
+// launcher refuses (chainLimitRefusal); the ones before them are a file's, and
+// a file's looser value is dropped and recorded as it always has been.
+func (c chainLimitPolicy) merge(chain policy.Layer) (policy.Effective, int) {
+	base := policy.Merge(c.ceiling, c.under...)
+	e := policy.Merge(c.ceiling, append(slices.Clone(c.under), chain)...)
+	for k := range c.fromNode {
+		if e.Sources[k] == policy.SourceCeiling {
+			e.Sources[k] = policy.SourcePolicy
+		}
+	}
+	for i := range e.Ignored {
+		if e.Ignored[i].Source == policy.SourceCeiling && c.fromNode[e.Ignored[i].Key] {
+			e.Ignored[i].Source = policy.SourcePolicy
+		}
+	}
+	return e, len(base.Ignored)
+}
+
+// chainLimitRefusal is the refusal of one value the merge dropped as looser
+// (D1043): it names the flag, both numbers and the layer that set the lower
+// one, because a caller who typed a number has to be told it did not take
+// effect and where the number that beat it lives. nil for a key that is not
+// one of the four — the merge records every key's losers, and only these four
+// are a launch argument.
+func chainLimitRefusal(ig policy.Ignored) error {
+	flag, dim := "", ""
+	switch ig.Key {
+	case policy.KeyPerRunUSD:
+		flag, dim = "max-usd", "chain dollar limit"
+	case policy.KeyMaxRunTokens:
+		flag, dim = "max-tokens", "chain token limit"
+	case policy.KeyMaxRunTime:
+		flag, dim = "max-time", "chain wall-time limit"
+	case policy.KeyMaxReviewRounds:
+		flag, dim = "max-review-rounds", "chain review-round limit"
+	default:
+		return nil
+	}
+	return userErr("--%s %s is above the %s this launch resolves: %s sets %s, and a launch can only tighten a limit, never loosen one. Pass %s or less, or raise the limit where it is set",
+		flag, ig.Value, dim, layerWord(ig.Source), ig.Effective, ig.Effective)
+}
+
+// layerWord names a policy layer the way a refusal reads it.
+func layerWord(src string) string {
+	switch src {
+	case policy.SourceCeiling:
+		return "the owner's ceiling"
+	case policy.SourcePolicy:
+		return "this project's published policy"
+	case policy.SourceDefaultBranch:
+		return "the repository's default branch"
+	case policy.SourceBranch:
+		return "the branch this run checks out"
+	case policy.SourceChain:
+		return "this launch's own chain layer"
+	}
+	return "the " + src + " layer"
+}
+
+// chainRoundCeiling is the rounds one run of mode m spends on its review loop
+// with nothing else set: the mode's own senior row, held inside the recipe's
+// bound (internal/runner's setRounds, recipe.MaxReviewRounds).
+//
+// It is the figure a refusal about the review-round dimension quotes, and it
+// is quoted from the functions rather than from the mode table: the plan that
+// asked for this flag named rigor.RoundCeiling, which this tree no longer has
+// (DefaultRounds and AdversarialDefault replaced it, #1483) and whose output
+// the mode's row was never equal to anyway — POC's and Hotfix's rows sit below
+// the floor that function used to apply and Pro's and Critical's above it
+// (docs/run-limit-carry-over F15). Quoting the mode's own row through this
+// function is the narrower, true claim: the number a run of this mode starts
+// from is this one, and it is a default rather than a cap — the recipe's bound
+// is the only ceiling either number is held under.
+func chainRoundCeiling(m rigor.Mode) int {
+	return min(rigor.DefaultRounds(m).Senior, recipe.MaxReviewRounds)
 }
 
 // budgetPrecheck refuses a launch the budget would refuse anyway (see

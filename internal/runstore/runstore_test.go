@@ -6,9 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -19,8 +23,10 @@ import (
 	"gocloud.dev/blob/memblob"
 	"gocloud.dev/gcerrors"
 
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/triage"
 	"github.com/dimipaun/fugaro/internal/verify"
 )
 
@@ -250,6 +256,445 @@ func TestNewToleratedBoundsWhatItStores(t *testing.T) {
 	}
 	if tf := NewTolerated(nil); tf != nil {
 		t.Errorf("NewTolerated(nil) = %+v, want nil", tf)
+	}
+}
+
+// TestRecordRoundTripsAcceptedFindings: what a stop accepted survives the round
+// trip with the two facts a tolerated entry does not carry — the round it was
+// left by and the half of the stop rule that ended the run (the owner's ruling
+// of 2026-11-08) — so a reader can tell a run merged at its time threshold from
+// one whose review let the finding go. A record written before the field
+// existed still decodes, which is what the unchanged version rests on.
+func TestRecordRoundTripsAcceptedFindings(t *testing.T) {
+	s := newStore(t)
+	accepted := NewAccepted(rigor.Startup, 3, StopTimeThreshold, []ToleratedFinding{
+		{Title: "the retry loop has no backoff", Mode: rigor.Startup, Likelihood: 3, Impact: 3, FixCost: 2, Class: rigor.Correctness},
+	})
+	rec := &Record{Version: 1, RunID: runID, Status: StatusSucceeded, Outcome: OutcomeReady,
+		StartedAt: time.Now().UTC(), Accepted: accepted}
+	if err := s.WriteRecord(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ReadRecord(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got.Accepted, accepted) {
+		t.Fatalf("ReadRecord accepted = %+v, want %+v", got.Accepted, accepted)
+	}
+	if got.Accepted.At != StopTimeThreshold || got.Accepted.Round != 3 || got.Accepted.Total != 1 {
+		t.Errorf("accepted = %+v, want round 3 at the time threshold", got.Accepted)
+	}
+	if got.Accepted.Findings[0].Label != rigor.Medium {
+		t.Errorf("the accepted finding's label = %q, want the word its score reads", got.Accepted.Findings[0].Label)
+	}
+	data, err := json.Marshal(&Record{Version: 1, RunID: runID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "accepted") {
+		t.Fatalf("a run that accepted nothing encoded the field: %s", data)
+	}
+	old := `{"version":1,"run_id":"` + runID + `","status":"succeeded","stage":"writeback","outcome":"draft","cost_usd":1,"tolerated":{"findings":[{"title":"t","mode":"pro","likelihood":1,"impact":1,"fix_cost":1,"class":"correctness","label":"nit"}],"total":1,"truncated":false},"started_at":"2026-09-26T22:15:30Z"}`
+	if err := s.PutFile(ctx, "result.json", []byte(old), "application/json"); err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.ReadRecord(ctx)
+	if err != nil || got.Accepted != nil {
+		t.Fatalf("old record = %+v, %v, want no accepted block", got, err)
+	}
+	if got.Tolerated == nil || got.Tolerated.Total != 1 {
+		t.Fatalf("old record tolerated = %+v, want the block it carried", got.Tolerated)
+	}
+}
+
+// TestNewAcceptedBoundsWhatItStores: the block is built from a stop's own
+// answer and stores nothing a caller cannot have answered — a round the run
+// numbered from 1, one of the two halves of the stop rule, and a finding
+// Tolerated's own rules accept — so a record cannot claim an acceptance that
+// never happened. Everything else is nil, the way a run that accepted nothing
+// writes no block at all.
+func TestNewAcceptedBoundsWhatItStores(t *testing.T) {
+	entry := ToleratedFinding{Title: "t", Mode: rigor.Startup, Likelihood: 1, Impact: 1, FixCost: 1, Class: rigor.Correctness}
+	ac := NewAccepted(rigor.Startup, 1, StopRoundsSpent, []ToleratedFinding{entry})
+	if ac == nil || ac.At != StopRoundsSpent || ac.Mode != rigor.Startup || ac.Round != 1 || ac.Total != 1 || len(ac.Findings) != 1 {
+		t.Fatalf("NewAccepted = %+v, want the round it was given", ac)
+	}
+	for _, tc := range []struct {
+		name   string
+		mode   rigor.Mode
+		round  int
+		at     string
+		findng []ToleratedFinding
+	}{
+		{"no findings", rigor.Startup, 1, StopRoundsSpent, nil},
+		{"a round the run never had", rigor.Startup, 0, StopRoundsSpent, []ToleratedFinding{entry}},
+		{"a half of the rule that does not exist", rigor.Startup, 1, "whenever", []ToleratedFinding{entry}},
+		{"a finding NewTolerated refuses", rigor.Startup, 1, StopTimeThreshold, []ToleratedFinding{{Title: "", Mode: rigor.Startup, Likelihood: 1, Impact: 1, FixCost: 1, Class: rigor.Correctness}}},
+	} {
+		if got := NewAccepted(tc.mode, tc.round, tc.at, tc.findng); got != nil {
+			t.Errorf("%s: NewAccepted = %+v, want nil", tc.name, got)
+		}
+	}
+}
+
+// TestRecordWithoutTriageIsByteIdentical: a run that triaged nothing writes the
+// record it always wrote. Neither block is written when it holds nothing, so
+// the bytes of a record with no triage are the bytes of one whose two blocks
+// are the nil NewTriage and NewDeferred answer an empty input — which is what
+// keeps the format's version at 1 (F10, D1850) — and a record written before
+// the fields existed still decodes, carrying neither.
+func TestRecordWithoutTriageIsByteIdentical(t *testing.T) {
+	s := newStore(t)
+	at := time.Date(2026, 9, 26, 22, 15, 30, 0, time.UTC)
+	rec := &Record{Version: 1, RunID: runID, Status: StatusSucceeded, Outcome: OutcomeReady,
+		StartedAt: at}
+	data, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	empty := &Record{Version: 1, RunID: runID, Status: StatusSucceeded, Outcome: OutcomeReady,
+		StartedAt: at, Triage: NewTriage(nil), Deferred: NewDeferred(nil)}
+	emptyData, err := json.Marshal(empty)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(data, emptyData) {
+		t.Fatalf("a run that triaged nothing wrote %s, want the record it always wrote %s", emptyData, data)
+	}
+	if strings.Contains(string(data), "triage") || strings.Contains(string(data), "deferred") {
+		t.Fatalf("a run that triaged nothing encoded a block: %s", data)
+	}
+
+	// A record written before the fields existed still parses, without either.
+	old := `{"version":1,"run_id":"` + runID + `","status":"succeeded","stage":"writeback","outcome":"ready","cost_usd":1,"started_at":"2026-09-26T22:15:30Z"}`
+	if err := s.PutFile(ctx, "result.json", []byte(old), "application/json"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ReadRecord(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Triage != nil || got.Deferred != nil {
+		t.Fatalf("old record = %+v, want no triage and no deferred block", got)
+	}
+	if got.Version != 1 {
+		t.Errorf("old record version = %d, want 1: both blocks are additive", got.Version)
+	}
+}
+
+// TestTriageBlockRoundTrips: a round's placements and the deferrals that took
+// effect survive the round trip — the round, the mode reached at it, the level
+// whose findings they were, the account and the model that served the call, the
+// failure fact a call that could not be read leaves, and one entry per finding
+// with the source that placed it — so the judgment can be checked and tuned
+// after the job and the pull request are gone (spec acceptance 3, D1850). The
+// keys are the ones a follow-up task carries (T-TR4, T-TR10).
+func TestTriageBlockRoundTrips(t *testing.T) {
+	s := newStore(t)
+	tr := NewTriage([]TriageRound{
+		{
+			Round: 1, Mode: rigor.Startup, Level: policy.LevelL2, Account: "team-a", Model: "claude-opus-5-5",
+			Entries: []TriageEntry{
+				{Index: 0, Key: "9f2a1c", Verdict: VerdictDefer, Reason: "doc drift, not the main path", Group: "docs", Source: TriageSourceAgent},
+				{Index: 1, Key: "3b7e05", Verdict: VerdictBlock, Reason: "the build breaks on the new import", Source: TriageSourceAgent},
+			},
+		},
+		{
+			Round: 2, Mode: rigor.Pro, Level: policy.LevelL3, Failed: true,
+			Entries: []TriageEntry{
+				{Index: 0, Key: "3b7e05", Verdict: VerdictBlock, Reason: "the triage call failed, so this one blocks", Source: TriageSourceFailSafe},
+			},
+		},
+	})
+	deferred := NewDeferred([]DeferredFinding{
+		{Key: "9f2a1c", Summary: "a long comment restates the function", Reason: "doc drift, not the main path", Group: "docs", Source: TriageSourceAgent},
+		{Key: "5c1d20", Summary: "the retry loop has no backoff", Reason: "the mode's table tolerates this finding", Source: TriageSourceTable},
+	})
+	rec := &Record{Version: 1, RunID: runID, Status: StatusSucceeded, Outcome: OutcomeReady,
+		StartedAt: time.Now().UTC(), Triage: tr, Deferred: deferred}
+	if err := s.WriteRecord(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ReadRecord(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got.Triage, tr) {
+		t.Fatalf("ReadRecord triage = %+v, want %+v", got.Triage, tr)
+	}
+	if !reflect.DeepEqual(got.Deferred, deferred) {
+		t.Fatalf("ReadRecord deferred = %+v, want %+v", got.Deferred, deferred)
+	}
+	// The facts a reader routes on are the ones the round was given: the mode
+	// reached at it and the level whose findings they were, the two the persona
+	// and the level rules are read from (D1847, F14).
+	second := got.Triage.Rounds[1]
+	if !second.Failed || second.Mode != rigor.Pro || second.Level != policy.LevelL3 || second.Round != 2 {
+		t.Errorf("round 2 = %+v, want the failed level 3 round at pro", second)
+	}
+	if got.Deferred.Total != 2 || len(got.Deferred.Findings) != 2 {
+		t.Errorf("deferred = %+v, want 2 findings and a total of 2", got.Deferred)
+	}
+	if got.Deferred.Findings[1].Source != TriageSourceTable {
+		t.Errorf("the tolerated finding's deferral source = %q, want the table's", got.Deferred.Findings[1].Source)
+	}
+}
+
+// TestNewTriageBoundsWhatItStores: the block is the run's log of what a judge
+// placed, and the record is a small object every listing reads, so it is
+// bounded — the rounds at MaxTriageRounds, one round's entries at
+// MaxTriageEntries with the round's Total saying how many it really read, the
+// judge's reason and the group key at MaxTriageLine — and
+// a round a reader cannot place is not stored at all: one the run never
+// numbered, or one whose mode or level is outside its vocabulary. An entry the
+// record cannot read is dropped from its round rather than stored — an index
+// below 0 included, which the schema refuses and internal/triage's own reader
+// does too, so a constructor that kept one would hand a reader a record its own
+// published schema rejects — and a block holding nothing is nil, the way a run
+// that triaged nothing writes none.
+func TestNewTriageBoundsWhatItStores(t *testing.T) {
+	entry := TriageEntry{Key: "9f2a1c", Verdict: VerdictDefer, Reason: "doc drift", Source: TriageSourceAgent}
+	round := TriageRound{Round: 1, Mode: rigor.Startup, Level: policy.LevelL2, Entries: []TriageEntry{entry}}
+	tr := NewTriage([]TriageRound{round})
+	if tr == nil || len(tr.Rounds) != 1 || len(tr.Rounds[0].Entries) != 1 {
+		t.Fatalf("NewTriage = %+v, want the round it was given", tr)
+	}
+	// Entries is always a list: a round with nothing to place carries [], never
+	// null, which a reader would have to tell from an absent member.
+	if tr := NewTriage([]TriageRound{{Round: 1, Mode: rigor.Startup, Level: policy.LevelL1}}); tr == nil || tr.Rounds[0].Entries == nil {
+		t.Errorf("NewTriage = %+v, want an empty entries list rather than null", tr)
+	}
+
+	long := strings.Repeat("x", MaxTriageLine+50)
+	tr = NewTriage([]TriageRound{{Round: 1, Mode: rigor.Startup, Level: policy.LevelL1,
+		Entries: []TriageEntry{{Key: "k", Verdict: VerdictBlock, Reason: long, Group: long, Source: TriageSourceTable}}}})
+	if got := len([]rune(tr.Rounds[0].Entries[0].Reason)); got != MaxTriageLine {
+		t.Errorf("reason length = %d, want %d", got, MaxTriageLine)
+	}
+	if got := len([]rune(tr.Rounds[0].Entries[0].Group)); got != MaxTriageLine {
+		t.Errorf("group length = %d, want %d", got, MaxTriageLine)
+	}
+
+	var many []TriageRound
+	for i := 0; i < MaxTriageRounds+5; i++ {
+		many = append(many, TriageRound{Round: 1, Mode: rigor.Pro, Level: policy.LevelL2})
+	}
+	if tr := NewTriage(many); len(tr.Rounds) != MaxTriageRounds {
+		t.Errorf("NewTriage = %d rounds, want %d", len(tr.Rounds), MaxTriageRounds)
+	}
+	var entries []TriageEntry
+	for i := 0; i < MaxTriageEntries+5; i++ {
+		entries = append(entries, entry)
+	}
+	// The cap cuts the list and Total is what keeps the cut from being silent:
+	// a review round's findings are bounded by nothing, so a round that read
+	// more than the cap is recorded as its first MaxTriageEntries verdicts and
+	// says how many it read, the way the tolerated, accepted and
+	// owner-decision lists do.
+	if tr := NewTriage([]TriageRound{{Round: 1, Mode: rigor.Pro, Level: policy.LevelL2, Entries: entries}}); len(tr.Rounds[0].Entries) != MaxTriageEntries || tr.Rounds[0].Total != MaxTriageEntries+5 {
+		t.Errorf("NewTriage = %d entries, total %d, want %d and %d", len(tr.Rounds[0].Entries), tr.Rounds[0].Total, MaxTriageEntries, MaxTriageEntries+5)
+	}
+	// Total is the constructor's and not the caller's: a round that reported
+	// fewer verdicts than it holds would be the same silent truncation.
+	if tr := NewTriage([]TriageRound{{Round: 1, Mode: rigor.Pro, Level: policy.LevelL1, Entries: []TriageEntry{entry}, Total: 99}}); tr.Rounds[0].Total != 1 {
+		t.Errorf("NewTriage total = %d, want the 1 entry it was given", tr.Rounds[0].Total)
+	}
+
+	for _, tc := range []struct {
+		name string
+		r    TriageRound
+	}{
+		{"a round the run never numbered", TriageRound{Round: 0, Mode: rigor.Pro, Level: policy.LevelL1}},
+		{"a mode outside the vocabulary", TriageRound{Round: 1, Mode: rigor.Mode("paranoid"), Level: policy.LevelL1}},
+		{"a level outside the vocabulary", TriageRound{Round: 1, Mode: rigor.Pro, Level: policy.Level("l4")}},
+		{"no level", TriageRound{Round: 1, Mode: rigor.Pro}},
+	} {
+		if got := NewTriage([]TriageRound{tc.r}); got != nil {
+			t.Errorf("%s: NewTriage = %+v, want nil", tc.name, got)
+		}
+	}
+	for _, tc := range []struct {
+		name string
+		e    TriageEntry
+	}{
+		{"no key", TriageEntry{Verdict: VerdictDefer, Reason: "why", Source: TriageSourceAgent}},
+		{"no reason", TriageEntry{Key: "k", Verdict: VerdictDefer, Source: TriageSourceAgent}},
+		{"an index below the round", TriageEntry{Index: -1, Key: "k", Verdict: VerdictDefer, Reason: "why", Source: TriageSourceAgent}},
+		{"a verdict outside the two", TriageEntry{Key: "k", Verdict: TriageVerdict("maybe"), Reason: "why", Source: TriageSourceAgent}},
+		{"a source outside the four", TriageEntry{Key: "k", Verdict: VerdictDefer, Reason: "why", Source: TriageSource("judge")}},
+		{"no source", TriageEntry{Key: "k", Verdict: VerdictDefer, Reason: "why"}},
+	} {
+		got := NewTriage([]TriageRound{{Round: 1, Mode: rigor.Pro, Level: policy.LevelL1, Entries: []TriageEntry{tc.e}}})
+		if got == nil || len(got.Rounds[0].Entries) != 0 {
+			t.Errorf("%s: NewTriage stored the entry: %+v", tc.name, got)
+		}
+	}
+	if tr := NewTriage(nil); tr != nil {
+		t.Errorf("NewTriage(nil) = %+v, want nil", tr)
+	}
+}
+
+// TestTriageSourcesCoverTheStagesVocabulary: the record's four sources hold
+// internal/triage's three, spelled the same way, and add the cap's. The two
+// vocabularies are separate declarations — the record restates the stage's
+// rather than importing it, because it holds one value the stage's does not
+// (D1858) — so nothing but this test stops them drifting: NewTriage and
+// NewDeferred drop an unrecognised source rather than failing, so a spelling
+// changed on one side alone would silently empty the other's records instead of
+// breaking a build.
+//
+// The cap's source is asserted to be outside the stage's vocabulary, which is
+// what makes the record's set the larger one rather than a restatement.
+func TestTriageSourcesCoverTheStagesVocabulary(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		stage  triage.Source
+		record TriageSource
+	}{
+		{"a judge's own verdict", triage.SourceAgent, TriageSourceAgent},
+		{"the table's own call", triage.SourceTable, TriageSourceTable},
+		{"the failed call's fallback", triage.SourceFailSafe, TriageSourceFailSafe},
+	} {
+		if TriageSource(tc.stage) != tc.record {
+			t.Errorf("%s: the record spells it %q and internal/triage spells it %q", tc.name, tc.record, tc.stage)
+		}
+		if !knownSource(TriageSource(tc.stage)) {
+			t.Errorf("%s: the record does not know internal/triage's %q", tc.name, tc.stage)
+		}
+	}
+	if !knownSource(TriageSourceCap) {
+		t.Errorf("the record does not know its own cap source %q", TriageSourceCap)
+	}
+	for _, s := range []triage.Source{triage.SourceAgent, triage.SourceTable, triage.SourceFailSafe} {
+		if TriageSource(s) == TriageSourceCap {
+			t.Errorf("the cap's source %q is internal/triage's %q: it is the record's own", TriageSourceCap, s)
+		}
+	}
+}
+
+// TestNewDeferredBoundsWhatItStores: the deferred block holds the findings
+// whose deferral took effect and is what a follow-up is filed from, so it is
+// bounded the way the tolerated block is — the list at MaxDeferred, the
+// finding's summary at MaxToleratedTitle, the reason and the group at
+// MaxTriageLine — and an entry a follow-up cannot be built from is not stored:
+// one with no key to name it by, no summary to carry, no reason to print, or a
+// source outside the four. An empty block is nil.
+func TestNewDeferredBoundsWhatItStores(t *testing.T) {
+	entry := DeferredFinding{Key: "9f2a1c", Summary: "a long comment restates the function", Reason: "doc drift", Source: TriageSourceTable}
+	df := NewDeferred([]DeferredFinding{entry})
+	if df == nil || df.Total != 1 || len(df.Findings) != 1 {
+		t.Fatalf("NewDeferred = %+v, want the finding it was given", df)
+	}
+
+	long := strings.Repeat("x", MaxToleratedTitle+50)
+	df = NewDeferred([]DeferredFinding{{Key: "k", Summary: long, Reason: long, Group: long, Source: TriageSourceCap}})
+	if got := len([]rune(df.Findings[0].Summary)); got != MaxToleratedTitle {
+		t.Errorf("summary length = %d, want %d", got, MaxToleratedTitle)
+	}
+	if got := len([]rune(df.Findings[0].Reason)); got != MaxTriageLine {
+		t.Errorf("reason length = %d, want %d", got, MaxTriageLine)
+	}
+	if got := len([]rune(df.Findings[0].Group)); got != MaxTriageLine {
+		t.Errorf("group length = %d, want %d", got, MaxTriageLine)
+	}
+
+	var many []DeferredFinding
+	for i := 0; i < MaxDeferred+5; i++ {
+		many = append(many, entry)
+	}
+	if df := NewDeferred(many); len(df.Findings) != MaxDeferred || df.Total != MaxDeferred+5 {
+		t.Errorf("NewDeferred = %d findings, total %d, want %d and %d", len(df.Findings), df.Total, MaxDeferred, MaxDeferred+5)
+	}
+
+	for _, tc := range []struct {
+		name string
+		f    DeferredFinding
+	}{
+		{"no key", DeferredFinding{Summary: "s", Reason: "why", Source: TriageSourceAgent}},
+		{"no summary", DeferredFinding{Key: "k", Reason: "why", Source: TriageSourceAgent}},
+		{"no reason", DeferredFinding{Key: "k", Summary: "s", Source: TriageSourceAgent}},
+		{"a source outside the four", DeferredFinding{Key: "k", Summary: "s", Reason: "why", Source: TriageSource("judge")}},
+		{"no source", DeferredFinding{Key: "k", Summary: "s", Reason: "why"}},
+	} {
+		if got := NewDeferred([]DeferredFinding{tc.f}); got != nil {
+			t.Errorf("%s: NewDeferred = %+v, want nil", tc.name, got)
+		}
+	}
+	if df := NewDeferred(nil); df != nil {
+		t.Errorf("NewDeferred(nil) = %+v, want nil", df)
+	}
+}
+
+// TestToleratedKeepsItsMeaning: the triage block is a new block beside
+// tolerated and never a reuse of it (F10, D1850). A record can carry both, and
+// tolerated still says exactly what it said — the findings the mode's table let
+// through, with the score it read and the word for that score — while a verdict,
+// a reason and a source live in the two new blocks: no member is added to a
+// tolerated entry, and the format's version stays 1.
+func TestToleratedKeepsItsMeaning(t *testing.T) {
+	s := newStore(t)
+	tolerated := NewTolerated([]ToleratedFinding{
+		{Title: "a long comment restates the function", Mode: rigor.Startup, Likelihood: 2, Impact: 2, FixCost: 1, Class: rigor.Cosmetic},
+	})
+	rec := &Record{Version: 1, RunID: runID, Status: StatusSucceeded, Outcome: OutcomeReady,
+		StartedAt: time.Now().UTC(), Tolerated: tolerated,
+		Triage: NewTriage([]TriageRound{{Round: 1, Mode: rigor.Startup, Level: policy.LevelL2,
+			Entries: []TriageEntry{{Index: 0, Key: "9f2a1c", Verdict: VerdictDefer, Reason: "doc drift", Source: TriageSourceTable}}}}),
+		Deferred: NewDeferred([]DeferredFinding{
+			{Key: "9f2a1c", Summary: "a long comment restates the function", Reason: "the mode's table tolerates this finding", Source: TriageSourceTable},
+		}),
+	}
+	if err := s.WriteRecord(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ReadRecord(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got.Tolerated, tolerated) {
+		t.Fatalf("ReadRecord tolerated = %+v, want %+v", got.Tolerated, tolerated)
+	}
+	if got.Version != 1 {
+		t.Errorf("version = %d, want 1: the two blocks are additive and tolerated is untouched", got.Version)
+	}
+
+	// The stored tolerated entry is the seven members it always had: the block
+	// the triage verdicts need is beside it, never inside it.
+	data, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	var tol struct {
+		Findings []map[string]json.RawMessage `json:"findings"`
+		Total    int                          `json:"total"`
+	}
+	if err := json.Unmarshal(doc["tolerated"], &tol); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"title", "label", "mode", "likelihood", "impact", "fix_cost", "class"}
+	if len(tol.Findings) != 1 || len(tol.Findings[0]) != len(want) {
+		t.Fatalf("a tolerated entry = %v, want the seven members %v", tol.Findings, want)
+	}
+	for _, name := range want {
+		if _, ok := tol.Findings[0][name]; !ok {
+			t.Errorf("a tolerated entry lost its %q member", name)
+		}
+	}
+	for _, name := range []string{"verdict", "reason", "group", "source"} {
+		if _, ok := tol.Findings[0][name]; ok {
+			t.Errorf("a tolerated entry gained a %q member: verdicts live in the triage block (D1850)", name)
+		}
+	}
+	// The two blocks say the same finding two different ways: the triage entry
+	// records the placement, and the deferred entry is what a follow-up is
+	// filed from.
+	if len(got.Triage.Rounds) != 1 || got.Triage.Rounds[0].Entries[0].Key != got.Deferred.Findings[0].Key {
+		t.Errorf("triage = %+v and deferred = %+v, want the same finding key in both", got.Triage, got.Deferred)
 	}
 }
 
@@ -1052,5 +1497,65 @@ func TestCredentialForAuth(t *testing.T) {
 		if got := CredentialForAuth(tt.auth); got != tt.want {
 			t.Errorf("CredentialForAuth(%q) = %q, want %q", tt.auth, got, tt.want)
 		}
+	}
+}
+
+// statusConstants is the string value of every Status constant runstore.go
+// declares, in source order, read from the source rather than listed here: the
+// vocabulary has one spelling in this package, and a constant added without
+// Statuses is what the test below exists to catch.
+func statusConstants(t *testing.T) []Status {
+	t.Helper()
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "runstore.go", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []Status
+	for _, decl := range f.Decls {
+		gd, ok := decl.(*ast.GenDecl)
+		if !ok || gd.Tok != token.CONST {
+			continue
+		}
+		for _, spec := range gd.Specs {
+			vs, ok := spec.(*ast.ValueSpec)
+			if !ok {
+				continue
+			}
+			if id, ok := vs.Type.(*ast.Ident); !ok || id.Name != "Status" {
+				continue
+			}
+			for _, v := range vs.Values {
+				lit, ok := v.(*ast.BasicLit)
+				if !ok || lit.Kind != token.STRING {
+					t.Fatalf("runstore.go: a Status constant's value is %T, not a string literal", v)
+				}
+				s, err := strconv.Unquote(lit.Value)
+				if err != nil {
+					t.Fatal(err)
+				}
+				out = append(out, Status(s))
+			}
+		}
+	}
+	return out
+}
+
+// TestRunstoreStatusesAreTheWireVocabulary pins Statuses to the Status
+// constants this package declares, both directions and in order. Statuses is
+// the one spelling of the run status set: result.schema.json's status enum
+// (schemas/schemas_test.go) and internal/digest's closed set are read from it
+// instead of restating the words, so a value this package can write and
+// Statuses lacks would be a record those two readers render differently from
+// the run that wrote it. Mutation (run, restored): drop a name from Statuses,
+// or add a Status constant and leave it out, and this names the side that has
+// it.
+func TestRunstoreStatusesAreTheWireVocabulary(t *testing.T) {
+	declared := statusConstants(t)
+	if len(declared) == 0 {
+		t.Fatal("no Status constants found in runstore.go: this test proves nothing")
+	}
+	if !slices.Equal(Statuses, declared) {
+		t.Errorf("runstore.Statuses = %v, the Status constants runstore.go declares = %v", Statuses, declared)
 	}
 }

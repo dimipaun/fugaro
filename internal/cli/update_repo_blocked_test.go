@@ -253,8 +253,11 @@ func dropAppID(t *testing.T, r *convergeRig) {
 // and on a checkout whose pin is already this release's they used to read one
 // current and the other stale on the same run: the stage said "No changes: ...
 // pins the plugin to vX" while every command warned that the installed copy
-// was the release behind. The pin's half is not the whole truth, and the line
-// now carries the half that is behind and the step that installs it.
+// was the release behind. The pin's half is not the whole truth, the line
+// carries the half that is behind, and since U1 of
+// docs/plugin-user-scope/implementation-plan.md the stage that says it is the
+// one that installs it — the step the line used to point at was the checkout
+// stage's and is this stage's own.
 func TestUpdatePluginLineDoesNotReadCurrentWhileTheInstallIsBehind(t *testing.T) {
 	r := newConvergeRigYAML(t, v4Node(), convergeLegacyYAML)
 	currentRelease(t)
@@ -265,6 +268,25 @@ func TestUpdatePluginLineDoesNotReadCurrentWhileTheInstallIsBehind(t *testing.T)
 	// the list the checkout's plugin step reads.
 	checkoutFile(t, r.settings, wiredAt("v"+convergeRelease))
 
+	// The stage's own check is the line #1836c is about — the run's plan line
+	// and `fugaro update --plan-only` print it — and it may not read as current
+	// while Claude Code's own copy is the release behind: it has both versions
+	// in it, the copy Claude Code holds and the one this stage installs. Read
+	// before the run, which is the state the line is about (the install this
+	// stage makes is what the run then does).
+	e := rigEngine(t, r.initRig, &initOptions{door: updateDoor.name})
+	st, ok := stageNamed(initStages(e), initflow.Plugin)
+	if !ok {
+		t.Fatalf("fugaro update registers no %s stage: %v", initflow.Plugin, namesOf(initStages(e)))
+	}
+	status, cerr := st.Check(t.Context())
+	if cerr != nil {
+		t.Fatal(cerr)
+	}
+	if status.State != initflow.Todo || !strings.Contains(status.Detail, convergePrev) || !strings.Contains(status.Detail, convergeRelease) {
+		t.Errorf("the plugin stage's check reads %s %q, want the copy Claude Code holds (%s) and the one this stage installs (%s) in it", status.State, status.Detail, convergePrev, convergeRelease)
+	}
+
 	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
 	if err == nil {
 		t.Fatalf("the run reported success while the checkout's own fugaro.yaml is invalid:\n%s", out)
@@ -273,20 +295,15 @@ func TestUpdatePluginLineDoesNotReadCurrentWhileTheInstallIsBehind(t *testing.T)
 	if uerr := json.Unmarshal([]byte(runJSONObject(t, out)), &res); uerr != nil {
 		t.Fatalf("%v:\n%s\n%s", uerr, out, errOut)
 	}
-	if got := res.state(initflow.Plugin); got != "done" {
-		t.Fatalf("the plugin stage is %q, want done: the pin is already this release's\n%s", got, out)
+	if got := res.state(initflow.Plugin); got != "changed" {
+		t.Fatalf("the plugin stage is %q, want changed: the pin is already this release's and Claude Code's own copy is the release behind, which is the install this stage makes\n%s", got, out)
+	}
+	if d := res.stageDetail(t, initflow.Plugin); !strings.Contains(d, convergeRelease) {
+		t.Errorf("the plugin stage's line does not name what it installed: %q\n%s", d, out)
 	}
 
-	d := res.stageDetail(t, initflow.Plugin)
-	if !strings.Contains(d, convergePrev) {
-		t.Errorf("the plugin stage's line reads as current while Claude Code still has %s installed: %q\n%s", convergePrev, d, out)
-	}
-	if !strings.Contains(d, convergeRelease) {
-		t.Errorf("the plugin stage's line does not name the version the checkout stage installs: %q\n%s", d, out)
-	}
-
-	// The other half of #1836c: the two lines agree now, and the run that the
-	// line points at still did the install.
+	// The other half of #1836c: the line and the run agree — the run is the step
+	// the line names, and it did the install.
 	if got := claudeListVersion(t, r); got != convergeRelease {
 		t.Errorf("Claude Code lists the plugin as %q after the run, want %q\n%s", got, convergeRelease, out)
 	}

@@ -1428,3 +1428,152 @@ func TestBakeReposDefaultsTrue(t *testing.T) {
 		t.Errorf("the reader that predates the key lists UnknownKeys = %v, want %v", q.UnknownKeys, want)
 	}
 }
+
+// imageServicesNode is a node carrying the services a catalog entry's image
+// provides (D1904): the two entries the fixture catalog declares, one with a
+// service and one with three.
+const imageServicesNode = `{"version": 4, "image_services": {"api": ["postgres"], "web": ["postgres", "redis", "firebase"]}}`
+
+// TestPolicyImageServicesStrictDecode: image_services decodes into the field a
+// run reads — the entry's own list, keyed by the entry's name — and a block
+// whose keys or values are not the ones this reader can hand the services
+// script is refused here rather than at the run that would start them.
+func TestPolicyImageServicesStrictDecode(t *testing.T) {
+	p, found, err := Decode([]byte(imageServicesNode))
+	if err != nil || !found {
+		t.Fatalf("Decode = (%v, %v, %v), want the node read", p, found, err)
+	}
+	if len(p.UnknownKeys) != 0 {
+		t.Errorf("UnknownKeys = %v, want none: image_services is a key this Fugaro reads", p.UnknownKeys)
+	}
+	want := ImageServices{"api": {"postgres"}, "web": {"postgres", "redis", "firebase"}}
+	if !reflect.DeepEqual(p.ImageServices, want) {
+		t.Errorf("ImageServices = %v, want %v", p.ImageServices, want)
+	}
+	if got := strings.Join(p.ServicesFor("api"), " "); got != "postgres" {
+		t.Errorf("ServicesFor(api) = %q, want postgres", got)
+	}
+	// A policy with no block, and a nil one, answer the same thing: no entry
+	// provides anything this policy says.
+	var none *Policy
+	if got := none.ServicesFor("api"); got != nil {
+		t.Errorf("a nil policy's ServicesFor(api) = %v, want nil", got)
+	}
+	if got := p.ServicesFor("frontend"); got != nil {
+		t.Errorf("ServicesFor of an entry the block does not name = %v, want nil", got)
+	}
+	// An empty block is no block: a project that declares no service writes no
+	// member, and the two spellings read the same way (the catalog's rule).
+	q, found, err := Decode([]byte(`{"version": 4, "image_services": {}}`))
+	if err != nil || !found {
+		t.Fatalf("Decode of a written empty block = (%v, %v, %v), want the node read", q, found, err)
+	}
+	if q.ImageServices != nil {
+		t.Errorf("ImageServices of a written empty block = %v, want nil", q.ImageServices)
+	}
+
+	for _, tc := range []struct{ name, node, want string }{
+		{
+			"an unknown service name",
+			`{"version": 4, "image_services": {"api": ["mysql"]}}`,
+			"must be one of postgres, redis, firebase",
+		},
+		{
+			"a service named twice",
+			`{"version": 4, "image_services": {"api": ["redis", "redis"]}}`,
+			"named twice",
+		},
+		{
+			"an entry that names no service",
+			`{"version": 4, "image_services": {"api": []}}`,
+			"names at least one service",
+		},
+		{
+			"a key that is not a catalog entry name",
+			`{"version": 4, "image_services": {"API Image": ["redis"]}}`,
+			"must be a catalog entry name",
+		},
+	} {
+		if _, _, err := Decode([]byte(tc.node)); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: Decode(%s) = %v, want the refusal naming %q", tc.name, tc.node, err, tc.want)
+		}
+	}
+}
+
+// TestEntryServicesRunInFlightKeepsReading is F20's answer and the HARD RULE's
+// test: a reader of the release BEHIND reads a node that carries the services
+// (D1904). It has to, because the node is re-read while runs are in flight —
+// the credentials service reads it per model call — so a member that made such
+// a reader refuse the whole policy would stop runs `fugaro update` promised to
+// leave alone.
+//
+// The services therefore travel as a key of their own at the TOP level, where
+// every unknown key is listed in UnknownKeys and tolerated (P8), and NOT as a
+// member of an entry: an entry member is refused whole by the strict
+// image_catalog decode, which the second half pins — the same key written on
+// an entry is an error, so the top-level key is the only shape that holds.
+func TestEntryServicesRunInFlightKeepsReading(t *testing.T) {
+	preKey := make(map[string]bool, len(knownTopLevelKeys))
+	for k, v := range knownTopLevelKeys {
+		preKey[k] = v
+	}
+	delete(preKey, "image_services")
+	q, found, err := decodeWithKeys([]byte(`{"version": 4, "base_branch": "main", `+
+		`"image_services": {"api": ["postgres"]}}`), preKey)
+	if err != nil || !found || q == nil {
+		t.Fatalf("the reader of the release behind refused the node: (%v, %v, %v) — a run in flight would stop on it", q, found, err)
+	}
+	if q.BaseBranch != "main" {
+		t.Errorf("BaseBranch = %q: the rest of the node must still be read", q.BaseBranch)
+	}
+	if want := []string{"image_services"}; !slices.Equal(q.UnknownKeys, want) {
+		t.Errorf("UnknownKeys = %v, want %v: that is the node a CLI of that age refuses and a runner of it logs", q.UnknownKeys, want)
+	}
+	// This binary still fills the field from the key it tolerates — it is the
+	// reader that knows the key, handed the older reader's key set — and that
+	// is the whole of what a reader of the older release lacks: the code to
+	// read it. What the older reader does with the bytes is decided by the
+	// key set alone, and that is what makes it go on rather than stop.
+
+	// The member shape is the one that does not hold: an entry carrying
+	// `services` is refused by the strict decode of the whole policy, which is
+	// what F20 is about and why the fact travels top-level.
+	_, _, err = Decode([]byte(`{"version": 4, "image_catalog": {"entries": [` +
+		`{"name": "api", "tags": ["node"], "source": {"kind": "inline", "inline": "FROM node:24\n"}, "services": ["postgres"]}]}}`))
+	if err == nil || !strings.Contains(err.Error(), "services") {
+		t.Fatalf("Decode of an entry carrying services = %v, want the unknown-member refusal: an entry member is what a reader of the release behind refuses whole", err)
+	}
+}
+
+// TestImageServicesFromCatalog: the publisher's one derivation, from the
+// catalog's own entries (D1904) — one member per entry that declares a
+// service, under the entry's own name, and nil for a catalog that declares
+// none, which is what keeps a project that uses no service byte for byte what
+// its node was.
+func TestImageServicesFromCatalog(t *testing.T) {
+	cat := &config.Catalog{Entries: []config.Entry{
+		{Name: "api", Services: []string{"postgres"}},
+		{Name: "static"},
+		{Name: "web", Services: []string{"postgres", "redis", "firebase"}},
+	}}
+	got := ImageServicesFromCatalog(cat)
+	want := ImageServices{"api": {"postgres"}, "web": {"postgres", "redis", "firebase"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("ImageServicesFromCatalog = %v, want %v", got, want)
+	}
+	if got := ImageServicesFromCatalog(&config.Catalog{Entries: []config.Entry{{Name: "static"}}}); got != nil {
+		t.Errorf("a catalog declaring no service derives %v, want nil", got)
+	}
+	if got := ImageServicesFromCatalog(nil); got != nil {
+		t.Errorf("no catalog derives %v, want nil", got)
+	}
+	// The derivation is the node's own rule: what it writes decodes back.
+	raw, err := json.Marshal(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, found, err := Decode([]byte(`{"version": 4, "image_services": ` + string(raw) + `}`))
+	if err != nil || !found || !reflect.DeepEqual(p.ImageServices, want) {
+		t.Errorf("the derived block does not decode back: (%v, %v, %v)", p, found, err)
+	}
+}
