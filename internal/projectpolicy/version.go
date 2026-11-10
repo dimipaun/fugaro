@@ -102,7 +102,7 @@ const Version = 5
 // VersionSince names, for each policy version, the fugaro release that
 // introduced it: 1 is the model itself (0.8.0, internal/cli's policySince), 2
 // is the profile gate above (0.8.5), 3 the account axis (0.9.0), 4 the
-// Bitbucket token block (0.14.0), 5 the binaries block (0.22.0). It sits
+// Bitbucket token block (0.14.0), 5 the binaries block (0.23.0). It sits
 // beside Version because a bump of
 // Version adds its row in the same change
 // (TestVersionSinceCoversEveryVersion fails until it does), and it is
@@ -121,7 +121,7 @@ var VersionSince = map[int]string{
 	2: "0.8.5",
 	3: "0.9.0",
 	4: "0.14.0",
-	5: "0.22.0",
+	5: "0.23.0",
 }
 
 // VersionRelease is the release that introduced policy version v, and false

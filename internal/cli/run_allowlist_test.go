@@ -167,7 +167,7 @@ func TestRunRefusesBeforeLaunch(t *testing.T) {
 // remedy is `fugaro image refresh --repo X --workflow Y`).
 //
 // The two directions of the same node are what the sub-tests pin apart: the
-// node this release writes needs an image at 0.22.0 or later, and the node one
+// node this release writes needs an image at 0.23.0 or later, and the node one
 // shape-free step behind it (a version-4 node, which this binary reads as it
 // stands) needs only the release that introduced *that* version — so the
 // tolerance and the gate are one answer rather than two.

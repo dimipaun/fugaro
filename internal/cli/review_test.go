@@ -80,7 +80,7 @@ func newReviewFixtureAt(t *testing.T, service string) *projectJobFixture {
 	// node's version (policyImageGate) — reviewAdmissionSince is older than the
 	// release that introduced it, and an installation cannot hold a node its
 	// own base image cannot read. The admission E7's half is about still holds:
-	// it is a floor, and 0.22.0 is above it.
+	// it is a floor, and the node's own release is above it.
 	setBaseImage(t, nodeRelease)
 	f.appendConfig(t, "credentials_service: { url: "+credentialsServiceFixtureURL+" }\n")
 	isolateState(t)

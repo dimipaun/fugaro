@@ -883,6 +883,11 @@ var propertyAgentSites = map[string]string{
 	// run, which no marker reaches — moveCredentialsImage's own arm is the
 	// second guard and is outside, for that reason.
 	"init_stages.go newCredentialsStage": "TestUpdateInAnAgentSessionPinsNoCredentialsImage (under a marker: the run reports the stage skipped with its own sentence) and TestUpdateMigratesTheNodeBeforeItReplacesTheCredentialsService (with none: the stage moves the image and applies the root after the policy stage)",
+	// credentialsMoveHeld answers the same question one stage earlier, for the
+	// policy stage: a session replaces no service, so it may not raise the
+	// node's version either, and the test drives that through the door — the
+	// session's own run leaves the node at its version and the stage says so.
+	"init_stages.go credentialsMoveHeld": "TestUpdateInAnAgentSessionHoldsTheNodeAtItsVersion (under a marker: the policy stage holds the node at its version and says why), and TestUpdateFailsTheCredentialsResolveBeforeItMigratesTheNode and TestUpdateMigratesTheNodeBeforeItReplacesTheCredentialsService drive the same decision with no marker",
 	// The audience fill is the same shape and for the same reason: it applies
 	// from inside the installation stage, so it must not run in a session whose
 	// apply is a plan the owner has not confirmed. Under a marker it returns

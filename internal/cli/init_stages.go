@@ -56,6 +56,15 @@ type initEngine struct {
 	repo      *repositoryStage
 	policy    *policyMigrateStage
 
+	// The credentials service's image as this run resolved it
+	// (credentialsResolve): the policy stage asks for it before it raises the
+	// published node's version and the credentials-service stage pins the
+	// answer after that write, and one resolve is what makes the two the same
+	// read.
+	pinnedCredentials string
+	credentialsRead   bool
+	credentialsErr    error
+
 	redact, held []string // the loop's redaction list, and the slots at its end a stage fills with a value it holds
 }
 
@@ -649,13 +658,107 @@ func (e *initEngine) writeCarriedCredentials(doc []byte) ([]byte, error) {
 	return next, nil
 }
 
+// The two reasons a run deploys no credentials service at all: a coding agent's
+// session deploys nothing (the service is the identity that holds every model
+// credential the installation has, and the deploy is the owner's own act), and
+// a development build resolves no released image to deploy. They are constants
+// because two readers say them: the credentials-service stage, which skips on
+// them, and the policy stage, which holds the published node's version with
+// them (credentialsMoveHeld) — the sentence the node is held with and the
+// sentence the stage skips with are one fact about the run.
+const (
+	credentialsSessionHeld  = "a coding agent's session deploys nothing"
+	credentialsDevBuildHeld = "a development build resolves no released image"
+)
+
+// credentialsMoveHeld is why a run may not write a node whose version rises:
+// the installation's tfvars carry a credentials service, and this run is one
+// that replaces nothing — a coding agent's session, or a development build (the
+// two constants above).
+//
+// The service reads the published node on every cascade and Bitbucket-proxied
+// call and refuses a node its own binary does not understand, so a node that
+// moves while the process reading it stays where it is refuses every such call
+// until a later update succeeds. The migration is held instead, and with it the
+// whole write of the policy stage — a node written without the version it is
+// behind is the same node the config half would rewrite on the next run, so the
+// two halves of that write stay one — and the owner's own `fugaro update` does
+// the pair together: its policy stage migrates the node, and the
+// credentials-service stage immediately after it replaces the service.
+//
+// Nothing else holds it. An installation whose tfvars carry no block runs no
+// service to refuse the node at all, and the other two runs answer "" here:
+// the one whose recorded image is already this release's (the apply before the
+// policy stage converges that service, and there is no stale process left) and
+// the one that is about to move it (credentialsResolveBeforeRaise).
+func (e *initEngine) credentialsMoveHeld() string {
+	var why string
+	switch {
+	case agentMarker(os.Getenv, e.r.stdinTerminal()) != "":
+		why = credentialsSessionHeld
+	case releaseVersion() == "":
+		why = credentialsDevBuildHeld
+	default:
+		return ""
+	}
+	doc, _, err := e.recordedCredentialsImage()
+	if err != nil || doc == nil {
+		return ""
+	}
+	return why
+}
+
+// credentialsResolveBeforeRaise resolves the image this run's own move of the
+// credentials service will pin, and it is the policy stage's precondition for a
+// write whose version rises. It is where the resolve's failure has to land: an
+// image this run cannot reach is a move that will not happen, and after the
+// write the same failure leaves a node at this version with the release
+// behind's service deployed — a service that refuses every cascade and
+// Bitbucket-proxied call until a later update succeeds (the owner's ruling of
+// 2026-11-10; credentialsMoveHeld is the rule's other half).
+//
+// A tfvars this run cannot read is no move to resolve: the failure of that read
+// is the run's at the stage that applies the file (the installation root, whose
+// engines run before this one), and this precondition has nothing to answer
+// about a document it cannot read.
+func (e *initEngine) credentialsResolveBeforeRaise(ctx context.Context) error {
+	ver := releaseVersion()
+	if ver == "" {
+		return nil
+	}
+	doc, image, err := e.recordedCredentialsImage()
+	if err != nil || doc == nil || !credentialsImageStale(ver, image) {
+		return nil
+	}
+	_, err = e.credentialsResolve(ctx)
+	return err
+}
+
+// credentialsResolve is the run's one resolve of the credentials service's
+// image, memoized: the policy stage asks for it before it writes a node whose
+// version moves, and the credentials-service stage pins the answer after that
+// write. The failure of a resolve has to land before the node moves — a pinned
+// image this run cannot reach is a move that will not happen, and the state it
+// may not leave is a node at this version with the release behind's service
+// deployed — and one answer is what keeps the two readers of it from spending
+// the operator's ADC on the same read twice.
+func (e *initEngine) credentialsResolve(ctx context.Context) (string, error) {
+	if !e.credentialsRead {
+		e.credentialsRead = true
+		e.pinnedCredentials, e.credentialsErr = resolveCredentialsImage(ctx, e)
+	}
+	return e.pinnedCredentials, e.credentialsErr
+}
+
 // moveCredentialsImage moves the installation's recorded credentials image
 // forward onto this release's, in the installation root's tfvars, and it is the
 // credentials-service stage's step (init_stages.go's newCredentialsStage): it
 // runs after the policy stage, so the node every call of the service is read
 // under is this release's before the process that reads it is replaced (the
 // owner's ruling of 2026-11-10; initflow.CredentialsService has the order and
-// the window it leaves).
+// the window it leaves). The resolve behind it is the policy stage's own read
+// (credentialsResolve): the write is this stage's, and what it would fail on is
+// already answered by the time it runs.
 //
 // It pins through resolveCredentialsImage: the release's signed "-pinned"
 // image, its signature verified and its digest read back through the
@@ -691,7 +794,7 @@ func (e *initEngine) moveCredentialsImage(ctx context.Context) error {
 	if !credentialsImageStale(ver, image) {
 		return nil
 	}
-	pinned, err := resolveCredentialsImage(ctx, e)
+	pinned, err := e.credentialsResolve(ctx)
 	if err != nil {
 		return err
 	}
@@ -1158,11 +1261,11 @@ func newCredentialsStage(e *initEngine) *engineStage {
 	return &engineStage{e: e, name: initflow.CredentialsService, isolate: true,
 		skip: func() string {
 			if m := agentMarker(os.Getenv, e.r.stdinTerminal()); m != "" {
-				return "a coding agent's session deploys nothing"
+				return credentialsSessionHeld
 			}
 			ver := releaseVersion()
 			if ver == "" {
-				return "a development build resolves no released image"
+				return credentialsDevBuildHeld
 			}
 			doc, image, err := e.recordedCredentialsImage()
 			switch {

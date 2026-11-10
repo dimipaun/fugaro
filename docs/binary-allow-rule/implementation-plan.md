@@ -124,7 +124,9 @@ node only — nothing reads it yet — so it lands without waiting for anything.
   validation — the four pattern checks of `rigor.Area.Validate` / `rebuild.paths` **plus the length
   bound** (`MaxAreaPattern`, 200) that `Area.Validate` adds, and the cap's positivity and ceiling),
   `internal/projectpolicy/policy.go` (the member, `knownTopLevelKeys`),
-  `internal/projectpolicy/version.go` (`Version = 5`, `VersionSince[5] = "0.20.0"`), and the three
+  `internal/projectpolicy/version.go` (`Version = 5`, `VersionSince[5] = "0.23.0"` — §4's slot read
+  0.20.0 when this plan was written; the row names the release that ships the node, since it is the
+  floor the launch gate holds a job image to), and the three
   test files `binaries_test.go` (new), `policy_test.go`, `version_test.go`.
 - **Red step:** `TestBinariesAllowPatternsAreRefusedAtDecode` fails — `/etc/passwd`, a `..`
   component, an empty entry and a pattern the matcher cannot read (`brand/[.png`) are all accepted by
@@ -333,7 +335,7 @@ AR3–AR6 in one slot), and the publish last, in the same release.
 same command and behind that command's own per-build confirmations. Two repositories are not that
 checkout, and the release states both rather than leaving them to be found: a repository whose job
 image is a derived image of another checkout keeps the image it had until that checkout's `fugaro
-image refresh` runs, and the launcher refuses a launch of it onto an image older than 0.22.0 —
+image refresh` runs, and the launcher refuses a launch of it onto an image older than 0.23.0 —
 rather than starting a run that halts at bootstrap — naming that command
 (`internal/cli`'s `policyImageGate`); and the reader accepts a node one shape-free step behind
 (`projectpolicy`'s `ReadsVersion`), so this release's own readers — the runner, the launcher and the

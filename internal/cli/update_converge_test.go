@@ -349,6 +349,94 @@ func TestUpdateMigratesTheNodeBeforeItReplacesTheCredentialsService(t *testing.T
 	}
 }
 
+// TestUpdateFailsTheCredentialsResolveBeforeItMigratesTheNode is the failure
+// half of the same rule, and the state this branch's review reproduced: the
+// same installation — a version-4 node published, the previous release's
+// credentials service deployed — whose credentials image THIS release has not
+// published yet (the state every release is in until its images stage has
+// published it) used to reach the policy stage first, write the version-5 node,
+// and only then stop at the resolve the move needs. What it left was a node at
+// this version with the previous release's service still on the project: a
+// service that refuses every cascade and Bitbucket-proxied call until a later
+// update succeeds, which the owner's one command may not leave behind.
+//
+// The run fails with the node exactly where it was instead: the resolve is the
+// write's own precondition (credentialsResolveBeforeRaise), and the failure
+// lands at the policy stage — the credentials-service stage after it is already
+// too late, the node being at this version by then.
+func TestUpdateFailsTheCredentialsResolveBeforeItMigratesTheNode(t *testing.T) {
+	r := newConvergeRig(t, v4Node())
+	// The block an earlier release left, and no publishCredentialsImage: the
+	// release's signed "-pinned" tag is what the resolve reads, and this run
+	// has none.
+	seedCredentialsService(t, r.imagesRig, oldCredentialsRef(convergePrev))
+	// The installation's outputs name the service the tfvars carry: a block
+	// without it is the half-carried state the installation stage refuses (and
+	// the repository roots read this output to decide whether a job mounts a
+	// model credential at all).
+	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
+		"credentials_service": credentialsServiceOutput(),
+	})}
+	r.save(t)
+	recorded := credentialsServiceEntry(t, r.imagesRig)["image"]
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	s := out + errOut
+	if err == nil {
+		t.Fatalf("an update whose credentials image this release does not publish succeeded, want the resolve's failure:\n%s", s)
+	}
+	if stage := stoppedStage(out); stage != initflow.Policy {
+		t.Errorf("the run stopped at %q, want the %s stage: the resolve is the write's own precondition, and it may not land after the node has moved — the service the installation runs then refuses every call that reads the node\n%s", stage, initflow.Policy, s)
+	}
+	if v := nodeVersionOn(t, r.db); v != 4 {
+		t.Errorf("the published policy is version %d, want 4: the node moved without the service that reads it, so every cascade and Bitbucket-proxied call of this project is refused until a later update succeeds\n%s", v, s)
+	}
+	if got := credentialsServiceEntry(t, r.imagesRig)["image"]; got != recorded {
+		t.Errorf("credentials_service.image = %v, want the recorded %v: a run that resolved no image rewrote the installation's tfvars\n%s", got, recorded, s)
+	}
+}
+
+// TestUpdateInAnAgentSessionHoldsTheNodeAtItsVersion is the other half of the
+// same rule, and the second state the review named: the move is not the only
+// thing that can be missing when the policy stage writes. In a coding agent's
+// session on a managed project the credentials-service stage SKIPS itself ("a
+// coding agent's session deploys nothing") while the policy stage, which the
+// gate admits, would go on and raise the node — leaving exactly the state the
+// failure above leaves, without any failure at all: this release's node with the
+// previous release's service deployed on the project, refusing every cascade and
+// Bitbucket-proxied call until a later update succeeds.
+//
+// So the node stays where it is and the run says why, in the policy stage's own
+// line: the version it would raise and the sentence naming the session. The
+// credentials image is untouched too, which is what makes the two halves one
+// decision rather than two.
+func TestUpdateInAnAgentSessionHoldsTheNodeAtItsVersion(t *testing.T) {
+	r := newConvergeRig(t, v4Node())
+	seedCredentialsService(t, r.imagesRig, oldCredentialsRef(convergePrev))
+	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
+		"credentials_service": credentialsServiceOutput(),
+	})}
+	r.save(t)
+	r.managedRuns(t, initProjectName, initProject)
+	t.Setenv("CLAUDECODE", "1")
+	recorded := credentialsServiceEntry(t, r.imagesRig)["image"]
+
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	s := out + errOut
+	if err != nil && !strings.Contains(s, "left for you") {
+		t.Fatalf("an update in a coding agent's session failed with something other than the steps it leaves for the user: %v\n%s", err, s)
+	}
+	if v := nodeVersionOn(t, r.db); v != 4 {
+		t.Errorf("the published policy is version %d, want 4: the session raised the node in a run that replaces no service, so the previous release's service refuses every call that reads it until a later update succeeds\n%s", v, s)
+	}
+	if !strings.Contains(s, "holds it there") || !strings.Contains(s, credentialsSessionHeld) {
+		t.Errorf("the policy stage did not say it held the node where it was, and why:\n%s", s)
+	}
+	if got := credentialsServiceEntry(t, r.imagesRig)["image"]; got != recorded {
+		t.Errorf("credentials_service.image = %v, want the recorded %v: a session rewrote the installation's tfvars\n%s", got, recorded, s)
+	}
+}
+
 // converge runs the door once and checks the fixture converged. stale is the
 // set of doctor checks the fixture has to be firing before the run, or the run
 // below proves nothing: an installation that was current already would pass
@@ -647,8 +735,15 @@ func generatedRules(t *testing.T) []byte {
 // command.
 func stoppedStage(out string) string {
 	for _, line := range strings.Split(out, "\n") {
-		if rest, ok := strings.CutPrefix(strings.TrimSpace(line), "[failed]"); ok {
-			return strings.TrimSpace(rest)
+		// The resume line is the run's own: "stopped at policy; fix: rerun
+		// fugaro update: it resumes at policy". The stage is what stands between
+		// the two sentences, and it is the name the loop's own stages carry.
+		rest, ok := strings.CutPrefix(strings.TrimSpace(line), "stopped at ")
+		if !ok {
+			continue
+		}
+		if stage, _, ok := strings.Cut(rest, "; fix: "); ok {
+			return stage
 		}
 	}
 	return "(the summary names no failed stage)"

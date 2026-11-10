@@ -300,7 +300,8 @@ the diff finalize already holds is the reading.
 
 **D990 — the policy version.** **Recommended (not ruled on 2026-11-04):** **bump
 `projectpolicy.Version` 4 → 5**, add
-`VersionSince[5] = "0.20.0"` (the slot, implementation-plan.md §4), and carry the convergence test
+`VersionSince[5] = "0.23.0"` (the release that ships it; implementation-plan.md §4's slot read 0.20.0
+when this decision was recorded), and carry the convergence test
 the HARD RULE asks for. A version-4
 image tolerates a new *top-level* key (it lands in `UnknownKeys`), so tolerating would not be
 fail-open — but it would be **fail-silent**: the owner publishes a path list, the version-4 image
