@@ -818,16 +818,28 @@ func (e *cloudEnv) localRepo(repo string) (localcfg.Repo, bool) {
 	return e.lc.RepoFor(repo)
 }
 
+// localRepoProvider is the git provider kind the local config's entry for
+// repo names, and "" when it names none or has no entry for repo.
+//
+// It is the half of repoProvider and repoSlug that needs no checkout, which
+// is what a caller deciding anything *because* there is no checkout must read:
+// the checkout's own fugaro.yaml is not there to fill a gap in, and reading it
+// through repoProvider's fallback would dereference a nil *config.Config for a
+// repository the local config does not name (reconciliation F3).
+func (e *cloudEnv) localRepoProvider(repo string) string {
+	if r, ok := e.localRepo(repo); ok {
+		return r.Provider
+	}
+	return ""
+}
+
 // repoSlug is repo's storage slug. Its git provider kind comes from the
 // local config's entry for repo and from the checkout's fugaro.yaml (only
 // when the checkout's origin is repo; see checkoutOf). Either may be
 // missing, but when both are set they must agree: the slug depends on it.
 // It never comes from the origin host.
 func (e *cloudEnv) repoSlug(repo string, checkout func() *config.Config) (string, error) {
-	local := ""
-	if r, ok := e.localRepo(repo); ok {
-		local = r.Provider
-	}
+	local := e.localRepoProvider(repo)
 	fromCheckout := ""
 	if c := checkout(); c != nil {
 		fromCheckout = c.Git.Provider
