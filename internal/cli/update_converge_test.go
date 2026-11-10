@@ -34,8 +34,9 @@ var argsUpdUser = []string{"plugin", "update", "fugaro@fugaro", "--scope", "user
 // convergeRig is an installation set up at convergePrev and left alone since,
 // in a checkout of its own repository:
 //
-//   - the policy node is the one the fixture's release left published (v4Node
-//     or v3Node), so the policy stage has to migrate it when it is behind;
+//   - the policy node is the one the fixture's release left published (v5Node,
+//     v4Node or v3Node), so the policy stage has to migrate it when it is
+//     behind and leave it alone when it is not;
 //   - the deployed rules carry the previous generation's marker, so
 //     policy-rules-skew fires and the rules stage has to deploy;
 //   - the local config records the previous release's base image, so
@@ -56,15 +57,26 @@ type convergeRig struct {
 	builder *fakeBuilder
 }
 
-// v4Node is the published node the release before this one leaves behind: the
-// version this binary writes too, so nothing has to be migrated, only the
-// rules generation, the base image and the plugin moved.
-func v4Node() map[string]any {
+// v5Node is the published node this binary writes: nothing has to be migrated,
+// only the rules generation, the base image and the plugin moved. It is the
+// fixture for "an installation that already published under this release and is
+// behind on everything else", and it is what tells a door that leaves a current
+// node alone from one that rewrites it every time.
+func v5Node() map[string]any {
 	return map[string]any{
-		"version":     4,
+		"version":     5,
 		"budget":      map[string]any{"mode": "enforce", "per_run_usd": 5},
 		"allow_repos": []string{"github/acme/app"},
 	}
+}
+
+// v4Node is the published node the release before this one leaves behind: one
+// policy version below this binary's, so the run's policy stage has to migrate
+// it as well as move the rules generation, the base image and the plugin.
+func v4Node() map[string]any {
+	n := v5Node()
+	n["version"] = 4
+	return n
 }
 
 func newConvergeRig(t *testing.T, node map[string]any) *convergeRig {
@@ -193,18 +205,24 @@ func currentRelease(t *testing.T) {
 // the door stopped at: that is a gap the update door owns, and the one command
 // the user is told to run may not be two.
 func TestUpdateConvergesFromThePreviousRelease(t *testing.T) {
-	// The node the previous release publishes: the version this binary writes
-	// too, so the run moves the rules generation, the base image and the
-	// plugin and leaves the node alone.
-	t.Run("the node the previous release publishes", func(t *testing.T) {
-		converge(t, v4Node(), []string{"policy-rules-skew", "plugin-pin"})
+	// The node this binary writes: nothing to migrate, so the run moves the
+	// rules generation, the base image and the plugin and leaves the node
+	// alone.
+	t.Run("the node this binary writes", func(t *testing.T) {
+		converge(t, v5Node(), []string{"policy-rules-skew", "plugin-pin"})
 	})
-	// The node one version back: a v3 node, which an installation that has not
+	// The node the previous release publishes: one policy version below this
+	// binary's, so the policy stage has to carry it forward by the same run
+	// that moves everything else (D990).
+	t.Run("the node the previous release publishes", func(t *testing.T) {
+		converge(t, v4Node(), []string{"policy-older-than-binary", "policy-rules-skew", "plugin-pin"})
+	})
+	// The node two versions back: a v3 node, which an installation that has not
 	// republished since 0.13.0 carries. 0.14.0's operator notes removed that
 	// node by hand and published again; the migration chain (a later release's)
 	// does it inside `fugaro update` instead, so this is the fixture the update
 	// door has to converge.
-	t.Run("the node one version back", func(t *testing.T) {
+	t.Run("the node two versions back", func(t *testing.T) {
 		converge(t, v3Node(nil), []string{"policy-older-than-binary", "policy-rules-skew", "plugin-pin"})
 	})
 }
@@ -325,7 +343,7 @@ func TestUpdateConvergesPreviousPolicy(t *testing.T) {
 			p.ImageMap, p.BakeRepos)
 	}
 
-	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	convergeOn(t, r, []string{"policy-older-than-binary", "policy-rules-skew", "plugin-pin"})
 
 	p := convergeNode(t, r)
 	want := projectpolicy.ImageMap{"acme/app": "app"}
@@ -386,7 +404,7 @@ func TestUpdateConvergesTheOrchestratorRulesFromThePreviousGeneration(t *testing
 		t.Fatal("the fixture's deployed rules are already the document this binary generates, so nothing has to converge")
 	}
 
-	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	convergeOn(t, r, []string{"policy-older-than-binary", "policy-rules-skew", "plugin-pin"})
 
 	// One run, and the marker records this binary's generation. A marker left
 	// absent here is the daemon's own gate refusing to start on a database the

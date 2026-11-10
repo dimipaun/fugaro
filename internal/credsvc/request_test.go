@@ -37,7 +37,7 @@ func testPolicyDocAllowed(models ...string) string {
 		list = append(list, `"`+m+`"`)
 	}
 	return `{
-		"version": 4,
+		"version": 5,
 		"budget": {"mode": "enforce", "per_run_usd": 5, "allowed_models": [` + strings.Join(list, ", ") + `]},
 		"allow_repos": ["` + testRepo + `", "` + testOtherRepo + `"],
 		"accounts": {

@@ -81,16 +81,23 @@ func TestMigrateV3ToV4PreservesHandEditedAllowList(t *testing.T) {
 		t.Errorf("accounts.ops.allow_repos = %v, want the account the node carries", got)
 	}
 
-	// The report a caller renders as the diff: one step, 3 to 4, naming what it
-	// kept. Nothing here asks the operator for anything more.
-	if len(changes) != 1 {
-		t.Fatalf("changes = %+v, want the one step this node needed", changes)
+	// The report a caller renders as the diff: the chain's two steps, 3 to 4
+	// and 4 to 5, each naming what it kept. Nothing here asks the operator for
+	// anything more — a version-5 node admits no binary until the project
+	// publishes a list, and that is a publish and not a repair.
+	if len(changes) != 2 {
+		t.Fatalf("changes = %+v, want the two steps this node needed", changes)
 	}
 	if changes[0].From != 3 || changes[0].To != 4 {
 		t.Errorf("changes[0] = %+v, want the step from version 3 to version 4", changes[0])
 	}
-	if changes[0].Changed == "" {
-		t.Error("changes[0].Changed is empty: the diff must say what the step changed")
+	if changes[1].From != 4 || changes[1].To != 5 {
+		t.Errorf("changes[1] = %+v, want the step from version 4 to version 5", changes[1])
+	}
+	for i, ch := range changes {
+		if ch.Changed == "" {
+			t.Errorf("changes[%d].Changed is empty: the diff must say what the step changed", i)
+		}
 	}
 	// Kept is read off the node, not off a list in the step: every top-level key
 	// but version, including the block no release of this Fugaro models. That is
@@ -105,6 +112,14 @@ func TestMigrateV3ToV4PreservesHandEditedAllowList(t *testing.T) {
 	}
 	if changes[0].Note != "" {
 		t.Errorf("changes[0].Note = %q, want no further move for a node with no Bitbucket profile", changes[0].Note)
+	}
+	// The 4-to-5 step never carries a move, and it is the one step where that
+	// is a property of the step rather than of the node: what version 5 reads
+	// that a version-4 node cannot state — the binaries block — is absent by
+	// default, so a migrated node is one the reader enforces (it admits
+	// nothing) rather than one it refuses.
+	if changes[1].Note != "" {
+		t.Errorf("changes[1].Note = %q, want none: a node with no binaries block is a policy this Fugaro reads, and publishing a list is not a repair the migration owes", changes[1].Note)
 	}
 }
 
@@ -123,7 +138,7 @@ func TestMigrateV3ToV4EditsOnlyTheVersionBytes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Migrate = %v", err)
 	}
-	want := bytes.Replace(raw, []byte(`"version": 3`), []byte(`"version": 4`), 1)
+	want := bytes.Replace(raw, []byte(`"version": 3`), []byte(`"version": 5`), 1)
 	if !bytes.Equal(migrated, want) {
 		t.Errorf("the migrated node is not the node with its version rewritten:\n got %s\nwant %s", migrated, want)
 	}
@@ -162,7 +177,7 @@ func TestMigrateV3ToV4RoundTripsThroughTheStrictReader(t *testing.T) {
 	}
 	// The fixture with its version rewritten by hand is what "nothing but the
 	// version changed" means, and the strict reader is the judge of it.
-	hand := bytes.Replace(raw, []byte(`"version": 3`), []byte(`"version": 4`), 1)
+	hand := bytes.Replace(raw, []byte(`"version": 3`), []byte(`"version": 5`), 1)
 	want, found, err := Decode(hand)
 	if err != nil || !found {
 		t.Fatalf("the hand-rewritten fixture does not decode: (%v, %v)", found, err)
@@ -244,7 +259,7 @@ func TestMigrateRefusesAMalformedNodeUntouched(t *testing.T) {
 		{"a version that is not an integer", `{"version": "3"}`, 0},
 		{"a version written twice", `{"version": 3, "version": 3}`, 0},
 		{"a top-level key written twice", `{"version": 3, "allow_repos": [], "allow_repos": ["github/owner/repo-a"]}`, 0},
-		{"a migrated node the reader refuses", `{"version": 3, "allow_repos": ["nope"]}`, 1},
+		{"a migrated node the reader refuses", `{"version": 3, "allow_repos": ["nope"]}`, 2},
 	} {
 		raw := []byte(tc.raw)
 		migrated, changes, err := Migrate(raw)
@@ -271,8 +286,8 @@ func TestMigrateRefusesAMalformedNodeUntouched(t *testing.T) {
 // and not its own.
 func TestMigrateCurrentIsANoOp(t *testing.T) {
 	for _, raw := range [][]byte{
-		[]byte(`{"version":4,"budget":{"mode":"enforce"},"allow_repos":["github/owner/repo-a"]}`),
-		[]byte(`{"version":4,"allow_repos":["nope"]}`),
+		[]byte(`{"version":5,"budget":{"mode":"enforce"},"allow_repos":["github/owner/repo-a"]}`),
+		[]byte(`{"version":5,"allow_repos":["nope"]}`),
 	} {
 		migrated, changes, err := Migrate(raw)
 		if err != nil {
@@ -310,8 +325,8 @@ func TestMigrateReportsTheBitbucketRepublish(t *testing.T) {
 	if !bytes.Equal(migrated, raw) {
 		t.Errorf("Migrate returned %s, want the input untouched", migrated)
 	}
-	if len(changes) != 1 {
-		t.Fatalf("changes = %+v, want the step that was read, with the move that finishes it", changes)
+	if len(changes) != 2 {
+		t.Fatalf("changes = %+v, want the two steps that were read, with the move that finishes the job", changes)
 	}
 	if !strings.Contains(changes[0].Note, "republish to derive the Bitbucket block") {
 		t.Errorf("changes[0].Note = %q, want it to say republish to derive the Bitbucket block", changes[0].Note)
