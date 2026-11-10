@@ -196,8 +196,8 @@ func TestDocsProjectImageCatalogDesign(t *testing.T) {
 	plan := readDoc(t, planPath)
 	planSection := docSection(t, planPath, plan, "# Project image catalog: implementation plan")
 	projectImageCatalogMustContain(t, planSection, planPath, "fact", []string{
-		// Nothing is approved by being written down.
-		"**Nothing here is approved to build.**",
+		// The folder's current state, and where the table that keeps it lives.
+		"**Status as of 2026-11-10: done; see [docs/status.md](../status.md) for the current table.**",
 		"nothing is built until the owner approves the",
 		// A SEC task gets the independent review.
 		"A task marked **SEC** gets the owner's independent review in addition to the usual one.",
@@ -379,7 +379,7 @@ func TestDocsProjectImageCatalogDesign(t *testing.T) {
 	readmePath := dir + "/README.md"
 	readme := readDoc(t, readmePath)
 	projectImageCatalogMustContain(t, readme, readmePath, "fact", []string{
-		"**Status: design only; nothing here is approved and no code follows from this folder.**",
+		"**Status as of 2026-11-10: done; see [docs/status.md](../status.md) for the current table.**",
 		"**Release: the design is 0.16.0, the build is 0.17.0**",
 		"then cut 0.16.0's scope and moved it to 0.17.0.",
 		"**Answered by the owner, 2026-11-02** — seven decisions, each as the recommendation:",

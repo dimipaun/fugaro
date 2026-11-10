@@ -2304,3 +2304,125 @@ func TestNewPathsSeesANewFileThatLooksLikeARenameOfATrackedOne(t *testing.T) {
 		t.Fatalf("NewPaths = %q; want out.o listed although git sees a rename", got)
 	}
 }
+
+// TestPushURLs pins what a push from the checkout actually goes to, which is
+// what the runner holds a checkout's push URL to (checkBakedCheckoutOrigin):
+// the remote's pushurl entries when it has any, every one of them, and its
+// fetch URL when it has none — with insteadOf and pushInsteadOf applied, so the
+// URL returned is the one git opens at push time rather than the one written in
+// the config — and, besides those, what a push that names the origin URL itself
+// opens: git applies url.*.pushInsteadOf to a URL a push names, and a checkpoint
+// pushes by the URL (PushFastForward), which git's own read of the remote stops
+// answering for once the remote sets a pushurl.
+func TestPushURLs(t *testing.T) {
+	repo, remote := setup(t)
+	if got, err := repo.PushURLs(ctx, remote); err != nil || !slices.Equal(got, []string{remote}) {
+		t.Fatalf("PushURLs with no pushurl = %q, %v; want the fetch URL %q", got, err, remote)
+	}
+	testutil.Git(t, repo.Dir, "config", "remote.origin.pushurl", "https://github.com/evil/other.git")
+	testutil.Git(t, repo.Dir, "config", "--add", "remote.origin.pushurl", "https://github.com/evil/second.git")
+	if got, want := mustPushURLs(t, repo, remote), []string{"https://github.com/evil/other.git", "https://github.com/evil/second.git"}; !slices.Equal(got, want) {
+		t.Fatalf("PushURLs = %q, want %q", got, want)
+	}
+	// An empty pushurl is unset to git, not a push URL of its own.
+	testutil.Git(t, repo.Dir, "config", "--unset-all", "remote.origin.pushurl")
+	testutil.Git(t, repo.Dir, "config", "remote.origin.pushurl", "")
+	if got, err := repo.PushURLs(ctx, remote); err != nil || !slices.Equal(got, []string{remote}) {
+		t.Fatalf("PushURLs with an empty pushurl = %q, %v; want the fetch URL %q", got, err, remote)
+	}
+	// pushInsteadOf is the other way a checkout sends a push elsewhere, and git
+	// resolves it here: the fetch URL is this repository's and the push URL is
+	// not, which is the case the runner refuses.
+	testutil.Git(t, repo.Dir, "config", "--unset-all", "remote.origin.pushurl")
+	const app = "https://github.com/acme/app.git"
+	testutil.Git(t, repo.Dir, "remote", "set-url", "origin", app)
+	testutil.Git(t, repo.Dir, "config", "url.ssh://git@github.com/evil/.pushInsteadOf", "https://github.com/acme/")
+	if got, want := mustPushURLs(t, repo, app), []string{"ssh://git@github.com/evil/app.git"}; !slices.Equal(got, want) {
+		t.Fatalf("PushURLs with pushInsteadOf = %q, want %q", got, want)
+	}
+	// The pushurl is this repository's (its ssh spelling), so git's read admits
+	// it and stops there: the rewrite the URL-naming push meets is in the list
+	// only because it is resolved against the origin URL too, which is the hole
+	// this read closes for the runner.
+	testutil.Git(t, repo.Dir, "config", "remote.origin.pushurl", "git@github.com:acme/app.git")
+	if got, want := mustPushURLs(t, repo, app), []string{"git@github.com:acme/app.git", "ssh://git@github.com/evil/app.git"}; !slices.Equal(got, want) {
+		t.Fatalf("PushURLs with a pushurl and a pushInsteadOf rewrite = %q, want %q", got, want)
+	}
+	// Two rules can match, and the longest prefix wins — the longer rule is
+	// written first here, so the last rule in the configuration is the one git
+	// does not take — and git's own read of the same configuration, with the
+	// pushurl out of the way, answers with the same URL: the rewrite is git's
+	// rule and not a spelling of this function's.
+	testutil.Git(t, repo.Dir, "config", "--unset-all", "remote.origin.pushurl")
+	testutil.Git(t, repo.Dir, "config", "--unset-all", "url.ssh://git@github.com/evil/.pushInsteadOf")
+	testutil.Git(t, repo.Dir, "config", "url.https://github.com/second/app.pushInsteadOf", app)
+	testutil.Git(t, repo.Dir, "config", "url.ssh://git@github.com/evil/.pushInsteadOf", "https://github.com/acme/")
+	gitSays := testutil.Git(t, repo.Dir, "remote", "get-url", "--push", "--all", "origin")
+	if got := mustPushURLs(t, repo, app); !slices.Equal(got, []string{"https://github.com/second/app"}) || !slices.Equal(got, []string{gitSays}) {
+		t.Fatalf("PushURLs with two matching pushInsteadOf rules = %q, want the longest rule's base and git's own answer %q", got, gitSays)
+	}
+	// url.*.insteadOf is what a push that names a URL meets when no
+	// pushInsteadOf rule matches, and a second rule of that kind can match what
+	// the first one produced: git's read of the remote answers with the
+	// once-rewritten URL — and with the pushurl alone once the checkout sets
+	// one — while the push itself opens the twice-rewritten one (measured: git
+	// does not apply the rules again to a rule's own result, and the URL it is
+	// asked to push to is the one it rewrites). That second rule is the only
+	// thing that says where the run's commits would land, which is why the list
+	// has to carry what it produces.
+	testutil.Git(t, repo.Dir, "config", "--unset-all", "url.https://github.com/second/app.pushInsteadOf")
+	testutil.Git(t, repo.Dir, "config", "--unset-all", "url.ssh://git@github.com/evil/.pushInsteadOf")
+	testutil.Git(t, repo.Dir, "config", "url.https://github.com/mirror/.insteadOf", "https://github.com/acme/")
+	testutil.Git(t, repo.Dir, "config", "url.https://github.com/evil/.insteadOf", "https://github.com/mirror/")
+	testutil.Git(t, repo.Dir, "config", "remote.origin.pushurl", "git@github.com:acme/app.git")
+	once := testutil.Git(t, repo.Dir, "remote", "get-url", "origin")
+	if once != "https://github.com/mirror/app.git" {
+		t.Fatalf("git's own read of origin = %q, want the once-rewritten URL the guard is handed", once)
+	}
+	if got, want := mustPushURLs(t, repo, once), []string{"git@github.com:acme/app.git", "https://github.com/evil/app.git"}; !slices.Equal(got, want) {
+		t.Fatalf("PushURLs with a second insteadOf rule = %q, want %q", got, want)
+	}
+	// A push meets url.*.pushInsteadOf before url.*.insteadOf: with a rule of
+	// each kind matching the URL, git applies the pushInsteadOf one although the
+	// insteadOf rule's prefix is the longer of the two (measured: the push
+	// landed at the pushInsteadOf rule's base), and it does not apply the
+	// insteadOf rule to what that produced either.
+	testutil.Git(t, repo.Dir, "config", "--unset-all", "url.https://github.com/mirror/.insteadOf")
+	testutil.Git(t, repo.Dir, "config", "--unset-all", "url.https://github.com/evil/.insteadOf")
+	testutil.Git(t, repo.Dir, "config", "url.https://github.com/evil/other.git.insteadOf", app)
+	testutil.Git(t, repo.Dir, "config", "url.https://github.com/mirror/.pushInsteadOf", "https://github.com/acme/")
+	if got, want := mustPushURLs(t, repo, app), []string{"git@github.com:acme/app.git", "https://github.com/mirror/app.git"}; !slices.Equal(got, want) {
+		t.Fatalf("PushURLs with a rule of each kind = %q, want the pushInsteadOf rule's base %q", got, want)
+	}
+	// A remote can be *named* by the URL: a section [remote "<origin URL>"] is
+	// one, and git resolves the URL a push names to a remote by name, so a push
+	// that names it goes to that section's own push URL (measured: the push
+	// landed at the section's pushurl's repository) — which none of the reads
+	// above answers for, since the remote is not named "origin" and the section's
+	// push URL is not a rewrite of the URL. git's own answer for the URL read as
+	// a name is where the list has to carry it from.
+	testutil.Git(t, repo.Dir, "config", "--unset-all", "url.https://github.com/evil/other.git.insteadOf")
+	testutil.Git(t, repo.Dir, "config", "--unset-all", "url.https://github.com/mirror/.pushInsteadOf")
+	testutil.Git(t, repo.Dir, "config", "--unset-all", "remote.origin.pushurl")
+	testutil.Git(t, repo.Dir, "config", "remote."+app+".pushurl", "https://github.com/evil/app.git")
+	if got, want := mustPushURLs(t, repo, app), []string{app, "https://github.com/evil/app.git"}; !slices.Equal(got, want) {
+		t.Fatalf("PushURLs with a remote named by the URL = %q, want %q", got, want)
+	}
+	// The section's fetch URL is what such a push opens when it sets no pushurl
+	// (measured: the push landed at the section's url's repository), which is
+	// what --push answers with there.
+	testutil.Git(t, repo.Dir, "config", "--unset-all", "remote."+app+".pushurl")
+	testutil.Git(t, repo.Dir, "config", "remote."+app+".url", "https://github.com/evil/app.git")
+	if got, want := mustPushURLs(t, repo, app), []string{app, "https://github.com/evil/app.git"}; !slices.Equal(got, want) {
+		t.Fatalf("PushURLs with a remote named by the URL and no pushurl = %q, want %q", got, want)
+	}
+}
+
+func mustPushURLs(t *testing.T, repo *Repo, origin string) []string {
+	t.Helper()
+	urls, err := repo.PushURLs(ctx, origin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return urls
+}

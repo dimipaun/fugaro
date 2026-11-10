@@ -1,10 +1,11 @@
 # Pending workflow changes
 
-**Two files are pending: `console-windows.yml`** (the console's Windows
-installer pack, 2026-10-20 — a release-time job, not a pull-request check; see
-`## console-windows.yml` below) **and `images.yml`** (the images workflow with
+**One file is pending: `images.yml`** (the images workflow with
 the nightly's republish of an unchanged base skipped, 2026-11-05, issue #1745;
-see `## images.yml` — staged again below).
+see `## images.yml` — staged again below). The console's Windows installer pack,
+`console-windows.yml`, was copied in on **2026-11-10** and its staged copy
+removed; it was a release-time job rather than a pull-request check (see
+`## console-windows.yml` below, which is the record of that change).
 **Four further files here are not workflows at all: `website-promote-comments.md`, `mobile-release-comments.md`, `console-release-comments.md` and `console-linux-comments.md`** — comment-only corrections. The first three were staged on **2026-11-07**, for three workflow files whose comments still say a reviewer approves a release; the fourth on **2026-11-09**, for a comment of `.github/workflows/console-linux.yml` whose count of pinned Electron hashes went stale when the `win32-x64` hash landed. They are `.md` on purpose: they are not pending workflows, they are not enumerated as such by the docs tests or by `website/test/readme.mjs`, and neither count above moves. See `## The comment-only fragments` below.
 **Two other files stay staged here by design: `console-tests.yml` and `console-release.yml`.** Both were copied into `.github/workflows/` by the owner, and unlike every other file here their staged copies are kept, because their tests assert the copy under `.github/workflows/` is byte-identical to the staged one (see their sections below). Nothing else is pending: the shared package's test job, `shared-tests.yml` (mobile plan Task P4.3), was copied into `.github/workflows/` by the owner on 2026-10-22 (its staged copy is removed; see `## shared-tests.yml` below); Dependabot's watch over `console/`'s npm dependencies, `dependabot-console.yml`, was copied over `.github/dependabot.yml` on the owner's approval of 2026-10-23 (its staged copy is removed; see `## dependabot-console.yml` below); the mobile app's release workflow, `mobile-release.yml`, was copied into `.github/workflows/` on the owner's approval of 2026-10-23 (its staged copy is removed; see `## mobile-release.yml` below); the website's two manual deploy workflows, `website-preview.yml` and `website-promote.yml` (#566), were copied into `.github/workflows/` by the owner (their staged copies are removed); `ci.yml` was copied in on 2026-10-17 (#504, staged copy removed in #508); and `images.yml` was copied in and its staged copy removed in `6b57ba9`, staged again by C1.14 for the credentials service's image leg, and that copy was applied and removed on 2026-10-30 (see `## images.yml` below). A future workflow change that a run needs is staged here as the real file plus the change, and the owner copies it in.
 
@@ -22,7 +23,7 @@ see `## images.yml` — staged again below).
 - **`dependabot-console.yml`** — **applied on 2026-10-23, not pending** (copied over `.github/dependabot.yml` and its staged copy removed; what follows is the record). **Dependabot's watch over the console's npm dependencies**, staged on 2026-10-23 on the owner's ruling of 2026-10-22. It is **not a workflow and not a file of its own**: it is the whole of `.github/dependabot.yml` as it should read once the console is watched -- the `github-actions` entry that runs today, unchanged, plus one `npm` entry for `/console`, weekly and **grouped** so that minor and patch bumps arrive as one pull request a week (a major, Electron's included, stays outside the group and arrives on its own for a deliberate look). **A staging file is not strictly forced here** -- `.github/dependabot.yml` is not under `.github/workflows/`, so an agent run may write it -- which is exactly why this plan stages it: `docs/plans/2026-10-15-desktop-console.md`'s open item 5 reserved the decision for the owner, and the ruling of 2026-10-22 is "stage it, with the copy-in step, and let them apply it". See `## dependabot-console.yml` below for the copy-in commands and for the two sentences that copy-in has to update.
 - **`images.yml` — applied on 2026-10-30, not pending** (copied into `.github/workflows/` and its staged copy removed; what follows is the record). The staged copy was the running `.github/workflows/images.yml` plus the credentials service's image leg (credentials-service plan, task **C1.14**): the `credentials` job that builds `images/credentials/Dockerfile`, smoke-tests it, holds it to a size budget and secret-scans it on every run, the `credentials` kind in the `version` job's list, the `publish-credentials` job that publishes it and gives it the same signed `<version>-pinned` tag the base has (which `fugaro update`'s credentials stage resolves and verifies), and the `credentials` image in `verify-public`'s pull-back loop. Staged by a Fugaro run that cannot push a `.github/workflows/**` change; see `## images.yml` below for the diff, the one command that applies it and the steps that have to go with it. **The two earlier `images.yml` changes are records, not requests:** the signing of the pushed base image by its OCI digest (cosign, keyless) and the nightly-immune `<version>-pinned` tag (plan Task 1 of `docs/plans/2026-10-13-retire-image-mirror.md`) was copied in and `git rm`'d from here in `6b57ba9`, and the 0.7.0 hard cut (`838e0b0`) before it.
 
-**`console-tests.yml`** — the desktop console's own tests in CI, staged by Task 1.4 of `docs/plans/2026-10-15-desktop-console.md` and applied by the owner as Task 1.5. **It holds no secret of any kind**, it runs unconditionally on every pull request and every push to `main`, and unlike `images.yml` **its staged copy is kept after the copy-in** (`TestConsoleTestsWorkflowIsStagedAndPinned` asserts the two files are byte-identical from then on): see `## console-tests.yml` below.
+**`console-tests.yml`** — the desktop console's own tests in CI, staged by Task 1.4 of `docs/plans/2026-10-15-desktop-console.md` and applied by the owner as Task 1.5. **It holds no secret of any kind**, its only trigger is `workflow_dispatch` — it ran on every pull request and every push to `main` until the owner's ruling of 2026-11-07 moved every workflow that ran on push to a hand dispatch (`e5d6ba7c`, #1960) — and unlike `images.yml` **its staged copy is kept after the copy-in** (`TestConsoleTestsWorkflowIsStagedAndPinned` asserts the two files are byte-identical from then on): see `## console-tests.yml` below.
 
 **`console-release.yml`** — the desktop console's signing, notarisation and stapling pipeline, staged by Task 4.2 of the same plan and applied by the owner as Task 4.5, together with the protected GitHub environment its secrets live in. **It is a separate file from the tests workflow on purpose, and the split is a security boundary rather than tidiness**: this job reads the Apple signing certificate and the App Store Connect key, and a branch of this repository can open a pull request, so a job holding that material must never sit in a file that runs on every pull request. Its staged copy is kept after the copy-in too: see `## console-release.yml` below.
 
@@ -249,8 +250,11 @@ the end-to-end pass under `xvfb-run`: `actions/setup-node` with the version read
 from `console/package.json`'s `engines.node`, `npm ci --ignore-scripts
 --no-audit --no-fund`, `npm run test:unit` and `npm run test:e2e` (which builds
 the app first and passes on a tree with no spec). **It holds no secret at all**,
-and its triggers are `pull_request` and `push` to `main` **with no `paths:`
-filter and no job-level `if:`** — and that is a correctness requirement rather
+and its only trigger is `workflow_dispatch` — it ran on every pull request and
+every push to `main` until the owner's ruling of 2026-11-07 moved the workflows
+that ran on push to a hand dispatch (`e5d6ba7c`, #1960; the `pull_request`
+trigger went with the push one) — **with no `paths:` filter and no job-level
+`if:`** — and that is a correctness requirement rather
 than taste. **Task 4.6 (#600) added the job's two matrix legs to
 `scripts/release-gate.sh`'s `names` array** — `console (ubuntu-latest)` and
 `console (macos-latest)`, the names GitHub gives each leg's check run — so the
@@ -260,8 +264,8 @@ skipped is not a success**, so a `console` job filtered to `console/**` would
 then refuse **every** release tag in this repository, including the releases that
 never touch the console (plan Task 4.6, design section 9.4). The signing,
 notarising and stapling job and the Apple material it reads are Task 4.2's
-**separate** `console-release.yml`, precisely so that this file — which runs on
-every pull request from any branch — never sits next to them.
+**separate** `console-release.yml`, precisely so that this file — which anyone
+with write access can dispatch — never sits next to them.
 
 The owner applies it with one command, from the repository root:
 
@@ -1310,6 +1314,20 @@ the directory in both directions, and the site's paragraph by
 
 ## `console-windows.yml`
 
+**Status: `console-windows.yml` is applied, not pending.** The copy-in below was
+run on **2026-11-10** and the staged copy removed, so
+`.github/workflows/console-windows.yml` is the file that runs and this section is
+its record. **The job has still never run**: no host has carried a `--win` pack
+to an artifact, which is why [docs/release.md](../release.md)'s "Before you tag"
+checklist tells the owner to dispatch it by hand before a tag. Every `console/`
+edit the job's own header once waited on has landed (the three are named below);
+the header says so first. **This line is rewritten by the copy-in as well**:
+`TestWindowsConsoleStagingTellsTheOwnerWhatToCopyWhere` reads it against the
+tree in both directions — `staged and pending` while the staged copy is here,
+`applied, not pending` once the copy-in has removed it — the way the two
+sentences that count what this directory holds are counted against it by
+`TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere`.
+
 The desktop console's **Windows pack**, staged on **2026-10-20** by the run that
 planned the console's Windows build, and re-cut the same day for the owner's
 answer to that plan's decision **D7**. The owner's ruling of that date is what it
@@ -1350,8 +1368,9 @@ has. The job's artifact is kept for **90 days** rather than `console-linux.yml`'
 seven, so that it is still there for the release it was dispatched for.
 
 **It is not build-only, and that is why it is worth a runner at all.**
-`console-linux.yml` proves the packaging path on every pull request; this job's
-subject is that the console has never *run* on Windows, so it typechecks and runs
+`console-linux.yml` proves the packaging path on a dispatch, without running the
+console's own tests; this job's subject is that the console has never *run* on
+Windows, so it typechecks and runs
 the unit suite before it packs — **and with the pack moved to release time, this
 is the only place that suite ever runs on Windows**, which is what makes the
 POSIX repairs below worth doing. The e2e suite is not run here — it drives the
@@ -1397,18 +1416,29 @@ it in.** Staging it now is the point of this directory — the file is reviewabl
 while it is still a proposal, and the header's first paragraph says the same
 thing to whoever opens the file rather than this page.
 
-**Why it is its own workflow rather than a second job in `console-tests.yml`.**
-Exactly `console-linux.yml`'s reason, which is a test rather than a taste: **the
-release gate's required-check list is derived from `console-tests.yml`'s job
-set.** `TestReleaseGateRequiresTheConsoleCheck`
+**Why it is its own workflow rather than a second job in `console-tests.yml`,
+or a third leg of that job's matrix.** Exactly `console-linux.yml`'s reason,
+which is a test rather than a taste: **the release gate's required-check list is
+derived from `console-tests.yml`'s job set.** `TestReleaseGateRequiresTheConsoleCheck`
 (`internal/cli/docs_desktop_console_test.go`) reads that workflow and asserts
 that `scripts/release-gate.sh`'s `names=(...)` array is exactly the check names
 it reports plus `test`, `terraform` and `rules` — and `deriveConsoleCheckNames`
 **refuses a workflow with more than one job** ("this test cannot tell which of
 several jobs that is"). A second job there would therefore not be a packaging
-change at all: it would change which checks gate a release tag. The release-time
-trigger is a second, independent reason: a job that must not run on a pull
-request does not belong in the file that runs on every one.
+change at all: it would change which checks gate a release tag. **Folding it in
+as a third matrix leg is the option D8 refused**, on the two grounds D8(c)
+gives: the matrix is the *same job* on two runners, so a third leg
+would be a third runner running the *tests* and not the packer — a different job
+with a different artifact — and it would make the derivation read a
+multi-platform job whose name GitHub spells `console (windows-latest)`, which is
+a gate change by the back door (reconciliation
+[docs/console-windows/reconciliation.md](../console-windows/reconciliation.md)
+D8(c), refused). The release-time
+trigger is a separate thing rather than a second reason: this job must never run
+on a pull request (D7(c)), and that is a property of the pack job rather than a
+difference from `console-tests.yml`, whose own only trigger is `workflow_dispatch`
+today (the owner's ruling of 2026-11-07 moved every workflow that ran on push to
+a hand dispatch).
 
 **This job is deliberately NOT in the gate**, and that is a recorded decision
 rather than an oversight: a red Windows pack is information, not a blocked
@@ -1453,11 +1483,18 @@ git rm docs/pending-workflows/console-windows.yml
 git commit -m "console: pack the Windows installer at release time"
 ```
 
-**Two follow-up edits belong in that commit** — the last section of
+**Three follow-up edits belong in that commit** — the last section of
 `website/README.md` (which `website/test/readme.mjs` reads in both directions,
-count and names) and **this README's own opening line** (which
+count and names), **this README's own opening line** (which
 `TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere` holds to the same
-directory). **The pair of fenced blocks under `## console-release-linux.yml`
+directory), and **this section's own status line**, which becomes
+`**Status: `console-windows.yml` is applied, not pending.**`:
+`TestWindowsConsoleStagingTellsTheOwnerWhatToCopyWhere` reads that line against
+the tree in both directions, so a section still opening with "staged and
+pending" once the staged copy is gone is red, and the owner who leaves it out
+of the commit is the one who finds out.
+
+**The pair of fenced blocks under `## console-release-linux.yml`
 above is *not* this commit's**: those are read by
 `TestStagedLinuxFilesSurviveTheCopyIn`, which splices them into a copy of the tree
 with the **Linux** copy-in applied, so they describe *that* state — `shared-tests.yml`
@@ -2978,7 +3015,7 @@ Copied in on 2026-10-17 (#504): `.github/workflows/ci.yml`'s `terraform` job now
 
 Re-staging `ci.yml` therefore means rewriting both guards (and the plan text the first one quotes) in a change about a test timeout, which is the owner's call, not a run's. The owner can apply the change above by hand, or stage the file properly when they next copy a workflow file in and rewrite those two guards in the same change. `CONTRIBUTING.md` and `docs/dogfooding.md` name the same bound for the local case, so the package is run with it either way. **`internal/cli/docs_runner_timeout_test.go` holds this section, those two sentences and `.github/workflows/ci.yml` to one another in both directions**: it reads whether CI gives `internal/runner` a bound of its own out of the workflow, and fails whichever way the two disagree — the documents still calling the change outstanding once CI carries it, or claiming CI carries it while the workflow does not — so applying the change without these three documents is what goes red, and so is editing them without applying it. It also checks, while CI carries the bound, that the job's cap is above it, which is the way this change goes wrong silently: the step's `-timeout` under a job that dies first.
 
-**Applied on 2026-10-30, not outstanding: a second change to `ci.yml`, written in this section rather than staged for the reason above (the review of #1338), was copied in by the coordinator on the owner's word, and the `terraform` job's last step now runs `./internal/infra/... ./deploy/terraform/...`; what follows is the record.** The `terraform` job's last step runs `go test -tags terraform ./internal/infra/...`, and no job in `.github/workflows/` runs `./deploy/terraform/...` under any tag: the `test` job's `go test ./...` reaches the package **untagged** — that is `terraform_test.go` and `secret_readers_test.go` — while the two tests in `deploy/terraform/proxied_git_test.go`, the proxied-git flip list's (B1.8, D500, G9), carry `//go:build terraform`, so CI **type-checks** them — the `vet` job runs `go vet -tags terraform ./...` (.github/workflows/ci.yml:61) precisely to keep the tagged tests from rotting — but no step *runs* them. The review of #1338 asked for the step to name both trees.
+**Applied on 2026-10-30, not outstanding: a second change to `ci.yml`, written in this section rather than staged for the reason above (the review of #1338), was copied in by the coordinator on the owner's word, and the `terraform` job's last step now runs `./internal/infra/... ./deploy/terraform/...`; what follows is the record.** The `terraform` job's last step runs `go test -tags terraform ./internal/infra/...`, and no job in `.github/workflows/` runs `./deploy/terraform/...` under any tag: the `test` job's `go test ./...` reaches the package **untagged** — that is `terraform_test.go` and `secret_readers_test.go` — while the two tests in `deploy/terraform/proxied_git_test.go`, the proxied-git flip list's (B1.8, D500, G9), carry `//go:build terraform`, so CI **type-checks** them — the `vet` job runs `go vet -tags terraform ./...` (.github/workflows/ci.yml:60) precisely to keep the tagged tests from rotting — but no step *runs* them. The review of #1338 asked for the step to name both trees.
 
 **What the owner changes**, in that job's last step — one line, `run:` only:
 
@@ -2995,6 +3032,33 @@ The comment above it ("The tf wrapper's tests against a real terraform binary.")
 The third is the wall rather than the first two: **any** new staged workflow file has to be named in `website/README.md`. Nothing in the tree forbids editing that file — `.claude/rules/website.md` governs the edits it does allow (`npm run check`, never deploy) rather than barring them — so this one is a constraint of the run and not of the repository: the brief a 0.14.0 run works under lists `website/**` among the paths it may not touch. A run not under that brief can stage this file normally; under it, the owner applies the line above by hand, and nothing they have to do differs either way.
 
 **Everything that has to move with it if it is staged later.** The copy is `cp docs/pending-workflows/ci.yml .github/workflows/ci.yml` followed by a `git rm` of the staged copy, **re-based on the live `.github/workflows/ci.yml` first** — a staged copy is a snapshot, and copying a stale one in silently reverts every edit main made to `ci.yml` since it was staged. The two guards above and `docs/plans/2026-10-19-compute-backend.md`'s Global Constraint 3 have to be rewritten in that commit, and this document's opening line and `website/README.md`'s last paragraph because the file is staged at all. `CONTRIBUTING.md:25` and `:32` — read at those line numbers by `internal/cli/docs_contributing_cla_test.go` — are not moved by the staging itself, which leaves them green; they go false when the file is copied in, so they belong in the same commit. The other half of this section, the `internal/runner` bound above, is the same shape and can go in the same commit.
+
+**The change outstanding now, a third one: the key service's Terraform never runs in CI (2026-11-09, S3.5).** `ee/keyservice/terraform/` holds the key service's two roots — the key ring with the licence-signing keys and the signer role, and the intake/minter pair with their identities — and its suite is `ee/keyservice/terraform/infra_test.go`, a `//go:build terraform` file. No job runs it. The `test` job's `go vet -tags terraform ./...` (.github/workflows/ci.yml:60) **type-checks** it, so it cannot rot into not compiling, and its own `go test -race ./...` is untagged, so it compiles the package to no test at all; the `terraform` job's `terraform fmt -check -recursive deploy/terraform` covers the other tree, its root loop covers the four roots under `deploy/terraform/gcp/roots/`, and its last step names `./internal/infra/... ./deploy/terraform/...`. So a push to main can widen the signer role, hand the signer grant to another account or flip the minter's `invoker_iam_disabled` with every check green — the suite that refuses each of those is simply never invoked. **Written in this section rather than staged as a copy of the file**, for the reason the two changes above give: `TestDocsComputeBackendCIReachMatchesTheTree` fails while `docs/pending-workflows/ci.yml` exists at all, and `TestStagedCIWorkflowIsTheRealOnePlusTheComputeRoot` holds a staged copy to one differing line — both were re-verified red on 2026-11-09 by staging the file with exactly the change below and running the two tests, then removing it.
+
+**What the owner changes**, in the `terraform` job: a format step of its own, so the existing line stays as it reads, a second root loop, and one more package on the last step's command.
+
+    - run: terraform fmt -check -recursive ee/keyservice/terraform
+
+    # The key service's roots: a project the owner applies with their own
+    # credentials, never an installation (§3.4 of the design). No `terraform
+    # test` step of its own — this tree carries no .tftest.hcl, its suite is
+    # the Go file the last step runs. The data directory stays outside the
+    # tree for a second reason here: the licence-notice tests walk ee/, and a
+    # provider directory under it would land in that walk.
+    - name: validate the key service's roots
+      run: |
+        for r in keyring services; do
+          [ -d "ee/keyservice/terraform/$r" ] || { echo "no Terraform root $r" >&2; exit 1; }
+          export TF_DATA_DIR="$RUNNER_TEMP/tf-ks-$r"
+          terraform -chdir=ee/keyservice/terraform/$r init -backend=false -lockfile=readonly -input=false
+          terraform -chdir=ee/keyservice/terraform/$r validate
+        done
+
+    - run: go test -tags terraform ./internal/infra/... ./deploy/terraform/... ./ee/keyservice/...
+
+The first line is the one step that needs nothing but the binary; it goes beside the `deploy/terraform` format step rather than widening it, so a failure names the tree that drifted. The `-chdir` form is the one the `deploy/terraform` loop uses in its own shape, and `-lockfile=readonly` is what makes the two committed `.terraform.lock.hcl` files the ones init uses — without it a provider update would be absorbed on a runner and never seen. `tflint` and `deploy/terraform/scan.sh` are scoped to `deploy/terraform` and this change does not extend them: the key service's tree is linted by nothing, which is a gap this section records rather than closes.
+
+**The command is verified green**, on the run that wrote this (2026-11-09): `terraform fmt -check -recursive ee/keyservice/terraform` prints nothing, `terraform -chdir=ee/keyservice/terraform/{keyring,services} init -backend=false -lockfile=readonly -input=false` and `validate` both succeed with terraform 1.16.4 and no credentials, and `GOFLAGS=-p=2 go test -tags terraform ./ee/keyservice/... -count=1` passes. Until it is applied, the suite runs where the plan's command runs it — a contributor's own machine, with the tag — and nowhere else.
 
 ## `core-without-ee.yml`
 

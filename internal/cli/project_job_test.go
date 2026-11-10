@@ -1679,6 +1679,228 @@ func TestProjectJobSentinelRefusedOnAPerRepositoryJob(t *testing.T) {
 	}
 }
 
+// projectJobProviderKeyProfile is the profiles block of a project whose
+// standard profile serves the account axis's SECOND non-account value: the
+// project's provider key (config.ProviderKeyAccount, docs/api-key-review's
+// AK6a). A profile that lists it deploys one more job — the account segment of
+// its name is the value itself and nothing is mounted on it — and that job's
+// review-only variant is the pairing a review served by the provider key runs
+// in. The list is exact, as a profile that names accounts must write it (D3).
+const projectJobProviderKeyProfile = "profiles: { standard: { provider: github, cpu: 2, memory: 4Gi, timeout_class: 6h, allow_repos: [github/acme/app], claude_accounts: [" + config.ProviderKeyAccount + "] } }\n"
+
+// projectJobProviderKeyPolicy is the node that project publishes: the profile
+// above, and the accounts block entry the provider key must have for any of
+// this to be reachable (credsvc's admittedAccounts intersects a repository's
+// admission with accounts.<name>.allow_repos). It carries no entry for the
+// sentinel: the two values are two credentials, and a node that keyed one of
+// them by the other's name would admit a repository to a key its job is not
+// the one for.
+const projectJobProviderKeyPolicy = `{"version":4,"allow_repos":["github/acme/*"],` +
+	`"profiles":{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h",` +
+	`"allow_repos":["github/acme/app"],"claude_accounts":["` + config.ProviderKeyAccount + `"]}},` +
+	`"accounts":{"` + config.ProviderKeyAccount + `":{"allow_repos":["github/acme/app"]}}}`
+
+// newProjectJobProviderKeyFixture is newProjectJobSentinelFixture's shape for
+// the other non-account value: the standard profile rewritten to list the
+// provider key, that policy published, and the job the installation would have
+// deployed for it registered in the fake.
+func newProjectJobProviderKeyFixture(t *testing.T) *projectJobFixture {
+	t.Helper()
+	f := newProjectJobFixture(t)
+	rewriteProfileLine(t, f.cloudFixture, projectJobProviderKeyProfile)
+	publishPolicy(t, f.launchBudgetFixture, projectJobProviderKeyPolicy)
+	job := gcp.ProjectJobName("standard", "github", config.ProviderKeyAccount)
+	f.run.AddProjectJob(job, "standard", "github", config.ProviderKeyAccount, "2", "4Gi")
+	f.run.SetJobTimeout(job, projectJobTimeout+backend.TaskTimeoutSlack)
+	return f
+}
+
+// TestProviderKeyGetsItsOwnValueOnTheAccountAxis is AK6a's red step, and the
+// whole of what a second axis value buys (docs/cloud-senior-review §6.7's
+// CSR17, the reading the reconciliation of 2026-11-09 kept): the profile's
+// provider key is a value of the account axis of its OWN, so
+//
+//   - a policy that publishes it derives an accounts entry keyed by it
+//     (projectpolicy.DeriveAccounts) and by nothing beside it — the axis value
+//     is the admission unit, so one value for two credentials would leave a
+//     repository admitted to a key its job is not the one for;
+//   - the deployer builds the profile's job for it and that job's review-only
+//     variant (internal/infra's ProjectJobs and ProjectReviewJobs), mounting
+//     nothing on either (the credential is the credentials service's, AK6b);
+//   - the launcher resolves that job — and the variant of it — when the run's
+//     own credential is the value.
+//
+// Mutation (run, restore): let the provider key ride config.AnthropicKeyAccount
+// (the loser's reading, §1) — the derive answers one entry where the profile
+// named the other value, and the assertion that the sentinel is absent from the
+// block goes red.
+func TestProviderKeyGetsItsOwnValueOnTheAccountAxis(t *testing.T) {
+	f := newProjectJobProviderKeyFixture(t)
+	addRepoAppIDToFixture(t, f.cloudFixture)
+	lc, err := localcfg.Parse([]byte(readFileString(t, os.Getenv("FUGARO_CONFIG"))))
+	if err != nil {
+		t.Fatalf("the fixture's local config does not parse: %v", err)
+	}
+	profiles := map[string]projectpolicy.Profile{}
+	for name, pr := range lc.Profiles {
+		profiles[name] = projectpolicy.Profile{JobProfile: pr}
+	}
+	accounts, err := projectpolicy.DeriveAccounts(profiles, lc.ClaudeAccounts, lc.ProjectSecrets)
+	if err != nil {
+		t.Fatalf("a profile naming the provider key derived no block: %v", err)
+	}
+	entry, ok := accounts[config.ProviderKeyAccount]
+	if !ok {
+		t.Fatalf("the derived accounts block = %v, want an entry keyed by %s: the value is the admission unit the credentials service intersects a repository's child with", accounts, config.ProviderKeyAccount)
+	}
+	if want := []string{"github/acme/app"}; !slices.Equal(entry.AllowRepos, want) {
+		t.Errorf("accounts.%s.allow_repos = %v, want %v (the naming profile's own list)", config.ProviderKeyAccount, entry.AllowRepos, want)
+	}
+	if _, sentinel := accounts[config.AnthropicKeyAccount]; sentinel {
+		t.Errorf("the derived block carries %s as well as %s: one axis value for two credentials is one repository admitted to a key its job is not the one for", config.AnthropicKeyAccount, config.ProviderKeyAccount)
+	}
+
+	coding, err := infra.ProjectJobs(lc, lc.RunsBucket, false)
+	if err != nil {
+		t.Fatalf("the installation's coding jobs: %v", err)
+	}
+	variants, err := infra.ProjectReviewJobs(lc, lc.RunsBucket, false)
+	if err != nil {
+		t.Fatalf("the installation's review variants: %v", err)
+	}
+	job := gcp.ProjectJobName("standard", "github", config.ProviderKeyAccount)
+	c, ok := coding[job]
+	if !ok {
+		t.Fatalf("the installation deploys no job %s (%v): the launcher would ask Cloud Run for a name nothing deployed", job, slices.Sorted(maps.Keys(coding)))
+	}
+	if c.Account != config.ProviderKeyAccount {
+		t.Errorf("the deployed job %s carries the account %q, want %q", job, c.Account, config.ProviderKeyAccount)
+	}
+	if _, mounted := c.SecretEnv[config.ReservedSecrets[config.ClaudeOAuthToken]]; mounted {
+		t.Errorf("the provider key's job mounts %s: the value names a credential of the credentials service's, so there is no token of its own to mount", config.ReservedSecrets[config.ClaudeOAuthToken])
+	}
+	variantName := credsvc.ReviewJobName("standard", "github", infra.ReviewVariantAccount(config.ProviderKeyAccount))
+	v, ok := variants[variantName]
+	if !ok {
+		t.Fatalf("the installation deploys no review variant %s (%v): the class serves its calls from that job alone", variantName, slices.Sorted(maps.Keys(variants)))
+	}
+	if v.Account != config.ProviderKeyAccount || len(v.SecretEnv) != 0 {
+		t.Errorf("the review variant %s = account %q, mounts %v, want the provider key's account and no mount", variantName, v.Account, v.SecretEnv)
+	}
+
+	// The launcher: the value is placed on the job the deployer built for it,
+	// and the review entry is that job's variant — the one the installation
+	// deployed a moment ago.
+	p, found, err := projectpolicy.Decode([]byte(projectJobProviderKeyPolicy))
+	if err != nil || !found {
+		t.Fatalf("the test's own policy document is not one Decode accepts: %v", err)
+	}
+	pr := p.Profiles["standard"]
+	account, err := projectJobAccountFor(p, "standard", pr, "api-key", config.ProviderKeyAccount, "github", "acme/app")
+	if err != nil {
+		t.Fatalf("an api-key launch naming the provider key, which the profile serves: %v", err)
+	}
+	if account != config.ProviderKeyAccount {
+		t.Fatalf("the launch's account axis = %q, want %q", account, config.ProviderKeyAccount)
+	}
+	rv := projectJobReviewFor("standard", "github", account, projectJobTimeout+backend.TaskTimeoutSlack)
+	if rv.Name != variantName {
+		t.Fatalf("the review entry of the provider key's job resolves %s, want %s", rv.Name, variantName)
+	}
+
+	// And the runner's half: the job's name resolves back to the value over the
+	// published policy, which is the name its pairing test compares the task's
+	// own oauth_token against.
+	profile, provider, back, ok := runner.ProjectJobOfPolicy(p, job)
+	if !ok || profile != "standard" || provider != "github" || back != config.ProviderKeyAccount {
+		t.Errorf("ProjectJobOfPolicy(%s) = (%s, %s, %q, %v), want (standard, github, %q, true)", job, profile, provider, back, ok, config.ProviderKeyAccount)
+	}
+}
+
+// TestProviderKeyIsNotAClaudeAccount is the same value's three doors, in AK5's
+// own three directions (docs/api-key-review AK6a's Interfaces): the value is
+// admissible at the account flag `--token` and by inheritance from a launch
+// that used one, refused in a repository's own fugaro.yaml, and refused as a
+// stage account. No door opens wider than the sentinel's: a stage's account is
+// a token the job's environment already carries, and this value's job carries
+// nothing.
+//
+// Mutation (run, restore): admit the value as a *stage* account — which mounts
+// a token the job has none of, and hands a coding run the review's credential —
+// and the stage direction goes red; drop claudeAccountAllowed's arm and the
+// --token direction is refused for a claude_accounts entry that cannot exist.
+func TestProviderKeyIsNotAClaudeAccount(t *testing.T) {
+	t.Run("admissible at the account flag", func(t *testing.T) {
+		f := newProjectJobProviderKeyFixture(t)
+		isolateCache(t)
+		projectJobCheckout(t) // the repository's own fugaro.yaml: agent.auth: api-key
+
+		const run = "20261109-120000-aaaa"
+		if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", run, "--token", config.ProviderKeyAccount, "Add a feature"); err != nil {
+			t.Fatalf("an api-key launch naming the provider key, which the profile serves: %v", err)
+		}
+		profile, provider, account := launchedProjectJob(t, f.cloudFixture)
+		if profile != "standard" || provider != "github" || account != config.ProviderKeyAccount {
+			t.Errorf("the launch ran the project job of (%s, %s, %q), want (standard, github, %q)", profile, provider, account, config.ProviderKeyAccount)
+		}
+		if got := readSpec(t, f.cloudFixture, run).OAuthToken; got != config.ProviderKeyAccount {
+			t.Errorf("the run's own account in task.json = %q, want %q: the runner pairs a review by the task's own oauth_token and the job's account segment together", got, config.ProviderKeyAccount)
+		}
+	})
+	t.Run("refused for every other agent.auth", func(t *testing.T) {
+		for i, auth := range config.AgentAuths {
+			if auth == "api-key" {
+				continue // the one auth it is admitted under, asserted above
+			}
+			f := newProjectJobProviderKeyFixture(t)
+			isolateCache(t)
+			projectJobCheckoutYAML(t, projectJobRefRepoYAML(auth))
+			run := fmt.Sprintf("20261109-1210%02d-%04d", i, i)
+			_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", run, "--token", config.ProviderKeyAccount, "Add a feature")
+			if err == nil {
+				t.Fatalf("a %s launch naming the provider key was admitted", auth)
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Errorf("a %s launch naming the provider key: %v, want a refusal", auth, err)
+			}
+			if len(f.run.Executions()) != 0 || len(f.run.RunRequests()) != 0 {
+				t.Errorf("the refused %s launch reached Cloud Run", auth)
+			}
+			if tok := readToken(t, f.cloudFixture, run); tok != "" {
+				t.Errorf("the refused %s launch minted a budget token: %s", auth, tok)
+			}
+		}
+	})
+	t.Run("refused in a repository's own fugaro.yaml", func(t *testing.T) {
+		const base = "version: 1\nproject: example\ngit: { provider: github, base_branch: main }\nagent:\n  auth: api-key\n" +
+			"  oauth_token: " + config.ProviderKeyAccount + "\n" +
+			"workflows:\n  app: { commands: { build: go build ./..., test: go test ./... } }\n"
+		_, ps := config.Parse([]byte(base))
+		if len(ps) != 1 || ps[0].Path != "agent.oauth_token" || !strings.Contains(ps[0].Message, "must be a Claude account name") {
+			t.Fatalf("a repository naming the provider key in its own file: %v, want one refusal at agent.oauth_token's shape rule", ps)
+		}
+	})
+	t.Run("refused as a stage account", func(t *testing.T) {
+		f := newProjectJobFixture(t)
+		f.appendConfig(t, "stages:\n  review:\n    claude_account: "+config.ProviderKeyAccount+"\n")
+		_, err := localcfg.Parse([]byte(readFileString(t, os.Getenv("FUGARO_CONFIG"))))
+		if err == nil {
+			t.Fatalf("a config naming the provider key as a stage's account was accepted: no job mounts it as a Claude account")
+		}
+		for _, banned := range []string{"claude_accounts", "allow_data_to"} {
+			if strings.Contains(err.Error(), banned) {
+				t.Errorf("the refusal names %q: %v — the account lookup's sentence prescribes an entry config.ValidateClaudeAccounts refuses, so it is a remedy nobody can carry out", banned, err)
+			}
+		}
+		// The value itself is not echoed: it is a file's own text, and the
+		// loader's sentences never print one (config.ValidClaudeAccountRef's own
+		// rule). What the refusal must say is the move that works.
+		if !strings.Contains(err.Error(), "drop the key") {
+			t.Errorf("the refusal does not name the move that works (dropping the key): %v", err)
+		}
+	})
+}
+
 // projectJobReservedTokenPolicy is the node an owner can write by hand (the
 // node is theirs), with the standard profile mounting the reserved
 // claude-oauth-token. The account segment of the job that profile names is the

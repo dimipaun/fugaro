@@ -1,6 +1,6 @@
 # Show resolved issues on `fugaro update`: implementation plan
 
-**Status: plan only; nothing is implemented; no task is approved.** Each task below needs the owner's explicit go, by name; answering a decision approved none. This plan builds [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md) (which wins).
+**Status as of 2026-11-10: in progress, 3/8 merged; see [docs/status.md](../status.md) for the current table.** Each task below needs the owner's explicit go, by name; answering a decision approved none. This plan builds [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md) (which wins).
 
 **Owner answers that shaped it (2026-11-08):** D1750 upper-bound sweep (recommended); D1751 GitHub API only (recommended); D1752 `dismissed` plus `closed_as` (recommended); D1753 the milestone for an issue with no closing commit (not the recommendation); D1754 versions saved by update, not timestamps (not the recommendation); D1755 the retry command from the local file, else the shared record (not the recommendation); D1756 milestone only, no commit-to-tag mapping (recommended); D1757 record `{release, previous_release}` and sweep all at or below Y (recommended). The owner's note: update also fills in `resolved_in` (its value is the milestone, reconciliation F4).
 

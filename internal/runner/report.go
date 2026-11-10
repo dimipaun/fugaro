@@ -257,6 +257,13 @@ func rigorLine(rg *runstore.RigorRecord) string {
 // what was tolerated only where the round was let through whole (prflow.go
 // toleratedPart): a table over that half would claim a decision Decide never
 // made, and it is the round's own count printed above it that a reader goes by.
+//
+// A record carrying an accepted block (the owner's ruling of 2026-11-08) gets
+// the same table under "#### Accepted at the stop" and a line naming the mode
+// and the half of the stop rule that ended the run's review: the entries are
+// the ones the stop accepted, the tolerated block beside them holding the same
+// ones, and the heading and the line are what keep a reader from taking
+// findings a stop left for findings a review waved through.
 // ownerSection is the report's Waiting-on-you list (OD1): the findings the
 // run's review left that only the repository's owner can settle, one line per
 // decision — the file the reviewer named and its own sentence — so the report
@@ -302,11 +309,34 @@ func toleratedSection(rec *runstore.Record) string {
 	// blocked on the rest. The comparison is against the record's own total
 	// rather than the rows, which the cap can shorten.
 	last := seniorReview(rec.Reviews)
+	if ac := rec.Accepted; ac != nil {
+		// Which round the block is the split of is the accepted block's own
+		// fact, and it is the only reader that can be right here: the round the
+		// stop ended on is level 1's where the stop cut every outer level before
+		// it started (firstLineStop, item 6b), and seniorReview skips exactly
+		// that round — the block would be dropped, or compared against an outer
+		// level's older round, and a run the ruling merges as-is would file
+		// nothing.
+		last = decidingRound(rec.Reviews, ac.Round)
+	}
 	if last == nil || tf.Total != last.Findings {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("#### Tolerated\n\n")
+	// The same table under the heading that says which list it is. A run that
+	// accepted these findings at its stop carries both blocks, and they hold
+	// the same entries (finalize writes them from one split); the accepted
+	// block is the one that adds the two facts a reader needs not to mistake
+	// them for findings the mode waved through — the mode, and the half of the
+	// stop rule that ended the run's rounds (runstore.AcceptedFindings, the
+	// owner's ruling of 2026-11-08).
+	if ac := rec.Accepted; ac != nil {
+		b.WriteString("#### Accepted at the stop\n\n")
+		fmt.Fprintf(&b, "The run's review ended at the stop rule's %s and the mode %s accepts these findings at the stop: they are left for a follow-up rather than fixed.\n\n",
+			inlineText(ac.At), inlineText(string(ac.Mode)))
+	} else {
+		b.WriteString("#### Tolerated\n\n")
+	}
 	b.WriteString("| Label | Likelihood | Impact | Fix cost | Class | Mode | Finding |\n|---|---|---|---|---|---|---|\n")
 	for _, f := range tf.Findings {
 		fmt.Fprintf(&b, "| %s | %d | %d | %d | %s | %s | %s |\n",

@@ -430,7 +430,10 @@ const (
 	// release that let an installation hold two paid keys would use.
 	testSecondPaidKey = "second-paid-key"
 	// testProviderKey is a third-party provider's key — creds.TierC, the route
-	// this release never selects and a name no bundle can hold yet (AK6b).
+	// this release never selects. The name is config.ProviderKeySecret, the
+	// bundle's own key for the credential (AK6b), so the set below holds the
+	// tier-C entry a document can really carry: what is built by hand here is
+	// the SET the offering rule is asked about, not a name no document has.
 	testProviderKey = "provider-key"
 )
 
@@ -438,12 +441,14 @@ const (
 // fixture's own bundle, a second tier-B credential beside the project's key, and
 // a tier-C provider key.
 //
-// The bundle holds neither of the two added entries — its key set is closed, and
-// widening it is AK6b's — and that is why the rule is tested over a set rather
-// than over a document: what a review caller may be served by must not depend on
-// which credentials a later release lets the bundle carry, and the one entry a
-// caller paired with the sentinel is offered has to be the key itself rather
-// than every credential of its tier.
+// The fixture's bundle holds neither of the two added entries, and that is why
+// the rule is tested over a set rather than over a document: what a review
+// caller may be served by must not depend on which credentials an installation's
+// bundle happens to carry — AK6b let the document hold the tier-C provider key
+// (F15), so the entry is one a real bundle can have, and the rule is still held
+// over the set a fixture builds so that it is the rule under test and not the
+// document. The one entry a caller paired with the sentinel is offered has to be
+// the key itself rather than every credential of its tier.
 func reviewCredentialSet(t *testing.T, s *svc) []creds.Credential {
 	t.Helper()
 	b, err := s.server.cfg.Bundles.Load(context.Background())
@@ -546,11 +551,13 @@ func TestReviewCandidateListIsExactlyOneCredential(t *testing.T) {
 // nor one paired with the project's own key.
 //
 // It is stated over the credential set rather than over a bundle document
-// because the bundle cannot hold a provider key in this release (the closed key
-// set, AK6b): the rule this test holds is the offering rule, and the offering
-// rule is the one place that would have to change for a review call to reach a
+// because the rule this test holds is the offering rule, and the offering rule
+// is the one place that would have to change for a review call to reach a
 // provider's key — the tier-C entry is in the set the caller is offered from and
-// is refused there, not filtered out before it arrives.
+// is refused there, not filtered out before it arrives. The same rule read off a
+// document that really holds the entry is
+// TestProviderKeyEntryIsNotOfferedToAnyOtherCaller's, whose fixture's bundle is
+// one (AK6b).
 func TestReviewCallerIsNeverOfferedAProviderKey(t *testing.T) {
 	s := newAnthropicKeyReviewSvc(t)
 	all := reviewCredentialSet(t, s)
@@ -570,6 +577,350 @@ func TestReviewCallerIsNeverOfferedAProviderKey(t *testing.T) {
 		if got.Reason != ReasonNotAdmitted || got.Tier != wireTier(creds.TierC) {
 			t.Errorf("the provider key was reported as %q at tier %q, want %q at %q", got.Reason, got.Tier, ReasonNotAdmitted, wireTier(creds.TierC))
 		}
+	}
+}
+
+// TestProviderKeyEntryIsNotOfferedToAnyOtherCaller is AK6b's own negative: the
+// bundle can now HOLD the project's provider key (F15), and a document that
+// holds it serves every other caller exactly as a document without it did — the
+// entry is in no coding caller's candidates at all, and a review caller is
+// offered it only in the one spelling that names it.
+//
+// The coding half is why this is a test and not a detail. A tier-C candidate is
+// refused by the selector's own check rather than skipped (creds.checkCandidates
+// names Check 50), and that refusal is the WHOLE call's: a provider key that
+// leaked into Credentials would take every model call of every repository down
+// the moment an installation set one. So the served call is what says the leak
+// did not happen, and the candidate list is what says the entry is not even
+// reported to a coding caller as not admitted — it is not a credential of that
+// caller's axis at all, where a tier-A account the repository is not admitted to
+// is.
+//
+// The review half is the other direction. The two spellings a bundle's
+// credentials are already offered under are unchanged (an account name, the
+// Anthropic-key sentinel), the provider key is reported not admitted to both, and
+// the one spelling it IS offered to — config.ProviderKeyAccount — is offered it
+// by name AND tier and then refused end to end, with the sentence that names
+// Check 50 and with nothing leaving the service. That refusal is the whole of
+// what this half of AK6b buys: the bundle can hold the key and the service can
+// forward with it, and no Claude model is routed to a third party until that
+// check has run.
+func TestProviderKeyEntryIsNotOfferedToAnyOtherCaller(t *testing.T) {
+	s := newSvcWith(t, func(s *svc, _ *Config) {
+		s.src.docs = [][]byte{providerBundleDoc(t, testProviderBase, providerAuthBearer)}
+	})
+	resp, body := s.call(t, callBody("provider-in-the-bundle"))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("a coding caller's call through a bundle that holds the provider key was answered %d, want the upstream's 200: %s", resp.StatusCode, body)
+	}
+	if got := resp.Header.Get(HeaderCredential); got != testAccount {
+		t.Errorf("%s = %q, want the account the round robin picked (%q): a provider key changes nothing for a coding caller", HeaderCredential, got, testAccount)
+	}
+	if got := resp.Header.Get(HeaderTier); got != TierA {
+		t.Errorf("%s = %q, want %q: a coding caller reaches the provider key in no way", HeaderTier, got, TierA)
+	}
+	if n := s.up.Count(); n != 1 {
+		t.Fatalf("the upstream saw %d requests, want 1", n)
+	}
+	if got := s.up.Seen()[0].Header.Get("x-api-key"); got != "" {
+		t.Error("the call went upstream with an x-api-key, and a tier-A call is served by a subscription token")
+	}
+
+	b, err := s.server.cfg.Bundles.Load(context.Background())
+	if err != nil {
+		t.Fatalf("loading the fixture's own bundle: %v", err)
+	}
+	if e, ok := b.ProviderKey(); !ok || e.Tier != creds.TierC || e.Name != config.ProviderKeySecret {
+		t.Fatalf("the fixture's bundle does not hold the provider key at tier C: %+v, %v", e, ok)
+	}
+
+	cands, skipped, err := s.server.candidates(context.Background(),
+		Identity{Slug: s.slug, JobAccount: testJobSA, JobClass: ClassRepository}, testRepo, b)
+	if err != nil {
+		t.Fatalf("candidates: %v", err)
+	}
+	for _, c := range cands {
+		if c.Tier == creds.TierC || c.Name == config.ProviderKeySecret {
+			t.Errorf("a coding caller was offered %v, and a tier-C candidate refuses the caller's whole call", c)
+		}
+	}
+	for _, tr := range skipped {
+		if tr.Name == config.ProviderKeySecret {
+			t.Errorf("the provider key was reported to a coding caller as %+v, and it is not a credential of that caller's axis", tr)
+		}
+	}
+
+	// The bundle's own offerings, which is the list a review caller is offered
+	// from: the provider key is in it — offered, so that the pairing that names
+	// it can reach it — and beside the model credentials rather than among them.
+	all := reviewOfferings(b)
+	if !slices.ContainsFunc(all, func(c creds.Credential) bool {
+		return c.Name == config.ProviderKeySecret && c.Tier == creds.TierC
+	}) {
+		t.Fatal("the offerings hold no provider key, so this test has nothing to keep the other callers away from")
+	}
+	for _, tf := range []struct {
+		account string
+		what    string
+		name    string
+		tier    creds.Tier
+	}{
+		{config.AnthropicKeyAccount, "the project's own key", config.AnthropicSecret, creds.TierB},
+		{testAccount, "the account's own token", testAccount, creds.TierA},
+	} {
+		offered, skipped := reviewCandidates(all, tf.account)
+		if len(offered) != 1 || offered[0].Name != tf.name || offered[0].Tier != tf.tier {
+			t.Errorf("a review caller paired with %q was offered %v, want exactly %s (%q at tier %s)",
+				tf.account, offered, tf.what, tf.name, wireTier(tf.tier))
+		}
+		got, ok := reportedNotAdmitted(t, skipped)[config.ProviderKeySecret]
+		if !ok {
+			t.Errorf("the provider key was neither offered nor reported as not admitted for %q", tf.account)
+			continue
+		}
+		if got.Reason != ReasonNotAdmitted || got.Tier != wireTier(creds.TierC) {
+			t.Errorf("the provider key was reported to %q as %q at tier %q, want %q at %q",
+				tf.account, got.Reason, got.Tier, ReasonNotAdmitted, wireTier(creds.TierC))
+		}
+	}
+	offered, _ := reviewCandidates(all, config.ProviderKeyAccount)
+	if len(offered) != 1 || offered[0].Name != config.ProviderKeySecret || offered[0].Tier != creds.TierC {
+		t.Fatalf("a review caller paired with %q was offered %v, want exactly the provider key at tier C", config.ProviderKeyAccount, offered)
+	}
+
+	// And the one pairing that is offered it is refused before a byte leaves the
+	// service: the offer is the pairing's, and the SELECTION is the selector's,
+	// which does not select tier C in this release.
+	r := providerReviewSvc(t)
+	resp, body = r.callTokens(t, callBody("review-provider-key"), r.reviewRunToken(), r.reviewJobToken(), r.job)
+	if resp.StatusCode != StatusUnavailable {
+		t.Fatalf("a review caller paired with the provider key was answered %d, want %d: %s", resp.StatusCode, StatusUnavailable, body)
+	}
+	e := refusal(t, resp.StatusCode, body)
+	if e.Error != ErrorStateUnavailable || !strings.Contains(e.Message, "Check 50") {
+		t.Errorf("the refusal is %+v, want %q naming Check 50: the tier-C route is reserved until that check has run", e, ErrorStateUnavailable)
+	}
+	if strings.Contains(string(body), fakeCred(t, "provider-key")) {
+		t.Error("the refusal carries the provider key's value")
+	}
+	if n := r.up.Count(); n != 0 {
+		t.Fatalf("the upstream saw %d requests, want none: a refused offer reaches no provider", n)
+	}
+}
+
+// providerReviewSvc is the review fixture whose pairing names the provider key's
+// account-axis value: the installation publishes config.ProviderKeyAccount in
+// the shared node's accounts block, offers it to the fixture's repository, and
+// the repository's own node admits it — so the pairing resolves as it resolves a
+// Claude account, and the credential that value stands for is the bundle's
+// tier-C provider key. The bundle is one that holds it (providerBundleDoc), and
+// the fixture's two Claude accounts are in it as well and admitted to the
+// repository: a service that treated the value as one account name among the
+// others would serve the call from one of them instead of refusing.
+func providerReviewSvc(t *testing.T) *svc {
+	t.Helper()
+	return newReviewSvcSpelled(t, testReviewSA, testReviewSA, func(s *svc, cfg *Config) {
+		s.src.docs = [][]byte{providerBundleDoc(t, testProviderBase, providerAuthBearer)}
+		cfg.ReviewAccounts = []ReviewJobAccount{{Email: testReviewSA, Account: config.ProviderKeyAccount}}
+		s.policy.shared = decodeTestPolicy(t, testPolicyDocAccounts("auto",
+			`"default": {"allow_repos": ["`+testRepo+`"]},
+				"`+testAccount+`": {"allow_repos": ["`+testRepo+`"]},
+				"`+config.ProviderKeyAccount+`": {"allow_repos": ["`+testRepo+`"]}`))
+		s.policy.admissions[s.slug] = decodeTestChild(t, testChildDoc(config.ProviderKeyAccount))
+	})
+}
+
+// providerNameAccountReviewSvc is the review fixture whose pairing names the
+// provider key's account-axis value against a bundle that holds NO provider
+// entry and DOES hold an account named after the credential
+// (claude-oauth-token-provider-key): the one document where the provider arm's
+// two halves — the name and the tier — come apart. Both policies admit that
+// account to the fixture's repository, so a rule that matched the name alone
+// would not merely offer it: it would serve the call from it.
+func providerNameAccountReviewSvc(t *testing.T) *svc {
+	t.Helper()
+	return newReviewSvcSpelled(t, testReviewSA, testReviewSA, func(s *svc, cfg *Config) {
+		s.src.docs = [][]byte{append(bundleDoc(t),
+			[]byte(config.ClaudeAccountSecret(config.ProviderKeySecret)+": "+fakeCred(t, "account")+"\n")...)}
+		cfg.ReviewAccounts = []ReviewJobAccount{{Email: testReviewSA, Account: config.ProviderKeyAccount}}
+		s.policy.shared = decodeTestPolicy(t, testPolicyDocAccounts("auto",
+			`"default": {"allow_repos": ["`+testRepo+`"]},
+				"`+testAccount+`": {"allow_repos": ["`+testRepo+`"]},
+				"`+config.ProviderKeyAccount+`": {"allow_repos": ["`+testRepo+`"]},
+				"`+config.ProviderKeySecret+`": {"allow_repos": ["`+testRepo+`"]}`))
+		s.policy.admissions[s.slug] = decodeTestChild(t, testChildDoc(config.ProviderKeyAccount, config.ProviderKeySecret))
+	})
+}
+
+// TestProviderKeyPairingIsRefusedWhenOnlyAnAccountGoesByName is the second half
+// of offeredToReview's provider arm: the name is not the credential. The arm
+// matches the name AND the tier, and a bundle may hold an account named
+// "provider-key" — the sentinel carries a doubled dash, so a single one is a
+// legal account name — so a rule that matched the name alone would serve a
+// caller paired with config.ProviderKeyAccount from that account's tier-A OAuth
+// token, under the credential name "provider-key". That is the substitution the
+// rule exists to prevent, and the account is admitted to the fixture's
+// repository on both policy levels so that the wrong answer is a served call
+// rather than only an offer.
+//
+// The document holds the account and no provider entry, which is the state an
+// installation is in before its bundle carries the entry (and any installation
+// that never adds one): the pairing has nothing to be served by, so the call is
+// refused before a byte leaves the service.
+func TestProviderKeyPairingIsRefusedWhenOnlyAnAccountGoesByName(t *testing.T) {
+	s := providerNameAccountReviewSvc(t)
+
+	b, err := s.server.cfg.Bundles.Load(context.Background())
+	if err != nil {
+		t.Fatalf("loading the fixture's own bundle: %v", err)
+	}
+	if e, ok := b.ProviderKey(); ok {
+		t.Fatalf("the fixture's document holds a provider entry (%+v), so this is not the document this test means to be about", e)
+	}
+	if e, ok := b.Lookup(config.ProviderKeySecret); !ok || e.Tier != creds.TierA {
+		t.Fatalf("the fixture's document does not hold the account named %q: %+v, %v", config.ProviderKeySecret, e, ok)
+	}
+
+	all := reviewOfferings(b)
+	offered, skipped := reviewCandidates(all, config.ProviderKeyAccount)
+	if len(offered) != 0 {
+		t.Errorf("a caller paired with %q was offered %v, and the document holds no provider entry: the arm matches the tier as well as the name", config.ProviderKeyAccount, offered)
+	}
+	got, ok := reportedNotAdmitted(t, skipped)[config.ProviderKeySecret]
+	switch {
+	case !ok:
+		// Not a Fatalf: the call below is the half that shows what the wrong
+		// answer costs, and it has to run whatever the list says.
+		t.Errorf("the account named %q was neither offered nor reported as not admitted", config.ProviderKeySecret)
+	case got.Reason != ReasonNotAdmitted || got.Tier != wireTier(creds.TierA):
+		t.Errorf("the account named %q was reported as %+v, want %q at tier %s: it is a model credential this pairing is not served by",
+			config.ProviderKeySecret, got, ReasonNotAdmitted, wireTier(creds.TierA))
+	}
+
+	resp, body := s.callTokens(t, callBody("review-provider-name-only"), s.reviewRunToken(), s.reviewJobToken(), s.job)
+	if resp.StatusCode != StatusUnavailable {
+		t.Fatalf("a review caller paired with %q was answered %d, want %d: %s", config.ProviderKeyAccount, resp.StatusCode, StatusUnavailable, body)
+	}
+	if e := refusal(t, resp.StatusCode, body); e.Error != ErrorStateUnavailable {
+		t.Errorf("the refusal is %+v, want %q", e, ErrorStateUnavailable)
+	}
+	if got := resp.Header.Get(HeaderCredential); got != "" {
+		t.Errorf("%s = %q, want none: no credential answered this call", HeaderCredential, got)
+	}
+	if n := s.up.Count(); n != 0 {
+		t.Fatalf("the upstream saw %d requests, want none: the pairing has nothing to be served by", n)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Which entry a selected candidate resolves to (AK6b)
+// ---------------------------------------------------------------------------
+
+// TestEntryForResolvesTheProviderKeyByKind is the guard over the one place a
+// selected candidate becomes a bundle entry: entryFor resolves a tier-C
+// candidate by KIND and every other candidate by name, and the document below
+// holds a credential under each of those, so a resolution that fell back to the
+// name would answer the account where the provider's key was selected.
+//
+// An account named claude-oauth-token-provider-key is legal — the sentinel
+// carries a doubled dash, so no account name is reserved for this credential,
+// and TestBundleHoldsAProviderKey proves the two entries live in one document —
+// and the two carry different values, so what the fallback attaches is a real
+// substitution and not a spelling: the call would leave for the provider's own
+// endpoint carrying the account's OAuth token, under an answer that names the
+// provider key's tier and name. That is what the function's own comment
+// forbids, and the load-bearing half of it is the tier test, because the two
+// credentials go by one name.
+//
+// No SERVED call reaches this rule in this release: creds.Select refuses every
+// tier-C candidate before a credential is sent (checkCandidates), which
+// TestProviderKeyEntryIsNotOfferedToAnyOtherCaller holds end to end. The rule is
+// therefore held here, and the last third drives it through send so that the
+// wrong credential would be one at the upstream's door and not only in a return
+// value.
+func TestEntryForResolvesTheProviderKeyByKind(t *testing.T) {
+	doc := append(providerBundleDoc(t, testProviderBase, providerAuthBearer),
+		[]byte(config.ClaudeAccountSecret(config.ProviderKeySecret)+": "+fakeCred(t, "account")+"\n")...)
+	b, err := ParseBundle(doc)
+	if err != nil {
+		t.Fatalf("parsing a bundle holding the provider key beside an account named after it: %v", err)
+	}
+	// The fixture is what this test needs it to be, or the assertions below
+	// would pass over a document that holds only one of the two.
+	if e, ok := b.ProviderKey(); !ok || e.Kind != KindProvider || e.Value() != fakeCred(t, "provider-key") {
+		t.Fatalf("the fixture's document does not hold the provider entry: %+v, %v", e, ok)
+	}
+	if e, ok := b.Lookup(config.ProviderKeySecret); !ok || e.Tier != creds.TierA || e.Value() != fakeCred(t, "account") {
+		t.Fatalf("the fixture's document does not hold the account named after the credential: %+v, %v", e, ok)
+	}
+
+	// The tier is what chooses. Dropping the tier-C arm answers the account's
+	// entry here, which is the substitution: a different kind, a different
+	// value, and no endpoint of its own.
+	e, ok := entryFor(b, creds.Credential{Name: config.ProviderKeySecret, Tier: creds.TierC})
+	if !ok {
+		t.Fatal("entryFor answered nothing for the provider key's own tier-C candidate, and the document holds the entry")
+	}
+	if e.Kind != KindProvider || e.Value() != fakeCred(t, "provider-key") || e.baseURL != testProviderBase || e.auth != providerAuthBearer {
+		t.Errorf("entryFor(tier C) = %+v, want the provider entry the document holds (%q, %q, %q)",
+			e, fakeCred(t, "provider-key"), testProviderBase, providerAuthBearer)
+	}
+	if got, ok := entryFor(b, creds.Credential{Name: config.ProviderKeySecret, Tier: creds.TierA}); !ok || got.Kind == KindProvider || got.Value() != fakeCred(t, "account") {
+		t.Errorf("entryFor(tier A) = (%+v, %v), want the account that goes by that name and not the provider entry", got, ok)
+	}
+
+	// And both halves fail closed: a tier-C candidate whose name is not the
+	// provider entry's is not an entry — the credential is reached by kind, so a
+	// tier-C spelling of another name is nothing this bundle can serve — and a
+	// name the document does not hold is not one either.
+	if got, ok := entryFor(b, creds.Credential{Name: testSecondPaidKey, Tier: creds.TierC}); ok {
+		t.Errorf("a tier-C candidate named %q resolved to %+v, and the bundle's provider entry goes by %q", testSecondPaidKey, got, config.ProviderKeySecret)
+	}
+	if got, ok := entryFor(b, creds.Credential{Name: "not-in-this-bundle", Tier: creds.TierB}); ok {
+		t.Errorf("a name the bundle does not hold resolved to %+v", got)
+	}
+	// A document with no provider entry answers nothing rather than an empty
+	// credential: the caller refuses on false, it never forwards "" (D143).
+	plain, err := ParseBundle(bundleDoc(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := entryFor(plain, creds.Credential{Name: config.ProviderKeySecret, Tier: creds.TierC}); ok || got.Value() != "" {
+		t.Errorf("entryFor on a document without the entry = (%+v, %v), want nothing", got, ok)
+	}
+
+	// What entryFor answers is what send attaches to the call. A substitution
+	// here is a substitution on the wire, so the credential is read off the
+	// request the provider's endpoint saw: the key under the shape the entry
+	// names, at the entry's own prefix, and the account's token nowhere.
+	s := newSvc(t)
+	ans, err := s.server.send(context.Background(), providerCall(t, MessagesPath), e)
+	if err != nil {
+		t.Fatalf("the provider call was not sent: %v", err)
+	}
+	defer ans.resp.Body.Close()
+	if ans.credential != fakeCred(t, "provider-key") {
+		t.Error("the answer is redacted with a value that is not the provider key's")
+	}
+	if n := s.up.Count(); n != 1 {
+		t.Fatalf("the provider saw %d requests, want 1", n)
+	}
+	req := s.up.Seen()[0]
+	if got, want := req.Header.Get("Authorization"), "Bearer "+fakeCred(t, "provider-key"); got != want {
+		t.Errorf("the call carried Authorization = %q, want the key entryFor answered under the shape the entry names", got)
+	}
+	if got := req.Header.Get("x-api-key"); got != "" {
+		t.Errorf("the call carried x-api-key = %q, and the entry names bearer", got)
+	}
+	for name, vals := range req.Header {
+		for _, v := range vals {
+			if strings.Contains(v, fakeCred(t, "account")) {
+				t.Errorf("the call carries the account's token in %s", name)
+			}
+		}
+	}
+	if got := req.URL.Path; got != "/api"+MessagesPath {
+		t.Errorf("the call went to %q, want the provider entry's own endpoint: the account has none", got)
 	}
 }
 

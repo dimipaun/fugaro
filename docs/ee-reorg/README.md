@@ -1,6 +1,6 @@
 # Governance, the cost report and the coordinator move under `ee/`
 
-**Status: all decisions answered; plan only; nothing is implemented; no task approved.** Decisions D520–D536 are written
+**Status as of 2026-11-10: done except the owner's E3.4 (E4.1 deferred); see [docs/status.md](../status.md) for the current table.** Decisions D520–D536 are written
 with recommendations; all are answered (2026-10-29), D523, D531 and D533 NOT as recommended: **no licence notice at all until the verifier, the key-minting service and the launch are ready (the warn tasks are deferred); the Terms text is edited now (E3.6); the 0.13.0 notes carry no operator steps.** O1 and O2 are answered; **O3 is CONFIRMED (2026-10-29): the owner owns the agent-written code that moves under `ee/`, so no CLA or counsel step is needed before the move**, and **O8 is CONFIRMED (2026-10-29): the untagged runner's run-log line and the paid-command stubs are capability statements, not licence notices**; **O7 is answered (2026-10-29): the 0.13.0 notes carry one line — refresh images to get governance — and it is not a required operator step** (D533 against D524: governance is available only after an image refresh). The CLI 0.13.0 tag is held until governance is under
 `ee/` and the CLA placeholder is replaced (the owner's rulings).
 

@@ -102,12 +102,25 @@
 # workflow with several jobs. All of it in one commit, or the test that holds
 # them together fails.
 #
+# **Why this job cannot move into console-tests.yml is the derivation above, and
+# nothing else**: `deriveConsoleCheckNames` reads that file's **single** job, so a
+# second job there would be a gate change rather than a packaging change.
+#
+# **And this job is never on a pull request** -- not even path-filtered, which is
+# the D7(c) ruling this header states and the `on:` block below carries. That is
+# a property of this job rather than a difference from console-tests.yml: that
+# file's own only trigger is `workflow_dispatch` today (the owner's ruling of
+# 2026-11-07 moved every workflow that ran on push to a hand dispatch), so the
+# two files' triggers do not separate them, and what the ruling forbids is this
+# job running on a pull request at all.
+#
 # WHAT THIS FILE IS
 #
 #   - **A release-time job, and the only place the console's unit suite ever runs
 #     on Windows.** It is not build-only, and console-linux.yml is: that file
-#     proves the packaging path on every pull request, while this job's subject
-#     is that the console has never *run* on Windows -- so it typechecks and runs
+#     proves the packaging path on a dispatch without running the console's own
+#     tests, while this job's subject is that the console has never *run* on
+#     Windows -- so it typechecks and runs
 #     the unit suite before it packs. The e2e suite is not run here: it drives
 #     the console's real window under its real CSP and needs a display, which is
 #     a separate question and a separate task (docs/console-windows/implementation-plan.md,

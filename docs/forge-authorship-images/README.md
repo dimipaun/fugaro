@@ -1,8 +1,6 @@
 # Forge, authorship and images
 
-**Status: plan only; no task is approved; C8a of the shared-images design is built to it
-(2026-10-30) — the key, the superset lookup and the lock, in `internal/imagecheck` — and nothing else
-in the plan is.** *The status as first written, kept:* **Status: plan only; nothing is implemented;
+**Status as of 2026-11-10: in progress, about 9/25 merged; see [docs/status.md](../status.md) for the current table.** *The status as first written, kept:* **Status: plan only; nothing is implemented;
 no task is approved.** Decisions D600–D649 are
 **answered** (2026-10-29): every answer is the recommendation except D618, where the owner chose
 shared images across repos, scoped to repos with an identical resolved dependency set (plan C7 and

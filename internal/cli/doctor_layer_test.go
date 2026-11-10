@@ -986,3 +986,122 @@ func TestDoctorImageCatalogFromThePublishedNode(t *testing.T) {
 		}
 	})
 }
+
+// doctorPrebuiltCatalogFixture is the project image catalog a prebuilt entry's
+// own check is judged against: one entry that is somebody else's image, which
+// no build writes an image for and whose whole run is the smoke of that
+// reference (F10/IS11).
+const doctorPrebuiltCatalogFixture = `image_catalog:
+  entries:
+    - name: node22
+      tags: [node]
+      source: { kind: image, image: "docker.io/library/node:22" }
+`
+
+// writeCatalogRecordAs writes entry's catalog record under slug the way a
+// smoke-only run of ref leaves it (F10/IS11): the entry's record with that
+// reference in it, and nothing a build writes into one.
+func writeCatalogRecordAs(t *testing.T, f *cloudFixture, slug, entry, ref string) {
+	t.Helper()
+	data, err := json.Marshal(imagecheck.CatalogRecordState{
+		Version: imagecheck.CatalogRecordVersion, Entry: entry, Image: ref,
+		ImageDigest: "sha256:" + strings.Repeat("a", 64),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := gcp.CatalogRecordKey(slug, entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeBucketFile(t, f, key, string(data))
+}
+
+// TestPrebuiltEntrySmokedReportsInDoctor: the entry a prebuilt image answers is
+// never built, so nothing of a build can say whether the image its jobs start
+// on is one a job can start on. What says it is the smoke-only Cloud Build run
+// of that reference (F10/IS11), and what doctor reads back is the record that
+// run writes: an absent record is both "never smoked" and "its smoke failed" —
+// a Cloud Build stops at a failed step, so a failed smoke writes no record —
+// and the line says both rather than claiming which one it was, with the run
+// itself as the fix. A record that names another reference than the entry
+// names now is a smoke of something else: the reference its jobs start on has
+// not been smoked.
+//
+// Mutation (run, restore): judge a prebuilt entry the way a buildable one is
+// judged (drop the SourceImage arm of catalogImageChecks) and the first
+// subtest finds no line at all: its record carries no definition to compare,
+// so an image nothing ever checked is the one state doctor said nothing about.
+func TestPrebuiltEntrySmokedReportsInDoctor(t *testing.T) {
+	const yaml = minimalAnchored + "git: { provider: github }\nworkflows:\n  app: { image_name: node22, commands: { build: sh build.sh, test: sh test.sh } }\n"
+
+	build := func(t *testing.T) (*cloudFixture, string, context.Context, *localcfg.Config, resolvedFile, string) {
+		t.Helper()
+		f := newCloudFixture(t)
+		isolateCache(t)
+		publishedLayer(t, f, testProjectLayer)
+		f.appendConfig(t, doctorPrebuiltCatalogFixture)
+		dir := layerCheckout(t, f, yaml)
+		lc := fileEnv(t, f).lc
+		ctx := context.Background()
+		return f, dir, ctx, lc, resolvedLayerFixture(t, ctx, lc, dir), mustSlug("github", "acme/other")
+	}
+
+	t.Run("no smoke of the reference has been recorded", func(t *testing.T) {
+		_, dir, ctx, lc, rf, _ := build(t)
+		c := layerCheck(doctorLayerChecks(ctx, lc, dir, rf), "image-catalog-app")
+		if c == nil || c.Severity != "warning" ||
+			!strings.Contains(c.Problem, "docker.io/library/node:22") || !strings.Contains(c.Problem, "no smoke") {
+			t.Fatalf("check %+v", c)
+		}
+		if c.Fix != "fugaro image build node22 smokes it in Cloud Build, which fails there if the image is not one a job can start on" {
+			t.Errorf("fix = %q, want the entry's own smoke", c.Fix)
+		}
+	})
+
+	t.Run("the reference the entry names was smoked", func(t *testing.T) {
+		f, dir, ctx, lc, rf, slug := build(t)
+		writeCatalogRecordAs(t, f, slug, "node22", "docker.io/library/node:22")
+		if c := layerCheck(doctorLayerChecks(ctx, lc, dir, rf), "image-catalog-app"); c != nil {
+			t.Fatalf("a smoked, current reference must say nothing: %+v", c)
+		}
+	})
+
+	t.Run("the last smoke tested another reference", func(t *testing.T) {
+		f, dir, ctx, lc, rf, slug := build(t)
+		writeCatalogRecordAs(t, f, slug, "node22", "docker.io/library/node:20")
+		c := layerCheck(doctorLayerChecks(ctx, lc, dir, rf), "image-catalog-app")
+		if c == nil || c.Severity != "warning" || !strings.Contains(c.Problem, "tested docker.io/library/node:20") {
+			t.Fatalf("check %+v", c)
+		}
+		if c.Fix != "fugaro image build node22 smokes the reference the entry names now" {
+			t.Errorf("fix = %q, want the entry's own smoke", c.Fix)
+		}
+	})
+
+	// A record a run of an older release wrote may carry no reference at all
+	// (the field is added, never retyped), and it says as much rather than
+	// reading as a smoke of the empty string.
+	t.Run("the record names no reference at all", func(t *testing.T) {
+		f, dir, ctx, lc, rf, slug := build(t)
+		writeCatalogRecordAs(t, f, slug, "node22", "")
+		c := layerCheck(doctorLayerChecks(ctx, lc, dir, rf), "image-catalog-app")
+		if c == nil || !strings.Contains(c.Problem, "no reference at all") {
+			t.Fatalf("check %+v", c)
+		}
+	})
+
+	// A record that is there and cannot be read is not a reference nobody
+	// smoked: doctor's best effort says nothing about what it could not read.
+	t.Run("a record that does not parse says nothing", func(t *testing.T) {
+		f, dir, ctx, lc, rf, slug := build(t)
+		key, err := gcp.CatalogRecordKey(slug, "node22")
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeBucketFile(t, f, key, "{ this is not the record's shape")
+		if c := layerCheck(doctorLayerChecks(ctx, lc, dir, rf), "image-catalog-app"); c != nil {
+			t.Fatalf("a corrupt record must not be read as no record: %+v", c)
+		}
+	})
+}

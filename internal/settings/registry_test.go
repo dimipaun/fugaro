@@ -213,6 +213,11 @@ func TestRegistryOwnerNamesACommand(t *testing.T) {
 	families := []string{
 		"settings set", "models", "rigor", "rigor floor", "accounts", "secrets",
 		"config", "budget", "project", "setup", "update", "workspace",
+		// The image map's own family (D1906): the key is the project's image
+		// policy per repository and `fugaro image map set` is what writes it, so
+		// the row names that command rather than `fugaro project`, which writes
+		// the project's other policy keys and not this one.
+		"image map",
 	}
 	for _, r := range Rows() {
 		ok := false
