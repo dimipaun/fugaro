@@ -682,7 +682,7 @@ func decodeNumber(raw []byte, key string) (numberDoc, error) {
 // launcher can delete it inside any window (F24), and a caller that read the
 // missing entry as "unknown" would leave the issue it wrote in the store as one
 // no fingerprint names, which the retry that follows takes a second number for.
-func entryNames(ctx context.Context, b *blobx.Bucket, key string, number int) (bool, error) {
+func entryNames(ctx context.Context, b storeReader, key string, number int) (bool, error) {
 	v, err := readVersion(ctx, b, key)
 	if errors.Is(err, blobx.ErrNotExist) {
 		return false, nil
@@ -713,11 +713,20 @@ func decodeStrict(raw []byte, v any) error {
 	return nil
 }
 
+// storeReader is the slice of a bucket every reader here uses: names-only
+// listings and bounded reads. It is an interface because the same read is made
+// by callers that must not reach the bucket's writes, and because a test wraps
+// a bucket to count the calls a reader makes (F7).
+type storeReader interface {
+	List(opts *blob.ListOptions) *blob.ListIterator
+	ReadMax(ctx context.Context, key string, limit int) ([]byte, int64, error)
+}
+
 // readVersion reads one object and the version a later write about it has to
 // match. Records are read with ReadMax (F24) at the package's own bound: the
 // prefix is writable by every launcher, so a read here is never unbounded, and
 // a record is a few KB of a report and well inside it.
-func readVersion(ctx context.Context, b *blobx.Bucket, key string) (version, error) {
+func readVersion(ctx context.Context, b storeReader, key string) (version, error) {
 	raw, gen, err := b.ReadMax(ctx, key, blobx.MaxReadBytes)
 	if err != nil {
 		return version{}, err

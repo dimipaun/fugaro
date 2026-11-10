@@ -22,9 +22,9 @@ import (
 // listing answers who is on which issue, and reading every record it walks past
 // is the read F7 exists to avoid.
 type countingBucket struct {
-	b     *blobx.Bucket
-	reads int
-	lists int
+	b        *blobx.Bucket
+	readKeys []string
+	lists    int
 }
 
 func (c *countingBucket) List(opts *blob.ListOptions) *blob.ListIterator {
@@ -33,7 +33,7 @@ func (c *countingBucket) List(opts *blob.ListOptions) *blob.ListIterator {
 }
 
 func (c *countingBucket) ReadMax(ctx context.Context, key string, limit int) ([]byte, int64, error) {
-	c.reads++
+	c.readKeys = append(c.readKeys, key)
 	return c.b.ReadMax(ctx, key, limit)
 }
 
@@ -156,19 +156,26 @@ func TestMineUserNotCountedAsOther(t *testing.T) {
 }
 
 // Finding the user's issues is one names-only listing of their own prefix: the
-// index objects are never read, only the records the index names (F7).
+// index objects are never read, and the two objects a read does take back are
+// the issue's record and the fingerprint entry that names it (F7, F28).
 func TestMineMembershipReadsNoObjects(t *testing.T) {
 	ctx := context.Background()
 	b := sharedBucket(t)
 	ana := "ana@example.test"
-	up := upload(t, ctx, b, sharedIssue("update-20261107183012-48213", fingerprint("68")))
-	upload(t, ctx, b, hit("update-20261107183014-48215", fingerprint("68"), "bo@example.test", "0.9.0", issueAt.Add(time.Hour)))
+	fp := fingerprint("68")
+	up := upload(t, ctx, b, sharedIssue("update-20261107183012-48213", fp))
+	upload(t, ctx, b, hit("update-20261107183014-48215", fp, "bo@example.test", "0.9.0", issueAt.Add(time.Hour)))
 	c := &countingBucket{b: b}
 	if _, err := ListMine(ctx, c, verified(ana), sharedAt); err != nil {
 		t.Fatalf("reading mine: %v", err)
 	}
-	if c.reads != 1 {
-		t.Errorf("the read made %d object reads, want 1: the issue's record and nothing else (issue %d)", c.reads, up.Number)
+	if want := []string{recordKey(up.Number), fingerprintKey(fp)}; !slices.Equal(c.readKeys, want) {
+		t.Errorf("the read took back %v, want %v: the issue's record and the entry that names it (issue %d)", c.readKeys, want, up.Number)
+	}
+	for _, key := range c.readKeys {
+		if strings.HasPrefix(key, reporterPrefix(Digest(ana))) {
+			t.Errorf("the read took back the index object %q: the listing answers who is on which issue, and its names are all a reader needs (F7)", key)
+		}
 	}
 }
 
@@ -242,7 +249,8 @@ func TestMineReadsOnlyOwnRecords(t *testing.T) {
 	for _, fp := range []string{fingerprint("71"), fingerprint("72"), fingerprint("73")} {
 		upload(t, ctx, b, hit("update-20261107183012-48213", fp, "bo@example.test", "0.9.0", issueAt))
 	}
-	mine := upload(t, ctx, b, sharedIssue("update-20261107183019-48220", fingerprint("74")))
+	fp := fingerprint("74")
+	mine := upload(t, ctx, b, sharedIssue("update-20261107183019-48220", fp))
 	c := &countingBucket{b: b}
 	got, err := ListMine(ctx, c, verified(ana), sharedAt)
 	if err != nil {
@@ -251,8 +259,8 @@ func TestMineReadsOnlyOwnRecords(t *testing.T) {
 	if want := []int{mine.Number}; !slices.Equal(mineNumbers(got), want) {
 		t.Errorf("the rows are %v, want %v", mineNumbers(got), want)
 	}
-	if c.reads != 1 {
-		t.Errorf("the read made %d object reads, want 1", c.reads)
+	if want := []string{recordKey(mine.Number), fingerprintKey(fp)}; !slices.Equal(c.readKeys, want) {
+		t.Errorf("the read took back %v, want %v: the user's own record and its entry, and none of the three of somebody else's", c.readKeys, want)
 	}
 }
 
@@ -339,6 +347,61 @@ func TestMineBoundedRecordRead(t *testing.T) {
 	}
 }
 
+// A record no fingerprint entry names is an orphan a naming that failed left
+// behind, not an issue the store holds: the team's own listing skips it (F28),
+// and so does this one, or its reporter is shown — and can then claim and file
+// — an issue nothing else in the store will ever show (F7).
+func TestMineSkipsRecordNoFingerprintEntryNames(t *testing.T) {
+	ctx := context.Background()
+	ana := "ana@example.test"
+	fp := fingerprint("79")
+	// The states a failed naming leaves the entry in, and the naming that
+	// landed beside them, so what the read answers is the entry's doing rather
+	// than the fixture's.
+	for _, tc := range []struct {
+		what  string
+		entry int // -1: the entry was never written
+		want  []int
+	}{
+		{"the entry was never written", -1, nil},
+		{"the entry names no issue yet", 0, nil},
+		{"the entry names another issue", 2, nil},
+		{"the entry names it", 1, []int{1}},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			b := sharedBucket(t)
+			i := sharedIssue("update-20261107183012-48213", fp)
+			i.Reporter = ana
+			raw, err := marshalShared(i, 1)
+			if err != nil {
+				t.Fatalf("encoding the record: %v", err)
+			}
+			if _, err := b.Create(ctx, recordKey(1), raw, sharedJSON); err != nil {
+				t.Fatalf("writing the record: %v", err)
+			}
+			if _, err := b.Create(ctx, reporterIndexKey(1, Digest(ana)), nil, sharedJSON); err != nil {
+				t.Fatalf("indexing issue 1: %v", err)
+			}
+			if tc.entry >= 0 {
+				entry, err := json.Marshal(numberDoc{Format: sharedFormat, Number: tc.entry})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := b.Create(ctx, fingerprintKey(fp), entry, sharedJSON); err != nil {
+					t.Fatalf("writing the fingerprint entry: %v", err)
+				}
+			}
+			got, err := ListMine(ctx, b, verified(ana), sharedAt)
+			if err != nil {
+				t.Fatalf("reading mine: %v", err)
+			}
+			if !slices.Equal(mineNumbers(got), tc.want) {
+				t.Errorf("the rows are %v, want %v", mineNumbers(got), tc.want)
+			}
+		})
+	}
+}
+
 // A user nobody could name is on no issue, and the answer is an empty read
 // rather than an error.
 func TestMineNobodyReadsNothing(t *testing.T) {
@@ -353,7 +416,3 @@ func TestMineNobodyReadsNothing(t *testing.T) {
 		t.Errorf("the read = %+v, want an empty untruncated one", got)
 	}
 }
-
-// strings is used by the fixtures above through the package's helpers; keep the
-// import honest.
-var _ = strings.TrimSpace

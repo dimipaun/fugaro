@@ -25,15 +25,6 @@ const mineIndexCap = 500
 // thing a longer listing would change.
 const mineOccurrenceCap = 1000
 
-// mineStore is the slice of a bucket this reader uses: names-only listings and
-// bounded reads. It is an interface so a test can wrap a bucket and count the
-// calls, because what this reader must never do is read an object whose name
-// was all it needed (F7).
-type mineStore interface {
-	List(opts *blob.ListOptions) *blob.ListIterator
-	ReadMax(ctx context.Context, key string, limit int) ([]byte, int64, error)
-}
-
 // ListMine reads the issues this user is a reporter on (F7): the user's own
 // reporter index is listed names only, each issue it names is read bounded, and
 // the number of other people who hit it is counted by digest and never by name
@@ -42,7 +33,7 @@ type mineStore interface {
 // id is a display identity, so a cached one is enough to read with — nothing
 // here writes. A user with no digest, which is nobody at all, is on no issue
 // the store can name, and the answer is an empty read rather than an error.
-func ListMine(ctx context.Context, b mineStore, id Identity, now time.Time) (MineShared, error) {
+func ListMine(ctx context.Context, b storeReader, id Identity, now time.Time) (MineShared, error) {
 	out := MineShared{AsOf: now.UTC()}
 	if id.Digest == "" {
 		return out, nil
@@ -70,7 +61,7 @@ func ListMine(ctx context.Context, b mineStore, id Identity, now time.Time) (Min
 // prefix, names only. A name that is not one this store writes is skipped, and
 // the listing is capped at mineIndexCap issues, with the ones past it left out
 // and said so.
-func mineIndex(ctx context.Context, b mineStore, digest string) (numbers []int, truncated bool, err error) {
+func mineIndex(ctx context.Context, b storeReader, digest string) (numbers []int, truncated bool, err error) {
 	iter := b.List(&blob.ListOptions{Prefix: reporterPrefix(digest)})
 	for {
 		obj, err := iter.Next(ctx)
@@ -113,11 +104,20 @@ func numberFromIndexKey(key, digest string) (int, bool) {
 }
 
 // readMineRecord reads one issue's record through the reader's own bounded
-// read. A record the store cannot hand back — gone, too big, not this format —
-// is not an issue the store holds, and the listing leaves it out rather than
-// failing: the prefix is writable by every launcher, and one entry this build
-// cannot read must not take the user's whole list down (F11).
-func readMineRecord(ctx context.Context, b mineStore, number int) (Issue, bool) {
+// read, and answers it only if the store holds it as an issue.
+//
+// A record the store cannot hand back — gone, too big, not this format — is not
+// an issue the store holds, and the listing leaves it out rather than failing:
+// the prefix is writable by every launcher, and one entry this build cannot
+// read must not take the user's whole list down (F11).
+//
+// A record whose fingerprint names it nowhere is not one either. That is the
+// rule the team's own listing reads (F28): the record is written before the
+// fingerprint's entry is named, so an upload that died in between leaves a
+// record no entry names, and `mine` showing it would put an issue in front of
+// its reporter — with the retry and the claim that follow — that nothing else
+// in the store will ever show.
+func readMineRecord(ctx context.Context, b storeReader, number int) (Issue, bool) {
 	if err := validateNumber(number); err != nil {
 		return Issue{}, false
 	}
@@ -129,6 +129,18 @@ func readMineRecord(ctx context.Context, b mineStore, number int) (Issue, bool) 
 	if err != nil {
 		return Issue{}, false
 	}
+	// A key is never built out of nothing (F20): the record is a file a
+	// launcher can write too, and one whose fingerprint is not a fingerprint no
+	// entry can name.
+	if !fingerprintRE.MatchString(rec.Issue.Fingerprint) {
+		return Issue{}, false
+	}
+	// An entry the store could not read names as little as one that names
+	// nothing, and a row that must not be there is worse than a row that is
+	// late: the listing already leaves a record it cannot read alone.
+	if named, err := entryNames(ctx, b, fingerprintKey(rec.Issue.Fingerprint), number); err != nil || !named {
+		return Issue{}, false
+	}
 	return rec.Issue, true
 }
 
@@ -136,7 +148,7 @@ func readMineRecord(ctx context.Context, b mineStore, number int) (Issue, bool) 
 // display data, the user's own hit time, the count of other people, and — on a
 // resolved issue — whether the user's own hit was flagged a regression (F7,
 // F14).
-func mineIssue(ctx context.Context, b mineStore, digest string, rec Issue) (MineSharedIssue, error) {
+func mineIssue(ctx context.Context, b storeReader, digest string, rec Issue) (MineSharedIssue, error) {
 	occ, err := mineOccurrences(ctx, b, rec.Number, digest, rec.Status == StatusResolved)
 	if err != nil {
 		return MineSharedIssue{}, err
@@ -196,7 +208,7 @@ type mineOcc struct {
 // regression flag belongs to the hit that set it, and another reporter's
 // regression must not turn this user's row into one (F14). A name that is not
 // one this store writes is skipped, so a hostile entry changes nothing here.
-func mineOccurrences(ctx context.Context, b mineStore, number int, digest string, readOwn bool) (mineOcc, error) {
+func mineOccurrences(ctx context.Context, b storeReader, number int, digest string, readOwn bool) (mineOcc, error) {
 	out := mineOcc{digests: map[string]bool{}}
 	iter := b.List(&blob.ListOptions{Prefix: occurrencePrefix(number)})
 	seen := 0
