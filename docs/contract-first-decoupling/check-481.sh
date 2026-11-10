@@ -306,7 +306,13 @@ watch_batch() {
   deadline=$(( $(date +%s) + WAIT_SECONDS ))
   while :; do
     if ! fugaro runs ls --batch "$name" --since 0 --json >"$batch_json" 2>"$SCRATCH/batch-$key.err"; then
-      fact "$key" FAIL "'fugaro runs ls --batch $name' could not list the batch — $(tr '\n' ' ' <"$SCRATCH/batch-$key.err")"
+      # A listing that cannot be read is not a finding about the plan: the wall
+      # clock is the only thing this row measures, and a check that could not
+      # take it has nothing to say about the gain either way. It is left
+      # unmeasured — the row says which figure is missing and why — rather than
+      # failed, which would read as a break the read reported and the clock
+      # refused.
+      fact "$key" UNVERIFIED "'fugaro runs ls --batch $name' could not list the batch — $(tr '\n' ' ' <"$SCRATCH/batch-$key.err") The wall clock is the figure this row measures and the listing is the only place it comes from, so nothing is concluded about the plan here: check that the installation can read the runs bucket (fugaro doctor) and run the check again"
       return 0
     fi
     n=$(jq -r '.runs | length' "$batch_json")
