@@ -185,6 +185,39 @@ func TestSeparatorNotInName(t *testing.T) {
 	}
 }
 
+// Every refusal echoes the caller's own bytes escaped, never raw: a name is
+// caller-supplied, the intake's refusal path and the CLI both print the error,
+// and a terminal escape, a bidi override or a credential pasted where a name
+// belonged must not arrive as itself.
+func TestRefusalEscapesTheCallersBytes(t *testing.T) {
+	const hostile = "key\x1b[2K\u202egnp.exe"
+	for _, c := range []struct {
+		what string
+		call func() error
+	}{
+		{"Project", func() error { _, err := secretname.Project(hostile); return err }},
+		{"User name", func() error { _, err := secretname.User("12", hostile); return err }},
+		{"User id", func() error { _, err := secretname.User(hostile, "key"); return err }},
+		{"Parse", func() error { _, err := secretname.Parse(hostile); return err }},
+		{"Parse without the separator", func() error {
+			_, err := secretname.Parse(secretname.UserPrefix + hostile)
+			return err
+		}},
+	} {
+		err := c.call()
+		if err == nil {
+			t.Errorf("%s accepted %q, want a refusal", c.what, hostile)
+			continue
+		}
+		if strings.ContainsAny(err.Error(), "\x1b\u202e") {
+			t.Errorf("%s: the refusal echoes the caller's bytes raw: %q", c.what, err.Error())
+		}
+		if !strings.Contains(err.Error(), `\u001b`) || !strings.Contains(err.Error(), `\u202e`) {
+			t.Errorf("%s: the refusal does not show the bytes escaped: %q", c.what, err.Error())
+		}
+	}
+}
+
 // R1: a name that would build a secret ID over Secret Manager's own limit is
 // refused, and the sentence says what the limit is.
 func TestLengthLimit(t *testing.T) {

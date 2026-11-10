@@ -25,6 +25,12 @@
 // verified sub and refuses a name outside this grammar, and the credentials
 // service (DS3.3), which resolves a user-supplied credential by its
 // per-secret name first and by its bundle entry second (R6).
+//
+// A refusal echoes the caller's own bytes through pluginwire.Printable and
+// never raw: a name is caller-supplied, both ends of this package print the
+// refusal — the intake's refusal path and the CLI — and what arrives there may
+// be a terminal escape, a bidi override or a credential pasted where a name
+// belonged.
 package secretname
 
 import (
@@ -34,6 +40,7 @@ import (
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 )
 
 const (
@@ -120,7 +127,7 @@ func Project(name string) (string, error) {
 
 func checkID(id string) error {
 	if !idRE.MatchString(id) {
-		return fmt.Errorf("the owner of a per-user secret is the numeric Google account id, not %q", id)
+		return fmt.Errorf("the owner of a per-user secret is the numeric Google account id, not %s", pluginwire.Printable(id))
 	}
 	return nil
 }
@@ -130,9 +137,9 @@ func checkName(name string) error {
 	case name == "":
 		return errors.New("a credential name is empty")
 	case reservedPlatformName(name):
-		return fmt.Errorf("%s is a platform credential kind, and no user or project secret may be stored under it (R7)", name)
+		return fmt.Errorf("%s is a platform credential kind, and no user or project secret may be stored under it (R7)", pluginwire.Printable(name))
 	case !nameRE.MatchString(name):
-		return fmt.Errorf("%s is not a credential name: lower-case letters, digits and dashes, starting with a letter or a digit", name)
+		return fmt.Errorf("%s is not a credential name: lower-case letters, digits and dashes, starting with a letter or a digit", pluginwire.Printable(name))
 	}
 	return nil
 }
@@ -179,11 +186,11 @@ func Parse(secretID string) (Name, error) {
 	}
 	rest, ok := strings.CutPrefix(secretID, UserPrefix)
 	if !ok {
-		return Name{}, fmt.Errorf("%s is neither a per-user nor a project-shared secret ID", secretID)
+		return Name{}, fmt.Errorf("%s is neither a per-user nor a project-shared secret ID", pluginwire.Printable(secretID))
 	}
 	id, name, ok := strings.Cut(rest, "_")
 	if !ok {
-		return Name{}, fmt.Errorf("%s is not a per-user secret ID: they are %s<id>_<name>", secretID, UserPrefix)
+		return Name{}, fmt.Errorf("%s is not a per-user secret ID: they are %s<id>_<name>", pluginwire.Printable(secretID), UserPrefix)
 	}
 	if err := checkID(id); err != nil {
 		return Name{}, err
