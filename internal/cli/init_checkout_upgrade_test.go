@@ -516,7 +516,8 @@ func TestUpdateAgentSessionLeavesTheCloudStepForTheUser(t *testing.T) {
 	// — no cloud step is reached, and the step the session may not take is
 	// still left for the user. The stage's check says so (it does not read the
 	// parked step as done), the plan's line keeps naming it, and the JSON
-	// carries it.
+	// carries it. The pin and the plugin are the plugin stage's halves (U1), so
+	// the step this stage's plan drops and names is the cloud one.
 	checkoutFile(t, settings, wiredAt("v0.5.1"))
 	*ran = nil
 	e2, out2 := checkoutEngine(t, &initOptions{yes: true})
@@ -527,11 +528,8 @@ func TestUpdateAgentSessionLeavesTheCloudStepForTheUser(t *testing.T) {
 	if len(*ran) != 0 {
 		t.Errorf("the second run reached the cloud: steps %q\n%s", *ran, out2)
 	}
-	if !strings.Contains(out2.String(), "pin: current") {
-		t.Errorf("the second run did not find the pin already moved:\n%s", out2)
-	}
-	if !strings.Contains(out2.String(), "plugin: current") {
-		t.Errorf("the second run's plugin step is not current, so the parked cloud step is not the only step its plan holds:\n%s", out2)
+	if !strings.Contains(out2.String(), "skipped here: cloud") {
+		t.Errorf("the second run no longer says which step it leaves:\n%s", out2)
 	}
 	// The plan view's row is one clause (report.Brief) and the reason is whole
 	// in the log, so what is read here is the run's own block under it: the
@@ -1009,9 +1007,15 @@ func TestUpdateBuildsTheStaleWorkflowsWhenNobodyIsAsked(t *testing.T) {
 
 			e, refreshOut := checkoutEngine(t, &initOptions{})
 			out := atTerminal(t, e, "")
-			res := stageOutcome(t, e, checkoutStageOf(t, e))
+			// The way `fugaro update` runs it: the plugin stage first, whose
+			// stale pin is what says this run is taking the checkout to this
+			// release, and the checkout stage behind it — the cloud half's own
+			// check reads the local config and a build record never, so the
+			// plugin stage is where the run's reach of the images is read
+			// (initEngine.checkoutBehind).
+			res := updateStages(t, e, initflow.Plugin, checkoutStageName)
 			if res.Failed != nil {
-				t.Fatalf("the checkout stopped with nothing typed: %+v\n%s%s", res, out, refreshOut)
+				t.Fatalf("the run stopped with nothing typed: %+v\n%s%s", res, out, refreshOut)
 			}
 			if len(fb.specs) != 2 {
 				t.Fatalf("built %+v, want both stale workflows", fb.specs)
