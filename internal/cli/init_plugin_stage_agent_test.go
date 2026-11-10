@@ -22,19 +22,33 @@ import (
 // the user — its job images are built from the fugaro.yaml the run did not
 // onboard — so the stage is done with what it may do and the run exits 1.
 //
-// What the test decides is the plugin step's position, and this test is RED on
-// main by design: U0 ships it failing, and U1 (same plan) is what turns it
-// green. Today the plugin step lives in the checkout stage, which a coding
-// agent's session never reaches here: the plugin stage — a stage neither
+// What the test decides is the plugin step's position. The claim is not true
+// yet, so the body is behind the tree's guard for exactly that — the FUTURE
+// skip of managed_test.go's TestManagedConfigClaimingManagedIsNotManaged — and
+// that guard may not come off here: a red main is fixed before anything else
+// merges (docs/dogfooding.md), and every concurrent run's own verify runs this
+// package (fugaro.yaml), so an unguarded red would end other runs on a test
+// they did not touch. U1 is what moves the step into the plugin stage and makes
+// that stage LocalUnderAgent; it is also the task that removes this skip, and
+// until it does the skip is the only thing keeping the claim out of the test
+// run.
+//
+// With the skip removed today the first failure names the reason:
+//
+//	Claude Code lists the plugin as ... after the run, want ...: the plugin
+//	step was left for the user in a coding agent's session, though its write is
+//	on this machine, and the run never reached it
+//
+// Today the plugin step lives in the checkout stage, which a coding agent's
+// session never reaches here: the plugin stage — a stage neither
 // LocalUnderAgent nor SelfConfirming — is left whole for the user, the loop
 // stops there, and everything behind it, the repository stage and the
 // checkout's own plugin step included, is blocked. So the plugin stays on the
-// previous release (the first failure names it) and nothing local moves. U1
-// moves the step into the plugin stage and makes that stage LocalUnderAgent,
-// and then the assertions below hold: the plugin installs, the repository
-// stage stops needs-you, and the checkout runs past that stop to park its
-// cloud half.
+// previous release and nothing local moves. After U1 the assertions below hold:
+// the plugin installs, the repository stage stops needs-you, and the checkout
+// runs past that stop to park its cloud half.
 func TestInitPluginStageMovesInAgentSessionAheadOfARepositoryStop(t *testing.T) {
+	t.Skip("FUTURE (U1, docs/plugin-user-scope/implementation-plan.md): no skip-free red may land — docs/dogfooding.md fixes a red main before anything else merges, and every run's own verify runs this package (fugaro.yaml). The claim below is false until U1 moves the plugin step into the plugin stage and makes that stage LocalUnderAgent; U1 removes this skip and changes nothing else in this file.")
 	r := newConvergeRigYAML(t, v4Node(), convergeLegacyYAML)
 	currentRelease(t)
 	// The staleness line is once per process; an earlier test's run may have

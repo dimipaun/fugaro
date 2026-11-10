@@ -80,8 +80,16 @@ session, in a repository whose repository stage returns needs-you, still reaches
 **Files.** A new `internal/cli/init_plugin_stage_agent_test.go`, holding
 `TestInitPluginStageMovesInAgentSessionAheadOfARepositoryStop` (chosen over a case in
 `internal/cli/init_checkout_upgrade_test.go`: the decision is the plugin *stage*'s, so it reads beside the
-plugin stage's own tests). It ships **red on `main`** — no skip, no build tag: U0's whole point is that
-the claim is tested now.
+plugin stage's own tests).
+
+**How the red lands.** The claim is not true until U1, and a skip-free red may not land: `ci.yml` runs
+`go test -race ./...` on every push to `main` and `fugaro.yaml` puts `./internal/cli` in every run's own
+verify, so an unguarded red would leave `main` failing and end every concurrent run on a test it did not
+touch — and `docs/dogfooding.md` fixes a red `main` before anything else merges. The body therefore ships
+behind the tree's existing guard for a documented, not-yet-true claim, the `FUTURE` skip of
+`internal/cli/managed_test.go`'s `TestManagedConfigClaimingManagedIsNotManaged`, whose reason names U1 as
+the task that removes it; **U1 un-skips it and changes nothing else in the file**, and that un-skip is
+recorded in U1's own section below, not only in the skip string.
 
 **Interface.** The test drives the converge with the agent marker set the way
 `internal/initflow/loop.go` applies `LocalUnderAgent`, and a repository fixture whose repository stage
@@ -105,16 +113,20 @@ project keeps skipping, with its wording corrected (F15).
 `planFor`'s `pinSkip`), `internal/cli/init_plugin_stage.go` (the marker and the message that names the
 step), `internal/cli/upgrade.go` (`fugaroCheckout`), `internal/initflow/stage.go` if the marker's
 documentation names the stage; tests `internal/cli/{init_checkout_upgrade_test.go,
-init_plugin_stage_test.go,checkouts_test.go,cascade_test.go,left_commands_test.go}`.
+init_plugin_stage_test.go,init_plugin_stage_agent_test.go,checkouts_test.go,cascade_test.go,
+left_commands_test.go}` (the last test file only for the un-skip above).
 
 **Interface.** The step lines the converge prints do not change their names (`plugin:`), only which stage
 emits them; `left_for_you` is no longer the plugin's answer in an agent session; the checkout stage's
 parked-cloud behaviour is untouched.
 
-**Red step.** `TestInitPluginStageMovesInAgentSessionAheadOfARepositoryStop` — the red U0 landed and left
-running — plus a case that a checkout wired by an older Fugaro is still recognised as one after
+**Red step.** Delete the `FUTURE` skip U0 landed in
+`internal/cli/init_plugin_stage_agent_test.go` and watch
+`TestInitPluginStageMovesInAgentSessionAheadOfARepositoryStop` fail for the reason its comment names (the
+plugin step is still the checkout's) — that un-skip is this task's, and the file changes in no other way.
+Add, beside it, a case that a checkout wired by an older Fugaro is still recognised as one after
 `fugaroCheckout` loses its disjunct, written to fail against today's code path. Both are green at the end
-of this task: the first is the acceptance of the move, not a test this task edits.
+of this task.
 
 **Tests.** `GOFLAGS=-p=2 go test ./internal/cli/ -run
 'TestInitCheckoutUpgrade|TestCheckout|TestCheckouts|TestCascade|TestLeftCommands|TestInitPluginStage'
