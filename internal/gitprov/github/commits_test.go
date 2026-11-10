@@ -101,6 +101,51 @@ func TestTreeReadsTheFilesUnderThePathAtTheCommit(t *testing.T) {
 	}
 }
 
+// TestTreeReadsADirectoryWrittenWithItsTrailingSlash: a context names a
+// directory, and the catalog's grammar takes one written the way the key's own
+// example spells it — "ci/" (D1391) — which is the same directory the same
+// entry written "ci" names: the read answers the files under it, relative to
+// it.
+func TestTreeReadsADirectoryWrittenWithItsTrailingSlash(t *testing.T) {
+	def := []byte("FROM example.invalid/base\n")
+	p := contentsProvider(t, append(mintExchanges(t),
+		contentsExchange(t, "/repos/acme/web/git/trees/"+commitSHA+"?recursive=1", 200, treeListing(false,
+			treeEntryJSON("ci/Dockerfile", "blob", len(def)),
+			treeEntryJSON("web/index.html", "blob", 5),
+		)),
+		contentsExchange(t, "/repos/acme/web/git/blobs/"+blobSHA, 200, blobReply(def)),
+	)...)
+	files, err := p.Tree(ctx, "ci/", commitSHA, gitprov.TreeLimit{MaxFiles: 10, MaxBytes: 1 << 20})
+	if err != nil {
+		t.Fatalf("Tree of a context written with its trailing slash: %v", err)
+	}
+	if len(files) != 1 || files[0].Path != "Dockerfile" || string(files[0].Data) != string(def) {
+		t.Fatalf("Tree = %v, want the one file under ci, named relative to it", files)
+	}
+}
+
+// TestTreeRefusesAFileTooLargeForOneBlobReply: a blob reply carries the file
+// base64 inside a JSON object, and the client bounds one reply, so a file over
+// three quarters of that has no reply that holds it whatever ceiling the
+// caller gave — the caller's is larger. It is refused by name before the read,
+// which is the exchange this fixture does not hold: a file left to the read
+// would come back as a truncated reply and a decoding error that names no
+// file.
+func TestTreeRefusesAFileTooLargeForOneBlobReply(t *testing.T) {
+	p := contentsProvider(t, append(mintExchanges(t),
+		contentsExchange(t, "/repos/acme/web/git/trees/"+commitSHA+"?recursive=1", 200, treeListing(false,
+			treeEntryJSON("ci/big.bin", "blob", maxBlobBytes+1),
+		)),
+	)...)
+	_, err := p.Tree(ctx, "ci", commitSHA, gitprov.TreeLimit{MaxFiles: 10, MaxBytes: 1 << 30})
+	if err == nil {
+		t.Fatal("a file larger than one blob reply was read")
+	}
+	if !strings.Contains(err.Error(), gitprov.ErrTreeTooLarge.Error()) || !strings.Contains(err.Error(), "big.bin") {
+		t.Errorf("Tree error = %v, want it to name the file and carry %v", err, gitprov.ErrTreeTooLarge)
+	}
+}
+
 // TestTreeRefusesATreeOverItsLimit: a directory over the byte ceiling is
 // refused as soon as the listing says so — the file that took it over is not
 // fetched, which is the exchange this fixture does not hold.

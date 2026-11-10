@@ -210,6 +210,27 @@ func TestCatalogCopyStagesTheContextHash(t *testing.T) {
 	}
 }
 
+// TestCatalogCopyStagesAContextWrittenWithItsTrailingSlash: a context is a
+// directory, and the catalog's own example spells the key with one — "ci/"
+// (D1391) — so the copy reads that shape and stages the same identity as the
+// same context written without the slash. The copy is the end of the path the
+// grammar accepts, and the whole of it: a read that refused the slash would
+// fail here, where the operator meets it.
+func TestCatalogCopyStagesAContextWrittenWithItsTrailingSlash(t *testing.T) {
+	ctx := context.Background()
+	p, b, e := contextCopy(t)
+	e.Source.Context = "ci/"
+	if err := writeCatalogDockerfile(ctx, b, catalogOpen(p), gitprov.KindGitHub, e); err != nil {
+		t.Fatalf("writeCatalogDockerfile of a context written with its trailing slash: %v", err)
+	}
+	if got, want := catalogObject(t, b, config.CatalogContextHashKey, "agent"), contextDigestOf(contextTree()); got != want {
+		t.Errorf("the staged context hash is %q, want the digest of the tree under ci/ %q", got, want)
+	}
+	if got := catalogObject(t, b, config.CatalogContextCommitKey, "agent"); got != p.State.Commits["main"] {
+		t.Errorf("the staged commit is %q, want %q", got, p.State.Commits["main"])
+	}
+}
+
 // TestCatalogCopyBoundsTheContext: a context over the bound is refused by the
 // entry's name before a build is paid for (D1398), and the copy writes nothing
 // at all — not the Dockerfile either, because the definition and the context

@@ -163,6 +163,64 @@ func TestTreeWalksEveryPageOfAListing(t *testing.T) {
 	}
 }
 
+// TestTreeReadsADirectoryWrittenWithItsTrailingSlash: a context names a
+// directory, and the catalog's grammar takes one written the way the key's own
+// example spells it — "ci/" (D1391) — which is the same directory the same
+// entry written "ci" names: the read answers the files under it, relative to
+// it, and asks the API for it once.
+func TestTreeReadsADirectoryWrittenWithItsTrailingSlash(t *testing.T) {
+	def := "FROM example.invalid/base\n"
+	f := newCommitsServer(t)
+	f.routes[srcBase+"ci/?pagelen=100&recursive=true"] = commitsReply{status: 200, ctype: "application/json",
+		body: fmt.Sprintf(`{"values": [{"path": "ci/Dockerfile", "type": "commit_file", "size": %d}]}`, len(def))}
+	f.routes[srcBase+"ci/Dockerfile"] = commitsReply{status: 200, ctype: "application/octet-stream", body: def}
+	p := f.provider(t)
+	files, err := p.Tree(ctx, "ci/", commitSHA, gitprov.TreeLimit{MaxFiles: 10, MaxBytes: 1 << 20})
+	if err != nil {
+		t.Fatalf("Tree of a context written with its trailing slash: %v", err)
+	}
+	if len(files) != 1 || files[0].Path != "Dockerfile" || string(files[0].Data) != def {
+		t.Fatalf("Tree = %v, want the one file under ci, named relative to it", files)
+	}
+}
+
+// TestTreeStopsTheWalkOnThePageThatIsOverItsLimit: the caller's ceiling is
+// applied as the entries arrive, not after the walk, so a directory whose
+// second page takes it over is refused there — the third page is never asked
+// for and no file of it is read, which is what the server's record of the
+// requests shows.
+func TestTreeStopsTheWalkOnThePageThatIsOverItsLimit(t *testing.T) {
+	one := "one\n"
+	page := func(n int, link bool, name string) commitsReply {
+		r := commitsReply{status: 200, ctype: "application/json",
+			body: fmt.Sprintf(`{"values": [{"path": "ci/%s", "type": "commit_file", "size": %d}]}`, name, len(one))}
+		if link {
+			r.header = map[string]string{"Link": fmt.Sprintf("<{{server}}%sci/?pagelen=100&recursive=true&page=%d>; rel=\"next\"", srcBase, n+1)}
+		}
+		return r
+	}
+	f := newCommitsServer(t)
+	f.routes[srcBase+"ci/?pagelen=100&recursive=true"] = page(1, true, "a")
+	f.routes[srcBase+"ci/?pagelen=100&recursive=true&page=2"] = page(2, true, "b")
+	f.routes[srcBase+"ci/?pagelen=100&recursive=true&page=3"] = page(3, false, "c")
+	for _, name := range []string{"a", "b", "c"} {
+		f.routes[srcBase+"ci/"+name] = commitsReply{status: 200, ctype: "application/octet-stream", body: one}
+	}
+	p := f.provider(t)
+	_, err := p.Tree(ctx, "ci", commitSHA, gitprov.TreeLimit{MaxFiles: 1, MaxBytes: 1 << 20})
+	if err == nil || !strings.Contains(err.Error(), gitprov.ErrTreeTooLarge.Error()) {
+		t.Fatalf("Tree over its file limit = %v, want %v", err, gitprov.ErrTreeTooLarge)
+	}
+	if f.asked(srcBase + "ci/?pagelen=100&recursive=true&page=3") {
+		t.Error("the walk went past the page that took it over the ceiling")
+	}
+	for _, name := range []string{"a", "b", "c"} {
+		if f.asked(srcBase + "ci/" + name) {
+			t.Errorf("the file %s was read for a directory that is over the ceiling", name)
+		}
+	}
+}
+
 // TestTreeRefusesADirectoryOverItsLimit: a directory over the byte ceiling is
 // refused as soon as the listing says so — the file that took it over is never
 // read, which is what the server's record of the requests shows.
