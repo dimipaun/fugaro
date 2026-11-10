@@ -283,7 +283,8 @@ func (r *run) stageAgentEnv(stage string, pins map[string]string) ([]string, err
 // gateway there are none and a run sets no variable the budget-off runs never
 // set. When the stage's model or the background model is served by a provider
 // route, agent.ProviderRouteVars are added: a Claude stage is never touched by
-// them.
+// them. So is a stage of a review the project's provider key serves
+// (providerServedReview), whose model reaches a provider whatever its ID says.
 //
 // A stage the run's stage account serves has none either, whatever the
 // gateway's state: the pins are its route table's and its price table's, and
@@ -301,7 +302,7 @@ func (r *run) stagePins(stage string) map[string]string {
 	a := r.cfg.Agent
 	model, bg := r.stageModel(stage), r.backgroundModel()
 	pins := agent.PinVars(model, bg, a.MaxOutputFor(role))
-	if r.stageOnProviderRoute(model, bg) {
+	if r.stageOnProviderRoute(model, bg) || r.providerServedReview() {
 		maps.Copy(pins, agent.ProviderRouteVars())
 	}
 	return pins
@@ -317,6 +318,26 @@ func (r *run) stageOnProviderRoute(model, background string) bool {
 		}
 	}
 	return false
+}
+
+// providerServedReview reports whether this run's stages are served by the
+// project's provider key rather than by Anthropic: the run is a review class
+// run (reviewClassRun) and the pairing it was admitted to is that key's
+// (pairingNamesTheProjectsProviderKey).
+//
+// Every call such a run makes is a provider's call whatever the stage's model
+// ID says: the credentials service attaches the project's provider key and
+// sends the call to the provider's own endpoint with the provider's auth shape,
+// both of them out of its own document (D1418), and the runner names neither.
+// So the stage's model list is a provider's and takes agent.ProviderRouteVars.
+//
+// The run cannot ask its own routes: a review class run is in a shared project
+// job, whose environment carries no FUGARO_MODEL_PROVIDERS
+// (internal/infra's projectJobEnv), and the class's credential is the pairing's
+// and not the job's. The pairing is the fact, and it is the one the class's own
+// admission reads (checkReviewClassModelPath).
+func (r *run) providerServedReview() bool {
+	return r.reviewClassRun() && r.pairingNamesTheProjectsProviderKey()
 }
 
 // writeManagedSettings writes the managed settings for stage: the gateway's

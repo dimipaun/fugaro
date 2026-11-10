@@ -18,6 +18,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gateway"
+	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
@@ -837,6 +838,127 @@ func TestReviewRunIsServedByTheProjectsAnthropicKey(t *testing.T) {
 				t.Errorf("the agent carries CLAUDE_CODE_OAUTH_TOKEN (%q): the variant mounts no token of its own", v)
 			}
 		})
+	}
+}
+
+// TestReviewRunOnAProviderKeyReachesTheProvider (AK7, D1418): the class's
+// third pairing, and the one that names no host. A review run the launcher
+// admitted to the review variant of the account the project's provider key is
+// spelled as (config.ProviderKeyAccount) is served by that key: the class is
+// the run's model path whatever the repository's own file says — agent.auth:
+// api-key is what such a repository writes, because its coder's calls are the
+// provider's — the gateway's upstream is the credentials service's, and the
+// service is what holds the provider's key *and* the provider's own endpoint
+// and auth shape, in the document it carries (D1418). So the call the service
+// forwards reaches the provider's host with the provider's auth shape, and
+// this run names no part of either: none of the environments it writes carries
+// a provider host at all.
+//
+// The stage's model list is a provider's, so the stage is launched with
+// agent.ProviderRouteVars: the safeguards and thinking additions Claude Code
+// makes are fields a provider does not take. The run cannot read that off its
+// own routes — a review class run is in a shared project job, whose
+// environment carries no FUGARO_MODEL_PROVIDERS, and the class's credential is
+// the pairing's and not the job's — so the pairing is what says it.
+//
+// The pairing is what admits the run, never the auth: this repository writes
+// the same agent.auth as TestReviewRunIsNeverServedByAnAPIKeyOfItsOwn's, and
+// only the job the run was admitted to tells the two apart.
+//
+// Mutation (run, restored): carry the provider's base URL into the agent's
+// environment, so the runner picks the endpoint instead of the service's
+// document — the assertions that no environment this run writes names the
+// provider's host go red, and the installation would have two places deciding
+// where a review's prompt goes (D1418, §7's third attack question).
+func TestReviewRunOnAProviderKeyReachesTheProvider(t *testing.T) {
+	// The provider's own endpoint as the installation's config spells it: a
+	// host that resolves nowhere (nothing here dials it) and the one string no
+	// environment this run writes may carry.
+	const providerBaseURL = "https://openrouter.example.invalid/api"
+	const providerHost = "openrouter.example.invalid"
+
+	r := reviewClassRun(t, "api-key", policy.ModeEnforce)
+	r.cfg.Agent.Models = config.ModelRoles{Coder: "claude-sonnet-5-5", Reviewer: reviewClassModel}
+	r.job.Account = reviewVariantAccount(config.ProviderKeyAccount)
+	r.spec.OAuthToken = config.ProviderKeyAccount
+	r.d.Execution = identityExecution(gcp.ProjectJobName(r.job.Profile, r.job.Provider, r.job.Account))
+	// The provider table a repository whose coder is routed carries
+	// (FUGARO_MODEL_PROVIDERS). A review class run's own job holds none — which
+	// is half of why the class cannot read the provider's facts itself — and
+	// the table is here so that a change which copied a host out of one into an
+	// environment has one to copy. Its models claim none of this run's pins, so
+	// no route is built and no key of a provider's is mounted.
+	r.d.Providers = map[string]config.ModelProvider{
+		"openrouter": {
+			Kind: config.ModelProviderKind, BaseURL: providerBaseURL, Auth: "bearer",
+			Secret: "openrouter-api-key", Models: []string{"anthropic/claude-opus-4-5"},
+			AllowDataTo: []string{"acme/app"}, RouteFeePct: 5,
+		},
+	}
+
+	// The pairing, and only the pairing, is what admits this run: the file is
+	// the same api-key file TestReviewRunIsNeverServedByAnAPIKeyOfItsOwn
+	// refuses.
+	if err := r.applyRouting(r.projPolicy.policy, true); err != nil {
+		t.Fatalf("a review whose pairing names the project's provider key was refused: %v", err)
+	}
+
+	// The one destination this run builds is the credentials service's: not
+	// the provider's, and not Anthropic's. Which provider endpoint the key
+	// belongs to is the service's document's to say (D1418).
+	r.sess = svcSession(t)
+	up, err := r.gatewayUpstream(context.Background())
+	if err != nil {
+		t.Fatalf("the upstream of a review the project's provider key serves: %v", err)
+	}
+	if up.Kind != gateway.KindService || up.BaseURL != reviewClassServiceURL {
+		t.Errorf("upstream = %+v, want the credentials service's kind and URL: the class's calls are the service's, which holds the provider's key and its endpoint", up)
+	}
+	if strings.Contains(up.BaseURL, providerHost) || strings.Contains(up.BaseURL, "api.anthropic.com") {
+		t.Errorf("the run's upstream is %q, want neither the provider's host nor Anthropic's: the class's destination is the service's", up.BaseURL)
+	}
+
+	// The stage's pins carry what a provider's model list needs, and no host.
+	pins := r.stagePins("review")
+	for k, want := range agent.ProviderRouteVars() {
+		if pins[k] != want {
+			t.Errorf("stagePins(review)[%s] = %q, want %q: the stage's model list is a provider's", k, pins[k], want)
+		}
+	}
+	if pins["ANTHROPIC_DEFAULT_SONNET_MODEL"] != reviewClassModel {
+		t.Errorf("the review stage's model pin = %q, want the reviewer's %q", pins["ANTHROPIC_DEFAULT_SONNET_MODEL"], reviewClassModel)
+	}
+
+	// No environment this run writes names the provider's host: the job's own,
+	// the stage's pins, the environment the agent is built with, the
+	// environment the stage's process runs in, and the managed settings.
+	namesHost := func(what string, kvs []string) {
+		t.Helper()
+		for _, kv := range kvs {
+			if strings.Contains(kv, providerHost) {
+				t.Errorf("%s names the provider's host: %s", what, kv)
+			}
+		}
+	}
+	namesHost("the job's environment", r.d.Env)
+	namesHost("the stage's pins", gitops.WithVars(nil, pins))
+	r.d.ManagedSettingsPath = filepath.Join(t.TempDir(), "managed-settings.json")
+	r.gwAgent = &agent.Gateway{BaseURL: "http://127.0.0.1:1", Token: reviewClassToken}
+	env, _, err := agent.BuildEnv(r.d.Env, agent.EnvSpec{Auth: r.modelAuth(), Gateway: r.gateway()})
+	if err != nil {
+		t.Fatalf("building the agent's environment for a review the project's provider key serves: %v", err)
+	}
+	namesHost("the agent's environment", env)
+	namesHost("the stage's environment", gitops.WithVars(env, pins))
+	if err := r.writeManagedSettings("review", pins); err != nil {
+		t.Fatalf("writing the managed settings: %v", err)
+	}
+	raw, err := os.ReadFile(r.managedPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), providerHost) {
+		t.Errorf("the managed settings name the provider's host: %s", raw)
 	}
 }
 
