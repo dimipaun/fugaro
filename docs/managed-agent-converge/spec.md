@@ -156,6 +156,8 @@ The alternative — leaving the refresh unbounded as `--yes` leaves it — costs
 
 **What is recorded.** One object per applied command, at a new family under the runs bucket's owner-only prefix: `gs://fugaro-runs-<gcp-project>/fugaro/managed-audit/<utc-date>/<id>.json`. The unit is the admitted apply and not the invocation: a step `fugaro update`'s propagation retry judges twice writes two objects, one per judged plan — a failed apply created what its plan named, and a record written only for the retry would leave that plan's digest out of the trail rather than in it. The prefix matters: `settings` objects under `runs/` are deleted at 90 days, and the versioning the bucket carries since D1545 (T2's ruling of 2026-11-07, `deploy/terraform/gcp/modules/installation/bucket.tf:25-27`) keeps a deleted object as a noncurrent version only 7 more — the noncurrent rule purges those under `runs/`, `cache/`, `locks/`, `tokens/` and `issues/` and never under `fugaro/` — so an audit that must outlive a quarter cannot live there; `fugaro/` has no lifecycle rule and is written only by operators.
 
+**Which commands record, and which does not.** The set in §3 — `fugaro update`, `config publish`, `project policy publish`, `image refresh`, `settings`, `rigor` and `accounts`, each with its `unset` / `rm` sibling — records, because those are the commands the gate stands in for. **`fugaro managed apply` is not one of them** (D1011): it is the one command this design cites rather than touches, so an apply through it leaves no record for `fugaro doctor` to read, and the warnings its own gate prints are the whole of the trail it leaves (`internal/managed/apply.go` says so in the line it prints).
+
 **What it holds**, and each field is there because a reader acts on it:
 
 | Field | Why |
@@ -168,7 +170,7 @@ The alternative — leaving the refresh unbounded as `--yes` leaves it — costs
 | `marker_version`, `marker_generation` | which creation fact was in force |
 | `delete_list_generation` | which version of the owner's list admitted the deletes, where it was read |
 | `agent_marker` | which environment marker was present — the session's own claim, recorded rather than trusted |
-| `identity` | the account the write ran as (the deployer account for `managed apply`, the operator's own elsewhere) |
+| `identity` | the account the write ran as: the command's own answer where it names one, and otherwise the credentials in force — the operator's own, never the agent's job account, and refused rather than written empty when it cannot be established at all |
 | `at` | when, in UTC |
 
 **Who writes it.** The command itself, with the operator's credentials, **after** the write, and it is written for a refusal too — a gate that refused is the record an owner most wants. A failure to write the record fails the command: an unattended apply that leaves no trail is the state this section exists to end. The record is never written by the agent's job account, whose grants are conditioned to `runs/`, `cache/` and `locks/`.

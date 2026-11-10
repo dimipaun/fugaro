@@ -145,8 +145,8 @@ type AuditFacts struct {
 	// Project and GCPProject are the installation the record is about.
 	Project    string
 	GCPProject string
-	// Identity is the account the write ran as: the deployer account for
-	// `managed apply`, the operator's own elsewhere. An empty one is filled
+	// Identity is the account the write ran as: the writer's own answer where
+	// it names one, the operator's own elsewhere. An empty one is filled
 	// from the credentials in force (operatorIdentity), and a record whose
 	// identity could not be established at all is refused rather than written
 	// with an empty field — a trail that does not say who wrote it is the half

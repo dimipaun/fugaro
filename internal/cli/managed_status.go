@@ -228,8 +228,8 @@ type managedStatusAudit struct {
 	// refusal is a record an owner reads most, so it is shown beside an
 	// admission and never instead of it.
 	Verdict string `json:"verdict"`
-	// Identity is the account the write ran as: the deployer account for a
-	// managed apply, the operator's own elsewhere.
+	// Identity is the account the write ran as: the command's own answer where
+	// it names one, and otherwise the credentials in force (the operator's own).
 	Identity string `json:"identity"`
 	// PlanDigest is the sha256 of the exact document the gate judged, so a
 	// reader can compare the record against a plan rather than believe a
