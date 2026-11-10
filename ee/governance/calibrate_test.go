@@ -332,7 +332,7 @@ func TestCalibrationWindowIsPerTier(t *testing.T) {
 // expectations would hold the two recent runs alone and print 3.00x, and the
 // three runs a fortnight earlier are the evidence that keeps it at 1.00x. The
 // three runs before the window are 5.00x and are not read: keeping them would
-// make the median 2.00x. medium ran only before the window and gets no row: a
+// make the median 3.00x. medium ran only before the window and gets no row: a
 // tier nothing ran of in the fortnight is not calibrated on what it last did a
 // month ago.
 func TestCalibrationWindowStopsAtFourteenDays(t *testing.T) {
