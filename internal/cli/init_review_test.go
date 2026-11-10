@@ -248,8 +248,8 @@ func TestPlanOutsideTheAllowlistAsksItsOwn(t *testing.T) {
 			if err := r.confirmOrdinary("applies the other plan", "nothing was applied", r.notCovered(bad, nil)); err != nil {
 				t.Fatalf("err %v\n%s", err, out)
 			}
-			if !strings.Contains(out.String(), "note: this step is not covered by the run confirmation: "+r.notCovered(bad, nil)+"; it asks for its own") {
-				t.Errorf("the step did not say why it asks its own:\n%s", out)
+			if !strings.Contains(out.String(), "note: this step is not covered by the run confirmation: "+r.notCovered(bad, nil)+"; it is shown and then applied, and where nobody is at the terminal the run leaves it to you") {
+				t.Errorf("the step did not say what its own plan means:\n%s", out)
 			}
 			if !strings.Contains(out.String(), "⚠ CONFIRM") {
 				t.Errorf("the step's own banner was not shown:\n%s", out)
@@ -270,7 +270,7 @@ func TestPlanOutsideTheAllowlistAsksItsOwn(t *testing.T) {
 // the one state in which askOrdinary prints something about the review before
 // asking — and under a marker it prints nothing at all: the refusal comes
 // first, so an agent's session reads no line of the review, not even the note
-// telling the person this step asks for its own.
+// telling the person the step is applied where nobody is at the terminal.
 //
 // The run with no marker is the control: the same two arguments do print that
 // note there, and then take the step's own banner, so the silence under the

@@ -2548,15 +2548,15 @@ func TestRulesStageDetailCarriesTheMobileLockOut(t *testing.T) {
 // (false, "") for the one case it cannot word — no --firebase-project at all —
 // and firebaseReason pasted that into "the Firebase project is ", so the run
 // that deploys into the project's own database without the flag told the
-// operator a sentence that stopped after "is". The note is what asks the step
-// for its own typed confirmation, so half a sentence is the one thing it cannot
-// be.
+// operator a sentence that stopped after "is". The note is what says the step
+// is not covered by the run confirmation, so half a sentence is the one thing
+// it cannot be.
 func TestRulesStageNotCoveredNoteWithoutTheFlag(t *testing.T) {
 	r := &initRun{cmd: NewRootCmd(), o: &initOptions{}, w: &syncBuf{}, projectName: initProjectName, gcpProject: initProject,
 		review: &runReview{state: reviewTaken, firebase: func(context.Context) (bool, string) { return false, "" }}}
 	got := r.firebaseReason()
-	// The note is embedded before the loop's "; it asks for its own", so it has
-	// to end on a word of its own: the old text ended on "is".
+	// The note is embedded before the loop's "; it is shown and then applied", so
+	// it has to end on a word of its own: the old text ended on "is".
 	if strings.HasSuffix(got, " is") || strings.HasSuffix(got, " ") || strings.HasSuffix(got, ", ") {
 		t.Fatalf("the note stops mid-sentence: %q", got)
 	}

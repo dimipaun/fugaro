@@ -1760,6 +1760,24 @@ func TestPolicyWriteAsksNoTypedNameOfAPersonOnAManagedProject(t *testing.T) {
 			t.Errorf("the node was not written (version %d)", got)
 		}
 	})
+	t.Run("an unmanaged project whose owner passed --ask", func(t *testing.T) {
+		// The flag's own rule, read at this door too (restoreAsk): --ask puts
+		// back the question a managed project's gate replaces, and a project
+		// whose marks did not answer "managed" has none to put back — so it is
+		// the no-op its help describes, and the person at the terminal is the
+		// confirmation exactly as they are without it. Before this read, the
+		// flag asked here while the run's every other step asked nothing.
+		h, f, err := run(t, false, true, true, "")
+		if err != nil {
+			t.Fatalf("--ask in a project that is not managed refused the write: %v\n%s", err, h.out)
+		}
+		if strings.Contains(h.out.String(), "[y/N]") {
+			t.Errorf("--ask asked a question it has nothing to put back:\n%s", h.out)
+		}
+		if got := nodeVersionOn(t, f.db); got == 3 {
+			t.Errorf("the node was not written (version %d)", got)
+		}
+	})
 	t.Run("a coding agent's session on a managed project", func(t *testing.T) {
 		refused(t, "a coding agent's session", true, true, false, "CLAUDECODE")
 	})

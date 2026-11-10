@@ -2137,6 +2137,14 @@ func (r *initRun) askBanner(what string) (bool, error) {
 // can do none of the three is refused, naming the one thing that reaches it
 // from there, and nothing is written.
 //
+// c is the run's own conditions with --ask taken as the flag's own rule has it
+// (restoreAsk): the question is back only where the gate replaced one, so a
+// project whose marks did not answer "managed" reads here as a run that never
+// passed the flag — Conditions.Ask set, as conditions() gives it, would put the
+// [y/N] to a session with nothing to restore and take the person at the
+// terminal, who is the whole of the confirmation (PersonAtTheTerminal reads
+// Ask), out of it.
+//
 // It is for the two writes that lose no data and take no secret value, which is
 // what leaves a deletion and a widening in confirmTypedStrict's hands (D846):
 // the layer's three writes keep what they replace beside it or write against

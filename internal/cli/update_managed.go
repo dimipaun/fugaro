@@ -334,6 +334,26 @@ func (r *initRun) gateUnderway() bool { return r.gate.underway() }
 // line gateRun prints) — which is why initRun.confirmNow asks only here.
 func (r *initRun) gateRestores() bool { return r.gateUnderway() || r.refresh != nil }
 
+// asksBack is --ask where the flag has a question to put back, which is the one
+// read confirmNow asks its own question on (gateRestores). A project whose
+// marks did not answer "managed" has no question for the flag to restore, and
+// the flag's own help says so: it is a no-op there, with a sentence
+// (AskDecision's AskUnmanaged).
+func (r *initRun) asksBack() bool { return r.o.ask && r.gateRestores() }
+
+// restoreAsk is c with --ask answered by the run's own rule (asksBack), the
+// form the confirmations shared between stages take (confirmStageWrite): the
+// flag as given puts its question to every session that passed it, and
+// Conditions.Ask read whole is read twice — as the question to ask, and as the
+// owner's own arm of PersonAtTheTerminal, where it takes the person at the
+// terminal out of a confirmation the flag has nothing to restore for. The
+// managed read is the caller's own fact about the run: initRun.asksBack at the
+// run, and policyMigrationConfirm's `managed` at a door that holds no initRun.
+func restoreAsk(c initflow.Conditions, ask bool) initflow.Conditions {
+	c.Ask = ask
+	return c
+}
+
 // gateStandsIn is whether the gate stands in for the confirmations it does NOT
 // judge document by document — the run's one confirmation (init_review.go's
 // runCovers and the ordinary steps it covers), the plugin wiring's y/N

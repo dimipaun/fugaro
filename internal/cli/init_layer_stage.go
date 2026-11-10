@@ -72,7 +72,7 @@ func (s *layerStage) confirmWrite(lc *localcfg.Config, env initflow.Env, what st
 		fmt.Fprintf(r.w, "  %s\n", initflow.OwnerProceeded())
 		return nil
 	}
-	return confirmStageWrite(r.cmd, lc, r.conditions(), env.Yes, what)
+	return confirmStageWrite(r.cmd, lc, restoreAsk(r.conditions(), r.asksBack()), env.Yes, what)
 }
 
 // layerStage is the stage itself.

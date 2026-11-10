@@ -220,7 +220,7 @@ func (r *initRun) askOrdinary(what, notCovered string) (bool, error) {
 		}
 	}
 	if notCovered != "" && r.review != nil && r.review.state == reviewTaken {
-		fmt.Fprintf(r.w, "note: this step is not covered by the run confirmation: %s; it asks for its own\n", notCovered)
+		fmt.Fprintf(r.w, "note: this step is not covered by the run confirmation: %s; it is shown and then applied, and where nobody is at the terminal the run leaves it to you\n", notCovered)
 	}
 	return r.ask(what)
 }
@@ -451,7 +451,7 @@ func (e *initEngine) reviewScreen(ctx context.Context, why string) {
 	}
 	fmt.Fprintln(w, "Fixed, announced and free, so they need no plan: the Terraform state bucket (cents a month) and the Cloud Resource Manager API when missing, the local config (its diff is shown first).")
 	fmt.Fprintf(w, "IAM changes announced: removes project Viewers' read access to the runs bucket gs://%s and the state bucket gs://%s when they have it.\n", e.spec.RunsBucket, e.spec.StateBucket)
-	fmt.Fprintln(w, "Who gets access (the effective lists; a plan that grants anyone else stops and asks its own confirmation):")
+	fmt.Fprintln(w, "Who gets access (the effective lists; a plan that grants anyone else is shown and then applied, and where nobody is at the terminal the run leaves it to you):")
 	for _, a := range e.accessLists(ctx) {
 		list := "nobody"
 		if len(a.members) > 0 {
@@ -470,7 +470,7 @@ func (e *initEngine) reviewScreen(ctx context.Context, why string) {
 	for _, a := range e.accessLists(ctx) {
 		for _, m := range a.members {
 			if strings.HasPrefix(m, "domain:") || m == "allUsers" || m == "allAuthenticatedUsers" {
-				fmt.Fprintf(w, "WARNING: %s lists %s, which is everyone in a domain or on the internet: a plan granting it is NOT covered and asks its own confirmation.\n", a.what, pluginwire.Printable(m))
+				fmt.Fprintf(w, "WARNING: %s lists %s, which is everyone in a domain or on the internet: a plan granting it is NOT covered by the run confirmation, and is shown and then applied; where nobody is at the terminal the run leaves it to you.\n", a.what, pluginwire.Printable(m))
 			}
 		}
 	}
@@ -479,7 +479,7 @@ func (e *initEngine) reviewScreen(ctx context.Context, why string) {
 	if o.billingAccount != "" {
 		fmt.Fprintf(w, "  %-15s %s (from --billing-account; the only account a budget may name)\n", "billing account:", pluginwire.Printable(o.billingAccount))
 	}
-	fmt.Fprintln(w, "Every Terraform plan is shown as it runs. It is covered only if it consists of creates and in-place updates of the installation's own resource kinds, its attributes are the modules' (images in this project's registry, jobs of this project called by Fugaro's accounts, logs to this project, private buckets, this project's names), and it grants only the modules' roles to the members above or to Fugaro's own service accounts. Anything else (a destroy or replace, a binding or policy, a key, another project, an unlisted member) stops that step, which asks its own confirmation.")
+	fmt.Fprintln(w, "Every Terraform plan is shown as it runs. It is covered only if it consists of creates and in-place updates of the installation's own resource kinds, its attributes are the modules' (images in this project's registry, jobs of this project called by Fugaro's accounts, logs to this project, private buckets, this project's names), and it grants only the modules' roles to the members above or to Fugaro's own service accounts. Anything else (a destroy or replace, a binding or policy, a key, another project, an unlisted member) is shown and then applied, and where nobody is at the terminal the run leaves it to you.")
 	if managed {
 		fmt.Fprintln(w, "What the gate does not stand in for, and still asks separately (the gate judges a document, and these are not documents):")
 	} else {

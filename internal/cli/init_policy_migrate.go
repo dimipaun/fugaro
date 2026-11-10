@@ -490,8 +490,15 @@ func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMi
 	if err := m.refuseRunsInFlight(ctx, yes, inflight, managed, c, w); err != nil {
 		return err
 	}
+	// --ask's own read, the one confirmNow asks its question on: it puts back a
+	// confirmation only where the gate replaced one, and this door's read of the
+	// marks is that fact here (initRun.asksBack is the same read made at the
+	// run). A project the marks did not answer "managed" for keeps the
+	// confirmation it always had, in its terminal arm as well, instead of one
+	// the flag puts back (restoreAsk).
+	ask := c.Ask && managed
 	if m.generations != nil {
-		return m.confirmReseed(ctx, cmd, c, yes, w, admitted)
+		return m.confirmReseed(ctx, cmd, restoreAsk(c, ask), yes, w, admitted)
 	}
 	if !m.writesNode() {
 		// The one write of this run is the generation record in this machine's
@@ -578,7 +585,7 @@ func policyMigrationConfirm(ctx context.Context, cmd *cobra.Command, m *policyMi
 			if err := confirmTypedStrict(cmd, m.lc, why, what); err != nil {
 				return err
 			}
-		} else if err := confirmStageWrite(cmd, m.lc, c, yes, what); err != nil {
+		} else if err := confirmStageWrite(cmd, m.lc, restoreAsk(c, ask), yes, what); err != nil {
 			return err
 		}
 	}

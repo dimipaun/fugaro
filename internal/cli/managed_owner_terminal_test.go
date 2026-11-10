@@ -97,7 +97,7 @@ func TestManagedOwnerTerminalOrdinaryStepRefusesWithNobodyAtTheTerminal(t *testi
 			if !strings.Contains(out.String(), "⚠ CONFIRM (project "+initProjectName+", GCP project "+initProject+"): "+tc.what) {
 				t.Errorf("a run nobody is at was not asked for the step:\n%s", out)
 			}
-			if tc.notCovered != "" && !strings.Contains(out.String(), tc.notCovered+"; it asks for its own") {
+			if tc.notCovered != "" && !strings.Contains(out.String(), tc.notCovered+"; it is shown and then applied, and where nobody is at the terminal the run leaves it to you") {
 				t.Errorf("the step's own confirmation was not the one asked:\n%s", out)
 			}
 			if strings.Contains(out.String(), initflow.OwnerProceeded()) {
@@ -202,7 +202,7 @@ func TestManagedOwnerTerminalPlanOutsideTheReviewKeepsTheOwnersTerminal(t *testi
 			if spy.read {
 				t.Errorf("the run read its own input: nothing is typed at a confirmation any more:\n%s", out)
 			}
-			if !strings.Contains(out.String(), notCovered+"; it asks for its own") {
+			if !strings.Contains(out.String(), notCovered+"; it is shown and then applied, and where nobody is at the terminal the run leaves it to you") {
 				t.Errorf("the step does not say what the run's confirmation did not cover:\n%s", out)
 			}
 			if strings.Contains(out.String(), "Type "+initProjectName) {
@@ -697,7 +697,7 @@ func TestManagedOwnerTerminalUnverifiedFirebaseKeepsTheOwnersTerminal(t *testing
 	if spy.read {
 		t.Errorf("the run read its own input: nothing is typed at a confirmation any more:\n%s", out)
 	}
-	if !strings.Contains(out.String(), notCovered+"; it asks for its own") {
+	if !strings.Contains(out.String(), notCovered+"; it is shown and then applied, and where nobody is at the terminal the run leaves it to you") {
 		t.Errorf("the write does not say why it is not covered by the run:\n%s", out)
 	}
 	if strings.Contains(out.String(), "Type "+initProjectName) {

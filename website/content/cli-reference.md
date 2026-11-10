@@ -5588,8 +5588,9 @@ its attributes are the modules' (images in this project's registry, jobs of
 this project, logs to this project, private buckets), and a Firebase project
 other than the installation's is covered only if verified as Fugaro's; any other
 plan (a destroy or replace, an IAM binding or policy, an unlisted member, a
-widened role) stops that step, which asks for its own confirmation rather than
-the run's one. The confirmation is per run and never stored. Any other project
+widened role) is not covered by the run's confirmation: it is shown and then
+applied, and left for you where nobody is at the terminal. The confirmation is
+per run and never stored. Any other project
 (one an earlier run created and this one resumed, unmarked, or a mark that
 fails to read) keeps its own confirmation at each step;
 --yes covers the ordinary steps as ever and takes no review; --non-interactive,
