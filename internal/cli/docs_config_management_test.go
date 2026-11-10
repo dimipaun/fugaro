@@ -128,9 +128,17 @@ const (
 // (D1854), whose owner is the `project` family because `fugaro project policy
 // publish` is what carries it. That last row is the one this paragraph adds:
 // the registry has one row more and the allowlist has not.
+// The model-crafts work (MC5) moved both figures once more, by one row each,
+// and the figures below are the tree's: the pools' subscription switch
+// `subscription_spread` (F22, D1622, D1636) is a widening direction the owner
+// answers at their own terminal, so the generic path is its owner and the
+// named list carries it; the pools' own `pools.*` rows are the `accounts`
+// family's and were already counted here. The registry's figure is one row
+// longer and the allowlist's one key wider, so the gap the audit is about does
+// not move.
 const (
-	cfmRegistryRows   = 398
-	cfmAllowlistNamed = 96
+	cfmRegistryRows   = 399
+	cfmAllowlistNamed = 97
 )
 
 func TestDocsConfigManagementIsWritten(t *testing.T) {

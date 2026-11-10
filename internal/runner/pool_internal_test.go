@@ -38,12 +38,15 @@ const signaledPrices = `{"` + signaledModel + `": {"input_per_m": 3, "output_per
 //
 // What it refuses, and why each is a way the table goes wrong: a row whose
 // status a real gateway does not relay as the row's phrase (the signal would
-// never be recognised on the road that carries it); a row whose phrase a
-// status answer also produces for a *different* credential type, since a
-// failover is driven by the type the member is; and a row with no phrase that
-// the classifier reads anyway, which would move a run off a credential on
-// wording this table does not claim to know (Vertex answers with Google's own
-// body, and that is recorded rather than guessed).
+// never be recognised on the road that carries it); a row whose phrase the
+// row's own type does not read (the signal is recorded and never acted on);
+// and a row with no phrase that the classifier reads anyway, which would move
+// a run off a credential on wording this table does not claim to know (Vertex
+// answers with Google's own body, and that is recorded rather than guessed).
+//
+// Every row here is read for its own type only, which is half of the rule and
+// the half a row can be wrong about on its own; the other half — that one
+// type's signal is not read as another's — is TestPoolExhaustionSignalsArePerType's.
 func TestPoolExhaustionSignals(t *testing.T) {
 	types := slices.Sorted(maps.Keys(exhaustionSignals))
 	if len(types) != 4 {

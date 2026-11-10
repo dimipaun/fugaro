@@ -346,7 +346,11 @@ func firstPublishNodeOnlyMembers(lc *localcfg.Config) []string {
 // and the shared config refuses the map and the switches outright. The triage
 // switch joins them (D1854) for the half a repository cannot write: a
 // repository's own file states the switch for itself, and the answer a
-// project's runs read is the node's. So each of them is a member a project that
+// project's runs read is the node's. The pools' subscription switch joins them
+// last (F22, D1636) for the same reason, one over: whether a run may spread a
+// project across two or more subscriptions at all is the node's answer, and a
+// written true is what makes a pool of two or more subscriptions serve
+// anything. So each of them is a member a project that
 // has never published a node has left in a file no run reads.
 //
 // The members that are not node-only are not this stage's to publish here: a

@@ -45,11 +45,20 @@ func VertexPoolRefusal(pool, member string) string {
 
 // The exhaustion signals, one row per credential type (F5, D1634): what a
 // credential of each type says when it has nothing left to serve with, and the
-// one table the runner reads "this credential is spent" from. A pool's
-// failover moves on nothing else: an attempt that ended on a signal here was
-// refused by the credential that served it and not by anything about the work,
-// so the stage's next attempt is the pool's next member; an attempt that ended
-// on anything else is about the work and stops the run where it always did.
+// one table "this credential is spent" is read from. A failover moves on
+// nothing else — an attempt that ended on a signal here was refused by the
+// credential that served it and not by anything about the work, so the next
+// member is what a failover would serve the stage with — and this table is
+// therefore what a pool's failover stands on, wherever one is built.
+//
+// Where one is built today is not this path. A pool on the runner path cannot
+// serve one stage's model with one member and then the next (poolchoice.go's
+// head works that out from the routes the gateway accepts), so ordered
+// failover belongs to the credentials service (MC6); what this tree reads the
+// table for is the OAuth subscription allowance's own sentence, by way of
+// signalPhrases and oauthLimitPhrases (subscriptionUsageLimit). The reading
+// helpers below are the table's other half — the auth half is what a failover
+// asks, and their callers are the tests that pin each row until one is built.
 //
 // F5 is unverified (docs/model-crafts/reconciliation.md §5): the exact set of
 // statuses and bodies each provider returns on exhaustion is not something
@@ -71,8 +80,11 @@ func VertexPoolRefusal(pool, member string) string {
 //     the gateway makes of it is one this table reads. A status a row claims
 //     and a phrase that answer does not produce is a row the test refuses.
 //   - Phrase is what the attempt's own text says about it, matched as a
-//     substring of the lowercased text, and it is the half the runner reads
-//     (credentialExhaustedText). A row with no Phrase is a signal this table
+//     substring of the lowercased text, and it is the half a reader of the
+//     table takes: the OAuth row's phrases are read by the runner through
+//     signalPhrases (oauthLimitPhrases, subscriptionUsageLimit), and the rows
+//     of every type are read by credentialExhaustedText where a failover is
+//     built. A row with no Phrase is a signal this table
 //     records and does not claim to read: Vertex answers with Google's own
 //     error body, which reaches the agent verbatim, and no phrase here guesses
 //     its wording — the stage then fails with those words quoted, which is the
@@ -125,16 +137,19 @@ type exhaustionSignal struct {
 }
 
 // credentialExhaustedText reports whether an attempt's own text says the
-// credential of this type is spent. It is the classifier the pool's failover
-// stands on, and it is closed on purpose: the phrases are shapes rather than
+// credential of this type is spent. It is the table's Phrase half as a yes or
+// no, asked by whoever is deciding whether to move an attempt off a credential
+// — a failover, where one is built (the runner path's is not: see the table's
+// head) — and it is closed on purpose: the phrases are shapes rather than
 // English, for the reason the phrases it inherited record.
 func credentialExhaustedText(typ, text string) bool {
 	return exhaustionWhy(typ, text) != ""
 }
 
 // exhaustionWhy names the signal an attempt's text carries, "" when the text
-// carries none: credentialExhaustedText's answer as a clause, for the line
-// that has to say which signal moved a run off a credential.
+// carries none: credentialExhaustedText's answer as a clause, so a caller that
+// has to say which signal moved an attempt off a credential has the table's
+// own words for it rather than a second reading of the text.
 func exhaustionWhy(typ, text string) string {
 	if text == "" {
 		return ""

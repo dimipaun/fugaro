@@ -444,7 +444,7 @@ func (r *run) checkStagePool(ctx context.Context, stage string) (config.PoolMemb
 		return config.PoolMember{}, ""
 	}
 	if e := r.stageCrafts(ctx)[stageCraft(stage)]; e.Inert {
-		return config.PoolMember{}, fmt.Sprintf("the stage's %s craft goes out on the pool %q, and that pool serves nothing yet: it lists %d Claude OAuth subscription credentials, and Fugaro spreads a run across subscriptions only when the project's subscription_spread switch is on (it is off). Turn the switch on, or list one subscription with another kind of credential beside it, which needs no switch",
+		return config.PoolMember{}, fmt.Sprintf("the stage's %s craft goes out on the pool %q, and that pool serves nothing yet: it lists %d Claude OAuth subscription credentials, and Fugaro spreads a run across subscriptions only when the project's subscription_spread switch is on (it is off). Turn it on with `fugaro settings set subscription_spread true` at a terminal, or list one subscription with another kind of credential beside it, which needs no switch",
 			stageCraft(stage), pool.Name, oauthMembers(pool, creds))
 	}
 	member, skipped, err := r.poolMember(ctx, stage, pool, creds)
