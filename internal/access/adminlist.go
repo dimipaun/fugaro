@@ -111,9 +111,9 @@ type adminListDoc struct {
 // hold no stored pair (resolve.go's Input.Implicit, roles.md D689) — are not on
 // the list. An implicit admin may be a group or a service account, and an entry
 // is the address a caller's ID token carries, so the list cannot hold one; a
-// shared-secret writer holds a stored admin grant instead (the plan's DS2.0 and
-// DS2.3). The omission is fail closed: an implicit admin is refused the shared
-// prefix rather than admitted by a grant the roster does not hold.
+// shared-secret writer holds a stored admin grant instead (the plan's DS2.0).
+// The omission is fail closed: an implicit admin is refused the shared prefix
+// rather than admitted by a grant the roster does not hold.
 //
 // The failures are silent skips rather than errors, and that is the roster's
 // own rule (fail closed): a grant that does not parse grants nothing, so a
