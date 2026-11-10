@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bufio"
 	"encoding/json"
 	"errors"
 	"io/fs"
@@ -1341,11 +1342,21 @@ func TestBillingPendingIsAStatusInJSON(t *testing.T) {
 // TestAPausedFirstRunWritesItsConfig: the first run that pauses for billing
 // writes the local config, marked setup_pending: billing, so a rerun resumes
 // exactly there; a run with a config already writes nothing here.
+//
+// What the paused run was answered travels with the config (IS7, D1901). It is
+// the run that writes the bake switch and the one run that never reaches
+// writeConfig — the Project stage is before Installation — so an answer carried
+// only there would be lost for good: the rerun has a config, the wizard asks it
+// nothing, and an absent key means yes.
 func TestAPausedFirstRunWritesItsConfig(t *testing.T) {
 	r := newProjectRig(t)
-	e := rigEngine(t, r.initRig, &initOptions{door: setupDoor.name, createProject: true})
+	// The answer a no is: bakeReposChanged with the zero answer, which is what
+	// --bake-repos=false and a person typing no both leave on the options.
+	e := rigEngine(t, r.initRig, &initOptions{door: setupDoor.name, createProject: true, bakeReposChanged: true})
 	e.old = nil
 	e.path = filepath.Join(t.TempDir(), "projects", initProjectName+".yaml")
+	var out strings.Builder
+	e.r.w = &out
 	s := newProjectStage(e)
 	err := s.pause([]string{"created project " + newProj})
 	var bp *initflow.BillingPausedError
@@ -1360,12 +1371,45 @@ func TestAPausedFirstRunWritesItsConfig(t *testing.T) {
 	if perr != nil {
 		t.Fatal(perr)
 	}
+	if lc.BakeRepos == nil || *lc.BakeRepos {
+		t.Fatalf("the paused run's config carries bake_repos = %v, and this run was answered no:\n%s", lc.BakeRepos, data)
+	}
+	if got := lc.BakeReposEffective(nil); got == nil || *got {
+		t.Errorf("the file's answer reads as %v to the build's own rule, want no", got)
+	}
+	if !strings.Contains(out.String(), "fugaro settings set bake_repos") || !strings.Contains(out.String(), "rebuilt") {
+		t.Errorf("the paused run wrote the bake switch and does not say what that costs:\n%s", out.String())
+	}
 	pe := &initEngine{r: e.r, lc: lc, old: data}
 	if !pe.firstRun() {
 		t.Error("a config marked setup_pending is not resumed as a first run")
 	}
 	if (&initEngine{lc: &localcfg.Config{}, old: data}).firstRun() {
 		t.Error("a config with no setup_pending is a first run")
+	}
+
+	// The rerun writes that config again (the installation stage's writeConfig)
+	// and has no answer of its own to carry: the wizard asks a run with a
+	// project config nothing, so the value the paused run wrote is the one the
+	// file keeps — and so the one the rerun's policy stage publishes and its
+	// build reads.
+	rerun := &initRun{o: &initOptions{door: setupDoor.name}, w: &strings.Builder{}, in: bufio.NewReader(strings.NewReader("")), cmd: NewRootCmd()}
+	spec, serr := infra.Installation(lc, infra.InstallOptions{})
+	if serr != nil {
+		t.Fatal(serr)
+	}
+	if err := rerun.writeConfig(t.Context(), lc, spec, infra.InstallationOutputs{RunsBucket: "fugaro-runs-" + newProj}, e.path, data, true); err != nil {
+		t.Fatalf("the rerun's write: %v", err)
+	}
+	after, aerr := localcfg.Load(e.path)
+	if aerr != nil {
+		t.Fatal(aerr)
+	}
+	if after.BakeRepos == nil || *after.BakeRepos {
+		t.Errorf("after the rerun's write the config carries bake_repos = %v, want the answer the paused run was given: no run asks again", after.BakeRepos)
+	}
+	if after.SetupPending != "" {
+		t.Errorf("the rerun left setup_pending = %q: the config it wrote is the finished one", after.SetupPending)
 	}
 }
 

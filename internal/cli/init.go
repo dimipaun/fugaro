@@ -2995,6 +2995,31 @@ func (r *initRun) readOutputs(ctx context.Context, c *infra.Clients, t *tf.TF, w
 	return infra.DecodeOutputs(raw)
 }
 
+// carryBakeAnswer writes the answer this run was given about baking into the
+// local config it is about to write (IS7, D1901) — the wizard's question, or
+// --bake-repos — and returns whether there was an answer to carry.
+//
+// Two writers call it, and they have to agree. One is writeConfig, for a run
+// that reaches its installation. The other is init_project.go's pauseBecause,
+// which writes the local config of the first run that pauses for billing — and
+// that run never reaches writeConfig, because the Project stage is before
+// Installation (init_stages.go). An answer carried only by writeConfig would be
+// lost for good on that path: the rerun reads a config, so the wizard asks it
+// nothing, and an absent key means yes — a person who answered no would get
+// baking on, with no question ever again.
+//
+// It is written because only a written value can carry a no: the value is what
+// the same run's policy stage publishes (init_policy_publish.go reads the file
+// through lc, which writeConfig moves to next at its end).
+func (r *initRun) carryBakeAnswer(next *localcfg.Config) bool {
+	if !r.o.bakeReposChanged {
+		return false
+	}
+	answer := r.o.bakeRepos
+	next.BakeRepos = &answer
+	return true
+}
+
 // writeConfig writes the local config from the installation's outputs and
 // the flags, keeping everything else (repos, the legacy registry, the
 // endpoints) and dropping build.service_account. It shows the diff first,
@@ -3006,16 +3031,7 @@ func (r *initRun) writeConfig(ctx context.Context, lc *localcfg.Config, spec inf
 	}
 	r.res.Outputs = &outs
 	next := *lc
-	if r.o.bakeReposChanged {
-		// The bake switch (IS7, D1901): the answer the wizard's question gave
-		// this run, or --bake-repos's. It is written where a switch that says
-		// no has to be readable — an absent key means yes, so only the written
-		// value can carry a no — and it is what makes the same run's policy
-		// stage publish it (init_policy_publish.go reads this file's value
-		// through lc, which the end of this function moves to next).
-		answer := r.o.bakeRepos
-		next.BakeRepos = &answer
-	}
+	carried := r.carryBakeAnswer(&next)
 	if outs.RunsBucket != "" {
 		next.RunsBucket = outs.RunsBucket
 	}
@@ -3123,7 +3139,7 @@ func (r *initRun) writeConfig(ctx context.Context, lc *localcfg.Config, spec inf
 	if err := r.writeLocalConfig(&next, path, old, confirmed); err != nil {
 		return err
 	}
-	if r.o.bakeReposChanged {
+	if carried {
 		// The switch answers what the next build does, not what the images
 		// that exist did: the reader of the answer is owed that
 		// (noteBakeRebuild, setup.go).
