@@ -23,8 +23,8 @@ import (
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
-// releaseRepo is a bare "origin" seeded with this checkout's scripts/ and
-// plugin/ trees, and a clone of it (on main) to run release.sh from.
+// releaseRepo is a bare "origin" seeded with this checkout's scripts/, plugin/
+// and images/ trees, and a clone of it (on main) to run release.sh from.
 type releaseRepo struct {
 	bare  string
 	local string
@@ -42,7 +42,11 @@ func newReleaseRepo(t *testing.T) *releaseRepo {
 	seed := filepath.Join(root, "seed")
 	testutil.Git(t, root, "clone", "--quiet", bare, seed)
 	moduleRoot := testutil.ModuleRoot()
-	for _, name := range []string{"scripts", "plugin"} {
+	// images/ travels with the seed too: scripts/verify-release.sh reads the
+	// tagged tree to decide which images a release published (images/$kind/
+	// Dockerfile, the way images.yml does) and calls images/verify-public.sh
+	// for them, which the fake docker on PATH answers.
+	for _, name := range []string{"scripts", "plugin", "images"} {
 		if err := os.CopyFS(filepath.Join(seed, name), os.DirFS(filepath.Join(moduleRoot, name))); err != nil {
 			t.Fatalf("copying %s: %v", name, err)
 		}
@@ -323,16 +327,20 @@ func releaseProcs(pgid int) string {
 }
 
 // fakeBinDir returns a directory on PATH ahead of the real one, holding the
-// fake gh (and nothing else: git, bash, sed, awk, sort, date stay real).
+// fakes for gh and docker (and nothing else: git, bash, sed, awk, sort, date
+// stay real). The fake docker answers images/verify-public.sh's three calls,
+// which scripts/verify-release.sh makes for every image a release published.
 func fakeBinDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	src, err := os.ReadFile(filepath.Join(testutil.ModuleRoot(), "scripts", "testdata", "fake-gh.sh"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "gh"), src, 0o755); err != nil {
-		t.Fatal(err)
+	for _, name := range []string{"gh", "docker"} {
+		src, err := os.ReadFile(filepath.Join(testutil.ModuleRoot(), "scripts", "testdata", "fake-"+name+".sh"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), src, 0o755); err != nil {
+			t.Fatal(err)
+		}
 	}
 	return dir
 }
@@ -428,7 +436,11 @@ func runRelease(t *testing.T, r *releaseRepo, g *ghState, stdin string, args ...
 	bin := fakeBinDir(t)
 	cmd := exec.Command("bash", append([]string{filepath.Join(r.local, "scripts", "release.sh")}, args...)...)
 	cmd.Dir = r.local
-	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "RELEASE_SH_POLL_SECONDS=1", "RELEASE_RETRY_SECONDS=0")
+	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "RELEASE_SH_POLL_SECONDS=1", "RELEASE_RETRY_SECONDS=0",
+		// The verification release.sh ends with waits on the tag's runs and the
+		// images; the fake answers both at once, and these keep a run whose
+		// wait does not end from hanging a test for 45 minutes.
+		"VERIFY_RELEASE_POLL_SECONDS=1", "VERIFY_RELEASE_TIMEOUT_SECONDS=60")
 	// The helper first and the test's own environment after it, so a test can
 	// unset RELEASE_SH_STREAMS_CMD (an empty value is the default `go run`).
 	cmd.Env = append(cmd.Env, releaseEnv(t)...)

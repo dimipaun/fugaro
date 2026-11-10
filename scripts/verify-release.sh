@@ -129,7 +129,14 @@ tip=$(git rev-parse --quiet --verify "refs/tags/$tag^{commit}") || {
   echo "tag $tag does not resolve to a commit" >&2
   exit 1
 }
-remote_tip=$(retry_read git ls-remote origin "refs/tags/$tag^{}" "refs/tags/$tag" | head -n1 | cut -f1)
+# ls-remote is asked for the peeled commit ("^{}"): the tag name on its own
+# resolves to the tag object of an annotated tag, whose sha is not the commit
+# the tag points at (which is what this compares against). A lightweight tag has
+# no peeled line, so the plain ref answers for that shape.
+remote_tip=$(retry_read git ls-remote origin "refs/tags/$tag^{}" | cut -f1 | head -n1)
+if [ -z "$remote_tip" ]; then
+  remote_tip=$(retry_read git ls-remote origin "refs/tags/$tag" | cut -f1 | head -n1)
+fi
 if [ -z "$remote_tip" ]; then
   echo "tag $tag is not on origin" >&2
   exit 1

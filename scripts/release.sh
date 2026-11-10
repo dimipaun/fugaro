@@ -268,7 +268,7 @@ resolve_repo() {
   url_path=${origin_url%/}
   url_path=${url_path%.git}
   url_name=${url_path##*[/:]}
-  url_rest=${url_path%[/:]}
+  url_rest=${url_path%[/:]*}
   url_repo="${url_rest##*[/:]}/$url_name"
   if [ "$(printf '%s' "$url_repo" | tr '[:upper:]' '[:lower:]')" != "$(printf '%s' "$repo" | tr '[:upper:]' '[:lower:]')" ]; then
     echo "origin ($origin_url) is $url_repo but gh targets $repo; fix it with 'gh repo set-default' or run from the right checkout" >&2
