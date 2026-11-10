@@ -1,0 +1,5 @@
+[
+  {"method": "GET", "path": "/repos/acme/web/contents/fugaro.yaml?ref=release/1.2",
+   "auth": "Bearer ghs_fixture_person_read", "status": 404,
+   "response": {"message": "Not Found", "documentation_url": "https://docs.github.com/rest/repos/contents"}}
+]
