@@ -326,6 +326,11 @@ func TestSharedJobRefusalWhenTheCarriedLayerIsInvalid(t *testing.T) {
 // all (git answers "not a git repository" for --show-toplevel there), with the
 // read itself failing.
 //
+// The words of that refusal are the read's own (serviceReadRefusal, spec.md
+// §7), not this gate's: it is the same read the job decision makes, and a
+// reader that worded its failure differently would tell the operator about the
+// credential when what failed is the read.
+//
 // Mutation (run, restore): return "", nil for the empty root instead of
 // refusing — the launcher reads the empty string as the run's agent.auth, and
 // projectJobAccountFor finds no "oauth" in it, so an OAuth run would be launched
@@ -342,9 +347,12 @@ func TestSharedJobRefusalWhenTheCheckoutCannotBeFound(t *testing.T) {
 
 	e := &cloudEnv{lc: &localcfg.Config{Name: "aurora"}}
 	_, err := e.projectJobAgentAuth(context.Background(), &task.Spec{Repo: "acme/app", Ref: "main"})
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "cannot tell which Claude credential") ||
-		!strings.Contains(err.Error(), "could not be read at the forge") || !strings.Contains(err.Error(), "acme/app") {
-		t.Fatalf("a launch whose document cannot be read at the forge: %v, want a refusal naming the repository and the failed read", err)
+	if ExitCode(err) != ExitRemoteError {
+		t.Fatalf("err = %v, want a remote error: the service could not be reached", err)
+	}
+	want := "cannot read acme/app's fugaro.yaml at main as yourself: the read that decides the run's job could not be made (the credentials service could not be reached). Run it from acme/app's checkout"
+	if !strings.Contains(err.Error(), want) {
+		t.Fatalf("a launch whose document cannot be read at the forge:\n got: %v\nwant: %s", err, want)
 	}
 }
 

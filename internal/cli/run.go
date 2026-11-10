@@ -1829,6 +1829,13 @@ var resolveBatchPlan = resolveAttemptPlan
 // reports those k and returns the error.
 func runAttempts(cmd *cobra.Command, env *cloudEnv, o *runOptions, text string, total time.Duration) error {
 	ctx := cmd.Context()
+	// One read per command, not one per attempt (spec.md §6, D904): every
+	// attempt of a batch runs the same repository's document at the same ref,
+	// so the batch asks the forge one question, and a read mint is an act the
+	// credentials service audits. Installed over the whole batch, before the
+	// plan below, because the cache finishLaunch installs is one launch's own —
+	// the attempts share this context and would otherwise each pay a mint.
+	ctx = withServiceReadCache(ctx)
 	warn := cmd.ErrOrStderr()
 	n := o.attempts
 	// A batch prints one step per attempt, and stops the run on the attempt

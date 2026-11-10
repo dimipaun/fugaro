@@ -19,6 +19,7 @@ import (
 
 	"gocloud.dev/blob"
 
+	"github.com/dimipaun/fugaro/internal/agentenv"
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
@@ -2844,6 +2845,7 @@ type serviceReadFixture struct {
 	serviceURL string // the URL personIDToken was asked for
 	appID      string // the app_id the mint's body named
 	document   string // the fugaro.yaml the ref carries; "" is the absent-file 404
+	notFound   string // the message of the contents route's 404 ("" is GitHub's own "Not Found")
 	status     int    // the contents answer's status (0: 200)
 	message    string // the body of that non-200 answer
 }
@@ -2928,6 +2930,16 @@ func (s *serviceReadFixture) serve(w http.ResponseWriter, r *http.Request) {
 		if s.status != 0 {
 			w.WriteHeader(s.status)
 			fmt.Fprintf(w, `{"message":%q}`, s.message)
+			return
+		}
+		if s.notFound != "" {
+			// The 404 the forge words about the REF rather than the path ("No
+			// commit found for the ref …"): the absent-ref row, which refuses
+			// and names the ref, and which no confirmation is asked about
+			// (fileread.go). The body is GitHub's own prose, so the fixture
+			// spells it rather than deriving it.
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprintf(w, `{"message":%q}`, s.notFound)
 			return
 		}
 		if s.document == "" {
@@ -3097,6 +3109,164 @@ func TestLaunchWithoutCheckoutNamesAForgeStatusAndNotItsBody(t *testing.T) {
 	}
 	if calls := f.run.RunRequests(); len(calls) != 0 {
 		t.Errorf("the refused launch asked Cloud Run for %d job(s): %+v", len(calls), calls)
+	}
+}
+
+// TestLaunchWithoutCheckoutWhereTheRefDoesNotExistNamesTheRef is spec.md §7's
+// "the ref does not exist at the forge" row. The forge answers the read with
+// the 404 it words about the ref rather than the path ("No commit found for the
+// ref …"), which is a deleted, force-pushed or mistyped branch: it is refused,
+// and refused in the ref's own row — not read as the absent-file row that keeps
+// the per-repository job, because no other ref's document places this run
+// (spec.md §3) — with the ref named and the checkout as the way out.
+//
+// Mutation (run, restore): drop the ErrRefNotFound case from serviceReadRefusal
+// — the launch is refused by the default arm instead, which reports HTTP 404
+// and never names the ref.
+func TestLaunchWithoutCheckoutWhereTheRefDoesNotExistNamesTheRef(t *testing.T) {
+	f := newProjectJobFixture(t)
+	s := newServiceReadFixture(t)
+	s.notFound = "No commit found for the ref main"
+	s.use(t, f.cloudFixture)
+	isolateCache(t)
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir())
+
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261110-130008-abcd", "Add a feature")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a user error", err)
+	}
+	want := "cannot read acme/app's fugaro.yaml at main: the repository has no such ref, and a deleted or never-pushed branch is not a reason to read another one"
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("the refusal is not spec.md §7's row for a ref that does not exist:\n got: %v\nwant: %s", err, want)
+	}
+	if mints, reads := s.counts(); mints != 1 || reads != 1 {
+		t.Errorf("the launch made %d mint(s) and %d read(s), want one of each: the mint answered and the ref is what does not exist", mints, reads)
+	}
+	if calls := f.run.RunRequests(); len(calls) != 0 {
+		t.Errorf("the refused launch asked Cloud Run for %d job(s): %+v", len(calls), calls)
+	}
+}
+
+// TestLaunchWithoutCheckoutWithoutARecordedAppIDNamesTheRead is spec.md §7's row
+// for the other thing a read needs from the installation's own records: the App
+// ID the read mint is signed as (localcfg.Repo.GitHubAppID). A project whose
+// local config published a credentials service but records no App for this
+// repository cannot ask for a read at all, and the refusal says so — naming the
+// recorded value and the checkout — rather than reporting a read that failed.
+//
+// Mutation (run, restore): drop the errNoGitHubAppID case from
+// serviceReadRefusal — the default arm reports "this repository's github_app_id
+// is not recorded" as a remote failure instead, and names no fix.
+func TestLaunchWithoutCheckoutWithoutARecordedAppIDNamesTheRead(t *testing.T) {
+	f := newProjectJobFixture(t)
+	s := newServiceReadFixture(t)
+	// The service is published; the App ID the mint is signed as is not
+	// recorded, so there is nothing to ask the service with.
+	f.appendConfig(t, "credentials_service: { url: "+s.srv.URL+" }\n")
+	old := personIDToken
+	personIDToken = func(ctx context.Context, url string) (string, error) {
+		t.Errorf("the identity was minted for %s although this launch records no App ID to read with", url)
+		return identityTokenFixture, nil
+	}
+	t.Cleanup(func() { personIDToken = old })
+	isolateCache(t)
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir())
+
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261110-130009-abcd", "Add a feature")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a user error", err)
+	}
+	want := "cannot read acme/app's fugaro.yaml at main as yourself: this installation's local config records no github_app_id for acme/app, and the read the credentials service mints is signed as that App, so the read that decides the run's job cannot be made. Run it from acme/app's checkout"
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("the refusal is not spec.md §7's row for a missing App ID:\n got: %v\nwant: %s", err, want)
+	}
+	if mints, reads := s.counts(); mints != 0 || reads != 0 {
+		t.Errorf("a launch with no App ID recorded made %d mint(s) and %d read(s), want none: there is nothing to ask with", mints, reads)
+	}
+	if calls := f.run.RunRequests(); len(calls) != 0 {
+		t.Errorf("the refused launch asked Cloud Run for %d job(s): %+v", len(calls), calls)
+	}
+}
+
+// TestProjectJobAgentAuthRefusesAnAgentSessionBeforeTheForgeRead is the
+// credential gate's own half of D902's invariant (spec.md §5): the read this
+// gate makes of the ref's document is made with the OPERATOR's own credential,
+// so a coding agent's session must never make it — no identity minted, no
+// service called, no forge asked.
+//
+// The gate reaches the forge through the same choke point the job decision does
+// (serviceReadAtTheForge), and that is what this pins. The state it covers is
+// the one where the decision answered from the working tree's checkout and this
+// gate cannot find that checkout a moment later (checkoutRoot asks git again,
+// and a directory whose git answers once and not twice is the state the old
+// refusal named): with the guard on the decision's path alone, this call minted
+// the operator's identity token and made the forge read.
+//
+// Mutation (run, restore): move the guard out of serviceReadAtTheForge and back
+// into repoConfigAtTheRef — this call mints the operator's identity token and
+// makes the forge read (1 mint, 1 read, no error).
+func TestProjectJobAgentAuthRefusesAnAgentSessionBeforeTheForgeRead(t *testing.T) {
+	s := newServiceReadFixture(t)
+	oldIdentity, oldURL, oldClient := personIDToken, githubAPIURL, githubAPIClient
+	personIDToken = func(ctx context.Context, url string) (string, error) {
+		t.Errorf("an identity token was minted for %s in a coding agent's session", url)
+		return identityTokenFixture, nil
+	}
+	githubAPIURL, githubAPIClient = s.srv.URL, s.srv.Client()
+	t.Cleanup(func() { personIDToken, githubAPIURL, githubAPIClient = oldIdentity, oldURL, oldClient })
+
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir()) // no checkout: the gate reads at the forge
+	t.Setenv(agentenv.AgentMarkers[0], "1")
+
+	e := &cloudEnv{lc: &localcfg.Config{
+		CredentialsService: &localcfg.CredentialsService{URL: s.srv.URL},
+		Repos:              map[string]localcfg.Repo{"acme/app": {GitHubAppID: "123456789"}},
+	}}
+	_, err := e.projectJobAgentAuth(context.Background(), &task.Spec{Repo: "acme/app", Ref: "main"})
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a user error", err)
+	}
+	for _, want := range []string{"fugaro run", "coding agent's session"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if mints, reads := s.counts(); mints != 0 || reads != 0 {
+		t.Errorf("the credential gate made %d mint(s) and %d read(s) in a coding agent's session, want none: the refusal comes before anything is read", mints, reads)
+	}
+}
+
+// TestProjectJobAgentAuthWordsAReadFailureLikeTheDecision is the other half of
+// that same choke point: what this gate reports when the read fails is the
+// read's own refusal, in spec.md §7's words — not a sentence about the
+// credential. The decision refuses this launch with exactly this line, and the
+// two readers of one read that disagreed about it would tell the operator about
+// agent.auth when what failed is the read (and would report an unreachable
+// service as a local condition).
+//
+// Mutation (run, restore): word the failure here as checkProjectJobAuthUnknown
+// again — the refusal is the long credential sentence instead, and the row
+// spec.md §7 gives an installation with no credentials service is lost.
+func TestProjectJobAgentAuthWordsAReadFailureLikeTheDecision(t *testing.T) {
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir()) // no checkout: the gate reads at the forge
+
+	// No credentials service: the row is the installation's own, and it is the
+	// decision's line for the same state.
+	e := &cloudEnv{lc: &localcfg.Config{
+		Name:  "aurora",
+		Repos: map[string]localcfg.Repo{"acme/app": {GitHubAppID: "123456789"}},
+	}}
+	_, err := e.projectJobAgentAuth(context.Background(), &task.Spec{Repo: "acme/app", Ref: "main"})
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a user error", err)
+	}
+	want := "cannot read acme/app's fugaro.yaml at main as yourself: this installation has no credentials service, so the read that decides the run's job cannot be made. Run it from acme/app's checkout"
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("the credential gate does not refuse in the decision's own words:\n got: %v\nwant: %s", err, want)
 	}
 }
 

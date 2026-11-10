@@ -376,24 +376,12 @@ func (e *cloudEnv) repoProvider(repo string, co *config.Config) string {
 // with no credentials service, the refusal a coding agent's session gets before
 // anything is read, then one read through the service.
 func (e *cloudEnv) repoConfigAtTheRef(ctx context.Context, spec *task.Spec) (*config.Config, error) {
-	// The order of the two refusals is the catalog's (catalogProviderEnv): a
-	// value is refused where it would actually be read, and an installation with
-	// no credentials service has no read to refuse — its own line is the honest
-	// one, and the checkout it names is a way out that works for an agent too.
-	if _, _, err := e.serviceReadTarget(spec.Repo); err != nil {
-		return nil, serviceReadRefusal(spec.Repo, spec.Ref, err)
-	}
-	// A coding agent's session is refused before anything is read, for the value
-	// this read is rather than for the App's key (D902, spec.md §5): the token
-	// the service mints is the operator's, and an agent's process is the one
-	// place it must never reach. The way out is the checkout — a launch from the
-	// repository's own checkout reads the file out of its objects and asks the
-	// service for nothing — so the refusal names the launch where the shared
-	// refusal names a flag (doctor_brokering.go's shape for the service's
-	// bundle).
-	if err := refuseKeyReadInAgent(os.Getenv, launchReadCommand, launchServiceReadWhat); err != nil {
-		return nil, err
-	}
+	// Both refusals that come before a read — the installation's own records and
+	// the guard that keeps this read out of a coding agent's session — are the
+	// read's own, in serviceReadAtTheForge: this function decides a job and does
+	// not make the read, and the credential gate reads the same document
+	// (projectJobAgentAuth), so a guard here would be one the other reader could
+	// go without.
 	data, err := readRepoConfigAtRef(ctx, e, spec.Repo, spec.Ref)
 	switch {
 	case errors.Is(err, github.ErrFileNotFound):
@@ -436,6 +424,16 @@ const (
 // mints, the identity presented for it and GitHub's own refusal text are never
 // put in one.
 func serviceReadRefusal(repo, ref string, cause error) error {
+	// A refusal this package already wrote for the operator is that refusal, not
+	// a cause to be worded: the guard that keeps the read out of a coding
+	// agent's session writes one (refuseKeyReadInAgent), and it arrives here as
+	// a read's failure because it is the read's own first step
+	// (serviceReadAtTheForge). Re-wording it would report an agent's session as
+	// a remote failure and drop the way out it names.
+	var refusal *ExitError
+	if errors.As(cause, &refusal) {
+		return cause
+	}
 	var se *httpjson.StatusError
 	switch {
 	case errors.Is(cause, errNoCredentialsService):
@@ -504,8 +502,9 @@ type serviceReadCacheKey struct{}
 // launch with no checkout read at the forge, per (repo, ref). It exists because
 // two readers of that one document ask for it — the job decision and the
 // credential gate (projectJobAgentAuth) — and a read mint is an act the
-// credentials service AUDITS: one launch, one mint, one read, which is what
-// spec.md §6's "at most one read per command" is.
+// credentials service AUDITS: one launch, one mint, one read, and one for the
+// whole of a best-of-N batch, which is what spec.md §6's "at most one read per
+// command" is.
 //
 // Nothing outlives the command (D904): the value is a context's, nothing writes
 // it anywhere, and the next command starts with none.
@@ -522,14 +521,15 @@ type serviceReadResult struct {
 }
 
 // withServiceReadCache installs an empty cache for this launch's reads. It is
-// installed by each launch shape over the whole of it — finishLaunch for
-// `fugaro run`, Launch for the daemon's own launches — because a launch with
-// no checkout of the repository has two readers of that one document, its
-// gates (freshLaunchGates) and its job decision, and the first of them runs
-// before the second. launchProjectJobFor installs one too, for a caller that
-// reaches the decision directly. A launch its own checkout answered, and every
-// command that reads no document at all, carries nothing but the context
-// value.
+// installed by each launch shape over the whole of it — runAttempts for a
+// best-of-N batch, whose attempts share one command's context, and finishLaunch
+// for a single `fugaro run` and for the daemon's own launches
+// (orchestrator_launcher's Launch) — because a launch with no checkout of the
+// repository has two readers of that one document, its gates
+// (freshLaunchGates) and its job decision, and the first of them runs before
+// the second. launchProjectJobFor installs one too, for a caller that reaches
+// the decision directly. A launch its own checkout answered, and every command
+// that reads no document at all, carries nothing but the context value.
 func withServiceReadCache(ctx context.Context) context.Context {
 	if _, ok := ctx.Value(serviceReadCacheKey{}).(*serviceReadCache); ok {
 		return ctx
@@ -594,10 +594,30 @@ func (e *cloudEnv) serviceReadTarget(repo string) (url, appID string, err error)
 	return url, appID, nil
 }
 
-// serviceReadAtTheForge is the read itself, once.
+// serviceReadAtTheForge is the read itself, once — and the one place a read is
+// refused before it is made. Two things come first, in this order: the
+// installation's own records, which are what a read needs and the only place
+// either is looked up (serviceReadTarget), and the guard that keeps a read made
+// with the operator's own credential out of a coding agent's process
+// (refuseKeyReadInAgent, D902, spec.md §5).
+//
+// The order is the catalog's (catalogProviderEnv): a value is refused where it
+// would actually be read, and an installation with no credentials service has
+// no read to refuse — its own line is the honest one, and the checkout it names
+// is a way out that works for an agent too. The guard is refused here, in the
+// read, rather than in a caller: a launch's document has two readers — the job
+// decision (repoConfigAtTheRef) and the credential gate (projectJobAgentAuth) —
+// and the caller that had to remember the guard is the caller that would mint
+// the operator's token inside an agent's process (the state where a checkout
+// answered the decision and cannot be found a moment later). The way out it
+// names is the checkout: a launch from the repository's own checkout reads the
+// file out of its objects and asks the service for nothing.
 func serviceReadAtTheForge(ctx context.Context, e *cloudEnv, repo, ref string) ([]byte, error) {
 	url, appID, err := e.serviceReadTarget(repo)
 	if err != nil {
+		return nil, err
+	}
+	if err := refuseKeyReadInAgent(os.Getenv, launchReadCommand, launchServiceReadWhat); err != nil {
 		return nil, err
 	}
 	// The identity is minted for the service's own URL, which is the audience
@@ -1172,13 +1192,27 @@ func (e *cloudEnv) projectJobAgentAuth(ctx context.Context, spec *task.Spec) (st
 		// resolves is the one the job decision read at the forge, and it is the
 		// same read — readRepoConfigAtRef's memo answers from the launch's
 		// cache, so the credential gate costs no second mint (D904, spec.md
-		// §6). A read that failed was already refused by the decision, so the
-		// failure this can still see is a cache that was not installed, which
-		// is a defect rather than an operator's state.
+		// §6).
+		//
+		// Where the read was not made for this launch, it is made here: the
+		// decision read the working tree's checkout and this gate cannot find
+		// that checkout a moment later (checkoutRoot asks git again, and a
+		// directory whose git answers once and not twice is the state the old
+		// refusal named). What comes back is then the read's own refusal, in
+		// spec.md §7's words — an agent's session refused before anything is
+		// minted, an installation with no credentials service naming the
+		// checkout, a forge status reported by that status — because it is the
+		// same read the decision makes (serviceReadRefusal). The one failure
+		// this branch words for itself is the absent file: a ref whose tree
+		// carries no document leaves no agent.auth to resolve, which is this
+		// gate's own subject rather than a read that failed.
 		var err error
 		data, err = readRepoConfigAtRef(ctx, e, spec.Repo, spec.Ref)
-		if err != nil {
-			return "", checkProjectJobAuthUnknown(spec.Repo, "the fugaro.yaml at the ref the run checks out ("+oneLineCLI(spec.Ref)+") could not be read at the forge ("+oneLineCLI(err.Error())+")")
+		switch {
+		case errors.Is(err, github.ErrFileNotFound):
+			return "", checkProjectJobAuthUnknown(spec.Repo, "the fugaro.yaml at the ref the run checks out ("+oneLineCLI(spec.Ref)+") is not there at the forge")
+		case err != nil:
+			return "", serviceReadRefusal(spec.Repo, spec.Ref, err)
 		}
 	} else {
 		var err error
