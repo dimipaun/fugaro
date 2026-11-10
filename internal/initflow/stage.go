@@ -243,12 +243,17 @@ var order = []slot{
 	// Checkout it writes only this machine's own files — one file under the
 	// person's home — so billing does not gate it (NeedsBilling).
 	//
-	// noYes: --yes never covers it. A unit is code that runs at every login,
-	// so the setup door asks for the typed confirmation (the owner's Q2
-	// answer of 2026-11-04) and the update door, at a terminal, for the
-	// step's own class, which is Typed (T7's ruling of 2026-11-05). In a
-	// managed project the gate's no-prompt rule is what it is everywhere
-	// else, and an agent-driven run writes no unit at all.
+	// noYes: --yes never covers it. A unit is code that runs at every login, so
+	// neither door may take a flag for it (the owner's Q2 answer of 2026-11-04
+	// and T7's ruling of 2026-11-05). Neither door asks a question of its own
+	// either: Q2's first install has no confirmation beside the plan line the
+	// person already read, and T7's re-render has none either — the owner's
+	// rule of 2026-11-10 is that `fugaro update` carries no extra prompt — so
+	// the step the run cannot make is a step --yes does not cover, which the
+	// loop leaves for the user (the update door) or skips with the sentence
+	// that says nobody was at the terminal (the setup door). What fences the
+	// write is the session, not a question: a coding agent's run writes no
+	// unit at all, and the drift stays visible through `fugaro doctor`.
 	{name: Unit, needs: []string{Repository, Policy}, noYes: true},
 	// The compute backend's provisioning is money, permanent and owner-run,
 	// so --yes never covers it; it comes last, after every stage that
