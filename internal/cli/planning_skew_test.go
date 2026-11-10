@@ -28,7 +28,9 @@ func planningSkewLayer(t *testing.T) *config.ProjectLayer {
 
 // TestPlanningSinceIsTheReleaseTheChecklistAndSchemasName holds planningSince
 // to the three readers that state its number: docs/release.md's Before-you-tag
-// bullet and the planning descriptions of both schemas. The schemas said no
+// bullet and the planning descriptions of both schemas. It also holds the
+// bullet to the convergence tests its CD7 sentence records, since those are
+// what says the work the sentence describes is in this tree and not owed. The schemas said no
 // gate judged the block while the plan's CD7 was unwritten; that switch now
 // exists in this tree, so both sentences name the release with it.
 func TestPlanningSinceIsTheReleaseTheChecklistAndSchemasName(t *testing.T) {
@@ -58,6 +60,14 @@ func TestPlanningSinceIsTheReleaseTheChecklistAndSchemasName(t *testing.T) {
 		}
 		if !strings.Contains(line, "Fugaro before "+planningSince+" refuses the key") {
 			t.Errorf("%s's planning description does not say Fugaro before %s refuses the key", path, planningSince)
+		}
+	}
+	// CD7's remainder is in this tree, so the bullet records the two tests that
+	// pin it: a rewrite that dropped them would leave the checklist saying the
+	// convergence tests and the release note's entry are still owed.
+	for _, want := range []string{"TestUpdateConvergesFromThePreviousVersionWithPlanningKey", "TestUpdateConvergesFromABaseImageThatPredatesPlanning"} {
+		if !strings.Contains(bullet, want) {
+			t.Errorf("docs/release.md's planningSince bullet does not name %s, the convergence test CD7 owes", want)
 		}
 	}
 }
