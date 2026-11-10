@@ -1,7 +1,6 @@
 # Workspaces: the spec
 
-**Status: design answered by the owner 2026-11-04; plan only; nothing implemented; no task
-approved.** §0 is the owner's spec as this run recorded it; the design that follows (§1 onward) is
+**Status as of 2026-11-10: in progress, 6/10 merged; see [docs/status.md](../status.md) for the current table.** §0 is the owner's spec as this run recorded it; the design that follows (§1 onward) is
 written to the answer of each decision in [reconciliation.md](reconciliation.md) §4 (**D1290–D1305**,
 the block this design was renumbered into on 2026-11-04), and **where the two disagree the
 reconciliation wins** — §0 is the record of what was asked, not of what this design proposes.

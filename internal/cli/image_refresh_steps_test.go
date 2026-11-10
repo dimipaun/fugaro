@@ -108,17 +108,19 @@ func TestRefreshBaseStepYesNoTerminal(t *testing.T) {
 	}
 }
 
-// A declined base copy stops the step: nothing is copied or recorded.
-func TestRefreshBaseStepDeclined(t *testing.T) {
+// Without a terminal the base step is left: nothing is pinned or recorded
+// (T7: nothing is typed at a confirmation, so where no person is there to
+// answer, the step is the user's and the run stops).
+func TestRefreshBaseStepNoTerminalIsLeft(t *testing.T) {
 	r := newImagesRig(t, "1.2.3")
 	t.Chdir(repoCheckout(t, githubOrigin, refreshYAML))
 	e := rigEngine(t, r.initRig, &initOptions{})
-	out := atTerminal(t, e, "nope\n")
+	out := atNoTerminal(e)
 	if err := e.r.refreshBase(t.Context(), e, []string{"base"}); err == nil || r.dst.puts != 0 {
-		t.Fatalf("declined: %v, %d puts\n%s", err, r.dst.puts, out.String())
+		t.Fatalf("no terminal: %v, %d puts\n%s", err, r.dst.puts, out.String())
 	}
 	if got := r.localConfig(t).BaseImages["base"]; got != "" {
-		t.Fatalf("base_images.base was recorded despite the decline: %s", got)
+		t.Fatalf("base_images.base was recorded without a terminal: %s", got)
 	}
 }
 
@@ -394,8 +396,9 @@ func checkJobOwner(t *testing.T, provider, repo string) (slug, label string) {
 	return slug, label
 }
 
-// Step 3 moves the image and the spec's base together, after the typed
-// name, and says No changes on a rerun. A decline leaves the job untouched.
+// Step 3 moves the image and the spec's base together, after the person at
+// the terminal confirms it (nothing is typed: T7), and says No changes on a
+// rerun. With no terminal the step is left and the job untouched.
 func TestRefreshCheckJobStep(t *testing.T) {
 	r := newInitRig(t)
 	e := rigEngine(t, r, &initOptions{})
@@ -410,12 +413,12 @@ func TestRefreshCheckJobStep(t *testing.T) {
 	}
 	lc.BaseImages = map[string]string{"base": newRef}
 	tg := &refreshTarget{lc: lc, spec: infra.RepoSpec{Name: "acme/sandbox", Slug: slug, Label: label}, kinds: []string{"base"}}
-	// Declined: nothing written.
-	out := atTerminal(t, e, "nope\n")
+	// No terminal: the step is left and nothing is written.
+	out := atNoTerminal(e)
 	if err := e.r.refreshCheckJob(t.Context(), tg); err == nil || len(r.run.Patches()) != 0 {
-		t.Fatalf("declined: %v, %d patches\n%s", err, len(r.run.Patches()), out.String())
+		t.Fatalf("no terminal: %v, %d patches\n%s", err, len(r.run.Patches()), out.String())
 	}
-	out = atTerminal(t, e, initProjectName+"\n")
+	out = atTerminal(t, e, "")
 	if err := e.r.refreshCheckJob(t.Context(), tg); err != nil {
 		t.Fatalf("%v\n%s", err, out.String())
 	}
@@ -437,8 +440,8 @@ func TestRefreshCheckJobStep(t *testing.T) {
 }
 
 // 2026-10-08 decision: --yes confirms the check-job update without a
-// terminal, after showing the same old/new diff as a typed run, with its own
-// "confirmed by --yes" line.
+// terminal, after showing the same old/new diff as a run at the owner's
+// terminal, with its own "confirmed by --yes" line.
 func TestRefreshCheckJobStepYesNoTerminal(t *testing.T) {
 	r := newInitRig(t)
 	e := rigEngine(t, r, &initOptions{yes: true})
@@ -805,12 +808,12 @@ func TestRefreshMovesCloneJob(t *testing.T) {
 	p := &refreshPlan{workflows: []string{"app"}}
 	tg := &refreshTarget{lc: lc, cfg: cfg, spec: infra.RepoSpec{Name: "acme/app", Slug: slug, Label: label,
 		Workflows: map[string]infra.WorkflowSpec{"app": {Job: jobName}}}}
-	// Declined: nothing written.
-	out := atTerminal(t, e, "nope\n")
+	// No terminal: the step is left and nothing is written.
+	out := atNoTerminal(e)
 	if err := e.r.refreshBuilds(t.Context(), p, tg); err == nil || len(r.run.Patches()) != 0 {
-		t.Fatalf("declined: %v, %d patches\n%s", err, len(r.run.Patches()), out.String())
+		t.Fatalf("no terminal: %v, %d patches\n%s", err, len(r.run.Patches()), out.String())
 	}
-	out = atTerminal(t, e, initProjectName+"\n")
+	out = atTerminal(t, e, "")
 	if err := e.r.refreshBuilds(t.Context(), p, tg); err != nil {
 		t.Fatalf("%v\n%s", err, out.String())
 	}
