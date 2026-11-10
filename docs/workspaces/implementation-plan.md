@@ -198,8 +198,11 @@ for it and `localcfg.WorkspaceMember` has no field for it, so the credentials no
 `database_region` has no writer anywhere in the tree — the node's own comment says so
 (`internal/projectpolicy/workspace_credentials.go`:101) and spec.md §5 states it — and a member whose
 Firebase project was adopted with a **regional** database is therefore derived the legacy
-`<firebase_project>-default-rtdb` host until a later task takes the field. The two commands are the
-two halves of a membership, and neither writes the other's file.
+`<firebase_project>-default-rtdb` host until a later task takes the field. **The owner answered that
+on 2026-11-10, as recommended**: the field is taken by the task that gives the node its writer, so
+the verb's option and this plan's own later task are where the region lands
+([reconciliation.md](reconciliation.md) §9, O4). The two commands are the two halves of a membership,
+and neither writes the other's file.
 
 **`workspace show` reads files and no cloud node**, and the two halves it can therefore see are not
 the same (spec.md §6). The **workspace owner's** machine holds the record it publishes, so its drift
@@ -489,7 +492,10 @@ to one of a member's repositories can present a run identity of another of them.
 by the member's own lists (both legs are asked), and closing it is a **column** beside each job
 account — the pair `credsvc.JobAccount` already carries for the installation's own jobs — which is an
 owner decision rather than a task's: it is spec.md §8's residual risk 7, stated and **not enforced**
-by this task, and W9 is where `SECURITY.md` carries it.
+by this task, and W9 is where `SECURITY.md` carries it. **The owner answered that decision on
+2026-11-10, as recommended**: the column is taken by the task that gives the per-member table a
+writer, and this release ships with the pairing stated and not enforced
+([reconciliation.md](reconciliation.md) §9, O3).
 
 **A member's policy and its outcomes are read per member, from the database its own verified `iss`
 names.** `checkLive` (`internal/credsvc/auth.go`:1213) and the outcomes reader it uses

@@ -469,7 +469,10 @@ accounts, its Firebase project, its `fp` and its exchange URL, so the **region**
 command that records a region, and the publish path that fills the table, are therefore a later
 task's, and a member whose Firebase project was adopted with a **regional** database is derived the
 legacy `<firebase_project>-default-rtdb` host until one lands: its row can carry only an empty
-region, so the service cannot reach that member at all. **The
+region, so the service cannot reach that member at all. **The owner answered that gap on 2026-11-10,
+as recommended**: the task that carries the region and the publish path is the one that gives this
+node its writer, and this release ships the node's shape and the derivation rather than taking the
+field ([reconciliation.md](reconciliation.md) §9, O4). **The
 member's database URL is not in the table at all**: it is **derived from the Firebase project the
 verified `iss` names**, so an owner cannot splice member B's accounts onto member A's database (§4,
 finding 6). **None of it is in
@@ -910,9 +913,11 @@ ceiling is decided.
    Closing the pairing is an owner decision and
    a column — the repository beside each job account in the owner's per-member table, the pair
    `credsvc.JobAccount` already carries for the installation's own jobs, which yields the slug the
-   pairing needs — not a redesign, and **it stays an open item until the owner makes that
-   call: W6 ships with the pairing stated here and not enforced**, because the row's job accounts are
-   emails and `Verify` therefore has no slug to compare.
+   pairing needs — not a redesign, and **the owner made that call on 2026-11-10, as recommended:
+   W6 ships with the pairing stated here and not enforced**, and the column is taken by the task that
+   gives the per-member table a writer, because the row's job accounts are emails, `Verify` therefore
+   has no slug to compare, and a column no command writes would be a check with nothing in it
+   ([reconciliation.md](reconciliation.md) §9, O3).
 
 ## 9. What a workspace never does
 

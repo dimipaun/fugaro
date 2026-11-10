@@ -236,22 +236,41 @@ type WorkspaceCaller struct {
 // literal whose fields are all well-formed and which stands for no verified run
 // identity at all.
 //
+// **The member a call names is held to that Verify too, because Member is
+// exported and writable.** A holder of a verified call can point it at another
+// member — `c.Member.Project = other` — and the mark would still be set, so a
+// route that read Member after the mark alone would read the OTHER member's
+// database while the run identity beside it stayed the one Verify checked. The
+// project Verify resolved is therefore kept unexported here and compared, which
+// is the same division the mark makes: the mark says a Verify ran, and this says
+// the member the call names is that Verify's.
+//
 // A member's Caller is still a WorkspaceCaller: the workspace-wide routes take
 // that type, because the class they admit — the workspace owner's people — holds
 // no run identity at all (Verify refuses it).
 type MemberCall struct {
 	WorkspaceCaller
 	verified bool
+	// member is the project of the member Verify resolved, and it is what the
+	// routes below read: the embedded Member is exported, so the member a route
+	// acts for has to come from a field a caller cannot rewrite.
+	member string
 }
 
 // refuseUnverified holds every route that acts for a member to the mark Verify
-// sets, and it is the check the unexported field exists for: a MemberCall whose
-// fields are all plausible and which Verify never produced is a call with no
-// run identity behind it, and the routes behind this check read the member's own
-// policy and serve the workspace's pool.
+// sets AND to the member it resolved, and those are the two unexported fields'
+// whole job: a MemberCall whose fields are all plausible and which Verify never
+// produced is a call with no run identity behind it, and a MemberCall whose
+// Member was pointed at another member afterwards names a member no Verify
+// resolved — and the routes behind this check read that member's own policy and
+// serve the workspace's pool. The refusal names no member: the package's rule is
+// that a refusal names the field and never its content.
 func (c MemberCall) refuseUnverified() error {
 	if !c.verified {
 		return fmt.Errorf("%w: the call did not come from Verify, so no run identity stands behind it and the routes that act for a member are closed", ErrUnverifiedJob)
+	}
+	if c.Member.Project != c.member {
+		return fmt.Errorf("%w: the member this call names is not the member Verify resolved, so the routes that act for a member are closed", ErrUnverifiedJob)
 	}
 	return nil
 }
@@ -528,7 +547,7 @@ func (w *Workspace) Verify(ctx context.Context, req Request) (MemberCall, error)
 		return MemberCall{}, err
 	}
 	caller.Identity = id
-	return MemberCall{WorkspaceCaller: caller, verified: true}, nil
+	return MemberCall{WorkspaceCaller: caller, verified: true, member: caller.Member.Project}, nil
 }
 
 // WorkspaceWide admits a caller to the routes that answer about the workspace
@@ -557,7 +576,7 @@ func (w *Workspace) MemberRoute(c MemberCall, project string) error {
 	if c.Class != ClassWorkspaceMember {
 		return fmt.Errorf("%w: the route answers about one member, and only a member's job service account may reach it", ErrUnverifiedJob)
 	}
-	if c.Member.Project != project {
+	if c.member != project {
 		return fmt.Errorf("%w: the caller is another member's job service account, and a member's route answers about that member alone", ErrUnverifiedJob)
 	}
 	return nil
@@ -652,7 +671,7 @@ func (w *Workspace) Shared(ctx context.Context, c MemberCall, offered []creds.Sh
 		repo, ok := canonicalOfSlug(policy.Accounts[name].AllowRepos, c.Identity.Slug)
 		return ok && projectpolicy.AdmitRepo(policy.AllowRepos, repo)
 	})
-	return creds.SharedFor(c.Member.Project, offered, member), nil
+	return creds.SharedFor(c.member, offered, member), nil
 }
 
 // canonicalOfSlug is the canonical name of the run's own repository, recovered
@@ -735,7 +754,7 @@ func (w *Workspace) database(c MemberCall) (Getter, error) {
 	if c.Class != ClassWorkspaceMember {
 		return nil, fmt.Errorf("%w: the caller is not a member's job, so it names no member's database", ErrUnverifiedJob)
 	}
-	db, ok := w.databases[c.Member.Project]
+	db, ok := w.databases[c.member]
 	if !ok {
 		return nil, fmt.Errorf("%w: the member this call resolved to has no database in this deployment", ErrWorkspaceConfig)
 	}

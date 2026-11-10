@@ -589,6 +589,52 @@ func TestWorkspaceServiceRefusesAMemberCallItDidNotProduce(t *testing.T) {
 	}
 }
 
+// TestWorkspaceServiceRefusesAMemberCallRetargetedAtAnotherMember: the mark
+// proves that a Verify ran, and it does not by itself hold the member the call
+// names — MemberCall embeds WorkspaceCaller, whose Member is an exported field.
+// So a holder of a verified call can point it at another member and still pass
+// the mark's check, and the routes that act for a member would read THAT
+// member's policy and serve ITS pool under a caller that really did verify, with
+// the run identity of the first member's run still beside it. The member Verify
+// resolved is therefore kept beside the mark and compared, and a rewritten call
+// is refused before any member's database is read.
+func TestWorkspaceServiceRefusesAMemberCallRetargetedAtAnotherMember(t *testing.T) {
+	f := newWSFixture(t)
+	ctx := context.Background()
+	// The other member's own policy is published, so a call served as that
+	// member would be served its pool: what the refusals below hold is the
+	// retargeting and not a member whose policy happens to admit nothing.
+	f.setPolicy(wsMemberB, wsShared)
+	retargeted := f.verifyOK(wsMemberA, wsAccountA)
+	// Verify reads the member's own outcomes (checkLive), so the paths are
+	// counted from here: what the routes below must not add is a read of either
+	// member's database.
+	readA, readB := len(f.dbs[wsMemberA].paths), len(f.dbs[wsMemberB].paths)
+	retargeted.Member.Project = wsMemberB
+	if err := f.ws.MemberRoute(retargeted, wsMemberA); !errors.Is(err, ErrUnverifiedJob) {
+		t.Errorf("MemberRoute for a call pointed at another member = %v, want ErrUnverifiedJob", err)
+	}
+	if err := f.ws.MemberRoute(retargeted, wsMemberB); !errors.Is(err, ErrUnverifiedJob) {
+		t.Errorf("MemberRoute for the member a retargeted call names = %v, want ErrUnverifiedJob: the call is not one Verify produced, whichever member it is asked about", err)
+	}
+	if _, _, err := f.ws.Policy(ctx, retargeted); !errors.Is(err, ErrUnverifiedJob) {
+		t.Errorf("Policy for a retargeted call = %v, want ErrUnverifiedJob", err)
+	}
+	if _, err := f.ws.Shared(ctx, retargeted, f.offered(wsMemberB)); !errors.Is(err, ErrUnverifiedJob) {
+		t.Errorf("Shared for a retargeted call = %v, want ErrUnverifiedJob", err)
+	}
+	if len(f.dbs[wsMemberA].paths) != readA || len(f.dbs[wsMemberB].paths) != readB {
+		t.Errorf("a retargeted call read a member's database (member A's paths %v, member B's %v, beyond the %d and %d Verify itself made): the member the call names is checked before any read", f.dbs[wsMemberA].paths, f.dbs[wsMemberB].paths, readA, readB)
+	}
+	// The member the account resolved to is served its own pool, so the
+	// refusals above are the rewrite and not the shape of the call.
+	f.setPolicy(wsMemberA, wsShared)
+	got, err := f.ws.Shared(ctx, f.verifyOK(wsMemberA, wsAccountA), f.offered(wsMemberA))
+	if err != nil || len(got) != 1 {
+		t.Errorf("Shared for the member the account resolved to = (%v, %v), want the pool's one credential", got, err)
+	}
+}
+
 // TestWorkspaceServiceRefusesATokenWhoseIssuerAndAccountDisagree: the account
 // names one member and the run identity's pins name another. The member is the
 // account — so the RUN TOKEN is offered to that member's own verifier, and the
