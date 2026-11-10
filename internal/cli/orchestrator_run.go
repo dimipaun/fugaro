@@ -833,7 +833,7 @@ func (v *orchestratorRunView) executionOver(ctx context.Context, slug, runID str
 	}
 	x, err := v.env.checkExecution(ctx, nil, l.Execution, slug, runID)
 	if err != nil {
-		fmt.Fprintf(v.warn, "run %s/%s: the state of its execution could not be read: %s\n", slug, runID, safetext.OneLine(err.Error()))
+		fmt.Fprintf(v.warn, "run %s/%s: the state of its execution could not be read: %s\n", slug, task.ShortRun(runID), safetext.OneLine(err.Error()))
 		return "", false
 	}
 	if x == nil {
