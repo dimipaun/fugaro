@@ -4833,25 +4833,31 @@ func runSlipEnv(ctx context.Context, env *cloudEnv, spec *task.Spec, slug, workf
 // credential it has.
 //
 // The second answer is why this launcher cannot name the run's own set, ""
-// when it can: the repository's own document could not be read at all (only a
-// file that exists is a set of accesses, and this one is read the way every
-// other launch read reads it — launchFileConfig, at the run's ref out of the
-// launcher's checkout, that checkout's own file standing in), or it names an
-// access no layer of this installation holds (craft.Resolve's own verdict,
-// which its caller here keeps rather than drops). The caller asks for no slip
-// then, because the names it would send are the slip's allow-list rather than
-// a wish (R9: the service serves this run from exactly them), and a name in
-// there that the run may not be served, or one the run will ask for that is
-// missing, is a run let into a state it cannot get out of.
+// when it can: the repository's own document could not be read at the run's ref
+// (only a file that exists there is a set of accesses, and this one is read
+// exactly as the run reads it — cascadeRefConfig, the ref out of the launcher's
+// checkout, which is the document the run clones and resolves its crafts from),
+// or it names an access no layer of this installation holds (craft.Resolve's
+// own verdict, which its caller here keeps rather than drops). The caller asks
+// for no slip then, because the names it would send are the slip's allow-list
+// rather than a wish (R9: the service serves this run from exactly them), and a
+// name in there that the run may not be served, or one the run will ask for
+// that is missing, is a run let into a state it cannot get out of.
+//
+// launchFileConfig is deliberately not what reads it, though every other launch
+// read does: its checkout stands in when the ref cannot be read, and the
+// working tree is a document the run never sees — one left on another branch or
+// carrying an uncommitted edit names accesses the run will not ask for, which
+// is the same broken slip the nil branch above refuses, only silently.
 //
 // subscriptionSpread is false and that is not a judgement about the switch: it
 // decides only whether a pool is reported inert, which is the run's own rule
 // about which of a pool's members to skip (D1626, MC5), and it changes no
 // access.
 func slipCredentialNames(ctx context.Context, env *cloudEnv, spec *task.Spec) ([]string, string) {
-	co := launchFileConfig(ctx, env, spec)
+	co := cascadeRefConfig(ctx, env, spec)
 	if co == nil {
-		return nil, "the repository's own fugaro.yaml could not be read from here — there is no checkout of it, and the file at the run's ref did not resolve — so the credentials the run will ask for cannot be named; run `fugaro run` from a checkout of the repository to have this run served under a slip"
+		return nil, "the repository's own fugaro.yaml could not be read at the ref this run will check out — there is no checkout of the repository here, or that ref carries no such file this launcher can resolve — so the credentials the run will ask for cannot be named, and the launcher's own working tree is not the document the run reads; run `fugaro run` from a checkout of the repository with the ref the run will clone to have this run served under a slip"
 	}
 	layers := []craft.Layer{{Name: craft.SourceRepo, Crafts: co.Agent.Crafts}}
 	if env.lc != nil {

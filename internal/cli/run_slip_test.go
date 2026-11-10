@@ -19,6 +19,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // fakeSlipID is the id the fixtures' service grants. It is not a credential
@@ -60,9 +61,17 @@ func newSlipLaunchRig(t *testing.T) *slipLaunchRig {
 // stranger whose pull request sits there — could write.
 func newSlipLaunchRigWith(t *testing.T, yaml string) *slipLaunchRig {
 	t.Helper()
+	return newSlipLaunchRigOver(t, func(t *testing.T, _ *launchBudgetFixture) { projectJobCheckoutYAML(t, yaml) })
+}
+
+// newSlipLaunchRigOver is the rig with a fixture setup of the caller's own, for
+// the tests that need the installation's config or the checkout to say
+// something the ordinary fixtures do not.
+func newSlipLaunchRigOver(t *testing.T, setup func(*testing.T, *launchBudgetFixture)) *slipLaunchRig {
+	t.Helper()
 	f := newLaunchBudget(t, "enforce")
 	f.appendConfig(t, "credentials_service:\n  url: "+launchCredsURL+"\n")
-	projectJobCheckoutYAML(t, yaml)
+	setup(t, f)
 	markRepoCredentialsServiceReady(t, f.cloudFixture)
 	env := memEnv(t, f.cloudFixture)
 	rec := &envRecorder{Backend: env.be}
@@ -430,12 +439,12 @@ func TestASlipIDIsUsableOnlyAsOneCleanEntry(t *testing.T) {
 
 // TestALaunchThatCannotReadTheRepositoryAsksForNoSlip: the slip names the
 // credentials the run may be served, and only the repository's own file can
-// select a craft's access — so a launch that can read neither the file at the
-// run's ref nor a checkout of the repository cannot name what the run, which
-// will check the file out, is about to ask for. It starts without a slip and
-// says so, rather than claiming a slip that names less than the run asks for:
-// that is the run refused at its next call with no way back (R9), where no
-// slip is the path every run took before the slip existed.
+// select a craft's access — so a launch with no checkout of the repository at
+// all cannot name what the run, which will check the file out, is about to ask
+// for. It starts without a slip and says so, rather than claiming a slip that
+// names less than the run asks for: that is the run refused at its next call
+// with no way back (R9), where no slip is the path every run took before the
+// slip existed.
 //
 // Mutation (verified, run and restored): resolve the layers with no repo layer
 // where the file could not be read (an empty `if co != nil`) instead of
@@ -443,10 +452,10 @@ func TestASlipIDIsUsableOnlyAsOneCleanEntry(t *testing.T) {
 // run is not configured for.
 func TestALaunchThatCannotReadTheRepositoryAsksForNoSlip(t *testing.T) {
 	r := newSlipLaunchRig(t)
-	// A directory that is no checkout of the repository: nothing for
-	// launchFileConfig to read the run's document from, which is the daemon's
-	// own launch (orchestrator_launcher) and `fugaro run --repo` from
-	// elsewhere on the machine.
+	// A directory that is no checkout of the repository: nothing to read the
+	// run's document from, which is the daemon's own launch
+	// (orchestrator_launcher) and `fugaro run --repo` from elsewhere on the
+	// machine.
 	t.Chdir(t.TempDir())
 	plain := r.launch(t, func(req credsvc.SlipGrantRequest) (credsvc.SlipGrantResponse, error) {
 		return credsvc.SlipGrantResponse{Slip: fakeSlipID, MaxRuntimeSeconds: req.MaxRuntimeSeconds}, nil
@@ -459,6 +468,137 @@ func TestALaunchThatCannotReadTheRepositoryAsksForNoSlip(t *testing.T) {
 	}
 	if !strings.Contains(r.warned.String(), "without a slip") {
 		t.Errorf("the launch said %q, want a warning that this run starts without a slip and why", r.warned.String())
+	}
+}
+
+// slipCheckoutRefWithoutTheFile is a checkout of the repository whose ref
+// carries no fugaro.yaml at all, with an uncommitted one in the working tree:
+// the state the launcher's own read is in when the document it finds is not the
+// document the run will read. The run clones spec.Ref and resolves the file it
+// finds there (run.go's cascadeRefConfig), so this working tree is a document
+// the run never sees.
+func slipCheckoutRefWithoutTheFile(t *testing.T, working string) {
+	t.Helper()
+	testutil.IsolateGit(t)
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "-q")
+	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/app.git")
+	testutil.Git(t, dir, "commit", "-q", "--allow-empty", "-m", "a ref with no fugaro.yaml")
+	testutil.Git(t, dir, "update-ref", "refs/remotes/origin/main", "HEAD")
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": working})
+	t.Chdir(dir)
+}
+
+// TestALaunchWhoseRefCarriesNoReadableFileAsksForNoSlip: the slip's names are
+// resolved from the document the run will read — the one at the ref it clones —
+// and a launch that cannot read that one has no stand-in: the launcher's own
+// working tree is a document the run never reads (run.go's cascadeRefConfig),
+// so a file left on another branch or carrying an uncommitted edit can name a
+// set the run will not ask for. Here the ref carries no file at all while the
+// working tree carries one, and the launch starts without a slip, saying so,
+// rather than filing the working tree's set and meeting the run's first call as
+// a refusal with no way back (R9).
+//
+// Mutation (verified, run and restored): read the document with launchFileConfig
+// — whose checkout stands in when the ref cannot be read — and this fails on the
+// grant call it makes from the working tree's file the run never sees.
+func TestALaunchWhoseRefCarriesNoReadableFileAsksForNoSlip(t *testing.T) {
+	r := newSlipLaunchRigOver(t, func(t *testing.T, _ *launchBudgetFixture) { slipCheckoutRefWithoutTheFile(t, cascadeLaunchYAML) })
+	plain := r.launch(t, func(req credsvc.SlipGrantRequest) (credsvc.SlipGrantResponse, error) {
+		t.Errorf("the launch asked for a slip naming %v from the launcher's own working tree, want no slip at all: the run reads the file at the ref it clones and never this one", req.Credentials)
+		return credsvc.SlipGrantResponse{Slip: fakeSlipID, MaxRuntimeSeconds: req.MaxRuntimeSeconds}, nil
+	})
+	if r.calls != 0 {
+		t.Errorf("the launch made %d grant calls, want none", r.calls)
+	}
+	if want := []string{envCredentialsServiceURL + "=" + launchCredsURL}; !slices.Equal(plain, want) {
+		t.Errorf("the launch handed the job %v, want %v", plain, want)
+	}
+	if !strings.Contains(r.warned.String(), "without a slip") {
+		t.Errorf("the launch said %q, want a warning that this run starts without a slip and why", r.warned.String())
+	}
+}
+
+// TestASlipNamesTheRefsFileNotTheLaunchersWorkingTree: with the file at the
+// run's ref readable, the slip names the accesses THAT document writes, even
+// when the launcher's working tree writes others — the state a checkout left on
+// another branch, or one carrying an uncommitted edit, is in, and the one the
+// launcher must not resolve the slip from.
+//
+// Mutation (verified, run and restored): resolve the crafts from the working
+// tree (checkoutConfig) instead of the ref, and this fails on the request, which
+// names the working tree's `tree-key`.
+func TestASlipNamesTheRefsFileNotTheLaunchersWorkingTree(t *testing.T) {
+	const at = "  model: claude-sonnet-5-5\n"
+	craft := func(access string) string {
+		return strings.Replace(cascadeLaunchYAML, at, at+"  crafts:\n    coder: { access: "+access+" }\n", 1)
+	}
+	ref, tree := craft("ref-key"), craft("tree-key")
+	if ref == cascadeLaunchYAML || tree == cascadeLaunchYAML {
+		t.Fatal("the fixture writes no agent.model, so these documents were not built")
+	}
+	// The two credentials are the installation's — the set a repository's file
+	// selects among (F12/D1628) — and each document here names one of them.
+	r := newSlipLaunchRigOver(t, func(t *testing.T, f *launchBudgetFixture) {
+		f.appendConfig(t, "credentials:\n  - {name: ref-key, type: anthropic}\n  - {name: tree-key, type: anthropic}\n")
+		projectJobCheckoutYAMLAt(t, tree, ref)
+	})
+	plain := r.launch(t, func(req credsvc.SlipGrantRequest) (credsvc.SlipGrantResponse, error) {
+		return credsvc.SlipGrantResponse{Slip: fakeSlipID, MaxRuntimeSeconds: req.MaxRuntimeSeconds}, nil
+	})
+	if r.calls != 1 {
+		t.Fatalf("the launch made %d grant calls, want one: the file at the ref is readable here", r.calls)
+	}
+	if !slices.Contains(r.req.Credentials, "ref-key") {
+		t.Errorf("the grant call asked for %v, want the access the file at the run's ref writes (%q): that is the document the run resolves its crafts from", r.req.Credentials, "ref-key")
+	}
+	if slices.Contains(r.req.Credentials, "tree-key") {
+		t.Errorf("the grant call asked for %v, which carries %q — a name only the launcher's own working tree writes, and a document the run never reads: the run would be refused it at its first call", r.req.Credentials, "tree-key")
+	}
+	if want := []string{envCredentialsServiceURL + "=" + launchCredsURL, envSlip + "=" + fakeSlipID}; !slices.Equal(plain, want) {
+		t.Errorf("the launch handed the job %v, want %v", plain, want)
+	}
+}
+
+// TestALaunchWithNoServiceAddressAsksForNoSlip: a slip is asked for exactly
+// where the service's address was written (run.go's call site), and that gate
+// is the whole of what keeps an installation that has not opted in from making
+// the call at all — a call to an address that is not there, from a machine
+// whose `gcloud` this launcher would have to run for it, which then warns about
+// a slip nobody asked for. No address, no call, and nothing said.
+//
+// Mutation (verified, run and restored): call runSlipEnv unconditionally at the
+// call site (drop the credentialsServiceURLOf gate) and this fails on the one
+// call it makes.
+func TestALaunchWithNoServiceAddressAsksForNoSlip(t *testing.T) {
+	f := newLaunchBudget(t, "enforce")
+	projectJobCheckoutYAML(t, cascadeLaunchYAML)
+	env := memEnv(t, f.cloudFixture)
+	rec := &envRecorder{Backend: env.be}
+	env.be = rec
+	var warned strings.Builder
+	prevWarn := launchWarn
+	launchWarn = &warned
+	t.Cleanup(func() { launchWarn = prevWarn })
+	calls := 0
+	prev := slipGrant
+	slipGrant = func(context.Context, string, credsvc.SlipGrantRequest) (credsvc.SlipGrantResponse, error) {
+		calls++
+		return credsvc.SlipGrantResponse{}, errSlipRouteAbsent
+	}
+	t.Cleanup(func() { slipGrant = prev })
+
+	if _, err := launchRun(context.Background(), env, appSlug, raceSpec(t, env), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 0 {
+		t.Errorf("an installation with no credentials service made %d grant calls, want none: the address is the opt-in, and the call would mint this launcher's own identity token for a service that is not deployed", calls)
+	}
+	if warned.Len() != 0 {
+		t.Errorf("the launch said %q, want nothing: an installation that has not opted in launches byte for byte what it launched before the slip existed", warned.String())
+	}
+	if plain := withoutServicesStamp(t, rec.env); len(plain) != 0 {
+		t.Errorf("the launch handed the job %v, want none", plain)
 	}
 }
 
