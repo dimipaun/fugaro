@@ -2176,6 +2176,47 @@ func TestLocalConfigBakeSwitchKeepsThePublishedOneWhenSilent(t *testing.T) {
 	}
 }
 
+// TestLocalConfigTriageKeepsThePublishedSwitchWhenSilent: the triage switch's
+// keep rule (D1854), which is the bake switch's with a sharper cost on the
+// wrong reading: a machine whose config predates the key must not publish a
+// node that turns the stage back on for every run of the project, and a written
+// false is this machine's own answer and wins over the node's. A written true
+// is an answer too — the node carries what the file states — and it is the one
+// value that changes nothing for a reader (absent and true are one statement,
+// config.Agent.TriageOn).
+func TestLocalConfigTriageKeepsThePublishedSwitchWhenSilent(t *testing.T) {
+	yes, no := true, false
+	silent, err := Parse([]byte(sample))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := silent.TriageEffective(&no); got != &no {
+		t.Errorf("a silent config takes %v, want the published switch", got)
+	}
+	if got := silent.TriageEffective(nil); got != nil {
+		t.Errorf("a silent config beside a node that states no switch takes %v, want nothing published", got)
+	}
+	off, err := Parse([]byte(sample + "triage: false\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := off.TriageEffective(&yes); got != off.Triage || *got {
+		t.Errorf("a config that writes false takes %v, want its own false: the switch only ever moves down", got)
+	}
+	on, err := Parse([]byte(sample + "triage: true\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := on.TriageEffective(&no); got != on.Triage || !*got {
+		t.Errorf("a config that writes true takes %v, want its own true", got)
+	}
+	// The key is modelled, so a value that is not a switch is refused where it
+	// is written rather than published half-read.
+	if _, err := Parse([]byte(sample + "triage: nope\n")); err == nil {
+		t.Error("a local config whose triage is a word was accepted")
+	}
+}
+
 // TestImageMapAndBakeSwitchNotInShared: the map and the switch are the owner's
 // and travel the catalog's way, one step stronger: the map decides what code
 // each repository's jobs execute, so a launcher who could write it into the
@@ -2206,6 +2247,33 @@ func TestImageMapAndBakeSwitchNotInShared(t *testing.T) {
 	}
 	if c.ImageMap == nil || c.BakeRepos == nil {
 		t.Error("Shared/MergeShared cleared the local map or the local switch")
+	}
+}
+
+// TestTriageSwitchNotInShared: the triage switch is the owner's for the floor's
+// reason (D1854): the stage decides which of a review round's findings hold a
+// pull request back, so a launcher who could write the switch into the runs
+// bucket's shared file would be waving every teammate's runs past them.
+// internal/cli's ParseShared refuses the key besides.
+func TestTriageSwitchNotInShared(t *testing.T) {
+	c, err := Parse([]byte(sample + "triage: false\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, got := range map[string]*Config{"shared": c.Shared(), "merged": MergeShared(nil, c)} {
+		if got.Triage != nil {
+			t.Errorf("%s: triage = %v, want it dropped: a launcher may not write the project's switch", name, got.Triage)
+		}
+		out, err := got.Marshal()
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if strings.Contains(string(out), "triage") {
+			t.Errorf("%s: the marshalled config carries the switch:\n%s", name, out)
+		}
+	}
+	if c.Triage == nil || *c.Triage {
+		t.Error("Shared/MergeShared cleared the local switch on the config it was given")
 	}
 }
 

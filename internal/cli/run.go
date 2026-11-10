@@ -253,6 +253,16 @@ type runOptions struct {
 	// near miss gets is this package's (config.ParseReviewLevelsYAML), not
 	// the runner's at bootstrap after the launch was paid for.
 	reviewLevels *config.ReviewLevels
+	// The four chain limits (docs/run-limit-carry-over D1042), one flag per
+	// dimension and one member per flag: --max-usd, --max-tokens, --max-time
+	// and --max-review-rounds. They are the flags' own text here and are
+	// parsed once, by chainLimitsFlag, into limits below, so every launch
+	// shape writes the same four numbers.
+	maxUSD, maxTokens, maxTime, maxReviewRounds string
+	// limits is the four flags above, parsed. A launch that names none of
+	// them carries no chain limit at all and its task is byte-identical to
+	// what the previous release wrote (D1041).
+	limits chainLimits
 }
 
 func newRunCmd() *cobra.Command {
@@ -317,6 +327,10 @@ func newRunCmd() *cobra.Command {
 	f.StringVar(&o.tf, "task-file", "", "read the task from this file, or - for stdin")
 	f.StringVar(&o.retry, "retry", "", "launch the stored task of RUN (a full run ID, or <repo-slug>/<run-id>) that never started: a run an ending names is never launched, since the bucket cannot vouch for which run an ending means")
 	f.StringVar(&o.totalTimeout, "total-timeout", "", "override the workflow's timeouts.total for this run, such as 45m")
+	f.StringVar(&o.maxUSD, "max-usd", "", "cap this chain's model spend at X dollars, such as 5 or 12.5: it may only tighten the ceiling this launch resolves (fugaro refuses a looser value and names the layer that set the lower one), and it is recorded in the task's overrides, beside the total_timeout that is there today. A chain is the run that sets it and the runs that continue it; a launch that names no such limit gets today's per-run caps and no chain at all")
+	f.StringVar(&o.maxTokens, "max-tokens", "", "cap this chain's token total at N tokens, such as 900000: tighten-only, like --max-usd, and recorded in the task's overrides")
+	f.StringVar(&o.maxTime, "max-time", "", "cap this chain's elapsed run time, as a duration such as 45m or 2h: --total-timeout keeps its own meaning and may raise this run's clock, and the two compose as the smaller of the two (the run's clock is min(--total-timeout, this))")
+	f.StringVar(&o.maxReviewRounds, "max-review-rounds", "", "cap this chain's review rounds at N, senior-review iterations included: tighten-only, and never refused against the mode's own number — the rounds a run spends stay the mode's and the recipe's, and this bounds the whole chain")
 	f.IntSliceVar(&o.pr, "pr", nil, "continue Fugaro PR N: act on its trusted review comments (TEXT adds instructions); with a mode: review --recipe, review PR N instead (repeatable, 1 to 4, any open PR)")
 	f.StringVar(&o.recipe, "recipe", "", "the recipe (task loop) to run: .fugaro/recipes/NAME.yaml, the project's, or the catalog's ("+strings.Join(recipe.CatalogNames(), ", ")+"); default: agent.recipe in fugaro.yaml, else default; a follow-up (--pr) keeps its previous run's")
 	f.StringVar(&o.token, "token", "", "named Claude account (claude_accounts in the local config) this run uses, for a workflow whose agent.auth is oauth; default: agent.oauth_token in fugaro.yaml, else the repository's default account; a follow-up (--pr) keeps its previous run's account unless this is given explicitly, which overrides it (checked the same way as a first run's)")
@@ -338,7 +352,7 @@ func newRunCmd() *cobra.Command {
 }
 
 // taskFlags are the flags --retry excludes: the stored task.json supplies them.
-var taskFlags = []string{"repo", "ref", "workflow", "run-id", "batch", "title", "plan-task", "task-file", "total-timeout", "pr", "recipe", "token", "attach", "mode", "path", "tier", "no-compression", "review-levels", "review-run"}
+var taskFlags = []string{"repo", "ref", "workflow", "run-id", "batch", "title", "plan-task", "task-file", "total-timeout", "pr", "recipe", "token", "attach", "mode", "path", "tier", "no-compression", "review-levels", "review-run", "max-usd", "max-tokens", "max-time", "max-review-rounds"}
 
 // prFlags are the flags --pr excludes: the previous run on the PR supplies them.
 var prFlags = []string{"ref", "workflow"}
@@ -404,6 +418,15 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 		// --tier, resolved the same way and for the same reason: the
 		// vocabulary is closed, and a launch that names none writes no field.
 		if err = tierFlag(o); err != nil {
+			return err
+		}
+		// The four --max-* chain limits, parsed once for every launch shape
+		// below and before the cloud is opened: a mistyped number is a
+		// caller's mistake, and it costs no read. A value that would loosen
+		// is a different refusal, and it needs the policy this launch
+		// resolves (chainLimitGate). --retry never reaches here: taskFlags
+		// refuses the four with it, since the stored task keeps its own.
+		if err = chainLimitsFlag(cmd, o); err != nil {
 			return err
 		}
 		if text, err = taskText(cmd, o.tf, args, prSet); err != nil {
@@ -704,6 +727,18 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 	if o.reviewLevels != nil {
 		spec.ReviewLevels = o.reviewLevels
 	}
+	// The four --max-* chain limits (docs/run-limit-carry-over §2, D1042), on
+	// every launch shape below as --review-levels is, and refused here rather
+	// than dropped: the policy this launch resolves is merged first and a
+	// value that would loosen is a refusal naming both numbers and the layer
+	// that set the lower one (D1043). Written before createTask below, so a
+	// repeated --run-id with a limit the stored task does not carry is
+	// refused as a different task rather than silently dropped, and before
+	// the gates that read the task (freshLaunchGates judges the image on the
+	// fields this writes).
+	if err := chainLimitGate(ctx, env, o, spec, reused, warn); err != nil {
+		return launchResult{}, err
+	}
 	// The compression image gate's own condition, resolved here beside the
 	// write and used by both launch branches below. It is the field's as much
 	// as the configuration's, and the two halves catch different failures: a
@@ -807,6 +842,134 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 		res.ProjectLayer = &launchProjectLayer{SHA256: spec.ProjectLayer.SHA256, Generation: spec.ProjectLayer.Generation}
 	}
 	return res, nil
+}
+
+// chainLimitsAsk reports whether the task carries any of the four chain limits.
+// It is the fields' check and not the flags': a launch that reuses a stored
+// task — --retry, or a repeated --run-id of one that never launched — carries
+// limits no flag of this call named, and an image gate that read the flags
+// would launch it onto a runner that refuses the task.
+func chainLimitsAsk(spec *task.Spec) bool {
+	o := spec.Overrides
+	return o.MaxUSD != nil || o.MaxTokens != nil || o.MaxTime != "" || o.MaxReviewRounds != nil
+}
+
+// chainLimitGate writes this launch's four --max-* limits into the task's
+// overrides, resolving first the policy they merge under (chainLimitPolicyOf)
+// and refusing a value that would loosen it (D1043, D1044).
+//
+// The four are written as the merge's own effective values: a chain limit may
+// only tighten, so the merged figure is the caller's wherever it was not
+// refused, and writing the merged one keeps the task and the policy record
+// saying the same number from the same layer.
+//
+// The two dimensions no layer under the chain's sets are the launcher's own
+// comparisons, and both are recorded divergences from the plan that asked for
+// this flag (docs/run-limit-carry-over L3, F15, F18):
+//
+//   - The review rounds are never refused against the mode's number: a mode's
+//     row is a default and not a cap (internal/rigor's DefaultRounds, which
+//     replaced the RoundCeiling the plan quotes, #1483), and a chain spans
+//     runs, so a chain limit above one run's number is a launch the engine
+//     would run. A refusal that names a figure at all is the one for a value
+//     below 1 round, and the figure it names is chainRoundCeiling's output.
+//   - The wall time is compared with the run's own clock, the number
+//     --total-timeout raises and this one may only tighten: a launch that gives
+//     both composes as min, and a --max-time above the clock is refused rather
+//     than silently ineffective (F18, spec §2). The clock is the launch's own
+//     --total-timeout, else the workflow's timeouts.total when this launcher
+//     can read the checkout; a launcher that can read neither writes the chain
+//     limit alone and leaves the composition to the runner's bootstrap (L5).
+//
+// A launch that reuses a stored follow-up (reused) writes nothing here: the
+// limits such a task carries were merged, refused and composed when it was
+// written, and what this call's flags claim is compared byte for byte against
+// them (storedFollowUp), so there is no figure left to judge — while the merge
+// and the clock both depend on the environment this call happens to read (the
+// policy as it stands now, the checkout in hand now), and re-deriving them
+// would refuse a task that is not changing, or write a different composition
+// into a run that has already started.
+func chainLimitGate(ctx context.Context, env *cloudEnv, o *runOptions, spec *task.Spec, reused bool, warn io.Writer) error {
+	if o.retry != "" || reused || !o.limits.set() {
+		return nil
+	}
+	c := chainLimitPolicyOf(ctx, env, spec, launchLevelsConfig(ctx, env, spec))
+	e, base := c.merge(o.limits.layer())
+	for _, ig := range e.Ignored[base:] {
+		if err := chainLimitRefusal(ig); err != nil {
+			return err
+		}
+	}
+	if o.limits.usd != nil {
+		spec.Overrides.MaxUSD = &e.PerRunUSD
+	}
+	if o.limits.tokens != nil {
+		spec.Overrides.MaxTokens = &e.MaxRunTokens
+	}
+	if r := o.limits.rounds; r != nil {
+		if *r < 1 {
+			return userErr("--max-review-rounds %d: a chain's review rounds must be at least 1. A %s run's own review loop starts from %d rounds per run (the mode's default, held inside the recipe's %d), so a limit below that bounds a chain that could never spend it",
+				*r, c.mode, chainRoundCeiling(c.mode), recipe.MaxReviewRounds)
+		}
+		n := int(e.MaxReviewRounds)
+		spec.Overrides.MaxReviewRounds = &n
+	}
+	if o.limits.time > 0 {
+		clock := launchClockOf(ctx, env, spec)
+		if clock > 0 && o.limits.time > clock {
+			return userErr("--max-time %s is above %s, this run's own clock (its %s): a chain's wall time can only tighten the clock the run itself has, and the two compose as the smaller of the two. Pass %s or less, or raise the clock rather than the chain",
+				o.limits.time, clock, launchClockSource(o, spec), clock)
+		}
+		t := o.limits.time.String()
+		spec.Overrides.MaxTime = t
+		if clock > 0 {
+			// The composition (spec §2): the run's clock is the smaller of
+			// the two, written as the task's own total_timeout — which is
+			// the field the backend's override reads (launchTimeoutOf) — and
+			// the chain's limit stays in max_time beside it, where the
+			// runner merges it again at bootstrap (D1044).
+			composed := min(clock, o.limits.time)
+			// The composed figure becomes the run's own total_timeout, so
+			// the rule the --total-timeout flag is held to holds it too: a
+			// clock that does not clear the workflow's finalize reserve
+			// leaves the run no time to finish in.
+			if co := checkoutConfig(ctx, spec.Repo); co != nil {
+				if w, ok := co.Workflows[spec.Workflow]; ok && composed <= w.Timeouts.FinalizeReserve.Duration {
+					return userErr("--max-time %s leaves this run a %s clock, which workflow %s's timeouts.finalize_reserve %s does not fit inside: pass more than the reserve (the run's clock is the smaller of --max-time and its own %s)",
+						o.limits.time, composed, spec.Workflow, w.Timeouts.FinalizeReserve.Duration, launchClockSource(o, spec))
+				}
+			}
+			spec.Overrides.TotalTimeout = composed.String()
+		}
+	}
+	return nil
+}
+
+// launchClockOf is the clock this launch may give the run: the total timeout
+// the caller asked for, else the workflow's own timeouts.total as the checkout
+// in hand declares it. 0 is a launcher that can resolve neither — a launch
+// from outside the repository's checkout with no --total-timeout — and then
+// there is nothing to compare the chain's wall time with: it is still written,
+// and the runner composes it at bootstrap (L5).
+func launchClockOf(ctx context.Context, env *cloudEnv, spec *task.Spec) time.Duration {
+	if d := launchTimeoutOf(spec); d > 0 {
+		return d
+	}
+	if co := checkoutConfig(ctx, spec.Repo); co != nil {
+		if w, ok := co.Workflows[spec.Workflow]; ok {
+			return w.Timeouts.Total.Duration
+		}
+	}
+	return 0
+}
+
+// launchClockSource names where the clock above came from, as the refusal
+// reads it: the flag the caller typed, or the workflow's own key.
+func launchClockSource(o *runOptions, spec *task.Spec) string {
+	if o.totalTimeout != "" {
+		return "--total-timeout"
+	}
+	return "workflows." + spec.Workflow + ".timeouts.total"
 }
 
 // freshLaunchGates is the block of gates a fresh launch passes before anything
@@ -927,6 +1090,18 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 				return config.Inputs{}, err
 			}
 		}
+		// The chain limits' own gate, for the same reason as the four above:
+		// a runner older than launchLimitsSince refuses a task carrying one
+		// outright, and the run would die at bootstrap over fields that change
+		// nothing about what it does. A launch that carries none (the common
+		// case) is never gated, so a task stays byte-identical to what the
+		// previous release wrote: the check is the field's, not the flag's.
+		if chainLimitsAsk(spec) {
+			if err := checkCloneImageSince(env.lc, spec, launchLimitsSince,
+				chainLimitsSubject, chainLimitsKnows, chainLimitsAlt, warn); err != nil {
+				return config.Inputs{}, err
+			}
+		}
 		// The compression gate: a runner older than compressionSince knows
 		// neither the key nor the field and refuses whichever it meets at
 		// bootstrap, so the launch is judged on both (compressionGate
@@ -1016,6 +1191,12 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 		if err := checkCloneStopFractionImage(env.lc, spec, fileCfg, warn); err != nil {
 			return config.Inputs{}, err
 		}
+		// The triage stage's switch, on the same configuration read: a
+		// runner older than triageSince refuses agent.triage at
+		// bootstrap, whatever it says (checkCloneTriageImage).
+		if err := checkCloneTriageImage(env.lc, spec, fileCfg, warn); err != nil {
+			return config.Inputs{}, err
+		}
 	} else {
 		if needsRecipeImage(spec, agentRecipe) {
 			if err := checkRecipeImage(ctx, env, slug, spec, kind, warn); err != nil {
@@ -1056,6 +1237,14 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 		if spec.PlanTask != "" {
 			if err := checkImageSince(ctx, env, slug, spec, kind, planTaskSince,
 				"a plan task (--plan-task)", "the plan task", "", warn); err != nil {
+				return config.Inputs{}, err
+			}
+		}
+		// The same gate as the clone branch's above, and for the same
+		// reason: see launchLimitsSince.
+		if chainLimitsAsk(spec) {
+			if err := checkImageSince(ctx, env, slug, spec, kind, launchLimitsSince,
+				chainLimitsSubject, chainLimitsKnows, chainLimitsAlt, warn); err != nil {
 				return config.Inputs{}, err
 			}
 		}
@@ -1130,6 +1319,11 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 		// The same gate as the clone branch's above, and for the same
 		// reason: see checkStopFractionImage.
 		if err := checkStopFractionImage(ctx, env, slug, spec, kind, fileCfg, warn); err != nil {
+			return config.Inputs{}, err
+		}
+		// The same gate as the clone branch's above, and for the same
+		// reason: see checkTriageImage.
+		if err := checkTriageImage(ctx, env, slug, spec, kind, fileCfg, warn); err != nil {
 			return config.Inputs{}, err
 		}
 		// The digest drift, last of this branch's image reads, and the
@@ -2147,7 +2341,7 @@ func claudeAccountFor(ctx context.Context, env *cloudEnv, repo, flag, stage, ref
 	// therefore does the checking:
 	//
 	//   - api-key: the mix is the only way the default reaches a stage, so
-	//     mixedStageAccount holds it there (the two stages it may serve, and no
+	//     mixedStageAccount holds it there (the stages it may serve, and no
 	//     other), and a run whose reviews are not Claude's checks nothing;
 	//   - oauth: the walk below ends in claudeAccountAllowed, which checks the
 	//     default whenever it is what the run picked as its own credential,
@@ -2229,13 +2423,14 @@ func claudeAccountFor(ctx context.Context, env *cloudEnv, repo, flag, stage, ref
 	// the default. Any other name
 	// is left to the walk below, which refuses it unless it is the mix's own. A
 	// *stage* asked for is not this resolution: it has its own chain above, and
-	// the mix serves the two stages of the allow-list and no other.
+	// the mix serves the stages of the allow-list and no other.
 	//
 	// A non-account value and a declared mix are the one pair here that neither
 	// of those answers covers: the name is no account, so it is refused below
 	// only where the pair cannot be judged at all (claudeAccountAllowed admits
 	// it for api-key, which is the auth a mix is declared under), while the
-	// runner serves the run's review and adversarial stages out of the mix
+	// runner serves the run's mixed stages (review, adversarial and triage)
+	// out of the mix
 	// whatever the launch's own account is. Such a launch would start on the
 	// value's job — the one whose account segment it is — which mounts no Claude
 	// token, and its review stages would halt for one. It is refused here
@@ -2247,7 +2442,7 @@ func claudeAccountFor(ctx context.Context, env *cloudEnv, repo, flag, stage, ref
 		}
 		if mix != "" && config.AxisNonAccountValue(name) {
 			return "", userErr("this launch names %s (%s) as the run's own account, and this run declares a mix: %s serves its %s stages, and those stages read the account's token out of the runner's environment, which only the account's own job mounts — the mix is the one Claude account an api-key run may hold, and this value is not an account, so the launch would start on its job, whose review stages have no token to run on. Nothing was launched: no claim was taken, no budget token was minted and Cloud Run was not called. Launch without --token, which is where a mixed run starts — the mix is the run's own account — or remove the account this mix names for the %s stages",
-				nonAccountPhrase(name), name, mix, strings.Join(config.MixedAccountStages, " and "), strings.Join(config.MixedAccountStages, " and "))
+				nonAccountPhrase(name), name, mix, config.MixedStagePhrase(), config.MixedStagePhrase())
 		}
 		if mix != "" && (name == "" || name == config.DefaultClaudeAccount) {
 			name = mix
@@ -2327,7 +2522,8 @@ func stageAccountsOf(lc *localcfg.Config) map[string]string {
 // stageAccountOf is the account the stage's own key names, for the auths that
 // may have one: oauth, where the accounts design's rung 2 gives a stage an
 // account of its own, and api-key, where the B0 ruling's one account serves the
-// senior review and the adversarial review. Every other auth is "" — vertex and
+// mix's stages: the senior review, the adversarial review and the triage that
+// weighs their findings. Every other auth is "" — vertex and
 // cascade are refused outright by CheckStageAccountMix, and an auth the launch
 // cannot resolve yet is not judged on a guess.
 func stageAccountOf(lc *localcfg.Config, auth, stage string) string {
@@ -2468,9 +2664,11 @@ func mixedStageAccount(ctx context.Context, env *cloudEnv, repo, stage, auth str
 }
 
 // mixedStageModel is the model a review stage runs, for the mix's
-// Anthropic-model condition: level 2's own model for review and level 3's for
-// adversarial — the levels the two stages are (config.ResolveLevels' own
-// defaults) — and the reviewer role's model when the level names none. Level
+// Anthropic-model condition: level 2's own model for review and for the triage
+// that weighs its findings, and level 3's for adversarial — the levels those
+// stages are (config.ResolveLevels' own defaults; triage's is the senior
+// reviewer's, D1848) — and the reviewer role's model when the level names
+// none. Level
 // models are read here because a level's model is a pin of its own: it runs in
 // place of the role slot the level sits in, so a Claude reviewer with a
 // DeepSeek level 2 is a stage the account has nothing to do on.

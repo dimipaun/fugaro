@@ -41,29 +41,29 @@ project layer file's entries, D1175), and the dedicated commands of §3 are then
 
 The registry spells a wildcard key `workflows.*.commands.test`
 (`internal/settings/registry.go:223`). `settingsWriteLookup`
-(`internal/cli/settings_set.go:550`) reaches a wildcard row only for a spelling
+(`internal/cli/settings_set.go:551`) reaches a wildcard row only for a spelling
 `settingsGenericKeys` names, so a concrete key a person would type — `workflows.web.commands.test` —
 resolves to no row and is refused.
 
 **Recommendation (D1161): a concrete key matches the wildcard row whose pattern it fits.** The
 resolution is the settings read's own rule, reused rather than re-derived:
-`settingsPatternMatch` (`internal/cli/settings_set.go:573`) already matches a
+`settingsPatternMatch` (`internal/cli/settings_set.go:574`) already matches a
 pattern against a concrete key. The write path uses it to find the row, keeps the concrete key in the
 document it prints and the diff it shows, and the registry row supplies the layers, the default, the
 merge rule and the owner. The alternative — requiring the literal `*` — costs nothing to write and
 makes the command unusable by a person, which is the whole point of the ruling.
 
 **What changes is the allowlist and not the resolver.** The wildcard loop is already bounded to rows
-`settingsGenericKeys` names by name (`internal/cli/settings_set.go:550`), which is how
+`settingsGenericKeys` names by name (`internal/cli/settings_set.go:551`), which is how
 `stages.*.claude_account` (`:120`) is reachable and why `workflows.*` is not; the literal `*` spelling
-keeps its own refusal (`:525`). So the task is to decide, row by row, which wildcard blocks the generic
+keeps its own refusal (`:501`). So the task is to decide, row by row, which wildcard blocks the generic
 path carries — the same decision `settingsGenericKeys` is for at every other row — and the resolver
 needs no change at all.
 
 ### 2.2 `--add-entry` and `--remove-entry`
 
 `settings set --add` and `--remove` already add and remove **items of a string-list key**
-(`internal/cli/settings_set.go:260`, `:1850`), through `yamledit.AddListItem` and
+(`internal/cli/settings_set.go:261`, `:1851`), through `yamledit.AddListItem` and
 `yamledit.RemoveListItem` (`internal/yamledit/yamledit.go:234`, `:258`). They do not
 reach a **map** (`workflows.*.cache.*.key`, `providers.*.models`) or an **object list**
 (`workflows.*.cache` is a sequence of mappings, `workflows.*.secrets` a sequence of
@@ -89,8 +89,8 @@ entry by `name`), because the registry names leaves and not blocks.
 ### 2.3 The dry run, the confirmation, the backup and the compare-and-swap
 
 **Recommendation (D1166): an entry write is the same edit as any other.** It is classified by the same
-`settingsTypedWrite` call (`internal/cli/settings_set.go:1649`), printed by the
-same dry-run document (`internal/cli/settings_set.go:1976`), confirmed through
+`settingsTypedWrite` call (`internal/cli/settings_set.go:1650`), printed by the
+same dry-run document (`internal/cli/settings_set.go:1971`), confirmed through
 the same `applySettingsEdit` (`internal/cli/settings_write.go:86`), backed up
 by the same `backupFile` (`internal/cli/init.go:2602`) and refused when the file moved by
 the same byte compare-and-swap (`internal/cli/settings_write.go:150`). There is
@@ -215,7 +215,7 @@ mechanism. The layer's rows already exist in the registry
 mechanism, not a new registry.
 
 **Recommendation (D1176): the edit's own next step publishes.** `fugaro settings set --layer project`
-already ends with `next: fugaro update` (`internal/cli/settings_set.go:2024`); the
+already ends with `next: fugaro update` (`internal/cli/settings_set.go:2019`); the
 HARD RULE is that `update` publishes the layer, not that a person runs `fugaro config publish` after it.
 `fugaro config publish` therefore **stays** as the operator's own door (and is the door the agent runs
 under the gate, [managed spec](../managed-agent-converge/spec.md) §4.2), but no *edit* here requires it:
@@ -251,7 +251,7 @@ three parts:
   command that would be read as an editor.
 - **The mechanism is the read's own table, not the write's map.** `settingsFamilyCommands` is asked a
   second question too — it is what refuses a write and points the key at its family
-  (`internal/cli/settings_set.go:522`) — so a family cannot simply be added to it: `config` owns
+  (`internal/cli/settings_set.go:523`) — so a family cannot simply be added to it: `config` owns
   `max_parallel` (`internal/settings/registry.go:560`) and `setup` owns `update_check` (`:566`), and both
   are keys the generic path writes today, so an entry for either family would refuse two keys `settings
   set` writes.

@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/rigor"
 )
@@ -729,5 +730,114 @@ func TestABMergeTightenOnly(t *testing.T) {
 	// Equal rates are not ignored, as for every other key.
 	if e := Merge(Layer{ABRate: rate(0.05)}, Layer{ABRate: rate(0.05)}); len(e.Ignored) != 0 {
 		t.Errorf("two equal rates = %v, want nothing ignored", e.Ignored)
+	}
+}
+
+// TestAgentTriageOffInPolicyWinsOverARepositoryOn is D1854's direction for the
+// triage stage's switch, read at the layer the rule belongs to: the switch has
+// two homes — the repository's own fugaro.yaml (config.Agent.Triage) and the
+// owner's published policy node (Layer.Triage, which the runner puts on the
+// ceiling beside every other key of the node) — and only one direction between
+// them. Off is the stricter answer, so a repository may turn the stage off for
+// itself under a node that is silent, and may not turn it back on under a node
+// that turned it off: the merge drops the repository's `true` and records it,
+// the way it drops a looser cap.
+//
+// The layers are the three Merge is always handed — the owner's node as the
+// ceiling, the project's default branch, the task's own branch — because the
+// question is what a run reads once they meet, and a repository writes two of
+// the three.
+func TestAgentTriageOffInPolicyWinsOverARepositoryOn(t *testing.T) {
+	on, off := true, false
+	cases := []struct {
+		name                 string
+		ceiling, def, branch *bool
+		wantOff              bool
+		wantSrc              string
+		ignored              int
+	}{
+		{"nothing set", nil, nil, nil, false, "", 0},
+		{"the repository turns it off", nil, nil, &off, true, "branch", 0},
+		{"the default branch turns it off", nil, &off, nil, true, "default-branch", 0},
+		{"the owner's node turns it off", &off, nil, nil, true, "ceiling", 0},
+		{"the owner's node turns it off over a repository on", &off, nil, &on, true, "ceiling", 1},
+		{"the owner's node turns it off over a default-branch on", &off, &on, &on, true, "ceiling", 2},
+		{"a repository on under a silent node", nil, nil, &on, false, "branch", 0},
+		{"the owner's node turns it on, the repository off", &on, nil, &off, true, "branch", 0},
+		{"a branch off under a default-branch on", nil, &on, &off, true, "branch", 0},
+		{"a branch on under a default-branch off", nil, &off, &on, true, "default-branch", 1},
+		{"the repository says off twice", nil, &off, &off, true, "default-branch", 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := Merge(Layer{Triage: tc.ceiling}, Layer{Triage: tc.def}, Layer{Triage: tc.branch})
+			if got := e.TriageOff(); got != tc.wantOff {
+				t.Fatalf("TriageOff() = %v, want %v (Triage = %v)", got, tc.wantOff, e.Triage)
+			}
+			if got := e.Sources[KeyTriage]; got != tc.wantSrc {
+				t.Errorf("Sources[%s] = %q, want %q", KeyTriage, got, tc.wantSrc)
+			}
+			if len(e.Ignored) != tc.ignored {
+				t.Fatalf("Ignored = %v, want %d record(s)", e.Ignored, tc.ignored)
+			}
+			for _, ig := range e.Ignored {
+				if ig.Key != KeyTriage || ig.Value != "true" || ig.Effective != "false" {
+					t.Errorf("Ignored = %+v: a dropped value is the repository's true under an effective false", ig)
+				}
+				if ig.Source != tc.wantSrc {
+					t.Errorf("Ignored = %+v: source = %q, want the layer the effective value came from, %q", ig, ig.Source, tc.wantSrc)
+				}
+			}
+		})
+	}
+}
+
+// TestMergeNamesTheChainLayer pins the two things the chain layer needs of
+// this package (docs/run-limit-carry-over F4, D1055): a layer past the run's
+// own file is named "chain" and not "branch" — the number did not come from
+// the branch — and the two members a chain carries get a source of their own.
+// The third layer is still the branch, which is what the runner merges today.
+func TestMergeNamesTheChainLayer(t *testing.T) {
+	chain := Layer{PerRunUSD: 5, MaxRunTokens: 500, MaxRunTime: 90 * time.Minute, MaxReviewRounds: 4}
+	e := Merge(Layer{PerRunUSD: 10, MaxRunTokens: 1000}, Layer{}, Layer{PerRunUSD: 8, MaxRunTokens: 800}, chain)
+	for key, src := range map[string]string{
+		KeyPerRunUSD: SourceChain, KeyMaxRunTokens: SourceChain,
+		KeyMaxRunTime: SourceChain, KeyMaxReviewRounds: SourceChain,
+	} {
+		if e.Sources[key] != src {
+			t.Errorf("%s: source = %q, want %q", key, e.Sources[key], src)
+		}
+	}
+	if e.PerRunUSD != 5 || e.MaxRunTokens != 500 || e.MaxRunTime != 90*time.Minute || e.MaxReviewRounds != 4 {
+		t.Errorf("the chain layer = %+v, want its own four figures", e.Layer)
+	}
+	// The layer under it keeps its own name: a value the run's own file set
+	// is still the branch's, whatever the chain layer above it does.
+	if e := Merge(Layer{PerRunUSD: 10}, Layer{}, Layer{PerRunUSD: 8}); e.Sources[KeyPerRunUSD] != SourceBranch {
+		t.Errorf("the run's own file: source = %q, want %q", e.Sources[KeyPerRunUSD], SourceBranch)
+	}
+	// A chain value looser than the layer under it is dropped and recorded
+	// against the layer that set the lower one — the entry the launcher reads
+	// to refuse a launch argument (D1043) rather than drop it in silence.
+	e = Merge(Layer{PerRunUSD: 10, MaxRunTokens: 1000}, Layer{}, Layer{PerRunUSD: 8, MaxRunTokens: 800},
+		Layer{PerRunUSD: 9, MaxRunTokens: 900})
+	for _, ig := range e.Ignored {
+		if ig.Key == KeyPerRunUSD && ig.Value != "9" || ig.Key == KeyMaxRunTokens && ig.Value != "900" {
+			t.Errorf("Ignored = %+v, want the chain's own looser figures", ig)
+		}
+		if ig.Source != SourceBranch {
+			t.Errorf("Ignored = %+v, want the source of the lower number (%s)", ig, SourceBranch)
+		}
+	}
+	if len(e.Ignored) != 2 || e.PerRunUSD != 8 || e.MaxRunTokens != 800 {
+		t.Errorf("a looser chain layer = %+v (ignored %v), want the branch's 8 and 800", e.Layer, e.Ignored)
+	}
+	// The time and the review rounds have no layer under the chain's own, so
+	// a chain layer that writes them is the one that wins: a chain limit is
+	// never refused against the mode's own number or the run's clock by this
+	// merge (D1057), which is the launcher's own comparison.
+	e = Merge(Layer{}, Layer{}, Layer{}, Layer{MaxRunTime: 30 * time.Minute, MaxReviewRounds: 2})
+	if len(e.Ignored) != 0 || e.Sources[KeyMaxReviewRounds] != SourceChain {
+		t.Errorf("a chain layer alone = %+v (ignored %v), want nothing ignored and the chain named", e.Layer, e.Ignored)
 	}
 }

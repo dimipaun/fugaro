@@ -9,6 +9,7 @@ package bitbucket
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -247,8 +248,11 @@ func TestContentsIsBounded(t *testing.T) {
 	f := newContentsServer(t)
 	f.body = make([]byte, gitprov.MaxContentsBytes+1)
 	p := f.provider(t)
-	if _, err := p.Contents(ctx, "Dockerfile", "main"); err == nil {
-		t.Fatal("Contents returned more than gitprov.MaxContentsBytes")
+	// The refusal carries gitprov's own error as well: a caller that asks
+	// whether the repository HAS a file, and never reads its bytes, tells a
+	// file over the bound from a path that is not there.
+	if _, err := p.Contents(ctx, "Dockerfile", "main"); !errors.Is(err, gitprov.ErrContentsTooLarge) {
+		t.Fatalf("Contents over the bound: err = %v, want it to carry gitprov.ErrContentsTooLarge", err)
 	}
 }
 
@@ -257,8 +261,8 @@ func TestContentsRefusesAnEmptyFile(t *testing.T) {
 	f := newContentsServer(t)
 	f.body = nil
 	p := f.provider(t)
-	if _, err := p.Contents(ctx, "Dockerfile", "main"); err == nil {
-		t.Fatal("Contents returned an empty file")
+	if _, err := p.Contents(ctx, "Dockerfile", "main"); !errors.Is(err, gitprov.ErrContentsEmpty) {
+		t.Fatalf("Contents of an empty file: err = %v, want it to carry gitprov.ErrContentsEmpty", err)
 	}
 }
 

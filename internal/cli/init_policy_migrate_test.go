@@ -603,6 +603,52 @@ func TestUpdatePublishesTheFirstPolicyNodeForTheBakeSwitch(t *testing.T) {
 	}
 }
 
+// TestUpdatePublishesTheFirstPolicyNodeForTheTriageSwitch is the same member
+// class for the switch the review finding names (D1854): the stage turns on
+// what the node says, so a project whose owner had written `triage: false` and
+// had never published a node would go on judging findings the owner turned the
+// judge off for — and the first publish is what carries the answer, with no
+// second command (the HARD RULE). Only the written false asks the question, the
+// bake switch's reason: an absent key and a written true are one statement to
+// every reader (config.Agent.TriageOn), so the check is reached by the key's
+// presence and not by its value.
+func TestUpdatePublishesTheFirstPolicyNodeForTheTriageSwitch(t *testing.T) {
+	f := newProjectFixture(t, "triage: false\n")
+	h := newMigrationRig(t, f, &initOptions{})
+
+	st, err := h.s.Check(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.State != initflow.Todo {
+		t.Fatalf("the check says %s %q, want the first publish left to do", st.State, st.Detail)
+	}
+	if !strings.Contains(st.Detail, "the triage switch") || strings.Contains(st.Detail, "the bake switch") {
+		t.Errorf("the check names a switch this config does not state: %q", st.Detail)
+	}
+	plan, err := h.s.Plan(context.Background(), initflow.Env{Yes: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.NothingToDo {
+		t.Errorf("the plan leaves the first publish out: %+v", plan)
+	}
+
+	fakeTerminal(t)
+	h.cmd.SetIn(strings.NewReader("aurora\n"))
+	out, err := h.apply(t, false)
+	if err != nil {
+		t.Fatalf("the first publish was refused: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "triage") {
+		t.Errorf("the diff the operator confirmed does not name the switch it creates the node with:\n%s", out)
+	}
+	p := publishedPolicy(t, f)
+	if p.Triage == nil || *p.Triage {
+		t.Fatalf("the published node carries triage %v, want the false the config writes", p.Triage)
+	}
+}
+
 // catalogConfigWithNoRepos rewrites the fixture's config so the project lists no
 // repository while the catalog the fixture's extra block states stays: a first
 // publish from it would write a node whose allow-list admits nothing, which is

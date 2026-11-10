@@ -554,6 +554,14 @@ func credentialsServiceConfig(ctx context.Context, getenv func(string) string, e
 		// back under it, over the service's own identity — which is the only
 		// writer of that subtree (the rules deny every run token it).
 		Signs: db,
+		// The slips (DS1.1, DS1.3): the grant a launcher asks for and the claim
+		// a run makes once, over the same client and therefore the same service
+		// identity. It is a second store of its own rather than State's, because
+		// a slip is not a selection's business — it is written before the run
+		// exists and read on every call the run makes — and it is not optional:
+		// NewServer refuses a service that cannot write one, because a service
+		// that cannot grant a run its credentials has no purpose at all.
+		Slips: &creds.RTDBStore{DB: db},
 		// Every audited act goes to the process's log, which is the stream
 		// Cloud Logging reads; the one auditor that redacts is built inside
 		// NewServer (NewProbeAuditor arms it with this service's loader).
