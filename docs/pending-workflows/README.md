@@ -1313,6 +1313,13 @@ the directory in both directions, and the site's paragraph by
 
 ## `console-windows.yml`
 
+**Status: `console-windows.yml` is staged and pending.** Nothing has been copied
+in — `.github/workflows/console-windows.yml` does not exist — so the job has
+never run, and the copy-in below is what is left to do. Every `console/` edit
+the job's own header once waited on has landed (the three are named below); the
+header says so first, and the two sentences that count what this directory holds
+are rewritten by the copy-in rather than by this line.
+
 The desktop console's **Windows pack**, staged on **2026-10-20** by the run that
 planned the console's Windows build, and re-cut the same day for the owner's
 answer to that plan's decision **D7**. The owner's ruling of that date is what it
@@ -1401,16 +1408,24 @@ it in.** Staging it now is the point of this directory — the file is reviewabl
 while it is still a proposal, and the header's first paragraph says the same
 thing to whoever opens the file rather than this page.
 
-**Why it is its own workflow rather than a second job in `console-tests.yml`.**
-Exactly `console-linux.yml`'s reason, which is a test rather than a taste: **the
-release gate's required-check list is derived from `console-tests.yml`'s job
-set.** `TestReleaseGateRequiresTheConsoleCheck`
+**Why it is its own workflow rather than a second job in `console-tests.yml`,
+or a third leg of that job's matrix.** Exactly `console-linux.yml`'s reason,
+which is a test rather than a taste: **the release gate's required-check list is
+derived from `console-tests.yml`'s job set.** `TestReleaseGateRequiresTheConsoleCheck`
 (`internal/cli/docs_desktop_console_test.go`) reads that workflow and asserts
 that `scripts/release-gate.sh`'s `names=(...)` array is exactly the check names
 it reports plus `test`, `terraform` and `rules` — and `deriveConsoleCheckNames`
 **refuses a workflow with more than one job** ("this test cannot tell which of
 several jobs that is"). A second job there would therefore not be a packaging
-change at all: it would change which checks gate a release tag. The release-time
+change at all: it would change which checks gate a release tag. **Folding it in
+as a third matrix leg is the option D8 refused**, in its own words the closest
+fit and still wrong: the matrix is the *same job* on two runners, so a third leg
+would be a third runner running the *tests* and not the packer — a different job
+with a different artifact — and it would make the derivation read a
+multi-platform job whose name GitHub spells `console (windows-latest)`, which is
+a gate change by the back door (reconciliation
+[docs/console-windows/reconciliation.md](../console-windows/reconciliation.md)
+D8(c), refused). The release-time
 trigger is a separate thing rather than a second reason: this job must never run
 on a pull request (D7(c)), and that is a property of the pack job rather than a
 difference from `console-tests.yml`, whose own only trigger is `workflow_dispatch`

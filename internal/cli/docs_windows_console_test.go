@@ -998,6 +998,67 @@ func TestDocsWindowsConsoleNotesSayWhichHalfMoved(t *testing.T) {
 	}
 }
 
+// TestDocsPendingWorkflowsReadmeDescribesEveryStagedFile is T-H4's guard, and it
+// is the staging convention's own rather than this folder's: every workflow
+// still staged under docs/pending-workflows/ is described by a section of that
+// directory's README, by name.
+//
+// The directory is where a workflow change waits for the owner -- no Fugaro run
+// may write under .github/workflows/, because GitHub refuses the push -- and
+// that README is the only place the person who copies a file in reads what it
+// is, which commands copy it in, and whether it is still pending at all. A
+// `.yml` staged there with no section of its own is a file whose copy-in nobody
+// can find, and a section that goes on saying "staged and pending" after the
+// copy-in is the same failure from the other side: it sends the reader to a
+// staged copy that is gone. So the guard reads three things per staged file --
+// the heading that names it, the status line that states its state, and the
+// `cp` line that is its copy-in -- and each is derived from the directory rather
+// than listed, so it holds for every state the owner's copy-ins pass through.
+//
+// The mutations that prove it: delete the `## `console-windows.yml`` heading,
+// change its status line to `applied, not pending`, and delete the `cp` line
+// from its copy-in block. Each fails here by naming the file, and the second is
+// the edit a copy-in that forgot to update this README leaves behind.
+func TestDocsPendingWorkflowsReadmeDescribesEveryStagedFile(t *testing.T) {
+	lines := strings.Split(readDoc(t, pendingWorkflowsReadmePath), "\n")
+	for _, name := range pendingWorkflows(t) {
+		// The heading is read at the start of a line rather than anywhere in the
+		// document, because this README quotes its own headings in prose: the
+		// paragraph at the top points at `## `images.yml``, and a substring
+		// search would take that mention for the section and read the claim it
+		// is made in. The first heading that names the file is the section that
+		// describes it; the ones after it are the records of earlier stagings of
+		// the same name.
+		heading := "## `" + name + "`"
+		start := -1
+		for i, line := range lines {
+			if strings.HasPrefix(line, heading) {
+				start = i
+				break
+			}
+		}
+		if start < 0 {
+			t.Errorf("%s has no %q heading: every workflow staged in this directory is described by a section of this README, and a file staged without one is a file whose copy-in nobody can find", pendingWorkflowsReadmePath, heading)
+			continue
+		}
+		end := len(lines)
+		for i := start + 1; i < len(lines); i++ {
+			if strings.HasPrefix(lines[i], "## ") {
+				end = i
+				break
+			}
+		}
+		flat := flattenDoc(strings.Join(lines[start:end], "\n"))
+		if !strings.Contains(flat, "staged and pending") {
+			t.Errorf("%s's %q section does not say the file is staged and pending: the section that describes a staged workflow is also the one that says whether the owner still has to copy it in, and a status left saying something else is a reader sent to a file that is not there", pendingWorkflowsReadmePath, name)
+		}
+		copyIn := "cp docs/pending-workflows/" + name + " .github/workflows/" + name
+		if !strings.Contains(flat, copyIn) {
+			t.Errorf("%s's %q section carries no copy-in command (%q): this README is where the owner reads how to apply a staged file, so a section without the `cp` line is a change nobody can land", pendingWorkflowsReadmePath, name, copyIn)
+		}
+	}
+}
+
 // windowsConsoleNoteDate is the date the notes T-H3 owes carry: the landing
 // date of the change that wrote them, which is what a reader comparing them
 // against the ruling of 2026-10-20 they record is looking for.
