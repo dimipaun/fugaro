@@ -76,12 +76,31 @@ import (
 // installation republishes its policy for version 4; a version-3 node is
 // refused in the other direction too (D477), which is why the shape of this
 // node is version 3's and only what a reader must enforce changed.
-const Version = 4
+//
+// Version 5 (secrets-brokering dynamic-delivery, plan task DS3.1, decisions
+// D1936 and D1942) is the node whose pools carry an owner and the users they
+// are served to: a pool written now names owner and optionally allowed_users
+// (by email — the roster's key, resolved to a `sub` at grant, R10), and the
+// PUBLISHED node refuses a pool that names no owner, because a pool with no
+// owner serves nobody. The shape changes for the first time in this line: it
+// ADDS two members to a craft_pools entry and one more, legacy_open, which is
+// what the migration writes for a pool whose owner no release ever recorded
+// (D1942) — so a version-4 reader, whose pool carrier is strict, refuses a
+// version-5 node on the members inside craft_pools and not merely on a
+// top-level key it would list in UnknownKeys (P8). What a version-5 reader
+// enforces that a version-4 one does not is that owner: a version-4 runner
+// would serve a pool to anyone who asked for a slip naming it, which is the
+// shared token the owner's own answer has to bound. The bump is also what
+// makes the migration run: `fugaro update` carries a version-4 node forward
+// (migrate.go), marking every ownerless pool legacy-open so the upgrade serves
+// exactly whom the installation served before it.
+const Version = 5
 
 // VersionSince names, for each policy version, the fugaro release that
 // introduced it: 1 is the model itself (0.8.0, internal/cli's policySince), 2
 // is the profile gate above (0.8.5), 3 the account axis (0.9.0), 4 the
-// Bitbucket token block (0.14.0). It sits beside Version because a bump of
+// Bitbucket token block (0.14.0), 5 the pools' owner and roster (0.23.0). It
+// sits beside Version because a bump of
 // Version adds its row in the same change
 // (TestVersionSinceCoversEveryVersion fails until it does), and it is
 // read by every message about a node *ahead* of its reader (SkewSentence, so
@@ -99,6 +118,7 @@ var VersionSince = map[int]string{
 	2: "0.8.5",
 	3: "0.9.0",
 	4: "0.14.0",
+	5: "0.23.0",
 }
 
 // VersionRelease is the release that introduced policy version v, and false

@@ -41,6 +41,7 @@ type migrator func(raw json.RawMessage) (json.RawMessage, Change, error)
 // bumps Version adds exactly one entry here, in the same change.
 var migrators = map[int]migrator{
 	3: migrateV3ToV4,
+	4: migrateV4ToV5,
 }
 
 // tooOld names the versions this Fugaro reads but has no migrator for. The
@@ -230,36 +231,126 @@ func migrateV3ToV4(raw json.RawMessage) (json.RawMessage, Change, error) {
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		return nil, Change{}, fmt.Errorf("projectpolicy: the version-3 node is not a JSON object: %w", err)
 	}
-	start, end, ok := versionValueSpan(raw)
-	if !ok {
-		return nil, Change{}, errors.New("projectpolicy: the version-3 node's version field could not be located")
-	}
-	out := make(json.RawMessage, 0, len(raw))
-	out = append(out, raw[:start]...)
-	out = append(out, strconv.Itoa(4)...)
-	out = append(out, raw[end:]...)
-	kept := make([]string, 0, len(doc))
-	for _, name := range sortedStringKeys(doc) {
-		if name != "version" {
-			kept = append(kept, name)
-		}
+	out, err := writeVersionField(raw, 3, 4)
+	if err != nil {
+		return nil, Change{}, err
 	}
 	return out, Change{
 		From:    3,
 		To:      4,
 		Changed: "the version field: 3 to 4",
-		Kept:    kept,
+		Kept:    keptKeys(doc, "version"),
 		Note:    bitbucketRepublishNote(doc),
 	}, nil
 }
 
-// versionValueSpan is the byte span of the value of the node's top-level
-// "version" member. It is a walk of the document's own tokens rather than a
-// search for the text `"version"`, because the name can appear inside a block
-// (a profile named version, a key of a block this Fugaro does not model) and
-// the node is what the operator's diff is read against: the value is located
-// by nesting, not by spelling.
-func versionValueSpan(raw []byte) (start, end int, ok bool) {
+// migrateV4ToV5 writes the version field version 5 reads, and marks every pool
+// that names no owner legacy-open.
+//
+// Version 5 is the first bump in this line that changes the node's SHAPE: a
+// craft_pools entry gains owner and allowed_users, and a pool written now must
+// name its owner where it is published (D1936). A pool an installation already
+// holds has no owner, and no step may invent one — an owner is a person, and
+// guessing one would hand a shared token to somebody the owner never chose.
+// D1942's answer is to keep it serving exactly whom it served before the
+// upgrade: the step writes the explicit legacy_open marker, which is a NEW NAME
+// rather than the absence of an owner (F37), so a reader of the node can tell a
+// pool that predates owners from one whose owner the operator has yet to name.
+//
+// The edit is byte-level like the step before it, and it is confined to the one
+// member it changes: the pools' own bytes are re-emitted as they were written,
+// with the marker inserted into the entries that need it, so a key this Fugaro
+// does not model — inside a pool entry or anywhere else — comes back exactly as
+// the owner wrote it. A pool that names an owner, and one already marked, are
+// left alone: a version-4 node cannot carry the marker, but a hand-written one
+// can, and rewriting it would be the second migration resting on a guess about
+// the node's history.
+//
+// The republish note of the step before is not repeated here. A version-4 node
+// is either one this chain has already carried over the Bitbucket block's
+// derivation or one published by the release that reads it, so the block is
+// there or the node was published without a profile mounting the token —
+// neither is a move this step can still make.
+func migrateV4ToV5(raw json.RawMessage) (json.RawMessage, Change, error) {
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return nil, Change{}, fmt.Errorf("projectpolicy: the version-4 node is not a JSON object: %w", err)
+	}
+	out, err := writeVersionField(raw, 4, 5)
+	if err != nil {
+		return nil, Change{}, err
+	}
+	changed := "the version field: 4 to 5"
+	kept := keptKeys(doc, "version")
+	if praw, ok := doc["craft_pools"]; ok && !IsNull(praw) {
+		start, end, ok := memberValueSpan(out, "craft_pools")
+		if !ok {
+			return nil, Change{}, errors.New("projectpolicy: the version-4 node's craft_pools field could not be located")
+		}
+		pools, marked, err := markLegacyOpenPools(out[start:end])
+		if err != nil {
+			return nil, Change{}, err
+		}
+		if marked > 0 {
+			next := make(json.RawMessage, 0, len(out)+len(pools)-(end-start))
+			next = append(next, out[:start]...)
+			next = append(next, pools...)
+			next = append(next, out[end:]...)
+			out = next
+			changed = fmt.Sprintf("the version field: 4 to 5, and legacy_open on %s with no owner", countPools(marked))
+			kept = keptKeys(doc, "version", "craft_pools")
+		}
+	}
+	return out, Change{From: 4, To: 5, Changed: changed, Kept: kept}, nil
+}
+
+// countPools words the number of pools a step marked, so the diff reads as a
+// sentence about the owner's node rather than as a count of entries.
+func countPools(n int) string {
+	if n == 1 {
+		return "1 pool"
+	}
+	return strconv.Itoa(n) + " pools"
+}
+
+// writeVersionField returns the node with its top-level version member written
+// as to, and refuses when the member cannot be located. It is the whole of a
+// step whose version is the only thing that changed, and the first half of one
+// that edits a block as well: the version is written from the caller's `from`
+// rather than from the node, because nodeVersion has already read it and a step
+// that wrote a number it re-read would move a node it was not handed.
+func writeVersionField(raw json.RawMessage, from, to int) (json.RawMessage, error) {
+	start, end, ok := memberValueSpan(raw, "version")
+	if !ok {
+		return nil, fmt.Errorf("projectpolicy: the version-%d node's version field could not be located", from)
+	}
+	out := make(json.RawMessage, 0, len(raw))
+	out = append(out, raw[:start]...)
+	out = append(out, strconv.Itoa(to)...)
+	out = append(out, raw[end:]...)
+	return out, nil
+}
+
+// keptKeys is the node's top-level keys a step does not write — every key but
+// the ones it names, read off the node rather than listed in the step, so a
+// block a newer release added or the owner wrote by hand is reported too.
+func keptKeys(doc map[string]json.RawMessage, written ...string) []string {
+	kept := make([]string, 0, len(doc))
+	for _, name := range sortedStringKeys(doc) {
+		if !slices.Contains(written, name) {
+			kept = append(kept, name)
+		}
+	}
+	return kept
+}
+
+// memberValueSpan is the byte span of the value of one of the node's top-level
+// members, and its name is the caller's: a step locates the field it edits by
+// nesting rather than by spelling. It is a walk of the document's own tokens
+// rather than a search for the text `"version"`, because the name can appear
+// inside a block (a profile named version, a key of a block this Fugaro does
+// not model) and the node is what the operator's diff is read against.
+func memberValueSpan(raw []byte, member string) (start, end int, ok bool) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	tok, err := dec.Token()
 	if err != nil {
@@ -283,7 +374,7 @@ func versionValueSpan(raw []byte) (start, end int, ok bool) {
 			return 0, 0, false
 		}
 		afterValue := int(dec.InputOffset())
-		if name != "version" {
+		if name != member {
 			continue
 		}
 		colon := bytes.IndexByte(raw[afterKey:afterValue], ':')
@@ -297,6 +388,105 @@ func versionValueSpan(raw []byte) (start, end int, ok bool) {
 		return vs, afterValue, true
 	}
 	return 0, 0, false
+}
+
+// poolLegacyOpenMember is the member the version-5 step inserts: the spelled
+// name F37 asks for, written in the node rather than left to the absence of an
+// owner.
+const poolLegacyOpenMember = `"legacy_open": true`
+
+// markLegacyOpenPools inserts poolLegacyOpenMember into every entry of a
+// craft_pools array that names no owner, and reports how many it marked. The
+// array's own text is returned with the insertions and nothing else: the
+// entries keep their bytes, their order and their spacing, which is what makes
+// this an edit of the owner's document rather than a re-encoding of it.
+//
+// An entry that names an owner, and one already marked, are returned as they
+// are. The second is the one a hand edit produces — no version-4 release wrote
+// the member — and marking it again would be this step rewriting a value it did
+// not find.
+func markLegacyOpenPools(arr []byte) ([]byte, int, error) {
+	dec := json.NewDecoder(bytes.NewReader(arr))
+	tok, err := dec.Token()
+	if err != nil {
+		return nil, 0, fmt.Errorf("projectpolicy: the version-4 node's craft_pools is not readable: %w", err)
+	}
+	if d, isDelim := tok.(json.Delim); !isDelim || d != '[' {
+		return nil, 0, errors.New("projectpolicy: the version-4 node's craft_pools is not an array")
+	}
+	// The decoder's InputOffset names the end of the last token it read, so an
+	// entry's bytes run from the end of the one before it: the separators —
+	// the commas and the whitespace the owner's document was written with —
+	// are re-emitted from that slice rather than computed, which is what keeps
+	// the array in one piece.
+	prev := int(dec.InputOffset())
+	out := make([]byte, 0, len(arr))
+	out = append(out, arr[:prev]...)
+	marked := 0
+	for dec.More() {
+		var el json.RawMessage
+		if err := dec.Decode(&el); err != nil {
+			return nil, 0, fmt.Errorf("projectpolicy: the version-4 node's craft_pools is not readable: %w", err)
+		}
+		end := int(dec.InputOffset())
+		chunk := arr[prev:end]
+		lead := len(chunk) - len(bytes.TrimLeft(chunk, " \t\r\n,"))
+		out = append(out, chunk[:lead]...)
+		body := chunk[lead:]
+		if !poolNamesOwner(body) {
+			body, marked = withLegacyOpen(body), marked+1
+		}
+		out = append(out, body...)
+		prev = end
+	}
+	out = append(out, arr[prev:]...)
+	return out, marked, nil
+}
+
+// poolNamesOwner reports whether one craft_pools entry names an owner. An entry
+// that is not a JSON object, or whose owner is not a string, is read as one
+// that does NOT name an owner and is marked: Decode refuses the node either
+// way, and the marker is the answer that keeps a pool with no readable owner
+// from being served to everybody.
+func poolNamesOwner(el []byte) bool {
+	var pool map[string]json.RawMessage
+	if err := json.Unmarshal(el, &pool); err != nil {
+		return false
+	}
+	owner, ok := pool["owner"]
+	if !ok || IsNull(owner) {
+		return false
+	}
+	var s string
+	return json.Unmarshal(owner, &s) == nil && s != ""
+}
+
+// withLegacyOpen returns one craft_pools entry with the marker written first in
+// it, which keeps the insert a splice of the entry's own bytes. The comma is
+// there only when the entry holds something else: a pool written as {} is
+// marked without trailing punctuation, and the reader is what judges the
+// result either way.
+func withLegacyOpen(el []byte) []byte {
+	var pool map[string]json.RawMessage
+	if err := json.Unmarshal(el, &pool); err == nil {
+		if _, marked := pool["legacy_open"]; marked {
+			return el
+		}
+	}
+	brace := bytes.IndexByte(el, '{')
+	if brace < 0 {
+		return el
+	}
+	rest := el[brace+1:]
+	insert := []byte(poolLegacyOpenMember)
+	if trimmed := bytes.TrimLeft(rest, " \t\r\n"); len(trimmed) > 0 && trimmed[0] != '}' {
+		insert = append(insert, ',', ' ')
+	}
+	out := make([]byte, 0, len(el)+len(insert))
+	out = append(out, el[:brace+1]...)
+	out = append(out, insert...)
+	out = append(out, rest...)
+	return out
 }
 
 // bitbucketRepublishNote is the move that finishes the migration when the node

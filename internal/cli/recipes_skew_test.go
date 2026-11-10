@@ -994,7 +994,7 @@ func TestRecipesSkewRefusesReviewLevelsWithoutABuildRecord(t *testing.T) {
 // nil): the 0.15.0 launch below succeeds.
 func TestRecipesSkewRefusesTheOwnerFloorOnOldImage(t *testing.T) {
 	f := newLaunchBudget(t, "enforce")
-	publishPolicy(t, f, `{"version":4,"allow_repos":["github/acme/*"],"review_floor":{"pro":["l3"]}}`)
+	publishPolicy(t, f, `{"version":5,"allow_repos":["github/acme/*"],"review_floor":{"pro":["l3"]}}`)
 	isolateCache(t)
 	testutil.IsolateGit(t)
 	t.Chdir(t.TempDir())
