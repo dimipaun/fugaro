@@ -508,9 +508,9 @@ BW-T2.1 amended, so nothing in the text below is contradicted by the chain. Deci
 ### T2.4: `fugaro doctor` warns about an own copy a shared job ignores (0.13.0)
 
 *Verdict 2026-11-10: **Kept, and it waits for B5.1 (S5)** with T2.2. Its subject is a **shared**
-job's use of the project token, which the proxy does not change: on a proxied per-repository job
-there is no token in the job to be shadowed, and that is the one sentence its text still needs.
-Decision **D1982**.*
+job's use of the project token, which the proxy does not change: on a proxied per-repository job the
+run spends no token of the job's, so there is none to be shadowed, and that is the one sentence its
+text still needs. Decision **D1982**.*
 
 - **Files:** `internal/cli/doctor.go` and `internal/cli/doctor_bitbucket_shared_test.go` (new).
 - **Behaviour (D466):** "admitted" means admitted by the **published** node, read the way the

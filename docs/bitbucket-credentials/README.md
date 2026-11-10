@@ -23,6 +23,12 @@ chain builds none of it**: T2.6 (the runbook) and T2.11 (`SECURITY.md`) are stil
 (Check 149) is still the owner's own run. **What falls out of the reading are D1960–D1962**, each
 with a recommendation and an answer cell the owner has not filled.
 
+**One precision on the ruling above.** "No run holds a Bitbucket token" is true of the run's *git
+traffic*, and the proxy that gives it that is live in the released 0.22.0 — a node that publishes
+`proxy: true` proxies its runs today. The **job** still holds the token until the flip: the empty
+`config.ProxiedGitSecretNames` is the mount and accessor drop, so a proxied job keeps its
+`bitbucket-token` secret, one read of the runner's `/proc` away.
+
 **Amended 2026-10-26, after #1104:**
 
 - **O1 is answered: D363 is reversed.** Runs keep their per-repository access tokens. The run-token

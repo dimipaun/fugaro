@@ -41,12 +41,21 @@ are in the tree.
 | The empty flip list, and the mount and accessor a filled one drops | `internal/config/providers.go`'s `ProxiedGitSecretNames`, `internal/infra/spec.go`'s `RepoSpec.BitbucketProxied`, `deploy/terraform/gcp/modules/workflow/sa.tf` | B1.8, merged `0c973faa` (#1338) and `1bc8a846` (#1349) |
 | The operator-facing text and the proxy's own owner checks | `SECURITY.md`'s "The Bitbucket git proxy", `docs/git-providers.md`, `docs/credentials-service/runbook.md` §11; `scripts/live-checks/check191.sh` and the register's rows 191 and 192 | B1.10 and B1.11 |
 
+**The proxy is live in the released 0.22.0, and the empty flip list does not hold it back.** What
+makes a run proxied is the **published node** alone: `internal/runner/project.go`'s
+`proxiedBitbucket` reads the repository's `proxy: true` and the job's credentials-service URL, so a
+node that publishes `proxy: true` proxies its runs today (the service's own route,
+`internal/credsvc/bitbucketproxy.go`, landed a release earlier, in 0.21.0). `ProxiedGitSecretNames`
+is a different thing: it is the **mount** drop, and while it is empty a proxied job keeps its
+`bitbucket-token` secret and accessor, so the token is still one read of the runner's `/proc` away
+even though the run's own git traffic carries none.
+
 Two things are **not** on `main`, and both matter below: `internal/config/providers.go`'s
-`ProxiedGitSecretNames` is still `[]string{}`, so no installation is proxied yet and the job's
-mount stays (the flip is B1.13 part two, held on Check 191 in draft #2166); and this folder's own
-S2 read path — `ee/coordinator/cli/coordinator_show.go`, `internal/credsvc/bitbucket.go`'s read
-mint, `internal/credsvc/auth.go`'s person class — is untouched by the chain, because it reads
-through a **person's** credential rather than a run's.
+`ProxiedGitSecretNames` is still `[]string{}`, so the job's mount stays (the flip is B1.13 part two,
+held on Check 191 in draft #2166); and this folder's own S2 read path —
+`ee/coordinator/cli/coordinator_show.go`, `internal/credsvc/bitbucket.go`'s read mint,
+`internal/credsvc/auth.go`'s person class — is untouched by the chain, because it reads through a
+**person's** credential rather than a run's.
 
 ## 2. Every task, and what builds it
 
@@ -68,7 +77,7 @@ Bitbucket token for a run.
 | **T2.11** `SECURITY.md` for S2 | **Kept — owed** | Nothing builds it. `SECURITY.md` carries B1.10's "The Bitbucket git proxy", which is about the **run's** git credential; the read consumer, the read mint's two caller classes and the read mint's custody (O6) are still unwritten, and `SECURITY.md` has no sentence naming either. |
 | **T3.0** the per-repository `bitbucket_via_service` switch, rendered into the job | **Superseded by BW-T2.1 and B1.7** | The switch is now the **published node's**: `internal/config/project_secrets.go`'s `Proxy`, derived into `internal/projectpolicy/bitbucket.go`'s `BitbucketToken.Proxy`, and read by `internal/gitprov/providers/providers.go`'s `Proxied`. That is stronger than the design T3.0 rejected the shared config for: the switch is the operator's own published node rather than a job environment variable Terraform writes, and a launcher's local config cannot override it. |
 | **T3.1** the run mint, with an allow-list and an audit line | **Superseded by B1.4 and B1.5** | Nothing is minted to a run any more. `internal/gitproxy/rules.go`'s `Decide` and `CheckPRWrite`, behind `internal/credsvc/bitbucketproxy.go`, admit a run's traffic to the repositories the node's block names, and the service puts the credential on the wire. There is no run token to allow-list, no audit line for a mint, and no `POST /v1/bitbucket/access-token`. |
-| **T3.2** the runner gets its Bitbucket token from the service | **Superseded by B1.6, B1.7 and B1.8** | The runner holds nothing: `internal/gateway/gitforward.go` forwards to the service's route and `internal/gitprov/providers/providers.go`'s `Proxied` is what the runner installs, through `internal/runner/runner.go`'s `startProxiedGit`. T3.2's "never falls back to the mounted token" is B1.8's drop, whose tests are merged, and whose flip — the mount actually leaving the job — is B1.13 part two. |
+| **T3.2** the runner gets its Bitbucket token from the service | **Superseded by B1.6, B1.7 and B1.8** | The runner's git provider holds no token: `internal/gateway/gitforward.go` forwards to the service's route and `internal/gitprov/providers/providers.go`'s `Proxied` is what the runner installs, through `internal/runner/runner.go`'s `startProxiedGit`. T3.2's "never falls back to the mounted token" is B1.8's drop, whose tests are merged, and whose flip — the mount actually leaving the job — is B1.13 part two. |
 | **T3.3** comment identity and the cross-repository trust paths | **Superseded in part, Kept in part** | The identity half is superseded: there is no run consumer, so no consumer-owned person identity to detect, and what a run may comment is B1.4's REST allow-list (`CallPRComment`, `CallCommentList`) behind B1.5's route. The trust-path half is **Kept** and still owed: `internal/gitprov/bitbucket/comments.go`'s `selfUser` and `Comments` and `internal/followup/select.go`'s `MarkersFromAnyone` are in the tree from other work, but T3.3's four tests are absent, and the proxy makes the question live again rather than moot — a proxied run's comments are written with the operator's own token. |
 | **T3.4** `SECURITY.md` and the docs say it plainly | **Superseded by B1.10 and B1.13 part one** | Its subject was the reach of a **minted run token** (workspace-wide for the consumer's owner, for the life of the run plus 1–2 hours). No token is minted. B1.10 wrote the proxy's own section and B1.13 part one the operator notes; the sentences T3.4 was to replace are still true, because a run on a non-proxied repository still holds its own per-repository token. |
 | **T3.5** the minimum run scopes, enforced where possible, and their check | **Superseded — and Check 147 with it** | Nothing is minted, so there is no run scope set to enforce: the service spends the credential the operator stored, whose scopes are the operator's own. Check 147 has no script and its subject is gone (D1960). |
@@ -110,8 +119,9 @@ same reconciliation takes.
 - **Nothing here was checked live.** Every row is a reading of `origin/main`; no run was launched,
   no service was called and no credential was read. Checks 145, 146 and 149 stay the owner's and
   none of them has been run; 148's read half is unwritten and is D1961's subject.
-- **The flip is not done** (`ProxiedGitSecretNames` is empty), so no installation is proxied today
-  and the reach `SECURITY.md` states is still the live one. Everything this document says about a
-  proxied run is a reading of code that no released installation runs yet.
+- **The flip is not done** (`ProxiedGitSecretNames` is empty), so a proxied job keeps its mount and
+  the reach `SECURITY.md` states is still the live one. The **proxy** is not held back by that: it
+  is in the released 0.22.0, so what this document says about a proxied run is a reading of code a
+  released installation runs — a node that publishes `proxy: true` proxies its runs today.
 - **B1.13 part two** is held in draft #2166 on Check 191, which is unrun. Nothing here presumes its
   outcome.

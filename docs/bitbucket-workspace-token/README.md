@@ -17,7 +17,8 @@ probably makes T2.2 and T2.9 moot". **T2.9 is moot**: `internal/runner/projectjo
 Bitbucket check and should not have one, because the boundary is now
 `internal/gitproxy/rules.go`'s `Decide` and `CheckPRWrite`, behind
 `internal/credsvc/bitbucketproxy.go`, where an agent cannot reach it. **T2.2 is not moot**: the
-proxy takes the token out of the *job*, and it does not make the service admit a *shared* job —
+proxy takes the token off the *run's git traffic* — the job's own mount stays until the flip — and
+it does not make the service admit a *shared* job —
 `internal/infra/projectjobs.go`'s `SharedJobProvider` still admits `github` alone, and T2.1's own
 `projectpolicy.SharedBitbucketProfile` has no production caller. T2.2, T2.4, T2.6's phase-3 half
 and T2.7 wait on B5.1 (S5), which is not started. **Done since the census:** T1.1's remainder and
