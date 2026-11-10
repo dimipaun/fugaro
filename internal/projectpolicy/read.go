@@ -42,6 +42,40 @@ import (
 // It returns (p, found, err), exactly as Decode documents, with err
 // non-nil whenever the marker or the node could not be read.
 func Read(ctx context.Context, db *rtdb.Client) (*Policy, bool, error) {
+	raw, found, err := readNode(ctx, db)
+	if err != nil || !found {
+		return nil, found, err
+	}
+	return Decode(raw)
+}
+
+// ReadCarriedForward is Read with a node written one version behind carried
+// forward in memory (DecodeCarriedForward) instead of refused.
+//
+// It is for the readers that ask a QUESTION about the node rather than act on
+// it — `fugaro update`'s line about the runs in flight, which asks whether the
+// project is routed through the credentials cascade — where Read is for the
+// readers that decide something by it. A refusal is the right answer for those
+// (fail closed: a policy no version of this reader understands is not one to
+// enforce), and it is the wrong one here: the node every installation holds
+// during the upgrade that bumps Version is exactly the one this reader cannot
+// decode, so asking Read would answer "no cascade" for the project that has
+// one, and the update would print "no step of it can reach them" over the
+// stage that rewrites the node the service re-reads per call.
+//
+// Nothing is written back, and only the direction the chain can carry is
+// carried: see DecodeCarriedForward.
+func ReadCarriedForward(ctx context.Context, db *rtdb.Client) (*Policy, bool, error) {
+	raw, found, err := readNode(ctx, db)
+	if err != nil || !found {
+		return nil, found, err
+	}
+	return DecodeCarriedForward(raw)
+}
+
+// readNode is the two rules above, up to the bytes: the marker gate shared by
+// Read and ReadCarriedForward.
+func readNode(ctx context.Context, db *rtdb.Client) (json.RawMessage, bool, error) {
 	gen, err := rulesGeneration(ctx, db)
 	if err != nil {
 		return nil, false, err
@@ -57,7 +91,7 @@ func Read(ctx context.Context, db *rtdb.Client) (*Policy, bool, error) {
 	if !found {
 		return nil, false, nil
 	}
-	return Decode(raw)
+	return raw, true, nil
 }
 
 // MarkerError is the refusal of a config/limits/policyRules node whose value

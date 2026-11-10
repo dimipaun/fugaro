@@ -436,44 +436,16 @@ func (p RTDBPolicy) Shared(ctx context.Context) (*projectpolicy.Policy, bool, er
 	if err != nil || !found {
 		return nil, false, err
 	}
-	return carriedForward(raw)
-}
-
-// carriedForward reads the shared node the way this service must read it while
-// an upgrade is in flight: a node written one version behind is carried forward
-// in memory rather than refused.
-//
-// The service and the stored node move in two different stages of `fugaro
-// update` — the service is deployed with the installation's other pieces, and
-// the policy is migrated in the last stage — so between the two this binary
-// meets a node its own strict Decode refuses, and every cascade model call and
-// every proxied Bitbucket request of a run in flight would be refused with it.
-// The update is never allowed to stop a run in flight (CLAUDE.md's HARD RULE),
-// and neither is a run that keeps going while the operator has not run `fugaro
-// update` again: the migration the CLI would have written is applied to the
-// bytes in memory here instead, for the reader only.
-//
-// Only the direction the chain can carry is carried: a node below the chain's
-// first step, or one ahead of this binary, comes back with the refusal Decode
-// made — those nodes are not this service's to reinterpret, and a run meeting
-// one is a run whose policy came from a Fugaro this one is not the successor
-// of. Nothing is written back to the database: the node is the CLI's to
-// migrate, and a service that wrote here would be a second writer of the
-// installation's policy.
-func carriedForward(raw []byte) (*projectpolicy.Policy, bool, error) {
-	pol, found, err := projectpolicy.Decode(raw)
-	var ve *projectpolicy.VersionError
-	if err == nil || !errors.As(err, &ve) || ve.Found >= ve.Understood {
-		return pol, found, err
-	}
-	migrated, _, merr := projectpolicy.Migrate(raw)
-	if merr != nil {
-		// The node's own refusal stands, in the words Decode gave it: this is
-		// a node the chain cannot carry, and the caller's answer is the
-		// refusal it would have had without the attempt.
-		return pol, found, err
-	}
-	return projectpolicy.Decode(migrated)
+	// The node is read the way a service on the far side of a Version bump must
+	// read it: `fugaro update` deploys this service with the installation's
+	// other pieces and migrates the policy in its last stage, so between the
+	// two this binary meets a node its own strict Decode refuses — and every
+	// cascade model call and every proxied Bitbucket request of a run in flight
+	// would be refused with it, which is what the update may never do to a run
+	// in flight (CLAUDE.md's HARD RULE). DecodeCarriedForward applies the
+	// migration the CLI would have written to the bytes in memory, for this
+	// reader alone, and writes nothing back: the node is the CLI's to migrate.
+	return projectpolicy.DecodeCarriedForward(raw)
 }
 
 func (p RTDBPolicy) Admissions(ctx context.Context, slug string) (*projectpolicy.RepoPolicy, bool, error) {

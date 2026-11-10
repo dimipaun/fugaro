@@ -182,6 +182,47 @@ func Migrate(raw []byte) ([]byte, []Change, error) {
 	return cur, changes, nil
 }
 
+// DecodeCarriedForward reads a node that may be written one version behind,
+// carrying it forward in memory rather than refusing it: the bytes the CLI
+// would have written are applied to the bytes just read, for this reader alone.
+//
+// It exists for the readers that live on the far side of the gap a Version bump
+// opens. A bump is a lockstep the operator runs with `fugaro update`, and the
+// pieces that read the node are not all migrated in the same stage: the
+// credentials service is deployed with the installation's other pieces and
+// meets the old node until the policy stage runs, and `fugaro update`'s own
+// line about the runs in flight asks the node before its stages have. Read
+// refuses such a node — which is right where the reader DECIDES by it, since a
+// node no version of this reader understands is not one to enforce — and wrong
+// where the reader only asks a question about it, because the answer becomes
+// "no policy" over the node every installation holds. Both callers read the
+// node through this function instead (internal/credsvc's Shared,
+// internal/cli's policyReadsLive), and neither writes anything back: the node
+// is the CLI's to migrate, and a second writer of the installation's policy is
+// what the publish path's single-writer rule forbids.
+//
+// Only the direction the chain can carry is carried. A node ahead of this
+// binary, or one below the chain's first step, comes back with the refusal
+// Decode made: those are not this reader's to reinterpret, and a migration that
+// has no step for a version reports its own refusal rather than inventing one.
+// A node already at Version is not migrated at all — Migrate returns it byte
+// for byte and nothing here re-encodes it.
+func DecodeCarriedForward(raw []byte) (*Policy, bool, error) {
+	pol, found, err := Decode(raw)
+	var ve *VersionError
+	if err == nil || !errors.As(err, &ve) || ve.Found >= ve.Understood {
+		return pol, found, err
+	}
+	migrated, _, merr := Migrate(raw)
+	if merr != nil {
+		// The node's own refusal stands, in the words Decode gave it: this is
+		// a node the chain cannot carry, and the caller's answer is the
+		// refusal it would have had without the attempt.
+		return pol, found, err
+	}
+	return Decode(migrated)
+}
+
 // nodeVersion reads the version off a node without decoding it, and refuses
 // the classes of node no version can be read from. It runs before the walk
 // because the version decides what the walk does, and it is deliberately
