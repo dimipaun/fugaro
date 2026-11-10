@@ -434,6 +434,67 @@ func TestARespelledSignatureOfASpentIDTokenIsRefused(t *testing.T) {
 	}
 }
 
+// TestANewlineInASpentTokensSignatureIsRefused is the third spelling, and the
+// one no rule about the last character can close: base64url's decoder ignores a
+// CR or LF ANYWHERE in its input — the Strict decode included — so a newline
+// moved into the signature segment leaves the signature verifying while the
+// string the store is keyed on changes. One leaked sign-in would then approve
+// one flow per newline an attacker could write, which is the hole the spend
+// exists to close.
+//
+// The newline goes inside the signature and not in the header or the payload
+// because those two segments are the signing input: a byte added there changes
+// what was signed and the signature stops verifying on its own. The signature
+// segment is covered by nothing, which is exactly why it is the one a decoder
+// has to read as it was written.
+func TestANewlineInASpentTokensSignatureIsRefused(t *testing.T) {
+	ts := newTestServer(t)
+	clientID, _ := ts.register(t, "an editor", testClientRedirect)
+	token := approvalToken(t)
+
+	bindingA, numberA := ts.startFlow(t, authorizeQuery(clientID, testClientRedirect))
+	if rec := ts.deviceApprove(t, bindingA, numberA, token); rec.Code != http.StatusOK {
+		t.Fatalf("the device's act answered %d (%s); want it to record the approval", rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+
+	for _, spelling := range []struct{ name, sep string }{
+		{"a LF", "\n"},
+		{"a CRLF", "\r\n"},
+	} {
+		// A flow of its own per spelling: were the first one to be approved
+		// (which is what the code did before this rule), the second would be
+		// refused for naming a flow that already carries an approval and this
+		// test would stop saying anything about the newline.
+		binding, number := ts.startFlow(t, authorizeQuery(clientID, testClientRedirect))
+		withNewline := newlineInSignature(t, token, spelling.sep)
+		if rec := ts.deviceApprove(t, binding, number, withNewline); rec.Code == http.StatusOK {
+			t.Errorf("an ID token with %s inside its signature approved a second flow: the decoder ignores the byte and the store keys on the string, so one spent sign-in buys one approval per spelling", spelling.name)
+		}
+		if rec := ts.consent(t, url.Values{"request_id": {binding}, "decision": {"allow"}}); rec.Code == http.StatusFound {
+			t.Errorf("a flow minted a code off an ID token with %s inside its signature: no approved act stands behind that flow", spelling.name)
+		}
+	}
+
+	// The first flow still completes: what is refused above is the spelling and
+	// not the flow the token's own text approved.
+	if rec := ts.pageAnswer(t, bindingA, "allow"); rec.Code != http.StatusFound {
+		t.Errorf("the flow the token's own text approved answered %d (%s); want the code redirect: the refusal above is about the token", rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+}
+
+// newlineInSignature inserts sep inside a compact JWT's signature segment, at
+// the one place a byte can be added without changing what the signature covers.
+func newlineInSignature(t *testing.T, tok, sep string) string {
+	t.Helper()
+	parts := strings.Split(tok, ".")
+	if len(parts) != 3 || len(parts[2]) < 2 {
+		t.Fatalf("the token is not a compact JWT")
+	}
+	mid := len(parts[2]) / 2
+	parts[2] = parts[2][:mid] + sep + parts[2][mid:]
+	return strings.Join(parts, ".")
+}
+
 // respellSignature rewrites the last character of a compact JWT's signature
 // segment to the other character that carries the same signature: the bits a
 // non-strict base64url decoder ignores are set to one instead of zero.
