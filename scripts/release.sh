@@ -604,6 +604,7 @@ Commit them on $branch (git fetch origin $branch && git switch -c $branch origin
 tag $tag pushed on $branch ($tip). Watch:
   https://github.com/$repo/actions/workflows/release.yml
   https://github.com/$repo/actions/workflows/images.yml
+  https://github.com/$repo/actions/workflows/console-windows.yml
 EOF
   scripts/verify-release.sh "$tag" --timeout-minutes "$timeout_minutes" || return 1
   return 0
@@ -1094,6 +1095,7 @@ cat <<EOF
 tag $tag pushed. Watch:
   https://github.com/$repo/actions/workflows/release.yml
   https://github.com/$repo/actions/workflows/images.yml
+  https://github.com/$repo/actions/workflows/console-windows.yml
 
 Post-release checklist (docs/release.md):
   - the first release of a new image package: make it public once (package settings, Danger Zone, Change visibility)

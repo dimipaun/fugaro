@@ -14,8 +14,9 @@
 #      tags, console-vX.Y.Z and mobile-vX.Y.Z, with their own paths; this
 #      script verifies neither.
 #   2. Every workflow run the tag push started -- the runs whose event is
-#      `push` and whose head branch is the tag: release.yml, images.yml and
-#      any other workflow a strict vX.Y.Z tag triggers -- has concluded, and
+#      `push` and whose head branch is the tag: release.yml, images.yml,
+#      console-windows.yml and any other workflow a strict vX.Y.Z tag triggers
+#      -- has concluded, and
 #      each concluded successfully. It waits for up to --timeout-minutes
 #      (default 45) for a run still running or not yet registered, and fails at
 #      once on a conclusive failure, like the release gate.
@@ -196,14 +197,15 @@ fi
 # name, status, conclusion, head branch, event. scripts/testdata/fake-gh.sh
 # answers this same shape for the tests; keep the two in step.
 runs_jq='.workflow_runs[] | [.name, .status, (.conclusion // "-"), (.head_branch // "-"), .event] | @tsv'
-# required_runs is every workflow a strict vX.Y.Z tag starts -- release.yml and
-# images.yml, whose `on: push: tags:` filters are what a tag is matched
-# against; a third workflow added to that filter belongs here too. The wait
+# required_runs is every workflow a strict vX.Y.Z tag starts: those whose
+# `on: push: tags:` filter is `v[0-9]+.[0-9]+.[0-9]+` -- release.yml, images.yml
+# and console-windows.yml (the console's Windows pack, which runs at release
+# time only) -- and a fourth added to that filter belongs here too. The wait
 # below is why they are named rather than inferred: a run registers a few
 # seconds after the push, and a verification that read the API once and found
 # no run would pass a release whose workflows never started. Any other run the
 # tag started is held to the same rule, from the same read.
-required_runs="release images"
+required_runs="release images console-windows"
 echo "waiting for every workflow the $tag push started (up to ${timeout_minutes}m)..."
 deadline=$(($(date +%s) + timeout_seconds))
 while :; do

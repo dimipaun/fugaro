@@ -107,7 +107,7 @@ func TestVerifyReleasePassesWhenEveryWorkflowIsGreen(t *testing.T) {
 	for _, want := range []string{
 		"waiting for every workflow the v0.12.1 push started",
 		"verify-release: v0.12.1",
-		"runs:   every workflow the tag started",
+		"runs:   every workflow the tag started (release images console-windows, and any other run on the tag)",
 		"ghcr.io/dimipaun/fugaro-history:0.12.1",
 		"ghcr.io/dimipaun/fugaro-base:0.12.1",
 		"ghcr.io/dimipaun/fugaro-credentials:0.12.1",
@@ -198,6 +198,22 @@ func TestVerifyReleaseWaitsForARunThatHasNotRegistered(t *testing.T) {
 	res.requireVerifyFailureContaining(t, "is not released: images has no run on v0.12.1 yet")
 	if !strings.Contains(res.out, "still waiting: images has no run") {
 		t.Errorf("the missing run was not waited for:\n%s", res.out)
+	}
+}
+
+// TestVerifyReleaseWaitsForTheWindowsRunToo: the console's Windows pack,
+// console-windows.yml, carries the same `on: push: tags:` filter as release.yml
+// and images.yml, so a strict vX.Y.Z tag starts it too and it is one of the
+// runs the wait names. A verification that only waited for the other two would
+// print "is verified" while the Windows run was still registering -- or never
+// started -- which is the race the named list exists to close.
+func TestVerifyReleaseWaitsForTheWindowsRunToo(t *testing.T) {
+	r := newVerifyFixture(t)
+	g := newGHState(t, r.releaseRepo, greenChecks()).with("FAKE_GH_RUN_WINDOWS=missing")
+	res := r.verify(t, g, 4, "v0.12.1")
+	res.requireVerifyFailureContaining(t, "is not released: console-windows has no run on v0.12.1 yet")
+	if !strings.Contains(res.out, "still waiting: console-windows has no run") {
+		t.Errorf("the missing Windows run was not waited for:\n%s", res.out)
 	}
 }
 

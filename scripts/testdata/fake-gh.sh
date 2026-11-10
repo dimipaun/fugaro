@@ -44,14 +44,17 @@
 #                    arguments start with FAKE_GH_FLAKY fail as a dropped
 #                    connection does ("net/http: TLS handshake timeout"), and
 #                    do nothing else
-#   FAKE_GH_RUN_RELEASE / FAKE_GH_RUN_IMAGES   success (default) | failure |
-#                    cancelled | pending | missing: what the runs api reports
-#                    for that workflow's run on the tag's commit, which is the
-#                    read scripts/verify-release.sh waits on (it asks for the
-#                    runs whose head branch is the tag and whose event is
-#                    push). `pending` answers in_progress, `missing` answers
-#                    no run at all. The tag is read from the origin repo, so a
-#                    test must have pushed it.
+#   FAKE_GH_RUN_RELEASE / FAKE_GH_RUN_IMAGES / FAKE_GH_RUN_WINDOWS
+#                    success (default) | failure | cancelled | pending |
+#                    missing: what the runs api reports for that workflow's
+#                    run on the tag's commit, which is the read
+#                    scripts/verify-release.sh waits on (it asks for the runs
+#                    whose head branch is the tag and whose event is push).
+#                    `pending` answers in_progress, `missing` answers no run
+#                    at all. Every strict vX.Y.Z tag starts all three
+#                    (release.yml, images.yml and console-windows.yml), so
+#                    they are answered together. The tag is read from the
+#                    origin repo, so a test must have pushed it.
 #   FAKE_GH_RUN_OTHER  an extra run on the tag, "name:state" (default none),
 #                    for the rule that any other workflow the tag started has
 #                    to be green too
@@ -216,11 +219,12 @@ case "$1 ${2:-}" in
         # scripts/verify-release.sh's read of the runs a tag push started: one
         # tab-separated line per run, in the shape its --jq asks for
         # ([name, status, conclusion, head branch, event] | @tsv). The tag's own
-        # runs come from FAKE_GH_RUN_RELEASE / _IMAGES / _OTHER; a run of each
-        # workflow on main is answered below too and belongs to no verification,
-        # so a filter that lost its head-branch or event clause reads a row it
-        # must not. This arm's rows and verify-release.sh's --jq are one shape in
-        # two files: keep them in step.
+        # runs are the three a strict vX.Y.Z tag starts -- release, images and
+        # console-windows, from FAKE_GH_RUN_RELEASE / _IMAGES / _WINDOWS -- plus
+        # FAKE_GH_RUN_OTHER; a run of each workflow on main is answered below too
+        # and belongs to no verification, so a filter that lost its head-branch
+        # or event clause reads a row it must not. This arm's rows and
+        # verify-release.sh's --jq are one shape in two files: keep them in step.
         case "$*" in
           *".workflow_runs[]"*"@tsv"*) ;;
           *)
@@ -250,6 +254,7 @@ case "$1 ${2:-}" in
         if [ -n "$branch" ]; then
           run_rows release "${FAKE_GH_RUN_RELEASE:-success}"
           run_rows images "${FAKE_GH_RUN_IMAGES:-success}"
+          run_rows console-windows "${FAKE_GH_RUN_WINDOWS:-success}"
         fi
         if [ -n "${FAKE_GH_RUN_OTHER:-}" ]; then
           run_rows "${FAKE_GH_RUN_OTHER%%:*}" "${FAKE_GH_RUN_OTHER#*:}"
