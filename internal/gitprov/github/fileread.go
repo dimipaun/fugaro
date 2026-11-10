@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/gitprov"
@@ -82,6 +83,44 @@ const (
 	// notFoundRef is the absent-ref answer: the row that refuses, naming the ref.
 	notFoundRef
 )
+
+// confirmAbsent reports whether a "Not Found" from the read really is the
+// absent-file row: the repository is one this token reaches and, when the
+// caller named a ref, the ref resolves.
+//
+// The body alone cannot say. The contents API answers the same
+// {"message":"Not Found"} for a path the ref does not carry and for a
+// repository the token cannot reach, and the second is a refusal — spec.md §7's
+// row for a repository the installation does not hold: a name that is not its
+// repository, one outside the App's scope, one deleted after the mint, or a
+// token minted for a different repository, which nothing in FileAt binds to the
+// repository it is asked for. Reading the second as the first places the run on
+// the per-repository job by a document nobody read, which is the placement D905
+// refuses.
+//
+// The ref is confirmed for the same reason one step further in: a body that
+// still says "Not Found" when the ref is gone is what a rewording of GitHub's
+// "No commit found for the ref …" would produce, so the wording that names the
+// ref row is not the only thing standing between a bad ref and a placed run.
+//
+// Both calls are ones the person read set already covers — `metadata: read` for
+// the repository and `contents: read` for the root listing, which is the same
+// endpoint and the same ref spelling the read itself uses — and both are made
+// with the provider's own token, the caller's source and no other. Every
+// failure of either is returned as it is and stays a refusal; nothing here
+// decides a job.
+func confirmAbsent(ctx context.Context, p *Provider, ref string) error {
+	if err := p.api.Do(ctx, "GET", p.repoPath(""), nil, nil); err != nil {
+		return err
+	}
+	if ref == "" {
+		// The API's own default branch is one the repository has, so there is
+		// no ref to confirm and the absent-ref answer is not reachable here.
+		return nil
+	}
+	q := url.Values{"ref": {ref}}
+	return p.api.Do(ctx, "GET", p.repoPath("/contents")+"?"+q.Encode(), nil, nil)
+}
 
 // notFoundAnswerOf reads body, a 404's own, for the answer it carries. Both
 // wordings are GitHub's prose and can change under this package; when either
@@ -143,6 +182,9 @@ func FileAt(ctx context.Context, o Options, ts gitprov.TokenSource, repo, ref, p
 			case notFoundRef:
 				return nil, fmt.Errorf("%w: %s: %w", ErrRefNotFound, where, err)
 			case notFoundFile:
+				if cerr := confirmAbsent(ctx, p, ref); cerr != nil {
+					return nil, fmt.Errorf("github: %s at %s: the file is not there, and the repository or the ref it names could not be confirmed: %w", at, where, cerr)
+				}
 				return nil, fmt.Errorf("%w: %s at %s: %w", ErrFileNotFound, at, where, err)
 			}
 		}

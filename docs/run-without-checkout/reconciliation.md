@@ -110,6 +110,13 @@ are kept as the reading of 2026-11-04, with this amendment beside them. **A1's o
 A0**: they replay an `httpfixture` response through a fake `gitprov.TokenSource`, so they exercise the
 reader with no real mint in the path. A3's end-to-end read is the test that could not be green before it.
 
+**And the reader's absent-file answer is not taken on `Contents`'s 404 alone.** `Not Found` is also what
+the API answers for a repository the token cannot reach, which is a different row of spec.md §7 — a
+refusal, not a document that selects nothing — so A1 confirms the repository, and the ref when one was
+named, before it hands the launcher that answer; both confirming calls are `metadata: read` and
+`contents: read`, which is the set A0 landed, and a failed confirmation is a refusal. The reading here
+holds: the reader reads one file, and it decides no job.
+
 **F7. The recorded job needs no new storage.** `internal/runstore/launch.go` records `Job` in
 `launch.json`, and `existingLaunch` (`internal/cli/run.go`) already backfills that record from
 `result.json`'s execution when the CLI died before writing one — `ParseExecution(rec.Execution)` and

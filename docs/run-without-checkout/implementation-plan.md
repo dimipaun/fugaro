@@ -77,7 +77,8 @@ whole `internal/cli` or `internal/runner` run.
 - **Files:** `internal/gitprov/github/fileread.go` (new), `internal/gitprov/github/fileread_test.go`
   (new), `internal/gitprov/github/testdata/fileread/*.json` (new: an `httpfixture` replay of one file
   read, one file the ref does not carry, one ref the repository does not have, one read the forge
-  refuses, and the two 404s whose bodies this code cannot read as either answer).
+  refuses, the two 404s whose bodies this code cannot read as either answer, and the two the
+  confirmation refuses — the repository and the ref).
 - **Interfaces:** `FileAt(ctx context.Context, o Options, ts gitprov.TokenSource, repo, ref, path string) ([]byte, error)`,
   built over what the package already has rather than over a second HTTP client (reconciliation F6): it
   assembles `Options` for `repo` with `ServiceHeldKey: true`, installs `ts` (`UseServiceTokens` accepts
@@ -103,7 +104,19 @@ whole `internal/cli` or `internal/runner` run.
   GitHub's message stay reachable to whoever reads the failure. **The failure direction is the refusal
   and not the fallback:** a wording that changes under this code puts the read it named back in the
   refusal row, where the launch halts, and never in the absent-file row, which selects nothing and
-  would place a run by a document nobody read. **No permission is asked for, and there is
+  would place a run by a document nobody read. **And the body alone does not decide it:** `Not Found` is
+  also what the API answers for a **repository the token cannot reach** — a name that is not the
+  installation's repository, one outside the App's scope, one deleted after the mint, or a token minted
+  for another repository, which nothing in `FileAt` binds to the repository it is asked for — and that
+  is spec.md §7's row for a repository the installation does not hold, a refusal. So the absent-file
+  answer is taken only after **two more calls**, both made with the same token and both already covered
+  by A0's set: `GET /repos/{owner}/{repo}` (`metadata: read`) confirms the repository, and, when the
+  caller named a ref, `GET /repos/{owner}/{repo}/contents?ref=` (`contents: read`, the same endpoint and
+  ref spelling the read itself uses) confirms the ref — the second because a body that still said
+  `Not Found` with the ref gone is what a rewording of the absent-ref message would produce. **Any
+  failure of either is a refusal**, returned with that call's own error and GitHub's message: the
+  absent-file row costs three requests on a path that has already failed, and a read that cannot confirm
+  what it read decides nothing. **No permission is asked for, and there is
   no parameter to ask with:** what the token reaches is the set the service mints (A0). **Its
   dependence on A0 is the live path and nothing else:** the fixture tests below are green the day A1 is
   written, and what waits for A0 is a real person's token reading a real file — A3's end-to-end test.
@@ -112,6 +125,9 @@ whole `internal/cli` or `internal/runner` run.
   never happen: the absent-ref answer read as the absent-file one),
   `TestFileAtRefusesA404ItCannotRead` (a body that is not the API's answer object and a reworded one:
   neither is a typed answer, and both stay `Contents`'s refusal rather than the absent-file row),
+  `TestFileAtRefusesA404ForARepositoryItCannotReach` and `TestFileAtRefusesA404WhereTheRefDoesNotResolve`
+  (the read and the confirmation both answering `Not Found`, and the read answering `Not Found` with a
+  ref that does not resolve: neither sentinel, and the confirmation's own error kept),
   `TestFileAtUsesTheTokenSourceItIsGiven`
   (a fake `gitprov.TokenSource` observes one mint and the request carries its token), and
   `TestFileAtRefusesARepositoryItCannotName`. The kind, encoding and size refusals are `Contents`'s own
@@ -122,11 +138,12 @@ whole `internal/cli` or `internal/runner` run.
 - **Commit:** `github: read one file at a ref through the person's read mint`.
 - **Landed:** 2026-11-10: `github.FileAt` and its two sentinels, `ErrFileNotFound` and `ErrRefNotFound`,
   in `internal/gitprov/github/fileread.go` — over `Contents`, a `ServiceHeldKey` provider with the
-  caller's `gitprov.TokenSource` installed — with `fileread_test.go` and the six
+  caller's `gitprov.TokenSource` installed — with `fileread_test.go` and the eight
   `testdata/fileread/*.json` replays beside it. The read is hermetic (a fake `gitprov.TokenSource` and an
   `httpfixture` replay), so it waited on nothing from A0: what A0 gates is the live path, and A3's
   end-to-end read is the test that exercises it. What A3 calls, and what its messages read, is the two
-  sentinels; the absent-file one is the row that selects nothing.
+  sentinels; the absent-file one is the row that selects nothing, and it is the only one that costs the
+  two confirming calls.
 
 ## A2. The narrowing that needs no credential (D905, D908, D909, D912)
 
