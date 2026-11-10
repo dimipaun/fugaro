@@ -775,7 +775,7 @@ register.
 ### AK9 — the tree's own sentences stop saying a review is served by a Claude account (SEC)
 
 **Slice:** none — **off the levels and off the critical path** (§1, §2's `—` rows); **folded into
-MC6 of `docs/model-crafts` on 2026-11-10** (§6 item 12, that folder's D1638 and F26), so this file is
+MC6 of `docs/model-crafts` on 2026-11-10** (§6 item 12, that folder's D1638 and F26), so this task stays
 written and not approved here and the files below are that task's to write. **Depends on:**
 nothing; it was found by the security review of the merged AK4 and AK5 (§7, **F25**).
 
