@@ -2,14 +2,18 @@ package cli
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -19,6 +23,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/credsvc"
+	"github.com/dimipaun/fugaro/internal/gitprov/github"
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -2792,5 +2797,214 @@ func TestReviewJobVariantIsHandedNoToken(t *testing.T) {
 		if len(v.SecretEnv) != 0 {
 			t.Errorf("the review job %s mounts %v: the variant mounts no secret at all", job.Name, v.SecretEnv)
 		}
+	}
+}
+
+// identityTokenFixture and readTokenFixture are the two credentials a source-3
+// read presents and receives in these tests: the operator's own Google ID
+// token (personIDToken, which no test mints for real) and the installation
+// token the service answers with. Neither is a secret and neither is shaped
+// like one: the fixture values exist to be compared, never to be used.
+const (
+	identityTokenFixture = "identity-token-of-the-operator-fixture"
+	readTokenFixture     = "read-token-the-service-minted-fixture"
+)
+
+// serviceReadFixture is the installation source 3 needs (spec.md §5, D902): a
+// published credentials service and the repository's own App ID, and one TLS
+// server that answers as both the service's read mint and the GitHub API root
+// the read asks. It is one server because a launch reaches both, and TLS
+// because localcfg's validCredentialsServiceURL admits nothing but the https
+// URL Cloud Run serves the service on — so the client that trusts this
+// server's certificate is the one the read is given.
+//
+// Every answer is spelled here rather than replayed from a fixture file: the
+// read is two calls of two protocols (the service's own JSON and the contents
+// API), and what these tests ask about is which of them the launch made.
+type serviceReadFixture struct {
+	srv *httptest.Server
+
+	mu         sync.Mutex
+	mints      int    // read-mint calls the service answered
+	reads      int    // contents calls the forge answered
+	identity   string // the Authorization header the mint was presented with
+	serviceURL string // the URL personIDToken was asked for
+	appID      string // the app_id the mint's body named
+	document   string // the fugaro.yaml the ref carries; "" is the absent-file 404
+	status     int    // the contents answer's status (0: 200)
+	message    string // the body of that non-200 answer
+}
+
+func newServiceReadFixture(t *testing.T) *serviceReadFixture {
+	t.Helper()
+	s := &serviceReadFixture{document: projectJobRepoYAML}
+	s.srv = httptest.NewTLSServer(http.HandlerFunc(s.serve))
+	t.Cleanup(s.srv.Close)
+	return s
+}
+
+// use points the launcher's read at s: the local config records the service's
+// address and the repository's App ID, the operator's own identity is the
+// fixture's, and the API root the read asks is the fixture's own server.
+func (s *serviceReadFixture) use(t *testing.T, f *cloudFixture) {
+	t.Helper()
+	f.appendConfig(t, "credentials_service: { url: "+s.srv.URL+" }\n")
+	addRepoAppIDToFixture(t, f)
+	oldIdentity, oldURL, oldClient := personIDToken, githubAPIURL, githubAPIClient
+	personIDToken = func(ctx context.Context, url string) (string, error) {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		s.serviceURL = url
+		return identityTokenFixture, nil
+	}
+	githubAPIURL, githubAPIClient = s.srv.URL, s.srv.Client()
+	t.Cleanup(func() { personIDToken, githubAPIURL, githubAPIClient = oldIdentity, oldURL, oldClient })
+}
+
+// counts is what the launch asked the two servers, read under the lock the
+// handlers write them with.
+func (s *serviceReadFixture) counts() (mints, reads int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mints, s.reads
+}
+
+func (s *serviceReadFixture) presented() (identity, serviceURL, appID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.identity, s.serviceURL, s.appID
+}
+
+func (s *serviceReadFixture) serve(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	w.Header().Set("Content-Type", "application/json")
+	switch {
+	case r.URL.Path == github.ServiceReadPath:
+		s.mints++
+		s.identity = r.Header.Get("Authorization")
+		var body struct {
+			Repository string `json:"repository"`
+			AppID      string `json:"app_id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, `{"message":"the read mint's body is not JSON"}`, http.StatusBadRequest)
+			return
+		}
+		s.appID = body.AppID
+		if body.Repository != "acme/app" {
+			// spec.md §7's second row: a repository the installation does not
+			// hold is the service's own refusal, and it is not this fixture's
+			// subject beyond being relayed.
+			w.WriteHeader(http.StatusForbidden)
+			fmt.Fprint(w, `{"message":"this installation does not hold that repository"}`)
+			return
+		}
+		fmt.Fprintf(w, `{"token":%q,"expires_at":%q,"repository":%q}`,
+			readTokenFixture, time.Now().Add(time.Hour).UTC().Format(time.RFC3339), body.Repository)
+	case strings.HasSuffix(r.URL.Path, "/contents/fugaro.yaml"):
+		s.reads++
+		if s.status != 0 {
+			w.WriteHeader(s.status)
+			fmt.Fprintf(w, `{"message":%q}`, s.message)
+			return
+		}
+		if s.document == "" {
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprint(w, `{"message":"Not Found"}`)
+			return
+		}
+		fmt.Fprintf(w, `{"type":"file","encoding":"base64","size":%d,"content":%q}`,
+			len(s.document), base64.StdEncoding.EncodeToString([]byte(s.document)))
+	default:
+		http.Error(w, `{"message":"the fixture answers no such route"}`, http.StatusNotFound)
+	}
+}
+
+// TestLaunchWithoutCheckoutReadsTheRefThroughTheService is source 3 (spec.md
+// §2, D901, D902): a launch of a GitHub repository from a directory that holds
+// no checkout of it, on a project whose policy publishes a profile and an
+// installation whose credentials service is published, is decided by the
+// document the service reads for the operator — and lands on the shared job of
+// the profile that document names.
+//
+// Red against main, where the launch is refused before any read.
+func TestLaunchWithoutCheckoutReadsTheRefThroughTheService(t *testing.T) {
+	f := newProjectJobFixture(t)
+	s := newServiceReadFixture(t)
+	s.use(t, f.cloudFixture)
+	isolateCache(t)
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir())
+
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261110-130000-aaaa", "Add a feature"); err != nil {
+		t.Fatalf("a launch from outside the checkout, on an installation with a credentials service: %v", err)
+	}
+	if profile, provider, _ := launchedProjectJob(t, f.cloudFixture); profile != "standard" || provider != "github" {
+		t.Fatalf("the launch ran on %s/%s, want the standard/github project job the ref's fugaro.yaml selects", profile, provider)
+	}
+	if mints, reads := s.counts(); mints != 1 || reads != 1 {
+		t.Errorf("the launch made %d mint(s) and %d read(s), want exactly one of each: one read, held for the command and written nowhere", mints, reads)
+	}
+}
+
+// TestLaunchWithACheckoutNeverReadsTheService is the trigger's own boundary
+// (spec.md §2: none of this runs unless the code is about to refuse). The
+// checkout answers, so no credential is minted, no service is called and no
+// App ID is needed: the launch is decided by the objects, exactly as it was
+// before this task.
+func TestLaunchWithACheckoutNeverReadsTheService(t *testing.T) {
+	f := newProjectJobFixture(t)
+	s := newServiceReadFixture(t)
+	s.use(t, f.cloudFixture)
+	isolateCache(t)
+	projectJobCheckout(t)
+
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261110-130001-bbbb", "Add a feature"); err != nil {
+		t.Fatalf("a launch from the repository's own checkout: %v", err)
+	}
+	if profile, provider, _ := launchedProjectJob(t, f.cloudFixture); profile != "standard" || provider != "github" {
+		t.Fatalf("the launch ran on %s/%s, want the standard/github project job", profile, provider)
+	}
+	if mints, reads := s.counts(); mints != 0 || reads != 0 {
+		t.Errorf("a launch its own checkout answered made %d mint(s) and %d read(s), want none: the read is the refusal's, not the launch's", mints, reads)
+	}
+}
+
+// TestLaunchWithoutCheckoutWithoutACredentialsServiceNamesTheCheckout is
+// spec.md §7's first row, and the cost of D902's answer: the credentials
+// service ships dormant, and where an installation has not opted in the
+// launcher holds nothing to read a repository's configuration with — so the
+// refusal stands, in the shape it has today, with the checkout as the way out.
+func TestLaunchWithoutCheckoutWithoutACredentialsServiceNamesTheCheckout(t *testing.T) {
+	f := newProjectJobFixture(t)
+	s := newServiceReadFixture(t)
+	// The service's server is there and the App ID is recorded; what is
+	// missing is the installation's own opt-in, which is the block the
+	// credentials stage writes.
+	old := personIDToken
+	personIDToken = func(ctx context.Context, url string) (string, error) {
+		t.Errorf("the identity was minted for %s although this installation has no credentials service", url)
+		return identityTokenFixture, nil
+	}
+	t.Cleanup(func() { personIDToken = old })
+	addRepoAppIDToFixture(t, f.cloudFixture)
+	isolateCache(t)
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir())
+
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261110-130002-cccc", "Add a feature")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a user error", err)
+	}
+	want := "cannot read acme/app's fugaro.yaml at main as yourself: this installation has no credentials service, so the read that decides the run's job cannot be made. Run it from acme/app's checkout"
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("the refusal is not spec.md §7's:\n got: %v\nwant: %s", err, want)
+	}
+	if mints, reads := s.counts(); mints != 0 || reads != 0 {
+		t.Errorf("a launch with no credentials service made %d mint(s) and %d read(s), want none", mints, reads)
+	}
+	if calls := f.run.RunRequests(); len(calls) != 0 {
+		t.Errorf("the refused launch asked Cloud Run for %d job(s): %+v", len(calls), calls)
 	}
 }
