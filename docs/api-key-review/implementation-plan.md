@@ -1,6 +1,7 @@
 # The api-key review path — implementation plan
 
-**Status: AK1–AK5 are implemented on `main`, and no task past AK5 is started; D1410–D1429 are answered
+**Status: AK1–AK5 and AK6a are implemented on `main` (AK6a merged as #2147, `03c2a22c`), AK6b is
+written and in review, and no further task is started; D1410–D1429 are answered
 2026-11-07 and all tasks are approved 2026-11-07 (owner: "All tasks approved. Jobmax"), except the two
 the security review added — AK9 and AK10, which are written and not approved, and **AK10's approval is
 a precondition of AK6b's release** (§6 item 11).** AK4 lets the
@@ -19,6 +20,15 @@ tier and `.claude/rules/credentials-service.md` require — so item 6 is **open 
 landed under it rather than past it, and stands for **AK6a**, **AK6b** and **AK7** too. **E7's gate is
 lifted**, item 7's own accounting: its second half reached the tree on 2026-11-08, so `fugaro review`
 admits a launch, though **no live installation has been measured** against it.
+
+**Reconciled with `docs/model-crafts` on 2026-11-10** (that folder's **D1638** and **F26**, and §6
+item 12 below): the owner ruled that **api-key-review is NOT superseded by model-crafts; model-crafts
+builds on it**. **AK1–AK7 stay exactly as planned here** — nothing in this folder is re-scoped, and
+**AK6a is merged**, which is what the other package builds on. Model-crafts' **MC5** and **MC6**
+**extend what AK6a, AK6b and AK7 build and never replace it**, are **held until AK6b and AK7 have
+merged**, and re-decide no axis value, no bundle field, no forwarding rule and no model path.
+**AK9 and AK10 are folded into MC6**: they stay written and not approved here, and their files and
+tests are that task's to write, because MC6 already writes the credentials service's own files.
 
 **The reconciliation with `docs/cloud-senior-review/implementation-plan.md` §6.7 is done, on
 2026-11-09** (§1's own paragraph, and §6 items 9 and 10): **§6.7's reading was right and this plan's
@@ -59,7 +69,9 @@ holding and serving that key, AK7 is the runner's path to it, and AK8 measures t
 result on a real installation. **AK2 and AK3 are off the critical path** — AK2 is documentation and
 AK3 is the record — and either may land at any point in L1 without moving it. **AK9 and AK10 are off
 it too**: they are the security review's two findings (a wording pair that says a review job's account
-is a Claude account, and the credential write that can outrun the service that reads it), and **neither
+is a Claude account, and the credential write that can outrun the service that reads it), and **since
+2026-11-10 both are folded into `docs/model-crafts`'s MC6** (§6 item 12), which carries their files
+and keeps them written and unapproved; **neither
 blocks a cloud task from starting** — but **AK10 is a release precondition of AK6b** (§6 item 11): the
 two land in one release, AK6b's commit first and the guard after it, and **that release waits on the
 owner's approval of AK10**, which is written and not approved. **The OpenRouter half of the critical path carries one more gate, and no
@@ -172,7 +184,10 @@ could touch).
 
 **A row with `—` in the Level column is a task that is on no level**, which §1 says of AK9 and AK10:
 they are off the levels and off the critical path, so their files are booked here only so that a later
-task knows they are taken.
+task knows they are taken. **As of 2026-11-10 the rows that name AK9 and AK10 are written by MC6 of
+`docs/model-crafts`** (§6 item 12, that folder's D1638 and F26): the two tasks are folded into it, so
+the `—` rows below are its writers now, booked here to keep this folder's inventory of them complete
+and to say that no task here writes them.
 
 `internal/credsvc/cascade.go` is booked twice across two levels — AK4's candidate list and AK6b's tier
 map — and `internal/runner/routing.go` with `internal/runner/routing_internal_test.go` twice within
@@ -759,7 +774,9 @@ register.
 
 ### AK9 — the tree's own sentences stop saying a review is served by a Claude account (SEC)
 
-**Slice:** none — **off the levels and off the critical path** (§1, §2's `—` rows). **Depends on:**
+**Slice:** none — **off the levels and off the critical path** (§1, §2's `—` rows); **folded into
+MC6 of `docs/model-crafts` on 2026-11-10** (§6 item 12, that folder's D1638 and F26), so this file is
+written and not approved here and the files below are that task's to write. **Depends on:**
 nothing; it was found by the security review of the merged AK4 and AK5 (§7, **F25**).
 
 **Files (11):** `internal/credsvc/auth.go`, `internal/credsvc/auth_test.go`, `internal/credsvc/server.go`,
@@ -832,7 +849,10 @@ what was refused is a security-relevant inaccuracy rather than a wording prefere
 
 ### AK10 — the credential write refuses a bundle the deployed service cannot read (SEC)
 
-**Slice:** none — **off the levels and off the critical path** (§1, §2's `—` rows), and **a release
+**Slice:** none — **off the levels and off the critical path** (§1, §2's `—` rows), **folded into
+MC6 of `docs/model-crafts` on 2026-11-10** (§6 item 12, that folder's D1638 and F26: written and not
+approved here, its guard and its files are that task's to write, and that task lands after AK6b's own
+commit, which the guard's own ordering requires), and **a release
 precondition of AK6b** (§6 item 11, condition 8 of the review): it lands in the same release as AK6b
 and **after** AK6b's own commit, because the guard judges a document only a CLI carrying the provider
 entry can write — its own `TestCredsSetWritesWhenTheServiceIsNewer` loads the written bundle through
@@ -1053,7 +1073,8 @@ alike. **Item 7's gate is lifted** — E7's second half reached the tree on 2026
 launch is admitted where it was refused, though no live installation has been measured against it.
 **Item 3's approval covered the tasks that existed on 2026-11-07: AK9 and AK10 are written and not
 approved.** **Item 9 records the reconciliation of 2026-11-09, item 10 a gate no task carried, which
-that reconciliation found, and item 11 the release precondition AK6b cannot ship without.**
+that reconciliation found, item 11 the release precondition AK6b cannot ship without, and item 12 the
+reconciliation with `docs/model-crafts` of 2026-11-10 and the fold of AK9 and AK10 into its MC6.**
 
 1. **D1410 answered: both slices** — the plan is about all three (reconciliation §9.1).
 2. **D1421 answered: after 0.20.0** — the release for AK8 and for any release note.
@@ -1165,6 +1186,22 @@ that reconciliation found, and item 11 the release precondition AK6b cannot ship
     **AK10 is written and not approved** (item 3), and that has a consequence this plan states
     rather than hides: **the OpenRouter half's release waits on the owner's approval of AK10.** AK10's
     own section carries the same requirement from its side, and §1's L3 row says so beside AK6b.
+12. **The reconciliation with `docs/model-crafts` is done, 2026-11-10** (that folder's **D1638** and
+    **F26**), and it re-scopes nothing here: the owner ruled that **api-key-review is NOT superseded
+    by model-crafts; model-crafts builds on it**, so **AK1–AK7 stay as planned** — this folder keeps
+    its tasks, its levels and its critical path — and model-crafts' **MC5** and **MC6** are the ones
+    that change: they **extend what AK6a, AK6b and AK7 build and never replace it**, they read the
+    files they share with them as merged (`internal/runner/routing.go`, `internal/credsvc/cascade.go`,
+    `internal/creds/select.go`), and they are **held until AK6b and AK7 have merged**, which that
+    folder's plan now says in its levels, its critical path and its shared-files table. **AK9 and
+    AK10 are folded into MC6**: both stay written and **not approved** here, the fold approves nothing
+    and unapproves nothing, and their files are MC6's to write. **The two consequences this item
+    states rather than hides:** AK9's sentences and AK10's guard are written in a task of another
+    folder, so this folder's §2 rows that name them are its writers now; and **item 11's
+    precondition travels with AK10** — the release that first ships AK6b's provider entry is one that
+    also carries the guard, which MC6 carries, and MC6 lands after AK6b's own commit. That is the
+    reading the fold leaves. What AK6a's own merge did for the other package is recorded there: the
+    provider key's axis value is merged (`03c2a22c`, #2147).
 
 **One answer leaves work that no gate and no task carries yet, and it is named here so it is not
 lost:** **D1413** settles *that* the key wins when the owner asks for it explicitly, and **the
@@ -1248,4 +1285,5 @@ rather than a running service. **It is also not the independent review item 6 as
 says so in its own last section — so **item 6 stays open for AK4 and AK5** and for AK6a, AK6b and
 AK7. **AK9 and AK10 are written and not approved** (item 3); **AK9 blocks no task**, and **AK10 blocks
 no task from starting but gates AK6b's release** (§6 item 11) — both are off the levels and off the
-critical path (§1, §2).
+critical path (§1, §2), and **both are folded into `docs/model-crafts`'s MC6 as of 2026-11-10**
+(§6 item 12), which writes their files and tests while they stay written and unapproved here.

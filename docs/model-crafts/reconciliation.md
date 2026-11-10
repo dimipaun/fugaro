@@ -2,7 +2,7 @@
 
 **Spec:** [spec.md](spec.md) (received verbatim; owner Dimi Paun). **Checked against** `origin/main` at `1ad2d3143` on **2026-11-07**.
 **Numbers:** this work holds **D1620–D1639** and **Checks 420–429** (none appears anywhere under `docs/` on `main` or in the open pull requests' diffs when read; siblings hold D1540–D1619 and Checks 380–419).
-**Where this file disagrees with `spec.md`, this file wins.** Nothing is implemented; no task is approved.
+**Where this file disagrees with `spec.md`, this file wins.** Nothing is implemented; no task is approved. **F26 and D1638 are added 2026-11-10** on the owner's ruling of that date and are read against `docs/api-key-review`'s own files and the merge of its AK6a, not against a fresh reading of the whole tree.
 
 ## 0. The word: **craft**
 
@@ -77,6 +77,8 @@ The spec calls the four model assignments "roles", which collides with the user 
 
 **F25 — Missing (which "project layer"; added after review).** D1628's "project layer" means the **owner-written project policy node** (`projectpolicy`), **never the runs-bucket shared file**, which `sharedForbidden` bars from carrying account keys.
 
+**F26 — Rule (the api-key review path is not superseded; added 2026-11-10 on the owner's ruling of that date).** Another package already designs — and has partly built — the API-key credential type's two halves: `docs/api-key-review`'s **AK6a** (**merged**, `03c2a22c`: the provider key gets a value of its own on the account axis, `config.ProviderKeyAccount`), **AK6b** (**in review**: the bundle holds the key — its base URL and its auth shape as additive optional fields — and `internal/credsvc`'s `forward.go` sends it to the provider's own endpoint) and **AK7** (**not started**: the review run's model path reaches that endpoint). **MC5** (credential commands and pool selection in the runner) and **MC6** (the credentials service serves Anthropic-key and OAuth pool members) would build those same three things for that credential type if they were written against a tree that did not already have them. *Consequence:* **MC5 and MC6 EXTEND what AK6a, AK6b and AK7 built and never replace it** (D1638): neither re-decides an axis value, a bundle field, a forwarding rule or a model path; the files they share with those three are named in the plan's table and are read as merged; and **both are held until AK6b and AK7 have merged**, so they are written against the merged shapes rather than against this package's sketches of them. **And two of that folder's off-level tasks are folded into MC6**, which that folder records on the same date: **AK9** (the tree's sentences that still say a review is served by a Claude account, which AK4 made inexact) and **AK10** (the guard on the bundle write a deployed service cannot read) become MC6's files, written and unapproved as they were.
+
 ## 3. Decisions D1620–D1639
 
 | # | Question | Recommendation (reason) | Alternative and cost | Owner's answer |
@@ -101,7 +103,9 @@ The spec calls the four model assignments "roles", which collides with the user 
 | **D1636** | The successor of `claude_account_auto`. | **A project-level pool flag `subscription_spread`, default off, with today's refusals kept (agent session, widening direction) and pinned on the credsvc path** (F22). | Drop the switch: D1622's terms ruling would have no control. | **2026-11-07: as recommended (recommended; owner delegated reading to the PR, 2026-11-07)** — recorded as the recommendation. |
 | **D1637** | A pool and the craft's one model string. | **Admit a pool only if every member serves the model ID as written, checked at config time** (F23). | Per-member model mapping: one more thing to price, validate and explain. | **2026-11-07: as recommended (recommended; owner delegated reading to the PR, 2026-11-07)** — recorded as the recommendation. |
 
-D1638–D1639 are reserved and unused.
+| **D1638** | Do MC5 and MC6 supersede `docs/api-key-review`'s AK6a, AK6b and AK7 for the API-key credential type? | **No: they extend it.** The provider key's axis value (AK6a, merged), the bundle's key with its base URL and auth shape and the service's forward to the provider's endpoint (AK6b, in review) and the review run's model path (AK7) are that credential type's runner and service halves, already designed and partly built there; MC5 and MC6 build on the merged shapes, share those files (the plan names them), and are **held until AK6b and AK7 have merged** (F26). | Writing MC5 and MC6 against this package's sketches of that machinery: two designs for one credential type, the second silently re-deciding the axis value, the bundle fields and the destination rule. | **2026-11-10: as ruled by the owner** — "api-key-review is NOT superseded by model-crafts; model-crafts builds on it". |
+
+D1639 is reserved and unused.
 
 ## 4. Open tensions and open items for the owner
 
