@@ -1,7 +1,14 @@
 package cli
 
 import (
+	"context"
+	"fmt"
+
 	"github.com/spf13/cobra"
+
+	roleaccess "github.com/dimipaun/fugaro/internal/access"
+	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 // update.go is `fugaro update`: the second door of the converge — the
@@ -105,3 +112,101 @@ func newUpdateCmd() *cobra.Command { return newUpdateCmdWith(&initOptions{}) }
 // newSetupCmdWith has for the same reason: the tests drive a door over an
 // options value they can read back.
 func newUpdateCmdWith(o *initOptions) *cobra.Command { return newInitCmdWith(o, updateDoor) }
+
+// writeAdminList is D1940's step: the roster's project-scoped admins, derived
+// and published as the bucket object the intake reads (internal/access's
+// adminlist.go).
+//
+// Why it is `update`'s and why here: the intake admits a caller to the shared
+// `fugaro_p_` prefix by checking them against this list, and it may hold no
+// database role — reading the roster directly is the design the decision
+// rejected, and the derivation is what keeps the intake's reach an object read
+// (D1940, F32). The list is therefore a fact of the installation that has to be
+// refreshed by an installation-wide run, and `fugaro update` is the one run
+// every installation has: the HARD RULE says the upgrade is this command
+// alone, so a roster written by `fugaro project access set` reaches the intake
+// here or nowhere. It sits at the end of the converge, beside D1548's raise and
+// D1553's self-flag, and for the same reason they do: the roster is read after
+// every stage that could have moved it, and what it prints belongs to this
+// run's result.
+//
+// The lag is the decision's, and the step says so rather than hiding it: a
+// grant or a revocation is not seen by the intake until the run after it. What
+// catches up on its own is nothing the roster says, so the line names the next
+// `fugaro update` as the moment a role change lands.
+//
+// Nothing here may fail the update (the HARD RULE, as in update_budget_mode.go):
+// every state that leaves the object as it is — no shared budget backend, a
+// database that is not this installation's, a roster that could not be read or
+// decoded, a bucket that refused the write — is a warning or silence, and the
+// object is exactly what the run found. A list that was not written is a list
+// the intake decides on as it is, which is fail closed for the caller and never
+// a reason to stop an upgrade.
+func (e *initEngine) writeAdminList(ctx context.Context) {
+	r, o := e.r, e.r.o
+	// The door first, as in raiseBudgetMode: this is the upgrade's step, and
+	// the hook both doors share is the end of the converge (init_stages.go's
+	// outcome). `fugaro setup` creates an installation; the roster of one that
+	// exists is not its business, and a project it just created has no admins
+	// to derive from.
+	if o.doorName() != updateDoor.name || o.planOnly {
+		return
+	}
+	// The roster is a node of the installation's budget database, reached over
+	// IAM, and a run that never opened the cloud or a project with no shared
+	// backend at all has none to read: the line about that installation is
+	// doctor's (policy-published), and `fugaro update --firebase-project` — the
+	// command that gives it a backend — is where this step next runs.
+	if e.c == nil || e.lc == nil || e.lc.Budget == nil || e.lc.Budget.RTDBURL == "" {
+		return
+	}
+	db, err := newBudgetClient(ctx, e.lc.Budget.RTDBURL, e.lc.Endpoints.NoAuth)
+	if err != nil {
+		r.warn(fmt.Sprintf("the admin list was not written: the database the roster lives in could not be opened (%s), so the intake keeps the list it has", safetext.FieldErr(err)))
+		return
+	}
+	// The one ownership question every reader and writer of that database asks
+	// (budgetDBUnadopted), before anything is read out of it: a database that is
+	// not this installation's is not where this installation's roster lives, and
+	// a list derived from somebody else's grants would admit the wrong people.
+	if why := budgetDBUnadopted(ctx, e.lc, infra.NewDB(db, e.lc.Name, e.lc.GCPProject, ""), "the admin list was not written", selfCommand()+" update"); why != "" {
+		r.warn(why)
+		return
+	}
+	node, err := roleaccess.Read(ctx, db)
+	if err != nil {
+		// The roster is read whole or not at all (roleaccess.Read): a node that is
+		// present but unreadable is never an empty roster, and a list derived
+		// from a partly understood node would admit people the node does not.
+		r.warn(fmt.Sprintf("the admin list was not written: %s, and a list derived from it would be one the roster does not say", safetext.FieldErr(err)))
+		return
+	}
+	// An absent node is a roster with no grants (roleaccess.Read's own answer), and
+	// the list that follows from it is the empty one: the object is written on
+	// every update, so the intake always reads a document that says who is on
+	// it, and "nobody" is a fact rather than a missing object.
+	list := roleaccess.Admins(node.Grants)
+	data, err := roleaccess.EncodeAdminList(list)
+	if err != nil {
+		r.warn(fmt.Sprintf("the admin list was not written: the roster's project admins could not be encoded (%s)", safetext.FieldErr(err)))
+		return
+	}
+	if fakeEndpointsOnGS(e.lc, e.lc.BucketURL()) {
+		// The config's endpoints are fakes (tests, emulators): the gs:// bucket
+		// is not the one they stand for, and opening it would reach the real
+		// network with the developer's credentials.
+		return
+	}
+	b, err := sharedBucketOpener(ctx, e.lc.BucketURL())
+	if err != nil {
+		r.warn(fmt.Sprintf("the admin list was not written: the runs bucket %s could not be opened (%s)", safetext.Field(e.lc.BucketURL()), safetext.FieldErr(err)))
+		return
+	}
+	defer b.Close()
+	if err := b.Put(ctx, roleaccess.PathAdminList, data, "application/json"); err != nil {
+		r.warn(fmt.Sprintf("the admin list was not written: %s", safetext.FieldErr(operatorWriteErr(e.lc.BucketURL(), roleaccess.PathAdminList, err, "the admin list was not written"))))
+		return
+	}
+	fmt.Fprintf(r.w, "admin list: %d project admin(s) in %s, the object the intake reads before it writes to the shared prefix. It lags a role change until the next `fugaro update`: a grant or a revocation reaches the intake in the run after it.\n",
+		len(list), roleaccess.PathAdminList)
+}

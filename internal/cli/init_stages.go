@@ -353,6 +353,14 @@ func (e *initEngine) outcome(ctx context.Context, res *initflow.Result, runErr e
 	// printResult for the reason the two above are: what it printed and
 	// recorded belongs to this run's result.
 	e.raiseBudgetMode(ctx)
+	// And D1940's, the last of the three steps this hook owns: the roster's
+	// project-scoped admins, published for the intake that admits a caller to
+	// the shared prefix and may hold no database role (update.go's
+	// writeAdminList). It is here for the reason above — the converge has
+	// applied everything it had, so the roster it reads is the one this run
+	// leaves behind — and it returns no error either: the list is a derived
+	// object, and failing an upgrade over one is what the HARD RULE forbids.
+	e.writeAdminList(ctx)
 	if err := r.printResult(); err != nil {
 		return err
 	}
