@@ -2181,10 +2181,16 @@ func TestLaunchKeepsABitbucketProfileOnThePerRepositoryJob(t *testing.T) {
 
 // Item 2: a launch of a repository from outside its checkout cannot tell
 // which workflow it is about — the working tree's fugaro.yaml is where a
-// workflow's checkout: kind and its profile are read — so, for a project
-// that has published profiles, it refuses rather than silently guessing the
-// per-repository job, which is the wrong job for a clone workflow. The
-// remedy is named: run it from the repository's own checkout.
+// workflow's checkout: kind and its profile are read — so, for a project that
+// has published profiles, it refuses rather than silently guessing the
+// per-repository job, which is the wrong job for a clone workflow. The remedy
+// is named: run it from the repository's own checkout.
+//
+// A3 narrows the refusal rather than deleting it: where the installation has a
+// credentials service the document is read at the ref instead (D901, D902) and
+// this fixture — which configures none — is the installation that has not opted
+// in, whose one line names the missing service and keeps the checkout as the way
+// out (spec.md §7).
 //
 // Mutation (run, restore): return nil, nil where this refuses (the
 // per-repository path) — the launch goes through, on a job the run may not
@@ -2198,7 +2204,7 @@ func TestRunRepoWithoutItsCheckoutErrorsClearly(t *testing.T) {
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v, want a user error", err)
 	}
-	for _, want := range []string{"acme/app", "checkout", "fugaro run"} {
+	for _, want := range []string{"acme/app", "checkout", "credentials service"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not say %q: %v", want, err)
 		}
@@ -2518,10 +2524,11 @@ func TestCheckoutWithoutTheFileStillResolvesTheRefsWorkflow(t *testing.T) {
 }
 
 // TestNoCheckoutGitHubRefusalNamesTheCheckoutAndTheRef is D912's first
-// message: a launch with no checkout of the repository anywhere, on a project
-// that has published a profile, is refused — the provider is one a shared job
-// serves, so there is nothing to narrow — and the refusal names the
-// repository, the ref, what was tried and the way out (spec.md §7). The ref
+// message as A3 leaves it: a launch with no checkout of the repository
+// anywhere, on a project that has published a profile and an installation that
+// has no credentials service, is refused — the provider is one a shared job
+// serves, and the read that would narrow it cannot be made (D902) — and the
+// refusal names the repository, the ref and the way out (spec.md §7). The ref
 // is named because it is half of what the launch had to read: the document is
 // the one at the ref the run checks out, and only from the repository's
 // checkout can this operator see it.
@@ -2538,7 +2545,7 @@ func TestNoCheckoutGitHubRefusalNamesTheCheckoutAndTheRef(t *testing.T) {
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v, want a user error", err)
 	}
-	for _, want := range []string{"acme/app", "release-2", "checkout", "fugaro run", "clone workflow"} {
+	for _, want := range []string{"acme/app", "release-2", "checkout", "credentials service"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not say %q: %v", want, err)
 		}
@@ -2551,10 +2558,12 @@ func TestNoCheckoutGitHubRefusalNamesTheCheckoutAndTheRef(t *testing.T) {
 // TestRefusalMessagesAreNotInterchanged is D912's rule read from the other
 // side: the two causes have two remedies, so neither message may carry the
 // other's. The operator with no checkout of the repository is the one the
-// checkout is the way out for; the operator standing *in* the checkout whose
-// ref could not be read out of its objects is not — and telling them to run
-// it from the checkout they are in is the sentence this design exists to
-// delete (F2, D909).
+// checkout is the way out for — the document is read at the forge where the
+// installation has a credentials service, and where it has none that read does
+// not exist and the checkout is the remedy; the operator standing *in* the
+// checkout whose ref could not be read out of its objects is not — telling them
+// to run it from the checkout they are in is the sentence this design exists to
+// delete (F2, D909), and their read never touches the service at all.
 //
 // Mutation (run, restore): make one message serve both causes — one of the
 // two assertions below fails, whichever text is kept.
@@ -2580,7 +2589,7 @@ func TestRefusalMessagesAreNotInterchanged(t *testing.T) {
 	if ExitCode(noCheckout) != ExitUserError || ExitCode(unreadable) != ExitUserError {
 		t.Fatalf("no-checkout: %v; unreadable ref: %v; want two user errors", noCheckout, unreadable)
 	}
-	if !strings.Contains(noCheckout.Error(), "is not acme/app's checkout") {
+	if !strings.Contains(noCheckout.Error(), "Run it from acme/app's checkout") {
 		t.Errorf("the no-checkout refusal does not name the checkout: %v", noCheckout)
 	}
 	if strings.Contains(noCheckout.Error(), "out of this checkout") {
@@ -2589,8 +2598,11 @@ func TestRefusalMessagesAreNotInterchanged(t *testing.T) {
 	if !strings.Contains(unreadable.Error(), "out of this checkout") {
 		t.Errorf("the unreadable-ref refusal does not name the checkout the read was made from: %v", unreadable)
 	}
-	if strings.Contains(unreadable.Error(), "is not acme/app's checkout") {
+	if strings.Contains(unreadable.Error(), "Run it from acme/app's checkout") {
 		t.Errorf("the unreadable-ref refusal sends the operator to the checkout they are standing in: %v", unreadable)
+	}
+	if strings.Contains(unreadable.Error(), "credentials service") {
+		t.Errorf("the unreadable-ref refusal talks about a service this read never reached: %v", unreadable)
 	}
 	for _, want := range []string{"acme/app", "fugaro.yaml"} {
 		if !strings.Contains(unreadable.Error(), want) {
