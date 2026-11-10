@@ -1353,10 +1353,10 @@ added or removed without this sentence moving fails there:
     `data/compatibility.yaml` — 46 rows of names, notes, statuses and editions, **1037
     words** on the build of 2026-11-10 — so the words a reader reads there are the matrix's
     own and not a page's prose. It moved nothing else: D188's own number is untouched and
-    the pages that are the site's are the pages it still holds. The exemption is the
-    owner's and this change did not touch it: the page is much shorter than the document it
-    used to render whole and is still well over this ceiling, so it stays on the list — and
-    `test/security.mjs` holds it to a ceiling of its own. How many words a page carries is
+    the pages that are the site's are the pages it still holds. `/security/` is the one of the
+    five a reader might question — much shorter than the document it used to render whole, and
+    still well over this ceiling — so it stays on the list, and `test/security.mjs` holds it to
+    a ceiling of its own. How many words a page carries is
     `budget.mjs`'s own reader's to say, over the built artifact; this list does not keep the
     count, and the figure it kept here once did not match what the reader measures.
     **The number is no longer D188's own, and it is derived rather than picked.** The

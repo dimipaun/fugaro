@@ -81,8 +81,12 @@ const LINKED = [
 // repository — the compatibility matrix, and one entry today (item 5 above). It is written here
 // for the reason `LINKED` is: a hub that quietly stopped linking the page would otherwise pass
 // the count below, and this list is the plan's (Task CM2), not the page's. The entry's own
-// title, path line and answer are held to the page itself by
-// `website/test/compatibility-page.mjs`, which reads this page's built HTML from the other side.
+// title and path line are held to the page itself by `website/test/compatibility-page.mjs`,
+// which reads this page's built HTML from the other side: the title against the page's `<h1>`,
+// and the path line against the page's route, which is what this entry's link opens. Its
+// `answers` line is the hub's own sentence like every other entry's — the line under a title is
+// this page's summary of what a reader finds there, not the document's own prose — and nothing
+// holds it to the page.
 const HUB_PAGES = ['/compatibility/']
 
 /** Every entry the hub carries: the repository's documents and the pages of this site. */
