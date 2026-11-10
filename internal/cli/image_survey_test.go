@@ -19,6 +19,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
 	"github.com/dimipaun/fugaro/internal/imagesurvey"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
 // surveyProvider is one repository's file-backed provider with the reads it
@@ -349,6 +350,78 @@ func TestSurveyNothingReadIsNotNoSignals(t *testing.T) {
 	}
 }
 
+// TestSurveySetupIsTheProjectOwnOrSaysWhyNot: the setup half of the document
+// carries the three values a rerun of the skill compares against — the
+// catalog, the repository-to-image map and the bake switch (F16, IS10's
+// interface, D1901/D1906) — and it keeps the same distinction the repository
+// rows keep. A project that published no map and bakes, a project whose node
+// this machine cannot read and a project whose node says otherwise are one
+// document without the reason: the defaults are byte-identical to a setting
+// nobody wrote. The reason travels with them, so a reader is never told a
+// project bakes when nothing was read.
+func TestSurveySetupIsTheProjectOwnOrSaysWhyNot(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	surveyStub(t, map[string]map[string]string{"acme/app": {"Dockerfile": "FROM node:20\n"}})
+
+	// Nothing published at all: the defaults are the truth about the project —
+	// an empty map and baking (D1901's default) — and the setup carries no
+	// reason for them.
+	doc := surveyDoc(t)
+	if doc.Setup.Unread != "" {
+		t.Errorf("a project that published no policy node is reported unread: %q", doc.Setup.Unread)
+	}
+	if len(doc.Setup.ImageMap) != 0 || !doc.Setup.BakeRepos {
+		t.Errorf("setup = %+v, want the empty map and bake_repos true", doc.Setup)
+	}
+
+	// A node that was read: its own map and switch, and still no reason.
+	f.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
+	f.db.Set(projectpolicy.PathShared(), json.RawMessage(`{"version":4,"image_map":{"acme/app":"go"},"bake_repos":false}`))
+	doc = surveyDoc(t)
+	if doc.Setup.Unread != "" {
+		t.Errorf("a policy node that was read is reported unread: %q", doc.Setup.Unread)
+	}
+	if got := doc.Setup.ImageMap["acme/app"]; got != "go" || doc.Setup.BakeRepos {
+		t.Errorf("setup = %+v, want the node's own map and bake setting", doc.Setup)
+	}
+
+	// The node's map without a bake switch: absent means baking, and the
+	// document reports that default rather than leaving the member out.
+	f.db.Set(projectpolicy.PathShared(), json.RawMessage(`{"version":4,"image_map":{"acme/app":"go"}}`))
+	doc = surveyDoc(t)
+	if !doc.Setup.BakeRepos || doc.Setup.Unread != "" {
+		t.Errorf("setup = %+v, want bake_repos true (a node that states no switch bakes) and no reason", doc.Setup)
+	}
+
+	// This machine's own config states both keys, and the database then refuses
+	// the node: the two values are this machine's own rather than the project's,
+	// which is exactly what the reason has to say beside them (localcfg's keep
+	// rule, D1140).
+	f.appendConfig(t, "image_map: {acme/app: local}\nbake_repos: false\n")
+	f.db.DenyRead(projectpolicy.PathShared())
+	doc = surveyDoc(t)
+	if !strings.Contains(doc.Setup.Unread, "the project's published policy node could not be read") {
+		t.Fatalf("setup.unread = %q, want the reason the node was not read", doc.Setup.Unread)
+	}
+	if !strings.Contains(doc.Setup.Unread, "are this machine's own rather than what this project published") {
+		t.Errorf("setup.unread = %q, and a reader has to be told what the members are then", doc.Setup.Unread)
+	}
+	if got := doc.Setup.ImageMap["acme/app"]; got != "local" || doc.Setup.BakeRepos {
+		t.Errorf("an unread setup answers %+v, want this machine's own map and switch", doc.Setup)
+	}
+	// And the terminal says it too, before the members it is about.
+	out, _, err := execute(t, "image", "survey")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !strings.Contains(out, "unread: the project's published policy node could not be read") {
+		t.Errorf("the report does not say the setup was not read:\n%s", out)
+	}
+	if !strings.Contains(out, "bake_repos: no") || !strings.Contains(out, "local") {
+		t.Errorf("the report does not carry this machine's own map and switch:\n%s", out)
+	}
+}
+
 // executeSurveyCtx runs the command tree with a context the test controls.
 func executeSurveyCtx(t *testing.T, ctx context.Context, args ...string) (string, error) {
 	t.Helper()
@@ -525,7 +598,9 @@ func TestSurveyJSONMatchesSchema(t *testing.T) {
 			} `json:"signals"`
 		} `json:"repos"`
 		Setup struct {
-			Catalog []any `json:"catalog"`
+			Catalog   []any             `json:"catalog"`
+			ImageMap  map[string]string `json:"image_map"`
+			BakeRepos *bool             `json:"bake_repos"`
 		} `json:"setup"`
 	}
 	if err := json.Unmarshal([]byte(out), &decoded); err != nil {
@@ -549,8 +624,17 @@ func TestSurveyJSONMatchesSchema(t *testing.T) {
 		}
 	}
 	// A project that has published no catalog is the document's own empty
-	// catalog, which is what the schema's array branch is validated on here.
+	// catalog, which is what the schema's array branch is validated on here —
+	// and the map and the switch are the members the setup's own branches are
+	// validated on, so a fixture that stopped producing them cannot leave those
+	// unchecked and still be green.
 	if decoded.Setup.Catalog == nil {
 		t.Errorf("setup = %+v, want the catalog member the schema closes over", decoded.Setup)
+	}
+	if decoded.Setup.ImageMap == nil {
+		t.Errorf("setup = %+v, want the image_map member the schema closes over", decoded.Setup)
+	}
+	if decoded.Setup.BakeRepos == nil {
+		t.Errorf("setup = %+v, want the bake_repos member the schema closes over", decoded.Setup)
 	}
 }

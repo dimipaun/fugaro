@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/image-survey.schema.json",
   "title": "Fugaro image survey",
-  "description": "The document `fugaro image survey --json` prints: one row per repository the project's configuration lists, with the image signals that repository carries (its lockfiles and version files, its Dockerfile and the base image it names, its CI file, and the services its compose or Testcontainers files name), and the catalog the project has today. The read is read-only: each repository is read through the code host's own file API at a fixed list of paths, nothing is cloned and nothing is written, and every value here was bounded by the rule that took it out of a file before it reached this document. A row the survey got no answer from — a provider it could not open, or none of its fixed paths readable — carries unread and no signals; a row at least one of those paths answered carries its signals, empty when none of those files named one, and that is a different thing from the row that carries unread.",
+  "description": "The document `fugaro image survey --json` prints: one row per repository the project's configuration lists, with the image signals that repository carries (its lockfiles and version files, its Dockerfile and the base image it names, its CI file, and the services its compose or Testcontainers files name), and the catalog, repository-to-image map and bake switch the project has today. The read is read-only: each repository is read through the code host's own file API at a fixed list of paths, nothing is cloned and nothing is written, and every value here was bounded by the rule that took it out of a file before it reached this document. A row the survey got no answer from — a provider it could not open, or none of its fixed paths readable — carries unread and no signals; a row at least one of those paths answered carries its signals, empty when none of those files named one, and that is a different thing from the row that carries unread.",
   "type": "object",
   "required": [
     "version",
@@ -29,7 +29,7 @@
     },
     "setup": {
       "$ref": "#/$defs/setup",
-      "description": "What a rerun of the setup compares against: the catalog the project has today."
+      "description": "What a rerun of the setup compares against: the catalog, the repository-to-image map and the bake switch the project has today."
     }
   },
   "$defs": {
@@ -99,9 +99,11 @@
     "setup": {
       "type": "object",
       "required": [
-        "catalog"
+        "catalog",
+        "image_map",
+        "bake_repos"
       ],
-      "description": "What a rerun of the setup compares against: the catalog the project has today. The repository-to-image map and the bake switch (D1901/D1906) join this object with the slice of the plan that implements them, IS5, read through projectpolicy's typed fields; a member added within a version is what D784 allows, and neither key is defined or written by any code today.",
+      "description": "What a rerun of the setup compares against: the catalog, the repository-to-image map and the bake switch the project has today (F16, D1901/D1906). Each is the effective one — this machine's own project config when it states it, the published policy node's otherwise (D1140) — because that is what a build and a run would use, and each is read through projectpolicy's own typed fields rather than as a document; unread is why they are then this machine's own rather than the project's.",
       "properties": {
         "catalog": {
           "type": "array",
@@ -109,6 +111,23 @@
           "items": {
             "$ref": "#/$defs/catalogEntry"
           }
+        },
+        "image_map": {
+          "type": "object",
+          "description": "The repository-to-image map the project has today, owner/name to the catalog entry that builds it: this machine's own when its config states one, the published node's otherwise. Empty on a project that maps nothing, which is a setting and not an unread one.",
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "bake_repos": {
+          "type": "boolean",
+          "description": "Whether a build bakes the mapped repositories into the derived image (D1901). Absent in a config and in the node means true, so the default is reported here as a value rather than left out."
+        },
+        "unread": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Why the three above are this machine's own rather than the project's: the published policy node could not be read. Absent when the project published nothing, which is not a failed read — a project that never published these keys has an empty map and bakes (D1901), and that is a fact about it."
         }
       }
     },

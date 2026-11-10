@@ -56,17 +56,26 @@ type imageSurveyRepo struct {
 }
 
 // imageSurveySetup is what the skill proposes differences against (F16): the
-// entries the project's catalog has today.
+// catalog the project has today, the repository-to-image map, and the bake
+// switch (D1901/D1906: absent is true).
 //
-// The repository-to-image map and the bake switch (D1901/D1906) are not here.
-// Both are published policy keys that no code in this tree defines or writes —
-// their slice of the plan, IS5, is not implemented — so a report of them would
-// be the v1 document's own defaults on every installation, and freezing a
-// meaning now would bind the key before it exists. They are added as members
-// of this object with IS5, through projectpolicy's typed fields, which is what
-// D784 allows: a member added within a version.
+// All three are the EFFECTIVE ones — this machine's project config when it
+// writes them, the published policy node's otherwise (ImageCatalogEffective,
+// ImageMapEffective, BakeReposEffective) — because that is what a build and a
+// run would use, and they are read through projectpolicy's own typed fields and
+// never as a document: the node's shape belongs to the type, and a report is
+// not the place to decide what a key means.
+//
+// Unread is why the three are this machine's own rather than the project's: a
+// published node this machine could not read. The two states must not look
+// alike — a project that published nothing and bakes answers the same values as
+// one whose node was not read — so a setup that was not read says so, exactly
+// as a repository row does.
 type imageSurveySetup struct {
-	Catalog []catalogEntryRow `json:"catalog"`
+	Catalog   []catalogEntryRow `json:"catalog"`
+	ImageMap  map[string]string `json:"image_map"`
+	BakeRepos bool              `json:"bake_repos"`
+	Unread    string            `json:"unread,omitempty"`
 }
 
 // openSurveyProvider is OpenProvider, a seam for the survey's reads: the
@@ -88,7 +97,7 @@ func newImageSurveyCmd() *cobra.Command {
 			"repository this machine's project config lists, the signals each one carries\n" +
 			"(its lockfiles and version files, a Dockerfile and its base image, its CI\n" +
 			"file, and the services its compose or Testcontainers files name), and the\n" +
-			"catalog the project has today.\n\n" +
+			"catalog, repository-to-image map and bake setting the project has today.\n\n" +
 			"Nothing is cloned, built or written: each repository is read through the\n" +
 			"code host's own file API with the token this shell holds, at a fixed list of\n" +
 			"paths, and a path that is not there is a signal the repository does not have.\n" +
@@ -223,24 +232,55 @@ func unreadableProvider(kind string) string {
 	return "the " + pluginwire.Printable(kind) + " provider cannot read a file out of a repository, so its signals cannot be read"
 }
 
-// surveySetup is the setup a rerun of the skill compares against (F16). The
-// catalog is the effective one — this machine's project config when it states
-// one, the published node's otherwise — because that is what a build would
-// use, and a node this machine cannot read is a note rather than a refusal
-// (the rule `fugaro image ls` keeps).
+// surveySetupDefaults is the half of every reason the setup can be unread for
+// that says what the three members below then are: not what the project
+// published but what this machine's config and the defaults say, which is the
+// difference the reason exists to keep.
+const surveySetupDefaults = ", so the catalog, the repository-to-image map and the bake switch below are this machine's own rather than what this project published"
+
+// surveySetup is the setup a rerun of the skill compares against (F16). Every
+// member is the effective one — this machine's project config when it states
+// it, the published node's otherwise — because that is what a build would use,
+// and a node this machine cannot read is a note and a reason rather than a
+// refusal (the rule `fugaro image ls` keeps).
+//
+// A node that is simply absent is not that case: a project that never published
+// these keys has no map and bakes (D1901's default), which is a fact about the
+// project and not a read that failed, so it carries no reason.
 func surveySetup(ctx context.Context, env *cloudEnv, stderr io.Writer) imageSurveySetup {
-	out := imageSurveySetup{Catalog: []catalogEntryRow{}}
-	cat, err := effectiveCatalog(ctx, env)
+	out := imageSurveySetup{Catalog: []catalogEntryRow{}, ImageMap: map[string]string{}, BakeRepos: true}
+	p, found, err := env.policy.read(ctx, env.lc)
 	if err != nil {
-		fmt.Fprintf(stderr, "note: this project's published policy node could not be read (%s), so the catalog below is this machine's own\n", oneLine(err.Error()))
+		out.Unread = "the project's published policy node could not be read (" + oneLine(err.Error()) + ")" + surveySetupDefaults
+		fmt.Fprintf(stderr, "note: %s\n", oneLine(out.Unread))
+		p = nil
 	}
-	if cat != nil {
+	if !found {
+		p = nil
+	}
+	var publishedCatalog *config.Catalog
+	var publishedMap map[string]string
+	var publishedBake *bool
+	if p != nil {
+		publishedCatalog, publishedMap, publishedBake = p.ImageCatalog, p.ImageMap, p.BakeRepos
+	}
+	if cat := env.lc.ImageCatalogEffective(publishedCatalog); cat != nil {
 		for _, e := range cat.Entries {
 			out.Catalog = append(out.Catalog, catalogEntryRow{
 				Name: e.Name, Tags: e.Tags, Default: e.Default,
 				Source: catalogSourceLine(e.Source), Description: e.Description,
 			})
 		}
+	}
+	// Both halves of a mapping reach a terminal and an agent's context from
+	// here, and the repository key is a value a person reads back, so both are
+	// printed through pluginwire.Printable as every other value that leaves a
+	// command is.
+	for repo, entry := range env.lc.ImageMapEffective(publishedMap) {
+		out.ImageMap[pluginwire.Printable(repo)] = pluginwire.Printable(entry)
+	}
+	if bake := env.lc.BakeReposEffective(publishedBake); bake != nil {
+		out.BakeRepos = *bake
 	}
 	return out
 }
@@ -275,6 +315,9 @@ func printImageSurvey(w io.Writer, out imageSurveyOut) error {
 			fmt.Fprintln(w, line)
 		}
 	}
+	if out.Setup.Unread != "" {
+		fmt.Fprintf(w, "\nunread: %s\n", oneLine(out.Setup.Unread))
+	}
 	fmt.Fprintf(w, "\ncatalog:\n")
 	if len(out.Setup.Catalog) == 0 {
 		fmt.Fprintf(w, "  none: fugaro image add writes an entry, and fugaro update publishes the catalog\n")
@@ -286,5 +329,13 @@ func printImageSurvey(w io.Writer, out imageSurveyOut) error {
 		}
 		fmt.Fprintln(w, line)
 	}
+	fmt.Fprintf(w, "image_map:\n")
+	if len(out.Setup.ImageMap) == 0 {
+		fmt.Fprintf(w, "  none: fugaro image map set maps a repository to a catalog entry, and fugaro update publishes it\n")
+	}
+	for _, repo := range slices.Sorted(maps.Keys(out.Setup.ImageMap)) {
+		fmt.Fprintf(w, "  %s  %s\n", oneLine(repo), oneLine(out.Setup.ImageMap[repo]))
+	}
+	fmt.Fprintf(w, "bake_repos: %s\n", presentCell(out.Setup.BakeRepos))
 	return nil
 }
