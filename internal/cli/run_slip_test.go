@@ -248,6 +248,9 @@ func TestTheGrantCallAsksTheGrantRoute(t *testing.T) {
 // address, which is a test's own service. A URL that is more than a scheme and
 // a host is refused too — the route is appended to it, and a base path, a
 // query or a fragment would decide where this token goes.
+//
+// Mutation (verified, run and restored): `return nil` as the first statement of
+// checkSlipServiceURL and this fails on the plain-http cases.
 func TestTheGrantCallRefusesAURLItWillNotSendATokenTo(t *testing.T) {
 	for _, c := range []struct {
 		url  string
@@ -281,6 +284,9 @@ func TestTheGrantCallRefusesAURLItWillNotSendATokenTo(t *testing.T) {
 // request holds the launcher's own token in a header a redirect would carry to
 // whatever host the Location named. The second server here is exactly that
 // host, and it must never be reached.
+//
+// Mutation (verified, run and restored): drop the CheckRedirect from
+// slipClient and this fails on the request that reached it.
 func TestTheGrantCallDoesNotFollowARedirect(t *testing.T) {
 	reached := 0
 	elsewhere := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -308,13 +314,23 @@ func TestTheGrantCallDoesNotFollowARedirect(t *testing.T) {
 }
 
 // TestTheGrantCallReadsABoundedAnswer: the service is another writer, and its
-// answer is rendered into this launcher's memory, so its size is read before
-// its shape. An answer larger than a grant's is refused, and refused as
-// itself: nothing about an unread answer is the version skew.
+// answer is rendered into this launcher's memory, so its size is judged before
+// its shape. The answers here are ones a launcher would otherwise accept — the
+// id it granted, and padding — so the size alone is what refuses the second
+// one: both refusals reach a caller as one error, which is why the refusal's
+// own words are what says which of the two this was.
+//
+// Mutation (verified, run and restored): delete the `len(data) >
+// maxSlipAnswerBytes` refusal and the second case stops being refused.
 func TestTheGrantCallReadsABoundedAnswer(t *testing.T) {
+	const prefix, suffix = `{"slip":"` + fakeSlipID + `","padding":"`, `"}`
+	answer := func(extra int) string {
+		return prefix + strings.Repeat("a", maxSlipAnswerBytes-len(prefix)-len(suffix)+extra) + suffix
+	}
+	body := answer(0)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"slip":"` + strings.Repeat("a", maxSlipAnswerBytes) + `"}`))
+		_, _ = w.Write([]byte(body))
 	}))
 	t.Cleanup(srv.Close)
 	prev := slipIdentity
@@ -323,9 +339,14 @@ func TestTheGrantCallReadsABoundedAnswer(t *testing.T) {
 
 	req := credsvc.SlipGrantRequest{Slug: appSlug, Run: "20261110-100000-abcd",
 		Account: "fugaro-web-abcde@proj.iam.gserviceaccount.com", Credentials: []string{config.CredentialVertex}, MaxRuntimeSeconds: 3600}
-	_, err := slipGrantOverService(context.Background(), srv.URL, req)
-	if err == nil || errors.Is(err, errSlipRouteAbsent) {
-		t.Errorf("an answer larger than %d bytes was read as %v, want a refusal of the answer itself", maxSlipAnswerBytes, err)
+	got, err := slipGrantOverService(context.Background(), srv.URL, req)
+	if err != nil || got.Slip != fakeSlipID {
+		t.Errorf("an answer of exactly %d bytes was read as %+v, %v, want the id it carries: %d is the bound, not one past it", len(body), got, err, maxSlipAnswerBytes)
+	}
+	body = answer(1)
+	_, err = slipGrantOverService(context.Background(), srv.URL, req)
+	if err == nil || errors.Is(err, errSlipRouteAbsent) || !strings.Contains(err.Error(), "larger than a grant's") {
+		t.Errorf("an answer of %d bytes was read as %v, want the refusal of an answer larger than a grant's (%d bytes)", len(body), err, maxSlipAnswerBytes)
 	}
 }
 
@@ -334,6 +355,9 @@ func TestTheGrantCallReadsABoundedAnswer(t *testing.T) {
 // the service draws, or not one clean printable token is not an id this
 // launcher puts on a job — the backend builds the environment out of these
 // entries, and the value is the service's, not the launcher's.
+//
+// Mutation (verified, run and restored): `return true` from slipIDUsable and
+// this fails on every case but the first.
 func TestASlipIDIsUsableOnlyAsOneCleanEntry(t *testing.T) {
 	for _, c := range []struct {
 		id   string
@@ -362,6 +386,11 @@ func TestASlipIDIsUsableOnlyAsOneCleanEntry(t *testing.T) {
 // says so, rather than claiming a slip that names less than the run asks for:
 // that is the run refused at its next call with no way back (R9), where no
 // slip is the path every run took before the slip existed.
+//
+// Mutation (verified, run and restored): resolve the layers with no repo layer
+// where the file could not be read (an empty `if co != nil`) instead of
+// refusing to ask, and this fails on the grant call it makes with defaults the
+// run is not configured for.
 func TestALaunchThatCannotReadTheRepositoryAsksForNoSlip(t *testing.T) {
 	r := newSlipLaunchRig(t)
 	// A directory that is no checkout of the repository: nothing for
