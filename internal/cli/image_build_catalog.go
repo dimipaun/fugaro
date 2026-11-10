@@ -280,13 +280,14 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 	}
 	imageMap := lc.ImageMapEffective(publishedMap)
 	bakeRepos := lc.BakeReposEffective(publishedBake)
-	// The switch reaches the rule in all three of its states (answered true,
-	// answered false, answered nothing): the default is the map's, so an
-	// installation that maps nothing composes nothing at all, and one that
-	// maps a repository composes a stage only for an entry nothing else is
-	// mapped to — a shared image is where O3's F18 boundary is (imagebake.
-	// Decide). No path under fugaro update writes a definition at all (O1),
-	// which is what keeps it a one-command upgrade.
+	// What the map and the switch decide, and what they do not (imagebake.
+	// Decide): the map is the build's only evidence about any repository but
+	// the checkout's own, so a stage is composed only for an entry the map puts
+	// this repository alone on — a shared image is O3 (b)'s F18 boundary, and
+	// no answer to bake_repos puts a checkout into one. An installation that
+	// maps nothing therefore composes nothing at all, which is byte-for-byte
+	// the definition it had. No path under fugaro update writes a definition at
+	// all (O1), which is what keeps it a one-command upgrade.
 	bakeRepo := imagebake.Repo{Repo: canon, Slug: rs.Slug, URL: repoURL, Branch: cmp.Or(rs.BaseBranch, "main")}
 	bakeRef := bakeReference(cfg, cat, rs.Slug, catalog.Backend(lc.Backend()))
 	// The image is spelled from the host the installation's registries are
@@ -693,6 +694,13 @@ func catalogBuildBanner(entries []config.Entry, machineType, account, registry s
 // are both references, which is what F4 and T1 (b) call them: reading only the
 // pin would bake a repository that declares needs: into the entry the map puts
 // it on, an image its own jobs never start.
+//
+// Naming the entry is not the same as baking into it: imagebake.Decide still
+// asks the project's map to put this repository on that entry and to put no
+// other repository there, because the map is the only evidence a build has
+// about any repository but the checkout's own (O3 (b)) — the reference says
+// which image this repository's jobs start, and the map is what a build can
+// read about the rest.
 //
 // A workflow that runs the base image or a shared dependency layer names no
 // entry and is skipped: such a job holds no repository source and a checkout

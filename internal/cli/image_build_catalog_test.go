@@ -842,32 +842,37 @@ func TestCatalogBuildBakesNothingWithoutTheMap(t *testing.T) {
 	}
 }
 
-// TestCatalogBuildBakesASharedEntryAndNamesTheReaders: the entry serves another
-// repository too, so its jobs can read whatever the image carries (F18). The
-// bake happens — the switch is on unless an operator writes it off — and the
-// build names the repositories that can read the checkout, so the exposure is
-// said out loud rather than left to be inferred. `bake_repos: false` is the
-// operator's answer to it.
-func TestCatalogBuildBakesASharedEntryAndNamesTheReaders(t *testing.T) {
+// TestCatalogBuildBakesNothingIntoASharedEntry: the entry serves another
+// repository too, so its jobs can read whatever the image carries (F18). O3's
+// reading (b) bakes the repositories that share the image's own repository
+// grant, which for a shared image is none of the others — so nothing is
+// composed into it, and the build names the repositories that made it shared
+// rather than baking and warning. bake_repos: true does not change it: the
+// switch asks for a bake, and it is not the answer to O3's boundary.
+func TestCatalogBuildBakesNothingIntoASharedEntry(t *testing.T) {
 	shared := "image_map:\n  acme/app: tools\n  acme/other: tools\n"
-	t.Run("the default bakes and names the readers", func(t *testing.T) {
-		_, gcs, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildYAML)
-		f.appendConfig(t, shared)
+	for name, switchLine := range map[string]string{
+		"the project answered nothing":   "",
+		"the project asked for the bake": "bake_repos: true\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, gcs, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildYAML)
+			f.appendConfig(t, shared+switchLine)
 
-		_, stderr, err := executeBuild(t, "image", "build", "tools", "--base", "b:1")
-		if err != nil {
-			t.Fatalf("%v (%s)", err, stderr)
-		}
-		dir := "/work/baked/" + mustSlug(gitprov.KindBitbucket, "acme/app")
-		got, _ := catalogCopy(t, gcs, "tools")
-		if baked, ok := imagebake.BakedDir([]byte(got)); !ok || baked != dir {
-			t.Errorf("the copy bakes at %q, %v; want %s: an absent bake_repos is on", baked, ok, dir)
-		}
-		if !strings.Contains(stderr, "acme/other") || !strings.Contains(stderr, "can read this checkout") {
-			t.Errorf("stderr = %q, want the repository that can read the baked checkout named", stderr)
-		}
-	})
-	t.Run("bake_repos false keeps the checkout out of it", func(t *testing.T) {
+			_, stderr, err := executeBuild(t, "image", "build", "tools", "--base", "b:1")
+			if err != nil {
+				t.Fatalf("%v (%s)", err, stderr)
+			}
+			got, _ := catalogCopy(t, gcs, "tools")
+			if got != catalogBuildInline {
+				t.Errorf("the copy is %q, want the entry's own definition %q: nothing is baked into an image another repository runs", got, catalogBuildInline)
+			}
+			if !strings.Contains(stderr, "bakes no checkout") || !strings.Contains(stderr, "acme/other") {
+				t.Errorf("stderr = %q, want the repository that would have read the checkout named", stderr)
+			}
+		})
+	}
+	t.Run("bake_repos false names the switch", func(t *testing.T) {
 		_, gcs, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildYAML)
 		f.appendConfig(t, shared+"bake_repos: false\n")
 
@@ -885,75 +890,20 @@ func TestCatalogBuildBakesASharedEntryAndNamesTheReaders(t *testing.T) {
 	})
 }
 
-// TestCatalogBuildBakesTheEntryTheCheckoutNames: a checkout whose own workflow
-// names the entry being built (T1 (b), `image_name:`, D1155) runs that entry's
-// image by its own answer, so its next build composes the stage for it — with
-// no image_map and no bake_repos anywhere, because the switch is on unless an
-// operator turns it off.
-func TestCatalogBuildBakesTheEntryTheCheckoutNames(t *testing.T) {
+// TestCatalogBuildRefusesABakeTheMapDoesNotConfirm: a checkout whose own
+// workflow names the entry being built (T1 (b), `image_name:`, D1155) does run
+// that entry's image, but the build cannot turn that into a bake on its own:
+// its own repository's reference says nothing about the project's other
+// repositories, and the map — the only evidence a build holds — does not say
+// who else runs the entry. Another repository may pin the same entry, and its
+// jobs would read the checkout, so nothing is composed and the line names the
+// map entry that makes the readers knowable.
+func TestCatalogBuildRefusesABakeTheMapDoesNotConfirm(t *testing.T) {
 	repo := strings.Replace(bitbucketYAML, "app: {", "app: { image_name: tools,", 1)
 	if repo == bitbucketYAML {
 		t.Fatal("the fixture workflow has changed shape")
 	}
-	fb, gcs, _ := catalogBuildCheckoutFor(t, repo, catalogBuildYAML, gitprov.KindBitbucket, "")
-
-	_, stderr, err := executeBuild(t, "image", "build", "tools", "--base", "b:1")
-	if err != nil {
-		t.Fatalf("%v (%s)", err, stderr)
-	}
-	dir := "/work/baked/" + mustSlug(gitprov.KindBitbucket, "acme/app")
-	got, _ := catalogCopy(t, gcs, "tools")
-	if baked, ok := imagebake.BakedDir([]byte(got)); !ok || baked != dir {
-		t.Errorf("the copy bakes at %q, %v; want %s: the checkout's own workflow names this entry, so its jobs run it", baked, ok, dir)
-	}
-	if !strings.Contains(stderr, "bakes the checkout of acme/app at "+dir) {
-		t.Errorf("stderr = %q, want the line naming the baked checkout", stderr)
-	}
-	if subs := catalogBuildSubs(t, fb); subs["_CATALOG_TAG"] != sha256Hex([]byte(got)) {
-		t.Errorf("_CATALOG_TAG = %v, want the composed definition's sha256", subs["_CATALOG_TAG"])
-	}
-	// The entry the checkout does not run is nobody's to bake: building it
-	// composes nothing (TestCatalogBuildBakesNothingWithoutTheMap).
-}
-
-// TestCatalogBuildNamesTheReposThatCloneAtStart: the image serves every
-// repository the map puts on it, and only the build's own repository is baked
-// (O3 (b): the build account reaches that one). The rest are named, so the
-// person who answered "bake your repos" can see which repositories still clone
-// when their job starts.
-func TestCatalogBuildNamesTheReposThatCloneAtStart(t *testing.T) {
-	_, _, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildYAML)
-	f.appendConfig(t, "image_map:\n  acme/app: tools\n  acme/other: tools\nbake_repos: true\n")
-
-	_, stderr, err := executeBuild(t, "image", "build", "tools", "--base", "b:1")
-	if err != nil {
-		t.Fatalf("%v (%s)", err, stderr)
-	}
-	if !strings.Contains(stderr, "acme/other") || !strings.Contains(stderr, "clone their own at job start") {
-		t.Errorf("stderr = %q, want the repositories that clone at job start named", stderr)
-	}
-}
-
-// TestCatalogBuildBakesTheEntryAWorkflowsNeedsChoose: a workflow that declares
-// needs: and no image_name: runs the entry the tag-cover rule covers its tags
-// with — catalog.Choose, the rule internal/infra's catalogJobImage resolves
-// the deployed job's image with — and that entry is a catalog reference like a
-// pin (F4, T1 (b)). The entry the project's map puts the repository on is not
-// that entry, so nothing is composed into it: the checkout would sit in an
-// image its own jobs never start, and in an image every other repository the
-// map gives that entry to would run (F18).
-func TestCatalogBuildBakesTheEntryAWorkflowsNeedsChoose(t *testing.T) {
-	repo := strings.Replace(bitbucketYAML, "app: {", "app: { needs: [postgres],", 1)
-	if repo == bitbucketYAML {
-		t.Fatal("the fixture workflow has changed shape")
-	}
-	// base is the entry whose tags cover postgres, and the map says tools:
-	// the two disagree, and the rule the job's image is resolved with is the
-	// one this build follows.
-	_, gcs, f := catalogBuildCheckoutFor(t, repo, catalogBuildYAML, gitprov.KindBitbucket, "")
-	stubCatalogProvider(t, map[string]string{".fugaro/base.Dockerfile": catalogBuildFetched})
-	f.sm.AllowAccess()
-	f.appendConfig(t, "image_map:\n  acme/app: tools\n")
+	_, gcs, _ := catalogBuildCheckoutFor(t, repo, catalogBuildYAML, gitprov.KindBitbucket, "")
 
 	_, stderr, err := executeBuild(t, "image", "build", "tools", "--base", "b:1")
 	if err != nil {
@@ -961,19 +911,76 @@ func TestCatalogBuildBakesTheEntryAWorkflowsNeedsChoose(t *testing.T) {
 	}
 	got, _ := catalogCopy(t, gcs, "tools")
 	if got != catalogBuildInline {
-		t.Errorf("the copy is %q, want the entry's own definition %q: this repository's jobs run base, not tools", got, catalogBuildInline)
+		t.Errorf("the copy is %q, want the entry's own definition %q: the map does not put this repository on the entry, so the readers cannot be named", got, catalogBuildInline)
 	}
-	if strings.Contains(stderr, "bakes the checkout") {
-		t.Errorf("stderr = %q, want no bake line for an entry this repository does not run", stderr)
+	if !strings.Contains(stderr, "bakes no checkout") || !strings.Contains(stderr, "image map set") {
+		t.Errorf("stderr = %q, want the refusal and the command that makes the readers knowable", stderr)
 	}
-	// The entry the rule chose is the one its jobs start, so that entry's
-	// build is where the checkout goes.
-	if _, _, err := executeBuild(t, "image", "build", "base", "--base", "b:1"); err != nil {
-		t.Fatalf("%v", err)
+	// The entry the checkout does not run is nobody's to bake: building it
+	// composes nothing (TestCatalogBuildBakesNothingWithoutTheMap).
+}
+
+// TestCatalogBuildBakesTheEntryAWorkflowsNeedsChoose: a workflow that declares
+// needs: and no image_name: runs the entry the tag-cover rule covers its tags
+// with — catalog.Choose, the rule internal/infra's catalogJobImage resolves
+// the deployed job's image with — and that entry is a catalog reference like a
+// pin (F4, T1 (b)). So the bake follows the rule and not the map: where the map
+// puts the repository on another entry, neither entry is composed into — the
+// mapped one is an image its own jobs never start, and the chosen one is an
+// entry the map does not confirm, whose other readers the build cannot name.
+// Where the map agrees with the rule, the bake lands in the entry the jobs run.
+func TestCatalogBuildBakesTheEntryAWorkflowsNeedsChoose(t *testing.T) {
+	repo := strings.Replace(bitbucketYAML, "app: {", "app: { needs: [postgres],", 1)
+	if repo == bitbucketYAML {
+		t.Fatal("the fixture workflow has changed shape")
 	}
-	dir := "/work/baked/" + mustSlug(gitprov.KindBitbucket, "acme/app")
-	got, _ = catalogCopy(t, gcs, "base")
-	if baked, ok := imagebake.BakedDir([]byte(got)); !ok || baked != dir {
-		t.Errorf("the copy of base bakes at %q, %v; want %s: needs: [postgres] picks that entry, so its jobs run it", baked, ok, dir)
+	newFixture := func(t *testing.T, imageMap string) (*gcpfake.Build, *gcpfake.GCS) {
+		t.Helper()
+		fb, gcs, f := catalogBuildCheckoutFor(t, repo, catalogBuildYAML, gitprov.KindBitbucket, "")
+		stubCatalogProvider(t, map[string]string{".fugaro/base.Dockerfile": catalogBuildFetched})
+		f.sm.AllowAccess()
+		f.appendConfig(t, imageMap)
+		return fb, gcs
 	}
+	t.Run("the map names another entry", func(t *testing.T) {
+		_, gcs := newFixture(t, "image_map:\n  acme/app: tools\n")
+
+		_, stderr, err := executeBuild(t, "image", "build", "tools", "--base", "b:1")
+		if err != nil {
+			t.Fatalf("%v (%s)", err, stderr)
+		}
+		got, _ := catalogCopy(t, gcs, "tools")
+		if got != catalogBuildInline {
+			t.Errorf("the copy is %q, want the entry's own definition %q: this repository's jobs run base, not tools", got, catalogBuildInline)
+		}
+		if strings.Contains(stderr, "bakes the checkout") {
+			t.Errorf("stderr = %q, want no bake line for an entry this repository does not run", stderr)
+		}
+		// The entry the rule chose is the one its jobs start, but the map says
+		// nothing about who else runs it, so that build composes nothing either.
+		_, stderr, err = executeBuild(t, "image", "build", "base", "--base", "b:1")
+		if err != nil {
+			t.Fatalf("%v (%s)", err, stderr)
+		}
+		got, _ = catalogCopy(t, gcs, "base")
+		if baked, ok := imagebake.BakedDir([]byte(got)); ok {
+			t.Errorf("the copy of base bakes at %q: nothing is baked into an entry the map does not put this repository on", baked)
+		}
+	})
+	t.Run("the map names the entry the rule chooses", func(t *testing.T) {
+		fb, gcs := newFixture(t, "image_map:\n  acme/app: base\n")
+
+		_, stderr, err := executeBuild(t, "image", "build", "base", "--base", "b:1")
+		if err != nil {
+			t.Fatalf("%v (%s)", err, stderr)
+		}
+		dir := "/work/baked/" + mustSlug(gitprov.KindBitbucket, "acme/app")
+		got, _ := catalogCopy(t, gcs, "base")
+		if baked, ok := imagebake.BakedDir([]byte(got)); !ok || baked != dir {
+			t.Errorf("the copy of base bakes at %q, %v; want %s: needs: [postgres] picks that entry and the map puts this repository alone on it", baked, ok, dir)
+		}
+		if subs := catalogBuildSubs(t, fb); subs["_CATALOG_TAG"] != sha256Hex([]byte(got)) {
+			t.Errorf("_CATALOG_TAG = %v, want the composed definition's sha256", subs["_CATALOG_TAG"])
+		}
+	})
 }

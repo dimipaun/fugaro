@@ -53,30 +53,47 @@ func TestDecideBakesTheBuildsOwnRepo(t *testing.T) {
 	}
 }
 
-// TestDecideClonesTheOtherReposAtStart: the repositories the image serves that
-// are not this build's own are named as the clone-at-start half, so the line a
-// build prints does not read as though every repo of the project was baked.
-func TestDecideClonesTheOtherReposAtStart(t *testing.T) {
-	req := reqApp()
-	req.Map = map[string]string{"acme/app": "app", "acme/api": "app", "acme/web": "app", "acme/tool": "other"}
-	p := Decide(req)
-	if p.Baked == nil {
-		t.Fatalf("Decide baked nothing: %s", p.Reason)
-	}
+// TestDecideBakesNothingIntoASharedImage: the entry serves other repositories
+// as well, which is F18's boundary — whatever is baked into the image is source
+// their jobs can read. O3's reading (b) bakes "only the repos that share the
+// image's own repository grant — typically none for a shared image", so nothing
+// is baked there, and the plan names the repositories that made it shared so
+// the line a build prints says who would have read it.
+//
+// The switch is not what decides this: bake_repos: true asks for a bake where
+// one may land, and no answer to the switch puts a checkout into an image other
+// repositories' jobs start.
+func TestDecideBakesNothingIntoASharedImage(t *testing.T) {
 	want := []string{"acme/api", "acme/web"}
-	if len(p.Cloned) != len(want) {
-		t.Fatalf("the plan clones %v at start, want %v", p.Cloned, want)
+	for name, bake := range map[string]*bool{"the project answered nothing": nil, "the project asked for the bake": bakeOn()} {
+		t.Run(name, func(t *testing.T) {
+			req := reqApp()
+			req.Bake = bake
+			req.Map = map[string]string{"acme/app": "app", "acme/api": "app", "acme/web": "app", "acme/tool": "other"}
+			p := Decide(req)
+			if p.Baked != nil {
+				t.Fatalf("Decide baked the checkout into an image acme/api and acme/web run: their jobs can read it (F18), and O3 (b) bakes nothing into a shared image")
+			}
+			if got := strings.Join(p.Cloned, ", "); got != strings.Join(want, ", ") {
+				t.Fatalf("the plan names %q as the other repositories this image serves, want %q: they are who the refusal is about", got, strings.Join(want, ", "))
+			}
+			if !p.Notable {
+				t.Error("the plan is quiet, so a build printing it would leave the operator who asked for a bake with nothing")
+			}
+			for _, r := range want {
+				if !strings.Contains(p.Reason, r) {
+					t.Errorf("the reason %q does not name %s, so a build's line does not say who else runs this image", p.Reason, r)
+				}
+			}
+		})
 	}
-	for i, got := range p.Cloned {
-		if got != want[i] {
-			t.Fatalf("the plan clones %v at start, want %v", p.Cloned, want)
-		}
-	}
-	// And the same list is what a plan that bakes nothing reports: the entry's
-	// own jobs still clone at start, whichever way the decision went.
+	// Which repositories the entry serves is read the same way with the bake
+	// off: it is a fact about the map, not about the switch.
+	req := reqApp()
 	req.Bake = bakeOff()
-	if p := Decide(req); len(p.Cloned) != len(want) {
-		t.Errorf("with baking off the plan clones %v at start, want %v: which repositories clone does not depend on the switch", p.Cloned, want)
+	req.Map = map[string]string{"acme/app": "app", "acme/api": "app", "acme/web": "app"}
+	if p := Decide(req); strings.Join(p.Cloned, ", ") != strings.Join(want, ", ") {
+		t.Errorf("with baking off the plan names %v as the other repositories this image serves, want %v: which repositories run the image does not depend on the switch", p.Cloned, want)
 	}
 }
 
@@ -112,16 +129,43 @@ func TestDecideBakesNothingForAnotherImage(t *testing.T) {
 	}
 }
 
-// TestDecideReferenceBeatsTheMap: T1 reading (b) — a repository that names an
-// entry in its own workflow runs that entry's image whatever the map says, so
-// the bake follows the reference. The reference equal to the entry being built
-// is the case that still bakes.
-func TestDecideReferenceBeatsTheMap(t *testing.T) {
-	req := reqApp()
-	req.Map = map[string]string{"acme/app": "other"}
-	req.Reference = "app"
+// TestDecideBakesNothingWhenTheReadersCannotBeKnown: two repositories pinning
+// one entry by their own workflows, with no map. The build runs in one of them
+// and reads the project's map, which is its only evidence about any repository
+// but its own (O3 (b): one credential, one checkout, no second repository's
+// config) — so it cannot name acme/web, whose jobs run the same image and could
+// read the checkout. The bake is refused rather than made on a guess, and the
+// refusal names the map entry that makes the readers knowable.
+func TestDecideBakesNothingWhenTheReadersCannotBeKnown(t *testing.T) {
+	pinned := func() Request {
+		req := reqApp()
+		req.Entry = "tools"
+		req.Reference = "tools"
+		req.Map = nil
+		req.Bake = bakeOn()
+		return req
+	}
+	p := Decide(pinned())
+	if p.Baked != nil {
+		t.Fatal("Decide baked a checkout into an entry the map says nothing about: another repository may pin the same entry, and its jobs would read this checkout")
+	}
+	if !p.Notable {
+		t.Error("the plan is quiet, so a build would not say why the project's bake did not happen")
+	}
+	if !strings.Contains(p.Reason, "image map set") {
+		t.Errorf("the reason %q does not name the command that makes the readers knowable", p.Reason)
+	}
+	// The map is what makes them knowable: recorded there, and alone on the
+	// entry, the bake lands — the same repository, the same pin.
+	req := pinned()
+	req.Map = map[string]string{"acme/app": "tools"}
 	if p := Decide(req); p.Baked == nil {
-		t.Fatalf("Decide baked nothing (%s): the repository's own workflow names the entry being built, which is where its jobs run", p.Reason)
+		t.Fatalf("Decide baked nothing (%s): the map puts this repository on the entry and puts no other repository there", p.Reason)
+	}
+	// A second repository recorded on the entry is the shared case again.
+	req.Map = map[string]string{"acme/app": "tools", "acme/web": "tools"}
+	if p := Decide(req); p.Baked != nil {
+		t.Fatal("Decide baked the checkout into an image the map puts acme/web on as well")
 	}
 }
 
@@ -165,28 +209,21 @@ func TestDecideAnUnsetSwitchIsOn(t *testing.T) {
 	}
 }
 
-// TestDecideBakesASharedImageAndNamesTheReaders: the entry serves another
-// repository as well, which is F18's boundary — whatever is baked into the
-// image is source that repository's jobs can read. The bake happens (the
-// switch is on unless an operator turns it off), and the plan names the
-// repositories that can read the checkout, which is what the line a build
-// prints says out loud.
-func TestDecideBakesASharedImageAndNamesTheReaders(t *testing.T) {
+// TestDecideBakesAnEntryOnlyThisRepositoryRuns: the map puts this repository
+// alone on the entry — the one shape O3 (b) leaves for a bake — and the plan
+// says nothing about other readers because there are none to name.
+func TestDecideBakesAnEntryOnlyThisRepositoryRuns(t *testing.T) {
 	req := reqApp()
-	req.Bake = nil
-	req.Map = map[string]string{"acme/app": "app", "acme/web": "app"}
+	req.Map = map[string]string{"acme/app": "app"}
 	p := Decide(req)
 	if p.Baked == nil {
-		t.Fatalf("Decide baked nothing (%s): an unset switch is on", p.Reason)
+		t.Fatalf("Decide baked nothing (%s): the map puts this repository alone on the entry its jobs run", p.Reason)
 	}
-	if len(p.Cloned) != 1 || p.Cloned[0] != "acme/web" {
-		t.Errorf("the plan clones %v at start, want [acme/web]: the note has to name who else reads the baked checkout", p.Cloned)
+	if len(p.Cloned) != 0 {
+		t.Errorf("the plan names %v as other repositories this image serves, want none: the map puts no other repository on it", p.Cloned)
 	}
-	// Turning it off is the operator's own answer to F18, and it is the one
-	// thing that keeps the checkout out of a shared image.
-	req.Bake = bakeOff()
-	if p := Decide(req); p.Baked != nil {
-		t.Error("Decide baked the checkout into a shared image with bake_repos off")
+	if p.Notable != true {
+		t.Error("the plan is quiet, so a build that baked a checkout says nothing about it")
 	}
 }
 
@@ -329,6 +366,11 @@ func TestRepoURLGuardHoldsTheRepositoryNotTheSpelling(t *testing.T) {
 		"another repository, spelt like the origin":   {"https://Bitbucket.org/Acme/Elsewhere", false},
 		"another repository of another host":          {"https://github.com/acme/other.git", false},
 		"a repository whose name starts the same":     {"https://bitbucket.org/acme/other-repo.git", false},
+		// ".GIT" is the same suffix as ".git": the fold lowercases before it
+		// trims, as the guard's shell does, so a trailing uppercase suffix
+		// reaches the same repository rather than a spelling nothing matches.
+		"the canonical form, uppercased suffix": {"https://bitbucket.org/acme/other.GIT", true},
+		"the origin, uppercased suffix":         {"https://Bitbucket.org/acme/Other.GIT/", true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			cmd := exec.Command("sh", "-c", guard)

@@ -41,21 +41,31 @@
 //
 // # When nothing is baked
 //
-// Nothing is baked unless the entry being built is the image the repository
-// runs — a catalog reference in its own workflow beats the project's map (T1
-// reading (b)), and the map answers for a repository that names none — and the
-// project's switch (bake_repos, D1901) is on. Only a written false turns it
-// off: absent and true are one statement everywhere the switch is read
-// (projectpolicy.Policy.BakesRepos, localcfg.BakeReposEffective), so a build
-// reads the absent case — every installation predating the field — the same way
-// the settings, the skill and the publisher do.
+// Three things have to hold, and none of them is the switch's to override.
 //
-// The bake does land in an image the entry's other repositories run as well,
-// and whatever is baked into it is source their jobs can read (F18). That is
-// the operator's own answer to F18: the switch is on unless they turn it off,
-// and Plan.Cloned carries the repositories that can read the checkout so the
-// line a build prints names them rather than leaving "bake your repos" to read
-// like every repository of the project.
+// The entry being built is the image the repository runs (a catalog reference
+// in its own workflow beats the project's map, T1 reading (b); the map answers
+// for a repository that names none), and the project's switch (bake_repos,
+// D1901) is on. Only a written false turns the switch off: absent and true are
+// one statement everywhere it is read (projectpolicy.Policy.BakesRepos,
+// localcfg.BakeReposEffective), so a build reads the absent case — every
+// installation predating the field — the same way the settings, the skill and
+// the publisher do.
+//
+// The entry serves no other repository, and the build can say so: a checkout
+// baked into an image another repository's jobs run is source they can read
+// (F18), and O3's reading (b) bakes "only the repos that share the image's own
+// repository grant — typically none for a shared image". So nothing is baked
+// into a shared image whatever the switch says: bake_repos: true asks for a
+// bake where one may land, and the switch is not an answer to F18.
+//
+// The map is the evidence for both of those, because it is the only thing a
+// build holds that speaks about any repository but its own (a build's
+// credential reaches one, O3 (b), so it reads no other repository's config).
+// A repository the map does not put on the entry — one that runs it by its own
+// workflow's reference — is therefore refused rather than baked: the build
+// cannot name the repositories that run the entry as well, and Plan.Cloned
+// would be a guess.
 //
 // An installation that predates both fields is byte-for-byte what it was: it
 // maps nothing, so no entry is its own, and no composed stage is ever quiet
@@ -126,7 +136,9 @@ type Request struct {
 	// job of it would read.
 	Reference string
 	// Map is the project's effective repo-to-image map (image_map, D1906), keyed
-	// by canonical repository name.
+	// by canonical repository name. It is the only evidence a build has about
+	// who else runs the entry — a build reads one repository's config — so the
+	// bake hangs off it: see Decide.
 	Map map[string]string
 	// Bake is the project's effective bake switch (bake_repos, D1901): nil when
 	// the project answered nothing, which is what an installation predating the
@@ -142,9 +154,11 @@ type Plan struct {
 	// Baked is the repository the stage clones, nil when this build bakes
 	// nothing.
 	Baked *Repo
-	// Cloned are the other repositories this build's image serves — they run on
-	// it and are cloned by their own jobs at start, because the build's
-	// credential reaches this build's repository alone (O3 (b)).
+	// Cloned are the other repositories the project's map puts on this build's
+	// image — they run on it and are cloned by their own jobs at start, because
+	// the build's credential reaches this build's repository alone (O3 (b)). It
+	// is what the build can say about who else reads the image, and it is why a
+	// non-empty list refuses the bake: see Decide.
 	Cloned []string
 	// Reason is why nothing is baked, as a sentence a build can print. It is
 	// empty when Baked is set.
@@ -159,7 +173,8 @@ type Plan struct {
 }
 
 // Decide is the rule: a build bakes the repository it runs for, and only when
-// that repository runs this entry and the project asked for the bake.
+// that repository runs this entry, when the entry is one no other repository
+// the project maps runs, and when the project asked for the bake.
 //
 // The entry a repository runs is the one its own workflow names, then the map's
 // answer for it, in the resolver's own order (T1 (b); IS1's one resolver), so
@@ -167,17 +182,34 @@ type Plan struct {
 // an image they never pull is work nobody reads. A repository that runs this
 // entry neither way bakes nothing, and says nothing.
 //
-// # The bake switch
+// # The bake switch, and what it does not decide
 //
 // bake_repos: false bakes nothing. Anything else — true, or the project
 // answering nothing, which is every installation predating the field — bakes
-// the repository's own checkout into the entry's image wherever the project
-// says the repository runs it, a shared image among them: that is the
-// operator's own answer to F18, and the build names the other repositories that
-// can then read the checkout (Plan.Cloned). Absent and true decide the same
-// way, because that is what the switch means everywhere else it is read
-// (projectpolicy.Policy.BakesRepos): one published node does not tell a
-// settings reader "on" and a build "nothing is baked".
+// the repository's own checkout into the entry's image where a bake may land.
+// Absent and true decide the same way, because that is what the switch means
+// everywhere else it is read (projectpolicy.Policy.BakesRepos): one published
+// node does not tell a settings reader "on" and a build "nothing is baked".
+//
+// A shared image is not somewhere a bake may land, whichever way the switch is
+// set (O3 reading (b): the bake set is the repositories that share the image's
+// own repository grant, which for a shared image is typically none). Whatever
+// is baked into an image the entry's other repositories run is source their
+// jobs can read (F18), and bake_repos: true is an operator asking for a bake —
+// not the answer to a boundary the owner ruled on. So a non-empty Plan.Cloned
+// refuses the bake, and the line a build prints names those repositories as the
+// reason rather than as a warning.
+//
+// # What the map has to say
+//
+// Both of those are read off the project's map, the only thing a build holds
+// that speaks about a repository other than its own: it reads one repository's
+// config and its credential reaches one repository (O3 (b)), so a build cannot
+// ask what the project's other repositories run. That makes the map a
+// requirement and not a hint — a repository the map does not put on the entry,
+// even one that runs it by its own workflow's reference, is refused rather than
+// baked, because the build cannot name the repositories that run the entry as
+// well and Plan.Cloned would be a guess.
 func Decide(req Request) Plan {
 	// The other repositories this image serves: they are the clone-at-start
 	// half of O3 (b) and are named whether or not this build bakes.
@@ -208,11 +240,20 @@ func Decide(req Request) Plan {
 	if req.Bake != nil && !*req.Bake {
 		return Plan{Cloned: cloned, Notable: true, Reason: "the project turned baking off (bake_repos is false in the published policy), so this image carries no checkout and its jobs clone at start"}
 	}
-	// The bake lands in an image the entry's other repositories run as well
-	// (Plan.Cloned names them): whatever is baked into it is source their jobs
-	// can read (F18). That is the operator's own answer to F18 — the switch is
-	// on unless they turn it off — and the line a build prints names them, so
-	// what the bake exposes is said rather than assumed.
+	// The map is the build's only evidence about any repository but its own (O3
+	// (b): one credential, one checkout, no second repository's config read), so
+	// where it does not put this repository on this entry the build cannot say
+	// who else runs the entry. A bake there is a checkout read by repositories
+	// the build cannot name — the reference is a fact about this repository's
+	// jobs and not about the project's.
+	if req.Map[req.Repo.Repo] != req.Entry {
+		return Plan{Cloned: cloned, Notable: true, Reason: fmt.Sprintf("this repository runs the catalog entry %s by its own workflow's reference and the project's image map does not put it there, so a build cannot name the other repositories that run the entry and could read a checkout baked into it: `fugaro image map set %s %s` records it in the map a build reads, and the bake follows", req.Entry, req.Repo.Repo, req.Entry)}
+	}
+	// A shared image is O3 (b)'s own boundary and not the switch's: bake_repos:
+	// true asks for a bake, and it does not decide who may read the result.
+	if len(cloned) > 0 {
+		return Plan{Cloned: cloned, Notable: true, Reason: fmt.Sprintf("the other repositories the project maps to this entry (%s) run this image too, so their jobs can read whatever is baked into it, and O3's reading (b) bakes nothing there — the bake follows only where an image serves this repository alone", strings.Join(cloned, ", "))}
+	}
 	baked := req.Repo
 	return Plan{Baked: &baked, Cloned: cloned, Notable: true}
 
@@ -331,6 +372,11 @@ func repoURLGuard(url string) string { return fmt.Sprintf(repoURLGuardFormat, or
 // a trailing ".git" off — applied to the whole URL, with a trailing "/" off
 // first because a URL may carry one and a repository name may not.
 //
+// The case fold comes first, as it does in the shell guard and in CanonicalRepo:
+// ".GIT" is the same suffix as ".git" to whoever wrote the remote, and a fold
+// that trimmed before lowercasing would leave "…/app.GIT" as "…/app.git" — a
+// spelling the guard then refuses against every REPO_URL, its own included.
+//
 // It is the identity the guard compares and the spelling the stage writes into
 // it, so a definition composed from any of git's spellings of one repository
 // is rebuilt by the nightly check, which passes the canonical one. It is not a
@@ -339,7 +385,7 @@ func repoURLGuard(url string) string { return fmt.Sprintf(repoURLGuardFormat, or
 // once this fold is applied, and a URL that is not one is refused before a
 // stage is written (httpsOrigin).
 func originID(u string) string {
-	return task.ASCIILower(strings.TrimSuffix(strings.TrimSuffix(u, "/"), ".git"))
+	return strings.TrimSuffix(strings.TrimSuffix(task.ASCIILower(u), "/"), ".git")
 }
 
 // httpsOrigin refuses a URL a stage may not spell into a definition: the URL is
