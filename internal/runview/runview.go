@@ -401,12 +401,19 @@ func ClassOf(rec *runstore.Record) failure.Class {
 // failedStatus reports whether a record's status is an ending the run did not
 // succeed under, which is the set a record's class is written for: a succeeded
 // run, a run still going and a record that never settled carry none (design
-// §3, D1464). It is asked of the *record*, so the status a row derives over
-// such a record — a preemption, a lost execution — never reaches it: that
-// derivation is the read side's, and the record recorded no ending at all.
+// §3, D1464). An unreviewed run belongs to that set like the rest: it ended,
+// and the review_unread class written beside its status is why it did not end
+// succeeded, so leaving the status out would drop the writer's own class off
+// the row and count the run under no cause at all (docs/binary-allow-rule's
+// NV1, F34's rule that a reader and a writer cannot call one cause by two
+// names).
+//
+// It is asked of the *record*, so the status a row derives over such a record
+// — a preemption, a lost execution — never reaches it: that derivation is the
+// read side's, and the record recorded no ending at all.
 func failedStatus(status runstore.Status) bool {
 	switch status {
-	case runstore.StatusFailed, runstore.StatusHalted, runstore.StatusInfraError, runstore.StatusCancelled:
+	case runstore.StatusFailed, runstore.StatusUnreviewed, runstore.StatusHalted, runstore.StatusInfraError, runstore.StatusCancelled:
 		return true
 	}
 	return false

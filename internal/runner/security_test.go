@@ -301,24 +301,28 @@ func TestSecurityRefusalKeepsTheRunOutOfReady(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
 		sec        *runstore.SecurityEscalation
-		inReady    bool
-		inReason   string
-		inClass    failure.Class
+		in         Decision
 		wantReady  bool
 		wantReason string
 		wantClass  failure.Class
+		wantKind   Kind
 	}{
-		{"a run that escalated nothing", nil, true, "", "", true, "", ""},
-		{"a run whose escalation ran", ran, true, "", "", true, "", ""},
-		{"a refused escalation turns a ready run into a draft", refused, true, "", "", false, ReasonSecurityRefused, failure.Unclassified},
-		{"a refused escalation replaces Decide's own refusal", refused, false, testsFailed, failure.TestsFailed, false, ReasonSecurityRefused, failure.Unclassified},
+		{"a run that escalated nothing", nil, readyDecision(""), true, "", "", KindReady},
+		{"a run whose escalation ran", ran, readyDecision(""), true, "", "", KindReady},
+		{"a refused escalation turns a ready run into a draft", refused, readyDecision(""), false, ReasonSecurityRefused, failure.Unclassified, KindBlocked},
+		{"a refused escalation replaces Decide's own refusal", refused, blockedDecision(testsFailed, failure.TestsFailed), false, ReasonSecurityRefused, failure.Unclassified, KindBlocked},
+		// The kind moves with the sentence, and this is the case that matters: a
+		// run no review round reached is the one Decide answers `unreviewed`
+		// for, and a refusal found at finalize is a failure of its own — the
+		// record may not carry the label over it (D994, D995).
+		{"a refused escalation outranks the unreviewed label", refused, unreviewedDecision("no review verdict"), false, ReasonSecurityRefused, failure.Unclassified, KindBlocked},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := &run{rec: &runstore.Record{Security: tc.sec}}
-			ready, reason, class := r.applySecurityRefusal(tc.inReady, tc.inReason, tc.inClass)
-			if ready != tc.wantReady || reason != tc.wantReason || class != tc.wantClass {
-				t.Errorf("applySecurityRefusal(%v, %q, %q) = (%v, %q, %q), want (%v, %q, %q)",
-					tc.inReady, tc.inReason, tc.inClass, ready, reason, class, tc.wantReady, tc.wantReason, tc.wantClass)
+			dec := r.applySecurityRefusal(tc.in)
+			if dec.Ready != tc.wantReady || dec.Reason != tc.wantReason || dec.Class != tc.wantClass || dec.Kind != tc.wantKind {
+				t.Errorf("applySecurityRefusal(%+v) = %+v, want (%v, %q, %q, %q)",
+					tc.in, dec, tc.wantReady, tc.wantReason, tc.wantClass, tc.wantKind)
 			}
 		})
 	}
