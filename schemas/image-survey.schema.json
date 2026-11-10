@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/image-survey.schema.json",
   "title": "Fugaro image survey",
-  "description": "The document `fugaro image survey --json` prints: one row per repository the project's configuration lists, with the image signals that repository carries (its lockfiles and version files, its Dockerfile and the base image it names, its CI file, and the services its compose or Testcontainers files name), and the catalog the project has today. The read is read-only: each repository is read through the code host's own file API at a fixed list of paths, nothing is cloned and nothing is written, and every value here was bounded by the rule that took it out of a file before it reached this document. A repository the survey could not open is a row carrying unread and no signals, which is a different thing from a repository whose files name nothing.",
+  "description": "The document `fugaro image survey --json` prints: one row per repository the project's configuration lists, with the image signals that repository carries (its lockfiles and version files, its Dockerfile and the base image it names, its CI file, and the services its compose or Testcontainers files name), and the catalog the project has today. The read is read-only: each repository is read through the code host's own file API at a fixed list of paths, nothing is cloned and nothing is written, and every value here was bounded by the rule that took it out of a file before it reached this document. A row the survey got no answer from — a provider it could not open, or none of its fixed paths readable — carries unread and no signals; a row at least one of those paths answered carries its signals, empty when none of those files named one, and that is a different thing from the row that carries unread.",
   "type": "object",
   "required": [
     "version",
@@ -56,11 +56,11 @@
         "unread": {
           "type": "string",
           "minLength": 1,
-          "description": "Why this row has no signals: the name is not a repository of this project, no provider could be resolved, the provider cannot read a file out of a repository, opening it failed, or not one of the survey's fixed paths could be read from it. Absent on every row the survey read — a repository whose files were read and name none of the signals carries an empty signals list and no reason. The last reason is the interface's own limit and not a verdict about the repository: a contents read answers the same error for a file that is not there and for a read that was refused, so a repository that does not exist, a credential that reads nothing there and a repository holding none of these files are one answer here, and this document does not guess which."
+          "description": "Why this row has no signals: the name is not a repository of this project, no provider could be resolved, the provider cannot read a file out of a repository, opening it failed, or not one of the survey's fixed paths could be read from it. Absent on every row at least one of those paths answered, and a repository whose files were read and name none of the signals carries an empty signals list and no reason. The last reason is not a verdict about the repository: a contents read answers the same error for a file that is not there and for a read that was refused, so a repository that does not exist, a credential that reads nothing there, and a repository holding none of the survey's files — one whose files are all outside the fixed list, a Terraform-only or docs-only repository, say — are one answer here, and this document does not guess which."
         },
         "signals": {
           "type": "array",
-          "description": "The signals the repository carries, in the survey's own fixed order. Empty on a row the survey read whose files name none of them, and on a row it could not read (which then carries unread).",
+          "description": "The signals the repository carries, in the survey's own fixed order. Empty on a row whose files were read and named none of them, and on a row whose every fixed path came back unreadable (which then carries unread).",
           "items": {
             "$ref": "#/$defs/finding"
           }
@@ -92,7 +92,7 @@
         },
         "value": {
           "type": "string",
-          "description": "What the rule bounded out of that file: a manager's name, a version, a base image reference, or the services a compose or Testcontainers file names, comma-separated. Absent when the signal is the file's own presence, which is the answer for a lockfile, a CI file, a Dockerfile whose FROM line is not a reference the survey carries, and a compose file naming no service Fugaro starts."
+          "description": "What the rule bounded out of that file: a manager's name, a version, a base image reference, or the services a compose or Testcontainers file names, comma-separated. A service name is one of the closed list a catalog entry's own services: key takes — postgres, redis, firebase — and never a tag: the Firebase emulator is `firebase` here, while `firebase-emulator` is a tag an entry may carry beside it. Absent when the signal is the file's own presence, which is the answer for a lockfile, a CI file, a Dockerfile whose FROM line is not a reference the survey carries, and a compose file naming no service Fugaro starts."
         }
       }
     },

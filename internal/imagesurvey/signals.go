@@ -310,11 +310,17 @@ func testcontainersHints(data []byte) (string, bool) {
 	return serviceWordsIn(data, true)
 }
 
-// services are the names images/common/fugaro-services starts (F12), each with
-// the words a repository writes it as — compiled once, and matched against the
-// file's bytes and nothing else. Only these are ever answered with: a service
-// a repository names that Fugaro has no starter for is not one this survey can
-// propose, so no word of the file ever reaches the report.
+// services are the names a catalog entry's own `services:` key may hold (F12,
+// D1904), each with the words a repository writes it as — compiled once, and
+// matched against the file's bytes and nothing else. They are the closed list
+// images/common/fugaro-services accepts and config.ServiceNames holds, and what
+// a rule answers with is a list a consumer writes straight into an entry, so
+// every name here is one `fugaro validate` takes and the script starts: the
+// Firebase emulator is the service `firebase`, not the `firebase-emulator` tag
+// an entry may carry beside it (internal/cli/image_catalog.go). Only these are
+// ever answered with: a service a repository names that Fugaro has no starter
+// for is not one this survey can propose, so no word of the file ever reaches
+// the report.
 var services = []struct {
 	service string
 	words   []*regexp.Regexp
@@ -324,7 +330,7 @@ var services = []struct {
 		regexp.MustCompile(`(?i)\bpostgresql\b`),
 	}},
 	{"redis", []*regexp.Regexp{regexp.MustCompile(`(?i)\bredis\b`)}},
-	{"firebase-emulator", []*regexp.Regexp{regexp.MustCompile(`(?i)\bfirebase\b`)}},
+	{"firebase", []*regexp.Regexp{regexp.MustCompile(`(?i)\bfirebase\b`)}},
 }
 
 var testcontainersMarker = regexp.MustCompile(`(?i)\btestcontainers\b`)

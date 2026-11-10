@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 )
 
@@ -150,6 +151,27 @@ func TestSurveyValuesAreBoundByShape(t *testing.T) {
 		if strings.ContainsAny(f.Value, "‮\u001b") {
 			t.Errorf("%s: the value %q carries a control character", f.Path, f.Value)
 		}
+	}
+}
+
+// TestSurveyServiceNamesAreTheCatalogList: what a compose or Testcontainers
+// rule answers with is a list of services a consumer writes straight into a
+// catalog entry's `services:` key, so every name here has to be one that key
+// takes — config.ServiceNames, the closed list images/common/fugaro-services
+// starts (F12, D1904) — and every name the key takes has to be one the survey
+// can answer with. The emulator is where the two could drift: it is `firebase`
+// as a service and `firebase-emulator` as the tag an entry may also carry
+// (internal/cli/image_catalog.go).
+func TestSurveyServiceNamesAreTheCatalogList(t *testing.T) {
+	names := make([]string, 0, len(services))
+	for _, s := range services {
+		names = append(names, s.service)
+		if len(s.words) == 0 {
+			t.Errorf("%s has no word a repository writes it as, so no rule can ever answer it", s.service)
+		}
+	}
+	if !slices.Equal(names, config.ServiceNames) {
+		t.Errorf("the survey answers with %v, and a catalog entry's services: key takes %v: a value a consumer writes into an entry has to be a name `fugaro validate` accepts and the starter knows", names, config.ServiceNames)
 	}
 }
 

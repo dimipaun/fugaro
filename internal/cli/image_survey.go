@@ -39,12 +39,15 @@ type imageSurveyOut struct {
 // signals for it: the name is not a repository of this project, no provider
 // could be resolved for it, its provider cannot read a file out of a
 // repository, opening it failed, or not one of the files the survey reads could
-// be read from it. It is empty on every row whose files were read — a
-// repository that has none of the signals is one whose files answered, which is
-// exactly what Unread's last reason cannot claim. The two empty rows must not
-// look alike, so a repository the survey read nothing from says so rather than
-// reporting the same thing as a readable repository that holds none of these
-// files.
+// be read from it. It is empty on every row at least one of those files
+// answered — a repository that has none of the signals is one whose files
+// answered, which is exactly what Unread's last reason cannot claim. The two
+// empty rows must not look alike, so a repository the survey read nothing from
+// says so rather than reporting the same thing as a repository that holds none
+// of these files — and the last reason is deliberately the same sentence for
+// both, because a contents read answers one error for a file that is not there
+// and for a read that was refused, so which of the two this is cannot be told
+// here.
 type imageSurveyRepo struct {
 	Repo     string                `json:"repo"`
 	Provider string                `json:"provider,omitempty"`
