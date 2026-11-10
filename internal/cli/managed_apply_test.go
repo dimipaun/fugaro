@@ -148,9 +148,6 @@ func TestManagedApplyRefusesWhenNoBudgetReadOpensTheGate(t *testing.T) {
 		unreadable bool
 		want       []string
 	}{
-		{"the marker is version 1: managed, and no amount recorded",
-			[]byte(`{"version":1,"gcp_project":"proj-1234"}`), false,
-			[]string{"has no budget recorded", "fugaro managed flag <gcp-project-id> --budget N --budget-currency CCC", "fugaro setup --create-project --managed --budget N --budget-currency CCC --billing-account ID"}},
 		{"there is no marker at all", nil, false, []string{"is not managed", "is not there"}},
 		{"the marker exists and cannot be read", []byte(v2), true, []string{"is not managed", "cannot be read"}},
 		// A version-2 marker whose figure fails Budget.Check is reported as an
@@ -352,6 +349,61 @@ func TestManagedApplyRunsPastAnOpenGate(t *testing.T) {
 	}
 	if !initWithCred {
 		t.Fatalf("an open gate did not go on to launch terraform's init with the deployer's credential file (calls: %v)", verbs)
+	}
+}
+
+// TestManagedApplyWarnsWhenTheMarkerRecordsNoBudget is D1545's one exception to
+// the refusal table above, and the reason the version-1 row is not in it: a
+// version-1 marker that NAMES THIS PROJECT is a managed creation fact, so the
+// read answered the question it was asked and what is missing is only the
+// evidence that the owner chose a budget — which the owner can add at their own
+// terminal. The gate therefore opens WITH A WARNING rather than refusing: the
+// apply goes on past the gate, exactly as an open gate does above, and the
+// session reads the sentence ApplyGate built and Apply printed (Request.Out,
+// which this command's reporter points at stderr).
+//
+// The warning is asserted where it is written, from Enable.Warning, and not by
+// re-deriving it here: the five pieces are the sentence's own opening, the
+// read's reason, the owner's two commands and the promise that the apply
+// proceeds with it recorded.
+func TestManagedApplyWarnsWhenTheMarkerRecordsNoBudget(t *testing.T) {
+	r, root, mints := managedOpenGateRig(t)
+	// The rig's own marker is a version 2, the open gate the test above runs
+	// past; the world this test is about records no amount, and it names this
+	// project, so the second read IsManaged makes answers "managed" and the one
+	// warning D1545 takes is the one raised.
+	r.gcs.Put(initRunsBucket, "fugaro/managed.json", []byte(`{"version":1,"gcp_project":"proj-1234"}`))
+
+	out, errOut, _ := execute(t, "managed", "apply", root)
+	got := out + errOut
+	for _, want := range []string{
+		initProjectName + " has no budget recorded (",
+		"records no budget amount for " + initProjectName,
+		"fugaro managed flag <gcp-project-id> --budget N --budget-currency CCC",
+		"fugaro setup --create-project --managed --budget N --budget-currency CCC --billing-account ID",
+		"this apply proceeds with that warning recorded",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the owner does not read the gate's own warning, missing %q:\n%s", want, got)
+		}
+	}
+	// And a warning is not a refusal: the run goes on past the gate to the
+	// steps it guards, which is what "the apply proceeds" promises.
+	if !readAllowList(r) {
+		t.Error("a warned gate did not go on to read the owner's delete list")
+	}
+	calls := mints()
+	if !slices.ContainsFunc(calls, func(p string) bool { return strings.HasSuffix(p, ":generateAccessToken") }) {
+		t.Errorf("a warned gate did not go on to assume the deployer (impersonation calls: %v)", calls)
+	}
+	var initWithCred bool
+	for _, c := range r.fakeCalls(t) {
+		if c.Args[0] == "init" && c.Credentials {
+			initWithCred = true
+		}
+	}
+	if !initWithCred {
+		t.Fatal("a warned gate did not go on to launch terraform's init with the deployer's credential file")
 	}
 }
 

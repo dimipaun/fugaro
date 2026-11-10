@@ -1230,11 +1230,10 @@ func TestUpdateManagedRefusalsHoldAtATerminal(t *testing.T) {
 	}
 
 	// The control for the projection arm: the same plan, the same terminal, a
-	// project that is not managed. There the step is the person's own — the
-	// note above it says the plan is not covered by the run's one confirmation,
-	// and the reader of that note is what answers for the step (T7) — and it is
-	// applied, because no gate stands there to refuse it. That is what the
-	// refusal above holds back.
+	// project that is not managed. No gate stands there, so nothing refuses the
+	// plan: the step asks its own confirmation, the person at the terminal is
+	// the answer to it (T7), and the plan is applied. That is what the refusal
+	// above holds back.
 	r := updateRig(t)
 	// A project of Fugaro's own that is not managed: the marker names it, so
 	// the review is a run confirmation a person answers by being there
@@ -1254,8 +1253,8 @@ func TestUpdateManagedRefusalsHoldAtATerminal(t *testing.T) {
 	if strings.Contains(got, managedmode.NotConverged) {
 		t.Errorf("a project that is not managed stopped in the managed gate's sentence, so the control does not witness what the refusal above holds back:\n%s", got)
 	}
-	if !strings.Contains(got, "is not covered by the run confirmation") {
-		t.Errorf("the control's step did not say the plan is the person's own, so it does not witness what the gate's refusal holds back:\n%s", got)
+	if !strings.Contains(got, "⚠ CONFIRM (project "+initProjectName+", GCP project "+initProject+"): applies") {
+		t.Errorf("the control's step did not ask its own confirmation, so it does not witness what the gate's refusal holds back:\n%s", got)
 	}
 	if n := len(r.ran(t, "apply")); n != 1 {
 		t.Errorf("%d terraform apply(s) in the control run, want the one:\n%s", n, got)
