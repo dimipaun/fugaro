@@ -11,6 +11,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/issues"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/shellword"
 	"github.com/dimipaun/fugaro/internal/updatecheck"
@@ -44,7 +45,8 @@ const retryOfferPrefix = "You can retry: "
 // get to be the thing that finds a second config. dir is the checkout the run
 // converged ("" is the working directory), and it selects in both places the
 // converge selected in: the checkout whose fugaro.yaml names the project, and
-// the origin a config is matched by.
+// the origin a config is matched by. Which bucket the selection reads follows
+// from the run as well (retryBucketURL).
 var updateRetryBucket = func(ctx context.Context, o cloudOptions, p retryProject) (*blobx.Bucket, error) {
 	co, err := checkoutProject(ctx, p.dir)
 	if err != nil {
@@ -65,21 +67,57 @@ var updateRetryBucket = func(ctx context.Context, o cloudOptions, p retryProject
 	if err != nil {
 		return nil, err
 	}
-	if lc == nil || (lc.Bucket == "" && lc.RunsBucket == "") {
+	if lc == nil {
 		return nil, errors.New("no project with a runs bucket is selected")
 	}
-	return blobx.Open(ctx, lc.BucketURL())
+	url, err := retryBucketURL(lc, p.runsBucket)
+	if err != nil {
+		return nil, err
+	}
+	return blobx.Open(ctx, url)
+}
+
+// retryBucketURL is the bucket the offer reads, from the config the run
+// selected and the --runs-bucket the run was given: loadInitConfig's own two
+// lines, applied to the selection rather than to a config about to be
+// converged. The run converged against this bucket, so the offer has to read
+// the same one — a machine that passed --runs-bucket here and whose config
+// names no bucket_url of its own would otherwise read the bucket the config
+// would have answered with and miss its own issue (or, if that bucket holds a
+// row of the same number and fingerprint, offer an issue this release did not
+// fix).
+//
+// The refusal is the converge's, spelled the same way: --runs-bucket and a
+// bucket_url that is not it are two answers to one question. Every error is an
+// offer not printed, never a failed update.
+//
+// It is a function of its own because the answer is what a test can check
+// without a bucket: the seam it is called from opens a gs:// URL, which no
+// hermetic test can reach.
+func retryBucketURL(lc *localcfg.Config, runsBucket string) (string, error) {
+	if runsBucket != "" {
+		lc.RunsBucket = runsBucket
+		if lc.Bucket != "" && lc.Bucket != "gs://"+runsBucket {
+			return "", userErr("--runs-bucket %s is not the local config's bucket_url %s", runsBucket, lc.Bucket)
+		}
+	}
+	if lc.Bucket == "" && lc.RunsBucket == "" {
+		return "", errors.New("no project with a runs bucket is selected")
+	}
+	return lc.BucketURL(), nil
 }
 
 // retryProject is the project the run this offer follows converged, as the
 // door still knows it after the fact: dir is the checkout --repo converged
-// ("" is the working directory), and name is the --name the run selected with.
-// The two together are the run's own selection, which is the one the offer has
-// to repeat — a project this offer found on its own would be a second
-// selection, and the whole point is that the run's is the only one.
+// ("" is the working directory), name is the --name the run selected with, and
+// runsBucket is the --runs-bucket the installation door applies to the config
+// it selects. The three together are the run's own selection, which is the one
+// the offer has to repeat — a project this offer found on its own would be a
+// second selection, and the whole point is that the run's is the only one.
 type retryProject struct {
-	dir  string
-	name string
+	dir        string
+	name       string
+	runsBucket string
 }
 
 // updateRetryProject is that project, from the flags and the door's own
@@ -89,12 +127,21 @@ type retryProject struct {
 // would read another project's store (or none). name is --name, which
 // loadInitConfig selects with and which loadRepoConfig validates against the
 // checkout's own project before this offer can run — on a machine with several
-// project configs, nothing else selects.
+// project configs, nothing else selects. runsBucket is --runs-bucket, and the
+// installation door's alone: it converges the config loadInitConfig selected
+// against that bucket, so the offer reads it, and a --repo run never applied it
+// (loadRepoConfig does not).
 func updateRetryProject(o *initOptions, args []string) retryProject {
-	p := retryProject{name: o.name}
 	if !o.repo {
-		return p
+		// The installation door's selection, --runs-bucket included:
+		// loadInitConfig applies it to the config it selected.
+		return retryProject{name: o.name, runsBucket: o.runsBucket}
 	}
+	// --repo converges the checkout's repository through loadRepoConfig, which
+	// selects with the checkout's own config and does not apply --runs-bucket
+	// (the flag is the installation door's), so the offer repeats that too and
+	// reads the bucket the run actually converged against.
+	p := retryProject{name: o.name}
 	p.dir = "."
 	if len(args) > 0 {
 		p.dir = args[0]
