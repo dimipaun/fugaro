@@ -16,7 +16,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runstore"
-	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // The runs of these tests are on PR 7 of acme/app, on the branch a fresh run
@@ -374,7 +373,7 @@ func TestFollowupsCarriesTheParentsMode(t *testing.T) {
 		t.Fatalf("the document's rigor = %q, want %q", doc.Tasks[0].Rigor, rigor.Critical)
 	}
 	spec := readSpec(t, f, doc.Tasks[0].RunID)
-	if spec.Rigor != string(rigor.Critical) {
+	if spec.Rigor != rigor.Critical {
 		t.Fatalf("the stored task's rigor = %q, want %q", spec.Rigor, rigor.Critical)
 	}
 }
@@ -422,7 +421,7 @@ func TestFollowupsNeverLowersAFloor(t *testing.T) {
 
 	doc := followUpsDoc(t, parent, "--launch")
 	spec := readSpec(t, f, doc.Tasks[0].RunID)
-	if spec.Rigor != string(rigor.POC) {
+	if spec.Rigor != rigor.POC {
 		t.Fatalf("the stored task's rigor = %q, want the parent's own %q", spec.Rigor, rigor.POC)
 	}
 	// Nothing of the parent's own resolution is carried besides the mode: no
@@ -433,14 +432,14 @@ func TestFollowupsNeverLowersAFloor(t *testing.T) {
 	}
 	// The request is raise-only, so the floors hold whatever the record said:
 	// poc is below the mode a repository that configures nothing resolves.
-	if got := rigor.Resolve(rigor.Config{}, rigor.Request{Mode: rigor.Mode(spec.Rigor)}).Mode; got != rigor.Default {
+	if got := rigor.Resolve(rigor.Config{}, rigor.Request{Mode: spec.Rigor}).Mode; got != rigor.Default {
 		t.Fatalf("the run resolves %q, want its floor %q", got, rigor.Default)
 	}
 
 	// A block outside the vocabulary is not a decision anybody made, and is
 	// not carried: the floors alone decide.
 	rec.Rigor = &runstore.RigorRecord{Mode: "wild", From: rigor.FromRepo, At: runstore.RigorAtBootstrap}
-	seedParent(t, f, parent, rec)
+	writeRecord(t, f, parent, rec)
 	other := followUpsDoc(t, parent, "--launch")
 	if other.Skipped == nil {
 		t.Fatalf("the groups filed a moment ago are not skipped: %+v", other)
@@ -695,13 +694,14 @@ func TestFollowupsResolvesTheRunIsRepository(t *testing.T) {
 	rec := parentRecord(parent)
 	rec.Deferred = allDeferred(t)
 	rec.Repo = "other/fork"
-	seedParent(t, f, parent, rec)
+	writeRecord(t, f, parent, rec)
 
+	asked := followUpsTripwire(t, stub)
 	if doc := followUpsDoc(t, parent); doc.Repo != "acme/app" {
 		t.Fatalf("the document's repo = %q, want the launcher-written acme/app", doc.Repo)
 	}
-	if calls := stub.Snapshot().Calls; len(calls) == 0 {
-		t.Error("the forge was never asked about the run's own repository")
+	if got := *asked; !slices.Equal(got, []string{"acme/app"}) {
+		t.Errorf("the forge was opened for %v, want the run's own acme/app alone", got)
 	}
 
 	// A run under a slug no repository of this machine produces: the task
@@ -715,14 +715,33 @@ func TestFollowupsResolvesTheRunIsRepository(t *testing.T) {
 	}
 	data = []byte(strings.Replace(string(data), "acme/app", "acme/other", 1))
 	putBuildObject(t, f, "runs/"+otherSlug+"/"+other+"/task.json", data)
-	before := stub.Snapshot().Calls
+	*asked = nil
 	refused := followUpsErr(t, otherSlug+"/"+other)
 	if !strings.Contains(refused, "which no repository in this machine's config") {
 		t.Errorf("the refusal does not name the config: %s", refused)
 	}
-	if after := stub.Snapshot().Calls; len(after) != len(before) {
-		t.Errorf("a run whose repository cannot be resolved still reached the forge: %v", after[len(before):])
+	if got := *asked; len(got) != 0 {
+		t.Errorf("a run whose repository cannot be resolved still reached the forge, for %v", got)
 	}
+}
+
+// followUpsTripwire installs the command's opener seam so that a test can say
+// which repository the forge was asked about, if any: the Call log is the
+// writes alone (fake.Call), so a read is invisible there. It answers every
+// open with p, the host a real opener would have handed back, and the returned
+// slice holds one entry per open, in order.
+func followUpsTripwire(t *testing.T, p *fake.Provider) *[]string {
+	t.Helper()
+	asked := &[]string{}
+	was := openFollowUpsProvider
+	openFollowUpsProvider = func([]string, func(string)) (string, gitprov.Opener, error) {
+		return "", func(_ context.Context, _, repo string) (gitprov.Provider, []string, error) {
+			*asked = append(*asked, repo)
+			return p, nil, nil
+		}, nil
+	}
+	t.Cleanup(func() { openFollowUpsProvider = was })
+	return asked
 }
 
 // TestFollowUpSinceHasAReleaseBullet: followUpSince names a release that is not
