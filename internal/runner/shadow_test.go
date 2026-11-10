@@ -2,6 +2,7 @@ package runner_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -846,6 +847,40 @@ func TestShadowNoVerdictMatchesTheChampion(t *testing.T) {
 	}
 	if n := pushes(); n != 0 || len(publishes(g.harness)) != 0 {
 		t.Fatalf("the unreviewed arm published something: %d push(es), %v", n, publishes(g.harness))
+	}
+}
+
+// TestShadowStageFailureMatchesTheChampion: the arm's own first failure ends the
+// arm's run the way it ends its champion's, and the sentence it leaves is the
+// record's — the decision it replaced does not get to name the ending. The case
+// is the one where the two disagree: the implement stage ran and its tests
+// passed, so the verified record is on the commit the arm ends at, and the review
+// stage then fell over — no review round was ever recorded, so Decide's own
+// answer is "no review verdict", the label. The champion's case is
+// TestStageTimingFailedStage and its record says failed: the answer that would
+// have made it unreviewed is the one finalize's override replaces whole, because
+// the run stopped for a stage that failed and no round was read either way. An
+// arm that inherited the label instead would be a pair whose two records
+// disagree about a run both of them failed (D559), and a reader of this one would
+// see a label pointing at a review the arm never had.
+func TestShadowStageFailureMatchesTheChampion(t *testing.T) {
+	g, _ := armGW(t, armCfg(t), "50", challengerModel, armLayer)
+	fell := func(*testing.T, context.Context, agent.Request) (agent.Result, error) {
+		return agent.Result{}, errors.New("the reviewer fell over")
+	}
+	rec, err := g.run(t, implement("feature"), fell)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeNone {
+		t.Fatalf("record = %s/%s (reason %q), want %s/none: the stage the arm failed is the ending its record names",
+			rec.Status, rec.Outcome, rec.Reason, runstore.StatusFailed)
+	}
+	if want := "stage review failed: the reviewer fell over"; rec.Reason != want {
+		t.Fatalf("reason = %q, want %q: the arm's own failure outranks the answer it replaced, and says so", rec.Reason, want)
+	}
+	if len(publishes(g.harness)) != 0 {
+		t.Fatalf("the failed arm published something: %v", publishes(g.harness))
 	}
 }
 
