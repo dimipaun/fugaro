@@ -1980,7 +1980,7 @@ test('the client never relies on the SDK\'s offline queue: nothing is ever issue
   assert.equal(h.valueAt(`${INBOX}/handed-over`), null);
 });
 
-test('a sentence comes from the gate alone, and every other refusal is bare', async () => {
+test('a sentence comes from the gate and from the licence, and every other refusal is bare', async () => {
   // README's bullet tells the screens (P6.9's text screen, P6.12's voice screen)
   // which refusal they may render. The claim was wrong twice: first it said
   // `flush` and `poll` carry a sentence too, then it said every refused `send`
@@ -2019,6 +2019,17 @@ test('a sentence comes from the gate alone, and every other refusal is bare', as
   // And it is still refused for its own reason: the bare shape is not one code.
   assert.equal(tooLong.code, CLIENT_CODES.TOO_LONG, 'and it is the refusal it says it is');
   assert.equal(whileOffline[0][1].code, GATE_CODES.NO_CONNECTION);
+
+  // **The second refuser with a sentence is the licence** (S6.3, D436, T12;
+  // §5.7: the lapse's refusal is rendered the way the offline one is). It is a
+  // table of its own -- `licence/state.js`'s -- and the two are disjoint, which
+  // is what makes the lookup in `spokenRefusal` answer a reason rather than a
+  // preference. Its sentence names the state and the way out, and it carries no
+  // figure (D430).
+  const lapsed = await harness({ licence: licenceIn(LICENCE_STATES.LAPSED).port });
+  const byLicence = await lapsed.client.send('launch the docs task', { verb: 'launch' });
+  assert.equal(byLicence.message, LICENCE_SPEECH[LICENCE_STATE_CODES.LAPSED]);
+  assert.equal(typeof byLicence.told, 'boolean', 'and a licence refusal says whether it was heard');
 });
 
 // ---------------------------------------------------------------------------

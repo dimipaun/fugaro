@@ -761,13 +761,18 @@ test('the door names one package and its own two files, and the package is the E
   // The suite never loads this file, so nothing here is a claim a test can make
   // by running it -- the scan is the claim.
   assert.deepEqual(specifiers.filter((specifier) => !specifier.startsWith('.')), ['@noble/curves/ed25519.js']);
-  // The two files the door is the door TO: the verifier (S2.5) and the store
-  // (S2.8), and each is named where it belongs -- the store once for the factory
-  // and once for the names it re-exports. The set is exact on purpose -- a third
-  // module reached through the door is a decision, and this is where it is made.
+  // The three files the door is the door TO: the verifier (S2.5), the store
+  // (S2.8) and the lapse state (S6.3). The set is exact on purpose -- a module
+  // reached through the door is a decision, and this is where it is made -- and
+  // the third was taken deliberately, not slipped in: S6.3's screens need the
+  // five states' names, the refusal code and its sentence (the banners of §5.3
+  // to §5.5 and the copy of §5.7), while the write path's rules -- the classes,
+  // the kept set, the refusal functions -- stay OUT of the door, so that nothing
+  // a screen can reach could enforce a lapse of its own (`index.js` states that
+  // rule and why; this line is what holds the file to it).
   assert.deepEqual(
     [...new Set(specifiers.filter((specifier) => specifier.startsWith('.')))].sort(),
-    ['./store.js', './verify.js'],
+    ['./state.js', './store.js', './verify.js'],
   );
   assert.deepEqual(specifiers.filter((specifier) => NETWORK_MODULES.includes(specifier)), []);
   assert.equal(/\bprocess\.env\b/.test(INDEX_SOURCE), false, 'the door reads no environment either');

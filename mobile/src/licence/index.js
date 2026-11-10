@@ -39,6 +39,7 @@
 
 import { ed25519 } from '@noble/curves/ed25519.js';
 
+import { LICENCE_STATES, LICENCE_STATE_CODES, createLicenceState, licenceSpeech } from './state.js';
 import { LicenceStore } from './store.js';
 import { GRACE_DAYS, LICENCE_CODES, PRODUCTION_KEYRING, TIER_MAX_LIFETIME_DAYS, createLicenceVerifier } from './verify.js';
 
@@ -65,6 +66,25 @@ export { GRACE_DAYS, LICENCE_CODES, PRODUCTION_KEYRING, TIER_MAX_LIFETIME_DAYS }
 export function createLicenceStore(port) {
   return new LicenceStore({ port, verifier: LICENCE_VERIFIER });
 }
+
+/** The lapse state (S6.3; D436, T12): which of the app's five states it is in,
+ * the code a screen switches on, the sentence it says, and the port the write
+ * path is handed. */
+export { LICENCE_STATES, LICENCE_STATE_CODES, createLicenceState, licenceSpeech };
+
+// **What the door does NOT hand out, and why it is the store's class over
+// again.** `state.js` also exports the write path's own vocabulary: the write
+// CLASSES (`WRITES`), the kept set (`LAPSE_KEPT_WRITES`), the two functions that
+// decide a refusal (`lapseRefusal`, `lapseRefusalAt`) and the classification
+// (`writeOf`). None of them is here, and this file is where that is decided: a
+// screen that could call `lapseRefusal` could enforce a lapse of its own, beside
+// the one write path D113 says everything the app sends leaves through -- which
+// is the thing an enforcement outside it stops being. The screens need the state
+// (for the banners of §5.3 to §5.5), the code and the sentence; the client needs
+// the rules, and it reaches them as a FILE, because this door names
+// `@noble/curves` and the mailbox suite runs with no `node_modules`. The scan in
+// `verify.test.js` holds the specifier set, so this paragraph and that import
+// line are checked against each other rather than trusted.
 
 // The store is reached through the door and not built beside the screen that
 // reads it, for the reason above. The screen S2.1's table names is the caller:

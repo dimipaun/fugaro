@@ -16,6 +16,7 @@ const client = createMailboxClient({
   keys,                       // a SecretStore (the Keychain port)
   store,                      // { write(path, value), read(path) } -- the database, behind a port
   connection,                 // { isOnline() } -- the SDK's own "would this be sent" flag (P6.10)
+  licence,                    // { at(now) } -- the app's licence state (S6.3; optional, see "The lapse")
   speaker,                    // { speak(text) } -- P3.4's seam (see "The audio stub" below)
   now,                        // D117's server-anchored now, in ms
   newId,                      // a fresh message id per call
@@ -27,7 +28,7 @@ await client.send('run 42 finished');   // ONE signed inbox message, fresh id
 await client.flush();                   // re-deliver what the outbox has not answered
 await client.poll();                    // reads, verifies, speaks, acks, reports presence
 client.pending();                       // the records the outbox has not answered, still retried
-client.unsent();                        // D167's unsent text: what the gate refused (see below)
+client.unsent();                        // D167's unsent text: what the gate or the licence refused
 ```
 
 ## The write set is exactly two paths (D113)
@@ -243,12 +244,13 @@ client.pending();  // [] -- nothing was queued
   the connection gate **before** any read, write, key read or speak, so nothing
   reaches the SDK and nothing reaches its queue -- and `send` asks it once more
   at the write, for the reason the M1 note gives below the three rules. **A `message` is present
-  exactly when the GATE refused and nowhere else, and that is the shape a screen
-  may rely on.** A gated `send` -- and only that -- answers
-  `{ ok: false, code: <a `GATE_CODES` code>, field, message, told }`: the
-  sentence from `OFFLINE_SPEECH`, one table, so this module and the screens that
-  render it cannot end up saying two different things about one reason -- plus
-  whether it was spoken. A refused `flush` or `poll` answers the bare
+  exactly when the GATE or the LICENCE refused and nowhere else, and that is the
+  shape a screen may rely on.** A gated or lapsed `send` -- and only those --
+  answers `{ ok: false, code, field, message, told }`: the sentence from
+  `OFFLINE_SPEECH` for a `GATE_CODES` code, or from `LICENCE_SPEECH` for the
+  licence's `licence-lapsed` (S6.3), one table per refuser, so this module and
+  the screens that render it cannot end up saying two different things about one
+  reason -- plus whether it was spoken. A refused `flush` or `poll` answers the bare
   `{ ok: false, code, field }` (`refuse` in `client.js`), with **no `message`
   and no `told`**: there is nothing honest to say and nothing to speak. A poll
   is a read and may run with no screen in front of it, so a sentence spoken
@@ -264,10 +266,14 @@ client.pending();  // [] -- nothing was queued
   from `refuse` with no sentence attached, because those are failures this
   module has no decided sentence for and inventing one here would be this
   directory speaking for a screen. So the rule a screen must follow is: render
-  `refusal.message` **only for a `GATE_CODES` code**, and switch on `refusal.code`
-  for everything else -- a screen that renders `refusal.message` for a refused
-  flush, or for a refused too-long utterance, renders nothing, which is the
-  bug this paragraph exists to prevent.
+  `refusal.message` **only for a `GATE_CODES` code or for the licence's
+  `licence-lapsed`**, and switch on `refusal.code` for everything else -- a
+  screen that renders `refusal.message` for a refused flush, or for a refused
+  too-long utterance, renders nothing, which is the bug this paragraph exists to
+  prevent. The licence's sentence is `licence/state.js`'s and not this
+  directory's, for the reason `gate.js`'s is not: the state module owns what the
+  owner is told about a lapse, and two tables that render one reason are two
+  tables that drift.
 * **`send` asks the presence gate too**, over the **last poll's heartbeat,
   re-judged at the moment the owner speaks** -- not the verdict the poll
   computed. **It is asked twice, the second time at the write** (the review's
@@ -296,6 +302,44 @@ which is why a stale consumer is caught by an ordinary send and not only by a
 **An action that is gated offline is refused and NOT kept** -- the two rules meet
 there: nothing is written, and there is no unsent text either, because resending
 a destructive command means confirming it again.
+
+## The lapse (S6.3; D436, T12)
+
+The licence has its own refuser here, and it is the only one that is not about
+the network. `docs/design/lapse-read-only.md` §4.2 is the table, `state.js` owns
+it, and this client is where it is enforced -- because `send` is the app's one
+write path (D113), a lapse enforced anywhere else would be one a caller could
+walk around. It runs **before the connection gate**: both can be true of one
+utterance, and the licence's sentence names the way out (the key screen, which
+is never gated) while "try again when you are online" cannot help someone whose
+next launch is refused whatever the connection does.
+
+```js
+licence = { at: async (now) => ({ state: 'lapsed', claims: null }) };   // S6.3's port
+await client.send('launch the docs task', { verb: 'launch' });
+// { ok: false, code: 'licence-lapsed', field: 'licence',
+//   message: 'The Fugaro subscription has lapsed. I have not sent that. …', told: true }
+client.unsent();    // [{ text: 'launch the docs task', … }] -- kept, and never queued
+await client.send('cancel the docs refactor', { action: actionRecord });
+// { ok: true, … }  -- T12 keeps the cancel, and the kill switch, and every message
+```
+
+* **What it refuses is a CLASS, not a command.** The client asks `writeOf` what
+  the utterance will do -- the `verb` a caller classified a message as, or the
+  action record it carries -- and `state.js` answers, so a command nobody has
+  written yet cannot slip past. **The verb has to be handed in** (`options.verb`)
+  because D162's launch travels as an ordinary message: at this layer a launch
+  and a question are the same bytes.
+* **A kept write is never read at all.** A message, a cancel and the kill switch
+  are kept at every state, so the licence store is not opened for them
+  (`lapseRefusalAt` in `state.js` decides that, beside the set it is about).
+* **No port is the unenforced product, and it is the default.** A client built
+  without `licence` refuses nothing: there is nothing to enforce with until the
+  app has a verifier and a key service (D523), and a release that had not wired
+  one must not refuse a launch on a state it never read. A port that cannot be
+  asked (anything but `{ at }`) throws in the constructor, like every other port.
+* **A refusal is a sentence, from the licence's table** -- see the gate's
+  refusal-shape rule above, which now names both refusers.
 
 ## The limits of the gate, named
 
