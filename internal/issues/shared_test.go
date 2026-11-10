@@ -55,11 +55,26 @@ func hit(run, fingerprint, reporter, version string, at time.Time) Issue {
 	return i
 }
 
+// verified is the identity an upload names: the member string a credential
+// answered with, and the source that says it was this run's credential rather
+// than the cache (F3).
+func verified(member string) Identity {
+	return Identity{Address: member, Digest: Digest(member), Source: SourceVerified}
+}
+
+// uploadRaw is Upload with the identity every existing fixture's credential
+// answers with — the reporter the fixture itself carries — so a call site that
+// is about something else reads as it did before the reporter became the
+// credential's to name.
+func uploadRaw(ctx context.Context, b *blobx.Bucket, i Issue) (Uploaded, error) {
+	return Upload(ctx, b, i, verified(i.Reporter))
+}
+
 // upload is Upload with the error taken out, for the tests whose subject is
 // what happened after it.
 func upload(t *testing.T, ctx context.Context, b *blobx.Bucket, i Issue) Uploaded {
 	t.Helper()
-	up, err := Upload(ctx, b, i)
+	up, err := uploadRaw(ctx, b, i)
 	if err != nil {
 		t.Fatalf("uploading %s: %v", i.Run, err)
 	}
@@ -209,11 +224,11 @@ func TestConcurrentUploadsGetDistinctNumbers(t *testing.T) {
 		ch := make(chan struct{})
 		go func() {
 			defer close(ch)
-			other, otherErr = Upload(ctx, b, sharedIssue("update-20261107183015-48216", fingerprint("33")))
+			other, otherErr = uploadRaw(ctx, b, sharedIssue("update-20261107183015-48216", fingerprint("33")))
 		}()
 		<-ch
 	})
-	ours, err := Upload(ctx, b, sharedIssue("update-20261107183014-48215", fingerprint("22")))
+	ours, err := uploadRaw(ctx, b, sharedIssue("update-20261107183014-48215", fingerprint("22")))
 	if err != nil {
 		t.Fatalf("this machine's upload: %v", err)
 	}
@@ -251,17 +266,17 @@ func TestSameFingerprintOneNumber(t *testing.T) {
 	fp := fingerprint("44")
 	first := sharedIssue("update-20261107183012-48213", fp)
 
-	up, err := Upload(ctx, b, first)
+	up, err := uploadRaw(ctx, b, first)
 	if err != nil || up.Number != 1 || up.Attached {
 		t.Fatalf("the first upload = %+v, %v", up, err)
 	}
-	up2, err := Upload(ctx, b, hit("update-20261107183013-48214", fp, "bo@example.test", "0.9.0", issueAt.Add(time.Minute)))
+	up2, err := uploadRaw(ctx, b, hit("update-20261107183013-48214", fp, "bo@example.test", "0.9.0", issueAt.Add(time.Minute)))
 	if err != nil || up2.Number != 1 || !up2.Attached {
 		t.Fatalf("the second machine's upload = %+v, %v", up2, err)
 	}
 	// An upload repeated because its answer was lost is the issue that is
 	// there, not an occurrence of itself.
-	again, err := Upload(ctx, b, first)
+	again, err := uploadRaw(ctx, b, first)
 	if err != nil || again.Number != 1 || again.Attached {
 		t.Fatalf("the retried upload = %+v, %v", again, err)
 	}
@@ -285,11 +300,11 @@ func TestSameFingerprintOneNumber(t *testing.T) {
 			ch := make(chan struct{})
 			go func() {
 				defer close(ch)
-				other, otherErr = Upload(ctx, b, hit("update-20261107183015-48216", fp, "bo@example.test", "0.9.0", issueAt.Add(2*time.Minute)))
+				other, otherErr = uploadRaw(ctx, b, hit("update-20261107183015-48216", fp, "bo@example.test", "0.9.0", issueAt.Add(2*time.Minute)))
 			}()
 			<-ch
 		})
-		ours, err := Upload(ctx, b, hit("update-20261107183014-48215", fp, "ana@example.test", "0.9.0", issueAt.Add(time.Minute)))
+		ours, err := uploadRaw(ctx, b, hit("update-20261107183014-48215", fp, "ana@example.test", "0.9.0", issueAt.Add(time.Minute)))
 		if err != nil {
 			t.Fatalf("this machine's upload: %v", err)
 		}
@@ -334,7 +349,7 @@ func TestMatchAtOrAboveResolvedInIsRegression(t *testing.T) {
 	at := issueAt.Add(time.Minute)
 	for _, version := range []string{"0.21.1", "0.22.0"} {
 		t.Run(version, func(t *testing.T) {
-			got, err := Upload(ctx, b, hit("update-20261107183014-48215", fp, "bo@example.test", version, at))
+			got, err := uploadRaw(ctx, b, hit("update-20261107183014-48215", fp, "bo@example.test", version, at))
 			if err != nil {
 				t.Fatalf("uploading the hit: %v", err)
 			}
@@ -367,7 +382,7 @@ func TestMatchBelowResolvedInAttaches(t *testing.T) {
 	up, _ := filedIssue(t, ctx, b, fp)
 	setResolvedIn(t, ctx, b, up.Number, "0.21.1")
 
-	got, err := Upload(ctx, b, hit("update-20261107183014-48215", fp, "bo@example.test", "0.20.3", issueAt.Add(time.Minute)))
+	got, err := uploadRaw(ctx, b, hit("update-20261107183014-48215", fp, "bo@example.test", "0.20.3", issueAt.Add(time.Minute)))
 	if err != nil {
 		t.Fatalf("uploading the hit: %v", err)
 	}
@@ -387,7 +402,7 @@ func TestMatchBelowResolvedInAttaches(t *testing.T) {
 	// The issue this hit attaches to was never resolved, so a hit from any
 	// version is a plain occurrence too.
 	unresolved := upload(t, ctx, b, sharedIssue("update-20261107183016-48217", fingerprint("78")))
-	other, err := Upload(ctx, b, hit("update-20261107183017-48218", fingerprint("78"), "cy@example.test", "0.99.0", issueAt.Add(2*time.Minute)))
+	other, err := uploadRaw(ctx, b, hit("update-20261107183017-48218", fingerprint("78"), "cy@example.test", "0.99.0", issueAt.Add(2*time.Minute)))
 	if err != nil || other.Number != unresolved.Number || other.Regression {
 		t.Fatalf("the hit on an unresolved issue = %+v, %v", other, err)
 	}
@@ -414,7 +429,7 @@ func TestDevOrUnparseableVersionNeverRegresses(t *testing.T) {
 			if tc.resolvedIn != "" {
 				setResolvedIn(t, ctx, b, up.Number, tc.resolvedIn)
 			}
-			got, err := Upload(ctx, b, hit("update-20261107183014-48215", fp, "bo@example.test", tc.reporter, issueAt.Add(time.Minute)))
+			got, err := uploadRaw(ctx, b, hit("update-20261107183014-48215", fp, "bo@example.test", tc.reporter, issueAt.Add(time.Minute)))
 			if err != nil {
 				t.Fatalf("uploading the hit: %v", err)
 			}
@@ -443,7 +458,7 @@ func TestFingerprintWithoutNumberIsCompleted(t *testing.T) {
 		t.Fatalf("seeding the fingerprint's entry: %v", err)
 	}
 
-	up, err := Upload(ctx, b, sharedIssue("update-20261107183012-48213", fp))
+	up, err := uploadRaw(ctx, b, sharedIssue("update-20261107183012-48213", fp))
 	if err != nil || up.Number != 1 || up.Attached {
 		t.Fatalf("the upload = %+v, %v", up, err)
 	}
@@ -456,7 +471,7 @@ func TestFingerprintWithoutNumberIsCompleted(t *testing.T) {
 	}
 	// The number is an issue: the next machine to report the bug attaches to
 	// it rather than completing the entry again.
-	got, err := Upload(ctx, b, hit("update-20261107183014-48215", fp, "bo@example.test", "0.9.0", issueAt.Add(time.Minute)))
+	got, err := uploadRaw(ctx, b, hit("update-20261107183014-48215", fp, "bo@example.test", "0.9.0", issueAt.Add(time.Minute)))
 	if err != nil || got.Number != 1 || !got.Attached {
 		t.Fatalf("the next machine's upload = %+v, %v", got, err)
 	}
@@ -477,7 +492,7 @@ func TestRefusedNamingLeavesNoIssueBehind(t *testing.T) {
 		race(t, fingerprintKey(fp), func() { g.FailObjectWrites("fugaro-issues", fingerprintKey(fp), 1) })
 
 		issue := sharedIssue("update-20261107183012-48213", fp)
-		_, err := Upload(ctx, b, issue)
+		_, err := uploadRaw(ctx, b, issue)
 		if err == nil {
 			t.Fatal("an upload reported success for a naming write the store refused")
 		}
@@ -498,7 +513,7 @@ func TestRefusedNamingLeavesNoIssueBehind(t *testing.T) {
 		}
 		// The retry takes the next number — the counter is not rolled back — and
 		// the store holds the bug once.
-		up, err := Upload(ctx, b, issue)
+		up, err := uploadRaw(ctx, b, issue)
 		if err != nil || up.Number != 2 || up.Attached {
 			t.Fatalf("the retry = %+v, %v; want issue 2", up, err)
 		}
@@ -531,7 +546,7 @@ func TestRefusedNamingLeavesNoIssueBehind(t *testing.T) {
 		})
 
 		issue := sharedIssue("update-20261107183012-48213", fp)
-		if _, err := Upload(ctx, b, issue); err == nil {
+		if _, err := uploadRaw(ctx, b, issue); err == nil {
 			t.Fatal("an upload reported success for a naming write the store refused")
 		}
 		if rows, err := ListShared(ctx, b); err != nil || len(rows) != 0 {
@@ -541,7 +556,7 @@ func TestRefusedNamingLeavesNoIssueBehind(t *testing.T) {
 			t.Errorf("the fingerprint's entry after the naming = %v; want it still gone", err)
 		}
 		// The retry takes the next number and the store holds the bug once.
-		up, err := Upload(ctx, b, issue)
+		up, err := uploadRaw(ctx, b, issue)
 		if err != nil || up.Number != 2 || up.Attached {
 			t.Fatalf("the retry = %+v, %v; want issue 2", up, err)
 		}
@@ -566,7 +581,7 @@ func TestCancelledNamingLeavesNoIssueBehind(t *testing.T) {
 	race(t, fingerprintKey(fp), cancel)
 
 	issue := sharedIssue("update-20261107183012-48213", fp)
-	if _, err := Upload(cctx, b, issue); !errors.Is(err, context.Canceled) {
+	if _, err := uploadRaw(cctx, b, issue); !errors.Is(err, context.Canceled) {
 		t.Fatalf("the upload = %v, want the caller's own cancellation", err)
 	}
 	// Nothing of the cancelled attempt is left: not a record the retry numbers
@@ -576,7 +591,7 @@ func TestCancelledNamingLeavesNoIssueBehind(t *testing.T) {
 	}
 	// The retry the contract invites takes the next number — the counter is not
 	// rolled back — and the store holds the bug once.
-	up, err := Upload(ctx, b, issue)
+	up, err := uploadRaw(ctx, b, issue)
 	if err != nil || up.Number != 2 || up.Attached {
 		t.Fatalf("the retry = %+v, %v; want issue 2", up, err)
 	}
@@ -651,7 +666,7 @@ func TestNamingThatLandedBeforeItsErrorKeepsTheIssue(t *testing.T) {
 	// and the caller cannot tell that from a write that never happened.
 	race(t, fingerprintKey(fp), func() { g.FailObjectStoresAfterWrite(1) })
 
-	up, err := Upload(ctx, b, sharedIssue("update-20261107183012-48213", fp))
+	up, err := uploadRaw(ctx, b, sharedIssue("update-20261107183012-48213", fp))
 	if err != nil || up.Number != 1 {
 		t.Fatalf("the upload = %+v, %v; want issue 1", up, err)
 	}
@@ -746,7 +761,7 @@ func TestOccurrenceOnDismissedReopensNothing(t *testing.T) {
 			up := upload(t, ctx, b, sharedIssue("update-20261107183012-48213", fp))
 			tc.closing(t, b, up.Number)
 
-			got, err := Upload(ctx, b, hit("update-20261107183014-48215", fp, "bo@example.test", "0.9.0", issueAt.Add(time.Minute)))
+			got, err := uploadRaw(ctx, b, hit("update-20261107183014-48215", fp, "bo@example.test", "0.9.0", issueAt.Add(time.Minute)))
 			if err != nil || got.Number != up.Number || !got.Attached {
 				t.Fatalf("the hit = %+v, %v; want an occurrence of issue %d", got, err, up.Number)
 			}
@@ -1005,7 +1020,7 @@ func TestRejectsForeignIssueURL(t *testing.T) {
 		} {
 			bad := sharedIssue("update-20261107183012-48213", fp)
 			bad.URL, bad.OriginalURL = tc.url, tc.original
-			if _, err := Upload(ctx, b, bad); err == nil {
+			if _, err := uploadRaw(ctx, b, bad); err == nil {
 				t.Errorf("uploading a record with %s (%q) was allowed", tc.name, tc.url)
 			}
 		}
@@ -1018,7 +1033,7 @@ func TestRejectsForeignIssueURL(t *testing.T) {
 		if _, err := readVersion(ctx, b, fingerprintKey(fp)); !errors.Is(err, blobx.ErrNotExist) {
 			t.Errorf("a refused upload took the fingerprint: %v", err)
 		}
-		up, err := Upload(ctx, b, sharedIssue("update-20261107183012-48213", fp))
+		up, err := uploadRaw(ctx, b, sharedIssue("update-20261107183012-48213", fp))
 		if err != nil || up.Number != 1 {
 			t.Fatalf("the corrected upload = %+v, %v; want issue 1", up, err)
 		}
@@ -1744,7 +1759,7 @@ func TestUploadRefusesAValueThatIsNotAFingerprint(t *testing.T) {
 		{"not hexadecimal", "9f2c4a1b0d3e5f60718293a4b5c6d7gz"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := Upload(ctx, b, sharedIssue("update-20261107183012-48213", tc.fingerprint)); err == nil {
+			if _, err := uploadRaw(ctx, b, sharedIssue("update-20261107183012-48213", tc.fingerprint)); err == nil {
 				t.Errorf("uploading %q as a fingerprint was allowed", tc.fingerprint)
 			}
 		})
@@ -1759,7 +1774,7 @@ func TestUploadRefusesAValueThatIsNotAFingerprint(t *testing.T) {
 	if obj, err := iter.Next(ctx); !errors.Is(err, io.EOF) {
 		t.Errorf("a refused upload left %v under the fingerprint prefix: %v", obj, err)
 	}
-	up, err := Upload(ctx, b, sharedIssue("update-20261107183012-48213", fingerprint("23")))
+	up, err := uploadRaw(ctx, b, sharedIssue("update-20261107183012-48213", fingerprint("23")))
 	if err != nil || up.Number != 1 {
 		t.Fatalf("the corrected upload = %+v, %v; want issue 1", up, err)
 	}
@@ -1775,7 +1790,7 @@ func TestUploadRefusesARecordTheStoreCouldNotReadBack(t *testing.T) {
 	ctx := context.Background()
 	b := sharedBucket(t)
 
-	if _, err := Upload(ctx, b, sized(t, "update-20261107183012-48213", fingerprint("41"), sharedRecordMax-sharedClaimHeadroom+1)); err == nil {
+	if _, err := uploadRaw(ctx, b, sized(t, "update-20261107183012-48213", fingerprint("41"), sharedRecordMax-sharedClaimHeadroom+1)); err == nil {
 		t.Fatal("an upload wrote a record past what a reader takes back")
 	} else if !strings.Contains(err.Error(), "more than the shared store reads back") {
 		t.Errorf("the refusal = %v, want the size of the record", err)

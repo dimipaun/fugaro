@@ -801,7 +801,7 @@ func seedDigestIssue(t *testing.T, f *cloudFixture, run, summary string, created
 		// One byte pair repeated, so no literal here is the hash of anything.
 		Fingerprint: strings.Repeat("ab", 32),
 		Summary:     summary, Diagnosis: "the review stage starts twice", Steps: "run it again",
-	})
+	}, issues.Identity{Address: "someone@example.test", Digest: issues.Digest("someone@example.test"), Source: issues.SourceVerified})
 	if err != nil {
 		t.Fatalf("seeding issue %s: %v", run, err)
 	}

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -25,14 +26,17 @@ import (
 // (D1727), so the grant that reaches it does not widen what a run's own account
 // may write.
 //
-// Four kinds of object, all of them read by every launcher and written by one
+// Five kinds of object, all of them read by every launcher and written by one
 // protocol between honest clients (F24):
 //
-//	issues/counter                    the last number handed out
-//	issues/fingerprints/<hash>        the issue a fingerprint is
-//	issues/records/<NNNN>             one issue: its record and, while a
-//	                                  submitter holds it, the claim on it
-//	issues/occurrences/<NNNN>/<name>  one more time that issue happened
+//	issues/counter                              the last number handed out
+//	issues/fingerprints/<hash>                  the issue a fingerprint is
+//	issues/records/<NNNN>                       one issue: its record and,
+//	                                            while a submitter holds it, the
+//	                                            claim on it
+//	issues/reporters/<digest>/<NNNN>            one reporter is on that issue
+//	issues/occurrences/<NNNN>/<digest>/<time>   one more time it happened, to
+//	                                            that reporter, at that time
 //
 // None of it is a boundary: a launcher may write the whole prefix and can
 // rewrite any of it. What the store does do is condition every write on the
@@ -42,6 +46,7 @@ const (
 	sharedDir       = "issues"
 	recordsDir      = "records"
 	fingerprintsDir = "fingerprints"
+	reportersDir    = "reporters"
 	occurrencesDir  = "occurrences"
 	counterObject   = "counter"
 	sharedJSON      = "application/json"
@@ -218,16 +223,47 @@ func recordKey(number int) string {
 	return fmt.Sprintf("%s/%s/%04d", sharedDir, recordsDir, number)
 }
 
-// occurrencePrefix is every occurrence of one issue.
+// reporterPrefix is one reporter's own index: every issue that reporter is on,
+// the ones they created and the ones their duplicate was merged into (F7). The
+// digest is the path segment, so `mine` finds the user's issues by listing one
+// prefix instead of reading every issue the store holds, and a flood under one
+// digest cannot reach another reporter's view.
+func reporterPrefix(digest string) string {
+	return sharedDir + "/" + reportersDir + "/" + digest + "/"
+}
+
+// reporterIndexKey is one entry of that index: the issue's number, printed the
+// way a file name prints it, so a prefix listing comes back in number order.
+// The object is empty — the name is the whole record — and it is created rather
+// than written, so a retried upload and a duplicate that names the creator both
+// land on the one object.
+func reporterIndexKey(number int, digest string) string {
+	return reporterPrefix(digest) + fmt.Sprintf("%04d", number)
+}
+
+// occurrencePrefix is every occurrence of one issue, whoever reported it.
 func occurrencePrefix(number int) string {
 	return fmt.Sprintf("%s/%s/%04d/", sharedDir, occurrencesDir, number)
 }
 
-// occurrenceKey is one occurrence: when it happened and who it happened to, so
-// two hits on one issue are two objects and a retried upload is the one that is
-// already there (D1724, F21).
+// occurrenceDigestPrefix is one reporter's own occurrences of one issue: the
+// part of the prefix `mine` lists to find the user's hit time and the user's
+// own regression flag (F7, F14).
+func occurrenceDigestPrefix(number int, digest string) string {
+	return occurrencePrefix(number) + digest + "/"
+}
+
+// occurrenceTimeLayout is the compact UTC spelling of a hit time in an
+// occurrence's key: `<YYYYMMDDTHHMMSSZ>`, which sorts as it reads.
+const occurrenceTimeLayout = "20060102T150405Z"
+
+// occurrenceKey is one occurrence: who it happened to and when, so two hits on
+// one issue are two objects, a retried upload is the one that is already there,
+// and a reader can tell whose hit it was and when without reading the body
+// (D1724, F7, F21). The time is the moment the reporter hit the issue — the
+// record's `created` — and not the moment it was uploaded.
 func occurrenceKey(number int, occ Occurrence) string {
-	return occurrencePrefix(number) + occ.At.UTC().Format("20060102T150405Z") + "-" + Digest(occ.Reporter)[:8]
+	return occurrenceDigestPrefix(number, Digest(occ.Reporter)) + occ.At.UTC().Format(occurrenceTimeLayout)
 }
 
 // Upload puts a local issue into the store: it takes the issue's number and
@@ -241,7 +277,18 @@ func occurrenceKey(number int, occ Occurrence) string {
 // at all, the record stays where it is, because deleting it could strand a
 // fingerprint on an issue the store does not hold — and a record no entry names
 // is not an issue the store lists (F21).
-func Upload(ctx context.Context, b *blobx.Bucket, i Issue) (Uploaded, error) {
+//
+// id is who this machine is, and it has to be a verified credential: the
+// reporter an upload writes is the credential's member string and never the
+// local file's header, which is text a person or a coding agent can edit (F3).
+// An upload with no verified identity does not happen at all — the issue stays
+// local — because a name this machine cannot stand behind is worse than an
+// issue that is late.
+func Upload(ctx context.Context, b *blobx.Bucket, i Issue, id Identity) (Uploaded, error) {
+	if id.Source != SourceVerified || id.Address == "" {
+		return Uploaded{}, errNoVerifiedIdentity
+	}
+	i.Reporter = id.Address
 	if err := i.Validate(); err != nil {
 		return Uploaded{}, err
 	}
@@ -334,6 +381,15 @@ func Upload(ctx context.Context, b *blobx.Bucket, i Issue) (Uploaded, error) {
 		if err != nil {
 			return Uploaded{}, fmt.Errorf("issues: writing the shared issue: %w", err)
 		}
+		// The creator's own index entry is written with the issue: `mine` finds
+		// the issues a user is on by listing this one prefix, so an issue the
+		// index does not name is one its reporter never sees (F7). An index
+		// entry left behind by a naming that then failed names a number with no
+		// issue under it, which a reader skips; an issue with no entry is the
+		// reporter's view quietly missing a row, which nothing repairs.
+		if err := indexReporter(ctx, b, number, Digest(i.Reporter)); err != nil {
+			return Uploaded{}, err
+		}
 		named, err := json.Marshal(numberDoc{Format: sharedFormat, Number: number})
 		if err != nil {
 			return Uploaded{}, fmt.Errorf("issues: %w", err)
@@ -425,7 +481,38 @@ func attach(ctx context.Context, b *blobx.Bucket, number int, i Issue) (Uploaded
 	if err := AttachOccurrence(ctx, b, number, occ); err != nil {
 		return Uploaded{}, err
 	}
+	// A duplicate's reporter is on this issue too, so their own index entry
+	// names it: without one, a bug they hit on another machine and that was
+	// merged into somebody else's issue would never appear in their `mine`
+	// (F7). The create is idempotent, which is what makes the retry a caller
+	// makes after a failure land on the same object.
+	if err := indexReporter(ctx, b, number, Digest(i.Reporter)); err != nil {
+		return Uploaded{}, err
+	}
 	return Uploaded{Number: number, Attached: true, Regression: occ.Regression, OriginalURL: occ.OriginalURL}, nil
+}
+
+// reporterDigestRE accepts the digest a reporter's keys are built from: the
+// first 16 hex characters `Digest` gives, and nothing else. The digest is a
+// path segment of a store any launcher can write, so a name is never built from
+// one that is not this shape (F20).
+var reporterDigestRE = regexp.MustCompile(`^[0-9a-f]{16}$`)
+
+// indexReporter records that a reporter is on an issue (F7). The object is
+// empty — the name carries everything a reader needs — and it is created rather
+// than written, so two uploads that name the same reporter and the same issue
+// are one entry.
+func indexReporter(ctx context.Context, b *blobx.Bucket, number int, digest string) error {
+	if err := validateNumber(number); err != nil {
+		return err
+	}
+	if !reporterDigestRE.MatchString(digest) {
+		return fmt.Errorf("issues: %q is not a reporter digest", digest)
+	}
+	if _, err := b.Create(ctx, reporterIndexKey(number, digest), nil, sharedJSON); err != nil && !errors.Is(err, blobx.ErrExists) {
+		return fmt.Errorf("issues: indexing the reporter of issue %d: %w", number, err)
+	}
+	return nil
 }
 
 // occurrenceOf is the occurrence this upload is, of an issue that is already
@@ -1014,29 +1101,28 @@ func transitionSubmitted(ctx context.Context, b *blobx.Bucket, number int, gen i
 }
 
 // Reporters is who hit one issue: the reporter the record was filed by, then
-// the reporter of every occurrence, each name once, in the order the store
-// lists them — the record's own name first, then the hits oldest first (F10).
+// the reporter of every occurrence, each name once, the hits oldest first
+// (F10).
+//
+// The occurrences are ordered by the time each one carries and not by the
+// order the store lists them: their names are `<digest>/<time>`, so a listing
+// comes back in digest order and the oldest hit is not the first one (F7). A
+// name the store could not read is left out rather than failing the read, the
+// way the listing leaves one record alone.
 //
 // The names are whatever the machines that wrote them put there, and every
 // launcher can rewrite them (F24): they are shared strings, for a caller to
-// print through safetext and never as an identity it acts on. An occurrence
-// the store could not hold or read is left out rather than failing the read,
-// the way the listing leaves one record alone.
+// print through safetext and never as an identity it acts on.
 func Reporters(ctx context.Context, b *blobx.Bucket, number int) ([]string, error) {
 	rec, _, err := readShared(ctx, b, number)
 	if err != nil {
 		return nil, err
 	}
-	var out []string
-	seen := make(map[string]bool)
-	add := func(name string) {
-		if name == "" || seen[name] {
-			return
-		}
-		seen[name] = true
-		out = append(out, name)
+	type hit struct {
+		at   time.Time
+		name string
 	}
-	add(rec.Issue.Reporter)
+	var hits []hit
 	iter := b.List(&blob.ListOptions{Prefix: occurrencePrefix(number)})
 	for {
 		obj, err := iter.Next(ctx)
@@ -1057,7 +1143,26 @@ func Reporters(ctx context.Context, b *blobx.Bucket, number int) ([]string, erro
 		if err := decodeStrict(raw, &occ); err != nil {
 			continue
 		}
-		add(occ.Reporter)
+		if occ.Reporter == "" {
+			continue
+		}
+		hits = append(hits, hit{at: occ.At.UTC(), name: occ.Reporter})
+	}
+	// A stable sort keeps the listing's own order for two hits at the same
+	// instant, so the same store always answers the same list.
+	sort.SliceStable(hits, func(a, c int) bool { return hits[a].at.Before(hits[c].at) })
+	var out []string
+	seen := make(map[string]bool)
+	add := func(name string) {
+		if name == "" || seen[name] {
+			return
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	add(rec.Issue.Reporter)
+	for _, h := range hits {
+		add(h.name)
 	}
 	return out, nil
 }
