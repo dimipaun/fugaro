@@ -110,7 +110,7 @@ func TestConfigRefusesUnknownTriageKey(t *testing.T) {
 		}
 	}
 	for name, body := range map[string]string{
-		"a string where the switch is": "  triage: \"off\"\n",
+		"a word where the switch is":   "  triage: nope\n",
 		"a number where the switch is": "  triage: 1\n",
 		"a misspelt key":               "  triage_off: true\n",
 		"the key outside agent":        "triage: true\n",
@@ -211,7 +211,7 @@ func TestTriageKeyInSchemas(t *testing.T) {
 	}{
 		"the stage off":                {"  triage: false\n", true},
 		"the stage on":                 {"  triage: true\n", true},
-		"a string where the switch is": {"  triage: \"off\"\n", false},
+		"a word where the switch is":   {"  triage: nope\n", false},
 		"a number where the switch is": {"  triage: 0\n", false},
 	} {
 		text := triageHead + "agent:\n" + tc.body + triageTail

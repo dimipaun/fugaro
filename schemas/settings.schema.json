@@ -347,6 +347,9 @@
         "agent.review_stop_fraction": {
           "default": "unset = 0.8 (config.DefaultReviewStopFraction)"
         },
+        "agent.triage": {
+          "default": "unset = on (startup and pro only, config.TriageMode)"
+        },
         "backend": {
           "default": "unset = cloud-run"
         },
@@ -1227,6 +1230,9 @@
           "default": "unset = the project's default account"
         },
         "stages.review_first.claude_account": {
+          "default": "unset = the project's default account"
+        },
+        "stages.triage.claude_account": {
           "default": "unset = the project's default account"
         },
         "terraform.alert_email": {

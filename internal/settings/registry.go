@@ -218,6 +218,13 @@ var yamlMeta = map[string]Row{
 	"agent.review_stop_fraction": {
 		Default: unset("0.8 (config.DefaultReviewStopFraction)"),
 	},
+	// The triage stage's switch (D1854): an absent key is the stage running,
+	// in the two modes that have such a stage at all, so the DEFAULT column
+	// names those modes rather than reading "none" — which a reader would take
+	// for the stage being off.
+	"agent.triage": {
+		Default: unset("on (startup and pro only, config.TriageMode)"),
+	},
 
 	"agent.recipe":      {Owner: "models", Default: unset("the built-in recipe"), Doc: "docs/recipes.md"},
 	"agent.oauth_token": {Default: unset("the job's own credential")},

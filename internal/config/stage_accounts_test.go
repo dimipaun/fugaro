@@ -14,7 +14,7 @@ import (
 // absent: no account could apply to them, so naming one is refused rather than
 // silently never applying.
 func TestRunStagesAreTheModelCallingStages(t *testing.T) {
-	want := []string{"plan", "implement", "review_first", "review", "adversarial", "fix"}
+	want := []string{"plan", "implement", "review_first", "review", "adversarial", "triage", "fix"}
 	if len(RunStages) != len(want) {
 		t.Fatalf("RunStages = %v, want %v", RunStages, want)
 	}

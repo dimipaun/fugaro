@@ -22,14 +22,25 @@ import (
 // applying. The names are the runner's own stage literals
 // (internal/runner/runner.go, reviewmode.go, artifact.go) and
 // recipe.StepAdversarial, which the record's own stage enum does not yet
-// carry.
-var RunStages = []string{"plan", "implement", "review_first", "review", "adversarial", "fix"}
+// carry. triage is the judge that weighs a review round's findings before the
+// fix round takes them (D1851): it spends a model call for the same reason the
+// reviews do, on the senior reviewer's model (MixedStageModel), so an account
+// may be named for it, and it is listed where the run reaches it — after the
+// reviews, before the fix.
+var RunStages = []string{"plan", "implement", "review_first", "review", "adversarial", "triage", "fix"}
 
 // MixedAccountStages are the stages of a run that mixes credentials: the
-// senior review and the adversarial review, and no other stage
+// senior review, the adversarial review and the triage that weighs their
+// findings, and no other stage
 // (docs/design/mixed-credentials.md §11, "An allow-list, not a denylist"). An
-// api-key run may name its one Claude account for these two stages only.
-var MixedAccountStages = []string{"review", "adversarial"}
+// api-key run may name its one Claude account for these stages only.
+//
+// triage stands last, after the two reviews, and the order is load-bearing:
+// internal/cli's mixedRunAccount takes the first stage of this list that names
+// an account to decide which account's job a mixed run starts on, so a name
+// sorted ahead of review would move that launch for a repository that names no
+// review account.
+var MixedAccountStages = []string{"review", "adversarial", "triage"}
 
 // IsRunStage reports whether stage is one of RunStages.
 func IsRunStage(stage string) bool {
