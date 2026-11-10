@@ -149,11 +149,15 @@ func scriptServiceNames(t *testing.T) []string {
 	}
 	const arms = "case $s in "
 	i := strings.Index(line, arms)
-	j := strings.Index(line[i:], ")")
+	armsText := ""
+	if i >= 0 {
+		armsText = line[i+len(arms):]
+	}
+	j := strings.Index(armsText, ")")
 	if i < 0 || j < 0 {
 		t.Fatalf("the script's allow-list could not be read, so nothing pins the catalog's names to it: the line refusing an unknown service is %q", line)
 	}
-	names := strings.Split(line[i+len(arms):i+j], "|")
+	names := strings.Split(armsText[:j], "|")
 	for _, n := range names {
 		if n == "" || strings.ToLower(n) != n {
 			t.Fatalf("the script's allow-list line %q does not read as names: %v", line, names)

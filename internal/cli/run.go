@@ -4138,6 +4138,25 @@ func (e *cloudEnv) repoServiceAuth(ctx context.Context, spec *task.Spec, warn io
 	return "", deployed
 }
 
+// servicesLaunchEnv is the launch entry that stamps the services the job's
+// own catalog entry declares: backend.ServicesEnv set to the entry's list,
+// space separated, which is exactly the value `fugaro-services` reads.
+//
+// It is one entry on EVERY launch, the empty value included, and that is the
+// whole point of writing it here rather than on the job at deploy time (which
+// internal/infra does for the image-entry stamp): the runner reads its own
+// environment, and on a job whose image is a catalog entry's that environment
+// carries the image's own ENV — so an image that set FUGARO_SERVICES itself
+// would have the run start services no entry declared, and the entry's list is
+// the only source these services may come from. An entry the launch sets
+// overrides whatever the image holds, and a zero entry (a job the catalog does
+// not speak for, or one whose entry declares no service) writes the empty
+// stamp, which the runner reads as "no service" rather than as the script's
+// own default of all three.
+func servicesLaunchEnv(entry config.Entry) string {
+	return backend.ServicesEnv + "=" + strings.Join(entry.Services, " ")
+}
+
 // credentialsServiceLaunchEnv is what this launch puts on the execution's
 // environment for the credentials service (plan task C1.24, D146/D147): the
 // service's URL, under the one name the runner and the keyless GitHub path
@@ -4219,24 +4238,6 @@ func (e *cloudEnv) repoServiceAuth(ctx context.Context, spec *task.Spec, warn io
 // record that lags a bundle emptied since the apply cannot withdraw the address
 // on its own here: the deployed root still answers for the machine that applied
 // it.
-// servicesLaunchEnv is the launch entry that stamps the services the job's
-// own catalog entry declares: backend.ServicesEnv set to the entry's list,
-// space separated, which is exactly the value `fugaro-services` reads.
-//
-// It is one entry on EVERY launch, the empty value included, and that is the
-// whole point of writing it here rather than on the job at deploy time (which
-// internal/infra does for the image-entry stamp): the runner reads its own
-// environment, and on a job whose image is a catalog entry's that environment
-// carries the image's own ENV — so an image that set FUGARO_SERVICES itself
-// would have the run start services no entry declared, and the entry's list is
-// the only source these services may come from. An entry the launch sets
-// overrides whatever the image holds, and a zero entry (a job the catalog does
-// not speak for, or one whose entry declares no service) writes the empty
-// stamp, which the runner reads as "no service" rather than as the script's
-// own default of all three.
-func servicesLaunchEnv(entry config.Entry) string {
-	return backend.ServicesEnv + "=" + strings.Join(entry.Services, " ")
-}
 
 func credentialsServiceLaunchEnv(lc *localcfg.Config, job, repo, auth string, deployed bool) []string {
 	if job != "" || lc == nil {
