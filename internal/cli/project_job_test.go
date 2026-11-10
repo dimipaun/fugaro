@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -2214,11 +2215,17 @@ func TestRunRepoFromItsCheckoutUnchanged(t *testing.T) {
 
 // checkoutParse answers nil both for a working directory outside the
 // repository's checkout and for the repository's own checkout when its
-// fugaro.yaml cannot be read, so the refusal has to name the second cause:
-// a message naming only the first is wrong where the file is what is
-// missing, and sends the user to look for a checkout they are already in.
-func TestRunRepoInItsCheckoutWithUnreadableFugaroYAML(t *testing.T) {
-	newProjectJobFixture(t)
+// fugaro.yaml cannot be read, and the two are not one case: the second has
+// objects to read (D909), and a repository whose document is nowhere — not in
+// the working tree and not at the ref either, which is this checkout — has no
+// clone workflow and no profile for a file to select. Its launch therefore
+// keeps the per-repository job, the answer the checkout path gives for a
+// workflow the repository's own document does not define, and it is never
+// sent back to the checkout it is standing in (spec.md §2, §7; D905 refuses a
+// read that *failed*, not a repository that has no document to read).
+func TestRunRepoInItsCheckoutWithNoFugaroYAMLKeepsThePerRepositoryJob(t *testing.T) {
+	f := newProjectJobFixture(t)
+	perRepo := gcp.JobName(appSlug, "web")
 	isolateCache(t)
 	testutil.IsolateGit(t)
 	dir := t.TempDir()
@@ -2229,14 +2236,12 @@ func TestRunRepoInItsCheckoutWithUnreadableFugaroYAML(t *testing.T) {
 	testutil.Git(t, dir, "commit", "-q", "-m", "no fugaro.yaml yet")
 	testutil.Git(t, dir, "update-ref", "refs/remotes/origin/main", "HEAD")
 	t.Chdir(dir)
-	_, _, err := execute(t, "run", "--repo", "acme/app", "Add a feature")
-	if ExitCode(err) != ExitUserError {
-		t.Fatalf("err = %v, want a user error", err)
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261110-094000-ffff", "Add a feature"); err != nil {
+		t.Fatalf("a launch of a repository whose fugaro.yaml is nowhere: %v", err)
 	}
-	for _, want := range []string{"acme/app", "fugaro.yaml", "fugaro validate", "checkout"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("the refusal does not say %q: %v", want, err)
-		}
+	calls := f.run.RunRequests()
+	if len(calls) != 1 || calls[0].Job != perRepo {
+		t.Fatalf("the launch made %d jobs.run calls (%+v), want one on the per-repository job %s", len(calls), calls, perRepo)
 	}
 }
 
@@ -2272,6 +2277,164 @@ func TestRunRepoWithoutItsCheckoutKeepsThePerRepositoryJob(t *testing.T) {
 				t.Fatalf("the launch made %d jobs.run calls (%+v), want one on the per-repository job %s", len(calls), calls, perRepo)
 			}
 		})
+	}
+}
+
+// TestNoCheckoutBitbucketKeepsItsPerRepositoryJob is the first question a
+// launch with no checkout asks, asked before anything is read: whether a
+// shared project job is possible for this repository at all. No shared job
+// serves Bitbucket (infra.SharedJobProvider: a Bitbucket credential cannot be
+// scoped to one project's repositories, the owner's ruling of 2026-10-15), so
+// the per-repository job is not a guess about a document nobody read — it is
+// the answer the checkout path gives for the same repository, from the same
+// fact (D908). Before this the provider was never consulted on that path: the
+// no-checkout refusal fired first, for a project that had published a profile,
+// and every Bitbucket launch from outside its checkout — which is every launch
+// the console makes, from its own private directory (F9) — was refused for a
+// question with exactly one answer.
+//
+// Mutation (run, restore): read the policy before the provider, and let the
+// profile question refuse a launch whose provider no shared job serves — the
+// launch is refused and no jobs.run call is made.
+func TestNoCheckoutBitbucketKeepsItsPerRepositoryJob(t *testing.T) {
+	f := newProjectJobFixture(t)
+	const bbRepo = "acme/bb"
+	addRepoToConfig(t, f.cloudFixture, bbRepo, "bitbucket")
+	bbSlug, err := task.Slug("bitbucket", bbRepo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	perRepo := gcp.JobName(bbSlug, "web")
+	f.run.AddJob(perRepo, "4", "8Gi")
+	// The build record the fixture's own repository has: a launch on a
+	// per-repository job mints the sealed budget token, which the job's image
+	// has to know how to read (launch_seal_test.go's fixture writes the same
+	// record for acme/app's web workflow).
+	writeBuildRecord(t, f.cloudFixture, bbSlug, "web", releaseSeal)
+	// The project publishes a profile (the fixture's own github one, which is
+	// what makes the refusal fire) and admits the Bitbucket repository, so
+	// nothing below is about an admission.
+	publishPolicy(t, f.launchBudgetFixture, strings.Replace(projectJobPolicy, `["github/acme/*"]`, `["github/acme/*","bitbucket/acme/*"]`, 1))
+
+	isolateCache(t)
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir())
+	if _, _, err := execute(t, "run", "--repo", bbRepo, "--run-id", "20261110-090000-aaaa", "Add a feature"); err != nil {
+		t.Fatalf("launch: %v", err)
+	}
+	calls := f.run.RunRequests()
+	if len(calls) != 1 || calls[0].Job != perRepo {
+		t.Fatalf("the launch made %d jobs.run calls (%+v), want one on the per-repository job %s, which is the same job the checkout path gives this repository", len(calls), calls, perRepo)
+	}
+}
+
+// TestCheckoutWithoutTheFileReadsTheRefsObjects is D909's own case: the
+// operator is standing in the repository's checkout and the working tree has
+// no fugaro.yaml, while the ref the run checks out carries one. The launcher
+// reads the ref's document out of the checkout's own object database — the
+// reader the credential axis already uses two gates later — and decides the
+// job from it, exactly as if the file were in the tree. The case that raised
+// the decision is a checkout on a branch whose tree predates the file, which
+// is why deleting it here stands in for it.
+//
+// Mutation (run, restore): refuse where the ref's objects answer — the launch
+// is refused over a document the checkout holds.
+func TestCheckoutWithoutTheFileReadsTheRefsObjects(t *testing.T) {
+	f := newProjectJobFixture(t)
+	dir := projectJobCheckout(t)
+	if err := os.Remove(filepath.Join(dir, "fugaro.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261110-091000-bbbb", "Add a feature"); err != nil {
+		t.Fatalf("a launch from a checkout whose working tree has no fugaro.yaml: %v", err)
+	}
+	if profile, provider, _ := launchedProjectJob(t, f.cloudFixture); profile != "standard" || provider != "github" {
+		t.Fatalf("the launch ran on %s/%s, want the standard/github project job the ref's fugaro.yaml selects", profile, provider)
+	}
+}
+
+// TestNoCheckoutGitHubRefusalNamesTheCheckoutAndTheRef is D912's first
+// message: a launch with no checkout of the repository anywhere, on a project
+// that has published a profile, is refused — the provider is one a shared job
+// serves, so there is nothing to narrow — and the refusal names the
+// repository, the ref, what was tried and the way out (spec.md §7). The ref
+// is named because it is half of what the launch had to read: the document is
+// the one at the ref the run checks out, and only from the repository's
+// checkout can this operator see it.
+//
+// Mutation (run, restore): drop the ref from the message — this test fails on
+// the ref alone, which is the field an operator with two checkouts of the
+// repository needs to know which document placed (or failed to place) a run.
+func TestNoCheckoutGitHubRefusalNamesTheCheckoutAndTheRef(t *testing.T) {
+	f := newProjectJobFixture(t)
+	isolateCache(t)
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir())
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--ref", "release-2", "--run-id", "20261110-092000-cccc", "Add a feature")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a user error", err)
+	}
+	for _, want := range []string{"acme/app", "release-2", "checkout", "fugaro run", "clone workflow"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if calls := f.run.RunRequests(); len(calls) != 0 {
+		t.Errorf("the refused launch asked Cloud Run for %d job(s): %+v", len(calls), calls)
+	}
+}
+
+// TestRefusalMessagesAreNotInterchanged is D912's rule read from the other
+// side: the two causes have two remedies, so neither message may carry the
+// other's. The operator with no checkout of the repository is the one the
+// checkout is the way out for; the operator standing *in* the checkout whose
+// ref could not be read out of its objects is not — and telling them to run
+// it from the checkout they are in is the sentence this design exists to
+// delete (F2, D909).
+//
+// Mutation (run, restore): make one message serve both causes — one of the
+// two assertions below fails, whichever text is kept.
+func TestRefusalMessagesAreNotInterchanged(t *testing.T) {
+	newProjectJobFixture(t)
+
+	// Neither cause has a checkout to name: the working directory holds
+	// nothing of the repository.
+	isolateCache(t)
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir())
+	_, _, noCheckout := execute(t, "run", "--repo", "acme/app", "--run-id", "20261110-093000-dddd", "Add a feature")
+
+	// A checkout of the repository is here, its working tree has no file, and
+	// the ref this launch names is not one the checkout holds: the objects
+	// cannot answer either.
+	dir := projectJobCheckout(t)
+	if err := os.Remove(filepath.Join(dir, "fugaro.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	_, _, unreadable := execute(t, "run", "--repo", "acme/app", "--ref", "topic", "--run-id", "20261110-093001-eeee", "Add a feature")
+
+	if ExitCode(noCheckout) != ExitUserError || ExitCode(unreadable) != ExitUserError {
+		t.Fatalf("no-checkout: %v; unreadable ref: %v; want two user errors", noCheckout, unreadable)
+	}
+	if !strings.Contains(noCheckout.Error(), "is not acme/app's checkout") {
+		t.Errorf("the no-checkout refusal does not name the checkout: %v", noCheckout)
+	}
+	if strings.Contains(noCheckout.Error(), "out of this checkout") {
+		t.Errorf("the no-checkout refusal talks about a checkout the operator is not in: %v", noCheckout)
+	}
+	if !strings.Contains(unreadable.Error(), "out of this checkout") {
+		t.Errorf("the unreadable-ref refusal does not name the checkout the read was made from: %v", unreadable)
+	}
+	if strings.Contains(unreadable.Error(), "is not acme/app's checkout") {
+		t.Errorf("the unreadable-ref refusal sends the operator to the checkout they are standing in: %v", unreadable)
+	}
+	for _, want := range []string{"acme/app", "fugaro.yaml"} {
+		if !strings.Contains(unreadable.Error(), want) {
+			t.Errorf("the unreadable-ref refusal does not say %q: %v", want, unreadable)
+		}
+	}
+	if !strings.Contains(unreadable.Error(), "topic") {
+		t.Errorf("the unreadable-ref refusal does not name the ref it could not read: %v", unreadable)
 	}
 }
 
