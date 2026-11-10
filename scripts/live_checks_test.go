@@ -25,6 +25,10 @@ import (
 // agent. Check 130's fake is a fake `curl` alone, answering the three anonymous
 // GETs the check makes about a repository; its fake `gcloud` and `fugaro` log
 // any call and fail, so the test can say the check never reaches a cloud tool.
+// Check 148's fakes are a fake `gcloud`, a fake `fugaro` and a fake Bitbucket
+// Cloud on a loopback port, and the bundle document is the file the drill's own
+// writes and the read mint's answer share: a stop the check reported without the
+// write having landed is caught by the mint it reads next.
 // Check 91, fake `gcloud`, `git`, `curl` and `fugaro` for Check 190, fake
 // `gcloud` and `fugaro` for Check 146, fake `gcloud`, `fugaro` and a fake
 // Realtime Database behind a fake `curl` for Check 191, and a fake `gcloud`
@@ -54,6 +58,7 @@ var liveCheckScripts = []struct {
 	{"check130.sh", "check130_test.sh"},
 	{"check145.sh", "check145_test.sh"},
 	{"check146.sh", "check146_test.sh"},
+	{"check148.sh", "check148_test.sh"},
 	{"check180.sh", "check180_test.sh"},
 	{"check190.sh", "check190_test.sh"},
 	{"check191.sh", "check191_test.sh"},
