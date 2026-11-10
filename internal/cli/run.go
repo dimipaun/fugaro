@@ -424,11 +424,10 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 		// below and before the cloud is opened: a mistyped number is a
 		// caller's mistake, and it costs no read. A value that would loosen
 		// is a different refusal, and it needs the policy this launch
-		// resolves (chainLimitGate).
-		if o.retry == "" {
-			if err = chainLimitsFlag(cmd, o); err != nil {
-				return err
-			}
+		// resolves (chainLimitGate). --retry never reaches here: taskFlags
+		// refuses the four with it, since the stored task keeps its own.
+		if err = chainLimitsFlag(cmd, o); err != nil {
+			return err
 		}
 		if text, err = taskText(cmd, o.tf, args, prSet); err != nil {
 			return err
@@ -912,7 +911,18 @@ func chainLimitGate(ctx context.Context, env *cloudEnv, o *runOptions, spec *tas
 			// the field the backend's override reads (launchTimeoutOf) — and
 			// the chain's limit stays in max_time beside it, where the
 			// runner merges it again at bootstrap (D1044).
-			spec.Overrides.TotalTimeout = min(clock, o.limits.time).String()
+			composed := min(clock, o.limits.time)
+			// The composed figure becomes the run's own total_timeout, so
+			// the rule the --total-timeout flag is held to holds it too: a
+			// clock that does not clear the workflow's finalize reserve
+			// leaves the run no time to finish in.
+			if co := checkoutConfig(ctx, spec.Repo); co != nil {
+				if w, ok := co.Workflows[spec.Workflow]; ok && composed <= w.Timeouts.FinalizeReserve.Duration {
+					return userErr("--max-time %s leaves this run a %s clock, which workflow %s's timeouts.finalize_reserve %s does not fit inside: pass more than the reserve (the run's clock is the smaller of --max-time and its own %s)",
+						o.limits.time, composed, spec.Workflow, w.Timeouts.FinalizeReserve.Duration, launchClockSource(o, spec))
+				}
+			}
+			spec.Overrides.TotalTimeout = composed.String()
 		}
 	}
 	return nil

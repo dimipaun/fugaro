@@ -89,6 +89,11 @@ func TestRunRefusesALooseningLimit(t *testing.T) {
 // and silently ineffective, and the refusal names the figure and where it came
 // from: the caller's own --total-timeout, or the workflow's timeouts.total
 // when this launcher resolved its clock from the checkout.
+//
+// The last row is the composition's own floor: the figure the gate writes as
+// the run's total_timeout is the run's clock, so it is held to the rule the
+// --total-timeout flag already answers to — a clock that does not clear the
+// workflow's finalize reserve leaves the run no time to finish in.
 func TestRunRefusesALooseningMaxTimeAgainstTotalTimeout(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -96,9 +101,11 @@ func TestRunRefusesALooseningMaxTimeAgainstTotalTimeout(t *testing.T) {
 		want []string
 	}{
 		{"the workflow's clock", []string{"--max-time", "3h"},
-			[]string{"--max-time 3h0m0s", "above 2h0m0s", "workflows.web.timeouts.total"}},
+			[]string{"--max-time 3h0m0s", "above 2h0m0s", "workflows.web.timeouts.total", "compose as the smaller"}},
 		{"the caller's own clock", []string{"--total-timeout", "30m", "--max-time", "45m"},
-			[]string{"--max-time 45m0s", "above 30m0s", "--total-timeout"}},
+			[]string{"--max-time 45m0s", "above 30m0s", "--total-timeout", "compose as the smaller"}},
+		{"a clock the reserve does not fit inside", []string{"--max-time", "5m"},
+			[]string{"--max-time 5m0s", "5m0s clock", "timeouts.finalize_reserve 10m0s", "workflows.web.timeouts.total"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newCloudFixture(t)
@@ -108,7 +115,7 @@ func TestRunRefusesALooseningMaxTimeAgainstTotalTimeout(t *testing.T) {
 			if ExitCode(err) != ExitUserError {
 				t.Fatalf("%v: err = %v, want a user error", tc.args, err)
 			}
-			for _, want := range append(tc.want, "compose as the smaller") {
+			for _, want := range tc.want {
 				if !strings.Contains(err.Error(), want) {
 					t.Fatalf("%v: err = %v, want it to name %q", tc.args, err, want)
 				}
