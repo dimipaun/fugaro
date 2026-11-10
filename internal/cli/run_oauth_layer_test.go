@@ -311,18 +311,20 @@ func TestSharedJobRefusalWhenTheCarriedLayerIsInvalid(t *testing.T) {
 }
 
 // TestSharedJobRefusalWhenTheCheckoutCannotBeFound is the arm of
-// projectJobAgentAuth that has no other guard behind it: when the checkout the
-// resolution is made against cannot be found, the credential is unknown, and an
-// unknown credential must refuse the launch rather than be read as "no oauth
-// here" (the empty string projectJobAccountFor is then handed).
+// projectJobAgentAuth that has no checkout to read out of: A3 gives a launch
+// outside the repository's checkout the ref's own fugaro.yaml through the
+// credentials service (readRepoConfigAtRef), so the document here is the one the
+// job decision already read — the memo answers with it, which is what keeps the
+// two readers of one launch's document to one audited mint — and a read that
+// failed leaves the credential unknown. An unknown credential must refuse the
+// launch rather than be read as "no oauth here" (the empty string
+// projectJobAccountFor is then handed).
 //
-// It is the state a launch reaches when its checkout goes away between the two
-// reads of it — launchProjectJobFor only gets past checkoutConfig with a
-// checkout in hand, and this is that checkout having moved or gone before
-// projectJobAgentAuth asks for its root again — so the launcher cannot be driven
-// into it from the fixture: the two reads run inside one command. The test calls
-// the resolution directly, in a directory that is no checkout at all (git
-// answers "not a git repository" for --show-toplevel there).
+// It is the arm the launch path cannot be driven into from a fixture: there, a
+// read that failed is refused by the job decision before this gate is reached.
+// The test calls the resolution directly, in a directory that is no checkout at
+// all (git answers "not a git repository" for --show-toplevel there), with the
+// read itself failing.
 //
 // Mutation (run, restore): return "", nil for the empty root instead of
 // refusing — the launcher reads the empty string as the run's agent.auth, and
@@ -332,11 +334,17 @@ func TestSharedJobRefusalWhenTheCheckoutCannotBeFound(t *testing.T) {
 	testutil.IsolateGit(t)
 	t.Chdir(t.TempDir()) // not a repository: there is no checkout to find
 
+	read := readRepoConfigAtRef
+	readRepoConfigAtRef = func(context.Context, *cloudEnv, string, string) ([]byte, error) {
+		return nil, errors.New("the credentials service could not be reached")
+	}
+	t.Cleanup(func() { readRepoConfigAtRef = read })
+
 	e := &cloudEnv{lc: &localcfg.Config{Name: "aurora"}}
-	_, err := e.projectJobAgentAuth(context.Background(), &task.Spec{Repo: "acme/app"})
+	_, err := e.projectJobAgentAuth(context.Background(), &task.Spec{Repo: "acme/app", Ref: "main"})
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "cannot tell which Claude credential") ||
-		!strings.Contains(err.Error(), "checkout could not be found") || !strings.Contains(err.Error(), "acme/app") {
-		t.Fatalf("a launch whose checkout cannot be found: %v, want a refusal naming the repository and the missing checkout", err)
+		!strings.Contains(err.Error(), "could not be read at the forge") || !strings.Contains(err.Error(), "acme/app") {
+		t.Fatalf("a launch whose document cannot be read at the forge: %v, want a refusal naming the repository and the failed read", err)
 	}
 }
 
