@@ -100,14 +100,16 @@ func TestScopeDriftFlagOnly(t *testing.T) {
 	}
 }
 
-// TestDigestCarriesThePeriodsTierExpectations (task-governance T8.3): the
-// per-run figures a tier calibration reads, carried by the digest and rendered
-// by none of it. Every run of the period that carries a tier is here — the
-// report's own rows are a selection a size cap trims, and a calibration reads a
-// window — the governance-halted runs are marked rather than dropped (leaving
+// TestDigestCarriesTheTierExpectationsTheCalibrationReads (task-governance
+// T8.3): the per-run figures a tier calibration reads, carried by the digest
+// and rendered by none of it. Every run the digest is handed that carries a
+// tier and finished at or before the period closed is here -- a calibration's
+// window is the days ending with the period, so it reads back past it, and the
+// report's own rows are a selection a size cap trims while a calibration reads
+// a window -- the governance-halted runs are marked rather than dropped (leaving
 // them out is the hook's policy, and the mark is what lets it), and an unknown
 // duration is absent and never zero (G5).
-func TestDigestCarriesThePeriodsTierExpectations(t *testing.T) {
+func TestDigestCarriesTheTierExpectationsTheCalibrationReads(t *testing.T) {
 	p := week43(t)
 	tiered := func(id, finished, start string, tr tier.Tier, usd float64, minutes int64, halt runstore.HaltReason) runstore.Record {
 		rec := run(t, id, finished, 1.00, 0)
@@ -123,34 +125,44 @@ func TestDigestCarriesThePeriodsTierExpectations(t *testing.T) {
 	}
 
 	recs := []runstore.Record{
+		// A run of the week before this one: it is not a row of this report, and
+		// it is a figure the calibration of it reads.
+		tiered("20261010-090000-0009", "2026-10-10T09:00:00Z", "2026-10-10T08:30:00Z", tier.Small, 1, 30, ""),
 		tiered("20261021-090000-0001", "2026-10-21T09:00:00Z", "2026-10-21T08:30:00Z", tier.Small, 1, 30, ""),
 		tiered("20261022-090000-0002", "2026-10-22T09:00:00Z", "2026-10-22T08:00:00Z", tier.Medium, 3, 90, runstore.HaltStageBudget),
 		tiered("20261023-090000-0003", "2026-10-23T09:00:00Z", "", tier.Large, 8, 240, ""),
-		// An untiered run, and one that finished outside the period: neither is
-		// a figure a calibration of this period reads.
+		// An untiered run, and one that finished after the period closed:
+		// neither is a figure a calibration of this period reads. The second is
+		// the one that keeps a committed report the report it was (G3).
 		run(t, "20261024-090000-0004", "2026-10-24T09:00:00Z", 1.00, 0),
-		run(t, "20261101-090000-0005", "2026-11-01T09:00:00Z", 1.00, 0),
+		tiered("20261101-090000-0005", "2026-11-01T09:00:00Z", "2026-11-01T08:00:00Z", tier.Small, 1, 30, ""),
 	}
-	got := Build(recs, p).Expectations
-	if len(got) != 3 {
-		t.Fatalf("the digest carries %d expectations, want the period's three tiered runs: %+v", len(got), got)
+	d := Build(recs, p)
+	got := d.Expectations
+	if len(got) != 4 {
+		t.Fatalf("the digest carries %d expectations, want the three tiered runs of the period and the one before it: %+v", len(got), got)
+	}
+	if n := len(d.Runs); n != 4 {
+		t.Errorf("the report holds %d rows, want the period's four records: the run before it is a figure of the calibration and not a row", n)
 	}
 	// The order is the runs' own finish time, whatever order the records
 	// arrived in, so a hook reading a window off the digest is a pure function
 	// of it (G3).
-	for i, want := range []string{"2026-10-21T09:00:00Z", "2026-10-22T09:00:00Z", "2026-10-23T09:00:00Z"} {
+	for i, want := range []string{
+		"2026-10-10T09:00:00Z", "2026-10-21T09:00:00Z", "2026-10-22T09:00:00Z", "2026-10-23T09:00:00Z",
+	} {
 		if got[i].Finished.Format(time.RFC3339) != want {
 			t.Errorf("expectation %d finished at %s, want %s", i, got[i].Finished.Format(time.RFC3339), want)
 		}
 	}
-	if first := got[0]; first.Tier != string(tier.Small) || first.ExpectedUSD != 1_000_000 || first.ExpectedMinutes != 30 ||
+	if first := got[1]; first.Tier != string(tier.Small) || first.ExpectedUSD != 1_000_000 || first.ExpectedMinutes != 30 ||
 		first.Billed != 1_000_000 || first.Duration != 30*time.Minute || !first.DurationKnown || first.Governance {
-		t.Errorf("the first expectation = %+v, want the small run's own figures", first)
+		t.Errorf("the small run's expectation = %+v, want its own figures", first)
 	}
-	if halted := got[1]; !halted.Governance {
+	if halted := got[2]; !halted.Governance {
 		t.Errorf("the stage_budget-halted run is not marked as governance-halted: %+v", halted)
 	}
-	if unknown := got[2]; unknown.DurationKnown || unknown.Duration != 0 {
+	if unknown := got[3]; unknown.DurationKnown || unknown.Duration != 0 {
 		t.Errorf("a run whose record carries no start has a duration: %+v", unknown)
 	}
 
@@ -159,5 +171,13 @@ func TestDigestCarriesThePeriodsTierExpectations(t *testing.T) {
 	bogus := tiered("20261025-090000-0006", "2026-10-25T09:00:00Z", "2026-10-25T08:00:00Z", tier.Tier("huge"), 1, 30, "")
 	if n := len(Build([]runstore.Record{bogus}, p).Expectations); n != 0 {
 		t.Errorf("a record with an unknown tier carries %d expectations, want none", n)
+	}
+
+	// A period whose end is not a date -- one built by hand rather than by
+	// NewPeriod -- says nothing about the runs after it, so it carries the
+	// expectations of its own runs and no others.
+	hand := Period{Dim: p.Dim, Key: p.Key, Start: p.Start}
+	if n := len(Build(recs, hand).Expectations); n != 3 {
+		t.Errorf("a period with no end carries %d expectations, want its own three runs", n)
 	}
 }

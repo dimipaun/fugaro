@@ -99,8 +99,8 @@ const (
 	// FlagScopeDrift is a run that changed a path the scope its task declared
 	// does not name (T8.3, D332): the expectation envelope's "roughly which
 	// files or areas" against the paths the run really touched. It is report
-	// only (G8) — D332 keeps a heuristic in the reports until the reports show
-	// it is reliable, and this one is raised from two sets a record wrote — and
+	// only (G8) -- D332 keeps a heuristic in the reports until the reports show
+	// it is reliable, and this one is raised from two sets a record wrote -- and
 	// it is absent for a run whose task declared no scope, because a flag
 	// raised from a set that is not there would say nothing.
 	FlagScopeDrift = "scope_drift"
@@ -194,6 +194,23 @@ func (p Period) Holds(t time.Time) bool {
 	return err == nil && key == p.Key
 }
 
+// EndsAt is the instant the period closes: the start of the day after its last
+// day, so every run of the period finished before it and no run of the next one
+// did. ok is false for a period whose end is not a date, which is a Period
+// built by hand rather than by NewPeriod, and then nothing is known about the
+// runs after it.
+//
+// It is the bound on the tier expectations the digest carries -- whose window
+// reaches back before the period (T8.3) -- and the anchor a calibration's window
+// ends at, so the two sides of the boundary read the same instant.
+func (p Period) EndsAt() (time.Time, bool) {
+	t, err := time.Parse("2006-01-02", p.End)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return t.AddDate(0, 0, 1), true
+}
+
 // Flag is one flag of one run: its name, and the value it carries when it
 // names one (the halt reason, an enum).
 type Flag struct {
@@ -249,15 +266,15 @@ type Expectation struct {
 	// ExpectedUSD and ExpectedMinutes are what that tier expected of the run:
 	// the figures the record carries, which a repository's own layers may have
 	// tightened and which are never a cap (G6). Both are read the way every
-	// other figure a record carries is — bounded, and no figure at all when
-	// they cannot be one — so zero reads as "no expectation" and never as a
+	// other figure a record carries is -- bounded, and no figure at all when
+	// they cannot be one -- so zero reads as "no expectation" and never as a
 	// free run (G1, G5).
 	ExpectedUSD     budget.Micros
 	ExpectedMinutes int64
 	// Billed is what the run's model calls cost, in the report's own unit.
 	Billed budget.Micros
 	// Duration is how long the run took, and DurationKnown is false when the
-	// record's window cannot give one — no start, or a finish before it. An
+	// record's window cannot give one -- no start, or a finish before it. An
 	// unknown duration is not a zero one: a reader that has no figure leaves
 	// the run out rather than read it as instant (G5).
 	Duration      time.Duration
@@ -328,10 +345,14 @@ type Digest struct {
 	// name. It is the per-recipe figure D326's third rule reads month over
 	// month.
 	Recipes map[string]budget.Micros
-	// Expectations is every run of the period that carries a tier, ordered by
-	// its finish time: the figures a calibration reads (T8.3). The report
-	// renders none of them, and the order is the runs' own so that a hook
-	// reading the window is a pure function of this digest (G3).
+	// Expectations is every run the digest was handed that carries a tier and
+	// finished at or before the period closed, ordered by its finish time: the
+	// figures a calibration reads (T8.3), whose window is the days ending with
+	// the period and so reaches back before it. The report renders none of
+	// them, and the order is the runs' own so that a hook reading the window is
+	// a pure function of this digest (G3). A run that finished after the period
+	// closed is not here, whatever the caller handed over: a closed period's
+	// report is the same report as later runs land.
 	Expectations []Expectation
 	// Dropped is how many selected rows the size cap left out.
 	Dropped int
@@ -341,23 +362,42 @@ type Digest struct {
 // repository's records, in any order. A record that did not finish in the
 // period, or whose run ID is not a run ID, is not one of the period's runs:
 // the first has no period, and the second is not a run this repository's
-// prefix names.
+// prefix names. The tier expectations are the one thing Build reads from
+// outside the period, and only backwards: a calibration's window is the days
+// ending with the period, so the records of the runs before it are read while
+// the report's own figures stay the period's (T8.3).
 func Build(recs []runstore.Record, p Period) Digest {
 	all := make([]Run, 0, len(recs))
 	byRecipe := map[string][]budget.Micros{}
 	byClass := map[failure.Class]*ClassCount{}
 	var expectations []Expectation
 	total := Figures{}
+	// end is when the period closed. carried says whether a run that finished
+	// at t is one the calibration may read: the runs of the period and of the
+	// days before it, and never one that finished after the period closed. A
+	// period nobody can place -- one built by hand rather than by NewPeriod --
+	// carries the expectations of its own runs alone, which is what this field
+	// held before the window existed.
+	end, placed := p.EndsAt()
+	carried := func(t time.Time) bool {
+		if !placed {
+			return p.Holds(t)
+		}
+		return t.Before(end)
+	}
 	for i := range recs {
 		rec := &recs[i]
-		if rec.FinishedAt == nil || !p.Holds(*rec.FinishedAt) || !task.ValidRunID(rec.RunID) {
+		if rec.FinishedAt == nil || !task.ValidRunID(rec.RunID) {
+			continue
+		}
+		if exp, ok := expectation(rec); ok && carried(exp.Finished) {
+			expectations = append(expectations, exp)
+		}
+		if !p.Holds(*rec.FinishedAt) {
 			continue
 		}
 		r := row(rec)
 		all = append(all, r)
-		if exp, ok := expectation(rec); ok {
-			expectations = append(expectations, exp)
-		}
 		name := recipeName(rec)
 		byRecipe[name] = append(byRecipe[name], cost(r))
 		if class := runview.ClassOf(rec); class != "" {
@@ -458,7 +498,7 @@ func expectedMinutes(v int64) int64 {
 
 // governanceHalt is whether a governance tripwire stopped the run (T6.1,
 // D329): the reasons a checkpoint carries, which a calibration leaves out of
-// its window. A budget or credential halt is not one of them — a run that ran
+// its window. A budget or credential halt is not one of them -- a run that ran
 // out of money or a credential says nothing about what its tier expected.
 func governanceHalt(rec *runstore.Record) bool {
 	if rec.Halt == nil {
@@ -691,7 +731,7 @@ func reviewScopeDrift(rec *runstore.Record) bool {
 // scopeDrift reports whether the record says the run changed a path the scope
 // its task declared does not name (T8.3, D332): the expectation envelope's
 // "roughly which files or areas" against what the run really touched. It is
-// report only (G8) — nothing halts on it — and it is raised from two sets the
+// report only (G8) -- nothing halts on it -- and it is raised from two sets the
 // record wrote, so a forged record can raise it and nothing else.
 //
 // A run whose task declared no scope, and a record written before the field
@@ -721,7 +761,7 @@ func scopeDrift(rec *runstore.Record) bool {
 // back is not trusted to be the one a task declared: it is bounded again the
 // way the task parser bounds it (task.MaxDeclaredPaths entries of at most
 // task.MaxDeclaredPathBytes), and a pattern the matcher cannot read is dropped
-// rather than kept as one nothing matches — a pattern no path could match
+// rather than kept as one nothing matches -- a pattern no path could match
 // would raise the flag for every run that carried it.
 func declaredScope(scope []string) []string {
 	if len(scope) == 0 {

@@ -321,48 +321,94 @@ func TestCalibrationWindowIsPerTier(t *testing.T) {
 	}
 }
 
-// TestCalibrationWindowStopsAtFourteenDays (plan T8.3): the window is the last
-// WindowDays of the tier's own runs as well as its last WindowRuns, whichever
-// is fewer. A year's runs are read here because they are the only period a run
-// older than a fortnight fits in: the two large runs of October are the window
-// and the three of September are outside it, so the ratio is the recent 3.00x
-// and not the 1.00x a reader that kept every run would take.
+// TestCalibrationWindowStopsAtFourteenDays (plan T8.3): the window is the
+// WindowDays ending with the report's period as well as its last WindowRuns,
+// whichever is fewer -- and it is the section of a weekly report that is read
+// here, because that is the only report that prints one and the only place the
+// fortnight can be told from the week.
+//
+// large ran three times in the week before this one and twice in the week
+// itself, so its row is five runs: a section that read the report's own
+// expectations would hold the two recent runs alone and print 3.00x, and the
+// three runs a fortnight earlier are the evidence that keeps it at 1.00x. The
+// three runs before the window are 5.00x and are not read: keeping them would
+// make the median 2.00x. medium ran only before the window and gets no row: a
+// tier nothing ran of in the fortnight is not calibrated on what it last did a
+// month ago.
 func TestCalibrationWindowStopsAtFourteenDays(t *testing.T) {
-	p, err := digest.NewPeriod(digest.ByYear, "2026-10-21")
-	if err != nil {
-		t.Fatal(err)
+	p := calPeriod(t)
+	end, ok := p.EndsAt()
+	if !ok {
+		t.Fatalf("the fixture's period %+v does not end at a date", p)
 	}
-	// The fixture's own claim: the cutoff falls between the September runs and
-	// the October ones, so the two halves are on either side of it.
-	cutoff := calTime(t, "2026-10-21T09:00:00Z").AddDate(0, 0, -governance.WindowDays)
-	if !cutoff.After(calTime(t, "2026-09-12T09:00:00Z")) || cutoff.After(calTime(t, "2026-10-20T09:00:00Z")) {
-		t.Fatalf("the fixture no longer straddles the %d-day cutoff %s", governance.WindowDays, cutoff.Format(time.RFC3339))
+	// The fixture's own claim: the cutoff falls between the runs before the
+	// window and the week-before ones, so the two halves are on either side of
+	// it.
+	cutoff := end.AddDate(0, 0, -governance.WindowDays)
+	for _, outside := range []string{"2026-10-03T09:00:00Z", "2026-10-06T09:00:00Z"} {
+		if !cutoff.After(calTime(t, outside)) {
+			t.Fatalf("the fixture's %s run is inside the %d-day window ending %s", outside, governance.WindowDays, end.Format(time.RFC3339))
+		}
 	}
+	if cutoff.After(calTime(t, "2026-10-14T09:00:00Z")) {
+		t.Fatalf("the fixture's 2026-10-14 run is outside the %d-day window ending %s", governance.WindowDays, end.Format(time.RFC3339))
+	}
+
 	var recs []runstore.Record
 	for _, r := range []calRun{
-		{id: "20260910-090000-0001", at: "2026-09-10T09:00:00Z", took: 30 * time.Minute, tier: tier.Large, usd: 1, minutes: 30, billed: 1},
-		{id: "20260911-090000-0002", at: "2026-09-11T09:00:00Z", took: 30 * time.Minute, tier: tier.Large, usd: 1, minutes: 30, billed: 1},
-		{id: "20260912-090000-0003", at: "2026-09-12T09:00:00Z", took: 30 * time.Minute, tier: tier.Large, usd: 1, minutes: 30, billed: 1},
-		{id: "20261020-090000-0004", at: "2026-10-20T09:00:00Z", took: 90 * time.Minute, tier: tier.Large, usd: 1, minutes: 30, billed: 3},
-		{id: "20261021-090000-0005", at: "2026-10-21T09:00:00Z", took: 90 * time.Minute, tier: tier.Large, usd: 1, minutes: 30, billed: 3},
+		// Before the window, whatever the tier.
+		{id: "20261001-090000-0001", at: "2026-10-01T09:00:00Z", took: 150 * time.Minute, tier: tier.Large, usd: 1, minutes: 30, billed: 5},
+		{id: "20261002-090000-0002", at: "2026-10-02T09:00:00Z", took: 150 * time.Minute, tier: tier.Large, usd: 1, minutes: 30, billed: 5},
+		{id: "20261003-090000-0003", at: "2026-10-03T09:00:00Z", took: 150 * time.Minute, tier: tier.Large, usd: 1, minutes: 30, billed: 5},
+		{id: "20261005-090000-0004", at: "2026-10-05T09:00:00Z", took: 30 * time.Minute, tier: tier.Medium, usd: 1, minutes: 30, billed: 1},
+		{id: "20261006-090000-0005", at: "2026-10-06T09:00:00Z", took: 30 * time.Minute, tier: tier.Medium, usd: 1, minutes: 30, billed: 1},
+		// Inside the window and before the report's own week.
+		{id: "20261014-090000-0006", at: "2026-10-14T09:00:00Z", took: 30 * time.Minute, tier: tier.Large, usd: 1, minutes: 30, billed: 1},
+		{id: "20261015-090000-0007", at: "2026-10-15T09:00:00Z", took: 30 * time.Minute, tier: tier.Large, usd: 1, minutes: 30, billed: 1},
+		{id: "20261016-090000-0008", at: "2026-10-16T09:00:00Z", took: 30 * time.Minute, tier: tier.Large, usd: 1, minutes: 30, billed: 1},
+		// The week's own two.
+		{id: "20261020-090000-0009", at: "2026-10-20T09:00:00Z", took: 90 * time.Minute, tier: tier.Large, usd: 1, minutes: 30, billed: 3},
+		{id: "20261021-090000-0010", at: "2026-10-21T09:00:00Z", took: 90 * time.Minute, tier: tier.Large, usd: 1, minutes: 30, billed: 3},
 	} {
 		recs = append(recs, calRecord(t, r))
 	}
 
+	report := calMarkdown(t, recs)
+	if !strings.Contains(report, "| large | 5 | 1.00x | 1.00x | $1.00 / 30m | $1.00 / 30m |") {
+		t.Errorf("the report's large row is not the five runs of the fortnight ending with the week:\n%s", calSection(t, report))
+	}
+	if strings.Contains(report, "| medium |") {
+		t.Errorf("the report carries a medium row and the window holds no run of it:\n%s", calSection(t, report))
+	}
+	// The same row off the calibration itself, so the printed figures are the
+	// window's and not a rendering of something else.
 	cal := governance.Calibrate(digest.Build(recs, p))
 	if len(cal) != 1 {
 		t.Fatalf("the window gave %d rows, want the one tier it holds runs of: %+v", len(cal), cal)
 	}
 	c := cal[0]
-	if c.Runs != 2 {
-		t.Errorf("the large row holds %d runs, want the 2 inside the last %d days", c.Runs, governance.WindowDays)
+	if c.Tier != tier.Large || c.Runs != 5 {
+		t.Errorf("the large row = %+v, want the 5 runs inside the last %d days", c, governance.WindowDays)
 	}
-	if !c.CostKnown || c.CostRatio != 3 || !c.DurationKnown || c.DurationRatio != 3 {
-		t.Errorf("the large row's ratios = %v cost (known %v), %v duration (known %v), want 3.00x for both: the runs outside the window are not read",
+	if !c.CostKnown || c.CostRatio != 1 || !c.DurationKnown || c.DurationRatio != 1 {
+		t.Errorf("the large row's ratios = %v cost (known %v), %v duration (known %v), want 1.00x for both: the runs outside the window are not read",
 			c.CostRatio, c.CostKnown, c.DurationRatio, c.DurationKnown)
 	}
-	if c.SuggestedUSD != 2_000_000 || c.SuggestedMinutes != 60 {
-		t.Errorf("the suggestion = %s / %dm, want $2.00 / 60m (3.00x held at the ceiling)", digest.USD(c.SuggestedUSD), c.SuggestedMinutes)
+	if c.SuggestedUSD != 1_000_000 || c.SuggestedMinutes != 30 {
+		t.Errorf("the suggestion = %s / %dm, want $1.00 / 30m (the expectation the window's runs carried)", digest.USD(c.SuggestedUSD), c.SuggestedMinutes)
+	}
+
+	// And the window ends where the report does: a digest handed a run that
+	// finished after the period closed -- a caller's own, not one Build wrote --
+	// does not read it either, so a report already committed cannot move when a
+	// later run lands (G3).
+	d := digest.Build(recs, p)
+	d.Expectations = append(d.Expectations, digest.Expectation{
+		Tier: string(tier.Large), ExpectedUSD: 1_000_000, ExpectedMinutes: 30,
+		Billed: 5_000_000, Finished: calTime(t, "2026-10-28T09:00:00Z"),
+	})
+	if got := governance.Calibrate(d); len(got) != 1 || got[0].Runs != 5 {
+		t.Errorf("the window read a run that finished after the period closed: %+v", got)
 	}
 }
 
@@ -431,11 +477,11 @@ func TestCalibrationAppliesNothing(t *testing.T) {
 }
 
 // TestCalibrationPrintsOnlyInAWeeklyReport (plan T8.3): the section is the
-// weekly report's. The window it reads is 20 runs or 14 days, so a day's
-// report would print the same suggestion under a period it is not a figure of
-// and a month's would print a window no longer than its own. Neither carries
-// the section: a build with a hook still prints the report it printed before
-// on every other cadence.
+// weekly report's. The window it reads is the 14 days ending with the period,
+// so a day's report would print the same fortnight's suggestion under a day
+// that is no figure of it, and a month's or a year's would print a window
+// shorter than the period it heads. Neither carries the section: a build with
+// a hook still prints the report it printed before on every other cadence.
 func TestCalibrationPrintsOnlyInAWeeklyReport(t *testing.T) {
 	var recs []runstore.Record
 	for i := range 3 {

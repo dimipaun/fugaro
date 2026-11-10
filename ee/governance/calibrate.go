@@ -8,6 +8,7 @@ import (
 	"math"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/digest"
@@ -37,9 +38,11 @@ const (
 	// WindowRuns is the most runs of one tier a calibration reads: the last
 	// of them, so a tier that changed shape is calibrated on what it does now.
 	WindowRuns = 20
-	// WindowDays is how far back from that tier's newest run it reads. The two
-	// are a window and not a requirement: whichever holds fewer runs is the one
-	// that counts.
+	// WindowDays is how far back from the end of the report's period it reads:
+	// the days ending with the period, so a quiet week is calibrated on the
+	// tier's last fortnight and not on the three runs this week happened to
+	// hold. The two are a window and not a requirement: whichever holds fewer
+	// runs is the one that counts.
 	WindowDays = 14
 	// SuggestionFloor and SuggestionCeiling bound how far a suggestion may
 	// move from the expectation the window's runs carried. A ratio outside
@@ -89,11 +92,11 @@ type Calibration struct {
 // (E1.2, design §5.4): the tier calibration of a weekly report, and no section
 // at all for any other period.
 //
-// The weekly cadence is the plan's (T8.3). A day's report holds a handful of
-// runs and a month's or a year's holds a window no longer than this one, so
-// the same suggestion would print under a period it is not a figure of; the
-// window is what the section is about, and a week is the period that shows it
-// without repeating it.
+// The weekly cadence is the plan's (T8.3). The window is the WindowDays ending
+// with the period, so a day's report would print the same fortnight's
+// suggestion under a day that is no figure of it, and a month's or a year's
+// would print a window shorter than the period it heads; a week is the period
+// the window is for.
 func Sections(d digest.Digest) []digest.Section {
 	if d.Period.Dim != digest.ByWeek {
 		return nil
@@ -108,21 +111,30 @@ func Sections(d digest.Digest) []digest.Section {
 // Calibrate is the window's calibration, one row per tier the window holds
 // runs of, in the vocabulary's order (plan T8.3, spec §6).
 //
-// The window is the report's own expectations -- every run of the period that
-// carried a tier -- read per tier: the plan's window is "per tier, over the
-// last 20 runs or 14 days", so each tier is calibrated on its own runs and on
-// none of another's. One window cut over every tier's expectations at once
-// would be a window of the report rather than of a tier: a busy tier would
-// push a quiet one out of the section entirely, and the busy one would be
-// calibrated on fewer runs than its own last twenty.
+// The window is the 14 days ending with the report's period, read per tier:
+// the plan's window is "per tier, over the last 20 runs or 14 days", so each
+// tier is calibrated on its own runs and on none of another's, and the days are
+// a fortnight where the report is a week. That reach is why the digest carries
+// tier expectations from outside its period (digest.Build): a section that read
+// the period's own expectations would be the last 20 runs or 7 days whatever it
+// said, which is a fortnight's window printed under a week's report.
+//
+// One window cut over every tier's expectations at once would be a window of
+// the report rather than of a tier: a busy tier would push a quiet one out of
+// the section entirely, and the busy one would be calibrated on fewer runs than
+// its own last twenty.
 //
 // A tier the window holds no run of gets no row: there is nothing to calibrate
 // it from, and a suggestion invented from nothing would be a figure no run
 // produced.
 func Calibrate(d digest.Digest) []Calibration {
+	end, ok := d.Period.EndsAt()
+	if !ok {
+		return nil
+	}
 	out := make([]Calibration, 0, len(tier.Tiers))
 	for _, t := range tier.Tiers {
-		if window := calibrateWindow(tierRuns(d.Expectations, t)); len(window) > 0 {
+		if window := calibrateWindow(tierRuns(d.Expectations, t), end); len(window) > 0 {
 			out = append(out, calibrate(t, window))
 		}
 	}
@@ -144,25 +156,27 @@ func tierRuns(exp []digest.Expectation, t tier.Tier) []digest.Expectation {
 	return out
 }
 
-// calibrateWindow is one tier's runs narrowed to its window: the runs no older
-// than WindowDays before the tier's newest one, and of those the last
-// WindowRuns. The two are a window and not a requirement: whichever holds
-// fewer runs is the one that counts.
+// calibrateWindow is one tier's runs narrowed to its window: the runs that
+// finished in the WindowDays ending with the period's last day, and of those
+// the last WindowRuns. The two are a window and not a requirement: whichever
+// holds fewer runs is the one that counts.
+//
+// The window ends where the report does and not at the tier's newest run: a
+// report is of a closed period, so the same records give the same window
+// however long after the period it is written, and a tier that has not run
+// since is calibrated on the runs it did make or on none rather than on
+// whatever arrived later.
 //
 // The governance-halted runs are left out before the sample is cut rather than
 // after: the window bounds the sample a median is taken over, and a window of
-// 20 runs of which 8 were halted would otherwise be a median of 12. The 14 days
-// are measured back from the tier's newest run, halted or not, because what
-// ages is the tier's own last use of it and a tripwire stopping a run does not
-// move that.
-func calibrateWindow(runs []digest.Expectation) []digest.Expectation {
-	if len(runs) == 0 {
-		return nil
-	}
-	cutoff := runs[len(runs)-1].Finished.AddDate(0, 0, -WindowDays)
+// 20 runs of which 8 were halted would otherwise be a median of 12. They are
+// left out of the window's runs and not out of its days, because the days are
+// the report's and not the runs'.
+func calibrateWindow(runs []digest.Expectation, end time.Time) []digest.Expectation {
+	cutoff := end.AddDate(0, 0, -WindowDays)
 	kept := make([]digest.Expectation, 0, len(runs))
 	for _, e := range runs {
-		if !e.Governance && !e.Finished.Before(cutoff) {
+		if !e.Governance && !e.Finished.Before(cutoff) && e.Finished.Before(end) {
 			kept = append(kept, e)
 		}
 	}
@@ -265,7 +279,7 @@ func median[T ~int64 | ~float64](vs []T) T {
 // suggests within, the rows, and the line that says what a suggestion is.
 func calibrationMarkdown(cal []Calibration) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Suggested tier defaults from the last %d runs or %d days of this report, whichever is fewer, by the median actual/expected of each tier's own runs. Runs a governance tripwire stopped are left out, and every suggestion is held between %gx and %gx the expectation those runs carried. Nothing is applied: a suggestion is a figure a person writes into the policy, and no run reads it (G9).\n\n",
+	fmt.Fprintf(&b, "Suggested tier defaults from the last %d runs of each tier or its runs of the %d days ending with this report, whichever is fewer, by the median actual/expected of each tier's own runs. Runs a governance tripwire stopped are left out, and every suggestion is held between %gx and %gx the expectation those runs carried. Nothing is applied: a suggestion is a figure a person writes into the policy, and no run reads it (G9).\n\n",
 		WindowRuns, WindowDays, SuggestionFloor, SuggestionCeiling)
 	b.WriteString("| tier | runs | cost | duration | expected | suggested |\n")
 	b.WriteString("| --- | --- | --- | --- | --- | --- |\n")
