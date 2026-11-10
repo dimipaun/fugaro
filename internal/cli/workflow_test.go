@@ -31,8 +31,9 @@ import (
 //     (TestWorkflowAddInAManagedProjectFilesTheAdmissionAtTheOwnersTerminal);
 //   - `config init` still writes the minimal file, which is D1177's second half
 //     (TestDocsConfigInitStillWritesAMinimalFile), and this group is what puts a
-//     workflow into the file a repository is anchored with
-//     (TestWorkflowAddLandsOnTheAnchoredFileConfigInitWrites).
+//     workflow into the file a repository is anchored with — which is the write
+//     path's own read that file does not satisfy yet
+//     (TestWorkflowAddRefusesAFileTheSettingsPathCannotRead).
 //
 // Every fixture here is one config.Parse accepts, because every write this
 // group makes is held to that loader (settingsReparse) and because the loader
@@ -511,6 +512,31 @@ func TestWorkflowAddRefusesAFileTheSettingsPathCannotRead(t *testing.T) {
 				t.Error("the refused write changed the file")
 			}
 		})
+	}
+}
+
+// TestWorkflowHelpOffersOnlyKeysARepositoryFileCanHold is the boundary above read
+// from the other side: the keys the help prints as examples have to be keys this
+// write takes, and `profile` is not one of them — a repository's file naming a
+// profile is exactly the file the settings read refuses, so an example printing it
+// is a command the CLI declines with the loader's own sentence. The examples are
+// also where a person writes their first block, and the keys the suite itself
+// writes are the ones the examples print (workflowAddDocs,
+// TestWorkflowAddCreatesTheBlock), so this is one artifact and not a second list.
+func TestWorkflowHelpOffersOnlyKeysARepositoryFileCanHold(t *testing.T) {
+	for _, tc := range []struct {
+		command string
+		help    string
+	}{
+		{"workflow", newWorkflowCmd().Long},
+		{"workflow add", newWorkflowAddCmd().Long},
+	} {
+		if strings.Contains(tc.help, "profile") {
+			t.Errorf("`fugaro %s`'s help names profile: a repository's file that names one is a file this write path's read refuses (profiles come from the project layer), so it is not a key of a block a repository holds", tc.command)
+		}
+		if !strings.Contains(tc.help, "commands.test") {
+			t.Errorf("`fugaro %s`'s help prints no example of a block's own key, and its examples are what a person copies:\n%s", tc.command, tc.help)
+		}
 	}
 }
 

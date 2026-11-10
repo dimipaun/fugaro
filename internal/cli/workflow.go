@@ -61,7 +61,7 @@ this group creates one and takes one away. The block's own keys are
 
 ` + "`fugaro settings set`" + `'s, written one concrete key at a time:
 
-    fugaro settings set workflows.web.profile svc --layer repo
+    fugaro settings set workflows.web.resources.cpu 4 --layer repo
     fugaro settings set workflows.web.commands.test 'go test ./...' --layer repo
 
 ` + "`workflow add`" + ` writes the keys it is given with --set and refuses a block the file
@@ -88,7 +88,7 @@ func newWorkflowAddCmd() *cobra.Command {
 keys are ` + "`fugaro settings set workflows.NAME.<key>`" + `'s).
 
 --set takes one FIELD=VALUE per key, FIELD being a key of a workflow without the
-block's name: --set profile=svc, --set commands.test='go test ./...'. A key whose
+block's name: --set resources.cpu=4, --set commands.test='go test ./...'. A key whose
 value is a list, a map or an object list is not this flag's — settings set writes
 those with --add, --remove, --add-entry and --remove-entry after the block exists.
 
