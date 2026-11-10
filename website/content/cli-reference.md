@@ -3013,15 +3013,13 @@ address the owner did not approve is refused) and the deployer account (which
 holds no project-level IAM permission and cannot write the runs bucket). None
 of the four is a boundary against a session that goes around this program.
 
-The confirmation comes back whenever the whole-project inventory does not clear
-the project: before anything is planned, this command reads every resource of
-the GCP project (Cloud Asset, with the operator's own credential) and compares
-it with what the installation's Terraform states account for. A resource
-nothing accounts for, or an inventory that cannot be read, keeps this run's
-confirmation: a coding agent's session is refused, and a person at a terminal
-proceeds with the reason printed first — the prompt itself is not restored,
-because in a managed project a prompt is what --ask puts back and this command
-registers no such flag yet. Nothing is halted and nothing is deleted.
+The prompt comes back whenever the whole-project inventory does not clear the
+project: before anything is planned, this command reads every resource of the
+GCP project (Cloud Asset, with the operator's own credential) and compares it
+with what the installation's Terraform states account for. A resource nothing
+accounts for, or an inventory that cannot be read, keeps this run's
+confirmation: a coding agent's session is refused and a person is asked, with
+the reason printed first. Nothing is halted and nothing is deleted.
 
 Usage: `fugaro managed apply ROOT`
 

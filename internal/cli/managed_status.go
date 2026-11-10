@@ -221,9 +221,12 @@ type managedStatusAudit struct {
 	// Command is the command as a person types it ("fugaro config publish"),
 	// which is the record's own name for it and not its argv.
 	Command string `json:"command"`
-	// Verdict is the gate's own answer about the judged plan: "admitted" or
-	// "refused". A refusal is a record an owner reads most, so it is shown
-	// beside an admission and never instead of it.
+	// Verdict is the gate's own answer about the judged plan: "admitted",
+	// "warned" or "refused". "warned" is D1545's middle answer — the gate
+	// recorded the plan's content findings and the write went through — and the
+	// findings themselves are not carried here (the member's own comment). A
+	// refusal is a record an owner reads most, so it is shown beside an
+	// admission and never instead of it.
 	Verdict string `json:"verdict"`
 	// Identity is the account the write ran as: the deployer account for a
 	// managed apply, the operator's own elsewhere.

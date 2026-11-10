@@ -1164,6 +1164,36 @@ func TestImpersonationAccountReadsTheURLStrictly(t *testing.T) {
 	}
 }
 
+// A person at a terminal types the project's name after the apply's own
+// question; anything else is a no.
+func TestManagedAskWantsTheProjectsNameTyped(t *testing.T) {
+	r := newInitRig(t)
+	lc, err := localcfg.Load(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		in   string
+		want bool
+	}{
+		{lc.Name + "\n", true},
+		{"yes\n", false},
+		{"", false},
+	} {
+		cmd := newManagedApplyCmd()
+		var out strings.Builder
+		cmd.SetErr(&out)
+		cmd.SetIn(strings.NewReader(tc.in))
+		ok, err := managedAsk(cmd, lc)("apply the saved plan (sha256 abc): 1 to create")
+		if err != nil || ok != tc.want {
+			t.Errorf("typed %q: (%v, %v), want %v", tc.in, ok, err, tc.want)
+		}
+		if !strings.Contains(out.String(), "sha256 abc") || !strings.Contains(out.String(), "Type "+lc.Name) {
+			t.Errorf("the prompt does not carry the question and what to type:\n%s", out.String())
+		}
+	}
+}
+
 // TestManagedApplyRefusesAMissingImpersonationGrant: an operator without the
 // token-creator grant is a user error that names what to ask the owner for, and
 // the refusal is ErrNoImpersonationGrant so the caller can tell it apart from

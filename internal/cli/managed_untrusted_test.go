@@ -166,6 +166,39 @@ func TestTheRootsRefusalBoundsTheRootAndTheCheckoutsProject(t *testing.T) {
 	}
 }
 
+// TestManagedAskBoundsThePromptAndStillReadsTheTypedName: the question is
+// printed with the project's own name twice, and the answer is compared with
+// that name exactly — the bound is on the text and never on the comparison, or
+// a name the bound shortened could never be typed back.
+func TestManagedAskBoundsThePromptAndStillReadsTheTypedName(t *testing.T) {
+	for name, v := range hostileCLIValues() {
+		t.Run(name, func(t *testing.T) {
+			lc := &localcfg.Config{Name: v}
+			cmd := newManagedApplyCmd()
+			var out strings.Builder
+			cmd.SetErr(&out)
+			cmd.SetIn(strings.NewReader(v + "\n"))
+			ok, err := managedAsk(cmd, lc)("apply the saved plan (sha256 abc)")
+			if err != nil {
+				t.Fatal(err)
+			}
+			// This program's own two lines — the warning and the question —
+			// and never more, however many lines the name would have added.
+			noRawHostile(t, name+" in the prompt", out.String(), 2)
+			if !strings.Contains(out.String(), safetext.Field(v)) {
+				t.Errorf("the prompt does not carry the name it is about, bounded:\n%q", out.String())
+			}
+			// And the comparison is on the name itself, never on the bounded
+			// text: a name a terminal can deliver is read back exactly, and one
+			// with a newline in it cannot be typed at all, so it is not
+			// confirmed — the fail-closed answer, not the bound's.
+			if want := !strings.ContainsAny(v, "\n\r"); ok != want {
+				t.Errorf("the typed name was read as %v, want %v: the bound is not on the comparison", ok, want)
+			}
+		})
+	}
+}
+
 // TestTheApplyRefusalsMapBoundsEveryValue: managedListErr and managedApplyErr
 // are where the apply's own errors become the sentence a person reads, and
 // every value they interpolate — the project, the runs bucket, the root, and

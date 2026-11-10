@@ -164,7 +164,7 @@ The alternative — leaving the refresh unbounded as `--yes` leaves it — costs
 | `command`, `argv` | which command, with every secret-bearing argument absent rather than redacted — the gate never admits a command that takes a secret |
 | `project`, `gcp_project` | the installation the record is about |
 | `plan_digest` | sha256 of the exact plan bytes the gate read, so the applied plan and the judged plan are provably one |
-| `verdict`, `rules` | admitted or refused, and which rules the gate applied |
+| `verdict`, `rules`, `warnings` | admitted, warned or refused; which rules the gate applied; and, for a warned one, the content findings the gate recorded and did not refuse on (D1545) |
 | `marker_version`, `marker_generation` | which creation fact was in force |
 | `delete_list_generation` | which version of the owner's list admitted the deletes, where it was read |
 | `agent_marker` | which environment marker was present — the session's own claim, recorded rather than trusted |
