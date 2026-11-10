@@ -94,8 +94,11 @@ func TestRigorSetRefusesAModeBelowTheResolvedOne(t *testing.T) {
 	if !strings.Contains(err.Error(), "fugaro rigor set startup") {
 		t.Errorf("the refusal does not print the command to run: %v", err)
 	}
-	if !strings.Contains(out, "defaults.rigor.default") {
+	if !strings.Contains(out, "default: critical") {
 		t.Errorf("the refused write printed no diff:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "defaults.rigor.default") {
+		t.Errorf("the refusal does not name the key it refused: %v", err)
 	}
 	if readFileString(t, path) != before {
 		t.Error("the refused write changed the layer file")
@@ -162,7 +165,7 @@ func TestRigorSetRefusesHotfix(t *testing.T) {
 // this machine's own layer file, and the name is the plan's shorthand for it.
 func TestRigorSetWritesTheLocalProjectConfig(t *testing.T) {
 	settingsWriteHomeWith(t, "review_floor:\n  critical: [l2, l3]\n")
-	path := settingsManagedLayerFile(t, "# the layer this machine edits\ndefaults:\n  agent:\n    review_rounds: 4\n")
+	path := settingsManagedLayerFile(t, rigorAnchors+"# the layer this machine edits\ndefaults:\n  agent:\n    review_rounds: 4\n")
 	before := readFileString(t, path)
 	noAgentSession(t)
 	noTerminal(t)

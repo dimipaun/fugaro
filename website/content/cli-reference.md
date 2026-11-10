@@ -56,6 +56,7 @@ Subcommands:
 - `fugaro report` -- Report what the project spent, by day, week, month, year, repository, model, person or mode
 - `fugaro restore` -- Rebuild a managed project from zero, into a new GCP project ID, and print what is not restored
 - `fugaro review` -- Review a pull request in a job of its own, on a named account
+- `fugaro rigor` -- Set the rigor mode a project's runs are held to
 - `fugaro run` -- Launch a task in the cloud; it always ends with a PR
 - `fugaro runs` -- List and inspect runs
 - `fugaro seats` -- Estimate how many people a subscription's seat rule would count
@@ -4524,6 +4525,82 @@ Flags:
 | `--json` | bool | `false` | no | print the artifact's own JSON alone, exactly as the review job wrote it |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro rigor`
+
+Set the rigor mode a project's runs are held to
+
+The rigor mode decides how much review a run gets and what it costs.
+
+`fugaro rigor set <mode>` writes `defaults.rigor.default` of this machine's own
+project layer file, and `--area <glob>` writes one rule of
+`defaults.rigor.areas` — the mode a run touching that glob is held to, which is
+the strictest of the rules that match it. The file is the one `fugaro update`
+publishes, and every write ends with `next: fugaro update`.
+
+A mode is `poc`, `startup`, `pro`, `critical` or `hotfix`, and `hotfix` is the one
+no layer sets: it is an operator's per-run mode, reached with
+`fugaro run --mode hotfix`. A mode below what the project resolves to today is
+the sensitive direction, so a coding agent's session is refused it with the
+command to run at your own terminal, and your own terminal writes it and asks
+nothing.
+
+Usage: `fugaro rigor`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for rigor |
+
+Subcommands:
+
+- `fugaro rigor set` -- Write the project layer's rigor default, or one area rule
+
+## `fugaro rigor set`
+
+Write the project layer's rigor default, or one area rule
+
+Write a rigor mode into this machine's own project layer file.
+
+With no --area the command writes `defaults.rigor.default`: the mode every run of
+this project starts from unless an area rule or a repository's own file moves
+it. With --area GLOB it writes one rule of `defaults.rigor.areas`: a glob a rule
+already carries has its mode replaced, and a glob the layer does not carry yet
+is added and then needs --name — the rule's name is what the run record and the
+pull request say decided the mode. --name on a rule the layer already carries
+renames it. A second rule with the same glob is refused: one glob addresses one
+rule, and two rules matching one path leave only the strictest of them deciding.
+
+A mode below what this project resolves to today is the sensitive direction: a
+coding agent's session is refused it with the diff and the command to run at
+your own terminal, `--yes` included, and your own terminal writes it and asks
+nothing. `hotfix` is refused in either form, naming `fugaro run --mode hotfix`.
+
+The command prints the review floor beside the write, and it cannot lower it:
+`fugaro rigor floor` is where a floor is changed.
+
+It writes one file — this machine's own project layer file, whose path is
+derived from the selected project's name — and it refuses when that file does
+not exist, naming `fugaro update`, which seeds it from the published layer.
+
+Usage: `fugaro rigor set MODE [--area GLOB [--name NAME]]`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--area` | string | "" | no | write this glob's rule in defaults.rigor.areas instead of the layer's default (e.g. docs/**) |
+| `--ask` | bool | `false` | no | in a project whose marks say it is managed, ask the confirmation this write would otherwise get instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back. Refused where nobody can answer it (a coding agent's session, a pipe, --non-interactive); a no-op with a sentence in a project that is not managed; refused beside --yes |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `-h`, `--help` | bool | `false` | no | help for set |
+| `--name` | string | "" | no | the rule's name; required for a glob the layer does not carry yet, and a rename for one it does |
+| `--project` | string | "" | no | the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config) |
+| `--yes` | bool | `false` | no | confirm the write without a prompt |
 
 Subcommands:
 
