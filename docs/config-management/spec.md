@@ -383,10 +383,15 @@ gives it a command — with the converge flag that changes it when the two doors
   `fugaro update`**, following the same local file the converge reads, and never a hand edit of a file
   the next `update` overwrites — which is the state this design removes. The rows with a flag are the
   change a person makes today, and they are the shape every other row takes when it is asked for.
-- **Two rows here are D1179's, not this table's, and they are listed because that task has not
-  landed.** `compute_prices.*.gib_second_usd` and `compute_prices.*.vcpu_second_usd` become the generic
-  writer's entries (§2, D1162), so the allowlist gains them and this table loses both rows in the same
-  change: until then the tree has no writer for them at all, which is exactly what a row here says.
+- **Two rows here are D1179's, and the plan carries its half of that decision in no task at all.**
+  `compute_prices.*.gib_second_usd` and `compute_prices.*.vcpu_second_usd` become the generic writer's
+  entries (§2, D1162) under D1179, so the allowlist gains them and this table loses both rows in the same
+  change: until then the tree has no writer for them at all, which is exactly what a row here says. **That
+  change has no task**, and the two rows are the record of it: the plan gives D1179's allowlist half to
+  **G0**, which landed without these two, and **G12**'s own section disclaims them as G0's
+  (§ plan, G12). A decision the plan does not assign is reported and not decided here —
+  the rows stay, the gap is named, and whichever task the owner gives these two keys drops both rows and
+  this bullet in the same sweep.
 - **Two of them look like deliberate choices with no command today** — `terraform.alert_email`
   (`internal/settings/registry.go:586`) and `batch.machine_type` (`internal/settings/registry.go:572`).
   The converge already takes `--alert-email` (`internal/cli/init.go:368`) and the batch machine is the
