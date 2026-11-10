@@ -1,6 +1,6 @@
 # Project Claude accounts: one OAuth token per (profile, account)
 
-Status: **0.9.0, released.** The released Fugaro is 0.21.0, and 0.9.0 is the first release any of this page works on:
+Status: **0.9.0, released.** The released Fugaro is 0.21.2, and 0.9.0 is the first release any of this page works on:
 the `claude_accounts` field inside a profile, the `accounts` block in the published policy and the
 jobs they name all ship in 0.9.0 (policy version 3,
 [`internal/projectpolicy/version.go`](../internal/projectpolicy/version.go)), and a 0.8.x binary
@@ -472,6 +472,28 @@ gcloud secrets versions disable <version> --secret=claude-oauth-token-<name>
 Runs of that job then start without a usable credential. `gcloud secrets versions enable` puts it
 back. `fugaro doctor`'s `project-account-stored` check (§9) reports a token with no enabled
 version, which is the state a disabled-last-version leaves.
+
+**Changing which account a stage runs on** is a setting, not an edit of the local config by hand.
+The local config keys one account per stage — `stages.<stage>.claude_account`, one key for each
+stage name a run spends a model call on (`plan`, `implement`, `review_first`, `review`,
+`adversarial`, `fix`) — and `fugaro settings` reads it with the layer that decided it (per
+installation):
+
+```bash
+fugaro settings get stages.review.claude_account
+fugaro settings set stages.review.claude_account acme-team
+fugaro settings unset stages.review.claude_account
+```
+
+The value is a name the project's `claude_accounts` declares, or `default` for the unsuffixed
+account. A name nothing declares is refused with the declared names, and a name whose `allow_data_to`
+does not cover every repository this project onboards is refused naming the repositories it misses:
+the account a stage runs on is chosen for the repository a run is for, so an account that covers
+less would have every run on the rest refused at the launch, and the write stops before it happens.
+`unset` is the way back — the stage then runs on `default_claude_account`, the account every stage
+uses when nothing more specific does (§3). This is the command that repoints a stage when the
+account it runs on has run out; §6's `--token` and the committed `agent.oauth_token` stay the run's
+own and the repository's own ways of naming an account.
 
 **Changing which repositories an account may reach** is an edit to `allow_data_to` in the project's
 local config (per installation), followed by a publish:

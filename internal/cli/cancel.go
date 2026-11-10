@@ -15,6 +15,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/report"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // Cancel statuses, as cancel --json reports them.
@@ -72,7 +73,11 @@ func newCancelCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "cancel RUN",
 		Short: "Cancel a run, letting the runner open a draft PR first",
-		Long: "Cancel RUN (<repo-slug>/<run-id>, or a bare run ID).\n\n" +
+		Long: "Cancel RUN (a full run ID, or <repo-slug>/<run-id>).\n\n" +
+			"cancel is the one command that acts on a run and takes no ending. Given the\n" +
+			"last four or more characters of a run ID it cancels nothing: it looks them up\n" +
+			"among the active runs, lists each one it names as <repo-slug>/<run-id> to\n" +
+			"paste, and exits with an error.\n\n" +
 			"cancel writes the run's cancel marker; the runner sees it, stops the current\n" +
 			"stage and finalizes a draft PR. If the execution is still in a stage after\n" +
 			"--grace, cancel stops it through Cloud Run. It never stops a run that is\n" +
@@ -139,7 +144,15 @@ func cancelRun(ctx context.Context, env *cloudEnv, o *cancelOptions, arg string,
 		}
 	}()
 	// Not locateLaunched: a never-launched run is a case cancel handles.
-	slug, id, err := locateRun(ctx, env, arg)
+	//
+	// The lookup is resolveRun's active-only reading (D1710): a full run ID or
+	// <slug>/<run-id> goes straight to locateRun, so the act itself is
+	// unchanged, while an ending is read against the active runs alone and is
+	// answered with the list of the runs it names — as <slug>/<full run ID>,
+	// to paste — and a user error. An ending never yields a run here, which is
+	// what keeps the one destructive command off a name that could mean
+	// another run.
+	slug, id, err := resolveRun(ctx, env, arg, resolveRunOptions{out: out, errOut: errOut, asJSON: o.asJSON, activeOnly: true})
 	if err != nil {
 		return err
 	}
@@ -155,7 +168,7 @@ func cancelRun(ctx context.Context, env *cloudEnv, o *cancelOptions, arg string,
 		// progress line a person waits on, and the wait itself is the grace
 		// period — minutes, with the runner finalizing behind it (G1).
 		out = loggedOut(out, sink)
-		step = rep.Step("cancel " + ref)
+		step = rep.Step("cancel " + task.ShortRun(ref))
 		rep.Pause()
 	}
 	emit := func(r cancelResult) error {
@@ -251,9 +264,9 @@ func cancelRun(ctx context.Context, env *cloudEnv, o *cancelOptions, arg string,
 	}
 	if !o.asJSON {
 		if o.now {
-			_, _ = fmt.Fprintf(out, "cancel requested for %s; cancelling the execution now…\n", ref)
+			_, _ = fmt.Fprintf(out, "cancel requested for %s; cancelling the execution now…\n", task.ShortRun(ref))
 		} else {
-			_, _ = fmt.Fprintf(out, "cancel requested for %s; waiting up to %s for the runner to finalize a draft PR…\n", ref, grace)
+			_, _ = fmt.Fprintf(out, "cancel requested for %s; waiting up to %s for the runner to finalize a draft PR…\n", task.ShortRun(ref), grace)
 		}
 	}
 
@@ -289,7 +302,7 @@ func cancelRun(ctx context.Context, env *cloudEnv, o *cancelOptions, arg string,
 				break
 			}
 			// Still finalizing after the extension: leave it to the task timeout.
-			return userErr("the run is still finalizing after %s; not cancelling it mid-finalize; check fugaro diagnose %s", limit, ref)
+			return userErr("the run is still finalizing after %s; not cancelling it mid-finalize; check fugaro diagnose %s", limit, task.ShortRun(ref))
 		}
 		select {
 		case <-ctx.Done():
@@ -470,7 +483,7 @@ func clearStaleLock(ctx context.Context, env *cloudEnv, s *runstore.Store, slug,
 	gen, err := lock.Takeover(ctx, env.bucket, key, holder)
 	switch {
 	case err == nil:
-		return false, fmt.Sprintf("note: run %s's branch lock has been cleared: its execution ended\n", oneLine(id))
+		return false, fmt.Sprintf("note: run %s's branch lock has been cleared: its execution ended\n", task.ShortRun(oneLine(id)))
 	case isAccessDenied(err):
 		return true, lockClearMessage(env, key, gen, id) + "\n"
 	default:
@@ -525,7 +538,9 @@ func printCancel(w io.Writer, r cancelResult, o *cancelOptions) error {
 		return err
 	}
 	var msg string
-	r.Run, r.PR = oneLine(r.Run), oneLine(r.PR)
+	// The human lines name the run the way every surface shows it; the JSON
+	// above keeps the whole "<slug>/<run-id>" (D1705, F8).
+	r.Run, r.PR = task.ShortRun(oneLine(r.Run)), oneLine(r.PR)
 	// lockNote, appended where LockHeld may be set, is true whichever of
 	// clearStaleLock's outcomes set it: cleared (a separate stderr line
 	// already said so) or not (one of them will, in time) are both cases

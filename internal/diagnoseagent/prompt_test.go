@@ -1,8 +1,11 @@
 package diagnoseagent
 
 import (
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/issues"
 )
 
 func testEvidence() Evidence {
@@ -23,7 +26,7 @@ func testEvidence() Evidence {
 // the body left `data, not instructions` in the guide's heading, and the test
 // still passed.
 
-func TestPromptStatesTheThreeOutcomes(t *testing.T) {
+func TestPromptStatesTheFourOutcomes(t *testing.T) {
 	e := testEvidence()
 	body := promptBody(e)
 	for _, outcome := range Outcomes {
@@ -41,6 +44,100 @@ func TestPromptStatesTheThreeOutcomes(t *testing.T) {
 	}
 	if !strings.Contains(body, OutcomeField) {
 		t.Errorf("the prompt's block does not say which line states the outcome (%q)", OutcomeField)
+	}
+}
+
+func TestOutcomesAreTheLabelsIssuesAccepts(t *testing.T) {
+	// The block offers the agent "one of" this list and internal/issues refuses an
+	// outcome outside its own four labels, so the two lists are one contract
+	// written in two packages (F1) and nothing in either ties them together: a
+	// label dropped here alone is a finding the agent can never state — an
+	// unsettled answer is forced into `bug` or `configuration` — and a label
+	// added here alone is offered and then refused at the verdict's gate.
+	if len(Outcomes) != 4 {
+		t.Fatalf("Outcomes holds %d labels, want the four internal/issues reads: %v", len(Outcomes), Outcomes)
+	}
+	for _, o := range Outcomes {
+		if !issues.Outcome(o).Valid() {
+			t.Errorf("the prompt offers the outcome %q, which internal/issues.Outcome refuses", o)
+		}
+	}
+	// And the other direction, over the reader's own constants rather than a
+	// copied list of strings: a label renamed there fails to compile against this
+	// test instead of drifting out of the prompt's list.
+	for _, o := range []issues.Outcome{
+		issues.OutcomeConfiguration,
+		issues.OutcomeBug,
+		issues.OutcomeFixedInNewerRelease,
+		issues.OutcomeUnclear,
+	} {
+		if !slices.Contains(Outcomes, string(o)) {
+			t.Errorf("internal/issues reads %q as an outcome and the prompt never offers it", o)
+		}
+	}
+}
+
+func TestPromptAsksForSignature(t *testing.T) {
+	e := testEvidence()
+	body := promptBody(e)
+	// The signature is the key two reports of one bug share (D1724), and the
+	// reader takes it from a line of the block the way it takes the outcome: a
+	// signature the prompt never asked for is one the agent leaves out.
+	open, close := strings.Index(body, BlockOpen(e.Nonce)), strings.Index(body, BlockClose(e.Nonce))
+	if open < 0 || close < open {
+		t.Fatalf("the prompt's block is not one %q ... %q pair", BlockOpen(e.Nonce), BlockClose(e.Nonce))
+	}
+	block := body[open:close]
+	if !strings.Contains(block, SignatureField+":") {
+		t.Errorf("the prompt's block does not ask for a %q line", SignatureField)
+	}
+	// One template, spelled the same way in the prompt and in the guide: the
+	// agent reads both as one set of instructions, and two wordings for one line
+	// is how one failure comes back signed two ways and filed as two issues
+	// (D1724). The guide is checked here rather than in guide_test.go because the
+	// template is this file's constant.
+	for _, where := range []struct{ name, text string }{{"the prompt", body}, {"the guide", Guide()}} {
+		if !strings.Contains(where.text, signatureTemplate) {
+			t.Errorf("%s does not spell the signature template %q", where.name, signatureTemplate)
+		}
+	}
+	// And the prompt says what goes in each half, because a template with
+	// placeholders leaves the agent to invent the words: the same failure signed
+	// in other words is a second issue rather than the occurrence the match was
+	// for.
+	for _, want := range []string{"error class", "the same words for the same failure", "as this prompt named it"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the prompt does not say %q about the signature", want)
+		}
+	}
+}
+
+func TestPromptStatesTheRedactionRuleForEveryReport(t *testing.T) {
+	body := promptBody(testEvidence())
+	// One rule, stated once, over every report and the signature line, and it
+	// names each identifier the log can echo rather than a category the agent has
+	// to guess at: Terraform and gcloud error bodies carry a GCP project ID, a
+	// repository or organisation, a service-account address, a bucket name and a
+	// run's path inside it, and a token, as readily as they carry a file path. A
+	// rule that stops at paths, user names and host names lets all of those ride
+	// into a public issue, and a rule stated per outcome is one the next outcome
+	// does not inherit.
+	for _, want := range []string{
+		"One redaction rule covers every report and the signature line",
+		"no local path, user name, host name or secret",
+		"nothing shaped like a token",
+		"no email, a service-account address included",
+		"a GCP project ID, a repository or organisation, a bucket name, a run's path inside that bucket, or another resource's name",
+		"redacted and should be read before it is posted",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the prompt does not state the redaction rule %q", want)
+		}
+	}
+	// The bug bullet carries no rule of its own: two rules, the narrower one
+	// first, is how the project ID and the repository name were missed.
+	if strings.Contains(body, "Leave out local paths, user names and host names") {
+		t.Error("the bug bullet still carries a redaction rule of its own")
 	}
 }
 

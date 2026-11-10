@@ -110,7 +110,20 @@ func AllowedForProjectSecret(secrets map[string]ProjectSecret, name, repo string
 // variant mounts nothing, O1), so the deployer's own gate is never consulted
 // for it, and a policy list that admitted a repository this function refuses
 // would be a reach the operator's key entry does not give.
+//
+// The project's provider key (ProviderKeySecret) is the second name answered
+// here that no project_secrets entry can carry: it is deliberately not in
+// ReservedSecrets (ProviderKeySecret's comment) and `fugaro secrets set`
+// refuses it, so the block above can never list it and ProjectScopeByDefault's
+// own answer would be no — for a credential that is in fact the service's own,
+// held once for the project, and reaches every repository it is asked about.
+// The reach of that value's policy list is therefore the profiles that name it
+// and their own allow_repos, which is the whole of its bound
+// (projectpolicy.DeriveAccounts).
 func ProjectSecretReaches(secrets map[string]ProjectSecret, name, repo string) bool {
+	if name == ProviderKeySecret {
+		return true
+	}
 	if _, listed := secrets[name]; listed {
 		return AllowedForProjectSecret(secrets, name, repo)
 	}

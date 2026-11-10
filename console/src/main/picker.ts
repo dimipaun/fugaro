@@ -89,6 +89,7 @@ import {
   cliSentence,
 } from './spawn'
 import { buildHardenedWindow, consoleWebPreferences, openExternalValidated } from './window'
+import { wslDistributions } from './wsl'
 import type { BrowserWindow, BrowserWindowConstructorOptions, Session, Shell } from 'electron'
 import type { CliCompatibility } from '../shared/version'
 import type { ChildSpawner, SpawnPlan } from './spawn'
@@ -166,6 +167,21 @@ export const OPEN_EXTERNAL_FAILED = 'the console could not open the link in the 
  */
 export const REVEAL_FAILED = 'the console could not open the installation’s directory'
 
+/**
+ * DISTROS_NOT_WINDOWS is what the distro row answers on a host that has no
+ * `wsl.exe` -- the console's own sentence, because the machine is the subject of
+ * that question and no child ever speaks here.
+ *
+ * It is a refusal and **not an empty list**: `listed` with no names is the true
+ * answer for a machine that has WSL and no distribution, and giving it for a
+ * machine where WSL cannot exist is exactly the false statement the row's own
+ * rule forbids. The renderer never asks (the picker's document draws no distro
+ * section off Windows -- `src/renderer/installations.ts`), so what this holds is
+ * the answer a frame that asked anyway receives, and the guarantee that no
+ * `wsl.exe` is started on a host that is not Windows.
+ */
+export const DISTROS_NOT_WINDOWS = 'this machine is not Windows, so it has no WSL distributions to list'
+
 /** UpdateMenuOptions is the off switch as the menu sees it: the value the
  * checkbox draws, and the two things the items do with it. Plain values and
  * callbacks rather than the store itself, so that the template stays a plain
@@ -242,6 +258,22 @@ export interface InstallationPickerDeps {
   readonly spawner?: ChildSpawner
   readonly spawnLog?: SpawnLogWriter
   readonly fs?: InstallationFs
+  /** wslPath replaces the `wsl.exe` the distro list's read runs. It is T-C4's
+   * own seam (`wslDistributions`' `wslPath`) and it is here for the same reason
+   * `prefixes` is: a unit test must be able to point the console at the fake
+   * without a Windows installation on the machine under test. **The shipped app
+   * never passes it** -- `installInstallationPicker` leaves it out, so the
+   * program is `wslExecutable`'s own absolute path. */
+  readonly wslPath?: string | undefined
+  /** platform is the host this console is running on, in `process.platform`'s
+   * spelling. It is a seam for the reason `home` and `prefixes` are -- a unit
+   * test must be able to say which machine it is standing on -- and it is read
+   * for one thing: the distro row is `wsl.exe`'s question, and `wsl.exe` exists
+   * on Windows alone, so off Windows the row refuses rather than answering a
+   * Windows read failure as a fact about the operator's machine (T-G3). **The
+   * shipped app never passes it** -- `installInstallationPicker` leaves it out,
+   * so the answer is this process's own platform. */
+  readonly platform?: string | undefined
   /** prefixes, when given, replaces rule 4's well-known directories
    * (`binDirectories`' own parameter). It exists for the same reason `home`
    * does: a unit test must be able to say "this machine has no `fugaro`"
@@ -513,6 +545,10 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
   // and no declared argument among them. A row that grew an argument is refused
   // before a window exists.
   assertSpawnSurface(SPAWN_COMMANDS)
+  // The host this console is running on, read the way `locationsFor` reads it
+  // (`./spawn`): the seam when a caller named one, this process's own platform
+  // otherwise. It is asked by the distro row and by nothing else.
+  const host = deps.platform ?? process.platform
   // A `userData` the path rule refuses -- `$FUGARO_CONFIG` in the home directory
   // makes every `userData` "inside" the CLI's configuration -- is **not** a
   // reason to quit at startup (review S7). The console starts with no store: the
@@ -1255,6 +1291,42 @@ export function createInstallationPicker(deps: InstallationPickerDeps): Installa
         if (!opened) return { ok: false, reason: OPEN_EXTERNAL_FAILED }
         return { ok: true, data: { opened: GETTING_STARTED_URL } }
       }
+      case 'distros':
+        // The one row whose subject is not this console's record of anything:
+        // the distributions this machine has, asked of `wsl.exe` by the module
+        // that owns that question (T-C4). Three things follow from that and all
+        // three are the row's whole shape:
+        //
+        //   - **it is Windows' question.** `wsl.exe` is a Windows program at a
+        //     Windows path, so a console on macOS or Linux that asked it would
+        //     answer a spawn failure -- "spawn C:\Windows\System32\wsl.exe
+        //     ENOENT" -- and the window would draw that over the operator's
+        //     machine as though it were a fact about it. Off Windows the row
+        //     refuses, says why, and starts nothing (`DISTROS_NOT_WINDOWS`);
+        //
+        //   - **the child is `wsl.exe`, never the CLI**, so it runs in this
+        //     process's own directory (rule 5's `workingDirectory`) and no
+        //     installation, checkout or project is named -- the question is
+        //     about the machine, and a console that answered it through an
+        //     installation's record would need an installation chosen to ask;
+        //   - **the answer is `wslDistributions`' own, refused shape included.**
+        //     `listed` with no names, `absent` with the sentence `wsl.exe` gave
+        //     (or the reason it gave none), and `listed` with names and the one
+        //     `--status` named the default are three different facts, and the
+        //     window draws them as three different lines -- an empty list drawn
+        //     for a machine where WSL is missing would send the operator to add
+        //     a distribution to a feature that is not installed.
+        if (host !== 'win32') return { ok: false, reason: DISTROS_NOT_WINDOWS }
+        return {
+          ok: true,
+          data: await wslDistributions({
+            appEnv: deps.appEnv,
+            cwd: workingDirectory(),
+            ...(deps.wslPath === undefined ? {} : { wslPath: deps.wslPath }),
+            ...(deps.spawner === undefined ? {} : { spawner: deps.spawner }),
+            ...(deps.spawnLog === undefined ? {} : { log: deps.spawnLog }),
+          }),
+        }
     }
   }
 

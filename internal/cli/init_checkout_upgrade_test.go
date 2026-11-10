@@ -423,9 +423,10 @@ func TestUpdateAgentSessionLeavesTheCloudStepForTheUser(t *testing.T) {
 		`{"version":2,"plugins":{"fugaro@fugaro":[{"scope":"user","version":"0.5.1"}]}}`)
 	// And what Claude Code answers the marketplace list with, which the fake
 	// only moves when the add call runs: the step reads that list before it
-	// decides, so a list that still lacks the marketplace is a change to make
-	// on every run.
-	f.Write(t, "marketplaces.json", ourMarket)
+	// decides, so a list that still lacks the marketplace — or holds it at
+	// another ref than this release's tag — is a change to make on every run.
+	// The first run left it pinned to this release, as the step does.
+	f.Write(t, "marketplaces.json", ourMarketAt("v0.5.1"))
 	*ran = nil
 	e2, out2 := checkoutEngine(t, &initOptions{yes: true})
 	res2 := stageOutcome(t, e2, checkoutStageOf(t, e2))

@@ -70,6 +70,34 @@ const DESIGN_DOCUMENT = join(CONSOLE_ROOT, '..', 'docs', 'design', 'console-styl
 const INVENTORY_HEADING = '## 2. Screen inventory'
 const NEXT_SECTION = '## 3.'
 
+/** STATES_HEADING and STATES_NEXT bound §2.9, "Every state variant, in one
+ * table" -- the one table of every variant, and the table the console's four
+ * installation failures joined (the Windows work's part G, T-G4). It is read
+ * out of the design for the reason §2 is: a copy of the list here would be the
+ * copy a rule is enforced against, and a state added to the document would be a
+ * state no case of this file ever asks for a rule for. */
+const STATES_HEADING = '### 2.9 '
+const STATES_NEXT = '### 2.10 '
+
+/** UNAVAILABLE_SCREEN is the screen column §2.9's rows carry for the console's
+ * installation failures, and the one this file reads: the degraded screen's
+ * `data-kind="no-firebase"` is a state of a screen with a root and a rule table
+ * of its own, so a row naming it is not one of these. */
+const UNAVAILABLE_SCREEN = 'unavailable'
+
+/** INSTALLATION_FAILURES is §2.9's `data-kind` vocabulary for the unavailable
+ * screen, in name order: the four ways a machine can have no `fugaro` the
+ * console can read, plus the refused read the same screen draws. It is the
+ * non-vacuity guard for the case below -- a reading that found none would pass
+ * by requiring rules for nothing. */
+const INSTALLATION_FAILURES: readonly string[] = Object.freeze([
+  'no-binary',
+  'no-distro',
+  'no-fugaro-in-distro',
+  'no-wsl',
+  'refused',
+])
+
 /** SCANNED is the stylesheets whose selectors are checked, and the task that
  * adds each: Task 6.3 wrote `base.css` and Task 6.4 appends `screens.css` here,
  * in the same commit that creates it -- a stylesheet the bundler serves and this
@@ -163,7 +191,7 @@ const SUFFIX = /^-[a-z0-9-]+(?:\/-[a-z0-9-]+)*$/
  * §2 whole must not quietly license either set, so they are subtracted here by
  * name -- which is what keeps both sentences true of the scan.
  *
- * **Seven of §2.11's nine, and not the other two.** `data-key` and `data-view`
+ * **Eight of §2.11's ten, and not the other two.** `data-key` and `data-view`
  * are listed in §2.11 because *the graph* emits them and no graph rule selects
  * them, but the same two names are §2's hooks elsewhere: §2.3's table and §2.4's
  * prose license `data-key` on a spend chart's points and rows and on the caps
@@ -171,7 +199,12 @@ const SUFFIX = /^-[a-z0-9-]+(?:\/-[a-z0-9-]+)*$/
  * `data-view` on `nav.console-views button.console-view` and §2.5 on
  * `section.spend-people`. The scan licenses by attribute **name**, not by name
  * and screen, so subtracting those two would refuse rules the design asked for;
- * §2.11's paragraph says which of its eight this list holds to. */
+ * §2.11's paragraph says which of its ten stay out of this list.
+ *
+ * `data-kept` is the newest of the eight: §2.11 lists it because no rule selects
+ * it -- the kept row says `last read` in words, which is the channel H10 asks
+ * for -- and the PR whose rule tones that row moves it into §2.11's table of
+ * attributes a rule selects and out of this list, in the same commit. */
 const NOT_A_LICENCE: readonly string[] = Object.freeze([
   'data-hidden',
   'data-skew',
@@ -182,6 +215,7 @@ const NOT_A_LICENCE: readonly string[] = Object.freeze([
   'data-release',
   'data-word',
   'data-source',
+  'data-kept',
 ])
 
 /** readDesign reads the design document, failing by name rather than with an
@@ -246,6 +280,39 @@ function inventoryHooks(): readonly string[] {
     if (HOOK.test(qualified) && !NOT_A_LICENCE.includes(qualified)) hooks.add(qualified)
   }
   return [...hooks].sort()
+}
+
+/** unavailableKinds is the `data-kind` vocabulary §2.9's table gives the
+ * unavailable screen: one entry per page `renderUnavailable` can draw, read out
+ * of the document rather than listed here. A row counts when its **screen
+ * column** is the unavailable screen, which is what keeps the degraded screen's
+ * own kind out of the list. */
+function unavailableKinds(): readonly string[] {
+  const design = readDesign()
+  const start = design.indexOf(STATES_HEADING)
+  const end = design.indexOf(STATES_NEXT, start)
+  if (start === -1 || end === -1) {
+    throw new Error(`the design has no ${STATES_HEADING} section: the states' own scan would be vacuous`)
+  }
+  const kinds = new Set<string>()
+  for (const line of design.slice(start, end).split('\n')) {
+    if (!line.startsWith('| ')) continue
+    if ((line.split('|')[2] ?? '').trim() !== UNAVAILABLE_SCREEN) continue
+    for (const [, kind] of line.matchAll(/`data-kind="([a-z0-9-]+)"`/g)) kinds.add(kind ?? '')
+  }
+  return [...kinds].sort()
+}
+
+/** drawnKinds is the `data-kind` values the theme selects on the unavailable
+ * screen's root: what a state of that screen is actually drawn as, as against
+ * what the design says the state's name is. */
+function drawnKinds(): readonly string[] {
+  const kinds = new Set<string>()
+  for (const selector of selectorList(readTheme('screens.css'))) {
+    if (!selector.includes('.console-unavailable')) continue
+    for (const [, kind] of selector.matchAll(/\[data-kind=['"]([a-z0-9-]+)['"]\]/g)) kinds.add(kind ?? '')
+  }
+  return [...kinds].sort()
 }
 
 /** selectorsIn is what one stylesheet's selectors name: the classes (`.name`)
@@ -891,6 +958,36 @@ describe('the theme’s selectors against the design’s §2 inventory', () => {
       expect(hooks, `§2 names ${hook} in shorthand and the expansion missed it`).toContain(hook)
     }
     expect(hooks, 'the scan expanded a suffix that follows no hook').not.toContain('data-segments-num')
+  })
+
+  it('draws every installation failure the design’s state table names, and no kind it does not', () => {
+    // The licence above is one-directional -- a rule may select a hook §2 names
+    // -- and it says nothing about a state the design *declares* and no rule
+    // draws. That is the gap this case closes for the four pages a console with
+    // no `fugaro` can draw: §2.9's table is the one table of every state
+    // variant, and a variant that joins it without a rule of its own is a page
+    // the theme has no state mark for. The four arrived with the Windows work
+    // (part G, T-G4), whose rule is that the four are four different
+    // instructions rather than four spellings of one -- so a build that drew
+    // one of them, or drew a fifth the document does not name, is the defect.
+    const kinds = unavailableKinds()
+    expect(kinds, '§2.9 does not name the four installation failures and the refused read').toEqual([
+      ...INSTALLATION_FAILURES,
+    ])
+    const drawn = drawnKinds()
+    expect(
+      drawn.filter((kind) => !kinds.includes(kind)),
+      'a rule selects a `data-kind` §2.9 does not name as a state of the unavailable screen',
+    ).toEqual([])
+    expect(
+      kinds.filter((kind) => !drawn.includes(kind)),
+      '§2.9 names a state of the unavailable screen that no rule of the theme draws',
+    ).toEqual([])
+    // And the hook the three WSL pages draw their remedy in is §2's, not this
+    // file's: §2.8 is where the screen's hooks are listed, so a page whose
+    // remedy has no hook there is a page a later rule cannot style at all.
+    const hooks = inventoryHooks()
+    expect(hooks, '§2.8 does not name the remedy the three WSL states draw').toContain('unavailable-remedy')
   })
 
   it('selects no class §2 does not name, in every stylesheet this task writes', () => {

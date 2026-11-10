@@ -87,6 +87,39 @@ func yamlFields(t reflect.Type) bool {
 	return false
 }
 
+// TestRegistryCarriesEveryRunStagesAccount: a stage account is addressable
+// under the spelling the owner writes, one row per stage name the config
+// accepts. The rows are derived from config.RunStages (stageAccountRows), so
+// this is the pin on what that derivation produced: the wildcard row the local
+// config's own map yields, the concrete row beside it, and both local-only and
+// the generic path's — a stage's account is decided on the owner's own machine
+// and by nobody else (spec §11.1).
+func TestRegistryCarriesEveryRunStagesAccount(t *testing.T) {
+	if _, ok := Lookup("stages.*.claude_account"); !ok {
+		t.Error("stages.*.claude_account: no registry row, and the local config's stages: is a map — the walk TestRegistryCoversEveryConfigField makes of it yields that spelling and nothing else")
+	}
+	for _, stage := range config.RunStages {
+		key := "stages." + stage + ".claude_account"
+		r, ok := Lookup(key)
+		if !ok {
+			t.Errorf("%s: no registry row: the read answers that name and the write lands on it", key)
+			continue
+		}
+		if !slices.Equal(r.Layers, []string{LayerLocal}) {
+			t.Errorf("%s: Layers = %v, want the local config alone: an account is decided on the owner's machine and never in a reviewed file or a published layer", key, r.Layers)
+		}
+		if r.Owner != "settings set" || r.Doc == "" {
+			t.Errorf("%s: Owner = %q and Doc = %q, and a row a reader can act on names both", key, r.Owner, r.Doc)
+		}
+		if r.Default.Unset == "" {
+			t.Errorf("%s: Default = %+v, want the sentence an unset stage account reads as", key, r.Default)
+		}
+		if r.Sensitive {
+			t.Error("a stage account names an account rather than holding a token, and the read prints a name (spec §2.3)")
+		}
+	}
+}
+
 // TestRegistryIsInKeyOrder: the table is sorted, so a reader scanning for a
 // key finds it where its name says and two reads of one registry print the same
 // order. Sorted() is the invariant; this is what holds buildRows to it.
@@ -180,6 +213,11 @@ func TestRegistryOwnerNamesACommand(t *testing.T) {
 	families := []string{
 		"settings set", "models", "rigor", "rigor floor", "accounts", "secrets",
 		"config", "budget", "project", "setup", "update", "workspace",
+		// The image map's own family (D1906): the key is the project's image
+		// policy per repository and `fugaro image map set` is what writes it, so
+		// the row names that command rather than `fugaro project`, which writes
+		// the project's other policy keys and not this one.
+		"image map",
 	}
 	for _, r := range Rows() {
 		ok := false

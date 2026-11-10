@@ -54,10 +54,14 @@ const (
 // project's own Anthropic API key), which is a job name and no mount: its job
 // is what its review-only variant is derived from, and an installation whose
 // profile lists it has a review job even when it defines no Claude account at
-// all (D1417, D1422).
+// all (D1417, D1422). The provider key (config.ProviderKeyAccount, AK6a) is the
+// axis's second non-account value and is listed for the same reason: it is an
+// admission of its own (DeriveAccounts keys the accounts block by the axis
+// value), so a service that spelled it as the sentinel's account would admit a
+// caller to a credential the job it names is not the one for.
 const sharedJobsProfile = `{"provider": "github", "cpu": 2, "memory": "8Gi", "timeout_class": "6h",
 		"allow_repos": ["github/acme/webapp"],
-		"claude_accounts": ["acme-personal", "acme-shared", "` + config.AnthropicKeyAccount + `"],
+		"claude_accounts": ["acme-personal", "acme-shared", "` + config.AnthropicKeyAccount + `", "` + config.ProviderKeyAccount + `"],
 		"secrets": ["github-app-key"]}`
 
 // sharedJobsLocalConfig is the installation `fugaro update` deploys from: the M4
@@ -102,7 +106,8 @@ func sharedJobsPolicyDoc() string {
 		"accounts": {
 			"acme-personal": {"allow_repos": ["github/acme/webapp"]},
 			"acme-shared": {"allow_repos": ["github/acme/webapp"]},
-			"` + config.AnthropicKeyAccount + `": {"allow_repos": ["github/acme/webapp"]}
+			"` + config.AnthropicKeyAccount + `": {"allow_repos": ["github/acme/webapp"]},
+			"` + config.ProviderKeyAccount + `": {"allow_repos": ["github/acme/webapp"]}
 		},
 		"profiles": {"standard": ` + sharedJobsProfile + `},
 		"credentials": {"fallback": "auto"}
@@ -158,13 +163,14 @@ func TestSharedJobAccountsAreTheNamesProjectJobsDeploys(t *testing.T) {
 		t.Fatalf("SharedJobAccountsFor = %v, want the accounts the deployer created, %v", got, deployed)
 	}
 	// The fixture is only a test of anything if the axis it covers is more
-	// than one account: one profile serving two Claude accounts and the
-	// project's own key beside its no-account job.
+	// than one account: one profile serving two Claude accounts and the axis's
+	// two non-account values beside its no-account job.
 	want := []string{
 		serviceAccountEmailForTest(gcp.ProjectServiceAccountID("standard", "github", "")),
 		serviceAccountEmailForTest(gcp.ProjectServiceAccountID("standard", "github", "acme-personal")),
 		serviceAccountEmailForTest(gcp.ProjectServiceAccountID("standard", "github", "acme-shared")),
 		serviceAccountEmailForTest(gcp.ProjectServiceAccountID("standard", "github", config.AnthropicKeyAccount)),
+		serviceAccountEmailForTest(gcp.ProjectServiceAccountID("standard", "github", config.ProviderKeyAccount)),
 	}
 	slices.Sort(want)
 	if !slices.Equal(got, want) {
@@ -272,14 +278,17 @@ func TestReviewAccountsAreTheNamesProjectJobsDeploys(t *testing.T) {
 	// one account, and if the no-account job of a profile that lists no
 	// default account is spelled the way the published admissions spell the
 	// default account rather than as the empty string the axis produces. The
-	// sentinel is the row whose account segment is neither: it is no account at
-	// all, and the variant of its job is the one a review served by the
-	// project's own key runs on.
+	// axis's two non-account values are the rows whose account segment is
+	// neither: they are no account at all, and the variant of each one's job is
+	// the one a review served by that credential runs on — one value per
+	// credential, which is what makes a caller admitted to one of them a caller
+	// the other's job is not the one for.
 	want := []credsvc.ReviewJobAccount{
 		{Email: serviceAccountEmailForTest(credsvc.ReviewServiceAccountID("standard", "github", config.DefaultClaudeAccount)), Account: config.DefaultClaudeAccount},
 		{Email: serviceAccountEmailForTest(credsvc.ReviewServiceAccountID("standard", "github", "acme-personal")), Account: "acme-personal"},
 		{Email: serviceAccountEmailForTest(credsvc.ReviewServiceAccountID("standard", "github", "acme-shared")), Account: "acme-shared"},
 		{Email: serviceAccountEmailForTest(credsvc.ReviewServiceAccountID("standard", "github", config.AnthropicKeyAccount)), Account: config.AnthropicKeyAccount},
+		{Email: serviceAccountEmailForTest(credsvc.ReviewServiceAccountID("standard", "github", config.ProviderKeyAccount)), Account: config.ProviderKeyAccount},
 	}
 	slices.SortFunc(want, func(a, b credsvc.ReviewJobAccount) int { return cmp.Compare(a.Email, b.Email) })
 	if !slices.Equal(got, want) {

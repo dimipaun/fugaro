@@ -52,9 +52,9 @@ runner_works() {
 }
 
 # A runner, found rather than assumed. A working one on PATH is the ordinary
-# case; this repository's base image keeps node off PATH on purpose
-# (docs/base-image.md), and mise holds the toolchains, so a machine that has
-# mise gets one from there rather than from any one machine's home directory.
+# case; the base carries no node of its own (docs/base-image.md), and mise
+# holds the toolchains, so a machine that has mise gets one from there rather
+# than from any one machine's home directory.
 # node@22 is the line package.json's engines declares (>=22 <23).
 if ! runner_works && command -v mise >/dev/null 2>&1; then
   for tool in node@22 node; do

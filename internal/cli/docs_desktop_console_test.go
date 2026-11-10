@@ -383,12 +383,21 @@ func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 		reflect.TypeOf(plan.Node{}),
 		reflect.TypeOf(plan.Edge{}),
 		reflect.TypeOf(plan.Footprint{}),
+		// The decoupling pass's own record (schema 3): one broken edge and one
+		// change request, and the `was` object under the first.
+		reflect.TypeOf(plan.Decoupling{}),
+		reflect.TypeOf(plan.BrokenEdge{}),
+		reflect.TypeOf(plan.ContractChange{}),
 		// The read's own document (V2.2.3): every key of what `plan graph
 		// --json` prints, so a computed field the contract does not name fails
 		// here too, not only the artifact's own.
 		reflect.TypeOf(plan.Graph{}),
 		reflect.TypeOf(plan.NodeState{}),
 		reflect.TypeOf(plan.CriticalPath{}),
+		// What the decoupling pass bought (CD3): the gain and the critical path
+		// it measures before and after, both of them the read's own fields.
+		reflect.TypeOf(plan.Gain{}),
+		reflect.TypeOf(plan.PathMeasure{}),
 		reflect.TypeOf(runstore.ChangedFiles{}),
 		// The rigor block and the rule inside it (docs/rigor-modes D24).
 		reflect.TypeOf(runstore.RigorRecord{}),
@@ -662,10 +671,16 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 		reflect.TypeOf(configListCheckout{}),
 		reflect.TypeOf(plan.Document{}), reflect.TypeOf(plan.Node{}),
 		reflect.TypeOf(plan.Edge{}), reflect.TypeOf(plan.Footprint{}),
+		// The decoupling pass's own record (schema 3), as in the test above.
+		reflect.TypeOf(plan.Decoupling{}), reflect.TypeOf(plan.BrokenEdge{}),
+		reflect.TypeOf(plan.ContractChange{}),
 		// The read's own document (V2.2.3): the artifact's shape plus what is
 		// computed where the graph is read.
 		reflect.TypeOf(plan.Graph{}), reflect.TypeOf(plan.NodeState{}),
 		reflect.TypeOf(plan.CriticalPath{}),
+		// The gain the pass bought and the path it measures before and after,
+		// as in the test above (CD3).
+		reflect.TypeOf(plan.Gain{}), reflect.TypeOf(plan.PathMeasure{}),
 		reflect.TypeOf(runstore.ChangedFiles{}),
 		// The rigor block and the rule inside it (docs/rigor-modes D24).
 		reflect.TypeOf(runstore.RigorRecord{}), reflect.TypeOf(runstore.RigorArea{}),
@@ -876,14 +891,20 @@ func TestDocsDesktopConsoleContractStatesTheRunsStatsOwnViewRefusal(t *testing.T
 }
 
 // TestDocsDesktopConsoleContractStatesWhichDocumentsAreLineDelimited: the
-// console's own set has exactly two line-delimited documents, and they do it
-// through two different code paths -- the watch feed through json.NewEncoder
-// with no SetIndent, the log lines through json.Marshal in printLogEntry. A
-// document that claims only the feed is line-delimited, or that calls the log
-// form indented, builds the log reader on the wrong parser, which is what a
-// review of the first revision found here.
+// console's own set has three line-delimited documents, and they do it through
+// two different code paths -- the watch feed through json.NewEncoder with no
+// SetIndent and the graph's stream through WriteDoc, the log lines through
+// json.Marshal in printLogEntry. A document that claims only the feed is
+// line-delimited, or that calls the log form indented, builds the log reader on
+// the wrong parser, which is what a review of the first revision found here.
 //
-// The claim is scoped to the console's set, and the third line-delimited
+// The count moved once, and the move is why the graph's stream is quoted here:
+// the graph plan's CG9b puts `graph --watch --json` on the console's spawn
+// table, which is what makes section 6.22's compact stream a document of the
+// console's own set -- before it, the document said the graph was not in the
+// set and named CG9b as the task that would move the count with its row.
+//
+// The claim is scoped to the console's set, and the fourth line-delimited
 // document this file describes -- `fugaro cancel RUN --json` (section 6.3),
 // which is a write the console never spawns -- is stated separately and
 // asserted here too. A second review found the document claiming "exactly two
@@ -897,12 +918,12 @@ func TestDocsDesktopConsoleContractStatesWhichDocumentsAreLineDelimited(t *testi
 		what   string
 		quotes []string
 	}{
-		{"the two in the console's set are line-delimited", []string{
+		{"the three in the console's set are line-delimited", []string{
 			"one compact `logLine` object per line",
 			"printLogEntry",
 			"json.Marshal",
-			"Exactly two of the commands in the console's set are line-delimited",
-			"`watch --json` and `logs RUN\n   --json`",
+			"Three of the commands in the console's set are line-delimited",
+			"`watch --json`, `logs RUN\n   --json` and `graph --watch --json`",
 			"Every other command in that set is indented",
 		}},
 		{"cancel's document is compact, outside that set", []string{
@@ -1337,7 +1358,7 @@ func firstBacktick(cell string) string {
 // is what a review of the first revision found here: the table could lose a
 // row -- or gain one -- and the test would still pass. This parses both tables
 // §5.1 rule 6 carries and compares their first cells exactly: the allow-list is
-// the twenty-six argvs and nothing else -- the console's one spawn table
+// the twenty-seven argvs and nothing else -- the console's one spawn table
 // (SPAWN_COMMANDS) since the installation rail took the picker's read onto the
 // dashboard's surface -- and a review of an earlier revision found the picker's own
 // read, `config list --json`, absent here, which left the specification
@@ -1392,6 +1413,15 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 		// optional the way `plan status --json`'s `--all` is: the row's cell
 		// spells the command's argv and names the argument in its parenthesis.
 		"graph --json",
+		// The same graph as a live feed (the graph plan's CG9b, the
+		// `graph.watch` operation): a long-lived child that re-prints the whole
+		// document on every change, which is what makes this the one row here
+		// whose command path carries `--watch` -- the never table's flag, given
+		// this one operation as its exception. Read-only and no path, for the
+		// row above's reason exactly; its scope is the row above's, and the
+		// `visible` argument the window sends to stop the child reaches no word
+		// of this argv, so the row spells the command's argv back whole.
+		"graph --watch --json",
 		// The project view (Bitbucket credentials T1.2, the
 		// `coordinator.status` operation): read-only, no path in the argv.
 		// `--from-store` is what makes it need no host credential at all --
@@ -1771,7 +1801,9 @@ func consoleSpelledNumber(t *testing.T, spelled string) int {
 //     -- `managed.status` and `policy.show`, whose rule 6 rows CM3 had already
 //     written -- to thirty-four, and the subscriptions plan's S2.7 -- the licence
 //     section's `licence.read` and `licence.save`, two of the eleven rows here
-//     that spawn nothing -- to the thirty-six rule 5 carries today.
+//     that spawn nothing -- to thirty-six, and the graph plan's CG9b --
+//     `graph.watch`, the surface's one long-lived child -- to the thirty-seven
+//     rule 5 carries today.
 //   - **every row of spawn.ts's `SPAWN_COMMANDS` is admitted by rule 6's table**:
 //     the row's own words lead some row of the design's table **and what that row
 //     carries after them is flags, nothing else**. The second half is the whole
@@ -8514,6 +8546,48 @@ func TestDocsConsoleReleaseSymbolsIsStagedAndPinned(t *testing.T) {
 			continue
 		}
 		t.Errorf("%s drops %q, which %s carries: the symbol change adds two steps, one changed pack line and a paragraph of header, and rewrites nothing else", consoleReleaseSymbolsWorkflowPath, trimmed, basePath)
+	}
+}
+
+// TestDocsConsoleReadmeCarriesTheWindowsNote pins the fourth of the four places
+// that said "Windows stays out" (docs/console-windows/reconciliation.md F43),
+// and the only one outside docs/: the console's own README, whose Linux section
+// opens on the owner's ruling of 2026-10-20.
+//
+// This file is where it belongs rather than in docs_windows_console_test.go,
+// because it reads a path under console/ and this is the file the boundary
+// allow-list admits to one (docs_console_boundary_test.go, Task 0.3 a3). The
+// other three -- the design's section 4.2, its section 7.6 rule 3, the
+// owner-run table's signing row and D10's row, and docs/windows-cli/wsl.md --
+// are read there.
+//
+// The claim is the same in both: the owner's ruling of 2026-10-20 moves half of
+// that sentence. The Windows *build* is in -- the console drives the *Linux*
+// `fugaro` inside a WSL distribution, and the pack is staged as a release-time
+// job -- and the *signing* answer is not, because there is still no Authenticode
+// identity and none is planned. The README keeps its own sentence and gains the
+// dated note, for the reason the other three do: a rewrite would claim more
+// than the ruling does.
+//
+// The mutations that prove it: delete the note, and move it out of the Linux
+// section into the Windows one below it. Each fails here.
+func TestDocsConsoleReadmeCarriesTheWindowsNote(t *testing.T) {
+	const path = "console/README.md"
+	readme := readDoc(t, path)
+	linux := flattenDoc(mdBetween(t, path, readme,
+		"## The Linux build, unsigned (the owner's ruling of 2026-10-20)",
+		"\n## The Windows pack, unsigned, and not yet run"))
+
+	for _, want := range []string{
+		windowsConsoleNoteDate,
+		"the *build* half",
+		"the signing half",
+		"Authenticode",
+		windowsConsoleWorkflowPath,
+	} {
+		if !strings.Contains(linux, want) {
+			t.Errorf("%s's Linux section no longer carries %q: it opens on \"Windows stays out\", the owner's ruling of 2026-10-20 moves half of that sentence, and the README is the one of the four places a console developer reads first", path, want)
+		}
 	}
 }
 

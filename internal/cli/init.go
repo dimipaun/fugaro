@@ -811,6 +811,22 @@ func (r *initRun) asking(f func() error) error {
 	return f()
 }
 
+// lockWorkdirs takes the terraform workdirs of project for this run, and
+// returns the function that gives them back. A run that cannot have them is
+// refused here, in the one line that says which command is running, in which
+// project, and — when the holder's lock file named one — with which pid.
+//
+// Nothing waits: a second fugaro update on one installation is not a run to
+// queue behind the first, it is the run whose PrepareWorkdir rebuilds the
+// tree the first one's terraform is planning in.
+func (r *initRun) lockWorkdirs(project string) (func(), error) {
+	lock, err := infra.LockWorkdirs(os.Getenv, project, r.o.doorProgram())
+	if err != nil {
+		return nil, userErr("%v", err)
+	}
+	return func() { _ = lock.Release() }, nil
+}
+
 func runInit(r *initRun) error {
 	cmd, o := r.cmd, r.o
 	defer func() { clear(r.appKeyMem) }()
@@ -853,6 +869,22 @@ func runInit(r *initRun) error {
 		return err
 	}
 	r.setProject(lc)
+	// The project is known and this run has touched none of its workdirs yet:
+	// it takes them for itself here, before the first PrepareWorkdir, and
+	// keeps them until it ends (the kernel gives the lock back if it does
+	// not).
+	//
+	// Decided at the door, before the loop exists, and not in a stage: a
+	// refusal raised where a workdir is prepared — or by cancelling the
+	// context so the run stops at once — is recorded as the failure of
+	// whatever stage the loop had reached, preflight first, and the cause (a
+	// second converge on this machine) is then reported as that stage's
+	// problem. Here it is one line and one exit code.
+	unlock, err := r.lockWorkdirs(lc.GCPProject)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	if err := checkFirebaseProject(o.firebase, lc.GCPProject); err != nil {
 		return err
 	}
@@ -2710,14 +2742,28 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 		// default puts it back in dry-run.
 		r.warn("registry cleanup is on (or off) in the installation, and this plan puts it back to dry-run: pass --registry-cleanup=on or off to keep it")
 	}
-	changed, err := t.Plan(ctx, infra.PlanFile)
-	if err != nil {
-		return outs, false, remote(err)
-	}
-	if changed {
+	// The cycle the retry runs again (propagationRetry): plan, the managed
+	// gate (or the guard and the confirmation), apply. Every pass plans
+	// afresh, so a retry after an API Google has not caught up with applies
+	// what the new plan holds and never the saved plan of the failed attempt.
+	// stop (the caller's own) is a cycle that ended without applying:
+	// --plan-only's two ways out.
+	cycle := func(ctx context.Context) (*tf.Plan, error) {
+		changed, err := t.Plan(ctx, infra.PlanFile)
+		if err != nil {
+			return nil, remote(err)
+		}
+		if !changed {
+			r.res.Changes = &infra.PlanCounts{}
+			fmt.Fprintln(r.w, "No changes: the installation matches the plan.")
+			if r.o.planOnly {
+				stop = true
+			}
+			return nil, nil
+		}
 		plan, err := t.Show(ctx, infra.PlanFile)
 		if err != nil {
-			return outs, false, remote(err)
+			return nil, remote(err)
 		}
 		fmt.Fprint(r.w, tf.Summary(plan))
 		// The 0.7.0 bucket hardening deletes launchers' old objectAdmin
@@ -2739,31 +2785,29 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 		// path prints or records stays where it was, on the path that runs it.
 		gated, err := r.gateStep(ctx, t, im.Keys(), r.coverOf(r.coverReasons), upgrade)
 		if err != nil {
-			return outs, false, err
+			return plan, err
 		}
 		if gated {
 			r.res.Changes = &counts
 		} else {
 			if err := r.guard(ctx, c, plan, allowed); err != nil {
-				return outs, false, err
+				return plan, err
 			}
 			fmt.Fprint(r.w, infra.HardeningBanner(hardening))
 			fmt.Fprint(r.w, infra.LauncherGrantUpgradeBanner(upgrade))
 			r.res.Changes = &counts
 			if r.o.planOnly {
 				fmt.Fprintf(r.w, "--plan-only: nothing applied; the plan is %s\n", filepath.Join(wd.Root, infra.PlanFile))
-				return outs, true, nil
+				stop = true
+				return plan, nil
 			}
 			// 6. Confirm, 7. apply the plan shown.
 			if err := r.confirmOrdinary("applies "+counts.String()+r.installLabel, "nothing was applied", r.notCovered(plan, im.Keys())); err != nil {
-				return outs, false, err
+				return plan, err
 			}
 		}
-		if err := t.Apply(ctx, infra.PlanFile); err != nil {
-			return outs, false, remote(err)
-		}
-		if err := r.gateApplied(ctx); err != nil {
-			return outs, false, err
+		if err := r.applyAndRecord(ctx, t); err != nil {
+			return plan, err
 		}
 		r.res.Applied = true
 		if !im.AdoptsRunsBucket() {
@@ -2771,20 +2815,21 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 			// project Viewer access; it is ours only if discovery says so.
 			after, err := infra.DiscoverInstallation(ctx, c, spec)
 			if err != nil {
-				return outs, false, initErr(err)
+				return plan, initErr(err)
 			}
 			if after.AdoptsRunsBucket() {
 				if err := r.runsBucketViewers(ctx, c, spec); err != nil {
-					return outs, false, err
+					return plan, err
 				}
 			}
 		}
-	} else {
-		r.res.Changes = &infra.PlanCounts{}
-		fmt.Fprintln(r.w, "No changes: the installation matches the plan.")
-		if r.o.planOnly {
-			return outs, true, nil
-		}
+		return plan, nil
+	}
+	if err := propagationRetry(ctx, r.w, "the installation step", cycle); err != nil {
+		return outs, false, err
+	}
+	if stop {
+		return outs, true, nil
 	}
 	raw, err := t.Output(ctx)
 	if err != nil {
@@ -3789,6 +3834,18 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 		return err
 	}
 	r.setProject(lc)
+	// The repository's workdir is one of the project's (RepoWorkdir is under
+	// the same directory the installation's workdir is in), so it is the same
+	// lock the converge takes — and a run that reaches here as a stage of one
+	// already holds it. Only the door takes it, for the reason
+	// runInit.lockWorkdirs states.
+	if !embedded {
+		unlock, err := r.lockWorkdirs(lc.GCPProject)
+		if err != nil {
+			return err
+		}
+		defer unlock()
+	}
 	r.noteOpenProviders(lc)
 	r.res.Repo = repo
 	if !embedded && !o.planOnly && !o.forget && !o.printVars {
@@ -3842,6 +3899,11 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	// securitySince: the repository writes it in fugaro.yaml, the project in
 	// the layer file it publishes (D1501).
 	if err := r.gateSecurity(o, repo, lc, cfg); err != nil {
+		return err
+	}
+	// The planning: block, in either file, is the same kind of break, on
+	// planningSince.
+	if err := r.gatePlanning(o, repo, lc, cfg); err != nil {
 		return err
 	}
 	if !o.forget {
@@ -4369,6 +4431,23 @@ func (r *initRun) gateSecurity(o *initOptions, repo string, lc *localcfg.Config,
 	return refuseSecuritySkew(repo, cfg.RepoSecuritySet, cfg.Layer.SetsSecurity(), lc.BaseImage(config.BaseKind), w)
 }
 
+// gatePlanning is fugaro update --repo's gate for planningSince:
+// refusePlanningSkew, with gateRigor's escapes and for its reason. The judged
+// half is the key being written (RepoPlanningSet) and not the value it holds:
+// a runner older than planningSince refuses planning: whatever it says, so an
+// explicit null and planning.decoupling: true are deployed by a value test and
+// die at bootstrap.
+func (r *initRun) gatePlanning(o *initOptions, repo string, lc *localcfg.Config, cfg *config.Config) error {
+	if o.forget || o.planOnly || cfg == nil {
+		return nil
+	}
+	w := r.w
+	if o.printVars {
+		w = r.cmd.ErrOrStderr()
+	}
+	return refusePlanningSkew(repo, cfg.RepoPlanningSet, cfg.Layer.SetsPlanning(), lc.BaseImage(config.BaseKind), w)
+}
+
 // checkVertexBudget refuses a repository whose fugaro.yaml authenticates
 // the agent through Vertex AI (agent.auth: vertex) under a project budget
 // in enforce mode. observe and off are allowed.
@@ -4641,71 +4720,85 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 			}
 		}
 	}
-	changed, err := t.Plan(ctx, infra.PlanFile)
-	if err != nil {
-		// A plan Terraform refuses on a prevent_destroy resource is the one
-		// failure a retirement gets its own words for (design §3.3): the
-		// summary was printed above, and Terraform's text stays in the
-		// workdir, so nothing is hidden, only re-framed.
-		if preventDestroyAbort(err) {
-			return infra.RepoSpec{}, nil, retireAborted(rets, preventDestroyAddress(err), wd.Root)
+	// The cycle the retry runs again (propagationRetry): the repository root's
+	// plan, gate and apply. Every pass plans afresh, so a retry after an API
+	// Google has not caught up with applies what the new plan holds and never
+	// the saved plan of the failed attempt. stop is a cycle that ended without
+	// applying: this root's plan-only and "no changes" ways out.
+	var stop bool
+	cycle := func(ctx context.Context) (*tf.Plan, error) {
+		changed, err := t.Plan(ctx, infra.PlanFile)
+		if err != nil {
+			// A plan Terraform refuses on a prevent_destroy resource is the one
+			// failure a retirement gets its own words for (design §3.3): the
+			// summary was printed above, and Terraform's text stays in the
+			// workdir, so nothing is hidden, only re-framed.
+			if preventDestroyAbort(err) {
+				return nil, retireAborted(rets, preventDestroyAddress(err), wd.Root)
+			}
+			return nil, remote(err)
 		}
-		return infra.RepoSpec{}, nil, remote(err)
+		if !changed {
+			r.res.Changes = &infra.PlanCounts{}
+			fmt.Fprintf(r.w, "No changes: %s matches the plan.\n", spec.Name)
+			// Nothing was applied, so nothing was retired: only a set the read
+			// proved empty is settled by a plan that changed nothing, because a
+			// non-empty one is settled by the apply below, which is what deletes
+			// it (recordUpdate).
+			r.recordRetiredNothing(ctx, lc)
+			stop = true
+			return nil, nil
+		}
+		plan, err := t.Show(ctx, infra.PlanFile)
+		if err != nil {
+			return nil, remote(err)
+		}
+		if opts.AllowJobDelete {
+			fmt.Fprintln(r.w, "⚠ --allow-job-delete: this plan lowers the deletion protection of "+spec.Name+"'s jobs, for offboarding")
+		}
+		fmt.Fprint(r.w, tf.Summary(plan))
+		fmt.Fprintln(r.w, im.Bindings.String())
+		counts := infra.CountPlan(plan)
+		// The managed gate first, and the guard and the confirmation only when it
+		// does not admit this plan (D1016, update_managed.go). A repository root
+		// is one of Fugaro's own too, so it is judged by the same cover and the
+		// same guard the installation's roots are.
+		gated, err := r.gateStep(ctx, t, im.Keys(), r.coverOf(r.coverReasons), nil)
+		if err != nil {
+			return plan, err
+		}
+		if gated {
+			r.res.Changes = &counts
+		} else {
+			if err := r.guard(ctx, c, plan, r.o.allowDelete); err != nil {
+				return plan, err
+			}
+			r.res.Changes = &counts
+			if r.o.planOnly {
+				fmt.Fprintf(r.w, "--plan-only: nothing applied; the plan is %s\n", filepath.Join(wd.Root, infra.PlanFile))
+				stop = true
+				return plan, nil
+			}
+			what := "applies " + counts.String() + " to " + spec.Name
+			if !first {
+				what += ", deploying the images just built"
+			}
+			if err := r.confirmOrdinary(what, "nothing was applied", r.notCovered(plan, im.Keys())); err != nil {
+				return plan, err
+			}
+		}
+		if err := r.applyAndRecord(ctx, t); err != nil {
+			return plan, err
+		}
+		r.res.Applied = true
+		return plan, nil
 	}
-	if !changed {
-		r.res.Changes = &infra.PlanCounts{}
-		fmt.Fprintf(r.w, "No changes: %s matches the plan.\n", spec.Name)
-		// Nothing was applied, so nothing was retired: only a set the read
-		// proved empty is settled by a plan that changed nothing, because a
-		// non-empty one is settled by the apply below, which is what deletes
-		// it (recordUpdate).
-		r.recordRetiredNothing(ctx, lc)
+	if err := propagationRetry(ctx, r.w, "the repository step", cycle); err != nil {
+		return infra.RepoSpec{}, nil, err
+	}
+	if stop {
 		return ready, missing, nil
 	}
-	plan, err := t.Show(ctx, infra.PlanFile)
-	if err != nil {
-		return infra.RepoSpec{}, nil, remote(err)
-	}
-	if opts.AllowJobDelete {
-		fmt.Fprintln(r.w, "⚠ --allow-job-delete: this plan lowers the deletion protection of "+spec.Name+"'s jobs, for offboarding")
-	}
-	fmt.Fprint(r.w, tf.Summary(plan))
-	fmt.Fprintln(r.w, im.Bindings.String())
-	counts := infra.CountPlan(plan)
-	// The managed gate first, and the guard and the confirmation only when it
-	// does not admit this plan (D1016, update_managed.go). A repository root
-	// is one of Fugaro's own too, so it is judged by the same cover and the
-	// same guard the installation's roots are.
-	gated, err := r.gateStep(ctx, t, im.Keys(), r.coverOf(r.coverReasons), nil)
-	if err != nil {
-		return infra.RepoSpec{}, nil, err
-	}
-	if gated {
-		r.res.Changes = &counts
-	} else {
-		if err := r.guard(ctx, c, plan, r.o.allowDelete); err != nil {
-			return infra.RepoSpec{}, nil, err
-		}
-		r.res.Changes = &counts
-		if r.o.planOnly {
-			fmt.Fprintf(r.w, "--plan-only: nothing applied; the plan is %s\n", filepath.Join(wd.Root, infra.PlanFile))
-			return ready, missing, nil
-		}
-		what := "applies " + counts.String() + " to " + spec.Name
-		if !first {
-			what += ", deploying the images just built"
-		}
-		if err := r.confirmOrdinary(what, "nothing was applied", r.notCovered(plan, im.Keys())); err != nil {
-			return infra.RepoSpec{}, nil, err
-		}
-	}
-	if err := t.Apply(ctx, infra.PlanFile); err != nil {
-		return infra.RepoSpec{}, nil, remote(err)
-	}
-	if err := r.gateApplied(ctx); err != nil {
-		return infra.RepoSpec{}, nil, err
-	}
-	r.res.Applied = true
 	// The third way a retirement's address goes away, and the last moment its
 	// record can be written: a set the run left to the ordinary plan is
 	// settled by the apply above, which is what deletes it. rets is non-empty

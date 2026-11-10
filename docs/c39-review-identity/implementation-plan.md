@@ -577,7 +577,7 @@ ten-file rule (`:8`) no room for the key and the rule it needs, so the field is 
 land as **one pull request**, for the reason C3.9g1 gives for g2 being one change with g1.
 
 - **What the operator writes, and where it is published.** The local configuration's top-level
-  `verifier_accounts` — the shape `bitbucket_api_roots` already has (`internal/localcfg/localcfg.go:184`),
+  `verifier_accounts` — the shape `bitbucket_api_roots` already has (`internal/localcfg/localcfg.go:185`),
   and for the same reason: it is the owner's list, it travels to the policy node, and the node "is written
   only by the owner and the runner fails closed on it, while the shared file is writable by any launcher"
   (`internal/localcfg/shared.go`). `fugaro update`'s policy stage copies it into `config/policy/shared` as
@@ -613,15 +613,15 @@ land as **one pull request**, for the reason C3.9g1 gives for g2 being one chang
   reader older than the field refuses the node** — `fugaro run`'s launch gate
   (`internal/cli/launch_budget.go:156`), publishing and the update's own policy stage
   (`internal/cli/project_cmd.go:499`), `policy show`, `project show` and `repos ls`
-  (`refuseUnknownPolicyKeys`, `project_cmd.go:2823`) and the migration (`refuseMigrationUnknownKeys`,
-  `internal/cli/init_policy_migrate.go:578`) — because the operator is the one who can fix a misspelling
-  (`internal/projectpolicy/policy.go:261`: "the runner logs them … the CLI refuses them"). **So once a
+  (`refuseUnknownPolicyKeys`, `project_cmd.go:2848`) and the migration (`refuseMigrationUnknownKeys`,
+  `internal/cli/init_policy_migrate.go:595`) — because the operator is the one who can fix a misspelling
+  (`internal/projectpolicy/policy.go:262`: "the runner logs them … the CLI refuses them"). **So once a
   verifier is published, every teammate on an older CLI cannot launch until they upgrade.** **What that
   older reader is, in a test, is said rather than implied**: `knownTopLevelKeys` holds this key today
-  (`internal/projectpolicy/policy.go:269`–`:276`), so no test can reach the older reader by writing a key
+  (`internal/projectpolicy/policy.go:270`–`:277`), so no test can reach the older reader by writing a key
   the package does not model — it decodes the **same fixture node twice**, once under this key set and once
   under a **copy of the list as it stood before this key**. That is why this task's files include the one
-  change that makes the key set a parameter of `Decode` (`:696`, the loop at `:723` building
+  change that makes the key set a parameter of `Decode` (`:736`, the loop at `:763` building
   `UnknownKeys`): `TestVerifierAccountsIsUnknownToAReaderThatPredatesIt` asserts this binary reads the
   fixture with no `UnknownKeys` at all, while the pre-key reader lists `verifier_accounts` — the exact node
   every CLI reader refuses (`refuseUnknownPolicyKeys`, the launch gate) and the runner logs. The suffix
@@ -651,11 +651,11 @@ land as **one pull request**, for the reason C3.9g1 gives for g2 being one chang
   `internal/projectpolicy/policy.go` (the key, the member list at `:269`–`276`, its validation, and `Decode`'s
   key set as a parameter), `internal/projectpolicy/policy_test.go` (the divided test: the fixture under this
   key set and under the pre-key copy), `internal/cli/project_cmd.go` (the node is built here: the struct
-  literal at `:819`, the copy beside `bitbucket_api_roots` at `:829` and the keep rule beside
-  `keepReviewFloor` at `:815`; the node reads C3.9g2's stage reuses are here too — `readPolicyNode` `:449`,
+  literal at `:830`, the copy beside `bitbucket_api_roots` at `:840` and the keep rule beside
+  `keepReviewFloor` at `:826`; the node reads C3.9g2's stage reuses are here too — `readPolicyNode` `:449`,
   `publishedPolicyOf` `:479`), `internal/cli/init_policy_publish.go` (the drift list that names a member the
   node is missing, `policyConfigDrift`, `:61`), `internal/cli/init_policy_migrate.go` (the migration's own
-  copy, the shape `bitbucketAPIRootsKey` has: the key at `:514`, the copy at `:560` and the list of members
+  copy, the shape `bitbucketAPIRootsKey` has: the key at `:525`, the copy at `:571` and the list of members
   it reports as derived at `:499`), `internal/cli/sharedcfg.go` (`sharedForbidden`),
   `internal/settings/registry.go` (the key's row: without it `TestRegistryCoversEveryConfigField`,
   `internal/settings/registry_test.go:98`, is red for any new `localcfg.Config` key), and

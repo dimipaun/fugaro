@@ -245,12 +245,14 @@ Commit: `console: pin the win32-x64 Electron archive against the lockfile's own 
 **T-B4 — `build.win`, named rather than inherited.**
 Files: `console/package.json`, `console/test/unit/fuses.test.ts`.
 Red step: the manifest test's platform-table half (the one that asserts `build.mac` and `build.linux`)
-gains the `win` block's shape: `target: ['nsis']`, `arch: ['x64']`, and
-`artifactName: Fugaro.Console-${version}-win-${arch}.${ext}` following the Linux pattern. Fails on the
-absent block.
+gains the `win` block's shape: `target: [{target: 'nsis', arch: ['x64']}]` (the Linux leg's nested
+form, and **not** a top-level `win.arch`: `WindowsConfiguration` is `additionalProperties: false` and
+has no `arch`, so that spelling is a configuration electron-builder refuses outright, on every
+platform), and `artifactName: Fugaro.Console-${version}-win-${arch}.${ext}` following the Linux
+pattern. Fails on the absent block.
 NSIS is **named** rather than left to the default: the default Windows target is NSIS today, and a
-default is a decision nobody wrote down. `x64` only, matching the Linux leg and T-B3's single pinned
-archive.
+default is a decision nobody wrote down. `x64` only, matching the Linux leg and T-B3's pinned
+archive, which has yet to land.
 Verification: `[unit]`, `[types]`. Tier A. Depends on: nothing.
 Commit: `console: a win block that names its target, its arch and its artifact name`
 
@@ -771,9 +773,30 @@ asked for the by-hand dry run to exist before the pack does, so `docs/release.md
 paragraph and its "Before you tag" checklist carry the release-time note, the unsigned sentence, the
 not-an-asset sentence and the dry run now. T-H3 therefore **completes 3 and 4 and re-reads 1 and 2**
 rather than rewriting them — and it is why the paragraph says the build is *planned and staged*
-rather than shipped: the ruling is a plan, nothing on Windows has been built, and
-`docs/design/desktop-console.md` and `console/README.md` still carry the older, narrower sentence
-until this task lands (O7).
+rather than shipped: the ruling is a plan and nothing on Windows has been built (O7).
+**Landed 2026-11-10.** The four edits below are in, and `docs/windows-cli/wsl.md`'s F40 paragraph and
+its console table row with them (O1). Each place that read the sentence —
+`docs/design/desktop-console.md` §4.2, §7.6's rule 3, the owner-run table's Windows-signing row and
+D10's row, and `console/README.md`'s Linux section — carries a dated note of that date saying which
+half moved, so the older, narrower sentence is no longer unqualified anywhere (O7, F43).
+`docs/release.md`'s paragraph was **re-read rather than rewritten**: by then two of its clauses were
+false — the pack had stopped being "red until the `console/` edits its Parts B and C name have
+landed" (they had), and the other documents no longer "still carry the older sentence" — and what
+replaced them is the state the notes leave: the edits have landed, no host has carried a `--win` pack
+to an artifact, and the by-hand dry run below is the first that will.
+
+**Three things landed outside this task's file list, deliberately.** The guards are
+`TestDocsWindowsConsoleNotesSayWhichHalfMoved` (`internal/cli/docs_windows_console_test.go`, this
+folder's own guard file: the red step this task actually took, written before the notes) and
+`TestDocsConsoleReadmeCarriesTheWindowsNote` (`internal/cli/docs_desktop_console_test.go`, which the
+red step above names) — the console's README is pinned in the second file and not the first because
+no Go file outside this package's allow-list may name a path under the console tree (Task 0.3
+a3). The third is the finding's own record: this folder's README's O7 item and
+[reconciliation.md](reconciliation.md)'s O7 line said the two notes were still outstanding, which the
+landing falsifies, so both are marked landed in the same commit and both are read by the guard. And
+the red step above is the one thing here that did **not** happen as written:
+`TestDocsWindowsConsoleReleaseDocsCarryTheDryRun` was already green from the staging pull request,
+which had written edits 1 and 2.
 
 Four edits, each a **dated note rather than a rewrite** (O7, F43):
 1. `docs/release.md`'s console paragraphs gain the Windows sentence: the pack runs **at release time

@@ -111,6 +111,31 @@ func policyConfigDrift(lc *localcfg.Config, p *projectpolicy.Policy) []policyDri
 	if lc.ImageCatalog != nil {
 		add("image_catalog", lc.ImageCatalogEffective(nil), p.ImageCatalog, false)
 	}
+	// The repo-to-image map is compared the same way and for the same reason
+	// (D1906): it is where a run's own repository is looked up, so a config that
+	// maps a repository and a node that carries no map is exactly the gap this
+	// stage exists to close — every run of that repository would take the
+	// catalog's default image instead of the one the owner mapped it to. A
+	// config silent about the map keeps the node's, and a written empty one
+	// differs from a node that still maps something, which is the removal an
+	// operator has to see.
+	if lc.ImageMap != nil {
+		// Both sides are the block's own type, so what is compared is the JSON
+		// the node is written with — the escaped keys — and not the config
+		// spelling of a name against the node's (ImageMap).
+		add("image_map", projectpolicy.ImageMap(lc.ImageMapEffective(nil)), p.ImageMap, false)
+	}
+	// The bake switch reaches a run off this node too (D1901), so a config that
+	// states it where the node states the other answer is a difference a publish
+	// closes. It is compared by the publisher's own keep rule, which is the
+	// orchestrator line's reason: the node's value is handed to the rule, so a
+	// config that writes nothing is not reported as a difference — nil would
+	// read as a difference against a node that states either answer — while a
+	// written false against a node that says nothing (or true) is exactly the
+	// edit this stage exists to carry.
+	if lc.BakeRepos != nil {
+		add("bake_repos", lc.BakeReposEffective(p.BakeRepos), p.BakeRepos, false)
+	}
 	// The orchestrator block is compared by the publisher's own keep rule
 	// (D1239, D1234): a config that states a block that sets a key differs from
 	// a node carrying another — or none — so a guardrail-only edit reaches the

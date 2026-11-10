@@ -741,7 +741,6 @@ var notADecisionSites = map[string]string{
 // `confirmTypedStrict` and `askTyped`, so their entries are the helpers' own
 // sites in `budget.go` and `init.go` — the read is what the lint holds.
 var pendingSites = map[string]string{
-	"accounts.go:accountsClear":    "T5",
 	"budget.go:confirmTyped":       "T3",
 	"budget.go:confirmTypedStrict": "T3",
 	"image.go:confirmBuild":        "T4",
@@ -750,16 +749,16 @@ var pendingSites = map[string]string{
 	// removed the two callers the plan gave it (init_layer_stage.go,
 	// init_policy_migrate.go: their writes take confirmStageWrite now, which
 	// asks nothing of a person and reads no line). This one stays because its
-	// callers do not: confirmRemoval is defined in a file T6 owns, but
-	// upgrade.go (T5) and update_workspace.go (T15) still call it, so the entry
-	// outlives T6 and belongs to the task that removes the last caller. Deleting
-	// it here would not compile. The deletions that keep it in the same family —
+	// callers do not: confirmRemoval is defined in a file T6 owns, and
+	// project_enroll.go (T6) and update_workspace.go (T15) still call it —
+	// upgrade.go's own caller went with T5 — so the entry outlives T6 and
+	// belongs to the task that removes the last caller. Deleting it here would
+	// not compile. The deletions that keep it in the same family —
 	// project_cmd.go's `policy publish --delete` and project_enroll.go's
 	// allow-list removal — are data loss, which the ruling of 2026-11-06 leaves
 	// typed where --yes does not stand in, so no task of the plan removes them
 	// and this entry is not theirs.
-	"project_cmd.go:confirmRemoval":          "T6's file, whose callers T5 and T15 remove",
-	"settings_write.go:confirmSettingsWrite": "T5",
+	"project_cmd.go:confirmRemoval": "T6's file, whose callers T6 and T15 remove",
 }
 
 // forms is the shapes found at one site, in a stable order, for a failure's

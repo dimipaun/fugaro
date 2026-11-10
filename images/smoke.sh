@@ -8,9 +8,8 @@
 # images/BASE/Dockerfile, so CI and release builds always assert the pins;
 # set one in the environment to override it.
 # For BASE=base, the pins additionally include MISE_VERSION, GCLOUD_VERSION,
-# DOCKER_CLI_VERSION, YQ_VERSION, CODEX_VERSION, OPENCODE_VERSION,
-# GOOSE_VERSION, CRUSH_VERSION, HARNESS_NODE_VERSION, UV_VERSION and
-# GRAPHIFY_VERSION, each matched exactly
+# DOCKER_CLI_VERSION, YQ_VERSION, UV_VERSION and GRAPHIFY_VERSION, each
+# matched exactly
 # (not as a substring) against a version token parsed from the tool's own
 # output; every field of /etc/fugaro/base.json is checked against its own
 # pin too. The image's presence checks (images/base/tools.tsv) and its mise
@@ -76,11 +75,6 @@ case "$base" in
     pinned GCLOUD_VERSION 's/^Google Cloud SDK //' gcloud --version
     pinned DOCKER_CLI_VERSION 's/^Docker version \([^,]*\),.*/\1/' docker --version
     pinned YQ_VERSION 's/.*version v//' yq --version
-    pinned CODEX_VERSION 's/^codex-cli //' codex --version
-    pinned OPENCODE_VERSION 's/^ *//' opencode --version
-    pinned GOOSE_VERSION 's/^ *//' goose --version
-    pinned CRUSH_VERSION 's/.*version v//' crush --version
-    pinned HARNESS_NODE_VERSION 's/^v//' /opt/fugaro/node/bin/node -v
     pinned UV_VERSION 's/^uv \([0-9.]*\).*/\1/' /opt/fugaro/uv/bin/uv --version
     pinned GRAPHIFY_VERSION 's/^graphify //' graphify --version
 
@@ -101,11 +95,6 @@ case "$base" in
     check_json_field yq "$(resolve_pin YQ_VERSION)"
     check_json_field gcloud "$(resolve_pin GCLOUD_VERSION)"
     check_json_field docker_cli "$(resolve_pin DOCKER_CLI_VERSION)"
-    check_json_field harness_node "$(resolve_pin HARNESS_NODE_VERSION)"
-    check_json_field codex "$(resolve_pin CODEX_VERSION)"
-    check_json_field opencode "$(resolve_pin OPENCODE_VERSION)"
-    check_json_field goose "$(resolve_pin GOOSE_VERSION)"
-    check_json_field crush "$(resolve_pin CRUSH_VERSION)"
     check_json_field uv "$(resolve_pin UV_VERSION)"
     check_json_field graphify "$(resolve_pin GRAPHIFY_VERSION)"
     echo "base.json matches every pin"

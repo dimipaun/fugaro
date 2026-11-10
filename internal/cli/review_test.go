@@ -269,8 +269,10 @@ func TestReviewRefusesWhileTheCodingRunIsGoing(t *testing.T) {
 		PR: &runstore.PRRef{Number: 7}, StartedAt: time.Now(),
 		FollowUp: &runstore.FollowUp{PR: 7, PreviousRun: rootID}})
 
+	// The refusal names the run the way every human surface does, by its
+	// ending (spec.md §1), so the sentence is pinned whole around it.
 	wantReviewRefused(t, f.cloudFixture, []string{"--pr", "7", "--token", "acme-personal"},
-		active, "is still running", "fugaro runs ls --pr 7 --repo acme/app")
+		"run "+task.ShortRun(active)+" on PR #7 is still running", "fugaro runs ls --pr 7 --repo acme/app")
 }
 
 // TestReviewShowPrintsTheArtifactAndItsMarkdown is the second verb: what the

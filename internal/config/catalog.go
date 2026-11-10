@@ -169,7 +169,7 @@ func CatalogContextHashKey(name string) (string, error) {
 // segment, a "/", a NUL) would otherwise name an object outside the entry's own
 // directory.
 func catalogKey(name, leaf string) (string, error) {
-	if !catalogNameRE.MatchString(name) {
+	if !ValidCatalogName(name) {
 		// The refusal names the value through pluginwire.Printable, the way
 		// layer.go's showKey prints a key and every other message here prints
 		// a name that did not pass a rule: the name reaching this helper is
@@ -177,7 +177,7 @@ func catalogKey(name, leaf string) (string, error) {
 		// message name it — an operator copying (or reading) a build's
 		// definition has no entry index to look up, and the escaped name
 		// cannot carry a control or bidi character into the log it lands in.
-		return "", fmt.Errorf("the catalog entry name %s %s", pluginwire.Printable(name), catalogNameMessage)
+		return "", fmt.Errorf("the catalog entry name %s %s", pluginwire.Printable(name), CatalogNameMessage)
 	}
 	return buildsPrefix + "catalog/" + name + "/" + leaf, nil
 }
@@ -189,9 +189,19 @@ func catalogKey(name, leaf string) (string, error) {
 // messages a person reads.
 var catalogNameRE = ProjectNameRE
 
+// ValidCatalogName reports whether name may be a catalog entry's name, the
+// rule an entry's own name is held to here and a workflow's image_name is held
+// to there. It is exported with the sentence its refusal prints because a
+// third document names an entry: the published policy node's image_map values
+// are entry names (the image setup skill, D1906), and that map is read in
+// internal/projectpolicy and written by the local config's loader — two
+// packages that cannot restate this rule without a second one to keep in step.
+func ValidCatalogName(name string) bool { return catalogNameRE.MatchString(name) }
+
+// CatalogNameMessage is the refusal ValidCatalogName's rule prints.
+const CatalogNameMessage = "must be a catalog entry name: 1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit"
+
 var (
-	// catalogNameMessage is the refusal of a name outside catalogNameRE.
-	catalogNameMessage = "must be a catalog entry name: 1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit"
 	// catalogTagRE is the shape a tag must have: an allowlist of 1 to
 	// maxCatalogTagLen lower-case letters, digits, '.', '_' and '-', the first
 	// a letter or a digit. It is an allowlist and not "no whitespace, no
@@ -234,8 +244,8 @@ func ValidateCatalog(p string, c Catalog) []Problem {
 	for i, e := range c.Entries {
 		ep := fmt.Sprintf("%s.entries[%d]", p, i)
 		switch {
-		case !catalogNameRE.MatchString(e.Name):
-			add(ep+".name", "%s", catalogNameMessage)
+		case !ValidCatalogName(e.Name):
+			add(ep+".name", "%s", CatalogNameMessage)
 		default:
 			if j, dup := names[e.Name]; dup {
 				add(ep+".name", "duplicates entries[%d]", j)
