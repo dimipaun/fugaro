@@ -125,6 +125,63 @@ func TestRequestsAreThrottled(t *testing.T) {
 	}
 }
 
+// TestTheThrottleBucketsByTheForwardedAddress: §7.2's per-IP bucket is the
+// address the platform's front end saw and not the peer the connection ends at.
+// Every applicant arrives from that front end — on Cloud Run one peer for the
+// whole internet — so a bucket keyed on the peer is one bucket for everyone, and
+// the addresses a caller writes into X-Forwarded-For itself are the entries
+// before the last and are not the bucket. With no header at all there is nothing
+// but the peer, and that is the bucket.
+func TestTheThrottleBucketsByTheForwardedAddress(t *testing.T) {
+	f := newFixtureWith(t, Production, func(f *fixture) {
+		f.cfg.Throttle = Limits{Requests: 1, Window: time.Hour}
+	})
+	const front = "10.0.0.1:443" // the platform's front end, one peer for everyone
+
+	send := func(forwarded, email string) *httptest.ResponseRecorder {
+		f.t.Helper()
+		req := httptest.NewRequest(http.MethodPost, intakeOrigin+RouteFreeSeat, strings.NewReader(url.Values{"email": {email}}.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		if forwarded != "" {
+			req.Header.Set("X-Forwarded-For", forwarded)
+		}
+		req.RemoteAddr = front
+		rec := httptest.NewRecorder()
+		f.handler.ServeHTTP(rec, req)
+		return rec
+	}
+
+	answerBody(t, send("198.51.100.9", "one@acme.example"))
+	if got := len(f.mail.sent); got != 1 {
+		t.Fatalf("the first applicant mailed %d message(s), want the verification one", got)
+	}
+
+	// Another address behind the same front end: its own bucket, and it is not
+	// the first applicant's.
+	before := len(f.mail.sent)
+	answerBody(t, send("203.0.113.5", "two@acme.example"))
+	if got := len(f.mail.sent); got != before+1 {
+		t.Errorf("a second address behind the same front end mailed %d message(s), want one more: the bucket is the forwarded address, not the peer", got-before)
+	}
+
+	// The first address again, with an entry the caller wrote itself in front of
+	// the one the front end appended: the last entry is the bucket, so the
+	// caller cannot choose its own and the bucket it really is in is full.
+	before = len(f.mail.sent)
+	answerBody(t, send("192.0.2.7, 198.51.100.9", "three@acme.example"))
+	if got := len(f.mail.sent); got != before {
+		t.Errorf("a caller that wrote its own X-Forwarded-For entry mailed %d message(s), want none", got-before)
+	}
+
+	// No header at all — a test, a local run — and the peer is all there is.
+	answerBody(t, send("", "four@acme.example"))
+	before = len(f.mail.sent)
+	answerBody(t, send("", "five@acme.example"))
+	if got := len(f.mail.sent); got != before {
+		t.Errorf("two requests from one peer with no forwarded address mailed %d message(s), want none: the fallback is the peer", got-before)
+	}
+}
+
 // TestOnlyTheMinterCallsTheSigner: §3.2/§3.3 and Check 174 — the split T13
 // rules is that the internet-facing intake cannot sign. The intake reaches a
 // key through Mints alone, it holds no Signer anywhere in its types, and no

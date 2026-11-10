@@ -172,6 +172,38 @@ func TestOpenSourceCheckRefusesAPrivateOrNonOSIRepository(t *testing.T) {
 	}
 }
 
+// TestAnApplicationOverTheRepositoryCapIsRefused: the count is the deploy's,
+// because each repository it names is a call into the deploy's code-host
+// credentials made on the strength of one unauthenticated post — and the form's
+// body cap is not a bound on that: 16 KiB is more URLs than the check should
+// ever ask the host about. An application past the cap is refused before the
+// first call.
+func TestAnApplicationOverTheRepositoryCapIsRefused(t *testing.T) {
+	f := newFixtureWith(t, Production, func(f *fixture) { f.cfg.MaxRepositories = 2 })
+
+	// At the cap: read, and the address verified.
+	answerBody(t, f.applyOpenSource(applicantAddress, repositoryURL, repositoryTwoURL))
+	if got := len(f.host.asked); got != 2 {
+		t.Fatalf("an application naming two repositories asked the code host %d time(s), want its two", got)
+	}
+	if got := len(f.mail.sent); got != 1 {
+		t.Fatalf("an application at the cap mailed %d message(s), want the verification one", got)
+	}
+	asked, mailed := len(f.host.asked), len(f.mail.sent)
+
+	// One past it: nothing is read and nothing is mailed.
+	answerBody(t, f.applyOpenSource("dev@other.example", repositoryURL, repositoryTwoURL, repositoryURL+"-three"))
+	if got := len(f.host.asked) - asked; got != 0 {
+		t.Errorf("an application past the cap asked the code host %d time(s), want none: the count is checked before the first call", got)
+	}
+	if got := len(f.mail.sent); got != mailed {
+		t.Errorf("an application past the cap mailed %d message(s) in all, want the verification one alone", got)
+	}
+	if queued := f.queued(); len(queued) != 0 {
+		t.Errorf("an application past the cap was queued (%+v), want a refusal", queued)
+	}
+}
+
 // TestUnverifiedEmailMintsNothing: nothing is minted before the address is
 // verified (§4.1) — the free seat's application mails a single-use token and
 // mints only when it comes back.

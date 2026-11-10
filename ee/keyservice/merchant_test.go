@@ -34,6 +34,7 @@ func TestPurchaseEventNeedsAValidSignature(t *testing.T) {
 		OccurredAt:   f.now,
 		Subscription: "sub-acme.example",
 		Organisation: "acme.example",
+		Email:        buyerAddress("acme.example"),
 		Seats:        5,
 		TermDays:     365,
 	}
@@ -86,6 +87,7 @@ func TestPurchaseEventIsIdempotent(t *testing.T) {
 		OccurredAt:   f.now.Add(-6 * time.Hour),
 		Subscription: "sub-acme.example",
 		Organisation: "acme.example",
+		Email:        buyerAddress("acme.example"),
 		Seats:        5,
 		TermDays:     365,
 	})
@@ -119,6 +121,7 @@ func TestReplayedOrOutOfOrderEventIsIgnored(t *testing.T) {
 		OccurredAt:   f.now,
 		Subscription: "sub-acme.example",
 		Organisation: "acme.example",
+		Email:        buyerAddress("acme.example"),
 		Seats:        5,
 		TermDays:     365,
 	}

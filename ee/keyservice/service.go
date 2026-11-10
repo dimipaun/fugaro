@@ -10,8 +10,15 @@ package keyservice
 //
 // The whole package is one program's parts because the split T13 rules is an
 // identity boundary and not a compilation one (§3.4): this file and minter.go
-// are the two services' entry points, and what keeps them apart is which one
-// holds a Signer.
+// are the two halves' handlers, and what keeps them apart is which one holds a
+// Signer.
+//
+// Neither half is a deployable program yet and this package holds no `main`: the
+// two entry points, and with them the durable Store, the code host's client, the
+// mail provider, D452's proof check and the key ring's signing client, are the
+// deploy's (§11, S3.7) — the images S3.5's roots name are built from this
+// package's source and nothing in this tree builds one. What is here is what
+// those pieces plug into, driven in a test through Deps.
 
 import (
 	"context"
@@ -84,6 +91,12 @@ type Config struct {
 	VerificationTTL time.Duration
 	// MerchantSecret is the merchant of record's signing secret (§5.2).
 	MerchantSecret []byte
+	// MaxRepositories is how many repositories one open-source application may
+	// name. Each one is a call into the deploy's own code-host credentials, made
+	// on the strength of an unauthenticated form post, so the bound belongs to
+	// the deploy beside the rate: an application that names more is refused
+	// before the first call rather than read (§4.4, §7.2).
+	MaxRepositories int
 	// Throttle is the intake's rate (§7.2).
 	Throttle Limits
 }
@@ -149,6 +162,9 @@ func New(cfg Config, deps Deps) (*Service, error) {
 	}
 	if len(cfg.MerchantSecret) == 0 {
 		return nil, errors.New("the intake holds no merchant secret, and without one it would read an unsigned body")
+	}
+	if cfg.MaxRepositories < 1 {
+		return nil, errors.New("the intake's repository cap is not set, and an open-source application that names a thousand repositories is a thousand calls into the deploy's code-host credentials")
 	}
 	switch {
 	case deps.Store == nil:
@@ -254,13 +270,18 @@ func (s *Service) freeSeatForm(w http.ResponseWriter, r *http.Request) {
 // openSource is the open-source programme's route (§4.4): every repository the
 // applicant named has to be public under a licence the OSI approves and D452's
 // proof of control has to be given, and only then is the address verified.
+//
+// The count is capped before the first call. The form's body is bounded at
+// maxFormBytes and that alone is not a bound on the work: 16 KiB of short URLs
+// is more repositories than the deploy's code-host credentials should be asked
+// about on the strength of one unauthenticated post.
 func (s *Service) openSourceForm(w http.ResponseWriter, r *http.Request) {
 	form, email, domain, ok := s.applicant(w, r)
 	if !ok {
 		return
 	}
 	repositories := splitLines(form.Get("repositories"))
-	if len(repositories) == 0 {
+	if len(repositories) == 0 || len(repositories) > s.cfg.MaxRepositories {
 		answer(w)
 		return
 	}
@@ -310,7 +331,8 @@ func (s *Service) requestForm(w http.ResponseWriter, r *http.Request) {
 
 // verify follows a link the intake mailed (§4.1). The token is spent before the
 // mint, so a link followed twice mints once, and a link that has expired mints
-// nothing.
+// nothing. A request that could not be finished hands the token back, so a link
+// is never spent on a key nobody received.
 func (s *Service) verifyLink(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	token := r.URL.Query().Get("token")
@@ -365,6 +387,16 @@ func (s *Service) verifyLink(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if _, err := s.mint(ctx, s.mintRequest(plan, pending.Organisation, plan.Seats, plan.TermDays), pending.Email, "verification:"+pending.ID); err != nil {
+		// The link is handed back. A token spent on a request that failed is a
+		// dead link with no key behind it, and the applicant has no way to ask
+		// again: the mail that carried the link is the only place it existed
+		// (§4.1, §7.2). What the spending closed reopens here — a second follow
+		// of the same link is then one more mint, which is a key delivered twice
+		// rather than a key delivered never.
+		pending.Used = false
+		if err := s.store.SaveVerification(ctx, pending); err != nil {
+			log.Printf("keyservice: giving the verification %s back: %v", pending.ID, err)
+		}
 		fail(w, err)
 		return
 	}
@@ -385,7 +417,7 @@ func (s *Service) applicant(w http.ResponseWriter, r *http.Request) (url.Values,
 		answer(w)
 		return nil, "", "", false
 	}
-	if !s.limiter.allow("address:"+email, "ip:"+hostOf(r.RemoteAddr)) {
+	if !s.limiter.allow("address:"+email, "ip:"+clientIP(r)) {
 		answer(w)
 		return nil, "", "", false
 	}
@@ -412,15 +444,25 @@ func (s *Service) pending(ctx context.Context, v Verification) error {
 	return s.mail.Send(ctx, mail)
 }
 
-// mint asks the minter for one key, writes the record and mails the key to the
-// applicant.
+// mint asks the minter for one key, mails it to the applicant and writes the
+// record.
 //
-// The record is written before the answer is returned (§5.2), and it is the
-// record and not a reservation: two deliveries of one event in flight at once
-// both reach the minter and the second's write is refused, so one key is minted
-// twice and one record is kept. What makes that harmless is that the two keys
-// are the same key in every claim — and closing it properly is a store that
-// reserves a source, which is the durable backend's (S3.5/S3.7).
+// The mail comes **before** the record, and that order is the whole of it: a key
+// is mailed and never stored (§7.3), so a record written for a mail that failed
+// is a source spent on a key nobody holds — the merchant's redelivery finds the
+// source recorded and mails nothing, and the customer has paid for a key that
+// exists nowhere (§5.2). Mailing first makes a failed delivery a failed request:
+// nothing is recorded, the source stays free, and the next delivery mints and
+// mails again. The price is the other order's failure: a mail that lands and a
+// write that fails delivers the key twice on the retry, which is a duplicate key
+// rather than a lost one.
+//
+// The record is still written before the answer is returned (§5.2), and it is
+// the record and not a reservation: two deliveries of one event in flight at
+// once both reach the minter and both mail, and the second's write is refused,
+// so one key is minted twice and one record is kept. What makes that harmless is
+// that the two keys are the same key in every claim — and closing it properly is
+// a store that reserves a source, which is the durable backend's (S3.5/S3.7).
 func (s *Service) mint(ctx context.Context, req Request, applicant, source string) (Minted, error) {
 	answer, err := s.mints.Mint(ctx, req)
 	if err != nil {
@@ -428,17 +470,16 @@ func (s *Service) mint(ctx context.Context, req Request, applicant, source strin
 	}
 	answer.Record.Source = source
 	answer.Record.Email = applicant
+	if applicant != "" {
+		if err := s.mail.Send(ctx, keyMail(applicant, answer.Key)); err != nil {
+			return Minted{}, err
+		}
+	}
 	if err := s.store.SaveIssuance(ctx, answer.Record); err != nil {
 		if errors.Is(err, ErrAlreadyRecorded) {
 			return answer, nil
 		}
 		return Minted{}, err
-	}
-	if applicant != "" {
-		mail := keyMail(applicant, answer.Key)
-		if err := s.mail.Send(ctx, mail); err != nil {
-			return answer, err
-		}
 	}
 	return answer, nil
 }
@@ -511,9 +552,31 @@ func domainOf(email string) string {
 	return domain
 }
 
-// hostOf is the address a request came from, without its port. It is the
-// connection's peer and not a forwarded header: a caller that sets
-// X-Forwarded-For would otherwise choose its own throttle bucket (§7.2).
+// clientIP is the address a request came from, which is §7.2's per-IP bucket.
+//
+// It is the **last** entry of X-Forwarded-For and not the connection's peer,
+// because the peer is the platform's own front end: on Cloud Run every applicant
+// arrives from the same one, so a bucket keyed on it is one bucket for the whole
+// internet, and the intake refuses everyone as soon as D454's rate is reached
+// (§3.4, §7.2). The front end appends the address it saw to whatever the caller
+// sent, so the last entry is that address and the entries a caller writes itself
+// are the earlier ones this reads past — a caller cannot pick its own bucket.
+// With no header at all — a test, or a local run — the peer is the only address
+// there is and it is the fallback.
+func clientIP(r *http.Request) string {
+	forwarded := r.Header.Values("X-Forwarded-For")
+	for i := len(forwarded) - 1; i >= 0; i-- {
+		entries := strings.Split(forwarded[i], ",")
+		for j := len(entries) - 1; j >= 0; j-- {
+			if entry := strings.TrimSpace(entries[j]); entry != "" {
+				return entry
+			}
+		}
+	}
+	return hostOf(r.RemoteAddr)
+}
+
+// hostOf is the address a request's connection ended at, without its port.
 func hostOf(remoteAddr string) string {
 	host, _, err := net.SplitHostPort(remoteAddr)
 	if err != nil {

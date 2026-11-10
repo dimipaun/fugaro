@@ -51,11 +51,17 @@ const (
 	applicantIP   = "203.0.113.7:4040"
 
 	repositoryURL    = "https://code.example/acme/widget"
+	repositoryTwoURL = "https://code.example/acme/gadget"
 	privateURL       = "https://code.example/acme/private"
 	unlicensedURL    = "https://code.example/acme/proprietary"
 	openSourceOrg    = "code.example/acme/widget"
 	applicantAddress = "dev@acme.example"
 )
+
+// buyerAddress is the address a merchant's payload carries for the buyer of a
+// subscription: the paid path mails the key to it and refuses an event without
+// one, so an event the fixture sends carries one.
+func buyerAddress(organisation string) string { return "buyer@" + organisation }
 
 // evaluationDays is the term the fixture's free seat covers. D432/D439's
 // three-month evaluation key is the ruled one; the fixture states it in days
@@ -209,9 +215,10 @@ func newFixtureWith(t *testing.T, env Environment, edit func(*fixture)) *fixture
 	f.store = &Memory{}
 	f.mail = &mailSpy{}
 	f.host = &hostSpy{repos: map[string]Repository{
-		repositoryURL: {Public: true, Licence: "MIT"},
-		privateURL:    {Public: false, Licence: "MIT"},
-		unlicensedURL: {Public: true, Licence: "LicenseRef-Proprietary"},
+		repositoryURL:    {Public: true, Licence: "MIT"},
+		repositoryTwoURL: {Public: true, Licence: "Apache-2.0"},
+		privateURL:       {Public: false, Licence: "MIT"},
+		unlicensedURL:    {Public: true, Licence: "LicenseRef-Proprietary"},
 	}}
 	f.proofs = &proofSpy{proved: true, organisation: openSourceOrg}
 	f.recording = &recordingMints{inner: Minter{Signer: f.signer, Keys: f.keys, Now: f.clock}}
@@ -231,6 +238,7 @@ func newFixtureWith(t *testing.T, env Environment, edit func(*fixture)) *fixture
 		FreeMailDomains: []string{"gmail.example", "outlook.example"},
 		VerificationTTL: 24 * time.Hour,
 		MerchantSecret:  f.secret,
+		MaxRepositories: 8,
 		Throttle:        Limits{Requests: 50, Window: time.Hour},
 	}
 	f.deps = &Deps{
@@ -423,6 +431,7 @@ func (f *fixture) purchase(id, domain string, seats, termDays int) Record {
 		OccurredAt:   f.now,
 		Subscription: "sub-" + domain,
 		Organisation: domain,
+		Email:        buyerAddress(domain),
 		Seats:        seats,
 		TermDays:     termDays,
 	})
@@ -442,6 +451,9 @@ func (f *fixture) event(e Event) *httptest.ResponseRecorder {
 	}
 	if e.Subscription == "" {
 		e.Subscription = "sub-" + e.Organisation
+	}
+	if e.Email == "" && e.Organisation != "" {
+		e.Email = buyerAddress(e.Organisation)
 	}
 	if e.OccurredAt.IsZero() {
 		e.OccurredAt = f.now

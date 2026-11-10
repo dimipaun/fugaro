@@ -74,6 +74,12 @@ var (
 	// hold: an event ordering the service missed, which is the deploy's to
 	// reconcile and not a mint to force.
 	ErrUnknownSubscription = errors.New("keyservice: there is no subscription by that id")
+	// ErrNoBuyer is an event the service cannot deliver a key for: the paid path
+	// mails the key to the buyer's own address, and an event whose address is
+	// missing or unreadable is one that would end in a key nobody holds. It is
+	// answered with a failure rather than a mint, so the merchant's retry and the
+	// owner's alerting see it (§5.1).
+	ErrNoBuyer = errors.New("keyservice: the event carries no address a key can be mailed to")
 )
 
 // Event is one merchant event as the intake reads it. It is the service's own
@@ -91,7 +97,8 @@ type Event struct {
 	Organisation string    `json:"organisation"`
 	// Email is the buyer's own address as the merchant's payload carries it,
 	// and it is where the key is mailed: the record's personal data is the
-	// minimum a key's delivery needs (§7.3).
+	// minimum a key's delivery needs (§7.3). An event without one is refused
+	// rather than minted for, because the key it would carry reaches nobody.
 	Email    string `json:"email"`
 	Seats    int    `json:"seats"`
 	TermDays int    `json:"term_days"`
@@ -237,7 +244,11 @@ func (s *Service) purchased(ctx context.Context, e Event) error {
 	if e.Organisation == "" || e.Seats < 1 || e.TermDays < 1 {
 		return nil
 	}
-	minted, err := s.mint(ctx, s.mintRequest(s.cfg.Paid, e.Organisation, e.Seats, e.TermDays), buyer(e.Email), e.ID)
+	to, deliverable := address(e.Email)
+	if !deliverable {
+		return fmt.Errorf("%w: the purchase %s", ErrNoBuyer, e.ID)
+	}
+	minted, err := s.mint(ctx, s.mintRequest(s.cfg.Paid, e.Organisation, e.Seats, e.TermDays), to, e.ID)
 	if err != nil {
 		return err
 	}
@@ -265,7 +276,11 @@ func (s *Service) seatChanged(ctx context.Context, e Event, sub Subscription) er
 		// minting something that has already expired.
 		return nil
 	}
-	if _, err := s.mint(ctx, s.mintRequest(s.cfg.Paid, sub.Organisation, e.Seats, days), buyer(e.Email), e.ID); err != nil {
+	to, deliverable := address(e.Email)
+	if !deliverable {
+		return fmt.Errorf("%w: the seat change %s", ErrNoBuyer, e.ID)
+	}
+	if _, err := s.mint(ctx, s.mintRequest(s.cfg.Paid, sub.Organisation, e.Seats, days), to, e.ID); err != nil {
 		return err
 	}
 	sub.Seats = e.Seats
@@ -355,15 +370,4 @@ func daysBetween(from, to time.Time) int {
 	}
 	day := 24 * time.Hour
 	return int((left + day - 1) / day)
-}
-
-// buyer is the merchant's buyer address when it is one this service may mail to,
-// and nothing otherwise: the address in an event is the merchant's field, and a
-// value that is not an address is one the intake does not write into a header.
-func buyer(raw string) string {
-	at, ok := address(raw)
-	if !ok {
-		return ""
-	}
-	return at
 }
