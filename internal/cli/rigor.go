@@ -257,19 +257,34 @@ func runRigorSet(cmd *cobra.Command, name string, o rigorOptions) error {
 	// today, over the same inputs the edit is about — the rule's own glob for
 	// the area form, nothing for the layer's default — and the mode after the
 	// edit is the same resolution over the edited document. Both are read
-	// before anything is written.
+	// before anything is written. The area form carries the second baseline the
+	// resolution cannot see (rigorAreaLowered), for the globs that do not match
+	// their own literal text.
 	baseline := rigorResolved(prev, o.area)
 	after := rigorResolved(edited, o.area)
 	typed, why := false, ""
-	if after.Rank() < baseline.Rank() {
-		// The sensitive direction. The sentence is the publish door's own where
-		// the two documents name the rule it lowers (layerRigorRules, D1026):
-		// the same layer reaching runs by two doors says one thing about what
-		// left it.
+	switch {
+	case after.Rank() < baseline.Rank():
 		typed = true
-		why = fmt.Sprintf("this lowers the project's rigor mode from %s to %s: the mode a run resolves decides how much review every run of this project's branches gets, and this layer is where it starts from", baseline, after)
+		why = fmt.Sprintf("this lowers the project's rigor mode from %s to %s", baseline, after)
+	case o.area != "" && rigorAreaLowered(prev, o.area, mode):
+		// The resolution above reads the glob as a PATH, so a glob that does not
+		// match its own text — `docs/{a,b}/**`, `docs/[ab]*` — resolves to the
+		// layer's default against itself and a rule lowered through such a glob
+		// reads as no change at all. The rule this edit replaces is the second
+		// baseline, and dropping its own mode is the lowering whatever the
+		// resolution over the glob's literal text says.
+		typed = true
+		why = fmt.Sprintf("this lowers the rigor mode of the rule %s", safetext.Field(o.area))
+	}
+	if typed {
+		// The sentence is the publish door's own where the two documents name
+		// the rule it lowers (layerRigorRules, D1026): the same layer reaching
+		// runs by two doors says one thing about what left it.
 		if rules := layerRigorRules(prev, edited); len(rules) > 0 {
 			why = rules[0]
+		} else {
+			why += ": the mode a run resolves decides how much review every run of this project's branches gets, and this layer is where it starts from"
 		}
 	}
 	// The review floor is outside every layer, so this command cannot lower it
@@ -374,6 +389,17 @@ func rigorAreaIn(prev *config.ProjectLayer, glob string) (*rigor.Area, int) {
 		}
 	}
 	return nil, len(prev.Defaults.Rigor.Areas)
+}
+
+// rigorAreaLowered says whether the area edit replaces the mode of a rule the
+// layer already carries with a lower one. It is the rank rule's second
+// baseline for the area form: rigorResolved reads the glob as a path, and a
+// glob that does not match its own literal text (a brace or a character class)
+// resolves to the layer's default against itself, so the resolution alone
+// misses the lowering of such a rule.
+func rigorAreaLowered(prev *config.ProjectLayer, glob string, mode rigor.Mode) bool {
+	rule, _ := rigorAreaIn(prev, glob)
+	return rule != nil && mode.Rank() < rule.Mode.Rank()
 }
 
 // rigorResolved is what these inputs resolve to: the layer's own rigor block,

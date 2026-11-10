@@ -373,6 +373,52 @@ func TestRigorSetAreaReplacesTheModeOfAnExistingGlob(t *testing.T) {
 	}
 }
 
+// The rank rule's second baseline (rigorAreaLowered). §3's baseline is a
+// resolution over the rule's own glob, and a glob that does not match its own
+// literal text — a brace or a character class — resolves to the layer's default
+// against itself, so a rule lowered through one of those read as no change at
+// all: the owner's terminal printed no lowering sentence and a coding agent's
+// session wrote the mode. The rule the edit replaces is what decides instead,
+// and both halves of the sensitive direction are pinned here.
+func TestRigorSetAreaLowersABraceGlobRuleTheResolutionCannotSee(t *testing.T) {
+	const brace = "docs/{a,b}/**"
+	seeded := rigorAnchors +
+		"defaults:\n  rigor:\n    default: pro\n    areas:\n      - match: " + brace + "\n        mode: critical\n        name: docs subfolders\n"
+	settingsWriteHome(t)
+	path := settingsManagedLayerFile(t, seeded)
+	noAgentSession(t)
+	noTerminal(t)
+
+	// startup is below the rule's own critical although the resolution over the
+	// glob's literal text reads pro before (the default) and pro after.
+	out, _, err := execute(t, "rigor", "set", "startup", "--area", brace)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !strings.Contains(out, "lowers") {
+		t.Errorf("the owner's terminal did not print the lowering sentence:\n%s", out)
+	}
+	got := readFileString(t, path)
+	if !strings.Contains(got, "mode: startup") {
+		t.Errorf("the write did not replace the rule's mode:\n%s", got)
+	}
+	if strings.Count(got, "match: "+brace) != 1 {
+		t.Errorf("the write added a second rule for one glob:\n%s", got)
+	}
+
+	// And the same edit in a coding agent's session: the Typed class is what
+	// refuses it, so a session reading the glob as a path would have written it.
+	path = settingsManagedLayerFile(t, seeded)
+	agentSession(t)
+	_, _, err = execute(t, "rigor", "set", "startup", "--area", brace)
+	if err == nil || !strings.Contains(err.Error(), "coding agent's session") {
+		t.Fatalf("a coding agent's session lowered a brace-glob rule's mode: %v", err)
+	}
+	if readFileString(t, path) != seeded {
+		t.Error("the refused write changed the layer file")
+	}
+}
+
 // D838 with F14: two rules with one glob in a layer are refused, and by the
 // loader's own repeat rule rather than by a second table here — a glob addresses
 // one rule, so an edit that cannot tell which one it is addressing writes
