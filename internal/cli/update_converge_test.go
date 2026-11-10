@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -337,10 +338,18 @@ func TestUpdateConvergesPreviousPolicy(t *testing.T) {
 	// test wrote.
 	registerInstallation(t, r.initRig)
 	// The fixture is the release behind, or nothing here has to converge: the
-	// node this installation carries names neither key.
-	if p := convergeNode(t, r); p.ImageMap != nil || p.BakeRepos != nil {
-		t.Fatalf("the fixture's node already carries image_map = %v and bake_repos = %v: it is not an installation whose policy predates both",
-			p.ImageMap, p.BakeRepos)
+	// node this installation carries names neither key. It is read as raw
+	// members and not through convergeNode, because a node one policy version
+	// behind is exactly what that reader refuses — and being behind is what
+	// this test's fixture is.
+	raw, err := json.Marshal(r.db.Value(projectpolicy.PathShared()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"image_map", "bake_repos"} {
+		if bytes.Contains(raw, []byte(`"`+key+`"`)) {
+			t.Fatalf("the fixture's node already carries %s (%s): it is not an installation whose policy predates both", key, raw)
+		}
 	}
 
 	convergeOn(t, r, []string{"policy-older-than-binary", "policy-rules-skew", "plugin-pin"})
@@ -392,7 +401,7 @@ func convergeNode(t *testing.T, r *convergeRig) *projectpolicy.Policy {
 // generation's document and carry no orchestrator marker at all, which is the
 // state every installation is in until this release's update runs.
 func TestUpdateConvergesTheOrchestratorRulesFromThePreviousGeneration(t *testing.T) {
-	r := newConvergeRig(t, v4Node())
+	r := newConvergeRig(t, v5Node())
 	currentRelease(t)
 	// The fixture is the previous generation, or the assertions below prove
 	// nothing: no marker, and a document this binary does not generate.
@@ -404,7 +413,7 @@ func TestUpdateConvergesTheOrchestratorRulesFromThePreviousGeneration(t *testing
 		t.Fatal("the fixture's deployed rules are already the document this binary generates, so nothing has to converge")
 	}
 
-	convergeOn(t, r, []string{"policy-older-than-binary", "policy-rules-skew", "plugin-pin"})
+	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
 
 	// One run, and the marker records this binary's generation. A marker left
 	// absent here is the daemon's own gate refusing to start on a database the
@@ -446,7 +455,7 @@ func TestUpdateConvergesTheOrchestratorRulesFromThePreviousGeneration(t *testing
 // it `fugaro update` on an older binary would take the subtree out from under a
 // daemon whose own gate reads the same marker.
 func TestUpdateRefusesToRewindTheOrchestratorMarker(t *testing.T) {
-	r := newConvergeRig(t, v4Node())
+	r := newConvergeRig(t, v5Node())
 	currentRelease(t)
 	ahead := rules.OrchestratorRulesVersion + 1
 	r.db.Set(rules.PathOrchestratorRulesMarker(), ahead)

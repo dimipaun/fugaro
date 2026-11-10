@@ -24,7 +24,13 @@ import (
 // are the run's work: re-pin the base, and rebuild the repository's own job
 // images on the new pin rather than on the one the records still show.
 func TestUpdateConvergesSlimBase(t *testing.T) {
-	r := newConvergeRig(t, v4Node())
+	// The node is the one this binary writes, and deliberately: this test is
+	// about the base image, and a node one version behind would take doctor's
+	// policy checks out of the run (doctorPolicyChecks returns the skew line
+	// alone), so policy-vs-jobs — the check this fixture exists to fire — would
+	// never be appended and the guard below would fail for a reason that has
+	// nothing to do with the base.
+	r := newConvergeRig(t, v5Node())
 	// The fixture is the previous release's base, or the assertions after the
 	// run prove nothing: an installation already on this release's pin would
 	// converge without the images stage touching it.
