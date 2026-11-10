@@ -3,7 +3,7 @@
 **Checked against** `main` at `d19e2b1cf` (fetched 2026-11-10), by symbol and path, not line. Where this page disagrees
 with [spec.md](spec.md), this page wins. **Spec owner:** Dimi Paun. **Date:** 2026-11-10.
 
-**Numbers this work holds:** decisions **D2030-D2069** (D2030-D2041 used), checks **540-549** (540-541 used). The highest
+**Numbers this work holds:** decisions **D2030-D2069** (D2030-D2045 used), checks **540-549** (540-541 used). The highest
 numbers found were D2019 on `main` and D1961 in open pull requests; Check 522 on `main` and 481 in open pull requests.
 
 ## Headline: spec concept, what the repo already has
@@ -22,9 +22,9 @@ numbers found were D2019 on `main` and D1961 in open pull requests; Check 522 on
 | Rung 0 rebase and re-test | No rebase, conflict-resolution or update-branch step anywhere (`internal/gitops/checkpoint.go` only guards against an in-progress rebase). | Gap (F10) |
 | Churn detection | `rigor.Split` has no cross-round memory. A finding has no identity across rounds (`docs/post-review-triage` F11; D1850 plans a key in the result record's `triage` block). D1246 plans "same file and class in two or more Reviews". | Gap (F11) |
 | Follow-ups tagged with the source PR, important vs minor | `Task.FollowUpOf` and `Task.Debt` exist in `internal/task/task.go`; `fugaro followups RUN` is planned (T-TR10, not built). No importance field. | Exists / Gap (F12) |
-| Merge notification, human sign-off | `internal/orchestrator/notify.go` has kinds `run-finished` and `decision-needed` and only a log sink; the owner push is O9, not built. D1247 raises a `waiting_on: person` decision. | Exists / Gap (F13) |
+| Merge notification, human sign-off | `internal/orchestrator/notify.go` has kinds `run-finished` and `decision-needed` and only a log sink; the owner push is a later task of `docs/stateless-orchestrator` (not built). D1247 raises a `waiting_on: person` decision. | Exists / Gap (F13) |
 | Per-orchestrator daily report with a project roll-up | `docs/periodic-reviews`: one project-level writer (E4, "no per-orchestrator scheduler"), daily/weekly digests, 7 of 14 built. | Rule (F14) |
-| "Blocks other tasks" | `orchestrator.Item.DependsOn` (the dependency-driven launcher, O6, merged). A PR's "blocks" is the reverse edge. `fugaro plan` has `CriticalPathTasks` for plan documents only. | Exists (F15) |
+| "Blocks other tasks" | `orchestrator.WorkItem.DependsOn` (the dependency-driven launcher, O6, merged). A PR's "blocks" is the reverse edge. `fugaro plan` has `CriticalPathTasks` for plan documents only. | Exists (F15) |
 | Strict config precedence, "thresholds can be overridden at the project level" | `internal/policy.Merge` is tighten-only; mode precedence is area > repo > project > default and **a repo may loosen the mode**. D1244 forbids the project layer from setting `orchestrator.triage_after`. | Rule (F16) |
 | Review stop at 80% of time | `agent.review_stop_fraction` (default 0.8) and `rigor.BlocksAtStop` already make a PR ready at the stop with the rest as follow-ups: the in-run cousin of rung 3. It makes a PR ready; it does not merge. | Exists (F17) |
 
@@ -42,7 +42,7 @@ terminal and ready, has commits, CI is green, the path set classifies `Routine` 
 is critical and none is high in a security path. D1246: a run with no commits, no progress, or the same finding looping is
 cancelled and split, never relaunched with the same spec. D1247: a critical finding or a high one in a security path stops and
 raises `waiting_on: person`; each triage is appended to the audit log as `<run>:triage`; input it cannot read fails closed to
-recommend-only. Reading a pull request's checks does not exist yet (`gitprov.PRInfo`); O14 adds it. Consequence: the ladder is
+recommend-only. Reading a pull request's checks does not exist yet (`gitprov.PRInfo`); O14 adds it. **`orchestrator.triage_after` was never built**: only the docs, and `docs_stateless_orchestrator_test.go` pins its name, so D2032's replacement changes docs, not shipped config. Consequence: the ladder is
 built **on** O14, not beside it; rung 3 and rung 4 are O14's two outcomes, and the plan amends D1244 and D1246 visibly (D2032,
 D2036) rather than building a second rule.
 
@@ -66,7 +66,7 @@ in shadow in T-TR7a. The spec's "interaction with triage" assumes it runs everyw
 triage output; it reads the run record and the review verdicts, and uses triage's deferrals only where present.
 
 **F7 (Exists/Gap). Cost and time are a chain, not a counter.** `docs/run-limit-carry-over` (L0-L3 merged) carries a chain budget
-"a restart cannot reset" with chain membership in the run records. Orchestrator `Item` has `Attempts`, `Phase`, `RunID`,
+"a restart cannot reset" with chain membership in the run records. Orchestrator `WorkItem` has `Attempts`, `Phase`, `RunID`,
 `DependsOn` but no first-start time, no cumulative cost, no rung. Consequence: D2038 (resolution): cost and time per PR come from
 the chain; the ledger stores only the rung, its reason and the counters the chain cannot give (outer attempts, rung entry times).
 `escalation.cost_ceiling` is a ceiling over the chain's cost, never a second meter.
@@ -88,9 +88,11 @@ runner step that resolves it. Both touch agent configuration and prompts, so the
 latest base, resolve conflicts, re-run the tests, push the branch); the daemon holds no checkout and no git credentials.
 
 **F11 (Gap). Churn needs a finding identity.** The spec's rule compares findings across rounds. A finding has no id;
-`runner.Finding` carries `severity`, `likelihood`, `impact`, `fix_cost`, `class`, `needs_owner`, `file`, `summary`. D1850 plans a
-key (a hash of file and summary) in the result record. Consequence: the churn comparator waits on that key (external
-prerequisite, named in the plan); it reads the key, never invents its own. D2036 (answered): the same finding repeating goes to
+`runner.Finding` carries `severity`, `likelihood`, `impact`, `fix_cost`, `class`, `needs_owner`, `file`, `summary`. The record
+now has `runstore.TriageEntry.Key` (a hash of file and summary, landed with #2215), but the triage stage fills it in **Startup and
+Pro only** and is still in shadow. Consequence: the churn comparator reads that key and is **off in POC, Critical and
+Hotfix** (it falls back to the normal path, never a guess); so a reworded finding does not read as "new minor", it also treats
+two findings with the same file and class as the same (D1246's rule): a match on either is "same". D2036 (answered): the same finding repeating goes to
 rung 2 once and to rung 4 (D1246's split) if rung 2 repeats it; new minor findings every round go straight to rung 3.
 "Minor" is `rigor.Blocks`'s answer for the mode, not a new scale.
 
@@ -102,9 +104,9 @@ written from the merge judge's classification when the judge ran and from a dete
 data-loss class, or impact 5, is important); the launcher orders important ahead of new work. Adding a field is allowed; no
 existing field changes meaning.
 
-**F13 (Exists/Gap). Notification is half-built.** Only the log sink exists; O9 (the owner's push) is not built and is per
+**F13 (Exists/Gap). Notification is half-built.** Only the log sink exists; the owner's push is not built (a `docs/stateless-orchestrator` task) and is per
 person, not per project. Consequence: "notify the project owner" in Pro and Hotfix means a `decision-needed`-shaped notification
-through the existing sink; the plan adds one kind (`merged-needs-review`), and the channel arrives with O9. Critical, and any
+through the existing sink; the plan adds one kind (`merged-needs-review`), and the channel arrives with that task. Critical, and any
 non-Routine path set in any mode, raises the D1247 `waiting_on: person` decision (D2037, answered).
 
 **F14 (Rule). One project-level report writer.** `docs/periodic-reviews` E4 ruled one writer, no per-orchestrator scheduler.
@@ -139,8 +141,12 @@ the `escalate` recipe, the grade resolution and the merge call all touch such pa
 review`, per `.claude/rules/credentials-service.md` and the owner's rule (security review is level 3 in-job).
 
 **F20 (Rule). `fugaro update` is the whole upgrade, and it is safe while runs are in flight.** A new local config key with a
-default needs no migration. A new orchestrator-state field must be optional and must not change what an older daemon reads
-(strict decoders). A new recipe ships in the catalog and is reached by `update`. The release's operator section is "run
+default needs no migration. The orchestrator state is not optional-friendly:
+`schemas/orchestrator-state.schema.json` says `schema_version` is bumped whenever a field is added, the daemon's decoder refuses a
+field it does not model, and a reader that finds a higher version must stop. So the ledger needs **`schema_version` 2 with a
+`Migrate`** shipped through `update`, and the new block must be listed in `bookkeepingFields` (`state.go`), or `SpecDigest` (it
+hashes every `WorkItem` field but those) would read each ledger write as a changed spec and revoke the approval. The deployed
+RTDB rules do not pin the node's shape (`.write: false` for a token writer), so no rules change is needed. A new recipe ships in the catalog and is reached by `update`. The release's operator section is "run
 `fugaro update`". The plan pins this with a test that an installation at the previous state version converges.
 
 **F21 (Rule). Follow-ups are filed, never approved.** D1226 (stateless-orchestrator): the rule never approves a work item, and
@@ -154,6 +160,18 @@ the daemon may mark a draft ready (`gitprov` `ApplyReady`) and then merge, when 
 passes at the head SHA. This is a **new write authority for the daemon** and an amendment of D1245's "the PR is ready"
 condition (T3). The gate is evaluated against the exact head SHA that is readied and merged, and the merge call carries that
 SHA, so a push in between refuses it.
+
+**F23 (Rule). The ladder launches runs nobody approved.** D1226: a cycle spawns only the recipe named in an approved item, and
+`ApprovalAttempts = 2` (`internal/orchestrator/state.go`) is what one approval covers. R0, R2 and the judge are extra launches
+with another recipe and a stronger model grade, each spending money. Consequence: D2042 (answered): the approval of an item
+covers its ladder runs (R0 per head, one R2, one judge), bounded per item by the cost ceiling; `ApprovalAttempts` counts normal
+runs only. This amends D1226 visibly (T4).
+
+**F24 (Wrong in an earlier draft). Provider calls.** `ApplyReady` only adds reviewers and labels on a PR already made ready; it
+does not un-draft, and neither it nor any checks read takes a head SHA. Consequence: E8 adds `MarkReady(number, expectedHeadSHA)`
+(re-reads the head, refuses on a mismatch, then sets `Draft:false`), `Merge(number, expectedHeadSHA)` and `Checks(number, sha)`.
+A provider whose merge API has no expected-head precondition (Bitbucket's is unchecked, UNVERIFIED) makes the ladder **refuse
+to merge** there and raise `waiting_on: person`. A merge never bypasses branch protection (no admin merge).
 
 ## Decisions
 
@@ -174,7 +192,12 @@ Each answer below is the owner's, given in this conversation on 2026-11-10, and 
 | D2039 | Grade keys and defaults (F8). | Resolution: `model_grades.strong|strongest` in the project layer; no built-in model; an unset grade makes the rung refuse and ask. | stated, no question |
 | D2040 | Follow-up importance (F12). | Resolution: one optional field `importance` on the follow-up block; a deterministic rule when no judge ran. | stated, no question |
 
-D2038-D2040 are resolutions the owner may overturn at the plan's review; each has one defensible reading and a named task.
+| D2042 | What covers the ladder's extra launches (F23)? | The item's approval covers its ladder runs, bounded by the cost ceiling. Cost: one approval authorizes a costlier model for that item. Alternatives: each rung needs its own approval; a local switch `auto_launch`. | **Approval covers the ladder**, 2026-11-10 (the recommendation). D1226 is amended. |
+| D2043 | May rung 0 merge a rebased head (review finding)? | Resolution, one defensible answer: **never directly.** A merge is eligible only at a head covered by a review verdict or the judge's verdict, with the path set and findings computed at that head. A conflict-resolved R0 head always goes to the judge. | stated, no question |
+| D2044 | A judge that fails, times out or returns nothing (review finding)? | Resolution: an absent, failed, malformed or late verdict is a **veto** (blocked), never a merge. | stated, no question |
+| D2045 | Merge credential and branch protection (review finding)? | Resolution: the daemon merges and readies through `gitprov` under the operator's own login, never an admin merge; a base branch whose required reviews it cannot satisfy refuses and raises `waiting_on: person`. `README.md`, `SECURITY.md`, `docs/design/v1.md` and D13's pages say "Fugaro never merges" and are amended (E0, E14). | stated, no question |
+
+D2038-D2040 and D2043-D2045 are resolutions the owner may overturn at the plan's review; each has one defensible reading and a named task.
 
 ## Rows of the spec, as read after this reconciliation
 
@@ -205,17 +228,19 @@ D2038-D2040 are resolutions the owner may overturn at the plan's review; each ha
    say readiness is the runner's. State which wins: the plan implements D2041, amends both pages in E0, and keeps the readying
    behind a local switch `escalation.ready_drafts` (default **off**, so the owner turns authority on once, after Check 540).
    Confirm the switch default; without it the ladder is built and inert for drafts.
+6. **T4: D2042 amends D1226** (a person's approval covers one recipe). Confirm the amended text: an approval covers the item's
+   ladder runs under the cost ceiling, and nothing the ladder files is approved (F21).
 
 ## UNVERIFIED
 
-- Which post-review-triage task builds D1850's finding key (T-TR3 is the named block, "the result record's triage block", not
-  built per `docs/status.md`); the churn comparator is planned against that block and its task id is not confirmed.
+- Which post-review-triage task makes the runner fill `TriageEntry.Key` (the field landed with #2215; the triage stage runs in
+  Startup and Pro only); the churn comparator is planned against that field.
 - That run-limit-carry-over's chain record exposes cumulative cost to the daemon without a new read path (L0-L3 merged; the
   reader was not opened).
 - The exact `periodic-reviews` task that renders the digest (R7-R12 unbuilt): the Escalation section is planned as a section
   added to whichever task lands the daily digest; its id is not confirmed.
 - Whether a per-run model grade can be injected into an existing run's `agent.models` without changing `internal/config`'s
   strict decode (read only `schemas/fugaro.schema.json` and `docs/model-crafts`, not the resolver code).
-- Platform: the daemon's merge call needs a provider "merge" API for GitHub (`gh pr merge`) and Bitbucket; Bitbucket's merge
-  strategy and branch-restriction behaviour were not checked.
+- Platform: GitHub's merge accepts an expected head SHA; Bitbucket's merge API was not checked for one (F24 refuses where it has
+  none). The daemon's token and its right to merge under branch protection were not checked.
 - The default models named in the spec (Sonnet 5.5, Opus 5.5, DeepSeek Flash): only `docs/multi-model.md` examples were seen.
