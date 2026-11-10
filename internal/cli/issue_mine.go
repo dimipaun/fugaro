@@ -601,12 +601,20 @@ func mineCoverage(r issues.MineRow) string {
 //
 // It is this machine's own issue file's command and never the shared record's
 // (F8): the shared store is writable by every launcher, and a line a person
-// pastes is not a place to trust one. The file has to be the same issue —
-// the same number and the same fingerprint — so a hand-edited number or a
-// reused local file cannot hand one issue's command to another, and it has to
-// belong to this project (F8b). What comes back has already been checked
-// against this build's own command tree (D1614), which is what makes the
-// suggestion a command the reader can actually run.
+// pastes is not a place to trust one. The file has to be the same issue — the
+// same number, and the same fingerprint whenever the row still knows one — so
+// a hand-edited number or a reused local file cannot hand one issue's command
+// to another, and it has to belong to this project (F8b). What comes back has
+// already been checked against this build's own command tree (D1614), which is
+// what makes the suggestion a command the reader can actually run.
+//
+// A row read from the offline snapshot knows no fingerprint: the snapshot is
+// display data only and its own pin refuses the field (T-IM5, snapshot.go).
+// Its number and, when one is selected, the project it was filed under are
+// then the whole match, which is what O4 needs — an offline run and a coding
+// agent's session print the `cli_only` row and the command this machine's file
+// recorded with it — and that row's number comes from this machine's own
+// cached read of this project's store, where one number is one issue.
 //
 // Only a covered row offers one, `cli_only` included, because a `behind` row's
 // answer is the update and an `unknown` row's is nothing (F5, O4): offering a
@@ -616,11 +624,14 @@ func mineRetry(r issues.MineRow, all []issues.Issue, installation string, root *
 	if r.Coverage != issues.CoverageCovered && r.Coverage != issues.CoverageCLIOnly {
 		return ""
 	}
-	if r.Number == 0 || r.Fingerprint == "" {
+	if r.Number == 0 {
 		return ""
 	}
 	for _, i := range all {
-		if i.Number != r.Number || i.Fingerprint != r.Fingerprint || i.FailedCommand == "" {
+		if i.Number != r.Number || i.FailedCommand == "" {
+			continue
+		}
+		if r.Fingerprint != "" && i.Fingerprint != r.Fingerprint {
 			continue
 		}
 		if i.Installation != "" && installation != "" && i.Installation != installation {

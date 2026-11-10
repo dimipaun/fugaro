@@ -369,6 +369,40 @@ func TestMineOfflineUsesSnapshot(t *testing.T) {
 	}
 }
 
+func TestMineOfflineSnapshotKeepsCliOnlyRetry(t *testing.T) {
+	rig := newMineRig(t)
+	useVersion(t, "0.22.1")
+	i := mineRec("1", "sig-a")
+	i.Status = issues.StatusResolved
+	i.ResolvedIn = "0.22.1"
+	up := rig.upload(i, rig.caller)
+
+	// The file this machine wrote for that issue, and the read that files the
+	// snapshot. The snapshot holds display data only (T-IM5), so the row that
+	// comes back offline carries no fingerprint to match the file by: the
+	// number and the project are what is left.
+	local := mineRec("1", "sig-a")
+	local.Number, local.Uploaded, local.Status = up.Number, true, issues.StatusResolved
+	local.ResolvedIn, local.FailedCommand = "0.22.1", "fugaro update"
+	rig.save(local)
+	rig.mine() // one successful read writes the snapshot
+
+	// The shared store stops answering — and with it the installation record,
+	// so the row is the `cli_only` one O4 rules on. A coding agent's session
+	// reads this same snapshot (F10), which is why the retry has to hold here.
+	rig.openErr = errors.New("no network")
+	out := rig.mine()
+	if !strings.Contains(out, "offline: shared state as of") {
+		t.Fatalf("the offline run did not read the snapshot:\n%s", out)
+	}
+	if !strings.Contains(out, "installation not checked") {
+		t.Fatalf("the offline row is not the cli_only row O4 rules on:\n%s", out)
+	}
+	if !strings.Contains(out, "retry: fugaro update") {
+		t.Errorf("an offline cli_only row drops the retry suggestion (O4, F8):\n%s", out)
+	}
+}
+
 func TestMineOfflineWithoutSnapshotShowsLocalOnly(t *testing.T) {
 	rig := newMineRig(t)
 	local := mineRec("1", "sig-a")
