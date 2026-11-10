@@ -33,10 +33,9 @@ var (
 	argsRemove      = []string{"plugin", "marketplace", "remove", "fugaro", "--scope", "user"}
 	// argsBack is the add that puts back what argsRemove cleared: the plain
 	// source releases before this one declared, which is what ourMarket holds.
-	argsBack       = []string{"plugin", "marketplace", "add", "--scope", "user", "dimipaun/fugaro"}
-	argsUpdMarket  = []string{"plugin", "marketplace", "update", "fugaro"}
-	argsInstall    = []string{"plugin", "install", "fugaro@fugaro", "--scope", "user"}
-	argsUpdProject = []string{"plugin", "update", "fugaro@fugaro", "--scope", "project"}
+	argsBack      = []string{"plugin", "marketplace", "add", "--scope", "user", "dimipaun/fugaro"}
+	argsUpdMarket = []string{"plugin", "marketplace", "update", "fugaro"}
+	argsInstall   = []string{"plugin", "install", "fugaro@fugaro", "--scope", "user"}
 )
 
 // refusedAdd is what the real claude answers to an add of a name it has
@@ -140,34 +139,29 @@ func TestUpgradePluginMovesAnUnpinnedMarketplaceToTheRelease(t *testing.T) {
 // install of a marketplace it removes only when the removal leaves the name
 // undeclared, and a fugaro checkout's own committed settings declare it too
 // (the pin step writes them). So on those machines the clear leaves the
-// plugin installed at the version it was installed at — an install of one that
-// is already there does not move it, claude answers "already installed" and
-// names update as the call that re-records the version — and the update at
-// that install's own scope is what converges the checkout. Without it the step
-// reads the install it started with, which is the failure of 2026-11-09 again
-// ("the installed plugin is still 0.21.0") on the machine this change is for.
+// machine's own install standing at the version it was installed at — an
+// install of one that is already there does not move it, claude answers
+// "already installed" and names update as the call that re-records the version
+// — and the update at that install's own scope is what converges the machine.
+// Without it the step reads the install it started with, which is the failure
+// of 2026-11-09 again ("the installed plugin is still 0.21.0") on the machine
+// this change is for.
 func TestUpgradePluginMovesAnInstallTheClearLeftStanding(t *testing.T) {
 	upgradeEnv(t, "0.5.2")
-	root, _ := skillCheckout(t, wiredAt("v0.5.2"))
-	project := func(v string) string {
-		return `{"id":"fugaro@fugaro","version":"` + v + `","scope":"project","projectPath":"` + root + `"}`
-	}
-	// The remove leaves every install standing (this machine's settings declare
-	// the marketplace, so claude has nothing of its own to uninstall), the
-	// install the plan makes adds the user-scope one without moving the project
-	// install claude says is "already installed", and the project-scope update is
-	// what re-records its version.
-	f := testutil.NewClaudePluginFake(t, ourMarket, "["+project("0.5.1")+"]")
+	f := testutil.NewClaudePluginFake(t, ourMarket, userInstall("0.5.1"))
 	f.On(t, "fail", refusedAdd, argsAdd...)
 	f.On(t, "rm", "fail."+testutil.ClaudePluginKey(argsAdd...), argsRemove...)
-	f.On(t, "plugins", "["+project("0.5.1")+","+userInstall("0.5.2")[1:], argsInstall...)
-	f.On(t, "plugins", "["+project("0.5.2")+","+userInstall("0.5.2")[1:], argsUpdProject...)
+	// The install the plan makes does not move the standing one (the fake
+	// leaves the record where it is, as claude's "already installed" does), and
+	// the user-scope update is what re-records its version.
+	f.On(t, "plugins", userInstall("0.5.2"), argsUpdUser...)
 	useFakeClaude(t, f)
+	root, _ := skillCheckout(t, wiredAt("v0.5.2"))
 	out, _, err := executeStdin(t, "", "upgrade", "--local", root)
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	want := [][]string{argsRemove, argsAdd, argsUpdMarket, argsInstall, argsUpdProject}
+	want := [][]string{argsRemove, argsAdd, argsUpdMarket, argsInstall, argsUpdUser}
 	if !slices.EqualFunc(f.Changes(t), want, slices.Equal[[]string]) {
 		t.Fatalf("changes %q, want %q\n%s", f.Changes(t), want, out)
 	}
@@ -181,25 +175,24 @@ func TestUpgradePluginMovesAnInstallTheClearLeftStanding(t *testing.T) {
 // undeclared, so the clear takes every install of it with the declaration
 // ("Also uninstalled 1 plugin from this marketplace"): the update at that
 // install's scope has nothing to update, which is not a failure of the step —
-// the install it ran is what the checkout applies — and every other failure
-// there stays reported by the check after the calls, because it leaves the
-// version where it was.
+// the install it ran is what the machine has — and every other failure there
+// stays reported by the check after the calls, because it leaves the version
+// where it was.
 func TestUpgradePluginToleratesAnInstallTheClearTook(t *testing.T) {
 	upgradeEnv(t, "0.5.2")
-	root, _ := skillCheckout(t, wiredAt("v0.5.2"))
-	old := `[{"id":"fugaro@fugaro","version":"0.5.1","scope":"project","projectPath":"` + root + `"}]`
-	f := testutil.NewClaudePluginFake(t, ourMarket, old)
+	f := testutil.NewClaudePluginFake(t, ourMarket, userInstall("0.5.1"))
 	f.On(t, "fail", refusedAdd, argsAdd...)
 	f.On(t, "rm", "fail."+testutil.ClaudePluginKey(argsAdd...), argsRemove...)
 	f.On(t, "plugins", "[]", argsRemove...)
 	f.On(t, "plugins", userInstall("0.5.2"), argsInstall...)
-	f.On(t, "fail", `Plugin "fugaro" not found in marketplace "fugaro".`, argsUpdProject...)
+	f.On(t, "fail", `Plugin "fugaro" not found in marketplace "fugaro".`, argsUpdUser...)
 	useFakeClaude(t, f)
+	root, _ := skillCheckout(t, wiredAt("v0.5.2"))
 	out, _, err := executeStdin(t, "", "upgrade", "--local", root)
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	want := [][]string{argsRemove, argsAdd, argsUpdMarket, argsInstall, argsUpdProject}
+	want := [][]string{argsRemove, argsAdd, argsUpdMarket, argsInstall, argsUpdUser}
 	if !slices.EqualFunc(f.Changes(t), want, slices.Equal[[]string]) {
 		t.Fatalf("changes %q, want %q\n%s", f.Changes(t), want, out)
 	}
@@ -212,29 +205,26 @@ func TestUpgradePluginToleratesAnInstallTheClearTook(t *testing.T) {
 
 // TestUpgradePluginCarriesOnWhenTheInstallTheClearMayHaveTakenFails: the
 // install on the cleared path is a call the clear may have taken the need for,
-// not the update's own work. On this machine the clear left the checkout's
-// project install standing, so the update at that scope is what converges the
-// checkout, and a non-zero answer from the install must not fail an update the
-// check after the calls passes. The fake fails it because a test may not lean
-// on claude's real answer to an install of one that is already there ("already
-// installed", exit 0) staying that answer.
+// not the update's own work. On this machine the install answers with a
+// failure and the update at the same scope is what converges the machine, so a
+// non-zero answer from the install must not fail an update the check after the
+// calls passes. The fake fails it because a test may not lean on claude's real
+// answer to an install of one that is already there ("already installed", exit
+// 0) staying that answer.
 func TestUpgradePluginCarriesOnWhenTheInstallTheClearMayHaveTakenFails(t *testing.T) {
 	upgradeEnv(t, "0.5.2")
-	root, _ := skillCheckout(t, wiredAt("v0.5.2"))
-	project := func(v string) string {
-		return `{"id":"fugaro@fugaro","version":"` + v + `","scope":"project","projectPath":"` + root + `"}`
-	}
-	f := testutil.NewClaudePluginFake(t, ourMarket, "["+project("0.5.1")+"]")
+	f := testutil.NewClaudePluginFake(t, ourMarket, userInstall("0.5.1"))
 	f.On(t, "fail", refusedAdd, argsAdd...)
 	f.On(t, "rm", "fail."+testutil.ClaudePluginKey(argsAdd...), argsRemove...)
 	f.On(t, "fail", "claude: network down", argsInstall...)
-	f.On(t, "plugins", "["+project("0.5.2")+"]", argsUpdProject...)
+	f.On(t, "plugins", userInstall("0.5.2"), argsUpdUser...)
 	useFakeClaude(t, f)
+	root, _ := skillCheckout(t, wiredAt("v0.5.2"))
 	out, _, err := executeStdin(t, "", "upgrade", "--local", root)
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	want := [][]string{argsRemove, argsAdd, argsUpdMarket, argsInstall, argsUpdProject}
+	want := [][]string{argsRemove, argsAdd, argsUpdMarket, argsInstall, argsUpdUser}
 	if !slices.EqualFunc(f.Changes(t), want, slices.Equal[[]string]) {
 		t.Fatalf("changes %q, want %q\n%s", f.Changes(t), want, out)
 	}
@@ -251,29 +241,29 @@ func TestUpgradePluginCarriesOnWhenTheInstallTheClearMayHaveTakenFails(t *testin
 // must not leave the machine without what the clear took either. Here the clear
 // emptied every install, the install that follows it fails (the network, say)
 // and the update at the vanished install's scope finds nothing to update, so
-// nothing applies and the step fails: the declaration and the install go back
-// first, best effort, as the add-back of a stopped step does.
+// the machine's own install is not there and the step fails: the declaration
+// and the install go back first, best effort, as the add-back of a stopped step
+// does.
 func TestUpgradePluginPutsBackWhatTheClearRemovedWhenTheCheckAfterTheCallsFails(t *testing.T) {
 	upgradeEnv(t, "0.5.2")
-	root, _ := skillCheckout(t, wiredAt("v0.5.2"))
-	old := `[{"id":"fugaro@fugaro","version":"0.5.1","scope":"project","projectPath":"` + root + `"}]`
-	f := testutil.NewClaudePluginFake(t, ourMarket, old)
+	f := testutil.NewClaudePluginFake(t, ourMarket, userInstall("0.5.1"))
 	f.On(t, "fail", refusedAdd, argsAdd...)
 	f.On(t, "rm", "fail."+testutil.ClaudePluginKey(argsAdd...), argsRemove...)
 	f.On(t, "plugins", "[]", argsRemove...)
 	f.On(t, "fail", "claude: network down", argsInstall...)
-	f.On(t, "fail", `Plugin "fugaro" not found in marketplace "fugaro".`, argsUpdProject...)
+	f.On(t, "fail", `Plugin "fugaro" not found in marketplace "fugaro".`, argsUpdUser...)
 	f.On(t, "fail", refusedAdd, argsBack...) // the tag is declared by then: the add-back is refused
 	useFakeClaude(t, f)
+	root, _ := skillCheckout(t, wiredAt("v0.5.2"))
 	out, _, err := executeStdin(t, "", "upgrade", "--local", root)
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d\n%s", ExitCode(err), out)
 	}
-	want := [][]string{argsRemove, argsAdd, argsUpdMarket, argsInstall, argsUpdProject, argsBack, argsInstall}
+	want := [][]string{argsRemove, argsAdd, argsUpdMarket, argsInstall, argsUpdUser, argsBack, argsInstall}
 	if !slices.EqualFunc(f.Changes(t), want, slices.Equal[[]string]) {
 		t.Fatalf("changes %q, want %q\n%s", f.Changes(t), want, out)
 	}
-	for _, w := range []string{"plugin: failed: after the update claude lists no install of fugaro@fugaro that applies to this checkout",
+	for _, w := range []string{"plugin: failed: after the update claude lists no install of fugaro@fugaro at user scope",
 		"putting back what the clear removed failed", "claude: network down"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("output lacks %q:\n%s", w, out)
@@ -444,28 +434,24 @@ func TestUpgradePluginCurrentRunsOnlyTheLists(t *testing.T) {
 	if err != nil || len(f.Changes(t)) != 0 || !strings.Contains(out, "plugin: current: installed 0.5.2") || !strings.Contains(out, "nothing to do: "+root) {
 		t.Fatalf("%v, changes %q\n%s", err, f.Changes(t), out)
 	}
-	if strings.Contains(out, "claude changed") {
-		t.Errorf("the settings note fired though no change call ran:\n%s", out)
-	}
 }
 
-func TestUpgradePluginUpdatesThisCheckoutsProjectInstall(t *testing.T) {
+// TestUpgradePluginLeavesThisCheckoutsProjectInstall: a project-scope install
+// is the checkout's own settings, whoever made it — a person's, or one Claude
+// Code made from the pin a wired checkout carried when the folder was trusted
+// — and this step no longer moves one (D949, U2). A behind project install
+// beside the machine's own current install is nothing to do, and no call is
+// planned in the checkout for it: what applies there is doctor's question
+// (claudeplugin.Effective, D942).
+func TestUpgradePluginLeavesThisCheckoutsProjectInstall(t *testing.T) {
 	upgradeEnv(t, "0.5.2")
 	root, _ := skillCheckout(t, wiredAt("v0.5.2"))
 	plugins := `[{"id":"fugaro@fugaro","version":"0.5.2","scope":"user"},{"id":"fugaro@fugaro","version":"0.5.1","scope":"project","projectPath":"` + root + `"}]`
 	f := testutil.NewClaudePluginFake(t, ourMarketAt("v0.5.2"), plugins)
-	f.On(t, "plugins", strings.Replace(plugins, `"0.5.1"`, `"0.5.2"`, 1), argsUpdProject...)
 	useFakeClaude(t, f)
 	out, _, err := executeStdin(t, "", "upgrade", "--local", root)
-	if want := [][]string{argsUpdMarket, argsUpdProject}; err != nil || !slices.EqualFunc(f.Changes(t), want, slices.Equal[[]string]) {
-		t.Fatalf("%v, changes %q, want %q\n%s", err, f.Changes(t), want, out)
-	}
-	// The project-scope update is the one call claudeplugin.needsCheckout
-	// says acts on the checkout, so it alone runs there.
-	for _, c := range f.Calls(t) {
-		if slices.Equal(c.Args, argsUpdProject) != testutil.SamePath(c.Dir, root) {
-			t.Errorf("call %q ran in %s, checkout is %s", c.Args, c.Dir, root)
-		}
+	if err != nil || len(f.Changes(t)) != 0 || !strings.Contains(out, "plugin: current") {
+		t.Fatalf("%v, changes %q\n%s", err, f.Changes(t), out)
 	}
 }
 
@@ -491,7 +477,7 @@ func TestUpgradePluginFailureStopsTheCheckout(t *testing.T) {
 		t.Fatalf("exit %d\n%s", ExitCode(err), out)
 	}
 	for _, w := range []string{"plugin: failed: claude plugin install fugaro@fugaro --scope user failed: exit status 1", "claude: network down",
-		"  " + root + ": pin current, plugin failed", "once that is fixed, rerun: fugaro upgrade --local " + root} {
+		"  " + root + ": plugin failed", "once that is fixed, rerun: fugaro upgrade --local " + root} {
 		if !strings.Contains(out, w) {
 			t.Errorf("output lacks %q:\n%s", w, out)
 		}
@@ -522,24 +508,6 @@ func TestUpgradeCheckRunsNoClaude(t *testing.T) {
 	out, _, err := executeStdin(t, "", "upgrade", "--check", root)
 	if ExitCode(err) != ExitUserError || len(f.Calls(t)) != 0 || !strings.Contains(out, "plugin: stale: installed 0.5.1, this fugaro is 0.5.2") {
 		t.Fatalf("exit %d, calls %+v\n%s", ExitCode(err), f.Calls(t), out)
-	}
-}
-
-// TestUpgradePluginNotesSettingsChangedByClaude: only a project or local
-// scope update runs in the checkout (claudeplugin.needsCheckout), so that is
-// the call that can touch its .claude/settings.json (U2: a project-scope
-// install writes enabledPlugins there).
-func TestUpgradePluginNotesSettingsChangedByClaude(t *testing.T) {
-	upgradeEnv(t, "0.5.2")
-	root, settings := skillCheckout(t, wiredAt("v0.5.2"))
-	plugins := `[{"id":"fugaro@fugaro","version":"0.5.1","scope":"project","projectPath":"` + root + `"}]`
-	f := testutil.NewClaudePluginFake(t, ourMarketAt("v0.5.2"), plugins)
-	f.On(t, "plugins", strings.Replace(plugins, `"0.5.1"`, `"0.5.2"`, 1), argsUpdProject...)
-	f.On(t, "touch", "", argsUpdProject...)
-	useFakeClaude(t, f)
-	out, _, err := executeStdin(t, "", "upgrade", "--local", root)
-	if err != nil || !strings.Contains(out, "claude changed "+settings+": review it with git diff") {
-		t.Fatalf("%v\n%s", err, out)
 	}
 }
 
@@ -596,13 +564,17 @@ func TestUpgradePluginListsThatFailAreFailedSteps(t *testing.T) {
 	}
 }
 
+// TestUpgradePluginNothingAppliesAfterTheUpdate: a machine the install left
+// without the plugin is a failed step, and the sentence says which install it
+// read: the machine's own, at user scope (a checkout's own is not this step's
+// to move any more, D949, U2).
 func TestUpgradePluginNothingAppliesAfterTheUpdate(t *testing.T) {
 	upgradeEnv(t, "0.5.2")
 	f := testutil.NewClaudePluginFake(t, ourMarketAt("v0.5.2"), "[]")
 	useFakeClaude(t, f) // the install call leaves the list empty
 	root, _ := skillCheckout(t, wiredAt("v0.5.2"))
 	out, _, err := executeStdin(t, "", "upgrade", "--local", root)
-	if ExitCode(err) != ExitUserError || !strings.Contains(out, "plugin: failed: after the update claude lists no install of fugaro@fugaro that applies to this checkout") {
+	if ExitCode(err) != ExitUserError || !strings.Contains(out, "plugin: failed: after the update claude lists no install of fugaro@fugaro at user scope") {
 		t.Fatalf("exit %d\n%s", ExitCode(err), out)
 	}
 }
@@ -625,25 +597,30 @@ func TestUpgradeCheckPluginNewerThanFugaro(t *testing.T) {
 	}
 }
 
-// TestUpgradePluginForkRepoIsPrintable: the repo in a committed settings.json
-// goes into the summary, so an invalid one is shown escaped, never raw, and
-// is never passed to claude (marketRepo's ValidRepo check).
-func TestUpgradePluginForkRepoIsPrintable(t *testing.T) {
+// TestUpgradePluginForkRepoNamesReachNeitherClaudeNorTheOutput: the repo in a
+// leftover pin's committed settings.json is not read any more (D949, U2) — the
+// marketplace this step declares is Fugaro's own — so an invalid one never
+// reaches claude and never a claude call's arguments. --allow-fork, the flag
+// that moved a fork's ref to this release's tag, is gone with the write
+// (TestUpgradeHasNoAllowFork).
+func TestUpgradePluginForkRepoNamesReachNeitherClaudeNorTheOutput(t *testing.T) {
 	upgradeEnv(t, "0.5.2")
-	f := testutil.NewClaudePluginFake(t, ourMarketAt("v0.5.2"), "[]")
+	f := testutil.NewClaudePluginFake(t, ourMarket, userInstall("0.5.2"))
 	useFakeClaude(t, f)
 	evil := `{"extraKnownMarketplaces":{"fugaro":{"source":{"source":"github","repo":"ev\u001b[31mil/x","ref":"v0.5.2"}}},"enabledPlugins":{"fugaro@fugaro":true}}`
 	root, _ := skillCheckout(t, evil)
-	for _, args := range [][]string{{"upgrade", "--local", "--allow-fork", root}, {"upgrade", "--local", root}} {
-		out, _, _ := executeStdin(t, "", args...)
-		if strings.ContainsRune(out, 0x1b) {
-			t.Errorf("%q: a raw escape reached the output: %q", args, out)
-		}
-		if !strings.Contains(out, "plugin: skipped:") {
-			t.Errorf("%q: plugin step not skipped:\n%s", args, out)
-		}
+	out, _, err := executeStdin(t, "", "upgrade", "--local", root)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
 	}
-	if len(f.Calls(t)) != 0 {
-		t.Errorf("claude ran for an invalid repo: %q", f.Calls(t))
+	if strings.ContainsRune(out, 0x1b) {
+		t.Errorf("a raw escape reached the output: %q", out)
+	}
+	if strings.Contains(out, "il/x") {
+		t.Errorf("the repo in the checkout's settings reached the output:\n%s", out)
+	}
+	want := [][]string{argsRemove, argsAdd, argsUpdMarket, argsInstall}
+	if !slices.EqualFunc(f.Changes(t), want, slices.Equal[[]string]) {
+		t.Fatalf("changes %q, want %q\n%s", f.Changes(t), want, out)
 	}
 }

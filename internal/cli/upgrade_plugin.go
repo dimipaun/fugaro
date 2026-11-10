@@ -1,11 +1,9 @@
 package cli
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"os/exec"
 
 	"github.com/dimipaun/fugaro/internal/claudeplugin"
@@ -72,7 +70,6 @@ func pluginStep(ctx context.Context, u *upgradeCtx) stepResult {
 	if len(plan.Calls) == 0 {
 		return stepResult{state: stepCurrent, reason: "installed " + pluginwire.Printable(plan.Before)}
 	}
-	before, _ := os.ReadFile(u.loc.Settings)
 	// cleared is whether a Clear ran, and so whether a failed add has anything
 	// to put back: claude's removal takes the marketplace declaration and every
 	// install of it, so a failed step must not leave the machine without either
@@ -142,30 +139,32 @@ func pluginStep(ctx context.Context, u *upgradeCtx) stepResult {
 			return fail(err)
 		}
 	}
-	note := ""
-	if after, _ := os.ReadFile(u.loc.Settings); !bytes.Equal(before, after) {
-		note = "; claude changed " + pluginwire.Printable(u.loc.Settings) + ": review it with git diff"
-	}
+	// The read of the installs can fail on its own (the record is unreadable,
+	// say), and that stop is after the clear like any other.
 	if installed, err = run.Installed(ctx); err != nil {
-		// The read of the installs can fail on its own (the record is
-		// unreadable, say), and that stop is after the clear like any other.
 		putBack()
 		return fail(err)
 	}
-	got := claudeplugin.Effective(u.loc.Root, installed)
+	// What the step converged is the install it maintains: the machine's own,
+	// at user scope. A checkout-scoped install is not this step's to move any
+	// more (D949, U2), so one standing behind this release — a person's, or one
+	// a trusted folder made from the pin it carried — is not a failure here;
+	// what applies to the checkout is doctor's question (claudeplugin.Effective,
+	// D942).
+	got := claudeplugin.UserVersion(installed)
 	c, ok := claudeplugin.Compare(got, ver)
 	switch {
 	case !ok:
 		putBack()
-		return fail(fmt.Errorf("after the update claude lists no install of %s that applies to this checkout", pluginwire.PluginID))
+		return fail(fmt.Errorf("after the update claude lists no install of %s at user scope", pluginwire.PluginID))
 	case c < 0:
 		putBack()
 		return fail(fmt.Errorf("after the update the installed plugin is still %s, older than this fugaro %s", pluginwire.Printable(got), ver))
 	case c > 0:
-		return stepResult{state: stepDone, reason: fmt.Sprintf("installed %s, newer than this fugaro %s (Claude Code's marketplace is pinned to a newer release, and the pin is never moved down): brew upgrade dimipaun/tap/fugaro, then fugaro upgrade; restart running Claude Code sessions to apply it%s",
-			pluginwire.Printable(got), ver, note)}
+		return stepResult{state: stepDone, reason: fmt.Sprintf("installed %s, newer than this fugaro %s (Claude Code's marketplace is pinned to a newer release, and the pin is never moved down): brew upgrade dimipaun/tap/fugaro, then fugaro upgrade; restart running Claude Code sessions to apply it",
+			pluginwire.Printable(got), ver)}
 	}
-	return stepResult{state: stepDone, reason: "installed " + ver + "; restart running Claude Code sessions to apply it" + note}
+	return stepResult{state: stepDone, reason: "installed " + ver + "; restart running Claude Code sessions to apply it"}
 }
 
 // pluginCheck is the plugin step under --check: Claude Code's record of

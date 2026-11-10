@@ -119,6 +119,21 @@ func Effective(root string, installed []Install) string {
 	return v
 }
 
+// UserVersion is the plugin version installed on this machine at user scope:
+// the install Decide maintains, and so the one the step's own check after the
+// calls asks about ("" when there is none). A project or local install is the
+// checkout's, and its version is what Effective answers with; this step moves
+// none of them (D949, U2).
+func UserVersion(installed []Install) string {
+	v := ""
+	for _, in := range installed {
+		if in.ID == pluginwire.PluginID && in.Scope == "user" && v == "" {
+			v = in.Version
+		}
+	}
+	return v
+}
+
 // refNewer reports whether ref, a marketplace's own ref, is a release tag
 // strictly newer than want (both strict vX.Y.Z); anything else about it — no
 // ref, a branch name, an older tag — is not newer, and the marketplace is
@@ -133,7 +148,8 @@ func refNewer(ref, want string) bool {
 
 // Decide plans the change calls for one checkout:
 //   - a fugaro marketplace from another source: OtherMarketError;
-//   - the marketplace pinned at Ref and every applying install at Want: none;
+//   - the marketplace pinned at Ref and the machine's own install at Want:
+//     none;
 //   - otherwise the marketplace declared at Ref (missing, or there at another
 //     ref that is not newer, in which case the declaration it is refused by is
 //     cleared first, and Restore is what puts back what the clear takes) and
@@ -141,8 +157,9 @@ func refNewer(ref, want string) bool {
 //     or a Clear is in the plan — on the cleared path it is what puts back the
 //     install the clear takes from a machine whose own settings leave the name
 //     undeclared — and a stale user install updated. (A stale project or local
-//     install is not updated: those installs are a checkout's own settings and
-//     not this step's to move, D949.) The install and that update are Repair
+//     install is not updated, and is not a reason to do anything: those
+//     installs are a checkout's own settings and not this step's to move,
+//     D949.) The install and that update are Repair
 //     when a Clear is in the plan: which of them the clear left anything to do
 //     is not knowable before it runs.
 //
@@ -185,7 +202,11 @@ func Decide(in Input) (Plan, error) {
 	p := Plan{Before: Effective(in.Root, in.Installed)}
 	var stale []string
 	for _, a := range applying {
-		if a.Version != in.Want && !slices.Contains(stale, a.Scope) {
+		// Only the machine's own install is this step's to move, whatever made
+		// a checkout-scoped one: a stale project or local install is not
+		// something to do here, so it neither keeps the early return below from
+		// answering "nothing to do" nor has a call planned for it (D949, U2).
+		if a.Scope == "user" && a.Version != in.Want && !slices.Contains(stale, a.Scope) {
 			stale = append(stale, a.Scope)
 		}
 	}
@@ -211,8 +232,8 @@ func Decide(in Input) (Plan, error) {
 	// clear took the declaration alone and the declaration alone is what goes
 	// back. An install of one that is already there does not move it, though
 	// (claude answers "already installed" and names update as the call that
-	// re-records the version), so each stale install is still updated where it
-	// stands. With a clear in the plan, this install and those updates are
+	// re-records the version), so each stale user install is still updated
+	// where it stands. With a clear in the plan, this install and those updates are
 	// Repair: which of them the clear left anything to do is not knowable before
 	// it runs, and the check after the calls is what sees whether the machine
 	// came out of them with an install that applies.

@@ -50,10 +50,12 @@ func TestDecide(t *testing.T) {
 		{"marketplace only", pinned, nil, [][]string{upd, inst}, "", nil},
 		{"current: nothing to do", pinned, []Install{user("0.5.2")}, nil, "0.5.2", nil},
 		{"user install behind", pinned, []Install{user("0.5.1")}, [][]string{upd, updU}, "0.5.1", nil},
-		// A project or local install is a checkout's own settings, so it is not
-		// this step's to move (D949, U2): the marketplace is refreshed and the
-		// install is left where it stands, at the version it was installed at.
-		{"this checkout's project install behind", pinned, []Install{user("0.5.2"), project("0.5.1", root)}, [][]string{upd}, "0.5.1", nil},
+		// A project or local install is a checkout's own settings and not this
+		// step's to move (D949, U2): a stale one is not something to do, so it
+		// is no call and no reason for one. It is still an install that applies
+		// to the checkout, which is what Before reports — a checkout's version
+		// is doctor's question (Effective, D942), not the machine's.
+		{"this checkout's project install behind", pinned, []Install{user("0.5.2"), project("0.5.1", root)}, nil, "0.5.1", nil},
 		{"another checkout's install is not ours to update", pinned, []Install{user("0.5.2"), project("0.4.0", other)}, nil, "0.5.2", nil},
 		{"both behind", pinned, []Install{project("0.5.0", root), user("0.5.1")}, [][]string{upd, updU}, "0.5.0", nil},
 		{"another plugin does not count", pinned, []Install{{ID: "superpowers@claude-plugins-official", Version: "6.4.1", Scope: "user"}}, [][]string{upd, inst}, "", nil},
@@ -207,6 +209,31 @@ func TestApplyingNonexistentProjectPath(t *testing.T) {
 	got := Applying(root, []Install{{ID: "fugaro@fugaro", Version: "0.4.0", Scope: "project", ProjectPath: root + "/does/not/exist"}})
 	if len(got) != 0 {
 		t.Fatalf("a nonexistent project path matched the checkout: %+v", got)
+	}
+}
+
+// TestUserVersion: the machine's own install, the one Decide maintains and the
+// one the step's check after the calls asks about. A checkout's project or
+// local install is not it — what applies there is Effective's answer, and the
+// step moves none of them (D949, U2).
+func TestUserVersion(t *testing.T) {
+	root := t.TempDir()
+	for _, tc := range []struct {
+		name      string
+		installed []Install
+		want      string
+	}{
+		{"a user install", []Install{{ID: "fugaro@fugaro", Version: "0.5.1", Scope: "user"}}, "0.5.1"},
+		{"this checkout's project install alone", []Install{{ID: "fugaro@fugaro", Version: "0.5.1", Scope: "project", ProjectPath: root}}, ""},
+		{"this checkout's local install alone", []Install{{ID: "fugaro@fugaro", Version: "0.5.1", Scope: "local", ProjectPath: root}}, ""},
+		{"a project install that shadows the user one", []Install{{ID: "fugaro@fugaro", Version: "0.4.0", Scope: "project", ProjectPath: root}, {ID: "fugaro@fugaro", Version: "0.5.1", Scope: "user"}}, "0.5.1"},
+		{"another plugin", []Install{{ID: "superpowers@claude-plugins-official", Version: "1.0.0", Scope: "user"}}, ""},
+		{"a managed install", []Install{{ID: "fugaro@fugaro", Version: "0.4.0", Scope: "managed"}}, ""},
+		{"nothing", nil, ""},
+	} {
+		if got := UserVersion(tc.installed); got != tc.want {
+			t.Errorf("%s: UserVersion = %q, want %q", tc.name, got, tc.want)
+		}
 	}
 }
 
