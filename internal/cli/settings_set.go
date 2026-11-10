@@ -228,6 +228,16 @@ var settingsGenericKeys = map[string]bool{
 	"layer.ab":                               true,
 	"layer.profiles.*.commands.rerun_failed": true,
 	"layer.profiles.*.cache":                 true,
+	// The four members of a repository's entry a person writes (G10, D1173):
+	// a map of scalars and one list, which is the shape §2 reaches, so they are
+	// this path's rather than `fugaro project repos set`'s. The two members of
+	// that entry `fugaro update` records — vertex and
+	// credentials_service_ready — are NOT here and keep the `project` owner in
+	// the registry: a person writes no record of what a run applied.
+	"repos.*.provider":      true,
+	"repos.*.base_branch":   true,
+	"repos.*.workflows":     true,
+	"repos.*.github_app_id": true,
 }
 
 // settingsGenericPrefixes are the blocks spec §4.4 hands to the generic path
