@@ -411,3 +411,150 @@ func TestExpiredSlipRefused(t *testing.T) {
 		t.Fatalf("ending an ended slip: %v", err)
 	}
 }
+
+// Create refuses what it cannot record, and it refuses at the writer rather
+// than leaving a reader to meet the record later. Every field a slip cannot be
+// decided from is a write this store does not make (checkWritable): a record
+// missing its run could never be claimed, the expected account is what the
+// claim is checked against, a runtime that is not positive would leave a
+// claimed slip that never ends, and a record created already claimed would be a
+// claim nobody made.
+//
+// Each refusal is checked together with the state it leaves behind, because an
+// error that wrote anyway would pass a test that read only the error, and the
+// node it half-wrote is exactly the record every reader afterwards would have
+// to defend against.
+//
+// An id that is already taken is the other half: it is another run's grant, so
+// it is refused rather than overwritten, and the test states that as the record
+// still being the first grant's rather than as the error alone.
+func TestCreateRefusesWhatItCannotRecord(t *testing.T) {
+	db := newFakeDB()
+	st := slipStore(db)
+
+	// An id that is empty is a refusal and never a path builder: PathSlip panics
+	// on an empty segment, and the id arrives from a request (DS1.3).
+	if err := st.Create(ctx, Slip{}); !errors.Is(err, ErrNoSlip) {
+		t.Fatalf("creating a slip with no id answered %v; want ErrNoSlip", err)
+	}
+
+	// One field at a time, so a checkWritable that lost one of them is a failure
+	// here and not a hole the next reader has to close.
+	for _, c := range []struct {
+		name string
+		drop func(s *Slip)
+	}{
+		{"no owner", func(s *Slip) { s.Owner = "" }},
+		{"no slug", func(s *Slip) { s.Slug = "" }},
+		{"no run", func(s *Slip) { s.Run = "" }},
+		{"no expected account", func(s *Slip) { s.ExpectedAccount = "" }},
+		{"no runtime", func(s *Slip) { s.MaxRuntime = 0 }},
+		{"a negative runtime", func(s *Slip) { s.MaxRuntime = -time.Minute }},
+		{"a claim hash nobody made", func(s *Slip) { s.ClaimHash = ClaimSecretHash("a claim hash no run wrote") }},
+		{"a claim nobody made", func(s *Slip) { s.Claimed = Claim{Account: slipAccount, At: now} }},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			sl := testSlip("s-unwritable")
+			c.drop(&sl)
+			if err := st.Create(ctx, sl); !errors.Is(err, ErrSlipMalformed) {
+				t.Fatalf("creating a slip with %s answered %v; want ErrSlipMalformed", c.name, err)
+			}
+			if _, found, err := st.Slip(ctx, sl.ID); err != nil || found {
+				t.Fatalf("a refused create left a node behind: found=%v err=%v", found, err)
+			}
+		})
+	}
+
+	// An id that is taken is refused, and the record it would have replaced is
+	// untouched: the second create names a different grant, and the slip a run
+	// may already have claimed must not be swapped under it.
+	first := testSlip("s-taken")
+	first.Pool = "the first grant's pool"
+	if err := st.Create(ctx, first); err != nil {
+		t.Fatalf("creating the first slip: %v", err)
+	}
+	second := testSlip("s-taken")
+	second.Pool = "the second grant's pool"
+	if err := st.Create(ctx, second); !errors.Is(err, ErrSlipExists) {
+		t.Fatalf("creating a slip over an existing id answered %v; want ErrSlipExists", err)
+	}
+	kept, found, err := st.Slip(ctx, first.ID)
+	if err != nil || !found {
+		t.Fatalf("reading the first slip: found=%v err=%v", found, err)
+	}
+	if kept.Pool != first.Pool {
+		t.Fatalf("the refused create replaced the record: the pool is %q; want the first grant's %q", kept.Pool, first.Pool)
+	}
+}
+
+// The claim is bound to the run AND to the account, and the id alone is never
+// enough (G3, R8): a slip found or guessed by another run is refused whole, and
+// this is the fence D1941 stands on — the id travels to the job in its
+// environment, so what keeps another launcher out is the run identity and the
+// account the record names rather than the secrecy of the id.
+//
+// Each field of the binding is dropped one at a time, because a check that
+// forgot the run, the slug or the account would leave the others green. What
+// the test also states is that the refusal is whole: no claim secret, and no
+// change to the record, so a caller that merely guessed an id cannot use the
+// store to tell one refusal from another.
+func TestClaimRefusesASlipThatIsNotThisRuns(t *testing.T) {
+	db := newFakeDB()
+	st := slipStore(db)
+	sl := testSlip("s-bound")
+	if err := st.Create(ctx, sl); err != nil {
+		t.Fatalf("creating the slip: %v", err)
+	}
+
+	for _, c := range []struct {
+		name    string
+		run     Run
+		account string
+	}{
+		{"another run", Run{Slug: run.Slug, ID: "r2"}, slipAccount},
+		{"another slug", Run{Slug: "gh-other-app", ID: run.ID}, slipAccount},
+		{"another account", run, "fugaro-job-gh-other-app@acme.iam.gserviceaccount.com"},
+		{"no account at all", run, ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if _, secret, err := st.Claim(ctx, sl.ID, c.run, c.account, now); !errors.Is(err, ErrSlipIdentity) {
+				t.Fatalf("a claim by %s answered %v; want ErrSlipIdentity", c.name, err)
+			} else if secret != "" {
+				t.Fatal("a claim the slip does not name answered a claim secret")
+			}
+			after, found, err := st.Slip(ctx, sl.ID)
+			if err != nil || !found {
+				t.Fatalf("reading the slip: found=%v err=%v", found, err)
+			}
+			if after.ClaimHash != "" || !after.Claimed.At.IsZero() {
+				t.Fatalf("a refused claim wrote the record: claimed=%+v hash=%q", after.Claimed, after.ClaimHash)
+			}
+		})
+	}
+
+	// An id that names no node, and an id that is nothing at all: both are
+	// ErrNoSlip, and neither reaches a path builder (PathSlip panics on an empty
+	// segment). The empty id is checked on every method, because each of them
+	// takes one straight from a request.
+	if _, secret, err := st.Claim(ctx, "s-nobody", run, slipAccount, now); !errors.Is(err, ErrNoSlip) {
+		t.Fatalf("claiming an id that names no node answered %v; want ErrNoSlip", err)
+	} else if secret != "" {
+		t.Fatal("a claim of a slip that is not there answered a claim secret")
+	}
+	if _, _, err := st.Claim(ctx, "", run, slipAccount, now); !errors.Is(err, ErrNoSlip) {
+		t.Fatalf("claiming with no id answered %v; want ErrNoSlip", err)
+	}
+	if _, _, err := st.Slip(ctx, ""); !errors.Is(err, ErrNoSlip) {
+		t.Fatalf("reading a slip with no id answered %v; want ErrNoSlip", err)
+	}
+	if err := st.End(ctx, ""); !errors.Is(err, ErrNoSlip) {
+		t.Fatalf("ending a slip with no id answered %v; want ErrNoSlip", err)
+	}
+
+	// And the run the slip DOES name is still served: the fence refuses the
+	// others, and a test that only ever saw refusals would pass on a store that
+	// refuses everyone.
+	if _, secret, err := st.Claim(ctx, sl.ID, run, slipAccount, now); err != nil || secret == "" {
+		t.Fatalf("the run the slip names was refused: secret=%q err=%v", secret, err)
+	}
+}

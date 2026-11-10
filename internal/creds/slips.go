@@ -206,7 +206,15 @@ var (
 	// claimant — another launcher that minted the same run identity, F28 — is
 	// told the slip is taken rather than handed a working one.
 	ErrSlipClaimed = errors.New("creds: the slip has already been claimed")
-	// ErrSlipExpired is a slip whose max runtime has passed, claimed or not.
+	// ErrSlipExpired is a CLAIMED slip whose max runtime has passed since it was
+	// claimed. Only a claimed slip can expire: the runtime is measured from the
+	// claim (Slip.Expires), so an unclaimed record has no expiry at all — it is
+	// not live (Slip.Live), so it serves nothing until the run it names claims
+	// it, and a claim of one is either granted to that run or refused as the
+	// identity it does not name, never as expired. The service cannot expire an
+	// unclaimed slip either: the record carries no creation time to measure
+	// from, which is deliberate (a grant that waits for a slot must not lose the
+	// runtime it was granted).
 	ErrSlipExpired = errors.New("creds: the slip's max runtime has passed")
 	// ErrSlipIdentity is a claim by a run or an account the slip does not name
 	// (G3): the id alone is never enough, so a slip found or guessed by another
@@ -334,10 +342,10 @@ func (s *RTDBStore) Slip(ctx context.Context, id string) (Slip, bool, error) {
 // The refusals are ordered so that the answer says the most useful true thing:
 // an id that names nothing is ErrNoSlip, a caller the slip does not name is
 // ErrSlipIdentity (G3 — the id alone is never enough), a slip whose runtime has
-// passed is ErrSlipExpired, and only then is a slip another run already holds
-// ErrSlipClaimed. The expiry is asked before the claim flag on purpose: a dead
-// slip is dead whatever else it is, and a caller reading the refusal learns the
-// fact it can act on.
+// passed since it was claimed is ErrSlipExpired, and only then is a slip
+// another run already holds ErrSlipClaimed. The expiry is asked before the
+// claim flag on purpose: a dead slip is dead whatever else it is, and a caller
+// reading the refusal learns the fact it can act on.
 //
 // The write is the package's cas — read the node, decide from it, write under
 // the ETag that was read, and re-read and re-decide if the database answers
