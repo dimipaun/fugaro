@@ -263,6 +263,20 @@ type runOptions struct {
 	// them carries no chain limit at all and its task is byte-identical to
 	// what the previous release wrote (D1041).
 	limits chainLimits
+	// continues is --continues: the run whose chain this launch joins when
+	// nothing else names one (D1045) — the flag a chain with no pull request
+	// is continued by. It is refused with the three flags that name a chain's
+	// previous run themselves (--pr, --retry, --attempts).
+	continues string
+	// The four --used-* figures (D1048), one per dimension, the flags' own
+	// text here and parsed once by chainContinueFlag into used below. Like the
+	// four --max-* ones they are members of runOptions rather than of
+	// chainLimits: a caller's statement of what a chain has already spent is
+	// not a limit the merge judges (a limit may only tighten, and this one may
+	// only raise a charge), and only the chain half of a launch reads it.
+	usedUSD, usedTokens, usedTime, usedReviewRounds string
+	// used is the four figures above, parsed.
+	used chainUsedFigures
 }
 
 func newRunCmd() *cobra.Command {
@@ -331,6 +345,7 @@ func newRunCmd() *cobra.Command {
 	f.StringVar(&o.maxTokens, "max-tokens", "", "cap this chain's token total at N tokens, such as 900000: tighten-only, like --max-usd, and recorded in the task's overrides")
 	f.StringVar(&o.maxTime, "max-time", "", "cap this chain's elapsed run time, as a duration such as 45m or 2h: --total-timeout keeps its own meaning and may raise this run's clock, and the two compose as the smaller of the two (the run's clock is min(--total-timeout, this))")
 	f.StringVar(&o.maxReviewRounds, "max-review-rounds", "", "cap this chain's review rounds at N, senior-review iterations included: tighten-only, and never refused against the mode's own number — the rounds a run spends stay the mode's and the recipe's, and this bounds the whole chain")
+	addChainContinueFlags(cmd, &o)
 	f.IntSliceVar(&o.pr, "pr", nil, "continue Fugaro PR N: act on its trusted review comments (TEXT adds instructions); with a mode: review --recipe, review PR N instead (repeatable, 1 to 4, any open PR)")
 	f.StringVar(&o.recipe, "recipe", "", "the recipe (task loop) to run: .fugaro/recipes/NAME.yaml, the project's, or the catalog's ("+strings.Join(recipe.CatalogNames(), ", ")+"); default: agent.recipe in fugaro.yaml, else default; a follow-up (--pr) keeps its previous run's")
 	f.StringVar(&o.token, "token", "", "named Claude account (claude_accounts in the local config) this run uses, for a workflow whose agent.auth is oauth; default: agent.oauth_token in fugaro.yaml, else the repository's default account; a follow-up (--pr) keeps its previous run's account unless this is given explicitly, which overrides it (checked the same way as a first run's)")
@@ -352,7 +367,7 @@ func newRunCmd() *cobra.Command {
 }
 
 // taskFlags are the flags --retry excludes: the stored task.json supplies them.
-var taskFlags = []string{"repo", "ref", "workflow", "run-id", "batch", "title", "plan-task", "task-file", "total-timeout", "pr", "recipe", "token", "attach", "mode", "path", "tier", "no-compression", "review-levels", "review-run", "max-usd", "max-tokens", "max-time", "max-review-rounds"}
+var taskFlags = []string{"repo", "ref", "workflow", "run-id", "batch", "title", "plan-task", "task-file", "total-timeout", "pr", "recipe", "token", "attach", "mode", "path", "tier", "no-compression", "review-levels", "review-run", "max-usd", "max-tokens", "max-time", "max-review-rounds", "continues", "used-usd", "used-tokens", "used-time", "used-review-rounds"}
 
 // prFlags are the flags --pr excludes: the previous run on the PR supplies them.
 var prFlags = []string{"ref", "workflow"}
@@ -364,9 +379,19 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 		if o.attempts < 2 || o.attempts > 4 {
 			return userErr("--attempts: use 2 to 4, got %d", o.attempts)
 		}
-		for _, name := range []string{"pr", "run-id", "retry"} {
+		for _, name := range []string{"pr", "run-id", "retry", "continues"} {
 			if cmd.Flags().Changed(name) {
 				return userErr("--attempts launches a fresh batch; it takes no --%s", name)
+			}
+		}
+		// A best-of-N batch is N chains of one run each (D1053), so one
+		// --used-* figure would have to be charged to all N of them or to
+		// none, and neither is what a caller stating one figure means. The
+		// flags the batch does not take are named here, beside the ones that
+		// name a previous run.
+		for _, name := range []string{"used-usd", "used-tokens", "used-time", "used-review-rounds"} {
+			if cmd.Flags().Changed(name) {
+				return userErr("--attempts launches a fresh batch of chains; it takes no --%s", name)
 			}
 		}
 	}
@@ -383,6 +408,15 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 				return userErr("--pr %d: use a pull request number", n)
 			}
 		}
+	}
+	// --pr names the chain's previous run itself, by the pull request the
+	// chain is linkable through, and --continues names one directly (D1045):
+	// two answers to one question are refused rather than merged, since the
+	// second would either be ignored or read a chain the first never named.
+	// --retry does not reach here (it takes no --continues, taskFlags) and
+	// --attempts is refused above.
+	if prSet && o.continues != "" {
+		return userErr("--continues names the run this launch continues, and --pr names the pull request whose chain it joins; pass one of them")
 	}
 	var text string
 	var total time.Duration
@@ -427,6 +461,14 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 		// resolves (chainLimitGate). --retry never reaches here: taskFlags
 		// refuses the four with it, since the stored task keeps its own.
 		if err = chainLimitsFlag(cmd, o); err != nil {
+			return err
+		}
+		// --continues and the four --used-* figures, parsed once here and for
+		// the same reason (chainContinueFlag): the syntax is this launcher's
+		// own mistake to refuse, and whether a figure is above what the chain
+		// already used needs the chain read (chainInherit). --retry never
+		// reaches here either: taskFlags refuses the five with it.
+		if err = chainContinueFlag(cmd, o); err != nil {
 			return err
 		}
 		if text, err = taskText(cmd, o.tf, args, prSet); err != nil {
@@ -737,6 +779,17 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 	// the gates that read the task (freshLaunchGates judges the image on the
 	// fields this writes).
 	if err := chainLimitGate(ctx, env, o, spec, reused, warn); err != nil {
+		return launchResult{}, err
+	}
+	// The chain half (docs/run-limit-carry-over L4, D1045/D1047/D1052): what a
+	// launch that does not begin a chain owes — the link it names, the chain's
+	// own limit off the run that began it, what the chain has spent off its
+	// runs' ledgers, and each dimension written as what is left rather than as
+	// the chain's whole limit again. After chainLimitGate, whose figures are
+	// this launch's own request and are what this call holds under the
+	// remaining, and before the gates below, which judge the fields the task
+	// now carries (freshLaunchGates reads the image off them).
+	if err := chainInherit(ctx, env, o, slug, spec, reused, warn); err != nil {
 		return launchResult{}, err
 	}
 	// The compression image gate's own condition, resolved here beside the

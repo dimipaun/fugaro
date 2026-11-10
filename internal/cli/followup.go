@@ -120,7 +120,7 @@ func resolvePR(ctx context.Context, env *cloudEnv, repo, slug string, pr int, ex
 		return r.RunID == exclude || (r.TaskPR != pr && !task.BranchRE.MatchString(r.Branch))
 	})
 	if len(rows) == 0 {
-		return nil, userErr("PR #%d is not a Fugaro PR in this repository, or its runs are older than %d days; start a new run instead",
+		return nil, userErr("PR #%d is not a Fugaro PR in this repository, or its runs are older than %d days; start a new run instead, or — for a run that opened nothing, so this PR is not its link — continue it with fugaro run --continues RUN-ID",
 			pr, int(followUpLookback/(24*time.Hour)))
 	}
 	slices.SortStableFunc(rows, func(a, b runview.Row) int {
@@ -533,8 +533,17 @@ func prSpec(ctx context.Context, env *cloudEnv, o *runOptions, text string, tota
 // chain's figure written alone, the composition left to the runner (L5) — is
 // repeated as it stands rather than gaining a clock from wherever the repeat
 // is run.
+//
+// A dimension this call names no flag for is taken from the stored task, which
+// is the rule the title, the plan task and the mode already follow: a flag that
+// is given must be the stored one, and a launch that gives none makes no claim.
+// The chain half of a launch (docs/run-limit-carry-over L4) is what makes it
+// necessary rather than merely tidy: a `--pr` follow-up writes the chain's
+// remaining into each dimension its chain limits, whatever this call typed, so
+// a repeat that echoed the flags alone would be refused as a different task
+// against the very task its own launch wrote.
 func repeatOverrides(have *task.Spec, o *runOptions, total time.Duration) task.Overrides {
-	var want task.Overrides
+	want := have.Overrides
 	if o.limits.usd != nil {
 		want.MaxUSD = o.limits.usd
 	}
