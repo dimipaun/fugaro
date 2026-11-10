@@ -194,6 +194,34 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	// block; it asks nothing now (D1540) and the diff of that block is the proof
 	// this fixture reaches it.
 	"fugaro accounts add": {args: []string{"team-a", "--repos", "acme/app"}, reaches: "claude_accounts"},
+	// The two allow-list pairs are the field that block holds, and the sentence
+	// each one prints is the only proof that the run reached its write rather
+	// than a refusal: what these commands edit is which repository may spend a
+	// credential, so a fixture that stopped short of the write for this reason
+	// would be silent exactly where it matters. allow declares an account the
+	// world does not have — the first form of that pair — so it needs no seed;
+	// deny removes a repository the seed gives the account; and both secrets
+	// fixtures need the entry, the allow one with a repository it does not name
+	// so the addition is a change and not the "no change" answer.
+	"fugaro accounts allow": {
+		args:    []string{"team-a", "acme/web"},
+		reaches: "add acme/web to claude_accounts.team-a.allow_data_to",
+	},
+	"fugaro accounts deny": {
+		args:    []string{"team-a", "acme/web"},
+		reaches: "remove acme/web from claude_accounts.team-a.allow_data_to",
+		seed:    closedStdinAccountAllowListSeed,
+	},
+	"fugaro secrets allow": {
+		args:    []string{"bitbucket-token", "acme/web"},
+		reaches: "add acme/web to project_secrets.bitbucket-token.allow_data_to",
+		seed:    closedStdinProjectSecretAllowListSeed("acme/other"),
+	},
+	"fugaro secrets deny": {
+		args:    []string{"bitbucket-token", "acme/web"},
+		reaches: "remove acme/web from project_secrets.bitbucket-token.allow_data_to",
+		seed:    closedStdinProjectSecretAllowListSeed("acme/web"),
+	},
 	// The pool writes are the same kind of edit, and they reach it the same
 	// way: the seed gives the world a credential to list and a pool to remove,
 	// so each runs to its own sentence rather than stopping at the block's own
@@ -630,6 +658,33 @@ func closedStdinSetBaseBranch(t *testing.T, f *budgetFixture) {
 func closedStdinPoolSeed(t *testing.T, f *budgetFixture) {
 	t.Helper()
 	f.appendConfig(t, "credentials:\n  - name: team-a\n    type: claude-oauth\n  - name: team-b\n    type: claude-oauth\npools:\n  - name: claude-pool\n    members:\n      - team-a\n")
+}
+
+// closedStdinAccountAllowListSeed gives the world the account the deny's
+// fixture narrows: a removal from an account the config does not declare is
+// refused before the write, which would leave the fixture's sentence unproven.
+// The allow's own fixture needs no seed — declaring the account is that form's
+// work.
+func closedStdinAccountAllowListSeed(t *testing.T, f *budgetFixture) {
+	t.Helper()
+	f.appendConfig(t, "claude_accounts:\n  team-a:\n    allow_data_to:\n      - acme/web\n")
+}
+
+// closedStdinProjectSecretAllowListSeed is the same for the project secret's
+// own list, and it is also the fixture's repository: the deny removes the one
+// it names, and the allow adds to a list that does not already hold it, so
+// neither run is the "no change" answer for a state the seed had already
+// reached. Only the names the project stores project-wide may appear here — the
+// loader refuses any other — and bitbucket-token is the one this list is for.
+func closedStdinProjectSecretAllowListSeed(repos ...string) func(*testing.T, *budgetFixture) {
+	return func(t *testing.T, f *budgetFixture) {
+		t.Helper()
+		body := "project_secrets:\n  bitbucket-token:\n    allow_data_to:\n"
+		for _, repo := range repos {
+			body += "      - " + repo + "\n"
+		}
+		f.appendConfig(t, body)
+	}
 }
 
 // closedStdinWorkflowSeed makes the world's own directory a checkout of a
