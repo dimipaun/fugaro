@@ -146,7 +146,7 @@ upgrades every launcher before it launches again. The image-catalog gate is spel
   has no `image_catalog` member, so a config that carries a catalog is either dropped or refused by
   strict decoding. `TestOlderCLIRefusesANodeCarryingImageCatalog` is **not** a red step and is not
   claimed as one: the CLI already refuses a node carrying **any** unknown key
-  (`refuseUnknownPolicyKeys`, `internal/cli/project_cmd.go:2836`), so that test passes before the task
+  (`refuseUnknownPolicyKeys`, `internal/cli/project_cmd.go:2861`), so that test passes before the task
   starts — it is kept in the list because it is the pin on the skew staying honest after the key is
   added.
 - **Tests:** `TestPolicyNodeOmitsAnEmptyCatalog`, `TestPolicyNodeCarriesTheCatalogWhenSet`,

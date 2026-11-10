@@ -386,7 +386,7 @@ One more cover fact the owner should have beside this, because it is the hostile
 (§5): the plan review validates the *build service account* and the *base images* of a check spec
 (`internal/infra/tf/cover.go:2603` `checkCatalogSpec`, `:2643` `buildAccount`) and **not the machine
 type**; and the local config's own validation of it is a charset rule, not an allowlist
-(`internal/localcfg/localcfg.go:1338-1339` `machineTypeRE = ^[A-Za-z0-9_-]{1,40}$`, checked at `:1829`).
+(`internal/localcfg/localcfg.go:1364-1365` `machineTypeRE = ^[A-Za-z0-9_-]{1,40}$`, checked at `:1891`).
 A hostile local config can already choose the machine type. §5 says why that is survivable, and what
 the estimator must do so it stays survivable.
 
@@ -425,8 +425,8 @@ the estimator must do so it stays survivable.
 **The chain, as the code has it today:**
 
 ```
-local config: build.machine_type   (default E2_HIGHCPU_8; internal/localcfg/localcfg.go:1598)
-              build.region, else region                     (:1148-1150, :2361-2365 BuildRegion)
+local config: build.machine_type   (default E2_HIGHCPU_8; internal/localcfg/localcfg.go:1624)
+              build.region, else region                     (:1174-1176, :2446-2450 BuildRegion)
         │
         ├─ internal/cli/image.go:310 → cloudBuildSpec(…, lc.Build.MachineType, …) → :456, the spec at :460
         ├─ internal/cli/image_build_catalog.go:361
@@ -618,7 +618,7 @@ The repository, by path and symbol:
 | `deploy/terraform/gcp/modules/installation/catalogcheck.tf:24-46,99,125` | The catalog check job and its account's grants |
 | `deploy/terraform/gcp/modules/repo/*.tf`, `modules/repo/catalogcheck.tf:24` | The repository build account and the per-repo actAs grant |
 | `internal/infra/tf/cover.go:22,137,154,200,244,311,795,2096,2603,2643` | `allowedTypes`; the principal kinds (`toCatalogCheck` at `:137`, the comment that makes it one at `:106-117`, `isCatalogCheckMember` at `:795`); `grantRules` (`:154`) with the one row that accepts that kind — `roles/storage.objectUser` at `:244`, checked by `catalogRecordsGrant` at `:2096` — and the `serviceUsageConsumer` row at `:200`; `allowedRoles` (`:311`); `checkCatalogSpec` (`:2603`) and `buildAccount` (`:2643`) |
-| `internal/localcfg/localcfg.go:1148-1150,1337-1339,1598,1629-1630,1826,1829,2361-2365` | `build.machine_type`/`build.region`, the charset rules, the default, the region fallback |
+| `internal/localcfg/localcfg.go:1174-1176,1337-1339,1598,1629-1630,1826,1829,2361-2365` | `build.machine_type`/`build.region`, the charset rules, the default, the region fallback |
 | `internal/backend/gcp/prices.go:9-27`; `internal/backend/batch/prices.go:47-79,326-329` | The repo's pinned-price-table precedent, dates included |
 | `docs/plans/2026-09-27-m4-gcp-backend.md:3838` | The repo's own earlier recipe for a catalog read with a bearer token |
 | `docs/gcp-live-checklist.md:1339,2668` | The operator's today's-by-hand `cloudbilling.googleapis.com` enablement on the ADC quota project |

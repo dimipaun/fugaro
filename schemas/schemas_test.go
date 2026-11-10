@@ -3221,17 +3221,18 @@ func TestTaskSchemaPlanTaskMatchesTheGoRule(t *testing.T) {
 
 // TestTaskSchemaOAuthTokenMatchesTheGoRules ties the task schema's
 // `oauth_token` property to the Go rules it mirrors (config.ClaudeAccountNameRE,
-// config.MaxClaudeAccountNameLen and config.AnthropicKeyAccount): the schema
+// config.MaxClaudeAccountNameLen and the axis's non-account values,
+// config.AnthropicKeyAccount and config.ProviderKeyAccount): the schema
 // pattern and maxLength are separate copies, so without this a change to the Go
 // rule would drift from the schema with only the corpus fixtures noticing. The
 // pattern alone admits 61 characters (it counts repetition units of one or
 // two), which is why the bound is a separate maxLength.
 //
-// The shape rule is one branch of the property's anyOf, the axis's one
-// non-account value being the other (the sentinel is outside the pattern by
-// construction and admitting it must not widen the pattern), so the pattern is
-// read out of the branches — and the branch that is a const is held to the Go
-// constant here, which is what keeps the schema's literal from drifting.
+// The shape rule is one branch of the property's anyOf, the axis's non-account
+// values being the others (both are outside the pattern by construction and
+// admitting them must not widen the pattern), so the pattern is read out of the
+// branches — and the branches that are consts are held to the Go constants
+// here, which is what keeps the schema's literals from drifting.
 func TestTaskSchemaOAuthTokenMatchesTheGoRules(t *testing.T) {
 	data, err := os.ReadFile("task.schema.json")
 	if err != nil {
@@ -3268,21 +3269,23 @@ func TestTaskSchemaOAuthTokenMatchesTheGoRules(t *testing.T) {
 	if len(patterns) != 1 || patterns[0] != config.ClaudeAccountNameRE.String() {
 		t.Errorf("the oauth_token anyOf's pattern branches = %q, want exactly config.ClaudeAccountNameRE %q: the shape rule is not loosened to admit the sentinel", patterns, config.ClaudeAccountNameRE.String())
 	}
-	if len(consts) != 1 || consts[0] != config.AnthropicKeyAccount {
-		t.Errorf("the oauth_token anyOf's const branches = %q, want exactly config.AnthropicKeyAccount %q: the property admits the project's own key only as the sentinel the Go rule admits", consts, config.AnthropicKeyAccount)
+	wantConsts := []string{config.AnthropicKeyAccount, config.ProviderKeyAccount}
+	if len(consts) != len(wantConsts) || consts[0] != wantConsts[0] || consts[1] != wantConsts[1] {
+		t.Errorf("the oauth_token anyOf's const branches = %q, want exactly the axis's non-account values %q: the property admits the project's own key and the project's provider key only as the literals the Go rule admits", consts, wantConsts)
 	}
 }
 
 // TestTaskSchemaRefusesReservedAccountName: a task's oauth_token may not name
 // the account the credentials bundle reserves for the platform's own git
 // credential, and — the other direction of the same cross-reader agreement —
-// it does admit the axis's one non-account value. The decoder is the authority
+// it does admit the axis's non-account values. The decoder is the authority
 // (task.Spec.Validate, through config.ReservedClaudeAccountName and the
-// sentinel's own case) and the schema is its published copy, so both are held
-// to the same fixture here: a name that is legal everywhere else passes both,
-// the reserved name and the sentinel's reference twin fail or pass both. The
-// field is optional and the document is additionalProperties: false, so nothing
-// else in either reader says anything about these names.
+// non-account values' own case) and the schema is its published copy, so both
+// are held to the same fixture here: a name that is legal everywhere else
+// passes both, the reserved name and each non-account value's reference twin
+// fail or pass both. The field is optional and the document is
+// additionalProperties: false, so nothing else in either reader says anything
+// about these names.
 func TestTaskSchemaRefusesReservedAccountName(t *testing.T) {
 	sch := compile(t, "task.schema.json")
 	docFor := func(name string) string {
@@ -3296,8 +3299,10 @@ func TestTaskSchemaRefusesReservedAccountName(t *testing.T) {
 	for name, valid := range map[string]bool{
 		"acme-personal":               true,
 		config.AnthropicKeyAccount:    true,
+		config.ProviderKeyAccount:     true,
 		config.BitbucketSecret:        false,
 		"anthropic-api-key--project2": false, // one character past the sentinel: the const branch is the literal, not a prefix rule
+		"provider-key--project2":      false, // and neither is the provider key's branch
 	} {
 		raw := docFor(name)
 		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(raw))
@@ -3430,21 +3435,22 @@ func TestFugaroSchemaAgentOAuthToken(t *testing.T) {
 
 // TestSchemaRefusesReservedOAuthTokenName: fugaro.yaml's agent.oauth_token
 // may not name the account the credentials bundle reserves for the platform's
-// own git credential, nor the axis's one non-account value (the project's own
-// Anthropic API key, config.AnthropicKeyAccount). The decoder is the authority
-// (config.Validate) and the schema is its published copy, so both are held to
-// the same fixture here: a name that is legal everywhere else passes both, the
-// reserved name and the sentinel fail both, and the decoder refuses them at its
-// own path — a schema that admitted the name, or a decoder that accepted it, is
-// the drift this catches.
+// own git credential, nor either of the axis's non-account values (the
+// project's own Anthropic API key, config.AnthropicKeyAccount, and the
+// project's provider key, config.ProviderKeyAccount). The decoder is the
+// authority (config.Validate) and the schema is its published copy, so both are
+// held to the same fixture here: a name that is legal everywhere else passes
+// both, the reserved name and each non-account value fail both, and the decoder
+// refuses them at its own path — a schema that admitted a name, or a decoder
+// that accepted it, is the drift this catches.
 //
-// The sentinel's row is the deliberate half: a *task's* oauth_token admits it
-// and a repository's document does not. The key is a fact of the installation
-// and of the launch (a review names it as the run's own credential, with
-// --token or the pairing's own account), never of a repository's fugaro.yaml,
-// which speaks of the Claude accounts a repository's runs may use — and
-// config.Validate's own agent.oauth_token rule reads the same shape rule the
-// schema does.
+// The non-account rows are the deliberate half: a *task's* oauth_token admits
+// them and a repository's document does not. Each key is a fact of the
+// installation and of the launch (a review names it as the run's own
+// credential, with --token or the pairing's own account), never of a
+// repository's fugaro.yaml, which speaks of the Claude accounts a repository's
+// runs may use — and config.Validate's own agent.oauth_token rule reads the
+// same shape rule the schema does.
 func TestSchemaRefusesReservedOAuthTokenName(t *testing.T) {
 	sch := compile(t, "fugaro.schema.json")
 	const head = "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { oauth_token: "
@@ -3453,6 +3459,7 @@ func TestSchemaRefusesReservedOAuthTokenName(t *testing.T) {
 		"acme-personal":            true,
 		config.BitbucketSecret:     false,
 		config.AnthropicKeyAccount: false,
+		config.ProviderKeyAccount:  false,
 	} {
 		doc := []byte(head + name + tail)
 		if schemaOK := sch.Validate(yamlInstance(t, doc)) == nil; schemaOK != valid {

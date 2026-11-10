@@ -325,13 +325,13 @@ func readTask(ctx context.Context, env *cloudEnv, slug, id string) (*task.Spec, 
 	case errors.Is(err, runstore.ErrNotFound):
 		return nil, err
 	case corruptObject(err):
-		return nil, userErr("run %s/%s's task.json is unreadable: %v", slug, id, err)
+		return nil, userErr("run %s/%s's task.json is unreadable: %v", slug, task.ShortRun(id), err)
 	case err != nil:
 		return nil, remote(err)
 	}
 	spec, err := task.Parse(raw)
 	if err != nil {
-		return nil, userErr("run %s/%s's task.json is unreadable: %v", slug, id, err)
+		return nil, userErr("run %s/%s's task.json is unreadable: %v", slug, task.ShortRun(id), err)
 	}
 	return spec, nil
 }
@@ -355,13 +355,18 @@ func checkRoot(ctx context.Context, env *cloudEnv, slug, root, branch string, pr
 	case errors.Is(err, runstore.ErrNotFound):
 		return nil // expired: the runs that remain agree on the branch
 	case corruptObject(err):
-		return userErr("run %s/%s, which PR #%d's branch names, has an unreadable result.json (%v); see fugaro diagnose %s/%s", slug, root, pr, err, slug, root)
+		// The run is named the way resolvePR names one (its ending, and the
+		// ending alone) and the hint is the command that takes that name: a
+		// `<slug>/<ending>` is a listing's cell, not a reference any command
+		// resolves (locateRun's ParseRef wants the whole pair).
+		return userErr("run %s, which PR #%d's branch names, has an unreadable result.json (%v); see fugaro diagnose %s",
+			task.ShortRun(root), pr, err, task.ShortRun(root))
 	case err != nil:
 		return remote(err)
 	}
 	if rec.Branch != branch {
-		return userErr("run %s/%s, which PR #%d's branch %s names, records branch %q; the PR is not the one it opened, so follow it up by hand",
-			slug, root, pr, branch, oneLine(rec.Branch))
+		return userErr("run %s, which PR #%d's branch %s names, records branch %q; the PR is not the one it opened, so follow it up by hand",
+			task.ShortRun(root), pr, branch, oneLine(rec.Branch))
 	}
 	return nil
 }

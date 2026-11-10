@@ -1406,6 +1406,39 @@ func TestSettingsSetWritesBudgetModeAndPerDayUsd(t *testing.T) {
 	}
 }
 
+// TestSettingsSetWritesTheBakeSwitch: the switch that tells a run's finalize
+// step whether to bake the project's images (D1901) is a scalar of the project
+// layer, so the generic path writes it, and what it writes is the project config
+// the publisher reads the value out of. The map beside it is the opposite case:
+// its entry is checked against the repository and the catalog, which needs the
+// family's own command, so `settings set` refuses it and names that command
+// (D1906).
+func TestSettingsSetWritesTheBakeSwitch(t *testing.T) {
+	_, path := settingsWriteHome(t)
+	out, _, err := execute(t, "settings", "set", "bake_repos", "false", "--layer", "local", "--yes")
+	if err != nil {
+		t.Fatalf("settings set refused the bake switch: %v\n%s", err, out)
+	}
+	lc, err := localcfg.Parse([]byte(readFileString(t, path)))
+	if err != nil {
+		t.Fatalf("the file the write produced does not read back: %v", err)
+	}
+	if lc.BakeRepos == nil || *lc.BakeRepos {
+		t.Errorf("the written bake_repos is %v, want a written false (absent means true)", lc.BakeRepos)
+	}
+
+	// The map is not a generic scalar: the write is refused with the command
+	// that does check its entry, and the file keeps the switch it just took.
+	before := readFileString(t, path)
+	_, _, err = execute(t, "settings", "set", "image_map", "x", "--layer", "local", "--yes")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "fugaro image map") {
+		t.Fatalf("settings set on the map: exit %d, err %v", ExitCode(err), err)
+	}
+	if readFileString(t, path) != before {
+		t.Error("a refused map write still changed the config")
+	}
+}
+
 // TestSettingsSetLiteralStarIsStillRefused: the widening of the allowlist does
 // not make the literal `*` a spelling a person writes. `workflows.*.commands.test`
 // is the row the concrete key resolves through, and it is refused as the map

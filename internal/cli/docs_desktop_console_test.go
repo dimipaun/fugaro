@@ -8549,6 +8549,48 @@ func TestDocsConsoleReleaseSymbolsIsStagedAndPinned(t *testing.T) {
 	}
 }
 
+// TestDocsConsoleReadmeCarriesTheWindowsNote pins the fourth of the four places
+// that said "Windows stays out" (docs/console-windows/reconciliation.md F43),
+// and the only one outside docs/: the console's own README, whose Linux section
+// opens on the owner's ruling of 2026-10-20.
+//
+// This file is where it belongs rather than in docs_windows_console_test.go,
+// because it reads a path under console/ and this is the file the boundary
+// allow-list admits to one (docs_console_boundary_test.go, Task 0.3 a3). The
+// other three -- the design's section 4.2, its section 7.6 rule 3, the
+// owner-run table's signing row and D10's row, and docs/windows-cli/wsl.md --
+// are read there.
+//
+// The claim is the same in both: the owner's ruling of 2026-10-20 moves half of
+// that sentence. The Windows *build* is in -- the console drives the *Linux*
+// `fugaro` inside a WSL distribution, and the pack is staged as a release-time
+// job -- and the *signing* answer is not, because there is still no Authenticode
+// identity and none is planned. The README keeps its own sentence and gains the
+// dated note, for the reason the other three do: a rewrite would claim more
+// than the ruling does.
+//
+// The mutations that prove it: delete the note, and move it out of the Linux
+// section into the Windows one below it. Each fails here.
+func TestDocsConsoleReadmeCarriesTheWindowsNote(t *testing.T) {
+	const path = "console/README.md"
+	readme := readDoc(t, path)
+	linux := flattenDoc(mdBetween(t, path, readme,
+		"## The Linux build, unsigned (the owner's ruling of 2026-10-20)",
+		"\n## The Windows pack, unsigned, and not yet run"))
+
+	for _, want := range []string{
+		windowsConsoleNoteDate,
+		"the *build* half",
+		"the signing half",
+		"Authenticode",
+		windowsConsoleWorkflowPath,
+	} {
+		if !strings.Contains(linux, want) {
+			t.Errorf("%s's Linux section no longer carries %q: it opens on \"Windows stays out\", the owner's ruling of 2026-10-20 moves half of that sentence, and the README is the one of the four places a console developer reads first", path, want)
+		}
+	}
+}
+
 // TestStagedLinuxFilesSurviveTheCopyIn is the proof of the property every test
 // in this family is written for: **the copy-in the owner does by hand does not
 // turn `main` red.** The tests above read the two Linux files through

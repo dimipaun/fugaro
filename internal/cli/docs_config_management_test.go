@@ -100,13 +100,22 @@ const (
 // added to the registry and not to the allowlist widens the gap the audit is
 // about rather than narrowing it, and with CB1 of docs/catalog-build-context/,
 // whose image_catalog.entries.*.source.context row is the image catalog's own.
-// This branch moved it to 390 with the six concrete spellings of
+// This moved it to 390 with the six concrete spellings of
 // stages.*.claude_account, one per config.RunStages name (settings_stages_test.go),
-// which are the whole of the growth: planning.decoupling's two rows
+// which were the whole of the growth then: planning.decoupling's two rows
 // (registry.go:301, and the layer row at :543) are already on main.
+//
+// This branch moved both figures with the image setup skill's two rows: the
+// bake switch, which IS7 asks through the setup wizard and writes through this
+// path, is a named key and takes the named count with it; the repo-to-image map
+// is one row too, and its owner is the `image map` family -- `fugaro image map
+// set` is the command that writes it (D1906) -- so it widens the registry and
+// not the allowlist, exactly as a key the registry carries and this list does
+// not. The two rows are visible in internal/settings/registry.go, and the
+// document's own sentence names the split.
 const (
-	cfmRegistryRows   = 390
-	cfmAllowlistNamed = 94
+	cfmRegistryRows   = 392
+	cfmAllowlistNamed = 95
 )
 
 func TestDocsConfigManagementIsWritten(t *testing.T) {

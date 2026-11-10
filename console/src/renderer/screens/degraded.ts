@@ -148,9 +148,21 @@ const WSL_PROCEDURE = 'docs/windows-cli/wsl.md'
  * name the *act* rather than a control: there is no picker hook under them
  * (`§2.8`: the console asks the operator for no path and draws no control that
  * wires nothing), so the operator is told what to do and not where in this app
- * to click. */
+ * to click.
+ *
+ * `NO_DISTRO_REMEDY` is the one of the three that names a window, and the
+ * exception is the case itself (Part G, T-G3): the installation names a
+ * distribution this machine does not have -- a rename, a removal -- and the
+ * picker's window is where the names it *does* have are drawn
+ * (`fugaro:installations/distros`, T-C4's `wslDistributions`). It is still a
+ * sentence and not a control: the page draws no button under it, and what the
+ * operator gets there is a read-only list to compare against. And it names that
+ * window **beside** the procedure rather than instead of it: the clause every
+ * remedy here ends with is what sends the operator on to the four commands, so
+ * the two halves of this one line are a choice to make and the procedure to
+ * follow once it is made. */
 export const NO_WSL_REMEDY = `install WSL and a distribution to run the CLI in, then follow ${WSL_PROCEDURE}`
-export const NO_DISTRO_REMEDY = `choose or add a WSL distribution to run the CLI in, then follow ${WSL_PROCEDURE}`
+export const NO_DISTRO_REMEDY = `choose or add a WSL distribution to run the CLI in; the installations window lists the ones this machine has, then follow ${WSL_PROCEDURE}`
 export const NO_FUGARO_IN_DISTRO_REMEDY = `install the CLI inside the distribution by following ${WSL_PROCEDURE}`
 /** REFUSED_HEADLINE is the refused-read screen's heading. */
 export const REFUSED_HEADLINE = 'the CLI refused this read'

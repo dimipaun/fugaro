@@ -930,6 +930,26 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		publishedCatalog = old.ImageCatalog
 	}
 	imageCatalog := lc.ImageCatalogEffective(publishedCatalog)
+	// The repo-to-image map and the bake switch are kept by that same rule
+	// (D1906, D1901), and the cost of the other reading is the catalog's: a
+	// machine whose config predates the keys — a teammate's, a CI box's — would
+	// publish a node that maps nothing and bakes nothing, so every repository
+	// the owner mapped would fall back to the catalog's default and every job
+	// of the project would clone again. A config that writes the map replaces
+	// what the node holds, and one that writes an empty map takes it away, which
+	// is how a published one is removed on purpose. The bake switch is a
+	// pointer on both sides because absent and true are one statement: a config
+	// that writes neither keeps the node's, and a node and a config that both
+	// say nothing publish no member at all, so such a node is byte for byte
+	// what it was before the key existed.
+	var publishedImageMap map[string]string
+	var publishedBake *bool
+	if old != nil {
+		publishedImageMap = old.ImageMap
+		publishedBake = old.BakeRepos
+	}
+	imageMap := lc.ImageMapEffective(publishedImageMap)
+	bakeRepos := lc.BakeReposEffective(publishedBake)
 	// The orchestrator block is kept by the same rule (D1239, D1234), with the
 	// catalog's two spellings collapsed into one: a config that states a block
 	// replaces what the node holds — the daemon's guardrails are the owner's own
@@ -981,6 +1001,8 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		ReviewFloor:          floor,
 		VerifierAccounts:     verifierAccounts,
 		ImageCatalog:         imageCatalog,
+		ImageMap:             imageMap,
+		BakeRepos:            bakeRepos,
 		Orchestrator:         orchestrator,
 	}
 	switch {
@@ -2432,14 +2454,17 @@ type projectShowDoc struct {
 	EnrolledNotRunning []string `json:"enrolled_not_running"`
 }
 
-// showPolicy is the published policy as this document renders it: the node's
-// own bytes spell model_prices' member names the way RTDB requires (escaped,
-// projectpolicy.Prices), and a consumer of this document is reading model IDs.
-// The embedded Policy's own model_prices is shadowed by the field below, which
-// is at a shallower depth and so is the one encoding/json writes.
+// showPolicy is the published policy as this document renders it: the node
+// spells two blocks' member names the way RTDB requires them escaped
+// (projectpolicy.Prices for model IDs with a "." or a "/", projectpolicy.ImageMap
+// for repository names, which always carry a "/"), and a consumer of this
+// document is reading model IDs and repository names. So both blocks are
+// shadowed here by the same maps in the reader's own spelling — the shadows sit
+// at a shallower depth and are therefore the ones encoding/json writes.
 type showPolicy struct {
 	*projectpolicy.Policy
-	Prices map[string]projectpolicy.Price `json:"model_prices,omitempty"`
+	Prices   map[string]projectpolicy.Price `json:"model_prices,omitempty"`
+	ImageMap map[string]string              `json:"image_map,omitempty"`
 }
 
 // showPolicyOf is the document's policy, or nil when none is published.
@@ -2447,7 +2472,7 @@ func showPolicyOf(p *projectpolicy.Policy) *showPolicy {
 	if p == nil {
 		return nil
 	}
-	return &showPolicy{Policy: p, Prices: p.Prices}
+	return &showPolicy{Policy: p, Prices: p.Prices, ImageMap: p.ImageMap}
 }
 
 // showCaps is the ceiling the installation's own nodes carry — the side of the

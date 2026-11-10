@@ -296,14 +296,16 @@ func profileNameOf(at string) string {
 // the project_secrets entry that already decides whether its project-wide copy
 // exists at all.
 //
-// The project's own Anthropic API key (config.AnthropicKeyAccount, AK4) is the
-// other, and the only value whose source is a profile rather than a block of
-// the local config: its list is the naming profiles' own allow_repos, kept
-// where the key itself reaches the repository (anthropicKeySlugs says why).
-// Publishing that list is what makes the sentinel usable at all — the accounts
-// block is what the credentials service intersects a repository's admission
-// with (credsvc's admittedAccounts), so a sentinel with no entry here is one no
-// review call could ever be served by.
+// The account axis's two non-account values — the project's own Anthropic API
+// key (config.AnthropicKeyAccount, AK4) and the project's provider key
+// (config.ProviderKeyAccount, AK6a) — are the others, and the only values whose
+// source is a profile rather than a block of the local config: each one's list
+// is the naming profiles' own allow_repos, kept where the value's own
+// credential reaches the repository (nonAccountSlugs says why). Publishing
+// those lists is what makes the values usable at all — the accounts block is
+// what the credentials service intersects a repository's admission with
+// (credsvc's admittedAccounts), so a value with no entry here is one no review
+// call could ever be served by.
 //
 // Every refusal names the profile that lists the account and the block the
 // operator edits (design §4.4 rows 1 and 2): this runs at publish and at
@@ -325,18 +327,36 @@ func DeriveAccounts(profiles map[string]Profile, accounts map[string]config.Clau
 		}
 		if ref == config.AnthropicKeyAccount {
 			// The sentinel's list is the one this block does not read out of a
-			// block of the local config (anthropicKeySlugs says why), so it is
+			// block of the local config (nonAccountSlugs says why), so it is
 			// built here rather than through accountSlugs below: those slugs
 			// are the config's own spelling of a repository and are qualified
 			// with the naming profile's provider here, while the sentinel's
 			// list is already this block's.
-			list, err := anthropicKeySlugs(ref, named[ref], profiles, projectSecrets)
+			list, err := nonAccountSlugs(ref, "the project's own key", "the key", named[ref], profiles, projectSecrets)
 			if err != nil {
 				return nil, err
 			}
 			if len(list) == 0 {
 				return nil, fmt.Errorf("projectpolicy: profiles.%s.claude_accounts: the project's own Anthropic API key may serve no repository, and an account's policy list cannot be empty: accounts.%s.allow_repos is profiles.%s.allow_repos — the repositories the profiles naming the key admit — kept where project_secrets.%s.allow_data_to reaches them, and that list is empty. Write the repositories this profile admits, or take the key off the profile",
 					named[ref][0], ref, named[ref][0], config.AnthropicSecret)
+			}
+			out[ref] = Account{AllowRepos: list}
+			continue
+		}
+		if ref == config.ProviderKeyAccount {
+			// The same shape for the axis's second non-account value (AK6a),
+			// with one difference the refusal names: the provider key is the
+			// credentials service's own credential, held once for the project,
+			// so no project_secrets entry narrows its reach
+			// (config.ProjectSecretReaches) and the naming profiles' own
+			// allow_repos is the list itself rather than a bound on one.
+			list, err := nonAccountSlugs(ref, "the project's provider key", "the provider key", named[ref], profiles, projectSecrets)
+			if err != nil {
+				return nil, err
+			}
+			if len(list) == 0 {
+				return nil, fmt.Errorf("projectpolicy: profiles.%s.claude_accounts: the project's provider key may serve no repository, and an account's policy list cannot be empty: accounts.%s.allow_repos is profiles.%s.allow_repos, the repositories the profiles naming it admit, and that list is empty — the provider key is the credentials service's own credential, held once for the project, so no project_secrets entry narrows it. Write the repositories this profile admits, or take the provider key off the profile",
+					named[ref][0], ref, named[ref][0])
 			}
 			out[ref] = Account{AllowRepos: list}
 			continue
@@ -389,29 +409,38 @@ func DeriveAccounts(profiles map[string]Profile, accounts map[string]config.Clau
 	return out, nil
 }
 
-// anthropicKeySlugs is the policy list of the project's own Anthropic API key
-// (config.AnthropicKeyAccount): the repositories the profiles naming the key
-// admit — their own allow_repos, which is already canonical — kept only where
-// the key itself reaches them (config.ProjectSecretReaches).
+// nonAccountSlugs is the policy list of one of the account axis's non-account
+// values: the repositories the profiles naming it admit — their own
+// allow_repos, which is already canonical — kept only where the value's own
+// credential reaches them (config.ProjectSecretReaches).
 //
-// The profiles are the source, and this is the only axis value whose source is
-// not a block of the local config. The key is stored project-wide with no list
-// of repositories to serve (D2's sweep: ProjectSecretReaches answers "every
-// repository" for a name with no project_secrets entry), and where there is
-// such an entry it decides reach — it may carry a segment wildcard, which a
-// published accounts list may not (D3), so it is a gate here and never the
-// list itself. The profile is where a repository says its reviews are served
-// by the project's own key, and a profile's own allow_repos is exact, so
-// reading the list off the profiles is the one reading that is both exact and
-// answerable from a document a run holds.
+// The profiles are the source, and these are the only axis values whose source
+// is not a block of the local config. The project's own Anthropic API key is
+// stored project-wide with no list of repositories to serve (D2's sweep:
+// ProjectSecretReaches answers "every repository" for a name with no
+// project_secrets entry), and where there is such an entry it decides reach —
+// it may carry a segment wildcard, which a published accounts list may not
+// (D3), so it is a gate here and never the list itself. The project's provider
+// key (AK6a) has no entry at all and cannot have one: the credential is the
+// credentials service's, so ProjectSecretReaches answers "every repository"
+// for it and the naming profiles' own allow_repos is the whole bound. The
+// profile is where a repository says its reviews are served by one of these
+// credentials, and a profile's own allow_repos is exact, so reading the list
+// off the profiles is the one reading that is both exact and answerable from a
+// document a run holds.
 //
-// A repository the key does not reach is left off and never admitted: this
+// subject is the value's own phrase in the refusals below and short is how the
+// move that works names it ("take the key off the profile"): the two values
+// are one rule with two subjects, and a sentence that named one of them for
+// the other would send the operator to edit the wrong profile entry — or, for
+// the reach clause, to a project_secrets entry the provider key cannot have.
+//
+// A repository the value does not reach is left off and never admitted: this
 // list is what a review call of that repository may be served by, and a
-// repository the key's own entry excludes is one the operator said the key is
-// not for. D3 then refuses the pair (validProfileAccounts), which is the
-// operator's answer — narrow the profile, or list the repository in the key's
-// entry.
-func anthropicKeySlugs(ref string, named []string, profiles map[string]Profile, projectSecrets map[string]config.ProjectSecret) ([]string, error) {
+// repository the value's own entry excludes is one the operator said it is not
+// for. D3 then refuses the pair (validProfileAccounts), which is the operator's
+// answer — narrow the profile, or list the repository in the entry.
+func nonAccountSlugs(ref, subject, short string, named []string, profiles map[string]Profile, projectSecrets map[string]config.ProjectSecret) ([]string, error) {
 	var list []string
 	for _, profileName := range named {
 		// A profile's own allow_repos is already the spelling this block
@@ -428,20 +457,20 @@ func anthropicKeySlugs(ref string, named []string, profiles map[string]Profile, 
 				// here first, because this is where the list is built and a
 				// pattern that reached the block would make the subset rule
 				// undecidable.
-				return nil, fmt.Errorf("projectpolicy: profiles.%s.claude_accounts: profiles.%s.allow_repos holds %q, a pattern, and the project's own key's list is published as accounts.%s.allow_repos, which is exact: a wildcard there makes the subset rule undecidable (D3). Name the repositories themselves, or take the key off the profile",
-					profileName, profileName, canonical, ref)
+				return nil, fmt.Errorf("projectpolicy: profiles.%s.claude_accounts: profiles.%s.allow_repos holds %q, a pattern, and %s's list is published as accounts.%s.allow_repos, which is exact: a wildcard there makes the subset rule undecidable (D3). Name the repositories themselves, or take %s off the profile",
+					profileName, profileName, canonical, subject, ref, short)
 			}
 			if err := ValidPattern(canonical); err != nil {
 				return nil, fmt.Errorf("projectpolicy: profiles.%s.claude_accounts: profiles.%s.allow_repos holds %q, which is not a repository as this block spells one: %v — accounts.%s.allow_repos is derived from this list",
 					profileName, profileName, canonical, err, ref)
 			}
-			// The reach question is asked in the spelling the key's own entry
+			// The reach question is asked in the spelling the value's own entry
 			// is written in, which is the repository as owner/name with no
 			// provider (ProjectSecret.AllowsData, and every caller of
 			// ProjectSecretReaches passes that spelling): the provider is the
 			// first segment of a canonical name.
 			_, repo, _ := strings.Cut(canonical, "/")
-			if !config.ProjectSecretReaches(projectSecrets, config.AnthropicSecret, repo) {
+			if !config.ProjectSecretReaches(projectSecrets, nonAccountSecret(ref), repo) {
 				continue
 			}
 			if !slices.Contains(list, canonical) {
@@ -479,17 +508,32 @@ func accountSlugs(ref string, accounts map[string]config.ClaudeAccount, projectS
 	return acct.AllowDataTo, "claude_accounts." + ref + ".allow_data_to", nil
 }
 
+// nonAccountSecret is the logical secret name whose reach bounds one non-account
+// axis value's published list: the project's own Anthropic API key's own secret
+// (config.AnthropicSecret), which an operator may narrow with a project_secrets
+// entry, or the provider key's name (config.ProviderKeySecret), for which
+// config.ProjectSecretReaches answers "every repository" because the credential
+// is the credentials service's and no entry of that block can name it.
+func nonAccountSecret(ref string) string {
+	if ref == config.ProviderKeyAccount {
+		return config.ProviderKeySecret
+	}
+	return config.AnthropicSecret
+}
+
 // accountSourcePhrase is the "where this account's list comes from" clause the
 // refusals above share, so one names the block the operator can actually edit:
 // a named account's own allow_data_to, the default account's project_secrets
-// entry, or — for the project's own Anthropic API key — the profiles that name
-// it. The last two are NOT claude_accounts entries, and naming that block for
-// them would send the operator to write a key this configuration refuses
+// entry, or — for the axis's two non-account values — the profiles that name
+// them. The last three are NOT claude_accounts entries, and naming that block
+// for them would send the operator to write a key this configuration refuses
 // (config.ValidateClaudeAccounts).
 func accountSourcePhrase(ref string) string {
 	switch ref {
 	case config.AnthropicKeyAccount:
 		return "the profiles that name the project's own Anthropic API key (their own allow_repos, kept where project_secrets." + config.AnthropicSecret + " reaches them)"
+	case config.ProviderKeyAccount:
+		return "the profiles that name the project's provider key (their own allow_repos: the credential is the credentials service's, held once for the project, so no project_secrets entry narrows it)"
 	case config.DefaultClaudeAccount:
 		return "project_secrets for the default account"
 	}

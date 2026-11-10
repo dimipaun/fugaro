@@ -6,7 +6,9 @@ that turns it on, `fugaro update --mcp-server` (D934); M5 is built except the pa
 for, which is M5b and is a hard prerequisite before any binary links the front door (the owner's
 ruling of 2026-11-07); M7 is built except the reading of the installation's published state its
 lists come from, which no task of this plan carries; M8 is built except the wiring that would serve
-its four read tools, which is the task M5b gates; M9 and M11 are not started; this folder approves no task.**
+its four read tools, which is the task M5b gates; M9 is not started, and the launch-override fence
+it was to wait on is declined for v1 and left unbuilt (the owner's ruling of 2026-11-09); this
+folder approves no task.**
 
 **This file is a table, and it is not a gate.** The owner ruled on 2026-11-07 that he would clear the
 `zitadel/oidc` dependency set by reading one table, and this is it: he read it and cleared the set
