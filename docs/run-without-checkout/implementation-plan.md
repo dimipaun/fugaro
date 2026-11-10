@@ -1,6 +1,6 @@
 # Launching a run for a repository without its checkout: implementation plan
 
-**Status: design answered by the owner 2026-11-04; plan only; nothing implemented; no task approved.**
+**Status: design answered by the owner 2026-11-04; plan only; A0 landed (2026-11-10, the person read set); A1–A4, B1–B2, C1 and D1 not started; no other task approved.**
 
 The decisions each task answers are named in its heading; they are **D901–D915** in
 [reconciliation.md §3](reconciliation.md), answered by the owner on 2026-11-04, each with the reason for
@@ -9,15 +9,17 @@ the answer beside it — **D915 too** (a permission set of its own, as recommend
 installation's credentials service, as the operator themselves, so the launcher holds no App key and
 reads no environment variable — and A0, A1 and A3 below are written for that answer.
 
-**A0 comes first, and A1 and A3 depend on it.** The answer names a credential class that exists; the
-credential's **permission** does not cover the read. The route mints with
-`github.CoordinatorTokenPermissions` — `pull requests` and `metadata`, read, and no `contents` — so
-`GET /repos/{owner}/{repo}/contents/fugaro.yaml` is refused with the token the service hands out today,
-and the refusal is correct: that constant is the coordinator's own reach, it reads no file, and two
-tests pin it so it cannot quietly grow one (reconciliation F6). A0 is that change, made on the service's
-own mint; it is the only **credentials-service change by rule** in this plan. **What waits on it is the
-real mint**, so A3's end-to-end read is the test that cannot be green before it; A1's own tests are
-hermetic — an `httpfixture` replay and a fake token source — and are not gated by it (F6).
+**A0 comes first, and A1 and A3 depend on it — and A0 has landed (2026-11-10).** The answer named a
+credential class that exists; the credential's **permission** did not cover the read. The route minted
+with `github.CoordinatorTokenPermissions` — `pull requests` and `metadata`, read, and no `contents` — so
+`GET /repos/{owner}/{repo}/contents/fugaro.yaml` was refused with the token the service handed out, and
+that refusal was correct: that constant is the coordinator's own reach, it reads no file, and two tests
+pin it so it cannot quietly grow one (reconciliation F6). A0 was that change, made on the service's own
+mint; it is the only **credentials-service change by rule** in this plan, and with it the route asks
+with `github.PersonReadTokenPermissions` — `contents`, `pull_requests` and `metadata`, all read — so the
+read is served where the project publishes a service. **What waited on it was the real mint**, so A3's
+end-to-end read is the test that could not be green before it; A1's own tests are hermetic — an
+`httpfixture` replay and a fake token source — and were never gated by it (F6).
 
 **The tasks are written against `main` as it is now**, with **#1477 merged** (reconciliation F1): the
 refusal this design answers is in the tree, so every red step below is red against `main` itself.
@@ -65,6 +67,11 @@ whole `internal/cli` or `internal/runner` run.
   they replay a fixture against a fake token source — and A1 must not add a test that claims a live mint
   it has not got.
 - **Commit:** `credsvc: the person read mint asks for the file read it is for`.
+- **Landed:** 2026-11-10, as option 1: `github.PersonReadTokenPermissions` (`contents`, `pull_requests`
+  and `metadata`, all read) beside the five sets, asked for by `githubRead`, with
+  `CoordinatorTokenPermissions` and its fixture body left exactly as they were. What follows in this
+  plan — A1's reader, A3's end-to-end read, B1's status line and B2's note — is written against that
+  set.
 
 ## A1. The file at a ref, read with the person's read-only token (D910, D911). **SEC**
 
@@ -286,7 +293,7 @@ order they are edited in:
 | `internal/credsvc/githubread.go` | A0 | A0 only: the constant `githubRead` asks with — and the route's own doc comment, which states the old set in prose |
 | `internal/credsvc/githubread_test.go` | A0 | A0 only: `TestGitHubReadAsksForNoWrite`'s `want` |
 | `internal/gitprov/github/contents.go` | none | Read by A1 and **not edited**: A1 wraps `Contents`, it does not widen it |
-| `docs/run-without-checkout/README.md` | B1 | The Status line moves when A3 lands, once |
+| `docs/run-without-checkout/README.md` | A0, B1 | The Status line moved once with A0 (2026-11-10) and moves once more when A3 lands |
 | `internal/gitprov/github/fileread.go` | A1 | A1 only (new) |
 
 **A0 goes first and alone** — it is the service's own mint, and everything else that reads a file waits

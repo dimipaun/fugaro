@@ -1,24 +1,29 @@
 # Launching a run for a repository without its checkout
 
-**Status: design answered by the owner 2026-11-04; plan only; nothing implemented; no task approved.**
+**Status: design answered by the owner 2026-11-04; plan only; A0 landed (2026-11-10, the person read set); A1–A4, B1–B2, C1 and D1 not started; no other task approved.**
 
-Every decision is answered but one, and each answer is recorded with its date and its reason beside the
+Every decision is answered — **D915 included**, the question the code itself raised, answered
+2026-11-04 and landed with A0 — and each answer is recorded with its date and its reason beside the
 decision it answers in [reconciliation.md §3](reconciliation.md). **One answer is not the
 recommendation this design made: D902, the credential the read is made with.** The owner's answer is
 the installation's **credentials service, person class** — the launcher reads the file as the operator
 themselves, and **the CLI holds no App key and reads no environment variable**.
 
-**And that credential cannot read a file today.** The route mints with
-`github.CoordinatorTokenPermissions`, which is `pull requests` and `metadata`, read — no `contents` —
-so `GET /repos/{owner}/{repo}/contents/fugaro.yaml` is refused with the token the service hands out, and
-an earlier round of this design said otherwise. That is why the plan's first task (**A0**) is a change
-to the service's own mint, why it is the one question the code raised (**D915**: a permission set of its
-own, or a route of its own; answered 2026-11-04, a set of its own), and why the design is no longer "no credentials-service change and no
-operator step beyond `fugaro update`": the credentials service must be redeployed to serve the new set.
-Reconciliation F6 holds the reading; the plan's B2 holds the note the release owes the operator.
+**And that credential reads a file now, because A0 landed.** The route mints with
+`github.PersonReadTokenPermissions` — `contents`, `pull_requests` and `metadata`, all read, a set of its
+own beside the coordinator's two, which are untouched — so
+`GET /repos/{owner}/{repo}/contents/fugaro.yaml` is served with the token the service hands out, where
+before A0 the coordinator's own set made it a refusal, and an earlier round of this design said the read
+was refused for that reason. **A0** is the plan's first task, and it has landed: what the design is still
+not is "no credentials-service change and no operator step beyond `fugaro update`", because the
+credentials service must be redeployed to serve the new set.
+Reconciliation F6 holds the reading, with its amendment; the plan's B2 holds the note the release owes
+the operator.
 
 **Reconciled against** `origin/main` as merged into this branch at `1625859c` (2026-11-04), with
 **#1477 merged**: the refusal this design answers is on `main` now, not only in a pull request.
+**And with A0 landed** (2026-11-10): the reading in F6 below is the pre-A0 one and carries its amendment,
+and where the two disagree the amendment is what the tree does.
 **Where `reconciliation.md` disagrees with `spec.md`, `reconciliation.md` wins.**
 
 | File | What it holds |
@@ -74,7 +79,7 @@ recommendation it answers and the cost of the alternative — is beside each dec
 | # | Answer, 2026-11-04 | Why |
 | --- | --- | --- |
 | D901 | Automatic, on the one refusing path | As recommended: no new flag, so the console needs no release before it can launch anything |
-| D902 | **Read through the credentials service's person class — not the recommendation** | The person class shipped in 0.18.0, so a launcher can read as a person instead of holding the installation-wide App key; **the CLI holds no App key and reads no environment variable**. The class is the answer to *which caller*; the permission it mints with is not one that reaches a file, which is A0's (F6, D915) |
+| D902 | **Read through the credentials service's person class — not the recommendation** | The person class shipped in 0.18.0, so a launcher can read as a person instead of holding the installation-wide App key; **the CLI holds no App key and reads no environment variable**. The class is the answer to *which caller*; the permission it minted with reached no file, which was A0's and has landed (F6, D915) |
 | D903 | `spec.Ref`, the ref the run checks out | As recommended: any other ref turns the launcher's own decision into a paid halt at run start |
 | D904 | No cache | As recommended: a document the ref no longer carries must not be able to place a run |
 | D905 | Refuse on a read that fails; never fall back to the per-repository job | As recommended: the fallback would silently drop the profile the project's policy chose |
@@ -83,11 +88,11 @@ recommendation it answers and the cost of the alternative — is beside each dec
 | D908 | A provider no shared job serves proceeds with no read | As recommended: the per-repository job is the same answer the checkout path gives |
 | D909 | A checkout whose tree lacks the file reads the ref's objects | As recommended: the local `git cat-file` answers where the working tree does not |
 | D910 | A CLI seam over a `FileAt` in `internal/gitprov/github`, built on the `Contents` reader the package already has | As recommended: `gitprov.Provider` must not grow a capability one provider has — but `gitprov.ContentsReader` already is that capability beside it |
-| D911 | The minted token's permissions | As recommended, and the recommendation is a task after all: the set the route mints with today (`CoordinatorTokenPermissions`: `pull requests` and `metadata`, read) reaches no file, so the permission is A0's, and it never widens that constant (F6, D915) |
+| D911 | The minted token's permissions | As recommended, and the recommendation was a task after all: the set the route minted with before A0 (`CoordinatorTokenPermissions`: `pull requests` and `metadata`, read) reached no file, so the permission was A0's — landed 2026-11-10 as `github.PersonReadTokenPermissions` — and it never widened that constant (F6, D915) |
 | D912 | Two distinct refusals, one per cause | As recommended: the two causes have two different remedies |
 | D913 | `docs/checkout.md` and `docs/git-providers.md` state the new rule | As recommended: both pages describe the launcher's behaviour, and one describes what the CLI holds |
 | D914 | An independent, security-sensitive review | As recommended, and wider: with A0 the change is the service's own — its mint's permission set — so the review is the one `.claude/rules/credentials-service.md` requires |
-| D915 | **A set of its own** (answered 2026-11-04 as recommended) — which permission the person read mint carries: a set of its own beside the coordinator's, or a route of its own | Raised by re-reading the code on 2026-11-04: the mint D902's answer uses reaches no file (F6). The owner chose option 1, a permission set of its own beside the coordinator's. **Cost of option 1:** the token reads the whole repository, and every listed person can mint it for every onboarded repository through the existing person route; "one file" is the launcher's use of it, not a limit on it |
+| D915 | **A set of its own** (answered 2026-11-04 as recommended; landed 2026-11-10 with A0) — which permission the person read mint carries: a set of its own beside the coordinator's, or a route of its own | Raised by re-reading the code on 2026-11-04: the mint D902's answer uses reached no file (F6). The owner chose option 1, a permission set of its own beside the coordinator's, and A0 landed it as `github.PersonReadTokenPermissions`. **Cost of option 1:** the token reads the whole repository, and every listed person can mint it for every onboarded repository through the existing person route; "one file" is the launcher's use of it, not a limit on it |
 
 ## Numbers this work holds
 
@@ -107,8 +112,9 @@ task that needs one takes D920 and re-checks this line's facts rather than its c
 
 ## What this design does not do
 
-- **No code, and no task approved.** The plan's tasks carry red steps so that the first one to be
-  approved can start red, but nothing here is scheduled.
+- **No code beyond A0, and no other task approved.** The plan's tasks carry red steps so that the first
+  one to be approved can start red, but A0 is the one that has landed (2026-11-10) and nothing else
+  here is scheduled.
 - **No live step of any kind.** Nothing in this design asks the owner to apply Terraform by hand, to
   touch a real installation or to make a cloud call, and nothing asks for a command beyond the one every
   release already asks for, `fugaro update` — which is what redeploys the credentials service A0 changes
@@ -116,11 +122,11 @@ task that needs one takes D920 and re-checks this line's facts rather than its c
 - **No new secret, no new stored credential, no new IAM binding and no new principal** — but **not no
   credentials-service change, and not no operator step.** The read is made with the installation's
   **existing credentials service** — its people list, its bundle and its audit line all exist — and the
-  operator's own Google identity (D902, D903). What does not exist is a permission the read can be made
-  with: the route mints with the coordinator's own set, which reaches no file (F6). A0 adds one (D915),
-  so the service's image changes and **an installation has to redeploy it — `fugaro update` does — for
-  the read to be served at all.** Until it has, a launch outside a checkout refuses exactly as the tree
-  refuses it today (D905), with the checkout named as the way out.
+  operator's own Google identity (D902, D903). What did not exist was a permission the read could be
+  made with: the route minted with the coordinator's own set, which reached no file (F6). **A0 landed
+  one (D915) on 2026-11-10**, so the service's image changed and **an installation has to redeploy it —
+  `fugaro update` does — for the read to be served at all.** Until it has, a launch outside a checkout
+  refuses exactly as the tree refuses it today (D905), with the checkout named as the way out.
 - **It does not touch the runner's placement.** The runner keeps every check it has
   (`checkJobProfile`, `checkProjectJobAccount`) and gains none: a run placed on a job its workflow
   does not select still halts rather than widening.
