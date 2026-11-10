@@ -57,7 +57,7 @@ const (
 // did not become ready, the failure class the cause is filed under, and the
 // Kind the ending's status is written from (D995). The four travel together
 // because finalize replaces the answer whole — a refusal found at finalize
-// writes its own reason, class and kind (Decision.blocked) — and a status read
+// writes its own reason, class and kind (blockedDecision) — and a status read
 // apart from the sentence it describes is how a run came to be filed as failed
 // for a review nobody held.
 type Decision struct {
