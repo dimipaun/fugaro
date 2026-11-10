@@ -590,6 +590,76 @@ func TestDocsProjectLayerSaysWhatTiesARepositoryToAProject(t *testing.T) {
 	}
 }
 
+// TestDocsProjectLayerPolicyTableNamesEveryKeyItDescribes pins §5's published
+// policy table, row by row. The table is the only place an operator reads what
+// a run does with each key of the node, and the `binaries` member shipped
+// without a row at all (review finding on AR0 of binary-allow-rule): the
+// reference described every key of the node but the one that release added, and
+// nothing read the table, so the gap was silent. `providers` is the precedent
+// the row has to follow — a key this release decodes, validates and accepts and
+// no run applies yet — and `binaries` is the one row whose *absence* of the
+// block is not an empty block, which the row has to state because a publisher
+// reading it is deciding whether to write `{"allow": []}` or nothing.
+//
+// The row set is pinned as a list rather than derived from the Policy struct:
+// the table groups the four `budget` members into one row and deliberately
+// leaves out the members whose effect is not a run's (base_branch, credentials,
+// accounts, clone_urls, the crafts), so a reflection over the struct would
+// refuse the table as it stands. What the list catches is the removal of a row
+// and the return of a claim the row no longer carries.
+//
+// Mutation (verified, run and restored): delete the `binaries` row — this fails
+// naming it; put "decoded, validated and accepted, **not applied**" back as the
+// row's whole description without the written-empty half — it fails naming that.
+func TestDocsProjectLayerPolicyTableNamesEveryKeyItDescribes(t *testing.T) {
+	const header = "| Policy key | What the run does with it today |"
+	doc := readDoc(t, "docs/project-layer.md")
+	i := strings.Index(doc, header)
+	if i < 0 {
+		t.Fatalf("docs/project-layer.md's §5 has no %q table: the reference for the node's keys has moved", header)
+	}
+	// The `|---|` separator sits between the header and the first key row.
+	rows := strings.Split(doc[i+len(header):], "\n")
+	for len(rows) > 0 && !strings.HasPrefix(rows[0], "| `") {
+		rows = rows[1:]
+	}
+	var keys []string
+	for _, line := range rows {
+		if !strings.HasPrefix(line, "| `") {
+			break
+		}
+		cell, _, _ := strings.Cut(strings.TrimPrefix(line, "| "), " |")
+		for _, key := range strings.Split(cell, ", ") {
+			keys = append(keys, strings.Trim(key, "`"))
+		}
+	}
+	want := []string{
+		"version",
+		"budget.mode", "budget.per_run_usd", "budget.max_run_tokens", "budget.allowed_models",
+		"model_prices",
+		"allow_repos",
+		"providers",
+		"binaries",
+		"routing",
+		"profiles",
+	}
+	if !slices.Equal(keys, want) {
+		t.Errorf("docs/project-layer.md's policy table lists %v, want %v: every key of the node the page describes has a row, and a member that ships without one is invisible to the operator reading what a run does with it", keys, want)
+	}
+	for _, want := range []string{
+		"| `binaries` | decoded, validated and accepted, **not applied**",
+		"the block is the owner's grant of the paths a run may add a binary at",
+		"no run reads it yet",
+		"the one key of this table whose *absence* is not the same as an empty block",
+		"`{\"allow\": []}` is a written grant that admits nothing, where no member at all is a project that set none",
+		"A version-4 reader lists the key as unknown and enforces no rule at all, which is why the node is version 5",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("docs/project-layer.md's `binaries` row lacks %q: the row is where an operator reads what the member does today and what writing an empty one means", want)
+		}
+	}
+}
+
 // TestDocsProjectLayerSaysTheAdmissionsAndTheSkewWarning: the publish row of
 // docs/project-layer.md is the operator's only description of what a publish
 // writes, and C1.2 added two things to it that the row did not carry before —

@@ -171,6 +171,18 @@ numstat side too; a path absent from the map is *unreadable*, and the design ref
 treating it as text (F1's rule: the check fails closed). AR4's `TestTheTwoReadingsPairByPath` pins
 this with a range whose two orderings differ, so an index-based pairing is red rather than latent.
 
+**F15 — the design's first draft took a readable pattern for an unreadable one, and AR0's red step
+named it first.** spec.md §2.1 and AR0's red step both made `website/public/**.png` an entry the
+task "exists to refuse". It is not one: `**` means "any depth" in doublestar only as a whole path
+segment, and inside one it matches like `*`, so that entry is a pattern the matcher reads — a lock
+over exactly one level, admitting `website/public/a.png` and refusing `website/public/deep/a.png`.
+Refusing it would be a sixth check, a second and stricter pattern language beside the one
+`rigor.areas` and `rebuild.paths` already share, which F8's count and F9 forbid. The shipped rule
+accepts it, AR0's `TestBinariesAllowTakesAMisplacedDoubleStar` pins the lock the owner actually gets,
+§2.1 and the red step are corrected to say so, and AR1 adds no check for it. What the "no lock that
+is not there" rule *does* cover is a pattern the matcher cannot read (`brand/[.png`), which is
+refused where it is written.
+
 ## 2. The decisions
 
 Each is written as a **recommendation** with the cost of the alternative, so that "as recommended"

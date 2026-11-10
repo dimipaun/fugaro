@@ -87,9 +87,18 @@ the length bound `rigor.Area.Validate` (`internal/rigor/area.go:63`) adds on top
 record and into the pull request's status line (§5), so an unbounded entry is unbounded text on a
 wire. `doublestar/v4` is already a direct dependency (`go.mod`), so this adds no module: one
 matcher, one pattern rule, the F9 rule the areas and the rebuild paths already follow. A pattern the
-matcher cannot read is refused **at publish time**, which is the "no lock that is not there" rule: a
-project that wrote `website/public/**.png` and believed it had allowed the directory would otherwise
-be refused a file it had every reason to expect would pass.
+matcher cannot read is refused **at publish time** (`brand/[.png`), which is the "no lock that is not
+there" rule.
+
+**What that rule does not cover is a pattern that is a narrower lock than its author read, and the
+first draft of this section took one for an unreadable pattern (F15).** `website/public/**.png` is
+readable: `**` means "any depth" in doublestar only as a whole path segment, and inside one it
+matches like `*`, so the entry admits `website/public/a.png` and refuses `website/public/deep/a.png`
+— a lock over exactly one level. The shipped rule accepts it (AR0's
+`TestBinariesAllowTakesAMisplacedDoubleStar` pins the lock the owner actually gets), because refusing
+it would be a sixth check: a second, stricter pattern language beside the one `rigor.areas` and
+`rebuild.paths` already share, which F8's count and F9 forbid. An owner who means the whole
+directory writes `website/public/**`.
 
 **An absent `binaries` block, an absent `allow`, and `"allow": []` all admit nothing at admission
 time** — today's behaviour, byte for byte. An entry list that admits no path is the whole answer at

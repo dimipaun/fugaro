@@ -126,9 +126,15 @@ node only — nothing reads it yet — so it lands without waiting for anything.
   `internal/projectpolicy/policy.go` (the member, `knownTopLevelKeys`),
   `internal/projectpolicy/version.go` (`Version = 5`, `VersionSince[5] = "0.20.0"`), and the three
   test files `binaries_test.go` (new), `policy_test.go`, `version_test.go`.
-- **Red step:** `TestBinariesAllowPatternsAreRefusedAtDecode` fails — `website/public/**.png`,
-  `/etc/passwd`, `..`, and an empty entry are all accepted by a decoder that has no such member, and
-  the task exists to refuse them where they are written.
+- **Red step:** `TestBinariesAllowPatternsAreRefusedAtDecode` fails — `/etc/passwd`, a `..`
+  component, an empty entry and a pattern the matcher cannot read (`brand/[.png`) are all accepted by
+  a decoder that has no such member, and the task exists to refuse them where they are written.
+  **`website/public/**.png` is not one of them, and this step's first draft had it first (F15):**
+  `**` means "any depth" in doublestar only as a whole path segment, so inside one it matches like
+  `*` and that entry is a readable pattern locking exactly one level. Accepting it is the five checks
+  of spec.md §2.1; refusing it would be a sixth, the second pattern rule F9 forbids. AR0 pins the
+  case as accepted *and* narrow (`TestBinariesAllowTakesAMisplacedDoubleStar`), and **AR1 adds no
+  check for it** — its caller is written against the rule that shipped.
 - **Tests:** `TestBinariesAllowPatternsAreRefusedAtDecode`, `TestAnOverLongBinariesPatternIsRefused`,
   `TestBinariesAbsentAdmitsNothing`, `TestBinariesWrittenEmptyAdmitsNothing` (admission time only:
   absent and empty both admit nothing here, and AR1's two publish tests tell the two spellings apart
