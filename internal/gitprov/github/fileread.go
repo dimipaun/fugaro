@@ -19,23 +19,62 @@ package github
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/httpjson"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 )
 
-// ErrFileNotFound is the repository holding no file at the path and ref that
-// were asked for. It is a fact of its own and not a refusal, because the
-// launcher's messages differ for the two: a document that is not there selects
-// nothing and leaves the run on the repository's own job, while a read that was
-// refused means the job cannot be decided at all (D905, spec §7). A caller
-// reads it with errors.Is; every other failure FileAt answers with is
-// Contents's own refusal, wording and all.
-var ErrFileNotFound = errors.New("github: the repository holds no such file at that ref")
+// The two things a 404 from the contents API can be. They are separate answers
+// because they are separate rows of the design's failure table (spec.md §7): a
+// document the ref does not carry selects nothing — no profile, no clone
+// workflow — and leaves the run on the repository's own job, while a ref the
+// forge cannot resolve is a refusal naming the ref (spec.md §3: a deleted or
+// never-pushed branch is not a reason to read another one, and D905 refuses
+// rather than falling back). A caller that read the second as the first would
+// place a run by a document it never read; both keep Contents's own error
+// wrapped, so the status, the URL and GitHub's message stay reachable to
+// whoever reads the failure.
+var (
+	// ErrFileNotFound is the repository holding no file at the path asked for,
+	// at a ref it does have (or at its default branch when the caller named
+	// none). A caller reads it with errors.Is.
+	ErrFileNotFound = errors.New("github: the repository holds no such file")
+	// ErrRefNotFound is the repository having no such ref at all. It is never
+	// the answer to a read that named no ref: the API's own default branch is
+	// one the repository has.
+	ErrRefNotFound = errors.New("github: the repository has no such ref")
+)
+
+// refNotFoundPrefix is how GitHub words the 404 that is about the ref and not
+// the path: "No commit found for the ref <ref>", and the SHA spelling of the
+// same miss for a ref given as one. Its answer about a path the ref does not
+// carry is a bare "Not Found", so this is the wording that positively selects
+// the ref row, and a message this code does not recognize stays the file row.
+//
+// It is GitHub's prose and can change under this package. A rewording puts a
+// missing ref back in the absent-file row, where this plan had it before the
+// distinction existed, and never the other way round: the row a message has to
+// positively select is the absent-file one, which is what a read that reached
+// the API at all is far likelier to be.
+const refNotFoundPrefix = "No commit found"
+
+// refNotFound reports whether body, a 404's own, is GitHub's answer about the
+// ref rather than the path.
+func refNotFound(body string) bool {
+	var answer struct {
+		Message string `json:"message"`
+	}
+	if json.Unmarshal([]byte(body), &answer) != nil {
+		return false
+	}
+	return strings.HasPrefix(answer.Message, refNotFoundPrefix)
+}
 
 // FileAt reads path of repo at ref, mints through ts, and returns the file's
 // bytes unchanged.
@@ -67,16 +106,20 @@ func FileAt(ctx context.Context, o Options, ts gitprov.TokenSource, repo, ref, p
 	if err != nil {
 		var se *httpjson.StatusError
 		if errors.As(err, &se) && se.Status == http.StatusNotFound {
-			// A ref the forge does not have answers the contents API the same
-			// 404 as a path that ref does not carry, and FileAt cannot tell
-			// them apart: both are the document's absence at the ref, which is
-			// the one thing its caller decides differently from a refusal.
+			at := pluginwire.Printable(path)
 			where := "the default branch"
 			if ref != "" {
 				where = pluginwire.Printable(ref)
 			}
-			return nil, fmt.Errorf("%w: %s at %s", ErrFileNotFound, pluginwire.Printable(path), where)
+			if refNotFound(se.Body) {
+				return nil, fmt.Errorf("%w: %s: %w", ErrRefNotFound, where, err)
+			}
+			return nil, fmt.Errorf("%w: %s at %s: %w", ErrFileNotFound, at, where, err)
 		}
+		// Every other failure — a refused read, 403 included, which is what a
+		// live call with a mint that carries no contents gets — a 5xx, a
+		// non-file entry and a body over the bound all stay Contents's own
+		// refusal, wording and all.
 		return nil, err
 	}
 	return data, nil

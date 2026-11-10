@@ -10,6 +10,7 @@ package github
 import (
 	"context"
 	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/gitprov/httpfixture"
+	"github.com/dimipaun/fugaro/internal/gitprov/httpjson"
 )
 
 // personReadToken is the token the fake source below mints, and
@@ -77,6 +79,18 @@ func TestFileAtAsksForTheRefItWasGiven(t *testing.T) {
 	}
 }
 
+// statusOf is the *httpjson.StatusError an answer keeps wrapped: both of
+// FileAt's 404 answers carry it, so the status, the URL and GitHub's own
+// message are still there for whoever reads the failure.
+func statusOf(t *testing.T, err error) *httpjson.StatusError {
+	t.Helper()
+	var se *httpjson.StatusError
+	if !errors.As(err, &se) {
+		t.Fatalf("err = %v, want the reply's own status kept in it", err)
+	}
+	return se
+}
+
 // TestFileAtDistinguishesMissingFromRefused: a file the repository does not
 // hold at the ref is a typed answer of its own, because the launcher's two
 // messages differ for the two — and every other failure stays the refusal
@@ -89,6 +103,9 @@ func TestFileAtDistinguishesMissingFromRefused(t *testing.T) {
 	if !strings.Contains(err.Error(), "fugaro.yaml") || !strings.Contains(err.Error(), "release/1.2") {
 		t.Fatalf("err = %v, want it to name the file and the ref", err)
 	}
+	if se := statusOf(t, err); se.Status != http.StatusNotFound {
+		t.Fatalf("the wrapped status is %d, want the reply's own 404", se.Status)
+	}
 	_, err = FileAt(ctx, fileReadOptions(t, "refused.json"), &fakePersonReadTokens{}, "acme/web", "release/1.2", "fugaro.yaml")
 	if err == nil {
 		t.Fatal("a refused read was accepted")
@@ -98,6 +115,30 @@ func TestFileAtDistinguishesMissingFromRefused(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "403") {
 		t.Fatalf("err = %v, want Contents's own wording for the refusal", err)
+	}
+}
+
+// TestFileAtRefusesARefTheRepositoryDoesNotHave: the contents API answers a
+// path it does not carry and a ref it cannot resolve with the same 404, and
+// they are two different rows of the design's own failure table (spec.md §7):
+// a document that is not there selects nothing and leaves the run on the
+// repository's own job, while a deleted, force-pushed or mistyped ref is a
+// refusal naming the ref (spec.md §3). A read that read the second as the
+// first would place the run by a document nobody ever read, and fail later at
+// clone — the fallback D905 refuses.
+func TestFileAtRefusesARefTheRepositoryDoesNotHave(t *testing.T) {
+	_, err := FileAt(ctx, fileReadOptions(t, "missing_ref.json"), &fakePersonReadTokens{}, "acme/web", "release/1.2", "fugaro.yaml")
+	if !errors.Is(err, ErrRefNotFound) {
+		t.Fatalf("a ref the repository does not have: err = %v, want ErrRefNotFound", err)
+	}
+	if errors.Is(err, ErrFileNotFound) {
+		t.Fatalf("a ref the repository does not have: err = %v, want it never to be read as the absent-file answer", err)
+	}
+	if !strings.Contains(err.Error(), "release/1.2") {
+		t.Fatalf("err = %v, want it to name the ref", err)
+	}
+	if se := statusOf(t, err); se.Status != http.StatusNotFound {
+		t.Fatalf("the wrapped status is %d, want the reply's own 404", se.Status)
 	}
 }
 

@@ -77,7 +77,8 @@ whole `internal/cli` or `internal/runner` run.
 
 - **Files:** `internal/gitprov/github/fileread.go` (new), `internal/gitprov/github/fileread_test.go`
   (new), `internal/gitprov/github/testdata/fileread/*.json` (new: an `httpfixture` replay of one file
-  read and of one missing file).
+  read, one file the ref does not carry, one ref the repository does not have and one read the forge
+  refuses).
 - **Interfaces:** `FileAt(ctx context.Context, o Options, ts gitprov.TokenSource, repo, ref, path string) ([]byte, error)`,
   built over what the package already has rather than over a second HTTP client (reconciliation F6): it
   assembles `Options` for `repo` with `ServiceHeldKey: true`, installs `ts` (`UseServiceTokens` accepts
@@ -86,18 +87,30 @@ whole `internal/cli` or `internal/runner` run.
   entry, a submodule, a non-base64 body and anything over `gitprov.MaxContentsBytes`. What A1 adds is
   the one thing the launcher's messages need and `Contents` does not carry: a **typed not-found**, so a
   file the repository does not hold at the ref is a different error from a read that was refused
-  (spec.md §7's rows differ for the two). **It adds no parsing and no second decode:** `FileAt` returns
-  `Contents`'s bytes unchanged, and the distinction is drawn from the error `Contents` already returns —
-  `errors.As(err, new(*httpjson.StatusError))` with `Status == 404` is `ErrFileNotFound`, and every other
-  failure (403 included: **what a live call with today's mint gets**, 5xx, a non-file entry, a body over
-  the bound) stays a refusal with `Contents`'s own wording. **No permission is asked for, and there is
+  (spec.md §7's rows differ for the two). **It adds no parsing of the document and no second decode:**
+  `FileAt` returns `Contents`'s bytes unchanged, and the distinction is drawn from the error `Contents`
+  already returns — `errors.As(err, new(*httpjson.StatusError))` with `Status == 404` is a typed answer,
+  and every other failure (403 included: **what a live call with a mint that carries no contents gets**,
+  5xx, a non-file entry, a body over the bound) stays a refusal with `Contents`'s own wording. **The 404
+  is two answers and not one** — the API sends it both for a path the ref does not carry and for a ref
+  it cannot resolve, and spec.md §7's rows differ for the two: a document that is not there selects
+  nothing and leaves the run on the repository's own job, while a deleted, force-pushed or mistyped ref
+  is a refusal naming the ref (§3, D905 — never the fallback). So `ErrFileNotFound` is the absent-path
+  answer and `ErrRefNotFound` the absent-ref one, told apart by GitHub's own wording for the second
+  (`No commit found for the ref …`, which no 404 about a path carries), and **both keep `Contents`'s
+  error wrapped**, so the status and GitHub's message stay reachable to whoever reads the failure. A
+  rewording of that message would put a missing ref back in the absent-file row — the reading this plan
+  had before the distinction — and never the other way, because the absent-file row is the one a
+  message must positively select. **No permission is asked for, and there is
   no parameter to ask with:** what the token reaches is the set the service mints (A0). **Its
   dependence on A0 is the live path and nothing else:** the fixture tests below are green the day A1 is
   written, and what waits for A0 is a real person's token reading a real file — A3's end-to-end test.
 - **Tests:** `TestFileAtAsksForTheRefItWasGiven`, `TestFileAtDistinguishesMissingFromRefused`,
-  `TestFileAtUsesTheTokenSourceItIsGiven` (a fake `gitprov.TokenSource` observes one mint and the
-  request carries its token). The kind, encoding and size refusals are `Contents`'s own and stay in
-  `contents_test.go`; A1 does not restate them.
+  `TestFileAtRefusesARefTheRepositoryDoesNotHave` (the two 404s, and the one classification that must
+  never happen: the absent-ref answer read as the absent-file one), `TestFileAtUsesTheTokenSourceItIsGiven`
+  (a fake `gitprov.TokenSource` observes one mint and the request carries its token), and
+  `TestFileAtRefusesARepositoryItCannotName`. The kind, encoding and size refusals are `Contents`'s own
+  and stay in `contents_test.go`; A1 does not restate them.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/gitprov/github -run 'FileAt' -count=1`.
 - **Red step:** `TestFileAtAsksForTheRefItWasGiven` is red against a package with no such function, and
   a first implementation that reads the working tree or the default branch keeps it red.
