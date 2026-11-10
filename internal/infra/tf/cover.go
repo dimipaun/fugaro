@@ -1093,6 +1093,11 @@ func (c Cover) NotCovered(p *Plan, imports []ImportKey) []string {
 // judge WHAT a plan contains — the type table and the grant table — are content
 // while nothing is being removed, because D1545 leaves that judgement to
 // record-and-warn, and every other rule of the chain is D1549's and refuses.
+// The type table's content arm does not end the chain: the import rules and
+// attributes' own rules below it are read for a type the modules do not carry
+// as well, so an off-table resource in a project that is not this run's — or
+// one importing an object this run's discovery never found — is refused as well
+// as warned (notCoveredIntegrity).
 func (c Cover) NotCoveredSplit(p *Plan, imports []ImportKey) (integrity, content []string) {
 	_, integrity, content = c.notCoveredSplit(p, imports)
 	return integrity, content
@@ -1166,7 +1171,21 @@ func (c Cover) notCoveredSplit(p *Plan, imports []ImportKey) (all, integrity, co
 		case t == "google_service_account_key":
 			add(rc, "a service account key")
 		case !allowedTypes[t]:
-			addFinding(rc, coverFinding{why: "a resource type outside the installation's modules", content: !removalRefuses(rc)})
+			f := coverFinding{why: "a resource type outside the installation's modules", content: !removalRefuses(rc)}
+			addFinding(rc, f)
+			// The type table is CONTENT — D1545 records it and warns — and it
+			// must not take the rules below it down with it: the imports and
+			// attributes' own rules judge the resource itself, where it lands
+			// and what it takes over, and they are D1549's whatever the type is.
+			// A type the modules do not carry is therefore warned about AND
+			// still refused for the deeper reason when there is one
+			// (notCoveredIntegrity), which is the shape tf.ManagedCover's own
+			// chain has.
+			if f.content {
+				if why := c.notCoveredIntegrity(rc, imports, creates, createdSAIDs, heldSAIDs, creds); why != "" {
+					add(rc, why)
+				}
+			}
 		case t == "google_project_iam_custom_role" && c.customRole(rc) != "":
 			add(rc, c.customRole(rc))
 		case rc.Change.Importing != nil && !c.importOK(rc.Change.Importing.ID):
@@ -1182,6 +1201,25 @@ func (c Cover) notCoveredSplit(p *Plan, imports []ImportKey) (all, integrity, co
 		}
 	}
 	return all, integrity, content
+}
+
+// notCoveredIntegrity is the part of the installation cover's chain below its
+// type table — the two import rules and attributes' own rules — in the order
+// the chain reads them. It is a function of its own for the reason
+// tf.ManagedCover's helper of the name is (managed_cover.go): the type table is
+// CONTENT for a type the modules do not carry, and its warning must not stop
+// the rules that judge the resource itself from answering. "" when the change
+// passes all of them.
+func (c Cover) notCoveredIntegrity(rc ResourceChange, imports []ImportKey, creates, createdSAIDs, heldSAIDs map[string]bool, creds credentialsPlan) string {
+	switch {
+	case rc.Change.Importing != nil && !c.importOK(rc.Change.Importing.ID):
+		return "imports " + rc.Change.Importing.ID + ", which is not in this run's projects"
+	case rc.Change.Importing != nil && !slices.Contains(imports, ImportKey{rc.Address, rc.Change.Importing.ID}):
+		return "imports " + rc.Change.Importing.ID + ", which this run's discovery did not find"
+	case c.attributes(rc, creates, createdSAIDs, heldSAIDs, creds) != "":
+		return c.attributes(rc, creates, createdSAIDs, heldSAIDs, creds)
+	}
+	return ""
 }
 
 // removalContent is whether the arm this cover refuses a removal with — the one

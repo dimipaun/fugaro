@@ -210,6 +210,18 @@ func TestNotCoveredSplitTellsIntegrityFromContent(t *testing.T) {
 	imported := mrc("google_storage_bucket", map[string]any{"name": ManagedPrefix + "bucket"})
 	imported.Change.Importing = &Importing{ID: "other-project/fugaro-bucket"}
 	foreignImport := managedPlan(imported)
+	// The type table's content arm does not end the chain (notCoveredResource):
+	// an off-table type is warned about AND the rules below the table still run,
+	// so a type the managed list does not carry is no way past the project and
+	// import rules. google_compute_instance is on neither list, which is what
+	// makes these rows the type table's own arm.
+	const offTable = "google_compute_instance"
+	if managedTypes[offTable] {
+		t.Fatalf("%s is on the managed list, so these rows no longer exercise the type table's content arm", offTable)
+	}
+	offTableProject := managedPlan(mrc(offTable, map[string]any{"name": "vm-1", "project": "other"}))
+	offTableImported := mrc(offTable, map[string]any{"name": "vm-1"})
+	offTableImported.Change.Importing = &Importing{ID: "other-project/vm-1"}
 
 	for _, tc := range []struct {
 		name, half, want string
@@ -224,6 +236,9 @@ func TestNotCoveredSplitTellsIntegrityFromContent(t *testing.T) {
 		{"a name outside the managed prefix", "integrity", `"fugaro-coordinator", outside the managed prefix`, outsidePrefix},
 		{"a resource in another project", "integrity", "in project other, which is not this run's", otherProject},
 		{"an import outside this run's projects", "integrity", "which is not in the managed project's projects", foreignImport},
+		{"an off-table type in another project", "integrity", "in project other, which is not this run's", offTableProject},
+		{"an off-table type taking over another project's object", "integrity", "which is not in the managed project's projects",
+			managedPlan(offTableImported)},
 		{"a dropped type", "content", "allowlist leaves out", managedPlan(mrc("google_logging_project_sink", nil))},
 		{"a grant the table does not make", "content", "basic role", managedPlan(mrc("google_storage_bucket_iam_member",
 			map[string]any{"bucket": ManagedPrefix + "bucket", "member": "serviceAccount:" + managedAccount, "role": "roles/owner"}))},
@@ -248,6 +263,57 @@ func TestNotCoveredSplitTellsIntegrityFromContent(t *testing.T) {
 			// only told apart.
 			if got, want := len(c.NotCovered(tc.plan, nil)), len(integrity)+len(content); got != want {
 				t.Errorf("%s: NotCovered holds %d items, the split holds %d", tc.name, got, want)
+			}
+		})
+	}
+}
+
+// TestAnOffTableTypeInTheInstallationCoverDoesNotEndTheWalk is the same arm at
+// the installation cover (Cover.notCoveredSplit): a type the installation's
+// modules do not carry is warned about, and the rules below the type table —
+// the two import rules and attributes' own project rule — still judge the
+// resource, which is what makes an unknown type no way past them. The halves
+// partition the one walk either way.
+func TestAnOffTableTypeInTheInstallationCoverDoesNotEndTheWalk(t *testing.T) {
+	const offTable = "google_compute_instance"
+	if allowedTypes[offTable] {
+		t.Fatalf("%s is in the installation's tables, so this test no longer exercises the type table's content arm", offTable)
+	}
+	inAnotherProject := rc(offTable, map[string]any{"name": "vm-1", "project": "other"}, map[string]any{}, "create")
+	takenOver := rc(offTable, map[string]any{"name": "vm-1"}, map[string]any{}, "create")
+	takenOver.Change.Importing = &Importing{ID: "other-project/vm-1"}
+	for _, tc := range []struct {
+		name, want string
+		change     ResourceChange
+	}{
+		{"an off-table type in another project", "in project other, which is not this run's", inAnotherProject},
+		{"an off-table type taking over another project's object", "which is not in this run's projects", takenOver},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := &Plan{FormatVersion: "1.2", ResourceChanges: []ResourceChange{tc.change}}
+			integrity, content := testCover.NotCoveredSplit(p, nil)
+			contains := func(items []string) bool {
+				return slices.ContainsFunc(items, func(s string) bool { return strings.Contains(s, tc.want) })
+			}
+			// The type table's own item is CONTENT, whatever the deeper rule is:
+			// an off-table type is a warning, not a refusal, on its own.
+			if !slices.ContainsFunc(content, func(s string) bool {
+				return strings.Contains(s, "a resource type outside the installation's modules")
+			}) {
+				t.Errorf("%s: content holds %q, want the type table's own item", tc.name, content)
+			}
+			// And the deeper rule is INTEGRITY — D1549's — written beside it.
+			if !contains(integrity) {
+				t.Errorf("%s: integrity holds %q, want an item naming %q", tc.name, integrity, tc.want)
+			}
+			if contains(content) {
+				t.Errorf("%s: the %q item is in the wrong half (%v)", tc.name, tc.want, content)
+			}
+			if got, want := len(testCover.NotCovered(p, nil)), len(integrity)+len(content); got != want {
+				t.Errorf("%s: NotCovered holds %d items, the split holds %d", tc.name, got, want)
+			}
+			if got, want := len(integrity)+len(content), 2; got != want {
+				t.Errorf("%s: the walk answers %d times, want %d: the type table's warning and the rule below it", tc.name, got, want)
 			}
 		})
 	}

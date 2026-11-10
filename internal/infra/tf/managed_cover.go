@@ -342,6 +342,13 @@ func (c ManagedCover) NotCovered(p *Plan, imports []ImportKey) []string {
 // which are content only for a type D1551 takes (a classified, non-data-bearing
 // one) and stay integrity refusals for a data-bearing or unclassified type
 // (RefusesRemovalType).
+//
+// The type table's content arm does not end the chain: a type outside the
+// allowlist is warned about AND still judged by the rules below it
+// (notCoveredResource), so an off-table resource that lands in another project,
+// or takes over an object this run's discovery never found, is refused as well
+// as warned — the deeper reason in the integrity half, the warning in the
+// content one, both under the same address.
 func (c ManagedCover) NotCoveredSplit(p *Plan, imports []ImportKey) (integrity, content []string) {
 	_, integrity, content = c.notCoveredSplit(p, imports)
 	return integrity, content
@@ -489,13 +496,15 @@ func (c ManagedCover) notCoveredSplit(p *Plan, imports []ImportKey) (all, integr
 		// (removed) — while a destroy has nothing in after to read and is
 		// judged on the resource it removes alone.
 		if !destroy {
-			if f := c.notCoveredResource(rc, declared, imports); f.why != "" {
-				addFinding(rc, f)
+			if fs := c.notCoveredResource(rc, declared, imports); len(fs) > 0 {
+				for _, f := range fs {
+					addFinding(rc, f)
+				}
 				continue
 			}
 		}
 		if removes {
-			if f := c.notCoveredResource(removed(rc), declared, imports); f.why != "" {
+			for _, f := range c.notCoveredResource(removed(rc), declared, imports) {
 				addFinding(rc, f)
 			}
 		}
@@ -578,7 +587,10 @@ func removed(rc ResourceChange) ResourceChange {
 // integrity refusal.
 // Returning the classification beside the reason is what lets NotCoveredSplit
 // tell the two kinds apart without matching a reason against its own words, and
-// what keeps NotCovered's items in the order they have always been written.
+// what keeps NotCovered's items in the order they have always been written. One
+// change can carry two of these — the type table's content one and an integrity
+// one from the rules below it (notCoveredResource) — and the walk writes the
+// table's first, where the chain has always written it.
 type coverFinding struct {
 	why     string
 	content bool
@@ -601,24 +613,67 @@ func removalRefuses(rc ResourceChange) bool {
 }
 
 // notCoveredResource is why the resource a change's view shows is not one a
-// managed plan may contain, "" when it is: the rule chain NotCovered reads a
+// managed plan may contain, nil when it is: the rule chain NotCovered reads a
 // create through, which a delete and both halves of a replace are judged by as
 // well. rc is either the change itself (the resource the plan creates, in
 // after) or removed(rc) (the resource it removes, in before).
-func (c ManagedCover) notCoveredResource(rc ResourceChange, declared map[string]ConfigResource, imports []ImportKey) coverFinding {
+//
+// It answers TWO findings in one case, and only one: when the type table fires
+// as CONTENT — a type outside the managed allowlist, which D1545 records and
+// warns about rather than stopping — the rules below it are still read
+// (notCoveredIntegrity: the import rules, managedResource and managedProject).
+// They judge the resource itself rather than what the plan contains, so they
+// are integrity refusals D1549 keeps whatever the type is, and a type the table
+// does not carry must not be a way past them: an off-table resource in another
+// project, or one taking over somebody else's object, would otherwise be warned
+// about and then applied. The type's own reason is written first, where the
+// chain has always written it, and the deeper one beside it.
+//
+// A type-table finding that is INTEGRITY — a removal of a data-bearing or
+// unclassified type (removalRefuses) — is the whole answer, because it refuses
+// the change for good whatever the rules below it would say.
+func (c ManagedCover) notCoveredResource(rc ResourceChange, declared map[string]ConfigResource, imports []ImportKey) []coverFinding {
 	t := rc.Type
 	switch {
 	case strings.HasSuffix(t, "_iam_binding") || strings.HasSuffix(t, "_iam_policy") || strings.HasSuffix(t, "_iam_audit_config"):
-		return coverFinding{why: "an authoritative IAM resource"}
+		return []coverFinding{{why: "an authoritative IAM resource"}}
 	case t == "google_service_account_key":
-		return coverFinding{why: "a service account key"}
+		return []coverFinding{{why: "a service account key"}}
 	case c.managedBilling(rc) != "":
 		// Before the type rule: google_billing_budget is off the managed
 		// list, so read after it the billing account would never be read
 		// (managedBilling).
-		return coverFinding{why: c.managedBilling(rc)}
+		return []coverFinding{{why: c.managedBilling(rc)}}
 	case !managedTypes[t]:
-		return coverFinding{why: c.managedTypeReason(t), content: !removalRefuses(rc)}
+		f := coverFinding{why: c.managedTypeReason(t), content: !removalRefuses(rc)}
+		if !f.content {
+			return []coverFinding{f}
+		}
+		out := []coverFinding{f}
+		if deeper := c.notCoveredIntegrity(rc, declared, imports); deeper.why != "" {
+			out = append(out, deeper)
+		}
+		return out
+	}
+	if f := c.notCoveredIntegrity(rc, declared, imports); f.why != "" {
+		return []coverFinding{f}
+	}
+	if strings.HasSuffix(t, "_iam_member") {
+		if why := c.managedGrant(rc); why != "" {
+			return []coverFinding{{why: why, content: !removalRefuses(rc)}}
+		}
+	}
+	return nil
+}
+
+// notCoveredIntegrity is the part of the chain below the two cover tables: the
+// import rules, managedResource and managedProject, in the order the chain has
+// always read them. It is a function of its own so the type table's content arm
+// can still run them (notCoveredResource): the tables judge what a plan
+// contains, these judge the resource itself, and the one must not take the
+// other's refusals down with it.
+func (c ManagedCover) notCoveredIntegrity(rc ResourceChange, declared map[string]ConfigResource, imports []ImportKey) coverFinding {
+	switch {
 	case rc.Change.Importing != nil && !c.importOK(rc.Change.Importing.ID):
 		return coverFinding{why: "imports " + rc.Change.Importing.ID + ", which is not in the managed project's projects"}
 	case rc.Change.Importing != nil && !slices.Contains(imports, ImportKey{rc.Address, rc.Change.Importing.ID}):
@@ -627,8 +682,6 @@ func (c ManagedCover) notCoveredResource(rc ResourceChange, declared map[string]
 		return coverFinding{why: c.managedResource(rc)}
 	case c.managedProject(rc, declared) != "":
 		return coverFinding{why: c.managedProject(rc, declared)}
-	case strings.HasSuffix(t, "_iam_member"):
-		return coverFinding{why: c.managedGrant(rc), content: !removalRefuses(rc)}
 	}
 	return coverFinding{}
 }
