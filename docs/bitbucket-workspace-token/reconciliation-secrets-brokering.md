@@ -9,11 +9,11 @@ task of this plan, what the proxy chain or other merged code already builds it, 
 task is **Done**, **Superseded** (naming the task that wins) or **Kept** (with why).
 
 **The owner's question, answered here.** [status.md](../status.md) records that "the proxy chain
-probably makes T2.2 and T2.9 moot". It does not, and the two are not alike: **T2.9 is moot** — the
-service's rules are the boundary now, and a runner-side check binds nothing an agent cannot bypass
-— while **T2.2 is not**: the proxy takes the token out of the *job*, and it does not make the
-service admit a *shared* job, which is B5.1 and has not started. §2 and §3 say so with the file
-and the symbol behind each claim.
+probably makes T2.2 and T2.9 moot". Half of that holds, and the two are not alike: **T2.9 is
+moot** — the service's rules are the boundary now, and a runner-side check binds nothing an agent
+cannot bypass — while **T2.2 is not**: the proxy takes the token out of the *job*, and it does not
+make the service admit a *shared* job, which is B5.1 and has not started. §2 and §3 say so with the
+file and the symbol behind each claim.
 
 **It adds to [reconciliation.md](reconciliation.md); it does not replace it.** Nothing there is
 revised, no historical text anywhere is rewritten, and this document approves no task and
@@ -56,7 +56,7 @@ draft #2166.
 | **T2.3** policy publish derives the block and runs the check | **Done** | Built by **BW-T2.3**: publish derives the amended block and never drops it. |
 | **T2.4** `fugaro doctor` warns about an own copy a shared job ignores | **Kept — waiting on B5.1** | Its subject is a **shared** job's use of the project token, which the proxy does not change until B5.1 admits shared jobs. The secrets-brokering plan's "moot for proxied repositories" reads a per-repository proxied job, which T2.4 was never about: on such a repository the job holds no token at all. D1982. |
 | **T2.5** folded into T2.9 | **Superseded by B1.4 and B1.5** | It went with T2.9, and T2.9 is replaced. |
-| **T2.6** docs: phase 3 serves Bitbucket too | **Kept in part — one sliver is owed now** | The phase-3 half waits for S5 with T2.2. Two corrections do not: the `FUGARO_BITBUCKET_API_URL` variables-table row does not name `bitbucket_api_roots`, and the same section still says the lock "is 0.13.0's (D474, T2.8)" when BW-T2.8 shipped it in 0.14.0. D1983. |
+| **T2.6** docs: phase 3 serves Bitbucket too | **Kept in part — one sliver is owed now** | The phase-3 half waits for S5 with T2.2. Three corrections do not: the `FUGARO_BITBUCKET_API_URL` variables-table row does not name `bitbucket_api_roots`; the section still says the root lock "is 0.13.0's (D474, T2.8)" when BW-T2.8 shipped it in 0.14.0; and "Bitbucket stays on the per-repository path" says each Bitbucket repository "keeps its own job and its own `bitbucket-token`", which the flip makes false. D1983. |
 | **T2.7** Check 181, OWNER-RUN | **Kept** | The register has no row 181 and no `## Check 181:` section; `internal/cli/docs_checks_180_181_test.go` says 181 joins them with T2.6's section. It waits for T2.6 and S5. |
 | **T2.8** a cloud run pins the Bitbucket API root | **Done** | Built by **BW-T2.8**: `internal/runner/runner.go`'s `checkBitbucketAPIRoot`, called from `openProvider` for every Bitbucket provider. Under the proxy it protects the **non-proxied** repositories, whose runner still holds the token. Its operator step is missing from the shipped notes — D1984. |
 | **T2.9** the runner enforces the block on a shared job | **Superseded by B1.4 and B1.5** | Verified absent: `internal/runner/projectjob.go` has `checkProjectJobAccount` and no Bitbucket check, and its test file is not in the tree. The boundary is now `internal/gitproxy/rules.go`'s `Decide` and `CheckPRWrite`, behind `internal/credsvc/bitbucketproxy.go` — a place a runner-side check cannot be, because a check in the job binds nothing the agent cannot bypass (F5). D1981. |

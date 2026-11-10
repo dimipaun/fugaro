@@ -53,7 +53,8 @@ through a **person's** credential rather than a run's.
 **Merged, for the record.** T0.1 and T0.2 (this folder's guard
 `internal/cli/docs_bitbucket_credentials_test.go`, and the register's rows and sections for Checks
 145, 146 and 149, held by `internal/cli/docs_checks_145_149_test.go`); T1.1 and T1.2
-(`ee/coordinator/cli/coordinator_view.go` and the console's P6); **BB1** (`internal/gitprov/bitbucket/oauth.go`);
+(`ee/coordinator/cli/coordinator_view.go` for the stored-view read, with the console's P6 built on
+it); **BB1** (`internal/gitprov/bitbucket/oauth.go`);
 **BB2** (`internal/credsvc/bundle.go`'s `KindBitbucketReadConsumer` and `BitbucketReadConsumerSecret`);
 **BB3** (`scripts/live-checks/check145.sh`); **BB4** (`internal/credsvc/bitbucket.go`,
 `internal/credsvc/auth.go`'s `PersonAccounts`, `ee/coordinator/cli/coordinator_show.go`); **BB5**
@@ -72,7 +73,7 @@ Bitbucket token for a run.
 | **T3.4** `SECURITY.md` and the docs say it plainly | **Superseded by B1.10 and B1.13 part one** | Its subject was the reach of a **minted run token** (workspace-wide for the consumer's owner, for the life of the run plus 1–2 hours). No token is minted. B1.10 wrote the proxy's own section and B1.13 part one the operator notes; the sentences T3.4 was to replace are still true, because a run on a non-proxied repository still holds its own per-repository token. |
 | **T3.5** the minimum run scopes, enforced where possible, and their check | **Superseded — and Check 147 with it** | Nothing is minted, so there is no run scope set to enforce: the service spends the credential the operator stored, whose scopes are the operator's own. Check 147 has no script and its subject is gone (D1960). |
 | **T3.6** the per-repository drop of the job's own `bitbucket-token` | **Superseded by B1.8** | `internal/config/providers.go`'s `ProxiedGitSecretNames` with `internal/infra/spec.go`'s `RepoSpec.BitbucketProxied` and `deploy/terraform/gcp/modules/workflow/sa.tf` is the same drop, keyed on the published node instead of on a per-repository local switch. Its tests are merged; only the **flip** is owed (B1.13 part two, held on Check 191 in draft #2166). |
-| **T3.7** Check 147 (OWNER-RUN) | **Superseded by B1.11 and B1.12** | The check is dropped with T3.5, and the proxy's own owner-run check takes its place: `scripts/live-checks/check191.sh` and the register's `\| 191 \|` row, with 192 for the flip. |
+| **T3.7** Check 147 (OWNER-RUN) | **Superseded — the check is dropped** | It goes with T3.5, and the proxy's own owner-run check takes its place: `scripts/live-checks/check191.sh` (B1.11) and the register's `\| 191 \|` row, with 192 for the flip. D1960 asks the owner to retire the number. |
 | **T3.8** Check 148: the stop, rotation and ownership-transfer drill | **Superseded in part, Kept in part** | The run-mint half goes with S3. The **read** half — the read consumer's stop, rotation and ownership transfer, with U13 — is Kept and is D1961: the read consumer is merged and shipped, and nothing else exercises its rotation. |
 
 **One consequence worth stating plainly.** S3 was parked "until a push and pull-request proxy
@@ -101,14 +102,14 @@ same reconciliation takes.
 | Block | Use |
 | --- | --- |
 | **D360–D389** | Unchanged: **D360–D367** written and answered (2026-10-26); **D368–D389** reserved and unused. |
-| **Checks 145–154** | **145, 146, 148 and 149** are the plan's; **147** is retired by D1960 and **150–154** stay reserved. |
+| **Checks 145–154** | **145, 146 and 149** are the plan's, and **148** is the plan's too with only its read half live (D1961); **147** is the number D1960 asks the owner to retire; **150–154** stay reserved. |
 | **D1960–D1979** | **This reconciliation's block**: D1960–D1962 are written above, D1963–D1979 reserved and unused. It sits above D1959, the highest decision on `main`, and beside the workspace-token folder's D1980–D1999. |
 
 ## 5. UNVERIFIED
 
 - **Nothing here was checked live.** Every row is a reading of `origin/main`; no run was launched,
-  no service was called and no credential was read. Checks 145, 146, 148 and 149 stay the owner's,
-  and none of them has been run.
+  no service was called and no credential was read. Checks 145, 146 and 149 stay the owner's and
+  none of them has been run; 148's read half is unwritten and is D1961's subject.
 - **The flip is not done** (`ProxiedGitSecretNames` is empty), so no installation is proxied today
   and the reach `SECURITY.md` states is still the live one. Everything this document says about a
   proxied run is a reading of code that no released installation runs yet.
