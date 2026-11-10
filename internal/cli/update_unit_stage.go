@@ -30,13 +30,12 @@ import (
 // person runs the command themselves), and a run with nobody at it writes
 // nothing either: the loop leaves the step for the user, and the left-for-you
 // line names the command to run where a person is. What it does NOT do is ask:
-// the plan line naming the file it
-// re-renders and where it lives is a line of the plan this update showed at the
-// person's own terminal before it applied anything, and re-rendering a unit the
-// person installed themselves — from the same template, naming the same stable
-// binary — is not a new write of code into their login. An extra confirmation
-// here would be exactly the operator step T7 exists to remove (the owner's
-// complaint of 2026-11-10).
+// the plan line naming the file it re-renders and where it lives is a line of
+// the plan this update showed at the person's own terminal before it applied
+// anything, and re-rendering a unit the person installed themselves — from the
+// same template, naming the same stable binary — is not a new write of code
+// into their login. An extra confirmation here would be exactly the operator
+// step T7 exists to remove (the owner's complaint of 2026-11-10).
 type updateUnitStage struct{ e *initEngine }
 
 func newUpdateUnitStage(e *initEngine) *updateUnitStage { return &updateUnitStage{e: e} }
