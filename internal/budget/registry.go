@@ -382,7 +382,7 @@ func (s *Session) heartbeat(ctx context.Context) {
 // The same set is a literal in the rules' outcome validator, because the
 // template is a document and not Go; the pin that holds the two together is
 // TestOutcomeRuleAcceptsEveryRunStatus (internal/budget/rules/rules_test.go,
-// which can import runstore), and TestFinishRecordsEveryRecordStatus
+// which can import runstore), and TestFinishRecordsTheRunsOwnStatus
 // (internal/budget/session_test.go) is the end of the path: the status the
 // runner passes reaches the outcome node unchanged.
 var outcomeStatuses = func() map[string]bool {
