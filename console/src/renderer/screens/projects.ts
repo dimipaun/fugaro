@@ -1771,9 +1771,12 @@ export function fillProjectsModels(factory: ScreenFactory, model: ProjectsModels
  * document and attaches no listener of its own. A row the
  * generic path does not write draws the command that does instead -- the
  * document's own `owner`, in the CLI's own words: a family's name, or the
- * sentence naming `fugaro setup` or `fugaro update` for a key that is the
- * installation's own (D1178). A document from a CLI that names no command on
- * such a row draws no word about one, because the console knows of none.
+ * sentence naming the command that carries the key's own file -- `fugaro setup`
+ * or `fugaro update` for a key that is the installation's own, `fugaro config
+ * publish` for a layer-file key and `fugaro config init` for one a checkout's
+ * `fugaro.yaml` is opened with (D1178). A document from a CLI that names no
+ * command on such a row draws no word about one, because the console knows of
+ * none.
  *
  * Everything from the document goes through `putText` with the class its wire
  * key declares; the two console sentences go through `literal`. The state is
