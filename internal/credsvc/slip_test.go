@@ -30,6 +30,7 @@ package credsvc
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"math"
 	"net/http"
@@ -960,6 +961,57 @@ func TestClaimIsStoppedByTheKillSwitch(t *testing.T) {
 			s.kills.global, s.kills.repos = false, nil
 			if claimed := s.claimOK(t, granted.Slip, claimBody(t, "")); claimed.ClaimSecret == "" {
 				t.Error("the claim after the switch cleared answered no claim secret")
+			}
+		})
+	}
+}
+
+// TestGrantIsStoppedByTheKillSwitch: the grant route is answered ahead of the
+// shared parse, so it reads the operator's switches itself, as the two other
+// routes answered there do (the read mints). An operator who stops the service
+// stops NEW grants with it, and that is the write this route must not make: an
+// unclaimed slip never expires, so a grant that got through while the service
+// was stopped is a lasting record of a run that is then halted at the claim.
+//
+// The refusal is the state the service is in and not a refusal of this call:
+// cleared, the same launcher is granted. A switch that cannot be read is the
+// same refusal and not a serve — an unreadable switch is not an off switch
+// (budget's own rule) — and its sentence is the service's own, never the
+// reader's text.
+func TestGrantIsStoppedByTheKillSwitch(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		stop func(*svc)
+	}{
+		{"the global switch", func(s *svc) { s.kills.global = true }},
+		{"the repository's own switch", func(s *svc) { s.kills.repos[s.slug] = true }},
+		{"the switches that cannot be read", func(s *svc) {
+			s.kills.err = errors.New("the switches node could not be read")
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newSlips(t, testLauncherAccount)
+			tc.stop(s.svc)
+
+			resp, body := s.grantCall(t, grantBody(t, s.slug, s.run, testJobSA, 3600, testSlipCredential))
+			if e := wantRefusal(t, resp, body, StatusUnavailable, ErrorStateUnavailable); strings.Contains(e.Message, "switches node") {
+				t.Errorf("the refusal carries the reader's own text: %q", e.Message)
+			}
+			if got := s.slipIDs(t); len(got) != 0 {
+				t.Errorf("a stopped service granted %v", got)
+			}
+			lines := auditLines(t, s.audit)
+			if len(lines) != 1 {
+				t.Fatalf("the stopped grant wrote %d audit lines, want exactly 1: %v", len(lines), lines)
+			}
+			wantSlipLine(t, lines[0], PurposeSlipGrant, ErrorStateUnavailable, map[string]any{
+				"caller": testLauncherAccount, "run": "", "repository": "", "job": "",
+				"credential": "", "tier": "",
+			})
+
+			s.kills.global, s.kills.repos, s.kills.err = false, nil, nil
+			if granted := s.grantOK(t, grantBody(t, s.slug, s.run, testJobSA, 3600, testSlipCredential)); granted.Slip == "" {
+				t.Error("the grant after the switch cleared answered no slip")
 			}
 		})
 	}

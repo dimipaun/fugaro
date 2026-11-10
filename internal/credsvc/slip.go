@@ -295,6 +295,10 @@ func newSlipID() (string, error) {
 //   - the call's body, whose read is ALSO the registration of the launcher's own
 //     token with the call-scoped scrub (readCall), exactly as the verify route
 //     and the read mints do it.
+//   - the operator's stop switches, which this route reads itself: it is
+//     answered ahead of the shared parse that reads them for every other route,
+//     and a stopped service grants nobody anything — the write below is a
+//     lasting one, because an unclaimed slip never expires.
 //   - the owner rule (R7), before the slip is written: a name the launcher may
 //     not be served is a request this contract does not read, and a refused
 //     grant writes nothing at all.
@@ -342,6 +346,24 @@ func (s *Server) slipGrant(ctx context.Context, w http.ResponseWriter, r *http.R
 	if err != nil {
 		// The refusal names the field and never what the call sent.
 		s.refuseGrant(ctx, w, caller.Account, StatusRequestRefused, ErrorRequestRefused, requestRefused+err.Error())
+		return
+	}
+	// The operator's stop switches, read HERE because this route is answered
+	// ahead of the shared parse that reads them for every other route, as the
+	// two read mints answered there read them themselves. A stopped service
+	// writes no new record: an unclaimed slip never expires, so a grant that got
+	// through while the service was stopped would be a lasting one, and the run
+	// it starts is halted at the claim.
+	on, which, err := s.cfg.Kills.Stop(ctx, req.Slug)
+	if err != nil {
+		// An unreadable switch is not an off switch (budget's own rule), so the
+		// call is refused rather than served.
+		s.refuseGrant(ctx, w, caller.Account, StatusUnavailable, ErrorStateUnavailable, "the operator's stop switches could not be read")
+		return
+	}
+	if on {
+		s.refuseGrant(ctx, w, caller.Account, StatusUnavailable, ErrorStateUnavailable,
+			"the credentials service is stopped by the "+which+" kill switch")
 		return
 	}
 	if err := checkGrantedNames(req.Credentials, caller.Sub); err != nil {
