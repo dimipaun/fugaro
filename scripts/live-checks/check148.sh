@@ -504,6 +504,7 @@ mint_once() {
   MINT_REPO=$(field_of repo "$answer")
   MINT_EXPIRES=$(field_of expires "$answer")
   MINT_TOKEN=$(field_of token "$answer")
+  MINT_ANSWERED=$(field_of answered "$answer")
   if [ "$MINT_TOKEN" = yes ]; then
     CREDENTIAL_FILES+=("$SCRATCH/token-$n")
   fi
@@ -522,7 +523,19 @@ mint_want() {
     mint_once "$n"
     case "$want" in
     ok) [ "$MINT_STATUS" = 200 ] && return 0 ;;
-    refused) [ "$MINT_STATUS" != 200 ] && return 0 ;;
+    refused)
+      # Only the service's own refusal is a refusal. A bundle without the read
+      # consumer is refused with 503 state_unavailable
+      # (internal/credsvc/bitbucket.go's ErrReadNoConsumer through refuseRead,
+      # whose statuses are wire.go's: 503 for everything the service cannot
+      # answer now, 403 for an unverified caller, 400 for a request its own
+      # rules refuse). Anything else — a curl timeout (000), a Cloud Run 429 or
+      # 5xx, an answer that is not a document — is this run NOT KNOWING, and a
+      # stop reported on any non-200 would be a stop that may never have
+      # happened, which is the one thing this check exists to avoid. So those
+      # keep waiting, and the row fails at the bound saying which answer it got.
+      [ "$MINT_STATUS" = 503 ] && [ "$MINT_CODE" = state_unavailable ] && return 0
+      ;;
     esac
     if [ "$waited" -ge "$MINT_WAIT" ]; then
       return 1
@@ -596,7 +609,17 @@ step_stop() {
     fact stop PASS "with the entry out of the bundle (version $VERSION; version $before disabled) the read mint is refused: the service answered ${MINT_STATUS}${MINT_CODE:+ (refused: ${MINT_CODE})}, and a bundle with no read consumer is refused rather than served from another entry"
     return 0
   fi
-  fact stop FAIL "the read mint was still served (HTTP ${MINT_STATUS}) ${MINT_WAIT}s after the entry was taken out of the bundle and the version it replaced was disabled: either the service is reading a document that still holds it — another version is enabled, or something else wrote one — or the mint is not reading the bundle at all. Read the bundle with fugaro creds ls and the service's own log before you trust a stop"
+  # Which answer the bound ran out on decides what the row can say. A 200 is the
+  # mint still serving; anything else is the run failing to read the refusal it
+  # needs, and the row says which answer it got rather than calling it a stop.
+  if [ "$MINT_STATUS" = 200 ]; then
+    fact stop FAIL "the read mint was still served (HTTP 200) ${MINT_WAIT}s after the entry was taken out of the bundle and the version it replaced was disabled: either the service is reading a document that still holds it — another version is enabled, or something else wrote one — or the mint is not reading the bundle at all. Read the bundle with fugaro creds ls and the service's own log before you trust a stop"
+  else
+    local note=""
+    if [ "$MINT_STATUS" = 000 ]; then note=$(curl_note); fi
+    if [ "$MINT_ANSWERED" = no ]; then note="$note (the answer was not a document at all)"; fi
+    fact stop FAIL "the read mint did not answer with the service's own refusal ${MINT_WAIT}s after the entry was taken out of the bundle: the service answered ${MINT_STATUS}${MINT_CODE:+ (${MINT_CODE})}${note}. A bundle with no read consumer is refused 503 state_unavailable, so this row is a reading this run does not have rather than a stop it measured — read the service's own log and the bundle with fugaro creds ls before you trust a stop"
+  fi
   return 1
 }
 
@@ -633,7 +656,7 @@ step_restore_consumer() {
     fact restore-consumer PASS "fugaro creds set put the read consumer back and the mint is served again (HTTP 200): the stop is a bundle write and its undo is one too"
     return 0
   fi
-  fact restore-consumer FAIL "the mint is still refused ${MINT_WAIT}s after fugaro creds set put the consumer back (the service answered ${MINT_STATUS}${MINT_CODE:+ (refused: ${MINT_CODE})}): the entry this run wrote is not the one the service reads, and the rotation below would measure a bundle that is not serving"
+  fact restore-consumer FAIL "the read mint is not serving ${MINT_WAIT}s after fugaro creds set put the consumer back (the service answered ${MINT_STATUS}${MINT_CODE:+ (refused: ${MINT_CODE})}): the entry this run wrote is not the one the service reads, and the rotation below would measure a bundle that is not serving"
   return 1
 }
 
@@ -645,7 +668,7 @@ step_rotate() {
   set_consumer "$ROTATED_CONSUMER_FILE" "rotated consumer"
   LEFTOVER="the bundle holds the rotated consumer (the same key with the secret Bitbucket regenerated)"
   if ! mint_want rotate ok "the rotation"; then
-    fact rotate FAIL "the mint is still refused ${MINT_WAIT}s after the rotated document was written (the service answered ${MINT_STATUS}${MINT_CODE:+ (refused: ${MINT_CODE})}): either the new secret is not the one Bitbucket holds — regenerate it and write the file again — or the bundle did not take the write"
+    fact rotate FAIL "the read mint is not serving ${MINT_WAIT}s after the rotated document was written (the service answered ${MINT_STATUS}${MINT_CODE:+ (refused: ${MINT_CODE})}): either the new secret is not the one Bitbucket holds — regenerate it and write the file again — or the bundle did not take the write"
     return 1
   fi
   fact rotate PASS "the rotated document is live: the read mint is served again (HTTP 200), so the secret this run wrote is the one Bitbucket accepts"
@@ -691,7 +714,7 @@ step_transfer() {
   set_consumer "$SUCCESSOR_CONSUMER_FILE" "successor consumer"
   LEFTOVER="the bundle holds the successor consumer, which is the transfer"
   if ! mint_want transfer ok "the transfer"; then
-    fact transfer FAIL "the mint is still refused ${MINT_WAIT}s after the successor document was written (the service answered ${MINT_STATUS}${MINT_CODE:+ (refused: ${MINT_CODE})}): the successor's own key and secret have to be the ones Bitbucket accepts for $REPO_WS, and a consumer created under another account only reads what that account reads"
+    fact transfer FAIL "the read mint is not serving ${MINT_WAIT}s after the successor document was written (the service answered ${MINT_STATUS}${MINT_CODE:+ (refused: ${MINT_CODE})}): the successor's own key and secret have to be the ones Bitbucket accepts for $REPO_WS, and a consumer created under another account only reads what that account reads"
     return 1
   fi
   fact transfer PASS "the successor consumer is live: the read mint is served again (HTTP 200) on the second account's own consumer, so the bundle's entry is the credential the mint spends and replacing it is the transfer"
@@ -817,6 +840,7 @@ main() {
   MINT_REPO=""
   MINT_EXPIRES=""
   MINT_TOKEN=""
+  MINT_ANSWERED=""
 
   guard_endpoint "the OAuth root" "$OAUTH_URL"
   guard_endpoint "the API root" "$API_URL"
@@ -867,7 +891,14 @@ ENTRY = "bitbucket-read-consumer"
 # is dropped rather than printed: an error body is written by the service, and a
 # field of its choosing must not reach the block.
 CODES = {
-    "state_unavailable", "no_credential", "unauthorized", "forbidden",
+    # credsvc's own refusal types (internal/credsvc/wire.go): the service's
+    # state, the run's identity, the caller's Google identity, and a request the
+    # gateway's rules refuse. A refusal whose code is dropped here reaches the
+    # block with no code at all, which is how a row about a refusal stops saying
+    # which refusal it measured.
+    "state_unavailable", "exhausted_until", "unverified_run_identity",
+    "unverified_job_identity", "request_refused",
+    "no_credential", "unauthorized", "forbidden",
     "invalid_request", "invalid_client", "invalid_grant", "invalid_scope",
     "invalid_token", "insufficient_scope", "not_found", "access_denied",
     "unsupported_grant_type", "unauthorized_client", "server_error",
@@ -886,6 +917,14 @@ def load(path, what):
             return json.load(fh)
     except (OSError, ValueError):
         die("%s is not readable JSON" % what)
+
+
+def load_or_none(path):
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return None
 
 
 def write_private(path, text):
@@ -1058,7 +1097,21 @@ def cmd_mintconf(tokenfile, conf, repo):
 
 
 def cmd_mint(path, tokenout, repo):
-    doc = load(path, "the read mint's answer")
+    # An answer that is not a document at all is a status and no reading: a curl
+    # timeout (000), a dropped connection, a proxy's own error page. It prints as
+    # exactly that rather than ending the run, because the caller has to be able
+    # to tell "the service refused" apart from "there was no answer" -- and a
+    # check that treated the second as the first would report a refusal it never
+    # read. A document that parses and carries a token that is not one line is
+    # still a die: that is the service answering with something it cannot mean.
+    doc = load_or_none(path)
+    if doc is None:
+        print("code=")
+        print("token=no")
+        print("repo=-")
+        print("expires=absent")
+        print("answered=no")
+        return
     code = doc.get("error") if isinstance(doc, dict) else None
     print("code=%s" % (code if isinstance(code, str) and code in CODES else ""))
     if not isinstance(doc, dict) or not isinstance(doc.get("token"), str) or not doc["token"].strip():
@@ -1076,6 +1129,7 @@ def cmd_mint(path, tokenout, repo):
     # rather than as the repository it was for.
     print("repo=same" if doc.get("repository") == repo else "other")
     print("expires=%s" % ("present" if doc.get("expires_at") else "absent"))
+    print("answered=yes")
 
 
 def cmd_grantconf(consumer, conf):

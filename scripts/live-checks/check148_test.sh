@@ -402,7 +402,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if m.get("mint") == "never":
             present = False
         if not present:
-            self.answer(403, {"error": "state_unavailable"})
+            # The service's own refusal of a bundle with no read consumer:
+            # 503 state_unavailable (internal/credsvc/bitbucket.go's
+            # ErrReadNoConsumer through refuseRead, wire.go's statuses). A case
+            # can answer something else — a 5xx, or nothing at all — which is
+            # the run not knowing rather than a refusal.
+            absent = m.get("mint_absent") or ""
+            if absent == "none":
+                self.close_connection = True
+                self.wfile.flush()
+                return
+            self.answer(int(m.get("mint_absent_status") or 503),
+                        {"error": m.get("mint_absent_error") or "state_unavailable"})
             return
         token = "%s-%s" % ("READTOKEN-SENTINEL-148-must-not-be-printed", secrets.token_hex(4))
         with open(os.path.join(DIR, "tokens"), "a", encoding="utf-8") as fh:
@@ -714,7 +725,10 @@ test_happy_path() {
   expect_contains "$out" "$REPO" "happy path: the repository it minted for"
   expect_contains "$out" "FACT xtrace: PASS — " "happy path: not tracing"
   expect_contains "$out" "FACT stop: PASS — " "happy path: the stop"
-  expect_contains "$out" "state_unavailable" "happy path: the refusal the service makes"
+  # The status AND the code: a bundle with no read consumer is 503
+  # state_unavailable (internal/credsvc/bitbucket.go's ErrReadNoConsumer through
+  # refuseRead, wire.go's statuses), and the stop is read on exactly that.
+  expect_contains "$out" "503 (refused: state_unavailable)" "happy path: the refusal the service makes"
   expect_contains "$out" "FACT restore-consumer: PASS — " "happy path: the entry put back"
   expect_contains "$out" "FACT rotate: PASS — " "happy path: the rotation"
   expect_contains "$out" "FACT old-secret: PASS — " "happy path: the replaced secret is refused"
@@ -733,6 +747,62 @@ test_happy_path() {
   expect_absent "$out" "the bundle is back the way it was" "happy path: no false Restore"
   assert_no_secret "$dir" "happy path"
   expect_scratch_gone "$dir" "happy path"
+}
+
+# THE OTHER RED STEP: the stop's own reading. Only the service's OWN refusal is
+# a stop -- 503 state_unavailable (internal/credsvc/bitbucket.go's
+# ErrReadNoConsumer) -- and a 5xx is this run not knowing. A check that counted
+# any non-200 as a stop would report a stop that may never have happened, which
+# is the one thing it exists to avoid.
+test_a_5xx_after_the_stop_is_not_a_pass() {
+  setup_case stop5xx
+  write_mode "$dir" '{"mint_absent_status": 500, "mint_absent_error": "server_error"}'
+  default_args
+  RUN148_ENV=(CHECK148_MINT_WAIT=0)
+  run148
+  expect_status "$status" 1 "a 500 after the stop"
+  expect_contains "$out" "FACT stop: FAIL — " "a 500 after the stop: the stop row fails"
+  expect_absent "$out" "FACT stop: PASS" "a 500 after the stop: no PASS for the stop"
+  expect_contains "$out" "did not answer with the service's own refusal" "a 500 after the stop: the row says what it did not get"
+  expect_contains "$out" "500 (server_error)" "a 500 after the stop: the row names the answer"
+  expect_contains "$out" "503 state_unavailable" "a 500 after the stop: the row names the refusal it needed"
+  # The rest of the drill still runs and reports: the entry goes back and the
+  # mint serves again, so the rows below are measured rather than guessed.
+  expect_contains "$out" "FACT restore-consumer: PASS — " "a 500 after the stop: the drill went on"
+  assert_no_secret "$dir" "a 500 after the stop"
+}
+
+# The refusal vocabulary is the service's own (internal/credsvc/wire.go), and a
+# code the reader does not know reaches the block with no code at all — which is
+# how a row about a refusal stops saying which refusal it measured.
+test_the_services_own_refusal_codes_reach_the_block() {
+  setup_case refusecode
+  write_mode "$dir" '{"mint": "never", "mint_absent_status": 403, "mint_absent_error": "unverified_job_identity"}'
+  default_args
+  run148
+  expect_status "$status" 2 "an identity refusal"
+  expect_contains "$out" "FACT repository: FAIL — " "an identity refusal: the baseline row fails"
+  expect_contains "$out" "unverified_job_identity" "an identity refusal: the row carries the service's own code"
+  # The shape a dropped code leaves behind: the status and no code at all.
+  expect_absent "$out" "answered 403." "an identity refusal: the code is not dropped"
+  assert_no_secret "$dir" "an identity refusal"
+}
+
+# And an answer there is none of: a timeout, a dropped connection, an error page
+# that is not a document. It reads as 000 with no document at all, and it is not
+# a refusal either.
+test_an_unanswered_mint_after_the_stop_is_not_a_pass() {
+  setup_case stopnone
+  write_mode "$dir" '{"mint_absent": "none"}'
+  default_args
+  RUN148_ENV=(CHECK148_MINT_WAIT=0)
+  run148
+  expect_status "$status" 1 "no answer after the stop"
+  expect_contains "$out" "FACT stop: FAIL — " "no answer after the stop: the stop row fails"
+  expect_absent "$out" "FACT stop: PASS" "no answer after the stop: no PASS for the stop"
+  expect_contains "$out" "the service answered 000" "no answer after the stop: the row says what it got"
+  expect_contains "$out" "the answer was not a document at all" "no answer after the stop: the row says there was no document"
+  assert_no_secret "$dir" "no answer after the stop"
 }
 
 # THE RED STEP, kept as a test: a mint that is still served after the entry is
@@ -1267,6 +1337,9 @@ t() {
 }
 
 t test_happy_path
+t test_a_5xx_after_the_stop_is_not_a_pass
+t test_the_services_own_refusal_codes_reach_the_block
+t test_an_unanswered_mint_after_the_stop_is_not_a_pass
 t test_a_mint_that_outlives_the_stop_is_a_fail
 t test_the_bundle_cache_is_waited_out
 t test_a_doctor_that_fails_but_answers_is_still_read

@@ -11236,9 +11236,14 @@ stopping, rotating and transferring it") it executes step by step.
 `POST <service>/v1/bitbucket/read-token` with a body of `{"repository":"<owner/name>"}`, and each
 read through the credential-carrying checks the drill makes:
 
-- **the stop** — the entry is taken out of the bundle and a read mint is then **refused**. No Fugaro
-  command removes a bundle entry (`fugaro creds set` is the bundle's only writer and only ever adds
-  or replaces), so the drill makes this version **by hand** — `gcloud secrets versions add`, with the
+- **the stop** — the entry is taken out of the bundle and a read mint is then **refused**, and the
+  refusal is the service's own: **503** with `error: state_unavailable` — `internal/credsvc`'s
+  `ErrReadNoConsumer` through `refuseRead` and `internal/credsvc/wire.go`'s statuses. That is the
+  only answer the row counts as a stop: a curl timeout, a Cloud Run 429 or 5xx, or an answer that is
+  not a document is the run **not knowing**, so the script keeps waiting and then fails the row with
+  the answer it got, rather than reporting a stop that may never have happened. No Fugaro command
+  removes a bundle entry (`fugaro creds set` is the bundle's only writer and only ever adds or
+  replaces), so the drill makes this version **by hand** — `gcloud secrets versions add`, with the
   version it replaced **disabled** — and that is what the row says it does;
 - **the rotation** — the consumer's secret regenerated at Bitbucket, the bundle written again with
   `fugaro creds set`, and the mint **served** from the new one while the **old** secret's own
