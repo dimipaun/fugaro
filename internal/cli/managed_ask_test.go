@@ -615,13 +615,14 @@ func TestUpdateAskAndYesAreRefused(t *testing.T) {
 	}
 }
 
-// The plugin wiring's y/N is one of the questions a managed project takes no
-// confirmation for today (the stage's own Apply, driven here under the gate),
-// and it is the flag's most ordinary surface: with --ask the y/N is asked, and
-// with an empty stdin the answer is no and the file is not written. The control
-// is the same call without the flag, which writes and prints the gate's
-// sentence instead.
-func TestManagedAskGivesThePluginWiringItsYOrNBack(t *testing.T) {
+// The plugin stage's y/N went with the wiring (U2, D949): the settings write it
+// confirmed is gone, and the step left is the install in Claude Code, which no
+// gate stands in for and --ask is not the flag to put a question back on. The
+// two runs — the flag, and the control without it — are driven the same way
+// (the gate open, a terminal, the stage's Apply called directly), and what is
+// read off them is that they are the same: no prompt, no diff of a file, and
+// the checkout's settings byte for byte.
+func TestManagedAskGivesThePluginStageNoQuestion(t *testing.T) {
 	releaseBuild(t, "0.2.0")
 	for _, ask := range []bool{false, true} {
 		name := "the flag"
@@ -632,7 +633,7 @@ func TestManagedAskGivesThePluginWiringItsYOrNBack(t *testing.T) {
 			settings := wiringCheckout(t, settingsWithOthers)
 			withTerminal(t, true)
 			e, out := stageEngine(t, "", &initOptions{ask: ask})
-			// --ask reaches the step's confirmation through the command's own
+			// --ask reaches a step's confirmation through the command's own
 			// flags — askConfirm reads it there, and boolFlag answers false for
 			// a flag its command does not carry — so a rig that left it off the
 			// command would be a --ask run in which nothing is ever asked. And
@@ -641,26 +642,16 @@ func TestManagedAskGivesThePluginWiringItsYOrNBack(t *testing.T) {
 			e.r.cmd.SetOut(out)
 			e.r.gate = &initGate{managed: true}
 
-			_, err := newPluginStage(e).Apply(t.Context(), initflow.Env{Interactive: true})
-			got, _ := os.ReadFile(settings)
-			written := string(got) != settingsWithOthers
-			if !strings.Contains(out.String(), "extraKnownMarketplaces") {
-				t.Fatalf("the step printed no diff of what it would write:\n%s", out.String())
+			if _, err := newPluginStage(e).Apply(t.Context(), initflow.Env{Interactive: true}); err != nil {
+				t.Fatalf("the plugin stage was stopped (err %v): it has nothing to ask:\n%s", err, out.String())
 			}
-			if !ask {
-				if err != nil || !written || !strings.Contains(out.String(), initflow.GateOrdinary()) {
-					t.Fatalf("the control did not take the gate's verdict (err %v, written %v):\n%s", err, written, out.String())
+			if got, _ := os.ReadFile(settings); string(got) != settingsWithOthers {
+				t.Errorf("the stage wrote the checkout's settings:\n%s", got)
+			}
+			for _, bad := range []string{"[y/N]", "extraKnownMarketplaces", initflow.GateOrdinary(), initflow.GateProceeded()} {
+				if strings.Contains(out.String(), bad) {
+					t.Errorf("the stage says %q, and it neither asks nor writes:\n%s", bad, out.String())
 				}
-				return
-			}
-			if err == nil || written {
-				t.Fatalf("--ask wrote the settings with nothing typed (err %v, written %v):\n%s", err, written, out.String())
-			}
-			if !strings.Contains(out.String(), "write this to "+settings+"? [y/N]: ") {
-				t.Errorf("--ask did not ask the y/N the gate stood in for:\n%s", out.String())
-			}
-			if strings.Contains(out.String(), initflow.GateOrdinary()) || strings.Contains(out.String(), initflow.GateProceeded()) {
-				t.Errorf("--ask printed the gate's sentence instead of asking:\n%s", out.String())
 			}
 		})
 	}
