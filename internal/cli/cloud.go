@@ -1108,6 +1108,15 @@ func checkoutParse(ctx context.Context, repo string) (*config.Config, []config.P
 	if root == "" {
 		return nil, nil
 	}
+	// The launch's own answer first, where this launch resolved one: a launch
+	// whose working tree cannot give a fugaro.yaml is judged by the document at
+	// the ref its run checks out, and every reader of that launch — the gates
+	// it passed, the job it runs on, its recipe and its layer — has to see that
+	// same document (withLaunchDocument). Before the cache, because a reader
+	// that ran before that resolution left it holding "no document".
+	if d, ok := launchDocumentOf(ctx); ok && d.root == root {
+		return d.cfg, d.problems
+	}
 	cache, _ := ctx.Value(checkoutParseCacheKey{}).(*checkoutParseCache)
 	if cache != nil {
 		cache.mu.Lock()

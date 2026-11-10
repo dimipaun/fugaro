@@ -646,6 +646,13 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 // already-leased state and print its notes once per attempt instead of once
 // per batch.
 func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string, spec *task.Spec, reused bool, warn io.Writer, skipBudget bool) (launchResult, error) {
+	// The repository's own document for this whole launch, resolved once
+	// before any of it: where the working tree cannot give a fugaro.yaml, the
+	// gates below and the job the launch runs on are judged by the document at
+	// the ref the run checks out (withLaunchDocument). Resolved here and not
+	// later because a reader that starts after this one is a reader that
+	// judged the launch on another file.
+	ctx = withLaunchDocument(ctx, spec.Repo, spec.Ref)
 	var layerData []byte
 	var err error
 	if o.retry == "" && !reused {

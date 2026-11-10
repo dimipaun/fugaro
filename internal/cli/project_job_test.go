@@ -2354,6 +2354,40 @@ func TestCheckoutWithoutTheFileReadsTheRefsObjects(t *testing.T) {
 	}
 }
 
+// TestCheckoutWithoutTheFileStillJudgesTheCloneGate is the case the launch
+// document exists for: a checkout whose working tree has no fugaro.yaml, whose
+// ref does carry one, on an installation whose base image predates cloneSince
+// (0.7.5). The ref's document runs a checkout: clone workflow, so this launch
+// is refused by the clone gate — exactly as the same launch is with the file
+// in the tree. Before the launch resolved its document once for every reader
+// of it, the gates read only the working tree, judged the launch a non-clone
+// workflow and passed it, and the decision below read the ref's document and
+// put the run on the shared job: every clone gate (cloneSince, seal, recipe,
+// rigor, governance, compression) skipped, with a claim and a budget token
+// taken on the way.
+//
+// Mutation (run, restore): drop withLaunchDocument from finishLaunch — the
+// launch succeeds on the shared job and this test fails on the refusal, with a
+// jobs.run call where the third assertion wants none.
+func TestCheckoutWithoutTheFileStillJudgesTheCloneGate(t *testing.T) {
+	f := newProjectJobFixture(t)
+	rewriteConfig(t, "fugaro-base:"+sealSince, "fugaro-base:0.7.0")
+	dir := projectJobCheckout(t)
+	if err := os.Remove(filepath.Join(dir, "fugaro.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261110-095000-aaaa", "Add a feature")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a user error", err)
+	}
+	if !strings.Contains(err.Error(), "how to provision a blobless clone (FUGARO_CHECKOUT)") || !strings.Contains(err.Error(), "0.7.0") {
+		t.Errorf("the refusal is not the clone gate's: %v", err)
+	}
+	if calls := f.run.RunRequests(); len(calls) != 0 {
+		t.Errorf("the refused launch asked Cloud Run for %d job(s): %+v", len(calls), calls)
+	}
+}
+
 // TestNoCheckoutGitHubRefusalNamesTheCheckoutAndTheRef is D912's first
 // message: a launch with no checkout of the repository anywhere, on a project
 // that has published a profile, is refused — the provider is one a shared job
