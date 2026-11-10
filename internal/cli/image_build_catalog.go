@@ -727,6 +727,11 @@ func noteBakePlan(cmd *cobra.Command, entry string, p imagebake.Plan) {
 	if len(p.Cloned) > 0 {
 		alone = fmt.Sprintf("the other repositories mapped to it (%s) clone at job start", strings.Join(p.Cloned, ", "))
 	}
-	fmt.Fprintf(cmd.ErrOrStderr(), "note: the catalog entry %s bakes the checkout of %s at %s, so its jobs find the source already there: %s\n",
+	// What the line claims is what the image carries and where, and not that a
+	// job reads it: the runner opens the image's own work directory today, and
+	// the per-slug path is what IS8's reader — unapproved still — has to open
+	// before a job is faster for it. A note that promised the speedup now
+	// would be false for every build this command makes.
+	fmt.Fprintf(cmd.ErrOrStderr(), "note: the catalog entry %s bakes the checkout of %s at %s, so the image carries that repository's source; %s\n",
 		pluginwire.Printable(entry), pluginwire.Printable(p.Baked.Repo), dir, alone)
 }

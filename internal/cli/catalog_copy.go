@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/catalog"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/imagebake"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 )
 
 // catalogDockerfileType is the copied definition's content type: a
@@ -50,8 +52,19 @@ func writeCatalogDockerfile(ctx context.Context, b *blobx.Bucket, open gitprov.O
 	if err != nil {
 		return err
 	}
+	fetchLen := len(data)
 	if data, err = imagebake.Append(data, bake); err != nil {
 		return err
+	}
+	// The composed bytes are bounded here and not only where the entry's own
+	// were resolved: every reader of this object reads it with this same limit
+	// (catalog.MaxDockerfileBytes), so an object over it is one the nightly
+	// check fails forever and one this call could not rewrite — an unreadable
+	// copy has no generation to condition on. A definition inside the bound can
+	// leave it by the generated stage alone, which is the case this refuses.
+	if len(data) > catalog.MaxDockerfileBytes {
+		return fmt.Errorf("the catalog entry %s: its Dockerfile is %d bytes and the generated checkout stage takes it to %d, more than the %d a definition may be; shorten the definition",
+			pluginwire.Printable(e.Name), fetchLen, len(data), catalog.MaxDockerfileBytes)
 	}
 	old, gen, err := b.ReadMax(ctx, key, catalog.MaxDockerfileBytes)
 	switch {

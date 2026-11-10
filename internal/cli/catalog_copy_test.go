@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/catalog"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/gitprov"
@@ -119,5 +120,45 @@ func TestCatalogInlineDefinitionIsWrittenFromState(t *testing.T) {
 	}
 	if _, _, err := b.Read(ctx, "builds/catalog/prebuilt/Dockerfile"); err == nil {
 		t.Fatalf("an image entry wrote a Dockerfile: %v", err)
+	}
+}
+
+// TestCatalogCopyRefusesABakeThatLeavesTheBound: an entry's own definition can
+// be inside catalog.MaxDockerfileBytes and the generated stage take it past
+// it, and the composed bytes are what every reader of the copy reads with that
+// same limit. Written, the object would be one the nightly check fails forever
+// and one this call could not rewrite — an unreadable copy has no generation
+// to condition on — so it is refused where it is composed, before anything is
+// written.
+func TestCatalogCopyRefusesABakeThatLeavesTheBound(t *testing.T) {
+	ctx := context.Background()
+	// Exactly the bound, which the fetch accepts: the staged clone below is
+	// what takes the object over it.
+	def := strings.Repeat("#\n", catalog.MaxDockerfileBytes/2)
+	if len(def) != catalog.MaxDockerfileBytes {
+		t.Fatalf("the fixture is %d bytes, not the %d-byte bound", len(def), catalog.MaxDockerfileBytes)
+	}
+	b := gcpfake.NewGCS(t).Bucket(t, "fugaro-runs-proj-1234")
+	e := config.Entry{Name: "agent", Source: config.Source{Kind: config.SourceInline, Inline: def}}
+	open := catalogOpen(&fake.Provider{Repo: "acme/app"})
+	bake := imagebake.Plan{Baked: &imagebake.Repo{Repo: "acme/app", Slug: "app-1234abcd", URL: "https://example.invalid/acme/app.git", Branch: "main"}}
+	err := writeCatalogDockerfile(ctx, b, open, gitprov.KindGitHub, e, bake)
+	if err == nil || !strings.Contains(err.Error(), "more than the") {
+		t.Fatalf("a definition the bake takes over the bound was copied: %v", err)
+	}
+	key, kerr := config.CatalogDockerfileKey("agent")
+	if kerr != nil {
+		t.Fatal(kerr)
+	}
+	if _, _, rerr := b.Read(ctx, key); rerr == nil {
+		t.Fatal("the refused definition was written anyway")
+	}
+	// The same definition with no bake is inside the bound and is copied: what
+	// is refused is the composition, not the entry.
+	if err := writeCatalogDockerfile(ctx, b, open, gitprov.KindGitHub, e, imagebake.Plan{}); err != nil {
+		t.Fatalf("the entry's own definition was refused: %v", err)
+	}
+	if data, _, err := b.ReadMax(ctx, key, catalog.MaxDockerfileBytes); err != nil || len(data) != len(def) {
+		t.Fatalf("the copy is %d bytes (%v), want the entry's own %d", len(data), err, len(def))
 	}
 }

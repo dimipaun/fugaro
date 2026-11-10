@@ -775,6 +775,12 @@ func TestCatalogBuildBakesTheMappedReposCheckout(t *testing.T) {
 	if !strings.Contains(stderr, "bakes the checkout of acme/app at "+dir) {
 		t.Errorf("stderr = %q, want a line naming the baked checkout", stderr)
 	}
+	// What the line says the image got, not what a job does with it: the
+	// runner opens the image's own work directory, so a build that promised a
+	// job would find the source there would be promising something false.
+	if !strings.Contains(stderr, "the image carries that repository's source") || strings.Contains(stderr, "jobs find the source") {
+		t.Errorf("stderr = %q, want the checkout the image carries and no claim about a job reading it", stderr)
+	}
 	if !strings.Contains(out, "built ") {
 		t.Errorf("stdout = %q, want the built image", out)
 	}
