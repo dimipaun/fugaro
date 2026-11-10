@@ -1,6 +1,6 @@
 # Launching a run for a repository without its checkout: spec
 
-**Status: design answered by the owner 2026-11-04; plan only; nothing implemented; no task approved.**
+**Status: design answered by the owner 2026-11-04; plan only; A0 and A1 landed (2026-11-10, the person read set and the file-at-a-ref reader); A2–A4, B1–B2, C1 and D1 not started; no other task approved.**
 
 The numbered decisions this file leans on (**D901**–**D919**) are in
 [reconciliation.md §3](reconciliation.md), each with the cost of the alternative and the owner's answer
@@ -160,14 +160,15 @@ recommendation was the App's key, read as `--check-github-app` reads it, and the
   secret is read, no key material enters the process, and the client has no field in which to ask for
   another permission (`internal/gitprov/github/serviceread.go`). Every mint writes one audit line the
   launcher cannot suppress (`internal/credsvc`'s `PurposeGitHubRead`: the person who asked and the
-  repository it was for). **The permission the read needs is not the one the route mints with today.**
-  The route asks with `github.CoordinatorTokenPermissions`, which is `pull requests` and `metadata`,
-  read — the coordinator reads no file, and its set is pinned by two tests so that it cannot quietly
-  grow one — so `GET .../contents/fugaro.yaml` is refused with today's token, before the permissions
-  question is answered at all (reconciliation F6). The set the read needs carries `contents: read`, and
-  it is the first task of the plan (A0; the choice between a set of its own and a route of its own is
-  D915). Until it lands, this section describes the read as it is meant to work and A0 is what makes it
-  work; the set **never** becomes the run's (`RunTokenPermissions`) and never widens the coordinator's.
+  repository it was for). **The permission the read needs is not the one the route minted with before
+  A0, and A0 has landed it.** The route now asks with `github.PersonReadTokenPermissions` — `contents`,
+  `pull_requests` and `metadata`, all read — a set of its own beside the coordinator's two, which are
+  `pull requests` and `metadata`, read, and are pinned by two tests so that they cannot quietly grow a
+  file read (reconciliation F6). Before A0 the route asked with the coordinator's own set, so
+  `GET .../contents/fugaro.yaml` was refused with the token the service handed out; with A0's set the
+  read is served. It is the first task of the plan and it has landed (the choice between a set of its
+  own and a route of its own was D915, answered a set of its own). The set **never** becomes the run's
+  (`RunTokenPermissions`) and never widens the coordinator's.
 - **Which repository:** `spec.Repo`, and only it. The service resolves the name through the
   installation's own inventory and refuses a repository it does not hold, so a refusal to install the
   App on a repository is a refusal to read it.
@@ -366,10 +367,12 @@ installation's inventory, mints a **read-only, repository-scoped** installation 
 its bundle, and writes one audit line for the act. So the launcher holds no App key, reads no secret
 and reads no environment variable; what it holds, for the duration of one API call, is a read-only
 token scoped to one repository — never the run's write-capable set, never the repository's pushed
-credential. The reach that token carries is the one A0 defines (a file read at least, `contents: read`,
-and no write), and the set the service asks with has to be one that reaches a file at all: today's is
-`pull requests` and `metadata`, so the read is refused until A0 lands and the service is redeployed
-(§5, §7). In a coding agent's session the read does not happen at all, so the token is never minted
+credential. The reach that token carries is the one A0 defines and has landed (a file read at least,
+`contents: read`, and no write), and the set the service asks with has to be one that reaches a file at
+all: A0's is `contents`, `pull requests` and `metadata`, all read, so the read is served — where before
+A0 the route asked with the coordinator's own `pull requests` and `metadata` and the file read was
+refused until the service was redeployed with the new set (§5, §7). In a coding agent's session the read
+does not happen at all, so the token is never minted
 for one — `refuseKeyReadInAgent`, the shape `internal/cli/doctor_brokering.go` already applies to the
 credentials service's bundle.
 

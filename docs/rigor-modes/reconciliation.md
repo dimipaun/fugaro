@@ -95,6 +95,30 @@ Two things the ruling does not change: the spec stays verbatim (its own commit,
 repository, which is the owner's to name and is recorded as the open value rather
 than as a recommendation this folder takes.
 
+### 1.4 The stop ruling of 2026-11-08: a run merges as-is at its stop
+
+The owner ruled that in Startup — and in POC, which blocks nothing but the
+catastrophic — speed to market means the run **finalizes ready at the stop**
+rather than leaving a draft: "merge as-is, follow up the rest". The stop is
+whichever comes first: the mode's review rounds are spent, or the loop is about
+to start another review or fix round past `agent.review_stop_fraction` (0.8) of
+the run's total time budget. It is the mode's *second* rule and it is data beside
+its floor, not a condition in the runner: `internal/rigor/table.go`'s `stop` rows
+(`threshold.Stop`, `BlocksAtStop`, `AcceptsAtStop`, and `SplitAtStop`'s accepted
+half), whose zero value is the draft every mode left before it.
+
+| The ruling's part | Where it lands |
+| --- | --- |
+| Which modes accept at their stop | `stopCatastrophic` for POC and Startup — every finding the severity override does not cover, which is `Blocks` read over the mode's own row — `stopSecurity` for Hotfix, its own gate applied at the second moment, and the zero `stopDraft` for Pro, Critical and every name the table does not hold |
+| What the stop is | `runner.Budget.PastStop` for the time half, and the rounds each enabled level's loop spends (`runner.firstLine`, `seniorLoop`, `adversarialLoop`, counted across the levels so level 3 buys no extra time); past either, the loop starts no new review or fix round and goes to finalize |
+| What it files, and where it is recorded | exactly as a tolerated finding is filed (D30): the pull request body's section and the run record. The record gains `record.Accepted` (`runstore.NewAccepted`) beside `Tolerated`, with the round and the half of the rule that ended the run, and on that block's own terms: the mode's reading of the round the run ended on, written whether or not the pull request ends ready — a new field on version 1, the format rule every wire shape here follows |
+| The reason | `runner.Decide`: `review round N left K findings, accepted at <mode> (rounds spent \| time threshold)`. A catastrophic finding, failing tests or a pending owner decision (OD1) keeps the draft, with the reason stated |
+| Asking for review level 3 | changes no mode's rigor: every enabled level is read through the same findings policy (`levelTolerated`, `heldBackLevel`), so a level whose last round is wholly tolerated counts as shipped and a level that left a blocking finding is the reason, whichever level it is. A run the stop ends before an outer level starts is read off the round that did run — level 1's — and not off the level the stop cut (`runner.firstLineStop`, `outerLevelReviewed`), so a level configured on and never started costs the run nothing |
+
+The key is a repository and project layer row (`agent.review_stop_fraction`,
+[project-layer.md](../project-layer.md) §5), so an installation or a repository
+can move the threshold; nothing else about the ruling needs an operator step. The key itself needs fugaro 0.22.0 or later in the job image that runs it: an older runner's strict decoder refuses `review_stop_fraction` at bootstrap whatever it says, so `fugaro run` refuses that launch and names the image to move, and `fugaro update --repo` refuses to converge the repository onto an older base image.
+
 ## 2. Corrections to the premises this task was given
 
 Five things stated in the brief, or plainly implied by it, are not what the tree
@@ -227,6 +251,11 @@ verdict. Every mode below Critical still has to *reach* a `ship` — by fixing w
 the mode says must be fixed and recording what it tolerates — or the run ends as
 today's failed draft. Where the tolerated findings go instead is the whole of D7
 and D9.
+
+The stop ruling (§1.4) is the one thing that has moved since, and it moves this
+premise in one place: a mode's own row can now accept the round the run *stopped*
+at, which is a second condition on readiness rather than a mode disagreeing with
+the verdict it read. `docs/recipes.md`'s sentence is amended in the same commit.
 
 **F5 — The failed-draft path is the backlog's natural trigger.** Class: **Exists**.
 The run that ends with findings already ends with `StatusFailed`, `OutcomeDraft`
@@ -595,7 +624,8 @@ ceiling), stated in §2 and pinned by a test rather than restated here (D6, D20)
 
 **F38 — Nothing tells a run which paths it will touch, before it touches them.**
 Class: **Gap**. `task.Spec` has no path field and `task.Spec.Overrides` has
-exactly four, none of them a path; `recipe.Step` has five members, none of them a
+none, either (the four the 2026-10-20 amendment counted, and the four chain limits
+L2 of `docs/run-limit-carry-over` added); `recipe.Step` has five members, none of them a
 path; and `internal/plan/footprint.go`'s `Footprint` is what a planner
 *predicts*, read only by `fugaro plan graph` (`internal/cli/plan.go`) and by no
 runner code at all — the file says as much, calling it advisory. Consequence: at
@@ -781,7 +811,17 @@ key service's Terraform suite and docs/pending-workflows/README.md's `## ci.yml`
 section on it (S3.5), moved the table's row from 114 to 115: the section's claim
 that no job runs that suite is a claim about `.github/workflows/ci.yml`, so the
 pin holds the section, the design doc's status line and the workflow to one
-another in both directions.) They
+another in both directions. Amended 2026-11-10:
+`internal/cli/docs_dogfooding_reports_test.go`, the task-governance plan's T4.4
+pin over `docs/dogfooding.md`'s own reports section, moved the table's row
+from 115 to 116: the folder the page names and the launch it schedules are read
+out of `internal/digest` and `internal/recipe`, so the page and the layout cannot
+drift apart.
+Amended 2026-11-10: `internal/cli/docs_dynamic_delivery_test.go`, the dynamic-delivery folder's pin (the register's Checks 510 and 511, their two steps files and the numbers the folder claims, DS0.2), moved the same row once more, from 116 to 117.
+Amended 2026-11-10: `internal/cli/docs_run_without_checkout_test.go`,
+the run-without-checkout folder's pin over A0 having landed — the person read
+set its status lines name and the answer row it was raised by are read
+against — moved the table's row from 117 to 118.) They
 are named because the figure is a running total of other folders' guards: a folder
 that writes one moves this row in its own commit, and a reader who finds the row
 stale has found a merge that did not.
@@ -791,16 +831,16 @@ stale has found a merge that did not.
 | Catalog recipes | 9 | `ls internal/recipe/catalog/*.yaml \| wc -l` |
 | Top-level `fugaro.yaml` keys | 14 | `sed -n '/^  "properties": {/,/^  }/p' schemas/fugaro.schema.json \| grep -c '^    "[a-z_]*": '` |
 | Top-level `fugaro.yaml` keys whose name contains `review` | 0 | `sed -n '/^  "properties": {/,/^  }/p' schemas/fugaro.schema.json \| grep -c '^    "[a-z_]*review[a-z_]*": '` |
-| Config scope rows | 103 | `sed -n '/Scopes = \[\]ScopeRow{/,/^}/p' internal/config/scope.go \| grep -c '{Key:'` |
+| Config scope rows | 104 | `sed -n '/Scopes = \[\]ScopeRow{/,/^}/p' internal/config/scope.go \| grep -c '{Key:'` |
 | Layers a configuration key may be set in | 4 | `sed -n '/The layers a key may be set in/,/^)/p' internal/config/scope.go \| grep -c 'In[A-Z]'` |
 | Blocks the project layer's `defaults:` may set | 4 | `sed -n '/type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -c 'yaml:'` |
-| Fields of `task.Spec.Overrides` | 4 | `sed -n '/type Overrides struct {/,/^}/p' internal/task/task.go \| grep -cE 'yaml:\|json:'` |
+| Fields of `task.Spec.Overrides` | 8 | `sed -n '/type Overrides struct {/,/^}/p' internal/task/task.go \| grep -cE 'yaml:\|json:'` |
 | Fields of `task.Spec` or `recipe.Step` whose name is a path | 0 | `{ sed -n '/^type Spec struct {/,/^}/p' internal/task/task.go; sed -n '/^type Step struct {/,/^}/p' internal/recipe/recipe.go; } \| grep -cE '^[[:space:]]+[A-Z][A-Za-z]*(Path\|Glob\|Dir)'` |
 | Sites that compare a finding's severity to a value | 0 | `git grep -n 'Severity ==' -- internal/runner ':!*_test.go' \| wc -l` |
 | Files in `internal/runner` that mention `Severity` at all | 4 | `git grep -l 'Severity' -- internal/runner ':!*_test.go' \| wc -l` |
-| Image-skew `Since` constants | 32 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
+| Image-skew `Since` constants | 34 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
 | Run outcomes | 4 | `git grep -ho 'Outcome[A-Za-z]* *= *"[a-z]*"' internal/runstore/runstore.go \| wc -l` |
-| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 115 | `ls internal/cli/docs_*_test.go \| wc -l` |
+| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 118 | `ls internal/cli/docs_*_test.go \| wc -l` |
 | Questions the in-job-review folder put to the owner, all answered | 17 | `git grep -hc '^\*\*Q[0-9]*\. ' docs/in-job-review/reconciliation.md` |
 | Published project-policy version | 4 | `sed -n 's/^const Version = //p' internal/projectpolicy/version.go` |
 | Blocks the project layer's `defaults:` may set whose value names a repository | 0 | `sed -n '/^type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -ci repo` |
@@ -829,11 +869,16 @@ is as small as it is.
 The four layering rows the 2026-10-20 amendment added are these: **4** layers a
 key may be set in (F37), **3** blocks the project layer's closed `defaults:` may
 set (F36 — two at this folder's tree, the third Slice 1's `defaults.rigor`),
-**4** fields of `task.Spec.Overrides` and **0** fields of `task.Spec`
+**8** fields of `task.Spec.Overrides` and **0** fields of `task.Spec`
 or `recipe.Step` whose name is a path (F38). The last row counts *declared
 fields*, which is why its command matches a field name at the start of a line
 rather than any mention: the `Spec` struct's prose mentions a path, and a count of
-prose is not a count of inputs.
+prose is not a count of inputs. Amended 2026-11-10: L2 of
+`docs/run-limit-carry-over` added four chain limits to `task.Spec.Overrides`
+(`MaxUSD`, `MaxTokens`, `MaxTime`, `MaxReviewRounds`, which carry a chain's own
+caps and are set by no flag in this tree), so F38's count and this row move from
+4 to 8 together; the amended row is still **0** paths, since none of the four
+names one.
 
 The five rows the backlog ruling's amendment adds are that ruling's two structural
 facts and their witnesses: **0** blocks of the project layer's `defaults:` name a

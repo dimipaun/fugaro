@@ -45,10 +45,26 @@ const (
 	KeyMode          = "mode"
 	KeyMaxRunTokens  = "max_run_tokens"
 	KeyAllowedModels = "allowed_models"
+	// The chain's own two record-backed dimensions
+	// (docs/run-limit-carry-over D1041, D1055): the wall time a chain may
+	// spend and the review rounds it may spend. They are spelled as
+	// policy.Layer's own members rather than as the task's fields
+	// (max_time, max_review_rounds) because a source names the layer a
+	// number came from, and the task is not a layer of this merge.
+	KeyMaxRunTime      = "max_run_time"
+	KeyMaxReviewRounds = "max_review_rounds"
 	// The per-call output limits of the coder and reviewer roles
 	// (agent.max_output_tokens.*).
 	KeyMaxOutputCoder    = "max_output_tokens.coder"
 	KeyMaxOutputReviewer = "max_output_tokens.reviewer"
+	// The project's binary allow rule (D981, D986): the paths a run may add a
+	// binary at and the largest binary it may add. They are the owner's policy
+	// node's alone — fugaro.yaml carries no such key and internal/config
+	// refuses one, because that file sits in the checkout the run's own agent
+	// writes — so the ceiling is the only layer that ever carries them and the
+	// merge's direction is what keeps them there.
+	KeyBinariesAllow    = "binaries.allow"
+	KeyBinariesMaxBytes = "binaries.max_bytes"
 	// KeyABRate is the A/B sampling rate (docs/model-ab-testing, D557). It is
 	// the one key of the ab: block the merge speaks: every other key of it is
 	// the project layer's own and is read where it is set, never merged,
@@ -92,6 +108,14 @@ const (
 	// refusal that tells the owner where to raise a limit must not name the
 	// other one (plan task 1.3 step 6).
 	SourcePolicy = "policy"
+	// SourceChain is the layer a launch's own limits are merged as
+	// (docs/run-limit-carry-over F4, D1043, D1055): the `--max-*` flags a
+	// caller typed, which ride the task and are merged last, under every
+	// layer above. A layer at index 2 or more used to be named SourceBranch
+	// whatever it was, and a chain limit printed as coming from the branch
+	// names a place the number did not come from; the branch keeps its own
+	// name and the chain layer is this one.
+	SourceChain = "chain"
 )
 
 // Budget modes, loosest to strictest.
@@ -427,10 +451,42 @@ type Layer struct {
 	// (the database enforces the owner's own cap); 0 = unset.
 	PerDayUSD    float64
 	MaxRunTokens int64 // 0 = unset
+	// MaxRunTime is the wall time a chain of runs may spend (the `max_time`
+	// override of docs/run-limit-carry-over, D1041); 0 = unset, smaller wins.
+	// No file layer sets it — it is not a fugaro.yaml key — so the only
+	// layers that carry one are the launch's own chain layer and, under it,
+	// whatever the runner resolves the run's clock to.
+	MaxRunTime time.Duration
+	// MaxReviewRounds is the review rounds a chain of runs may spend
+	// (`max_review_rounds`, D1041), senior-review iterations included; 0 =
+	// unset, smaller wins. It is a chain's number and not this run's: the
+	// rounds one run spends come from the task's own review_rounds, the
+	// recipe and the mode's row (internal/runner's planOf).
+	MaxReviewRounds int64
 	// Per-call output limits by role; 0 = unset, smaller wins.
 	MaxOutputCoder    int64
 	MaxOutputReviewer int64
 	AllowedModels     []string // nil = unset
+	// BinariesAllow is this layer's list of admitted binary paths:
+	// repository-relative doublestar globs. nil = unset, and for this key
+	// "unset" is the strict end rather than the loose one AllowedModels' nil
+	// is: a layer that names no path admits no binary at all (spec.md §2.1),
+	// so a non-nil list is the only thing that admits anything and the
+	// merge's intersection is the only thing a later layer may do to it.
+	//
+	// The owner's policy node is the only layer that carries it (D986): the
+	// ceiling is where it is read (internal/runner's policyCeiling), and no
+	// other layer the tree builds writes one — fugaro.yaml refuses the key,
+	// the shared config refuses a publish of it, and no project-layer or
+	// profile key carries it.
+	BinariesAllow []string
+	// BinariesMaxBytes is the largest binary a run may add at an admitted
+	// path, in bytes. 0 = unset, and the smaller positive cap wins
+	// (TightenInt), so a layer below the ceiling may only lower it. The
+	// default a node's written block takes when it names no cap (D983,
+	// 2 MiB) is filled where the block is decoded, not here: this layer
+	// carries the owner's word and invents no figure of its own.
+	BinariesMaxBytes int64
 	// ABRate is this layer's ab.rate, nil = the layer writes none. It is a
 	// pointer because 0 is a value here and not "unset": turning sampling off
 	// is the whole of what a repository's own ab: block may say (D556), and

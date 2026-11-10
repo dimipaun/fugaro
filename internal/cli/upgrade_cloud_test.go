@@ -132,6 +132,13 @@ func TestCloudCheckNotHere(t *testing.T) {
 	t.Run("no fugaro.yaml", func(t *testing.T) {
 		useVersion(t, "0.5.1")
 		root, _ := skillCheckout(t, wiredAt("v0.5.1"))
+		// The fixture is a checkout Fugaro is set up in since U1, which is
+		// what makes it one at all (fugaroCheckout lost its second disjunct):
+		// this case is the checkout without the file, which is the one
+		// resolveCloudRepo stops on before it reads anything else.
+		if err := os.Remove(filepath.Join(root, "fugaro.yaml")); err != nil {
+			t.Fatal(err)
+		}
 		if v := cloudCheck(t.Context(), root, cloudOptions{}, ""); v.state != cloudNotHere || !strings.Contains(v.reason, "no fugaro.yaml") {
 			t.Fatalf("%+v", v)
 		}

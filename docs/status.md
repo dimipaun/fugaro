@@ -35,7 +35,7 @@ As of 2026-11-10, read from `main`, the open pull requests and each plan's task 
 | licensing | 17/23 | owner-run only |
 | credentials-service | about 32/36 | owner checks; Check 96 holds C2.3 |
 | console-dependency-graph | 13/17 | GV3.1, GV3.2, GV4.1 |
-| bitbucket-credentials | 9/12 | T2.6, T2.11; owner Checks 149 and 145 |
+| bitbucket-credentials | 9/12 | T2.6, T2.11; owner Checks 149 and 145; S3 superseded by the secrets-brokering proxy chain (2026-11-10) |
 
 ## In progress, a lot left
 
@@ -64,13 +64,13 @@ As of 2026-11-10, read from `main`, the open pull requests and each plan's task 
 | settings-commands | about 6/12 | S6 to S11 |
 | rigor-modes | about 22/40 | T7.1, T7.2, T8.1, T8.3; overlay plan LV1 to LV7 essentially unstarted |
 | roles-scopes | 3/12 | RS3 (draft #1994), RS4, RS5, RS6a to RS6c, RS7, RS8, RS10; RS5 (`fugaro user`) not started |
-| rigor-command | 2/10 | R2 to R8 |
+| rigor-command | 3/10 | R6, R7, W; R2 to R5 closed 2026-11-10 as duplicates of the two winning plans |
 | review-levels-ab-jobmax | about 24/40 | A/B reviewer slot, `/jobmax` skill, `auto_launch` |
 | forge-authorship-images | about 9/25 | about 16, much overlapping image-setup |
 | go-to-market | 4/12 | the cost-estimate half (`fugaro estimate`) |
 | model-ab-testing | 3/18 | the sampler and the pair launch |
 | mobile | about 35/45 | P5.x, P7.2 to P7.5; owner P2.3 and P4.4 |
-| task-governance | 23/31 | 8 left, all in `ee/governance` |
+| task-governance | 24/31 | 7 left: T3.4 (docs), and the rest in `ee/governance` |
 | bitbucket-workspace-token | 7/13 | T2.2, T2.4, T2.6, T2.9, owner checks; the proxy chain probably makes T2.2 and T2.9 moot |
 | compatibility-matrix | 1/4 | CM2 (page), CM3, CM4 |
 

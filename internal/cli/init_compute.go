@@ -24,9 +24,12 @@ import (
 //
 // It is money and it is permanent — a preloaded boot image's Cloud Build, a
 // Cloud NAT's hours, a custom role and a scheduled job — so --yes cannot
-// cover it (the stage is registered noYes) and its confirmation is the
-// project's name typed at a real terminal (initflow.Typed), exactly as the
-// project's creation and the secrets are.
+// cover it (the stage is registered noYes, and askTyped's own class refuses it
+// too) and its confirmation is the owner's own session: a person at a real
+// terminal is what applies it, and nothing is typed at them (D1540). A coding
+// agent's session is refused rather than left for the owner like a session
+// that merely cannot answer (D1555, Apply), and what it reads beside the
+// refusal is the command its owner runs themselves (Left).
 //
 // What it does NOT do: touch the installation's own root (a workdir and a
 // state of its own, see infra.ComputeWorkdir), handle a secret, or delete
@@ -122,8 +125,19 @@ func (s *computeStage) Plan(ctx context.Context, _ initflow.Env) (initflow.Plan,
 // Apply plans, guards, confirms and applies the compute root, then starts the
 // preload rebuild once: a fresh installation must not wait a week for its
 // first preloaded image.
+//
+// A coding agent's session is refused rather than left (D1555), and it is
+// refused first: plan() writes the root's tfvars and plans it, so the refusal
+// has to come before anything of this root runs. The fence is beside the
+// loop's own agent arm and not only in it, because the loop answers this stage
+// from its registration — which is not this step's — and a stage whose only
+// fence is another component's ordering is one a later registration change can
+// leave unfenced.
 func (s *computeStage) Apply(ctx context.Context, _ initflow.Env) (initflow.Outcome, error) {
 	e, r := s.e, s.e.r
+	if m := agentMarker(os.Getenv, r.stdinTerminal()); m != "" {
+		return initflow.Outcome{}, &initflow.AgentError{Marker: m}
+	}
 	plan, err := s.plan(ctx)
 	if err != nil {
 		return initflow.Outcome{}, err
@@ -143,8 +157,8 @@ func (s *computeStage) Apply(ctx context.Context, _ initflow.Env) (initflow.Outc
 	counts := infra.CountPlan(plan)
 	s.changes = &counts
 
-	// The confirmation, typed at a real terminal: --yes never covers this
-	// stage, and a run that cannot ask leaves it for the owner.
+	// The confirmation, which is the owner's own session: --yes never covers
+	// this stage, and a run that cannot confirm leaves it for the owner.
 	what := fmt.Sprintf("provisions the Batch compute backend in GCP project %s: the Compute and Batch APIs, the run accounts' IAM, the launcher's, reaper's and preload accounts and roles, a Cloud NAT and router (billable while they exist), and a preloaded boot image built by a scheduled Cloud Build (%s)", e.lc.GCPProject, counts.String())
 	confirmed, reachable, err := r.askTyped(what)
 	if err != nil {

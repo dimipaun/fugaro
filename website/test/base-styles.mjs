@@ -2500,9 +2500,16 @@ export function navFailures(html, rel) {
   // "Product" and "Project" — so the names and the routes are held here, with the count.
   // Why GCP moved from Product to Project, after Security, by the owner's explicit approval of
   // 2026-10-23 (its label and URL unchanged).
+  // **Compatibility is the newest route in *Project*, after Docs**, and it is here for the same
+  // reason the other approvals are: `.claude/rules/website.md` keeps a nav label and URL unless
+  // the owner approves a change, and the owner approved this one on 2026-11-10 ("Yes, add
+  // Compatibility to the nav") — the entry the compatibility matrix's plan (Task CM2) left to
+  // the owner (docs/compatibility-matrix/reconciliation.md §4; the *Project* group is the
+  // candidate it named). `website/src/layouts/Base.astro` carries the same date and the same
+  // quote, so the two files that hold the nav agree about who approved it and when.
   const GROUPS_WANTED = [
     ['Product', ['/how-it-works/', '/getting-started/', '/caps-and-costs/', '/console/', '/mobile/']],
-    ['Project', ['/docs/', '/security/', '/why-gcp/', '/faq/', '/community/', '/changelog/']],
+    ['Project', ['/docs/', '/compatibility/', '/security/', '/why-gcp/', '/faq/', '/community/', '/changelog/']],
   ]
   groups.forEach((group, at) => {
     const wanted = GROUPS_WANTED[at]
@@ -2580,11 +2587,12 @@ test('the section nav is a labelled landmark of keyboard-reachable links, with t
 // ---- the refusals, kept ------------------------------------------------------------------
 
 // The two groups, as the layout writes them (the owner's feedback of 2026-10-21 dropped the
-// Reference group: Console under *Product*, Docs and Changelog under *Project*), so a fixture
-// is the real shape and not a smaller one the rule happens to accept.
+// Reference group: Console under *Product*, Docs and Changelog under *Project*; the owner's
+// approval of 2026-11-10 put Compatibility under *Project* after Docs), so a fixture is the real
+// shape and not a smaller one the rule happens to accept.
 const FIXTURE_GROUPS = [
   ['Product', [['/how-it-works/', 'How it works'], ['/getting-started/', 'Getting started'], ['/caps-and-costs/', 'Caps and costs'], ['/console/', 'Console'], ['/mobile/', 'Mobile']]],
-  ['Project', [['/docs/', 'Docs'], ['/security/', 'Security'], ['/why-gcp/', 'Why GCP'], ['/faq/', 'FAQ'], ['/community/', 'Community'], ['/changelog/', 'Changelog']]],
+  ['Project', [['/docs/', 'Docs'], ['/compatibility/', 'Compatibility'], ['/security/', 'Security'], ['/why-gcp/', 'Why GCP'], ['/faq/', 'FAQ'], ['/community/', 'Community'], ['/changelog/', 'Changelog']]],
 ]
 
 // The wordmark, as the layout writes it: the logo is decoration beside the name, and the name

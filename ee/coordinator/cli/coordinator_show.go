@@ -24,7 +24,8 @@ import (
 // read goes through coordinatorReader, so it is the same read-only token for
 // the repository, minted at the installation's credentials service with the
 // named read-only permission set and cached for its life
-// (github.CoordinatorTokenPermissions, no `write` anywhere). This command holds
+// (github.PersonReadTokenPermissions: contents, pull requests and metadata,
+// all read, and no `write` anywhere). This command holds
 // no GitHub App key and no Bitbucket credential at all, and it reads no
 // environment variable to find either: the service's URL is the project's own
 // published block (the owner's ruling of 2026-11-03), and a project that
@@ -60,11 +61,12 @@ func newCoordinatorShowCmd() *cobra.Command {
 			"sanitises it before it reaches a line or a cell.\n\n" +
 			"The read is the installation's: one read-only token for the repository,\n" +
 			"minted at the project's own published credentials service against the\n" +
-			"caller's own Google ID token and carrying the named read-only permission set\n" +
-			"— pull requests and metadata (Q3 answered (A)). This command holds no GitHub\n" +
-			"App key and no Bitbucket credential, and it reads no environment variable to\n" +
-			"find the service: a project that publishes none is one whose host read is\n" +
-			"refused (exit 1). No credential of the host's reaches the output.\n" +
+			"caller's own Google ID token and carrying the named read-only permission\n" +
+			"set — contents, pull requests and metadata, all read (Q3 answered (A)).\n" +
+			"This command holds no GitHub App key and no Bitbucket credential, and it\n" +
+			"reads no environment variable to find the service: a project that publishes\n" +
+			"none is one whose host read is refused (exit 1). No credential of the host's\n" +
+			"reaches the output.\n" +
 			"A repository on a host this read does not serve is refused the way the\n" +
 			"project-wide view refuses it (reconciliation Q12 (A), finding #30): a\n" +
 			"bitbucket repository is read through the same service, one repository's read\n" +

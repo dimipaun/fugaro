@@ -127,13 +127,11 @@ const maxUSD = 1e6
 // The closed sets a record's words are checked against. They are the wire's
 // own enums (schemas/result.schema.json, runstore's constants); a value
 // outside them is a record this runner did not write, and it renders "other"
-// rather than itself.
+// rather than itself. The status set is read from runstore.Statuses — the
+// vocabulary's one spelling — rather than restated here, so a status this
+// runner can write is never a word this report cannot name.
 var (
-	statuses = []string{
-		string(runstore.StatusRunning), string(runstore.StatusSucceeded),
-		string(runstore.StatusFailed), string(runstore.StatusInfraError),
-		string(runstore.StatusCancelled), string(runstore.StatusHalted),
-	}
+	statuses    = statusWords()
 	haltReasons = []string{
 		string(runstore.HaltKillSwitch), string(runstore.HaltRunCap),
 		string(runstore.HaltRepoDailyCap), string(runstore.HaltGlobalDailyCap),
@@ -152,6 +150,16 @@ var (
 		"render", "finalize", "writeback", "provision",
 	}
 )
+
+// statusWords is runstore's status vocabulary as the wire spells it, which is
+// what a record's status is compared against before the report prints it.
+func statusWords() []string {
+	words := make([]string, len(runstore.Statuses))
+	for i, s := range runstore.Statuses {
+		words[i] = string(s)
+	}
+	return words
+}
 
 // Period is one report period: the time grouping, its key and its first and
 // last day.
