@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "run_id": "20260101-120000-dddd",
+  "repo": "acme/app",
+  "status": "running",
+  "stage": "implement",
+  "outcome": "none",
+  "branch": "fugaro/20260101-120000-dddd",
+  "started_at": "2026-01-01T12:00:00Z"
+}
