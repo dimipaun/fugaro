@@ -757,3 +757,94 @@ func TestSlipOwnerIsTheLauncherRule(t *testing.T) {
 		t.Fatal("validSlipOwner accepted a stringified number")
 	}
 }
+
+// TestAnEndedRunEndsOnlyItsOwnSlip: G3, on the one path where a header a caller
+// chooses decides that a slip record is DELETED.
+//
+// endEndedRunsSlip is the outcome half of "issuance ends" (DS1.1's End names
+// the run's outcome and the max runtime), and it is unlike everything else this
+// service does with a slip: the call it acts for was refused, so no record was
+// verified against its identity and its secret, and what it has is the id the
+// call NAMED. Two guards hold "the id alone is never enough" there, and this is
+// what pins each: the header is read only where a slip id can be read at all
+// (one header, of the width this service mints), and the record the id names
+// must be the ended RUN's own — its slug and its run, both.
+//
+// Without the second guard an ended run could name any slip id it liked and end
+// another run's grant, refusing that run's every later call with
+// slipNotThisRuns. That is not a hypothetical caller: the end of a run is
+// exactly the moment its own job token is still usable and its record is still
+// in the database, which is why this path is the one that needs the guard.
+func TestAnEndedRunEndsOnlyItsOwnSlip(t *testing.T) {
+	t.Run("another run of the same repository", func(t *testing.T) {
+		s := newSlips(t, testLauncherAccount)
+		other := s.grantOK(t, grantBody(t, s.slug, otherRun(), testJobSA, 3600, testSlipCredential))
+		s.endTheRun()
+
+		resp, body := s.callTokens(t, callBody("naming-another-run"), s.runToken(), s.jobToken(), s.job,
+			withSlip(other.Slip, "a-claim-secret-this-call-does-not-have"))
+		e := wantRefusal(t, resp, body, StatusUnverified, ErrorUnverifiedRunIdentity)
+		if !strings.Contains(e.Message, "the run has ended") {
+			t.Errorf("the call of an ended run is refused %q, want the run's own end to be why", e.Message)
+		}
+		if !s.stillThere(t, other.Slip) {
+			t.Error("the ended run ended another run's slip by naming its id: the id alone is never enough (G3)")
+		}
+	})
+
+	t.Run("another repository's run", func(t *testing.T) {
+		s := newSlips(t, testLauncherAccount)
+		// The same run id under another repository's slug: a slug is not a run,
+		// and the guard reads both halves, so neither alone is the record's
+		// whole name.
+		other := s.grantOK(t, grantBody(t, testSlug(t, testOtherRepoPath), s.run, testJobSA, 3600, testSlipCredential))
+		s.endTheRun()
+
+		resp, body := s.callTokens(t, callBody("naming-another-repository"), s.runToken(), s.jobToken(), s.job,
+			withSlip(other.Slip, "a-claim-secret-this-call-does-not-have"))
+		wantRefusal(t, resp, body, StatusUnverified, ErrorUnverifiedRunIdentity)
+		if !s.stillThere(t, other.Slip) {
+			t.Error("the ended run ended a slip granted for another repository: the record that decides is the ended run's own")
+		}
+	})
+
+	t.Run("a call that names no slip", func(t *testing.T) {
+		s := newSlips(t, testLauncherAccount)
+		sl := s.claimedSlip(t, 3600, testSlipCredential)
+		s.endTheRun()
+
+		// No slip header at all: the ended run's own record is in the database
+		// and this path reads nothing but the header, so a service that reached
+		// for an id it was not given would be reading its own index zero.
+		resp, body := s.callTokens(t, callBody("no-slip-at-all"), s.runToken(), s.jobToken(), s.job)
+		wantRefusal(t, resp, body, StatusUnverified, ErrorUnverifiedRunIdentity)
+		if !s.stillThere(t, sl.id) {
+			t.Error("a call that named no slip ended one: the deletion is decided from the id the call GIVES, not from any record of its run")
+		}
+	})
+
+	t.Run("two slip headers", func(t *testing.T) {
+		s := newSlips(t, testLauncherAccount)
+		sl := s.claimedSlip(t, 3600, testSlipCredential)
+		s.endTheRun()
+
+		// The ended run's own slip, named twice: a header this service refuses
+		// to read anywhere else (oneHeader) is not read here either, so the
+		// record waits for the runtime cap rather than being ended by a call
+		// whose own headers it could not have answered.
+		resp, body := s.slipCall(t, sl, "two-slip-headers", func(r *http.Request) {
+			r.Header.Add(HeaderSlip, sl.id)
+		})
+		wantRefusal(t, resp, body, StatusUnverified, ErrorUnverifiedRunIdentity)
+		if !s.stillThere(t, sl.id) {
+			t.Error("a call whose slip header this service does not read ended a record anyway: the header is read once, or not at all")
+		}
+	})
+
+	// The header guard's other half — an id of the wrong width or outside the
+	// printable alphabet — is the claim route's own rule (slipClaim), applied
+	// here for the same reason: a lookup of every string a caller sends is a
+	// lookup an operator's database should not have to answer. It is not pinned
+	// by a record's fate, because an id this service could not have minted
+	// names no record: what it holds back is the lookup itself.
+}

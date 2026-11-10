@@ -297,6 +297,11 @@ func TestAuditCarriesNamesOnly(t *testing.T) {
 			{"tier", func(ev *AuditEvent, v string) { ev.Tier = v }, TierA},
 			{"purpose", func(ev *AuditEvent, v string) { ev.Purpose = v }, PurposeForward},
 			{"status", func(ev *AuditEvent, v string) { ev.Status = v }, StatusOK},
+			// The slip and its owner are scrubbed like every other field, and
+			// each case carries the pair's other half because a line with one
+			// of the two is refused before the scrub's own work can be read.
+			{"slip", func(ev *AuditEvent, v string) { ev.Slip, ev.Owner = v, testLauncherSub }, "scrubbed-slip"},
+			{"owner", func(ev *AuditEvent, v string) { ev.Owner, ev.Slip = v, anIdNobodyWrote }, "9876543210"},
 		} {
 			t.Run(c.field, func(t *testing.T) {
 				value := auditValue(t)
@@ -361,6 +366,15 @@ func TestAuditCarriesNamesOnly(t *testing.T) {
 			{"an issuance with no purpose", full(func(ev *AuditEvent) { ev.Purpose = "" }), "purpose", refusalMissing, ""},
 			{"an issuance with no run", full(func(ev *AuditEvent) { ev.Run, ev.Repository = "", "" }), "run", refusalMissing, ""},
 			{"an issuance with no job", full(func(ev *AuditEvent) { ev.Job, ev.Caller = "", "" }), "job", refusalMissing, ""},
+			// The slip and its owner (R5, DS1.6): the pair is one fact, and
+			// each half is held to its own rule — the slip id to the width and
+			// the alphabet this service mints, the owner to the launcher's own
+			// digits — so a line handed either one without the other, or with
+			// half a shape, is refused rather than recorded.
+			{"a slip id that could not be minted", full(func(ev *AuditEvent) { ev.Slip, ev.Owner = value+" "+value, testLauncherSub }), "slip", refusalMalformed, value},
+			{"an owner that is not a launcher's account id", full(func(ev *AuditEvent) { ev.Slip, ev.Owner = anIdNobodyWrote, value }), "owner", refusalMalformed, value},
+			{"a slip with no owner", full(func(ev *AuditEvent) { ev.Slip = anIdNobodyWrote }), "slip", refusalMissing, ""},
+			{"an owner with no slip", full(func(ev *AuditEvent) { ev.Owner = testLauncherSub }), "slip", refusalMissing, ""},
 		} {
 			t.Run(c.name, func(t *testing.T) {
 				a, buf := newAudit(t)
