@@ -91,6 +91,19 @@ func TestDocsChecks145149AreRegistered(t *testing.T) {
 				t.Errorf("Check %s's section does not say %q: the check is owner-run and has not been run, and a section that leaves either half out reads as something an agent did", number, want)
 			}
 		}
+		// Check 145's U11 line once made the minimum-scope rule (G7) rest on
+		// Check 147, and D1960 retired that number on 2026-11-10: a line that
+		// still hands G7's enforcement to it contradicts the plan's own G7 row,
+		// which reads the question as moot, and the register is where a reader
+		// meets the question first.
+		if number == "145" {
+			if strings.Contains(flat, "rests on check 147") {
+				t.Errorf("Check 145's U11 line still makes the minimum-scope rule rest on Check 147: D1960 retired the number as reserved and unused, and the plan's G7 row reads the question as moot")
+			}
+			if !strings.Contains(flat, "d1960") {
+				t.Errorf("Check 145's U11 line does not say the number it once named was retired (D1960)")
+			}
+		}
 	}
 
 	// The rows and the sections run in number order, so a reader who follows the

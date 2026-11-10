@@ -997,7 +997,8 @@ tests this task names are not.*
   token that carries more.
   - If Check 145 shows that it does not list them, no service-side enforcement is built, and
     `TestRunMintRefusesWiderScopes` is dropped. G7 then rests on Check 147 alone, and SECURITY.md
-    says so.
+    says so. **Amended 2026-11-10 (D1960):** the number is retired with this task, so there is no
+    enforcement left for G7 to rest on, and the G7 row above reads the question as moot.
 - **Runbook:** the scope sets are added to `docs/credentials-service/runbook.md`.
 - **Check 147's script:**
   - runs one sandbox run;

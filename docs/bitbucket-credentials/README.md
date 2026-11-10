@@ -23,8 +23,9 @@ chain builds none of it**: T2.6 (the runbook) and T2.11 (`SECURITY.md`) are stil
 (Check 149) is still the owner's own run. **What fell out of the reading are D1960–D1962, and the
 owner answered all three on 2026-11-10, as recommended**: Check 147 is retired as reserved and
 unused (D1960); the read half of Check 148 returns into S2 as an owner-run check beside T2.6
-(D1961); and T2.6 is written now, with U14 and U15 marked UNVERIFIED (D1962), so its block on
-Check 145 is lifted.
+(D1961); and **T2.6's block on Check 145 is lifted (D1962)** — the runbook is still owed and still
+unwritten, and D1962 says it is written next, with U14 and U15 marked UNVERIFIED, rather than
+held until Check 145 runs.
 
 **One precision on the ruling above.** "No run holds a Bitbucket token" is true of the run's *git
 traffic*, and the proxy that gives it that is live in the released 0.22.0 — a node that publishes
@@ -105,5 +106,5 @@ None. `spec.md` is byte for byte the text this work received. That text is itsel
 | Block | Use |
 | --- | --- |
 | **D360–D389** | This work's decision block. **D360–D367** are written and answered (2026-10-26); **D368–D389** are reserved and unused. The block sits above the highest decision on `main` (task governance's D320–D359) and in every open PR's docs, none of which reaches D334 |
-| **Checks 145–154** | This work's check block. **145–149** are proposed by the plan (owner-run, NOT RUN); **150–154** are reserved and unused. The block sits above the highest check block on `main` (task governance's Checks 135–144); no open PR writes Check 135 or above |
+| **Checks 145–154** | This work's check block. **145, 146, 148 and 149** are the plan's — owner-run, NOT RUN; **147** is retired as reserved and unused (D1960, answered 2026-11-10) and **148** carries only its read half, in S2 (D1961); **150–154** are reserved and unused. The block sits above the highest check block on `main` (task governance's Checks 135–144); no open PR writes Check 135 or above |
 | **D1960–D1979** | **The block [reconciliation-secrets-brokering.md](reconciliation-secrets-brokering.md) takes** (2026-11-10), because D1959 is the highest decision on `main` and no open PR writes D1960 or above. **D1960–D1962** were answered there on 2026-11-10, all three as recommended; **D1963–D1979** are reserved and unused. It sits above this work's own D360–D389 and below the workspace-token folder's D1980–D1999, which the same reconciliation takes |
