@@ -79,10 +79,10 @@ const (
 	// sentence is pinned rather than left to a reader to find.
 	mobileAuthAnswered = "**Answered 2026-10-22: as recommended"
 
-	// The index's status line, in the two pieces the plan names it by: the
-	// folder's own account of itself, whose second half says nothing here is
-	// built yet.
-	mobileAuthStatus      = "**Status: plan only.**"
+	// The index's status line, and the sentence that follows it. The line states
+	// the folder's state and points at docs/status.md, which carries the current
+	// table; the sentence after it is the folder's own account of itself.
+	mobileAuthStatus      = "**Status as of 2026-11-10: parked, 2/7 merged; see [docs/status.md](../status.md) for the current table.**"
 	mobileAuthStatusBuilt = "No code is implemented"
 
 	// mobileAuthNeverCarried is the one path these documents cite that is
@@ -101,13 +101,13 @@ var mobileAuthDocuments = []string{mobileAuthReadme, mobileAuthSpec, mobileAuthR
 
 // TestDocsMobileAuthDocumentsExist: the folder is four documents, and the index
 // still describes them as what they are. The status line is the index's own
-// claim about the folder ("plan only; no code is implemented"), and the index
-// is an index: it names the other three documents, so a reader who opens this
-// folder first is sent to all of it.
+// claim about the folder (its state, and the pointer to docs/status.md), and
+// the index is an index: it names the other three documents, so a reader who
+// opens this folder first is sent to all of it.
 //
 // Mutation (verified, run and restored): delete a document and this test fails
-// naming it; delete "no code is implemented" from the index's status line and
-// it fails naming the sentence the plan pins.
+// naming it; delete the status line from the index and it fails naming the
+// sentence the plan pins.
 func TestDocsMobileAuthDocumentsExist(t *testing.T) {
 	for _, doc := range mobileAuthDocuments {
 		if _, err := os.Stat("../../" + doc); err != nil {
