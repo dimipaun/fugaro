@@ -575,14 +575,21 @@ step_stop() {
   if [ "$after_n" != "$((before_n - 1))" ]; then
     stop "stripping the entry changed the document's entry count from $before_n to $after_n, which is not one fewer: the version written would not be the bundle with one credential taken out, so nothing was written"
   fi
+  # The add can land the version AND exit non-zero — the same partial write
+  # fugaro's own bundle writer names for creds set (internal/cli/creds.go, "a
+  # version of this credential may exist") — so the Restore row is told what the
+  # bundle MAY hold before the write rather than after it. Everything from here
+  # to the disable is a state the operator has to read, not assume.
+  LEFTOVER="a version of the bundle MAY have been written just now — the document with the bitbucket-read-consumer entry taken out — and the version it replaced ($before) is still enabled until this run says otherwise"
   if ! run_capture "$SCRATCH/added.txt" gcloud secrets versions add "$SECRET" --project "$PROJECT" --data-file "$SCRATCH/bundle-stopped.yaml"; then
-    stop "gcloud secrets versions add did not answer for $SECRET, so the entry is still in the bundle: nothing was stopped and nothing was disabled"
+    stop "gcloud secrets versions add did not answer for $SECRET. It can land the version and still exit non-zero, so the bundle MAY now hold the document with the entry taken out while the version it replaced ($before) is still enabled: read the bundle with fugaro creds ls before you go on"
   fi
   VERSION=$(newest_version)
   [ -n "$VERSION" ] && [ "$VERSION" != "$before" ] \
-    || stop "the bundle's newest version is still $before after a version was added, so this run cannot tell which version it wrote and will not disable anything"
+    || stop "the bundle's newest version is still $before after a version was added, so this run cannot tell which version it wrote and will not disable anything. Read the versions yourself (gcloud secrets versions list $SECRET): a version with the entry taken out may exist, and it may be the one the service reads"
+  LEFTOVER="the bundle holds the document with the bitbucket-read-consumer entry taken out (version $VERSION), with version $before possibly still enabled"
   if ! run_capture "$SCRATCH/disabled.txt" gcloud secrets versions disable "$before" --secret "$SECRET" --project "$PROJECT"; then
-    stop "gcloud secrets versions disable did not answer for version $before of $SECRET: the version this run replaced is still enabled, so the consumer is still readable from it and the stop is not one. Disable it yourself before going on"
+    stop "gcloud secrets versions disable did not answer for version $before of $SECRET, so this run cannot tell whether the version it replaced is still enabled — and an enabled version still holds the consumer, which is the one thing the stop is for. Read the versions yourself (gcloud secrets versions list $SECRET) and disable $before by hand before going on"
   fi
   LEFTOVER="the bundle holds the document with the bitbucket-read-consumer entry taken out (version $VERSION, with version $before disabled)"
   if mint_want stop refused "the stop"; then
@@ -606,9 +613,14 @@ newest_version() {
 # set_consumer PATH WHAT: one bundle write through the bundle's only writer,
 # with the document on stdin so the shell never holds a value.
 set_consumer() {
+  # The same partial write the stop drill's own add has: a version MAY exist
+  # even when the command exits non-zero, so the Restore row is told what the
+  # bundle may hold before the write and the caller tightens it once the write
+  # is known to have landed.
+  LEFTOVER="a fugaro creds set of the $2 may have landed: the bundle may hold it, or it may hold what the run left before it"
   if ! fugaro creds set bitbucket-read-consumer <"$1" >"$SCRATCH/set.out" 2>"$SCRATCH/set.err"; then
     sed -n '1,5p' "$SCRATCH/set.err" >&4 || true
-    stop "fugaro creds set bitbucket-read-consumer refused the $2: its message is above. Nothing was written by it, and the bundle is whatever the last step left"
+    stop "fugaro creds set bitbucket-read-consumer refused the $2: its message is above. A refused write is not always a write that did not land — a version of the credential may exist — so read the entry with fugaro creds ls before you trust what the bundle holds"
   fi
 }
 

@@ -125,12 +125,16 @@ secrets)
       [ -n "$data" ] || { printf 'fake gcloud: versions add without --data-file\n' >&2; exit 64; }
       cp "$data" "$FAKE148_DIR/bundle.yaml"
       bump_version
+      # The write above LANDS and the status is still non-zero: gcloud does
+      # both, which is the partial write a case here is about.
+      if [ -s "$FAKE148_DIR/add.status" ]; then exit "$(cat "$FAKE148_DIR/add.status")"; fi
       ;;
     disable)
       # Nothing to do: this suite's bundle is one file and the fake Bitbucket
       # reads the newest version's document, so disabling the version the stop
       # replaced has no state of its own to change. It is still recorded in
       # $FAKE148_DIR/calls, which is what the check's row is about.
+      if [ -s "$FAKE148_DIR/disable.status" ]; then exit "$(cat "$FAKE148_DIR/disable.status")"; fi
       ;;
     *)
       printf 'fake gcloud: unknown versions verb %s\n' "${3:-}" >&2
@@ -205,6 +209,9 @@ creds)
     cat >"$body"
     python3 "$FAKE148_DIR/bundle.py" set "$body"
     rm -f "$body"
+    # The entry is written above and the status is still non-zero: the partial
+    # write internal/cli/creds.go names, which a case here is about.
+    if [ -s "$FAKE148_DIR/set.status" ]; then exit "$(cat "$FAKE148_DIR/set.status")"; fi
     ;;
   *)
     printf 'fake fugaro: unknown creds verb %s\n' "${2:-}" >&2
@@ -680,6 +687,13 @@ expect_set_bundle() { # dir what
   grep -q '^fugaro creds set bitbucket-read-consumer' "$1/state/calls" \
     || fail "$2: no fugaro creds set ran $(tr '\n' ';' <"$1/state/calls")"
 }
+# expect_entry_gone FILE WHAT — the document the service reads really no longer
+# holds the entry. A case about a write that LANDED and failed is only about
+# that if the write landed.
+expect_entry_gone() { # file what
+  grep -q 'bitbucket-read-consumer' "$1" \
+    && fail "$2: $1 still holds the entry" || true
+}
 
 # ------------------------------------------------------------------- the tests
 test_happy_path() {
@@ -789,6 +803,57 @@ test_a_doctor_that_answers_nothing_stops() {
   expect_contains "$out" "fugaro exited 1" "doctor answers nothing: the reason names the status"
   expect_no_bundle_write "$dir" "doctor answers nothing"
   assert_no_secret "$dir" "doctor answers nothing"
+}
+
+# A version that LANDED and a gcloud that exited non-zero anyway -- the partial
+# write this repo names (internal/cli/creds.go, "a version of this credential
+# may exist"). The block must not tell the operator nothing was written: what is
+# on the service's document is the stripped bundle, every read mint is refused,
+# and the version the stop replaced is still enabled.
+test_a_versions_add_that_landed_and_failed_is_not_reported_as_nothing() {
+  setup_case addlanded
+  default_args
+  printf '1\n' >"$dir/state/add.status"
+  run148
+  expect_status "$status" 2 "the add landed and failed"
+  expect_entry_gone "$dir/state/bundle.yaml" "the add landed and failed: the case really landed the write"
+  expect_contains "$out" "MAY have been written" "the add landed and failed: the Restore row says so"
+  expect_absent "$out" "the bundle was not written" "the add landed and failed: no Restore claiming nothing happened"
+  expect_absent "$out" "nothing was stopped and nothing was disabled" "the add landed and failed: the old reason is gone"
+  expect_contains "$out" "FACT aborted: FAIL — " "the add landed and failed: the run is aborted"
+  expect_contains "$out" "FACT stop: FAIL — not reached" "the add landed and failed: the stop was never measured"
+  assert_no_secret "$dir" "the add landed and failed"
+}
+
+# The disable's own version of it: gcloud can disable the version and still exit
+# non-zero, so a sentence that says the version is still enabled states the
+# opposite of what may be true. What the run knows is that it cannot tell.
+test_a_versions_disable_that_failed_is_no_claim_about_the_version() {
+  setup_case disablefailed
+  default_args
+  printf '1\n' >"$dir/state/disable.status"
+  run148
+  expect_status "$status" 2 "the disable failed"
+  expect_contains "$out" "cannot tell whether the version it replaced is still enabled" "the disable failed: the reason says what the run knows"
+  expect_absent "$out" "the version this run replaced is still enabled, so the consumer" "the disable failed: no claim the run cannot make"
+  expect_contains "$out" "possibly still enabled" "the disable failed: the Restore row does not claim the disable either"
+  expect_contains "$out" "FACT stop: FAIL — not reached" "the disable failed: the stop was never measured"
+  assert_no_secret "$dir" "the disable failed"
+}
+
+# And the bundle's own writer, which ends its step with a cross for the same
+# reason: the entry is in the document the service reads and the command
+# reported a failure.
+test_a_creds_set_that_landed_and_failed_is_not_reported_as_nothing() {
+  setup_case setlanded
+  default_args
+  printf '1\n' >"$dir/state/set.status"
+  run148
+  expect_status "$status" 2 "the set landed and failed"
+  expect_contains "$out" "a fugaro creds set of the consumer the bundle held before the stop may have landed" "the set landed and failed: the Restore row says so"
+  expect_absent "$out" "Nothing was written by it" "the set landed and failed: no claim the run cannot make"
+  expect_contains "$out" "FACT restore-consumer: FAIL — not reached" "the set landed and failed: the row was never measured"
+  assert_no_secret "$dir" "the set landed and failed"
 }
 
 # A rotation that leaves the replaced secret alive at Bitbucket. The write is
@@ -1206,6 +1271,9 @@ t test_a_mint_that_outlives_the_stop_is_a_fail
 t test_the_bundle_cache_is_waited_out
 t test_a_doctor_that_fails_but_answers_is_still_read
 t test_a_doctor_that_answers_nothing_stops
+t test_a_versions_add_that_landed_and_failed_is_not_reported_as_nothing
+t test_a_versions_disable_that_failed_is_no_claim_about_the_version
+t test_a_creds_set_that_landed_and_failed_is_not_reported_as_nothing
 t test_a_rotation_that_leaves_the_old_secret_alive_is_a_fail
 t test_u13_that_ends_the_token_is_recorded_too
 t test_a_successor_that_is_the_same_consumer_stops
