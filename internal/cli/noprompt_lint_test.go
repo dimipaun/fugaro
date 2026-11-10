@@ -743,7 +743,6 @@ var notADecisionSites = map[string]string{
 var pendingSites = map[string]string{
 	"budget.go:confirmTyped":       "T3",
 	"budget.go:confirmTypedStrict": "T3",
-	"image.go:confirmBuild":        "T4",
 	"managed_apply.go:managedAsk":  "T9",
 	// T6 removed every read of this command family it could remove, and T7
 	// removed the two callers the plan gave it (init_layer_stage.go,

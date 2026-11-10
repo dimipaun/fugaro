@@ -963,11 +963,35 @@ func AuthorProblem(p Person) string {
 }
 
 // Overrides are the only config values a single task may change.
+//
+// The last four are a chain's limits rather than this run's settings, which
+// is why none of them reuses a member above it: review_rounds is this run's
+// round count and max_budget_usd is the per-stage ceiling the agent is
+// launched with (Spec.Apply), while max_usd, max_tokens, max_time and
+// max_review_rounds bound what a whole chain of runs may spend (D1041,
+// D1042, D1056). They belong on the launch that begins a chain and are unset
+// on every other task, so a launch that names none keeps today's per-run
+// caps exactly. Nothing writes one yet: the flags that do are L3 of
+// docs/run-limit-carry-over.
 type Overrides struct {
 	ReviewRounds *int     `json:"review_rounds,omitempty"`
 	MaxBudgetUSD *float64 `json:"max_budget_usd,omitempty"`
 	Model        string   `json:"model,omitempty"`
 	TotalTimeout string   `json:"total_timeout,omitempty"`
+
+	// The chain's dollar, token, wall-time and review-round limits, each
+	// nil or empty when the launch set none. They need a runner that knows
+	// them: an older one decodes with DisallowUnknownFields and refuses the
+	// whole task, so the launcher must gate a launch that would write one
+	// behind checkImageSince. No launch writes one yet and no such `…Since`
+	// constant exists yet — the four flags and the gate beside
+	// governanceSince in internal/cli/recipes_skew.go are L3 of
+	// docs/run-limit-carry-over — so today nothing can write a member an
+	// older image would refuse.
+	MaxUSD          *float64 `json:"max_usd,omitempty"`
+	MaxTokens       *int64   `json:"max_tokens,omitempty"`
+	MaxTime         string   `json:"max_time,omitempty"`
+	MaxReviewRounds *int     `json:"max_review_rounds,omitempty"`
 }
 
 // NewRunID returns a run ID for now, in UTC, with 4 random hex digits from r.
@@ -1387,6 +1411,26 @@ func (s *Spec) Validate() error {
 		if d, err := time.ParseDuration(o.TotalTimeout); err != nil || d <= 0 {
 			bad("task spec: overrides.total_timeout %q must be a positive duration such as 45m", o.TotalTimeout)
 		}
+	}
+	// The chain's four limits are caps, and the value that is not a cap is
+	// the value refused — zero included, for the reason max_budget_usd
+	// refuses it: absence is how a task says it has no chain limit, so a
+	// zero would leave the reader with one meaning for "not there" and
+	// another for a number, and a chain that started with zero remaining
+	// would refuse every run it continued.
+	if o.MaxUSD != nil && *o.MaxUSD <= 0 {
+		bad("task spec: overrides.max_usd must be greater than 0")
+	}
+	if o.MaxTokens != nil && *o.MaxTokens <= 0 {
+		bad("task spec: overrides.max_tokens must be greater than 0")
+	}
+	if o.MaxTime != "" {
+		if d, err := time.ParseDuration(o.MaxTime); err != nil || d <= 0 {
+			bad("task spec: overrides.max_time %q must be a positive duration such as 45m", o.MaxTime)
+		}
+	}
+	if o.MaxReviewRounds != nil && *o.MaxReviewRounds < 1 {
+		bad("task spec: overrides.max_review_rounds must be greater than 0")
 	}
 	if rc := s.Recipe; rc != nil {
 		switch {

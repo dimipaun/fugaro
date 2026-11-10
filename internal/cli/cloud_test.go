@@ -50,6 +50,10 @@ type cloudFixture struct {
 	// secret_manager endpoint, which is every other cloudFixture -- and
 	// deliberately so for the test that proves a command needs none.
 	sm *gcpfake.Secrets
+	// db is the budget database a rig that submits a billable build points its
+	// installation at (buildBudgetWorld): nil for a rig that only reads, and
+	// the fake a test changes a cap or a counter on afterwards.
+	db *gcpfake.RTDB
 }
 
 // newCloudFixture writes a local config whose endpoints point at the Run and
