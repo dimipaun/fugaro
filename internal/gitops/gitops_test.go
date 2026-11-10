@@ -2361,6 +2361,39 @@ func TestPushURLs(t *testing.T) {
 	if got := mustPushURLs(t, repo, app); !slices.Equal(got, []string{"https://github.com/second/app"}) || !slices.Equal(got, []string{gitSays}) {
 		t.Fatalf("PushURLs with two matching pushInsteadOf rules = %q, want the longest rule's base and git's own answer %q", got, gitSays)
 	}
+	// url.*.insteadOf is what a push that names a URL meets when no
+	// pushInsteadOf rule matches, and a second rule of that kind can match what
+	// the first one produced: git's read of the remote answers with the
+	// once-rewritten URL — and with the pushurl alone once the checkout sets
+	// one — while the push itself opens the twice-rewritten one (measured: git
+	// does not apply the rules again to a rule's own result, and the URL it is
+	// asked to push to is the one it rewrites). That second rule is the only
+	// thing that says where the run's commits would land, which is why the list
+	// has to carry what it produces.
+	testutil.Git(t, repo.Dir, "config", "--unset-all", "url.https://github.com/second/app.pushInsteadOf")
+	testutil.Git(t, repo.Dir, "config", "--unset-all", "url.ssh://git@github.com/evil/.pushInsteadOf")
+	testutil.Git(t, repo.Dir, "config", "url.https://github.com/mirror/.insteadOf", "https://github.com/acme/")
+	testutil.Git(t, repo.Dir, "config", "url.https://github.com/evil/.insteadOf", "https://github.com/mirror/")
+	testutil.Git(t, repo.Dir, "config", "remote.origin.pushurl", "git@github.com:acme/app.git")
+	once := testutil.Git(t, repo.Dir, "remote", "get-url", "origin")
+	if once != "https://github.com/mirror/app.git" {
+		t.Fatalf("git's own read of origin = %q, want the once-rewritten URL the guard is handed", once)
+	}
+	if got, want := mustPushURLs(t, repo, once), []string{"git@github.com:acme/app.git", "https://github.com/evil/app.git"}; !slices.Equal(got, want) {
+		t.Fatalf("PushURLs with a second insteadOf rule = %q, want %q", got, want)
+	}
+	// A push meets url.*.pushInsteadOf before url.*.insteadOf: with a rule of
+	// each kind matching the URL, git applies the pushInsteadOf one although the
+	// insteadOf rule's prefix is the longer of the two (measured: the push
+	// landed at the pushInsteadOf rule's base), and it does not apply the
+	// insteadOf rule to what that produced either.
+	testutil.Git(t, repo.Dir, "config", "--unset-all", "url.https://github.com/mirror/.insteadOf")
+	testutil.Git(t, repo.Dir, "config", "--unset-all", "url.https://github.com/evil/.insteadOf")
+	testutil.Git(t, repo.Dir, "config", "url.https://github.com/evil/other.git.insteadOf", app)
+	testutil.Git(t, repo.Dir, "config", "url.https://github.com/mirror/.pushInsteadOf", "https://github.com/acme/")
+	if got, want := mustPushURLs(t, repo, app), []string{"git@github.com:acme/app.git", "https://github.com/mirror/app.git"}; !slices.Equal(got, want) {
+		t.Fatalf("PushURLs with a rule of each kind = %q, want the pushInsteadOf rule's base %q", got, want)
+	}
 }
 
 func mustPushURLs(t *testing.T, repo *Repo, origin string) []string {

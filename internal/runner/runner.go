@@ -2068,14 +2068,17 @@ func (r *run) openBakedCheckout(ctx context.Context) error {
 // and it is the one the two reads above leave open between them. That push is
 // the checkpoint's (gitops' PushFastForward is handed origin's URL, which is
 // what keeps a pushurl set after the read from redirecting it) and it meets the
-// checkout's url.*.pushInsteadOf rules, while `git remote get-url --push`
-// answers for the *remote*: on a checkout that sets a pushurl the rewrite is
-// nowhere in its answer, so a checkout whose pushurl is this repository and
-// whose configuration rewrites the URL a push names to another one would pass
-// both reads and send every checkpoint into that other repository, with this
-// repository's credential and under this run's slug. gitops' PushURLs resolves
-// that rewrite against the origin URL and returns it with the rest, which is
-// why it is given the URL this function read.
+// checkout's url.*.pushInsteadOf and url.*.insteadOf rules, while `git remote
+// get-url --push` answers for the *remote*: on a checkout that sets a pushurl
+// the rewrite is nowhere in its answer, so a checkout whose pushurl is this
+// repository and whose configuration rewrites the URL a push names to another
+// one would pass both reads and send every checkpoint into that other
+// repository, with this repository's credential and under this run's slug. The
+// URL that push names is the one this function read, which git's read of the
+// remote has already rewritten once, so a rule matching what another rule
+// produced is a rewrite of this push too. gitops' PushURLs resolves both kinds
+// against the origin URL, in the order git reads them, and returns what they
+// produce with the rest — which is why it is given the URL this function read.
 func (r *run) checkBakedCheckoutOrigin(ctx context.Context, kind string, repo *gitops.Repo) error {
 	origin, err := strip(repo).OriginURL(ctx)
 	if err != nil {
@@ -2100,7 +2103,7 @@ func (r *run) checkBakedCheckoutOrigin(ctx context.Context, kind string, repo *g
 		// an endpoint a credential is scoped to that the launcher writes none
 		// of — so the decision is reused and the sentence is this one's.
 		if err := remoteAdmissionErr(url, kind, r.spec.Repo, r.d.Store.Slug()); err != nil {
-			return fmt.Errorf("the checkout in the image at %s pushes to %s, which is not this run's repository: the run's last git command pushes its branch to origin (gitops' Push), which git sends to the remote's pushurl when the checkout sets one, and a checkpoint pushes by origin's URL (gitops' PushFastForward), which git rewrites by the checkout's url.*.pushInsteadOf rules — and the run's git credential is scoped to the remote's endpoint rather than to its path, so the branch would land in another repository with this repository's credential, under the slug %s, while the pull request would be opened for %s: what a run pushes to is decided by the repository its task names and never by a checkout nothing ties to it, so the run stops before any git credential is requested", repo.Dir, remoteDisplay(url), r.d.Store.Slug(), r.spec.Repo)
+			return fmt.Errorf("the checkout in the image at %s pushes to %s, which is not this run's repository: the run's last git command pushes its branch to origin (gitops' Push), which git sends to the remote's pushurl when the checkout sets one, and a checkpoint pushes by origin's URL (gitops' PushFastForward), which git rewrites by the checkout's url.*.pushInsteadOf and url.*.insteadOf rules — and the run's git credential is scoped to the remote's endpoint rather than to its path, so the branch would land in another repository with this repository's credential, under the slug %s, while the pull request would be opened for %s: what a run pushes to is decided by the repository its task names and never by a checkout nothing ties to it, so the run stops before any git credential is requested", repo.Dir, remoteDisplay(url), r.d.Store.Slug(), r.spec.Repo)
 		}
 	}
 	return nil
@@ -2223,6 +2226,21 @@ func (r *run) bootstrap(ctx context.Context) error {
 	// refusal is still a run that requested nothing.
 	if err := r.openBakedCheckout(ctx); err != nil {
 		return err
+	}
+	// The checkout this run works on is settled only now, and the record's
+	// image has to name the commit that checkout is at. The read above ran
+	// while the work directory held the image's own checkout or nothing at all
+	// — on the shared catalog image every per-repository job runs (D1900) it
+	// holds no checkout of this run's repository — where imageInfo falls back
+	// to the commit the image's own record names, which belongs to whichever
+	// repository the image was built from and not to this run's. Read again
+	// here: after the adoption, and still before the sync below moves the
+	// checkout off the baked commit.
+	if sha := r.bakedHead(ctx); sha != "" {
+		if r.rec.Image == nil {
+			r.rec.Image = &runstore.ImageInfo{}
+		}
+		r.rec.Image.BakedCommit = sha
 	}
 	// Where this run clones from (design §4.1(1), plan task 3.3 step 3). On a
 	// project job the answer is computed from task.json's repository, the

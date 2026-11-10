@@ -2,6 +2,7 @@ package runner_test
 
 import (
 	"bufio"
+	"context"
 	"io"
 	"net"
 	"net/http"
@@ -93,6 +94,27 @@ func rewrittenPushCheckout(t *testing.T, h *harness, dir string) {
 	testutil.Git(t, dir, "config", "url.https://github.com/evil/.pushInsteadOf", "https://github.com/acme/")
 }
 
+// secondRewriteCheckout makes dir a checkout of this run's own repository whose
+// configuration rewrites the URL a push names twice: its origin is a URL of this
+// repository and its pushurl is the same repository in a third spelling (the
+// ssh URL, which the binding admits), so both of the guard's reads answer with
+// this repository — and two url.*.insteadOf rules chain, the first being what
+// git's own read of the origin applies (https to the scp-like spelling, which
+// the binding admits as this repository too) and the second matching that
+// rewritten URL, which only a push that names it meets. The second rule is the
+// only thing that says the run's commits would land elsewhere.
+func secondRewriteCheckout(t *testing.T, h *harness, dir string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	testutil.Git(t, filepath.Dir(dir), "clone", "--quiet", h.remote, dir)
+	testutil.Git(t, dir, "remote", "set-url", "origin", "https://github.com/acme/app.git")
+	testutil.Git(t, dir, "config", "remote.origin.pushurl", "ssh://git@github.com/acme/app.git")
+	testutil.Git(t, dir, "config", "url.git@github.com:.insteadOf", "https://github.com/")
+	testutil.Git(t, dir, "config", "url.https://github.com/evil/.insteadOf", "git@github.com:acme/")
+}
+
 // TestBakedCheckoutOriginMismatchRefuses (IS8): the job is for acme/app, and a
 // checkout the image already holds is another repository's — a shared image
 // built for someone else, or a warm container an earlier job or execution left
@@ -107,7 +129,9 @@ func rewrittenPushCheckout(t *testing.T, h *harness, dir string) {
 // image, which nothing else looks at) and its push URLs, which are where the
 // run's own branch actually lands: gitops' Push goes to origin's pushurl when
 // the checkout sets one, and a checkpoint (gitops' PushFastForward) pushes by
-// origin's URL, which git rewrites by the checkout's url.*.pushInsteadOf rules.
+// origin's URL, which git rewrites by the checkout's url.*.pushInsteadOf and
+// url.*.insteadOf rules — the URL it names is the one the origin read returned,
+// so a rule matching what another rule produced is a rewrite of that push too.
 //
 // Mutation (run, restore): drop the checkBakedCheckoutOrigin call — the run
 // opens another repository's checkout and fails further down (no fugaro.yaml,
@@ -120,7 +144,10 @@ func rewrittenPushCheckout(t *testing.T, h *harness, dir string) {
 // restore): gitops' PushURLs returning git's own read alone, without the
 // pushInsteadOf rewrite of the origin URL — the rewrite rows fail: the run goes
 // past the guard and fails further down with a git credential already
-// requested.
+// requested. Mutation (run, restore): the same, with the url.*.insteadOf rules
+// left out of that resolution — the second-rewrite rows fail, and only they do:
+// git's own read of the remote answers with the first rule's result, which is
+// this repository's, while the push opens the second rule's, which is not.
 func TestBakedCheckoutOriginMismatchRefuses(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -144,6 +171,12 @@ func TestBakedCheckoutOriginMismatchRefuses(t *testing.T) {
 		}, []string{"pushes to https://github.com/evil/app.git"}},
 		{"the directory the run would adopt, by its push rewrite", func(t *testing.T, h *harness) {
 			rewrittenPushCheckout(t, h, bakedDir(t, h, repoSlug))
+		}, []string{"pushes to https://github.com/evil/app.git"}},
+		{"the work directory's second push rewrite", func(t *testing.T, h *harness) {
+			secondRewriteCheckout(t, h, h.deps.WorkDir)
+		}, []string{"pushes to https://github.com/evil/app.git"}},
+		{"the directory the run would adopt, by its second push rewrite", func(t *testing.T, h *harness) {
+			secondRewriteCheckout(t, h, bakedDir(t, h, repoSlug))
 		}, []string{"pushes to https://github.com/evil/app.git"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -209,6 +242,41 @@ func TestBakedCheckoutPerSlugPath(t *testing.T) {
 	}
 	if got := testutil.Git(t, h.remote, "rev-parse", "refs/heads/fugaro/"+runID); got != rec.HeadSHA {
 		t.Errorf("remote branch %s != record head %s", got, rec.HeadSHA)
+	}
+}
+
+// TestBakedCheckoutPerSlugPathRecordsItsOwnCommit (IS8, review): the record's
+// image names the commit of the checkout the run works on, and on a shared
+// catalog image that checkout is the per-slug one bootstrap adopts — the work
+// directory holds no checkout at all when the image's record is read, so the
+// fallback there is the commit the image's own record names, which belongs to
+// whichever repository the image was built from. The two differ here, and the
+// field has to be the adopted checkout's.
+//
+// Mutation (run, restore): drop the read bootstrap makes once the checkout is
+// adopted (bakedHead, after openBakedCheckout) — the record keeps ffffffff, the
+// image's own build commit, and this test is the one that fails.
+func TestBakedCheckoutPerSlugPathRecordsItsOwnCommit(t *testing.T) {
+	h := newHarness(t, "", nil)
+	baked := bakedDir(t, h, repoSlug)
+	testutil.Git(t, filepath.Dir(baked), "clone", "--quiet", h.remote, baked)
+	testutil.Git(t, baked, "commit", "--quiet", "--allow-empty", "-m", "baked")
+	head := testutil.Git(t, baked, "rev-parse", "HEAD")
+	builtAt := time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC)
+	h.deps.ImageInfoPath = filepath.Join(t.TempDir(), "image.json")
+	if err := os.WriteFile(h.deps.ImageInfoPath, []byte(`{"built_at":"`+builtAt.Format(time.RFC3339)+`","commit":"ffffffff"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := h.run(t, implement("feature"), review("ship", 0))
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	stored, err := h.store.ReadRecord(context.Background())
+	if err != nil || stored.Image == nil || stored.Image.BakedCommit != head || stored.Image.BuiltAt == nil || !stored.Image.BuiltAt.Equal(builtAt) {
+		t.Fatalf("stored image = %+v, %v (the adopted checkout is at %s)", stored.Image, err, head)
+	}
+	if stored.Image.BakedCommit == "ffffffff" {
+		t.Fatal("the baked commit is the image's own build record's, which is another repository's")
 	}
 }
 
