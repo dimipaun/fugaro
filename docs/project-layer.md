@@ -39,11 +39,13 @@ exists (`internal/cli`'s `policyImageGate`, which names `fugaro image refresh --
 for a per-repository image and `fugaro update --base base` for a `checkout: clone` workflow, whose
 job image is the installation's base image), so the run never reaches bootstrap to halt on the
 node. The window `fugaro update` is itself in is not a refusal, and this release is built so
-that it is not: the update re-pins the credentials service to this release before its policy stage
-migrates the node, and a node one shape-free step behind is read as it stands
-(`projectpolicy`'s `ReadsVersion`: the 4 → 5 step moves the version member and nothing else), so no
-reader of the project's — the service, the launcher, the runner — refuses a v4 node while an
-installation is between the two. Every installation republishes its policy for version 5, and the migration carries
+that it is not: the update migrates the node in its policy stage and moves the credentials service
+onto this release's image in the stage immediately after it, with nothing running between the two,
+and a node one shape-free step behind is read as it stands (`projectpolicy`'s `ReadsVersion`: the
+4 → 5 step moves the version member and nothing else), so no reader of the project's — the service,
+the launcher, the runner — refuses a v4 node while an installation is between them. The order is
+the one the owned binary can be held to: the service that this update installs is never handed a
+node it has not migrated yet. Every installation republishes its policy for version 5, and the migration carries
 a version-4 node forward in place: the shape did not change, so a node with no `binaries` block
 migrates as one that admits no binary, and nothing the owner had edited into the node is lost.
 

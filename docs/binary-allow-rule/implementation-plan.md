@@ -336,9 +336,11 @@ image is a derived image of another checkout keeps the image it had until that c
 image refresh` runs, and the launcher refuses a launch of it onto an image older than 0.22.0 —
 rather than starting a run that halts at bootstrap — naming that command
 (`internal/cli`'s `policyImageGate`); and the reader accepts a node one shape-free step behind
-(`projectpolicy`'s `ReadsVersion`), which is the state an installation is in between the update's
-image stages and its policy stage, so the credentials service and the launcher refuse nothing in the
-window. A project that sets no `binaries`
+(`projectpolicy`'s `ReadsVersion`), so this release's own readers — the runner, the launcher and the
+credentials service it installs — read a version-4 node as it stands, whichever stage the update is
+in. The update still migrates the node before it replaces the credentials service (the stage
+immediately after the policy stage), because the release behind's own service refuses a node above
+its own version and cannot be taught otherwise. A project that sets no `binaries`
 block is unchanged: the node gains a member it does not use, and the run that leaves a build product
 in the tree is refused exactly as it is today. **The version-4 → 5 convergence is AR1's red step**
 (`TestInstallationAtThePreviousVersionConvergesBinaries`), so the HARD RULE's "an installation at

@@ -1497,11 +1497,12 @@ func TestUpdateManagedNeverAdmitsTheSecretsStage(t *testing.T) {
 // --provision-batch at all. A clean plan verdict cannot reach it (D1026: the
 // gate narrows, and a stage --yes never covered has nothing to narrow).
 //
-// The credentials service's own stage is gone (DON1, the owner's ruling of
-// 2026-11-05): the deploy is part of every installation's own confirmed apply
-// now, so there is no stage and no flag for an agent's session to be refused
-// at. What keeps it out of a session is pinCredentialsImage's own guard, which
-// is tested where it lives (init_credentials_test.go,
+// The credentials service's own block is not a stage of its own (DON1, the
+// owner's ruling of 2026-11-05): it is written by every installation's own
+// confirmed apply now, and the service's own image is moved by the stage after
+// the policy migration. What keeps both out of an agent's session is the guard
+// they share (init_stages.go's ensureCredentialsService and moveCredentialsImage),
+// which is tested where it lives (init_credentials_test.go,
 // TestUpdateInAnAgentSessionPinsNoCredentialsImage).
 func TestUpdateManagedLeavesComputeOwnerRun(t *testing.T) {
 	name := initflow.Compute

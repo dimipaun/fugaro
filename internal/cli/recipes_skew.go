@@ -486,7 +486,7 @@ const reviewJobSince = "0.20.0"
 // CredentialsService holds the service's URL and no version. It is also a
 // record every update writes: the pin is resolved and applied on every
 // installation, whether the service is being deployed or one already deployed
-// is moved onto this release's image (init_stages.go's pinCredentialsImage),
+// is moved onto this release's image (init_stages.go's moveCredentialsImage),
 // where `base_images.base` moves only in an update that handles that base kind
 // at all — outside a checkout with no --base and no catalog build,
 // imagesStage.kinds names none, and a gate on the base image would then refuse

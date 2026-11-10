@@ -316,12 +316,14 @@ block is a member `buildProjectPolicy` fills like `review_floor`, so:
   launch onto an image older than the release that introduced the node's version (0.22.0 for version
   5), naming `fugaro image refresh --repo … --workflow …` (`internal/cli`'s `policyImageGate`),
   rather than starting a run that halts at bootstrap on a node it cannot read.
-- **The window between the two is not a refusal.** The credentials service is re-pinned to the
-  release before the policy stage migrates the node, so a reader that refused the node one
-  shape-free step behind would refuse every cascade and Bitbucket-proxied call for the length of the
-  image builds. The reader accepts it instead (`projectpolicy`'s `ReadsVersion`: the 4 → 5 step moves
-  the version member and nothing else), and what an old *job image* meets is the launcher's gate
-  above rather than a halt.
+- **The window between the two is not a refusal.** The update migrates the node in its policy stage
+  and moves the credentials service onto this release's image in the stage immediately after it, with
+  nothing between the two, so the service it installs is never handed a node it has not migrated —
+  and the reader accepts a node one shape-free step behind anyway (`projectpolicy`'s `ReadsVersion`:
+  the 4 → 5 step moves the version member and nothing else). What an old *job image* meets is the
+  launcher's gate above rather than a halt. What no order can close is the release behind's own
+  service, which refuses a version-5 node until that stage applies: the window is one apply, and that
+  binary was released.
 - **The policy version moves 4 → 5** (§D990 — the recommendation; the owner did not rule on it),
   `VersionSince` gains its row (`5: "0.20.0"`, the slot of §4 of the plan), and
   `TestVersionSinceCoversEveryVersion` fails until it does. The convergence test the HARD RULE asks

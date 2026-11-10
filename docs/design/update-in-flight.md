@@ -50,7 +50,7 @@ release could observe or lose.
 | Step | What it changes | Exposure for a run in flight | Verdict | Evidence |
 | --- | --- | --- | --- | --- |
 | preflight | Reads the environment and the local config; no cloud write | None | Safe | `preflightStage` |
-| installation | Terraform root `installation`: the GCS bucket, the Artifact Registry, the credential containers, the history/coordinator/catalog-check jobs, the shared project jobs, the credentials service | A create or an update, never a replace: `google_storage_bucket.runs`, the registries and the secret containers carry `prevent_destroy` (`deploy/terraform/gcp/modules/installation/bucket.tf`, `registry.tf`, `secrets.tf`, `credentials.tf`). A job whose *name* would change is ForceNew and is destroyed — see the job row below | Safe, with the job-name caveat | `newInstallationStage`, `deploy/terraform/gcp/roots/installation/main.tf` |
+| installation | Terraform root `installation`: the GCS bucket, the Artifact Registry, the credential containers, the history/coordinator/catalog-check jobs, the shared project jobs, the credentials service's own block (its image is moved by the credentials-service row below) | A create or an update, never a replace: `google_storage_bucket.runs`, the registries and the secret containers carry `prevent_destroy` (`deploy/terraform/gcp/modules/installation/bucket.tf`, `registry.tf`, `secrets.tf`, `credentials.tf`). A job whose *name* would change is ForceNew and is destroyed — see the job row below | Safe, with the job-name caveat | `newInstallationStage`, `deploy/terraform/gcp/roots/installation/main.tf` |
 | Firebase | The Realtime Database instance, the web API key, the token-signing service account | The run reaches the database with an ID token exchanged from a custom token minted by its own launcher: `token.Exchange`, `internal/budget/token/exchange.go`; the database identity is not an IAM identity (`deploy/terraform/gcp/modules/firebase/iam.tf`). A re-apply of the instance's own fields does not invalidate it | Safe | `newFirebaseStage`, `deploy/terraform/gcp/modules/firebase/firebase.tf` |
 | images | Pins `base_images.<kind>` by digest and mirrors the history image; never patches a job | A run's own execution already holds its image; the pin reaches the *next* execution | Safe | `imagesStage`, `internal/cli/init_images.go` |
 | installation, second apply | The history job and the catalog check job, which only the images stage makes deployable | Same as the first apply | Safe | `newInstallation2Stage` |
@@ -59,6 +59,7 @@ release could observe or lose.
 | repository | Terraform root `repo` for the checkout's repository: the workflow jobs, the job service accounts, the mounts, the check job | A job whose name changes (a workflow added, removed or renamed in `fugaro.yaml`) is ForceNew: Terraform destroys the old job and creates a new one. Whether that reaches a *running* execution of the old job is a property of the platform, not of this repository — **UNVERIFIED** | Needs care, guarded | `newRepositoryStage`, `deploy/terraform/gcp/modules/repo/workflows.tf`, `deletion_protection` in `modules/workflow/job.tf` |
 | rules | Generates this release's rules document and deploys it, then writes `config/limits/policyRules`, `…/credsRules`, `…/orchestratorRules` | The generator may only **add**: `TestRulesPreexistingPathsUnchanged` diffs the frozen generation-3 document and fails on any pre-existing rule that changed, and `TestRunTokenWritesSurviveThePolicyEdit` fails when any run-writable location loses its grant. A rule that only adds a deny for a path the old runner never writes is therefore compatible by construction | Safe | `newRulesStage`, `internal/cli/init_rules_stage.go`; `infra.DB.Plan`/`Apply`, `internal/infra/firebasedb.go`; `rules.Generate`, `internal/budget/rules/rules.go` |
 | policy | Migrates and/or publishes `config/policy/shared` in place, from the local config, under the ETag it read | The node is memoized once by the runner, so a non-cascade run keeps the ceiling it bootstrapped with. A **cascade** call does re-read it: the credentials service reads the policy per call (`internal/credsvc/cascade.go`, `bitbucketproxy.go`), so a run of a cascade project is held to the node from its next call. A migration preserves the values it carries, so a plain upgrade changes no run's ceiling; a config the operator changed is the operator's own publish | Safe by intent, named in the line | `newPolicyMigrateStage`, `internal/cli/init_policy_migrate.go`; `policyRead`, `internal/runner/projectpolicy.go` |
+| credentials-service | Moves the installation's recorded credentials image onto this release's, then applies the installation root with it | The service reads the published node once per cascade and Bitbucket-proxied call and refuses a node its own binary does not understand, so this apply may not run before the policy stage's migration; it follows it in the stage immediately after, with nothing between the two, and it is an apply of tfvars alone — every image it needs was published by the images stage. What the order cannot reach is the release behind's own service, which refuses the migrated node until this apply lands: the window is that one apply, and the binary that reads it was released | Safe by intent, named in the line | `newCredentialsStage`, `moveCredentialsImage`, `internal/cli/init_stages.go` |
 | workspace | Migrates and/or publishes the workspace record `workspaces/<name>` in the workspace's own database | No run reads the workspace record: it is the workspace owner's document (`docs/workspaces/spec.md`). A member's run makes no request for it at all | Safe | `newWorkspaceStage`, `internal/cli/update_workspace.go` |
 | layer | Publishes the project layer object and seeds/re-seeds the local file | A run's layer travels with its task and is parsed at bootstrap (`resolveConfig`, `internal/runner/runner.go`); there is no mid-run re-read | Safe | `newLayerStage`, `internal/cli/init_layer_stage.go` |
 | checkout | The plugin pin, the Claude Code plugin and the repository's job images (`fugaro upgrade`'s three steps) | The job image is the execution's own. `fugaro image refresh` patches a job's container image in place and never starts an execution — the patch body drops the execution tokens (`TestApplyCheckJobDropsExecutionTokens`, `internal/infra/checkjob_test.go`) | Safe | `newCheckoutStage`, `internal/cli/init_checkout_upgrade.go`; `infra.PlanCheckJob`/`ApplyCheckJob`, `internal/infra/checkjob.go` |
@@ -88,17 +89,24 @@ carried with the task for the layer. The update's own write is ETag-conditional
 and preserves the values a migration moves.
 
 **A version bump is a shape question, and this release's is shape-free.** The
-update re-pins the credentials service to the release it applies in its
-installation stage, and migrates the node in its policy stage, which runs after
-the image stages: a version-4 → 5 bump in between would have made every cascade
-and Bitbucket-proxied call refuse the node for the length of the image builds.
-It does not, because the step moves the version member and nothing else and the
-readers accept a node one shape-free step behind (`projectpolicy`'s
-`ReadsVersion`, which `Decode` and the credentials service both go through) —
-while a version whose step carries a Note, like 3 → 4, stays refused in both
-directions and must not be bumped this way. A later bump that changes the shape
-has to solve the same window again: the reader can only be taught to accept a
-predecessor whose members it reads verbatim.
+update migrates the node in its policy stage and replaces the credentials
+service in the stage immediately after it, with nothing between the two (the
+owner's ruling of 2026-11-10): the re-pin cannot stay in the installation stage,
+which runs before the image builds, because a version-4 → 5 bump in between
+would have made every cascade and Bitbucket-proxied call refuse the node for the
+length of those builds. The service this release installs is therefore never
+handed a node it has not migrated — and it does not need to be, because the step
+moves the version member and nothing else and the readers accept a node one
+shape-free step behind (`projectpolicy`'s `ReadsVersion`, which `Decode` and the
+credentials service both go through) — while a version whose step carries a
+Note, like 3 → 4, stays refused in both directions and must not be bumped this
+way. What the order cannot close is the mirror of the same window: until this
+stage's apply lands, the process in the project is the one the release behind
+deployed, and that binary refuses a node above its own version. The window is
+one apply — the two stages are adjacent, and this stage builds no image — and
+the binary that reads it was released, so it cannot be taught anything. A later
+bump that changes the shape has to solve the same window again: the reader can
+only be taught to accept a predecessor whose members it reads verbatim.
 
 **A job image older than the node is refused at the launch, not by the update.**
 The update rebuilds the derived images of the checkout it runs in and nothing

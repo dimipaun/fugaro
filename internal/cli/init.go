@@ -2500,8 +2500,8 @@ func prepare(wd *infra.Workdir, spec infra.InstallationSpec, im infra.Imports, v
 	//     installation's outputs, on the same workdir — and the keys the
 	//     run's own writers put into that document are not in the
 	//     snapshot: the credentials service's block, which the
-	//     installation stage's own pinCredentialsImage writes before this
-	//     root is planned (init_stages.go), is the one that matters.
+	//     installation stage's own ensureCredentialsService writes before
+	//     this root is planned (init_stages.go), is the one that matters.
 	//     Without it, the compute stage's first line would rebuild the
 	//     document without the block and plan the service away — a plan
 	//     the bundle container's prevent_destroy refuses, so the run would
@@ -2513,7 +2513,7 @@ func prepare(wd *infra.Workdir, spec infra.InstallationSpec, im infra.Imports, v
 	documents := [][]byte{wd.PrevVars, now}
 	if spec.CredentialsService == nil {
 		// The credentials service's block is written by the installation
-		// stage's own pinCredentialsImage (init_stages.go) and this spec never
+		// stage's own ensureCredentialsService (init_stages.go) and this spec never
 		// carries it: the tfvars are rewritten from the spec on every run, so
 		// an installation that has the service would lose the key here and plan
 		// its removal — a plan the bundle container's prevent_destroy refuses,

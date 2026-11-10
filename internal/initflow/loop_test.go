@@ -194,14 +194,16 @@ func TestStageOrderMatchesDependencies(t *testing.T) {
 	// Ten stages of the installation's own plus the credentials service's
 	// owner-run apply (C1.20), the deployed security rules generation
 	// (init_rules_stage.go), the published policy node's migration in place
-	// (init_policy_migrate.go), the workspace record the owner's `fugaro
-	// update` publishes (update_workspace.go / D1292), the project layer
-	// and its one local file (init_layer_stage.go), the checkout's own steps
-	// inside fugaro update (init_checkout_upgrade.go) and the compute
-	// backend's provisioning, which the design puts last (compute-backend
-	// §8.1 task 6).
-	if len(names) != 16 {
-		t.Fatalf("the design has sixteen stages, got %v", names)
+	// (init_policy_migrate.go), the credentials service's image moving onto
+	// this release's after that migration (init_stages.go's
+	// newCredentialsStage, the owner's ruling of 2026-11-10), the workspace
+	// record the owner's `fugaro update` publishes (update_workspace.go /
+	// D1292), the project layer and its one local file
+	// (init_layer_stage.go), the checkout's own steps inside fugaro update
+	// (init_checkout_upgrade.go) and the compute backend's provisioning,
+	// which the design puts last (compute-backend §8.1 task 6).
+	if len(names) != 17 {
+		t.Fatalf("the design has seventeen stages, got %v", names)
 	}
 	pos := map[string]int{}
 	for i, n := range names {
@@ -216,7 +218,7 @@ func TestStageOrderMatchesDependencies(t *testing.T) {
 		}
 	}
 	// The order the dogfooding run found by hand.
-	want := []string{Preflight, Project, Services, Installation, Firebase, Images, Installation2, Secrets, Plugin, Repository, Rules, Policy, Workspace, Layer, Checkout, Compute}
+	want := []string{Preflight, Project, Services, Installation, Firebase, Images, Installation2, Secrets, Plugin, Repository, Rules, Policy, CredentialsService, Workspace, Layer, Checkout, Compute}
 	if !slices.Equal(names, want) {
 		t.Errorf("order = %v, want %v", names, want)
 	}
@@ -1391,7 +1393,7 @@ func TestPlanOnlyNeverPassesYes(t *testing.T) {
 // The run's one confirmation covers the ordinary stages and nothing that is
 // money, permanent, a secret or someone else's repository.
 func TestRunCovers(t *testing.T) {
-	want := map[string]bool{Installation: true, Firebase: true, Images: true, Installation2: true, Repository: true, Rules: true}
+	want := map[string]bool{Installation: true, Firebase: true, Images: true, Installation2: true, Repository: true, Rules: true, CredentialsService: true}
 	for _, name := range Names() {
 		if got := RunCovers(name); got != want[name] {
 			t.Errorf("RunCovers(%s) = %v, want %v", name, got, want[name])

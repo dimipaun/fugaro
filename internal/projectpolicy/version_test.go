@@ -245,7 +245,7 @@ func TestDecodeRefusesAVersion3Node(t *testing.T) {
 func TestDecodeReadsAShapeFreePredecessor(t *testing.T) {
 	p, found, err := Decode([]byte(`{"version": 4, "budget": {"mode": "enforce"}, "binaries": {"allow": ["brand/*.png"]}}`))
 	if err != nil || p == nil || !found {
-		t.Fatalf("Decode of a version-4 node = (%v, %v, %v), want the policy and no error: the step from 4 to 5 moves the version field alone, and an update re-pins the credentials service to this release before it migrates the node", p, found, err)
+		t.Fatalf("Decode of a version-4 node = (%v, %v, %v), want the policy and no error: the step from 4 to 5 moves the version field alone, and an update reaches the node before it replaces the process that reads it", p, found, err)
 	}
 	if p.Version != 4 {
 		t.Errorf("the policy reads version %d, want 4: the node's own number is what the readers report", p.Version)

@@ -17,6 +17,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -236,6 +237,116 @@ func TestUpdateConvergesFromThePreviousRelease(t *testing.T) {
 	t.Run("the node two versions back", func(t *testing.T) {
 		converge(t, v3Node(nil), []string{"policy-older-than-binary", "policy-rules-skew", "plugin-pin"})
 	})
+}
+
+// TestUpdateMigratesTheNodeBeforeItReplacesTheCredentialsService is the order
+// the owner ruled on 2026-11-10, and the half of AR0's first finding this
+// release answers by ordering rather than by tolerance: the credentials service
+// reads the published node on every cascade and Bitbucket-proxied call and
+// refuses a node its own binary does not understand (credsvc's RTDBPolicy reads
+// it through projectpolicy.Decode and refuses the call on the error), so the
+// release that replaces the service may not be the release that hands it a node
+// it has not migrated yet. The node is migrated first and the service is
+// replaced in the stage immediately after it, with no stage between the two —
+// which is the whole of what the order buys, and what this test pins.
+//
+// The installation is one release behind in both halves of the pair — a v4 node
+// published, and the service on the previous release's image — and neither is a
+// second command: one `fugaro update` reaches this release's node and this
+// release's service, which is the HARD RULE's own shape and the reason the
+// ruling is a reorder and not an operator step.
+//
+// The order is checked on the canonical order and on the order initStages
+// registers, exactly as the rules-before-policy stage's own test is
+// (TestUpdateRulesStageRunsBeforePolicy): the loop sorts by the first, and a
+// reader of the second sees who runs when. The job images are held to the same
+// rule in the same assertion — an image built by this release is what reads the
+// migrated node, so the run moves them before the node and never after it. What
+// the update cannot reach is an image it does not rebuild: a launch on one is
+// refused by the launcher's own gate (run_allowlist_test.go's
+// TestRunRefusesAJobImageThatCannotReadThePolicyNode), not left to halt a run at
+// bootstrap.
+func TestUpdateMigratesTheNodeBeforeItReplacesTheCredentialsService(t *testing.T) {
+	pos := func(names []string, name string) int {
+		for i, n := range names {
+			if n == name {
+				return i
+			}
+		}
+		return -1
+	}
+	canonical := initflow.Names()
+	images, policy, creds := pos(canonical, initflow.Images), pos(canonical, initflow.Policy), pos(canonical, initflow.CredentialsService)
+	switch {
+	case images < 0 || policy < 0:
+		t.Fatalf("%s or %s is not a canonical stage: %v", initflow.Images, initflow.Policy, canonical)
+	case creds < 0:
+		t.Fatalf("%s is not a canonical stage: %v", initflow.CredentialsService, canonical)
+	case images > policy:
+		t.Errorf("the canonical order runs %s at %d and %s at %d: the job images are rebuilt before the node is migrated, or the run leaves an installation whose images cannot read its own policy", initflow.Images, images, initflow.Policy, policy)
+	case policy > creds:
+		t.Errorf("the canonical order runs %s at %d and %s at %d: the node is migrated before the service that reads it per call is replaced, so the service is never handed a node its own binary does not understand", initflow.Policy, policy, initflow.CredentialsService, creds)
+	}
+	if !slices.Contains(initflow.Needs(initflow.CredentialsService), initflow.Policy) {
+		t.Errorf("the credentials-service stage does not need %s: %v", initflow.Policy, initflow.Needs(initflow.CredentialsService))
+	}
+	registered := namesOf(initStages(prodEngine(initOptions{door: updateDoor.name})))
+	i, p, c := pos(registered, initflow.Images), pos(registered, initflow.Policy), pos(registered, initflow.CredentialsService)
+	if i < 0 || p < 0 || c < 0 || i > p || p > c {
+		t.Errorf("update registers the images stage at %d, the policy stage at %d and the credentials-service stage at %d in %v: the order is images, then policy, then the service", i, p, c, registered)
+	}
+
+	// The fixture the ruling is about: an installation at the release before
+	// this one, with its service on that release's image. The image is this
+	// release's in the fake source, so a run that reaches the move resolves and
+	// verifies it rather than failing the resolve and leaving the service where
+	// it was (the rig of the images kind publishes base and history only).
+	r := newConvergeRig(t, v4Node())
+	publishCredentialsImage(t, r.imagesRig, convergeRelease)
+	seedCredentialsService(t, r.imagesRig, oldCredentialsRef(convergePrev))
+	// The installation root's plan holds the service's own revision moving, and
+	// the root is applied for it (a plan that reports no changes is never
+	// applied, TF.Plan's exit code being what says so). The rig's document
+	// answers the state reads under "show -json" while the plan answers under
+	// "show@installation"; without the first, the fallback the fake documents
+	// (a script naming only "show" answers the state too) would let this stage's
+	// plan be read as the installation's state, which manages nothing.
+	r.script["show -json"] = r.script["show"]
+	r.script["plan@installation"] = map[string]any{"exit": 2}
+	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
+	// The installation's outputs carry the service this run's tfvars name, as
+	// the module's outputs.tf does: the installation stage refuses the
+	// half-carried state (a tfvars block whose outputs name no service), and
+	// this rig's repository stage reads the same document for the
+	// installation's other facts.
+	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
+		"credentials_service": credentialsServiceOutput(),
+	})}
+	r.save(t)
+
+	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+
+	// Both halves moved in ONE run: the node is this release's, and the service
+	// is on this release's image, which is the resolve's own reference and not a
+	// value the run composed.
+	if p := convergeNode(t, r); p.Version != projectpolicy.Version {
+		t.Errorf("after one fugaro update, the published node is version %d, want %d: the run replaced the credentials service without migrating the node it reads per call", p.Version, projectpolicy.Version)
+	}
+	svc := credentialsServiceEntry(t, r.imagesRig)
+	if got, want := svc["image"], r.credentialsRefAt(convergeRelease); got != want {
+		t.Errorf("after one fugaro update, credentials_service.image = %v, want %s: the installation stayed on the previous release's service, which is a release whose reader refuses the node this same run published", got, want)
+	}
+	// And the move is that one member: every other fact the previous release
+	// wrote is what the entry still holds, so the run that migrates the node
+	// rewrites nothing of the service it does not own.
+	for k, want := range map[string]any{
+		"account_id": infra.CredentialsAccountID, "service": infra.CredentialsServiceName,
+		"firebase_project": fpID, "url": credentialsServiceURL, "rtdb_url": r.db.URL,
+	} {
+		if got := svc[k]; got != want {
+			t.Errorf("credentials_service.%s = %v, want %v: the move rewrote a fact of the service it does not own", k, got, want)
+		}
+	}
 }
 
 // converge runs the door once and checks the fixture converged. stale is the

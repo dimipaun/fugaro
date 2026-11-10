@@ -105,15 +105,19 @@ var shapeFreeSteps = map[int]bool{
 // shape-free.
 //
 // It exists because a bump of Version is otherwise a window and not a safety
-// (version.go, D990): the credentials service and the job images are re-pinned
-// to a release at their own stages of `fugaro update`, and the policy node is
-// migrated at a stage after them, so a reader that refused the shape-identical
-// node in between would refuse every cascade and Bitbucket-proxied model call
-// for the length of the image builds — for a policy it reads member for
-// member. A version that is not shape-free is refused exactly as it was, with
-// the *VersionError and the remedy SkewSentence words: a version-3 node means
-// something the version-4 reader's own release had to derive, and reading it
-// as a version-4 one would run a policy nobody published.
+// (version.go, D990): `fugaro update` moves the credentials service onto its
+// own release in the stage immediately after the policy stage, so the shape
+// question is asked of a node that is already migrated — but the release
+// behind's service is the one deployed until that stage applies, the job
+// images of the update are replaced at other stages still, and every reader of
+// this release meets the older node while those are in flight. A reader that
+// refused a shape-identical node would refuse every cascade and
+// Bitbucket-proxied model call for the length of the image builds, for a
+// policy it reads member for member. A version that is not shape-free is
+// refused exactly as it was, with the *VersionError and the remedy
+// SkewSentence words: a version-3 node means something the version-4 reader's
+// own release had to derive, and reading it as a version-4 one would run a
+// policy nobody published.
 //
 // A version above this reader's is never one: there the reader is the side
 // that is behind, and the move is an upgrade of the reader and not a tolerance

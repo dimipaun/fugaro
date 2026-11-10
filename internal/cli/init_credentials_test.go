@@ -46,10 +46,7 @@ func credentialsRig(t *testing.T) *imagesRig { return credentialsRigAt(t, "1.2.3
 func credentialsRigAt(t *testing.T, version string) *imagesRig {
 	t.Helper()
 	r := newImagesRig(t, version)
-	// The released image, and the nightly-immune "-pinned" tag a release
-	// publishes beside the plain version tag.
-	r.src.publish("dimipaun/fugaro-credentials", version)
-	r.src.tags["dimipaun/fugaro-credentials:"+version+"-pinned"] = r.src.tags["dimipaun/fugaro-credentials:"+version]
+	publishCredentialsImage(t, r, version)
 	// The database the marker is read from: a project config with a budget
 	// backend is what `fugaro update --firebase-project` writes. Its
 	// firebase_project is the one the credentials service's own environment
@@ -59,6 +56,18 @@ func credentialsRigAt(t *testing.T, version string) *imagesRig {
 	r.appendConfig(t, "budget: { mode: observe, per_run_usd: 5, firebase_project: "+fpID+", rtdb_url: "+r.db.URL+" }\n")
 	r.db.Set(rules.PathCredsRulesMarker(), rules.CredsRulesVersion)
 	return r
+}
+
+// publishCredentialsImage is the release's credentials image in the fake source:
+// the plain version tag and the nightly-immune "-pinned" tag a release publishes
+// beside it, which is the tag the resolve-and-verify step reads. A rig whose
+// installation has to be MOVED onto this release's service needs it before the
+// run, and one that only reads an image back (credentialsDigestAt) has nothing
+// to resolve.
+func publishCredentialsImage(t *testing.T, r *imagesRig, version string) {
+	t.Helper()
+	r.src.publish("dimipaun/fugaro-credentials", version)
+	r.src.tags["dimipaun/fugaro-credentials:"+version+"-pinned"] = r.src.tags["dimipaun/fugaro-credentials:"+version]
 }
 
 // credentialsDigest is the digest the fake source published the credentials
@@ -181,6 +190,13 @@ func credentialsServiceEntry(t *testing.T, r *imagesRig) map[string]any {
 	return svc
 }
 
+// credentialsServiceOutput is the credentials service as the installation
+// root's outputs carry it (the installation root's outputs.tf): the name, the
+// region the module deploys to, and the URL Cloud Run assigned.
+func credentialsServiceOutput() map[string]any {
+	return map[string]any{"name": infra.CredentialsServiceName, "region": "us-east5", "url": credentialsServiceURL}
+}
+
 // credentialsOutputs makes the installation root's `terraform output -json`
 // answer carry the credentials service the module publishes (the installation
 // root's outputs.tf): the run reads it back for the audience, and the
@@ -191,10 +207,19 @@ func credentialsServiceEntry(t *testing.T, r *imagesRig) map[string]any {
 // — Cloud Run assigns it, and Terraform refuses a resource that reads its own
 // uri — so the revision carries the module's unassigned placeholder until this
 // value comes back and the run applies it.
+//
+// The document is the service ALONE, which is what a rig whose run reads no
+// other output of the installation wants. A rig whose repository stage reads
+// the installation's own outputs for its other facts writes the same member
+// into outputsJSONWith's document instead (update_converge_test.go's
+// TestUpdateMigratesTheNodeBeforeItReplacesTheCredentialsService): those runs
+// decode project_name, runs_bucket and the rest from the same answer, and an
+// installation stage refuses the half-carried state either way (its tfvars
+// carrying the service while the outputs name none).
 func credentialsOutputs(t *testing.T, r *imagesRig) {
 	t.Helper()
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
-		"credentials_service": map[string]any{"name": infra.CredentialsServiceName, "region": "us-east5", "url": credentialsServiceURL},
+		"credentials_service": credentialsServiceOutput(),
 	})}
 	r.save(t)
 }
@@ -403,7 +428,9 @@ func planDirs(t *testing.T, log string) []string {
 // already has the block keeps it. The block is the record of a service that
 // exists — its URL is the audience every caller's ID token is minted for, and
 // its job table is the installation's own — so the run carries it as it is
-// found and moves the ONE member it owns, the image.
+// found and moves the members it owns: the image, and the one member the
+// carry's own rewrite writes over it (verifier_accounts, CSR14 — see the
+// expectation below).
 //
 // Mutation (verified, run and restored): rebuild the block from the spec
 // (infra.Credentials) instead of carrying it, and this test fails on the
@@ -420,6 +447,16 @@ func TestUpdateKeepsAnOptedInInstallationsServiceUnchanged(t *testing.T) {
 		t.Fatalf("an ordinary update of an installation that has the service failed: %v\n%s", err, s)
 	}
 	svc := credentialsServiceEntry(t, r)
+	// The one member that is not the earlier run's is verifier_accounts: the
+	// carry's own rewrite writes this run's effective list into the block
+	// (infra.CarriedCredentialsService, prepare), and the effective list is
+	// the published node's whenever the config states none of its own — which
+	// this rig's does not. The credentials-service stage runs AFTER the policy
+	// one (the owner's ruling of 2026-11-10), so the run that publishes the
+	// node naming the verifier account is also the run that plans the
+	// installation root again after it, and the member arrives in the update
+	// that published it rather than in the one behind. Every other member is
+	// the earlier run's, byte for byte.
 	want := map[string]any{
 		"account_id":       infra.CredentialsAccountID,
 		"service":          infra.CredentialsServiceName,
@@ -430,6 +467,8 @@ func TestUpdateKeepsAnOptedInInstallationsServiceUnchanged(t *testing.T) {
 		"job_accounts": []any{map[string]any{
 			"provider": "bitbucket", "repo": "acme/sandbox", "workflow": "web"}},
 		"url": credentialsServiceURL,
+		"verifier_accounts": []any{
+			"fugaro-verifier@proj-1234.iam.gserviceaccount.com"},
 	}
 	got, err := json.Marshal(svc)
 	if err != nil {
@@ -477,7 +516,7 @@ func seedCheckoutGitSecret(t *testing.T, r *imagesRig, repo string) {
 //
 // Mutation (verified, run and restored): drop the
 // infra.RefreshCredentialsServiceJobAccounts call in init_stages.go's
-// pinCredentialsImage → this fails on the config's own repository, which the
+// writeCarriedCredentials → this fails on the config's own repository, which the
 // table then does not hold.
 func TestUpdateRefreshesTheServicesJobTable(t *testing.T) {
 	r := credentialsRig(t)
@@ -1030,9 +1069,9 @@ func TestPrintVarsCarriesTheCredentialsService(t *testing.T) {
 // this is the carry half: an installation that HAS the block keeps every fact
 // of it and only the image moves.
 //
-// Mutation (verified, run and restored): return from pinCredentialsImage before
-// it resolves (the carry this test exists to replace): the tfvars keep 1.2.2's
-// image and this test fails.
+// Mutation (verified, run and restored): return from moveCredentialsImage
+// before it resolves (the carry this test exists to replace): the tfvars keep
+// 1.2.2's image and this test fails.
 func TestUpdateRepinsTheCredentialsImageOnAnOrdinaryUpdate(t *testing.T) {
 	r := credentialsRig(t)
 	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
@@ -1065,12 +1104,15 @@ func TestUpdateRepinsTheCredentialsImageOnAnOrdinaryUpdate(t *testing.T) {
 			t.Errorf("credentials_service.%s = %v, want %v: the re-pin rewrote a fact of the service it does not own", k, svc[k], want)
 		}
 	}
-	// One apply, and no audience fill: the block already carries the URL the
-	// module's own output does, which is every run after the one that deployed
-	// the service (prepare carries it forward), so there is nothing for the
-	// second apply to change.
-	if apps := r.ran(t, "apply"); len(apps) != 1 {
-		t.Errorf("applies = %v, want the installation root's alone", apps)
+	// Two applies, and no audience fill: the installation root's own, and the
+	// credentials-service stage's — the root once more, whose one change is
+	// the moved image. The second apply is what the reorder costs (the
+	// owner's ruling of 2026-11-10): the service may not be replaced before
+	// the node it reads per call is one its own binary understands, so its
+	// apply is the stage after the policy migration rather than part of the
+	// installation stage's.
+	if apps := r.ran(t, "apply"); len(apps) != 2 {
+		t.Errorf("applies = %v, want the installation root's and the credentials-service stage's own", apps)
 	}
 
 	// The next ordinary update is the converged one, and it asks the registry
@@ -1303,10 +1345,6 @@ func TestUpdateWithAFailedCredentialsRepinKeepsTheOptIn(t *testing.T) {
 	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
 	credentialsOutputs(t, r)
 	seedCredentialsService(t, r, oldCredentialsRef("1.2.2"))
-	seeded, err := os.ReadFile(filepath.Join(r.root(), infra.VarsFile))
-	if err != nil {
-		t.Fatal(err)
-	}
 	r.resolveErr = errors.New("the signature of dimipaun/fugaro-credentials:1.2.3-pinned did not verify")
 
 	out, errOut, err := executeStdin(t, "", "update", "--yes")
@@ -1323,19 +1361,15 @@ func TestUpdateWithAFailedCredentialsRepinKeepsTheOptIn(t *testing.T) {
 	// left holding, and what every reader of this file reads next — prepare and
 	// --print-vars carry the keys this run's spec never holds forward FROM them,
 	// and installationFenceRecorded reads the managed deployer's fence out of
-	// them. They are the earlier run's document entire, so the file and the
-	// snapshot the next run takes agree, and no clean-up step is owed here: a
-	// deletion would be the finding this test exists for.
-	after, err := os.ReadFile(filepath.Join(r.root(), infra.VarsFile))
-	if err != nil {
-		t.Fatalf("the failed update left no tfvars to read back: %v\n%s", err, s)
-	}
-	if string(after) != string(seeded) {
-		t.Errorf("the failed update left tfvars that are not the document it started from: %s, want %s\n%s", after, seeded, s)
-	}
-	// The opt-in is where it was, image and all: the run wrote the document
-	// the carry is about to use back before it resolved, so the file the next
-	// run reads carries the service.
+	// them, so an installation whose document is gone or unreadable cannot be
+	// updated again without a manual repair. What is left is this run's OWN
+	// document and not the one it started from, and that is the reorder's
+	// (the owner's ruling of 2026-11-10): the move onto this release's image
+	// happens in the credentials-service stage, after the policy migration, so
+	// the installation stage's apply — and prepare's rewrite of the root's
+	// tfvars from this run's spec, with the block carried forward by that same
+	// rewrite — is behind the failure rather than ahead of it. The invariant is
+	// the block the document carries (below), not the bytes.
 	doc := credentialsVarsOnDisk(t, r)
 	if doc == nil {
 		t.Fatalf("the failed update left the installation with no tfvars at all: the next run carries no credentials_service forward, plans the service's removal, and the bundle container's prevent_destroy refuses that plan — the installation could then never be updated again\n%s", s)
@@ -1344,8 +1378,15 @@ func TestUpdateWithAFailedCredentialsRepinKeepsTheOptIn(t *testing.T) {
 	if svc == nil {
 		t.Fatalf("the failed update left tfvars carrying no credentials_service: the next run reads that as never having opted in\n%s", s)
 	}
-	if svc["image"] != oldCredentialsRef("1.2.2") {
-		t.Errorf("credentials_service.image = %v, want the previous pin %s kept: nothing was applied, so nothing may say the service moved", svc["image"], oldCredentialsRef("1.2.2"))
+	for k, want := range map[string]any{
+		"account_id": infra.CredentialsAccountID, "service": infra.CredentialsServiceName,
+		"firebase_project": fpID, "url": credentialsServiceURL,
+		"bundle_secret": "fugaro-project-aurora-creds-bundle-6b0e9a4c7d21f358",
+		"image":         oldCredentialsRef("1.2.2"),
+	} {
+		if svc[k] != want {
+			t.Errorf("after the failed update credentials_service.%s = %v, want %v, the fact the run started from: nothing was applied to the service, so nothing may say it moved, and no other fact of it may have been rewritten either\n%s", k, svc[k], want, s)
+		}
 	}
 
 	// The next update, this time with the registry reachable, still finds the
@@ -1454,6 +1495,13 @@ func TestUpdateInAnAgentSessionPinsNoCredentialsImage(t *testing.T) {
 	}
 	if got := credentialsServiceEntry(t, r)["image"]; got != oldCredentialsRef("1.2.2") {
 		t.Errorf("credentials_service.image = %v, want the recorded %s: nothing of the re-pin may run in an agent's session\n%s", got, oldCredentialsRef("1.2.2"), s)
+	}
+	// The stage says it itself rather than being reported as a step the session
+	// would take: what it does when it is allowed to run is resolve an image
+	// through the operator's ADC and rewrite the installation's tfvars, and a
+	// session that applies nothing may show neither as outstanding work.
+	if !strings.Contains(s, "credentials-service") || !strings.Contains(s, "a coding agent's session deploys nothing") {
+		t.Errorf("the credentials-service stage was not reported skipped in a coding agent's session:\n%s", s)
 	}
 }
 

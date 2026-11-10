@@ -1051,11 +1051,11 @@ func decodeWithKeys(raw []byte, keys map[string]bool) (*Policy, bool, error) {
 	}
 	// A node this reader is a shape-free step behind is read rather than
 	// refused (ReadsVersion): its members are this version's members, and the
-	// refusal would be a window an update's own stages open — the credentials
-	// service is re-pinned to a release before the policy stage migrates the
-	// node, so a service that refused it would refuse every cascade and
-	// Bitbucket-proxied call in between (migrate.go's ReadsVersion has the
-	// whole argument). Any other version is the skew it always was.
+	// refusal would be a window an update's own stages open — this release's
+	// readers are at work while the node one step behind is still the published
+	// one, and the release behind's credentials service is on the project until
+	// the update replaces it (migrate.go's ReadsVersion has the whole
+	// argument). Any other version is the skew it always was.
 	if p.Version != Version && !ReadsVersion(p.Version) {
 		return nil, true, &VersionError{Found: p.Version, Understood: Version}
 	}
