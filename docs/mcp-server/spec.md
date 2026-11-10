@@ -1031,7 +1031,7 @@ allowlist read the other way round:** rather than the runner telling a template 
 value inside one merged environment, which it cannot do, there is no override to tell apart — so the
 fence is one IAM role and one job-scoped binding per project job in Terraform. **It is decided and
 NOT BUILT**: no role of this installation grants `run.jobs.run` alone, the front door's launch grant is
-deliberately absent (`deploy/terraform/gcp/modules/installation/coordinator.tf:377`), and the task
+deliberately absent (`deploy/terraform/gcp/modules/installation/coordinator.tf:383`), and the task
 that builds it is **M11** ([implementation-plan.md](implementation-plan.md) §3). **What gates M9 and
 D931 is that task being built, not the decision** (§11). **One question of that ruling is open again
 with the owner — D937**, its premise about the run's identity and the content the fence does not cover
@@ -1205,7 +1205,7 @@ amendment is in this tree (`docs/workspaces/spec.md:209-210`, `:217-219`), and i
   binary — the one M5b gates — owes this beside the two bounds above and M7's reading of the
   published state**, and it is where the project's own repository slugs come from: the
   `FUGARO_COORDINATOR_REPOS` the installation already puts on the front door's own service
-  (`deploy/terraform/gcp/modules/installation/coordinator.tf:491`), with a token's own repository
+  (`deploy/terraform/gcp/modules/installation/coordinator.tf:500`), with a token's own repository
   filter applied on top of it rather than instead of it.
   [reconciliation.md](reconciliation.md) §4a carries what M8 still owes.
 - **The library's citations, and the version they were read at.** The review read `zitadel/oidc`

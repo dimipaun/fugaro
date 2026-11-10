@@ -161,8 +161,8 @@ is unchanged, and **M1's spend-type finding is M9's to close**, which is where t
 this amended plan, because M4's draft predates the D934 and M-e answers and M6's predates M-a and H1.
 **Where the tree has gone since**: **M1 (#1713), M2 (#1767), M3 (#1715), M6 (#1714) and M4 are
 merged on `main`** — M4's first half (#1716) being the account, the front door service and its
-public invoker binding (`deploy/terraform/gcp/modules/installation/coordinator.tf:320`, `:382`,
-`:527`), and its store half being the bucket the records live in and the one binding that names the
+public invoker binding (`deploy/terraform/gcp/modules/installation/coordinator.tf:324`, `:388`,
+`:536`), and its store half being the bucket the records live in and the one binding that names the
 front door's account (`deploy/terraform/gcp/modules/installation/mcpauth_store.tf`) — **M5 is built
 apart from the paired device M-a asks for, which is M5b below and is not
 built, M7 is built apart from the reading of the installation's published state its lists come from,
@@ -289,7 +289,7 @@ answers through. **M5 → M7 → M6** are the three writers of `server.go`, and 
 path, which is why it takes the third slot rather than the second. **M4 → M5 → M7** are the three
 writers of the service's own entry point (`ee/coordinator/service.go`), and **M4 → M11** are the two
 writers of `coordinator.tf` and of `cover.go` — M4 creates the service and the
-account, M11 ends the account's own "one grant" comment and adds its principal kind and permission pin
+account, M11 ends the account's own "two grants" comment and adds its principal kind and permission pin
 to the cover — which is why M11 takes L1 rather than M4's own
 level. **The grant itself is not one of those rows**: it is written in `module "project"`, which no
 first-slice task touches at all.
@@ -520,7 +520,7 @@ Terraform file rather than any interface any other task builds against.
   accepted and §8 and this section corrected to say what is true. **The owner took the first on
   2026-11-05 — D935, the store of the first kind — and this open item is answered rather than
   standing**: the records leave this database for a store whose IAM names the front door's own account
-  `mcp_server` and no other member — the account M4 creates (`coordinator.tf:320`), never the
+  `mcp_server` and no other member — the account M4 creates (`coordinator.tf:324`), never the
   coordinator's own (`coordinator.tf:71`, the sweep's) — §8's sentence is corrected by the plan's own
   §8, and the node stays closed as a defence in depth. What M5 writes is therefore M2's store and not
   `mcpauth`, and the answer to this item is what decides that.
@@ -541,7 +541,7 @@ Terraform file rather than any interface any other task builds against.
 M-e answers — the meaning of "off" and the collision with the installer's own cover rule — and the
 store D935 moves the records into, which this task creates as a bucket of its own. **Both halves have
 landed**: its first half as #1716 — the account, the front door service and its public invoker
-binding (`deploy/terraform/gcp/modules/installation/coordinator.tf:320`, `:382`, `:527`) — and
+binding (`deploy/terraform/gcp/modules/installation/coordinator.tf:324`, `:388`, `:536`) — and
 **its store half as `mcpauth_store.tf` with the bucket and its one grant**, the bucket
 `fugaro-mcpauth-<gcp-project>` and the single `objectAdmin` binding for
 `google_service_account.mcp_server`, published as the installation's own
@@ -573,7 +573,7 @@ below is what that release's notes carry.
   `ee/coordinator/service.go`.
 - **Interface:** a `google_cloud_run_v2_service` for the coordinator with `allUsers` invoker (D920),
   its own service account, no model credential mounted, and the launch role of M9 **deliberately
-  absent** — the comment at `coordinator.tf:377` says so, and the task that adds it is M11. **And the store of D935, which is this task's because this is the task that writes IAM.**
+  absent** — the comment at `coordinator.tf:383` says so, and the task that adds it is M11. **And the store of D935, which is this task's because this is the task that writes IAM.**
   The store is **a bucket of its own — `fugaro-mcpauth-<gcp-project>`, a function of the
   project alone, the convention the runs bucket and both state buckets already follow
   (`internal/managed/statebucket.go:75`)** — with uniform bucket-level access and public access
@@ -1001,7 +1001,7 @@ this task still owes is its own rerun against M-a and H1 rather than that step.
   state and the two bounds the open registration endpoint is accepted under — owes this wiring
   beside them**: it is where the project's own repository slugs are read, from the
   `FUGARO_COORDINATOR_REPOS` the installation already puts on the front door's own service
-  (`deploy/terraform/gcp/modules/installation/coordinator.tf:491`, "the repositories the front door
+  (`deploy/terraform/gcp/modules/installation/coordinator.tf:500`, "the repositories the front door
   may answer about"), and where a token's own repository filter is applied on top of that list
   rather than instead of it. spec.md §11 carries it as an open item until the owner assigns it.
 
@@ -1168,7 +1168,7 @@ here, unchanged, as the plan for when it is designed and the owner approves it.
 **The owner's ruling of 2026-11-09 answered the question §6 check 0 left open — how the runner reads
 configuration an execution override cannot set — and this is the task that builds the answer**
 ([reconciliation.md](reconciliation.md) §6 check 0 and §4a, "The owner's ruling of 2026-11-09"). It is
-what `coordinator.tf:377` deliberately leaves absent: the front door's account gains the permission to
+what `coordinator.tf:383` deliberately leaves absent: the front door's account gains the permission to
 **start an execution** and never the permission to rewrite one.
 
 **It is not in the first slice**, and it is not in the deferred slice's own level either: it waits on
@@ -1182,7 +1182,7 @@ planner who takes only the first slice takes no part of this task.
   `:26-33`), `deploy/terraform/gcp/modules/installation/variables.tf` (the **closed**
   `names.role_ids` object at `:61-66` gains the key — an object left open would let a plan name a role
   nothing creates), `deploy/terraform/gcp/modules/installation/coordinator.tf` (**comments only**: the
-  account's "one grant" comment at `:301-320` and the "deliberately absent" comment at `:377` both
+  account's "two grants" comment at `:301-324` and the "deliberately absent" comment at `:383` both
   describe a state this task ends), `deploy/terraform/gcp/modules/project/iam.tf` (the one job-scoped
   binding, beside the launcher grant at `:7-14`), `deploy/terraform/gcp/modules/project/variables.tf`
   (the two inputs the binding reads, nullable and defaulting to no grant, so `module "project_review"`
@@ -1245,7 +1245,7 @@ planner who takes only the first slice takes no part of this task.
   no job and no map
   of them — `module "installation"` takes no `project_jobs`
   (`deploy/terraform/gcp/roots/installation/main.tf:26`) — and the account it
-  creates (`coordinator.tf:320`) cannot be named by a resource that module does not have, so
+  creates (`coordinator.tf:324`) cannot be named by a resource that module does not have, so
   `deploy/terraform/gcp/modules/project/iam.tf:7`'s launcher grant is the shape and the fence grant
   is written beside it. **The root
   passes the two strings in the same `module "project"` call as `job_runner_role`**
@@ -1255,7 +1255,7 @@ planner who takes only the first slice takes no part of this task.
   five, because the root knows the opt-in itself and a module
   output naming a role the module did not create would be a claim about a resource that is not there —
   and **the comment at
-  `coordinator.tf:377` that promises the grant is "added here" is rewritten by this task** rather than
+  `coordinator.tf:383` that promises the grant is "added here" is rewritten by this task** rather than
   followed. **The role and the member travel as two known spellings** —
   `projects/<project>/roles/<id>` and `serviceAccount:fugaro-mcp@<project>.iam.gserviceaccount.com`,
   **built by the root from the same two values the module creates them from** (`var.project` with
@@ -1389,7 +1389,7 @@ the first slice alone takes none of M11 either, and the one row M9 and M11 both 
 | `ee/coordinator/mcpauth/server.go` | M5 (L2), M7 (L3), M6 (L4) | M5 mounts the five endpoints; M7 adds the resource handler; M6 adds the authorize endpoint's verifier, off the critical path and therefore in the last of the three slots |
 | `ee/coordinator/mcpauth/tools.go` | M7 (L3), M8 (L4), M9 (L5), M10 (L6) | the registry: each of the three tool tasks registers into it |
 | `ee/coordinator/service.go` | M4 (L0), M5 (L2), M7 (L3) | M4 creates the service's entry point; M5 and M7 mount handlers on it |
-| `deploy/terraform/gcp/modules/installation/coordinator.tf` | M4 (L0), M11 (L1) | M4 creates the service and the account; M11 rewrites the two comments (`:301-320`, `:377`) that describe the account's reach and the absent grant — **the grant itself is not written here**, because the job it goes on is not a resource of this module |
+| `deploy/terraform/gcp/modules/installation/coordinator.tf` | M4 (L0), M11 (L1) | M4 creates the service and the account; M11 rewrites the two comments (`:301-324`, `:383`) that describe the account's reach and the absent grant — **the grant itself is not written here**, because the job it goes on is not a resource of this module |
 | `internal/infra/tf/cover.go` | M4 (L0), M11 (L1) | M4 adds the store's two resource types to the cover; M11 adds the front door's principal kind, the new role in `FugaroRoles` and `RolePermissions`, and the one `grantRules` row that accepts it |
 | `internal/runner/spend.go` | M9 (L5) alone, but **shared with every other runner task in its release** | the ceiling read out of the run's own task and its merge; see §5 — which is why the release slot is chosen for the file's other writers, not only for this work |
 | `internal/cli/recipes_skew.go`, `internal/cli/run.go`, `docs/release.md` | M11 (L1), M9 (L5) | the two skew constants and the two gates: M11's names the release whose **images** resolve their run from the execution (its identity half), M9's the release whose **runner** reads the ceiling off the task; different levels because each writes a constant of its own and the second reads the first's file before writing, and one bullet each in the release notes' `### For operators` — an image behind either release is a launch that dies after it was paid for |

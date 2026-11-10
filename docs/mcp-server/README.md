@@ -55,7 +55,7 @@ continue** — M1's spend-type finding is **M9's to close**, which is where the 
 found the same defect (`ee/coordinator/mcpauth/limits.go:298`). **The tree has gone past that**:
 **M1 (#1713), M2 (#1767), M3 (#1715), M6 (#1714) and M4 are merged** — M4's first half (#1716) being
 its account, the front door service and its public invoker binding
-(`deploy/terraform/gcp/modules/installation/coordinator.tf:320`, `:382`, `:527`), and its store half
+(`deploy/terraform/gcp/modules/installation/coordinator.tf:324`, `:388`, `:536`), and its store half
 being the bucket its records live in and the one binding that names them
 (`deploy/terraform/gcp/modules/installation/mcpauth_store.tf`) — **M5, M7, M8 and M10 are built**,
 each apart from the half behind it: M5 apart from the paired device M-a asks for, M7 apart from the
