@@ -730,6 +730,25 @@ func TestRootKeysAndRules(t *testing.T) {
 	}
 }
 
+// TestRootKeysRefusesARootHoldingAValue: a database whose root holds a value
+// rather than an object is refused rather than read as one with no keys. A root
+// is an object, so a scalar one is some other program's database, and reading
+// it as empty is what would let a caller go on and write into it — which is
+// exactly what infra.DB.Check asks this call before it adopts a database.
+func TestRootKeysRefusesARootHoldingAValue(t *testing.T) {
+	f := gcpfake.NewRTDB(t)
+	f.Set("", "a database this installation did not write")
+	c := newClient(t, f)
+
+	keys, err := c.RootKeys(ctx(t))
+	if err == nil {
+		t.Fatalf("a root holding a value listed %v, and a root that is not an object is not an empty database", keys)
+	}
+	if !strings.Contains(err.Error(), "decoding the root's keys") {
+		t.Errorf("the refusal does not name the root it could not read: %v", err)
+	}
+}
+
 // TestKeysListsOneNodeShallowly: listing the children of one node is a shallow
 // read of that node (what a caller that wants the names and not the values,
 // like a listing of the orchestrators, must do rather than download a subtree),
