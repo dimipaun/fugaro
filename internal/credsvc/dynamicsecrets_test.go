@@ -224,6 +224,13 @@ func TestPerSecretBeforeBundle(t *testing.T) {
 // answered the typed wait and the upstream sees no probe.
 func TestPerSecretCandidateIsProbed(t *testing.T) {
 	s := newPerSecretSvc(t)
+	// D142's window control written off, so what this reads is the probe's own
+	// effect on the mark rather than the window its success opens (probeSvc's
+	// fixture writes the same line off for the same reason): with the control on,
+	// a probe that works leaves the credential held until the window's end, and
+	// the call this test wants served would be refused — correctly, and for a
+	// reason that is not the probe's being made.
+	s.policy.shared = decodeTestPolicy(t, testPolicyDocControls("oauth-only", false, 0))
 	name := mustUserName(t, testLauncherSub, testAccount)
 	rotated := fakeCred(t, "rotated")
 	s.dyn.values[name] = rotated
@@ -248,8 +255,9 @@ func TestPerSecretCandidateIsProbed(t *testing.T) {
 	if got, want := seen[1].Header.Get("Authorization"), "Bearer "+rotated; got != want {
 		t.Errorf("the call carried %q, want %q", got, want)
 	}
-	if m, ok := s.state.mark(name); ok {
-		t.Errorf("the mark is still %+v after a probe that worked: a mark that does not move is a probe that was not made", m)
+	if m, _ := s.state.mark(name); m.State != creds.StateAvailable {
+		t.Errorf("the mark is %q after a probe that worked, want %q: a mark that does not move is a probe that was not made",
+			m.State, creds.StateAvailable)
 	}
 	line, ok := probeLine(t, s.auditLog)
 	if !ok {
