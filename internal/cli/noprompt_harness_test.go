@@ -455,11 +455,16 @@ var closedStdinUnreached = map[string]closedStdinUnreachedAsk{
 		file: "project_cmd.go", marker: "confirmRemoval(cmd, lc, o.yes,",
 		task: "T7", why: "asks after a deployed-rules read, which this world refuses",
 	},
-	// update and setup ask from their stages: the workspace and layer steps, the
-	// policy steps, and the wizard's own confirmations.
+	// update and setup ask from their stages: the policy step's loosening, the
+	// layer step, and the wizard's own confirmations. The workspace step asked
+	// here through T15, which removed its last ask — the membership is the
+	// owner's own session now and the removal asks nothing at all
+	// (TestWorkspaceRemovalAsksNothingAtATerminal) — so what is left of this
+	// entry is the policy stage's typed loosening, which T12 removes with the
+	// class system the call is written in.
 	"fugaro update": {
-		file: "update_workspace.go", marker: "confirmTypedStrict(cmd, p.lc, why, what)",
-		task: "T15", why: "asks from its stages, which need an installation this world does not build",
+		file: "init_policy_migrate.go", marker: "confirmTypedStrict(cmd, m.lc, why, what)",
+		task: "T12", why: "asks from its stages, which need an installation this world does not build",
 	},
 	"fugaro setup": {
 		file: "init.go", marker: "func (r *initRun) ask(what string) (bool, error) {",

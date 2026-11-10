@@ -1406,6 +1406,244 @@ export function loadMobileClaims(): MobileClaimsFacts {
   return { claims }
 }
 
+// ---------------------------------------------------------------------------------------
+// website/data/compatibility.yaml — what Fugaro supports today, and what it does not
+// (the compatibility matrix, task CM1's file and CM2's page; D1520–D1539).
+// ---------------------------------------------------------------------------------------
+
+/**
+ * The five statuses a row may carry, and nothing else (D1520). They are a closed set because
+ * the page draws a legend of five marks: a sixth status would render as one of the five or as
+ * nothing, and a reader would have no way to tell which.
+ */
+export const COMPATIBILITY_STATUSES = ['supported', 'coming-soon', 'built-not-enabled', 'roadmap', 'not-planned']
+
+/**
+ * The two editions, and nothing else (D1522). D1522 retired "CE" and "EE"; the page says
+ * *Core (MIT)* and *Subscription*, and a file that writes either retired word fails here.
+ */
+export const COMPATIBILITY_EDITIONS = ['core', 'subscription']
+
+/** One row of the matrix: what it names, how far it has got, and what backs the claim. */
+export interface CompatibilityRow {
+  /** What the row names, as the page renders it. */
+  name: string
+  /** How far it has got — one of the five, and the page's legend has a mark for each. */
+  status: (typeof COMPATIBILITY_STATUSES)[number]
+  /** Which half of the product it belongs to, on the rows whose group has an Edition column. */
+  edition: (typeof COMPATIBILITY_EDITIONS)[number] | null
+  /** The whole of what the row says besides its name. */
+  note: string
+  /**
+   * The path in this repository that backs the row, on the two statuses that claim something
+   * exists today. The page does not print it — the evidence is the row's proof rather than a
+   * second thing for a reader to read, and `website/test/compatibility.mjs` is what holds it to
+   * the tree.
+   */
+  evidence: string | null
+}
+
+/** One group of the matrix: the spec's own heading, its prose, and its rows. */
+export interface CompatibilityGroup {
+  /** The group's anchor on the page, and its key in every message below. */
+  id: string
+  title: string
+  /** The spec's prose for the group, where it has any. */
+  note: string | null
+  /** Whether the group's table carries an Edition column (the five the spec gave one). */
+  edition: boolean
+  rows: CompatibilityRow[]
+}
+
+/** website/data/compatibility.yaml, validated. */
+export interface CompatibilityFacts {
+  /** The release each half of the matrix was last read against (D1538). */
+  asOf: { cli: string; console: string }
+  /**
+   * The phrases the page may not be made of — the ones the reconciliation marked Wrong. The
+   * page never renders this list; it is read here so the page's own test can hold the built
+   * HTML to it without repeating it (`website/test/compatibility.mjs` reads the file itself,
+   * which is the same list one level up).
+   */
+  neverSay: string[]
+  groups: CompatibilityGroup[]
+}
+
+const COMPATIBILITY_FILE = 'website/data/compatibility.yaml'
+
+const COMPATIBILITY_KEYS = ['version', 'as_of', 'never_say', 'groups']
+const COMPATIBILITY_GROUP_KEYS = ['id', 'title', 'note', 'rows']
+const COMPATIBILITY_ROW_KEYS = ['name', 'status', 'edition', 'note', 'evidence']
+
+/**
+ * The spec's groups, in the spec's order, and the two the page reads out of that order: the
+ * groups' `id`s, which are the page's own anchors. An order written here rather than derived
+ * from the file is what keeps the page's headings the spec's: a group that moved, or one the
+ * file invented, fails the build with both lists in the message (the same rule
+ * `website/test/compatibility.mjs` holds the file to).
+ */
+export const COMPATIBILITY_GROUPS = [
+  'local-environment',
+  'console',
+  'mobile',
+  'agent-harness',
+  'model-access',
+  'cloud',
+  'backends',
+  'forges',
+  'trackers',
+  'notifications',
+  'identity-and-roles',
+]
+
+/**
+ * The groups whose spec table carried an Edition column, so whose rows carry an edition
+ * (D1522). The page renders the column for every row of these five groups and for no row of
+ * the others, which is why the two are held together here rather than in the page: a row
+ * carrying an edition its group's table has no column for would be a value the page drops.
+ */
+export const COMPATIBILITY_EDITION_GROUPS = ['local-environment', 'console', 'mobile', 'forges', 'identity-and-roles']
+
+/** The two statuses that claim something exists today, so the two that name an evidence path. */
+const COMPATIBILITY_PRESENT = ['supported', 'built-not-enabled']
+
+/**
+ * The compatibility matrix: every row the page renders, with its status, its edition, its note
+ * and its evidence (task CM1's file; the page is CM2's).
+ *
+ * **This file is the one place a compatibility claim is written, and the page renders it
+ * verbatim** (D1537). That is why the reader below is strict in the way every other data-file
+ * reader in this module is: the closed sets are refused rather than guessed at, an empty group
+ * is refused rather than rendered as a heading over nothing, and a row whose status claims
+ * something exists today must name the path in this repository that backs it — a claim the page
+ * cannot back is the one thing a compatibility page must not print.
+ *
+ * **The evidence path is checked for shape here and for existence by the site's own test.** The
+ * copies of the repository the gates build — `website/test/lib/build.mjs`'s `copyRepository` —
+ * leave `internal/`, `console/`, `deploy/` and the rest out, because a site build reads none of
+ * them; a reader that resolved each path would refuse the build everywhere the gates run it, so
+ * the path is held to the tree by `website/test/compatibility.mjs`, which runs in the checkout.
+ *
+ * **Nothing here is a date, a price or a promise of one.** The stamp is the release each half of
+ * the matrix was last read against (D1538), and the schedule of anything unbuilt is the owner's
+ * (D1523) — which is what `website/data/compatibility.yaml`'s own header says as well.
+ */
+export function loadCompatibility(): CompatibilityFacts {
+  const file = COMPATIBILITY_FILE
+  const doc = asMap(
+    parseYAML(readBytes(path.join(DATA_DIR, 'compatibility.yaml'), 'the compatibility matrix: one row per claim, with its status, its edition and the repository path that backs it (D1520–D1539)'), file),
+    file,
+    'the document',
+  )
+  refuseUnknownKeys(doc, COMPATIBILITY_KEYS, file)
+
+  const version = asInt(doc.version, file, 'version')
+  if (version !== 1) {
+    throw new Error(`${file}: version is ${version}, and this reader knows format version 1: a version it does not know is a file whose rows may mean something else (task CM1).`)
+  }
+
+  const asOf = asMap(doc.as_of, file, 'as_of')
+  refuseUnknownKeys(asOf, ['cli', 'console'], `${file} as_of`)
+  const stamp = { cli: asString(asOf.cli, file, 'as_of.cli'), console: asString(asOf.console, file, 'as_of.console') }
+  for (const half of ['cli', 'console'] as const) {
+    if (!/^v\d+\.\d+\.\d+$/.test(stamp[half])) {
+      throw new Error(
+        `${file}: as_of.${half} is ${JSON.stringify(stamp[half])}, and it is the version of the newest release file of that half of the product, as in v0.20.3 (D1538): the release procedure moves it in the release it cuts, and the page prints it as the day the matrix was last read.`,
+      )
+    }
+  }
+
+  const neverSay = asList(doc.never_say, file, 'never_say').map((phrase, index) => asString(phrase, file, `never_say[${index}]`))
+  if (neverSay.length === 0) {
+    throw new Error(`${file}: never_say is empty, and it is what holds the page to the phrases the reconciliation marked Wrong: the page's own test reads this list rather than repeating it (task CM1).`)
+  }
+
+  const groups = asList(doc.groups, file, 'groups').map((entry, index): CompatibilityGroup => {
+    const what = `groups[${index}]`
+    const group = asMap(entry, file, what)
+    refuseUnknownKeys(group, COMPATIBILITY_GROUP_KEYS, `${file} ${what}`)
+
+    const id = asString(group.id, file, `${what}.id`)
+    const title = asString(group.title, file, `${what}.title`)
+    if (title.trim() === '') {
+      throw new Error(`${file}: ${what}.title is empty, and the group's heading on the page is this string: a group with no title is a table with nothing naming it.`)
+    }
+    const note = group.note === undefined ? null : asString(group.note, file, `${what}.note`)
+
+    const rows = asList(group.rows, file, `${what}.rows`).map((rowEntry, at): CompatibilityRow => {
+      const where = `${what}.rows[${at}]`
+      const row = asMap(rowEntry, file, where)
+      refuseUnknownKeys(row, COMPATIBILITY_ROW_KEYS, `${file} ${where}`)
+
+      const name = asString(row.name, file, `${where}.name`)
+      const status = asString(row.status, file, `${where}.status`)
+      if (!COMPATIBILITY_STATUSES.includes(status)) {
+        throw new Error(
+          `${file}: ${where} (${JSON.stringify(name)}) carries the status ${JSON.stringify(status)}, and a status is one of ${COMPATIBILITY_STATUSES.map((one) => `\`${one}\``).join(', ')}: the page's legend has a mark for each of the five and none for a sixth, so a status outside them renders as one of the five or as nothing (D1520).`,
+        )
+      }
+
+      const written = row.edition === undefined ? null : asString(row.edition, file, `${where}.edition`)
+      if (written !== null && !COMPATIBILITY_EDITIONS.includes(written)) {
+        throw new Error(`${file}: ${where} (${JSON.stringify(name)}) carries the edition ${JSON.stringify(written)}, and an edition is \`core\` or \`subscription\`: D1522 retired "CE" and "EE", and the page says Core (MIT) and Subscription.`)
+      }
+
+      const rowNote = asString(row.note, file, `${where}.note`)
+      if (rowNote.trim() === '') {
+        throw new Error(`${file}: ${where} (${JSON.stringify(name)}) carries no note, and a row's note is the whole of what it says besides its name: a row with nothing under it is a name the page prints without an answer.`)
+      }
+
+      const evidence = row.evidence === undefined ? null : asString(row.evidence, file, `${where}.evidence`)
+      if (evidence !== null && evidence.trim() === '') {
+        throw new Error(`${file}: ${where} (${JSON.stringify(name)}) names an empty evidence path, and a path is the file or directory in this repository that backs the row.`)
+      }
+
+      return { name, status: status as CompatibilityRow['status'], edition: written as CompatibilityRow['edition'], note: rowNote, evidence }
+    })
+
+    if (rows.length === 0) {
+      throw new Error(
+        `${file}: ${what} (${JSON.stringify(id)}) carries no row, and the page renders one table per group: a group heading over an empty table is a claim about a group of the product that says nothing at all.`,
+      )
+    }
+
+    const withEdition = rows.filter((row) => row.edition !== null).length
+    if (withEdition !== 0 && withEdition !== rows.length) {
+      throw new Error(
+        `${file}: ${what} (${JSON.stringify(id)}) writes an edition on ${withEdition} of its ${rows.length} rows, and the page renders the Edition column for the whole table: a group carries the column on every row or on none (the spec's Edition column is the group's, and D1522 gives it two values).`,
+      )
+    }
+    if (COMPATIBILITY_EDITION_GROUPS.includes(id) !== (withEdition === rows.length)) {
+      throw new Error(
+        `${file}: ${what} (${JSON.stringify(id)}) is one of the groups whose spec table has an Edition column: ${COMPATIBILITY_EDITION_GROUPS.join(', ')}. Every row of one of those carries an edition and no row of any other group does (D1522) — this group carries ${withEdition === rows.length ? 'them' : 'none'}.`,
+      )
+    }
+
+    for (const row of rows) {
+      const present = COMPATIBILITY_PRESENT.includes(row.status)
+      if (present && row.evidence === null) {
+        throw new Error(
+          `${file}: ${what} (${JSON.stringify(id)}) carries the row ${JSON.stringify(row.name)}, which is \`${row.status}\` and names no evidence path: the two present-tense statuses claim something exists in the tree today, so each names the path in this repository that backs it, and a claim the page cannot back is the one thing this page must not print.`,
+        )
+      }
+    }
+
+    return { id, title, note, edition: withEdition === rows.length, rows }
+  })
+
+  if (groups.length === 0) {
+    throw new Error(`${file}: groups is empty, and this file is the page: a compatibility page with no group in it is a page that says nothing about what Fugaro supports (D1537).`)
+  }
+  const ids = groups.map((group) => group.id)
+  if (ids.join(',') !== COMPATIBILITY_GROUPS.join(',')) {
+    throw new Error(
+      `${file}: the groups are ${JSON.stringify(ids)}, and the spec's groups, in the spec's order, are ${JSON.stringify(COMPATIBILITY_GROUPS)}: the page's headings are the spec's, and a group that moved or a group the file invented is a page whose order a reader cannot compare with the spec.`,
+    )
+  }
+
+  return { asOf: stamp, neverSay, groups }
+}
+
 // website/data/why-gcp.yaml — the claims the "Why GCP" page renders.
 // ---------------------------------------------------------------------------------------
 

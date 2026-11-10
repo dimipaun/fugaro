@@ -20,6 +20,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rtdb"
+	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/workspace"
 )
 
@@ -717,12 +718,12 @@ func (s *workspaceStage) Apply(ctx context.Context, env initflow.Env) (initflow.
 		}
 	}
 	// The diff, the confirmation and every line of the write go through the
-	// run's own writer, and the question this stage asks is one of the shared
-	// ones (confirmRemoval, confirmTypedStrict), which hold the command rather
-	// than the run: the whole call is put to the person with the line in flight
-	// down (initRun.asking), so neither the diff nor the CONFIRM block nor the
-	// project's name typed under it is drawn over (G1) — the policy stage's own
-	// reading of the same rule, for this command's second published document.
+	// run's own writer, and what the confirmation asks goes through a shared
+	// door that holds the command rather than the run (confirmStageWrite,
+	// confirmWidening): the whole call is put to the person with the line in
+	// flight down (initRun.asking), so neither the diff nor the CONFIRM block is
+	// drawn over (G1) — the policy stage's own reading of the same rule, for
+	// this command's second published document.
 	cmd := s.e.r.cmd
 	if err := s.e.r.asking(func() error {
 		return p.confirm(cmd, env.Yes, s.e.r.w, admitted, gate, s.e.r.conditions())
@@ -743,76 +744,99 @@ func (s *workspaceStage) Apply(ctx context.Context, env initflow.Env) (initflow.
 	return initflow.Outcome{Changed: true, Detail: p.doneDetail()}, nil
 }
 
-// confirm is the confirmation this write is made behind: the typed project name
-// when the write puts more in the group — the group's first record, which
-// chooses the whole of it, and any later write that admits something the node
-// does not carry — and the ordinary y/N (or --yes) otherwise. A managed
-// project's gate that admitted the node replaces both, and the diff is printed
-// either way; of the sessions the class rule leaves a question to, a coding
-// agent's was refused before this call (gateStep) and a person at a real
-// terminal is answered by the note below.
+// confirm is the confirmation this write is made behind. A write that ADMITS
+// something to the group — the whole membership, where the workspace has no
+// published record yet, and any later write that adds a member, a repository or
+// a ceiling — is the owner's own step (D1555, D1552's fence): a person at a real
+// terminal is told what it admits and what it writes and it is written, a
+// session that is not one keeps the refusal naming the terminal, and --ask puts
+// the question back for whoever asked for it. The typed project name it used to
+// take (confirmTypedStrict) is gone with D1540 — no command waits on stdin — and
+// the coding agent's session was refused before this call: Apply's own marker
+// check where the gate is not underway, and gateStep's class sentence on a
+// managed project. --yes does not stand in for a widening (the stage is not a
+// step the gate admits, and who is in the group is the owner's own word, SEC
+// rule 1), which is the one arm of confirmStageWrite the widening does not take.
 //
-// The typed name is the policy stage's loosening rule (confirmTypedStrict, D846)
-// read on this node: what it reserves is a write that puts MORE in the group — a
-// project that can now spend against the workspace's credentials, a repository
-// it now covers, a ceiling above the one the owner set, the ceiling the node
-// states DROPPED by the record (which leaves the group's spend unbounded), or
-// the whole membership when there is no published record yet — and --yes does
-// not stand in for it, which is what the sentence says to the operator whose
-// script has just passed --yes and been refused. What it does NOT reserve is a
-// removal — a member the record no longer declares shrinks the group, and the
-// diff says so — or a ceiling the record ADDS where the node states none, which
-// bounds the group rather than widening it (workspaceWidening).
-//
-// A person at a real terminal on a managed project is not asked for the typed
-// name: the owner's ruling of 2026-11-06 keeps the typed prompt for data loss
-// and secret values alone, and rewriting this node from the owner's own local
-// record is neither — the person is told what is written (the diff above, whose
-// added and removed lines both name what changes) and it is written. That is the
-// policy stage's own reading of the ruling (policyMigrationConfirm), for this
-// command's second published document. Every other session keeps what the
-// branches below ask — a pipe, --json and --non-interactive by the typed name's
-// own refusal, and a coding agent's was refused before this call (gateStep) —
-// and the gate's own admission is untouched: where the gate judged and admitted
-// the write, there was nothing left to ask.
+// Every other write of this stage — a plain rewrite, a migration, a removal —
+// is the ordinary step, confirmed by confirmStageWrite: nothing is asked at the
+// owner's terminal either, --yes stands in where it reaches the stage, --ask
+// puts the question back. A managed project's gate that admitted the node
+// replaces all of it (`admitted`), and the diff is printed either way.
 func (p *workspacePublication) confirm(cmd *cobra.Command, yes bool, w io.Writer, admitted, managed bool, c initflow.Conditions) error {
 	p.print(w)
 	if admitted {
 		return nil
 	}
 	what := p.what()
+	// --ask's own read (restoreAsk): the flag puts a question back only where
+	// the gate replaced one, so a project the marks did not answer "managed"
+	// for asks nothing and keeps the person at its terminal (PersonAtTheTerminal
+	// reads Ask).
+	c = restoreAsk(c, managed && c.Ask)
 	if managed && initflow.PersonAtTheTerminal(c) {
 		fmt.Fprintf(w, "note: %s\n", what)
 		return nil
 	}
 	if len(p.widens) == 0 {
-		return confirmRemoval(cmd, p.lc, yes, what)
+		return confirmStageWrite(cmd, p.lc, c, yes, what)
 	}
-	why := p.wideningWhy()
-	// The sentence is said once: a session with no terminal is refused with it
-	// inside the error (confirmTypedStrict), and a door that printed it beside
-	// that error would say the same thing twice.
 	if stdinIsTerminal(cmd.InOrStdin()) {
-		fmt.Fprintf(w, "%s\n", why)
+		fmt.Fprintf(w, "%s\n", p.wideningWhy())
 	}
-	return confirmTypedStrict(cmd, p.lc, why, what)
+	return confirmWidening(cmd, p.lc, c, p.wideningWhy(), what)
 }
 
-// wideningWhy is the sentence the typed confirmation shows and the refusal
-// gives: what this write admits, and what it takes to admit it.
+// confirmWidening is confirmStageWrite where the write is the group's own
+// membership (D1555): the banner and what this program does with the document
+// are the same, and the question a session with no terminal leaves behind is
+// not. What answers for a widening is the owner's own session — a person at a
+// real terminal confirms it by being there, and nothing is typed at them
+// (D1540) — so the arms are --ask's [y/N], the person themselves, and the
+// refusal. --yes is not among them: a flag is not who is in the group.
+//
+// why is what this write admits, and it is the refusal's own sentence; the
+// caller prints it above this banner where there is a terminal to print it to,
+// so a refusal never says it twice.
+func confirmWidening(cmd *cobra.Command, lc *localcfg.Config, c initflow.Conditions, why, what string) error {
+	out := cmd.OutOrStdout()
+	fmt.Fprintf(out, "⚠ CONFIRM (project %s): %s\n", safetext.Field(lc.Name), what)
+	switch {
+	case c.Ask:
+		// The owner asked for this step's question back: askConfirm asks it
+		// below and refuses in its own sentence where nobody can answer one.
+	case initflow.PersonAtTheTerminal(c):
+		return nil
+	default:
+		return userErr("%s: %s", initflow.NeedsTerminal("the confirmation of this step"), why)
+	}
+	ok, err := askConfirm(cmd, what+"?")
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return userErr("not confirmed (the answer was no); nothing was written")
+	}
+	return nil
+}
+
+// wideningWhy is what this write admits, and what it takes to admit it: the
+// sentence this stage prints above the banner, and the sentence a refusal
+// carries, said once either way.
 //
 // The first publish has no published record for the write to be wider than, so
 // it says what it decides instead: the record written now is the one every run
 // of every member is admitted by, and there is nothing before it to be compared
-// against. Neither sentence names a value out of the node — a node's
+// against, which is also why it is the one arm that names the command to run
+// (selfCommand). Neither sentence names a value out of the node — a node's
 // repositories are the one string of it nothing holds to a grammar — and both
 // name `--yes` as the thing that does not stand in, because the operator reading
 // this from a script has just passed it and would otherwise take it for the
 // answer.
 func (p *workspacePublication) wideningWhy() string {
 	if !p.found {
-		return fmt.Sprintf("the workspace %s has no published record at %s, and this writes the one every run of its members reads — %s. %s is what confirms it and --yes does not stand in; run this yourself at your own terminal: %s",
-			p.record.Name, p.path, strings.Join(p.widens, "; "), p.record.Name, selfCommand()+" update")
+		return fmt.Sprintf("the workspace %s has no published record at %s, and this writes the one every run of its members reads — %s. It is the owner's own step: --yes does not stand in for it and nothing is typed at you, so run it yourself at your own terminal: %s",
+			p.record.Name, p.path, strings.Join(p.widens, "; "), selfCommand()+" update")
 	}
 	return fmt.Sprintf("this admits more to the workspace %s than the published record does: %s; every run of a member project reads the record, and what it admits is paid for by the workspace's own credentials", p.record.Name, strings.Join(p.widens, "; "))
 }
