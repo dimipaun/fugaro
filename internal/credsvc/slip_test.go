@@ -697,6 +697,59 @@ func TestJobRefusedOnGrantAndLauncherOnClaim(t *testing.T) {
 	}
 }
 
+// TestClaimExecutionIsOneCleanValue: the execution name a claim reports is the
+// one free-text value either route carries, and it is the one value of them
+// that is not a name of this service's own grammar — it is the caller's own
+// string, and the service's line is where it lands (D1937: recorded and
+// deciding nothing). A newline, an escape sequence or a bidi override in it
+// would rewrite the line an operator reads it in, so it is held to one clean
+// value at the door, as the proxy's own line keeps the same rule by carrying a
+// class instead of a byte of the call.
+//
+// The refusal is this contract's refused REQUEST and it claims nothing: the
+// slip is still there for the run to take with a name this service will keep.
+func TestClaimExecutionIsOneCleanValue(t *testing.T) {
+	s := newSlips(t, testLauncherAccount)
+	granted := s.grantOK(t, grantBody(t, s.slug, s.run, testJobSA, 3600, testSlipCredential))
+
+	for _, exec := range []string{
+		"two words",
+		strings.Repeat("a", maxSlipExecutionBytes+1),
+		"line\nbreak",
+		"bidi‮override",
+	} {
+		resp, body := s.claimCall(t, granted.Slip, claimBody(t, exec))
+		wantRefusal(t, resp, body, StatusRequestRefused, ErrorRequestRefused)
+	}
+	if got := s.slip(t, granted.Slip); got.ClaimHash != "" {
+		t.Error("a refused claim wrote a claim into the record")
+	}
+	lines := auditLines(t, s.audit)
+	if len(lines) != 4 {
+		t.Fatalf("the four refused calls wrote %d audit lines, want exactly 4: %v", len(lines), lines)
+	}
+	for _, line := range lines {
+		wantSlipLine(t, line, PurposeSlipClaim, ErrorRequestRefused, map[string]any{
+			"run": s.run, "repository": s.slug, "job": s.job, "caller": testJobSA,
+			"credential": "", "tier": "",
+		})
+	}
+	// Nothing a refused call sent reaches the service's own line either: the
+	// refusal names the field and never the value, which is the whole point of
+	// holding this field at the door.
+	for _, sent := range []string{"two words", "line\nbreak", "bidi‮override"} {
+		if strings.Contains(s.logs.String(), sent) {
+			t.Errorf("a refused claim put what it sent on the service's own line: %s", s.logs.String())
+		}
+	}
+
+	const exec = "fugaro-aurora-app-abc12"
+	s.claimOK(t, granted.Slip, claimBody(t, exec))
+	if logs := s.logs.String(); !strings.Contains(logs, "execution="+exec) {
+		t.Errorf("the service's line does not carry the execution the claim reported: %s", logs)
+	}
+}
+
 // TestMaxSlipRuntimeIsThePlatformMaximum: R10's cap. A slip may serve a run for
 // no longer than a run may live, and that bound is the compute platform's own
 // (backend.MaxRunTime). The cap is spelled in slip.go rather than imported

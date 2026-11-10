@@ -95,6 +95,17 @@ const slipIDBytes = 16
 // value is a request this contract does not read rather than one to look up.
 const maxSlipIDBytes = 2 * slipIDBytes
 
+// maxSlipExecutionBytes bounds the Cloud Run execution name a claim reports.
+// It is generous for the real thing — an execution is its job's name and a
+// short suffix, and a job name is at most 49 bytes (ValidJobName) — because the
+// value is recorded and decides nothing, so a longer one is a name this service
+// will not keep rather than a run it refuses to serve. It is a bound and a
+// printable-ASCII rule together: this is the one free-text field either route
+// carries, and the service's own line is the one place it lands, so it may hold
+// no newline, no escape sequence and no bidi control that would rewrite the
+// line an operator reads it in.
+const maxSlipExecutionBytes = 128
+
 // SlipGrantRequest is a launcher's grant call.
 //
 // Every field is a NAME or a bound and never a value: the credentials the slip
@@ -194,6 +205,16 @@ func readClaimRequest(body []byte) (SlipClaimRequest, error) {
 	var req SlipClaimRequest
 	if err := decodeStrict(body, &req); err != nil {
 		return SlipClaimRequest{}, errors.New("the body is not one JSON object of this route's fields")
+	}
+	if req.Execution != "" && !printableHeaderValue(req.Execution, maxSlipExecutionBytes) {
+		// The execution is the ONE free-text value either route carries and the
+		// only one that is not a name of this service's own grammar: it is the
+		// caller's own string, and it is recorded on the service's line. Held to
+		// one clean value for that reason — a newline, an escape sequence or a
+		// bidi override in it would rewrite the line an operator reads it in,
+		// which is the rule internal/safetext states and the rule the proxy's
+		// own line keeps by carrying a class instead of a byte of the call.
+		return SlipClaimRequest{}, fmt.Errorf("the call names an execution that is not one printable value (1 to %d ASCII bytes, no space)", maxSlipExecutionBytes)
 	}
 	return req, nil
 }
