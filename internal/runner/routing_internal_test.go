@@ -799,6 +799,9 @@ func TestReviewRunIsGatewayOnWhateverItsAuth(t *testing.T) {
 // Mutation (run, restored): admit the repository's own agent.auth as the
 // class's credential — every api-key repository's review is admitted, and the
 // second direction of TestReviewRunIsNeverServedByAnAPIKeyOfItsOwn goes red.
+// Drop the pairing half of providerServedReview (return r.reviewClassRun()) —
+// every OAuth-served review is launched as a provider's, and this test's pins
+// and effort assertions go red: the class alone is not the fact.
 func TestReviewRunIsServedByTheProjectsAnthropicKey(t *testing.T) {
 	for _, mode := range []string{policy.ModeEnforce, policy.ModeObserve} {
 		t.Run(mode, func(t *testing.T) {
@@ -808,6 +811,29 @@ func TestReviewRunIsServedByTheProjectsAnthropicKey(t *testing.T) {
 			r.d.Execution = identityExecution(gcp.ProjectJobName(r.job.Profile, r.job.Provider, r.job.Account))
 			if err := r.applyRouting(r.projPolicy.policy, true); err != nil {
 				t.Fatalf("a review whose pairing names the project's own Anthropic API key was refused: %v", err)
+			}
+			// The pairing is the project's Anthropic key, so this stage's calls
+			// are Claude's however the class is served: no model of its is on a
+			// route of this run's (it has none), so the pins carry none of a
+			// provider route's variables — and the level's effort, which is the
+			// one thing those variables would make a no-op, reaches the stage.
+			pins := r.stagePins("review")
+			if pins == nil {
+				t.Fatal("a review class run's stage has no pins: the gateway is what the class's calls go through")
+			}
+			for k := range agent.ProviderRouteVars() {
+				if got, ok := pins[k]; ok {
+					t.Errorf("stagePins(review)[%s] = %q: the project's Anthropic key serves this review, whose calls are Claude's, so a provider route's variable does not belong in its pins", k, got)
+				}
+			}
+			const effort = "high"
+			r.levels.L3.Effort = effort
+			levelEffort, vars, err := r.reviewEffort(stageAdversarial)
+			if err != nil {
+				t.Fatalf("the adversarial stage's effort on a review the project's Anthropic key serves: %v", err)
+			}
+			if levelEffort != effort || vars["CLAUDE_CODE_EFFORT_LEVEL"] != effort {
+				t.Errorf("reviewEffort(%s) = %q, %v, want the level's own %q: this stage is Claude's, and a route's variables are not what drops an effort", stageAdversarial, levelEffort, vars, effort)
 			}
 			r.sess = svcSession(t)
 			up, err := r.gatewayUpstream(context.Background())
@@ -869,7 +895,10 @@ func TestReviewRunIsServedByTheProjectsAnthropicKey(t *testing.T) {
 // environment, so the runner picks the endpoint instead of the service's
 // document — the assertions that no environment this run writes names the
 // provider's host go red, and the installation would have two places deciding
-// where a review's prompt goes (D1418, §7's third attack question).
+// where a review's prompt goes (D1418, §7's third attack question). Ask only
+// the stage's own route in reviewEffort (what it did before this task) — the
+// effort assertion goes red, and the stage carries a reasoning level beside the
+// switch that turns its thinking off.
 func TestReviewRunOnAProviderKeyReachesTheProvider(t *testing.T) {
 	// The provider's own endpoint as the installation's config spells it: a
 	// host that resolves nowhere (nothing here dials it) and the one string no
@@ -927,6 +956,21 @@ func TestReviewRunOnAProviderKeyReachesTheProvider(t *testing.T) {
 	}
 	if pins["ANTHROPIC_DEFAULT_SONNET_MODEL"] != reviewClassModel {
 		t.Errorf("the review stage's model pin = %q, want the reviewer's %q", pins["ANTHROPIC_DEFAULT_SONNET_MODEL"], reviewClassModel)
+	}
+
+	// And no reasoning effort beside them: the stage's thinking is off
+	// (MAX_THINKING_TOKENS=0 above), so an effort would look applied and do
+	// nothing (G5, D725). The question is the one stagePins asked
+	// (stageServedByProvider) and not the run's own routes, which claim nothing
+	// here — this run's provider table serves none of its pins.
+	const effort = "high"
+	r.levels.L3.Effort = effort
+	got, vars, err := r.reviewEffort(stageAdversarial)
+	if err != nil {
+		t.Fatalf("the adversarial stage's effort on a review the project's provider key serves: %v", err)
+	}
+	if got != "" || len(vars) != 0 {
+		t.Errorf("reviewEffort(%s) = %q, %v, want no effort and no variables: the service sends this stage's calls to a provider, which runs with thinking off", stageAdversarial, got, vars)
 	}
 
 	// No environment this run writes names the provider's host: the job's own,
@@ -1380,7 +1424,11 @@ func TestReviewRunIsNeverServedByAnAPIKeyOfItsOwn(t *testing.T) {
 				if err == nil {
 					t.Fatal("a review whose repository writes a credential of its own was admitted")
 				}
-				for _, want := range []string{auth, "credentials service", "review class", "pairing", config.AnthropicKeyAccount, "oauth"} {
+				// Both of the axis's non-account values are named, and not only
+				// the Anthropic one: the sentence is what tells a reader of it
+				// which two pairings an api-key repository's review is served
+				// from, and the provider key's is one of them (AK7, D1418).
+				for _, want := range []string{auth, "credentials service", "review class", "pairing", config.AnthropicKeyAccount, config.ProviderKeyAccount, "oauth"} {
 					if !strings.Contains(err.Error(), want) {
 						t.Errorf("the refusal does not name %q: %v", want, err)
 					}

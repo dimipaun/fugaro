@@ -285,6 +285,8 @@ func (r *run) stageAgentEnv(stage string, pins map[string]string) ([]string, err
 // route, agent.ProviderRouteVars are added: a Claude stage is never touched by
 // them. So is a stage of a review the project's provider key serves
 // (providerServedReview), whose model reaches a provider whatever its ID says.
+// Both halves are the one question stageServedByProvider asks, and reviewEffort
+// asks it too: a stage a provider serves carries no reasoning effort either.
 //
 // A stage the run's stage account serves has none either, whatever the
 // gateway's state: the pins are its route table's and its price table's, and
@@ -302,10 +304,25 @@ func (r *run) stagePins(stage string) map[string]string {
 	a := r.cfg.Agent
 	model, bg := r.stageModel(stage), r.backgroundModel()
 	pins := agent.PinVars(model, bg, a.MaxOutputFor(role))
-	if r.stageOnProviderRoute(model, bg) || r.providerServedReview() {
+	if r.stageServedByProvider(model, bg) {
 		maps.Copy(pins, agent.ProviderRouteVars())
 	}
 	return pins
+}
+
+// stageServedByProvider reports whether a stage whose model and background are
+// model and bg is served by a provider rather than by Anthropic: its own route
+// claims one of the two (stageOnProviderRoute), or the run is a review the
+// project's provider key serves (providerServedReview), whose model reaches a
+// provider whatever its ID says.
+//
+// It is the one question the two places that care ask, and they have to ask it
+// alike: stagePins gives such a stage agent.ProviderRouteVars, whose
+// MAX_THINKING_TOKENS=0 turns the stage's thinking off, and reviewEffort gives
+// it no reasoning effort, which beside that switch would look applied and be a
+// no-op (G5, D725).
+func (r *run) stageServedByProvider(model, background string) bool {
+	return r.stageOnProviderRoute(model, background) || r.providerServedReview()
 }
 
 // stageOnProviderRoute reports whether model or background is claimed by a
