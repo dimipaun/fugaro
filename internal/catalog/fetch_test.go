@@ -292,6 +292,24 @@ func TestDockerfileSecretArgRefused(t *testing.T) {
 		// the `--` and the credential name under it is never looked at.
 		"FROM example.invalid/base\nENV -- NPM_TOKEN=1\n",
 		"FROM example.invalid/base\nONBUILD ENV -- NPM_TOKEN=1\n",
+		// The arguments a build parses are the ones splitCommand returns, and
+		// that is the remainder trimmed (strings.TrimSpace(args)): left as the
+		// `--` left it, the space in front of the name is what the legacy form
+		// of an ENV reads as the name, and the variable a build sets —
+		// `ENV -- NPM_TOKEN value` sets NPM_TOKEN to the value `value` — is
+		// never looked at.
+		"FROM example.invalid/base\nENV -- NPM_TOKEN value\n",
+		"FROM example.invalid/base\nENV --  NPM_TOKEN value\n",
+		"FROM example.invalid/base\nONBUILD ENV -- NPM_TOKEN value\n",
+		// The words of a line are cut by runes, as the parser cuts them
+		// (parseWords decodes with utf8.DecodeRuneInString): the whitespace a
+		// build separates words with includes the multi-byte runes, and a reader
+		// that tests one byte at a time sees their bytes as ordinary characters.
+		// Read that way the line below is the one word A=1　NPM_TOKEN=1 and
+		// the pair a build reads second is never looked at.
+		"FROM example.invalid/base\nENV A=1　NPM_TOKEN=1\n",
+		"FROM example.invalid/base\nENV A=1 NPM_TOKEN=1\n",
+		"FROM example.invalid/base\nARG A　NPM_TOKEN\n",
 		"FROM example.invalid/base\nARG -- NPM_TOKEN=1\n",
 		"FROM example.invalid/base\nARG --build-arg NPM_TOKEN=1\n",
 		"FROM example.invalid/base\nARG --x=1 FOO TOKEN\n",
@@ -349,6 +367,10 @@ func TestDockerfileSecretArgRefused(t *testing.T) {
 		// declare. The same on an ENV line.
 		"FROM example.invalid/base\nARG NOTES=\"no credentials here\"\n",
 		"FROM example.invalid/base\nENV NOTES=\"not a password field\"\n",
+		// The multi-byte whitespace is whitespace inside a quoted stretch to no
+		// one: the quotes are what make it one word, and the words inside them
+		// are a value and not names.
+		"FROM example.invalid/base\nARG NOTES=\"no credentials here\"\n",
 	} {
 		if _, err := Fetch(ctx, nil, gitprov.KindGitHub, inlineEntry(def)); err != nil {
 			t.Errorf("the definition %q was refused: %v", def, err)

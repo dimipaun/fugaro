@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
@@ -367,6 +368,13 @@ func splitInstruction(line string) (string, string) {
 // this, a bare `--` reads here as the first name and the name a build sets —
 // `ENV -- NPM_TOKEN=1` is the environment variable NPM_TOKEN — goes unchecked;
 // the flags may be quoted, so a word is cut the same way the parser cuts it.
+//
+// What is returned is the arguments with the whitespace around them trimmed,
+// which is splitCommand's own last step (strings.TrimSpace(args)). The trim is
+// not decoration: without it the arguments after a bare `--` begin with the
+// space the `--` left behind, and a leading space is a name to the legacy form
+// of an ENV (ENV -- NPM_TOKEN value sets NPM_TOKEN to a build) while the empty
+// name it reads here is credential-shaped in no way at all.
 func withoutBuilderFlags(rest string) string {
 	const (
 		inSpaces = iota // looking for start of a word
@@ -386,7 +394,7 @@ func withoutBuilderFlags(rest string) string {
 			// Only a word that starts with `--` is a flag; the run of them ends
 			// at the first word that does not, which is where the arguments are.
 			if rest[pos] != '-' || pos+1 == len(rest) || rest[pos+1] != '-' {
-				return rest[pos:]
+				return strings.TrimSpace(rest[pos:])
 			}
 			phase, wordStart = inWord, pos
 			continue
@@ -399,7 +407,7 @@ func withoutBuilderFlags(rest string) string {
 		case inWord:
 			if unicode.IsSpace(rune(rest[pos])) {
 				if rest[wordStart:pos] == "--" {
-					return rest[pos:]
+					return strings.TrimSpace(rest[pos:])
 				}
 				phase = inSpaces
 				continue
@@ -453,10 +461,17 @@ func instructionNames(inst, rest string, esc byte) []string {
 
 // dockerfileWords cuts a line's arguments into the words the parser cuts them
 // into (parseWords): whitespace separates words — the parser's own whitespace,
-// unicode and not "space and tab" — while a quoted stretch is one word with its
-// quotes taken off, and the definition's escape character keeps the character
-// after it in the word rather than ending it. Nothing here reads a value: what
-// the words are for is the name at the front of each.
+// unicode and not "space and tab" — while a quoted stretch is one word, quotes
+// and all (the name check trims them), and the definition's escape character
+// keeps the character after it in the word rather than ending it. Nothing here
+// reads a value: what the words are for is the name at the front of each.
+//
+// The line is cut by runes and not by bytes, as the parser cuts it
+// (utf8.DecodeRuneInString): the parser's whitespace includes multi-byte runes
+// (U+00A0, U+2000, U+3000), and a reader that tests one byte at a time sees
+// their bytes as ordinary characters, so it keeps as one word what a build
+// splits in two — and a credential-shaped name written after such a rune is a
+// name the build sets and the guard never looks at.
 func dockerfileWords(rest string, esc byte) []string {
 	const (
 		inSpaces = iota // looking for start of a word
@@ -466,18 +481,18 @@ func dockerfileWords(rest string, esc byte) []string {
 	var words []string
 	phase := inSpaces
 	word := ""
-	var quote byte
+	var quote, ch rune
+	chWidth := 0
 	blankOK := false
-	var ch byte
-	for pos := 0; pos <= len(rest); pos++ {
+	for pos := 0; pos <= len(rest); pos += chWidth {
 		if pos != len(rest) {
-			ch = rest[pos]
+			ch, chWidth = utf8.DecodeRuneInString(rest[pos:])
 		}
 		if phase == inSpaces {
 			if pos == len(rest) {
 				break
 			}
-			if unicode.IsSpace(rune(ch)) {
+			if unicode.IsSpace(ch) {
 				continue
 			}
 			phase = inWord
@@ -489,7 +504,7 @@ func dockerfileWords(rest string, esc byte) []string {
 			break
 		}
 		if phase == inWord {
-			if unicode.IsSpace(rune(ch)) {
+			if unicode.IsSpace(ch) {
 				phase = inSpaces
 				if blankOK || len(word) > 0 {
 					words = append(words, word)
@@ -502,13 +517,13 @@ func dockerfileWords(rest string, esc byte) []string {
 				blankOK = true
 				phase = inQuote
 			}
-			if ch == esc {
-				if pos+1 == len(rest) {
+			if ch == rune(esc) {
+				if pos+chWidth == len(rest) {
 					continue // an escape character at the end of the line
 				}
 				word += string(ch)
-				pos++
-				ch = rest[pos]
+				pos += chWidth
+				ch, chWidth = utf8.DecodeRuneInString(rest[pos:])
 			}
 			word += string(ch)
 			continue
@@ -519,14 +534,14 @@ func dockerfileWords(rest string, esc byte) []string {
 		if ch == quote {
 			phase = inWord
 		}
-		if ch == esc && quote != '\'' {
-			if pos+1 == len(rest) {
+		if ch == rune(esc) && quote != '\'' {
+			if pos+chWidth == len(rest) {
 				phase = inWord
 				continue
 			}
-			pos++
+			pos += chWidth
 			word += string(ch)
-			ch = rest[pos]
+			ch, chWidth = utf8.DecodeRuneInString(rest[pos:])
 		}
 		word += string(ch)
 	}
