@@ -117,8 +117,9 @@ func TestAnUnclassifiedTypeRefusesDelete(t *testing.T) {
 // refused both whatever the type was, so one removal came back refused by this
 // half of the gate (Verdict.OK false, and the apply stopped) while the cover
 // wrote the same sentence as one of D1545's warnings: the plan was refused for
-// a removal D1545 says is recorded and warned, and TestGateSeesOneRemovalOnce
-// is what reads the two halves together.
+// a removal D1545 says is recorded and warned, and internal/managed's
+// TestGateWarnsARemovalAtAnAddressApprovedForAnotherObject is what reads the
+// two halves together, at the verdict the apply obeys.
 func TestTheDeleteRulesOwnReasonsFollowTheType(t *testing.T) {
 	const taken, bearing, unclassified = "google_cloud_run_v2_job", "google_storage_bucket", "google_firestore_database"
 	if RefusesRemovalType(taken) {
