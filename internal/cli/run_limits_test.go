@@ -11,9 +11,12 @@ import (
 
 	"gocloud.dev/blob"
 
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // limitsYAML is the fugaro.yaml the limits tests check out: the caps a launch
@@ -189,6 +192,95 @@ func TestRunGatesTheLimitsOnTheImage(t *testing.T) {
 	}
 	if _, _, err := execute(t, "run", "--repo", limitsRepo, "--run-id", "20261110-110000-abcd", "A task"); err != nil {
 		t.Fatalf("a launch carrying no limit must not be gated: %v", err)
+	}
+}
+
+// TestRunRefusesEveryLimitWithRetry: --retry launches the stored task as it is
+// and a chain's limits are part of it, so the four flags are refused there
+// rather than accepted and silently dropped — the failure the list taskFlags
+// exists to prevent, and the reason chainLimitsFlag is never called on a retry
+// (runRun's own loop refuses the flag before any spec is built).
+func TestRunRefusesEveryLimitWithRetry(t *testing.T) {
+	f := newCloudFixture(t)
+	for _, tc := range []struct{ flag, value string }{
+		{"--max-usd", "3"}, {"--max-tokens", "900000"}, {"--max-time", "90m"}, {"--max-review-rounds", "2"},
+	} {
+		wantRefused(t, f, "it takes no "+tc.flag, "run", "--retry", "20261018-120000-abcd", tc.flag, tc.value)
+	}
+}
+
+// TestRunRefusesTheLimitsOnARetryOfAStoredTask: the gate is chainLimitsAsk's,
+// the fields' check and not the flags', and --retry is where the two come
+// apart: it takes no --max-* at all (the test above), so a launch that only
+// ever read the flags would carry a stored task's limits onto an image whose
+// runner refuses the whole task at bootstrap — after the job started and was
+// paid for. The precedent is the job title's retry gate
+// (run_title_test.go's TestRunTitleGatesOnARetryOfAStoredTitle).
+func TestRunRefusesTheLimitsOnARetryOfAStoredTask(t *testing.T) {
+	f := newCloudFixture(t)
+	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+shiftRelease(t, launchLimitsSince, -1))
+	runID := "20261110-150000-abcd"
+	usd := 3.0
+	spec := &task.Spec{Version: 1, RunID: runID, Repo: limitsRepo, Ref: "main", Workflow: "web",
+		Task: "A task", RequestedBy: "someone@example.com", Overrides: task.Overrides{MaxUSD: &usd}}
+	ctx := context.Background()
+	b, err := blob.OpenBucket(ctx, f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	if err := runstore.Open(b, appSlug, runID).CreateTask(ctx, spec); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = execute(t, "run", "--retry", runID)
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want the retry of a limit-bearing task refused on the image", err)
+	}
+	for _, want := range []string{chainLimitsSubject, "fugaro " + launchLimitsSince + " or later", "fugaro image refresh"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("err = %v, want it to name %q", err, want)
+		}
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Fatalf("%d executions, want none", n)
+	}
+}
+
+// TestRunRefusesTheLimitsOnACloneWorkflowsOlderBaseImage: a checkout: clone
+// workflow has no build record to judge — it runs the installation's base image
+// as it is — so the same gate is judged against base_images.base itself, and it
+// names the fix that image has (fugaro update --base base, never an image
+// refresh of a workflow that is never built). The subject is the fields' and
+// not the flags', and the second half is the reason a task stays byte-identical
+// when nothing is given: a launch carrying no limit is not gated at all.
+func TestRunRefusesTheLimitsOnACloneWorkflowsOlderBaseImage(t *testing.T) {
+	f := newCloudFixture(t)
+	older := "ghcr.io/dimipaun/fugaro-base:" + shiftRelease(t, launchLimitsSince, -1)
+	f.appendConfig(t, "base_images: {base: "+older+"}\n")
+	testutil.IsolateGit(t)
+	other := mustSlug("github", "acme/other")
+	f.run.AddJob(gcp.JobName(other, "svc"), "2", "4Gi")
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "-q")
+	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": "version: 1\nproject: aurora\ngit: { provider: github, base_branch: develop }\nworkflows:\n" +
+		"  svc: { checkout: clone, commands: { build: sh build.sh, test: sh test.sh } }\n"})
+	t.Chdir(dir)
+	_, _, err := execute(t, "run", "--run-id", "20261110-160000-abcd", "--max-usd", "3", "A task")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want the launch refused on the base image", err)
+	}
+	for _, want := range []string{chainLimitsSubject, "fugaro " + launchLimitsSince + " or later",
+		older + ", release " + shiftRelease(t, launchLimitsSince, -1), "fugaro update --base base"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("err = %v, want it to name %q", err, want)
+		}
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Fatalf("%d executions, want none", n)
+	}
+	if _, _, err := execute(t, "run", "--run-id", "20261110-160001-abcd", "A task"); err != nil {
+		t.Fatalf("a launch carrying no limit must not be gated on the base image: %v", err)
 	}
 }
 
