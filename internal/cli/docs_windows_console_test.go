@@ -52,6 +52,13 @@ const (
 	// vX.Y.Z pattern, the same one console-release.yml runs on, because the
 	// Windows pack is a release-time job and a release is what a tag makes.
 	windowsConsoleReleaseTag = "v[0-9]+.[0-9]+.[0-9]+"
+	// windowsConsoleFollowUpEdits is how many follow-up edits the pack's copy-in
+	// commit needs, as the word the section writes: the site's last section, this
+	// README's own opening line, and the section's own status line, which
+	// TestWindowsConsoleStagingTellsTheOwnerWhatToCopyWhere reads against the
+	// tree in both directions -- so a section that says one fewer sends the owner
+	// away with a line that turns the suite red in their commit.
+	windowsConsoleFollowUpEdits = "Three"
 )
 
 // TestDocsWindowsConsoleReconciliationRecordsTheOwnerAnswers is the answer
@@ -629,22 +636,27 @@ func TestWindowsConsolePackIsNotInTheReleaseGate(t *testing.T) {
 	}
 }
 
-// TestWindowsConsoleStagingTellsTheOwnerWhatToCopyWhere is the two sentences
-// outside docs/console-windows/ that the staging moves, held to the file they
-// describe: the staging README's own section for the pack, and the site page
-// that names it among the pending workflows. Both described a pull-request job
-// before the D7 ruling, and both would be a reader told the wrong thing about a
-// job that runs once per release.
+// TestWindowsConsoleStagingTellsTheOwnerWhatToCopyWhere is what the staging
+// moves outside docs/console-windows/, held to the file it describes: the two
+// sentences -- the staging README's own section for the pack, and the site page
+// that names it among the pending workflows -- and the section's status line.
+// Those two both described a pull-request job before the D7 ruling, and both
+// would be a reader told the wrong thing about a job that runs once per release;
+// the status line is the half of "this file is still staged" that the copy-in
+// edits, so it has to say the truth of the tree that commit leaves.
 //
 // The count and the set of names are *not* pinned here: they belong to the
 // staging directory's own guards, which check them against the directory in
-// every state the owner's copy-ins pass through.
+// every state the owner's copy-ins pass through. The status line is pinned here
+// for the opposite reason -- the state its copy-in creates is one no guard that
+// reads the directory can see.
 //
-// The mutation that proves it: change the README section's "release time only"
-// back to "every pull request". It fails here.
+// The mutations that prove it: change the README section's "release time only"
+// back to "every pull request", and flip its status line to `applied, not
+// pending` while the staged copy is still there. Each fails here.
 func TestWindowsConsoleStagingTellsTheOwnerWhatToCopyWhere(t *testing.T) {
 	doc := readDoc(t, "docs/pending-workflows/README.md")
-	section := flattenDoc(consoleReadmeSection(t, doc, "## `console-windows.yml`"))
+	section := flattenDoc(consoleReadmeSection(t, doc, consoleWindowsReadmeHeading))
 	for _, want := range []string{
 		"cp docs/pending-workflows/console-windows.yml .github/workflows/console-windows.yml",
 		"git rm docs/pending-workflows/console-windows.yml",
@@ -657,6 +669,31 @@ func TestWindowsConsoleStagingTellsTheOwnerWhatToCopyWhere(t *testing.T) {
 		if !strings.Contains(section, want) {
 			t.Errorf("docs/pending-workflows/README.md's `console-windows.yml` section lacks %q: the owner is the one who copies the file in, and this is where they read what it is, when it runs, and what has to land first", want)
 		}
+	}
+
+	// The section states how many follow-up edits its commit needs, and that
+	// count is the list it introduces: the status line read below is one of
+	// them, so a section that says one fewer is an owner told to leave it out.
+	// The mobile-release section is held to its own count the same way, through
+	// the regex that reads the word in either copy-in.
+	if edits := mobileReleaseFollowUpEditsRE.FindAllStringSubmatch(section, -1); len(edits) != 1 || edits[0][1] != windowsConsoleFollowUpEdits {
+		t.Errorf("docs/pending-workflows/README.md's `console-windows.yml` section states how many follow-up edits its copy-in needs %d time(s) (%v), and it is %s: the count and the list it introduces are one claim, and this copy-in needs the site's last section, this README's opening line and the status line below", len(edits), edits, windowsConsoleFollowUpEdits)
+	}
+
+	// The status line is the machine-readable half of "this file is still
+	// pending": it is what the copy-in edits, and the owner who has just run
+	// that commit has to be able to see from this document whether they
+	// finished. So it is read against the tree in both directions rather than
+	// asserted as one fixed sentence -- the rule the shared-tests section's own
+	// line and the mobile-release section's follow -- because the copy-in
+	// removes the staged copy, and a section that kept saying "pending"
+	// afterwards would be sending the reader to a file that is not there. This
+	// read is also the only one that reaches that state:
+	// TestDocsPendingWorkflowsReadmeDescribesEveryStagedFile iterates what the
+	// directory still holds, so the file leaves its set the moment it is copied
+	// in.
+	for _, problem := range consoleWindowsStatusProblems(consoleReadmeSection(t, doc, consoleWindowsReadmeHeading), docExists(t, windowsConsoleWorkflowPath)) {
+		t.Errorf("docs/pending-workflows/README.md's `console-windows.yml` section %s", problem)
 	}
 
 	// The site's page names it among the pending workflows and says when it
@@ -681,6 +718,90 @@ func TestWindowsConsoleStagingTellsTheOwnerWhatToCopyWhere(t *testing.T) {
 	}
 	if _, ok := rawOn["workflow_dispatch"]; !ok {
 		t.Errorf("%s has no workflow_dispatch trigger, and the staging README tells the owner to dry-run the pack by hand before a tag", path)
+	}
+}
+
+// consoleWindowsReadmeHeading is the section of docs/pending-workflows/README.md
+// that describes the Windows pack: the file's own document, which the copy-in
+// section, the console's README and docs/console-windows/ all point at.
+const consoleWindowsReadmeHeading = "## `console-windows.yml`"
+
+// consoleWindowsStatusProblems reads that section's status line against one
+// state of the tree, and reports every way it can disagree with it: an empty
+// slice when the line is the one that state needs.
+//
+// A file is pending while its staged copy exists -- the half-done copy-in
+// included, where both copies are present and the staged one is still the
+// reviewed text -- and applied once the copy-in has removed it. So the line is
+// edited in the same commit as the `cp`, and a section that kept saying "staged
+// and pending" afterwards would be describing a file that is not there.
+//
+// Both directions are read from one function because this tree can only be in
+// the first: the state the line is *for* is the one the copy-in creates, and no
+// reader that iterates what the directory holds can see it -- the file leaves
+// that set as it is copied in. That is why the state is a parameter rather than
+// a `docExists` call, and why TestWindowsConsoleStagingStateRulesSeeEveryState
+// pins both of them, including the one this repository cannot be in. It is the
+// same rule TestSharedTestsWorkflowStagingStateIsWhatTheReadmeSays applies to
+// `shared-tests.yml`'s own line, and the mobile-release section's line follows.
+//
+// The section's **opening** line is what is read, not the section: the copy-in
+// procedure prints the line it writes, so a search over the whole section would
+// be satisfied by that quote and stay green with the live line saying the
+// opposite.
+func consoleWindowsStatusProblems(section string, staged bool) []string {
+	body := strings.TrimSpace(strings.TrimPrefix(section, consoleWindowsReadmeHeading))
+	stagedCopy, want := "is gone", "**Status: `console-windows.yml` is applied, not pending.**"
+	if staged {
+		stagedCopy, want = "is still there", "**Status: `console-windows.yml` is staged and pending.**"
+	}
+	if strings.HasPrefix(body, want) {
+		return nil
+	}
+	return []string{"does not open with " + want + " while the staged copy " + stagedCopy + ": that line is what the copy-in edits, and it has to be the section's opening claim rather than a sentence quoted further down"}
+}
+
+// TestWindowsConsoleStagingStateRulesSeeEveryState pins that read against both
+// states of the tree and both mistakes, including the state this repository
+// cannot be in: the copy-in, where the staged copy is gone and the line has to
+// have moved with it. Each case asserts the problems *and* that a correct
+// section produces none, so a rule that refused everything would fail here
+// rather than looking strict.
+func TestWindowsConsoleStagingStateRulesSeeEveryState(t *testing.T) {
+	const (
+		stagedLine  = "**Status: `console-windows.yml` is staged and pending.**"
+		appliedLine = "**Status: `console-windows.yml` is applied, not pending.**"
+	)
+	section := func(line string) string {
+		return consoleWindowsReadmeHeading + "\n\n" + line + "\n\nThe rest of the section.\n"
+	}
+	for _, tc := range []struct {
+		name   string
+		staged bool
+		line   string
+		want   string // the line this state needs, and "" when the section is right
+	}{
+		{"staged and pending, the state this branch is in", true, stagedLine, ""},
+		{"copied in and the line moved with it", false, appliedLine, ""},
+		{"copied in, but the section still says staged", false, stagedLine, appliedLine},
+		{"still staged, but the line already says applied", true, appliedLine, stagedLine},
+		{"no status line at all", true, "Nothing has been copied in yet.", stagedLine},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			problems := consoleWindowsStatusProblems(section(tc.line), tc.staged)
+			if tc.want == "" {
+				if len(problems) != 0 {
+					t.Fatalf("problems = %q, want none: this section is the one that state needs", problems)
+				}
+				return
+			}
+			if len(problems) != 1 {
+				t.Fatalf("problems = %q, want exactly one", problems)
+			}
+			if !strings.Contains(problems[0], tc.want) {
+				t.Errorf("the problem does not name %q, the line the tree needs: an owner who is told the line is wrong and not which line to write has to guess, and the two spellings differ by three words in the middle of a long sentence; got %q", tc.want, problems[0])
+			}
+		})
 	}
 }
 
@@ -1008,18 +1129,27 @@ func TestDocsWindowsConsoleNotesSayWhichHalfMoved(t *testing.T) {
 // that README is the only place the person who copies a file in reads what it
 // is, which commands copy it in, and whether it is still pending at all. A
 // `.yml` staged there with no section of its own is a file whose copy-in nobody
-// can find, and a section that goes on saying "staged and pending" after the
-// copy-in is the same failure from the other side: it sends the reader to a
-// staged copy that is gone. So the guard reads three things per staged file --
-// the heading that names it, the status line that states its state, and the
-// `cp` line that is its copy-in -- and each is derived from the directory rather
-// than listed, so it holds for every state the owner's copy-ins pass through.
+// can find. So the guard reads three things per staged file -- the heading that
+// names it, the status line that states its state, and the `cp` line that is its
+// copy-in -- and each is derived from the directory rather than listed, so it
+// holds for every state the owner's copy-ins pass through.
+//
+// **What it cannot read is the state the copy-in creates**, and that gap is
+// filled rather than described: the file leaves this guard's set the moment it
+// is copied in, so a section left saying "staged and pending" over a staged copy
+// that is gone is invisible here, and
+// TestWindowsConsoleStagingTellsTheOwnerWhatToCopyWhere reads that line against
+// the tree in both directions instead. What the guard does read is the other
+// mistake -- a line flipped to `applied, not pending` while the staged copy is
+// still there -- so the two together make the line load-bearing in every state
+// the owner can leave the tree in, which is what the convention asks of it
+// (the `## shared-tests.yml` section above states the rule; the mobile-release
+// section's own guard applies it to its line).
 //
 // The mutations that prove it: delete the heading that names
 // `console-windows.yml`, change its status line to `applied, not pending`, and
 // delete the `cp` line from its copy-in block. Each fails here by naming the
-// file, and the second is the edit a copy-in that forgot to update this README
-// leaves behind.
+// file.
 func TestDocsPendingWorkflowsReadmeDescribesEveryStagedFile(t *testing.T) {
 	lines := strings.Split(readDoc(t, pendingWorkflowsReadmePath), "\n")
 	for _, name := range pendingWorkflows(t) {

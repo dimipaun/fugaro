@@ -1317,8 +1317,12 @@ the directory in both directions, and the site's paragraph by
 in — `.github/workflows/console-windows.yml` does not exist — so the job has
 never run, and the copy-in below is what is left to do. Every `console/` edit
 the job's own header once waited on has landed (the three are named below); the
-header says so first, and the two sentences that count what this directory holds
-are rewritten by the copy-in rather than by this line.
+header says so first. **This line is rewritten by the copy-in as well**:
+`TestWindowsConsoleStagingTellsTheOwnerWhatToCopyWhere` reads it against the
+tree in both directions — `staged and pending` while the staged copy is here,
+`applied, not pending` once the copy-in has removed it — the way the two
+sentences that count what this directory holds are counted against it by
+`TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere`.
 
 The desktop console's **Windows pack**, staged on **2026-10-20** by the run that
 planned the console's Windows build, and re-cut the same day for the owner's
@@ -1475,11 +1479,18 @@ git rm docs/pending-workflows/console-windows.yml
 git commit -m "console: pack the Windows installer at release time"
 ```
 
-**Two follow-up edits belong in that commit** — the last section of
+**Three follow-up edits belong in that commit** — the last section of
 `website/README.md` (which `website/test/readme.mjs` reads in both directions,
-count and names) and **this README's own opening line** (which
+count and names), **this README's own opening line** (which
 `TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere` holds to the same
-directory). **The pair of fenced blocks under `## console-release-linux.yml`
+directory), and **this section's own status line**, which becomes
+`**Status: `console-windows.yml` is applied, not pending.**`:
+`TestWindowsConsoleStagingTellsTheOwnerWhatToCopyWhere` reads that line against
+the tree in both directions, so a section still opening with "staged and
+pending" once the staged copy is gone is red, and the owner who leaves it out
+of the commit is the one who finds out.
+
+**The pair of fenced blocks under `## console-release-linux.yml`
 above is *not* this commit's**: those are read by
 `TestStagedLinuxFilesSurviveTheCopyIn`, which splices them into a copy of the tree
 with the **Linux** copy-in applied, so they describe *that* state — `shared-tests.yml`
