@@ -199,7 +199,7 @@ The bundle write is §6's read-modify-write, and the version it replaced is disa
 
 **U14 is UNVERIFIED**, and `scripts/live-checks/check145.sh` is the owner-run check that settles it; it also records the token's lifetime (U1), its reach (U3), the plan the sandbox admits (U4), the seat count (U5), IP allowlisting (U8), the grant's scope listing (U11) and whether repeated grants are distinct (U12). Until it has run on a sandbox workspace, treat the clause above as unanswered rather than as either answer.
 
-**U15** — whether the consumer must be marked **private** — **is closed (2026-11-10)**, and it needs no step here: Bitbucket's create form offers no such choice, and the grant worked for the consumer it made ([bitbucket-credentials/reconciliation-secrets-brokering.md](../bitbucket-credentials/reconciliation-secrets-brokering.md), its U15 row), so there is nothing for this section to tell an operator to set.
+**U15** — whether the consumer must be marked **private** — **is closed (2026-11-10)**, and it needs no step here: Check 145 ran, the create form offers no such choice, and the grant worked for the consumer it made ([bitbucket-credentials/reconciliation.md](../bitbucket-credentials/reconciliation.md), its "U15 (closed 2026-11-10)"), so there is nothing for this section to tell an operator to set.
 
 **Write it with `fugaro creds set`, and write it only after `fugaro update`.** The value is a YAML mapping of exactly `key`, `secret` and `workspace`, one field per line (`internal/cli/creds.go`'s `readConsumerShape`, read by `readConsumerNode`); the `workspace` is the workspace the installation's repositories are in, and the read mint refuses a repository whose workspace is not that one, by name (G11):
 
