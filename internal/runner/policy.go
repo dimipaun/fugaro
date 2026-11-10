@@ -311,9 +311,16 @@ func (r *run) policyCeiling(pp *projectpolicy.Policy, env policy.Layer, c Spend)
 	// Unlike the floor these are keys of the merge's own vocabulary, so the
 	// node's are named in `set`: result.json then sources them as "policy" and
 	// not as a ceiling that carries no such value at all.
+	//
+	// The empty list the node wrote counts as its own: `binaries: {allow: []}`
+	// is D987's spelling for clearing the list, the merge reads it as the first
+	// list there is (the empty one), and it would then be sourced from the job
+	// environment — the one layer that can carry no binaries at all, since
+	// fugaro.yaml has no such key. So the member being written, not its length,
+	// is what names the key.
 	if b := pp.Binaries; b != nil {
 		ceiling.BinariesAllow, ceiling.BinariesMaxBytes = b.Allow, b.MaxBytes
-		if len(b.Allow) > 0 {
+		if b.Allow != nil {
 			set[policy.KeyBinariesAllow] = true
 		}
 		if b.MaxBytes > 0 {

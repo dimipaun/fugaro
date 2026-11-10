@@ -406,4 +406,24 @@ func TestPolicyCeilingCarriesTheBinariesList(t *testing.T) {
 			}
 		})
 	}
+
+	// The empty list the node wrote is the node's list, and result.json has to
+	// say so: `binaries: {allow: []}` is D987's spelling for a list the owner
+	// cleared, and the merge reads it as the first list there is — which, left
+	// unsourced, would name the job environment, the one layer that can carry
+	// no binaries at all (fugaro.yaml has no such key).
+	cleared := newRun(&projectpolicy.Policy{Binaries: &projectpolicy.Binaries{Allow: []string{}}}, true)
+	if err := cleared.resolvePolicy(context.Background(), cleared.cfg); err != nil {
+		t.Fatal(err)
+	}
+	if got := cleared.policy.BinariesAllow; got == nil || len(got) != 0 {
+		t.Errorf("BinariesAllow = %v, want the empty list the node wrote", got)
+	}
+	if got := cleared.policy.Sources[policy.KeyBinariesAllow]; got != policy.SourcePolicy {
+		t.Errorf("sources[%s] = %q, want %q: the node wrote the empty list, so the environment cannot be its source",
+			policy.KeyBinariesAllow, got, policy.SourcePolicy)
+	}
+	if rec := policyRecord(cleared.policy, 0); rec == nil || rec.Sources[policy.KeyBinariesAllow] != policy.SourcePolicy {
+		t.Errorf("result.json's policy.sources = %+v, want %s = %q", rec, policy.KeyBinariesAllow, policy.SourcePolicy)
+	}
 }

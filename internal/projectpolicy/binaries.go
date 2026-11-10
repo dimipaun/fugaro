@@ -41,7 +41,10 @@ type Binaries struct {
 // empty, and an empty list admits nothing, which is the answer the absent
 // member gives too. The two spellings are told apart where D987 distinguishes
 // them — at publish, where silence keeps the published list and a written
-// empty block takes it away — and never here.
+// empty block takes it away — and never here. What a reader of this node
+// beyond the publish does need is the difference between the two members: a
+// written `allow: []` is a non-nil empty slice and an absent one is nil, which
+// is how the runner tells a list the owner wrote from one no layer wrote.
 func decodeBinaries(raw json.RawMessage) (*Binaries, error) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
