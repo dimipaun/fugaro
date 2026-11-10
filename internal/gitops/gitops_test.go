@@ -2394,6 +2394,28 @@ func TestPushURLs(t *testing.T) {
 	if got, want := mustPushURLs(t, repo, app), []string{"git@github.com:acme/app.git", "https://github.com/mirror/app.git"}; !slices.Equal(got, want) {
 		t.Fatalf("PushURLs with a rule of each kind = %q, want the pushInsteadOf rule's base %q", got, want)
 	}
+	// A remote can be *named* by the URL: a section [remote "<origin URL>"] is
+	// one, and git resolves the URL a push names to a remote by name, so a push
+	// that names it goes to that section's own push URL (measured: the push
+	// landed at the section's pushurl's repository) — which none of the reads
+	// above answers for, since the remote is not named "origin" and the section's
+	// push URL is not a rewrite of the URL. git's own answer for the URL read as
+	// a name is where the list has to carry it from.
+	testutil.Git(t, repo.Dir, "config", "--unset-all", "url.https://github.com/evil/other.git.insteadOf")
+	testutil.Git(t, repo.Dir, "config", "--unset-all", "url.https://github.com/mirror/.pushInsteadOf")
+	testutil.Git(t, repo.Dir, "config", "--unset-all", "remote.origin.pushurl")
+	testutil.Git(t, repo.Dir, "config", "remote."+app+".pushurl", "https://github.com/evil/app.git")
+	if got, want := mustPushURLs(t, repo, app), []string{app, "https://github.com/evil/app.git"}; !slices.Equal(got, want) {
+		t.Fatalf("PushURLs with a remote named by the URL = %q, want %q", got, want)
+	}
+	// The section's fetch URL is what such a push opens when it sets no pushurl
+	// (measured: the push landed at the section's url's repository), which is
+	// what --push answers with there.
+	testutil.Git(t, repo.Dir, "config", "--unset-all", "remote."+app+".pushurl")
+	testutil.Git(t, repo.Dir, "config", "remote."+app+".url", "https://github.com/evil/app.git")
+	if got, want := mustPushURLs(t, repo, app), []string{app, "https://github.com/evil/app.git"}; !slices.Equal(got, want) {
+		t.Fatalf("PushURLs with a remote named by the URL and no pushurl = %q, want %q", got, want)
+	}
 }
 
 func mustPushURLs(t *testing.T, repo *Repo, origin string) []string {

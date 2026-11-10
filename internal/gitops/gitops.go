@@ -998,6 +998,16 @@ func (r *Repo) OriginURL(ctx context.Context) (string, error) {
 // against origin as that read returned it — already rewritten once by git — so
 // a rule matching what another rule produced is applied to it here too
 // (pushRewrite).
+//
+// A checkout can also name a *remote* by that URL: a section
+// [remote "https://github.com/acme/app.git"] is a remote whose name is the URL,
+// and git resolves the URL such a push names to it by name, so the section's own
+// push URL is where the push goes (measured: a push that named the URL landed at
+// the section's pushurl's repository, and at the section's url when it set no
+// pushurl). None of the reads above answers for that — the remote is not named
+// "origin", and the section's push URL is not a rewrite of the URL — so git's
+// own answer for the URL read as a name is added too. A name no remote has is
+// the ordinary case, and git exits 2 for it.
 func (r *Repo) PushURLs(ctx context.Context, origin string) ([]string, error) {
 	out, err := r.git(ctx, "remote", "get-url", "--push", "--all", "origin")
 	if err != nil {
@@ -1008,6 +1018,16 @@ func (r *Repo) PushURLs(ctx context.Context, origin string) ([]string, error) {
 		if line != "" {
 			urls = append(urls, line)
 		}
+	}
+	// -- so a URL that begins with a dash is a name and never an option.
+	if named, err := r.git(ctx, "remote", "get-url", "--push", "--all", "--", origin); err == nil {
+		for _, line := range strings.Split(named, "\n") {
+			if line != "" && !slices.Contains(urls, line) {
+				urls = append(urls, line)
+			}
+		}
+	} else if exitCode(err) != 2 {
+		return nil, err
 	}
 	rewritten, err := r.pushRewrite(ctx, origin)
 	if err != nil {

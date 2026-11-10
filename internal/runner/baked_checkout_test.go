@@ -115,6 +115,25 @@ func secondRewriteCheckout(t *testing.T, h *harness, dir string) {
 	testutil.Git(t, dir, "config", "url.https://github.com/evil/.insteadOf", "git@github.com:acme/")
 }
 
+// urlNamedRemoteCheckout makes dir a checkout of this run's own repository whose
+// configuration holds a *remote named by the origin URL* — the section
+// [remote "https://github.com/acme/app.git"], which is a remote whose name is
+// that URL — with a pushurl of another repository's. git resolves the URL a push
+// names to a remote by name, so the checkpoint push (gitops' PushFastForward,
+// which names the URL) goes to that pushurl, while the origin, the remote named
+// "origin" and the URL's own rewrite all say this repository. The pushurl is a
+// file:// URL of a bare repository this test makes, so a run that gets past the
+// guard really lands its branch there.
+func urlNamedRemoteCheckout(t *testing.T, h *harness, dir string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	testutil.Git(t, filepath.Dir(dir), "clone", "--quiet", h.remote, dir)
+	testutil.Git(t, dir, "remote", "set-url", "origin", "https://github.com/acme/app.git")
+	testutil.Git(t, dir, "config", "remote.https://github.com/acme/app.git.pushurl", "file://"+testutil.NewRemote(t, map[string]string{"README.md": "other\n"}))
+}
+
 // TestBakedCheckoutOriginMismatchRefuses (IS8): the job is for acme/app, and a
 // checkout the image already holds is another repository's — a shared image
 // built for someone else, or a warm container an earlier job or execution left
@@ -148,6 +167,10 @@ func secondRewriteCheckout(t *testing.T, h *harness, dir string) {
 // left out of that resolution — the second-rewrite rows fail, and only they do:
 // git's own read of the remote answers with the first rule's result, which is
 // this repository's, while the push opens the second rule's, which is not.
+// Mutation (run, restore): gitops' PushURLs without the read of the origin URL
+// as a remote name — the URL-named-remote rows fail, and only they do: every
+// other read answers for the remote named "origin" and for the URL's rewrite,
+// which are this repository's.
 func TestBakedCheckoutOriginMismatchRefuses(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -178,6 +201,12 @@ func TestBakedCheckoutOriginMismatchRefuses(t *testing.T) {
 		{"the directory the run would adopt, by its second push rewrite", func(t *testing.T, h *harness) {
 			secondRewriteCheckout(t, h, bakedDir(t, h, repoSlug))
 		}, []string{"pushes to https://github.com/evil/app.git"}},
+		{"the work directory's URL-named remote", func(t *testing.T, h *harness) {
+			urlNamedRemoteCheckout(t, h, h.deps.WorkDir)
+		}, []string{"pushes to file://"}},
+		{"the directory the run would adopt, by its URL-named remote", func(t *testing.T, h *harness) {
+			urlNamedRemoteCheckout(t, h, bakedDir(t, h, repoSlug))
+		}, []string{"pushes to file://"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newHarness(t, "", nil)

@@ -2079,6 +2079,14 @@ func (r *run) openBakedCheckout(ctx context.Context) error {
 // produced is a rewrite of this push too. gitops' PushURLs resolves both kinds
 // against the origin URL, in the order git reads them, and returns what they
 // produce with the rest — which is why it is given the URL this function read.
+//
+// A remote named by that URL is the fourth door. A checkout can carry a section
+// [remote "https://github.com/acme/app.git"] — a remote whose name is the URL —
+// with a push URL of its own, and git resolves the URL a push names to a remote
+// by name, so the checkpoint push goes to that section's push URL while both of
+// the reads above answer for the remote named "origin" and for the URL's own
+// rewrite. gitops' PushURLs asks git for the URL read as a name too, so that
+// section's push URL is in the list this function holds to the binding.
 func (r *run) checkBakedCheckoutOrigin(ctx context.Context, kind string, repo *gitops.Repo) error {
 	origin, err := strip(repo).OriginURL(ctx)
 	if err != nil {
@@ -2103,7 +2111,7 @@ func (r *run) checkBakedCheckoutOrigin(ctx context.Context, kind string, repo *g
 		// an endpoint a credential is scoped to that the launcher writes none
 		// of — so the decision is reused and the sentence is this one's.
 		if err := remoteAdmissionErr(url, kind, r.spec.Repo, r.d.Store.Slug()); err != nil {
-			return fmt.Errorf("the checkout in the image at %s pushes to %s, which is not this run's repository: the run's last git command pushes its branch to origin (gitops' Push), which git sends to the remote's pushurl when the checkout sets one, and a checkpoint pushes by origin's URL (gitops' PushFastForward), which git rewrites by the checkout's url.*.pushInsteadOf and url.*.insteadOf rules — and the run's git credential is scoped to the remote's endpoint rather than to its path, so the branch would land in another repository with this repository's credential, under the slug %s, while the pull request would be opened for %s: what a run pushes to is decided by the repository its task names and never by a checkout nothing ties to it, so the run stops before any git credential is requested", repo.Dir, remoteDisplay(url), r.d.Store.Slug(), r.spec.Repo)
+			return fmt.Errorf("the checkout in the image at %s pushes to %s, which is not this run's repository: the run's last git command pushes its branch to origin (gitops' Push), which git sends to the remote's pushurl when the checkout sets one, and a checkpoint pushes by origin's URL (gitops' PushFastForward), which git sends to the remote that URL names when the checkout has one and otherwise rewrites by the checkout's url.*.pushInsteadOf and url.*.insteadOf rules — and the run's git credential is scoped to the remote's endpoint rather than to its path, so the branch would land in another repository with this repository's credential, under the slug %s, while the pull request would be opened for %s: what a run pushes to is decided by the repository its task names and never by a checkout nothing ties to it, so the run stops before any git credential is requested", repo.Dir, remoteDisplay(url), r.d.Store.Slug(), r.spec.Repo)
 		}
 	}
 	return nil
