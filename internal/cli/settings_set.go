@@ -348,7 +348,7 @@ unset to remove the key.
 
 A stage's Claude account is a key of its own — ` + "`stages.<stage>.claude_account`" + `, one
 per stage name this binary runs (plan, implement, review_first, review,
-adversarial, fix) — and it is how a stage is repointed from one account to
+adversarial, triage, fix) — and it is how a stage is repointed from one account to
 another without editing the local config by hand. Its value is a name the local
 config's claude_accounts declares, or ` + "`default`" + ` for the unsuffixed account: an
 undeclared name is refused naming the declared ones, and an account whose
