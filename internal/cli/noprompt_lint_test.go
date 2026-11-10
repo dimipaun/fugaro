@@ -738,6 +738,13 @@ var pendingSites = map[string]string{
 	// belongs to the task that removes the last caller. Deleting it here would
 	// not compile.
 	"project_cmd.go:confirmRemoval": "T6's file, whose callers T7 and T15 remove",
+	// The login unit's own command (O9, Q2): a unit is code that runs at every
+	// login, so the confirmation the owner's answer asked for is the Typed
+	// class and stands while that class does. It is a non-money Typed step,
+	// which is exactly what T15 gives the owner-session-only fence to, so the
+	// entry names that task rather than a file of its own: T12 deletes the
+	// class only once every step that relies on it is fenced, and this is one.
+	"orchestrator_install.go:confirmUnitInstall": "T15 (the non-money Typed steps, whose fence replaces this confirmation)",
 }
 
 // forms is the shapes found at one site, in a stable order, for a failure's
