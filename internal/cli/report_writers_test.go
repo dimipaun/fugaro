@@ -20,6 +20,7 @@ import (
 
 	"golang.org/x/oauth2"
 
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/infra/managed"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
@@ -616,8 +617,15 @@ func TestRestoreKeepsNoTerraformTailInItsLog(t *testing.T) {
 	if err == nil {
 		t.Fatalf("the restore finished though the creating run's apply failed:\n%s", out)
 	}
-	if !strings.Contains(out, tail) {
-		t.Errorf("terraform's own tail never reached the screen:\n%s", out)
+	// The child run's step line carries one clause of terraform's own error and
+	// names the child's log, which is where the whole of it is (report.Brief) —
+	// this command's log holds no provider output, which the rest of this test
+	// is about, so the tail is read from the log the failing step points at.
+	if !strings.Contains(out, "terraform apply exited 1: Error: creating a bucket") {
+		t.Errorf("terraform's own error never reached the screen:\n%s", out)
+	}
+	if _, setupLog := onlyLog(t, "setup"); !strings.Contains(setupLog, tail) {
+		t.Errorf("terraform's own tail reached neither the screen nor the log the failing step names:\n%s", out)
 	}
 	_, log := onlyLog(t, "restore")
 	if strings.Contains(log, tail) {
@@ -715,6 +723,24 @@ func TestBudgetKillWritesALog(t *testing.T) {
 	if _, _, err := execute(t, "budget", "kill", "--all", "--yes"); err != nil {
 		t.Fatal(err)
 	}
+	writesALog(t, "budget-kill")
+}
+
+// TestBudgetKillWorkspaceWritesALog: the workspace scope is a scope of the
+// same command, not a command of its own, so it files under the same name
+// (budgetKillLogName) and reports the same step: a stop written through
+// --workspace is what a person reads back — and what the failure path sends
+// them to — exactly as a stop written through --all is (D1352). The scope
+// resolves its own project instead of selecting one, so it opens the reporter
+// itself, and this holds that to the answer the --all test above reads.
+func TestBudgetKillWorkspaceWritesALog(t *testing.T) {
+	h := newWSUpdateHome(t, wsOwnerTable)
+	h.project(t, "workspace-alpha").db.Set(budget.PathProject, "workspace-alpha")
+	out, _, err := execute(t, "budget", "kill", "--workspace", "workspace-alpha", "--reason", "runaway spend")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	reported(t, out, "workspace")
 	writesALog(t, "budget-kill")
 }
 

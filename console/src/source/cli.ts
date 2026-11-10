@@ -213,11 +213,20 @@ export function feedSilence(
 }
 
 /**
- * FUGARO_INSTALL_COMMAND is the one line the absent-binary screen offers, and
- * it is the README's own command rather than one this file invented:
+ * FUGARO_INSTALL_COMMAND is the line the absent-binary screen offers, and it is
+ * the README's own command rather than one this file invented:
  * `console/README.md` and `docs/release.md` both hand the cask as the install
  * step (`brew install dimipaun/tap/fugaro`). The console prints it and runs
  * nothing -- installing a binary is the operator's act, not the app's.
+ *
+ * **It is the host route's line, and not the console's only one** (F32). It is
+ * a macOS (and Linux) install, so it is the answer for `no-binary` alone: on the
+ * WSL route the CLI is a Linux binary inside a distribution, which Homebrew
+ * neither installs nor reaches, and that route's install line is the procedure
+ * in `docs/windows-cli/wsl.md`. Nothing here carries that line -- the three WSL
+ * kinds carry the empty string, deliberately -- and it is the pages' own remedy
+ * sentences in `renderer/screens/degraded.ts` that name the document rather than
+ * retyping its commands.
  */
 export const FUGARO_INSTALL_COMMAND = 'brew install dimipaun/tap/fugaro'
 
@@ -259,9 +268,12 @@ export interface NoInstallationState {
    * `brew install dimipaun/tap/fugaro` is not a Windows install and Homebrew is
    * not inside the distribution (F32), and the one command that would install
    * WSL installs nothing this console can then run. Their route's install line is
-   * the register procedure in `docs/windows-cli/wsl.md`, **pointed at** rather
-   * than retyped (F32) -- and that line is not drawn here: these pages carry
-   * their remedy as their own sentence, which is `degraded.ts`'s `NO_WSL_REMEDY`.
+   * the procedure in `docs/windows-cli/wsl.md`, **pointed at** rather than
+   * retyped (F32) -- and it is not drawn from here: these pages carry their
+   * remedy as their own sentence, and that sentence is what names the procedure
+   * (`degraded.ts`'s `NO_WSL_REMEDY` and the two beside it). The line is
+   * therefore per route -- the command below for the host one, the document for
+   * the WSL one -- and this field carries only the host route's.
    */
   readonly installCommand: string
   /**
@@ -712,9 +724,8 @@ export class CliSource implements FugaroSource {
    * argument at all -- the whole argv is the spawn row's, `--all --json` -- and
    * like the stored view above its child asks nothing of the host: the
    * declarations are the caller's own database node, read through the same
-   * store and the same ADC, so this read succeeds with
-   * `FUGARO_CREDENTIALS_SERVICE_URL` set where `coordinatorShow`'s host read
-   * refuses. */
+   * store and the same ADC, so this read needs no published credentials service
+   * where `coordinatorShow`'s host read needs the one its project publishes. */
   coordinatorIntents(args: ValidatedArguments): Promise<Snapshot> {
     return this.#readDocument('coordinator.intents', args)
   }
@@ -726,7 +737,7 @@ export class CliSource implements FugaroSource {
    * project flags main-process state settles -- and like the declarations read
    * above its child asks nothing of the host: the marks and the audit trail are
    * the caller's own database node, read through the same store and the same
-   * ADC, so this read succeeds with `FUGARO_CREDENTIALS_SERVICE_URL` set. **The
+   * ADC, so this read needs no credentials service of any kind. **The
    * subset is the command's** -- `argv` is not in it (D1476) -- so nothing this
    * process does can widen or narrow what a screen is shown. */
   managedStatus(args: ValidatedArguments): Promise<Snapshot> {

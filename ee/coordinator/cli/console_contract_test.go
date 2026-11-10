@@ -26,6 +26,8 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/ee/coordinator"
+	"github.com/dimipaun/fugaro/internal/gitprov/github"
+	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/spf13/pflag"
 )
 
@@ -503,6 +505,122 @@ func TestConsoleContractNamesOnlyRealShowFlags(t *testing.T) {
 		name := strings.TrimRight(m[1], "-")
 		if name != "" && !real[name] {
 			t.Errorf("%s's §8 row names --%s, which coordinator show has no flag for", coordinatorContractPath, name)
+		}
+	}
+}
+
+// personReadSetProse is the service's person read set as the contract writes
+// it: each permission of github.PersonReadTokenPermissions, its key spaced the
+// way prose spaces it ("pull_requests" is "pull requests") with its level after
+// it. The set is read off the code rather than listed here, so a permission
+// added to the mint and not to the documents is a document the console's
+// decoder was never told about, and a name kept here after the mint dropped it
+// is a claim about a token no command is handed.
+func personReadSetProse(t *testing.T) []string {
+	t.Helper()
+	perms := github.PersonReadTokenPermissions()
+	if len(perms) == 0 {
+		t.Fatalf("github.PersonReadTokenPermissions is empty: the checks below would pass vacuously")
+	}
+	out := make([]string, 0, len(perms))
+	for name, level := range perms {
+		out = append(out, strings.ReplaceAll(name, "_", " ")+" "+level)
+	}
+	slices.Sort(out)
+	return out
+}
+
+// TestConsoleContractNamesThePersonReadsOwnSet: §6.13, §6.15 and §8 describe
+// `coordinator status`'s and `coordinator show`'s credential as the PERSON read
+// set the installation's credentials service mints with — the set of its own
+// that carries contents read beside the coordinator's two (A0, D915,
+// github.PersonReadTokenPermissions) — and neither section tells the console's
+// decoder that the read is the run's. The second half is the same rule from the
+// other side: a person's read resolves the service from the project's own
+// published block and reads no environment variable, so
+// FUGARO_CREDENTIALS_SERVICE_URL decides nothing about it — not where the read
+// goes, and not whether it happens at all
+// (TestCoordinatorShowNeverReadsTheRunsServiceURL) — and a section that named
+// the variable would be drawing a refusal under it that the command does not
+// make. §6.16 is left out: the declarations read is the caller's own database
+// node, and it is the one place in this contract where the variable is named
+// for what it is, the run's.
+func TestConsoleContractNamesThePersonReadsOwnSet(t *testing.T) {
+	set := personReadSetProse(t)
+	for _, s := range []struct{ name, body string }{
+		{"§6.13", coordinatorSection(t)},
+		{"§6.15", coordinatorShowSection(t)},
+	} {
+		for _, want := range set {
+			if !strings.Contains(s.body, want) {
+				t.Errorf("%s's %s never names %q, which is a permission the service's read mint asks with (github.PersonReadTokenPermissions): a reader of this contract would take the token these commands are handed for a narrower one than it is",
+					coordinatorContractPath, s.name, want)
+			}
+		}
+		if strings.Contains(s.body, providers.EnvCredentialsServiceURL) {
+			t.Errorf("%s's %s names %s: a person's read resolves the credentials service from the project's own published block and reads no environment variable, so the run's variable decides nothing about it",
+				coordinatorContractPath, s.name, providers.EnvCredentialsServiceURL)
+		}
+	}
+	// §8's inventory row is where the console's spawn allow-list is written
+	// down: the row that mints a token of the host's has to name the set that
+	// token carries, or the row's own account of the child understates it.
+	row := coordinatorInventoryRow(t, "coordinator show")
+	if !strings.Contains(row, "person read") {
+		t.Errorf("%s's §8 row for coordinator show does not name the person read set: %q", coordinatorContractPath, row)
+	}
+	if strings.Contains(row, "the coordinator's own") {
+		t.Errorf("%s's §8 row for coordinator show still lends this read the coordinator's own token rather than the person read set the mint asks with: %q", coordinatorContractPath, row)
+	}
+}
+
+// coordinatorConsoleFiles are the console's own files whose comments describe
+// the person reads of this package's commands: the operation list, the spawn
+// allow-list, the preload's method surface and the two halves of the source
+// bridge. They are read here because the rule they state is the contract's own:
+// a person's read resolves the credentials service from the project's published
+// block and reads no environment variable, so the run's own name for the
+// service decides nothing about it, and a console comment that named it would
+// tell a reader the opposite of what `coordinator show` does.
+var coordinatorConsoleFiles = []string{
+	"../../../console/src/main/ipc.ts",
+	"../../../console/src/main/spawn.ts",
+	"../../../console/src/preload/index.ts",
+	"../../../console/src/source/source.ts",
+	"../../../console/src/source/cli.ts",
+}
+
+// TestConsolePersonReadsNeverConsultTheRunsServiceURL: no sentence in the
+// console's own files or in the design's spawn table lends the run's variable a
+// say over a person's read. Every one that did was the same false claim -- that
+// `coordinator show` refuses under `FUGARO_CREDENTIALS_SERVICE_URL`, and that
+// the reads needing no host refuse with it -- which the code contradicts:
+// coordinatorPersonMint reads the project's published block and nothing else,
+// and TestCoordinatorShowNeverReadsTheRunsServiceURL sets the variable and the
+// read succeeds. The console files are checked whole, because the console runs
+// these commands in a person's own shell, where the run's variable is another
+// process's name and has no business in any of them; the design is checked line
+// by line, so that a row or a sentence about one of these three commands cannot
+// carry it.
+func TestConsolePersonReadsNeverConsultTheRunsServiceURL(t *testing.T) {
+	for _, path := range coordinatorConsoleFiles {
+		for i, line := range strings.Split(readFileString(t, path), "\n") {
+			if strings.Contains(line, providers.EnvCredentialsServiceURL) {
+				t.Errorf("%s:%d names %s: the console runs this read in a person's own shell, where the run's variable is the run's and decides nothing about it -- a comment that names it here tells a reader the read refuses where it does not",
+					path, i+1, providers.EnvCredentialsServiceURL)
+			}
+		}
+	}
+	for i, line := range strings.Split(readFileString(t, coordinatorDesignPath), "\n") {
+		if !strings.Contains(line, providers.EnvCredentialsServiceURL) {
+			continue
+		}
+		for _, cmd := range []string{"coordinator show", "coordinator status", "coordinator intents"} {
+			if strings.Contains(line, cmd) {
+				t.Errorf("%s:%d describes %s and names %s: a person's read resolves the credentials service from the project's published block, and this variable decides nothing about it -- not where the read goes, and not whether it happens at all",
+					coordinatorDesignPath, i+1, cmd, providers.EnvCredentialsServiceURL)
+				break
+			}
 		}
 	}
 }

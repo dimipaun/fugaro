@@ -1,6 +1,6 @@
 # Review levels, A/B for every slot, job max, crash reports, console graph and gauges
 
-**Status: plan only; nothing is implemented; no task approved.** The owner answered D720–D737 on
+**Status as of 2026-11-10: in progress, about 24/40 merged; see [docs/status.md](../status.md) for the current table.** The owner answered D720–D737 on
 2026-10-30, every one as recommended except **D730** (fully automatic `/jobmax` launches, not the
 recommendation; ruled the same day with guardrails and a per-project opt-in, off by default). The answers approve no task. The open items O7, O9, O10 and O11 were ruled the same day (reconciliation §4). Still open: the crash-report processor's name (**O4**; the console tasks stay draft until then) and counsel's review of Terms §7.3 and the EU opt-out question (**O1**, **O2**).
 

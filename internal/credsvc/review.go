@@ -103,10 +103,12 @@ func ReviewServiceAccountID(profile, provider, account string) string {
 // the (profile, provider, account) triple. Account is what the *published
 // admissions* speak: the name the shared node's accounts block is keyed by,
 // which is the name the pairing looks the caller up under and the name of the
-// ONE credential a review call is offered — a tier-A account's name, or the
-// sentinel config.AnthropicKeyAccount, which names the project's own Anthropic
-// API key and the bundle's tier-B entry rather than an account
-// (docs/api-key-review, D1417). A caller cannot write either.
+// ONE credential a review call is offered — a tier-A account's name, or one of
+// the account axis's two values that name no account at all: the sentinel
+// config.AnthropicKeyAccount, which names the project's own Anthropic API key
+// and the bundle's tier-B entry, and config.ProviderKeyAccount, which names the
+// project's provider key (docs/api-key-review, D1417 and AK6a). A caller cannot
+// write either.
 type ReviewJobAccount struct {
 	// Email is the review job's service account, in the spelling the
 	// deployment configured (AuthConfig.ReviewJobAccounts folds it for
@@ -115,9 +117,10 @@ type ReviewJobAccount struct {
 	// Account is the account-axis value as the policy's accounts block spells
 	// it. It is never empty: the axis spells the default account as the empty
 	// string (config.ProjectJobAccounts) and the admissions spell it
-	// config.DefaultClaudeAccount. It is a Claude account's name, or
-	// config.AnthropicKeyAccount for the project's own key, which is not an
-	// account.
+	// config.DefaultClaudeAccount. It is a Claude account's name, or one of the
+	// axis's two non-account values (config.AnthropicKeyAccount for the
+	// project's own key, config.ProviderKeyAccount for the project's provider
+	// key), neither of which is an account.
 	Account string
 }
 
@@ -143,6 +146,13 @@ type ReviewJobAccount struct {
 // config.ProjectJobTokenAccount's, spelled here because the review job holds
 // no token of its own to join (the variant mounts nothing under O1 — its model
 // calls come here).
+//
+// The axis's two non-account values (config.AnthropicKeyAccount,
+// config.ProviderKeyAccount) ride this loop like every other axis value: a
+// profile that names one has a review-only variant the installation deploys for
+// it, so the value is a review job whose ONE offered credential is the bundle
+// entry the pairing looks up under that value rather than an account's token —
+// which is exactly what this class is (D1417, and AK6a for the second value).
 func ReviewJobAccountsFor(p *projectpolicy.Policy, gcpProject string) []ReviewJobAccount {
 	if p == nil {
 		return nil

@@ -2,7 +2,7 @@
 # The Fugaro base image (docs/design/base-image.md): one language-agnostic
 # image for every workflow. Debian 13 slim, a maximalist tool kit, gcloud and
 # the Docker CLI (client only), mise (projects install their runtimes with it),
-# the agent harnesses (only Claude Code is driven by the runner) and fugaro.
+# the one agent harness the runner drives (Claude Code) and fugaro.
 # It runs as the non-root user fugaro (uid 1000) in /work/repo, under tini,
 # with sudo installed but granting nothing. Build it from the repository root
 # with images/build-base.sh base [TAG], for linux/amd64 or linux/arm64.
@@ -11,7 +11,7 @@
 # monthly (design section 7): a version and, per architecture, the sha256
 # fetch.sh checks. Debian's own packages float: the first RUN upgrades them.
 # Layers go from the slowest-changing to the fastest: the OS and kit, the
-# single-binary tools, mise, the harnesses, then fugaro.
+# single-binary tools, mise, graphify, then fugaro and Claude Code.
 
 # debian:trixie-slim's multi-platform index, read on 2026-10-08; bump.sh
 # moves it.
@@ -58,19 +58,6 @@ ARG GCLOUD_SHA256_ARM64=15d0365242d72caebda77647642ae73f68bde10b1f71338c8a704aea
 ARG DOCKER_CLI_VERSION=29.8.2
 ARG DOCKER_CLI_SHA256_AMD64=995d1ef289677f74fd58d8d2c35727b6a4ee389c69db8638a3e42d0487aa5b0f
 ARG DOCKER_CLI_SHA256_ARM64=76a624e4a8e5da654d1150e808175125efb5a6f1b6aa1cbd9caee18f51047a50
-ARG HARNESS_NODE_VERSION=24.21.0
-ARG CODEX_VERSION=0.161.0
-ARG CODEX_SHA256_AMD64=b1efb95097660d7f2e5a3887618a23f2ea1b0d548078bf92b0f7a5d229a0cef2
-ARG CODEX_SHA256_ARM64=5c90bf4be3c97fc62fcafb28ec2335ee318e6ecb332e1e8ee3d2c63814a5a26a
-ARG OPENCODE_VERSION=1.18.35
-ARG OPENCODE_SHA256_AMD64=c8f888b451f5494a18f858fffb0e0b68f4e4baa9c241761c5f206884f0fa640d
-ARG OPENCODE_SHA256_ARM64=f7f2ba59ee8aa94d388f9696575a32d20e71c2ee48def9f80fc693a60fec6c72
-ARG GOOSE_VERSION=1.53.0
-ARG GOOSE_SHA256_AMD64=2d010c66dfd4348bb437b3a94001882468a5db1aa556858920481522f57752d7
-ARG GOOSE_SHA256_ARM64=e156799760a174bfbc5d14443aacef064ce7592f9099dc9ce04c3db74e72224b
-ARG CRUSH_VERSION=0.97.1
-ARG CRUSH_SHA256_AMD64=1b7cbe0600a3797538a74dc00dd8c4bac54ac4b8f4455ba5ff2312b29c7bd598
-ARG CRUSH_SHA256_ARM64=16c9477a178d69e02a51bf4babe6174e62051314b2cd7f36b1ec5fea47e25a88
 ARG UV_VERSION=0.13.0
 ARG UV_SHA256_AMD64=1468ebd5a5541121837c5a2817b9972ba6090fa6caa3d142620850a47fb75154
 ARG UV_SHA256_ARM64=3ccfb6af6e242433eb552f7d9676abd5412c6595c497e990d9c8cb7b5bd4d2c3
@@ -192,69 +179,14 @@ RUN --mount=type=bind,source=images/base/fetch.sh,target=/tmp/fetch.sh \
     HOME=/root mise --version; \
     rm -rf /root/.local /root/.cache /root/.config
 
-# 3. The agent harnesses (design section 6). Only Claude Code is driven by the
-# runner; the others are present for later. The Node ones (Gemini, Pi, Qwen)
-# run on a private Node in /opt/fugaro/node, never on PATH, through wrappers
-# that exec it without touching PATH, so neither side sees the other's Node.
-# They come from the committed lockfile, without install scripts, into
-# root-owned /opt.
-#
-# DeepSeek Harness (dsh, @deepseek-ai/dsh, MIT) is NOT wired into the loop
-# below yet, on purpose (design base-image.md section 6, updated 2026-10-12):
-# no npm was available to pin an exact version in harnesses/package.json and
-# regenerate harnesses/package-lock.json's integrity hashes for a package
-# with this many transitive dependencies. A prior version of this comment
-# added dsh to the loop without that lockfile entry; npm ci then installed
-# nothing for it and the loop's own "entry point is missing" guard failed
-# every build (confirmed on PR #302's fugaro-base (amd64/arm64) and
-# docker-tests checks). Add dsh:@deepseek-ai/dsh/lib/bin.js to the `for h in
-# ...` line below, and a tools.tsv row, only in the same change that pins a
-# real version and regenerates the lockfile with
-# `npm install --package-lock-only` (images/base_test.go's
-# TestDeepSeekHarnessNotHalfWired pins that the three move together).
-COPY --chmod=0755 images/base/install-node.sh /usr/local/lib/fugaro/install-node
-COPY images/base/harnesses/package.json images/base/harnesses/package-lock.json /opt/fugaro/harnesses/
-RUN --mount=type=bind,source=images/base/byproducts.sh,target=/tmp/byproducts.sh \
-    set -eu; \
-    NODE_PREFIX=/opt/fugaro/node /usr/local/lib/fugaro/install-node keyring; \
-    NODE_PREFIX=/opt/fugaro/node /usr/local/lib/fugaro/install-node "$HARNESS_NODE_VERSION"; \
-    cd /opt/fugaro/harnesses; \
-    HOME=/root PATH=/opt/fugaro/node/bin:$PATH npm ci --ignore-scripts --no-audit --no-fund --omit=dev; \
-    rm -rf /root/.npm; \
-    for h in gemini:@google/gemini-cli/bundle/gemini.js pi:@mariozechner/pi-coding-agent/dist/cli.js qwen:@qwen-code/qwen-code/cli-entry.js; do \
-      name=${h%%:*}; entry=/opt/fugaro/harnesses/node_modules/${h#*:}; \
-      [ -f "$entry" ] || { echo "base: $name's entry point $entry is missing" >&2; exit 1; }; \
-      printf '#!/bin/sh\n# %s on the harnesses'"'"' own Node, which is not on PATH (design base-image.md section 6).\nexec /opt/fugaro/node/bin/node %s "$@"\n' \
-        "$name" "$entry" > "/usr/local/bin/$name"; \
-      chmod 0755 "/usr/local/bin/$name"; \
-    done; \
-    sh /tmp/byproducts.sh
-# The binary harnesses: each release archive is checksummed per architecture
-# and its one executable installed into /usr/local/bin.
-RUN --mount=type=bind,source=images/base/fetch.sh,target=/tmp/fetch.sh \
-    set -eu; arch=$(dpkg --print-architecture); \
-    pick() { if [ "$arch" = amd64 ]; then echo "$1"; else echo "$2"; fi; }; \
-    one() { name=$1; url=$2; sum=$3; d=$(mktemp -d); \
-      sh /tmp/fetch.sh "$url" "$sum" "$d/archive"; mkdir "$d/x"; tar -xf "$d/archive" -C "$d/x"; \
-      bin=$(find "$d/x" -type f \( -name "$name" -o -name "$name-*" \) -perm -u+x | head -n 1); \
-      [ -n "$bin" ] || { echo "base: no $name executable in $url" >&2; exit 1; }; \
-      install -m 0755 "$bin" "/usr/local/bin/$name"; rm -rf "$d"; }; \
-    one codex "https://github.com/openai/codex/releases/download/rust-v${CODEX_VERSION}/codex-$(pick x86_64 aarch64)-unknown-linux-musl.tar.gz" \
-      "$(pick "$CODEX_SHA256_AMD64" "$CODEX_SHA256_ARM64")"; \
-    one opencode "https://github.com/sst/opencode/releases/download/v${OPENCODE_VERSION}/opencode-linux-$(pick x64 arm64).tar.gz" \
-      "$(pick "$OPENCODE_SHA256_AMD64" "$OPENCODE_SHA256_ARM64")"; \
-    one goose "https://github.com/block/goose/releases/download/v${GOOSE_VERSION}/goose-$(pick x86_64 aarch64)-unknown-linux-gnu.tar.bz2" \
-      "$(pick "$GOOSE_SHA256_AMD64" "$GOOSE_SHA256_ARM64")"; \
-    one crush "https://github.com/charmbracelet/crush/releases/download/v${CRUSH_VERSION}/crush_${CRUSH_VERSION}_Linux_$(pick x86_64 arm64).tar.gz" \
-      "$(pick "$CRUSH_SHA256_AMD64" "$CRUSH_SHA256_ARM64")"
-# graphify (design base-image.md section 6 update, 2026-10-13): a Python CLI
+# 3. graphify (design base-image.md section 6 update, 2026-10-13): a Python CLI
 # (PyPI graphifyy, github.com/Graphify-Labs/graphify) that builds a
 # knowledge graph of a folder. The base has no system Python beyond Debian's
 # own (no pip; design section 4: a runtime-bound package manager is never a
 # system package, and a project that wants one uses mise), so graphify gets
-# the same private-runtime treatment as the Node harnesses above: uv itself
-# is one pinned, checksummed single binary (like gh, yq, docker and gcloud,
-# 1b above), kept out of /usr/local/bin; it installs its own managed CPython
+# a private runtime of its own: uv itself is one pinned, checksummed single
+# binary (like gh, yq, docker and gcloud, 1b above), kept out of
+# /usr/local/bin; it installs its own managed CPython
 # and graphify's dependencies -- verified against this committed,
 # hash-pinned lockfile (`uv pip compile --generate-hashes`; see
 # images/base/graphify/requirements.in for how to regenerate it), so a PyPI
@@ -312,9 +244,8 @@ RUN --mount=type=bind,source=images/base/fetch.sh,target=/tmp/fetch.sh \
 COPY --chmod=0755 images/common/finalize-checkout.sh /usr/local/lib/fugaro/finalize-checkout
 COPY --chmod=0755 images/common/fugaro-services /usr/local/bin/fugaro-services
 RUN mkdir -p /etc/fugaro \
- && printf '{"debian":"trixie-slim@%s","mise":"%s","claude_code":"%s","gh":"%s","yq":"%s","gcloud":"%s","docker_cli":"%s","harness_node":"%s","codex":"%s","opencode":"%s","goose":"%s","crush":"%s","uv":"%s","graphify":"%s"}\n' \
+ && printf '{"debian":"trixie-slim@%s","mise":"%s","claude_code":"%s","gh":"%s","yq":"%s","gcloud":"%s","docker_cli":"%s","uv":"%s","graphify":"%s"}\n' \
       "$DEBIAN_DIGEST" "$MISE_VERSION" "$CLAUDE_CODE_VERSION" "$GH_VERSION" "$YQ_VERSION" "$GCLOUD_VERSION" "$DOCKER_CLI_VERSION" \
-      "$HARNESS_NODE_VERSION" "$CODEX_VERSION" "$OPENCODE_VERSION" "$GOOSE_VERSION" "$CRUSH_VERSION" \
       "$UV_VERSION" "$GRAPHIFY_VERSION" > /etc/fugaro/base.json \
  && chmod 0644 /etc/fugaro/base.json
 USER fugaro

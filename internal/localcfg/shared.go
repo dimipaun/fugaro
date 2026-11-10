@@ -148,6 +148,27 @@ func (c *Config) Shared() *Config {
 	// on, and ParseShared refuses the key besides — a shared config carrying
 	// it was not written by the converge.
 	s.ImageCatalog = nil
+	// ImageMap travels the catalog's way and is dropped here for its reason,
+	// one step stronger: a map that names the image each repository runs is the
+	// same choice the catalog is, made per repository, so a launcher who could
+	// write it into the runs bucket's shared file would be choosing what code a
+	// teammate's runs execute. ParseShared refuses the key besides, because a
+	// shared config carrying it was not written by the converge.
+	s.ImageMap = nil
+	// BakeRepos is dropped here for the catalog's reason too: whether a
+	// repository is baked into its image is the owner's decision about every
+	// repository of the project, and a launcher who could write it into the
+	// shared file could turn baking off for everyone — every job of the project
+	// cloning again, from one file it can write. ParseShared refuses it besides.
+	s.BakeRepos = nil
+	// Triage travels the bake switch's way too, and is dropped here for the
+	// floor's reason: the stage is what judges the findings a review round's
+	// table would have blocked, so a launcher who could write the switch into
+	// the shared file would be waving every teammate's runs past the findings it
+	// holds back — the floor's own decision, one level down. ParseShared refuses
+	// it besides, because a shared config carrying it was not written by the
+	// converge.
+	s.Triage = nil
 	// Orchestrator travels the catalog's way, into the policy node, and is
 	// dropped here for the same reason the floor is: the block is what stops a
 	// launcher spending the project's budget faster than the owner allows — the

@@ -6,6 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io"
 	"maps"
 	"math"
@@ -823,11 +826,13 @@ func TestLsPRWarnsUndecidableRun(t *testing.T) {
 	seedSpec(t, f, firstRunSpec(lost), false)
 	putBuildObject(t, f, "runs/"+appSlug+"/"+lost+"/result.json", []byte("{not json"))
 	got, errOut := lsJSON(t, "--pr", "7")
-	if len(got.Runs) != 3 || !strings.Contains(errOut, lost+": result.json is unreadable") || !strings.Contains(errOut, r.fu2+": result.json is unreadable") {
+	// The warnings name each run by its ending, like every other human line
+	// (spec.md §1, D1705).
+	if len(got.Runs) != 3 || !strings.Contains(errOut, task.ShortRun(lost)+": result.json is unreadable") || !strings.Contains(errOut, task.ShortRun(r.fu2)+": result.json is unreadable") {
 		t.Fatalf("ls --pr 7 = %v, stderr %q", runIDs(got.Runs), errOut)
 	}
 	// A run whose record says it is on another PR is off this one: no warning for it.
-	if got, errOut := lsJSON(t, "--pr", "8"); len(got.Runs) != 1 || strings.Contains(errOut, r.fu2) {
+	if got, errOut := lsJSON(t, "--pr", "8"); len(got.Runs) != 1 || strings.Contains(errOut, task.ShortRun(r.fu2)) {
 		t.Fatalf("ls --pr 8 = %v, stderr %q", runIDs(got.Runs), errOut)
 	}
 }
@@ -857,6 +862,8 @@ func TestLsPRColumn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The RUN cell is the run's short form (spec.md §1), so a row is looked up
+	// by that.
 	lines := map[string]string{}
 	for _, l := range strings.Split(human, "\n") {
 		if fields := strings.Fields(l); len(fields) > 0 {
@@ -865,13 +872,13 @@ func TestLsPRColumn(t *testing.T) {
 	}
 	// The BY cell follows the PR column, and none of these runs recorded a
 	// launcher (seedSpec's launch.json carries none): a dash.
-	if l := lines[appSlug+"/"+r.fu1]; !strings.Contains(l, "#7 https://github.com/acme/app/pull/7 (draft)") || !strings.HasSuffix(strings.TrimSpace(l), "-") {
+	if l := lines[task.ShortRun(r.fu1)]; !strings.Contains(l, "#7 https://github.com/acme/app/pull/7 (draft)") || !strings.HasSuffix(strings.TrimSpace(l), "-") {
 		t.Fatalf("finished follow-up line = %q\n%s", l, human)
 	}
-	if l := lines[appSlug+"/"+waiting]; !strings.Contains(l, "#7") || !strings.HasSuffix(strings.TrimSpace(l), "-") {
+	if l := lines[task.ShortRun(waiting)]; !strings.Contains(l, "#7") || !strings.HasSuffix(strings.TrimSpace(l), "-") {
 		t.Fatalf("unlaunched follow-up line = %q\n%s", l, human)
 	}
-	if l := lines[appSlug+"/"+r.plain]; l != "" {
+	if l := lines[task.ShortRun(r.plain)]; l != "" {
 		t.Fatalf("a run off the PR is listed: %q", l)
 	}
 }
@@ -1012,9 +1019,12 @@ func TestLsRecipeColumnDefaultsEmpty(t *testing.T) {
 	if err := printRows(&b, "aurora", rows, nil, time.Now(), false); err != nil {
 		t.Fatal(err)
 	}
+	// The two rows share their last four characters, so the listing extends
+	// each ending until they tell the rows apart (spec.md §3): the row stamped
+	// 100000 — the one without a recipe — is the one ending `00000-abcd`.
 	var line string
 	for _, l := range strings.Split(b.String(), "\n") {
-		if strings.Contains(l, "100000") {
+		if strings.HasPrefix(l, "00000-abcd") {
 			line = l
 		}
 	}
@@ -1034,9 +1044,11 @@ func TestLsAccountColumn(t *testing.T) {
 	if err := printRows(&b, "aurora", rows, nil, time.Now(), false); err != nil || !strings.Contains(b.String(), "ACCOUNT") || !strings.Contains(b.String(), "acme-personal") {
 		t.Fatalf("with a named account:\n%s", b.String())
 	}
+	// As above: the two rows share their last four characters, so the listing
+	// extends the endings until they tell the rows apart.
 	var line string
 	for _, l := range strings.Split(b.String(), "\n") {
-		if strings.Contains(l, "100000") {
+		if strings.HasPrefix(l, "00000-abcd") {
 			line = l
 		}
 	}
@@ -1257,6 +1269,38 @@ func TestRunsLsRUNCellResolves(t *testing.T) {
 	}
 }
 
+// TestRunsLsRepoCellFallsBackToTheSlug: the REPO column is where a listing
+// names a run's repository now that the RUN cell is the ending rather than
+// `<slug>/<run-id>`. A run whose task.json cannot be read names no repository
+// in its task, but the ref the listing is built on still carries the
+// repository's slug — Row.Run is `<slug>/<run-id>` (runview.Join) and rowRef
+// reads it back out — so the cell names that instead of going blank. A row
+// listed with a blank REPO would name no repository at all, which the
+// whole-ID RUN cell used to do for it; a run whose task reads still names the
+// task's own `owner/name`.
+func TestRunsLsRepoCellFallsBackToTheSlug(t *testing.T) {
+	f := newCloudFixture(t)
+	seedRun(t, f, recentRunID(t, 2*time.Minute, "aaaa"), "", "someone@example.com", false)
+	seedCorruptTask(t, f, recentRunID(t, time.Minute, "abcd"))
+
+	out, _, err := execute(t, "runs", "ls", "--since", "0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cells := map[string]string{}
+	for _, l := range strings.Split(out, "\n") {
+		if fields := strings.Fields(l); len(fields) > 1 {
+			cells[fields[0]] = fields[1]
+		}
+	}
+	if got := cells["abcd"]; got != appSlug {
+		t.Errorf("the REPO cell of the run whose task.json is unreadable = %q, want the repository's slug %q:\n%s", got, appSlug, out)
+	}
+	if got := cells["aaaa"]; got != "acme/app" {
+		t.Errorf("the REPO cell of a run whose task reads = %q, want the task's own repository acme/app:\n%s", got, out)
+	}
+}
+
 // TestLsIsGone: the 0.7.0 tombstone was deleted by #350 in 0.7.5 (design
 // generic-tool §5, G17, P3; the owner's 2026-10-14 ruling moved the deletion
 // from 0.8.0 to the next release, which #370 renamed 0.7.5), so there is no
@@ -1451,7 +1495,9 @@ func TestLsLauncherComesFromLaunchJSON(t *testing.T) {
 	}
 	var dashLine string
 	for _, l := range strings.Split(human, "\n") {
-		if strings.Contains(l, "091000") {
+		// The RUN cell is the run's ending, which is what tells the two rows
+		// of this listing apart.
+		if f := strings.Fields(l); len(f) > 0 && f[0] == "bbbb" {
 			dashLine = l
 		}
 	}
@@ -1514,9 +1560,10 @@ func TestLsLauncherShortFormAndClip(t *testing.T) {
 		"ffff": strings.Repeat("c", maxNameCellRunes) + "…"} {
 		found := false
 		for _, l := range strings.Split(out, "\n") {
-			if strings.Contains(l, "-"+id) {
+			// The RUN cell is the run's ending (the four characters above),
+			// and the first cell of the row.
+			if f := strings.Fields(l); len(f) > 0 && f[0] == id {
 				found = true
-				f := strings.Fields(l)
 				if got := f[len(f)-1]; got != want {
 					t.Errorf("run %s: BY = %q, want %q\n%s", id, got, want, out)
 				}
@@ -1755,7 +1802,7 @@ func TestRunsLsParallelOrderStable(t *testing.T) {
 	}
 	var wantWarned []string
 	for _, s := range corrupt {
-		wantWarned = append(wantWarned, s.slug+"/"+s.id)
+		wantWarned = append(wantWarned, s.slug+"/"+task.ShortRun(s.id))
 	}
 	if !slices.Equal(warned, wantWarned) {
 		t.Fatalf("warnings = %v, want %v: the runs are read in slug order, newest first within each", warned, wantWarned)
@@ -2308,8 +2355,14 @@ func TestRunsLsStateFilter(t *testing.T) {
 	seedRun(t, f, haltID, "", "someone@example.com", false)
 	writeRecord(t, f, haltID, &runstore.Record{Version: 1, RunID: haltID, Repo: "acme/app", Workflow: "web",
 		Status: runstore.StatusHalted, Halt: &runstore.Halt{Reason: runstore.HaltRunCap, Scope: "run"}})
+	// A row's status is the record's own, whatever the word is: --state takes a
+	// status this release writes even when nothing older has ever recorded one.
+	unrevID := today + "-093000-dddd"
+	seedRun(t, f, unrevID, "", "someone@example.com", false)
+	writeRecord(t, f, unrevID, &runstore.Record{Version: 1, RunID: unrevID, Repo: "acme/app", Workflow: "web",
+		Status: runstore.StatusUnreviewed})
 
-	for state, want := range map[string]string{"succeeded": okID, "halted": haltID} {
+	for state, want := range map[string]string{"succeeded": okID, "halted": haltID, "unreviewed": unrevID} {
 		got, _ := lsJSON(t, "--since", "0", "--state", state)
 		if len(got.Runs) != 1 || got.Runs[0].RunID != want {
 			t.Errorf("ls --state %s listed %v, want the one run %s", state, runIDs(got.Runs), want)
@@ -2585,7 +2638,14 @@ func TestRunsLsDebtFiltersToDebtTasks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(human, "-aaaa") || strings.Contains(human, "-bbbb") || strings.Contains(human, "-dddd") {
+	// The RUN cell is the run's ending, so the listing is read column by column.
+	listed := map[string]bool{}
+	for _, l := range strings.Split(human, "\n") {
+		if f := strings.Fields(l); len(f) > 0 {
+			listed[f[0]] = true
+		}
+	}
+	if !listed["aaaa"] || !listed["cccc"] || listed["bbbb"] || listed["dddd"] {
 		t.Fatalf("the plain listing's --debt =\n%s", human)
 	}
 }
@@ -2713,4 +2773,98 @@ func TestRunsLsJSONExistingFieldsUnchanged(t *testing.T) {
 			t.Errorf("field %q changed when the triage fields were added: %s, want %s", key, got, want)
 		}
 	}
+}
+
+// terminalStatusNames is every run status that is not running, as the two list
+// files below name it in runstore's package, and it is the set a list must
+// never ask about by negation: "the status is not one of the endings" reads a
+// new ending as a run still going. D994's label (runstore.StatusUnreviewed) is
+// the first value that made this matter — the run finished, pushed and opened
+// a draft, and nothing failed — and a reader that asks
+// `status != succeeded` would call it unfinished. The count check in the test
+// is what keeps this list honest: a status added to the vocabulary fails there
+// until it is named here, so the guard widens with the vocabulary instead of
+// silently going narrow.
+var terminalStatusNames = []string{
+	"runstore.StatusSucceeded", "runstore.StatusFailed",
+	"runstore.StatusUnreviewed", "runstore.StatusInfraError",
+	"runstore.StatusCancelled", "runstore.StatusHalted",
+}
+
+// TestRunsListsReadTheStatusWord guards the two list surfaces that read a
+// status without knowing the vocabulary: runs.go (the rows `runs ls` and
+// `runs watch` build, including the draft-in-progress row and the re-read of a
+// run whose execution ended) and watch_queued.go (the finished/unfinished
+// decision a watched run gets). Both ask whether a run is still going by an
+// EQUALITY with one value — `Status == runstore.StatusRunning` — and neither
+// needs a line for a new terminal value, which is the whole reason for asking
+// that way rather than by a negated list of endings.
+//
+// That property is invisible to a behaviour test that only uses today's
+// statuses, so this reads the two files as source: a status compared with !=
+// against an ending, or a negated read naming one, is what a rewrite to
+// `status != succeeded` looks like from here. Mutation (run, restored):
+// rewrite watch_queued.go's `r.Status == runstore.StatusRunning` as
+// `r.Status != runstore.StatusSucceeded`, and this names the file and the line.
+func TestRunsListsReadTheStatusWord(t *testing.T) {
+	if want := len(runstore.Statuses) - 1; len(terminalStatusNames) != want {
+		t.Fatalf("terminalStatusNames names %d statuses and runstore.Statuses holds %d besides running: name the new value here, so the guard covers it", len(terminalStatusNames), want)
+	}
+	for _, name := range []string{"runs.go", "watch_queued.go"} {
+		fset := token.NewFileSet()
+		file, err := parser.ParseFile(fset, name, nil, 0)
+		if err != nil {
+			t.Fatalf("parsing %s: %v", name, err)
+		}
+		equalities := 0
+		ast.Inspect(file, func(n ast.Node) bool {
+			switch e := n.(type) {
+			case *ast.BinaryExpr:
+				if e.Op != token.NEQ {
+					if e.Op == token.EQL && (len(statusNamesIn(e.X)) > 0 || len(statusNamesIn(e.Y)) > 0) {
+						equalities++
+					}
+					return true
+				}
+				for _, named := range append(statusNamesIn(e.X), statusNamesIn(e.Y)...) {
+					if slices.Contains(terminalStatusNames, named) {
+						t.Errorf("%s:%d: a status is compared against %s with !=: ask whether the run is still going by an equality with runstore.StatusRunning, so a new terminal value is not read as one still running", name, fset.Position(e.Pos()).Line, named)
+					}
+				}
+			case *ast.UnaryExpr:
+				if e.Op != token.NOT {
+					return true
+				}
+				for _, named := range statusNamesIn(e.X) {
+					if slices.Contains(terminalStatusNames, named) {
+						t.Errorf("%s:%d: a negated read names the terminal status %s: ask whether the run is still going by an equality with runstore.StatusRunning", name, fset.Position(e.Pos()).Line, named)
+					}
+				}
+			}
+			return true
+		})
+		if equalities == 0 {
+			t.Errorf("%s compares no status by equality: this file no longer reads the status word, and the guard above proves nothing", name)
+		}
+	}
+}
+
+// statusNamesIn is every runstore status constant named anywhere in e, spelled
+// "runstore.StatusX": the conversion `string(runstore.StatusX)` a row's status
+// is compared with is the same read as the constant itself.
+func statusNamesIn(e ast.Expr) []string {
+	var out []string
+	ast.Inspect(e, func(n ast.Node) bool {
+		sel, ok := n.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		pkg, ok := sel.X.(*ast.Ident)
+		if !ok || pkg.Name != "runstore" || !strings.HasPrefix(sel.Sel.Name, "Status") || sel.Sel.Name == "Status" {
+			return true
+		}
+		out = append(out, "runstore."+sel.Sel.Name)
+		return true
+	})
+	return out
 }

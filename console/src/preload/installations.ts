@@ -62,6 +62,12 @@ export const INSTALLATION_OPERATIONS = Object.freeze([
   ['remove', 'remove'],
   ['reveal', 'reveal'],
   ['openExternal', 'openExternal'],
+  // The machine's own distributions, which the picker's window draws beside the
+  // installations (Part G, T-G3). The mirror carries no argument schema, so this
+  // row says nothing about the read being argument-less: that is the main
+  // process's table, where it is checked, and the preload's copy is only so that
+  // `distros()` can name the channel it sends.
+  ['distros', 'distros'],
 ] as const) satisfies readonly (readonly [string, string])[]
 
 /** InstallationOperationName is the closed union of channel names. */

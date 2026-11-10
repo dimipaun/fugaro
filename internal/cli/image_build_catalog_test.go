@@ -5,17 +5,21 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
 	"github.com/dimipaun/fugaro/internal/image"
+	managedmode "github.com/dimipaun/fugaro/internal/managed"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -143,6 +147,10 @@ func catalogBuildCheckoutFor(t *testing.T, repo, catalog, provider, appID string
 	t.Cleanup(func() { openRecordBucket = prev })
 	f.appendConfig(t, catalog)
 	fb.AddRegistry("proj-1234", "us-east5", gcp.SharedRegistryRepoID())
+	// A catalog entry's build is billable and leases its cost before it is
+	// submitted (T4), so this checkout's installation has the budget database,
+	// the caps and the price lookup a submission needs.
+	buildBudgetWorld(t, f)
 	return fb, gcs, f
 }
 
@@ -216,13 +224,28 @@ func catalogBuildStep(t *testing.T, fb *gcpfake.Build, id string) map[string]any
 	return nil
 }
 
+// catalogBuildStepIDs are the ids of the last request's steps, in order.
+func catalogBuildStepIDs(t *testing.T, fb *gcpfake.Build) []string {
+	t.Helper()
+	steps, _ := fb.Last()["steps"].([]any)
+	ids := make([]string, 0, len(steps))
+	for _, raw := range steps {
+		st, _ := raw.(map[string]any)
+		id, _ := st["id"].(string)
+		ids = append(ids, id)
+	}
+	return ids
+}
+
 // TestImageBuildWithACatalogBuildsTheEntry: with a catalog published,
 // `fugaro image build <name>` submits that entry's own build (D1144) — the
 // copied Dockerfile is the build's whole context, the definition's sha256 is
 // the content tag of the image it produces, and the image lands in the
 // installation's shared registry (D1152) as this repository's build account.
-// Without a name every entry that has a Dockerfile is built, and one that is a
-// prebuilt image is named and passed over rather than failing the others.
+// Without a name every entry of this checkout is submitted, a prebuilt image
+// among them: it is not built but smoked, which is the entry's own run
+// (TestPrebuiltEntrySmoked), and only another repository's entry is passed
+// over rather than failing the rest.
 func TestImageBuildWithACatalogBuildsTheEntry(t *testing.T) {
 	fb, gcs, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildYAML)
 	stubCatalogProvider(t, map[string]string{
@@ -318,21 +341,20 @@ func TestImageBuildWithACatalogBuildsTheEntry(t *testing.T) {
 		t.Errorf("stdout = %q", out)
 	}
 
-	// No name with a catalog published is every entry that has a Dockerfile,
-	// and the prebuilt one is said to have nothing to build rather than
-	// stopping the others.
+	// No name with a catalog published is every entry of this checkout: a
+	// build per entry that has a Dockerfile, and the smoke of the one a
+	// prebuilt image answers (F10/IS11). Only another repository's entry is
+	// passed over rather than failing the rest.
 	before := buildPosts(fb)
 	_, stderr, err = executeBuild(t, "image", "build", "--base", "b:1")
 	if err != nil {
 		t.Fatalf("%v (%s)", err, stderr)
 	}
-	if got := buildPosts(fb) - before; got != 2 {
-		t.Errorf("the unnamed build submitted %d builds, want one per buildable entry", got)
+	if got := buildPosts(fb) - before; got != 3 {
+		t.Errorf("the unnamed build submitted %d builds, want one per entry of this checkout", got)
 	}
-	for _, want := range []string{"prebuilt", "other"} {
-		if !strings.Contains(stderr, want) {
-			t.Errorf("stderr = %q, want %s named among the entries passed over", stderr, want)
-		}
+	if !strings.Contains(stderr, "other") {
+		t.Errorf("stderr = %q, want other named among the entries passed over", stderr)
 	}
 
 	// An entry whose Dockerfile is another repository's is refused by name:
@@ -345,15 +367,6 @@ func TestImageBuildWithACatalogBuildsTheEntry(t *testing.T) {
 	}
 	if buildPosts(fb) != before {
 		t.Errorf("another repository's entry reached Cloud Build: %d posts", buildPosts(fb)-before)
-	}
-	// A named prebuilt entry is refused in the same way: it has no Dockerfile
-	// to copy and no build to submit.
-	_, _, err = executeBuild(t, "image", "build", "prebuilt", "--base", "b:1")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "prebuilt") {
-		t.Fatalf("exit %d, err %v: a prebuilt entry is named as having nothing to build", ExitCode(err), err)
-	}
-	if buildPosts(fb) != before {
-		t.Errorf("a prebuilt entry reached Cloud Build: %d posts", buildPosts(fb)-before)
 	}
 
 	// --no-wait reports the submitted build and its log instead of waiting
@@ -471,25 +484,55 @@ func TestCatalogBuildNeverPutsASecretInALogOrAnError(t *testing.T) {
 	}
 }
 
-// TestCatalogBuildCopiesNothingWithoutConfirmation: the copies are written
-// after the typed confirmation, so a run that cannot give it — a pipe here,
-// with a name that only a catalog has — submits nothing and leaves the bucket
-// as it found it.
-func TestCatalogBuildCopiesNothingWithoutConfirmation(t *testing.T) {
-	fb, gcs, _ := catalogBuildCheckout(t, bitbucketYAML, catalogBuildYAML)
+// TestCatalogBuildCopiesNothingOverCap: the copies are written after the lease
+// the build takes (T4), so a build a cap refuses — here the repository's own
+// daily cap, with the entry's copy still to be written — submits nothing to
+// Cloud Build and leaves the bucket as it found it.
+//
+// Mutation (run, restore): move the copy of the entry's Dockerfile above
+// openBuildLease in runImageBuildCatalog, and this test fails: the copy lands
+// in the bucket for a build that was never submitted.
+func TestCatalogBuildCopiesNothingOverCap(t *testing.T) {
+	fb, gcs, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildYAML)
 	stubCatalogProvider(t, map[string]string{".fugaro/base.Dockerfile": catalogBuildFetched})
 	noTerminal(t)
+	f.db.Set(budget.PathCapsRepo(mustSlug("bitbucket", "acme/app")), map[string]any{"dailyMicros": usd1 / 2})
 
 	_, _, err := executeStdin(t, "aurora\n", "image", "build", "tools", "--base", "b:1")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "tools") || !strings.Contains(err.Error(), "terminal") {
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "fugaro budget set") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
 	if buildPosts(fb) != 0 {
-		t.Errorf("an unconfirmable build reached Cloud Build: %d posts", buildPosts(fb))
+		t.Errorf("a build over the repository's cap reached Cloud Build: %d posts", buildPosts(fb))
 	}
 	if !catalogCopyAbsent(t, gcs, "tools") {
-		t.Errorf("an unconfirmable build copied the entry's Dockerfile")
+		t.Errorf("a refused build copied the entry's Dockerfile")
 	}
+}
+
+// TestCatalogBuildCountsTheWholeReservationWhenTheWatchIsLost: an entry whose
+// build is submitted and whose watch then gives up — here the first status read
+// is refused, which Wait does not retry — goes on billing without this command,
+// so the day counts the whole reservation. The catalog arm settles with the same
+// rule as the per-workflow one (image.go, image_build_catalog.go: both settle
+// what gcp.TerminalStatus says of the result the wait returned).
+//
+// Mutation (run, restore): `lease.settle(ctx, gcp.TerminalStatus(done.Status))`
+// back to `lease.settle(ctx, true)` in runImageBuildCatalog: this test fails
+// with 15600 µ$ on the counters, the first minute of a build still running.
+func TestCatalogBuildCountsTheWholeReservationWhenTheWatchIsLost(t *testing.T) {
+	fb, _, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildYAML)
+	stubCatalogProvider(t, map[string]string{".fugaro/base.Dockerfile": catalogBuildFetched})
+	fb.FailGets, fb.FailGetCode = 1, http.StatusForbidden
+
+	_, stderr, err := executeBuild(t, "image", "build", "tools", "--base", "b:1")
+	if err == nil || ExitCode(err) != ExitRemoteError {
+		t.Fatalf("exit %d, err %v: want the lost watch's own error (%s)", ExitCode(err), err, stderr)
+	}
+	if buildPosts(fb) != 1 {
+		t.Fatalf("the entry's build was submitted %d times, want the one the lost watch is about", buildPosts(fb))
+	}
+	wholeReservationCounted(t, f.db, mustSlug("bitbucket", "acme/app"), "for a catalog build whose watch was lost")
 }
 
 // TestCatalogBuildMountsEveryWorkflowsSecrets: an entry is not a workflow
@@ -592,5 +635,200 @@ func TestCatalogBuildStopsAtTheEntryThatFails(t *testing.T) {
 	catalogCopy(t, gcs, "alpha")
 	if !catalogCopyAbsent(t, gcs, "gamma") {
 		t.Errorf("an entry after the failing one was copied: the build went on past the failure")
+	}
+}
+
+// TestCatalogBuildCountsTheWholeReservationWhenItsRecordCannotBeWritten: a
+// build the record's own failure leaves running is counted whole.
+//
+// The gate's record is written after the submission and before the wait, so a
+// record that cannot be written ends the command with a build already out and
+// billing — and nothing in that process watches this build for however long it
+// runs. What the day counts is therefore the whole reservation, exactly as it
+// counts a --no-wait build's (buildLease.settle's contract, image_build_lease.go):
+// settling it as a build whose wait this command measured records the moment
+// between the submission and the failed write at the lease's minute rate and
+// gives the rest of the reservation back, which is money a build that is still
+// running is spending and headroom under the day's and the project's caps for a
+// loop of such builds.
+//
+// Both invocations are held here, because the flag cannot be what decides it:
+// this path returns the command before any wait in either of them.
+func TestCatalogBuildCountsTheWholeReservationWhenItsRecordCannotBeWritten(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		flag []string
+	}{
+		{name: "a build this command would have waited for"},
+		{name: "--no-wait", flag: []string{"--no-wait"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fb, _, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildThreeYAML)
+			w := managedBuildWorld(t, f, managedBuildMarker(1))
+			stubCatalogProvider(t, map[string]string{".fugaro/base.Dockerfile": catalogBuildFetched})
+			noAgentSession(t)
+			// The gate's own record is the write that fails: by then the
+			// submission is out, and this failure is what the person reads.
+			w.gcs.DenyWrites(initRunsBucket, managedmode.AuditPrefix)
+
+			args := append([]string{"image", "build", "alpha", "--base", "b:1"}, tc.flag...)
+			_, stderr, err := executeBuild(t, args...)
+			if err == nil {
+				t.Fatalf("a build whose audit record could not be written succeeded:\n%s", stderr)
+			}
+			if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "audit record could not be written") {
+				t.Fatalf("exit %d, err %v: want the record failure the person reads", ExitCode(err), err)
+			}
+			if buildPosts(fb) != 1 {
+				t.Fatalf("the build was submitted %d times, want the one submission the record failure is about", buildPosts(fb))
+			}
+			// The whole reservation the lease took, read from the same book the
+			// fixture prices every build with rather than spelled out here.
+			rate, err := budget.BuildCost(pricedBook(), "E2_HIGHCPU_8", "us-east5")
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := rate.Estimate()
+			client, err := newBudgetClient(context.Background(), f.db.URL, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			read, err := budget.ReadBuildState(context.Background(), client, mustSlug("bitbucket", "acme/app"), today())
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, c := range []struct {
+				what string
+				got  budget.Micros
+			}{
+				{"the repository's day counter", read.State.Repo.Counted},
+				{"the project's day counter", read.State.Global.Counted},
+				{"the repository's day spend", read.State.Repo.Spent},
+			} {
+				if c.got != want {
+					t.Errorf("%s is %d µ$ for a build that is still running, want the whole %d µ$ reservation: an unwatched build's settle records all of it, and the first minute of it is what the other direction leaves", c.what, c.got, want)
+				}
+			}
+		})
+	}
+}
+
+// TestPrebuiltEntrySmoked: an entry whose source is a prebuilt image is not
+// built, and not passed over either — its run is the smoke of the reference
+// the entry names against the runtime contract (F10/IS11), submitted as that
+// entry's own Cloud Build. Before this, an unnamed build passed such an entry
+// over and a named one was refused, so nothing in this tool ever asserted that
+// the image a job starts on is one a job can start on: the job was the first
+// thing to find out.
+//
+// What reports the answer afterwards is the record the run writes, which
+// fugaro doctor reads back. Nothing of a build is in the submission, and the
+// fixture makes that checkable: it holds no secret, stubs no provider and has
+// nothing copied, so a run that read a credential, opened a provider or wrote
+// a Dockerfile fails here rather than passing unnoticed.
+func TestPrebuiltEntrySmoked(t *testing.T) {
+	fb, gcs, _ := catalogBuildCheckout(t, bitbucketYAML, catalogBuildYAML)
+	const ref = "docker.io/library/node:22"
+
+	out, stderr, err := executeBuild(t, "image", "build", "prebuilt", "--base", "b:1")
+	if err != nil {
+		t.Fatalf("%v (%s)", err, stderr)
+	}
+	if got := buildPosts(fb); got != 1 {
+		t.Fatalf("smoking the entry submitted %d builds, want one", got)
+	}
+	// The run is the smoke and the record of it: no step of a build is in it.
+	if got, want := catalogBuildStepIDs(t, fb), []string{"catalog-smoke", "catalog-record"}; !slices.Equal(got, want) {
+		t.Errorf("the smoke's steps are %v, want %v", got, want)
+	}
+	subs := catalogBuildSubs(t, fb)
+	if len(subs) != 3 {
+		t.Errorf("the smoke's substitutions are %v, want the entry's reference and the smoke's spec alone", subs)
+	}
+	if subs["_IMAGE"] != ref {
+		t.Errorf("_IMAGE = %v, want the reference the entry names", subs["_IMAGE"])
+	}
+	if subs["_CATALOG_TAG"] != "" {
+		t.Errorf("_CATALOG_TAG = %v, want empty: the run pushes no image and moves no tag", subs["_CATALOG_TAG"])
+	}
+	// The smoke of a reference somebody else published is the critical tools
+	// alone: the checkout, the hardening and the stamped versions the
+	// per-workflow spec asks about are about a container this command built.
+	b64, _ := subs["_SELFTEST_B64"].(string)
+	spec, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		t.Fatalf("_SELFTEST_B64 = %q: %v", b64, err)
+	}
+	want, err := json.Marshal(image.SelftestSpec{ToolsOnly: true, Tools: "critical"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(spec) != string(want) {
+		t.Errorf("the smoke's spec is %s, want the tools tier alone %s", spec, want)
+	}
+	// Nothing was copied for the entry and nothing was pushed under its
+	// reference: a smoke is not a build.
+	if !catalogCopyAbsent(t, gcs, "prebuilt") {
+		t.Errorf("the prebuilt entry's run wrote a Dockerfile copy")
+	}
+	if fb.Tag(ref, "latest") != "" {
+		t.Errorf("the smoke pushed %s:latest", ref)
+	}
+	// What the entry answers is the digest its reference resolved to, which is
+	// what the record then carries.
+	if !strings.Contains(out, "smoked "+ref+"@sha256:") {
+		t.Errorf("stdout = %q, want the reference and the digest it smoked", out)
+	}
+
+	// --no-wait reports the submitted run without a digest, and says what it
+	// is smoking rather than that it built something. The reference it names is
+	// the entry's own: a run that pushes nothing leaves no latest behind, so
+	// the result names the reference as the entry spells it and never
+	// docker.io/library/node:22:latest.
+	before := buildPosts(fb)
+	if out, stderr, err = executeBuild(t, "image", "build", "prebuilt", "--base", "b:1", "--no-wait"); err != nil {
+		t.Fatalf("%v (%s)", err, stderr)
+	}
+	if got := buildPosts(fb) - before; got != 1 {
+		t.Errorf("a --no-wait smoke submitted %d builds", got)
+	}
+	if !strings.Contains(out, "smoking "+ref+";") || strings.Contains(out, "@sha256:") {
+		t.Errorf("stdout = %q, want the submitted run and the reference it smokes", out)
+	}
+	if strings.Contains(out, ":latest") {
+		t.Errorf("stdout = %q, want no tag of this command's on a reference somebody else published", out)
+	}
+
+	// A SUCCESS that reports no digest says the digest is unknown, and it names
+	// the same reference: this path prints the submission's own result, which
+	// is where a tag this command invented would have shown.
+	fb.NoResults = true
+	out, stderr, err = executeBuild(t, "image", "build", "prebuilt", "--base", "b:1")
+	fb.NoResults = false
+	if err != nil {
+		t.Fatalf("%v (%s)", err, stderr)
+	}
+	if !strings.Contains(out, "smoked "+ref+", digest unknown") || strings.Contains(out, ":latest") {
+		t.Errorf("stdout = %q, want the reference it smoked and no digest", out)
+	}
+
+	// --no-smoke asks for a build without its smoke, and a prebuilt entry has
+	// nothing else: there would be no run at all.
+	before = buildPosts(fb)
+	_, _, err = executeBuild(t, "image", "build", "prebuilt", "--base", "b:1", "--no-smoke")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "--no-smoke") {
+		t.Fatalf("exit %d, err %v: --no-smoke on a prebuilt entry is refused", ExitCode(err), err)
+	}
+	if buildPosts(fb) != before {
+		t.Errorf("a run --no-smoke left nothing in reached Cloud Build: %d posts", buildPosts(fb)-before)
+	}
+
+	// A smoke that fails is the command's failure: the build stops at the
+	// smoke step, so the record step never runs and fugaro doctor reports the
+	// entry as one whose smoke was never recorded.
+	fb.FailStep = "catalog-smoke"
+	_, _, err = executeBuild(t, "image", "build", "prebuilt", "--base", "b:1")
+	if ExitCode(err) != ExitRemoteError {
+		t.Fatalf("exit %d, err %v: a failed smoke is the command's failure", ExitCode(err), err)
 	}
 }

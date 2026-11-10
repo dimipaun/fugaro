@@ -102,8 +102,12 @@ type Report struct {
 
 // homeCredentialFiles must not exist in the agent user's HOME: the agent's
 // credentials come from the environment and the runner, never from files
-// baked into the image. The harness credential files are design
-// base-image.md section 6's table.
+// baked into the image. It is design base-image.md section 9's rule, and it
+// names the file each tool of section 6's runtime table would write in HOME.
+// The base carries Claude Code alone (image setup skill IS4), and the paths
+// of the harnesses it dropped stay listed: this is a refusal list, so a
+// derived image that adds one of them must not be able to bake its
+// credential in unnoticed.
 var homeCredentialFiles = []string{
 	".git-credentials", ".netrc", ".docker/config.json", ".config/gh/hosts.yml",
 	".codex/auth.json", ".gemini/oauth_creds.json", ".local/share/opencode/auth.json",

@@ -46,8 +46,8 @@ so `fugaro runs ls --json` carries one `reason` string per row and no grouping a
 (`internal/userstats/userstats.go`) counts runs by *person* and buckets every status into
 `succeeded/failed/halted/infra_error/other` (`userstats.go:124`–`136`); `fugaro runs digest` writes
 one closed period's report of one repository into that repository's tree, and its per-run
-"oddities" are six closed flags — `review_calls`, `subagents`, `halt`, `fix_rounds`,
-`repeated_command`, `review_scope_drift` (`internal/digest/digest.go:79`–`97`) — each a property of a
+"oddities" are seven closed flags — `review_calls`, `subagents`, `halt`, `fix_rounds`,
+`repeated_command`, `review_scope_drift`, `scope_drift` (`internal/digest/digest.go:83`–`110`) — each a property of a
 run, none of them a cause. So the owner's own 7-day report had to be built by normalizing this free
 text with a script: **the vocabulary below exists because the arithmetic that answers "where does the
 money go" was done by hand in a shell.**
@@ -167,7 +167,7 @@ knows what to do without reading a sentence:
 | **`failure_class`** | The run ended because | kind | retryable | needs owner |
 | --- | --- | --- | --- | --- |
 | `review_not_converged` | the deciding review round's verdict was `changes` and the mode did not tolerate its findings, or a level that had shipped was held back by one that did not (`review round N still has N findings`, `heldBackReason`, `internal/runner/outcome.go:73`, `:81`). The work is on the branch and the pull request is a draft. | quality | no — a follow-up on the pull request is the retry | yes |
-| `review_unread` | no round the rule can read: no deciding round at all, or a verdict of `none` after the retry (`no review verdict`, `review round N returned no parseable verdict after a retry`, `outcome.go:54`, `:65`) | quality | no | yes |
+| `review_unread` | no round the rule can read, and no round that read the commit the run publishes: no deciding round at all, a verdict of `none` after the retry, or a round whose verdict bought a fix nothing read before the stop — the fix is the branch's head and the pull request is a draft (`no review verdict`, `review round N returned no parseable verdict after a retry`, `the fix after review round N was not reviewed`, `outcome.go:54`, `:65`, `unreadFixReason`, `internal/runner/outcome.go:113`) | quality | no | yes |
 | `tests_failed` | the final commit's test record failed (`tests failing on the final commit`, `outcome.go:52`) | quality | no | yes |
 | `unverified_final_commit` | the pushed head carries no passing test: no test record on that commit, or work committed at finalize after the last verified run (`ReasonNoVerifiedTest`, `outcome.go:26`; `internal/runner/runner.go:4243`) | quality | no | yes |
 | `no_commits` | the agent made no commits (`internal/runner/runner.go:4196`) | quality | no | yes |
@@ -187,7 +187,7 @@ knows what to do without reading a sentence:
 | `unclassified` | the terminal the run reached has no class of its own (`stage_no_result`'s neighbour: a class the vocabulary does not yet hold). The report prints its count, and that count is the signal to name one. | other | yes | yes |
 
 **Nineteen values, and the set is closed in Go, in the schema and in the digest**, the way
-`runstore.HaltReason` and the six digest flags are: one slice the tests read (`failure.Classes()`,
+`runstore.HaltReason` and the seven digest flags are: one slice the tests read (`failure.Classes()`,
 `internal/failure/failure.go`, built by FC1), the schema's enum, and the report's table all built from
 it (the shape `TestResultSchemaStatusesAgreeWithGo` already uses for `status`).
 
@@ -248,7 +248,7 @@ are the six the one-offs row of §2 counts, that row being the remainder that cl
 
 **What is not in this change.** `fail` keeps its signature and its job (the pull request's report
 reads it); `r.rec.Reason` is not reworded anywhere; the pull request's section, `diagnose`'s output
-and the six digest flags do not move. The one new thing is that the 36 statements become one call,
+and the seven digest flags do not move. The one new thing is that the 36 statements become one call,
 at the site that already knows why the run is stopping.
 
 ### 4.2 How a class is chosen where several apply

@@ -274,7 +274,7 @@ the pull request knows an unreadable file is there without opening the diff. Tha
 **Through the doors that already exist, with no separate command anywhere.**
 
 Both halves are on `main`: `internal/cli/init_stages.go` registers `initflow.Policy`
-(`policyMigrateStage`, `internal/cli/init_policy_migrate.go:694`), and that stage's **publish half**
+(`policyMigrateStage`, `internal/cli/init_policy_migrate.go:711`), and that stage's **publish half**
 is `internal/cli/init_policy_publish.go` — the node built from the local config through
 `buildProjectPolicy` under an ETag guard and a generation guard (D854). The explicit door,
 `fugaro project policy publish`, goes through the same `buildProjectPolicy`, and it is additionally
@@ -404,7 +404,7 @@ reads, so the tasks name each reading (F13 counts the places the vocabulary is w
 | Reader | What it does with the new value |
 | --- | --- |
 | `schemas/result.schema.json` (`status` enum, line 22) | gains `unreviewed` — the run record's own schema, and the one a strict reader validates against |
-| `internal/digest` (`statuses`, `internal/digest/digest.go:119`) | gains it, or a record this Fugaro wrote renders as `other` |
+| `internal/digest` (`statuses`, `internal/digest/digest.go:123`) | gains it, or a record this Fugaro wrote renders as `other` |
 | `internal/watch` (`isFailure`, `internal/watch/finished.go:43`) | **not** a failure: nothing failed. A watched run that was never reviewed is a draft to look at, not an outage, and the row carries the status word itself |
 | `internal/userstats` (`internal/userstats/userstats.go:200`) | the switch's `default` already counts it as `Other`; §D996 recommends leaving it there and naming the counter a follow-up |
 | `internal/runview` | passes a status through unchanged when the record is terminal (`runview.go:398`), so nothing is derived wrongly; the console and the phone are the readers that need a chip, and they are **external** (E2) — `console/**` and `mobile/**` are other work streams' files |

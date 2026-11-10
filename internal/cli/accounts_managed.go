@@ -58,6 +58,14 @@ import (
 //     accountsAddTokenStep below — so a session that pipes one at the hidden
 //     prompt reads nothing, stores nothing, and is told where to run it.
 //
+//   - A credential entry. `--type` writes `credentials.<name>` on the same
+//     bytes, and that entry is a pool's member and a craft's access: creating a
+//     credential is creating a spending and data-egress grant, which D1628/F12
+//     put at the project/local layer at the owner's own terminal. It is refused
+//     by the declaration's own rule set (accountsAddRules), because the document
+//     the gate reads is the one already carrying it — and only the flag is
+//     refused: the account's declaration stays what a session may write.
+//
 //   - A caller that is neither: a pipe, a run with no terminal, or the same
 //     command with --yes. Nothing here can be asked of a person, so on a
 //     managed project the step is refused before a byte is written — which is
@@ -137,26 +145,32 @@ func accountsAddTokenConfirmation(cmd *cobra.Command, name string, allow []strin
 // audit record the gate wrote and in this file's own comments above (D1012 for
 // the gate, D1026 for the token, D868 for the widening).
 //
-// Why the two shapes of the second line. A coding agent's session is refused a
+// Why the shapes of the second line. A coding agent's session is refused a
 // widening for a reason it can act on inside itself: the declaration is a
 // document the gate admits when it is bounded (D1012), so naming only this
 // checkout's repository is the step that unblocks it, and the token it then
-// cannot read is what its own refusal at accountsAddTokenStep says. Every other
-// caller — a pipe, a run, --yes — has no narrower step to take and no
-// declaration to be admitted to: the one next step is the owner's terminal.
+// cannot read is what its own refusal at accountsAddTokenStep says. A session
+// refused the credential entry has the same kind of step: the account's own
+// declaration is what the gate admits, so dropping --type unblocks it (D1628).
+// Every other caller — a pipe, a run, --yes — has no narrower step to take and
+// no declaration to be admitted to: the one next step is the owner's terminal.
 //
 // The account's name and the repositories are bounded and quoted where they are
 // printed, because both come from a command line and from a file this command
 // is about to write.
-func accountsAddRefusal(marker, name string, beyond []string, claude bool) error {
+func accountsAddRefusal(marker, name string, beyond []string, claude bool, typ string) error {
 	what := fmt.Sprintf("This adds and stores the token of Claude account %s, and a managed project asks its owner for that.", pluginwire.Printable(name))
 	if len(beyond) > 0 {
 		what = fmt.Sprintf("This would send the token of Claude account %s to %s, beyond this checkout.", pluginwire.Printable(name), strings.Join(beyond, ", "))
+	} else if typ != "" {
+		what = fmt.Sprintf("This creates the credential credentials.%s, and a managed project's owner is the one who creates credentials.", pluginwire.Printable(name))
 	}
 	next := "Run this in your own terminal."
 	switch {
 	case marker != "" && len(beyond) > 0 && !claude:
 		next = "Name only this checkout's repository, or run without --repos."
+	case marker != "" && typ != "" && !claude:
+		next = "Declare the account without --type, or run this in your own terminal."
 	case marker != "":
 		next = "Run this in your own terminal, not in an agent session."
 	}
@@ -186,7 +200,7 @@ func accountsAddGate(ctx context.Context, cmd *cobra.Command, lc *localcfg.Confi
 	// this command's to state, and the gate's job is to hold the verdict they
 	// reach. The two lists are the verdict and the record's rules as well, so
 	// the document judged and the record of it are one reading of one document.
-	applied, refused := accountsAddRules(name, profile, beyond, o.claude)
+	applied, refused := accountsAddRules(name, profile, beyond, o.claude, o.typ)
 
 	// The marks are read for every caller, because their answer is the
 	// question this command asks first: is this project one whose owner is
@@ -257,7 +271,7 @@ func accountsAddGate(ctx context.Context, cmd *cobra.Command, lc *localcfg.Confi
 		// repository list before the prompt takes a value, so the step is
 		// refused before the file is touched and before the login is screened.
 		// The gate is not asked to judge a document nobody may write.
-		return initflow.Managed{}, managedGate{}, accountsAddRefusal(marker, name, beyond, o.claude)
+		return initflow.Managed{}, managedGate{}, accountsAddRefusal(marker, name, beyond, o.claude, o.typ)
 	}
 
 	// A coding agent's session: the declaration is judged, and the gate's
@@ -278,7 +292,7 @@ func accountsAddGate(ctx context.Context, cmd *cobra.Command, lc *localcfg.Confi
 		// record holds — are not what it needs to read. It is a user error and
 		// not a failure of this program: the session asked for a step the
 		// project's gate does not admit.
-		return m, gate, accountsAddRefusal(marker, name, beyond, o.claude)
+		return m, gate, accountsAddRefusal(marker, name, beyond, o.claude, o.typ)
 	}
 	// The read did not answer, immediately before the write: a mark that cannot
 	// be read is not a permission, and the session keeps this command's own
@@ -299,7 +313,7 @@ func accountsAddGate(ctx context.Context, cmd *cobra.Command, lc *localcfg.Confi
 // had a document at all. What the gate adds is the answer a session needs —
 // that this step's own rules are the whole of what was judged — and a rule that
 // passed is written into the record beside the ones that did.
-func accountsAddRules(name, profile string, beyond []string, claude bool) (applied, refused []string) {
+func accountsAddRules(name, profile string, beyond []string, claude bool, typ string) (applied, refused []string) {
 	// The name: config.ValidateClaudeAccounts refused a reserved one and
 	// "default" before this point, in the loader's own words, so a name that
 	// reaches the gate is one that passed that rule. It is named here because a
@@ -318,6 +332,20 @@ func accountsAddRules(name, profile string, beyond []string, claude bool) (appli
 		refused = append(refused, "--claude runs Anthropic's login and then reads a token: a secret entering the project is the class of step no plan gate admits (D1026), and no plan is a token")
 	} else {
 		applied = append(applied, "the step carries no token entry: --claude is absent, and the token this command reads is read at the owner's own terminal")
+	}
+	// A credential. --type writes credentials.<name> on the same bytes, and that
+	// entry is not a name: it is what a pool's members may list and a craft's
+	// access may name, so it decides where a run's calls are spent and which
+	// repositories the provider behind it is handed. Credentials are created at
+	// the project/local layer only, at the owner's own terminal (D1628, F12), and
+	// the gate's plan is the declaration the grant is for — no plan is a grant —
+	// so the entry is refused even though every other rule here passes. The
+	// declaration itself is still the session's to write, which is why this
+	// refuses the flag and not the account's own entry.
+	if typ != "" {
+		refused = append(refused, "--type "+pluginwire.Printable(typ)+" declares credentials."+pluginwire.Printable(name)+", the entry a pool's members may list and a craft's access may name: a credential is a spending and data-egress grant, and creating one is the project/local layer at the owner's own terminal, never a plan gate's step (D1628)")
+	} else {
+		applied = append(applied, "the step creates no credential: --type is absent, so nothing this write declares is an entry a pool may list")
 	}
 	return applied, refused
 }

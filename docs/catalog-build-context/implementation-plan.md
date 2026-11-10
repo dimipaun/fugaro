@@ -1,7 +1,6 @@
 # A repository build context for catalog `dockerfile` entries: implementation plan
 
-**Status: plan only; nothing is implemented on `main`; the decisions D1390–D1409 are all answered
-2026-11-07 (each the recommendation) and all five tasks CB1–CB5 are approved 2026-11-07.** Five tasks, **CB1–CB5**, each with
+**Status as of 2026-11-10: in progress, 2/5 merged; see [docs/status.md](../status.md) for the current table.** Five tasks, **CB1–CB5**, each with
 its files (at most six, and CB1 is exactly at the cap), its interfaces, its named tests, its **red
 step**, its **mutation**, its **reviewer tier**, what it depends on, its command and its commit.
 Written against the tree of **2026-11-06** (`495104e5`, the tip of `main` when this folder was

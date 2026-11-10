@@ -29,14 +29,14 @@ Five things already name people, and none of them is a role model.
 
 | List | Where it lives | Who is on it |
 | --- | --- | --- |
-| `terraform.launchers` | `internal/localcfg/localcfg.go:510`, `fugaro setup --launcher` (`internal/cli/init.go:362`) | IAM members who start runs |
-| `terraform.operators` | `internal/localcfg/localcfg.go:511`, `fugaro setup --operator` (`internal/cli/init.go:363`) | IAM members who onboard repositories and apply Terraform |
+| `terraform.launchers` | `internal/localcfg/localcfg.go:536`, `fugaro setup --launcher` (`internal/cli/init.go:362`) | IAM members who start runs |
+| `terraform.operators` | `internal/localcfg/localcfg.go:537`, `fugaro setup --operator` (`internal/cli/init.go:363`) | IAM members who onboard repositories and apply Terraform |
 | The project's owners and editors (`admins`) | read from the project's IAM policy into `deploy/terraform/gcp/modules/firebase/variables.tf:92` | whoever Google Cloud already trusts with the whole project |
-| `terraform.budget_admins` | `internal/localcfg/localcfg.go:515`, `fugaro setup --budget-admin` (`internal/cli/init.go:372`) | further people who may change caps and kill switches; refuses `domain:` members (`internal/localcfg/localcfg_test.go:981`) |
+| `terraform.budget_admins` | `internal/localcfg/localcfg.go:1027`, `fugaro setup --budget-admin` (`internal/cli/init.go:372`) | further people who may change caps and kill switches; refuses `domain:` members (`internal/localcfg/localcfg_test.go:981`) |
 | The device allowlist `config/admin/devices/<uid>` | `internal/budget/rules/rules.go:470` (`PathDevices`), written over IAM by `fugaro pair` and `fugaro pair revoke` | paired phones; each entry carries a `role` child (`internal/mobileauth/mobileauth.go:117`, `NodeFieldRole`) |
 
 `localcfg`'s member grammar accepts `user:`, `group:`, `domain:` and `serviceAccount:`
-(`internal/localcfg/localcfg.go:830`). A `domain:` member therefore grants a whole domain whatever
+(`internal/localcfg/localcfg.go:856`). A `domain:` member therefore grants a whole domain whatever
 the list grants — which is why `budget_admins` refuses it (F42,
 `docs/forge-authorship-images/reconciliation.md:328`).
 
@@ -122,8 +122,8 @@ Read together, that table says who can do what today:
 ## 2. The role model
 
 **viewer ⊂ operator ⊂ admin.** The rank order is not new: `internal/access` already encodes it
-as a closed set (`RoleViewer`, `RoleOperator`, `RoleAdmin`, `internal/access/access.go:66`), with
-`Rank` (`:105`) and `AtLeast` (`:118`) over it, and `ParseRole` (`:88`) refusing every other spelling.
+as a closed set (`RoleViewer`, `RoleOperator`, `RoleAdmin`, `internal/access/access.go:67`), with
+`Rank` (`:106`) and `AtLeast` (`:119`) over it, and `ParseRole` (`:89`) refusing every other spelling.
 `internal/mobileauth` re-exports the type (`mobileauth.go:80`). This
 document proposes nothing about that type; it fixes what each rank would *hold*, which is the part no
 code states today.

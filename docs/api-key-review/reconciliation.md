@@ -1,10 +1,23 @@
 # The api-key review path — reconciliation
 
-**Status: reconciliation only; no code is implemented; D1410–D1429 are answered 2026-11-07 and all
-tasks are approved 2026-11-07 (owner: "All tasks approved. Jobmax").** This document reads every
-clause of the owner's ask ([spec.md](spec.md), 2026-11-07) against the tree, classifies what it finds,
-and turns the parts that needed a decision into questions **D1410–D1429** (§7), every one of them
-answered the same day, each as recommended.
+**Status: AK1–AK5 and AK6a are implemented on `main` (AK6a merged as #2147, `03c2a22c`), AK6b is
+written and in review, and no further task is started; D1410–D1429 are answered
+2026-11-07 and all tasks are approved 2026-11-07 (owner: "All tasks approved. Jobmax") — except the two
+the security review added later, AK9 and AK10, which are written and not approved.** This document
+reads every clause of the owner's ask ([spec.md](spec.md), 2026-11-07) against the tree as it stood
+then, classifies what it finds, and turns the parts that needed a decision into questions
+**D1410–D1429** (§7), every one of them
+answered the same day, each as recommended. **Three things happened after that reading and none of them
+reopens it:** on **2026-11-09** the owner answered **D1418** — the provider's base URL and the auth
+shape go **in the bundle** (§5, §7) — and the **author's own security pass** over the merged AK4 and
+AK5 ([security-review.md](security-review.md), 2026-11-09) was written, adding **F25–F27** and tasks
+**AK9** and **AK10**; the plan's AK6 was split into **AK6a** and **AK6b** the same day
+([implementation-plan.md](implementation-plan.md) §6 item 9); and on **2026-11-10** the reconciliation
+with `docs/model-crafts` was done (that folder's **D1638** and **F26**) — **api-key-review is NOT
+superseded by model-crafts, which builds on it**: model-crafts' MC5 and MC6 extend what AK6a, AK6b and
+AK7 build and are held until the last two have merged, and **AK9 and AK10 are folded into MC6**
+([implementation-plan.md](implementation-plan.md) §6 item 12). **AK6a merged as** `03c2a22c` (#2147),
+so the axis value the other package builds on is on `main`.
 
 **Checked against:** `origin/main` at `aa26f322f`, on **2026-11-07**. `graphify` has no graph for
 this repository (there is no `graphify-out/`), so every claim was located with `git grep` and then
@@ -318,8 +331,10 @@ reading (an installation with no subscription at all — **F17**), while clause 
 and the citation of the mixed run's Check 290 are the **in-job** reading (**F19**). The plan is
 therefore written in three slices that can be taken independently, and **D1410 is the gate on all of
 them**: the in-job slice (AK1–AK3) needs no service change and can ship alone; the cloud
-Anthropic-key slice (AK4–AK5) is the cheap half of §6.7; the OpenRouter slice (AK6–AK7) is §6.7 as
-written.
+Anthropic-key slice (AK4–AK5) is the cheap half of §6.7; the OpenRouter slice (**AK6a**, **AK6b**,
+**AK7**) is §6.7 as written — and as reconciled with it on 2026-11-09, which is where §6.7's CSR17
+was found **right** and the plan's six-file AK6 the loser
+([implementation-plan.md](implementation-plan.md) §1, §2, §6 item 9).
 
 ## 5. The security analysis as an attacker would see it
 
@@ -355,13 +370,80 @@ destination rules and the gateway's route validation exist precisely so that a c
 the host it belongs to. Carrying a provider's base URL into the service's document puts a
 configuration fact into a credentials-only bundle — the design point §6.7 flags as why CSR17 is not
 a small task — and it is the reason this design recommends splitting the slice rather than landing
-both halves together (**D1416**).
+both halves together (**D1416**). **The owner answered the contract question on 2026-11-09**
+(**D1418**, §7): **the base URL and the auth shape go in the bundle**, as **additive optional
+fields** — an older bundle still decodes, no format version moves (a version would move only if a
+field were removed or retyped, and a field never changes meaning) — and the three consequences the
+two tasks carry are that the bundle's field names are new names, that **a provider the bundle does
+not describe fails closed** (no defaulted base URL and no defaulted auth shape, because a defaulted
+base URL is a credential sent to an endpoint nobody named), and that **no test, fixture or doc
+carries a secret-shaped literal** for either fact: a base URL and an auth shape are configuration and
+are written as such. Where that leaves the surface, once **AK6a**, **AK6b** and **AK7** exist, is
+[security-review.md](security-review.md)'s third attack question, whose conditions those tasks carry
+rather than re-decide.
 
 **What this design does not do.** It does not put the key in the agent's environment, it does not
 give a review stage a credential the run does not already hold, and it does not let a repository's
 own file choose which credential serves its review: `checkReviewClassModelPath`'s refusal of an
 api-key repository (**F11**) is a refusal the plan keeps, and AK5's change is to *admit the key as
 the class's own credential*, never to let the repository supply one.
+
+**F25 — Defect, wording. The tree's own sentences say a review call is served by a Claude
+account, and AK4 made that inexact.** `internal/credsvc/auth.go` refuses a review job account naming
+nothing with "names no Claude account, so no call of it could be served" and a duplicate with "bound
+to two Claude accounts"; `internal/credsvc/server.go` writes the same two in its serve path, one of
+them as "no email or no Claude account"; **six more Go sites** carry the claim —
+`internal/cli/validate.go`'s `reviewJobNotes`, whose `budget.per_run_usd` note tells the operator a
+review job "runs on a Claude account" (the one of these a person actually reads), three comments in
+`internal/cli/credentials_serve.go` (where the service's configuration is assembled, on
+`credentialsServiceReviewJobAccounts`, and on the de-duplication the same function makes: "rows that
+name one account under two **Claude accounts** are left for `credsvc.NewAuthenticator` to refuse"), and
+`internal/infra/tfvars.go`'s two comments on the review-job document (`CredentialsReviewJob`'s
+"account is the Claude account the policy's admissions spell" and `FUGARO_REVIEW_JOB_ACCOUNTS`'s); and
+**both module files** say it —
+`deploy/terraform/gcp/modules/installation/variables.tf` describes `review_job_accounts` as
+"carrying the Claude account the variant's calls are served by" (its description and the comment above
+its validation) and `deploy/terraform/gcp/modules/installation/credentials.tf`'s
+`FUGARO_REVIEW_JOB_ACCOUNTS` block says the same. Since **AK4** the axis value may be
+`config.AnthropicKeyAccount`, which names the project's own Anthropic API key and — in
+`internal/credsvc/review.go`'s own words — **is not an account**. Found by the security review of the
+merged AK4 and AK5 ([security-review.md](security-review.md)) on **2026-11-09**; the fix is the
+words and nothing else, so it is the review's task **AK9**, which is written and **not approved**
+(nothing was approved after 2026-11-07).
+
+**F26 — Defect, a guard a task needs. The bundle's own strictness turns a newer write into a
+service-wide halt.** `internal/credsvc`'s `ParseBundle` refuses the **whole document** on a key it
+does not know (`bundleErr(ErrBundleUnknownKey, …)`), and the service answers that as a refusal of
+every caller rather than of one credential — so a bundle written with **AK6b**'s provider entry by a
+CLI newer than the installation's deployed credentials service halts every run that reaches that
+service, coding runs included, until `fugaro update` moves the image. `fugaro creds set` is the
+bundle's only writer and an owner-only command, so the guard belongs at that write: the
+`*Since`-style check `reviewAdmissionSince` established — but judged against the release that
+**serves** the document: the image of the revision that serves, read from Cloud Run
+(`services.get` answers which revision serves, that revision's own image follows; the template's is
+the next revision, not the serving one), which decides whenever the service exists, falling back to
+the installation's pin
+(`terraform.tfvars.json`'s `credentials_service.image`, the update's **desired** state, which a
+declined or failed apply leaves ahead of what serves) only for a service not deployed yet — refusing
+the write, and naming `fugaro update`, with the release's own `### For operators` sentence. A release
+that cannot be read is a refusal as well, rather than the warning `reviewAdmissionSince`'s own reader
+gives: unknown is the state this write may not be made in. Found the same day; it is the
+review's task **AK10**, written and **not approved**, and it is off the levels and off the critical
+path like **AK9** — but **it gates AK6b's release** (implementation-plan §6 item 11): the guard lands
+in the same release as the entry it guards and after it, so **no release carries AK6b without
+AK10**, and the OpenRouter half's release waits on the owner's approval of it.
+
+**F27 — Stale docs, fixed here. `README.md` was reading the gates of 2026-11-07.** Its status line
+still said "items 6 and 7 … E7, not met, so those four tasks may not start and the cloud half stays
+unlaunchable" — item 7's gate is lifted (the flip of 2026-11-08, **U6**) and **item 6 is open, not
+settled**: the review that exists is the folder's own author's pass, which says of itself that it is
+not the independent review the SEC tier requires — and its file table still claimed "each with its
+files (at most six)", which
+the reconciliation of 2026-11-09 made false in both directions (**AK6a** is 24 files). Its numbers
+table read the register of 2026-11-07 as well: the Check 330 row called **290**/**291** the highest
+**written** `## Check` section and put 330 "far above" it, where the register now writes up to
+**360** and 330 sits below it, claimed by nobody else. Fixed in the same docs pass as this section
+rather than carried as a task.
 
 ## 6. UNVERIFIED
 
@@ -373,6 +455,7 @@ the class's own credential*, never to let the repository supply one.
 | U4 | Whether the credentials service's review class has been exercised live for a repository whose `agent.auth` is `api-key` | The refusal is pinned by a unit test; no live run of the refused shape was found in the register |
 | **U5** | **Whether the mixed run works on a real installation at all** — the in-job account path this design reads as the state of the art | **The owner's ask says Check 290 proved it on 2026-11-06, and the register says otherwise.** `docs/gcp-live-checklist.md`'s summary row for 290 ends "**USER-RUN, NOT RUN**" and its own section is headed "NOT RUN"; `docs/design/mixed-credentials.md` §3, §9 and §11, `docs/multi-model.md` §3 and `docs/releases/v0.20.0.md` all say the check "has not been measured live". So the rule is **built** (tasks B1–B6, 0.19.0) and **unmeasured**: every statement in §1 about the account path's behaviour rests on the code and its tests, and none on a run. This is also why the design's own live check (**Check 330**, implementation-plan §5) carries the contrast case — the same task run with and without a stage account — rather than assuming Check 290's numbers exist |
 | **U6** | **Whether a cloud review launch is reachable at all on this tree** | **It is, since 2026-11-08.** `internal/cli/review.go`'s `reviewJobAdmitted` is `true`: `docs/cloud-senior-review` §6's **CSR11** flipped it once the service's admission of a project-scoped job's caller (**C3.9**, §1's **E7**'s second half) was in the tree — **CSRW1** and **CSRW2** — and deleted the live-check switch in the same commit. **When this design was written it was not reachable**: the constant was `false` and `checkReviewJobAdmitted` refused every `fugaro review --pr N`, with `fugaro run --pr N --recipe review-only` named as the way to review then, and `docs/releases/v0.20.2.md`'s known limits carry that state forward from 0.20.0 ("the cloud review is built and not admitted"). **No live installation was inspected** — the reachability is read from the code, and the flip's own note says the owner's live checks are still unrun — and the design's cloud slices, **D1410** and **D1422** are priced without this prerequisite because it is not theirs (**F10**) |
+| **U7** | **Whether the OpenRouter half's *served* path is reachable at all** — a review call actually served by a provider key | **It is not, and the reason is a check nobody has run.** `internal/creds/select.go`'s `checkCandidates` refuses **every** tier-C candidate in a sentence naming **Check 50** (**D150**, **C3.6**), and `TestSelectRefusesReservedTierC` pins that refusal; **AK6b** offers the provider key as that tier (**F16**), so the tree refuses the call today. Read from the code on 2026-11-09 (the reconciliation of the plan's §6, item 10); whether Check 50 is worth running, and what it would have to measure, is the owner's and is written nowhere in this folder |
 
 ## 7. Owner decisions D1410–D1429
 
@@ -393,7 +476,7 @@ approved. Jobmax").
 | **D1415** | Does the record name the credential a stage the run's **own** key served? | **A new field, or nothing — never a new value on `credential`.** `credential`'s stated meaning is "the credential that served this stage when it was not the run's own" (**F18**), so `"api-key"` there is a meaning change under an existing name, which CLAUDE.md forbids; a new field is additive and keeps both meanings intact | **Nothing at all**, which is the cheaper and defensible answer: the review's two configurations are already distinguishable (`credential: "oauth"` with `model_notional_usd == model_usd` for the account, neither for the key) and the model and the route name what served any stage. Its cost is that a reader must combine three fields to answer one question. **A new value on `credential`** is the third shape and is not available: it changes a meaning on a wire shape the console, the mobile app and the history read | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
 | **D1416** | Does the cloud half land both keys at once, or the Anthropic key first? | **The Anthropic key first.** It needs no base URL, no auth shape and no new upstream (**F12**); the provider key needs all three and a bundle that is not a credential (**F15**) | **Both at once**, as §6.7's CSR17 sketches. Its cost is one SEC task that carries the whole provider apparatus and the bundle-contract question together | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
 | **D1417** | For the cloud half, does the pairing name the **project's own** `anthropic-api-key`, or a review-scoped secret? | **The project's own key**, which is what the service already holds at tier B (**F12**). A review is a call the project pays for, exactly as a cascade coding run is | **A review-scoped secret** in the bundle. Its cost is a second entry in a closed key set (**F24**) plus a mount, for a distinction the accounting does not make | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
-| **D1418** | Does the bundle grow a section for a provider's base URL and auth shape, or does the published policy carry them? | **Defer until D1416 is answered** — this is §6.7's own "design point this task must settle first", and it is a change to a contract another reader consumes | Either way: a bundle section that is not a credential, or a policy node that carries routing facts. Both are contract changes and both are priced in §6.7 | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
+| **D1418** | Does the bundle grow a section for a provider's base URL and auth shape, or does the published policy carry them? | **Defer until D1416 is answered** — this is §6.7's own "design point this task must settle first", and it is a change to a contract another reader consumes | Either way: a bundle section that is not a credential, or a policy node that carries routing facts. Both are contract changes and both are priced in §6.7 | **Answered 2026-11-09, the owner's ruling: the base URL and the auth shape go IN THE BUNDLE** — an **additive optional field**, so an older bundle still decodes and no format version moves (a version would move only if a field were removed or retyped, and a field never changes meaning). Its consequences are §5's three, and the task that carries them is **AK6b** (the reconciliation of 2026-11-09, implementation-plan §6 item 9) |
 | **D1419** | How does the service reach a provider's endpoint? | **Not at all in the Anthropic-key slice** (**F12**): `upstreamKindAnthropic` with a `""` base is already the right upstream. A provider endpoint is CSR18's work | **A provider upstream in the service now.** Its cost is a destination rule, a base URL from a non-credential source, and a second way for a credential to leave the service | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
 | **D1420** | What happens to `TestReviewRunIsNeverServedByAnAPIKeyOfItsOwn` when the path lands? | **Rewritten, keeping its name** — §6.7's own instruction: the refusal is 0.20.0's answer and the test gains the second direction | **Deleted.** Its cost is losing the one test that holds the fail-closed direction (a repository's own file must never choose the review's credential) | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
 | **D1421** | Does the Anthropic-key half ship in 0.20.0, in the release after it, or not at all? | **After 0.20.0.** The owner cut the path from 0.20.0 on 2026-11-06, and nothing here found a reason to reopen a cut the owner made with the full picture in front of them | **Into 0.20.0.** Its cost is re-opening a release whose tasks and live checks are already sequenced, for a slice §6.7 deliberately put outside every level | Recommended -- owner 2026-11-07 (AskUserQuestion: all recommended) |
@@ -422,21 +505,33 @@ open pull request's head:
   written above, **every one of them is answered as recommended on 2026-11-07** (§7), and none is
   reserved unused.
 
-**The check block.** The register's highest **written** `## Check` section on `main` was **290** at
-this reading (`docs/gcp-live-checklist.md`, the mixed-credentials run), and is **291** since
-`docs/image-env`'s own check was written — the register's rule is that the task implementing a check
-writes its row and section under the number free at its merge, which is what its `## Check 291` is.
-**292 is claimed by `docs/catalog-build-context`** (merged on `main` as #1805, at its own README's
-numbers table and its implementation-plan's §6, both read for this folder's D1409 above);
-**293–299 are claimed by nobody**; `docs/stateless-orchestrator` claims **300–309** and
-`docs/cli-output-console-graph` claims **310–314**. This work takes **Check 330**, well above every
-one of them, so no renumbering is owed whichever order the claims merge in. Like every claim above
-the highest written section, it is **claimed and not reserved**: the register's rule is that a claim
-is settled at its merge, and the register's own row and section are written by the task that
-implements the check, under the number free at that merge (implementation-plan §5).
+**The check block.** The register's highest **written** `## Check` section was **290** at this
+reading (`docs/gcp-live-checklist.md`, the mixed-credentials run) and **291** once `docs/image-env`'s
+own check was written — the register's rule is that the task implementing a check writes its row and
+section under the number free at its merge. **It has moved above this folder's number since:** the
+register now writes **340** (`docs/periodic-reviews`, under its §P8), **300–305**
+(`docs/stateless-orchestrator`, task O2) and **360** (`docs/console-managed-screens`, CM12), so
+**360** is the highest written section and 330 is **below** it, in the gap between
+`docs/cli-output-console-graph`'s **310–314** and the periodic-reviews block **340–349**, where
+**315–329 are written by nobody**. The claims around it: **292** by `docs/catalog-build-context`
+(merged on `main` as #1805, at its own README's numbers table and its implementation-plan's §6, both
+read for this folder's D1409 above), **306–309** reserved by `docs/stateless-orchestrator`,
+**310–314** by `docs/cli-output-console-graph`, **341–349** by `docs/periodic-reviews` (341 and 342
+taken, 343–349 reserved), **350–359** by `docs/failure-classes`, **361–369** available to
+`docs/console-managed-screens` and **370** taken by `docs/security-classification` (371–379
+available). This work
+takes **Check 330**, which **no other document claims and which collides with nothing**, so the
+number stays this work's. Like every claim it is **claimed and not reserved**: the register's rule is
+that a claim is settled at its merge, the later of two **colliding** claims renumbers itself, and the
+register's own row and section are written by the task that implements the check, under the number
+free at that merge (implementation-plan §5).
 
-**This folder's own numbers.** Findings **F1–F24** and tasks **AK1–AK8** are this folder's, and take
-no number any other work reads.
+**This folder's own numbers.** Findings **F1–F27** and tasks **AK1–AK10** are this folder's, and take
+no number any other work reads. **F25–F27 and AK9–AK10 are the author's own security pass's**
+(2026-11-09,
+[security-review.md](security-review.md)), and **AK6a** and **AK6b** are the reconciliation of the
+same day's splitting of the plan's old AK6 (implementation-plan §1, §2, §6 item 9): the numbering of
+a task never moves, so the two halves take the new letters rather than renumbering AK7 and AK8.
 
 ## 9. Open items
 
@@ -444,7 +539,10 @@ These were the owner's. The recommendation and the cost of each are in §7; this
 the reason each one existed and **the answer it carries since 2026-11-07**. **Items 1–8 are the
 owner's decisions and every one of them takes the recommendation**; **item 9 is not** — **U1** and
 **U2** are outside the tree (an owner/counsel question and the owner's own figures), so no answer
-here settles them and none is recorded. All tasks were approved the same day.
+here settles them and none is recorded. All tasks were approved the same day — **AK1–AK8 as they
+stood then: AK9 and AK10, added by the author's own security pass of 2026-11-09, are written and not
+approved**, and **AK10's approval is a precondition of AK6b's release** (implementation-plan §6
+item 11).
 
 1. **D1410 — answered: both slices.** The ask names one path and the tree has two reviews (§4), so
    the answer decides which slice the plan is about; the gate it carried — no task may start before
@@ -465,9 +563,13 @@ here settles them and none is recorded. All tasks were approved the same day.
    run's own key served without changing a meaning on a wire shape the console, the mobile app and
    the history read (**F18**), so the answer is the new field and not a new value on `credential`.
 6. **D1416, D1417, D1418 and D1419 — answered: the Anthropic key first, paired to the project's own
-   key, and no provider endpoint in this slice.** The Anthropic-key half needs a pairing that may
-   name the project's key (**F12**, **F13**); the OpenRouter half needs the provider-key apparatus
-   §6.7 describes (**F15**), and D1418 defers the bundle-and-policy contract question to that work.
+   key, no provider endpoint in this slice, and — since 2026-11-09 — the provider's base URL and auth
+   shape in the bundle.** The Anthropic-key half needs a pairing that may name the project's key
+   (**F12**, **F13**); the OpenRouter half needs the provider-key apparatus §6.7 describes (**F15**),
+   and **D1418 asked for the bundle-and-policy contract question to be deferred to that work, where
+   the owner answered it on 2026-11-09**: the bundle holds them, as additive optional fields (§5,
+   §7), which is what **AK6b** carries. The reconciliation that answer was owed to is done the same
+   day (implementation-plan §6 item 9) and it split the plan's old AK6 into **AK6a** and **AK6b**.
 7. **D1420 — answered: rewritten, keeping its name.**
    `TestReviewRunIsNeverServedByAnAPIKeyOfItsOwn` is the test that holds the fail-closed direction,
    and §6.7 says it is rewritten rather than deleted.

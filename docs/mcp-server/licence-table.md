@@ -1,12 +1,20 @@
 # The hosted MCP server: the dependency licence table
 
-**Status: design answered by the owner 2026-11-04; M1, M2, M3, M6 and M4's first half are built and
-merged on `main`; M5 is built except the paired device M-a asks for, which is M5b and is a hard
-prerequisite before any binary links the front door (the owner's ruling of 2026-11-07); M7 is built
-except the reading of the installation's published state its lists come from, which no task of this
-plan carries; M10 is built except the store's own bucket and its one grant, which are M4's store
-half and not started; M8 is built except the wiring that would serve its four read tools, which is
-the task M5b gates; M9 is not started; this folder approves no task.**
+**Status: design answered by the owner 2026-11-04; M1, M2, M3, M4, M6 and M10 are built and merged
+on `main`; the front door M4 creates is OFF on every installation until a release writes the flag
+that turns it on, `fugaro update --mcp-server` (D934); M5 is built and M5b is built with it — the
+paired-device approval the owner ruled a task of its own on 2026-11-07 — and what is built of it is
+the endpoint's half: the authorize POST takes the device's act as a shape of its own, the ID token
+is spent once and a family ages, all of it proved by the ID token and by no device key, so M-a's
+first requirement is not met — the endpoint cannot tell a paired device from any other holder of
+one, which is H1's accepted residual risk — and the delivery of a flow to that device, with no QR of
+the flow's binding rendered and no launcher reading the page, is built nowhere and carried by no
+task of this plan; M7 is built except the reading of the installation's published state its lists
+come from, which no task of this plan carries; M8 is built except the wiring that would serve its
+four read tools, which no binary has and no task of this plan carries; M9 is not started, and the
+launch-override fence it was to wait on is declined for v1 and left unbuilt (the owner's ruling of
+2026-11-09); this folder approves no task.**
+
 
 **This file is a table, and it is not a gate.** The owner ruled on 2026-11-07 that he would clear the
 `zitadel/oidc` dependency set by reading one table, and this is it: he read it and cleared the set
@@ -42,8 +50,9 @@ only tests reach). The three answers that appear below are:
   into the binary a person runs;
 - **no, compiled with `ee/coordinator/mcpauth`** — the module is imported by that package, which
   `go build ./...` compiles, and **no binary links it**: nothing outside `ee/` imports the front
-  door, which is what `TestNoBinaryLinksTheFrontDoorYet` holds and what **M5b** is the prerequisite
-  for relaxing ([implementation-plan.md](implementation-plan.md) §3);
+  door, which is what `TestNoBinaryLinksTheFrontDoorYet` holds and what **M5b** — built on the
+  server's side, with M-a's first requirement unmet — is the prerequisite for relaxing
+  ([implementation-plan.md](implementation-plan.md) §3);
 - **no, and no Go file here imports it** — the module is in the build list because a dependency's
   own `go.mod` requires it, and the requirer is named in the row. Its code is not compiled, linked
   or tested by anything in this repository.

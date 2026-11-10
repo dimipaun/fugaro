@@ -275,7 +275,10 @@ func (p *fakePolicy) readAdmissions() []string {
 	return append([]string(nil), p.admissionReads...)
 }
 
-// fakeKills is the operator's two stop switches as the service reads them.
+// fakeKills is the operator's two stop switches as the service reads them, and
+// it takes any slug, the empty one included: the real reader's rule for the
+// slug a person-facing route has — none — is asserted against a real database
+// client in kills_test.go.
 type fakeKills struct {
 	global bool
 	repos  map[string]bool
@@ -600,6 +603,7 @@ func newSvcWith(t *testing.T, mutate func(*svc, *Config)) *svc {
 		Now:    func() time.Time { return f.now },
 		DB:     s.nodes,
 		Probes: s.probes,
+		Slips:  testSlips(t),
 		// The audit lines are written as the JSON objects they are (C1.13), so
 		// a test that reads one reads it the way an operator's tooling does.
 		// They go to the fixture's own audit buffer and NOT to the service's

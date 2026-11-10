@@ -20,9 +20,9 @@ package cli
 //    D1363-D1369 has no row, and the one answer that is not the recommendation
 //    (D1355) is recorded as that rather than as the recommendation.
 //  * TestDocsCliOutputConsoleGraphStatusLines -- the index, the reconciliation
-//    and both plans state the folder's status in one line each (plan only,
-//    nothing is implemented, no task approved), and the owner's spec states
-//    none, because it is his document and not this folder's.
+//    and both plans state the folder's status in one line each (the state, and
+//    the pointer to docs/status.md that keeps it current), and the owner's spec
+//    states none, because it is his document and not this folder's.
 //  * TestDocsCliOutputConsoleGraphCitedPathsExist -- every relative link in the
 //    five documents resolves, and every repository path the index and the
 //    reconciliation cite in a code span exists. The two plans are read for
@@ -32,9 +32,8 @@ package cli
 // Mutation (verified, run and restored), one per way these documents can rot:
 //
 //	TestDocsCliOutputConsoleGraphStatusLines
-//	  change the index's status line to "plan only; nothing is implemented;
-//	  the plan is approved" -> fails, naming the file: the line is the folder's
-//	  whole claim about itself, and it is what keeps an answered plan from
+//	  drop the index's status line -> fails, naming the file: the line is the
+//	  folder's whole claim about itself, and it is what keeps a plan from
 //	  reading as a plan somebody may build from;
 //	TestDocsCliOutputConsoleGraphDecisionsAreAnswered
 //	  write a row for D1363 -> fails, naming the number: the reserved tail is
@@ -175,21 +174,22 @@ func TestDocsCliOutputConsoleGraphDecisionsAreAnswered(t *testing.T) {
 	}
 }
 
-// cocgStatusRE finds a document's status line: the paragraph the folder's files
-// open with. It is matched at the start of a line so a sentence that merely
-// mentions the status is not read as one.
-var cocgStatusRE = regexp.MustCompile(`(?m)^\*\*Status: .*$`)
+// cocgStatusRE finds a document's status line: the bold sentence the folder's
+// files open with, and only that sentence -- the paragraphs that follow it on
+// the same line are the document's own prose. It is matched at the start of a
+// line so a sentence that merely mentions the status is not read as one.
+var cocgStatusRE = regexp.MustCompile(`(?m)^\*\*Status as of 2026-11-10: [^*]*\*\*`)
 
-// cocgNoTaskApprovedRE matches the clause the status line ends on. The index
-// and the reconciliation write "no task approved" and the two plans write "no
-// task is approved"; the two spellings are one claim, and it is the claim that
-// keeps an answered, planned folder from reading as one somebody may build from.
-var cocgNoTaskApprovedRE = regexp.MustCompile(`no task (is )?approved`)
+// cocgStatusLine is what every document but the owner's spec states: the
+// folder's state in one sentence, with the pointer to the table that keeps it
+// current. The index, the reconciliation and the two plans carry the same line,
+// so a document that dropped it would leave a reader taking an in-progress plan
+// for one nobody may build from.
+const cocgStatusLine = "**Status as of 2026-11-10: in progress, 19/30 merged; see [docs/status.md](../status.md) for the current table.**"
 
 // TestDocsCliOutputConsoleGraphStatusLines: the folder's status is stated in
-// one line in every document but the owner's spec, and it says all three
-// things: the folder is a plan, nothing is implemented, and no task is
-// approved.
+// one line in every document but the owner's spec, and the line names the
+// folder's state and points at docs/status.md, where the current table lives.
 //
 // The spec is the exception on purpose. It is the owner's document, copied
 // verbatim and committed alone, so the state of this folder is stated beside it
@@ -203,16 +203,9 @@ func TestDocsCliOutputConsoleGraphStatusLines(t *testing.T) {
 				path, len(lines))
 			continue
 		}
-		line := strings.ToLower(lines[0])
-		for _, want := range []string{"plan only;", "nothing is implemented;"} {
-			if !strings.Contains(line, want) {
-				t.Errorf("%s' status line does not say %q (%q): the folder is a plan and nothing in it is built, which is what a reader has to know before trusting a task list",
-					path, want, lines[0])
-			}
-		}
-		if !cocgNoTaskApprovedRE.MatchString(line) {
-			t.Errorf("%s' status line does not say no task is approved (%q): answering a decision approved none of these tasks, and a status line that dropped the clause would read as a go to build",
-				path, lines[0])
+		if lines[0] != cocgStatusLine {
+			t.Errorf("%s' status line is %q, want %q: the folder's state and the pointer to docs/status.md are what a reader has to know before trusting a task list",
+				path, lines[0], cocgStatusLine)
 		}
 	}
 

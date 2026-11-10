@@ -838,9 +838,10 @@ describe('the packaging configuration the fuses belong to', () => {
     // refuses outright ("Invalid configuration object") before it packs
     // anything -- on every platform, not just `--win`.
     // x64 only, matching the Linux leg: an arm64 leg would cross-build an
-    // architecture nothing here has run. T-B3 has yet to pin a
-    // `win32-x64` Electron archive in `build.electronDownload.checksums`
-    // (the gap the plan records as F37).
+    // architecture nothing here has run. T-B3 pinned the `win32-x64` Electron
+    // archive in `build.electronDownload.checksums` on 2026-11-09 (the gap the
+    // plan recorded as F37), so the arch this target names and the archive the
+    // pack downloads agree.
     const win = (build.win ?? {}) as Record<string, unknown>
     expect(win['target']).toEqual([{ target: 'nsis', arch: ['x64'] }])
     // Following the Linux pattern: the name the release notes, the checksum
@@ -924,6 +925,12 @@ describe('the packaging configuration the fuses belong to', () => {
     // lockfile-pinned `electron` package carries in its `checksums.json`
     // (present after `npm ci --ignore-scripts`: it is in the tarball).
     //
+    // `electron-v<version>-win32-x64.zip` is the archive the Windows leg
+    // downloads: `package:win` and the `win` block landed on 2026-11-09
+    // (docs/console-windows/implementation-plan.md T-B1 and T-B4), and no host
+    // has completed a `--win` pack yet, so this pin is what the first one is
+    // verified against rather than a `SHASUMS256.txt` fetched at pack time.
+    //
     // The list is pinned exactly, so a build that started downloading an archive
     // nobody pinned -- a third arch, a different version -- fails here rather
     // than trusting a hash fetched over the network at pack time. `linux-arm64`
@@ -936,6 +943,7 @@ describe('the packaging configuration the fuses belong to', () => {
         `electron-v${version}-darwin-arm64.zip`,
         `electron-v${version}-darwin-x64.zip`,
         `electron-v${version}-linux-x64.zip`,
+        `electron-v${version}-win32-x64.zip`,
       ].toSorted(),
     )
     for (const hash of Object.values(checksums)) expect(hash).toMatch(/^[0-9a-f]{64}$/)

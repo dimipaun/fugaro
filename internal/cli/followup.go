@@ -325,13 +325,13 @@ func readTask(ctx context.Context, env *cloudEnv, slug, id string) (*task.Spec, 
 	case errors.Is(err, runstore.ErrNotFound):
 		return nil, err
 	case corruptObject(err):
-		return nil, userErr("run %s/%s's task.json is unreadable: %v", slug, id, err)
+		return nil, userErr("run %s/%s's task.json is unreadable: %v", slug, task.ShortRun(id), err)
 	case err != nil:
 		return nil, remote(err)
 	}
 	spec, err := task.Parse(raw)
 	if err != nil {
-		return nil, userErr("run %s/%s's task.json is unreadable: %v", slug, id, err)
+		return nil, userErr("run %s/%s's task.json is unreadable: %v", slug, task.ShortRun(id), err)
 	}
 	return spec, nil
 }
@@ -355,13 +355,18 @@ func checkRoot(ctx context.Context, env *cloudEnv, slug, root, branch string, pr
 	case errors.Is(err, runstore.ErrNotFound):
 		return nil // expired: the runs that remain agree on the branch
 	case corruptObject(err):
-		return userErr("run %s/%s, which PR #%d's branch names, has an unreadable result.json (%v); see fugaro diagnose %s/%s", slug, root, pr, err, slug, root)
+		// The run is named the way resolvePR names one (its ending, and the
+		// ending alone) and the hint is the command that takes that name: a
+		// `<slug>/<ending>` is a listing's cell, not a reference any command
+		// resolves (locateRun's ParseRef wants the whole pair).
+		return userErr("run %s, which PR #%d's branch names, has an unreadable result.json (%v); see fugaro diagnose %s",
+			task.ShortRun(root), pr, err, task.ShortRun(root))
 	case err != nil:
 		return remote(err)
 	}
 	if rec.Branch != branch {
-		return userErr("run %s/%s, which PR #%d's branch %s names, records branch %q; the PR is not the one it opened, so follow it up by hand",
-			slug, root, pr, branch, oneLine(rec.Branch))
+		return userErr("run %s, which PR #%d's branch %s names, records branch %q; the PR is not the one it opened, so follow it up by hand",
+			task.ShortRun(root), pr, branch, oneLine(rec.Branch))
 	}
 	return nil
 }
@@ -505,6 +510,56 @@ func prSpec(ctx context.Context, env *cloudEnv, o *runOptions, text string, tota
 	return slug, spec, false, err
 }
 
+// repeatOverrides is the overrides a repeat of this launch must find stored,
+// built the way the launch writes them rather than as an echo of the flags:
+// createTask compares the whole task, so every field the launcher derives has
+// to be derived here too.
+//
+// The four chain limits are the caller's own figures. A limit may only tighten
+// the policy a launch resolves, so the merged value is the caller's wherever
+// the launch was not refused (chainLimitGate), and the two no policy layer
+// under them sets — the wall time and the review rounds — are the caller's by
+// construction.
+//
+// The wall time is the one field two flags write: --max-time and
+// --total-timeout compose as the smaller of the two (chainLimitGate), and the
+// clock they composed with is the stored task's own — the smaller of the two
+// is what that gate wrote as total_timeout, the field the backend's override
+// reads. The repeat reads it back rather than resolving a clock of its own,
+// because this call's environment is not the launch's: the checkout in hand
+// now need not be the one that launch read, and there need not be one at all.
+// So repeating `--total-timeout 6h --max-time 90m` finds the composed 1h30m0s
+// and not the 6h it typed, and a launch that could resolve no clock — the
+// chain's figure written alone, the composition left to the runner (L5) — is
+// repeated as it stands rather than gaining a clock from wherever the repeat
+// is run.
+func repeatOverrides(have *task.Spec, o *runOptions, total time.Duration) task.Overrides {
+	var want task.Overrides
+	if o.limits.usd != nil {
+		want.MaxUSD = o.limits.usd
+	}
+	if o.limits.tokens != nil {
+		want.MaxTokens = o.limits.tokens
+	}
+	if o.limits.rounds != nil {
+		want.MaxReviewRounds = o.limits.rounds
+	}
+	if o.limits.time > 0 {
+		want.MaxTime = o.limits.time.String()
+		// The clock the launch composed with, as it wrote it: min is
+		// idempotent, so composing it once more with this call's figure
+		// answers the same figure the launch stored.
+		if clock := launchTimeoutOf(have); clock > 0 {
+			want.TotalTimeout = min(clock, o.limits.time).String()
+		}
+		return want
+	}
+	if total > 0 {
+		want.TotalTimeout = total.String()
+	}
+	return want
+}
+
 // storedFollowUp is the task a repeated --run-id already stored, when it is
 // this call's follow-up (the same PR, text, batch and overrides): it is
 // reused as it is, its previous_run and requested_by included. Any other
@@ -517,10 +572,7 @@ func storedFollowUp(ctx context.Context, env *cloudEnv, slug string, o *runOptio
 	if err != nil {
 		return nil, err
 	}
-	var want task.Overrides
-	if total > 0 {
-		want.TotalTimeout = total.String()
-	}
+	want := repeatOverrides(have, o, total)
 	a, err1 := json.Marshal(have.Overrides)
 	b, err2 := json.Marshal(want)
 	if err := errors.Join(err1, err2); err != nil {
@@ -582,6 +634,13 @@ func storedFollowUp(ctx context.Context, env *cloudEnv, slug string, o *runOptio
 // workflow; nothing else is inherited.
 func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo string, c *prChain, text string, total time.Duration, warn io.Writer) (*task.Spec, error) {
 	workflow := c.Workflow
+	// The launch's own document before the reader below, as resolveAttemptPlan
+	// and reviewSpec: the workflow this follow-up has to resolve when the run
+	// it continues names none is the one the ref's file names, and a follow-up
+	// whose working tree has no fugaro.yaml would otherwise be refused for a
+	// question the document answers. The chain's ref is what the run is cut
+	// from, so the read is made at it and not at the working tree.
+	ctx = withLaunchDocument(ctx, repo, c.Ref)
 	checkout := checkoutOf(ctx, repo)
 	if workflow == "" {
 		var err error

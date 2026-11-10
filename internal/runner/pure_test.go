@@ -47,7 +47,7 @@ func TestDecide(t *testing.T) {
 	// A mode whose split blocks: one finding above Startup's floor, which is
 	// the half of the split the count's own reason is kept for (outcome.go).
 	blocked := findingsPolicyOf(rigor.Config{RepoBlock: true}, rigor.Startup, 2,
-		[]rigor.Score{{Likelihood: 3, Impact: 3, FixCost: 1, Class: rigor.Correctness}})
+		[]rigor.Score{{Likelihood: 3, Impact: 3, FixCost: 1, Class: rigor.Correctness}}, "")
 	cases := []struct {
 		name    string
 		records []verify.Record
@@ -68,7 +68,8 @@ func TestDecide(t *testing.T) {
 			&runstore.ReviewSummary{Round: 2, Verdict: "changes", Findings: 1}, blocked, false, "review round 2 still has 1 finding"},
 	}
 	for _, tc := range cases {
-		ready, reason, _ := Decide(tc.records, "abc", tc.last, tc.pol, nil)
+		dec := Decide(tc.records, "abc", tc.last, tc.pol, nil)
+		ready, reason := dec.Ready, dec.Reason
 		if ready != tc.ready || reason != tc.reason {
 			t.Errorf("%s: Decide = %v %q, want %v %q", tc.name, ready, reason, tc.ready, tc.reason)
 		}
@@ -129,7 +130,8 @@ func TestReportConsistentWithDecide(t *testing.T) {
 	}
 
 	// Decide should report tests failing (uses clean record)
-	ready, reason, _ := Decide(rec.Verify, rec.HeadSHA, ship, FindingsPolicy{}, nil)
+	dec := Decide(rec.Verify, rec.HeadSHA, ship, FindingsPolicy{}, nil)
+	ready, reason := dec.Ready, dec.Reason
 	if ready || reason != "tests failing on the final commit" {
 		t.Errorf("Decide = %v %q, want false %q", ready, reason, "tests failing on the final commit")
 	}

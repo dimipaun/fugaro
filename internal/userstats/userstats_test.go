@@ -123,6 +123,29 @@ func TestCountsAddUp(t *testing.T) {
 	}
 }
 
+// TestUserStatsCountUnreviewedAsOther pins the census (D996): an unreviewed
+// run is none of the four endings this view names, and it belongs in Other —
+// the bucket of a run that settled outside those four — rather than in a
+// counter of its own. The label is the run record's; the figure a spend screen
+// would want is a wire change in three clients for a number the records
+// themselves already answer, so this slice changes no aggregate shape and a
+// later task that adds the counter has to move this test on purpose.
+func TestUserStatsCountUnreviewedAsOther(t *testing.T) {
+	res := Aggregate([]Run{{User: "dana@example.com", Status: string(runstore.StatusUnreviewed), CountedUSD: 2, CountedCost: true}})
+	if len(res.Rows) != 1 || len(res.Totals) != 1 {
+		t.Fatalf("rows = %+v totals = %+v, want one of each", res.Rows, res.Totals)
+	}
+	want := Counts{Runs: 1, Other: 1}
+	if res.Rows[0].Counts != want {
+		t.Fatalf("counts = %+v, want %+v: an unreviewed run is Other, never failed", res.Rows[0].Counts, want)
+	}
+	// The one figure it does carry is its money: the census leaves the ending
+	// in Other, not the run out of the totals.
+	if res.Totals[0].Counts != want || res.Totals[0].CountedUSD != 2 || res.Totals[0].CountedRuns != 1 {
+		t.Fatalf("total = %+v, want the run counted once in Other and in the spend", res.Totals[0])
+	}
+}
+
 // TestCurrenciesAreNeverSummed is the currency rule: two currencies are two
 // rows and two totals, and neither total carries a cent of the other.
 func TestCurrenciesAreNeverSummed(t *testing.T) {

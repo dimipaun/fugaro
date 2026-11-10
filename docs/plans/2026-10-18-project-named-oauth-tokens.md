@@ -35,7 +35,7 @@ call, no secret read):
 - No launcher can read a secret value (`internal/backend/gcp/run.go:361-373`, `SECURITY.md:56`),
   and nothing under `internal/` calls `AccessSecretVersion`.
 - The policy's profile decoder refuses unknown fields and its rule is "a newer profile field bumps
-  Version" (`internal/projectpolicy/policy.go:501-519`); `Version = 2`
+  Version" (`internal/projectpolicy/policy.go:541-559`); `Version = 2`
   (`internal/projectpolicy/version.go:24`); the skew messages and their remedies are
   `version.go:123-172`.
 

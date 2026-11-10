@@ -5,7 +5,7 @@
 This plan builds [spec.md](spec.md) **as amended by [reconciliation.md](reconciliation.md)**, which wins
 where they differ. Base: `origin/main` at `e9dacf54b`, 2026-10-26.
 
-**Status: plan only. Nothing is implemented, and NO TASK IS APPROVED.** Each task needs the owner's
+**Status as of 2026-11-10: in progress, 4/12 merged; see [docs/status.md](../status.md) for the current table.** Each task needs the owner's
 explicit go; answering a decision approved none of them.
 
 The owner's answers that shape it — D400-D408 of 2026-10-26, and D409-D412 of 2026-10-30:

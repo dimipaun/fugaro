@@ -251,13 +251,19 @@ function installPathNote(id) {
  * lowercase `<name>.astro` in a Files line is a page — and this is the only list of the
  * site's pages that exists while the page tasks are still being written.
  *
- * **Two plans write this site's pages, and each writes its line its own way.** The website
+ * **Each plan writes this site's pages, and each writes its line its own way.** The website
  * plan (`docs/website/implementation-plan.md`) is the site's first round and writes
  * `**Files:**`; this line of work's plan
  * (`docs/website/zoom-diagrams/implementation-plan.md`) adds routes to the same site — its
  * Part 2 writes `/why-gcp/` and its Part 3 writes `/mobile/` — and writes `**Files.**`. Both
  * spellings are read, because a route a plan writes is a route a page of this site lives at
- * whichever document writes it.
+ * whichever document writes it. **A third plan writes a page of this site and is read here
+ * too**: the compatibility matrix's plan (`docs/compatibility-matrix/implementation-plan.md`)
+ * writes `/compatibility/` in Task CM2, and the layout's nav links it from every page — so a
+ * reader that stopped at the two website plans would refuse the menu on the homepage for
+ * linking a route a plan does write. That plan writes its line as a bullet (`- **Files:**`),
+ * which the reader below accepts beside the two at the start of a line: the marker is what
+ * makes a line a Files line, and a plan that lists its tasks bullets them.
  *
  * **The name has to be the whole last segment of a backticked path**, and that is a fix to
  * this reader rather than a tightening of it: the loose form it was written with — any run of
@@ -270,10 +276,14 @@ function installPathNote(id) {
  */
 function plannedRoutes() {
   const routes = new Set()
-  const plans = ['docs/website/implementation-plan.md', 'docs/website/zoom-diagrams/implementation-plan.md']
+  const plans = [
+    'docs/website/implementation-plan.md',
+    'docs/website/zoom-diagrams/implementation-plan.md',
+    'docs/compatibility-matrix/implementation-plan.md',
+  ]
   for (const plan of plans) {
     for (const line of repoFile(plan).split('\n')) {
-      if (!/^\*\*Files[:.]\*\*/.test(line)) continue
+      if (!/^(?:- )?\*\*Files[:.]\*\*/.test(line)) continue
       for (const m of line.matchAll(/`(?:[\w./-]+\/)?([a-z0-9-]+)\.astro`/g)) {
         routes.add(m[1] === 'index' ? '/' : `/${m[1]}/`)
       }

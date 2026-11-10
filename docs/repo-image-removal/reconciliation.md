@@ -41,8 +41,8 @@ code. A `:line` is a **declaration** line at `777b902d`; the symbol is what to s
   finding F4's whole point.
 
 - **F5: Exists. The catalog's definitions live in the project's configuration and are published.**
-  `internal/config/catalog.go:25` (the type), `internal/localcfg/localcfg.go:236` (the
-  `image_catalog` key), `internal/projectpolicy/policy.go:1131` (its validation where it is published).
+  `internal/config/catalog.go:25` (the type), `internal/localcfg/localcfg.go:237` (the
+  `image_catalog` key), `internal/projectpolicy/policy.go:1171` (its validation where it is published).
 
 - **F6: Exists. The catalog's deploy-time selection is built**, with the tag-cover rule and the two
   refusals: `internal/infra/spec.go:807`, and the config-side references
@@ -316,9 +316,9 @@ its `Recommendation` and both costs, so the answer and the price of the other re
   `schemas/project-layer.schema.json:265` loses the same keys (`:338` for `rebuild`);
   `internal/settings/registry.go:229` loses the twenty-one rows that make the keys writable (`:234`,
   `:254`, `:258`, and the `layerRow`s at `internal/settings/registry.go:454`, `:458`, `:477`, `:481`),
-  and `schemas/settings.schema.json:1145` loses their twenty-one members (`:832`, `:1181`) — a key
+  and `schemas/settings.schema.json:1151` loses their twenty-one members (`:838`, `:1187`) — a key
   with no scope row and no registry row is a key `settings set` must not offer. `image_catalog.*`
-  (`schemas/settings.schema.json:547`), `base_images` and the catalog's own rows are untouched.
+  (`schemas/settings.schema.json:550`), `base_images` and the catalog's own rows are untouched.
   Cost of the alternative: a schema that still allows a removed key is the file a person's editor
   validates against, so it would let a `fugaro.yaml` through that the CLI refuses — the schema would be
   the one document that lies about the removal — and a surviving registry row would make

@@ -131,3 +131,56 @@ func TestFindingsAreBoundedAndQuoted(t *testing.T) {
 		}
 	}
 }
+
+// TestPromptsCarryShortIDRule: the standing instructions name a run the way a
+// person reads it — its short ID, the last four characters of the run ID,
+// extended a character at a time while another run named beside it shares them
+// (task.DisplayRuns, D1706) — and a plan task by its plan name (D1703), and
+// they never print the full ID in what an agent writes for a person.
+//
+// The rule is scoped to what the agent writes for a person, and says in as
+// many words that a command is given the ID its own help asks for: a naming
+// rule that read as "only ever the short ID" would withhold the full ID the
+// read commands need today (F11), and the agent would be left guessing which
+// rule wins.
+//
+// The job prompt names no command, unlike the plugin skills, where the same
+// rule sits beside "never launch, cancel or follow up without the user's
+// go-ahead". This prompt drives an unattended stage: nobody gives a go-ahead,
+// the container can reach the run's own service account, and `--review-run` is
+// a flag the CLI hides, so a list of run commands here would be instructions
+// for launching, cancelling or relaunching runs rather than for naming one.
+// What it does say is that those actions are not this stage's to take, and it
+// says it without naming a command; the form a command takes belongs to that
+// command's own help, and internal/cli's
+// TestShortIDRuleNamesOnlyCommandsThatTakeOne is what holds any text that does
+// name one to a command that really takes it.
+// runCommandRE finds a run-management command named in a code span of the
+// prompt, bare or in the `fugaro <cmd>` form this prompt writes its own
+// commands in, and with or without an argument after it: a check for the bare
+// name alone would miss the mention the prompt would really carry, which is
+// the `fugaro cancel <run>` shape.
+var runCommandRE = regexp.MustCompile("`(?:fugaro )?(?:cancel|run --retry|--review-run|review show|--run-id)\\b")
+
+func TestPromptsCarryShortIDRule(t *testing.T) {
+	for _, d := range []runner.PromptData{
+		{Branch: "fugaro/x", Base: "main", StateDir: "/s"},
+		{Branch: "fugaro/x", Base: "main", StateDir: "/s", FollowUp: []string{"- follow-up rule"}},
+	} {
+		got := runner.SystemPrompt(d, "")
+		for _, want := range []string{
+			"In anything you write for a person, refer to a run by its short ID — the last 4 characters of the run ID, and one character more for as long as another run you name shares them",
+			"and to a plan task by its plan name",
+			"never print the full run ID there",
+			"A command is given whatever ID its own help asks for, the full run ID included",
+			"Never launch, cancel or retry a run from inside this job",
+		} {
+			if !strings.Contains(got, want) {
+				t.Errorf("the prompt %+v lacks %q:\n%s", d, want, got)
+			}
+		}
+		for _, named := range runCommandRE.FindAllString(got, -1) {
+			t.Errorf("the prompt %+v names the run command %s: an unattended stage has no command that takes a run, and naming one reads as how to cancel or relaunch a run from inside the job", d, strings.TrimPrefix(named, "`"))
+		}
+	}
+}

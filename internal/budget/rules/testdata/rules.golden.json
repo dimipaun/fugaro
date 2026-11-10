@@ -339,7 +339,7 @@
             ".write": "(auth != null && auth.token.fp != null && auth.token.fp == root.child('fugaro/project').val() && auth.token.fx > now && auth.token.fs == $slug && auth.token.fr == $run) && ($day == ('' + ((now - now % 86400000) / 86400000)) || $day == ('' + ((now - now % 86400000) / 86400000 - 1))) && !data.exists()",
             ".validate": "newData.hasChildren(['status', 'requestedBy'])",
             "status": {
-              ".validate": "newData.isString() && (newData.val() == 'succeeded' || newData.val() == 'failed' || newData.val() == 'halted' || newData.val() == 'cancelled' || newData.val() == 'infra_error' || newData.val() == 'none') && (auth.token.rb != null && newData.parent().child('requestedBy').val() == auth.token.rb)"
+              ".validate": "newData.isString() && (newData.val() == 'succeeded' || newData.val() == 'failed' || newData.val() == 'unreviewed' || newData.val() == 'halted' || newData.val() == 'cancelled' || newData.val() == 'infra_error' || newData.val() == 'none') && (auth.token.rb != null && newData.parent().child('requestedBy').val() == auth.token.rb)"
             },
             "requestedBy": {
               ".validate": "(newData.isString() && newData.val().length <= 200) && (auth.token.rb != null && newData.parent().child('requestedBy').val() == auth.token.rb)"

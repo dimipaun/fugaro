@@ -2,6 +2,17 @@
 
 **Status: approved to build on the branch `rigor-modes`; the owner approval gate is passed.**
 
+**Duplicate check, 2026-11-10.** The owner ruled on 2026-11-10 that the tasks of
+[docs/rigor-command/](../rigor-command/) which build the same command, key or writer as a task of
+[docs/settings-commands/](../settings-commands/) or [docs/config-management/](../config-management/)
+are closed, and that the two winning plans are the ones that build them. **Nothing in this folder's
+two plans is one of them**: neither plan builds a command, a config key or a writer that either
+winning plan owns — the rigor commands, the `defaults.rigor` keys and the one write path are all
+designed in `docs/rigor-command/`, and the overlay's project-level areas and its one order are a
+run-loop behaviour, not a command. The surface the three share is *files*, and the levels plan's
+shared-files table names them; that is reported in the pull request that carries the ruling rather
+than closed here. **No task, number, edge or level in this folder moves.**
+
 **Owner:** the Fugaro owner
 **Written:** 2026-10-20
 **Base:** `main` at `1d325928` (`1d32592836a089cce2d72ff53e29116a00e1c433`)

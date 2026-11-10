@@ -88,6 +88,9 @@ func init() {
 	add("runs stats", userStatsDoc{}, "rows[].user", "rows[].counted_usd", "rows[].notional_usd")
 	add("logs", logLine{}, "time", "severity", "stage", "stream", "event", "message")
 	add("cancel", cancelResult{}, "project", "run", "status", "hard", "pr")
+	// The orchestrator skill tells a session where the revision a patch is
+	// built from comes from, so that field is held to the document it prints.
+	add("orchestrator state", orchestratorStateDoc{}, "rev")
 	add("watch --once", watch.BuildJSON("p", watch.View{}), "project")
 }
 
@@ -171,6 +174,7 @@ var notFields = []string{
 	"tool_error",        // a value of a log entry's event
 	"claude_accounts",   // a local-config key (never in --json output: it is operator-only and never published)
 	"agent.oauth_token", // a fugaro.yaml key, not a JSON output field
+	"base_rev",          // a key of the patch document a session sends, not a field of any --json output
 }
 
 var fieldTokenRE = regexp.MustCompile("`([a-z][a-z0-9]*(?:(?:_[a-z0-9]+)+|(?:\\.[a-z][a-z0-9_]*(?:\\[\\])?)+)(?:\\.[a-z][a-z0-9_]*)*)`")

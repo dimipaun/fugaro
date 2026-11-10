@@ -364,6 +364,12 @@ func (r *run) shadowFinalize(ctx context.Context) error {
 		return fmt.Errorf("reading head sha: %w", err)
 	}
 	r.recordChangedFiles(ctx)
+	// The arm's diff is classified at the same two seams the champion's loop
+	// has, and its whole diff is read here as the champion's finalize reads it:
+	// both calls are the champion's, so a refusal is not one of the two ways
+	// the arms differ from each other (D555, D559). That the arm publishes
+	// nothing is the outcome's business (OutcomeNone, D568), not this member's.
+	r.escalateSecurityAtFinalize(ctx)
 	r.finalizeRigor()
 	records, err := verify.Records(r.d.StateDir)
 	if err != nil {
@@ -377,20 +383,42 @@ func (r *run) shadowFinalize(ctx context.Context) error {
 	r.recordOwnerDecisions(halt)
 	pol := r.findingsPolicy()
 	// The arm's ending is chosen the way the champion's is chosen (finalize,
-	// runner.go): the reason and the class that describes it are handed over by
-	// the same three-way choice, so an arm that was refused and then halted is
-	// classed as a halt and one the agent left empty-handed is `no_commits`.
-	ready, reason, class := Decide(records, sha, r.decidingReview(), pol, r.rec.OwnerDecisions)
-	r.rec.Tolerated = r.toleratedRecord(pol)
-	if committed && reason == ReasonNoVerifiedTest {
-		reason = "uncommitted changes were committed at finalize, after the last verified test run"
+	// runner.go): the reason, the class that describes it and the kind that says
+	// which ending they name are handed over by the same three-way choice, so an
+	// arm that was refused and then halted is classed as a halt and one the agent
+	// left empty-handed is `no_commits`. What the arm differs in is what it
+	// writes *beside* the ending, never the ending itself: it publishes nothing,
+	// so its outcome is none (D568). An arm whose review answered nothing ends
+	// `unreviewed` exactly as its champion does — the pair is scored from the two
+	// records, and a status the other arm's record does not carry would read as
+	// two runs of different work.
+	decidedRound := r.decidingReview()
+	dec := Decide(records, sha, decidedRound, pol, r.rec.OwnerDecisions)
+	r.rec.Tolerated = r.toleratedRecord(pol, decidedRound)
+	r.rec.Accepted = r.acceptedRecord(pol, decidedRound)
+	// The answer is replaced whole here for the champion's reason (finalize,
+	// runner.go): the one reason this fires on is Decide's own, and the kind it
+	// came with is the one the replacement keeps (Decision, D995).
+	if committed && dec.Reason == ReasonNoVerifiedTest {
+		dec = blockedDecision("uncommitted changes were committed at finalize, after the last verified test run", dec.Class)
 	}
+	// The champion's rule, called in the champion's order (finalize, runner.go):
+	// a refused escalation is not something the arm's own records can answer
+	// away, and an arm whose record said succeeded while the champion's said
+	// failed would be a pair read as two different runs of the same work.
+	dec = r.applySecurityRefusal(dec)
+	// The run's own first failure outranks what Decide read and a halt outranks
+	// both, each replacement handing over the sentence it just wrote with the
+	// class and the kind that sentence carries: an arm refused for a stage it
+	// never finished is `failed`, never the label a run no review answered
+	// carries.
 	if fr := r.failure(); fr != "" {
-		ready, reason, class = false, fr, r.failureClass()
+		dec = blockedDecision(fr, r.failureClass())
 	}
 	if halt != nil {
-		ready, reason, class = false, (&HaltError{*halt}).Error(), haltClass(halt.Reason)
+		dec = blockedDecision((&HaltError{*halt}).Error(), haltClass(halt.Reason))
 	}
+	ready, reason, class := dec.Ready, dec.Reason, dec.Class
 	switch {
 	case halt != nil:
 		r.rec.Halt = halt
@@ -399,6 +427,8 @@ func (r *run) shadowFinalize(ctx context.Context) error {
 		r.recordEnd(runstore.StatusCancelled, runstore.OutcomeNone, failure.Cancelled, reason)
 	case ready:
 		r.recordEnd(runstore.StatusSucceeded, runstore.OutcomeNone, "", reason)
+	case dec.Kind == KindUnreviewed:
+		r.recordEnd(runstore.StatusUnreviewed, runstore.OutcomeNone, class, reason)
 	default:
 		r.recordEnd(runstore.StatusFailed, runstore.OutcomeNone, class, reason)
 	}

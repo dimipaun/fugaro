@@ -1,6 +1,6 @@
 # Project-level named Claude OAuth tokens
 
-Status: **built, release 0.9.0 (released; the released CLI is 0.21.0)**, 2026-10-19. Was: design,
+Status: **built, release 0.9.0 (released; the released CLI is 0.22.1)**, 2026-10-19. Was: design,
 2026-10-18, **RULED** (release 0.9.0). The three implementation tasks are merged — the policy's
 `accounts` block and the profile field (policy version 3), the account jobs and their static mount,
 and the two gates with doctor and SECURITY.md — and the operator guide is
@@ -197,7 +197,7 @@ profiles:
 **Schema version.** `profiles.<p>.claude_accounts` is a new field inside a profile entry, and the
 policy's rule for that case is written in the decoder: the profiles block is decoded with
 `DisallowUnknownFields`, and "a newer profile field bumps Version, which is what refuses a node
-this binary cannot read" (`internal/projectpolicy/policy.go:501-519`). So `projectpolicy.Version`
+this binary cannot read" (`internal/projectpolicy/policy.go:541-559`). So `projectpolicy.Version`
 goes from 2 to 3 (`internal/projectpolicy/version.go:24`). The `accounts` block itself is a new
 top-level key, which an older reader tolerates and lists in `UnknownKeys` (`policy.go:28-31,
 183-187`); the bump is what keeps an older runner from running past a gate it does not know, the
