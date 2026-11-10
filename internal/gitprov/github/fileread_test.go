@@ -142,6 +142,34 @@ func TestFileAtRefusesARefTheRepositoryDoesNotHave(t *testing.T) {
 	}
 }
 
+// TestFileAtRefusesA404ItCannotRead: a 404 is one of the two typed answers
+// only when its own body says which — a bare "Not Found" for the path, "No
+// commit found …" for the ref — and anything else is Contents's own refusal.
+// The other reading is the one D905 forbids: an answer this code cannot
+// classify, read as the absent-file row, places the run on the per-repository
+// job by a document nobody read. Both shapes are here: a body that is not the
+// API's answer object at all ("not found", which is what a proxy or a GHES in
+// front of it sends) and a JSON answer reworded past recognition ("Not
+// Found.").
+func TestFileAtRefusesA404ItCannotRead(t *testing.T) {
+	for _, fixture := range []string{"unreadable.json", "reworded.json"} {
+		ts := &fakePersonReadTokens{}
+		_, err := FileAt(ctx, fileReadOptions(t, fixture), ts, "acme/web", "release/1.2", "fugaro.yaml")
+		if err == nil {
+			t.Fatalf("%s: a 404 this code cannot read was accepted", fixture)
+		}
+		if errors.Is(err, ErrFileNotFound) || errors.Is(err, ErrRefNotFound) {
+			t.Fatalf("%s: err = %v, want neither typed answer: the body does not say which one it is", fixture, err)
+		}
+		if !strings.Contains(err.Error(), "reading fugaro.yaml") {
+			t.Fatalf("%s: err = %v, want Contents's own wording kept", fixture, err)
+		}
+		if se := statusOf(t, err); se.Status != http.StatusNotFound {
+			t.Fatalf("%s: the wrapped status is %d, want the reply's own 404", fixture, se.Status)
+		}
+	}
+}
+
 // TestFileAtUsesTheTokenSourceItIsGiven: the credential is the source the
 // caller handed over and nothing else. The fixture's exchange asserts the
 // request's Authorization header, so a read that minted in-job, sent an empty
