@@ -4,6 +4,13 @@
 D360–D367 on 2026-10-26, and D360, D362, D363 and D367 went against the recommendation. Those
 answers approve the reconciliation. Each task of the plan still needs the owner's own explicit go.
 
+**Amended 2026-11-10 (owner ruling): S3 is superseded by the secrets-brokering proxy chain.** The run-token
+slice S3 was parked "until a push and pull-request proxy exists"; that proxy is the B1 chain of
+[docs/secrets-brokering](../secrets-brokering/), under which no run holds a Bitbucket token at all, so a
+service-minted run token is no longer wanted. S3 (T3.0 to T3.8, Checks 147 and 148, the run consumer) stays in
+the plan as history and is not built. **Kept:** S0 to S2, the coordinator's read path through the service's
+read consumer, with T2.6 (the runbook), T2.11 (the SECURITY.md text) and owner Checks 145 and 149.
+
 **Amended 2026-10-26, after #1104:**
 
 - **O1 is answered: D363 is reversed.** Runs keep their per-repository access tokens. The run-token
