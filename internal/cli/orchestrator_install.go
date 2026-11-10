@@ -36,6 +36,12 @@ import (
 // replace it, so no test ever runs launchctl or systemctl.
 var orchestratorService = func() (service.Manager, error) { return service.For(runtime.GOOS) }
 
+// orchestratorGOOS is the platform the unit is rendered for: runtime.GOOS, as
+// a variable so that the one refusal a checkout of another platform cannot
+// otherwise reach — Windows — is testable from anywhere (service.For is a
+// parameter for the same reason, and this is the CLI's half of it).
+var orchestratorGOOS = runtime.GOOS
+
 // orchestratorReload loads or reloads an installed unit. It is the one reload
 // every writer uses — `fugaro orchestrator install`, the converge's setup step
 // and the converge's update step — so a re-rendered file is never left unread
@@ -53,7 +59,7 @@ func orchestratorUnit() (service.Unit, error) {
 	if err != nil {
 		return service.Unit{}, fmt.Errorf("finding the binary this %s is: %w", selfCommand(), err)
 	}
-	u, err := service.Render(os.Getenv, runtime.GOOS, stableBinaryPath(exe))
+	u, err := service.Render(os.Getenv, orchestratorGOOS, stableBinaryPath(exe))
 	if err != nil {
 		return service.Unit{}, err
 	}

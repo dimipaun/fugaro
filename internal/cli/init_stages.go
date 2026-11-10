@@ -237,6 +237,20 @@ func initStages(e *initEngine) []initflow.Stage {
 	// one command the user runs may not leave the checkout it runs in behind
 	// (init_checkout_upgrade.go, the owner's rule of 2026-10-30).
 	stages = append(stages, newCheckoutStage(e))
+	// The login unit that runs the orchestrator daemon: `fugaro setup` writes
+	// the first one (init_orchestrator_stage.go, the owner's Q2 answer of
+	// 2026-11-04) and `fugaro update` re-renders one already installed and
+	// never installs one (update_unit_stage.go, T7's ruling of 2026-11-05).
+	// The two are one stage — the loop takes one stage per name, and the
+	// canonical order holds one slot for it — and the door is what decides
+	// which of them this run gets, the way the door decides the project
+	// stage's creation path above. It comes after the checkout's own steps
+	// because the daemon it starts drives the project they leave behind.
+	if e.r.o.door == updateDoor.name {
+		stages = append(stages, newUpdateUnitStage(e))
+	} else {
+		stages = append(stages, newOrchestratorUnitStage(e))
+	}
 	// The Batch backend's provisioning is the owner's step and nothing else
 	// reaches it: the stage is registered only under its own flag, and
 	// `backend: cloud-batch` stays refused by config validation until the
