@@ -1072,10 +1072,10 @@ func (a *Authenticator) VerifyPersonCaller(ctx context.Context, tok string) (str
 // two facts about them the two routes key on.
 //
 // It is not the run's Identity and not a class of the model path: a launcher
-// holds no run identity and is admitted on no route that takes a Request — the
-// run route, the read mints and the verify route are all looked up in other
-// lists — which is why the two places that consume it, the grant route (DS1.3)
-// and the intake (DS2.1, another process's route entirely), take the token
+// holds no run identity and is admitted on no route of the model path: the run
+// route, the read mints and the verify route are all looked up in other lists,
+// and that is why the two places that consume it, the grant route (DS1.3) and
+// the intake (DS2.1, another process's route entirely), take the token
 // directly, the shape VerifyVerifier and the read mints already take.
 //
 // Every field is a claim Google signed for an address this installation
@@ -1098,11 +1098,11 @@ type LauncherCaller struct {
 }
 
 // maxLauncherSubDigits bounds the account id the launcher class carries, and
-// it is 21 because that is the width of a Google account id: a 21-digit number
-// above 2^53 — the fact internal/infra/tf's identity handling already records
-// of the same number, a service account's unique_id. Twenty digits would be
-// the width of a uint64, and these ids are wider than one, so a bound derived
-// from a 64-bit number refuses every launcher there is.
+// it is 21 because that is the width of a Google account id — a number above
+// 2^53, which is why internal/infra/tf's identity handling already carries the
+// same number, a service account's unique_id, as text rather than rendering it.
+// Twenty digits would be the width of a uint64, and these ids are wider than
+// one, so a bound derived from a 64-bit number refuses every launcher there is.
 //
 // The bound is a SHAPE check rather than a fence against a stranger's text: the
 // claim is inside a token Google signed, so a caller cannot choose this value
