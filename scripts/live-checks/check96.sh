@@ -11,10 +11,13 @@
 # plan's row 79, read on a real installation.
 #
 # Usage:      bash scripts/live-checks/check96.sh [--dry-run] [<owner/name>]
-#             The repository is the SANDBOX one and it may be left out: the
-#             installation's own state names it when exactly one repository has
-#             state, and the check then prints the one it picked. Name it when
-#             the installation has more than one.
+#             The repository is the SANDBOX one. It is the one to name, and it
+#             may be left out only where the installation's own state is
+#             unambiguous: with exactly one repository holding state that one is
+#             the sandbox and the fact says the check derived it, and with more
+#             than one the check stops (exit 2) and lists them rather than
+#             picking — what it mints below is a real GitHub installation token
+#             for whichever repository it names.
 #             --dry-run runs the guards and every read, prints the plan of the
 #             only things that write — the calls to the mint endpoint and the
 #             two Firebase Auth user deletions — and runs none of them.
@@ -28,7 +31,9 @@
 #             file; the service out of `gcloud run services list` by its
 #             `fugaro_role=credentials` label; the sandbox repository and the
 #             second repository the pairing case needs out of
-#             `fugaro budget show --all --json`; and the repository's job out of
+#             `fugaro budget show --all --json` (the second one always, the
+#             sandbox one only where that state names a single repository, which
+#             the fact says it did); and the repository's job out of
 #             `gcloud run jobs list` by its `fugaro_repo` label. The key and the
 #             signer are read from the config file and never printed.
 # Where:      installation fugaro on GCP project fugaro-dev ONLY, and never
@@ -379,8 +384,13 @@ step_installation() {
   if ! run_capture "$SCRATCH/budget.json" fugaro budget show --all --json; then
     stop "'fugaro budget show --all --json' did not answer, so this check cannot tell which repositories this installation has state for. Run it yourself from a checkout of a repository this installation manages"
   fi
-  answer=$(reader budget "$REPO_ARG" <"$SCRATCH/budget.json") \
-    || stop "the answer to 'fugaro budget show --all --json' is not the document this check reads, or $REPO_ARG is not one of its repositories. Name a repository this installation has state for (the command above lists them)"
+  # The reader is handed the repository only when the owner named one, and it
+  # refuses a derivation among several of them: what it mints below is a REAL
+  # GitHub installation token for whichever repository this names, so a pick the
+  # owner did not make is a token spent on a repository that may not be the
+  # sandbox. Its refusal lists the candidates, which is the one word to add.
+  answer=$(reader budget "$REPO_ARG" <"$SCRATCH/budget.json" 2>"$SCRATCH/budget.err") \
+    || stop "the sandbox repository could not be named: $(sed -n '1,3p' "$SCRATCH/budget.err" | tr '\n' ' ')"
   FPROJ=$(field_of project "$answer")
   REPO=$(field_of repo "$answer")
   SLUG=$(field_of slug "$answer")
@@ -423,7 +433,7 @@ step_installation() {
   cfgans=$(reader config "$CFG" "$REPO" 2>"$SCRATCH/cfg.err") || stop "$CFG is not the document this check reads (a config fugaro wrote, with a credentials_service block and a repos list): $(sed -n '1,3p' "$SCRATCH/cfg.err" | tr '\n' ' ')"
   CFG_URL=$(field_of service_url "$cfgans")
   CFG_READY=$(field_of repo_ready "$cfgans")
-  fact installation PASS "the config in force is the $NAME installation: project $PROJECT, region $REGION, Fugaro project $FPROJ; its own file ($CFG) carries the Firebase project $FB and the signer $SIGNER (whose domain is that project) and a restricted web API key (present, never printed); the sandbox repository is $REPO (slug $SLUG), $([ "$REPO_CHOSEN" = named ] && printf 'the one you named' || printf 'DERIVED as the first of the %s repositories this installation has state for (name it to be sure)' "$REPO_COUNT"), and the second repository the pairing case needs is $OTHER_REPO (slug $OTHER_SLUG)$([ -n "$CFG_URL" ] && printf '; the config records the credentials service at %s' "$CFG_URL" || printf '; the config records NO credentials service (credentials_service.url is absent), so no job of this installation is handed an address')"
+  fact installation PASS "the config in force is the $NAME installation: project $PROJECT, region $REGION, Fugaro project $FPROJ; its own file ($CFG) carries the Firebase project $FB and the signer $SIGNER (whose domain is that project) and a restricted web API key (present, never printed); the sandbox repository is $REPO (slug $SLUG), $([ "$REPO_CHOSEN" = named ] && printf 'the one you named' || printf 'DERIVED as the only repository this installation has state for'), and the second repository the pairing case needs is $OTHER_REPO (slug $OTHER_SLUG)$([ -n "$CFG_URL" ] && printf '; the config records the credentials service at %s' "$CFG_URL" || printf '; the config records NO credentials service (credentials_service.url is absent), so no job of this installation is handed an address')"
 }
 
 # step_service finds the credentials service by its own label rather than by a
@@ -1208,11 +1218,12 @@ def cmd_doctor():
 
 def cmd_budget(want):
     """The sandbox repository, and the second one the pairing case needs. Named
-    when the owner named it; otherwise the first repository this installation has
-    state for, which the check says out loud -- an installation with more than
-    one repository has no way for a script to know which is the sandbox, and
-    naming the wrong one mints a real token for it, so the derivation is stated
-    in the fact and the owner can always name the right one."""
+    when the owner named it, and otherwise only when exactly one repository of
+    this installation has state -- never a pick among several: this check mints a
+    REAL GitHub installation token for the repository it is handed and probes it
+    at GitHub, so choosing one the owner did not name would spend a token on a
+    repository that may not be the sandbox at all. The refusal names every
+    candidate, so the owner has the one word to add."""
     doc = load()
     rows = doc.get("repos") or []
     with_state = [r for r in rows if r.get("repo") and r.get("slug")]
@@ -1226,6 +1237,9 @@ def cmd_budget(want):
     else:
         if not with_state:
             fail("this installation has no repository with state")
+        if len(with_state) > 1:
+            fail("this installation has %d repositories with state and none was named, so this check cannot tell which one is the sandbox: name it, one of %s"
+                 % (len(with_state), ", ".join(sorted(r.get("repo") or "" for r in with_state))))
         mine = with_state[:1]
         chosen = "derived"
     others = [r for r in with_state if r.get("repo") != mine[0].get("repo")]
@@ -1255,11 +1269,16 @@ def cmd_config(path, repo):
                 url = line.split("url:", 1)[1].strip().strip("\"'")
     # repos is a MAPPING keyed by owner/name (localcfg.Project.Repos), so the
     # repository is a key at the block's own indentation and the flag is one
-    # level under it.
-    ready, in_repos, current = "unset", False, None
+    # level under it. That indentation is READ from the block's first key rather
+    # than assumed to be two spaces: localcfg.Config.Marshal is yaml.Marshal
+    # (yaml.v3, four spaces), and a config written by fugaro itself read at two
+    # is a config in which no repository is ever found -- repo_ready "unset" for
+    # every one of them, which is how the row this feeds would pass a job that
+    # has lost the service's address.
+    ready, in_repos, current, entry_pad = "unset", False, None, None
     for line in text.splitlines():
         if re.match(r"^repos:", line):
-            in_repos = True
+            in_repos, current, entry_pad = True, None, None
             continue
         if not in_repos:
             continue
@@ -1270,7 +1289,9 @@ def cmd_config(path, repo):
         if not m:
             continue
         pad, key, rest = m.group(1), m.group(2).strip().strip("\"'"), m.group(3).strip()
-        if len(pad) == 2:
+        if entry_pad is None:
+            entry_pad = len(pad)
+        if len(pad) <= entry_pad:
             # An entry of the mapping: the value is a block, so it never carries
             # one here, and a nested key that does (`workflows:`) must not be
             # mistaken for one.

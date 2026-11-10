@@ -337,6 +337,40 @@ func TestDocsCheck96IsWrittenAndSaysWhatIsNotYetTrue(t *testing.T) {
 		t.Errorf("scripts/live-checks/check96.sh's `step_front_end` no longer tells the two `403`s apart by the body (%q): the section states that discrimination as this row's mechanism, and a step that read the status and the line count alone would pass a service deployed without Cloud Run IAM", strings.TrimSpace(body))
 	}
 
+	// Which repository the check mints for is the owner's to name. With more than
+	// one repository holding state and none named, the reader used to take the
+	// first one — and what the check does with that repository is mint a REAL
+	// GitHub installation token for it and read its reach at GitHub, so a pick the
+	// owner did not make is a token spent on a repository that may not be the
+	// sandbox at all. It refuses now, and the refusal lists the candidates: the
+	// section says the run stops, and the reader is held to the refusal.
+	// Mutation (run and restored): the first-of-several pick put back →
+	// test_a_derivation_among_several_repositories_is_refused FAILs on
+	// "a call before the refusal".
+	if !strings.Contains(check, "stops (exit `2`) and lists them rather than picking one") {
+		t.Errorf("docs/gcp-live-checklist.md's Check 96 no longer says an unnamed run stops when more than one repository has state: Check 96 mints a real GitHub installation token for whatever repository it is handed, so the section has to say the repository is named rather than picked")
+	}
+	if body := check96PythonFunc(t, readRepoFile(t, check96Script), "def cmd_budget(want):"); !strings.Contains(body, "cannot tell which one is the sandbox") {
+		t.Errorf("scripts/live-checks/check96.sh's `cmd_budget` no longer refuses to derive one repository out of several (%q): the check mints a real installation token for the repository it names and reads that repository at GitHub, so a derivation the owner did not make spends a token on a repository that may not be the sandbox", strings.TrimSpace(body))
+	}
+
+	// And the config's `repos` mapping is read at the indentation fugaro writes
+	// that file with. `localcfg.Config.Marshal` is `yaml.Marshal` (yaml.v3, four
+	// spaces), so a reader that only accepts a two-space entry finds no repository
+	// at all in a config fugaro wrote itself: `credentials_service_ready` is
+	// `unset` for every repository, `step_job_env` reaches its final PASS branch,
+	// and the FAIL for a switched-on repository's job that has lost the service's
+	// address can never fire. The section says where the record is read.
+	// Mutation (run and restored): `len(pad) == 2` put back with the fixture at
+	// four spaces → test_a_job_that_has_no_service_url_while_the_config_records_one_is_a_fail
+	// FAILs with the check PASSing a job that has no URL.
+	if !strings.Contains(check, "at the indentation fugaro writes that file with") {
+		t.Errorf("docs/gcp-live-checklist.md's Check 96 no longer says the repository's record is read out of the config at the indentation fugaro writes it with: yaml.v3 writes four spaces, and a `job-env` row that could not find the record would report `unset` where the repository's own answer is the thing being read")
+	}
+	if body := check96PythonFunc(t, readRepoFile(t, check96Script), "def cmd_config(path, repo):"); !strings.Contains(body, "entry_pad is None") || !strings.Contains(body, "if len(pad) <= entry_pad:") {
+		t.Errorf("scripts/live-checks/check96.sh's `cmd_config` no longer takes the `repos` mapping's indentation from the block's first key (%q): localcfg.Config.Marshal is yaml.Marshal at yaml.v3's four-space indent, and a reader that assumed two finds no repository in the installation's own config", strings.TrimSpace(body))
+	}
+
 	// The wiring, held to the code as well: the keyless provider is opened only
 	// when the job's environment names the service, and the launch is what puts
 	// that name on a repository job — so the check's expected answers are read
@@ -533,6 +567,23 @@ func check96ShellFunc(t *testing.T, script, sig string) string {
 		t.Fatalf("%s: %s is not closed by a `}` at column 0 — this test's marker has moved", check96Script, sig)
 	}
 	return rest[:j]
+}
+
+// check96PythonFunc returns one function's body out of the reader embedded in
+// scripts/live-checks/check96.sh: from its `def` line to the next `def ` at
+// column 0. The reader is Python, so check96ShellFunc's `\n}\n` is not in it and
+// check96FuncBody's `\nfunc ` is not either.
+func check96PythonFunc(t *testing.T, script, sig string) string {
+	t.Helper()
+	i := strings.Index(script, sig)
+	if i < 0 {
+		t.Fatalf("%s: %s not found — this test's marker has moved", check96Script, sig)
+	}
+	rest := script[i+len(sig):]
+	if j := strings.Index(rest, "\ndef "); j >= 0 {
+		return rest[:j]
+	}
+	return rest
 }
 
 // check96FuncBody returns one function's body out of a source file the test

@@ -387,7 +387,15 @@ write_doctor() { # dir [GCP_PROJECT] [NAME]
     "${3:-$PROJECT_NAME}" "${2:-$PROJECT}" "$REGION" >"$1/state/doctor.json"
 }
 
+# write_budget dir — the installation's repository state. BUDGET_REPOS=one makes
+# the sandbox repository the only one with state, which is the one shape in which
+# the check derives the repository itself instead of refusing to pick.
 write_budget() { # dir
+  if [ "${BUDGET_REPOS:-two}" = one ]; then
+    printf '{"project": "%s", "gcp_project": "%s", "mode": "observe", "day": "2026-11-10", "repos": [{"slug": "%s", "repo": "%s"}], "running": []}\n' \
+      "$FUGARO_PROJECT" "$PROJECT" "$SANDBOX_SLUG" "$SANDBOX_REPO" >"$1/state/budget.json"
+    return 0
+  fi
   cat >"$1/state/budget.json" <<JSON
 {"project": "$FUGARO_PROJECT", "gcp_project": "$PROJECT", "mode": "observe", "day": "2026-11-10",
  "repos": [{"slug": "$SANDBOX_SLUG", "repo": "$SANDBOX_REPO"},
@@ -409,11 +417,14 @@ write_config() { # dir
     printf 'budget:\n  rtdb_url: https://%s-default-rtdb.firebaseio.com\n' "$FUGARO_PROJECT"
     printf '  firebase_project: %s\n  firebase_api_key: %s\n  token_signer: %s\n' \
       "$FUGARO_PROJECT" "$FIREKEY" "$SIGNER"
-    printf 'repos:\n  %s:\n    provider: github\n    workflows:\n      - default\n' "$SANDBOX_REPO"
+    # Four spaces, which is what fugaro itself writes: localcfg.Config.Marshal
+    # is yaml.Marshal (yaml.v3's default indent), and a check that only finds a
+    # repository at two spaces finds none of them in a real config.
+    printf 'repos:\n    %s:\n        provider: github\n        workflows:\n            - default\n' "$SANDBOX_REPO"
     if [ "${READY:-yes}" = yes ]; then
-      printf '    credentials_service_ready: true\n'
+      printf '        credentials_service_ready: true\n'
     fi
-    printf '  %s:\n    provider: github\n    workflows:\n      - default\n' "$OTHER_REPO"
+    printf '    %s:\n        provider: github\n        workflows:\n            - default\n' "$OTHER_REPO"
   } >"$dir/state/fugaro.yaml"
 }
 
@@ -544,20 +555,28 @@ setup_case() {
   : >"$dir/state/deleted"
 }
 
-# run96 [ARGS...] — runs the check on the case at hand. RUN96_ARGS adds
+# run96 [ARGS...] — runs the check on the case at hand. The sandbox repository is
+# named for the case, because that is what the check asks of the owner: the
+# default fixture has two repositories with state, and the check refuses to pick
+# one of several itself (RUN96_UNNAMED=yes is for the cases about what it does
+# then, and for the cases that name a repository of their own). RUN96_ARGS adds
 # arguments, RUN96_PATH prefixes PATH (for a fake that has to come first), and
 # RUN96_ENV names environment variables (NAME=value). Sets $status, $out and
 # $dir/err.
 run96() {
   status=0
+  local named=("$SANDBOX_REPO")
+  [ "${RUN96_UNNAMED:-no}" = yes ] && named=()
   out=$(env TMPDIR="$dir/tmp" FAKE96_DIR="$dir/state" FUGARO_CONFIG="$dir/state/fugaro.yaml" \
     PATH="${RUN96_PATH:+$RUN96_PATH:}$dir/bin:$PATH" \
     ${RUN96_ENV[@]+"${RUN96_ENV[@]}"} \
-    bash "$script" ${RUN96_ARGS[@]+"${RUN96_ARGS[@]}"} "$@" 2>"$dir/err") || status=$?
+    bash "$script" ${RUN96_ARGS[@]+"${RUN96_ARGS[@]}"} ${named[@]+"${named[@]}"} "$@" 2>"$dir/err") || status=$?
   printf '%s' "$out" >"$dir/out"
   RUN96_ARGS=()
   RUN96_ENV=()
   RUN96_PATH=""
+  RUN96_UNNAMED=no
+  BUDGET_REPOS=two
 }
 
 expect_block_keys() { # out what
@@ -653,12 +672,13 @@ test_dry_run_runs_nothing_that_writes() {
   expect_scratch_gone "$dir" "dry run"
 }
 
-test_a_named_repository_is_the_one_checked_and_the_derivation_says_so() {
+test_a_named_repository_is_the_one_checked_and_a_lone_one_needs_no_name() {
   setup_case named
   # The check's roles swap when the repository is named: the sandbox is the one
   # named and the pairing case's run identity has to belong to the other one, so
-  # the fake's idea of "the other repository" is the one it derived by default.
+  # the fake is told which repository this run's pairing case is about.
   RUN96_ENV=(FAKE96_OTHER_SLUG="$SANDBOX_SLUG")
+  RUN96_UNNAMED=yes
   write_audit "$dir" "$OTHER_SLUG" "$SANDBOX_SLUG"
   write_answers "$dir" "$OTHER_REPO"
   run96 "$OTHER_REPO"
@@ -667,17 +687,52 @@ test_a_named_repository_is_the_one_checked_and_the_derivation_says_so() {
     "named repository: the one named"
   expect_contains "$out" "the second repository the pairing case needs is $SANDBOX_REPO" \
     "named repository: the other one is the pairing case's"
-  # And with no argument: the first of the installation's repositories, said out
-  # loud, because a script cannot know which one is the sandbox.
+  # And with no argument where the installation's state holds exactly one
+  # repository: that one is the sandbox, so the run gets past the naming. It
+  # stops one step later, at the pairing case, which needs a second repository —
+  # which is why the command the owner runs names the repository: a derivation
+  # this check can make is a derivation on an installation that cannot pass the
+  # third claim anyway. What this case reads is that the run got as far as that
+  # stop instead of the refusal to pick.
+  BUDGET_REPOS=one
   setup_case derived
+  RUN96_UNNAMED=yes
   run96
-  expect_status "$status" 0 "the derived repository"
-  expect_contains "$out" "the sandbox repository is $SANDBOX_REPO (slug $SANDBOX_SLUG), DERIVED as the first of the 2 repositories" \
-    "the derived repository: it says it picked one"
+  expect_status "$status" 2 "the derived repository"
+  expect_contains "$out" "the installation has one repository with state, and the pairing case needs a second one" \
+    "the derived repository: the one repository with state was read as the sandbox"
+  expect_absent "$out" "cannot tell which one is the sandbox" \
+    "the derived repository: no refusal to pick a repository where there is only one"
+}
+
+test_a_derivation_among_several_repositories_is_refused() {
+  setup_case ambiguous
+  # Two repositories with state and no name given: the check must not pick one,
+  # because it mints a real GitHub installation token for whatever it names. It
+  # stops instead, and the message lists what it could have been.
+  RUN96_UNNAMED=yes
+  run96
+  expect_status "$status" 2 "the ambiguous derivation"
+  expect_contains "$out" "this installation has 2 repositories with state and none was named, so this check cannot tell which one is the sandbox: name it, one of $OTHER_REPO, $SANDBOX_REPO" \
+    "the ambiguous derivation: the refusal names the candidates"
+  expect_contains "$out" "FACT installation: FAIL — not reached" "the ambiguous derivation: nothing was claimed"
+  expect_absent "$(cat "$dir/state/calls")" "curl " "the ambiguous derivation: a call before the refusal"
+  expect_absent "$(cat "$dir/state/calls")" "installation-token" "the ambiguous derivation: a mint"
+}
+
+test_a_repository_that_is_not_one_with_state_is_refused() {
+  setup_case notmine
+  RUN96_UNNAMED=yes
+  run96 acme/not-managed
+  expect_status "$status" 2 "a repository with no state"
+  expect_contains "$out" "acme/not-managed is not one of this installation's repositories with state" \
+    "a repository with no state: the refusal says which"
+  expect_absent "$(cat "$dir/state/calls")" "curl " "a repository with no state: a call before the refusal"
 }
 
 test_belong_is_refused() {
   setup_case belong
+  RUN96_UNNAMED=yes
   run96 acme/belong-sandbox
   expect_status "$status" 2 "belong"
   expect_contains "$out" "aborted: FAIL" "belong: the abort is recorded"
@@ -688,6 +743,7 @@ test_belong_is_refused() {
 
 test_a_repository_argument_that_is_not_owner_name_is_refused() {
   setup_case shape
+  RUN96_UNNAMED=yes
   run96 sandbox
   expect_status "$status" 2 "argument shape"
   expect_contains "$out" "it has to be <owner>/<name>" "argument shape: the message"
@@ -1035,6 +1091,7 @@ test_usage() {
   run96 --nonsense
   expect_status "$status" 2 "an unknown flag"
   expect_contains "$(cat "$dir/err")" "unknown argument" "an unknown flag: the refusal"
+  RUN96_UNNAMED=yes
   run96 "$SANDBOX_REPO" "$OTHER_REPO"
   expect_status "$status" 2 "two repositories"
   expect_contains "$(cat "$dir/err")" "only one repository" "two repositories: the refusal"
@@ -1079,9 +1136,11 @@ t() {
 
 t test_happy_path
 t test_dry_run_runs_nothing_that_writes
-t test_a_named_repository_is_the_one_checked_and_the_derivation_says_so
+t test_a_named_repository_is_the_one_checked_and_a_lone_one_needs_no_name
 t test_belong_is_refused
 t test_a_repository_argument_that_is_not_owner_name_is_refused
+t test_a_derivation_among_several_repositories_is_refused
+t test_a_repository_that_is_not_one_with_state_is_refused
 t test_a_config_that_is_not_fugaro_dev_stops
 t test_a_repository_with_one_job_too_few_stops
 t test_the_shared_project_job_with_the_url_is_a_fail
