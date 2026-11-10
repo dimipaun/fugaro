@@ -224,6 +224,18 @@ function unknownKeys(map, allowed, what) {
 }
 
 /**
+ * The file as this reader read it, for the file's *other* gate:
+ * `website/test/compatibility-page.mjs` holds the built page to the rows this file carries, and
+ * it reads them here rather than parsing the YAML a second time — which is what the file itself
+ * means when it says the page-wide test reads its `never_say` list rather than repeating it. A
+ * second reader would be a second rule, and the two would drift into disagreeing about the file
+ * the page renders.
+ */
+export function compatibilityFacts() {
+  return FILE
+}
+
+/**
  * Every way the file departs from the rules above, as lines — the whole gate, so that a
  * plant below can be held to the one line it is about.
  */
