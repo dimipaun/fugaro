@@ -18,6 +18,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
@@ -127,7 +128,21 @@ func TestAdminListNotWrittenToAnotherInstallationsBucket(t *testing.T) {
 // returns what the run printed and whether the write reached a bucket at all,
 // which is the difference between "the step refused the bucket" and "the step
 // would have written".
-func adminListStep(t *testing.T, mutate func(*localcfg.Config)) (out string, opened bool) {
+func adminListStep(t *testing.T, mutate func(*localcfg.Config)) (string, bool) {
+	t.Helper()
+	e, buf, opened := adminListStepEngine(t, mutate)
+	e.writeAdminList(context.Background())
+	return buf.String(), *opened
+}
+
+// adminListStepEngine is adminListStep's fixture without the call: the engine,
+// where the step writes what it prints, and whether a bucket was opened. A test
+// that has to say something about the RUN the step is reached by rather than
+// about the step alone — the session it is in (agentSession), the project's
+// gate (r.gate, a managed project's), the steps the loop left for the person
+// (r.res.LeftForYou) — takes the engine, sets that, and calls writeAdminList
+// itself.
+func adminListStepEngine(t *testing.T, mutate func(*localcfg.Config)) (e *initEngine, out *strings.Builder, opened *bool) {
 	t.Helper()
 	db := gcpfake.NewRTDB(t)
 	db.Set(budget.PathProject, initProjectName)
@@ -141,17 +156,16 @@ func adminListStep(t *testing.T, mutate func(*localcfg.Config)) (out string, ope
 		Endpoints:  localcfg.Endpoints{NoAuth: true},
 	}
 	mutate(lc)
+	written := false
 	prev := sharedBucketOpener
 	sharedBucketOpener = func(ctx context.Context, url string) (*blobx.Bucket, error) {
-		opened = true
+		written = true
 		return blobx.Open(ctx, url)
 	}
 	t.Cleanup(func() { sharedBucketOpener = prev })
 
-	var buf strings.Builder
-	e := &initEngine{r: &initRun{o: &initOptions{door: updateDoor.name}, w: &buf}, lc: lc, c: &infra.Clients{}}
-	e.writeAdminList(context.Background())
-	return buf.String(), opened
+	buf := &strings.Builder{}
+	return &initEngine{r: &initRun{o: &initOptions{door: updateDoor.name}, w: buf}, lc: lc, c: &infra.Clients{}}, buf, &written
 }
 
 // TestSetupWritesNoAdminList: the step is `fugaro update`'s. `fugaro setup`
@@ -174,6 +188,113 @@ func TestSetupWritesNoAdminList(t *testing.T) {
 	}
 	if strings.Contains(out, roleaccess.PathAdminList) {
 		t.Errorf("fugaro setup names %s, the object only fugaro update writes:\n%s", roleaccess.PathAdminList, out)
+	}
+}
+
+// TestUpdateInACodingAgentsSessionWritesNoAdminList: the door in a coding
+// agent's session leaves the object alone. The list is the authorization object
+// the intake reads before it admits a caller to the shared `fugaro_p_` prefix,
+// so publishing it is an act outside this machine — and `--yes`'s help promises
+// exactly the opposite of one under a marker: the door "changes nothing outside
+// this machine, --yes included", and every step it will not run is listed under
+// left_for_you.
+//
+// The fixture is the session that would otherwise reach the write: the roster
+// is seeded and the runs bucket is a real one a write lands in, so a step that
+// ran here would leave the object behind. It is also the case the finding is
+// about rather than a corner of it — the run stops at its first stage that
+// needs the person, so it applies nothing at all, and a list published out of
+// it would be the one write of a run that changed nothing.
+//
+// The failure this pins is a silent one: a session that publishes the list
+// looks like any other run (the object is there, an earlier update's or this
+// one's, and nothing says which), while the promise the person read said
+// nothing left the machine.
+func TestUpdateInACodingAgentsSessionWritesNoAdminList(t *testing.T) {
+	agentSession(t)
+	currentRelease(t)
+	r := newConvergeRig(t, v4Node())
+	setRoster(t, r, rosterGrant("owner@example.com", "admin", "project"))
+
+	out, _, err := executeStdin(t, "", "update", "--yes")
+	if err == nil {
+		t.Errorf("the run reported success in a coding agent's session, over an installation it applied nothing to:\n%s", out)
+	}
+	b := adminListBucket(t, r)
+	if _, _, err := b.ReadMaxStrict(context.Background(), roleaccess.PathAdminList, roleaccess.MaxAdminListBytes); !errors.Is(err, blobx.ErrNotExist) {
+		t.Errorf("%s exists after an update in a coding agent's session (%v): the object is the intake's authorization list, and a session that applies nothing is not the run that publishes it",
+			roleaccess.PathAdminList, err)
+	}
+	if strings.Contains(out, roleaccess.PathAdminList) {
+		t.Errorf("the session names %s, the object it did not write:\n%s", roleaccess.PathAdminList, out)
+	}
+}
+
+// TestAdminListAgentSessionAndTheGate: the step's own read of the session, at
+// the two states the door's test cannot separate — the marker decides, and the
+// gates are two.
+//
+//   - A coding agent's session writes nothing: the step is one of the writes
+//     `--yes`'s help names as the session's own exception list has no room for,
+//     and the loop's left_for_you is where a session says what it did not do,
+//     never a bucket object nobody asked for.
+//   - A managed project's gate is the exception (D1016): the marks say managed,
+//     so the gate's own read stands in for the confirmations this run would
+//     have asked for (the ruling of 2026-11-01) and the session IS the run that
+//     converges the installation. Leaving the object to the owner there would
+//     be a step the gate's admission does not reach, and the list is part of
+//     what the run converges.
+//
+// The two runs differ in one field and nothing else, which is the whole claim:
+// the marker is the first case's, and `r.gate` is the second's.
+func TestAdminListAgentSessionAndTheGate(t *testing.T) {
+	t.Run("a coding agent's session writes nothing", func(t *testing.T) {
+		agentSession(t)
+		e, buf, opened := adminListStepEngine(t, func(*localcfg.Config) {})
+		e.writeAdminList(context.Background())
+		if *opened {
+			t.Errorf("the step opened the runs bucket in a coding agent's session: the list is the intake's authorization object, and this session applies nothing for it to be the account of")
+		}
+		if strings.Contains(buf.String(), roleaccess.PathAdminList) {
+			t.Errorf("the session names %s, the object it did not write:\n%s", roleaccess.PathAdminList, buf)
+		}
+	})
+	t.Run("a managed project's gate stands in for the confirmation", func(t *testing.T) {
+		agentSession(t)
+		e, buf, opened := adminListStepEngine(t, func(*localcfg.Config) {})
+		e.r.gate = &initGate{managed: true}
+		e.writeAdminList(context.Background())
+		if !*opened {
+			t.Errorf("the step wrote nothing in a managed project's session: the gate's own read stands in for this run's confirmations, so the run is the one that converges the installation and the list is part of what it converges")
+		}
+		if !strings.Contains(buf.String(), "admin list: 1 project admin(s)") {
+			t.Errorf("the run does not say what it published:\n%s", buf)
+		}
+	})
+}
+
+// TestAdminListUnconfirmedRunWritesNothing: a run that did not confirm all of
+// its steps publishes nothing either, whatever session it is in. The steps a
+// run cannot confirm without a person — a secret's value, a policy publish that
+// would loosen the published node — are listed under left_for_you, the run
+// exits 1 over them, and it is the run the person then makes that is the
+// account of the roster the installation ends up with.
+//
+// The fact is the one `outcome` records from the loop before this step runs
+// (r.res.LeftForYou = res.Left), so the fixture sets it there: what the step
+// must not do is publish authorization data out of a run that stopped short of
+// the state the object is derived from.
+func TestAdminListUnconfirmedRunWritesNothing(t *testing.T) {
+	e, buf, opened := adminListStepEngine(t, func(*localcfg.Config) {})
+	e.r.res.LeftForYou = []initflow.Left{{
+		Stage: initflow.Secrets, Kind: initflow.LeftCommand, Text: selfCommand() + " secrets set acme/app API_KEY",
+	}}
+	e.writeAdminList(context.Background())
+	if *opened {
+		t.Errorf("the step opened the runs bucket in a run that left a step for the person: the list is published by the run that finished, and this one says in its own result that it did not")
+	}
+	if strings.Contains(buf.String(), roleaccess.PathAdminList) {
+		t.Errorf("the run names %s, the object it did not write:\n%s", roleaccess.PathAdminList, buf)
 	}
 }
 
