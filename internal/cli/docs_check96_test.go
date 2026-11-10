@@ -304,6 +304,24 @@ func TestDocsCheck96IsWrittenAndSaysWhatIsNotYetTrue(t *testing.T) {
 		t.Errorf("internal/credsvc/github.go's `refuseMint` no longer audits the mint it refuses (%q): Check 96 states that a refused mint is recorded like an issued one", strings.TrimSpace(body))
 	}
 
+	// Step 2's front-end row is the one shape where the status and the count fail
+	// to tell two different services apart: a service deployed WITHOUT Cloud Run
+	// IAM lets the call reach the container, where `refuseIdentity` answers the
+	// same `403` `unverified_job_identity` and writes no line either — there is
+	// no verified identity to record — so a row that read the status and the
+	// unmoved line count alone would pass a service anyone can call. The body is
+	// what separates them (the platform's own non-JSON refusal against the
+	// service's typed one), and both halves of the pair are pinned: the section
+	// says the row reads the body, and the script's `step_front_end` does read it.
+	// Mutation (run and restored): the script's front-end step put back to the
+	// status-and-count test alone → FAIL; the section's sentence dropped → FAIL.
+	if !strings.Contains(check, "so this row reads the **body** the call came back with") {
+		t.Errorf("docs/gcp-live-checklist.md's Check 96 no longer says the `front-end` row reads the body the unauthenticated call came back with: the status and the unmoved audit-line count are the same for Cloud Run's own refusal and for a service deployed without IAM, whose `refuseIdentity` answers the same `403` and writes no line either, so without the body the row would pass a service anyone can call")
+	}
+	if body := check96FuncBody(t, readRepoFile(t, check96Script), "step_front_end() {"); !strings.Contains(body, `reader refusal <"$SCRATCH/noident.json"`) || !strings.Contains(body, "BY THE SERVICE") {
+		t.Errorf("scripts/live-checks/check96.sh's `step_front_end` no longer tells the two `403`s apart by the body (%q): the section states that discrimination as this row's mechanism, and a step that read the status and the line count alone would pass a service deployed without Cloud Run IAM", strings.TrimSpace(body))
+	}
+
 	// The wiring, held to the code as well: the keyless provider is opened only
 	// when the job's environment names the service, and the launch is what puts
 	// that name on a repository job — so the check's expected answers are read

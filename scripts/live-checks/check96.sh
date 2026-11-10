@@ -243,6 +243,13 @@ finish() {
   local restore=PASS
   if [ "$SCRATCH_REMOVED" != yes ] && [ -n "$SCRATCH" ]; then restore=FAIL; fi
   facts="${facts}"$'\n'"restore|$restore|$(restore_detail)"
+  # The verdict is taken from the facts, not from the exit path: a scratch
+  # directory this check could not remove is a FAIL, and a block that printed
+  # `restore: FAIL` beside `END (exit 0)` would read as a pass (check91.sh reads
+  # its own rows the same way). A run that stopped in a guard is exit 2 already.
+  if printf '%s\n' "$facts" | grep -q '|FAIL|' && [ "$status" = 0 ]; then
+    status=1
+  fi
   if [ "$HELP_SHOWN" = yes ]; then
     exit 0
   fi
@@ -612,15 +619,20 @@ step_app_key() {
   # The bundle is the other half of Q6, and it is not about the job at all: the
   # service mints from it, exactly one account may read it, and a job account
   # with an accessor on it is the finding the mint's whole design rules out.
-  local bindings role members cond
+  local bindings role members cond svcmember
   bindings=$(field_of bindings "$bundleans")
   role=$(field_of role "$bundleans")
   members=$(field_of members "$bundleans")
   cond=$(field_of cond "$bundleans")
-  if [ "$bindings" = 1 ] && [ "$role" = "roles/secretmanager.secretAccessor" ] && [ "$members" = 1 ] && [ "$cond" = no ] && [ "$job_member_on_bundle" = no ]; then
+  # The member is part of the claim, not just its count: one binding whose one
+  # member is not the service's own account is a bundle the service cannot mint
+  # from, and a row that said "the service's own account" over it would be
+  # asserting what it did not read.
+  svcmember=$(field_of svc_member "$bundleans")
+  if [ "$bindings" = 1 ] && [ "$role" = "roles/secretmanager.secretAccessor" ] && [ "$members" = 1 ] && [ "$svcmember" = yes ] && [ "$cond" = no ] && [ "$job_member_on_bundle" = no ]; then
     fact bundle PASS "the bundle's container is $BUNDLE_SECRET and its policy is exactly one binding — roles/secretmanager.secretAccessor on $SVCSA, the service's own account, with no condition and no second member (Q6, Global Constraint 12) — and the job account $JOBSA is a member of it: no"
   else
-    fact bundle FAIL "the bundle's container is $BUNDLE_SECRET and its policy is NOT Q6's one grant: $bindings binding(s), roles $role, $members member(s), a condition: $cond, and the job account $JOBSA a member of it: $job_member_on_bundle. Exactly one 'roles/secretmanager.secretAccessor' on the service's own account ($SVCSA), no condition and no second member is what the service mints from, and a job account with an accessor on the bundle is a job that could read every credential in it"
+    fact bundle FAIL "the bundle's container is $BUNDLE_SECRET and its policy is NOT Q6's one grant: $bindings binding(s), roles $role, $members member(s), the service's own account among them: $svcmember, a condition: $cond, and the job account $JOBSA a member of it: $job_member_on_bundle. Exactly one 'roles/secretmanager.secretAccessor' on the service's own account ($SVCSA), no condition and no second member is what the service mints from, and a job account with an accessor on the bundle is a job that could read every credential in it"
   fi
 }
 
@@ -630,14 +642,25 @@ step_app_key() {
 # The line count is read before and after the call: the call carries no identity
 # to name it by, so a count that does not move is what "no line for it" means.
 step_front_end() {
-  local before after status
+  local before after status refused error
   before=$(audit_lines "jsonPayload.purpose=\"mint\"") || stop "the service's own log could not be read (the fugaro-dev project's Cloud Logging): this row is the difference between the front end refusing the call and the service answering it"
   status=$(no_identity_call) || stop "the unauthenticated call did not get an answer from $SVCURL: is the URL right (it is the deployed service's own), and is there a network path to it?"
   after=$(audit_lines "jsonPayload.purpose=\"mint\"") || stop "the service's own log could not be read a second time"
+  # The status alone cannot tell the two 403s apart, and the line count cannot
+  # either: a service deployed WITHOUT IAM lets the call reach the container,
+  # where the account check answers 403 unverified_job_identity and writes no
+  # line for it (internal/credsvc's refuseIdentity) -- the same status and the
+  # same unmoved count the front end's own refusal leaves. The body separates
+  # them: Google's refusal is the platform's HTML, and the service's is its typed
+  # JSON. So the body is read first, and the count decides only what it leaves.
+  refused=$(reader refusal <"$SCRATCH/noident.json" 2>/dev/null) || refused=""
+  error=$(field_of error "$refused")
   case "$status" in
   403)
-    if [ "$before" = "$after" ]; then
-      fact front-end PASS "the call with no identity at all was refused $status by Cloud Run's own front end, and the service's log carries $before line(s) with purpose=mint before it and $after after it: an unauthenticated request never reaches the container, so the answer is Google's and the service's own account check is layered on top of IAM rather than instead of it"
+    if [ -n "$error" ]; then
+      fact front-end FAIL "the call with no identity at all was refused $status $error BY THE SERVICE ($before purpose=mint line(s) before it and $after after it): a typed answer to a call with no identity is a call that reached the container, so Cloud Run IAM is not on for this service. Read 'gcloud run services get-iam-policy $SVC' — the invoker grant is the outer fence this whole check is layered on, and without it the account table is the only gate"
+    elif [ "$before" = "$after" ]; then
+      fact front-end PASS "the call with no identity at all was refused $status by Cloud Run's own front end, and the service's log carries $before line(s) with purpose=mint before it and $after after it: an unauthenticated request never reaches the container (the answer is the platform's own, not the service's typed refusal), so the service's own account check is layered on top of IAM rather than instead of it"
     else
       fact front-end FAIL "the call with no identity was refused $status, and the service's log carries $after purpose=mint line(s) where it carried $before before the call: a line for a call with no identity is a line this service cannot write, so read the two dumps before concluding anything (another run's mint can land in the window and is the honest cause)"
     fi
@@ -747,11 +770,27 @@ step_mint() {
   MINT_IN_HOUR=$(field_of in_hour "$ans")
   TOK=$(field_of token "$ans")
   [ -n "$TOK" ] || stop "the mint answered 200 with no token in it"
-  if [ "$MINT_REPO" != "$REPO" ]; then
+  # The answer names the repository in the CANONICAL spelling —
+  # "<provider>/<owner>/<name>", projectpolicy.Canonical's, which is what
+  # internal/credsvc's MintResponse carries — while this check's own $REPO is the
+  # "<owner>/<name>" the config and the budget document use. The two are the same
+  # repository in two spellings, so the answer is held to the run's repository by
+  # its tail: exactly one more segment, and the same owner and name.
+  case "$MINT_REPO" in
+  */"$REPO") ;;
+  *)
     fact mint FAIL "the mint answered 200 with a token for $MINT_REPO while the run identity is a run of $REPO (uid r~$SLUG~$RUN): the service minted for a repository the run is not of, and the run identity — with the job's own account — is the whole of what decides which repository a mint is for. The token is in a shell variable and is not printed"
     return 0
+    ;;
+  esac
+  # The expiry is part of the claim, not decoration: GitHub's installation tokens
+  # live an hour and the service mints them with that expiry, so a token that
+  # outlives it (or arrives already expired) is a finding about the mint itself.
+  if [ "$MINT_IN_HOUR" != yes ]; then
+    fact mint FAIL "the mint answered 200 for $REPO ($MINT_REPO, the canonical spelling of the run's own repository) and its expiry is '$MINT_EXPIRES', inside the hour: $MINT_IN_HOUR — GitHub's installation tokens live an hour and the service mints them with that expiry, so a token outside it is the service's own expiry being wrong. The token is in a shell variable and is not printed"
+    return 0
   fi
-  fact mint PASS "the mint answered 200 for the calling account $JOBSA and the run identity of $SLUG (uid r~$SLUG~$RUN): repository $MINT_REPO, which is the run's OWN repository — the caller named nothing (the request has no repository field to fill in) and the account and the identity decided it — expires $MINT_EXPIRES, inside the hour: $MINT_IN_HOUR. The token is in a shell variable, is never printed, and is used for three reads and one probe below and for no write"
+  fact mint PASS "the mint answered 200 for the calling account $JOBSA and the run identity of $SLUG (uid r~$SLUG~$RUN): repository $MINT_REPO, the service's canonical spelling of the run's OWN repository $REPO — the caller named nothing (the request has no repository field to fill in) and the account and the identity decided it — expires $MINT_EXPIRES, inside the hour: $MINT_IN_HOUR. The token is in a shell variable, is never printed, and is used for three reads and one probe below and for no write"
 }
 
 # step_reach reads the token's reach AT GITHUB, which is the only place it can be

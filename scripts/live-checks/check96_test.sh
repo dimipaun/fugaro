@@ -258,9 +258,13 @@ case "$url" in
   case "$auth" in
   "")
     # No identity at all: Cloud Run's own front end, before the container. The
-    # body is Google's and the check prints none of it.
+    # body is Google's -- the platform's own HTML, so the check prints none of
+    # it and parses none of it. FAKE96_NOIDENT_BODY is the case where the call
+    # reached the container instead, which is a service deployed with IAM off:
+    # the body is then the service's typed refusal, and that is what the
+    # front-end row reads to tell the two 403s apart.
     code=403
-    body=""
+    body="${FAKE96_NOIDENT_BODY:-}"
     ;;
   *"IDTOKEN-CALLER-${FAKE96_OUTSIDER_DOMAIN}"*)
     # A caller that is no job account of the installation: IAM let it through
@@ -343,6 +347,26 @@ fi
 CURL_EOF
 
   chmod +x "$1/bin/gcloud" "$1/bin/fugaro" "$1/bin/curl"
+}
+
+# refuse_scratch_removal dir — a fake `rm` for the one case about a scratch
+# directory that cannot be removed: it refuses the scratch directory itself
+# (mktemp -d's `chk96.XXXXXXXX` and nothing under it, so the check's own removals
+# inside it still work) and is the real `rm` for everything else. It is written
+# by the case that wants it and by no other: a `restore` row that FAILs has to
+# make the run exit 1, and this is the only way to get one.
+refuse_scratch_removal() { # dir
+  cat >"$1/bin/rm" <<RM_EOF
+#!/usr/bin/env bash
+set -euo pipefail
+for a in "\$@"; do
+  case "\$a" in
+  */chk96.????????) printf 'rm: %s: Operation not permitted\n' "\$a" >&2; exit 1 ;;
+  esac
+done
+exec $(command -v rm) "\$@"
+RM_EOF
+  chmod +x "$1/bin/rm"
 }
 
 # ---------------------------------------------------------------- the fixtures
@@ -469,10 +493,13 @@ write_audit() { # dir
 # and the installation's repository list. The repository they name is the one
 # the check is about, which is $SANDBOX_REPO unless a case named another: the
 # service mints for the calling repository alone, and the token's reach at
-# GitHub is that repository's own.
+# GitHub is that repository's own. The mint's answer names it the way the real
+# service does — the canonical "<provider>/<owner>/<name>"
+# (internal/credsvc's MintResponse), not the bare "<owner>/<name>" the config
+# and the budget document use — while GitHub's own `full_name` is the bare one.
 write_answers() { # dir [CHECKED_REPO]
   local dir=$1 checked=${2:-$SANDBOX_REPO}
-  printf '{"token": "%s", "expires_at": "%s", "repository": "%s"}\n' \
+  printf '{"token": "%s", "expires_at": "%s", "repository": "github/%s"}\n' \
     "$MINTED" "$(date -u -d '+45 minutes' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v+45M +%Y-%m-%dT%H:%M:%SZ)" \
     "$checked" >"$dir/state/mint.json"
   printf '{"total_count": 1, "repositories": [{"full_name": "%s"}]}\n' "$checked" >"$dir/state/repos.json"
@@ -744,6 +771,81 @@ test_a_bundle_with_the_job_as_a_second_member_is_a_fail() {
   expect_contains "$out" "a job account with an accessor on the bundle" "the bundle's second member: why it is a finding"
 }
 
+test_a_mint_whose_answer_names_another_repository_is_a_fail() {
+  setup_case otherrepo
+  # The service mints for a repository this run is not of. Its answer names the
+  # canonical spelling of the OTHER repository — "github/<owner>/<name>", which
+  # is what the real service answers — so this is also the case that says the
+  # row compares the two spellings of one repository rather than the strings.
+  write_answers "$dir" "$OTHER_REPO"
+  run96
+  expect_status "$status" 1 "another repository"
+  expect_contains "$out" "FACT mint: FAIL — " "another repository: the row"
+  expect_contains "$out" "a token for github/$OTHER_REPO" "another repository: the repository the answer named"
+  expect_contains "$out" "while the run identity is a run of $SANDBOX_REPO" "another repository: the run it was for"
+}
+
+test_a_mint_whose_expiry_is_outside_the_hour_is_a_fail() {
+  setup_case badexpiry
+  python3 - "$dir/state/mint.json" "$SANDBOX_REPO" <<'PY'
+import datetime, json, sys
+p, repo = sys.argv[1], sys.argv[2]
+d = json.load(open(p))
+d["repository"] = "github/" + repo
+d["expires_at"] = (datetime.datetime.now(datetime.timezone.utc)
+                   + datetime.timedelta(hours=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
+json.dump(d, open(p, "w"))
+PY
+  run96
+  expect_status "$status" 1 "an expiry outside the hour"
+  expect_contains "$out" "FACT mint: FAIL — " "an expiry outside the hour: the row"
+  expect_contains "$out" "inside the hour: no" "an expiry outside the hour: what it read"
+}
+
+test_a_bundle_whose_one_member_is_not_the_service_account_is_a_fail() {
+  setup_case bundlemember
+  # One binding, one member, no condition, and the member is not the service's
+  # own account: the count is Q6's and the account is not, which is the half a
+  # row that reads only the count would report as held.
+  printf '{"bindings": [{"role": "roles/secretmanager.secretAccessor", "members": ["serviceAccount:someone-else@%s.iam.gserviceaccount.com"]}]}\n' \
+    "$PROJECT" >"$dir/state/policy-bundle.json"
+  run96
+  expect_status "$status" 1 "the bundle's one member"
+  expect_contains "$out" "FACT bundle: FAIL — " "the bundle's one member: the row"
+  expect_contains "$out" "the service's own account among them: no" "the bundle's one member: what it read"
+}
+
+test_a_service_reachable_without_iam_is_a_fail() {
+  setup_case noiam
+  # The call with no identity reached the container: the service answered its own
+  # typed refusal, which is a 403 with no audit line — the same status and the
+  # same unmoved count the front end's own refusal leaves. The body is what tells
+  # them apart, and a front-end row that read only the status would call this the
+  # outer fence holding.
+  RUN96_ENV=(FAKE96_NOIDENT_BODY='{"error": "unverified_job_identity", "message": "no identity"}')
+  run96
+  expect_status "$status" 1 "a service without IAM"
+  expect_contains "$out" "FACT front-end: FAIL — " "a service without IAM: the row"
+  expect_contains "$out" "BY THE SERVICE" "a service without IAM: who answered the call"
+}
+
+test_a_scratch_directory_that_cannot_be_removed_is_a_fail() {
+  setup_case restore
+  # The fake `rm` refuses the scratch directory itself, so the check's own
+  # cleanup cannot remove it. The row has to say so AND the run has to exit 1: a
+  # block that printed `restore: FAIL` beside `END (exit 0)` would read as a
+  # pass, and the exit code is what a wrapper around this check reads.
+  refuse_scratch_removal "$dir"
+  run96
+  expect_status "$status" 1 "a scratch directory that stayed"
+  expect_contains "$out" "FACT restore: FAIL — " "a scratch directory that stayed: the row"
+  expect_contains "$out" "the scratch directory is STILL THERE" "a scratch directory that stayed: what it says"
+  expect_contains "$out" "CHECK 96 RESULT END (exit 1)" "a scratch directory that stayed: the block's own end line says the run failed"
+  scratch=$(scratch_of "$dir")
+  [ -z "$scratch" ] || rm -rf "$scratch"
+  return 0
+}
+
 test_a_mint_that_answers_other_than_200_is_a_fail() {
   setup_case mintrefused
   # The bundle has no document yet, or the service cannot read it: a refusal with
@@ -919,6 +1021,10 @@ t test_the_drop_landed_is_a_pass
 t test_the_drop_without_the_code_is_a_fail
 t test_the_switch_hook_may_only_name_the_file_it_reads
 t test_a_bundle_with_the_job_as_a_second_member_is_a_fail
+t test_a_bundle_whose_one_member_is_not_the_service_account_is_a_fail
+t test_a_mint_whose_answer_names_another_repository_is_a_fail
+t test_a_mint_whose_expiry_is_outside_the_hour_is_a_fail
+t test_a_service_reachable_without_iam_is_a_fail
 t test_a_mint_that_answers_other_than_200_is_a_fail
 t test_a_mint_that_answers_200_with_no_token_stops
 t test_a_pairing_that_is_answered_is_the_finding
@@ -926,6 +1032,7 @@ t test_a_refusal_with_no_audit_line_is_the_finding
 t test_a_mint_that_answered_and_left_no_line_is_a_fail
 t test_an_outsider_that_is_answered_is_the_finding
 t test_a_user_that_survived_the_deletions_is_a_fail
+t test_a_scratch_directory_that_cannot_be_removed_is_a_fail
 t test_a_line_that_carries_a_token_is_dropped_and_reported
 t test_xtrace_is_refused
 t test_usage
