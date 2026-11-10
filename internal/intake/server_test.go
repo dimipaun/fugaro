@@ -106,13 +106,14 @@ func signToken(t *testing.T, claims map[string]any) string {
 type fakeStore struct {
 	containers map[string]Secret
 	values     map[string][]string
+	labels     map[string]map[string]string
 	created    []string
 	deleted    []string
 	calls      []string
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{containers: map[string]Secret{}, values: map[string][]string{}}
+	return &fakeStore{containers: map[string]Secret{}, values: map[string][]string{}, labels: map[string]map[string]string{}}
 }
 
 func (f *fakeStore) Describe(_ context.Context, id string) (Secret, bool, error) {
@@ -121,12 +122,13 @@ func (f *fakeStore) Describe(_ context.Context, id string) (Secret, bool, error)
 	return s, ok, nil
 }
 
-func (f *fakeStore) Create(_ context.Context, id string, annotations map[string]string) error {
+func (f *fakeStore) Create(_ context.Context, id string, annotations, labels map[string]string) error {
 	f.calls = append(f.calls, "create "+id)
 	if _, exists := f.containers[id]; exists {
 		return ErrExists
 	}
 	f.containers[id] = Secret{ID: id, Annotations: annotations}
+	f.labels[id] = labels
 	f.created = append(f.created, id)
 	return nil
 }
@@ -137,13 +139,21 @@ func (f *fakeStore) AddVersion(_ context.Context, id string, value []byte) (stri
 	return "1", nil
 }
 
-func (f *fakeStore) List(_ context.Context, prefix string) ([]Secret, error) {
-	f.calls = append(f.calls, "list "+prefix)
+// List answers the containers of one scope, and it answers them by the name
+// grammar rather than by the label the production store filters on: this fake
+// is the contract ("the containers the intake wrote under this scope") and not
+// the mechanism, and a test seeds containers by name. What the real store's
+// filter has to be is pinned against internal/gcpfake, which speaks Secret
+// Manager's own filter language.
+func (f *fakeStore) List(_ context.Context, scope Scope) ([]Secret, error) {
+	f.calls = append(f.calls, "list "+string(scope))
 	var out []Secret
 	for id, s := range f.containers {
-		if strings.HasPrefix(id, prefix) {
-			out = append(out, s)
+		n, err := secretname.Parse(id)
+		if err != nil || n.Shared() != (scope == ScopeShared) {
+			continue
 		}
+		out = append(out, s)
 	}
 	slices.SortFunc(out, func(a, b Secret) int { return strings.Compare(a.ID, b.ID) })
 	return out, nil

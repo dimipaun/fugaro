@@ -131,15 +131,24 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 				c.fail(err)
 				return
 			}
-			c.answer(http.StatusOK, ListAnswer{Secrets: listed(found, ScopeUser)})
+			c.answer(http.StatusOK, ListAnswer{Secrets: listed(found)})
 			return
 		}
-		found, err := s.cfg.Secrets.List(r.Context(), secretname.UserPrefix+caller.Sub+"_")
+		found, err := s.cfg.Secrets.List(r.Context(), ScopeUser)
 		if err != nil {
 			c.fail(err)
 			return
 		}
-		c.answer(http.StatusOK, ListAnswer{Secrets: listed(found, ScopeUser)})
+		// The scope's containers, and only the caller's own: the account id is
+		// the token's, and the name a container carries is what says whose it
+		// is (R3, R12).
+		var own []Secret
+		for _, sec := range found {
+			if n, err := secretname.Parse(sec.ID); err == nil && !n.Shared() && n.ID == caller.Sub {
+				own = append(own, sec)
+			}
+		}
+		c.answer(http.StatusOK, ListAnswer{Secrets: listed(own)})
 	case ScopeShared:
 		if req.Owner != "" {
 			c.fail(fmt.Errorf("%w: a project-shared container has no owner to name: it is the project's, and the derived admin list is who writes it", errRequestRefused))
@@ -149,12 +158,12 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 			c.fail(err)
 			return
 		}
-		found, err := s.cfg.Secrets.List(r.Context(), secretname.ProjectPrefix)
+		found, err := s.cfg.Secrets.List(r.Context(), ScopeShared)
 		if err != nil {
 			c.fail(err)
 			return
 		}
-		c.answer(http.StatusOK, ListAnswer{Secrets: listed(found, ScopeShared)})
+		c.answer(http.StatusOK, ListAnswer{Secrets: listed(found)})
 	default:
 		c.fail(scopeRefused(req.Scope))
 	}
@@ -327,7 +336,7 @@ func (s *Server) ensure(ctx context.Context, id string, o owner, mustExist bool)
 		if mustExist {
 			return false, errNoSuchSecret
 		}
-		if err := s.cfg.Secrets.Create(ctx, id, annotations(o)); err != nil {
+		if err := s.cfg.Secrets.Create(ctx, id, annotations(o), labels(o)); err != nil {
 			if !errors.Is(err, ErrExists) {
 				return false, err
 			}
@@ -359,6 +368,38 @@ func annotations(o owner) map[string]string {
 		AnnotationOwnerEmail: o.email,
 		AnnotationCreatedBy:  o.creator,
 	}
+}
+
+// labels is the label set the intake writes for a container: which scope it
+// belongs to, and — for a per-user one — the account id its name carries. They
+// are how the next call finds it again, since the intake holds no secrets.get
+// and no name filter (see the label constants).
+func labels(o owner) map[string]string {
+	scope := ScopeUser
+	if o.shared {
+		scope = ScopeShared
+	}
+	out := map[string]string{LabelScope: string(scope)}
+	if !o.shared {
+		out[LabelOwnerSub] = o.sub
+	}
+	return out
+}
+
+// ours reports whether a container is one this intake wrote under the scope a
+// call is about. The stored filter answers it already, and the name is checked
+// again here: the name is the truth about who owns a container (R12), and a
+// container the filter returned is not one this intake may answer with if its
+// own grammar does not agree.
+func ours(sec Secret, scope Scope) bool {
+	n, err := secretname.Parse(sec.ID)
+	if err != nil {
+		return false
+	}
+	if scope == ScopeShared {
+		return n.Shared()
+	}
+	return !n.Shared()
 }
 
 // checkShape refuses a container the intake did not make (R12, F35).
@@ -423,9 +464,11 @@ func ownerOf(sec Secret) owner {
 // byOwner answers the per-user containers whose owner annotation is the
 // address: the admin's lookup and the offboarding sweep (R10).
 //
-// It is a scan of the project's per-user containers, which is the shape of the
-// grant the intake holds: secrets.list cannot be conditioned on a name prefix
-// (F30), so the intake lists unconditioned and matches here. A container whose
+// It is a scan of every container the intake wrote under the per-user scope,
+// which is the shape of the grant the intake holds: secrets.list cannot be
+// conditioned on a name prefix (F30) and the address is not a label a list
+// could filter on, so the intake lists the scope and matches the annotation
+// here. A container whose
 // name is not one this grammar builds is not one this intake wrote and is not
 // returned — the NAME is the truth about who owns a container, and a name that
 // does not parse names nobody.
@@ -434,13 +477,13 @@ func (s *Server) byOwner(ctx context.Context, address string) ([]Secret, error) 
 	if !ok {
 		return nil, fmt.Errorf("%w: %s is not an address this intake can find a member's containers by", errRequestRefused, pluginwire.Printable(address))
 	}
-	all, err := s.cfg.Secrets.List(ctx, secretname.UserPrefix)
+	all, err := s.cfg.Secrets.List(ctx, ScopeUser)
 	if err != nil {
 		return nil, err
 	}
 	var out []Secret
 	for _, sec := range all {
-		if _, err := secretname.Parse(sec.ID); err != nil {
+		if !ours(sec, ScopeUser) {
 			continue
 		}
 		if !sameAddress(sec.Annotations[AnnotationOwnerEmail], canonical) {
@@ -452,16 +495,21 @@ func (s *Server) byOwner(ctx context.Context, address string) ([]Secret, error) 
 }
 
 // listed renders containers as a list's answer: the name a caller asks for it
-// by, its scope and the date it was made. A container whose name this grammar
-// does not build is skipped rather than answered with a name this intake never
-// writes — and there is nothing else on the row: no version's count, and no
-// version's value.
-func listed(found []Secret, scope Scope) []ListedSecret {
+// by, its scope and the date it was made. The scope is the name's own fact and
+// not a parameter, so a row cannot be answered with a scope its container is
+// not in. A container whose name this grammar does not build is skipped rather
+// than answered with a name this intake never writes — and there is nothing
+// else on the row: no version's count, and no version's value.
+func listed(found []Secret) []ListedSecret {
 	out := make([]ListedSecret, 0, len(found))
 	for _, sec := range found {
 		n, err := secretname.Parse(sec.ID)
 		if err != nil {
 			continue
+		}
+		scope := ScopeUser
+		if n.Shared() {
+			scope = ScopeShared
 		}
 		out = append(out, ListedSecret{ID: sec.ID, Name: n.Name, Scope: scope, Created: sec.Created})
 	}

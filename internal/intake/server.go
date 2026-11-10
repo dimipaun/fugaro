@@ -133,6 +133,33 @@ const (
 	AnnotationCreatedBy = "fugaro_created_by"
 )
 
+// The labels every container the intake writes carries. They are how the
+// intake finds its own containers again, and their reason is DS2.2's grant:
+// the account holds create and list and no secrets.get, and Secret Manager's
+// list call is filtered by labels (the installation's own filter shape: the
+// jobs and the secrets it retires are found by labels.fugaro_repo, retire.go).
+// A name-prefix *filter* would be the other candidate and is not taken: what
+// IAM cannot express on this call is exactly a name-prefix condition (F30),
+// and a filter that named a prefix would be a second, differently-spelled way
+// of saying what the name grammar already says.
+//
+// They are labels and not annotations because they are the lookup, and they
+// are only the lookup: the identity a container is found BY is the <sub> in
+// its name (R12), and its annotations are what records the owner. A label
+// value cannot hold an address — the whole reason R10 stores the address as an
+// annotation — so the scope is a word and the owner is the account id, which
+// digits allow.
+const (
+	// LabelScope is which prefix a container belongs to: the value is the
+	// scope's own word, so one filter answers for one scope and the value
+	// cannot be spelled two ways.
+	LabelScope = "fugaro_scope"
+	// LabelOwnerSub is the account id a per-user container's name carries. It
+	// is a copy of what the name says and never a claim: the name is the
+	// truth (R12), and this narrows a list to one member's containers.
+	LabelOwnerSub = "fugaro_owner_sub"
+)
+
 // The audit line's acts: what the call asked for. A closed set, for the reason
 // the scopes are one.
 const (
@@ -157,7 +184,9 @@ const (
 	// read, a name outside R1's grammar, a scope or an act it does not have.
 	ErrorRequestRefused = "request_refused"
 	// ErrorNoSuchSecret is a rotation or a delete of a container that is not
-	// there, and a sweep that matched nothing.
+	// there. A sweep that matched nothing is not this: it is answered as done,
+	// because what it was asked for — that none of the member's containers is
+	// left — is true.
 	ErrorNoSuchSecret = "no_such_secret"
 	// ErrorForeignContainer is an existing container whose shape is not the
 	// intake's own (R12): another writer's, and refused rather than written
@@ -305,9 +334,14 @@ var ErrExists = errors.New("the container already exists")
 // SecretStore is the intake's whole reach in Secret Manager, and it is
 // deliberately short: a container can be described, created, given a version,
 // listed and deleted, and there is no call that answers a version's payload.
-// The intake's service account holds no secretmanager.versions.access at all
-// (DS2.2), so this interface is the code's half of a bound the deployment also
-// makes — and the code's half is the one a test can hold (TestNoReadMethodExists).
+// The intake's service account holds no accessor at all and no secrets.get
+// either — DS2.2 grants it create and list unconditioned and version-add and
+// delete under the name-prefix condition (F30) and nothing else — so this
+// interface is the code's half of a bound the deployment also makes, and the
+// code's half is the one a test can hold (TestNoReadMethodExists). It is why
+// Describe is not a secrets.get and List is not a name filter: both are served
+// by the one list call the account holds, over the labels the intake writes
+// (see the label constants).
 //
 // A write to an existing container is refused by the caller of this interface
 // and not by the store: the shape check is R12's rule and it lives where the
@@ -315,15 +349,28 @@ var ErrExists = errors.New("the container already exists")
 // the second of them is refused before it is made.
 type SecretStore interface {
 	// Describe answers one container's metadata, and whether it is there.
+	// "There" means a container of this intake's own shape, since a store that
+	// holds no secrets.get finds one through the list call: a container with
+	// the name that another writer made without the intake's labels is one
+	// this call does not find, and the write path refuses it rather than
+	// writing into it (R12).
 	Describe(ctx context.Context, id string) (Secret, bool, error)
-	// Create makes the container with annotations, or answers ErrExists.
-	Create(ctx context.Context, id string, annotations map[string]string) error
+	// Create makes the container with annotations and labels, or answers
+	// ErrExists.
+	Create(ctx context.Context, id string, annotations, labels map[string]string) error
 	// AddVersion stores value as a new version of id and answers the version
 	// ID. The value is bytes: nothing here reads it back.
 	AddVersion(ctx context.Context, id string, value []byte) (string, error)
-	// List answers the metadata of every container whose ID begins with
-	// prefix. Metadata only, and never a version's payload.
-	List(ctx context.Context, prefix string) ([]Secret, error)
+	// List answers the metadata of every container the intake wrote under one
+	// scope: the callers' own containers, or the project's shared ones.
+	// Metadata only, and never a version's payload.
+	//
+	// The scope and not a name prefix, because the prefix is a spelling of the
+	// name grammar and this is a question about which containers the intake
+	// wrote: a name-prefix condition is exactly what IAM cannot express on the
+	// list call (F30), so the store narrows with the label it writes instead
+	// and re-checks the scope against the name it parses.
+	List(ctx context.Context, scope Scope) ([]Secret, error)
 	// Delete removes the container and every version in it. There is no
 	// undelete.
 	Delete(ctx context.Context, id string) error
