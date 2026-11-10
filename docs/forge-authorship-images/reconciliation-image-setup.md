@@ -16,9 +16,11 @@ open**, one of which (**C8**) has its first third built (C8a). **The image overl
 sixteen**: the two merged ones (C3, C4) and the two open ones (C6, and C8's C8b/C8c). What "about 16"
 was is the number of tasks *left* when the status row was written — §1.
 
-**Numbers this file holds:** **D650–D659**, out of this folder's own reserved block D650–D679, which
-[README.md](README.md) reserved and which was re-checked free on `main` and in every open pull
-request on 2026-11-10 (§5). **No check number is taken**: everything here is a reading of the tree.
+**Numbers this file holds:** the block **D650–D659**, out of this folder's own reserved D650–D679,
+which [README.md](README.md) reserved and which was re-checked free on `main` and in every open pull
+request on 2026-11-10 (§5). Of the block, **D650–D653 are written** below and **D654–D659 are held,
+unwritten**, for this file's own follow-ups. **No check number is taken**: everything here is a
+reading of the tree.
 
 **The image setup skill is a sibling plan, not a newer copy of this one.** It plans the *project
 image catalog* as the one place a project's images are defined, a survey of a project's repositories
@@ -58,7 +60,9 @@ That is four of 25, and it is the whole of the overlap: image-setup's plan touch
 `internal/runner/runner.go`'s checkout opening and the plugin skills; this folder's open tasks touch
 `internal/gitprov/`, `internal/task/`, `internal/cli/run.go`, `internal/imagecheck/`, `ee/` and the
 live checklist, and nothing in image-setup's plan creates a forge kind, a CI-status read, a context
-repository, a change set or a live-check entry.
+repository or a change set. The one file the two plans both write is `docs/gcp-live-checklist.md`,
+where they hold different numbers: this folder's Checks 230–235 (233 withdrawn, X1's file) against
+image-setup's 500 and 501 (IS13's), so neither block is the other's and no entry is shared.
 
 **A second, conditional overlap — a finding (F1).** C3 and C4 are merged, and both were written for
 the *per-repository derived image*: C3 orders that image's layers, C4 warns when the running job's
@@ -88,7 +92,7 @@ IS1–IS13 with IS6 unused); its own folder's merged count is stale in both dire
 | **A2b** — the launcher fills the author | **Merged** | `localcfg.Config.CommitName`, `localcfg.Config.CommitEmail` (`internal/localcfg/localcfg.go`); the `authorSince` and `gitAuthorSince` gates (`internal/cli/recipes_skew.go`) |
 | **A3** — the runner stamps commits as they are made | **Merged** | `internal/runner/runner.go` (`stampHooks`, `stampAuthor`, `writeStampHooks`), pinned by `internal/runner/stamp_test.go` (`TestRunnerVerifiedCommitIsTheStampedCommit`, `TestRunnerOwnCommitsCarryTrailers`, `TestRunnerLogsUnstampedCommitCount`, `TestRunnerReviewAndArtifactNeverStamp`) |
 | **A4** — docs | **Merged** | `docs/git-providers.md` §"Commit author and trailers"; `SECURITY.md` §"Known limits" ("A run's commit author is the launcher's claim, and its trailers are a record"); pinned by `internal/cli/docs_commit_author_test.go` (`TestDocsCommitAuthorIsAClaim`, `TestDocsTrailerNames`, `TestDocsSupportedForges`) |
-| **A5** — Check 230 (OWNER-RUN) | **Kept** | the check it measures can run — A3 is merged — but the entry is not written: `docs/gcp-live-checklist.md` has no Check 230 section, and X1 (the entry's only writer) is not merged. No image-setup task touches the live checklist |
+| **A5** — Check 230 (OWNER-RUN) | **Kept** | the check it measures can run — A3 is merged — but the entry is not written: `docs/gcp-live-checklist.md` has no Check 230 section, and X1 (the entry's only writer) is not merged. image-setup writes into the same file with its own numbers (IS13: Checks 500, 501), and no task of its plan writes a Check 230 entry |
 | **B1** — one list of forge kinds | **Kept** | no `internal/gitprov/kinds.go`; `internal/gitprov/gitprov.go` still declares `KindGitHub`/`KindBitbucket` and `internal/gitprov/providers/providers.go` reads them ad hoc. image-setup names forge kinds nowhere; its IS10 survey consumes `gitprov.ContentsReader` and so is forge-agnostic |
 | **B2** — a CI-status read | **Kept** | no `Checks` on `gitprov.Provider` (`internal/gitprov/gitprov.go`). image-setup's IS11 smokes a catalog entry's prebuilt image — a build-time contract check, not a commit's CI status |
 | **B3** — GitLab | **Kept** | gated on D610 ("build"); no file under `docs/` reconciles GitLab, and the plan's own first output (the tokens/`Draft:` reconciliation) is unwritten |
@@ -98,7 +102,7 @@ IS1–IS13 with IS6 unused); its own folder's merged count is stale in both dire
 | **C5a** — context repositories in the task | **Kept** | no `Spec.ContextRepos` (`internal/task/task.go`), no `--context` flag on `fugaro run`. image-setup's baked repos (IS7's `bake_repos`, IS8b) put a repository's *source in the image*; a context repository is a *read-only clone for one run* — §5 D652 |
 | **C5b** — a read-only token for context repositories | **Kept** | no second mint in `internal/gitprov/github/apptoken.go` / `internal/credsvc/github.go`; nothing in image-setup mints a token |
 | **C5c** — the runner clones context repositories read-only | **Kept** | no `internal/runner/context_repos.go`. image-setup's IS8 (`internal/runner/runner.go` `openCheckout`, `TestBakedCheckoutOriginMismatchRefuses`) is adjacent — one image, several repositories' sources — and builds the opposite direction: it *refuses* a checkout that is not the job's own repository instead of adding more |
-| **C6** — `SECURITY.md`: baked source and registry readers | **Kept** | its second half is merged with C8a (`SECURITY.md` §"the shared dependency-layer image": the key's integrity rules and what they are not a boundary for, pinned by `internal/cli/docs_shared_images_test.go`); its first half — that an image holds its source at the baked commit and that anyone with pull rights on its registry reads it, that context repositories are not baked, that builds are Cloud Build cost outside the run budget — is written nowhere: the design's own line, "C6 is not written, so no SECURITY.md paragraph exists to amend yet" (`shared-images.md` §1), was written before C8a's paragraph landed, and what C6's first half owes is still unwritten. §5 D651 |
+| **C6** — `SECURITY.md`: baked source and registry readers | **Kept** | its second half is merged with C8a (`SECURITY.md` §"Shared images: what the key protects, and what it does not": the key's integrity rules and what they are not a boundary for, pinned by `internal/cli/docs_security_test.go` `TestSecurityMdStatesTheModelAndItsLimits` — `docs_shared_images_test.go` reads the design and this folder's README, not `SECURITY.md`); its first half — that an image holds its source at the baked commit and that anyone with pull rights on its registry reads it, that context repositories are not baked, that builds are Cloud Build cost outside the run budget — is written nowhere: the design's own line, "C6 is not written, so no SECURITY.md paragraph exists to amend yet" (`shared-images.md` §1), was written before C8a's paragraph landed, and what C6's first half owes is still unwritten. §5 D651 |
 | **C7** — shared images keyed by the resolved dependency set: a design | **Merged** | `docs/forge-authorship-images/shared-images.md`, pinned by `internal/cli/docs_shared_images_test.go` `TestDocsSharedImagesDesign` |
 | **C8** — build, lock, proposal and job update for shared images | **Kept** (C8a built) | **C8a merged**: `imagecheck.Key` (`internal/imagecheck/key.go`), `imagecheck.ParseLock`/`ReadLock`/`Update` (`internal/imagecheck/lock.go`), `imagecheck.Superset` (`internal/imagecheck/superset.go`), `schemas/image-lock.schema.json` (merged as `251d55a4`, `0f1d13b6`). **C8b/C8c are not**: no `internal/cli/image_ls.go`, `image_proposal.go` or `image_prune.go`, no cap warning in `internal/cli/doctor.go`, and `config.SharedCheckoutRefusal` refuses `checkout: shared` until a release ships the images. §5 D650 |
 | **D1** — change sets created together, linked PRs | **Kept** | no `Spec.ChangeSet` (`internal/task/task.go`), no `internal/runstore/changeset.go`. Multi-repository runs are outside image-setup's subject entirely (its images hold several repositories' *sources*, never one run across repositories) |
@@ -134,7 +138,7 @@ Grouped, so the answer to "how much of this folder is really image work" is legi
   the image overlap actually is, instead of "about 16, much overlapping image-setup".
 - Nothing outside `docs/` changes, and no code, schema, policy or image changes: this is a reading.
 
-## 5. Decisions for the owner (D650–D659)
+## 5. Decisions for the owner (D650–D653 written, D654–D659 held)
 
 These are the questions the overlap leaves open. Each is a recommendation with its alternative and
 cost, and an **empty answer cell** — answering one is not approving a task. **Neither D650 nor D653
@@ -145,8 +149,9 @@ CATALOG FIRST ruling stand as they are.
 decision written on `main` is **D1959**, the top of secrets-brokering/dynamic-delivery's reserved
 block (D1930–D1959, D1947–D1959 unused); the highest used in any open pull request is **D1945**. This
 folder's own block **D600–D679** is intact on `main` and unused in every open pull request
-(D650–D679 are reserved and unused), so these decisions take **D650–D659** from it, above D649 (the
-highest answer this folder holds) and below the reserved top.
+(D650–D679 are reserved and unused), so these decisions take **D650–D653** from it, above D649 (the
+highest answer this folder holds) and below the reserved top; **D654–D659** of the block stay held
+for this file's own follow-ups.
 
 | # | Question | Recommendation and reason | Alternative and cost | Owner's answer |
 | --- | --- | --- | --- | --- |

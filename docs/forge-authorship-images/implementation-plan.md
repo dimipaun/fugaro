@@ -471,10 +471,10 @@ from it. **Not sized here** beyond: L, security-sensitive throughout.
 #### C6. SECURITY.md: baked source and registry readers
 
 - **State:** Kept in part — the shared-key half of the commit is merged with C8a (`SECURITY.md`'s
-  paragraph on the shared dependency-layer image, pinned by
-  `internal/cli/docs_shared_images_test.go`); the baked-source half is written nowhere — the design's
-  own "C6 is not written" line predates C8a's paragraph and still holds for that half. Whether to
-  re-point it at the catalog's images is
+  "Shared images: what the key protects, and what it does not", pinned by
+  `internal/cli/docs_security_test.go` `TestSecurityMdStatesTheModelAndItsLimits`); the baked-source
+  half is written nowhere — the design's own "C6 is not written" line predates C8a's paragraph and
+  still holds for that half. Whether to re-point it at the catalog's images is
   [reconciliation-image-setup.md](reconciliation-image-setup.md) §5, D651.
 
 - **Files:** `SECURITY.md`, `website/content/security.md` (regenerated),
