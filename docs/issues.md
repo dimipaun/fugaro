@@ -37,10 +37,10 @@ summary, and under them what is known about it:
   after the release that fixed it. Another reporter's regression does not make
   this user's row one.
 - **The times**: when the user hit it, when it was submitted, when it was
-  resolved and when it was dismissed. A transition that has not happened prints
-  `-`, and the hit time is the user's own — the moment the issue was created
-  here, or the time in the user's own earliest occurrence when a report of
-  theirs was merged into somebody else's issue.
+  resolved and when it was dismissed. A submitted, resolved or dismissed time
+  that has not happened prints `-`, and the hit time is the user's own — the
+  moment the issue was created here, or the time in the user's own earliest
+  occurrence when a report of theirs was merged into somebody else's issue.
 - **The link** to the GitHub issue, printed for a `submitted`, `resolved` or
   `regression` row. Only a link in the shape
   `https://github.com/dimipaun/fugaro/issues/<n>` is printed; anything else in a
@@ -50,8 +50,9 @@ summary, and under them what is known about it:
   installation are both at or above it; the version this machine runs followed
   by the one command that closes the gap, `fugaro update`, when they are not;
   `installation not checked` when the installation's own record could not be
-  read, which leaves the CLI deciding alone; and `dev build: cannot compare`
-  for a build that is not a release and so cannot be updated to one.
+  read, which leaves the CLI deciding alone; a record whose fixing release is
+  not one this build can compare against; and `dev build: cannot compare` for a
+  build that is not a release and so cannot be updated to one.
 - **How many other people hit it**, as `also hit by 2 other(s)`. Other
   reporters are counted and never named: a count of zero prints nothing, and the
   user is never counted among them. The same person on two machines is one
