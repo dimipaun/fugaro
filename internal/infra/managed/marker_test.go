@@ -2098,6 +2098,21 @@ var runAccountGrants = setOf(
 	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=var.project_secrets[var.coordinator.app_key_secret] | google_service_account.coordinator[0].member | for_each= | perms=`,
 	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=var.credentials_service.service | google_service_account.coordinator[0].member | for_each= | perms=`,
 
+	// The workspace's read of this member's ledger (W7,
+	// docs/workspaces/spec.md §5): the account the member's own workspace_pin
+	// names — another project's Fugaro installation, which this module cannot
+	// create, does not know and never derives — holding one permission on this
+	// project and nothing else. Reviewed for the write path this allowlist
+	// exists to stop: firebasedatabase.instances.get reads the instance and the
+	// role carries no firebasedatabase.instances.update, no storage permission
+	// of any kind, no IAM and no serviceAccount actAs, so it can neither write
+	// this bucket's root nor grant, mint or act as anything that could. It
+	// exists only on an installation whose pin names a workspace (the count)
+	// and a managed project's own plan gate refuses it, being a grant to a
+	// principal that is not this installation's — which is why it is bound here
+	// by the member's own `fugaro update` and not by a covered apply.
+	`google_project_iam_member | "projects/${var.project}/roles/fugaroWorkspaceRead" | project=var.project | "serviceAccount:${var.workspace_service_account}" | for_each= | perms=firebasedatabase.instances.get`,
+
 	// The scheduler account's: starting the history and check jobs, and the
 	// coordinator's sweep (coordinator plan P5, the same custom role and the
 	// same member, on the coordinator job alone).
