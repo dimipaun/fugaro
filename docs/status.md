@@ -35,7 +35,7 @@ As of 2026-11-10, read from `main`, the open pull requests and each plan's task 
 | licensing | 17/23 | owner-run only |
 | credentials-service | about 32/36 | owner checks; Check 96 holds C2.3 |
 | console-dependency-graph | 13/17 | GV3.1, GV3.2, GV4.1 |
-| bitbucket-credentials | 9/12 | T2.6, T2.11; owner Checks 149 and 145 |
+| bitbucket-credentials | 9/12 | T2.6, T2.11; owner Checks 149 and 145; S3 superseded by the secrets-brokering proxy chain (2026-11-10) |
 
 ## In progress, a lot left
 
