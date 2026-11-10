@@ -181,11 +181,12 @@ func resolvedRig(t *testing.T, modes func(*initOptions), dir string) (*initRun, 
 }
 
 // stubResolvedBucketFatal is the bucket a run that may not touch the store
-// would open: the step failing here is the assertion.
+// would open — one that applied nothing, or one that left a step for the
+// person — and the step failing here is the assertion.
 func stubResolvedBucketFatal(t *testing.T) {
 	t.Helper()
 	stubRetryBucket(t, func(context.Context, cloudOptions, retryProject) (*blobx.Bucket, error) {
-		t.Error("the step opened the runs bucket for a run that applied nothing")
+		t.Error("the step opened the runs bucket for a run that may not touch the store")
 		return nil, errors.New("no bucket")
 	})
 }
