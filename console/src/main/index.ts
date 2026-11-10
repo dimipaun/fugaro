@@ -884,9 +884,10 @@ let settingsEditRunner: SettingsEditRunner = DECLINING_SETTINGS_EDITOR
  * and the licence section's two, which read the console's own licence store
  * (`CliBackedHandlers` in `src/source/source.ts` says so from the other side).
  *
- * `reducedModeHandlers` wraps the result in `registerHandlers` below rather than
- * here, so that what this constant holds is the surface and what the wrapper
- * holds is the gate over it.
+ * The gates wrap the result in `registerHandlers` below rather than here, so that
+ * what this constant holds is the surface and what the wrappers hold is the gate
+ * over it -- `reducedModeHandlers` for the handshake's answer, and
+ * `lapseHandlers` outside it for the key's (subscriptions plan S6.2).
  */
 const gated: ConsoleHandlers = {
   ...handlersFor(boundSource, {
