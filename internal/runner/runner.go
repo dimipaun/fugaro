@@ -1955,6 +1955,12 @@ const bashTimeoutSlack = 2 * time.Minute
 // brings origin/<base> up to date before anything reads it — and the task's
 // own ref is fetched separately either way (CheckoutNewBranch).
 //
+// A checkout the image baked is not always at the work directory: on the
+// shared image D1900 gives every per-repository job it is at a per-slug path
+// under bakedRepoRoot, and bootstrap makes that path the work directory when it
+// is this run's repository's (openBakedCheckout). Every arm below therefore
+// works on r.d.WorkDir alone.
+//
 // remote is where the clone comes from. It is r.cloneURL's answer for this run
 // — computed from task.json, the job's provider and the policy on a project
 // job, the job's environment's remote on a per-repository one (projectjob.go) —
@@ -1972,6 +1978,178 @@ func (r *run) openCheckout(ctx context.Context, remote string, cloneVars map[str
 		return nil, fmt.Errorf("%s is empty and this job has no repository to clone (FUGARO_CHECKOUT=%s with no remote)", r.d.WorkDir, config.CheckoutClone)
 	}
 	return gitops.CloneBlobless(ctx, r.d.WorkDir, remote, "", env, modelCredentialVars...)
+}
+
+// bakedRepoRoot is the directory a shared image keeps the repositories it baked
+// in: one checkout per repository, named by the repository's storage slug
+// (openBakedCheckout). The name is fixed here rather than discovered because
+// both ends of the layout are Fugaro's own code — the bake step writes these
+// directories, and a run of the image reads them here. Nothing writes them yet:
+// the bake step (IS8b, docs/image-setup-skill) waits on the owner's ruling on
+// O3, so this constant and the per-slug arm below are the contract that step has
+// to meet, and until it does every run falls back to the clone. It is a sibling
+// of the work directory and never a path inside it, because the work directory
+// is the run's own checkout and a repository the image merely carries is not
+// part of it.
+const bakedRepoRoot = "baked"
+
+// openBakedCheckout settles the checkout this run finds in its image, before
+// anything of the run can use it.
+//
+// A checkout in the image is not one this run made, and which repository it is
+// a checkout OF is not a property of the path it sits at. The run therefore
+// opens the work directory when it holds a checkout and, otherwise, the
+// directory the image baked this run's own repository at (bakedRepoRoot,
+// named by the run's storage slug) — and never another repository's, which is
+// the half of the shared image's layout that a single clone at a fixed path
+// could not do (D1900: a per-repository job runs the project's catalog image,
+// which bakes the project's repositories and not just this run's, F7).
+// Whichever checkout it opens is then held to the repository its task names
+// (checkBakedCheckoutOrigin); a run with neither clones (openCheckout).
+//
+// Adopting the per-slug directory is what makes it the run's work directory,
+// and everything bootstrap reads about the checkout from there on reads this
+// one: which remote the clone, the fetches and the push name (cloneURL's
+// phase-1 answer), and which remote's credential is scoped to the endpoint git
+// will open (credentialVars). bootstrap therefore calls this before it asks
+// where the run clones from.
+//
+// Only a per-repository job looks. A project job's image bakes no checkout and
+// the run refuses any it finds (checkProjectCheckoutOrigin), so there is nothing
+// for it to adopt. And the run must be able to name the repository its task
+// names under the kind its own slug derives (providerForSlug): a slug no
+// provider kind produces — what `--provider fake` gives a local invocation —
+// names no repository to call a baked directory after and no remote to hold the
+// checkout the run finds to, so such a run looks for neither.
+//
+// A local run whose slug does derive one (`fugaro exec --run <slug>/<id>`) is
+// held to the binding like a cloud one, and deliberately: the slug it was given
+// keys its bucket paths, its locks, its cache and its budget session, so a
+// checkout of another repository is not this run's to work on and push from
+// there either.
+func (r *run) openBakedCheckout(ctx context.Context) error {
+	slug := r.d.Store.Slug()
+	kind, ok := providerForSlug(slug, r.spec.Repo)
+	if !ok {
+		return nil
+	}
+	if _, project := r.projectJob(); project {
+		return nil
+	}
+	repo, err := gitops.Open(r.d.WorkDir, nil)
+	if err != nil {
+		dir := filepath.Join(filepath.Dir(r.d.WorkDir), bakedRepoRoot, slug)
+		// No checkout at the work directory: this run's own repository is at
+		// its own baked path on a shared image, and a run that has none there
+		// either has no baked checkout at all.
+		if repo, err = gitops.Open(dir, nil); err != nil {
+			return nil
+		}
+		// The run's state stays outside the checkout it works on, and from
+		// here the checkout it works on is this one.
+		if err := stateDirOutsideCheckout(dir, r.d.StateDir); err != nil {
+			return err
+		}
+		r.d.WorkDir = dir
+		// A third remote the run's git commands can name, beside the job's own
+		// FUGARO_REMOTE and the origin of a checkout in the work directory:
+		// bootstrap registers both of those before anything can quote them, and
+		// this checkout's origin is only read here. What a remote can carry is
+		// what gets registered, never the path itself (addRemoteSecrets).
+		r.addRemoteSecrets(r.originURL(ctx))
+	}
+	return r.checkBakedCheckoutOrigin(ctx, kind, repo)
+}
+
+// checkBakedCheckoutOrigin refuses a checkout the image already held when it is
+// not this run's repository's (F7, IS8): the run would commit another
+// repository's source under this run's slug, push it with a git credential
+// minted for this run's repository, and open the pull request as this
+// repository's.
+//
+// The refusal is the admission's own remote binding (remoteAdmissionErr), read
+// against the checkout the run is about to work on instead of the remote it was
+// launched with. On a per-repository job a cloud run has had its origin checked
+// there already; what this adds is the origin of the checkout the run actually
+// opens — including the per-slug one openBakedCheckout has just adopted, which
+// admission never saw — and the same check for a local run, which has no
+// admission at all. A remote that names no repository at all — a local path,
+// an empty remote, an scp-like remote whose userinfo is everything in front of
+// its colon — passes exactly as it does there, which is what keeps a local
+// invocation's own checkout usable. An scp-like remote that does name a
+// repository (git@github.com:acme/app.git) is compared like any other, and one
+// naming another repository is refused here as it is there: the binding reads
+// the path a remote names whichever spelling it is written in
+// (remoteRepoPath), and the ssh spelling is no exception to it.
+//
+// It runs where checkProjectCheckoutOrigin does, before the provider is opened,
+// so a refusal means no git credential was ever requested and nothing was
+// fetched.
+//
+// The fetch URL is not the only URL this checkout can send the run's git to.
+// The run's last git command is a push of its own branch to origin
+// (gitops' Push), and git sends that push to the remote's pushurl when the
+// checkout sets one, resolved through insteadOf and pushInsteadOf as well —
+// while the run's git credential is scoped to the remote's endpoint and not to
+// its path (gitops' CredentialURL), so a pushurl naming another repository on
+// the provider's own host carries this repository's credential to it. A
+// checkout whose origin is this run's repository and whose pushurl is not would
+// therefore pass on its origin and push the run's branch into the other
+// repository, which is the same hole by another door: every push URL is held to
+// the binding too. A push URL that is the fetch URL is the ordinary case (no
+// pushurl is set) and is not compared twice.
+//
+// A push that names the origin URL rather than the remote is the third door,
+// and it is the one the two reads above leave open between them. That push is
+// the checkpoint's (gitops' PushFastForward is handed origin's URL, which is
+// what keeps a pushurl set after the read from redirecting it) and it meets the
+// checkout's url.*.pushInsteadOf and url.*.insteadOf rules, while `git remote
+// get-url --push` answers for the *remote*: on a checkout that sets a pushurl
+// the rewrite is nowhere in its answer, so a checkout whose pushurl is this
+// repository and whose configuration rewrites the URL a push names to another
+// one would pass both reads and send every checkpoint into that other
+// repository, with this repository's credential and under this run's slug. The
+// URL that push names is the one this function read, which git's read of the
+// remote has already rewritten once, so a rule matching what another rule
+// produced is a rewrite of this push too. gitops' PushURLs resolves both kinds
+// against the origin URL, in the order git reads them, and returns what they
+// produce with the rest — which is why it is given the URL this function read.
+//
+// A remote named by that URL is the fourth door. A checkout can carry a section
+// [remote "https://github.com/acme/app.git"] — a remote whose name is the URL —
+// with a push URL of its own, and git resolves the URL a push names to a remote
+// by name, so the checkpoint push goes to that section's push URL while both of
+// the reads above answer for the remote named "origin" and for the URL's own
+// rewrite. gitops' PushURLs asks git for the URL read as a name too, so that
+// section's push URL is in the list this function holds to the binding.
+func (r *run) checkBakedCheckoutOrigin(ctx context.Context, kind string, repo *gitops.Repo) error {
+	origin, err := strip(repo).OriginURL(ctx)
+	if err != nil {
+		return fmt.Errorf("the checkout in the image at %s carries no origin this run can read, and this run is for %s: what a run pushes to and works on is decided by the repository its task names and never by a checkout nothing ties to it, so the run stops before any git credential is requested", repo.Dir, r.spec.Repo)
+	}
+	if err := remoteAdmissionErr(origin, kind, r.spec.Repo, r.d.Store.Slug()); err != nil {
+		return fmt.Errorf("the checkout in the image at %s is not this run's repository: %w", repo.Dir, err)
+	}
+	pushURLs, err := strip(repo).PushURLs(ctx, origin)
+	if err != nil {
+		return fmt.Errorf("the checkout in the image at %s carries no push URL this run can read, and this run is for %s: the run's branch is pushed to this checkout's own origin, so a checkout whose push URL cannot be read is one this run cannot say where its work would land, and the run stops before any git credential is requested", repo.Dir, r.spec.Repo)
+	}
+	for _, url := range pushURLs {
+		if url == origin {
+			continue
+		}
+		// The refusal is the binding's decision and not its sentence: every
+		// sentence remoteAdmissionRefusal writes is about the remote the run
+		// *clones* from (the job's environment, or the origin of a checkout in
+		// the work directory), and a push URL is neither of those. The reasons
+		// it refuses for are this one's too — another repository, another host,
+		// an endpoint a credential is scoped to that the launcher writes none
+		// of — so the decision is reused and the sentence is this one's.
+		if err := remoteAdmissionErr(url, kind, r.spec.Repo, r.d.Store.Slug()); err != nil {
+			return fmt.Errorf("the checkout in the image at %s pushes to %s, which is not this run's repository: the run's last git command pushes its branch to origin (gitops' Push), which git sends to the remote's pushurl when the checkout sets one, and a checkpoint pushes by origin's URL (gitops' PushFastForward), which git sends to the remote that URL names when the checkout has one and otherwise rewrites by the checkout's url.*.pushInsteadOf and url.*.insteadOf rules — and the run's git credential is scoped to the remote's endpoint rather than to its path, so the branch would land in another repository with this repository's credential, under the slug %s, while the pull request would be opened for %s: what a run pushes to is decided by the repository its task names and never by a checkout nothing ties to it, so the run stops before any git credential is requested", repo.Dir, remoteDisplay(url), r.d.Store.Slug(), r.spec.Repo)
+		}
+	}
+	return nil
 }
 
 func (r *run) bootstrap(ctx context.Context) error {
@@ -2070,12 +2248,50 @@ func (r *run) bootstrap(ctx context.Context) error {
 		return err
 	}
 
+	// The checkout this run works on, settled before where it clones from is
+	// asked, because D1900 makes every per-repository job run the project's
+	// catalog image, which is shared by the project's repositories and holds
+	// this run's own at its per-slug path and not at the work directory: a
+	// per-repository job's remote is the phase-1 answer, "the origin of a
+	// checkout already in the work directory, else the job's remote"
+	// (cloneURL), and a baked job's environment carries no FUGARO_REMOTE — its
+	// checkout is the only thing that names the repository. Asked the other way
+	// round, that answer is the empty string for exactly the run the adoption
+	// exists for: the credential URL is built from it below, so the bootstrap
+	// fetch, the agent's git and the final push would all run with no git
+	// credential at all (the review finding on this change).
+	//
+	// It is also the other half of checkProjectCheckoutOrigin's question, for
+	// the job that may hold a baked checkout: which repository the one in the
+	// image is a checkout of, and whether this run may work on it at all (a
+	// shared image bakes several). Here rather than in openCheckout, which is
+	// called once the provider below has minted this run's git credential, so a
+	// refusal is still a run that requested nothing.
+	if err := r.openBakedCheckout(ctx); err != nil {
+		return err
+	}
+	// The checkout this run works on is settled only now, and the record's
+	// image has to name the commit that checkout is at. The read above ran
+	// while the work directory held the image's own checkout or nothing at all
+	// — on the shared catalog image every per-repository job runs (D1900) it
+	// holds no checkout of this run's repository — where imageInfo falls back
+	// to the commit the image's own record names, which belongs to whichever
+	// repository the image was built from and not to this run's. Read again
+	// here: after the adoption, and still before the sync below moves the
+	// checkout off the baked commit.
+	if sha := r.bakedHead(ctx); sha != "" {
+		if r.rec.Image == nil {
+			r.rec.Image = &runstore.ImageInfo{}
+		}
+		r.rec.Image.BakedCommit = sha
+	}
 	// Where this run clones from (design §4.1(1), plan task 3.3 step 3). On a
 	// project job the answer is computed from task.json's repository, the
 	// job's own provider and the policy's clone URL for it, so FUGARO_REMOTE
 	// is not read at all and a launcher who overrode it cannot point the run
 	// at another repository; on a per-repository job it is the phase-1 answer
-	// (a checkout's origin, else the job's remote), unchanged.
+	// (a checkout's origin, else the job's remote), unchanged — and that origin
+	// is the adopted checkout's when openBakedCheckout adopted one.
 	remote, err := r.cloneURL(ctx)
 	if err != nil {
 		return err
