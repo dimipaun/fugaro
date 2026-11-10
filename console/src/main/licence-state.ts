@@ -52,8 +52,9 @@ function refusesAfterLapse(operation: ConsoleOperation): boolean {
 /**
  * installationArgumentOf answers the payload argument a row acts on an
  * installation through, or `undefined` for a row that acts on the console's own
- * active binding. It takes the row widened for `refusesAfterLapse`' reason and
- * no other -- the optional columns are not on every row's literal type.
+ * active binding. It takes the row widened for `refusesAfterLapse`'s reason and
+ * no other: the optional columns are not on every row's literal type, and the
+ * caller must keep its literal type because that is what keys `ConsoleHandlers`.
  */
 function installationArgumentOf(operation: ConsoleOperation): string | undefined {
   return operation.installationArgument
@@ -147,7 +148,8 @@ function lapsed(): never {
  * that asked about the console's active binding for every row would be wrong in
  * both directions -- it would admit a launch of a lapsed installation while
  * driving a valid one, and it would refuse a valid installation's launch after
- * the rail moved -- and the first of those is the one that spends. A row with no
+ * the rail moved -- and the first of those is the one that does the damage: the
+ * launch goes out, with the lapsed installation's key in its child. A row with no
  * such column acts on the active installation (`settings.edit` writes the
  * settings document the console is driving), which is what `undefined` means to
  * `current`.
