@@ -372,7 +372,49 @@ type AuthConfig struct {
 	// is a *.gserviceaccount.com one. A service account is not a human
 	// operator, and an address two lists admit would be a caller whose class
 	// depends on which route it reached.
+	//
+	// The people who LAUNCH runs are not this list: they are the launcher class
+	// (LauncherAccounts, D1938), which is a class of another route, and an
+	// operator who launches is on both. See LauncherAccounts for why the
+	// launcher class is new rather than a widening of this one.
 	PersonAccounts []string
+	// LauncherAccounts are the identities admitted as the launcher class
+	// (D1938, F25): the people who may ask this service for a slip (the grant
+	// route) and reach the intake, and nothing else. They are the
+	// installation's roster as `update` derives it — the members the roles and
+	// scopes tree grants a role — so an installation whose operators launch
+	// runs holds those addresses here AND in PersonAccounts, which is the
+	// ordinary configuration and not the overlap the person list's own rule
+	// refuses: these two lists are the classes of DIFFERENT routes, and the
+	// overlap rule is about one route admitting a caller through two of its
+	// lists (G4).
+	//
+	// The class exists beside the person class rather than widening it, and
+	// that is the whole of D1938: the person list admits the read mints, which
+	// return a token reaching the installing person's whole Bitbucket or GitHub
+	// workspace — a power the installation's operators hold and its other
+	// members do not. A launcher needs none of it: they ask for a slip, which
+	// is a record about one run, and the intake, which writes one member's own
+	// secrets. So PersonAccounts stays the operators' and this list is the
+	// launchers', and an address on one is not admitted by the other.
+	//
+	// An entry is the same shape every other list's is — one bare `email`
+	// claim as a Google ID token spells it, matched by the same ASCII fold —
+	// and it is read the same way: a value that is not printable ASCII is a
+	// configuration error rather than a class that admits nobody. The one rule
+	// this list carries that the verifier list does not is the person list's:
+	// a launcher may not be a *.gserviceaccount.com address. The class is
+	// people — a service account is a job of this installation or of another,
+	// and nothing it does is a member asking for a slip — so an installation
+	// that named one would have an entry that can never be a caller (it is
+	// refused at the admission) and a deployment that disagrees with itself.
+	//
+	// It is empty by default, and an empty list is a statement rather than a
+	// missing gate: an installation whose roster names no launcher admits
+	// nobody to the grant route or the intake, and every caller of the class is
+	// refused (the owner's answer of 2026-11-09 to D1938, on F31's fail-closed
+	// reading).
+	LauncherAccounts []string
 	// CoordinatorAccount is the installation's coordinator service account: the
 	// SECOND class the Bitbucket read mint admits (BB5, B5), because the sweep
 	// is not a run of this installation and holds no run identity either.
@@ -424,6 +466,13 @@ type Authenticator struct {
 	// by nothing else — the read route is answered ahead of the shared parse,
 	// so no branch of Verify consults it.
 	personAccounts map[string]string
+	// launcherAccounts maps a presented email, folded the same way, to the
+	// configured spelling of that launcher (D1938). It is the fifth list of the
+	// same shape and it is read by VerifyLauncher and by nothing else: the
+	// class's routes — the grant route and the intake — are answered by that
+	// entry point, so no branch of Verify and no read mint consults it, which
+	// is what keeps a launcher off the run routes and off the read mints.
+	launcherAccounts map[string]string
 	// coordinatorAccount is the read mint's OTHER class, folded (BB5): the
 	// installation's coordinator service account, or "" when it has none. It is
 	// the folded key alone because the spelling the identity carries is
@@ -587,6 +636,37 @@ func NewAuthenticator(cfg AuthConfig) (*Authenticator, error) {
 		}
 		people[folded] = email
 	}
+	// The launcher list is read last and by the person list's rules, which are
+	// the two this class shares: an entry is one bare address, matched by the
+	// same fold, and a duplicate is harmless (two spellings of one address
+	// admit the same caller through the same class).
+	//
+	// The one rule it does NOT share with the verifier list is the person
+	// list's service-account rule, and it is here rather than at the admission
+	// because of the direction it fails in: a class that looked a
+	// service-account-shaped token up would refuse it anyway (no service
+	// account's address can be a launcher), so the check buys nothing at the
+	// route — while at the START it turns a deployment that named an automation
+	// as a launcher into a refusal the operator reads, instead of an entry that
+	// silently admits nobody. The class is people: a service account is a job
+	// of this installation or of another, and no job asks for a slip.
+	//
+	// It deliberately does NOT hold the launcher list to the person list's
+	// overlap rule: an installation's operators launch runs, so the two lists
+	// hold the same addresses on the ordinary installation, and the two are
+	// classes of different routes (the read mints and the grant route), which is
+	// not the overlap G4 refuses.
+	launchers := make(map[string]string, len(cfg.LauncherAccounts))
+	for _, email := range cfg.LauncherAccounts {
+		folded, ok := foldEmail(email)
+		if !ok {
+			return nil, errors.New("credsvc: a launcher account is not a printable ASCII email address")
+		}
+		if strings.HasSuffix(folded, ".gserviceaccount.com") {
+			return nil, errors.New("credsvc: a launcher account is a service account address, and the launcher class is the people who launch runs")
+		}
+		launchers[folded] = email
+	}
 	now := cfg.Now
 	if now == nil {
 		now = time.Now
@@ -598,6 +678,7 @@ func NewAuthenticator(cfg AuthConfig) (*Authenticator, error) {
 		reviewAccounts:     review,
 		verifierAccounts:   verifiers,
 		personAccounts:     people,
+		launcherAccounts:   launchers,
 		coordinatorAccount: coordinator,
 		now:                now,
 	}, nil
@@ -986,11 +1067,153 @@ func (a *Authenticator) VerifyPersonCaller(ctx context.Context, tok string) (str
 	return account, nil
 }
 
+// LauncherCaller is a verified launcher (D1938): a member of the installation
+// who may ask this service for a slip and reach the intake, answered as the
+// two facts about them the two routes key on.
+//
+// It is not the run's Identity and not a class of the model path: a launcher
+// holds no run identity and is admitted on no route of this service's own
+// contract, which is why the two routes that consume it — the grant route
+// (DS1.3) and the intake (DS2.1) — take the token directly rather than a
+// Request, the shape VerifyVerifier and the read mints already take.
+//
+// Every field is a claim Google signed for an address this installation
+// configured; nothing in it is a credential, and no credential value can be
+// in it.
+type LauncherCaller struct {
+	// Account is the verified address, in the spelling the deployment
+	// configured: the "who" an audit line writes, for the reason
+	// Identity.JobAccount is that same spelling.
+	Account string
+	// Sub is the Google account id — the token's `sub` claim, digits only, at
+	// most maxLauncherSubDigits of them — and it is the launcher's IDENTITY
+	// for both routes that consume it: the slip records it as the run's owner
+	// (DS1.1's Owner(sub)) and the intake derives the secret prefix
+	// fugaro_u_<id>_<name> from it (R1, R3, DS2.1). It is the token's and
+	// never a value read off this deployment's lists: the roster is keyed by
+	// email, so a configured id would be a second spelling of who the caller
+	// is, and the one Google signed is the only one a caller cannot write.
+	Sub string
+}
+
+// maxLauncherSubDigits bounds the account id the launcher class carries. A
+// Google account id is a 64-bit number, so at most 20 digits can spell one;
+// the bound is here because the value is caller text that reaches a secret
+// name (fugaro_u_<id>_<name>, whose length Secret Manager bounds) and an audit
+// line, and a `sub` of any length is not an account id this class can answer
+// with. It is the package's no-unbounded-caller-text rule, applied to the one
+// claim the service carries rather than only reads.
+const maxLauncherSubDigits = 20
+
+// VerifyLauncher admits the caller of the grant route and of the intake, or
+// refuses it with ErrUnverifiedJob (the caller is not one of the
+// installation's launchers, its email is not verified, its token is for
+// another audience, or its `sub` is not a Google account id) or ErrUnavailable
+// (the key set could not be read). It answers the account and the account id
+// the token names, or the zero value with an error — never a partially
+// verified caller.
+//
+// It is the fifth caller class and the SECOND of the two that are people
+// (D1938, F25). What makes it a class is the list the folded address is looked
+// up in, exactly as it is for every other one: this service's PersonAccounts
+// are the installation's operators and its read mints, and an installation's
+// other members launch runs and hold nothing else. Widening the person class
+// was the alternative D1938 refused, and the reason is in that class's own doc
+// comment: the read mint returns a token reaching the installing person's
+// whole workspace, which is not what a launcher asked for.
+//
+// The mechanism is the person class's, and it is deliberately not a third
+// spelling of the token check: the signature, the issuer, the email fold and
+// the token's own window are the shared code (callerClaims, checkCallerToken),
+// and the audience is this class's own line. Which audiences those are is the
+// same answer the person class gives — this service's URL and gcloud's own
+// client id (GcloudAudience) — and for the same reason: a launcher's token is
+// minted on their own machine, and a user account cannot mint for another
+// audience at all (`gcloud auth print-identity-token --audiences` is refused
+// for one). The gcloud audience is not scoped to this service and is
+// replayable at it for about an hour (F26, D1939, D1944, which accept that and
+// document it): what bounds the replay is the class's own admission, the
+// roster it is held to, and the fact that the grant it buys is a slip bound to
+// a run the caller then has to launch.
+//
+// What it adds to the person class's check is the account id. A person's
+// caller is answered by its address and nothing else, because the read mints
+// key on an address; a launcher's routes key on the Google account id, so the
+// `sub` claim is read here, held to the shape the intake can build a name from
+// (digits only, at most maxLauncherSubDigits — R1's grammar) and refused
+// rather than carried when it is not: an id this class cannot answer with is
+// one no secret prefix could be written under, and a class that answered an
+// empty or a partly-read id would be one whose writes land somewhere else.
+//
+// It takes the caller's token directly for VerifyReadCaller's reason: both
+// routes it serves are answered ahead of RequestFromHTTP (the grant route
+// because a launcher holds no run identity, and the intake because it is
+// another process's route entirely), so a Request is the one thing its caller
+// cannot build.
+func (a *Authenticator) VerifyLauncher(ctx context.Context, tok string) (LauncherCaller, error) {
+	now := a.now()
+	claims, folded, err := a.callerClaims(ctx, tok)
+	if err != nil {
+		return LauncherCaller{}, err
+	}
+	account, ok := a.launcherAccounts[folded]
+	if !ok {
+		// The reason names the class and never the address: it is the caller's
+		// own claim set, and the package doc's no-echo rule is that no refusal
+		// repeats what a caller presented.
+		return LauncherCaller{}, fmt.Errorf("%w: the caller is not one of this installation's launchers, so it may not be granted a slip", ErrUnverifiedJob)
+	}
+	// The audience is this class's own line, and it admits the two the person
+	// class admits (checkCallerAudience is per class for exactly this reason).
+	if err := checkCallerAudience(claims, a.cfg.Audience, GcloudAudience); err != nil {
+		return LauncherCaller{}, err
+	}
+	if err := checkCallerToken(claims, now); err != nil {
+		return LauncherCaller{}, err
+	}
+	sub, ok := launcherSub(claims)
+	if !ok {
+		// The refusal names the claim and never its content: a `sub` this class
+		// will not carry is caller text, and the package's no-echo rule holds
+		// for it as it does for the key id. It is not ErrUnverified: the
+		// identity is not in doubt — what is missing is the one fact the routes
+		// below need, and there is nothing a caller could fix by presenting
+		// another token of the same account.
+		return LauncherCaller{}, fmt.Errorf("%w: the caller's ID token carries no Google account id (a numeric sub), so no secret could be written under its prefix", ErrUnverifiedJob)
+	}
+	return LauncherCaller{Account: account, Sub: sub}, nil
+}
+
+// launcherSub reads the token's `sub` claim and holds it to the shape the
+// intake's name grammar can use: the digits of a Google account id, and no
+// more than maxLauncherSubDigits of them.
+//
+// The claim must be a JSON STRING of digits. A `sub` that is a number is
+// refused rather than stringified — the issuer writes it as a string, and a
+// value this code converted would be a second spelling of an account id in a
+// place where a secret's name is chosen — and so is one with a sign, a space,
+// a decimal point or any non-ASCII digit: `\d` in a Go byte loop is '0' to
+// '9', which is exactly the grammar R1 gives the `<id>` of
+// fugaro_u_<id>_<name>.
+func launcherSub(claims map[string]any) (string, bool) {
+	sub := claimString(claims, "sub")
+	if sub == "" || len(sub) > maxLauncherSubDigits {
+		return "", false
+	}
+	for i := 0; i < len(sub); i++ {
+		if sub[i] < '0' || sub[i] > '9' {
+			return "", false
+		}
+	}
+	return sub, true
+}
+
 // checkCallerAudience holds the caller's ID token to the audiences its OWN
 // class may carry, and it is a per-class check rather than a shared one: the
 // person class admits gcloud's own client id beside this service's URL
-// (GcloudAudience, the owner's ruling of 2026-11-04), and every other class —
-// job, review, verifier and coordinator — admits this service's URL alone.
+// (GcloudAudience, the owner's ruling of 2026-11-04), and so does the launcher
+// class (D1944) — every other class, job, review, verifier and coordinator,
+// admits this service's URL alone.
 //
 // A caller that presents anything else is refused, and the refusal names no
 // audience: which audiences this service would have taken is not a fact a
