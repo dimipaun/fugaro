@@ -41,6 +41,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/creds"
+	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
 )
 
 // ---------------------------------------------------------------------------
@@ -83,6 +84,17 @@ func (s *slips) slipCall(t *testing.T, sl aSlip, marker string, mutate ...func(*
 	t.Helper()
 	return s.callTokens(t, callBody(marker), s.runToken(), s.jobToken(), s.job,
 		append([]func(*http.Request){withSlip(sl.id, sl.secret)}, mutate...)...)
+}
+
+// serveCalls lets the fake upstream answer n calls: the fixture scripts one
+// answer, and a test that serves a call more than once — from the cache, or
+// after a failure it did not cause — has to say so.
+func (s *slips) serveCalls(n int) {
+	script := make([]anthropicfake.Reply, n)
+	for i := range script {
+		script[i] = anthropicfake.MessageOK(testModel, testUsage)
+	}
+	s.up.Script = script
 }
 
 // endTheRun writes the run's write-once outcome, which is what the service
@@ -243,18 +255,21 @@ func TestFinishedRunRefusedUncached(t *testing.T) {
 			t.Fatalf("the slip's own call is answered %d, want 200: %s", resp.StatusCode, body)
 		}
 
-		// The run ends. Its outcome is write-once and is read on every call.
+		// The run ends. Its outcome is write-once and is read on every call —
+		// and it is read from the database, not from the cached slip body,
+		// which still says the slip is claimed and inside its runtime.
 		s.endTheRun()
 		resp, body = s.slipCall(t, sl, "after-the-outcome")
 		e := wantRefusal(t, resp, body, StatusUnverified, ErrorUnverifiedRunIdentity)
 		if !strings.Contains(e.Message, "the run has ended") {
 			t.Errorf("the refusal is answered %q, want the run's own end to be why: a cached slip body is not what decides a finished run (R4)", e.Message)
 		}
-		// And it is the outcome that refused it and not the record: the slip is
-		// still there, still inside its runtime. The two are different facts,
-		// and only the record's own end ends the record.
-		if !s.stillThere(t, sl.id) {
-			t.Error("the refusal ended the slip: the run's end and the record's own end are two different facts")
+		// The run's outcome is also where its slip ends (DS1.1's End, R10's
+		// other half): a run that has ended makes no further call this service
+		// would serve, so nothing else would ever see the record again and it
+		// would outlive the run it was granted for by up to its whole runtime.
+		if s.stillThere(t, sl.id) {
+			t.Error("the ended run's slip is still in the database: issuance ends at the run's outcome too")
 		}
 	})
 
@@ -292,6 +307,7 @@ func TestCacheOnlyHoldsSlipBody(t *testing.T) {
 	}
 
 	s := newSlips(t, testLauncherAccount)
+	s.serveCalls(2)
 	sl := s.claimedSlip(t, 3600, testSlipCredential)
 
 	resp, body := s.slipCall(t, sl, "warm-the-cache")
@@ -603,9 +619,6 @@ func TestTheSlipCacheHoldsOnlyVerifiedBodies(t *testing.T) {
 // guesses at, and a call that presents a claim secret and no slip id presents
 // the secret of nothing.
 func TestCallSlipHeadersAreReadOnce(t *testing.T) {
-	s := newSlips(t, testLauncherAccount)
-	sl := s.claimedSlip(t, 3600, testSlipCredential)
-
 	cases := []struct {
 		name   string
 		mutate func(*http.Request)
@@ -625,6 +638,9 @@ func TestCallSlipHeadersAreReadOnce(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			s := newSlips(t, testLauncherAccount)
+			sl := s.claimedSlip(t, 3600, testSlipCredential)
+
 			resp, body := s.slipCall(t, sl, "unreadable", tc.mutate)
 			wantRefusal(t, resp, body, StatusRequestRefused, ErrorRequestRefused)
 			if lines := auditLines(t, s.audit); len(lines) != 1 {

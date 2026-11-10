@@ -108,7 +108,7 @@ func parseAuditLines(t *testing.T, raw string) []map[string]any {
 // auditFields is the shape of the line: the plan's fields, and no others.
 // A field added to the line — which is how a credential's value would reach
 // it — fails every test that reads this.
-var auditFields = []string{"run", "repository", "job", "caller", "credential", "purpose", "tier", "status"}
+var auditFields = []string{"run", "repository", "job", "caller", "credential", "purpose", "tier", "status", "slip", "owner"}
 
 // checkAuditShape holds a written line to that shape: every field of the
 // contract is there, and nothing else is.
