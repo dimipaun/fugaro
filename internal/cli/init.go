@@ -800,6 +800,20 @@ func (w runWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
+// notes is the run's stderr for the lines a stage prints itself rather than
+// through its own writer: the project header every cloud command starts with
+// and the notes a selection carries. They are the same rule as the run's own
+// lines (runWriter) because they land on the same terminal: a stage of a
+// converge selects the config for its own checkout while a step is in flight,
+// and on stdout the frame is drawn at the start of a line it never ends, so a
+// header written between two frames reads as the stage's name run into it.
+func (r *initRun) notes() io.Writer {
+	if r.rep == nil {
+		return r.cmd.ErrOrStderr()
+	}
+	return runWriter{r: r, out: r.cmd.ErrOrStderr()}
+}
+
 // endsLine reports whether a write left the cursor at the start of a line.
 func endsLine(p []byte) bool { return len(p) > 0 && p[len(p)-1] == '\n' }
 
@@ -995,6 +1009,12 @@ func runInit(r *initRun) error {
 		if r.repLog != nil {
 			defer func() { _ = r.repLog.Close() }()
 		}
+		// The run's stderr is the reporter's too, from here on: a stage that
+		// selects the project config for its own checkout prints the header and
+		// the selection's notes while a step is in flight, and a frame and a
+		// header written on one terminal without the line coming down first
+		// read as one run-together line (see initRun.notes).
+		o.cloud.stderr = r.notes
 		return e.converge(cmd.Context())
 	}
 

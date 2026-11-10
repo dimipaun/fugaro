@@ -3,11 +3,13 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -579,3 +581,78 @@ func doctorChecks(t *testing.T, root string) doctorOutput {
 	}
 	return o
 }
+
+// executeConsole runs the command tree with stdout and stderr on ONE writer,
+// which is what a terminal is: the reporter draws its line in flight on stdout
+// and a stage's own notes go to stderr, and both land on the same screen. A
+// test that captures the two separately cannot see one running into the other,
+// which is exactly the defect this seam is here for.
+//
+// writerIsTerminal answers true, so the reporter draws the line in flight (it
+// is what decides colour, and colour decides the spinner).
+func executeConsole(t *testing.T, args ...string) (string, error) {
+	t.Helper()
+	old := writerIsTerminal
+	writerIsTerminal = func(io.Writer) bool { return true }
+	t.Cleanup(func() { writerIsTerminal = old })
+
+	cmd := NewRootCmd()
+	both := &syncBuf{}
+	cmd.SetIn(strings.NewReader(""))
+	cmd.SetOut(both)
+	cmd.SetErr(both)
+	cmd.SetArgs(NormalizeArgs(args))
+	err := cmd.Execute()
+	return both.String(), err
+}
+
+// TestUpdateEndsTheSpinnerLineBeforeTheProjectHeader: the stage's own header
+// ("project: <name> (GCP <id>)") is printed to stderr while the reporter's line
+// in flight is on stdout, and a terminal draws both on the same row. The line
+// has to come down before the header is written, or the person reads
+// "- repositoryproject: <name>" — the stage run into the header, on no line of
+// its own.
+func TestUpdateEndsTheSpinnerLineBeforeTheProjectHeader(t *testing.T) {
+	r := newConvergeRig(t, v4Node())
+	currentRelease(t)
+	skillWarned.Store(false)
+	t.Cleanup(func() { skillWarned.Store(false) })
+	// The log is the run's own file, and XDG_STATE_HOME is the developer's.
+	isolateState(t)
+	_ = r
+
+	out, err := executeConsole(t, "update", "--yes")
+	if err != nil {
+		t.Fatalf("fugaro update failed (exit %d): %v\n%s", ExitCode(err), err, out)
+	}
+	// The header itself, and not every sentence that happens to hold
+	// "project: ": the name and the GCP project in parentheses are what the
+	// first line of every cloud command says.
+	header := regexp.MustCompile(`project: [a-z0-9-]+ \(GCP [a-z0-9-]+\)`)
+	at := header.FindAllStringIndex(out, -1)
+	if len(at) < 2 {
+		t.Fatalf("the run printed the project header %d time(s), want the one at the door and the one each stage prints for its own checkout:\n%s", len(at), out)
+	}
+	for _, m := range at {
+		if col := columnAt(out, m[0]); col != 0 {
+			start := strings.LastIndex(out[:m[0]], "\n") + 1
+			t.Errorf("the project header is not at the start of a line: the line in flight ran into it: %q", out[start:m[1]])
+		}
+	}
+}
+
+// columnAt is the column the byte at i sits in, on a terminal: a carriage
+// return and the reporter's own clear-to-end-of-line both put the cursor back
+// at the start, and nothing else in a run's output does.
+func columnAt(s string, i int) int {
+	line := s[strings.LastIndex(s[:i], "\n")+1 : i]
+	if j := strings.LastIndex(line, "\r"); j >= 0 {
+		line = line[j+1:]
+	}
+	line = ansiRE.ReplaceAllString(line, "")
+	return len(line)
+}
+
+// ansiRE is a terminal escape sequence: what the reporter paints a frame with,
+// and nothing a person reads as a column.
+var ansiRE = regexp.MustCompile("\x1b\\[[0-9;]*[a-zA-Z]")
