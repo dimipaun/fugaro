@@ -366,9 +366,10 @@ func TestRepoURLGuardHoldsTheRepositoryNotTheSpelling(t *testing.T) {
 		"another repository, spelt like the origin":   {"https://Bitbucket.org/Acme/Elsewhere", false},
 		"another repository of another host":          {"https://github.com/acme/other.git", false},
 		"a repository whose name starts the same":     {"https://bitbucket.org/acme/other-repo.git", false},
-		// ".GIT" is the same suffix as ".git": the fold lowercases before it
-		// trims, as the guard's shell does, so a trailing uppercase suffix
-		// reaches the same repository rather than a spelling nothing matches.
+		// ".GIT" is the same suffix as ".git": the guard's shell lowercases
+		// before it trims, so a trailing uppercase suffix on the build's own
+		// REPO_URL reaches the same repository rather than a spelling nothing
+		// matches.
 		"the canonical form, uppercased suffix": {"https://bitbucket.org/acme/other.GIT", true},
 		"the origin, uppercased suffix":         {"https://Bitbucket.org/acme/Other.GIT/", true},
 	} {
@@ -385,6 +386,19 @@ func TestRepoURLGuardHoldsTheRepositoryNotTheSpelling(t *testing.T) {
 				t.Fatalf("the guard refused %s without saying why:\n%s", tc.repoURL, out)
 			}
 		})
+	}
+	// The composed origin may carry the uppercase suffix itself, and then the
+	// fold's order is the whole test: trimming ".git" before lowercasing leaves
+	// "…/other.GIT" as "…/other.git", a pattern no REPO_URL matches — not the
+	// canonical one, not the origin — so the composing build and every nightly
+	// rebuild of it would fail inside the build, after it was paid for.
+	upper := repoURLGuard("https://bitbucket.org/acme/other.GIT")
+	for _, repoURL := range []string{"https://bitbucket.org/acme/other.git", "https://bitbucket.org/acme/other.GIT", "https://bitbucket.org/acme/other"} {
+		cmd := exec.Command("sh", "-c", upper)
+		cmd.Env = append(os.Environ(), "REPO_URL="+repoURL)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("a definition composed from an origin ending .GIT refused %s, the same repository: %v\n%s", repoURL, err, out)
+		}
 	}
 }
 
