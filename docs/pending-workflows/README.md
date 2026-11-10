@@ -1422,8 +1422,8 @@ it reports plus `test`, `terraform` and `rules` — and `deriveConsoleCheckNames
 **refuses a workflow with more than one job** ("this test cannot tell which of
 several jobs that is"). A second job there would therefore not be a packaging
 change at all: it would change which checks gate a release tag. **Folding it in
-as a third matrix leg is the option D8 refused**, in its own words the closest
-fit and still wrong: the matrix is the *same job* on two runners, so a third leg
+as a third matrix leg is the option D8 refused**, on the two grounds D8(c)
+gives: the matrix is the *same job* on two runners, so a third leg
 would be a third runner running the *tests* and not the packer — a different job
 with a different artifact — and it would make the derivation read a
 multi-platform job whose name GitHub spells `console (windows-latest)`, which is

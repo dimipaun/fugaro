@@ -1134,6 +1134,15 @@ func TestDocsWindowsConsoleNotesSayWhichHalfMoved(t *testing.T) {
 // copy-in -- and each is derived from the directory rather than listed, so it
 // holds for every state the owner's copy-ins pass through.
 //
+// The status line is read at the section's **opening**, and the section is not
+// searched: a section quotes its own line the moment an owner is told which line
+// to write -- the console-windows section names both spellings of its own a few
+// paragraphs below the live one -- so `Contains` over the section is satisfied by
+// that quotation and stays green with the live line saying the opposite. The
+// first non-blank line after the heading is where the convention puts it, and
+// both files staged here today open with it (`## shared-tests.yml` above states
+// the rule; `## mobile-release.yml`'s guard reads its own line the same way).
+//
 // **What it cannot read is the state the copy-in creates**, and that gap is
 // filled rather than described: the file leaves this guard's set the moment it
 // is copied in, so a section left saying "staged and pending" over a staged copy
@@ -1179,10 +1188,20 @@ func TestDocsPendingWorkflowsReadmeDescribesEveryStagedFile(t *testing.T) {
 				break
 			}
 		}
-		flat := flattenDoc(strings.Join(lines[start:end], "\n"))
-		if !strings.Contains(flat, "staged and pending") {
-			t.Errorf("%s's %q section does not say the file is staged and pending: the section that describes a staged workflow is also the one that says whether the owner still has to copy it in, and a status left saying something else is a reader sent to a file that is not there", pendingWorkflowsReadmePath, name)
+		// The status line, read where it is: the first non-blank line of the
+		// section, which is where the convention puts it and the only place a
+		// quotation of it cannot be mistaken for it.
+		opening := ""
+		for _, line := range lines[start+1 : end] {
+			if strings.TrimSpace(line) != "" {
+				opening = strings.TrimSpace(line)
+				break
+			}
 		}
+		if !strings.HasPrefix(opening, "**Status:") || !strings.Contains(opening, "staged and pending") {
+			t.Errorf("%s's %q section opens with %q rather than a status line saying the file is staged and pending: the section that describes a staged workflow is also the one that says whether the owner still has to copy it in, and a status left saying something else is a reader sent to a file that is not there", pendingWorkflowsReadmePath, name, opening)
+		}
+		flat := flattenDoc(strings.Join(lines[start:end], "\n"))
 		copyIn := "cp docs/pending-workflows/" + name + " .github/workflows/" + name
 		if !strings.Contains(flat, copyIn) {
 			t.Errorf("%s's %q section carries no copy-in command (%q): this README is where the owner reads how to apply a staged file, so a section without the `cp` line is a change nobody can land", pendingWorkflowsReadmePath, name, copyIn)
