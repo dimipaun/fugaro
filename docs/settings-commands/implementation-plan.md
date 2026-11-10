@@ -58,14 +58,14 @@ carries this ruling rather than dropped here.
 | 1 | S1, S3 | S0 (S1) |
 | 2 | S2, S4, S5 | S1 (S2, S5); S3 (S4, S5); E3 (S5); R1 (S5) |
 | 3 | S6, S8, S9 | S5, and S3 for S6, S8 and S9 |
-| 4 | S10, S11 | S1–S6, S8 and S9, and config-management's G7 (S10); S1–S3 and S5 (S11, plus R0 and R1 for the layer half of the loop) |
+| 4 | S10, S11 | S1–S6, S8 and S9, and config-management's G7 (S10); S1–S5 (S11, plus R0 and R1 for the layer half of the loop) |
 
 **S7 is off the table, and its number stays spent.** S7 has left the levels and the order above: the
 command it designed is config-management's G7, and its number is never reused — a later task here
 takes **S12** and re-reads this plan's `Needs` column rather than this sentence. Nothing else about
 the order moves. **S10 is the one row the closing touches**: it needed S7 among the commands its
 documentation and skill describe, and it now needs G7 there instead. S11 never needed S7 — its loop
-writes a ceiling key, which is S5's — and keeps the row it had.
+writes a ceiling key, which is S5's — and keeps its place in the order.
 
 **The joint order**, agreed with the `models` and `rigor` designs and the same list in all three:
 **editor → policy stage (S3) → settings read (S0–S2, S4) → layer stage (R0, R1) → set (S5) → rigor
