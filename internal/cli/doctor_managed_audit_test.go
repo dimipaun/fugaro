@@ -246,6 +246,40 @@ func TestDoctorFlagsAnOutOfTableGrant(t *testing.T) {
 			t.Errorf("doctor failed an installation whose gate admitted every step it ran: a warned apply is a decision, not a fault (%+v)", o.Checks)
 		}
 	})
+
+	// And yesterday's warned record is read even when TODAY holds a clean one.
+	// The scan is over the check's whole two-day window and not over today alone,
+	// because a session can otherwise hide its own warning by running one clean
+	// step: a warned apply at 23:50 and a clean `fugaro update` at 00:10 are two
+	// days apart by the calendar and minutes apart in fact, and a check that read
+	// yesterday only when today was empty would print the clean record and pass
+	// — from the one reader D1545's warning outlives the session for. The count
+	// in the sentence stays the day's own.
+	t.Run("a warned step yesterday and a clean one today", func(t *testing.T) {
+		r := newManagedAuditRig(t, managedAuditOpts{})
+		warned := r.file(t, "fugaro update", `{"version":1}`, managedmode.AuditWarned, managedAuditTestNow.AddDate(0, 0, -1), grant)
+		clean := r.file(t, "fugaro update", `{"version":2,"add":["image"]}`, managedmode.AuditAdmitted, managedAuditTestNow.Add(-time.Hour))
+		o := doctorJSON(t)
+		c, ok := doctorCheckByID(o.Checks, "managed-audit")
+		if !ok {
+			t.Fatalf("no managed-audit check: %+v", o.Checks)
+		}
+		if c.OK || c.Severity != "warning" || c.Class != doctorClassActionable {
+			t.Errorf("check = %+v, want yesterday's warned record reported although today holds a clean one: a session that ran one clean step after midnight would otherwise hide its own warning", c)
+		}
+		if !strings.Contains(c.Problem, grant) {
+			t.Errorf("problem = %q, want the rule itself (%q)", c.Problem, grant)
+		}
+		if !strings.Contains(c.Problem, warned.PlanDigest) || strings.Contains(c.Problem, clean.PlanDigest) {
+			t.Errorf("problem = %q, want the warned record's digest (%q) and not today's clean step's (%q)", c.Problem, warned.PlanDigest, clean.PlanDigest)
+		}
+		if !strings.Contains(c.Problem, "1 record") {
+			t.Errorf("problem = %q, want the count to stay the day's own (1 record, today's), not the window's two", c.Problem)
+		}
+		if !o.OK {
+			t.Errorf("doctor failed an installation whose gate admitted every step it ran: a warned apply is a decision, not a fault (%+v)", o.Checks)
+		}
+	})
 }
 
 // TestDoctorManagedAuditNeverPassesSilentlyOnAReadThatFailed: a family that
