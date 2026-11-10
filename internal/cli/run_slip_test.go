@@ -52,9 +52,17 @@ type slipLaunchRig struct {
 
 func newSlipLaunchRig(t *testing.T) *slipLaunchRig {
 	t.Helper()
+	return newSlipLaunchRigWith(t, cascadeLaunchYAML)
+}
+
+// newSlipLaunchRigWith is the rig over a checkout of a file of the caller's
+// own, so a test can put at the run's ref a document a repository author — or a
+// stranger whose pull request sits there — could write.
+func newSlipLaunchRigWith(t *testing.T, yaml string) *slipLaunchRig {
+	t.Helper()
 	f := newLaunchBudget(t, "enforce")
 	f.appendConfig(t, "credentials_service:\n  url: "+launchCredsURL+"\n")
-	projectJobCheckoutYAML(t, cascadeLaunchYAML)
+	projectJobCheckoutYAML(t, yaml)
 	markRepoCredentialsServiceReady(t, f.cloudFixture)
 	env := memEnv(t, f.cloudFixture)
 	rec := &envRecorder{Backend: env.be}
@@ -409,5 +417,48 @@ func TestALaunchThatCannotReadTheRepositoryAsksForNoSlip(t *testing.T) {
 	}
 	if !strings.Contains(r.warned.String(), "without a slip") {
 		t.Errorf("the launch said %q, want a warning that this run starts without a slip and why", r.warned.String())
+	}
+}
+
+// TestASlipNeverNamesAnAccessNoLayerHolds: the repository's own file may select
+// among the credentials and pools the installation holds (config.Scopes'
+// whyCredentialAccess, F12/D1628) — and nothing else. A name it writes that no
+// layer holds is not a wish the service judges later: the launcher's request IS
+// the slip's allow-list (credsvc.Slip.Allowed, R9), so a slip carrying it would
+// hand the run a name it may never be served, and one the run will ask for but
+// the slip left out would be the run refused at its next call. The launch
+// therefore asks for no slip at all, and says which key to fix — by its path,
+// never by the name it wrote, the way internal/credsvc's own refusals name the
+// position and not the name (R7).
+//
+// The file is at the run's ref, which is what makes this an attack surface and
+// not a typo: anyone whose pull request the run checks out writes it.
+//
+// Mutation (verified, run and restored): drop craft.Resolve's problems
+// (`eff, _ :=`) and put every resolved access in the request, and this fails on
+// the grant call it makes with `someone-elses-key` in it.
+func TestASlipNeverNamesAnAccessNoLayerHolds(t *testing.T) {
+	bad := strings.Replace(cascadeLaunchYAML, "  model: claude-sonnet-5-5\n",
+		"  model: claude-sonnet-5-5\n  crafts:\n    coder: { access: someone-elses-key }\n", 1)
+	if bad == cascadeLaunchYAML {
+		t.Fatal("the fixture writes no agent.model, so this test's document was not built")
+	}
+	r := newSlipLaunchRigWith(t, bad)
+	plain := r.launch(t, func(req credsvc.SlipGrantRequest) (credsvc.SlipGrantResponse, error) {
+		t.Errorf("the launch asked for a slip naming %v, want no slip at all: a name in there is on the slip's own allow-list", req.Credentials)
+		return credsvc.SlipGrantResponse{Slip: fakeSlipID, MaxRuntimeSeconds: req.MaxRuntimeSeconds}, nil
+	})
+	if r.calls != 0 {
+		t.Errorf("the launch made %d grant calls, want none", r.calls)
+	}
+	if want := []string{envCredentialsServiceURL + "=" + launchCredsURL}; !slices.Equal(plain, want) {
+		t.Errorf("the launch handed the job %v, want %v", plain, want)
+	}
+	warned := r.warned.String()
+	if !strings.Contains(warned, "without a slip") || !strings.Contains(warned, "agent.crafts.coder.access") {
+		t.Errorf("the launch said %q, want a warning that this run starts without a slip and the path of the key that stopped it", warned)
+	}
+	if strings.Contains(warned, "someone-elses-key") {
+		t.Errorf("the warning repeats the access the file wrote: %q — the position is what an operator needs, and the name is what must not travel (R7)", warned)
 	}
 }
