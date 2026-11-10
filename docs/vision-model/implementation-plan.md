@@ -186,6 +186,8 @@ permission, and the deny list is the one that already exists (F8).
   change; `agent.ImageReadExtensions() []string` is the one list of image kinds, exported for V5;
   `r.denyBinaryReads(stage string) bool` in the runner returns true for a review stage or for a stage
   whose model's price row has no image rate (`r.spend.Prices`).
+- **Depends on:** nothing. It ships alone, and it is the mitigation the issue's last line asks for
+  (D2014).
 - **Red step:** `TestTextOnlyCoderIsDeniedBinaryReads` fails while the deny list is review-only: in a
   stage pinned to a model with no image rate the managed settings carry no `Read(**/*.png)` rule.
 - **Tests:** `TestTextOnlyCoderIsDeniedBinaryReads`, `TestReviewStageKeepsItsDenyList`,
@@ -209,6 +211,8 @@ permission, and the deny list is the one that already exists (F8).
   `Agent.PinnedModels()` gains it as a fourth entry, `config.pinPaths` gains
   `"agent.models.vision"`, `config.Scopes` a row (`InProject | InRepo`, like the coder's), and
   `validateAgentModels`' list and `providers.go`'s three role lists the fourth pair.
+- **Depends on:** nothing. It is the key every other task reads, and it changes nothing for a
+  configuration that never writes it.
 - **Red step:** `TestVisionSlotIsCheckedLikeTheOthers` fails while the key is unknown: a repository that
   writes `agent.models.vision: deepseek/deepseek-v4.1-flash` is refused, not resolved.
 - **Tests:** `TestVisionSlotIsCheckedLikeTheOthers` (priced, allowed, an ID),
@@ -239,6 +243,8 @@ reservation the budget holds against the owner.
   `localcfg.ModelPrice.ImageTokens *int64` → `pricing.Overrides`; `projectpolicy.Price.ImageTokens *int64`,
   which the credentials service's table reaches through `CatalogJSON` → `ParseOverrides`
   (`internal/credsvc/request.go:163`) with no change of its own.
+- **Depends on:** V1, for the slot a priced vision model is written into — and for nothing else: the
+  member itself is pricing alone.
 - **Red step:** `TestModelPricesCarryAnImageRate` fails while the member is unknown: a project config
   that prices a model's images is refused by the strict decoder.
 - **Tests:** `TestModelPricesCarryAnImageRate`, `TestImageRateReachesTheTableRow`,
@@ -262,6 +268,7 @@ would have worked.
 - **Interface:** `const visionSince = "X.Y.0"`, a `checkImageSince`-shaped refusal at launch naming the
   key and the image to move, and the publish-time refusal that keeps a policy carrying the price member
   from being stored for an installation whose images cannot read it.
+- **Depends on:** V1 and V2. It guards both members, and it has nothing to guard before they exist.
 - **Red step:** `TestVisionSinceRefusesAnOlderImage` fails while the constant does not exist: a task
   whose image predates the release launches against a config carrying the new key and is refused by the
   runner instead of by the CLI.
@@ -287,6 +294,8 @@ owner's only explanation of a dead run.
   (V1); **a vision model that has no image rate** → price that ID's images under `model_prices` (V2);
   **neither the field nor the caller's own stage** (the credentials service) → the price sentence
   alone. Never a sentence a caller cannot act on.
+- **Depends on:** V1 and V2. The sentence names the slot and the price member, so both must exist
+  before it points at them.
 - **Red step:** `TestImageRefusalNamesModelPricesImageTokens` fails while the sentence still says
   "model_prices sets token rates only" and names no key the owner can set.
 - **Tests:** `TestImageRefusalNamesModelPricesImageTokens`,
@@ -310,6 +319,7 @@ owner's only explanation of a dead run.
   a task naming an image, a coder whose price row has no image rate and `agent.models.vision` empty →
   a `config_invalid` refusal naming the slot and V2's price member; a repository that tracks an image
   in that same state → the `r.d.Log.Warn` line the pin warnings already use.
+- **Depends on:** V0 (the one list of image kinds the scan reuses) and V1 (the slot the refusal names).
 - **Red step:** `TestBootstrapRefusesATextOnlyCoderWithImagesAndNoVisionModel` fails while nothing reads
   the task: the run reaches `implement` and dies there, which is the issue's own complaint.
 - **Tests:** `TestBootstrapRefusesATextOnlyCoderWithImagesAndNoVisionModel`,
@@ -336,6 +346,8 @@ owner's only explanation of a dead run.
   ("the three keys `agent.models` has") moves with it — and so does everything that list drives: the
   roles `models use` may name and the pinning-repository scan `models rm` reports from
   (`models_write.go:158`), which is why the vision pin is one more pin a removal names.
+- **Depends on:** V1 and V2. A slot nothing resolves and a model nothing can price would be two rows
+  that report a state no run can reach.
 - **Red step:** `TestModelsUseWritesTheVisionSlot` fails while `modelsRoleNames` has three entries.
 - **Tests:** `TestModelsUseWritesTheVisionSlot`, `TestModelsUseRefusesAnUnpricedVisionModel`,
   `TestModelsLsShowsTheVisionSlot`, `TestModelsRmNamesTheVisionPin`,
@@ -359,6 +371,8 @@ egress and the credential a stage's code goes out on.
   (`gatewayRoutes`, `providers.go:113`), the priced table and the record all see the vision model
   without a second resolution. A coder whose price row has an image rate is left alone (D2016), and a
   reviewer is never rewritten (D2004).
+- **Depends on:** V1 (the slot), V2 (a provider vision model needs the image rate to be priceable) and
+  V5, whose check must already know a vision model is set before a run starts rewriting pins for it.
 - **Red step:** `TestACoderWithoutAnImageRateRunsTheVisionModel` fails while nothing rewrites a pin: the
   gateway admits the coder's model for the stage and an image call still dies (F1, F6).
 - **Tests:** `TestACoderWithoutAnImageRateRunsTheVisionModel`,
@@ -377,6 +391,8 @@ egress and the credential a stage's code goes out on.
   row), `plugin/skills/working/SKILL.md` (the switch and the early refusal), `docs/releases/vX.Y.Z.md`
   (`### For operators`: the one line), `website/data/release-summaries.yaml` (no backticks),
   `website/content/cli-reference.md` (regenerated, never hand-edited — only if a command's help moved).
+- **Depends on:** V1–V7. It documents behaviour, so the behaviour has to exist: the slot, the price
+  member, the guard, the sentence, the check and the stage model are each one paragraph of it.
 - **Red step:** the Docs run fails while `docs/multi-model.md` does not name the slot a run's own
   choice and the refusal's sentence both point at; it turns green in this commit.
 - **Tests:** `GOFLAGS=-p=2 go test ./internal/cli/ -run Docs -count=1 -timeout 40m`, the plugin's

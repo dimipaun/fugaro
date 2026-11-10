@@ -45,7 +45,7 @@ yet; the plan is written for it and says which tasks change if the owner answers
 | Block | Use |
 | --- | --- |
 | **D2000–D2019** | this work's block: **D2000–D2016** written, with a recommendation, the alternative's cost and an empty answer cell; **D2017–D2019** reserved and unused. Taken above every decision on `main` (the highest is **D1959**, the top of `docs/secrets-brokering/dynamic-delivery`'s reserved block D1930–D1959, used to D1946) and above every open pull request's docs on 2026-11-10: the highest used in any of them is **D1999** (the workspace-token reconciliation in #2259), whose block and #2259's own D1960–D1979 sit below this one |
-| **Checks 520–529** | **520** and **521** are proposed by the plan, owner-run and **NOT RUN**; **522–529** are reserved and unused. Taken above every check on `main` (the highest is **Check 512**, inside `docs/secrets-brokering/dynamic-delivery`'s reserved 510–519) and above every open pull request's (the same 510–519; #2258's 230–249 and image-setup's 500–509 sit below) |
+| **Checks 520–529** | **520** and **521** are proposed by the plan, owner-run and **NOT RUN**; **522–529** are reserved and unused. Taken above every check on `main` (the highest **used** is **Check 511**, and the highest **held** is **519**: `docs/secrets-brokering/dynamic-delivery` registers 510 and 511 and reserves 512–519) and above every open pull request's (the same 510–519; #2258's 230–249 and image-setup's 500–509 sit below) |
 
 ## Siblings
 

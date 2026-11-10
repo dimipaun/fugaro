@@ -202,10 +202,10 @@ each price entry with `DisallowUnknownFields` (`internal/projectpolicy/prices.go
 (`internal/pricing/overrides.go:63`). So the two members V1 and V2 add — `agent.models.vision` and
 `model_prices.*.image_tokens` — each break a run whose job image predates them, whether the value
 arrives in the config, the node or `FUGARO_MODEL_PRICES`. The established answer is the `...Since`
-discipline, already in the tree for every key of this shape: one constant per key family in
-`internal/cli/recipes_skew.go` (`catalogSince:173`, `reviewLevelsSince:407`, `noneModelSince:434`,
-`proxySince:130`, and 15 more), a bullet in `docs/release.md`'s Before-you-tag list, the release named
-in the schema descriptions, and a launch check that refuses an older image naming the key and the image
+discipline, already in the tree for every key of this shape: one constant per key family — 34 of them
+in `internal/cli/recipes_skew.go`, among which `catalogSince:173`, `reviewLevelsSince:407`,
+`noneModelSince:434` and `proxySince:130` — then a bullet in `docs/release.md`'s Before-you-tag list,
+the release named in the schema descriptions, and a launch check that refuses an older image naming the key and the image
 to move (`checkImageSince`, `internal/cli/recipes_skew.go:1018`). *Consequence:* V3 is the task that
 carries the constant, the launch refusal and the release bullet for both members; without it, the
 release that ships V1 or V2 fails a run that bootstrapped before it, which is the one thing the update
