@@ -13,10 +13,15 @@
 // `compatibilityFacts()` (one reader, not two) and holds the artifact to it:
 //
 //   1. **One table per group, with that group's rows.** The section named by the group's `id`,
-//      the group's own title over it, one table, the group's rows in the file's order, each with
-//      the name, the note, the status and the edition the file gives it. A row that stopped
-//      rendering, a group whose section moved, and a row the page invented are the three ways a
-//      page drifts from its file, and each one shows up here as a count or a name.
+//      the group's own title over it, the group's own note where the file gives it one, one
+//      table, the group's rows in the file's order, each with the name, the note, the status and
+//      the edition the file gives it — and, above them all, the file's `as_of` line, which is the
+//      page's one date-shaped fact. A row that stopped rendering, a group whose section moved, a
+//      note or a stamp the page dropped or invented, and a row the page invented are the ways a
+//      page drifts from its file, and each one shows up here as a count or a name. The prose is
+//      read here rather than left to the word gates because the page is exempt from the page
+//      ceiling (`test/lib/exempt.mjs`): a template edit that dropped either would lose a reader
+//      the matrix's own words and nothing would say so.
 //   2. **Every status is a mark and a word, and they are the legend's.** The legend is read out
 //      of the built page and the rows are held to it: a status whose cell carries a different
 //      mark, or a word the legend does not define, is refused. This is what "not colour alone"
@@ -39,9 +44,12 @@
 //      edition on every row of a group or on none, and the evidence path behind every
 //      present-tense row. None of them is reachable from a page that was built — a file that got
 //      past the loader got a page — so each one is planted in a copy of the data file and the
-//      *build* is held to it, the way this site's other data-file loaders are
-//      (`test/console-screens.mjs`, `test/changelog-page.mjs`). No rule is written out again:
-//      the plant is the defect, and the sentence the loader throws is what the case reads.
+//      loader is held to it, the way this site's other data-file loaders are
+//      (`test/console-screens.mjs`, `test/changelog-page.mjs`): one case builds the copy and reads
+//      the refusal in the build's own output, and every other case calls the copy's own
+//      `loadCompatibility()` — the function the build calls — once per plant, so that a sentence
+//      about the data file does not cost a full Astro build each time. No rule is written out
+//      again: the plant is the defect, and the sentence the loader throws is what the case reads.
 //
 // A gate whose refusal has never been seen to fire is a gate nobody knows the shape of, so the
 // last cases mutate the **built page** — one edit per refusal, taken from the artifact itself
@@ -51,9 +59,11 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { buildCopy } from './lib/build.mjs'
+import { pathToFileURL } from 'node:url'
+import { buildCopy, copyRepository } from './lib/build.mjs'
 import { DIST, builtPages, findAll, parse, textOf } from './lib/html.mjs'
 import { compatibilityFacts } from './compatibility.mjs'
 
@@ -145,7 +155,8 @@ function single(el, name) {
 /**
  * Every way the built page fails to render the file it is built from, as failure lines. The
  * shape is the whole of it: the groups, in the file's order, one section and one table each,
- * the file's rows in the file's order, and each row's name, note, status and edition.
+ * each group's own note and the file's `as_of` line, the file's rows in the file's order, and
+ * each row's name, note, status and edition.
  */
 export function shapeFailures(html, doc) {
   const out = []
@@ -158,6 +169,27 @@ export function shapeFailures(html, doc) {
     out.push(
       `the built page carries ${sections.length} section(s) holding a table and ${tables.length} table(s), and the file carries ${doc.groups.length} group(s): the page is one section and one table per group, so a group it stopped rendering and a table it invented both read here (D1537)`,
     )
+  }
+
+  // The page's one date-shaped fact, and the only place the file's `as_of` reaches a reader: the
+  // matrix is read against one release of each half of the product, and a reader who cannot see
+  // which one cannot date a row (D1538). The two stamps are read as text inside the line rather
+  // than as the line itself: what the page writes around them is the page's own sentence, and the
+  // releases it names are the file's.
+  const stampLines = findAll(root, (el) => el.name === 'p' && hasClass(el, 'compat-as-of'))
+  if (stampLines.length !== 1) {
+    out.push(
+      `the built page carries ${stampLines.length} as-of line(s), and the file stamps the matrix with one release of each half of the product: the line under the legend is the page's one date-shaped fact, and a page without it is a matrix a reader cannot date (D1538)`,
+    )
+  } else {
+    const line = flat(textOf(stampLines[0]))
+    for (const half of ['cli', 'console']) {
+      if (!line.includes(doc.as_of[half])) {
+        out.push(
+          `the page's as-of line is ${JSON.stringify(line)} and the file's as_of.${half} is ${JSON.stringify(doc.as_of[half])}: the line prints the release each half of the matrix was last read against, and a line that does not carry it tells a reader the wrong day (D1538)`,
+        )
+      }
+    }
   }
 
   doc.groups.forEach((group, at) => {
@@ -174,6 +206,20 @@ export function shapeFailures(html, doc) {
     const heading = findAll(section, (el) => el.name === 'h2')[0]
     if (heading === undefined || flat(textOf(heading)) !== group.title) {
       out.push(`the section ${JSON.stringify(group.id)} is headed ${JSON.stringify(heading ? flat(textOf(heading)) : '')} and the file names the group ${JSON.stringify(group.title)}: a group's heading is the file's own title`)
+    }
+
+    // The group's own prose, where the file gives it any: it is about the whole group rather than
+    // a cell of its table, and it is the file's sentence rather than the page's (D1537). A group
+    // the file gives no note is a group the page prints no note for: a sentence about the product
+    // that no file carries is the one thing this page may not print.
+    const notes = findAll(section, (el) => el.name === 'p' && hasClass(el, 'compat-note'))
+    const note = notes.length === 1 ? flat(textOf(notes[0])) : ''
+    if (group.note === undefined) {
+      if (notes.length !== 0) {
+        out.push(`the section ${JSON.stringify(group.id)} carries ${notes.length} note(s) and the file gives the group none: the page's prose about a group is the file's, and a sentence the file does not carry is a claim nothing holds (D1537)`)
+      }
+    } else if (notes.length !== 1 || note !== group.note) {
+      out.push(`the section ${JSON.stringify(group.id)} renders ${JSON.stringify(note)} as the group's note and the file's note for it is ${JSON.stringify(group.note)}: what the group is, above its table, is the file's own sentence (D1537)`)
     }
 
     const table = findAll(section, (el) => el.name === 'table')[0]
@@ -379,13 +425,34 @@ test('the docs hub carries the page, under the page\'s own title', () => {
   const hub = builtPages(DIST).find((page) => page.url === '/docs/')
   assert.ok(hub, 'the build produced no docs hub at /docs/')
   const entries = findAll(parse(hub.html), (el) => el.name === 'li' && hasClass(el, 'guide'))
-    .map((el) => findAll(el, (one) => one.name === 'a' && one.attrs.get('href') === ROUTE))
-    .filter((found) => found.length > 0)
+    .filter((el) => findAll(el, (one) => one.name === 'a' && one.attrs.get('href') === ROUTE).length > 0)
   assert.equal(entries.length, 1, `the docs hub carries ${entries.length} entr(ies) linking ${ROUTE}: the hub is where a reader looks for the site's reference pages, and the compatibility matrix is one (the compatibility matrix's plan, Task CM2)`)
+
+  // The hub's title for the entry is a typed word in `src/pages/docs.astro` — this is the one entry
+  // with no document to read a title out of — so it is held to the page it links: a reader who
+  // follows "Compatibility" has to land on the page the hub called that (the page's own `<h1>` is
+  // this test's first case, and the menu's label for the route is its third).
+  const own = builtPages(DIST).find((page) => page.url === ROUTE)
+  assert.ok(own, `the build produced no page at ${ROUTE}`)
+  const heading = flat(textOf(findAll(parse(own.html), (el) => el.name === 'h1')[0]))
+  const card = entries[0]
+  const title = flat(textOf(findAll(card, (el) => el.name === 'a' && el.attrs.get('href') === ROUTE)[0]))
   assert.equal(
-    flat(textOf(entries[0][0])),
-    'Compatibility',
-    `the hub's entry links ${ROUTE} under the title ${JSON.stringify(flat(textOf(entries[0][0])))}: the entry's title is typed in src/pages/docs.astro and the page's own h1 is read above, so the two are the same word or one of them is wrong`,
+    title,
+    heading,
+    `the hub's entry links ${ROUTE} under the title ${JSON.stringify(title)} and the page's own h1 is ${JSON.stringify(heading)}: the entry's title is typed in src/pages/docs.astro, and a hub that calls the page something the page does not is a link a reader cannot recognise`,
+  )
+
+  // The entry's path line is the route rather than a repository file — this is the one entry whose
+  // link opens a page of this site — so it is held to the route: a card that named
+  // `website/data/compatibility.yaml` there would hand a reader the build's copy of the matrix,
+  // which is the file the page is for (src/pages/docs.astro says why the entry links the page).
+  const line = single(card, 'path')
+  assert.ok(line, `the hub's entry for ${ROUTE} carries no element marked \`path\`, and every entry of the hub names what it links under its title`)
+  assert.equal(
+    flat(textOf(line)),
+    ROUTE,
+    `the hub's entry for ${ROUTE} names ${JSON.stringify(flat(textOf(line)))} as its path: the path line is what the link opens, and what this one opens is the page`,
   )
 })
 
@@ -432,6 +499,21 @@ test('every refusal fires on the defect it names, on the built page itself', () 
   // A row's note gone: what the row says besides its name is the file's own sentence.
   refuses(shape(mutated('class="compat-row-note', 'class="compat-rownote')), 'the file\'s note for it is', 'a row whose note the page dropped is not refused')
 
+  // A group's note gone: the file's prose about the whole group, above its table.
+  refuses(shape(mutated('class="compat-note"', 'class="compatnote"')), 'as the group\'s note', 'a group whose note the page dropped is not refused')
+
+  // And a note on a group the file gives none for: a sentence about the product that no file
+  // carries, which is the one thing this page may not print.
+  refuses(
+    shape(mutated('<h2 class="display-md compat-heading" id="console-heading"', '<p class="compat-note">Built twice over.</p><h2 class="display-md compat-heading" id="console-heading"')),
+    'and the file gives the group none',
+    'a note on a group the file gives none for is not refused',
+  )
+
+  // The as-of line naming a release the file does not: the page's one date-shaped fact, and the
+  // only place a reader learns which build the matrix was read against.
+  refuses(shape(mutated('and the console at v0.120.0.', 'and the console at v0.119.0.')), 'as_of.console', 'an as-of line that does not carry the file\'s release is not refused')
+
   // A forbidden phrase, planted in the lead: the refusal names the phrase and the page.
   refuses(
     neverSayFailures(mutated('What runs where', `${doc.never_say[0]}. What runs where`), doc),
@@ -450,16 +532,32 @@ test('every refusal fires on the defect it names, on the built page itself', () 
 // ---- the loader's own refusals, kept ------------------------------------------------------
 
 /**
- * Build a copy of the repository with `website/data/compatibility.yaml` edited, and hand back
- * what the build produced.
+ * A copy of the repository and the loader that copy carries.
  *
- * Every plant below is an edit to the file's own text, and a case whose edit changes nothing
- * fails rather than passes: an anchor that drifted out of the file would otherwise leave a copy
- * the loader accepts, and the case would go green having proved nothing. The copy is
- * `website/test/lib/build.mjs`'s — the tree minus what a site build does not read — so the paths
- * the loader holds to their shape are not on disk there either: a shape is this reader's
- * business, and `website/test/compatibility.mjs` is what holds each path to the tree in the
- * checkout.
+ * `src/content.ts` resolves the site's root from its own path, so the loader imported from a copy
+ * reads the copy's `website/data/compatibility.yaml` and not the checkout's. That is what lets
+ * every refusal below be read in a few milliseconds rather than built: a full site build per
+ * refusal is eighteen more builds in a suite where eleven other files are building copies of
+ * their own at the same time, and a build the kernel kills for memory arrives as a refusal in the
+ * wrong place — a suite failing for the reason this file is not about. The build half is kept
+ * where it is the point: the case below holds one plant to the *site build*, because a matrix the
+ * loader refuses has to stop the build and not only the loader.
+ */
+function matrixCopy(t, prefix) {
+  const dir = mkdtempSync(path.join(tmpdir(), prefix))
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  const site = copyRepository(path.join(dir, 'repo'))
+  return {
+    file: path.join(site, 'data', 'compatibility.yaml'),
+    loader: pathToFileURL(path.join(site, 'src', 'content.ts')).href,
+  }
+}
+
+/**
+ * The build a copy with `edit` of the matrix produced. The copy is `website/test/lib/build.mjs`'s
+ * — the tree minus what a site build does not read — so the paths the loader holds to their shape
+ * are not on disk there either: a shape is this reader's business, and
+ * `website/test/compatibility.mjs` is what holds each path to the tree in the checkout.
  */
 function buildWithMatrix(t, edit) {
   return buildCopy(
@@ -485,10 +583,13 @@ function buildWithMatrix(t, edit) {
  * carry — the file it refused, and the thing it refused.
  *
  * The list is not a second copy of the loader's rules, and that is the point of reading the
- * *build* rather than the file: a refusal deleted from the loader and a refusal this file forgot
- * are the same failure seen from the two sides, and the case names it either way. It is also the
- * half `website/test/compatibility.mjs` cannot reach — that file holds the shipped rows to their
- * rules, and a rule the file's rows happen to satisfy is one nobody has watched throw.
+ * loader rather than the file: a refusal deleted from `src/content.ts` and a refusal this file
+ * forgot are the same failure seen from the two sides, and the case names it either way. It is
+ * also the half `website/test/compatibility.mjs` cannot reach — that file holds the shipped rows
+ * to their rules, and a rule the file's rows happen to satisfy is one nobody has watched throw.
+ *
+ * `wired` marks the one case the *site build* is held to as well: a malformed matrix has to stop
+ * the build and not only the loader, and one plant is what says so.
  */
 const MATRIX_REFUSALS = [
   {
@@ -532,6 +633,7 @@ const MATRIX_REFUSALS = [
     wants: [/"subtitle"/],
   },
   {
+    wired: true,
     what: 'a status outside the file’s five',
     edit: (yaml) =>
       yaml.replace(
@@ -604,12 +706,74 @@ const MATRIX_REFUSALS = [
   },
 ]
 
-test('the build stops on a matrix the loader refuses, naming the file and the defect', (t) => {
+test('the site build stops on a matrix the loader refuses, with the loader\'s own sentence', (t) => {
+  const wired = MATRIX_REFUSALS.find((one) => one.wired)
+  assert.ok(
+    wired,
+    'no case in the list is marked `wired`, so nothing holds a malformed matrix to the build itself: the loader refusing it is half the gate, and the operator reading the refusal in the build is the other',
+  )
+
+  const built = buildWithMatrix(t, wired.edit)
+  assert.notEqual(built.status, 0, `the build accepted ${wired.what} in website/data/compatibility.yaml:\n${built.output}`)
+  for (const want of wired.wants) {
+    assert.match(built.output, want, `the build's failure for ${wired.what} does not carry ${want}, and the loader's sentence is what the operator reads:\n${built.output}`)
+  }
+})
+
+test('the loader refuses every state of the matrix it names, in its own sentence', async (t) => {
+  const { file, loader } = matrixCopy(t, 'fugaro-compatibility-loader-')
+  const shipped = readFileSync(file, 'utf8')
+
+  // The copy's file is the shipped matrix before anything is planted, and every case below is
+  // that file with one edit: a loader that refused the copy as it stands would make the plants
+  // prove nothing, and a case read against the previous case's file would prove the wrong thing.
+  //
+  // One import for every case: each plant is written to the file and then read by `loadCompatibility()`
+  // again, which reads the data file on each call and holds nothing between them. So the module is
+  // the copy's own `src/content.ts` and each refusal is the one a build of this tree would print.
+  let module = null
+  let refused = null
+  try {
+    module = await import(loader)
+  } catch (error) {
+    refused = error
+  }
+  assert.ok(module !== null, `the copy's src/content.ts cannot be imported, so these cases are about nothing: ${refused?.message}`)
+
+  let clean = null
+  try {
+    clean = module.loadCompatibility()
+  } catch (error) {
+    refused = error
+  }
+  assert.ok(clean !== null, `the loader refuses the copy's own website/data/compatibility.yaml, so the plants below are not read against the shipped matrix: ${refused?.message}`)
+  assert.equal(
+    clean.groups.length,
+    facts().groups.length,
+    `the copy's matrix carries ${clean.groups.length} group(s) and the checkout's carries ${facts().groups.length}: the copy is the tree these cases are about, or they are about a different one`,
+  )
+
   for (const { what, edit, wants } of MATRIX_REFUSALS) {
-    const built = buildWithMatrix(t, edit)
-    assert.notEqual(built.status, 0, `the build accepted ${what} in website/data/compatibility.yaml:\n${built.output}`)
+    const planted = edit(shipped)
+    assert.notEqual(
+      planted,
+      shipped,
+      `this case's edit made no change to website/data/compatibility.yaml, so the loader below reads the file as it is and the case proves nothing — fix the anchor against the file, never the rule`,
+    )
+    writeFileSync(file, planted)
+
+    let error = null
+    try {
+      module.loadCompatibility()
+    } catch (one) {
+      error = one
+    }
+    assert.ok(
+      error instanceof Error,
+      `the loader accepted ${what} in website/data/compatibility.yaml: a state it does not refuse is a page built from a matrix nobody checked (D1537)`,
+    )
     for (const want of wants) {
-      assert.match(built.output, want, `the failure for ${what} does not carry ${want}:\n${built.output}`)
+      assert.match(error.message, want, `the refusal for ${what} does not carry ${want}: it is the loader's own sentence, and it is what names the file and the defect`)
     }
   }
 })
