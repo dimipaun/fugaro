@@ -432,9 +432,19 @@ func TestServiceNeedsASlipStore(t *testing.T) {
 //     which is not this route's check (R11, G8, DS3.2);
 //   - another account's per-user credential is refused as a request this
 //     contract does not read, before the slip is written at all;
-//   - the refusal writes exactly ONE audit line, it names the verified launcher
-//     and no run, no job and no credential, and the database is left with the
-//     one slip the first grant wrote — a refused grant is not a grant.
+//   - a name that CARRIES the per-user prefix without being one the grammar
+//     admits is refused too, and this is the case that is easy to get wrong:
+//     the grammar is what says who owns a name, so a name whose owner cannot be
+//     read is not thereby nobody's — fugaro_u_<another account>_Model-Token
+//     (the name rule is lower-case), …_model_token (the separator would make
+//     the split ambiguous), …_<id> with no name, and …_<a platform credential
+//     kind>, which the grammar reserves. Each announces another account and
+//     each would otherwise have been passed over as "not a grammar name" and
+//     granted, to be decided later by the resolution (DS3.2);
+//   - the refusal writes exactly ONE audit line per refused call, it names the
+//     verified launcher and no run, no job and no credential, and the database
+//     is left with the one slip the first grant wrote — a refused grant is not
+//     a grant.
 func TestGrantRefusedForAnotherOwnersToken(t *testing.T) {
 	s := newSlips(t, testLauncherAccount)
 	own := mustUserName(t, testLauncherSub, "model-token")
@@ -456,20 +466,39 @@ func TestGrantRefusedForAnotherOwnersToken(t *testing.T) {
 		t.Errorf("the slip's owner is %q, want the launcher's verified sub %q", sl.Owner, testLauncherSub)
 	}
 
-	resp, body := s.grantCall(t, grantBody(t, s.slug, s.run, testJobSA, 3600, other))
-	wantRefusal(t, resp, body, StatusRequestRefused, ErrorRequestRefused)
+	// Every name below announces an owner this launcher is not — the first one
+	// in the grammar's own spelling, the rest with the prefix and a name the
+	// grammar does not admit — and each is refused before a record is written.
+	refused := []struct{ name, why string }{
+		{other, "another account's per-user credential"},
+		{secretname.UserPrefix + testOtherSub + "_Model-Token", "the prefix with an upper-case name, outside the name rule"},
+		{secretname.UserPrefix + testOtherSub + "_model_token", "the prefix with a name holding the separator, so the split is ambiguous"},
+		{secretname.UserPrefix + testOtherSub, "the prefix and an id with no name at all"},
+		{secretname.UserPrefix + testOtherSub + "_" + config.GitHubAppKeySecret, "the prefix over a platform credential kind, which the grammar reserves"},
+		{secretname.ProjectPrefix + "Model-Token", "the project prefix with a name the grammar does not admit"},
+	}
+	for _, tc := range refused {
+		t.Run(tc.why, func(t *testing.T) {
+			resp, body := s.grantCall(t, grantBody(t, s.slug, s.run, testJobSA, 3600, tc.name))
+			if e := wantRefusal(t, resp, body, StatusRequestRefused, ErrorRequestRefused); strings.Contains(e.Message, tc.name) {
+				t.Errorf("the refusal echoes the name it refused: %q", e.Message)
+			}
+		})
+	}
 	if got := s.slipIDs(t); len(got) != 1 {
-		t.Errorf("a refused grant wrote %v, want no second record", got)
+		t.Errorf("the refused grants wrote %v, want no second record", got)
 	}
 
 	lines := auditLines(t, s.audit)
-	if len(lines) != 1 {
-		t.Fatalf("the grant wrote %d audit lines, want exactly 1 (the refusal; a grant that granted nothing has no line to write): %v", len(lines), lines)
+	if len(lines) != len(refused) {
+		t.Fatalf("the %d refused grants wrote %d audit lines, want exactly one each: %v", len(refused), len(lines), lines)
 	}
-	wantSlipLine(t, lines[0], PurposeSlipGrant, ErrorRequestRefused, map[string]any{
-		"caller": testLauncherAccount, "run": "", "repository": "", "job": "",
-		"credential": "", "tier": "",
-	})
+	for _, line := range lines {
+		wantSlipLine(t, line, PurposeSlipGrant, ErrorRequestRefused, map[string]any{
+			"caller": testLauncherAccount, "run": "", "repository": "", "job": "",
+			"credential": "", "tier": "",
+		})
+	}
 }
 
 // TestGrantTakesNoRunIdentity: the grant's door, and the sibling of

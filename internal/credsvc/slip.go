@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget/token"
@@ -540,13 +541,24 @@ func slipIsThisRuns(sl creds.Slip, id Identity) bool {
 // R7: a per-user secret ID — fugaro_u_<id>_<name> — may be named only by the
 // launcher whose verified Google account id is <id>.
 //
-// The rule applies to the names the GRAMMAR admits and to no others, and that
-// is the whole of its scope: a project-shared name (fugaro_p_) is granted to
-// any launcher here, because whether a pool admits that person is a fact about
-// the pool and its allowed_users and is DS3.2's check where the credential is
-// resolved (R11, G8); and a name the grammar does not admit at all — a bundle
-// entry's own name, such as a model credential's, or a per-secret name of
-// another spelling — has no owner to compare, so there is none to check.
+// A project-shared name (fugaro_p_) that the grammar ADMITS is granted to any
+// launcher here, because whether a pool admits that person is a fact about the
+// pool and its allowed_users and is DS3.2's check where the credential is
+// resolved (R11, G8). And a name with NEITHER of the grammar's two prefixes — a
+// bundle entry's own name, such as a model credential's — has no owner to
+// compare, so there is none to check.
+//
+// A name that carries one of the two prefixes and does NOT parse is refused,
+// which is the one case that looks like the second and is not: the grammar is
+// what says who owns a name, so a name that announces an owner this service
+// cannot read — fugaro_u_<another account>_Model-Token, whose upper-case letter
+// puts it outside the name rule; fugaro_u_<another account>_model_token, whose
+// separator makes the split ambiguous; fugaro_u_<another account> with no name
+// at all; fugaro_u_<another account>_<a platform credential kind> — is exactly
+// the shape the owner rule exists for, and passing it over would leave the
+// resolution (DS3.2) to decide, at a later call, what this route waved through.
+// The prefix is the whole of the test, and the reading is fail-closed: a name
+// that cannot be read as somebody else's is not thereby nobody's.
 //
 // The refusal names the FIELD and never the name: a credential name is caller
 // text, and this is the one route where a caller hands this service a list of
@@ -558,8 +570,12 @@ func checkGrantedNames(names []string, owner string) error {
 		}
 		parsed, err := secretname.Parse(name)
 		if err != nil {
-			// Not a name of the grammar: nothing here can say who owns it, and
-			// what may be served under it is the resolution's answer (DS3.2).
+			if strings.HasPrefix(name, secretname.UserPrefix) || strings.HasPrefix(name, secretname.ProjectPrefix) {
+				return fmt.Errorf("the credential named in position %d carries one of the grammar's prefixes and is not a name the grammar admits, so no launcher may be granted it", i+1)
+			}
+			// Neither prefix: not a name of the grammar at all, so nothing here
+			// can say who owns it, and what may be served under it is the
+			// resolution's answer (DS3.2).
 			continue
 		}
 		if parsed.ID != "" && parsed.ID != owner {
