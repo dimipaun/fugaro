@@ -504,48 +504,65 @@ func catalogBuildSelftest(t *testing.T, fb *gcpfake.Build) []byte {
 // TestCatalogBuildRefusesACopyAnotherPublisherStaged: the definition, the
 // commit and the context digest a request is built from are three objects, and
 // another publisher staging this entry's copy between the copy and the
-// submission's read-back leaves the bucket holding one revision's definition
-// beside another's identity. The build's pin step sees the definition alone —
-// its generation and its sha256 — so a request made from that mix would pass it
-// and then build one revision's Dockerfile on another's context, recording the
-// stale commit beside the newer digest. It is refused instead, before anything
-// is submitted, and the next run reads the whole copy the other publisher left.
+// submission's read-back leaves the bucket holding one revision's value beside
+// another's. The build's pin step sees the definition alone — its generation
+// and its sha256 — so a request made from such a mix would pass it and then
+// build one revision's Dockerfile on another's context, recording the stale
+// commit beside the newer digest. Each of the three is refused on its own,
+// before anything is submitted, and the sentence says which value moved.
 func TestCatalogBuildRefusesACopyAnotherPublisherStaged(t *testing.T) {
-	fb, _, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildContextYAML)
-	// The commit the entry's branch resolves to, and the definition it holds:
-	// the values this command's own copy stages.
+	// The commit the entry's branch resolves to and the definition it holds:
+	// the values this command's own copy stages. otherCommit and otherHash are
+	// another publisher's revision of the same entry.
 	const sha = "3f2b1c0d9e8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c"
+	const otherCommit = "b1a2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4"
+	const otherDefinition = "FROM example.invalid/other\nRUN true\n"
+	otherHash := strings.Repeat("b", 64)
 	atCommit := map[string]string{".fugaro/base.Dockerfile": catalogBuildFetched, "ci/Dockerfile": "FROM example.invalid/base\n"}
-	stubCatalogProviderState(t, fake.State{
-		Branches: map[string]map[string]string{"main": {".fugaro/base.Dockerfile": catalogBuildFetched}},
-		Commits:  map[string]string{"main": sha},
-		Trees:    map[string]map[string]string{sha: atCommit},
-	})
-	f.sm.AllowAccess()
-	putSecretID(t, f.sm, mustSlug(gitprov.KindBitbucket, "acme/app"), config.BitbucketSecret, []byte(catalogTokenPlaceholder))
+	for _, tc := range []struct {
+		what  string
+		part  string
+		key   func(string) (string, error)
+		data  []byte
+		ctype string
+	}{
+		{"the definition", "Dockerfile", config.CatalogDockerfileKey, []byte(otherDefinition), catalogDockerfileType},
+		{"the commit", "commit", config.CatalogContextCommitKey, []byte(otherCommit), catalogIdentityType},
+		{"the context digest", "context digest", config.CatalogContextHashKey, []byte(otherHash), catalogIdentityType},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			fb, _, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildContextYAML)
+			stubCatalogProviderState(t, fake.State{
+				Branches: map[string]map[string]string{"main": {".fugaro/base.Dockerfile": catalogBuildFetched}},
+				Commits:  map[string]string{"main": sha},
+				Trees:    map[string]map[string]string{sha: atCommit},
+			})
+			f.sm.AllowAccess()
+			putSecretID(t, f.sm, mustSlug(gitprov.KindBitbucket, "acme/app"), config.BitbucketSecret, []byte(catalogTokenPlaceholder))
 
-	// The other publisher's Dockerfile: another revision of the same entry,
-	// staged after this command's copy and before its read-back, which is the
-	// window catalogCopyRace stands in for.
-	const other = "FROM example.invalid/other\nRUN true\n"
-	race := catalogCopyRace
-	t.Cleanup(func() { catalogCopyRace = race })
-	catalogCopyRace = func(_ context.Context, b *blobx.Bucket, e config.Entry) {
-		key, err := config.CatalogDockerfileKey(e.Name)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := b.Put(context.Background(), key, []byte(other), catalogDockerfileType); err != nil {
-			t.Fatal(err)
-		}
-	}
+			// The other publisher's value, staged after this command's copy and
+			// before its read-back: the window catalogCopyRace stands in for.
+			race := catalogCopyRace
+			t.Cleanup(func() { catalogCopyRace = race })
+			catalogCopyRace = func(_ context.Context, b *blobx.Bucket, e config.Entry) {
+				key, err := tc.key(e.Name)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := b.Put(context.Background(), key, tc.data, tc.ctype); err != nil {
+					t.Fatal(err)
+				}
+			}
 
-	_, _, err := executeBuild(t, "image", "build", "base", "--base", "b:1")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "base") || !strings.Contains(err.Error(), "another publisher") {
-		t.Fatalf("exit %d, err %v: a copy another publisher staged is refused by name", ExitCode(err), err)
-	}
-	if buildPosts(fb) != 0 {
-		t.Errorf("a copy of two revisions reached Cloud Build: %d posts", buildPosts(fb))
+			_, _, err := executeBuild(t, "image", "build", "base", "--base", "b:1")
+			if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "base") ||
+				!strings.Contains(err.Error(), "another publisher") || !strings.Contains(err.Error(), tc.part) {
+				t.Fatalf("exit %d, err %v: a copy whose %s another publisher staged is refused, naming the entry and the value that moved", ExitCode(err), err, tc.what)
+			}
+			if buildPosts(fb) != 0 {
+				t.Errorf("a copy of two revisions reached Cloud Build: %d posts", buildPosts(fb))
+			}
+		})
 	}
 }
 
