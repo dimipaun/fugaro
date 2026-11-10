@@ -755,6 +755,110 @@ func TestRunDeniesAStoreTheEnvironmentMoved(t *testing.T) {
 	}
 }
 
+// TestRunDeniesTheConfigDirectoryTheCLIResolves: Fugaro's own store is not
+// where a rule spelled ~/.config puts it — it is where the resolver the CLI
+// itself uses puts it, and that answer is what the payload has to carry. The
+// resolver is localcfg.UserDir: $XDG_CONFIG_HOME, else %APPDATA% on Windows,
+// else the home directory's .config, and localcfg.configDir joins "fugaro"
+// onto that answer, which is the directory the CLI reads and writes. Deriving
+// the rule from that resolver rather than spelling its variables a second time
+// is what keeps the payload naming the store when the variables move or the
+// resolver's rule changes: a relative $XDG_CONFIG_HOME is one the resolver
+// ignores, so its answer is the home directory's .config, and a home there is
+// no $HOME for at all is still the resolver's answer.
+//
+// The rule here is the absolute spelling of the resolved directory, because
+// that is what the payload needs. The first case is the one the rows in
+// childStoresByVar name as well — $XDG_CONFIG_HOME is a store variable — and
+// its directory is not under HOME at all, so nothing that resolves ~ could
+// have denied it. The last two are the resolver's own fallback, and no row
+// names them: a rule spelled from the variable would have followed the
+// relative value the resolver ignores, and no variable at all names the home
+// directory's .config. Those two are what the mutation above turns red.
+//
+// Mutation (run and restored): make childConfigDirPaths return nil -> red on
+// the last two cases, naming the directory the CLI reads the project configs
+// from on a machine whose config home the ~ rules cannot name.
+func TestRunDeniesTheConfigDirectoryTheCLIResolves(t *testing.T) {
+	s := newRunSetup(t)
+	home, elsewhere := t.TempDir(), t.TempDir()
+	for _, tc := range []struct {
+		name string
+		env  []string
+		want string
+	}{
+		{"$XDG_CONFIG_HOME", []string{"HOME=" + home, "XDG_CONFIG_HOME=" + elsewhere}, elsewhere},
+		{"a relative $XDG_CONFIG_HOME, which the resolver ignores", []string{"HOME=" + home, "XDG_CONFIG_HOME=" + filepath.Join("relative", "config")}, filepath.Join(home, ".config")},
+		{"no $HOME, so the home the environment names instead", []string{"USERPROFILE=" + home}, filepath.Join(home, ".config")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := s.req
+			req.ParentEnv = tc.env
+			args, err := Args(req)
+			if err != nil {
+				t.Fatalf("every store this environment names is at a path a rule can carry, so there is no refusal to make here: %v", err)
+			}
+			want := runRule(filepath.Join(tc.want, "fugaro")) + "/**"
+			if deny := runReadRules(t, args); !slices.Contains(deny, want) {
+				t.Errorf("the payload does not carry %s, so the directory the CLI resolves its own configuration to — this installation's project configs — is one the child may read: %v", want, deny)
+			}
+		})
+	}
+}
+
+// TestRunKeepsADiagnosisTheRuleForItsConfigDirectoryCannotName: the resolver's
+// answer is a directory this payload can only name absolutely, and a home
+// directory holding a character the rule syntax reserves — a parenthesis, say
+// — is one where that spelling does not exist. What this case pins is that the
+// diagnosis still runs: the answer came from the home directory alone, so
+// ~/.config/fugaro/** in the payload names the same store, and refusing here
+// would refuse a machine where nothing is open. A store a *variable* moved has
+// no such rule behind it, which is why that one refuses instead
+// (TestRunRefusesAStoreNoRuleCanName).
+func TestRunKeepsADiagnosisTheRuleForItsConfigDirectoryCannotName(t *testing.T) {
+	s := newRunSetup(t)
+	home := filepath.Join(t.TempDir(), "ada (personal)")
+	s.req.ParentEnv = []string{"HOME=" + home}
+	block := answer(t, fence(s.nonce, "outcome: bug\nsignature: update config invalid\nbody"))
+	if _, err := s.run(t, block); err != nil {
+		t.Fatalf("the config home %s is one no rule can carry absolutely, and ~/.config/fugaro/** names it anyway: %v", home, err)
+	}
+	args, err := Args(s.req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deny := runReadRules(t, args); !slices.Contains(deny, "~/.config/fugaro/**") {
+		t.Errorf("the payload no longer names the home-relative rule that carries this store, so this case asserts a safety it no longer has: %v", deny)
+	}
+}
+
+// runReadRules are the Read rules of the payload argv carries.
+func runReadRules(t *testing.T, args []string) []string {
+	t.Helper()
+	payload, ok := runFlag(args, "--settings")
+	if !ok {
+		t.Fatal("the child is started with no --settings payload")
+	}
+	var doc struct {
+		Permissions struct {
+			Deny []string `json:"deny"`
+		} `json:"permissions"`
+	}
+	if err := json.Unmarshal([]byte(payload), &doc); err != nil {
+		t.Fatalf("--settings is not JSON (%v): %s", err, payload)
+	}
+	var read []string
+	for _, rule := range doc.Permissions.Deny {
+		if path, ok := strings.CutPrefix(rule, "Read("); ok {
+			read = append(read, strings.TrimSuffix(path, ")"))
+		}
+	}
+	return read
+}
+
+// runRule is a path as the payload spells an absolute one.
+func runRule(path string) string { return "//" + strings.TrimPrefix(filepath.ToSlash(path), "/") }
+
 // TestRunRefusesAStoreNoRuleCanName: a store a variable has moved to a path no
 // rule can name ends the diagnosis instead of leaving the payload one rule
 // short. Leaving it out would be silent in the worst way: the default rules

@@ -8,12 +8,14 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/procgroup"
 	"github.com/dimipaun/fugaro/internal/redact"
 	"github.com/dimipaun/fugaro/internal/safetext"
@@ -150,11 +152,12 @@ func (s *syncWriter) do(f func()) {
 //
 // These are the stores where the machine keeps them by default, and most of
 // them move: childStoresByVar names the variable that decides each of those
-// paths, so the payload for one diagnosis is this list plus a rule for
-// wherever the store actually is (childDenyRules). Without that, a machine
-// with $XDG_CONFIG_HOME set keeps gh's hosts.yml under it and the log, which
-// this process writes and which carries real paths, names a store no rule
-// here reaches.
+// paths, and Fugaro's own directory is named here as the default and again as
+// the answer of the resolver the CLI itself uses (childConfigDirPaths), so the
+// payload for one diagnosis is this list plus a rule for wherever each store
+// actually is (childDenyRules). Without that, a machine with $XDG_CONFIG_HOME
+// set keeps gh's hosts.yml under it and the log, which this process writes and
+// which carries real paths, names a store no rule here reaches.
 var childReadDeny = []string{
 	"~/.ssh/**",
 	"~/.aws/**",
@@ -322,9 +325,41 @@ func childStorePaths(parent []string, store childStore) []string {
 	return paths
 }
 
+// childConfigDirPaths is Fugaro's own store — this installation's project
+// configs — where the resolver the CLI itself uses puts it: localcfg.UserDir
+// decides the config home ($XDG_CONFIG_HOME, else %APPDATA% on Windows, else
+// the home directory's .config) and localcfg.configDir joins "fugaro" onto
+// that answer, which is the directory the CLI reads and writes. Taking the
+// path from that resolver rather than spelling its variables here a second
+// time is what keeps the payload naming the directory the CLI writes: a second
+// spelling goes stale the day the resolver's rule changes, and a store the
+// payload stops naming is a store the child reads.
+//
+// The rows in childStoresByVar stay beside this rule, because the two answer
+// different questions — where one variable puts a store, against where
+// Fugaro's own configuration resolves — and where the two answers meet the
+// payload names the directory twice: a longer payload, not a wrong one. The
+// rule is the absolute spelling of that answer, so the payload does not rest
+// on the client expanding ~ the way this file assumes, and where the answer is
+// the platform's own the ~ rules in childReadDeny name it a second time.
+//
+// The join is by hand for childStorePaths' reason: filepath.Join cleans, and a
+// Windows config home on a share has to reach childRulePath as the resolver
+// returned it, so that it is refused there rather than read as a path on this
+// machine.
+func childConfigDirPaths(parent []string) []string {
+	getenv := func(name string) string { return envValue(parent, name) }
+	d, err := localcfg.UserDir(getenv, runtime.GOOS, localcfg.DirConfig)
+	if err != nil {
+		return nil
+	}
+	return []string{strings.TrimRight(filepath.ToSlash(d), "/") + "/fugaro"}
+}
+
 // childDenyRules is the payload's deny list for one diagnosis: childReadDeny,
-// plus a rule for every store a variable has moved. Order is fixed, so the
-// payload is the same for the same environment and a test can pin it whole.
+// the config directory the CLI's own resolver answers with, and a rule for
+// every store a variable has moved. Order is fixed, so the payload is the same
+// for the same environment and a test can pin it whole.
 //
 // A store a variable has moved to a path no rule can name is an error and not
 // a rule left out. The default rules name where such a store sits on a machine
@@ -337,11 +372,25 @@ func childStorePaths(parent []string, store childStore) []string {
 // refused, naming the store, and the person decides what to do about it.
 func childDenyRules(parent []string) ([]string, error) {
 	rules := slices.Clone(childReadDeny)
+	for _, path := range childConfigDirPaths(parent) {
+		// A config home the rule cannot carry is not a store this payload
+		// leaves open, which is the reason a moved store refuses here: the
+		// resolver's answer came either from a variable, whose own rule
+		// refuses below for the same path, or from the home directory alone,
+		// where the ~ rules above name it for the client (a home directory
+		// holding a parenthesis is a ~ path, not a rule path). Refusing
+		// anyway would end a diagnosis on a machine where nothing is open.
+		rule, ok := childRulePath(path)
+		if !ok {
+			continue
+		}
+		rules = append(rules, rule+"/**")
+	}
 	for _, store := range childStoresByVar {
 		for _, path := range childStorePaths(parent, store) {
 			rule, ok := childRulePath(path)
 			if !ok {
-				return nil, fmt.Errorf("%s names %s, and no deny rule can name that path: a rule is a glob over the filesystem, and the client's syntax has no form for a UNC share or for a path holding a character it reserves. This diagnosis is refused rather than run with that store open, because the rules name only where such a store sits on a machine that did not move it, and the log this child reads carries real paths", store.env, path)
+				return nil, childNoRule(store.env, path)
 			}
 			if store.dir {
 				rule += "/**"
@@ -350,6 +399,12 @@ func childDenyRules(parent []string) ([]string, error) {
 		}
 	}
 	return rules, nil
+}
+
+// childNoRule is the refusal for a store at a path no rule can name: the
+// diagnosis ends rather than run with that store readable.
+func childNoRule(source, path string) error {
+	return fmt.Errorf("%s names %s, and no deny rule can name that path: a rule is a glob over the filesystem, and the client's syntax has no form for a UNC share or for a path holding a character it reserves. This diagnosis is refused rather than run with that store open, because the rules name only where such a store sits on a machine that did not move it, and the log this child reads carries real paths", source, path)
 }
 
 // childSettingsJSON is childSettings rendered for one diagnosis, from the
