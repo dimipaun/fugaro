@@ -241,3 +241,144 @@ func TestTheGrantCallAsksTheGrantRoute(t *testing.T) {
 		t.Errorf("a service that refuses the launcher answered %v, want a refusal that is not the version skew", err)
 	}
 }
+
+// TestTheGrantCallRefusesAURLItWillNotSendATokenTo: the grant call carries the
+// launcher's own Google ID token, which is a bearer credential, so the URL it
+// is sent to is judged before anything is minted: https, or http on a loopback
+// address, which is a test's own service. A URL that is more than a scheme and
+// a host is refused too — the route is appended to it, and a base path, a
+// query or a fragment would decide where this token goes.
+func TestTheGrantCallRefusesAURLItWillNotSendATokenTo(t *testing.T) {
+	for _, c := range []struct {
+		url  string
+		want bool
+	}{
+		{"https://creds.example.com", true},
+		{"https://creds.example.com/", true},
+		{"https://creds.example.com:8443", true},
+		{"http://127.0.0.1:8080", true},
+		{"http://localhost:8080", true},
+		{"http://creds.example.com", false},
+		{"http://10.0.0.1", false},
+		{"https://creds.example.com/v1", false},
+		{"https://creds.example.com?x=1", false},
+		{"https://creds.example.com#f", false},
+		{"https://user:pass@creds.example.com", false},
+		{"creds.example.com", false},
+		{"", false},
+	} {
+		err := checkSlipServiceURL(c.url)
+		if (err == nil) != c.want {
+			t.Errorf("checkSlipServiceURL(%q) = %v, want refused = %v: this URL is where the launcher's own identity token would be sent", c.url, err, !c.want)
+		}
+		if err != nil && strings.Contains(err.Error(), c.url) && c.url != "" {
+			t.Errorf("the refusal of %q repeats the URL: %v", c.url, err)
+		}
+	}
+}
+
+// TestTheGrantCallDoesNotFollowARedirect: a 3xx is not an answer, and the
+// request holds the launcher's own token in a header a redirect would carry to
+// whatever host the Location named. The second server here is exactly that
+// host, and it must never be reached.
+func TestTheGrantCallDoesNotFollowARedirect(t *testing.T) {
+	reached := 0
+	elsewhere := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"slip":"` + fakeSlipID + `"}`))
+	}))
+	t.Cleanup(elsewhere.Close)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, elsewhere.URL+credsvc.SlipPath, http.StatusTemporaryRedirect)
+	}))
+	t.Cleanup(srv.Close)
+	prev := slipIdentity
+	slipIdentity = func(context.Context, string) (string, error) { return fakeLauncherToken, nil }
+	t.Cleanup(func() { slipIdentity = prev })
+
+	req := credsvc.SlipGrantRequest{Slug: appSlug, Run: "20261110-100000-abcd",
+		Account: "fugaro-web-abcde@proj.iam.gserviceaccount.com", Credentials: []string{config.CredentialVertex}, MaxRuntimeSeconds: 3600}
+	if _, err := slipGrantOverService(context.Background(), srv.URL, req); err == nil {
+		t.Fatal("the grant call followed a redirect, want a refusal: the launcher's identity token is a bearer credential and the redirect names the host it would go to")
+	}
+	if reached != 0 {
+		t.Errorf("the redirected grant call reached the host the Location named (%d requests), want none", reached)
+	}
+}
+
+// TestTheGrantCallReadsABoundedAnswer: the service is another writer, and its
+// answer is rendered into this launcher's memory, so its size is read before
+// its shape. An answer larger than a grant's is refused, and refused as
+// itself: nothing about an unread answer is the version skew.
+func TestTheGrantCallReadsABoundedAnswer(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"slip":"` + strings.Repeat("a", maxSlipAnswerBytes) + `"}`))
+	}))
+	t.Cleanup(srv.Close)
+	prev := slipIdentity
+	slipIdentity = func(context.Context, string) (string, error) { return fakeLauncherToken, nil }
+	t.Cleanup(func() { slipIdentity = prev })
+
+	req := credsvc.SlipGrantRequest{Slug: appSlug, Run: "20261110-100000-abcd",
+		Account: "fugaro-web-abcde@proj.iam.gserviceaccount.com", Credentials: []string{config.CredentialVertex}, MaxRuntimeSeconds: 3600}
+	_, err := slipGrantOverService(context.Background(), srv.URL, req)
+	if err == nil || errors.Is(err, errSlipRouteAbsent) {
+		t.Errorf("an answer larger than %d bytes was read as %v, want a refusal of the answer itself", maxSlipAnswerBytes, err)
+	}
+}
+
+// TestASlipIDIsUsableOnlyAsOneCleanEntry: the granted id becomes ONE entry of
+// the execution's environment, so a value that is empty, longer than any id
+// the service draws, or not one clean printable token is not an id this
+// launcher puts on a job — the backend builds the environment out of these
+// entries, and the value is the service's, not the launcher's.
+func TestASlipIDIsUsableOnlyAsOneCleanEntry(t *testing.T) {
+	for _, c := range []struct {
+		id   string
+		want bool
+	}{
+		{fakeSlipID, true},
+		{strings.Repeat("a", maxSlipIDBytes), true},
+		{strings.Repeat("a", maxSlipIDBytes+1), false},
+		{"", false},
+		{"two words", false},
+		{"line\nbreak", false},
+		{"tab\there", false},
+		{"sliß", false},
+	} {
+		if got := slipIDUsable(c.id); got != c.want {
+			t.Errorf("slipIDUsable(%q) = %v, want %v: the id is one environment entry this launcher hands a job", c.id, got, c.want)
+		}
+	}
+}
+
+// TestALaunchThatCannotReadTheRepositoryAsksForNoSlip: the slip names the
+// credentials the run may be served, and only the repository's own file can
+// select a craft's access — so a launch that can read neither the file at the
+// run's ref nor a checkout of the repository cannot name what the run, which
+// will check the file out, is about to ask for. It starts without a slip and
+// says so, rather than claiming a slip that names less than the run asks for:
+// that is the run refused at its next call with no way back (R9), where no
+// slip is the path every run took before the slip existed.
+func TestALaunchThatCannotReadTheRepositoryAsksForNoSlip(t *testing.T) {
+	r := newSlipLaunchRig(t)
+	// A directory that is no checkout of the repository: nothing for
+	// launchFileConfig to read the run's document from, which is the daemon's
+	// own launch (orchestrator_launcher) and `fugaro run --repo` from
+	// elsewhere on the machine.
+	t.Chdir(t.TempDir())
+	plain := r.launch(t, func(req credsvc.SlipGrantRequest) (credsvc.SlipGrantResponse, error) {
+		return credsvc.SlipGrantResponse{Slip: fakeSlipID, MaxRuntimeSeconds: req.MaxRuntimeSeconds}, nil
+	})
+	if r.calls != 0 {
+		t.Errorf("a launch that could not read the repository's own fugaro.yaml made %d grant calls, want none: the slip would name defaults the run is not configured to ask for", r.calls)
+	}
+	if want := []string{envCredentialsServiceURL + "=" + launchCredsURL}; !slices.Equal(plain, want) {
+		t.Errorf("the launch handed the job %v, want %v", plain, want)
+	}
+	if !strings.Contains(r.warned.String(), "without a slip") {
+		t.Errorf("the launch said %q, want a warning that this run starts without a slip and why", r.warned.String())
+	}
+}

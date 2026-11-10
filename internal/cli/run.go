@@ -4770,6 +4770,16 @@ func checkSlipServiceURL(raw string) error {
 // and no more than that. The alternative, failing the launch, would break runs
 // that work today over the grant of a credential they may not even use.
 func runSlipEnv(ctx context.Context, env *cloudEnv, spec *task.Spec, slug, workflow, serviceURL string) []string {
+	names, known := slipCredentialNames(ctx, env, spec)
+	if !known {
+		// No slip rather than a slip that names less than the run will ask
+		// for: the names are the set the service serves this run from (R9),
+		// so one short of the run's own credentials is a run refused at the
+		// call with no way back, where no slip at all is exactly the run this
+		// launcher started before the slip existed.
+		fmt.Fprintf(launchWarn, "warning: this run starts without a slip, because the repository's own fugaro.yaml could not be read from here — no checkout of it, and the file at the run's ref did not resolve — so the credentials the run will ask for cannot be named: run `fugaro run` from a checkout of the repository to have this run served under a slip\n")
+		return nil
+	}
 	req := credsvc.SlipGrantRequest{
 		Slug: slug,
 		Run:  spec.RunID,
@@ -4778,7 +4788,7 @@ func runSlipEnv(ctx context.Context, env *cloudEnv, spec *task.Spec, slug, workf
 		// is dedicated to one job per repository (D1937), and the claim is
 		// checked against it.
 		Account:           gcp.ServiceAccountID(slug, workflow) + "@" + env.lc.GCPProject + ".iam.gserviceaccount.com",
-		Credentials:       slipCredentialNames(ctx, env, spec),
+		Credentials:       names,
 		MaxRuntimeSeconds: int64(slipRunTime(spec) / time.Second),
 	}
 	sctx, cancel := context.WithTimeout(ctx, slipGrantTimeout)
@@ -4822,16 +4832,25 @@ func runSlipEnv(ctx context.Context, env *cloudEnv, spec *task.Spec, slug, workf
 // else — and a slip that named nothing would be a run refused the one
 // credential it has.
 //
+// The second answer is whether the repository's own document could be read at
+// all: only a file that exists is a set of accesses, and this one is read the
+// way every other launch read reads it (launchFileConfig — at the run's ref
+// out of the launcher's checkout, that checkout's own file standing in), so a
+// launch made outside a checkout of the repository reads nothing and cannot
+// name what the run, which will check the file out, is about to ask for. The
+// caller does not ask for a slip then.
+//
 // subscriptionSpread is false and that is not a judgement about the switch: it
 // decides only whether a pool is reported inert, which is the run's own rule
 // about which of a pool's members to skip (D1626, MC5), and it changes no
 // access. An access naming a credential no layer holds is asked for as it
 // stands: the service's answer at the call is what says so.
-func slipCredentialNames(ctx context.Context, env *cloudEnv, spec *task.Spec) []string {
-	var layers []craft.Layer
-	if co := launchFileConfig(ctx, env, spec); co != nil {
-		layers = append(layers, craft.Layer{Name: craft.SourceRepo, Crafts: co.Agent.Crafts})
+func slipCredentialNames(ctx context.Context, env *cloudEnv, spec *task.Spec) ([]string, bool) {
+	co := launchFileConfig(ctx, env, spec)
+	if co == nil {
+		return nil, false
 	}
+	layers := []craft.Layer{{Name: craft.SourceRepo, Crafts: co.Agent.Crafts}}
 	if env.lc != nil {
 		layers = append(layers, craft.Layer{Name: craft.SourceLocal, Crafts: env.lc.Crafts,
 			Credentials: env.lc.Credentials, Pools: env.lc.Pools, KeyPrefix: craftLocalKeyPrefix})
@@ -4843,7 +4862,7 @@ func slipCredentialNames(ctx context.Context, env *cloudEnv, spec *task.Spec) []
 			names = append(names, access)
 		}
 	}
-	return names
+	return names, true
 }
 
 // slipRunTime is how long this run asks to be served for: the run's own
