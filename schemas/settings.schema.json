@@ -1081,11 +1081,20 @@
         "policy_generation": {
           "default": "unset = none: no generation is recorded; the next update adopts the published one"
         },
+        "pools.*.allowed_users": {
+          "default": "unset = only the owner"
+        },
+        "pools.*.legacy_open": {
+          "default": "unset = false: only the policy migration writes this, for a pool that predates owners"
+        },
         "pools.*.members": {
           "default": "unset = required: a pool with no members serves nothing"
         },
         "pools.*.name": {
           "default": "unset = required: the name a craft's access speaks"
+        },
+        "pools.*.owner": {
+          "default": "unset = required: the pool is served to its owner and the users it names"
         },
         "pools.*.strategy": {
           "default": "unset = failover"

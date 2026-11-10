@@ -770,6 +770,16 @@ var localRows = []Row{
 	locLocal("pools.*.name", "required: the name a craft's access speaks", "accounts", docCrafts),
 	locLocal("pools.*.strategy", config.PoolStrategyFailover, "accounts", docCrafts),
 	locLocal("pools.*.members", "required: a pool with no members serves nothing", "accounts", docCrafts),
+	// A pool's owner and the people it is served to (D1936, R10). They are
+	// local-only like the rest of the block, and they are the two keys that
+	// decide WHO a pool's credentials are handed to, which is why they belong
+	// to the owner and to no shared file a launcher can write. legacy_open is
+	// the migration's marker and not a key an operator writes: it is in the
+	// registry so that `fugaro settings` can name it, and the value it states
+	// says as much.
+	locLocal("pools.*.owner", "required: the pool is served to its owner and the users it names", "accounts", docCrafts),
+	locLocal("pools.*.allowed_users", "only the owner", "accounts", docCrafts),
+	locLocal("pools.*.legacy_open", "false: only the policy migration writes this, for a pool that predates owners", "accounts", docCrafts),
 	locLocal("crafts.coder.model", "required: the coder implements, so a run needs its model", "models", docCrafts),
 	locLocal("crafts.coder.access", "required: the coder's calls go out on a credential or a pool", "accounts", docCrafts),
 	locLocal("crafts.review.model", "the coder's model", "models", docCrafts),
