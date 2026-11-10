@@ -18,30 +18,31 @@ import (
 //
 // The folder is the user's own state directory, so nothing here reads a
 // credential, a project or a bucket: `list`, `show` and `dismiss` are reads
-// and one local write. The shared store, the upload and the filing on GitHub
-// are later slices, which is why `dismiss` refuses in a coding agent's session
-// even though it writes no cloud record (D1730): the dismissal it makes is
-// what a steered agent would use to bury a real bug.
-//
-// The help names no command that saves an issue, because none is in this tree
-// yet: the diagnosis that writes one is another plan's, and a reference that
-// told a reader to run it would name a command they cannot type.
+// and one local write, and `submit` builds the post from the record and files
+// it with the person's own `gh`. The shared store and the upload are later
+// slices, which is why `dismiss` refuses in a coding agent's session even
+// though it writes no cloud record (D1730): the dismissal it makes is what a
+// steered agent would use to bury a real bug.
 func newIssueCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "issue",
-		Short: "Read and dismiss the issues saved on this machine",
+		Short: "Read the issues saved on this machine, and file one on GitHub",
 		Long: "Read the issues saved on this machine.\n\n" +
 			"An issue is one Markdown file under the user's state directory, holding\n" +
 			"the whole issue: a strict header and the diagnosis' own words. `list`\n" +
 			"shows what is saved, `show` prints one, and `dismiss` sets one aside so\n" +
 			"nothing is filed for it. An issue is named by its local ID\n" +
 			"(`local-<run stem>`) until it has been uploaded, and by its number\n" +
-			"(`#0007`) from then on; `show` and `dismiss` take either.\n\n" +
-			"Nothing here is uploaded: the issue stays on this machine, and the text\n" +
-			"of a record is printed as data — it comes from log text this machine did\n" +
-			"not write.",
+			"(`#0007`) from then on; `show`, `dismiss` and `submit` take either.\n\n" +
+			"`submit` shows exactly what would be filed on GitHub — the post and the\n" +
+			"sha256 of its bytes — and files nothing until `--ask` is answered with a\n" +
+			"yes at your own terminal; without `gh`, it prints how to install it and\n" +
+			"a new-issue link holding the same post instead.\n\n" +
+			"Nothing here is uploaded: the issue stays on this machine until `submit`\n" +
+			"files it, and the text of a record is printed as data — it comes from log\n" +
+			"text this machine did not write.",
 	}
-	cmd.AddCommand(newIssueListCmd(), newIssueShowCmd(), newIssueDismissCmd())
+	cmd.AddCommand(newIssueListCmd(), newIssueShowCmd(), newIssueDismissCmd(), newIssueSubmitCmd())
 	return cmd
 }
 
