@@ -121,13 +121,21 @@ func TestDocsChecks147StaysReserved(t *testing.T) {
 	}
 
 	// The block's own statement of itself is read from the plan that claims it:
-	// the block is 145–154, 147 is parked with S3, and 150–154 are reserved.
-	// 148's parked row is deliberately not pinned here — the plan is another
-	// task's file, and this one only holds what the register writes.
+	// the block is 145–154, 147 is parked with S3, 148's read half is kept (the
+	// owner's answer of 2026-11-10, D1961) and 150–154 are reserved.
+	//
+	// The pin on 148 is the KEEP and not the plan's checks table row: that row
+	// still reads "148, **parked with S3** ... | reserved |" because the sweep
+	// that answers D1960–D1962 is another task's, and a pin on a row that sweep
+	// replaces would fail on the branch doing the replacing rather than on the
+	// drift. What must not drift is the plan's own record of why this register
+	// registers 148 at all — if the plan stops keeping the read half, the
+	// registration here is a check the plan has withdrawn.
 	plan := flattenDoc(readDoc(t, "docs/bitbucket-credentials/implementation-plan.md"))
 	for _, want := range []string{
 		"Checks 145–154",
 		"147, **parked with S3**",
+		"the read half is the read consumer's own drill",
 		"Checks 150–154 are reserved and unused.",
 	} {
 		if !strings.Contains(plan, want) {
