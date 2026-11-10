@@ -175,6 +175,15 @@ func TestDocsManagedAgentConvergeSkillParagraphIsAHandoff(t *testing.T) {
 	if strings.Contains(admitted, "accounts rm") || strings.Contains(admitted, "`rm`") || !strings.Contains(refused, "`fugaro accounts rm`") {
 		t.Errorf("the paragraph lists `accounts rm` somewhere other than its never-list, and a session is refused it outright: %q", paragraph)
 	}
+	// And the same rule for the third design's row, which landed with
+	// config-management's G6: `fugaro rigor set` is a command, and the gate's
+	// allowlist admits no rigor key (D1027), so a session is refused it. A
+	// paragraph that offered it among the commands a session may run would
+	// send its reader to a refusal — the reading this check exists to stop,
+	// whatever the allowlist does later.
+	if strings.Contains(admitted, "rigor") || !strings.Contains(refused, "`fugaro rigor set`") {
+		t.Errorf("the paragraph lists `fugaro rigor set` somewhere other than its never-list, and a session is refused it: %q", paragraph)
+	}
 }
 
 // TestDocsManagedAgentConvergeCensusRowMovedForItsPin: docs/rigor-modes/
