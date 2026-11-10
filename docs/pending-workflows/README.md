@@ -1,10 +1,11 @@
 # Pending workflow changes
 
-**Two files are pending: `console-windows.yml`** (the console's Windows
-installer pack, 2026-10-20 — a release-time job, not a pull-request check; see
-`## console-windows.yml` below) **and `images.yml`** (the images workflow with
+**One file is pending: `images.yml`** (the images workflow with
 the nightly's republish of an unchanged base skipped, 2026-11-05, issue #1745;
-see `## images.yml` — staged again below).
+see `## images.yml` — staged again below). The console's Windows installer pack,
+`console-windows.yml`, was copied in on **2026-11-10** and its staged copy
+removed; it was a release-time job rather than a pull-request check (see
+`## console-windows.yml` below, which is the record of that change).
 **Four further files here are not workflows at all: `website-promote-comments.md`, `mobile-release-comments.md`, `console-release-comments.md` and `console-linux-comments.md`** — comment-only corrections. The first three were staged on **2026-11-07**, for three workflow files whose comments still say a reviewer approves a release; the fourth on **2026-11-09**, for a comment of `.github/workflows/console-linux.yml` whose count of pinned Electron hashes went stale when the `win32-x64` hash landed. They are `.md` on purpose: they are not pending workflows, they are not enumerated as such by the docs tests or by `website/test/readme.mjs`, and neither count above moves. See `## The comment-only fragments` below.
 **Two other files stay staged here by design: `console-tests.yml` and `console-release.yml`.** Both were copied into `.github/workflows/` by the owner, and unlike every other file here their staged copies are kept, because their tests assert the copy under `.github/workflows/` is byte-identical to the staged one (see their sections below). Nothing else is pending: the shared package's test job, `shared-tests.yml` (mobile plan Task P4.3), was copied into `.github/workflows/` by the owner on 2026-10-22 (its staged copy is removed; see `## shared-tests.yml` below); Dependabot's watch over `console/`'s npm dependencies, `dependabot-console.yml`, was copied over `.github/dependabot.yml` on the owner's approval of 2026-10-23 (its staged copy is removed; see `## dependabot-console.yml` below); the mobile app's release workflow, `mobile-release.yml`, was copied into `.github/workflows/` on the owner's approval of 2026-10-23 (its staged copy is removed; see `## mobile-release.yml` below); the website's two manual deploy workflows, `website-preview.yml` and `website-promote.yml` (#566), were copied into `.github/workflows/` by the owner (their staged copies are removed); `ci.yml` was copied in on 2026-10-17 (#504, staged copy removed in #508); and `images.yml` was copied in and its staged copy removed in `6b57ba9`, staged again by C1.14 for the credentials service's image leg, and that copy was applied and removed on 2026-10-30 (see `## images.yml` below). A future workflow change that a run needs is staged here as the real file plus the change, and the owner copies it in.
 
@@ -1313,11 +1314,14 @@ the directory in both directions, and the site's paragraph by
 
 ## `console-windows.yml`
 
-**Status: `console-windows.yml` is staged and pending.** Nothing has been copied
-in — `.github/workflows/console-windows.yml` does not exist — so the job has
-never run, and the copy-in below is what is left to do. Every `console/` edit
-the job's own header once waited on has landed (the three are named below); the
-header says so first. **This line is rewritten by the copy-in as well**:
+**Status: `console-windows.yml` is applied, not pending.** The copy-in below was
+run on **2026-11-10** and the staged copy removed, so
+`.github/workflows/console-windows.yml` is the file that runs and this section is
+its record. **The job has still never run**: no host has carried a `--win` pack
+to an artifact, which is why [docs/release.md](../release.md)'s "Before you tag"
+checklist tells the owner to dispatch it by hand before a tag. Every `console/`
+edit the job's own header once waited on has landed (the three are named below);
+the header says so first. **This line is rewritten by the copy-in as well**:
 `TestWindowsConsoleStagingTellsTheOwnerWhatToCopyWhere` reads it against the
 tree in both directions — `staged and pending` while the staged copy is here,
 `applied, not pending` once the copy-in has removed it — the way the two
@@ -3011,7 +3015,7 @@ Copied in on 2026-10-17 (#504): `.github/workflows/ci.yml`'s `terraform` job now
 
 Re-staging `ci.yml` therefore means rewriting both guards (and the plan text the first one quotes) in a change about a test timeout, which is the owner's call, not a run's. The owner can apply the change above by hand, or stage the file properly when they next copy a workflow file in and rewrite those two guards in the same change. `CONTRIBUTING.md` and `docs/dogfooding.md` name the same bound for the local case, so the package is run with it either way. **`internal/cli/docs_runner_timeout_test.go` holds this section, those two sentences and `.github/workflows/ci.yml` to one another in both directions**: it reads whether CI gives `internal/runner` a bound of its own out of the workflow, and fails whichever way the two disagree — the documents still calling the change outstanding once CI carries it, or claiming CI carries it while the workflow does not — so applying the change without these three documents is what goes red, and so is editing them without applying it. It also checks, while CI carries the bound, that the job's cap is above it, which is the way this change goes wrong silently: the step's `-timeout` under a job that dies first.
 
-**Applied on 2026-10-30, not outstanding: a second change to `ci.yml`, written in this section rather than staged for the reason above (the review of #1338), was copied in by the coordinator on the owner's word, and the `terraform` job's last step now runs `./internal/infra/... ./deploy/terraform/...`; what follows is the record.** The `terraform` job's last step runs `go test -tags terraform ./internal/infra/...`, and no job in `.github/workflows/` runs `./deploy/terraform/...` under any tag: the `test` job's `go test ./...` reaches the package **untagged** — that is `terraform_test.go` and `secret_readers_test.go` — while the two tests in `deploy/terraform/proxied_git_test.go`, the proxied-git flip list's (B1.8, D500, G9), carry `//go:build terraform`, so CI **type-checks** them — the `vet` job runs `go vet -tags terraform ./...` (.github/workflows/ci.yml:61) precisely to keep the tagged tests from rotting — but no step *runs* them. The review of #1338 asked for the step to name both trees.
+**Applied on 2026-10-30, not outstanding: a second change to `ci.yml`, written in this section rather than staged for the reason above (the review of #1338), was copied in by the coordinator on the owner's word, and the `terraform` job's last step now runs `./internal/infra/... ./deploy/terraform/...`; what follows is the record.** The `terraform` job's last step runs `go test -tags terraform ./internal/infra/...`, and no job in `.github/workflows/` runs `./deploy/terraform/...` under any tag: the `test` job's `go test ./...` reaches the package **untagged** — that is `terraform_test.go` and `secret_readers_test.go` — while the two tests in `deploy/terraform/proxied_git_test.go`, the proxied-git flip list's (B1.8, D500, G9), carry `//go:build terraform`, so CI **type-checks** them — the `vet` job runs `go vet -tags terraform ./...` (.github/workflows/ci.yml:60) precisely to keep the tagged tests from rotting — but no step *runs* them. The review of #1338 asked for the step to name both trees.
 
 **What the owner changes**, in that job's last step — one line, `run:` only:
 
@@ -3028,6 +3032,33 @@ The comment above it ("The tf wrapper's tests against a real terraform binary.")
 The third is the wall rather than the first two: **any** new staged workflow file has to be named in `website/README.md`. Nothing in the tree forbids editing that file — `.claude/rules/website.md` governs the edits it does allow (`npm run check`, never deploy) rather than barring them — so this one is a constraint of the run and not of the repository: the brief a 0.14.0 run works under lists `website/**` among the paths it may not touch. A run not under that brief can stage this file normally; under it, the owner applies the line above by hand, and nothing they have to do differs either way.
 
 **Everything that has to move with it if it is staged later.** The copy is `cp docs/pending-workflows/ci.yml .github/workflows/ci.yml` followed by a `git rm` of the staged copy, **re-based on the live `.github/workflows/ci.yml` first** — a staged copy is a snapshot, and copying a stale one in silently reverts every edit main made to `ci.yml` since it was staged. The two guards above and `docs/plans/2026-10-19-compute-backend.md`'s Global Constraint 3 have to be rewritten in that commit, and this document's opening line and `website/README.md`'s last paragraph because the file is staged at all. `CONTRIBUTING.md:25` and `:32` — read at those line numbers by `internal/cli/docs_contributing_cla_test.go` — are not moved by the staging itself, which leaves them green; they go false when the file is copied in, so they belong in the same commit. The other half of this section, the `internal/runner` bound above, is the same shape and can go in the same commit.
+
+**The change outstanding now, a third one: the key service's Terraform never runs in CI (2026-11-09, S3.5).** `ee/keyservice/terraform/` holds the key service's two roots — the key ring with the licence-signing keys and the signer role, and the intake/minter pair with their identities — and its suite is `ee/keyservice/terraform/infra_test.go`, a `//go:build terraform` file. No job runs it. The `test` job's `go vet -tags terraform ./...` (.github/workflows/ci.yml:60) **type-checks** it, so it cannot rot into not compiling, and its own `go test -race ./...` is untagged, so it compiles the package to no test at all; the `terraform` job's `terraform fmt -check -recursive deploy/terraform` covers the other tree, its root loop covers the four roots under `deploy/terraform/gcp/roots/`, and its last step names `./internal/infra/... ./deploy/terraform/...`. So a push to main can widen the signer role, hand the signer grant to another account or flip the minter's `invoker_iam_disabled` with every check green — the suite that refuses each of those is simply never invoked. **Written in this section rather than staged as a copy of the file**, for the reason the two changes above give: `TestDocsComputeBackendCIReachMatchesTheTree` fails while `docs/pending-workflows/ci.yml` exists at all, and `TestStagedCIWorkflowIsTheRealOnePlusTheComputeRoot` holds a staged copy to one differing line — both were re-verified red on 2026-11-09 by staging the file with exactly the change below and running the two tests, then removing it.
+
+**What the owner changes**, in the `terraform` job: a format step of its own, so the existing line stays as it reads, a second root loop, and one more package on the last step's command.
+
+    - run: terraform fmt -check -recursive ee/keyservice/terraform
+
+    # The key service's roots: a project the owner applies with their own
+    # credentials, never an installation (§3.4 of the design). No `terraform
+    # test` step of its own — this tree carries no .tftest.hcl, its suite is
+    # the Go file the last step runs. The data directory stays outside the
+    # tree for a second reason here: the licence-notice tests walk ee/, and a
+    # provider directory under it would land in that walk.
+    - name: validate the key service's roots
+      run: |
+        for r in keyring services; do
+          [ -d "ee/keyservice/terraform/$r" ] || { echo "no Terraform root $r" >&2; exit 1; }
+          export TF_DATA_DIR="$RUNNER_TEMP/tf-ks-$r"
+          terraform -chdir=ee/keyservice/terraform/$r init -backend=false -lockfile=readonly -input=false
+          terraform -chdir=ee/keyservice/terraform/$r validate
+        done
+
+    - run: go test -tags terraform ./internal/infra/... ./deploy/terraform/... ./ee/keyservice/...
+
+The first line is the one step that needs nothing but the binary; it goes beside the `deploy/terraform` format step rather than widening it, so a failure names the tree that drifted. The `-chdir` form is the one the `deploy/terraform` loop uses in its own shape, and `-lockfile=readonly` is what makes the two committed `.terraform.lock.hcl` files the ones init uses — without it a provider update would be absorbed on a runner and never seen. `tflint` and `deploy/terraform/scan.sh` are scoped to `deploy/terraform` and this change does not extend them: the key service's tree is linted by nothing, which is a gap this section records rather than closes.
+
+**The command is verified green**, on the run that wrote this (2026-11-09): `terraform fmt -check -recursive ee/keyservice/terraform` prints nothing, `terraform -chdir=ee/keyservice/terraform/{keyring,services} init -backend=false -lockfile=readonly -input=false` and `validate` both succeed with terraform 1.16.4 and no credentials, and `GOFLAGS=-p=2 go test -tags terraform ./ee/keyservice/... -count=1` passes. Until it is applied, the suite runs where the plan's command runs it — a contributor's own machine, with the tag — and nowhere else.
 
 ## `core-without-ee.yml`
 

@@ -28,9 +28,11 @@ import (
 //
 // The runs below are the product's own paths and not the rule: `fugaro update`
 // over the real gate read in faked installations, and the two step-level
-// surfaces the flag gives a prompt back at — the plugin wiring's y/N, and a
-// billable build's typed name. A secret stays a hidden prompt in every case and
-// is no part of this flag: nothing here reads one.
+// surfaces the flag gives a question back at — the plugin wiring's y/N, and a
+// billable build's own. Nothing typed comes back with them: the flag restores
+// the question a step used to ask (T7 took the answers away, not the questions),
+// and what it is answered with is askConfirm's y or n. A secret stays a hidden
+// prompt in every case and is no part of this flag: nothing here reads one.
 
 // askSession is one session a run can be in, in initflow's own terms. The list
 // is written out rather than derived from confirmTable because the flag's
@@ -364,10 +366,11 @@ func askUpdateRun(t *testing.T, r *initRig, stdin string, args ...string) (strin
 // And it is the RUN'S one confirmation that comes back, which is the whole of
 // what "the prompts the project would have had if it were not managed" means
 // here: this rig's runs bucket is the installation's own, so the review is the
-// owner's to confirm, one typed name for all of its steps, exactly as it is
-// without the flag (TestMarkedProjectTakesOnePrompt). Nothing is applied
-// because the rig's stdin holds nothing to type, which is the assertion that
-// the question is a real one and not a line about a question.
+// owner's to confirm, one question for all of its steps, exactly as it is
+// without the flag (TestMarkedProjectTakesOnePrompt) — and since T7 the
+// question is the [y/N] askConfirm asks (nothing is typed under it), not a name.
+// Nothing is applied because the rig's stdin holds no answer, which is the
+// assertion that the question is a real one and not a line about a question.
 func TestUpdateManagedAskAsksTheRunsConfirmationAgain(t *testing.T) {
 	r := askUpdateRig(t, askMarkWorlds()[0])
 	fakeTerminal(t)
@@ -380,7 +383,7 @@ func TestUpdateManagedAskAsksTheRunsConfirmationAgain(t *testing.T) {
 	if !strings.Contains(got, initflow.AskRestored()) {
 		t.Errorf("the run does not say what the flag did:\n%s", got)
 	}
-	if !strings.Contains(got, "Type "+initProjectName+" to apply all of the above") {
+	if !strings.Contains(got, "apply all of the steps above to GCP project "+initProject+"? [y/N]: ") {
 		t.Errorf("--ask did not ask the run's own confirmation:\n%s", got)
 	}
 	if !strings.Contains(got, "Review: project ") || !strings.Contains(got, "is Fugaro's own") {
@@ -396,20 +399,20 @@ func TestUpdateManagedAskAsksTheRunsConfirmationAgain(t *testing.T) {
 	}
 }
 
-// And with the project's name typed, the run goes: the flag gives the
-// confirmation back and the confirmation is answered the way this command has
-// always taken it — the one review typed once for the run's ordinary steps.
-func TestUpdateManagedAskAppliesOnTheTypedName(t *testing.T) {
+// And with the question answered yes, the run goes: the flag gives the
+// confirmation back and the confirmation is answered the way askConfirm's own
+// question is answered — a y, one answer for the run's ordinary steps.
+func TestUpdateManagedAskAppliesOnTheRunsOwnYes(t *testing.T) {
 	r := askUpdateRig(t, askMarkWorlds()[0])
 	fakeTerminal(t)
 	noAgentSession(t)
 
-	got, err := askUpdateRun(t, r, initProjectName+"\n", "update", "--ask")
+	got, err := askUpdateRun(t, r, "y\n", "update", "--ask")
 	if !strings.Contains(got, initflow.AskRestored()) {
 		t.Errorf("the run does not say what the flag did:\n%s", got)
 	}
 	if n := len(r.ran(t, "apply")); n == 0 {
-		t.Errorf("nothing was applied after the name was typed at the confirmation --ask gave back (err %v):\n%s", err, got)
+		t.Errorf("nothing was applied after the question --ask gave back was answered yes (err %v):\n%s", err, got)
 	}
 }
 
@@ -466,7 +469,9 @@ func TestUpdateManagedAskRefusesWhereNobodyCanAnswer(t *testing.T) {
 // The gate comes first. A plan a managed project refuses is refused in the
 // gate's own sentence, before any prompt --ask gives back: the flag asks for
 // the confirmations the gate's verdict would have replaced, and it does not ask
-// the gate to judge less.
+// the gate to judge less. The question the flag put back earlier in the run is
+// answered yes here, so what the run stops on is the gate's refusal and not the
+// flag's own unanswered question.
 func TestUpdateManagedAskKeepsTheGatesOwnRefusalFirst(t *testing.T) {
 	const a = "user:a@example.com"
 	address := `module.installation.google_storage_bucket_iam_member.state["` + a + `"]`
@@ -478,7 +483,7 @@ func TestUpdateManagedAskKeepsTheGatesOwnRefusalFirst(t *testing.T) {
 	updating(t, r)
 	r.setPlan(t, grantChange("state", a, "roles/storage.objectAdmin", "delete"))
 
-	got, err := askUpdateRun(t, r, initProjectName+"\n", "update", "--ask")
+	got, err := askUpdateRun(t, r, "y\n", "update", "--ask")
 	if err == nil {
 		t.Fatalf("--ask applied a plan the managed gate refuses:\n%s", got)
 	}
@@ -497,6 +502,14 @@ func TestUpdateManagedAskKeepsTheGatesOwnRefusalFirst(t *testing.T) {
 // person's terminal would claim confirmations were replaced that never were.
 // The comparison is the assertion: the flagged run IS the plain run with the
 // flag's one line taken out of the middle, and nothing else moved.
+//
+// The runs it compares start from the same state, so the rig is settled by a
+// plain run first: this rig is a plan that applies, and its first run writes the
+// local config and takes the IAM removal — a second run differs from that one
+// for those reasons alone. The runs after it differ in one thing only, the flag
+// and the line it prints, and the applies are counted rather than assumed away:
+// a project that is not managed applies what it applies with or without the
+// flag, and nothing is applied for having passed it.
 func TestUpdateAskInAProjectThatIsNotManagedIsANoOp(t *testing.T) {
 	for _, w := range askMarkWorlds()[1:] {
 		for _, s := range []struct {
@@ -515,8 +528,12 @@ func TestUpdateAskInAProjectThatIsNotManagedIsANoOp(t *testing.T) {
 					fakeTerminal(t)
 				}
 
+				_, _ = updateRun(t, r, "update") // the rig settled
+				before := len(r.ran(t, "apply"))
 				plain, _ := updateRun(t, r, "update")
+				mid := len(r.ran(t, "apply"))
 				flagged, _ := updateRun(t, r, "update", "--ask")
+				after := len(r.ran(t, "apply"))
 
 				if !strings.Contains(flagged, initflow.AskUnmanaged()) {
 					t.Errorf("--ask did not say what the marks answered:\n%s", flagged)
@@ -527,10 +544,8 @@ func TestUpdateAskInAProjectThatIsNotManagedIsANoOp(t *testing.T) {
 				if stripped := withoutRunOwn(strings.Replace(flagged, initflow.AskUnmanaged()+"\n", "", 1)); stripped != withoutRunOwn(plain) {
 					t.Errorf("--ask changed the run in a project that is not managed (the flag's line stripped from the middle).\nwithout: %s\nwith:    %s", plain, flagged)
 				}
-				// The flag is a sentence and not a decision: a project that
-				// is not managed applies nothing here with or without it.
-				if n := len(r.ran(t, "apply")); n != 0 {
-					t.Errorf("--ask applied %d step(s) in a project that is not managed", n)
+				if mid-before != after-mid {
+					t.Errorf("--ask applied %d step(s) of its own in a project that is not managed (%d without it)", after-mid, mid-before)
 				}
 			})
 		}
@@ -600,6 +615,13 @@ func TestManagedAskGivesThePluginWiringItsYOrNBack(t *testing.T) {
 			settings := wiringCheckout(t, settingsWithOthers)
 			withTerminal(t, true)
 			e, out := stageEngine(t, "", &initOptions{ask: ask})
+			// --ask reaches the step's confirmation through the command's own
+			// flags — askConfirm reads it there, and boolFlag answers false for
+			// a flag its command does not carry — so a rig that left it off the
+			// command would be a --ask run in which nothing is ever asked. And
+			// askConfirm prints its question on the command, not through r.w.
+			e.r.cmd.Flags().Bool("ask", ask, "")
+			e.r.cmd.SetOut(out)
 			e.r.gate = &initGate{managed: true}
 
 			_, err := newPluginStage(e).Apply(t.Context(), initflow.Env{Interactive: true})
@@ -617,7 +639,7 @@ func TestManagedAskGivesThePluginWiringItsYOrNBack(t *testing.T) {
 			if err == nil || written {
 				t.Fatalf("--ask wrote the settings with nothing typed (err %v, written %v):\n%s", err, written, out.String())
 			}
-			if !strings.Contains(out.String(), "Write this to "+settings+"? [y/N]") {
+			if !strings.Contains(out.String(), "write this to "+settings+"? [y/N]: ") {
 				t.Errorf("--ask did not ask the y/N the gate stood in for:\n%s", out.String())
 			}
 			if strings.Contains(out.String(), initflow.GateOrdinary()) || strings.Contains(out.String(), initflow.GateProceeded()) {
@@ -627,13 +649,15 @@ func TestManagedAskGivesThePluginWiringItsYOrNBack(t *testing.T) {
 	}
 }
 
-// A billable build: askBuild is step 4's per-build confirmation, the project's
-// name typed, and in a managed project's own terminal the gate's verdict stands
-// in for it today (GateProceeded). --ask is exactly the flag for that surface —
-// the typed name comes back — and the control is the same call without it,
-// which confirms on the gate's verdict and prints its sentence instead. Nothing
-// else moves: the class is the same YesOrTyped build either way.
-func TestManagedAskGivesTheBuildsTypedNameBack(t *testing.T) {
+// A billable build: askBuild is step 4's per-build confirmation, and in a
+// managed project's own terminal the gate's verdict stands in for it today
+// (GateProceeded). --ask is exactly the flag for that surface — the build's own
+// question comes back — and the control is the same call without it, which
+// confirms on the gate's verdict, prints its sentence instead and reads
+// nothing. Nothing else moves: the class the gate judged is the same YesOrTyped
+// build either way, and what --ask asks is the build's own [y/N] (T7 took the
+// typed name away from every step, this one included).
+func TestManagedAskGivesTheBuildsOwnQuestionBack(t *testing.T) {
 	g := initflow.Managed{Managed: true, Admitted: true}
 	for _, ask := range []bool{false, true} {
 		name := "the flag"
@@ -641,32 +665,44 @@ func TestManagedAskGivesTheBuildsTypedNameBack(t *testing.T) {
 			name = "no flag (the control)"
 		}
 		t.Run(name, func(t *testing.T) {
-			r, _ := confirmRig(t, confirmRow{terminal: true, ask: ask}, initProjectName)
+			r, spy := confirmRig(t, confirmRow{terminal: true, ask: ask}, "y")
 			out := &syncBuf{}
 			r.w = out
+			r.cmd.SetOut(out) // askConfirm prints its question on the command, not through r.w
 			fakeTerminal(t)
 			noAgentSession(t)
+			// This command's own read of the marks, which is the one --ask
+			// answers for here: `fugaro image refresh` reads them into
+			// r.refresh, and non-nil is exactly a project they answered
+			// "managed" for (openRefreshManaged, and r.gateRestores).
+			r.refresh = &refreshManaged{}
 
 			confirmed, reachable, err := r.askBuild("builds the image for acme/app", g)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if !reachable || !confirmed {
-				t.Fatalf("reachable=%v confirmed=%v (the project's name is typed at the prompt in both worlds)", reachable, confirmed)
+				t.Fatalf("reachable=%v confirmed=%v: a person at the terminal answers this step in both worlds", reachable, confirmed)
 			}
 			if ask {
-				if !strings.Contains(out.String(), "Type "+initProjectName+" to confirm: ") {
-					t.Errorf("--ask did not ask for the project's name:\n%s", out.String())
+				if !strings.Contains(out.String(), "builds the image for acme/app? [y/N]: ") {
+					t.Errorf("--ask did not ask the build's own question:\n%s", out.String())
+				}
+				if !spy.read {
+					t.Errorf("--ask asked a question and never read the answer:\n%s", out.String())
 				}
 				if strings.Contains(out.String(), initflow.GateProceeded()) {
 					t.Errorf("--ask printed the gate's verdict instead of asking:\n%s", out.String())
 				}
 				return
 			}
+			if spy.read {
+				t.Errorf("the control read its own input: the gate's verdict stands in, so there is nothing to answer:\n%s", out.String())
+			}
 			if !strings.Contains(out.String(), initflow.GateProceeded()) {
 				t.Errorf("the control did not take the gate's verdict:\n%s", out.String())
 			}
-			if strings.Contains(out.String(), "to confirm: ") {
+			if strings.Contains(out.String(), "[y/N]") {
 				t.Errorf("the control asked a question the gate stands in for:\n%s", out.String())
 			}
 		})
