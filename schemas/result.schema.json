@@ -492,7 +492,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["rounds"],
-      "description": "What the run's post-review triage decided (docs/post-review-triage/implementation-plan.md T-TR3, D1850): one entry per triage round the stage ran, in the order it ran them, with each finding's placement. A block of its own and never a replacement for `tolerated` — that one is the mode's table's account of what it let through and this one is the triage step's, and a run can carry both. A round is kept whatever it decided, a failed call included, because that is the fact a reader needs (D1846's triage_failed). Bounded: at most 32 rounds (runstore.MaxTriageRounds), each at most 100 entries (runstore.MaxTriageEntries), each entry a key, a verdict, a reason of at most 200 runes and a source. Absent — never an empty block — for a run that triaged nothing, which is every record written before this field existed; the field is additive, so an old reader sees the record it always saw and `version` stays 1 (F21).",
+      "description": "What the run's post-review triage decided (docs/post-review-triage/implementation-plan.md T-TR3, D1850): one entry per triage round the stage ran, in the order it ran them, with each finding's placement. A block of its own and never a replacement for `tolerated` — that one is the mode's table's account of what it let through and this one is the triage step's, and a run can carry both. A round is kept whatever it decided, a failed call included, because that is the fact a reader needs (D1846's triage_failed). Bounded: at most 32 rounds (runstore.MaxTriageRounds), each round at most 100 entries (runstore.MaxTriageEntries) with its own `total` saying how many findings it really read — a review round's findings are bounded by nothing, so a round the cap cut is a record of its first 100 verdicts and never presented as the whole round — each entry a key, a verdict, a reason of at most 200 runes and a source. Absent — never an empty block — for a run that triaged nothing, which is every record written before this field existed; the field is additive, so an old reader sees the record it always saw and `version` stays 1 (F21).",
       "properties": {
         "rounds": {
           "type": "array",
@@ -502,7 +502,7 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["round", "mode", "level", "entries"],
+            "required": ["round", "mode", "level", "entries", "total"],
             "properties": {
               "round": { "type": "integer", "minimum": 1, "description": "The review round this triage followed, at least 1 (internal/runstore's TriageRound.Round). A round the run never numbered is not a round, so internal/runstore's NewTriage drops it." },
               "mode": { "enum": ["poc", "startup", "pro", "critical", "hotfix"], "description": "The mode reached at this round (F14, internal/rigor's vocabulary): the mode's persona is what the judge was asked from, and it is not necessarily the run's starting mode." },
@@ -513,7 +513,7 @@
               "entries": {
                 "type": "array",
                 "maxItems": 100,
-                "description": "One verdict per finding the round read, in the round's own order. It may be empty — a round whose call failed before it placed anything still says so through `failed` — and is never null.",
+                "description": "One verdict per finding the round read, in the round's own order. It may be empty — a round whose call failed before it placed anything still says so through `failed` — and is never null. Shorter than `total` only when the round read more than 100 findings, which the cap makes a record of the first 100 rather than of the whole round.",
                 "items": {
                   "type": "object",
                   "additionalProperties": false,
@@ -527,7 +527,8 @@
                     "source": { "enum": ["agent", "table", "fail_safe", "cap"], "description": "Where the placement came from (runstore.TriageSource): a judge's own verdict, the mode's threshold table's call, the fallback a failed or unreadable call leaves (D1846), or the cap's own deferral (D1858). The cap's is not a verdict any judge answers, which is why this enum is not internal/triage's own three." }
                   }
                 }
-              }
+              },
+              "total": { "type": "integer", "minimum": 0, "description": "How many findings the round read, so a round whose `entries` the cap cut still says how many verdicts it wrote (runstore.MaxTriageEntries). Never less than the length of `entries`. internal/runstore's NewTriage sets it from the entries the caller gave the round, never from the caller, so a record cannot report fewer than it holds." }
             }
           }
         }

@@ -440,7 +440,8 @@ func TestTriageBlockRoundTrips(t *testing.T) {
 // TestNewTriageBoundsWhatItStores: the block is the run's log of what a judge
 // placed, and the record is a small object every listing reads, so it is
 // bounded — the rounds at MaxTriageRounds, one round's entries at
-// MaxTriageEntries, the judge's reason and the group key at MaxTriageLine — and
+// MaxTriageEntries with the round's Total saying how many it really read, the
+// judge's reason and the group key at MaxTriageLine — and
 // a round a reader cannot place is not stored at all: one the run never
 // numbered, or one whose mode or level is outside its vocabulary. An entry the
 // record cannot read is dropped from its round rather than stored — an index
@@ -482,8 +483,18 @@ func TestNewTriageBoundsWhatItStores(t *testing.T) {
 	for i := 0; i < MaxTriageEntries+5; i++ {
 		entries = append(entries, entry)
 	}
-	if tr := NewTriage([]TriageRound{{Round: 1, Mode: rigor.Pro, Level: policy.LevelL2, Entries: entries}}); len(tr.Rounds[0].Entries) != MaxTriageEntries {
-		t.Errorf("NewTriage = %d entries, want %d", len(tr.Rounds[0].Entries), MaxTriageEntries)
+	// The cap cuts the list and Total is what keeps the cut from being silent:
+	// a review round's findings are bounded by nothing, so a round that read
+	// more than the cap is recorded as its first MaxTriageEntries verdicts and
+	// says how many it read, the way the tolerated, accepted and
+	// owner-decision lists do.
+	if tr := NewTriage([]TriageRound{{Round: 1, Mode: rigor.Pro, Level: policy.LevelL2, Entries: entries}}); len(tr.Rounds[0].Entries) != MaxTriageEntries || tr.Rounds[0].Total != MaxTriageEntries+5 {
+		t.Errorf("NewTriage = %d entries, total %d, want %d and %d", len(tr.Rounds[0].Entries), tr.Rounds[0].Total, MaxTriageEntries, MaxTriageEntries+5)
+	}
+	// Total is the constructor's and not the caller's: a round that reported
+	// fewer verdicts than it holds would be the same silent truncation.
+	if tr := NewTriage([]TriageRound{{Round: 1, Mode: rigor.Pro, Level: policy.LevelL1, Entries: []TriageEntry{entry}, Total: 99}}); tr.Rounds[0].Total != 1 {
+		t.Errorf("NewTriage total = %d, want the 1 entry it was given", tr.Rounds[0].Total)
 	}
 
 	for _, tc := range []struct {

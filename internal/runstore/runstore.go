@@ -622,14 +622,26 @@ func NewAccepted(mode rigor.Mode, round int, at string, findings []ToleratedFind
 	return &AcceptedFindings{Findings: tf.Findings, Total: tf.Total, Mode: mode, Round: round, At: at}
 }
 
-// MaxTriageRounds bounds the triage rounds a record stores. A run's rounds are
-// bounded by its mode's own plan, so the cap is a record's ceiling rather than
-// a run's, and it exists for the reason MaxTolerated does: the record is a
-// small object every listing reads.
+// MaxTriageRounds bounds the triage rounds a record stores. Unlike
+// MaxTriageEntries it is not a cut any run reaches: a triage round follows a
+// review verdict (T-TR7a), a recipe's steps are a fixed tuple of at most four
+// with at most three review-bearing ones (schemas/recipe.schema.json's steps,
+// items: false), and each of those is held at recipe.MaxReviewRounds — so a run
+// triages at most 30 rounds and this cap is above every plan there is. It is
+// the record's ceiling for the reason MaxTolerated is: the record is a small
+// object every listing reads.
 const MaxTriageRounds = 32
 
-// MaxTriageEntries bounds one round's verdicts. A round judges the findings of
-// one review round, which MaxTolerated already bounds at 100.
+// MaxTriageEntries bounds one triage round's verdicts. It is the record's own
+// ceiling on a round's list, for the reason MaxTolerated and MaxOwnerDecisions
+// are ceilings: the record is a small object every listing reads, and the list
+// is a model's output. It is NOT a bound on a review round's findings — nothing
+// bounds those (internal/runner/verdict.go caps no finding list and
+// internal/triage.Prompt presents every one) — so a round that read more is
+// recorded as its first MaxTriageEntries with Total saying how many it read,
+// exactly as the tolerated, accepted and owner-decision lists say when they are
+// cut. A truncated list is never presented as the whole one (F19's rule for
+// those three).
 const MaxTriageEntries = 100
 
 // MaxTriageLine bounds a verdict's reason and a group key in runes, like
@@ -699,7 +711,8 @@ type TriageRecord struct {
 
 // TriageRound is one triage round: which round of the run it judged, the mode
 // and review level in force at it, the account and model that answered, and
-// one verdict per finding the round read.
+// one verdict per finding the round read, with Total saying how many it read
+// where the list was cut.
 type TriageRound struct {
 	// Round is the review round this triage followed, at least 1.
 	Round int `json:"round"`
@@ -724,6 +737,12 @@ type TriageRound struct {
 	// round whose call failed before it placed anything still says so through
 	// Failed — and is never null, so a reader can range over it.
 	Entries []TriageEntry `json:"entries"`
+	// Total is how many findings the round read, so a list the cap cut still
+	// says how many verdicts the round wrote (MaxTriageEntries). Never less
+	// than len(Entries), and set by NewTriage from the entries it was given
+	// rather than by a caller: a round that reported fewer than it holds would
+	// be the same silent truncation the cap would otherwise be.
+	Total int `json:"total"`
 }
 
 // TriageEntry is one finding's placement in a round: which finding, the word,
@@ -753,14 +772,16 @@ type TriageEntry struct {
 // block at all, rather than an empty one.
 //
 // The rounds are capped at MaxTriageRounds and one round's entries at
-// MaxTriageEntries, the reason and the group key are clipped to MaxTriageLine,
-// and a round or an entry a reader cannot place is dropped: a round with no
-// number, a mode or a level outside its vocabulary, and an entry at a negative
-// index, with no key, no reason, a word outside the two or a source outside the
-// four — an index below 0 names no position in any round, which is the same
-// refusal internal/triage's own reader makes of a verdict. A round whose every
-// entry was dropped is still kept when it is failed, because that is the fact
-// the round carries.
+// MaxTriageEntries — each round's Total is set here, from the entries the
+// caller gave it, so a round the cap cut says how many verdicts it wrote
+// instead of looking like one that read only the first hundred — the reason and
+// the group key are clipped to MaxTriageLine, and a round or an entry a reader
+// cannot place is dropped: a round with no number, a mode or a level outside
+// its vocabulary, and an entry at a negative index, with no key, no reason, a
+// word outside the two or a source outside the four — an index below 0 names no
+// position in any round, which is the same refusal internal/triage's own reader
+// makes of a verdict. A round whose every entry was dropped is still kept when
+// it is failed, because that is the fact the round carries.
 func NewTriage(rounds []TriageRound) *TriageRecord {
 	if len(rounds) == 0 {
 		return nil
@@ -773,6 +794,7 @@ func NewTriage(rounds []TriageRound) *TriageRecord {
 		if len(tr.Rounds) >= MaxTriageRounds {
 			break
 		}
+		r.Total = len(r.Entries)
 		entries := []TriageEntry{}
 		for _, e := range r.Entries {
 			if len(entries) >= MaxTriageEntries {

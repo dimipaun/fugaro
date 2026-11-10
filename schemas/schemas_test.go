@@ -1193,24 +1193,25 @@ func TestResultSchemaAcceptsTriage(t *testing.T) {
 		{"triage is not an object", `,"triage":[]`},
 		{"triage with no rounds", `,"triage":{}`},
 		{"an empty rounds list", `,"triage":{"rounds":[]}`},
-		{"a round the run never numbered", `,"triage":{"rounds":[{"round":0,"mode":"pro","level":"l2","entries":[]}]}`},
-		{"a mode outside the vocabulary", `,"triage":{"rounds":[{"round":1,"mode":"paranoid","level":"l2","entries":[]}]}`},
-		{"a level outside the vocabulary", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l4","entries":[]}]}`},
-		{"a round with no entries list", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2"}]}`},
-		{"a failed that is not a boolean", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","failed":"yes","entries":[]}]}`},
-		{"a member the round does not carry", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","verdict":"defer","entries":[]}]}`},
-		{"more rounds than the bound", `,"triage":{"rounds":[` + strings.TrimSuffix(strings.Repeat(`{"round":1,"mode":"pro","level":"l2","entries":[]},`, runstore.MaxTriageRounds+1), ",") + `]}`},
-		{"an entry with no key", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","entries":[{"index":0,"verdict":"defer","reason":"why","source":"agent"}]}]}`},
-		{"an empty key", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","entries":[{"index":0,"key":"","verdict":"defer","reason":"why","source":"agent"}]}]}`},
-		{"a verdict outside the two", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","entries":[{"index":0,"key":"k","verdict":"maybe","reason":"why","source":"agent"}]}]}`},
-		{"a source outside the four", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","entries":[{"index":0,"key":"k","verdict":"defer","reason":"why","source":"judge"}]}]}`},
-		{"an entry with no source", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","entries":[{"index":0,"key":"k","verdict":"defer","reason":"why"}]}]}`},
-		{"an entry with no reason", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","entries":[{"index":0,"key":"k","verdict":"defer","source":"agent"}]}]}`},
-		{"an empty reason", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","entries":[{"index":0,"key":"k","verdict":"defer","reason":"","source":"agent"}]}]}`},
-		{"a reason longer than the bound", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","entries":[{"index":0,"key":"k","verdict":"defer","reason":"` + strings.Repeat("x", runstore.MaxTriageLine+1) + `","source":"agent"}]}]}`},
-		{"a negative index", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","entries":[{"index":-1,"key":"k","verdict":"defer","reason":"why","source":"agent"}]}]}`},
-		{"a member the entry does not carry", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","entries":[{"index":0,"key":"k","verdict":"defer","reason":"why","source":"agent","file":"a.go"}]}]}`},
-		{"more entries than the bound", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","entries":[` + strings.TrimSuffix(strings.Repeat(`{"index":0,"key":"k","verdict":"defer","reason":"why","source":"agent"},`, runstore.MaxTriageEntries+1), ",") + `]}]}`},
+		{"a round the run never numbered", `,"triage":{"rounds":[{"round":0,"mode":"pro","level":"l2","total":0,"entries":[]}]}`},
+		{"a mode outside the vocabulary", `,"triage":{"rounds":[{"round":1,"mode":"paranoid","level":"l2","total":0,"entries":[]}]}`},
+		{"a level outside the vocabulary", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l4","total":0,"entries":[]}]}`},
+		{"a round with no entries list", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","total":0}]}`},
+		{"a round with no total", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","entries":[]}]}`},
+		{"a failed that is not a boolean", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","failed":"yes","total":0,"entries":[]}]}`},
+		{"a member the round does not carry", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","verdict":"defer","total":0,"entries":[]}]}`},
+		{"more rounds than the bound", `,"triage":{"rounds":[` + strings.TrimSuffix(strings.Repeat(`{"round":1,"mode":"pro","level":"l2","total":0,"entries":[]},`, runstore.MaxTriageRounds+1), ",") + `]}`},
+		{"an entry with no key", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","total":1,"entries":[{"index":0,"verdict":"defer","reason":"why","source":"agent"}]}]}`},
+		{"an empty key", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","total":1,"entries":[{"index":0,"key":"","verdict":"defer","reason":"why","source":"agent"}]}]}`},
+		{"a verdict outside the two", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","total":1,"entries":[{"index":0,"key":"k","verdict":"maybe","reason":"why","source":"agent"}]}]}`},
+		{"a source outside the four", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","total":1,"entries":[{"index":0,"key":"k","verdict":"defer","reason":"why","source":"judge"}]}]}`},
+		{"an entry with no source", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","total":1,"entries":[{"index":0,"key":"k","verdict":"defer","reason":"why"}]}]}`},
+		{"an entry with no reason", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","total":1,"entries":[{"index":0,"key":"k","verdict":"defer","source":"agent"}]}]}`},
+		{"an empty reason", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","total":1,"entries":[{"index":0,"key":"k","verdict":"defer","reason":"","source":"agent"}]}]}`},
+		{"a reason longer than the bound", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","total":1,"entries":[{"index":0,"key":"k","verdict":"defer","reason":"` + strings.Repeat("x", runstore.MaxTriageLine+1) + `","source":"agent"}]}]}`},
+		{"a negative index", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","total":1,"entries":[{"index":-1,"key":"k","verdict":"defer","reason":"why","source":"agent"}]}]}`},
+		{"a member the entry does not carry", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","total":1,"entries":[{"index":0,"key":"k","verdict":"defer","reason":"why","source":"agent","file":"a.go"}]}]}`},
+		{"more entries than the bound", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","total":` + strconv.Itoa(runstore.MaxTriageEntries+1) + `,"entries":[` + strings.TrimSuffix(strings.Repeat(`{"index":0,"key":"k","verdict":"defer","reason":"why","source":"agent"},`, runstore.MaxTriageEntries+1), ",") + `]}]}`},
 		{"deferred is not an object", `,"deferred":[]`},
 		{"deferred with no findings", `,"deferred":{}`},
 		{"an empty findings list", `,"deferred":{"findings":[],"total":0}`},
@@ -1228,7 +1229,7 @@ func TestResultSchemaAcceptsTriage(t *testing.T) {
 	}
 	// The positive control: the same literal shape the refusals are built from
 	// is accepted when every member is one the block may carry.
-	good := head + `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","account":"team-a","model":"claude-opus-5-5","entries":[{"index":0,"key":"9f2a1c","verdict":"defer","reason":"doc drift","group":"docs","source":"agent"}]}]}` +
+	good := head + `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","account":"team-a","model":"claude-opus-5-5","total":1,"entries":[{"index":0,"key":"9f2a1c","verdict":"defer","reason":"doc drift","group":"docs","source":"agent"}]}]}` +
 		`,"deferred":{"findings":[{"key":"9f2a1c","summary":"a long comment","reason":"doc drift","group":"docs","source":"agent"}],"total":1}}`
 	if err := validateLit(good); err != nil {
 		t.Fatalf("schema rejects a well-formed triage block: %v\n%s", err, good)
