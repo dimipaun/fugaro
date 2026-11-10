@@ -1,6 +1,6 @@
 # The design: managing every configuration, behind the generic writer and the managed gate
 
-**Status: a design, and nothing is built.** Every decision in this document is **open with a
+**Status as of 2026-11-10: in progress, 5/14 merged; see [docs/status.md](../status.md) for the current table.** Every decision in this document is **open with a
 recommendation**, written to be answered by the owner. **Where this file and
 [reconciliation.md](reconciliation.md) disagree, the reconciliation wins.**
 

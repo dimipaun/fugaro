@@ -1,7 +1,6 @@
 # Workspaces: the reconciliation
 
-**Status: design answered by the owner 2026-11-04; plan only; nothing implemented; no task
-approved.**
+**Status as of 2026-11-10: in progress, 6/10 merged; see [docs/status.md](../status.md) for the current table.**
 
 Each claim of [spec.md](spec.md) §0 — the owner's spec as this run recorded it — against the code at
 `origin/main` `c2ca0aee`, merged into this branch and read on 2026-11-04; the first reading was taken

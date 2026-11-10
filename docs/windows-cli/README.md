@@ -1,6 +1,6 @@
 # The Fugaro CLI on Windows — the documents
 
-**Status: Slice 0 and Slice 1 approved (D16, 2026-10-20); Slice 0 is written; no code is implemented; D1–D6 are answered and D7–D15 are open.** The owner's
+**Status as of 2026-11-10: superseded by console-windows, 10/31 merged; see [docs/status.md](../status.md) for the current table.** The owner's
 brief of 2026-10-20 asked for a design and a plan, not code: *"Let's work out a
 plan on how to make the CLI work on Windows."* The owner gave the context the
 same day — the desktop console ships for macOS (and Linux, unsigned, for

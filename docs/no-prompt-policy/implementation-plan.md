@@ -1,7 +1,6 @@
 # No-prompt policy — implementation plan
 
-Builds [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md). **Status: plan only;
-nothing is implemented; no task is approved.** Answering a decision is not approving a task: each task below
+Builds [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md). **Status as of 2026-11-10: in progress, 8/17 merged; see [docs/status.md](../status.md) for the current table.** Answering a decision is not approving a task: each task below
 needs the owner's explicit go. D1540–D1555 are all answered (2026-11-07; D1552–D1555 as recommended, delegated to the PR).
 Owner answers (2026-11-07) that shaped the plan: D1540 values stay, never hang; D1541 unmanaged refuses and
 names the flag-by-argument command (the shape is D1553: setup always managed; `update` flags an unmanaged installation itself given its budget once; flagging refused in an agent session); D1542 cap raise is owner-session only;

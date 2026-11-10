@@ -1,7 +1,6 @@
 # Workspaces: an optional grouping of projects
 
-**Status: design answered by the owner 2026-11-04; plan only; nothing implemented; no task
-approved.** The owner's spec of 2026-10-24 is carried in [spec.md](spec.md) §0 as this run recorded
+**Status as of 2026-11-10: in progress, 6/10 merged; see [docs/status.md](../status.md) for the current table.** The owner's spec of 2026-10-24 is carried in [spec.md](spec.md) §0 as this run recorded
 it; [reconciliation.md](reconciliation.md) §4 puts sixteen decisions (**D1290–D1305**) in front of
 the owner, each with the recommendation first and the cost of the alternative, and **the owner
 answered all sixteen on 2026-11-04 — every one as recommended**. **The design merged as #1492, and

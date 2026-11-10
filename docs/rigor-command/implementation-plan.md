@@ -1,7 +1,6 @@
 # `fugaro rigor`: implementation plan
 
-**Design approved; the tasks here queue for CLI 0.15.0 (and console 0.117.0, which is not this
-plan's — D836).** Every decision in this design's block is answered
+**Status as of 2026-11-10: in progress, 2/10 merged; see [docs/status.md](../status.md) for the current table.** Every decision in this design's block is answered
 ([reconciliation.md](reconciliation.md) §3): **D830 and D831** by the owner's SD4 ruling of
 2026-10-31, **D832–D839 on 2026-10-31, all as recommended**. The one decision the plan **cites** and
 does not own — **D854**, the settings design's, whether the `Layer` stage records the generation it

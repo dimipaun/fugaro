@@ -6,7 +6,7 @@ console release (and for the latest mobile release once one exists; none does to
 
 ## Status
 
-**Plan only; nothing is implemented; no task is approved.** Each task needs the owner's explicit go; an
+**Status as of 2026-11-10: in progress, 3/4 merged; see [docs/status.md](../status.md) for the current table.** Each task needs the owner's explicit go; an
 answer to a decision is not a go. Owner answers that shaped the plan (2026-11-07): D1640 (files stay the
 source, newest three plus the link; the spec's API fetch is overridden), D1641 (CLI three plus a console line now and a mobile line once its first release exists; amended after review, confirmed), D1642 (the release procedure's preview and promote deploy the change;
 no new workflow), D1643 (no date). D1644–D1646 and D1648 were answered as recommended the same day, and D1641's

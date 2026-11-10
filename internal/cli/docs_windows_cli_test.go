@@ -38,13 +38,12 @@ const (
 	// which is the only part of this folder a Windows reader can act on.
 	windowsCLIWSL = "docs/windows-cli/wsl.md"
 
-	// windowsCLIStatus is the index's status line, word for word: what has been
-	// approved, what of it is written, and which decisions are still open. It
-	// moves only when the work it describes moves — T0.3 moved it to the
-	// owner's ruling of 2026-10-20 (D16), and T6.3 is the move that will state
-	// the tier the work reached — which is why it is asserted rather than left
-	// to a reader.
-	windowsCLIStatus = "**Status: Slice 0 and Slice 1 approved (D16, 2026-10-20); Slice 0 is written; no code is implemented; D1–D6 are answered and D7–D15 are open.**"
+	// windowsCLIStatus is the index's status line, word for word: the folder's
+	// state and the pointer to docs/status.md, where the current table lives.
+	// The folder is superseded by docs/console-windows/, and the line that used
+	// to read "no code is implemented" was false of a folder whose own headline
+	// says the first cut builds.
+	windowsCLIStatus = "**Status as of 2026-11-10: superseded by console-windows, 10/31 merged; see [docs/status.md](../status.md) for the current table.**"
 
 	// windowsCLIPin is this file, by path: the plan names it as the owning guard
 	// test of every documentation task, so the name lives in one place.
@@ -55,11 +54,8 @@ const (
 	// it: the headline's claim is a build, so the document that makes the claim
 	// has to name the build and the command, and a build that stops working has
 	// to be a red guard rather than a stale sentence (implementation-plan.md
-	// T1.5). This is not the status line above it: that one is the plan's own
-	// promise about the folder and moves at T0.3 and T6.3, with the evidence
-	// that licenses the move — and it still reads "no code is implemented",
-	// which is why the index states Slice 1's arrival in this section of its
-	// own.
+	// T1.5). This is not the status line above it: that one states the folder's
+	// state and points at docs/status.md, which carries the current table.
 	windowsCLIFirstCut        = "**The first cut builds.**"
 	windowsCLIFirstCutCommand = "GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o /tmp/fugaro.exe ./cmd/fugaro"
 
