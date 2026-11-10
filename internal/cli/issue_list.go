@@ -8,9 +8,9 @@ import (
 )
 
 // newIssueListCmd builds `fugaro issue list`: what this machine saved, one row
-// per issue.
+// per issue — or, with --mine, the issues this user reported to the project.
 func newIssueListCmd() *cobra.Command {
-	var asJSON bool
+	var asJSON, mine, all bool
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List the issues saved on this machine",
@@ -20,13 +20,29 @@ func newIssueListCmd() *cobra.Command {
 			"class the diagnosis gave it, where it stands, and its one-line summary.\n" +
 			"Nothing is uploaded and nothing is filed: the listing is this machine's\n" +
 			"own folder, read.\n\n" +
+			"--mine lists the issues this user reported to the project instead: the\n" +
+			"same rows `fugaro issue mine` prints, from the same read, so the two\n" +
+			"commands answer with one listing (F12). --all goes with --mine and only\n" +
+			"with it: this machine's own folder keeps every record until it is\n" +
+			"deleted, and the 30-day rule is about the project's issues, not about\n" +
+			"the files here.\n\n" +
 			"--json prints the records themselves, in the shape\n" +
-			"schemas/issue-record.schema.json describes, which is the document a\n" +
-			"reader outside this binary consumes.",
+			"schemas/issue-record.schema.json describes — or, with --mine, the\n" +
+			"document schemas/issue-mine.schema.json describes.",
 		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error { return runIssueList(cmd, asJSON) },
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if mine {
+				return runIssueMine(cmd, asJSON, all)
+			}
+			if all {
+				return userErr("--all goes with --mine: this machine's own records are listed whole, and only the project's issues are hidden by age")
+			}
+			return runIssueList(cmd, asJSON)
+		},
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print machine-readable output")
+	cmd.Flags().BoolVar(&mine, "mine", false, "list the issues this user reported to the project")
+	cmd.Flags().BoolVar(&all, "all", false, "with --mine: show the issues finished more than 30 days ago")
 	return cmd
 }
 

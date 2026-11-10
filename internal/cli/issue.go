@@ -41,7 +41,7 @@ func newIssueCmd() *cobra.Command {
 			"of a record is printed as data — it comes from log text this machine did\n" +
 			"not write.",
 	}
-	cmd.AddCommand(newIssueListCmd(), newIssueShowCmd(), newIssueDismissCmd())
+	cmd.AddCommand(newIssueListCmd(), newIssueShowCmd(), newIssueDismissCmd(), newIssueMineCmd())
 	return cmd
 }
 
