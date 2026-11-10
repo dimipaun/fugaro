@@ -86,6 +86,16 @@ func newFBRigFor(t *testing.T, fp string) *fbRig {
 	}
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{"history_service_account": historyAccount, "history_job": nil})}
 	r.script["output@firebase"] = map[string]any{"stdout": r.firebaseOutputs(t)}
+	// The workspace's own project's root plans too in a run whose config
+	// declares a workspace (init_stages.go, W3), and its cover is its OWN and
+	// not the installation's (internal/infra/tf's WorkspaceNotCovered): the
+	// fixture this rig scripts for every root is the installation's plan,
+	// which that cover refuses by name. What is answered here is the converged
+	// state — the workspace's own service account and its one grant already
+	// exist — because the tests built on this rig are about the record, the
+	// rules and the gate, and not about that root. A test that is about the
+	// root builds its own rig (workspace_create_test.go's newWSCreateRig).
+	r.script["plan@workspace"] = map[string]any{"exit": 0}
 	r.save(t)
 	return r
 }
@@ -492,8 +502,6 @@ func TestRulesDeployedAfterSecondApply(t *testing.T) {
 	if r.db.RulePuts() != 1 || !bytes.Equal(a, b) {
 		t.Errorf("rules puts %d; deployed rules differ from the generated ones", r.db.RulePuts())
 	}
-	// The rules go in last, over a database that is already marked and
-	// configured: the mark is written before them.
 	var puts []string
 	for _, q := range r.db.Requests() {
 		if q.Method == "PUT" {
@@ -502,15 +510,17 @@ func TestRulesDeployedAfterSecondApply(t *testing.T) {
 	}
 	// The rules go in last of the database's own writes, over a database that
 	// is already marked and configured: the mark is written before them. The
-	// three writes after them are the generation markers, which exist to say
+	// four writes after them are the generation markers, which exist to say
 	// the deploy above succeeded and must not be there otherwise
 	// (TestRulesMarkerOnlyAfterTheRulesDeploy): the document's generation and,
 	// beside it, the credentials children's own (credentials-service plan, task
-	// C1.3) and the orchestrator subtree's (stateless orchestrator plan, O2),
-	// which the same deploy carries because they ride on the same document.
-	if len(puts) < 4 || puts[0] != "/fugaro/mark" || puts[len(puts)-4] != "/.settings/rules" ||
-		puts[len(puts)-3] != "/"+projectpolicy.PathRulesMarker() ||
-		puts[len(puts)-2] != "/"+rules.PathCredsRulesMarker() ||
+	// C1.3), the workspace family's (workspaces plan, task W3) and the
+	// orchestrator subtree's (stateless orchestrator plan, O2), which the same
+	// deploy carries because they ride on the same document.
+	if len(puts) < 5 || puts[0] != "/fugaro/mark" || puts[len(puts)-5] != "/.settings/rules" ||
+		puts[len(puts)-4] != "/"+projectpolicy.PathRulesMarker() ||
+		puts[len(puts)-3] != "/"+rules.PathCredsRulesMarker() ||
+		puts[len(puts)-2] != "/"+rules.PathWorkspaceRulesMarker() ||
 		puts[len(puts)-1] != "/"+rules.PathOrchestratorRulesMarker() {
 		t.Errorf("PUT order = %v", puts)
 	}
@@ -525,16 +535,20 @@ func TestRulesDeployedAfterSecondApply(t *testing.T) {
 // marker at all.
 //
 // The credentials children's marker (`config/limits/credsRules`, plan task
-// C1.3) is written by the same deploy and for the same reason, so it is pinned
-// here too: absent after a refused deploy, at this binary's generation after
-// one that succeeded, and beside — never on top of — the largest lease. The
-// orchestrator subtree's own (`config/limits/orchestratorRules`, stateless
-// orchestrator plan, O2) is the third of them, written after the same deploy
-// for the same reason: the daemon's gate reads it before it writes any state,
-// so it must not survive a deploy that did not happen.
+// C1.3), the workspace family's (`config/limits/workspaceRules`, workspaces
+// plan task W3) and the orchestrator subtree's (`config/limits/orchestratorRules`,
+// stateless orchestrator plan, O2) are written by the same deploy and for the
+// same reason, so they are pinned here too: absent after a refused deploy, at
+// this binary's generation after one that succeeded, and beside — never on top
+// of — the largest lease. A Realtime Database carries ONE rules document, so
+// the four generations ride on it together and each counts its own changes. The
+// daemon's gate reads the orchestrator one before it writes any state, so a
+// marker left behind by a deploy that did not happen is a daemon writing into a
+// subtree the deployed rules do not carry.
 func TestRulesMarkerOnlyAfterTheRulesDeploy(t *testing.T) {
 	marker := func(r *fbRig) any { return r.db.Value(projectpolicy.PathRulesMarker()) }
 	credsMarker := func(r *fbRig) any { return r.db.Value(rules.PathCredsRulesMarker()) }
+	wsMarker := func(r *fbRig) any { return r.db.Value(rules.PathWorkspaceRulesMarker()) }
 	orchMarker := func(r *fbRig) any { return r.db.Value(rules.PathOrchestratorRulesMarker()) }
 
 	// A refused rules deploy: init fails and leaves no marker.
@@ -554,10 +568,17 @@ func TestRulesMarkerOnlyAfterTheRulesDeploy(t *testing.T) {
 	if got := credsMarker(refused); got != nil {
 		t.Errorf("%s = %#v after a refused rules deploy, want it absent: a cascade launch would pass the marker gate on rules that do not carry the children", rules.PathCredsRulesMarker(), got)
 	}
-	// The orchestrator subtree's marker is the same claim about a third
-	// generation (stateless orchestrator plan, O2): the daemon reads it before it
-	// writes any state, so a marker left behind by a deploy that did not happen
-	// is a daemon writing into a subtree the deployed rules do not carry.
+	// The workspace family's marker is the same claim about the family's own
+	// generation (workspaces plan, task W3): it says the database runs under the
+	// record, the token hashes, the meter and the rollup, so it must not survive
+	// a deploy that did not happen either.
+	if got := wsMarker(refused); got != nil {
+		t.Errorf("%s = %#v after a refused rules deploy, want it absent: the database would be read as running under a workspace family these rules do not carry", rules.PathWorkspaceRulesMarker(), got)
+	}
+	// The orchestrator subtree's marker is the same claim about its generation
+	// (stateless orchestrator plan, O2): the daemon reads it before it writes any
+	// state, so a marker left behind by a deploy that did not happen is a daemon
+	// writing into a subtree the deployed rules do not carry.
 	if got := orchMarker(refused); got != nil {
 		t.Errorf("%s = %#v after a refused rules deploy, want it absent: the daemon's gate would pass on rules that carry no orchestrator subtree", rules.PathOrchestratorRulesMarker(), got)
 	}
@@ -582,14 +603,18 @@ func TestRulesMarkerOnlyAfterTheRulesDeploy(t *testing.T) {
 	if !ok || credsNum.String() != strconv.Itoa(rules.CredsRulesVersion) {
 		t.Errorf("%s = %#v, want %d (CredsRulesVersion)", rules.PathCredsRulesMarker(), credsMarker(r), rules.CredsRulesVersion)
 	}
+	wsNum, ok := wsMarker(r).(json.Number)
+	if !ok || wsNum.String() != strconv.Itoa(rules.WorkspaceRulesVersion) {
+		t.Errorf("%s = %#v, want %d (WorkspaceRulesVersion)", rules.PathWorkspaceRulesMarker(), wsMarker(r), rules.WorkspaceRulesVersion)
+	}
 	orchNum, ok := orchMarker(r).(json.Number)
 	if !ok || orchNum.String() != strconv.Itoa(rules.OrchestratorRulesVersion) {
 		t.Errorf("%s = %#v, want %d (OrchestratorRulesVersion)", rules.PathOrchestratorRulesMarker(), orchMarker(r), rules.OrchestratorRulesVersion)
 	}
-	// All three sit beside the largest lease, not on top of it.
+	// All four sit beside the largest lease, not on top of it.
 	lim, _ := r.db.Value("config/limits").(map[string]any)
-	if len(lim) != 4 || lim["maxReserveMicros"] == nil {
-		t.Errorf("config/limits = %v, want the three markers beside maxReserveMicros", lim)
+	if len(lim) != 5 || lim["maxReserveMicros"] == nil {
+		t.Errorf("config/limits = %v, want the four markers beside maxReserveMicros", lim)
 	}
 }
 
@@ -1126,12 +1151,30 @@ func TestIdentityPlatformAlreadyEnabledRaceIsOK(t *testing.T) {
 	}
 }
 
+// idpPath is an Identity Platform IdP entry's `name` as the Admin API returns
+// it: the RESOURCE PATH, projects/<project>/<field>/<id>, and not the bare
+// provider id. Every fixture below uses it, because a fixture naming `google.com`
+// alone would be a shape the API never sends — infra.PublicSignUp passes this
+// field through unchanged — and a matcher written against the bare form would
+// pass here and refuse the pin's own provider in the cloud
+// (workspaceSignInPath; scripts/live-checks/check361.sh strips the last path
+// segment for the same reason). The project is the caller's, because the entry
+// names the project it belongs to and a test that reads a project other than
+// the installation's has to say which.
+func idpPath(fp, field, id string) string { return "projects/" + fp + "/" + field + "/" + id }
+
+// idpEntry is one enabled IdP of that shape, as `SetIdentityPlatformConfig`
+// takes it.
+func idpEntry(fp, field, id string) map[string]any {
+	return map[string]any{"name": idpPath(fp, field, id), "enabled": true}
+}
+
 func TestIdentityPlatformRefusesPublicSignUp(t *testing.T) {
 	for name, cfg := range map[string]map[string]any{
 		"email":     {"signIn": map[string]any{"email": map[string]any{"enabled": true}}},
 		"anonymous": {"signIn": map[string]any{"anonymous": map[string]any{"enabled": true}}},
 		"phone":     {"signIn": map[string]any{"phoneNumber": map[string]any{"enabled": true}}},
-		"idp":       {"defaultSupportedIdpConfigs": []any{map[string]any{"name": "google.com", "enabled": true}}},
+		"idp":       {"defaultSupportedIdpConfigs": []any{idpEntry(fpID, "defaultSupportedIdpConfigs", "google.com")}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := newFBRig(t)
@@ -1142,6 +1185,210 @@ func TestIdentityPlatformRefusesPublicSignUp(t *testing.T) {
 			}
 			if r.idt.InitializeAuthCalls() != 0 || r.db.Value("fugaro/mark") != nil {
 				t.Error("a refused configuration was followed by writes")
+			}
+		})
+	}
+}
+
+// TestIdentityPlatformAllowsTheWorkspacesOwnSignIn: the workspace's own project
+// is the one Firebase project whose public sign-in paths the owner enables —
+// spec.md §3 pins exactly which ones — so the refusal that holds every other
+// installation to custom tokens only does not hold it. The predicate is the
+// config's own owner half and nothing else, and this test is why it exists:
+// `fugaro update` converges the workspace's own project (workspace_create.go,
+// W3), so a refusal there would fail the one command the HARD RULE says brings
+// an installation to the new version.
+//
+// A member's project is the other side of the same predicate: it carries a
+// pin, not the owner's half, and its Firebase project is a member's own, where
+// nothing but a Fugaro token may sign in. A config carrying BOTH halves is that
+// side too: the member's half is the narrower claim, and reading it as a
+// workspace's own would leave a member's Firebase with the providers on and
+// every public sign-up path admitted.
+func TestIdentityPlatformAllowsTheWorkspacesOwnSignIn(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		extra   string
+		refused bool
+	}{
+		{"a workspace's own project", wsOwnerTable + wsOwnerCap, false},
+		{"a workspace of its own with a cap and no member", wsOwnerCap, false},
+		{"a member's project", wsPin, true},
+		{"a member's project that also declares the owner's half", wsPin + wsOwnerCap, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			r := newFBRig(t)
+			b, err := os.ReadFile(r.cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(r.cfg, append(b, c.extra...), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			lc, err := localcfg.Load(r.cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			r.idt.SetIdentityPlatformConfig(map[string]any{
+				"signIn":                     map[string]any{"email": map[string]any{"enabled": true}},
+				"defaultSupportedIdpConfigs": []any{idpEntry(fpID, "defaultSupportedIdpConfigs", "google.com")},
+			})
+			cmd := NewRootCmd()
+			cmd.SetOut(io.Discard)
+			cmd.SetErr(io.Discard)
+			cmd.SetIn(strings.NewReader(""))
+			run := newInitRun(cmd, &initOptions{door: setupDoor.name})
+			_, err = run.identityPlatform(context.Background(), lc, fpID)
+			if c.refused {
+				if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "public sign-up") {
+					t.Fatalf("a member's project carrying providers = %v, want the refusal", err)
+				}
+				if !strings.Contains(err.Error(), "google.com") || !strings.Contains(err.Error(), "email") {
+					t.Errorf("the refusal does not name the paths it found: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("the workspace's own providers were refused: %v", err)
+			}
+			// The step's own answer for an accepted configuration: it is read and
+			// left alone, and this run writes nothing over it.
+			if r.idt.InitializeAuthCalls() != 0 {
+				t.Errorf("the workspace's own Identity Platform was initialized: %d call(s)", r.idt.InitializeAuthCalls())
+			}
+		})
+	}
+}
+
+// TestIdentityPlatformRefusesASplitInstallationsPublicSignUp: the carve-out is
+// the project's and not the config's. A config can declare a workspace's own
+// half while the Firebase project read is another project's — a split
+// installation, `budget.firebase_project` naming a project that is not
+// `gcp_project` — and the pin's providers must not be admitted there: the
+// project whose sign-in the pin describes is the workspace's own, and this read
+// is of a project that is not it, so its public sign-up is refused exactly as
+// any other installation's is, with the project that has it named.
+//
+// The state is refused twice before this step in a real run (the Firebase step
+// refuses a config whose budget.firebase_project is not the project it reads,
+// and workspaceSplitFirebase refuses the split a stage later, with the flag that
+// names the other project refused before any cloud call). This pins the step's
+// own answer anyway: what it accepts is decided where the read is made, and not
+// by a check made somewhere else.
+func TestIdentityPlatformRefusesASplitInstallationsPublicSignUp(t *testing.T) {
+	const other = "aurora-fp"
+	r := newFBRigFor(t, other)
+	b, err := os.ReadFile(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	split := string(b) + wsOwnerTable + wsOwnerCap +
+		"budget: { rtdb_url: " + r.db.URL + ", firebase_project: " + other + " }\n"
+	if err := os.WriteFile(r.cfg, []byte(split), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	lc, err := localcfg.Load(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lc.GCPProject == other || lc.Budget == nil || lc.Budget.FirebaseProject != other {
+		t.Fatalf("the rig is not a split installation: gcp_project %s, budget %+v", lc.GCPProject, lc.Budget)
+	}
+	r.idt.SetIdentityPlatformConfig(map[string]any{
+		"signIn":                     map[string]any{"email": map[string]any{"enabled": true}},
+		"defaultSupportedIdpConfigs": []any{idpEntry(other, "defaultSupportedIdpConfigs", "google.com")},
+	})
+	cmd := NewRootCmd()
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	cmd.SetIn(strings.NewReader(""))
+	run := newInitRun(cmd, &initOptions{door: setupDoor.name})
+	_, err = run.identityPlatform(context.Background(), lc, other)
+	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "public sign-up") {
+		t.Fatalf("a split installation's providers = %v, want the refusal", err)
+	}
+	if !strings.Contains(err.Error(), other) || strings.Contains(err.Error(), "workspace's own Firebase project") {
+		t.Errorf("the refusal is not the one every other installation's project gets: %v", err)
+	}
+	if !strings.Contains(err.Error(), "google.com") || !strings.Contains(err.Error(), "email") {
+		t.Errorf("the refusal does not name the paths it found: %v", err)
+	}
+}
+
+// TestIdentityPlatformRefusesAWorkspacesOffPinProvider: the workspace's own
+// project is admitted for the paths spec §3's pin carries and for nothing else.
+// The exemption is not "a workspace may carry any provider": an anonymous
+// sign-in proves no address, a phone number is an address this project accepts
+// that nobody decided on, and a provider beside google.com is a second way in —
+// and this project is also an installation whose own sign-in reads a token's
+// claim and not the provider that signed the user in, so an off-pin provider is
+// admitted silently everywhere else. Each off-pin path is refused BY NAME, and
+// the pinned ones beside it are not what the refusal is about.
+func TestIdentityPlatformRefusesAWorkspacesOffPinProvider(t *testing.T) {
+	for name, c := range map[string]struct {
+		cfg map[string]any
+		off string
+	}{
+		"anonymous": {
+			cfg: map[string]any{"signIn": map[string]any{"anonymous": map[string]any{"enabled": true}}},
+			off: "signIn.anonymous.enabled",
+		},
+		"phone": {
+			cfg: map[string]any{"signIn": map[string]any{"phoneNumber": map[string]any{"enabled": true}}},
+			off: "signIn.phoneNumber.enabled",
+		},
+		"a second IdP beside the pinned one": {
+			cfg: map[string]any{"defaultSupportedIdpConfigs": []any{
+				idpEntry(fpID, "defaultSupportedIdpConfigs", "google.com"),
+				idpEntry(fpID, "defaultSupportedIdpConfigs", "microsoft.com"),
+			}},
+			off: "defaultSupportedIdpConfigs " + idpPath(fpID, "defaultSupportedIdpConfigs", "microsoft.com") + " enabled",
+		},
+		"an OAuth IdP": {
+			cfg: map[string]any{"oauthIdpConfigs": []any{idpEntry(fpID, "oauthIdpConfigs", "github.com")}},
+			off: "oauthIdpConfigs " + idpPath(fpID, "oauthIdpConfigs", "github.com") + " enabled",
+		},
+		"the pinned set with email and an off-pin provider": {
+			cfg: map[string]any{
+				"signIn": map[string]any{"email": map[string]any{"enabled": true}},
+				"defaultSupportedIdpConfigs": []any{
+					idpEntry(fpID, "defaultSupportedIdpConfigs", "google.com"),
+					idpEntry(fpID, "defaultSupportedIdpConfigs", "apple.com"),
+				},
+			},
+			off: "defaultSupportedIdpConfigs " + idpPath(fpID, "defaultSupportedIdpConfigs", "apple.com") + " enabled",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newFBRig(t)
+			b, err := os.ReadFile(r.cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(r.cfg, append(b, wsOwnerTable+wsOwnerCap...), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			lc, err := localcfg.Load(r.cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			r.idt.SetIdentityPlatformConfig(c.cfg)
+			cmd := NewRootCmd()
+			cmd.SetOut(io.Discard)
+			cmd.SetErr(io.Discard)
+			cmd.SetIn(strings.NewReader(""))
+			run := newInitRun(cmd, &initOptions{door: setupDoor.name})
+			if _, err := run.identityPlatform(context.Background(), lc, fpID); ExitCode(err) != ExitUserError || err == nil {
+				t.Fatalf("a workspace's own project carrying %s = %v, want a refusal", c.off, err)
+			} else {
+				for _, want := range []string{c.off, "docs/workspaces/spec.md §3", "pin"} {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("the refusal does not name %q: %v", want, err)
+					}
+				}
+			}
+			if n := r.idt.InitializeAuthCalls(); n != 0 {
+				t.Errorf("a refused workspace configuration was followed by %d initializeAuth call(s)", n)
 			}
 		})
 	}

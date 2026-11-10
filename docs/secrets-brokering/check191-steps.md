@@ -50,11 +50,19 @@ neither deletes nor closes them, and the block names each one.
   hard-coded in the script, and `fugaro doctor --project fugaro --all` must answer that this is the
   `fugaro-dev` installation: the script refuses to run against anything else. Never `belong`, and a
   repository whose workspace is `belong` is refused by name.
-- **The credentials service on for this installation, and the sandbox repository published with
-  `proxy: true`** (the plan's B1.7/B1.8, `fugaro project policy publish` from the project's
+- **The credentials service on for this installation, the sandbox repository on the
+  credentials-service switch (`agent.auth: cascade` for it, with a model credential in the service's
+  bundle, its root re-applied), and the sandbox repository published with `proxy: true`** (the plan's
+  B1.7/B1.8, `fugaro project policy publish` from the project's
   `project_secrets.bitbucket-token.allow_data_to`). Check 191 reads the published policy from
-  `fugaro project policy show --project fugaro --json` and fails the `proxied` row — before it
-  launches anything — when the repository is not admitted, or is admitted without `proxy: true`.
+  `fugaro project policy show --project fugaro --json` and the switch from `fugaro doctor --project
+  fugaro --json` (its `credentials-service-deployed` row, which is the one reading of the invoker
+  grants), and fails the `proxied` row — before it launches anything — when the repository is not
+  admitted, is admitted without `proxy: true`, or is off the switch: the published half alone is
+  **inert**, a repository off the switch holds its own token and is served by nothing, so the check
+  stops rather than launch three runs at a path the proxy is not on. Its remedy is to set
+  `agent.auth: cascade` for that repository, run `fugaro update --repo` for it and run the check
+  again.
 - **Three sandbox Bitbucket repositories of that installation**: `CHECK191_REPO` (the proxied one the
   runs work in), `CHECK191_OTHER_REPO` (a **second** one, for the other-repository refusal) and, for
   `--after-flip`, `CHECK191_PLAIN_REPO` (one the published policy does **not** proxy). Plus
@@ -148,7 +156,10 @@ project-wide container, and a repository that stored the token itself has its ow
 the repository may appear in any of them. If no secret carries that label the row was not measured:
 it reads `FAIL` and the check ends `2`, because there was no policy to read.
 
-Check 191: `proxied` (the published policy admits the repository with `proxy: true`), `run-launch` and
+Check 191: `proxied` (the published policy admits the repository with `proxy: true` **and** the
+credentials-service switch is on for it — `fugaro doctor --project fugaro --json`'s
+`credentials-service-deployed` row: `proxy: true` is inert for a repository off the switch, and a row
+that passed on the policy alone would call a run at the direct path a broken proxy), `run-launch` and
 `run-outcome` (the working run reached a final status, succeeded, and the service served its push and
 its pull request — the branch and the number the check leaves for you), the seven refusal rows
 (`refusal-other-repository`, `refusal-other-ref`, `refusal-tag-ref`, `refusal-ref-delete`,
@@ -172,7 +183,10 @@ the run never reached reads `FAIL — not reached`.
 ## If it stops before the end
 
 A stop prints the same block first, with an `aborted` fact naming the reason, and exits `1` (a guard
-that stopped it before it could run) or `2` (it could not measure). The stops worth knowing by name:
+that stopped it before it could run) or `2` (it could not measure). A `proxied` row that FAILs ends
+Check 191 the same way — the block prints, every row below it reads `FAIL — not reached`, and nothing
+was launched — with the reason in the row itself rather than in an `aborted` fact. The stops worth
+knowing by name:
 
 - **`this is not the fugaro-dev installation`** — `fugaro doctor --project fugaro --all` printed no
   `project: ... (GCP fugaro-dev,` line (that line is part of doctor's `--all` tail: the default view
@@ -193,7 +207,20 @@ that stopped it before it could run) or `2` (it could not measure). The stops wo
   container of its own has one, and that container's policy is what this row is about.
 - **A repository the policy does not proxy, when Check 191 needs one that is** (`proxied: FAIL`) — the
   published policy does not admit `CHECK191_REPO`, or admits it without `proxy: true`. Publish the
-  sandbox repository, or run this check as `--after-flip` if the flip has already happened.
+  sandbox repository, or run this check as `--after-flip` if the flip has already happened. The check
+  stops at this row: nothing below it was measured and no run was launched.
+- **The repository is off the credentials-service switch** (`proxied: FAIL`) — the published policy
+  admits it with `proxy: true`, and `fugaro doctor` reports its job account among the ones the service
+  does not admit, so its own `agent.auth` is not `cascade` (or its root was never re-applied with it):
+  the job mounts the token and the runs push straight to Bitbucket. Set `agent.auth: cascade` for that
+  repository (with a model credential in the service's bundle, `fugaro creds set`), run
+  `fugaro update --repo` for it and run the check again. The check stops here, and no run was launched
+  — the rows below would have measured the direct path, not the proxy.
+- **The switch could not be read** (`proxied: FAIL`, exit `2`) — `fugaro doctor --project fugaro
+  --json` came back without the `credentials-service-deployed` row, or with an arm this check does not
+  recognise, so whether the repository is served was **not measured**. Read `fugaro doctor --project
+  fugaro --json` yourself and settle it before you launch anything: a run whose switch nobody settled
+  is a run whose rows are about nothing.
 - **`the working run reported NO line for the … attempt`** — the probe's task asked for one
   `CHK191 attempt=<name> refused=… answer=…` line per attempt and the log holds none: the attempt was
   never made or never printed. Read `fugaro logs <run id>` and see what the agent did.
