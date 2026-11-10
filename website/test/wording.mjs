@@ -24,7 +24,7 @@
 //      directory is excepted by name: `FILES_THAT_KEEP_IT` below, the generated CLI
 //      reference, which carries the root command's help text verbatim.
 //
-// **Why the three document-rendering pages are exempt, and how wide the exemption is.** They
+// **Why the four document-rendering pages are exempt, and how wide the exemption is.** They
 // render a document of this repository rather than a page of the site: `/docs/` renders the
 // generated CLI reference, whose first paragraph is the root command's own help text, and
 // that help text still reads "Fleeting cloud workers for coding agents". The owner's ruling
@@ -33,12 +33,16 @@
 // `working` (its reference files too) and `parallelism`, the three
 // `SKILLS_THAT_CARRY_IT` below names — moves in the 0.9.0 work, not in this one, and the
 // generated file may not be hand-edited.
-// The exemption is exactly D188's three pages and no others, and the word is still refused
-// everywhere else — including `website/data/faq.yaml`, whose answer said "a fleet of
-// ephemeral cloud workers" and whose page `/faq/` is not exempt. The file half of the same
-// ruling is one line in one generated file, and it too is named and held to the tree
-// (`FILES_THAT_KEEP_IT` and the case that reads it) rather than left to the gate's own
-// sweep to miss.
+// The exemption is exactly the four document-rendering pages and no others, and the word is
+// still refused everywhere else — including `website/data/faq.yaml`, whose answer said "a fleet
+// of ephemeral cloud workers" and whose page `/faq/` is not exempt. **It is narrower than the
+// word ceiling's exemption** (D188), which also covers `/compatibility/`: the matrix's page
+// renders `website/data/compatibility.yaml`, a file this site owns and writes its own chrome
+// around, so its words are the ceiling's business and its wording is still this gate's — a
+// retired word or a banned claim on that page is a defect whichever file it came from
+// (`test/lib/exempt.mjs`'s two sets). The file half of the same ruling is one line in one
+// generated file, and it too is named and held to the tree (`FILES_THAT_KEEP_IT` and the case
+// that reads it) rather than left to the gate's own sweep to miss.
 //
 // **The second rule: the claim a figure's caption may not make.** The hero's chat was an
 // illustration, and its caption said "every line is the repository's own words, from the
@@ -64,7 +68,14 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { DIST, REPO, SITE, builtPages, parse, textOf } from './lib/html.mjs'
-import { DOCUMENT_PAGES, RECONCILIATION, documentPagesNamedIn, readReconciliation } from './lib/exempt.mjs'
+import {
+  CEILING_ONLY_PAGES,
+  CEILING_PAGES,
+  DOCUMENT_PAGES,
+  RECONCILIATION,
+  documentPagesNamedIn,
+  readReconciliation,
+} from './lib/exempt.mjs'
 
 /**
  * The retired word, as a word: `worker` and `workers`, and not `workered` or a substring of
@@ -165,7 +176,9 @@ const CLAIM_WHY =
  * the brief asked for, because a page whose framing row stopped rendering is a page whose
  * answer to the brief is missing. The exemption is the retired word's and the word ceiling's
  * (`DOCUMENT_PAGES`, D188): those pages render a document of this repository rather
- * than the site's own copy, and a quotation of a document is not a page's own claim.
+ * than the site's own copy, and a quotation of a document is not a page's own claim. It is the
+ * word ceiling's list minus `/compatibility/`, whose page is the site's own and carries this
+ * rule (the module's header).
  *
  * The first three entries are the owner's list, and the fourth is D248's word: `disposable` is
  * refused for that decision's reason rather than as a word in general — a container that does
@@ -353,18 +366,21 @@ test('the framing D249 asks for is on the Why GCP page, and the phrases it may n
     'faq/index.html': shell('<h1>FAQ</h1><p>There is no real alternative to one project.</p>'),
     'console/index.html': shell('<h1>Console</h1><p>It is the only cloud that offers this.</p>', '<meta name="description" content="a disposable project">'),
     'docs/index.html': shell('<h1>Reference</h1><p>There is no alternative to a disposable project.</p>'),
+    // The matrix's page, which the ceiling exempts and this rule does not: a banned claim is
+    // refused there too (website/test/lib/exempt.mjs, and the case above for the retired word).
+    'compatibility/index.html': shell('<h1>Compatibility</h1><p>It is the only cloud that offers this.</p>'),
     // The other side of the fourth pattern: a run's container is what this product is, and a
     // page that says so is not refused. A gate that took the word wherever it stood would fail
     // here, which is what keeps the pattern on the project rather than on the word.
     'community/index.html': shell('<h1>Community</h1><p>Every run gets a disposable container of its own.</p>'),
   }
   const failures = framingFailures(distOf(t, files))
-  assert.equal(failures.length, 3, failures.join('\n'))
+  assert.equal(failures.length, 4, failures.join('\n'))
   assert.ok(
     !failures.some((line) => line.startsWith('community/index.html ')),
     `the gate refused a page that says a container is disposable, which is what the product is:\n${failures.join('\n')}`,
   )
-  for (const rel of ['faq/index.html', 'console/index.html']) {
+  for (const rel of ['faq/index.html', 'console/index.html', 'compatibility/index.html']) {
     assert.ok(
       failures.some((line) => line.startsWith(`${rel} `)),
       `${rel} carries a banned phrase and the gate did not name it:\n${failures.join('\n')}`,
@@ -423,19 +439,26 @@ test('README.md carries no retired word, and the claim is refused there too', ()
   assert.deepEqual(failures, [], `README.md carries wording this gate refuses:\n  ${failures.join('\n  ')}`)
 })
 
-test('the pages this rule skips are D188’s own list, and no wider', () => {
-  // The exemption (`DOCUMENT_PAGES`, shared with the word ceiling through
-  // `test/lib/exempt.mjs`) is the one place this gate looks away, so it is the one place a
-  // defect could hide: a page added here is a page whose words nobody checks. It is held
-  // equal to the pages the ruling names rather than trusted, so widening it means editing
-  // D188's row in the same commit — and taking a page out of the ruling fails this too,
-  // because the gates would then be exempting a page the ruling no longer does.
+test('the ceiling skips D188’s own list, and this rule skips D188’s list minus the matrix', () => {
+  // Both exemptions live in `test/lib/exempt.mjs`, and both are the one place a gate looks
+  // away, so they are where a defect could hide: a page added to either is a page whose words
+  // nobody checks. The ceiling's set is held equal to the pages the ruling names rather than
+  // trusted, so widening it means editing D188's row in the same commit — and taking a page out
+  // of the ruling fails this too, because the gate would then be exempting a page the ruling no
+  // longer does. This rule's set is held to the same list minus `CEILING_ONLY_PAGES`, the page
+  // the ceiling exempts and this rule does not (`/compatibility/`): that page's words are a
+  // file's, and the file is one this site owns and renders, so its wording is still this gate's.
   const named = documentPagesNamedIn(readReconciliation())
   assert.ok(named.length > 0, `${RECONCILIATION}'s D188 row names no page and the exemption is read from it (website/test/lib/exempt.mjs)`)
   assert.deepEqual(
-    [...DOCUMENT_PAGES].sort(),
+    [...CEILING_PAGES].sort(),
     named.sort(),
-    `the pages this rule skips, ${JSON.stringify([...DOCUMENT_PAGES].sort())}, are not the pages ${RECONCILIATION}'s D188 row names, ${JSON.stringify(named.sort())}: the exemption is that ruling's list, and the ceiling in test/budget.mjs reads the same set (D188)`,
+    `the pages the ceiling skips, ${JSON.stringify([...CEILING_PAGES].sort())}, are not the pages ${RECONCILIATION}'s D188 row names, ${JSON.stringify(named.sort())}: the exemption is that ruling's list, and it is written in test/lib/exempt.mjs (D188)`,
+  )
+  assert.deepEqual(
+    [...DOCUMENT_PAGES].sort(),
+    named.filter((route) => !CEILING_ONLY_PAGES.includes(route)).sort(),
+    `the pages this rule skips, ${JSON.stringify([...DOCUMENT_PAGES].sort())}, are not D188's own list minus ${JSON.stringify([...CEILING_ONLY_PAGES].sort())}: this rule exempts a page that quotes a document of this repository, and ${JSON.stringify([...CEILING_ONLY_PAGES])} is the page whose words the ceiling waives and this rule still reads (website/test/lib/exempt.mjs)`,
   )
 })
 
@@ -505,11 +528,19 @@ test('the word is refused in a page’s text, in its title and in its card, and 
     // The exemption, exactly as wide as D188's list: the page that renders the CLI
     // reference keeps the root command's help text, and its own copy is not the site's.
     'docs/index.html': shell('<h1>Reference</h1><p>Fleeting cloud workers for coding agents</p>'),
+    // And the page on the other side of that line: the ceiling waives `/compatibility/`'s
+    // words because they are `website/data/compatibility.yaml`'s, and this rule still reads
+    // them, because the matrix is a file this site owns rather than a document it quotes.
+    'compatibility/index.html': shell('<h1>Compatibility</h1><p>one worker per row</p>'),
   }
   const failures = wordingFailures(distOf(t, files))
-  assert.equal(failures.length, 2, failures.join('\n'))
+  assert.equal(failures.length, 3, failures.join('\n'))
   assert.ok(failures.some((line) => line.startsWith('faq/index.html ')), failures.join('\n'))
   assert.ok(failures.some((line) => line.startsWith('caps/index.html ')), failures.join('\n'))
+  assert.ok(
+    failures.some((line) => line.startsWith('compatibility/index.html ')),
+    `the matrix's page carries ${RETIRED} and the gate did not name it, which is the ceiling's exemption read as this rule's (website/test/lib/exempt.mjs):\n${failures.join('\n')}`,
+  )
 })
 
 test('the word is refused in README.md and in the site’s own sources', () => {

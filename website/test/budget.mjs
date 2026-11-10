@@ -154,7 +154,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { DIST, SITE, builtPages, filesUnder, find, parse, servedFile, walk } from './lib/html.mjs'
 import { buildCopy } from './lib/build.mjs'
-import { DOCUMENT_PAGES } from './lib/exempt.mjs'
+import { CEILING_PAGES } from './lib/exempt.mjs'
 
 // ---- the numbers, from the README ------------------------------------------------------
 
@@ -249,14 +249,17 @@ export function budgetFailures(dist, budgets) {
 // like any other visible text: the ceiling is a claim about the page, not about its prose.
 //
 // The pages D188 exempts — `/docs/`, `/security/`, `/changelog/`, `/legal/subscription-terms/`
-// and `/compatibility/` — are exempt from the **page** ceiling because each renders a document
-// of this repository rather than a page of the site; their leads are still held to the lead
+// and `/compatibility/` — are exempt from the **page** ceiling because the words on each are a
+// file's rather than a page's prose: a document of this repository on the first four, and
+// `website/data/compatibility.yaml` on the matrix's page. Their leads are still held to the lead
 // ceiling, since a lead is a page's own and every page has one.
 //
-// The list itself is not written here: it is `test/lib/exempt.mjs`'s `DOCUMENT_PAGES`, which
-// `test/wording.mjs` skips for the same reason and holds equal to D188's own row. Two lists
-// would be two rules, and the page that ends up on one of them is exempt from a ceiling and
-// held to a wording rule — or the reverse — with both gates green.
+// The list itself is not written here: it is `test/lib/exempt.mjs`'s `CEILING_PAGES`, which
+// `test/wording.mjs` holds equal to D188's own row. That file writes a second, narrower set —
+// `DOCUMENT_PAGES`, the four the ruling exempts because they render a document of this
+// repository — and the wording rules read that one: the matrix's page is a file this site owns
+// and renders, so it is exempt from the ceiling and still held to the retired word and D249's
+// framing (the module's header says why).
 
 /** The words of a piece of text, the way a reader counts them. */
 function words(text) {
@@ -438,8 +441,8 @@ export function wordFailures(dist, budgets) {
     if (counts.lead > budgets.lead) {
       out.push(`${page.rel} opens with a ${counts.lead}-word lead; the ceiling is ${budgets.lead} words in a page's lead (website/README.md)`)
     }
-    if (!DOCUMENT_PAGES.has(page.url) && counts.words > budgets.words) {
-      out.push(`${page.rel} is ${counts.words} words; the ceiling is ${budgets.words} words per page (website/README.md), and the pages D188 exempts are ${[...DOCUMENT_PAGES].join(', ')}`)
+    if (!CEILING_PAGES.has(page.url) && counts.words > budgets.words) {
+      out.push(`${page.rel} is ${counts.words} words; the ceiling is ${budgets.words} words per page (website/README.md), and the pages D188 exempts are ${[...CEILING_PAGES].join(', ')}`)
     }
   }
   return out
@@ -1114,7 +1117,7 @@ export function wordsCeilingFailures(readme, dist = documentedBuild()) {
   }
 
   for (const page of pages) {
-    if (page.url === WORDS_CEILING_PAGE || DOCUMENT_PAGES.has(page.url)) continue
+    if (page.url === WORDS_CEILING_PAGE || CEILING_PAGES.has(page.url)) continue
     const other = pageWords(page.html)
     if (other === null) continue
     if (other.words > D188_WORDS) {
