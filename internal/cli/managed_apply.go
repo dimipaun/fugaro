@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bufio"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -132,13 +131,15 @@ address the owner did not approve is refused) and the deployer account (which
 holds no project-level IAM permission and cannot write the runs bucket). None
 of the four is a boundary against a session that goes around this program.
 
-The prompt comes back whenever the whole-project inventory does not clear the
-project: before anything is planned, this command reads every resource of the
-GCP project (Cloud Asset, with the operator's own credential) and compares it
-with what the installation's Terraform states account for. A resource nothing
-accounts for, or an inventory that cannot be read, keeps this run's
-confirmation: a coding agent's session is refused and a person is asked, with
-the reason printed first. Nothing is halted and nothing is deleted.`,
+The confirmation comes back whenever the whole-project inventory does not clear
+the project: before anything is planned, this command reads every resource of
+the GCP project (Cloud Asset, with the operator's own credential) and compares
+it with what the installation's Terraform states account for. A resource
+nothing accounts for, or an inventory that cannot be read, keeps this run's
+confirmation: a coding agent's session is refused, and a person at a terminal
+proceeds with the reason printed first — the prompt itself is not restored,
+because in a managed project a prompt is what --ask puts back and this command
+registers no such flag yet. Nothing is halted and nothing is deleted.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return managedApply(cmd, o, args[0])
@@ -338,12 +339,11 @@ func managedApplyWith(cmd *cobra.Command, o cloudOptions, rootArg string, newRep
 		// apply asks the rule once the gate has a verdict (managed.Request's
 		// own comment).
 		Conditions: managedConditions(cmd),
-		// And the person's own answer, when the session is a person's: the
-		// project's name typed at the terminal, after a question that names
-		// the saved plan's hash and what it changes. A coding agent's session
-		// is never asked (D55), and a session with no terminal never reaches
-		// this (the rule refuses it first).
-		Ask: managedApplyAsk(cmd, lc, rep),
+		// And the person's own answer, when the session is a person's: this
+		// command's --ask, and nothing else (managedApplyAsk). A coding agent's
+		// session is never asked (D55), and a session with no terminal never
+		// reaches this (the rule refuses it first).
+		Ask: managedApplyAsk(cmd, rep),
 		// Session is nil, and it is written out rather than left to the zero
 		// value because the field is the assertion: this command registers no
 		// flag and no argument that names an address, so there is no way to
@@ -400,17 +400,26 @@ func managedApplyWith(cmd *cobra.Command, o cloudOptions, rootArg string, newRep
 	return nil
 }
 
-// managedApplyAsk is managedAsk with the reporter's line in flight taken down
-// first: a managed apply's question is asked in the middle of the step, after
-// the plan has been gated, and a spinner drawn over the question would be a
-// prompt a person is reading through (G1). Resume draws the line again once
-// it is answered.
-func managedApplyAsk(cmd *cobra.Command, lc *localcfg.Config, rep *report.Reporter) func(string) (bool, error) {
-	ask := managedAsk(cmd, lc)
+// managedApplyAsk is the one confirmation a managed apply may still ask, with
+// the reporter's line in flight taken down first: a question is asked in the
+// middle of the step, after the plan has been gated, and a spinner drawn over
+// the question would be something a person is reading through (G1). Resume
+// draws the line again once it is answered.
+//
+// The question itself is askConfirm's, and that is the whole of it: a managed
+// apply is a step of the managed set like every other one, so it asks this
+// command's own --ask and nothing else, and without the flag the step proceeds
+// exactly as a step of a managed project does (the owner's rule of 2026-11-04,
+// and T7's ruling of 2026-11-06 that a person at a real terminal is asked
+// nothing at a confirmation). This command does not register --ask yet — that
+// is the flag work of its own task — and askConfirm reads an unregistered flag
+// as absent, so the question above comes back the day that flag is added and
+// not one line before it.
+func managedApplyAsk(cmd *cobra.Command, rep *report.Reporter) func(string) (bool, error) {
 	return func(question string) (bool, error) {
 		rep.Pause()
 		defer rep.Resume()
-		return ask(question)
+		return askConfirm(cmd, question)
 	}
 }
 
@@ -423,28 +432,13 @@ func managedApplyAsk(cmd *cobra.Command, lc *localcfg.Config, rep *report.Report
 // once (managed.Request's own comment).
 //
 // The command registers no --yes and no --non-interactive, so neither appears
-// here: a person at a terminal is ASKED (managedAsk: the project's name typed
-// after a question naming the plan's hash and counts), and a session with no
+// here: a person at a terminal is asked nothing (managedApplyAsk, and the
+// owner's rule that only --ask puts a question back), and a session with no
 // marker and no terminal has no confirmation to give. That is the fail-closed
 // direction, and the refusal a person then reads is initflow's own
 // NoTerminalAdvice.
 func managedConditions(cmd *cobra.Command) initflow.Conditions {
 	return initflow.Conditions{Terminal: stdinIsTerminal(cmd.InOrStdin()), Agent: agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin()))}
-}
-
-// managedAsk is the question a person at a terminal answers before a managed
-// apply: the apply's own words (the project, the saved plan's hash and its
-// counts), and the project's name typed back. Anything else is a no.
-func managedAsk(cmd *cobra.Command, lc *localcfg.Config) func(string) (bool, error) {
-	return func(question string) (bool, error) {
-		out := cmd.ErrOrStderr()
-		fmt.Fprintf(out, "⚠ CONFIRM (project %s): %s\nType %s to confirm: ", safetext.Field(lc.Name), question, safetext.Field(lc.Name))
-		line, err := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
-		if err != nil && !errors.Is(err, io.EOF) {
-			return false, err
-		}
-		return strings.TrimSpace(line) == lc.Name, nil
-	}
 }
 
 // managedRoot is ROOT as the apply reads it: an absolute directory inside the

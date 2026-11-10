@@ -460,12 +460,16 @@ func managedApplyStream(t *testing.T, r *initRig) {
 	r.save(t)
 }
 
-// TestManagedApplyAsksOnItsOwnLine: the managed apply's question is asked in
-// the middle of its one step, after the plan has been gated, so the line in
-// flight is taken down before the question is written and drawn again once it
-// is answered (G1). A question a person reads through a spinner is one nobody
-// can answer, and this is the question that decides whether a plan is applied.
-func TestManagedApplyAsksOnItsOwnLine(t *testing.T) {
+// TestManagedApplyAsksNothingOnItsOwnLine: in a managed project the apply asks
+// the person at the terminal nothing. The gate is what replaces the question
+// (D55), and --ask — which this command does not register yet — is the one flag
+// that puts one back (the owner's rule of 2026-11-04, and T7's ruling of
+// 2026-11-06). What the test holds besides the absence of the question is that
+// nothing is drawn over the step while it runs: the question's own wrapper takes
+// the line in flight down before it writes and draws it again after, so a
+// prompt that is not asked is a wrapper that never fires, and a redraw here
+// would be a line put back by nothing.
+func TestManagedApplyAsksNothingOnItsOwnLine(t *testing.T) {
 	noAgentSession(t)
 	r, root := inventoryApplyRig(t)
 	stubManagedAssets(t, &fakeManagedAssets{assets: []managedmode.Asset{
@@ -475,23 +479,15 @@ func TestManagedApplyAsksOnItsOwnLine(t *testing.T) {
 	managedApplyStream(t, r)
 	terminal(t, true)
 	watch, err := managedApplyOnScreen(t, root)
-	// Everything this run writes with the step open — terraform's own stream,
-	// which is not the run's own lines, and the question — takes the line down
-	// first, so the progress reads as terraform printed it rather than through
-	// a frame.
-	nothingDrawnOver(t, watch)
-	question := "Type " + initProjectName + " to confirm: "
-	out := watch.String()
-	at := strings.Index(out, question)
-	if at < 0 {
-		t.Fatalf("the command never asked the person at the terminal (err %v):\n%s", err, out)
+	if err != nil {
+		t.Fatalf("the apply failed: %v:\n%s", err, watch.String())
 	}
-	// The answer puts the line back, so the apply is still the one step the
-	// person is watching while it runs: Resume is the only thing that draws
-	// again — the frames are stopped until it does — so a redraw after the
-	// question is what says it happened.
-	if after := out[at+len(question):]; !strings.Contains(after, "\r") {
-		t.Errorf("the answer did not put the line in flight back:\n%q", after)
+	nothingDrawnOver(t, watch)
+	out := watch.String()
+	for _, asked := range []string{"[y/N]", "to confirm", initProjectName + " to "} {
+		if strings.Contains(out, asked) {
+			t.Errorf("the managed apply asked the person at the terminal (%q), and in a managed project it asks nothing:\n%s", asked, out)
+		}
 	}
 	if !strings.Contains(out, tfStream) {
 		t.Errorf("terraform's own progress never reached the screen:\n%s", out)
