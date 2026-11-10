@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -203,6 +205,209 @@ func TestCatalogFetchIsBounded(t *testing.T) {
 	}
 	if _, err := Fetch(ctx, o.open, gitprov.KindGitHub, config.Entry{Name: "agent", Source: config.Source{Kind: config.SourceInline, Inline: big}}); err == nil {
 		t.Fatal("an oversized inline definition was written from state")
+	}
+}
+
+// contextEntry is a dockerfile entry that names a build context, the source
+// Resolve's context read is about.
+func contextEntry(context string) config.Entry {
+	e := dockerfileEntry("agent", "docker/agent.Dockerfile", "main")
+	e.Source.Context = context
+	return e
+}
+
+// agentDockerfile is the definition the entries here are read from, and
+// contextDir the directory their context names.
+const (
+	agentDockerfile = "FROM example.invalid/base\n"
+	contextDir      = "ci"
+)
+
+// contextFiles is the context tree a commit holds, keyed by the path the read
+// answers with: relative to the context root, which is what the digest is
+// taken over.
+func contextFiles() map[string]string {
+	return map[string]string{"Dockerfile": agentDockerfile, "src/main.go": "package main\n"}
+}
+
+// contextProvider is a fake provider whose branch "main" resolves to one
+// commit, and whose tree at that commit holds the definition the entry names
+// and the files of its context. The branch itself holds a different
+// definition, so a read at the branch rather than at the commit is not the
+// same read.
+func contextProvider(files map[string]string) *fake.Provider {
+	const sha = "3f2b1c0d9e8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c"
+	tree := map[string]string{"docker/agent.Dockerfile": agentDockerfile}
+	for p, data := range files {
+		tree[contextDir+"/"+p] = data
+	}
+	return &fake.Provider{Repo: "acme/app", State: fake.State{
+		Branches: map[string]map[string]string{"main": {"docker/agent.Dockerfile": "the branch's own\n"}},
+		Commits:  map[string]string{"main": sha},
+		Trees:    map[string]map[string]string{sha: tree},
+	}}
+}
+
+// TestCatalogResolveReadsTheContextAtTheResolvedCommit: the context is read
+// at the commit the branch resolved to — the same commit the Dockerfile was
+// read at — so the digest it stages is the digest of that tree and not of
+// whatever the branch holds now.
+func TestCatalogResolveReadsTheContextAtTheResolvedCommit(t *testing.T) {
+	ctx := context.Background()
+	files := contextFiles()
+	p := contextProvider(files)
+	o := &fetchOpener{p: p, cred: fakeCredential(t)}
+	src, err := Resolve(ctx, o.open, gitprov.KindGitHub, contextEntry("ci"))
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if src.Commit != p.State.Commits["main"] {
+		t.Errorf("the resolved commit is %q, want the commit the branch resolved to", src.Commit)
+	}
+	if string(src.Dockerfile) != agentDockerfile {
+		t.Errorf("the Dockerfile is %q, want the one the commit holds (%q)", src.Dockerfile, agentDockerfile)
+	}
+	if want := contextDigestOf(files); src.ContextHash != want {
+		t.Errorf("the context hash is %q, want the digest of the commit's tree %q", src.ContextHash, want)
+	}
+	// An entry that names no context resolves no hash at all, which is the
+	// shape every entry had before the key existed.
+	if src, err = Resolve(ctx, o.open, gitprov.KindGitHub, dockerfileEntry("agent", "docker/agent.Dockerfile", "main")); err != nil || src.ContextHash != "" {
+		t.Errorf("a context-less entry resolved %q, %v", src.ContextHash, err)
+	}
+}
+
+// contextDigestOf is the digest of a tree written out the way the context's
+// identity is defined — a sha256 over the paths and each file's own digest, in
+// path order — so this test states the definition rather than asking the
+// resolver for its own answer.
+func contextDigestOf(files map[string]string) string {
+	h := sha256.New()
+	for _, p := range slices.Sorted(maps.Keys(files)) {
+		sum := sha256.Sum256([]byte(files[p]))
+		fmt.Fprintf(h, "%s\x00%x\n", p, sum)
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// reverseTreeReader is a provider that answers a context tree in the order its
+// host happened to list it — here, the reverse of the fake's own — so a digest
+// that trusted the read's order would differ from the same tree read the other
+// way round.
+type reverseTreeReader struct{ *fake.Provider }
+
+func (r reverseTreeReader) Tree(ctx context.Context, path, ref string, limit gitprov.TreeLimit) ([]gitprov.TreeFile, error) {
+	files, err := r.Provider.Tree(ctx, path, ref, limit)
+	slices.Reverse(files)
+	return files, err
+}
+
+// TestCatalogResolveDigestsAContextWhateverOrderItIsRead: the digest is a
+// function of the tree and not of the order a host listed it in, so two reads
+// of one context agree — which is what keeps the nightly check from rebuilding
+// an entry nothing changed.
+func TestCatalogResolveDigestsAContextWhateverOrderItIsRead(t *testing.T) {
+	ctx := context.Background()
+	files := contextFiles()
+	one, err := Resolve(ctx, (&fetchOpener{p: contextProvider(files), cred: fakeCredential(t)}).open, gitprov.KindGitHub, contextEntry("ci"))
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	two, err := Resolve(ctx, (&fetchOpener{p: reverseTreeReader{contextProvider(files)}, cred: fakeCredential(t)}).open, gitprov.KindGitHub, contextEntry("ci"))
+	if err != nil {
+		t.Fatalf("Resolve of a tree read in another order: %v", err)
+	}
+	if one.ContextHash != two.ContextHash {
+		t.Errorf("the two reads digest to %q and %q, want one value", one.ContextHash, two.ContextHash)
+	}
+	if len(one.ContextHash) != 64 {
+		t.Errorf("the context hash is %q, want a sha256", one.ContextHash)
+	}
+	// A file that changed is a different tree.
+	changed := contextFiles()
+	changed["src/main.go"] = "package other\n"
+	three, err := Resolve(ctx, (&fetchOpener{p: contextProvider(changed), cred: fakeCredential(t)}).open, gitprov.KindGitHub, contextEntry("ci"))
+	if err != nil {
+		t.Fatalf("Resolve of a changed tree: %v", err)
+	}
+	if three.ContextHash == one.ContextHash {
+		t.Error("a context whose file changed digests to the same value")
+	}
+}
+
+// limitRecorder is a provider that reads a file and resolves a ref, and whose
+// tree read refuses with the bound its caller gave it — so a test can read
+// back the ceiling the resolver applies, which is D1398's own number.
+type limitRecorder struct{ gitprov.Provider }
+
+func (limitRecorder) Contents(context.Context, string, string) ([]byte, error) {
+	return []byte("FROM example.invalid/base\n"), nil
+}
+
+func (limitRecorder) Commit(context.Context, string) (string, error) {
+	return strings.Repeat("a", 40), nil
+}
+
+func (limitRecorder) Tree(_ context.Context, _, _ string, limit gitprov.TreeLimit) ([]gitprov.TreeFile, error) {
+	recorded = limit
+	return nil, fmt.Errorf("the tree is over it: %w", gitprov.ErrTreeTooLarge)
+}
+
+// recorded is the limit the last limitRecorder read was given. It is a
+// package-level value because a provider is handed back through an interface
+// the test cannot reach into, and the test that reads it is one test.
+var recorded gitprov.TreeLimit
+
+// TestCatalogResolveBoundsTheContext: the context is bounded at copy time
+// (D1398) with this package's own ceiling, and a context over it is refused by
+// the entry's name before a build is paid for.
+func TestCatalogResolveBoundsTheContext(t *testing.T) {
+	recorded = gitprov.TreeLimit{}
+	o := &fetchOpener{p: limitRecorder{}, cred: fakeCredential(t)}
+	_, err := Resolve(context.Background(), o.open, gitprov.KindGitHub, contextEntry("ci"))
+	if !errors.Is(err, gitprov.ErrTreeTooLarge) {
+		t.Fatalf("err = %v, want the bound's own error", err)
+	}
+	if !strings.Contains(err.Error(), "agent") {
+		t.Errorf("the refusal %q does not name the entry", err)
+	}
+	if want := (gitprov.TreeLimit{MaxFiles: MaxContextFiles, MaxBytes: MaxContextBytes}); recorded != want {
+		t.Errorf("the read was bounded by %+v, want %+v", recorded, want)
+	}
+}
+
+// TestCatalogResolveRefusesAnEmptyContext: a context that holds no files is
+// refused — a tree read cannot tell an empty directory from one that is not
+// there, and an entry whose context is either is an entry whose context is a
+// mistake.
+func TestCatalogResolveRefusesAnEmptyContext(t *testing.T) {
+	o := &fetchOpener{p: contextProvider(map[string]string{}), cred: fakeCredential(t)}
+	_, err := Resolve(context.Background(), o.open, gitprov.KindGitHub, contextEntry("ci"))
+	if err == nil || !strings.Contains(err.Error(), "agent") {
+		t.Fatalf("err = %v, want a refusal naming the entry", err)
+	}
+}
+
+// noTreeReader reads a file and resolves a ref but cannot read a directory of
+// its repository: what a context entry on such a provider is refused with.
+type noTreeReader struct{ gitprov.Provider }
+
+func (noTreeReader) Contents(context.Context, string, string) ([]byte, error) {
+	return []byte("FROM example.invalid/base\n"), nil
+}
+
+func (noTreeReader) Commit(context.Context, string) (string, error) {
+	return strings.Repeat("a", 40), nil
+}
+
+// TestCatalogResolveRefusesAProviderWithoutATreeReader: a provider that reads
+// a file but no directory is refused by name rather than read as an empty
+// context, which is the same rule Fetch has for a provider with no file read.
+func TestCatalogResolveRefusesAProviderWithoutATreeReader(t *testing.T) {
+	o := &fetchOpener{p: noTreeReader{}, cred: fakeCredential(t)}
+	_, err := Resolve(context.Background(), o.open, gitprov.KindGitHub, contextEntry("ci"))
+	if err == nil || !strings.Contains(err.Error(), "agent") || !strings.Contains(err.Error(), "context") {
+		t.Fatalf("err = %v, want a refusal naming the entry and its context", err)
 	}
 }
 
