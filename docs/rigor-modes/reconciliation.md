@@ -821,7 +821,11 @@ Amended 2026-11-10: `internal/cli/docs_dynamic_delivery_test.go`, the dynamic-de
 Amended 2026-11-10: `internal/cli/docs_run_without_checkout_test.go`,
 the run-without-checkout folder's pin over A0 having landed — the person read
 set its status lines name and the answer row it was raised by are read
-against — moved the table's row from 117 to 118.) They
+against — moved the table's row from 117 to 118.) Amended 2026-11-10: the
+post-review-triage folder's T-TR5 (#2213, the triage stage, its switch and the
+switch's carrier) added one image-skew `Since` constant (`triageSince`) and left
+the row below at the count of the tree before it, so it moves with the tree: the
+image-skew constants from 34 to 35. They
 are named because the figure is a running total of other folders' guards: a folder
 that writes one moves this row in its own commit, and a reader who finds the row
 stale has found a merge that did not.
@@ -838,7 +842,7 @@ stale has found a merge that did not.
 | Fields of `task.Spec` or `recipe.Step` whose name is a path | 0 | `{ sed -n '/^type Spec struct {/,/^}/p' internal/task/task.go; sed -n '/^type Step struct {/,/^}/p' internal/recipe/recipe.go; } \| grep -cE '^[[:space:]]+[A-Z][A-Za-z]*(Path\|Glob\|Dir)'` |
 | Sites that compare a finding's severity to a value | 0 | `git grep -n 'Severity ==' -- internal/runner ':!*_test.go' \| wc -l` |
 | Files in `internal/runner` that mention `Severity` at all | 4 | `git grep -l 'Severity' -- internal/runner ':!*_test.go' \| wc -l` |
-| Image-skew `Since` constants | 34 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
+| Image-skew `Since` constants | 35 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
 | Run outcomes | 4 | `git grep -ho 'Outcome[A-Za-z]* *= *"[a-z]*"' internal/runstore/runstore.go \| wc -l` |
 | Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 118 | `ls internal/cli/docs_*_test.go \| wc -l` |
 | Questions the in-job-review folder put to the owner, all answered | 17 | `git grep -hc '^\*\*Q[0-9]*\. ' docs/in-job-review/reconciliation.md` |
