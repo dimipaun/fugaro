@@ -266,12 +266,29 @@ func deriveCraftAccesses(c *localcfg.Config, refused map[string]string) []string
 		if !slices.Contains(conflicted, craft) {
 			continue
 		}
+		// The stages that name no account are the other half of the conflict
+		// exactly when the file holds no default for them: a key the file does
+		// not have cannot be listed (the loop above adds
+		// default_claude_account only when it is there), and the name those
+		// stages run on is the unsuffixed secret — the empty string
+		// installationAccounts resolves them to is not a name, and printed as
+		// one it leaves a hole in the list.
+		where := slices.Clone(keys[craft])
+		named := installationAccounts(c, names[craft])
+		if c.DefaultClaudeAccount == "" && slices.Contains(names[craft], "") {
+			where = append(where, "the stages that name no account")
+			for i, name := range named {
+				if name == "" {
+					named[i] = unsuffixedSecret
+				}
+			}
+		}
 		notes = append(notes, fmt.Sprintf("crafts.%s: %s name different accounts (%s), and one craft holds one access, so no craft key was written for it — its stages keep the accounts they name today",
-			craft, strings.Join(keys[craft], " and "), strings.Join(installationAccounts(c, names[craft]), ", ")))
+			craft, strings.Join(where, " and "), strings.Join(named, ", ")))
 	}
 	if len(unsuffixed) > 0 {
-		notes = append(notes, fmt.Sprintf("the %s crafts' stages run on the unsuffixed default secret (default_claude_account %s), which no credential may be named after, so no craft key was written for them",
-			strings.Join(unsuffixed, ", "), orAbsent(c.DefaultClaudeAccount)))
+		notes = append(notes, fmt.Sprintf("the %s crafts' stages run on %s (default_claude_account %s), which no credential may be named after, so no craft key was written for them",
+			strings.Join(unsuffixed, ", "), unsuffixedSecret, orAbsent(c.DefaultClaudeAccount)))
 	}
 	for _, name := range slices.Sorted(maps.Keys(skipped)) {
 		why := refused[name]
@@ -308,6 +325,13 @@ func installationAccounts(c *localcfg.Config, stages []string) []string {
 func allEqual(names []string) bool {
 	return !slices.ContainsFunc(names, func(name string) bool { return name != names[0] })
 }
+
+// unsuffixedSecret is what a stage that names no account runs on in an
+// installation that sets no default either — the unsuffixed `default` account,
+// whose secret carries no name a credential or a craft key could take — spelled
+// for a sentence. The empty string installationAccounts resolves such a stage to
+// is not a name, so no note prints it as one.
+const unsuffixedSecret = "the unsuffixed default secret"
 
 // orAbsent spells a default_claude_account a sentence can print: a key the file
 // does not hold is not the empty string's key.

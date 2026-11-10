@@ -350,6 +350,57 @@ stages:
 	}
 }
 
+// TestCraftMigrationSpellsAnAbsentDefaultInAConflict: a craft whose stages
+// disagree is reported with the accounts they name, and in a config that sets
+// no default_claude_account at all the conflicting side is the stages that name
+// no account — they run on the unsuffixed secret, whose name is not the empty
+// string installationAccounts resolved them to. Printed as a name that string
+// leaves a hole in the list ("team-b, ") and no key can be listed for it either,
+// the file holding no default_claude_account to name.
+func TestCraftMigrationSpellsAnAbsentDefaultInAConflict(t *testing.T) {
+	// The coder's implement names team-b and its plan and fix name nothing, and
+	// there is no default for them: one craft, two accounts, no access.
+	const noDefault = `version: 1
+name: aurora
+gcp_project: proj-1234
+region: us-east5
+runs_bucket: fugaro-runs-proj-1234
+claude_accounts:
+  team-b: { allow_data_to: [dimipaun/fugaro] }
+stages:
+  implement: { claude_account: team-b }
+`
+	lc := parseLocalConfig(t, noDefault)
+	report := strings.Join(migrateCraftKeys(lc), "\n")
+	if want := "(the unsuffixed default secret, team-b, the unsuffixed default secret)"; !strings.Contains(report, want) {
+		t.Errorf("the conflict note does not spell the account of the stages that name none:\n%s", report)
+	}
+	if !strings.Contains(report, "stages.implement.claude_account and the stages that name no account name different accounts") {
+		t.Errorf("the conflict note names one key and claims they disagree:\n%s", report)
+	}
+	// The phrase is the neighbouring note's own, and that note says why the two
+	// halves are the same account: a config that sets no default uses the
+	// unsuffixed secret, which no credential may be named after.
+	if !strings.Contains(report, "the unsuffixed default secret (default_claude_account is not set)") {
+		t.Errorf("the report does not say the unsuffixed secret is what the unset default means:\n%s", report)
+	}
+	// Nothing in the report is an empty name: "" is the account a stage names
+	// none, and a list with a hole in it reads as a name that went missing.
+	for _, hole := range []string{"(, ", ", )", ", ,"} {
+		if strings.Contains(report, hole) {
+			t.Errorf("the report prints an empty account name (%q):\n%s", hole, report)
+		}
+	}
+	if got := lc.Crafts.Of(config.CraftCoder).Access; got != "" {
+		t.Errorf("crafts.coder.access = %q, want no key for the craft whose stages disagree", got)
+	}
+	data, err := lc.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	parseLocalConfigBytes(t, data)
+}
+
 // TestCraftMigrationKeepsANarrowedAccount is the shape every real installation
 // has: `fugaro accounts add` writes claude_accounts.<name>.allow_data_to and
 // has no way to declare an account without one, so an installation whose
