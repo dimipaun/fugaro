@@ -164,7 +164,7 @@ const CLAIM_WHY =
  * three places the retired word is refused in — and the sentence below has to be on the page
  * the brief asked for, because a page whose framing row stopped rendering is a page whose
  * answer to the brief is missing. The exemption is the retired word's and the word ceiling's
- * (`DOCUMENT_PAGES`, D188): those three pages render a document of this repository rather
+ * (`DOCUMENT_PAGES`, D188): those pages render a document of this repository rather
  * than the site's own copy, and a quotation of a document is not a page's own claim.
  *
  * The first three entries are the owner's list, and the fourth is D248's word: `disposable` is

@@ -248,10 +248,10 @@ export function budgetFailures(dist, budgets) {
 // already reads a page. A command block is a command a reader copies, and it is counted
 // like any other visible text: the ceiling is a claim about the page, not about its prose.
 //
-// The three reference pages D188 exempts — `/docs/`, `/security/` and `/changelog/` — are
-// exempt from the **page** ceiling because each renders a document of this repository
-// rather than a page of the site; their leads are still held to the lead ceiling, since a
-// lead is a page's own and every page has one.
+// The pages D188 exempts — `/docs/`, `/security/`, `/changelog/`, `/legal/subscription-terms/`
+// and `/compatibility/` — are exempt from the **page** ceiling because each renders a document
+// of this repository rather than a page of the site; their leads are still held to the lead
+// ceiling, since a lead is a page's own and every page has one.
 //
 // The list itself is not written here: it is `test/lib/exempt.mjs`'s `DOCUMENT_PAGES`, which
 // `test/wording.mjs` skips for the same reason and holds equal to D188's own row. Two lists

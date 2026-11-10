@@ -1341,14 +1341,22 @@ added or removed without this sentence moving fails there:
     not text either. No built page hides anything inside `main` today — the layout's own
     `hidden` elements, the skip link and the consent banner, sit outside it — so that rule
     is what stops a page that starts hiding a control from being counted for words nobody
-    sees. `/docs/`, `/security/`
-    and `/changelog/` are exempt, which is D188's own list: `/docs/` and `/changelog/` render a
-    document of this repository, and `/security/` renders two sections of the policy document
-    and links to the rest of it, so the three carry text the repository wrote rather
-    than a page of the site, and the brief allows those to stay long. The exemption is the
+    sees. `/docs/`, `/security/`,
+    `/changelog/`, `/legal/subscription-terms/` and `/compatibility/` are exempt, which is
+    D188's own list: `/docs/` and `/changelog/` render a
+    document of this repository, `/security/` renders two sections of the policy document
+    and links to the rest of it, and `/legal/subscription-terms/` renders the agreement text
+    of a document of this repository, so those carry text the repository wrote rather
+    than a page of the site, and the brief allows those to stay long. `/compatibility/` is
+    the fifth, added on 2026-11-10 with the page itself (the compatibility matrix's plan,
+    Task CM2, which names `test/lib/exempt.mjs`): its tables print
+    `data/compatibility.yaml` — 46 rows of names, notes, statuses and editions, **1037
+    words** on the build of 2026-11-10 — so the words a reader reads there are the matrix's
+    own and not a page's prose. It moved nothing else: D188's own number is untouched and
+    the pages that are the site's are the pages it still holds. The exemption is the
     owner's and this change did not touch it: the page is much shorter than the document it
     used to render whole and is still well over this ceiling, so it stays on the list — and
-    `test/security.mjs` holds it to a ceiling of its own. How many words the page carries is
+    `test/security.mjs` holds it to a ceiling of its own. How many words a page carries is
     `budget.mjs`'s own reader's to say, over the built artifact; this list does not keep the
     count, and the figure it kept here once did not match what the reader measures.
     **The number is no longer D188's own, and it is derived rather than picked.** The
