@@ -2092,6 +2092,56 @@ func TestUpdateManagedWorkspaceStageUnderTheGate(t *testing.T) {
 	}
 }
 
+// TestWorkspaceMemberPublishRefusesInAnAgentSession is the fence itself, one
+// step below the run that test above drives: a publish that ADMITS something to
+// the group is refused in a coding agent's session whatever the class says of
+// it (D1555, the same fence as D1552's), and what refuses it is the widening
+// (p.widens) read beside the session's own marker rather than the class typed
+// over it. The refusal is classified GateRefusedClass, because the document WAS
+// judged and it is the step's class that no plan gate admits (D1026), and what
+// stands beside it is the stage's own command (Left) — the one thing an agent's
+// report to its owner can act on.
+//
+// The control at the end is the same gate, the same session and a write that
+// admits nothing: the gate has no sentence for that one and leaves it to its own
+// confirmation, which is where the other half of this fence lives
+// (TestWorkspaceRemovalAsksNothingOfACodingAgentsSession).
+func TestWorkspaceMemberPublishRefusesInAnAgentSession(t *testing.T) {
+	run := &initRun{o: &initOptions{door: updateDoor.name}, w: io.Discard, cmd: NewRootCmd()}
+	run.gate = &initGate{managed: true}
+	s := &workspaceStage{e: &initEngine{r: run}}
+	t.Setenv("CLAUDECODE", "1")
+
+	admitted, err := s.gateStep(context.Background(), &workspacePublication{
+		body:   []byte(`{"name":"workspace-alpha","version":1}`),
+		widens: []string{"member-d is admitted to the workspace"},
+	})
+	if !admitted {
+		t.Error("a member publish in a coding agent's session was left to its own confirmation, and nothing in that session can answer for the group")
+	}
+	var ge *initflow.GatedError
+	if !errors.As(err, &ge) {
+		t.Fatalf("the refusal is %v, want the gate's own sentence", err)
+	}
+	if ge.Refusal != initflow.GateRefusedClass {
+		t.Errorf("the refusal is classified %v, want %v: the document was judged and it is the class no plan gate admits, so what is left for the owner is the step's own command and not an issue about a plan", ge.Refusal, initflow.GateRefusedClass)
+	}
+	if !strings.Contains(ge.Reason, managedmode.NotConverged) {
+		t.Errorf("the refusal does not carry the gate's sentence: %q", ge.Reason)
+	}
+	if !strings.Contains(ge.Reason, "Typed") {
+		t.Errorf("the refusal does not name the class that refused the node: %q", ge.Reason)
+	}
+	if got, want := s.Left().Text, selfCommand()+" update"; got != want {
+		t.Errorf("the refusal's own command is %q, want %q: the owner runs this themselves", got, want)
+	}
+
+	admitted, err = s.gateStep(context.Background(), &workspacePublication{body: []byte(`{"name":"workspace-alpha","version":1}`)})
+	if admitted || err != nil {
+		t.Errorf("a publish that admits nothing: admitted=%v, err=%v, want it left to its own confirmation", admitted, err)
+	}
+}
+
 // And the one write the gate never admits: a publish that puts a project in the
 // group the published node does not carry. The record decides who is in the
 // workspace, so the step is initflow.Typed (D846) and D1026 admits no plan

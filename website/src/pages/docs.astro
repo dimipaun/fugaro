@@ -190,7 +190,32 @@ const referenceEntry = {
   href: `${facts.repository}/blob/${REF}/${reference.path}`,
 }
 
-const entries = [...guides, referenceEntry]
+/**
+ * The compatibility matrix, and **the one entry that is a page of this site rather than a
+ * document of this repository** (the compatibility matrix's plan,
+ * `docs/compatibility-matrix/implementation-plan.md` Task CM2, with the owner's answers
+ * D1520–D1539 under it). `website/data/compatibility.yaml` is the one place a compatibility
+ * claim is written (D1537) and `/compatibility/` is the page that renders it, so what a reader
+ * is owed here is the page and not the file: a card linking `website/data/compatibility.yaml`
+ * would hand a reader a data file, which is the build's own copy of the matrix rather than the
+ * matrix.
+ *
+ * **Its title is typed, and that is the one exception to "read the title out of the document".**
+ * There is no document to read: the page's own `<h1>` is the page's own word, and the site's
+ * menu carries the same word as its label (the owner's approval of 2026-11-10, in
+ * `src/layouts/Base.astro`). Its `path` line is the route, because that is what the entry links
+ * and what a reader who copies it needs — every other entry's path is the repository file the
+ * link opens, and this one's link opens a page of this site.
+ */
+const compatibilityEntry = {
+  path: '/compatibility/',
+  anchor: null,
+  answers: 'The whole matrix, group by group: what is supported today, what is built and not enabled, what is planned and what is not.',
+  title: 'Compatibility',
+  href: '/compatibility/',
+}
+
+const entries = [...guides, compatibilityEntry, referenceEntry]
 ---
 
 <Base title="Documentation" description="The guides this repository holds, and the generated CLI reference.">
@@ -198,7 +223,7 @@ const entries = [...guides, referenceEntry]
       (the bold look's two blocks, separated by the hairline `.docs-hero` carries). **No word
       is added between the `h1` and the `Guides` heading**, and that is a gate's business
       rather than a taste: D188 reads a page's lead as the text between those two headings
-      (`budget.mjs`'s `pageWords`, which measures 36 here), and this page's lead is 36 of its
+      (`budget.mjs`'s `pageWords`, which measures 38 here), and this page's lead is 38 of its
       40 words — an eyebrow, a byline or a sentence about
       the page here would be a word the ceiling counts. */}
   <div class="docs-hero">
@@ -207,15 +232,16 @@ const entries = [...guides, referenceEntry]
     {/* The hub's lead (D188, D189). It is one sentence and it gathers what the guides below
         answer, in the order they are listed: D189 puts the hub's summary here, drawn from the
         per-guide `answers` lines the page already carries. It is not those lines themselves —
-        six of them plus the reference's are about 110 words, and D188 holds every page's lead,
-        this one included, to 40. So the lead is their subjects gathered into one sentence, and
-        the answers stay on their entries, where the reader is when they need them. The count
-        is rendered rather than typed, so a guide added to `GUIDES` changes the sentence with
-        it. */}
+        the six guides' plus the reference's and the compatibility page's are about 133 words, and
+        D188 holds every page's lead, this one included, to 40. So the lead is their subjects
+        gathered into one sentence, and the answers stay on their entries, where the reader is
+        when they need them. The count is rendered rather than typed, so an entry added to the
+        list above changes the sentence with it; the compatibility page's own subject is in the
+        list where its entry is, which is why the sentence is 38 of the 40 words and not more. */}
     <p class="lead">
-      {entries.length} documents, in the order a reader needs them: install the CLI, set up the
-      cloud, choose the loop a run follows, configure the layers, run another model, connect a
-      provider, and the generated command reference.
+      {entries.length} entries, in the order a reader needs them: install the CLI, set up the
+      cloud, choose the run's loop, configure the layers, run another model, connect a provider,
+      check what is supported, and the generated command reference.
     </p>
   </div>
 

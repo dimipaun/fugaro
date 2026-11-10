@@ -19,7 +19,7 @@
       "additionalProperties": { "type": "string", "maxLength": 64 }
     },
     "execution": { "type": "string", "description": "The canonical full execution name; empty or absent for local runs." },
-    "status": { "enum": ["running", "succeeded", "failed", "infra_error", "cancelled", "halted"] },
+    "status": { "enum": ["running", "succeeded", "failed", "unreviewed", "infra_error", "cancelled", "halted"] },
     "stage": { "enum": ["bootstrap", "plan", "implement", "review_first", "review", "fix", "render", "finalize", "writeback"], "description": "The step the run is in. plan and render are a mode: artifact run's optional plan stage and its render step (design artifact-runs.md §3)." },
     "outcome": { "enum": ["", "ready", "draft", "none", "reviewed", "artifacts"], "description": "Empty while the run is in progress. artifacts is a mode: artifact run whose deliverable is in the runs bucket: it opens no pull request." },
     "reason": { "type": "string" },
@@ -252,8 +252,8 @@
         },
         "sources": {
           "type": "object",
-          "additionalProperties": { "enum": ["ceiling", "default-branch", "branch", "policy"] },
-          "description": "Policy key to the layer that set its effective value: ceiling, policy (the project's published node, which replaces the ceiling key by key), default-branch or branch."
+          "additionalProperties": { "enum": ["ceiling", "default-branch", "branch", "chain", "policy"] },
+          "description": "Policy key to the layer that set its effective value: ceiling, policy (the project's published node, which replaces the ceiling key by key), default-branch, branch or chain (a launch's own chain limits, merged last of all)."
         },
         "ignored": {
           "type": "array",
@@ -266,8 +266,8 @@
               "key": { "type": "string" },
               "value": { "type": "string" },
               "effective": { "type": "string" },
-              "source": { "enum": ["ceiling", "default-branch", "branch", "policy"], "description": "The layer of the effective value." },
-              "from": { "enum": ["ceiling", "default-branch", "branch"], "description": "The layer that asked for the dropped value. The ceiling is here for one case: a stage timeout the run's own timeouts.stage bounds at least as tightly, which the run drops and records (T7.6) — the layer that wrote it can be the project layer's governance, which is the ceiling." },
+              "source": { "enum": ["ceiling", "default-branch", "branch", "chain", "policy"], "description": "The layer of the effective value." },
+              "from": { "enum": ["ceiling", "default-branch", "branch", "chain"], "description": "The layer that asked for the dropped value. The ceiling is here for one case: a stage timeout the run's own timeouts.stage bounds at least as tightly, which the run drops and records (T7.6) — the layer that wrote it can be the project layer's governance, which is the ceiling. chain is a launch's own chain limits, the last layer a value is asked for from." },
               "clamped": { "type": "boolean", "description": "True for the one shape that is not 'looser than the limits in force': a stage timeout the run's own timeouts.stage bounds at least as tightly, which the run drops rather than give a deadline of its own (T7.6). Absent (false) for the merge's looser values, which is also a stage timeout dropped because a tighter layer capped it — the two cannot be told apart by key, source and from alone." }
             }
           }
@@ -486,6 +486,79 @@
         "mode": { "enum": ["poc", "startup", "pro", "critical", "hotfix"], "description": "The mode the run resolved, which is the mode whose stop row accepted them (D9, D22)." },
         "round": { "type": "integer", "minimum": 1, "description": "The review round whose findings were accepted: the deciding level's last round, which is the round readiness read." },
         "at": { "enum": ["rounds spent", "time threshold"], "description": "Which half of the stop rule ended the run's rounds (runstore.StopRoundsSpent, runstore.StopTimeThreshold): the mode's own rounds were spent, or the configured share of the run's time budget elapsed before another round. It is the same vocabulary the run's `reason` states." }
+      }
+    },
+    "triage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rounds"],
+      "description": "What the run's post-review triage decided (docs/post-review-triage/implementation-plan.md T-TR3, D1850): one entry per triage round the stage ran, in the order it ran them, with each finding's placement. A block of its own and never a replacement for `tolerated` — that one is the mode's table's account of what it let through and this one is the triage step's, and a run can carry both. A round is kept whatever it decided, a failed call included, because that is the fact a reader needs (D1846's triage_failed). Bounded: at most 32 rounds (runstore.MaxTriageRounds), each round at most 100 entries (runstore.MaxTriageEntries) with its own `total` saying how many findings it really read — a review round's findings are bounded by nothing, so a round the cap cut is a record of its first 100 verdicts and never presented as the whole round — each entry a key, a verdict, a reason of at most 200 runes and a source. Absent — never an empty block — for a run that triaged nothing, which is every record written before this field existed; the field is additive, so an old reader sees the record it always saw and `version` stays 1 (F21).",
+      "properties": {
+        "rounds": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "description": "One entry per triage round the run ran, in the order it ran them. Never empty: a run that triaged nothing carries no block at all.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["round", "mode", "level", "entries", "total"],
+            "properties": {
+              "round": { "type": "integer", "minimum": 1, "description": "The review round this triage followed, at least 1 (internal/runstore's TriageRound.Round). A round the run never numbered is not a round, so internal/runstore's NewTriage drops it." },
+              "mode": { "enum": ["poc", "startup", "pro", "critical", "hotfix"], "description": "The mode reached at this round (F14, internal/rigor's vocabulary): the mode's persona is what the judge was asked from, and it is not necessarily the run's starting mode." },
+              "level": { "enum": ["l1", "l2", "l3"], "description": "The review level in force at the round (internal/policy's vocabulary, D1847). Triage runs at every level, so this is the level that was deciding and not a level the stage is restricted to." },
+              "account": { "type": "string", "minLength": 1, "description": "The account that served the round's call, absent for a round the table settled alone without buying a call. It is the same account name the record's `stage_accounts` holds." },
+              "model": { "type": "string", "minLength": 1, "description": "The model that answered the round's call, absent for a round the table settled alone. It is the same model id the record's `stages` hold." },
+              "failed": { "type": "boolean", "description": "Whether the round's call failed or its answer could not be read. Set, the fallback blocks every finding the table blocks (D1846) — the record's triage_failed — and the flag is what makes that visible rather than a round that looks like any other. Absent (false) for a round that answered." },
+              "entries": {
+                "type": "array",
+                "maxItems": 100,
+                "description": "One verdict per finding the round read, in the round's own order. It may be empty — a round whose call failed before it placed anything still says so through `failed` — and is never null. Shorter than `total` only when the round read more than 100 findings, which the cap makes a record of the first 100 rather than of the whole round.",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["index", "key", "verdict", "reason", "source"],
+                  "properties": {
+                    "index": { "type": "integer", "minimum": 0, "description": "The finding's position in the round's list, as the brief numbered it (D1850). It is the entry's key into that list, and a verdict whose index and key disagree about which finding they mean blocks it." },
+                    "key": { "type": "string", "minLength": 1, "description": "The finding's opaque key, the hash of its file and summary the brief gave the judge and the same key the follow-up task carries (F11, T-TR4). Opaque and unbounded here for the reason the task's `follow_up_of.keys` are: no reader parses it, it is only compared." },
+                    "verdict": { "enum": ["block", "defer"], "description": "The word the round placed on the finding (runstore.VerdictBlock, runstore.VerdictDefer): fixed in this patch before the merge, or filed as a follow-up task and merged without. A word outside the two is not a placement any reader can act on, and internal/runstore's NewTriage drops the entry." },
+                    "reason": { "type": "string", "minLength": 1, "maxLength": 200, "description": "The one-line why the round placed the finding that way, clipped to 200 runes (runstore.MaxTriageLine). It is the judge's own words and untrusted text: a reader shows it as data." },
+                    "group": { "type": "string", "minLength": 1, "maxLength": 200, "description": "The key that puts a deferral in the same follow-up task as other deferrals, clipped to 200 runes (runstore.MaxTriageLine). Absent for a finding that is its own task (T-TR10)." },
+                    "source": { "enum": ["agent", "table", "fail_safe", "cap"], "description": "Where the placement came from (runstore.TriageSource): a judge's own verdict, the mode's threshold table's call, the fallback a failed or unreadable call leaves (D1846), or the cap's own deferral (D1858). The cap's is not a verdict any judge answers, which is why this enum is not internal/triage's own three." }
+                  }
+                }
+              },
+              "total": { "type": "integer", "minimum": 0, "description": "How many findings the round read, so a round whose `entries` the cap cut still says how many verdicts it wrote (runstore.MaxTriageEntries). Never less than the length of `entries`. internal/runstore's NewTriage sets it from the entries the caller gave the round, never from the caller, so a record cannot report fewer than it holds." }
+            }
+          }
+        }
+      }
+    },
+    "deferred": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["findings", "total"],
+      "description": "The findings whose deferral took effect (docs/post-review-triage/implementation-plan.md T-TR3, D1850): the ones the mode's table tolerates, the ones the judge deferred inside the floor (T-TR7b) and the ones the cap deferred (D1858). It is what the report and the pull request list and what `fugaro followups` files, so it carries exactly what a follow-up task needs — the key that ties it to its verdict, the reviewer's summary, the one-line why and the group. A verdict the floor or the table overrode is never here: `triage` is the log of what was decided and this block is what took effect, and the shadow stage of T-TR7a writes the first and never the second. Bounded: at most 100 findings (runstore.MaxDeferred), each a key, a summary of at most 200 runes, a reason of at most 200 runes and a source. Absent — never an empty block — for a run that deferred nothing, which is every record written before this field existed; the field is additive, so an old reader sees the record it always saw and `version` stays 1 (F21).",
+      "properties": {
+        "findings": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 100,
+          "description": "One entry per deferral that took effect, in the reviewer's order. Never empty: a run that deferred nothing carries no block at all. Shorter than total only when the run deferred more than 100 findings, which the cap makes a record of the first 100 rather than of the whole set.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["key", "summary", "reason", "source"],
+            "properties": {
+              "key": { "type": "string", "minLength": 1, "description": "The finding's opaque key, the same one its verdict names and the one the follow-up task carries (F11, T-TR4). Opaque and unbounded here for the reason the task's `follow_up_of.keys` are: no reader parses it, it is only compared." },
+              "summary": { "type": "string", "minLength": 1, "maxLength": 200, "description": "The reviewer's own summary of the finding, clipped to 200 runes (runstore.MaxToleratedTitle) and redacted by the runner. It is the one piece of the finding's text the record carries, and the line the follow-up task and the report show." },
+              "reason": { "type": "string", "minLength": 1, "maxLength": 200, "description": "The one-line why the deferral took effect, clipped to 200 runes (runstore.MaxTriageLine): the judge's reason, the table's sentence or the cap's." },
+              "group": { "type": "string", "minLength": 1, "maxLength": 200, "description": "The key that puts this deferral in the same follow-up task as the others that carry it, clipped to 200 runes (runstore.MaxTriageLine). Absent for a finding that is its own task (T-TR10)." },
+              "source": { "enum": ["agent", "table", "fail_safe", "cap"], "description": "Where the deferral came from (runstore.TriageSource): the judge's word, the table's tolerance, or the cap's. The same four values `triage`'s entries carry, so one vocabulary serves both blocks; `fail_safe` is in it for that reason and cannot occur here — a failed or unreadable call blocks every finding the table blocks (D1846), so it defers nothing." }
+            }
+          }
+        },
+        "total": { "type": "integer", "minimum": 0, "description": "How many findings the run deferred, so a record whose list was capped still says how many took effect. Never less than the length of findings." }
       }
     },
     "owner_decisions": {

@@ -49,11 +49,11 @@ const (
 
 // NeedsBilling is whether a stage needs the GCP project to have billing: every
 // stage but the ones before the project's own and the ones that write local
-// files only — the plugin wiring, and the checkout's own steps, whose pin and
-// plugin write the checkout's settings and the user's own Claude Code. The
-// checkout's cloud step is the part of that stage that needs billing, and it is
-// the step that says so: waiting for billing on the stage would leave the two
-// local writes unmoved over a build that is asked for after both.
+// files only — the plugin stage, which wires the checkout's settings and
+// installs the plugin in the user's own Claude Code, and the checkout stage.
+// The checkout's cloud step is the part of that stage that needs billing, and
+// it is the step that says so: waiting for billing on the stage would leave the
+// plugin's own writes unmoved over a build that is asked for after them.
 func NeedsBilling(name string) bool {
 	switch name {
 	case Preflight, Project, Plugin, Checkout:
@@ -150,7 +150,10 @@ type slot struct {
 // stopped stopped with a step only the user can give (NeedsYou) and the loop
 // has nothing else to go on. It is the one place that answers it, and the
 // answer is a property of the stage: every row of order is empty but the
-// checkout's, whose pin and plugin read no repository state, because the
+// checkout's, whose one remaining step reads no repository state of its own — a
+// reader of the run is owed its own line about the images whatever the
+// repository stage did, and the plugin step that must be reached past that stop
+// is the plugin stage's, ahead of the repository stage (U1) — because the
 // user's fix for a stopped stage can be weeks away and the door the run's
 // lines name is `fugaro update` (the owner's rule of 2026-10-30: one fugaro
 // update is the whole upgrade) — a door that must not be left unable to clear
@@ -207,25 +210,24 @@ var order = []slot{
 	// layer published after it would leave the run building from the one the
 	// owner just replaced.
 	{name: Layer, needs: []string{Repository}},
-	// The checkout's own steps (fugaro upgrade's pin, plugin and cloud steps)
-	// run after the repository stage: the images the cloud step refreshes are
-	// that repository's, and the onboarding the repository stage does is what
-	// the refresh builds for.
+	// The checkout's own step (fugaro upgrade's cloud step) runs after the
+	// repository stage: the images it refreshes are that repository's, and the
+	// onboarding the repository stage does is what the refresh builds for. The
+	// pin and the plugin are the plugin stage's since U1 (D941,
+	// docs/plugin-user-scope/implementation-plan.md), which is what puts the
+	// step that clears the staleness line every command prints ahead of the
+	// repository stage rather than behind it.
 	//
-	// pastStops: the one row that has it. Its two local steps — the pin in
-	// the checkout's settings and the plugin in the user's own Claude Code —
-	// read no repository fugaro.yaml, and the plugin is what clears the
-	// staleness line every command prints ("run fugaro update"): a repository
-	// stage that stopped needs-you over a file these steps never read may not
-	// take them with it, or the door that line names is the one door that
-	// cannot clear it and the user is left in a loop with no way out (#1836).
-	// The three stages before it publish the installation every run of the
-	// project is admitted by, which is why none of them is here: a run with a
-	// stage left for the user does not write that (accounts_add_converge_test.go
-	// is the door that says so). The cloud step does need the repository the
-	// stop is about — its job images are built from it — so it is dropped
-	// rather than run past that stop, and the loop tells the stage the stops
-	// it is running past for exactly that (PastStops).
+	// pastStops: the one row that has it, and the tolerance is what the
+	// stage's remaining step is dropped under rather than run. The cloud step
+	// needs the repository the stop is about — its job images are built from
+	// it — so a run running past that stop drops the step, says which it
+	// dropped in the stage's own line, and the loop tells the stage the stops
+	// it is running past for exactly that (PastStops). The three stages before
+	// it publish the installation every run of the project is admitted by,
+	// which is why none of them is here: a run with a stage left for the user
+	// does not write that (accounts_add_converge_test.go is the door that says
+	// so).
 	{name: Checkout, needs: []string{Repository, Layer}, pastStops: []string{Repository}},
 	// The compute backend's provisioning is money, permanent and owner-run,
 	// so --yes never covers it; it comes last, after every stage that
@@ -425,12 +427,17 @@ type SelfConfirming interface {
 // is the stage's own, and it must have one: a stage that implements this and
 // then writes to the cloud would do it.
 //
-// It exists for one stage, the checkout's inside fugaro update (internal/cli/
-// init_checkout_upgrade.go). A marker stops a run from doing what only a
-// person should confirm; the pin in the checkout's settings and the plugin in
-// the user's own Claude Code are neither — they are the same two writes the
+// Two stages of fugaro update are such stages, and both are written on this
+// machine's files: the plugin stage (internal/cli/init_plugin_stage.go), whose
+// writes are the checkout's .claude/settings.json and the plugin in the user's
+// own Claude Code; and the checkout stage (internal/cli/
+// init_checkout_upgrade.go), whose one step left is the cloud half, dropped
+// under a marker with that step's own sentence and left for the user as a
+// named step. A marker stops a run from doing what only a person should
+// confirm: the pin and the plugin are not that — they are the writes the
 // user's own session makes with fugaro upgrade, on files it reads anyway — and
-// the cloud half of that stage keeps its refusal, in the step that makes it.
+// what reaches outside the machine keeps its refusal, in the step that makes
+// it.
 type LocalUnderAgent interface{ LocalUnderAgent() }
 
 // PastStops is implemented by a stage whose own steps are not all alike about
@@ -443,12 +450,15 @@ type LocalUnderAgent interface{ LocalUnderAgent() }
 // anchor edits the checkout's fugaro.yaml in the run that onboarded it).
 //
 // It exists for one stage: the checkout's inside fugaro update (internal/cli/
-// init_checkout_upgrade.go). Its pin and its plugin read no repository file and
-// run past a repository stop, which is what its row is for; its cloud step
-// builds the job images from the very repository that stop is about, so it is
-// dropped rather than run past it, and it is every needs-you stop of that stage
-// the cloud step is dropped for — the repository stage's are not all about its
-// file (#1836).
+// init_checkout_upgrade.go). The steps that read no repository file — the pin
+// and the plugin, which the plugin stage owns since U1 — are ahead of the
+// repository stage and need no tolerance; what is left in the checkout is its
+// cloud step, which builds the job images from the very repository that stop is
+// about, and it is dropped rather than run past the stop. The stage is told
+// which stops it is running past so that the reader gets that step's own line
+// out of a run the stop would otherwise end at "waits for repository", and it
+// is every needs-you stop of that stage the cloud step is dropped for — the
+// repository stage's are not all about its file (#1836).
 type PastStops interface{ PastStops(stops []string) }
 
 // StageError is a failure that carries the one-line fix.

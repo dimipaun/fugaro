@@ -56,6 +56,23 @@ type initEngine struct {
 	repo      *repositoryStage
 	policy    *policyMigrateStage
 
+	// checkoutBehind: this run found the checkout behind this release, which
+	// the plugin stage is where to read (the pin it wires is this release's tag,
+	// and the plugin in Claude Code is this release's too). The checkout stage
+	// runs the cloud half of fugaro upgrade for this checkout, and this is the
+	// fact it decides on: the cloud step's own check reads fugaro.yaml and the
+	// local config and never a build record (cloudCheck, U9), and the images
+	// stage has already pinned this release's base in that config by the time
+	// the checkout stage is checked — so a checkout whose job images are still
+	// on the previous release's base reads as a finished cloud half there, while
+	// this run, the one that moves the checkout to this release, is exactly the
+	// run those images move with.
+	//
+	// Set and never cleared: the pin it was read from is written by this same
+	// run, so the answer is about the run rather than about the file as it
+	// stands now (init_plugin_stage.go's Check, init_checkout_upgrade.go's).
+	checkoutBehind bool
+
 	redact, held []string // the loop's redaction list, and the slots at its end a stage fills with a value it holds
 }
 

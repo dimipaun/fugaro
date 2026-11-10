@@ -847,6 +847,25 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 			{Title: "the retry loop has no backoff", Mode: rigor.Startup, Likelihood: 1, Impact: 3, FixCost: 2, Class: rigor.Correctness},
 			{Title: "a long comment restates the function", Mode: rigor.Startup, Likelihood: 2, Impact: 2, FixCost: 1, Class: rigor.Cosmetic},
 		}),
+		// And what the post-review triage decided (docs/post-review-triage
+		// T-TR3, D1850): one round's placements, a second round whose call
+		// failed, and the deferrals that took effect — a block of its own
+		// beside `tolerated`, which keeps its meaning.
+		Triage: runstore.NewTriage([]runstore.TriageRound{
+			{Round: 1, Mode: rigor.Startup, Level: policy.LevelL2, Account: "team-a", Model: "claude-opus-5-5",
+				Entries: []runstore.TriageEntry{
+					{Index: 0, Key: "9f2a1c", Verdict: runstore.VerdictDefer, Reason: "doc drift, not the main path", Group: "docs", Source: runstore.TriageSourceAgent},
+					{Index: 1, Key: "3b7e05", Verdict: runstore.VerdictBlock, Reason: "the build breaks on the new import", Source: runstore.TriageSourceAgent},
+				}},
+			{Round: 2, Mode: rigor.Pro, Level: policy.LevelL3, Failed: true,
+				Entries: []runstore.TriageEntry{
+					{Index: 0, Key: "3b7e05", Verdict: runstore.VerdictBlock, Reason: "the triage call failed, so this one blocks", Source: runstore.TriageSourceFailSafe},
+				}},
+		}),
+		Deferred: runstore.NewDeferred([]runstore.DeferredFinding{
+			{Key: "9f2a1c", Summary: "a long comment restates the function", Reason: "doc drift, not the main path", Group: "docs", Source: runstore.TriageSourceAgent},
+			{Key: "5c1d20", Summary: "the retry loop has no backoff", Reason: "the mode's table tolerates this finding", Source: runstore.TriageSourceTable},
+		}),
 		// And the review-scope comparison (docs/task-governance T5.2, F2,
 		// D332): the paths implement changed, the paths the review range
 		// covers, and what of the two is outside, with the range kept wide by
@@ -1078,12 +1097,15 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 	without.BacklogClosed = nil
 	without.Tolerated = nil
 	without.ReviewScope = nil
+	without.Triage = nil
+	without.Deferred = nil
 	bare, err := json.Marshal(without)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if bytes.Contains(bare, []byte(`"backlog"`)) || bytes.Contains(bare, []byte(`"backlog_closed"`)) ||
-		bytes.Contains(bare, []byte(`"tolerated"`)) || bytes.Contains(bare, []byte(`"review_scope"`)) {
+		bytes.Contains(bare, []byte(`"tolerated"`)) || bytes.Contains(bare, []byte(`"review_scope"`)) ||
+		bytes.Contains(bare, []byte(`"triage"`)) || bytes.Contains(bare, []byte(`"deferred"`)) {
 		t.Fatalf("a run that filed, closed and tolerated nothing still writes the fields: %s", bare)
 	}
 	inst, err = jsonschema.UnmarshalJSON(bytes.NewReader(bare))
@@ -1092,6 +1114,126 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 	}
 	if err := sch.Validate(inst); err != nil {
 		t.Fatalf("schema rejects a record that filed, closed and tolerated nothing: %v\n%s", err, bare)
+	}
+}
+
+// TestResultSchemaAcceptsTriage pins the result schema's `triage` and
+// `deferred` properties (docs/post-review-triage, plan T-TR3, D1850): what the
+// post-review triage decided, round by round, and the deferrals that took
+// effect. result.schema.json is additionalProperties: false, so without the
+// two properties every record the runner writes once the stage lands is one
+// its own published schema rejects.
+//
+// The accepted case is marshalled from runstore.Record rather than written
+// out, so it reads the Go fields' own json tags the way
+// TestTaskSchemaAcceptsFollowUp does: renaming a tag or a schema property stops
+// the two agreeing, and the drift would otherwise be silent, since no Go test
+// reads this document.
+//
+// Mutation (drop the triage property, or rename the Go tag): the marshalled
+// record is rejected as an unknown key and this test fails.
+func TestResultSchemaAcceptsTriage(t *testing.T) {
+	sch := compile(t, "result.schema.json")
+	validate := func(r runstore.Record) error {
+		data, err := json.Marshal(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sch.Validate(inst)
+	}
+	validateLit := func(lit string) error {
+		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(lit))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sch.Validate(inst)
+	}
+	head := `{"version":1,"run_id":"20261108-120000-abcd","status":"succeeded","stage":"writeback","outcome":"ready","cost_usd":1,"started_at":"2026-11-08T12:00:00Z"`
+	at := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
+	rec := runstore.Record{Version: 1, RunID: "20261108-120000-abcd", Status: runstore.StatusSucceeded,
+		Stage: "writeback", Outcome: runstore.OutcomeReady, StartedAt: at}
+	if err := validate(rec); err != nil {
+		t.Fatalf("schema rejects a record carrying no triage block: %v", err)
+	}
+	// The constructors' nil answer for an empty input is what keeps the
+	// fields omitted: a run that triaged nothing writes the record it always
+	// wrote (F21), so the schema's version stays 1.
+	rec.Triage = runstore.NewTriage(nil)
+	rec.Deferred = runstore.NewDeferred(nil)
+	if err := validate(rec); err != nil {
+		t.Fatalf("schema rejects a record whose triage blocks are nil: %v", err)
+	}
+	rec.Triage = runstore.NewTriage([]runstore.TriageRound{
+		{Round: 1, Mode: rigor.Startup, Level: policy.LevelL2, Account: "team-a", Model: "claude-opus-5-5",
+			Entries: []runstore.TriageEntry{
+				{Index: 0, Key: "9f2a1c", Verdict: runstore.VerdictDefer, Reason: "doc drift, not the main path", Group: "docs", Source: runstore.TriageSourceAgent},
+				{Index: 1, Key: "3b7e05", Verdict: runstore.VerdictBlock, Reason: "the build breaks on the new import", Source: runstore.TriageSourceAgent},
+			}},
+		// A round whose call failed keeps its round, its mode and its level
+		// and carries no entries at all (D1846): the block is the run's log,
+		// so the failure is a fact in it rather than a round that vanished.
+		{Round: 2, Mode: rigor.Pro, Level: policy.LevelL3, Failed: true, Entries: []runstore.TriageEntry{}},
+	})
+	rec.Deferred = runstore.NewDeferred([]runstore.DeferredFinding{
+		{Key: "9f2a1c", Summary: "a long comment restates the function", Reason: "doc drift, not the main path", Group: "docs", Source: runstore.TriageSourceAgent},
+		{Key: "5c1d20", Summary: "the retry loop has no backoff", Reason: "the mode's table tolerates this finding", Source: runstore.TriageSourceTable},
+		{Key: "7d4e11", Summary: "the cache is never warmed", Reason: "the triage cap was reached", Source: runstore.TriageSourceCap},
+	})
+	if err := validate(rec); err != nil {
+		t.Fatalf("schema rejects the triage block the runner writes: %v", err)
+	}
+	// The two blocks are closed on the vocabularies runstore writes and on the
+	// bounds its constructors apply, so a value outside one of them, a member
+	// the block does not carry and a length the record never holds are all
+	// refused rather than stored.
+	for _, tc := range []struct{ name, lit string }{
+		{"triage is not an object", `,"triage":[]`},
+		{"triage with no rounds", `,"triage":{}`},
+		{"an empty rounds list", `,"triage":{"rounds":[]}`},
+		{"a round the run never numbered", `,"triage":{"rounds":[{"round":0,"mode":"pro","level":"l2","total":0,"entries":[]}]}`},
+		{"a mode outside the vocabulary", `,"triage":{"rounds":[{"round":1,"mode":"paranoid","level":"l2","total":0,"entries":[]}]}`},
+		{"a level outside the vocabulary", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l4","total":0,"entries":[]}]}`},
+		{"a round with no entries list", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","total":0}]}`},
+		{"a round with no total", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","entries":[]}]}`},
+		{"a failed that is not a boolean", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","failed":"yes","total":0,"entries":[]}]}`},
+		{"a member the round does not carry", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","verdict":"defer","total":0,"entries":[]}]}`},
+		{"more rounds than the bound", `,"triage":{"rounds":[` + strings.TrimSuffix(strings.Repeat(`{"round":1,"mode":"pro","level":"l2","total":0,"entries":[]},`, runstore.MaxTriageRounds+1), ",") + `]}`},
+		{"an entry with no key", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","total":1,"entries":[{"index":0,"verdict":"defer","reason":"why","source":"agent"}]}]}`},
+		{"an empty key", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","total":1,"entries":[{"index":0,"key":"","verdict":"defer","reason":"why","source":"agent"}]}]}`},
+		{"a verdict outside the two", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","total":1,"entries":[{"index":0,"key":"k","verdict":"maybe","reason":"why","source":"agent"}]}]}`},
+		{"a source outside the four", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","total":1,"entries":[{"index":0,"key":"k","verdict":"defer","reason":"why","source":"judge"}]}]}`},
+		{"an entry with no source", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","total":1,"entries":[{"index":0,"key":"k","verdict":"defer","reason":"why"}]}]}`},
+		{"an entry with no reason", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","total":1,"entries":[{"index":0,"key":"k","verdict":"defer","source":"agent"}]}]}`},
+		{"an empty reason", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","total":1,"entries":[{"index":0,"key":"k","verdict":"defer","reason":"","source":"agent"}]}]}`},
+		{"a reason longer than the bound", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","total":1,"entries":[{"index":0,"key":"k","verdict":"defer","reason":"` + strings.Repeat("x", runstore.MaxTriageLine+1) + `","source":"agent"}]}]}`},
+		{"a negative index", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","total":1,"entries":[{"index":-1,"key":"k","verdict":"defer","reason":"why","source":"agent"}]}]}`},
+		{"a member the entry does not carry", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","total":1,"entries":[{"index":0,"key":"k","verdict":"defer","reason":"why","source":"agent","file":"a.go"}]}]}`},
+		{"more entries than the bound", `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","total":` + strconv.Itoa(runstore.MaxTriageEntries+1) + `,"entries":[` + strings.TrimSuffix(strings.Repeat(`{"index":0,"key":"k","verdict":"defer","reason":"why","source":"agent"},`, runstore.MaxTriageEntries+1), ",") + `]}]}`},
+		{"deferred is not an object", `,"deferred":[]`},
+		{"deferred with no findings", `,"deferred":{}`},
+		{"an empty findings list", `,"deferred":{"findings":[],"total":0}`},
+		{"a finding with no key", `,"deferred":{"findings":[{"summary":"s","reason":"why","source":"table"}],"total":1}`},
+		{"a finding with no summary", `,"deferred":{"findings":[{"key":"k","reason":"why","source":"table"}],"total":1}`},
+		{"a finding with no reason", `,"deferred":{"findings":[{"key":"k","summary":"s","source":"table"}],"total":1}`},
+		{"a deferred source outside the four", `,"deferred":{"findings":[{"key":"k","summary":"s","reason":"why","source":"judge"}],"total":1}`},
+		{"a summary longer than the bound", `,"deferred":{"findings":[{"key":"k","summary":"` + strings.Repeat("x", runstore.MaxToleratedTitle+1) + `","reason":"why","source":"table"}],"total":1}`},
+		{"a total that is not a number", `,"deferred":{"findings":[{"key":"k","summary":"s","reason":"why","source":"table"}],"total":"1"}`},
+		{"more findings than the bound", `,"deferred":{"findings":[` + strings.TrimSuffix(strings.Repeat(`{"key":"k","summary":"s","reason":"why","source":"table"},`, runstore.MaxDeferred+1), ",") + `],"total":1}`},
+	} {
+		if err := validateLit(head + tc.lit + `}`); err == nil {
+			t.Errorf("schema accepts %s: %s", tc.name, tc.lit)
+		}
+	}
+	// The positive control: the same literal shape the refusals are built from
+	// is accepted when every member is one the block may carry.
+	good := head + `,"triage":{"rounds":[{"round":1,"mode":"pro","level":"l2","account":"team-a","model":"claude-opus-5-5","total":1,"entries":[{"index":0,"key":"9f2a1c","verdict":"defer","reason":"doc drift","group":"docs","source":"agent"}]}]}` +
+		`,"deferred":{"findings":[{"key":"9f2a1c","summary":"a long comment","reason":"doc drift","group":"docs","source":"agent"}],"total":1}}`
+	if err := validateLit(good); err != nil {
+		t.Fatalf("schema rejects a well-formed triage block: %v\n%s", err, good)
 	}
 }
 
@@ -2234,6 +2376,53 @@ func TestResultSchemaCheckpointAgreeWithGo(t *testing.T) {
 	}
 }
 
+// TestResultSchemaStatusesAgreeWithGo pins result.schema.json's status enum to
+// runstore.Statuses, in both directions: a status the runner can write but the
+// enum lacks is a result.json every consumer validating against the published
+// schema refuses — and the enum was a hand-written copy, exactly the shape
+// no_credential had before the halt-reason pin above was written — while a
+// value only the enum knows is a status no run can produce.
+//
+// The Go side is runstore's own slice and not a list written here: a second
+// list is a second place to forget, and the drift stays invisible until a
+// record renders as a word its writer never meant. Mutation (run, restored):
+// drop a value from the enum, or add a Status constant without the enum, and
+// this names the side that has it.
+func TestResultSchemaStatusesAgreeWithGo(t *testing.T) {
+	want := make([]string, len(runstore.Statuses))
+	for i, s := range runstore.Statuses {
+		want[i] = string(s)
+	}
+	if len(want) == 0 {
+		t.Fatal("runstore.Statuses is empty: this test proves nothing")
+	}
+	data, err := os.ReadFile("result.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	node, _ := doc["properties"].(map[string]any)
+	node, _ = node["status"].(map[string]any)
+	raw, ok := node["enum"].([]any)
+	if !ok {
+		t.Fatal(`result.schema.json: status has no enum`)
+	}
+	var got []string
+	for _, v := range raw {
+		s, ok := v.(string)
+		if !ok {
+			t.Fatalf("result.schema.json: status enum entry %v is not a string", v)
+		}
+		got = append(got, s)
+	}
+	if !sameStrings(got, want) {
+		t.Errorf("result.schema.json status = %v, internal/runstore's Statuses = %v", got, want)
+	}
+}
+
 // TestResultSchemaHaltReasonsAgreeWithGo pins result.schema.json's halt.reason
 // enum to the HaltReason constants in internal/runstore, in both directions:
 // a reason the Go side can write but the enum lacks is a result.json a
@@ -2542,8 +2731,11 @@ func TestPolicyRecordSchema(t *testing.T) {
 // The schema's layer names and internal/policy's are one list. The runner
 // writes whichever the merge produced — "policy" for a key the project's
 // published node named (PR #379), the rest for the ceiling, the default
-// branch and the run's branch — so a Go constant the schema does not carry is
-// a stored result.json the repository's own validator rejects. `from` stays
+// branch, the run's branch and the chain (a launch's own limits, merged last
+// of all, F4) — so a Go constant the schema does not carry is a stored
+// result.json the repository's own validator rejects. The chain layer is in
+// all three lists for that reason: the merge names it as a key's source and as
+// the layer a dropped value was asked for from. `from` stays
 // without "policy" on purpose: the node is not a later layer that can ask for
 // a looser value, it *is* the first layer, and its keys are replaced rather
 // than loosened (plan task 1.3, H1). It carries "ceiling" for the one case a
@@ -2585,11 +2777,11 @@ func TestPolicyRecordSchemaLayersAgreeWithGo(t *testing.T) {
 		want []string
 	}{
 		{"policy.sources", enum(at(pol, "sources", "additionalProperties", "enum")),
-			slices.Sorted(slices.Values([]string{policy.SourceCeiling, policy.SourceDefaultBranch, policy.SourceBranch, policy.SourcePolicy}))},
+			slices.Sorted(slices.Values([]string{policy.SourceCeiling, policy.SourceDefaultBranch, policy.SourceBranch, policy.SourceChain, policy.SourcePolicy}))},
 		{"policy.ignored[].source", enum(at(pol, "ignored", "items", "properties", "source", "enum")),
-			slices.Sorted(slices.Values([]string{policy.SourceCeiling, policy.SourceDefaultBranch, policy.SourceBranch, policy.SourcePolicy}))},
+			slices.Sorted(slices.Values([]string{policy.SourceCeiling, policy.SourceDefaultBranch, policy.SourceBranch, policy.SourceChain, policy.SourcePolicy}))},
 		{"policy.ignored[].from", enum(at(pol, "ignored", "items", "properties", "from", "enum")),
-			slices.Sorted(slices.Values([]string{policy.SourceCeiling, policy.SourceDefaultBranch, policy.SourceBranch}))},
+			slices.Sorted(slices.Values([]string{policy.SourceCeiling, policy.SourceDefaultBranch, policy.SourceBranch, policy.SourceChain}))},
 	} {
 		if !slices.Equal(where.got, where.want) {
 			t.Errorf("schema's %s = %v, internal/policy's layers are %v", where.name, where.got, where.want)

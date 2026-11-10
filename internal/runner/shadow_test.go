@@ -2,6 +2,7 @@ package runner_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -819,6 +820,68 @@ func TestShadowRefusalMatchesTheChampion(t *testing.T) {
 			t.Fatalf("the refused arm published something: %v", publishes(g.harness))
 		}
 	})
+}
+
+// TestShadowNoVerdictMatchesTheChampion: the pair's endings follow the
+// champion's, and the no-verdict one is where two arms can disagree about a
+// fact neither of them can change — the arm's review round answered nothing
+// exactly as the champion's did. The champion ends `unreviewed` there
+// (TestUnreviewedRunIsNotFailed is its own case), so an arm that ended
+// `failed` would be a pair two scorers read as two different runs of the same
+// work (D559). What the arm differs in is what it writes beside the ending: it
+// publishes nothing, so its outcome is none where the champion's is a draft
+// (D568).
+func TestShadowNoVerdictMatchesTheChampion(t *testing.T) {
+	g, _ := armGW(t, armCfg(t), "50", challengerModel, armLayer)
+	pushes := countPushes(t, g.harness)
+	rec, err := g.run(t, implement("feature"), proseReview, proseReview)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusUnreviewed || rec.Outcome != runstore.OutcomeNone {
+		t.Fatalf("record = %s/%s (reason %q), want the arm %s with nothing published",
+			rec.Status, rec.Outcome, rec.Reason, runstore.StatusUnreviewed)
+	}
+	if want := "review round 1 returned no parseable verdict after a retry"; rec.Reason != want {
+		t.Fatalf("reason = %q, want %q: the arm's sentence names the round the way the champion's does", rec.Reason, want)
+	}
+	if n := pushes(); n != 0 || len(publishes(g.harness)) != 0 {
+		t.Fatalf("the unreviewed arm published something: %d push(es), %v", n, publishes(g.harness))
+	}
+}
+
+// TestShadowStageFailureMatchesTheChampion: the arm's own first failure ends the
+// arm's run the way it ends its champion's, and the sentence it leaves is the
+// record's — the decision it replaced does not get to name the ending. The case
+// is the one where the two disagree: the implement stage ran and its tests
+// passed, so the verified record is on the commit the arm ends at, and the review
+// stage then fell over — no review round was ever recorded, so Decide's own
+// answer is "no review verdict", the label. The champion's case is
+// TestStageTimingFailedStage and its record says failed: the answer that would
+// have made it unreviewed is the one finalize's override replaces whole, because
+// the run stopped for a stage that failed and no round was read either way. An
+// arm that inherited the label instead would be a pair whose two records
+// disagree about a run both of them failed (D559), and a reader of this one would
+// see a label pointing at a review the arm never had.
+func TestShadowStageFailureMatchesTheChampion(t *testing.T) {
+	g, _ := armGW(t, armCfg(t), "50", challengerModel, armLayer)
+	fell := func(*testing.T, context.Context, agent.Request) (agent.Result, error) {
+		return agent.Result{}, errors.New("the reviewer fell over")
+	}
+	rec, err := g.run(t, implement("feature"), fell)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeNone {
+		t.Fatalf("record = %s/%s (reason %q), want %s/none: the stage the arm failed is the ending its record names",
+			rec.Status, rec.Outcome, rec.Reason, runstore.StatusFailed)
+	}
+	if want := "stage review failed: the reviewer fell over"; rec.Reason != want {
+		t.Fatalf("reason = %q, want %q: the arm's own failure outranks the answer it replaced, and says so", rec.Reason, want)
+	}
+	if len(publishes(g.harness)) != 0 {
+		t.Fatalf("the failed arm published something: %v", publishes(g.harness))
+	}
 }
 
 // TestShadowUploadsPatch: a challenger arm's patch object is the run's own

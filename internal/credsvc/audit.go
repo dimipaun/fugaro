@@ -165,6 +165,34 @@ const (
 	// bitbucket.Provider makes and no other. Its credential and its tier rule
 	// are PurposeGit's, from the same bundle entry.
 	PurposeBitbucketAPI = "bitbucket-api"
+	// PurposeSlipGrant is a launcher's request for a run's grant (DS1.3, D1937):
+	// the call that writes the slip a run's credentials hang on. Its line names
+	// the verified launcher and NO run, no job and no credential — the call is
+	// the launcher's own act, made before the run exists, and the slip it writes
+	// holds names rather than a value. It is the second purpose whose caller is
+	// not a run (callerWithoutJobPurpose).
+	//
+	// A grant that GRANTS writes no line: StatusOK requires a credential
+	// (checked), and a grant issues none — it writes a record. What records a
+	// grant is the service's own line naming the slip it wrote, which is also
+	// where the launcher and the run it named are read back.
+	PurposeSlipGrant = "slip_grant"
+	// PurposeSlipClaim is a run's claim of its slip (DS1.3, D1941): the run's
+	// first call, which presents the identity and the job account the slip binds
+	// and is answered the claim secret it must present on every call after.
+	//
+	// Its line is an ordinary job-class one — the run, its repository, the job
+	// the run reported and the verified account — because the claim's whole
+	// admission is that verified identity. Every refusal a claim answers after
+	// it is recorded with this purpose, the presented claim secret included: a
+	// line names the field that was wrong and never what the call sent, so the
+	// one value of this act that is a credential reaches no line.
+	//
+	// A claim that CLAIMS writes no line, for the grant's reason: the act is one
+	// a StatusOK line cannot record, because what it answers is a secret and not
+	// a credential of the cascade. The service's own line carries it, and that
+	// line is where the execution name the claim reported is recorded (F7).
+	PurposeSlipClaim = "slip_claim"
 )
 
 // ValidPurpose reports whether purpose is one this service issues a credential
@@ -172,7 +200,7 @@ const (
 func ValidPurpose(purpose string) bool {
 	switch purpose {
 	case PurposeForward, PurposeProbe, PurposeMint, PurposeReviewSign, PurposeReviewVerify, PurposeBitbucketRead, PurposeGitHubRead,
-		PurposeGit, PurposeBitbucketAPI:
+		PurposeGit, PurposeBitbucketAPI, PurposeSlipGrant, PurposeSlipClaim:
 		return true
 	}
 	return false
@@ -199,8 +227,10 @@ func credentialWithoutTier(purpose string) bool {
 }
 
 // callerWithoutJobPurpose reports whether a line records a caller's act rather
-// than a run's: a verifier's, and a read mint's — whose callers are a person or
-// the coordinator (BB5). All of them hold no run
+// than a run's: a verifier's, a read mint's — whose callers are a person or
+// the coordinator (BB5) — and a slip GRANT's, whose caller is a launcher and
+// holds no run identity either, because the run it names does not exist yet
+// (DS1.3, D1937). All of them hold no run
 // identity and are not a job of this installation, so the Caller-without-Job
 // rule and the StatusOK line's "a run and a job, or neither" rule are relaxed
 // for them and for no other purpose — a job purpose that dropped its job is
@@ -208,7 +238,7 @@ func credentialWithoutTier(purpose string) bool {
 // pins for the shape BB4 adds.
 func callerWithoutJobPurpose(purpose string) bool {
 	return purpose == PurposeReviewVerify || purpose == PurposeBitbucketRead ||
-		purpose == PurposeGitHubRead
+		purpose == PurposeGitHubRead || purpose == PurposeSlipGrant
 }
 
 // repositoryOnlyPurpose reports whether a line names a repository and no run:
