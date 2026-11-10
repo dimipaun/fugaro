@@ -886,6 +886,56 @@ func TestSecondClaimRefused(t *testing.T) {
 	})
 }
 
+// TestClaimIsStoppedByTheKillSwitch: the operator's stop switch, read on the
+// claim's own path. The claim is the branch that hands a run the claim secret
+// its later calls are answered under (D1941), so a stopped service must not
+// claim anything: the switch is read before the branch (server.go), and both
+// switches stop it — the global one and the repository's own.
+//
+// What the test pins, in the order it matters: the refusal is the state one and
+// not a refusal of the call's shape; the record is untouched, so the slip is
+// still there for the run when the operator clears the switch — a stop is not a
+// burn; exactly ONE audit line is written, under the claim's own purpose (a
+// purpose taken from the branch after the switch would be "forward" here, which
+// is the same trap TestMintIsStoppedByTheKillSwitch names for the mint); and the
+// call the switch cleared is served.
+func TestClaimIsStoppedByTheKillSwitch(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		stop func(*svc)
+	}{
+		{"the global switch", func(s *svc) { s.kills.global = true }},
+		{"the repository's own switch", func(s *svc) { s.kills.repos[s.slug] = true }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newSlips(t, testLauncherAccount)
+			granted := s.grantOK(t, grantBody(t, s.slug, s.run, testJobSA, 3600, testSlipCredential))
+			tc.stop(s.svc)
+
+			resp, body := s.claimCall(t, granted.Slip, claimBody(t, ""))
+			wantRefusal(t, resp, body, StatusUnavailable, ErrorStateUnavailable)
+			if sl := s.slip(t, granted.Slip); sl.ClaimHash != "" || sl.Claimed != (creds.Claim{}) {
+				t.Errorf("a stopped service claimed the slip: %+v", sl.Claimed)
+			}
+			lines := auditLines(t, s.audit)
+			if len(lines) != 1 {
+				t.Fatalf("the stopped claim wrote %d audit lines, want exactly 1: %v", len(lines), lines)
+			}
+			wantSlipLine(t, lines[0], PurposeSlipClaim, ErrorStateUnavailable, map[string]any{
+				"run": s.run, "repository": s.slug, "job": s.job, "caller": testJobSA,
+				"credential": "", "tier": "",
+			})
+
+			// The switch is a stop and not a refusal of this call: cleared, the
+			// same slip is claimed by the same run.
+			s.kills.global, s.kills.repos = false, nil
+			if claimed := s.claimOK(t, granted.Slip, claimBody(t, "")); claimed.ClaimSecret == "" {
+				t.Error("the claim after the switch cleared answered no claim secret")
+			}
+		})
+	}
+}
+
 // TestEmptyLauncherListRefusesAll: F31. The launcher class's allow-list is the
 // installation's roster, and an installation whose roster is empty — or whose
 // roster the deployment did not manage to fill — grants nobody anything. It is
