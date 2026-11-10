@@ -203,6 +203,16 @@ func (f *Build) run(id string, req map[string]any) *buildRun {
 				return fail(err.Error())
 			}
 			r.outputs[i] = base64.StdEncoding.EncodeToString([]byte(r.digest))
+		case "catalog-smoke":
+			// A prebuilt catalog entry's whole run: nothing is built and
+			// nothing is pushed, so the only output is the digest of the
+			// reference it smoked, which is what its record carries.
+			r.digest = fmt.Sprintf("sha256:%064x", f.n)
+			if err := os.WriteFile(filepath.Join(dir, "image-digest"), []byte(r.digest+"\n"), 0o644); err != nil {
+				return fail(err.Error())
+			}
+			r.log = append(r.log, "catalog-smoke: smoked "+image+"@"+r.digest)
+			r.outputs[i] = base64.StdEncoding.EncodeToString([]byte(r.digest))
 		case "promote":
 			data, err := os.ReadFile(filepath.Join(dir, "image-digest"))
 			if err != nil {
