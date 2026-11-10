@@ -28,8 +28,22 @@ import (
 //     seeds and publishes (D830, D831). This file resolves it through
 //     settingsResolveTarget's `--layer project` branch, so the path, the anchor
 //     the document is read against and the "no local project layer file"
-//     refusal are the ones every other project-layer write already makes — the
-//     design's step 4, read from the writer rather than restated here.
+//     refusal are the ones every other project-layer write already makes.
+//     **That refusal is one branch for both of §3 step 4's absences, and only
+//     its second half is what the design asks for there.** The design splits
+//     them: a file absent while the project HAS a published layer is refused,
+//     with `fugaro update` named as the remedy (R1's seed, merged — the case the
+//     writer's sentence is written for), and a file absent while the project has
+//     published NO layer is CREATED, as a project layer document carrying the
+//     three anchor values of the local project config and the `defaults:` block
+//     the edit writes. The creation half is not built here: the one write path
+//     compares and swaps against the file it re-reads, and backs that file up,
+//     so it refuses the file that is not there — and its own plan (S5's,
+//     re-entered by G7 and S7) forbids a second copy of the refusal and the
+//     write in this file, which is why G6's pull request reports the gap rather
+//     than answering where the creation belongs. A project that has published no
+//     layer therefore meets this refusal, and `fugaro update`'s Layer stage
+//     reports that it has nothing to seed a file from.
 //   - §3 step 1 is the vocabulary, step 2 D834's `hotfix` refusal, §5's glob
 //     and name rules are rigor.Area.Validate's own, and §5's duplicate-glob
 //     refusal is the loader's (internal/config's validateRigor, F14) — every one

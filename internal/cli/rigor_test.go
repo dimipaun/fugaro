@@ -29,7 +29,10 @@ import (
 //     glob twice is refused and a pair is never created — the loader's own
 //     repeat rule (internal/config's validateRigor, F14) is the check;
 //   - §3 step 4's second absence: a file that does not exist is refused, naming
-//     `fugaro update`, rather than created.
+//     `fugaro update`, rather than replaced. The design's first absence — no
+//     file and no published layer — is the creation half, which is not built;
+//     the test below says what it pins and why the second half is the one the
+//     write path can carry.
 //
 // The world is the settings family's own: settingsWriteHome's hermetic
 // installation (project aurora, gcp_project aurora-gcp) and a layer file written
@@ -220,10 +223,19 @@ func TestRigorSetRefusesAVocabularyNearMiss(t *testing.T) {
 	}
 }
 
-// A file that does not exist is refused, not created (§3 step 4's second
-// absence): publishing a nearly empty layer over the project's real one is the
-// one mistake this command must not make, and the remedy is `fugaro update`,
-// whose Layer stage seeds the file from the published layer (D831).
+// A file that does not exist is refused, and no byte is created where it would
+// be. The refusal this pins is the one write path's own sentence, and the
+// absence it is written for is §3 step 4's second: a file absent while the
+// project HAS a published layer, where publishing a fresh, nearly empty one over
+// the project's real layer is the mistake this command must not make, and the
+// remedy is `fugaro update`, whose Layer stage seeds the file from that layer
+// (D831, merged). The design's first absence — no file and no published layer,
+// where there is nothing to seed from — is the creation half, and it is not
+// built: the one write path compares and swaps against a file it re-reads and
+// backs that file up, so it cannot create one, and the plan that owns that path
+// (settings S5, re-entered by G7 and S7) forbids a second copy of its refusal
+// and its write in this file. G6's pull request reports the gap rather than
+// choosing where the creation belongs.
 func TestRigorSetRefusesWithNoLocalLayerFile(t *testing.T) {
 	settingsWriteHome(t)
 	path := localLayerPath(t)
