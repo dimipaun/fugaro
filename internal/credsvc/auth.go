@@ -237,12 +237,14 @@ func (o RTDBOutcomes) OutcomeExists(ctx context.Context, day int64, slug, run st
 
 // GcloudAudience is the audience a plain `gcloud auth print-identity-token`
 // mints into a USER account's ID token: gcloud's own OAuth client id, and not
-// this service's URL. The person class admits it (VerifyReadCaller and
-// VerifyPersonCaller), and it is the only class that does (the owner's ruling
-// of 2026-11-04): `gcloud auth print-identity-token --audiences=…` is refused
-// outright for a user account ("Invalid account type for --audiences. Requires
-// valid service account"), so a person cannot mint a token for this service's
-// URL at all, and without this the person class would admit nobody.
+// this service's URL. The classes that are PEOPLE admit it — the person class
+// (VerifyReadCaller and VerifyPersonCaller, the owner's ruling of 2026-11-04)
+// and the launcher class (VerifyLauncher, D1938) — and no class that is not
+// one of the people does: `gcloud auth print-identity-token --audiences=…` is
+// refused outright for a user account ("Invalid account type for --audiences.
+// Requires valid service account"), so a person cannot mint a token for this
+// service's URL at all, and without this neither people class could admit
+// anybody.
 //
 // The tradeoff, stated where the check lives: a token with this audience is not
 // scoped to this service. It is a bearer token for gcloud's own client id, it
@@ -254,7 +256,8 @@ func (o RTDBOutcomes) OutcomeExists(ctx context.Context, day int64, slug, run st
 // hour, exactly as it is for a job's token. What it is NOT is a widening of any
 // other class: job, review, verifier and coordinator callers still have to
 // present a token minted for this service's own URL, and a token for this
-// audience is refused on every route but the two read mints.
+// audience is refused on every route but the two read mints and the launcher
+// class's two, the grant route and the intake (DS1.3, DS2.1).
 const GcloudAudience = "32555940559.apps.googleusercontent.com"
 
 // AuthConfig is the service's identity configuration. Everything a check
@@ -273,10 +276,11 @@ type AuthConfig struct {
 	FirebaseProject string
 	// Audience is the audience every caller's Google ID token must carry —
 	// the service's own URL, which is what Cloud Run IAM checked it against.
-	// The person class alone also admits GcloudAudience, the audience a user
-	// account's own mint carries; which classes check what is readCallerClass's
-	// and checkCallerAudience's, and GcloudAudience's doc comment states why
-	// that class can afford it.
+	// The two classes that are people — the person class and the launcher
+	// class — also admit GcloudAudience, the audience a user account's mint
+	// carries; which classes check what is readCallerClass's and
+	// checkCallerAudience's, and GcloudAudience's doc comment states why those
+	// classes can afford it.
 	Audience string
 	// JobAccounts are the installation's per-repository job service accounts,
 	// by email: the identities that may call the service at all (the owner's
@@ -768,7 +772,7 @@ func (a *Authenticator) verifyJob(ctx context.Context, tok string, now time.Time
 	// A job's ID token is minted for this service's own URL and for nothing
 	// else — both classes that reach here, the per-repository job's and the
 	// review job's, mint with --audiences and hold the audience the owner's
-	// answer of 2026-10-19 names. The person class's second audience
+	// answer of 2026-10-19 names. The people classes' second audience
 	// (GcloudAudience) is NOT admitted here, and that is the whole of the
 	// class restriction: a job presenting a token gcloud minted for a user
 	// would be a caller of another class's shape reaching the model path.
@@ -829,7 +833,7 @@ func (a *Authenticator) verifyJob(ctx context.Context, tok string, now time.Time
 // the only place the classes differ.
 //
 // The audience is the one check that is NOT here, and it is out for the reason
-// the classes are: the person class's token may carry gcloud's own client id
+// the classes are: the people classes' tokens may carry gcloud's own client id
 // where every other class's must carry this service's URL (GcloudAudience), so
 // the audience is a fact about the class and is checked by each entry point
 // with checkCallerAudience once the class is known.
@@ -910,9 +914,9 @@ func (a *Authenticator) VerifyVerifier(ctx context.Context, tok string) (string,
 	if err != nil {
 		return "", err
 	}
-	// The verifier is not the person class, and it is not admitted on the
-	// person's audience: it mints for this service's URL like every class but
-	// the people (GcloudAudience).
+	// The verifier is not one of the people classes, and it is not admitted on
+	// their audience: it mints for this service's URL like every class but the
+	// two that are people (GcloudAudience).
 	if err := checkCallerAudience(claims, a.cfg.Audience); err != nil {
 		return "", err
 	}
@@ -961,9 +965,9 @@ func (a *Authenticator) VerifyVerifier(ctx context.Context, tok string) (string,
 // this route that is not shared with any other: a person's token may carry
 // gcloud's own client id, which is all a plain `gcloud auth
 // print-identity-token` can mint for a user account (GcloudAudience, with the
-// replay tradeoff stated there), while the coordinator job — and every class on
-// every other route — still presents a token for this service's own URL. Which
-// audiences each class may carry is readCallerClass's answer.
+// replay tradeoff stated there), while the coordinator job — like every class
+// whose caller is not a person — still presents a token for this service's own
+// URL. Which audiences each class may carry is readCallerClass's answer.
 //
 // It takes the caller's token directly for VerifyVerifier's reason: the read
 // route is answered ahead of RequestFromHTTP (server.go), because neither class
@@ -977,8 +981,8 @@ func (a *Authenticator) VerifyReadCaller(ctx context.Context, tok string) (strin
 	// The class is read before the audience, because the audience is the one
 	// thing the route's two classes do NOT share: a person may present the
 	// token a plain `gcloud auth print-identity-token` mints (GcloudAudience),
-	// while the coordinator job mints for this service's own URL like every
-	// other class and may carry nothing else (readCallerClass). A caller on
+	// while the coordinator job mints for this service's own URL and may carry
+	// nothing else (readCallerClass). A caller on
 	// neither list is refused by its class and never learns which audiences
 	// this service would have taken.
 	account, auds, ok := a.readCallerClass(folded)
@@ -1029,8 +1033,9 @@ func (a *Authenticator) readCallerClass(folded string) (account string, auds []s
 // own window are the same shared code (callerClaims, checkCallerToken). What it
 // leaves out is the coordinator, and that is the whole of the difference — the
 // audience is not a difference at all: this route's one class is the person,
-// and the person is the one class that admits gcloud's own client id beside
-// this service's URL (GcloudAudience).
+// and the person is the one class OF THIS ROUTE that admits gcloud's own client
+// id beside this service's URL (GcloudAudience admits it to the launcher class
+// too, which is another route's caller: D1938).
 //
 // The coordinator class is NOT admitted here on purpose. It is admitted on the
 // Bitbucket read mint because it holds no Bitbucket credential of its own: BB4's
