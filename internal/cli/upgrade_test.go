@@ -51,42 +51,50 @@ func upgradeRead(t *testing.T, path string) string {
 	return string(data)
 }
 
-func TestUpgradeLocalPinsThenPinCurrent(t *testing.T) {
+// TestUpgradeLocalWritesNothingInTheCheckout is U2 on the door the pin left
+// behind: --local runs the plugin step, which installs in Claude Code and
+// writes nothing in the checkout, and the pin an older fugaro left in
+// .claude/settings.json comes out of the run byte for byte as it was. Red
+// against the tree the pin step was in, which rewrote the file's ref.
+func TestUpgradeLocalWritesNothingInTheCheckout(t *testing.T) {
 	upgradeEnv(t, "0.5.2")
 	root, settings := skillCheckout(t, wiredAt("v0.5.1"))
+	before := upgradeRead(t, settings)
 	out, _, err := executeStdin(t, "", "upgrade", "--local", root)
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if r := pluginwire.Status(settings, "0.5.2", ""); r.Pin != pluginwire.OK {
-		t.Fatalf("pin %+v\n%s", r, out)
+	if upgradeRead(t, settings) != before {
+		t.Fatalf("the checkout's settings were rewritten:\n%s", upgradeRead(t, settings))
 	}
-	for _, want := range []string{"fugaro upgrade with fugaro 0.5.2", "brew upgrade dimipaun/tap/fugaro && fugaro upgrade", "== " + root,
-		"pin: done: pinned to v0.5.2 in " + settings, "git diff", "summary:", "  " + root + ": pin done"} {
+	for _, want := range []string{"fugaro upgrade with fugaro 0.5.2; it never upgrades fugaro itself: brew upgrade dimipaun/tap/fugaro && fugaro upgrade is the whole sequence", "== " + root,
+		"plugin: skipped: claude is not on PATH", "summary:", "  " + root + ": plugin skipped, cloud skipped, rules skipped, policy skipped"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output lacks %q:\n%s", want, out)
 		}
 	}
-	before := upgradeRead(t, settings)
-	out, _, err = executeStdin(t, "", "upgrade", "--local", root)
-	if err != nil || upgradeRead(t, settings) != before || !strings.Contains(out, "pin: current: pinned to v0.5.2") || !strings.Contains(out, "nothing to do: "+root) {
+	// The rerun is the same run: nothing on this machine changed, and the
+	// step has no state of its own to report but the machine's.
+	before = upgradeRead(t, settings)
+	if out, _, err = executeStdin(t, "", "upgrade", "--local", root); err != nil || upgradeRead(t, settings) != before {
 		t.Fatalf("rerun: %v, changed %v\n%s", err, upgradeRead(t, settings) != before, out)
 	}
 }
 
-// TestUpgradeEveryStepIsImplemented: pin, plugin and cloud run in that order
-// and none is a placeholder, so each mode reports every step's own state:
-// here pin current, plugin skipped (no claude on PATH, or --check with no
-// install recorded), cloud skipped because no local project config selects
-// this checkout — under --local and in an agent session the step is skipped
-// before anything is read at all, U7, so with their reason. With no step left
-// unchecked the checkout is "nothing to do" and the exit is 0.
+// TestUpgradeEveryStepIsImplemented: plugin and cloud run in that order and
+// none is a placeholder, so each mode reports every step's own state: here
+// plugin skipped (no claude on PATH, or --check with no install recorded),
+// cloud skipped because no local project config selects this checkout — under
+// --local and in an agent session the step is skipped before anything is read
+// at all, U7, so with their reason. With no step left unchecked the checkout is
+// "nothing to do" and the exit is 0. The steps are four: the pin went with the
+// merge it wrote (U2).
 func TestUpgradeEveryStepIsImplemented(t *testing.T) {
 	var names []string
 	for _, s := range upgradeSteps {
 		names = append(names, s.name)
 	}
-	if got := strings.Join(names, ","); got != "pin,plugin,cloud,rules,policy" {
+	if got := strings.Join(names, ","); got != "plugin,cloud,rules,policy" {
 		t.Fatalf("upgradeSteps = %s", got)
 	}
 	upgradeEnv(t, "0.5.2")
@@ -123,8 +131,8 @@ func TestUpgradeEveryStepIsImplemented(t *testing.T) {
 				// checkout holds.
 				rules = "rules: skipped: --check makes no cloud call, so the deployed security rules are not read"
 			}
-			for _, want := range []string{"pin: current", tc.pluginSkip, cloud, rules,
-				"  " + root + ": pin current, plugin skipped, cloud skipped, rules skipped, policy skipped",
+			for _, want := range []string{tc.pluginSkip, cloud, rules,
+				"  " + root + ": plugin skipped, cloud skipped, rules skipped, policy skipped",
 				"nothing to do: " + root + " is current (apart from what the skipped steps name)"} {
 				if !strings.Contains(out, want) {
 					t.Errorf("output lacks %q:\n%s", want, out)
@@ -198,10 +206,10 @@ func TestUpgradeRunsTheRulesStep(t *testing.T) {
 	for _, s := range upgradeSteps {
 		names = append(names, s.name)
 	}
-	if want := []string{"pin", "plugin", "cloud", "rules", "policy"}; !slices.Equal(names, want) {
+	if want := []string{"plugin", "cloud", "rules", "policy"}; !slices.Equal(names, want) {
 		t.Fatalf("the steps are %v, want %v", names, want)
 	}
-	if got := reflect.ValueOf(upgradeSteps[3].run).Pointer(); got != reflect.ValueOf(rulesStep).Pointer() {
+	if got := reflect.ValueOf(upgradeSteps[2].run).Pointer(); got != reflect.ValueOf(rulesStep).Pointer() {
 		t.Error("the rules step is registered under some other function")
 	}
 	_, db, root := upgradeBudgetRig(t)
@@ -456,79 +464,34 @@ func TestUpgradeRulesStepVerdicts(t *testing.T) {
 	})
 }
 
+// TestUpgradeCheckWritesNothing: --check reads Claude Code's record of
+// installed plugins and writes nothing — the checkout's settings included,
+// where a pin an older fugaro left stands whatever the machine's install says.
 func TestUpgradeCheckWritesNothing(t *testing.T) {
 	upgradeEnv(t, "0.5.2")
+	record := filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), "plugins", "installed_plugins.json")
+	checkoutFile(t, record, `{"version":2,"plugins":{"fugaro@fugaro":[{"scope":"user","version":"0.5.1"}]}}`)
 	root, settings := skillCheckout(t, wiredAt("v0.5.1"))
 	before := upgradeRead(t, settings)
 	out, _, err := executeStdin(t, "", "upgrade", "--check", root)
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "something is stale") {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
-	if upgradeRead(t, settings) != before || !strings.Contains(out, "pin: stale: the pin moves to v0.5.2") {
+	if upgradeRead(t, settings) != before || !strings.Contains(out, "plugin: stale: installed 0.5.1, this fugaro is 0.5.2") {
 		t.Fatalf("changed %v\n%s", upgradeRead(t, settings) != before, out)
 	}
 }
 
-// TestRefAboveBinaryComparesPatchNumerically: v0.5.10 is above 0.5.2 (patch
-// 10 > 2), which a string comparison would get backwards ("10" < "2").
-func TestRefAboveBinaryComparesPatchNumerically(t *testing.T) {
-	withVersion(t, "0.5.2")
-	if !refAboveBinary("v0.5.10") {
-		t.Error("v0.5.10 should read as above 0.5.2: the patch is compared numerically, not as a string")
-	}
-	if refAboveBinary("v0.5.1") {
-		t.Error("v0.5.1 should not read as above 0.5.2")
-	}
-}
-
-// TestUpgradeNeverMovesAPinDown: U10 for every marketplace and enablement
-// state, not only the one pluginwire.Status calls newer.
-func TestUpgradeNeverMovesAPinDown(t *testing.T) {
-	for _, tc := range []struct {
-		name, settings string
-		yaml           bool
-		flags          []string
-	}{
-		{"newer", wiredAt("v0.6.0"), false, []string{"--local"}},
-		{"fork", `{"extraKnownMarketplaces":{"fugaro":{"source":{"source":"github","repo":"someone/fugaro","ref":"v0.6.0"}}},"enabledPlugins":{"fugaro@fugaro":true}}`, false, []string{"--local", "--allow-fork"}},
-		{"disabled", `{"extraKnownMarketplaces":{"fugaro":{"source":{"source":"github","repo":"dimipaun/fugaro","ref":"v0.6.0"}}},"enabledPlugins":{"fugaro@fugaro":false}}`, true, []string{"--local"}},
-		{"check", wiredAt("v0.6.0"), false, []string{"--check"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			upgradeEnv(t, "0.5.2")
-			root, settings := skillCheckout(t, tc.settings)
-			if tc.yaml {
-				if err := os.WriteFile(filepath.Join(root, "fugaro.yaml"), []byte("version: 1\n"), 0o644); err != nil {
-					t.Fatal(err)
-				}
-			}
-			out, _, err := executeStdin(t, "", append(append([]string{"upgrade"}, tc.flags...), root)...)
-			if ExitCode(err) != ExitUserError || upgradeRead(t, settings) != tc.settings {
-				t.Fatalf("exit %d, changed %v\n%s", ExitCode(err), upgradeRead(t, settings) != tc.settings, out)
-			}
-			for _, want := range []string{"pin: failed: the plugin is pinned to 0.6.0, newer than this fugaro 0.5.2", "never moves a pin down", "brew upgrade dimipaun/tap/fugaro",
-				"  " + root + ": pin failed, plugin not run, cloud not run, rules not run, policy not run", "once that is fixed, rerun: fugaro upgrade " + strings.Join(tc.flags, " ") + " " + root} {
-				if !strings.Contains(out, want) {
-					t.Errorf("output lacks %q:\n%s", want, out)
-				}
-			}
-			if strings.Contains(out, "pin: done") || strings.Contains(out, "v0.5.2") {
-				t.Errorf("the pin moved down:\n%s", out)
-			}
-		})
-	}
-}
-
 // TestUpgradeDevBuildNeedsNoTerminal is U11: a development build has no
-// release to pin, install or refresh to, so every step is skipped and the
-// run exits 0, even with no flags and no terminal on stdin (the refusal that
-// otherwise requires one is for the cloud step a release build would run).
+// release to install or refresh to, so every step is skipped and the run exits
+// 0, even with no flags and no terminal on stdin (the refusal that otherwise
+// requires one is for the cloud step a release build would run).
 func TestUpgradeDevBuildNeedsNoTerminal(t *testing.T) {
 	upgradeEnv(t, "dev")
 	root, settings := skillCheckout(t, wiredAt("v0.5.1"))
 	before := upgradeRead(t, settings)
 	out, _, err := executeStdin(t, "", "upgrade", root)
-	if err != nil || upgradeRead(t, settings) != before || !strings.Contains(out, "a development build (dev)") || !strings.Contains(out, "pin: skipped: a development build") {
+	if err != nil || upgradeRead(t, settings) != before || !strings.Contains(out, "a development build (dev)") || !strings.Contains(out, "plugin: skipped: a development build") {
 		t.Fatalf("%v\n%s", err, out)
 	}
 }
@@ -538,7 +501,7 @@ func TestUpgradeDevBuildChangesNothing(t *testing.T) {
 	root, settings := skillCheckout(t, wiredAt("v0.5.1"))
 	before := upgradeRead(t, settings)
 	out, _, err := executeStdin(t, "", "upgrade", "--local", root)
-	if err != nil || upgradeRead(t, settings) != before || !strings.Contains(out, "a development build (dev)") || !strings.Contains(out, "pin: skipped: a development build") {
+	if err != nil || upgradeRead(t, settings) != before || !strings.Contains(out, "a development build (dev)") || !strings.Contains(out, "plugin: skipped: a development build") {
 		t.Fatalf("%v\n%s", err, out)
 	}
 }
@@ -553,7 +516,7 @@ func TestUpgradeDevBuildSkipsEveryPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
-	for _, want := range []string{"  " + notCheckout + ": pin skipped, plugin skipped, cloud skipped, rules skipped, policy skipped", "  " + plain + ": pin skipped, plugin skipped, cloud skipped, rules skipped, policy skipped"} {
+	for _, want := range []string{"  " + notCheckout + ": plugin skipped, cloud skipped, rules skipped, policy skipped", "  " + plain + ": plugin skipped, cloud skipped, rules skipped, policy skipped"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output lacks %q:\n%s", want, out)
 		}
@@ -572,10 +535,10 @@ func TestUpgradeEveryPathIsTried(t *testing.T) {
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "stopped in 2 of 3 checkout(s)") {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
-	if r := pluginwire.Status(settings, "0.5.2", ""); r.Pin != pluginwire.OK {
-		t.Fatalf("the failures hid the last checkout: %+v\n%s", r, out)
+	if upgradeRead(t, settings) != wiredAt("v0.5.1") {
+		t.Errorf("nothing writes the checkout's settings any more (U2), and this run changed them:\n%s", upgradeRead(t, settings))
 	}
-	for _, want := range []string{"  " + notCheckout + ": checkout failed", "  " + plain + ": checkout failed", "not a Fugaro checkout", "  " + root + ": pin done"} {
+	for _, want := range []string{"  " + notCheckout + ": checkout failed", "  " + plain + ": checkout failed", "not a Fugaro checkout", "  " + root + ": plugin skipped, cloud skipped, rules skipped, policy skipped"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output lacks %q:\n%s", want, out)
 		}
@@ -600,7 +563,7 @@ func TestUpgradeSameCheckoutOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	out, _, err := executeStdin(t, "", "upgrade", "--local", root, filepath.Join(root, ".claude"), link, sub)
-	if err != nil || strings.Count(out, "pin: done") != 1 || strings.Count(out, "checkout: skipped: the same checkout as "+root) != 3 {
+	if err != nil || strings.Count(out, "== "+root) != 1 || strings.Count(out, "checkout: skipped: the same checkout as "+root) != 3 {
 		t.Fatalf("%v\n%s", err, out)
 	}
 }
@@ -617,54 +580,44 @@ func TestUpgradeCountsDistinctCheckouts(t *testing.T) {
 	}
 }
 
-func TestUpgradeForkNeedsAllowFork(t *testing.T) {
+// TestUpgradeHasNoAllowFork: the flag belonged to the write — a checkout's
+// settings pointing at someone else's marketplace, which the pin step then
+// moved — and U2 removes it with the write. What a leftover fork says is
+// update-skills --check's and fugaro doctor's to report, never this step's,
+// which declares Fugaro's own marketplace on the machine.
+func TestUpgradeHasNoAllowFork(t *testing.T) {
 	upgradeEnv(t, "0.5.2")
-	fork := `{"extraKnownMarketplaces":{"fugaro":{"source":{"source":"github","repo":"someone/fugaro","ref":"v0.5.1"}}},"enabledPlugins":{"fugaro@fugaro":true}}`
+	fork := forkAt("someone/fugaro", "v0.5.1")
 	root, settings := skillCheckout(t, fork)
-	out, errOut, err := executeStdin(t, "", "upgrade", "--local", root)
-	if ExitCode(err) != ExitUserError || upgradeRead(t, settings) != fork || !strings.Contains(errOut, "WARNING") || !strings.Contains(out, "pass --allow-fork if it is yours") {
-		t.Fatalf("exit %d\n%s\n%s", ExitCode(err), out, errOut)
+	out, errOut, err := executeStdin(t, "", "upgrade", "--local", "--allow-fork", root)
+	if !strings.Contains(err.Error(), "unknown flag: --allow-fork") {
+		t.Fatalf("--allow-fork is still a flag: exit %d, err %v\n%s\n%s", ExitCode(err), err, out, errOut)
 	}
-	out, errOut, err = executeStdin(t, "", "upgrade", "--local", "--allow-fork", root)
-	if data := upgradeRead(t, settings); err != nil || !strings.Contains(data, "v0.5.2") || !strings.Contains(data, "someone/fugaro") {
-		t.Fatalf("%v\n%s\n%s", err, data, out)
+	if upgradeRead(t, settings) != fork {
+		t.Fatalf("a refused command rewrote the settings:\n%s", upgradeRead(t, settings))
 	}
-	if !strings.Contains(errOut, "WARNING: the \"fugaro\" marketplace in "+settings+" is someone/fugaro, not dimipaun/fugaro") || !strings.Contains(out, "pin: done") {
-		t.Errorf("the fork's ref moved without the warning:\n%s\n%s", out, errOut)
+	// A leftover fork is not this step's business either way: it installs from
+	// dimipaun/fugaro, and the file it came out of is untouched.
+	out, errOut, err = executeStdin(t, "", "upgrade", "--local", root)
+	if err != nil || upgradeRead(t, settings) != fork || strings.Contains(out, "someone/fugaro") || strings.Contains(errOut, "WARNING") {
+		t.Fatalf("%v\n%s\n%s", err, out, errOut)
 	}
 }
 
-// TestUpgradeCheckReportsAFork: --check reads a fork's pin as stale (exit 1),
-// with the warning, and writes nothing.
-func TestUpgradeCheckReportsAFork(t *testing.T) {
-	upgradeEnv(t, "0.5.2")
-	fork := `{"extraKnownMarketplaces":{"fugaro":{"source":{"source":"github","repo":"someone/fugaro","ref":"v0.5.1"}}},"enabledPlugins":{"fugaro@fugaro":true}}`
-	root, settings := skillCheckout(t, fork)
-	out, errOut, err := executeStdin(t, "", "upgrade", "--check", root)
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "something is stale") || upgradeRead(t, settings) != fork {
-		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
-	}
-	for _, want := range []string{"pin: stale: the marketplace is the fork someone/fugaro: pass --allow-fork if it is yours (only its ref moves)",
-		"plugin: skipped: cannot tell from Claude Code's record of installed plugins",
-		"  " + root + ": pin stale, plugin skipped, cloud skipped, rules skipped, policy skipped"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("output lacks %q:\n%s", want, out)
-		}
-	}
-	if !strings.Contains(errOut, "WARNING") {
-		t.Errorf("no warning:\n%s", errOut)
-	}
-}
-
+// TestUpgradeInvalidSettingsNeverRewritten: the plugin step reads no repository
+// out of the checkout any more, so settings it could not parse are not a
+// reason to stop — and nothing rewrites them either.
 func TestUpgradeInvalidSettingsNeverRewritten(t *testing.T) {
 	upgradeEnv(t, "0.5.2")
 	root, settings := skillCheckout(t, "{not json")
-	if err := os.WriteFile(filepath.Join(root, "fugaro.yaml"), []byte("version: 1\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
 	out, _, err := executeStdin(t, "", "upgrade", "--local", root)
-	if ExitCode(err) != ExitUserError || upgradeRead(t, settings) != "{not json" || !strings.Contains(out, "merge this in by hand") {
-		t.Fatalf("exit %d\n%s", ExitCode(err), out)
+	if err != nil || upgradeRead(t, settings) != "{not json" {
+		t.Fatalf("exit %d, settings %q\n%s", ExitCode(err), upgradeRead(t, settings), out)
+	}
+	for _, want := range []string{"plugin: skipped: claude is not on PATH", "  " + root + ": plugin skipped, cloud skipped, rules skipped, policy skipped"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output lacks %q:\n%s", want, out)
+		}
 	}
 }
 
