@@ -93,24 +93,24 @@ func TestSettingsOwnerStringsAreAClosedVocabulary(t *testing.T) {
 
 // settingsOwnerChanges is the table the plan asks G12 to carry in its own test:
 // every key whose registry owner string this task moves, key → old owner → new
-// owner, so the change is reviewable as a diff of names and a later task cannot
-// move one silently (D1178, spec §4). The rule behind it is the design's: a key
-// the allowlist carries is `settings set`'s and its row says so, and every other
-// key names a command that exists or a sentence naming `fugaro setup` / `fugaro
-// update`.
+// owner, key → old owner → new owner, so the change is reviewable as a diff of
+// names and a later task cannot move one silently (D1178, spec §4). The rule
+// behind it is the design's: a key the allowlist carries is `settings set`'s and
+// its row says so, and every other key names a command that exists or a sentence
+// naming `fugaro setup` / `fugaro update`.
 //
 // None of D1179's four budget keys is here: `budget.mode`, `budget.per_day_usd`,
 // `budget.per_run_usd` and `budget.allowed_models` already name the default
 // owner and stay the generic writer's.
-var settingsOwnerChanges = []struct{ key, was string }{
-	{"base_branch", "config"},
-	{"budget.max_run_tokens", "budget"},
-	{"budget.unreachable_grace", "budget"},
-	{"commit_email", "setup"},
-	{"commit_name", "setup"},
-	{"max_parallel", "config"},
-	{"update_check", "setup"},
-	{"watch.burn_alert_usd_per_hour", "budget"},
+var settingsOwnerChanges = []struct{ key, was, now string }{
+	{"base_branch", "config", "settings set"},
+	{"budget.max_run_tokens", "budget", "settings set"},
+	{"budget.unreachable_grace", "budget", "settings set"},
+	{"commit_email", "setup", "settings set"},
+	{"commit_name", "setup", "settings set"},
+	{"max_parallel", "config", "settings set"},
+	{"update_check", "setup", "settings set"},
+	{"watch.burn_alert_usd_per_hour", "budget", "settings set"},
 }
 
 // TestSettingsOwnerChangesAreTheOnesThePlanLists holds the fixture above to the
@@ -127,11 +127,14 @@ func TestSettingsOwnerChangesAreTheOnesThePlanLists(t *testing.T) {
 			t.Errorf("%s: no such registry row, and the fixture lists an owner change for it", tc.key)
 			continue
 		}
-		if row.Owner != "settings set" {
-			t.Errorf("%s: the registry row's owner is %q, and this task moves it to the default owner `settings set` (D1178)", tc.key, row.Owner)
+		if row.Owner != tc.now {
+			t.Errorf("%s: the registry row's owner is %q, and this task moves it to %q (D1178)", tc.key, row.Owner, tc.now)
 		}
-		if tc.was == "settings set" {
-			t.Errorf("%s: the fixture records the old owner as the default, and a key whose owner does not move is not listed", tc.key)
+		if tc.was == tc.now {
+			t.Errorf("%s: the fixture records the same owner before and after, and a key whose owner does not move is not listed", tc.key)
+		}
+		if _, ok := settingsOwnerCommands[tc.now]; !ok {
+			t.Errorf("%s: the fixture's new owner %q is no owner token of the registry", tc.key, tc.now)
 		}
 		if _, err := settingsWriteRow(tc.key); err != nil {
 			t.Errorf("%s: the generic path refuses it (%v), and only a key the allowlist carries is `settings set`'s", tc.key, err)
