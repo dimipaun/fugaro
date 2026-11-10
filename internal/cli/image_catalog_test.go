@@ -575,6 +575,52 @@ func TestImageRmAllowsAnEntryAListedRepositoriesJobDoesNotRun(t *testing.T) {
 	}
 }
 
+// TestImageRmAllowsAnEntryARepositorySpelledDifferentlyDoesNotRun: the map's
+// keys are canonical (D1906) and a repos: key is the operator's own spelling
+// (localcfg.Config.RepoFor canonicalizes both sides to match them), so a config
+// whose repositories: entry is Acme/App while the node names acme/app is one
+// repository read two ways. A sweep that looked the map's key up in the repos
+// map directly read that repository as unlisted, judged it again by the map
+// after the resolver had already judged it, and refused the removal of an entry
+// its job does not run — over a capital letter.
+//
+// The control is TestImageRmAllowsAnEntryAListedRepositoriesJobDoesNotRun: the
+// same workflow and the same repository, spelled the way the node spells it,
+// where both the old lookup and this one leave it to the resolver.
+func TestImageRmAllowsAnEntryARepositorySpelledDifferentlyDoesNotRun(t *testing.T) {
+	publishedMapFixture(t)
+	catalogCheckout(t, "version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  app: { image_name: base, commands: { build: sh build.sh, test: sh test.sh } }\n")
+	// The checkout's origin is acme/app, as catalogCheckoutFiles sets it, so the
+	// repository is this machine's whatever the key's case is.
+	path := os.Getenv("FUGARO_CONFIG")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spelled := strings.Replace(string(data), "\n  acme/app:", "\n  Acme/App:", 1)
+	if spelled == string(data) {
+		t.Fatalf("the fixture's config no longer states a repos: key to respell:\n%s", data)
+	}
+	if err := os.WriteFile(path, []byte(spelled), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := execute(t, "image", "rm", "tools"); err != nil {
+		t.Fatalf("removing the entry this repository's job does not run, its key spelled as a person writes it: %v", err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lc, err := localcfg.Parse(after)
+	if err != nil {
+		t.Fatalf("the config after the rm: %v\n%s", err, after)
+	}
+	if lc.ImageCatalog == nil || len(lc.ImageCatalog.Entries) != 1 || lc.ImageCatalog.Entries[0].Name != "base" {
+		t.Fatalf("ImageCatalog = %+v, want tools gone and base left", lc.ImageCatalog)
+	}
+}
+
 // TestImageCatalogGateIsSpelledApartFromThePriceCatalog: the image family's
 // skew gate is the image catalog's own pair (D1156), so it judges an image
 // document by the release that reads image_catalog and never by the price

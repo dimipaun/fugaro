@@ -1498,9 +1498,9 @@ func Repo(in Inputs) (RepoSpec, error) {
 		// stage keys, or whose project default, declare the one mix the
 		// ruling admits: that repository gets the account's own variant
 		// beside the default, and nothing else changes (WorkflowAccounts).
-		// catalogImage is what catalogJobImage answered for the workflow's
-		// job, read back from the spec it built rather than asked again:
-		// the check below and the job's own image must never disagree about
+		// catalogImage is what jobImage answered for the workflow's job,
+		// read back from the spec it built rather than asked again: the
+		// check below and the job's own image must never disagree about
 		// which jobs are the catalog's.
 		catalogImage := false
 		for _, tok := range WorkflowAccounts(in.Cfg, lc, in.Repo) {

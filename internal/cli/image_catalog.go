@@ -589,9 +589,12 @@ func catalogConfig(ctx context.Context, o cloudOptions) (string, *localcfg.Confi
 // therefore read as the claim it is, whatever key carries it, for a repository
 // that is not listed here: the removal would leave that repository's deploy and
 // every launch of it refusing with catalog.UnknownMappedEntryError, and nothing
-// on this machine would repair it. A key this config lists is not read that
-// way, because the resolver above already answered about that repository, and
-// its answer is what its job is.
+// on this machine would repair it. A repository this config lists is not read
+// that way, because the resolver above already answered about it, and its
+// answer is what its job is; and "lists" is the config's own question
+// (localcfg.Config.RepoFor), because the node's keys are canonical and a
+// repos: key is the operator's spelling, so the two name the same repository in
+// two ways (D1906).
 //
 // A job the resolver gives no entry to is not one of them: it runs no catalog
 // image at all, and a removal cannot leave it on an entry it never had.
@@ -636,15 +639,19 @@ func catalogPointedAt(ctx context.Context, lc *localcfg.Config, cat *config.Cata
 	// is not listed above is still a claim about that repository's job, and the
 	// workflow that would say otherwise is not here to read. The values are
 	// swept whatever their keys are, and in key order so the refusal names the
-	// same repository every time, and the keys this config DOES list are
-	// skipped: the resolver answered about those above, and its answer is the
-	// job's — a workflow that names an entry beats the map (T1 b), and a clone
-	// or shared job runs the installation's own image and no entry at all.
+	// same repository every time, and the repositories this config DOES list
+	// are skipped: the resolver answered about those above, and its answer is
+	// the job's — a workflow that names an entry beats the map (T1 b), and a
+	// clone or shared job runs the installation's own image and no entry at
+	// all. The skip asks RepoFor, not the map, because the key here is the
+	// node's canonical one and the repos: key is the operator's spelling:
+	// reading the map directly would call a listed repository unlisted over a
+	// capital letter.
 	for _, repo := range slices.Sorted(maps.Keys(imap)) {
 		if imap[repo] != entry {
 			continue
 		}
-		if _, listed := lc.Repos[repo]; listed {
+		if _, listed := lc.RepoFor(repo); listed {
 			continue
 		}
 		return fmt.Sprintf("the job of %s (this project's image_map gives it that entry)", pluginwire.Printable(repo)), nil, nil

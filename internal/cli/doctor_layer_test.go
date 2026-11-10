@@ -628,7 +628,7 @@ func TestDoctorImageConfigComparesWorkflowsTheCatalogDoesNotCover(t *testing.T) 
 // TestDoctorImageConfigComparesAPinWithNoCatalog: the two reasons a catalog is
 // nil are not one state. A project whose catalog is known to be empty is one
 // where every workflow runs the derived image — internal/infra's
-// catalogJobImage and run.go's catalogDockerAsk both stop at cat == nil — so
+// jobImage and run.go's catalogDockerAsk both stop at cat == nil — so
 // the per-workflow record is the image its jobs start on and is compared like
 // any other workflow's. A pin is the repository's own claim on its image, so
 // the resolver answers with the pinned name however empty the catalog is, and

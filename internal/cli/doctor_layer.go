@@ -561,7 +561,7 @@ func prebuiltSmokeChecks(ctx context.Context, env *cloudEnv, rb *blobx.Bucket, s
 //
 // The two nils are not one state, and the difference is what the job spec
 // resolves. A project with no catalog at all is the plain one:
-// internal/infra's catalogJobImage and run.go's catalogDockerAsk both stop at
+// internal/infra's jobImage and run.go's catalogDockerAsk both stop at
 // cat == nil, so every workflow's job runs the derived image, which is the
 // image the per-workflow comparison is about, and a pin names an entry no
 // catalog holds (a configuration mistake the job spec's own rule and

@@ -3880,10 +3880,9 @@ func TestSpecBakedWorkflowRunsTheCatalogsChoice(t *testing.T) {
 // that job carried (FUGARO_REMOTE and no FUGARO_CHECKOUT). R1 (#1698, D1191)
 // refuses a prebuilt entry on a baked workflow where the spec is built, and
 // the only two checkout kinds that leave the catalog inert — clone and shared
-// — are the resolver's base and shared layers, so catalogJobImage returns an
-// empty entry for them and WorkflowSpec.CatalogPrebuilt is never set from this
-// path: the
-// remote's `|| ws.CatalogPrebuilt` clause is unreachable, and no allowed
+// — are the resolver's base and shared layers, so jobImage returns an empty
+// entry for them and WorkflowSpec.CatalogPrebuilt is never set from this path:
+// the remote's `|| ws.CatalogPrebuilt` clause is unreachable, and no allowed
 // configuration exercises it. The behaviour those tests were about — the
 // remote on a job whose image holds no checkout, credential-free — stays
 // covered by TestSpecCloneSetsRemoteEnv and TestSpecSharedRemoteIsCredentialFree.
