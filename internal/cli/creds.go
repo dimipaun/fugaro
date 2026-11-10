@@ -590,6 +590,18 @@ func credsSet(cmd *cobra.Command, o credsOptions, name string, generate bool) er
 	if generate && (!reviewSigning || previous) {
 		return credsGenerateNameRefusal()
 	}
+	// The provider key is a bundle entry this command has no value shape for:
+	// the service reads it as a mapping (credsvc's providerValue) and the write
+	// below builds a scalar for every name that is not the read consumer's, so
+	// the loader hands the document back once it has been built — which is
+	// AFTER the operator has been prompted for the key. That read is the one
+	// step of this command that cannot be taken back, so the refusal is placed
+	// before it, and before the project is opened. The write that teaches this
+	// command the mapping is AK10's, and it lands with the release that serves
+	// the entry.
+	if kind == credsvc.KindProvider {
+		return credsProviderNameRefusal()
+	}
 	_, lc, err := selectProject(ctx, o.cloud)
 	if err != nil {
 		return err
@@ -850,6 +862,23 @@ func credsNameRefusal() error {
 	return userErr("the NAME must be a credential the credentials service holds: %s (the project's Anthropic API key, tier B), %s (the default Claude account's OAuth token, tier A), %s<account> for a named account, where <account> is a Claude account name (lower case, at most %d characters), %s (the upstream Bitbucket token), %s (the Bitbucket read consumer), or the review-signing names %s and %s<account>%s, which --generate writes. The read consumer's value is %s. Nothing was read and nothing was written",
 		config.AnthropicSecret, config.ClaudeOAuthToken, config.ClaudeOAuthTokenPrefix, config.MaxClaudeAccountNameLen, config.BitbucketSecret, credsvc.BitbucketReadConsumerSecret,
 		config.ReviewSigningKeySecret(config.DefaultClaudeAccount), config.ClaudeOAuthTokenPrefix, config.ReviewSigningKeySuffix, readConsumerShape)
+}
+
+// credsProviderNameRefusal refuses the provider key's name, which IS a key of
+// the document and NOT one this command writes: the service reads its value as
+// a mapping of the key, the provider's base URL and how the key is sent
+// (credsvc's providerValue, AK6b), and every value this command reads is a
+// single line, except the read consumer's mapping. A write of a scalar under
+// this name is a document the loader refuses, and the refusal would come after
+// the value had been read from a terminal — so the name is refused at the door
+// instead, and that is why this is not credsNameRefusal: the name is one the
+// service accepts, and what is missing is this command's write for it.
+//
+// The name is the bundle's own constant and not operator text, so naming it
+// here echoes nothing that came in. Nothing was read and nothing was written.
+func credsProviderNameRefusal() error {
+	return userErr("%s is a bundle entry this command does not write. The credentials service reads its value as a mapping of the provider's key, the provider's base URL and how the key is sent, and a value read here as one line could only be handed back by the loader. The write for it ships with the release that lets a bundle hold it. Nothing was read and nothing was written",
+		config.ProviderKeySecret)
 }
 
 // credsGenerateNameRefusal refuses --generate for a NAME that is not an
