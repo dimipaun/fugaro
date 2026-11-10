@@ -45,10 +45,15 @@
 #             repositories only: the project and the region are hard-coded in
 #             this file (never `gcloud config get-value project`), and a
 #             repository whose workspace is the owner's own is refused by name.
-#             The installation must have its credentials service on and the
-#             sandbox repository published with `proxy: true` — Check 191 stops
-#             if either is not so, because the fact it measures is a REFUSAL,
-#             and only the service can refuse a call it is answering. Check 192
+#             The installation must have its credentials service on, the sandbox
+#             repository must be on the credentials-service switch (agent.auth:
+#             cascade for it, with a model credential in the service's bundle,
+#             its root re-applied) and the sandbox repository must be published
+#             with `proxy: true`. Check 191 stops if any of the three is not so:
+#             the published half alone is INERT — a repository off the switch
+#             holds its own token and is served by nothing — because the fact it
+#             measures is a REFUSAL, and only the service can refuse a call it is
+#             answering. Check 192
 #             must be run from the proxied repository's own checkout (or with
 #             CHECK191_CHECKOUT naming it): doctor resolves the repository it is
 #             run in from the working directory, so the same command run
@@ -344,6 +349,11 @@ accessor argv: `gcloud secrets get-iam-policy`'s file. Prints `member=` for each
          member the bitbucket-token secret's policy binds.
 doctor   argv: `fugaro doctor --json`'s file. Prints the bitbucket-direct
          check's own verdict.
+switch   argv: `fugaro doctor --json`'s file, a repository. Prints whether the
+         credentials-service switch is ON for that repository: doctor's
+         `credentials-service-deployed` check is the one reading of the
+         invoker grants, and a repository whose job account is not admitted by
+         the service is one the switch is off for.
 """
 import json
 import re
@@ -429,6 +439,67 @@ def bitbucket_mount(e):
     here compares a name the deployment never writes."""
     src = (e.get("FUGARO_BITBUCKET_TOKEN") or {}).get("valueSource") or {}
     return (src.get("secretKeyRef") or {}).get("secret") or ""
+
+
+def names_account(problem, repo):
+    """Whether doctor's list of job accounts names this repository. The list is
+    `repo (workflow)`, each account written as pluginwire.Printable leaves the
+    repository, so the name is matched with the parenthesis that follows it."""
+    return re.search(r"(?:^|[^A-Za-z0-9._/-])" + re.escape(repo) + r" \(", problem) is not None
+
+
+def switch_state(ok, problem, repo):
+    """The credentials-service switch for one repository, read out of doctor's
+    `credentials-service-deployed` check (doctorCredentialsServiceDeployed).
+
+    Three of its arms are ok, and only two of them are a repository on the
+    switch: the one with no problem at all (every job account of the
+    installation may invoke the service) and the one whose verify route was
+    emptied (the service is deployed, every job account may invoke it and its
+    bundle holds a version; only the route that asks whether a verdict's
+    signature is this service's admits nobody). The third is the installation
+    that carries no service at all: its own sentence is what tells it apart, and
+    it is answered `noservice`. Any other ok
+    arm is one this reading does not know, and it answers `other`, never `on`:
+    doctor could have reworded the no-service sentence, and a reading that
+    answered `on` for it would pass the row and launch three real runs at an
+    installation whose service is not there at all.
+
+    The rest of its arms are warnings. One names the accounts the service does
+    NOT admit (`grants no roles/run.invoker to`) — exactly what a repository off
+    the switch gets: repoCredentialsService writes its root a nil service, and
+    modules/workflow/sa.tf then grants its job account no invoker at all. Its
+    other warnings are about something else — a service that is not deployed, a
+    policy the read could not settle — so each is told apart and said, and a
+    problem no needle recognises is `other`. The check's JSON carries no list of
+    accounts, so the arms are told apart by doctor's own words: a rewording
+    there makes this row one the check could not measure rather than a wrong
+    answer.
+
+    The problem it is handed is doctor's whole one. Doctor's list of accounts
+    follows the sentence that introduces it, so a copy cut at the length a
+    printed field is held to would hide a repository named past the cut and
+    answer `on` for a repository the service does not admit — which is why the
+    `switch` reading classifies on the full text and truncates only what it
+    prints.
+    """
+    if ok:
+        if "has no credentials service" in problem:
+            return "noservice"
+        # An ok arm whose problem nobody here knows is `other`: doctor could
+        # have reworded the no-service sentence, and a reading that answered
+        # `on` for it would pass the row and launch three real runs at an
+        # installation whose service is not there at all.
+        if not problem or "admits nobody on the verify route" in problem:
+            return "on"
+        return "other"
+    if "grants no roles/run.invoker" in problem:
+        return "off" if names_account(problem, repo) else "on"
+    if "could not be read" in problem or "could not be checked" in problem:
+        return "unread"
+    if "Cloud Run has no service" in problem:
+        return "noservice"
+    return "other"
 
 
 cmd = sys.argv[1]
@@ -520,6 +591,30 @@ elif cmd == "doctor":
             break
     else:
         print("ok=missing")
+elif cmd == "switch":
+    repo = sys.argv[3]
+    doc = load(sys.argv[2])
+    checks = doc.get("checks") if isinstance(doc, dict) else None
+    if not isinstance(checks, list):
+        print("read=no")
+    else:
+        for c in checks:
+            if not isinstance(c, dict) or c.get("id") != "credentials-service-deployed":
+                continue
+            # The WHOLE problem is what the arms are told apart on and what the
+            # repository is looked for in, and only the field the row prints is
+            # cut: doctor's list of accounts grows with the installation, and a
+            # repository named past the cap would otherwise read as one the
+            # service admits — the answer this reading exists to refuse.
+            full = " ".join(str(c.get("problem") or "").split())
+            print("read=yes")
+            print("present=yes")
+            print("state=%s" % switch_state(bool(c.get("ok")), full, repo))
+            print("problem=%s" % text(full))
+            break
+        else:
+            print("read=yes")
+            print("present=no")
 else:
     sys.stderr.write("reader.py: unknown reading %r\n" % cmd)
     sys.exit(2)
@@ -791,22 +886,74 @@ audit_class_need() { # audit_class_need CLASS
   printf '%s' "$n"
 }
 
+# step_policy_switch: whether the credentials-service switch is ON for $REPO,
+# which the published node does not answer. `proxy: true` is one half of the
+# flip and the inert half on its own: a repository is served only when the
+# installation has the service AND that repository's own auth is `cascade` AND
+# its record says the bundle holds a model credential (infra's
+# CredentialsServiceServes), and the repository's root is what writes its job
+# account the roles/run.invoker grant that follows (repoCredentialsService).
+#
+# Doctor is where the script reads it, not a gcloud call of its own: its
+# `credentials-service-deployed` check reads exactly that grant, per job
+# account, and says which accounts the service does not admit. Returns 0 when
+# the switch is on for $REPO, and 1 when the row was recorded — the check then
+# stops, because a run off the switch holds the Bitbucket token on its own job
+# and never reaches the service: every attempt below would be answered about
+# the direct path, and the block's thirteen FAILs would name the proxy for a
+# path this check never exercised.
+step_policy_switch() {
+  local doc=$SCRATCH/doctor-switch.json got state problem
+  # --json prints the document and then exits non-zero for a warning, so the
+  # exit is not this read's answer: the reading is the document's own row.
+  fugaro doctor --project fugaro --json >"$doc" 2>"$SCRATCH/doctor-switch.err" || true
+  got=$(reader switch "$doc" "$REPO")
+  state=$(field_of state "$got")
+  problem=$(field_of problem "$got")
+  case "$state" in
+  on)
+    return 0
+    ;;
+  off)
+    fact proxied FAIL "the credentials-service switch is OFF for ${REPO}: the published policy admits it with proxy: true, and that half is INERT — doctor reports its job account among the ones the service fugaro-credentials does not admit, so the repository's own auth is not cascade (or its root was never re-applied with it): its job mounts the Bitbucket token and its runs push straight to Bitbucket, and not one of the rows below would be about the proxy. Set agent.auth: cascade for ${REPO} in its own fugaro.yaml, with a model credential in the service's bundle (fugaro creds set), run 'fugaro update --repo' for it, and run this check again. Doctor says: ${problem}"
+    return 1
+    ;;
+  noservice)
+    fact proxied FAIL "the installation has no credentials service this check could read (doctor: ${problem}), and proxy: true is INERT without one — nothing is served, a run of ${REPO} holds the Bitbucket token on its job, and every row below would measure the direct path instead of the proxy. Run 'fugaro update' — it deploys the service on every installation that can hold it — then make sure ${REPO} is on the switch (agent.auth: cascade, a model credential in the bundle, 'fugaro update --repo' for it) and run this check again"
+    return 1
+    ;;
+  # `unread | other | ""` and anything else: the reading did not settle the
+  # switch, so it is a row the check could NOT measure rather than a PASS. The
+  # default arm is the fail-closed one on purpose — a state this file does not
+  # know is not a state it may read as on.
+  *)
+    unmeasured proxied "fugaro doctor's credentials-service-deployed row could not be read or is one this check does not recognise (state: ${state:-none}; doctor: ${problem:-no line}): whether the credentials-service switch is on for ${REPO} was NOT measured, and every row below would be read about a path this check never settled. Run 'fugaro doctor --project fugaro --json' yourself, read that row, and settle it before anything is launched"
+    return 1
+    ;;
+  esac
+}
+
 step_policy() {
   local doc=$SCRATCH/policy.json got
   fugaro project policy show --project fugaro --json >"$doc" 2>"$SCRATCH/policy.err" || {
     fact proxied FAIL "fugaro project policy show --project fugaro --json exited non-zero: $(last_line "$(cat "$SCRATCH/policy.err")"). Nothing about the proxy switch is settled by it"
-    return 0
+    return 1
   }
   got=$(reader policy "$doc" "$REPO")
   if [ "$(field_of admitted "$got")" != yes ]; then
     fact proxied FAIL "the published policy's bitbucket_token.allow_repos does not admit ${REPO}, so a run in it is refused at its first call and none of the seven attempts below would be about the proxy: publish the sandbox repository (fugaro project policy publish, from project_secrets.bitbucket-token.allow_data_to) and run this check again"
-    return 0
+    return 1
   fi
   if [ "$(field_of proxy "$got")" != yes ]; then
     fact proxied FAIL "the published policy admits ${REPO} but its bitbucket_token block does not carry proxy: true, so this repository's runs get the token MOUNTED on the job instead of through the credentials service — that is the state Check 191 measures the way OUT of, and the flip (Check 192) is what turns it on. Turn the proxy on for the installation and run this check again"
-    return 0
+    return 1
   fi
-  fact proxied PASS "${REPO} is admitted by the published policy with proxy: true: its runs reach Bitbucket through the installation's credentials service and hold no token"
+  # The node's half is read and it is not the whole flip: a repository the node
+  # admits is served only while its own switch is on, so the row that says its
+  # runs reach Bitbucket through the service is not written until doctor's
+  # reading of the invoker grants says so too.
+  step_policy_switch || return 1
+  fact proxied PASS "${REPO} is admitted by the published policy with proxy: true and is on the credentials-service switch: its runs reach Bitbucket through the installation's credentials service and hold no token"
 }
 
 step_work_run() {
@@ -1020,7 +1167,11 @@ TASK_EOF
 }
 
 run_191() {
-  step_policy
+  # step_policy stops the check when it FAILs: every row below is read from a
+  # run that goes through the credentials service, and a check whose premise —
+  # a repository the policy admits AND that is on the switch — does not hold
+  # would launch three real runs to measure a path they never take.
+  step_policy || return 0
   step_work_run
   run_log "work" "$(run_id work)"
   audit_read "$(run_id work)" "$SCRATCH/audit-work.json" "${#ATTEMPTS[@]}"
