@@ -135,6 +135,22 @@ func TestWiringStageConfirmsAndMergesOnly(t *testing.T) {
 	}
 }
 
+// U2 of docs/plugin-user-scope/implementation-plan.md (D949, answered by the
+// owner 2026-11-04): the pin merge is deleted, so a checkout that has no
+// .claude/settings.json comes out of this stage with none — the stage installs
+// the plugin in the user's own Claude Code and writes nothing in the
+// repository. Red against today's tree, where the stage's plan creates the
+// file.
+func TestPluginStageWritesNoSettingsFile(t *testing.T) {
+	releaseBuild(t, "0.2.0")
+	settings := wiringCheckout(t, "")
+	e, out := stageEngine(t, "", &initOptions{yes: true})
+	runPlugin(t, e)
+	if _, err := os.Stat(settings); !os.IsNotExist(err) {
+		t.Fatalf("the plugin stage wrote %s (err %v): nothing in the tree writes a pin any more (U2)\n%s", settings, err, out)
+	}
+}
+
 // Without a terminal and without --yes nothing is asked and nothing is
 // written: the loop refuses to go on.
 func TestWiringStageNeedsConfirmation(t *testing.T) {

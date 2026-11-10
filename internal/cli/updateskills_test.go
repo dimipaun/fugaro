@@ -216,6 +216,38 @@ func TestUpdateSkillsJSON(t *testing.T) {
 	}
 }
 
+// U2 of docs/plugin-user-scope/implementation-plan.md: the machine-side
+// command's --json document keeps every member's meaning ("A field never
+// changes meaning"): settings and changed stay declared, and nothing in the
+// checkout is written. Red against today's tree, where the command merges the
+// pin in and reports changed true.
+func TestUpdateSkillsJSONDocumentKeepsItsShape(t *testing.T) {
+	withVersion(t, "0.2.0")
+	root, settings := skillCheckout(t, "")
+	out, _, err := execute(t, "update-skills", "--json", "--dir", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(out), &raw); err != nil {
+		t.Fatalf("not JSON: %v\n%s", err, out)
+	}
+	for _, k := range []string{"checkout", "settings", "changed"} {
+		if _, ok := raw[k]; !ok {
+			t.Errorf("--json dropped %q; a member removed outright bumps the document's version\n%s", k, out)
+		}
+	}
+	if got := string(raw["settings"]); got != `"`+settings+`"` {
+		t.Errorf("settings = %s, want the checkout's own file %s", got, settings)
+	}
+	if got := string(raw["changed"]); got != "false" {
+		t.Errorf("changed = %s, want false: nothing in the checkout is written", got)
+	}
+	if b, err := os.ReadFile(settings); !os.IsNotExist(err) {
+		t.Errorf("wrote %s:\n%s", settings, b)
+	}
+}
+
 func warnLine(t *testing.T, stderr string) bool {
 	t.Helper()
 	return strings.Contains(stderr, "warning: the Fugaro plugin pinned in .claude/settings.json is 0.1.0, this is 0.2.0: run fugaro update in your own terminal")
