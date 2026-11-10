@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -1879,5 +1880,207 @@ func TestRecordKeyMustBeCanonical(t *testing.T) {
 	}
 	if len(rows) != 1 || rows[0].Number != up.Number {
 		t.Errorf("the listing = %+v, want issue %d once", rows, up.Number)
+	}
+}
+
+// listKeys is every object name under one prefix, sorted, so a test asserts on
+// what a reader lists rather than on the order a store happens to return.
+func listKeys(t *testing.T, ctx context.Context, b *blobx.Bucket, prefix string) []string {
+	t.Helper()
+	iter := b.List(&blob.ListOptions{Prefix: prefix})
+	var out []string
+	for {
+		obj, err := iter.Next(ctx)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("listing %s: %v", prefix, err)
+		}
+		if obj.IsDir {
+			continue
+		}
+		out = append(out, obj.Key)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// indexKeys is one reporter's own index as the store holds it.
+func indexKeys(t *testing.T, ctx context.Context, b *blobx.Bucket, digest string) []string {
+	t.Helper()
+	return listKeys(t, ctx, b, reporterPrefix(digest))
+}
+
+// occurrenceKeys is one issue's occurrences as the store holds them.
+func occurrenceKeys(t *testing.T, ctx context.Context, b *blobx.Bucket, number int) []string {
+	t.Helper()
+	return listKeys(t, ctx, b, occurrencePrefix(number))
+}
+
+// The reporter an upload writes is the verified credential's member string,
+// and not the local file's header, which is text a person or a coding agent
+// can edit (F3).
+func TestUploadReporterIsVerifiedCredential(t *testing.T) {
+	ctx := context.Background()
+	b := sharedBucket(t)
+	i := sharedIssue("update-20261107183012-48213", fingerprint("51"))
+	i.Reporter = "header@example.test"
+	up, err := Upload(ctx, b, i, verified("user:ana@example.test"))
+	if err != nil {
+		t.Fatalf("uploading: %v", err)
+	}
+	rec, _, err := readShared(ctx, b, up.Number)
+	if err != nil {
+		t.Fatalf("reading issue %d: %v", up.Number, err)
+	}
+	if rec.Issue.Reporter != "user:ana@example.test" {
+		t.Errorf("the record's reporter is %q, want the verified credential's", rec.Issue.Reporter)
+	}
+}
+
+// The header's reporter decides nothing an upload writes: not the record, not
+// the index entry, not the occurrence name (F3, F7).
+func TestUploadIgnoresHeaderReporter(t *testing.T) {
+	ctx := context.Background()
+	b := sharedBucket(t)
+	ana := "user:ana@example.test"
+	header := "header@example.test"
+	i := sharedIssue("update-20261107183012-48213", fingerprint("52"))
+	i.Reporter = header
+	up, err := Upload(ctx, b, i, verified(ana))
+	if err != nil {
+		t.Fatalf("uploading: %v", err)
+	}
+	rec, _, err := readShared(ctx, b, up.Number)
+	if err != nil {
+		t.Fatalf("reading issue %d: %v", up.Number, err)
+	}
+	if rec.Issue.Reporter != ana {
+		t.Errorf("the record's reporter is %q, want %q", rec.Issue.Reporter, ana)
+	}
+	if got, want := indexKeys(t, ctx, b, Digest(ana)), []string{reporterIndexKey(up.Number, Digest(ana))}; !slices.Equal(got, want) {
+		t.Errorf("the credential's index = %v, want %v", got, want)
+	}
+	if got := indexKeys(t, ctx, b, Digest(header)); len(got) != 0 {
+		t.Errorf("the header's reporter is indexed at %v, want nothing", got)
+	}
+}
+
+// An upload with only the cached identity does not happen: the cache is a
+// display convenience a coding agent or anyone with the user's own files could
+// write, and it never names a write (F3). The issue stays local.
+func TestUploadWithCachedIdentityOnlyStaysLocal(t *testing.T) {
+	ctx := context.Background()
+	b := sharedBucket(t)
+	env := identityEnv(t)
+	// A verified run caches the address, and then the network is gone: the
+	// only identity this run has is the cache's.
+	if _, err := ResolveIdentity(ctx, identityDeps(env, verifiedLookup(testMember))); err != nil {
+		t.Fatalf("caching an identity: %v", err)
+	}
+	id, err := ResolveIdentity(ctx, identityDeps(env, refusedLookup))
+	if err != nil || id.Source != SourceCached {
+		t.Fatalf("the offline identity = %+v, %v; want the cached one", id, err)
+	}
+	_, err = Upload(ctx, b, sharedIssue("update-20261107183012-48213", fingerprint("53")), id)
+	if !errors.Is(err, errNoVerifiedIdentity) {
+		t.Fatalf("uploading with a cached identity: err = %v, want the verified-only refusal", err)
+	}
+	rows, err := ListShared(ctx, b)
+	if err != nil {
+		t.Fatalf("listing the shared store: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Errorf("the store holds %d issues after a refused upload, want none", len(rows))
+	}
+}
+
+// An upload writes both index entries — the creator's and each duplicate's
+// reporter — and names the occurrence by the verified reporter's digest and the
+// hit time. The original report is not an occurrence of itself (F7).
+func TestUploadWritesIndexAndOccurrenceNames(t *testing.T) {
+	ctx := context.Background()
+	b := sharedBucket(t)
+	fp := fingerprint("54")
+	ana, bo := "user:ana@example.test", "user:bo@example.test"
+	first := sharedIssue("update-20261107183012-48213", fp)
+	first.Reporter = "header-ana@example.test"
+	up, err := Upload(ctx, b, first, verified(ana))
+	if err != nil {
+		t.Fatalf("uploading: %v", err)
+	}
+	hitAt := issueAt.Add(time.Hour)
+	other := hit("update-20261107183014-48215", fp, "header-bo@example.test", "0.9.0", hitAt)
+	got, err := Upload(ctx, b, other, verified(bo))
+	if err != nil {
+		t.Fatalf("uploading the duplicate: %v", err)
+	}
+	if got.Number != up.Number || !got.Attached {
+		t.Fatalf("the duplicate = %+v, want an occurrence of issue %d", got, up.Number)
+	}
+	for _, tc := range []struct{ who, digest string }{
+		{ana, Digest(ana)},
+		{bo, Digest(bo)},
+	} {
+		want := []string{reporterIndexKey(up.Number, tc.digest)}
+		if keys := indexKeys(t, ctx, b, tc.digest); !slices.Equal(keys, want) {
+			t.Errorf("the index of %s = %v, want %v", tc.who, keys, want)
+		}
+	}
+	for _, header := range []string{"header-ana@example.test", "header-bo@example.test"} {
+		if keys := indexKeys(t, ctx, b, Digest(header)); len(keys) != 0 {
+			t.Errorf("a header reporter is indexed at %v, want nothing", keys)
+		}
+	}
+	want := []string{occurrenceDigestPrefix(up.Number, Digest(bo)) + hitAt.UTC().Format(occurrenceTimeLayout)}
+	if keys := occurrenceKeys(t, ctx, b, up.Number); !slices.Equal(keys, want) {
+		t.Errorf("the occurrences = %v, want %v", keys, want)
+	}
+}
+
+// An occurrence's name carries the hit time — the moment the reporter's record
+// was created — and not the moment of the upload, and a retried upload of the
+// same hit is a create-if-absent no-op (F7).
+func TestOccurrenceTimeIsTheHitTimeAndRetryIsANoOp(t *testing.T) {
+	ctx := context.Background()
+	b := sharedBucket(t)
+	fp := fingerprint("55")
+	up := upload(t, ctx, b, sharedIssue("update-20261107183012-48213", fp))
+	hitAt := issueAt.Add(-72 * time.Hour)
+	other := hit("update-20261107183014-48215", fp, "bo@example.test", "0.9.0", hitAt)
+	if _, err := uploadRaw(ctx, b, other); err != nil {
+		t.Fatalf("uploading the duplicate: %v", err)
+	}
+	if _, err := uploadRaw(ctx, b, other); err != nil {
+		t.Fatalf("retrying the upload: %v", err)
+	}
+	keys := occurrenceKeys(t, ctx, b, up.Number)
+	want := []string{occurrenceDigestPrefix(up.Number, Digest("bo@example.test")) + hitAt.UTC().Format(occurrenceTimeLayout)}
+	if !slices.Equal(keys, want) {
+		t.Errorf("the occurrences = %v, want one at %v", keys, want)
+	}
+}
+
+// Reporters reads the layout the store now writes: the digest is in the path,
+// so the names come back in digest order and the reader orders the hits by the
+// time each one carries instead (F7, F10).
+func TestReportersReadsTheNewLayout(t *testing.T) {
+	ctx := context.Background()
+	b := sharedBucket(t)
+	fp := fingerprint("56")
+	up := upload(t, ctx, b, sharedIssue("update-20261107183012-48213", fp))
+	// Two duplicates, the later hit uploaded first, so a reader that trusted
+	// the listing order would not come back in time order.
+	later := hit("update-20261107183015-48216", fp, "cy@example.test", "0.9.0", issueAt.Add(2*time.Hour))
+	upload(t, ctx, b, later)
+	earlier := hit("update-20261107183014-48215", fp, "bo@example.test", "0.9.0", issueAt.Add(time.Hour))
+	upload(t, ctx, b, earlier)
+	got, err := Reporters(ctx, b, up.Number)
+	if err != nil {
+		t.Fatalf("reading the reporters: %v", err)
+	}
+	if want := []string{"ana@example.test", "bo@example.test", "cy@example.test"}; !slices.Equal(got, want) {
+		t.Errorf("the reporters = %v, want %v", got, want)
 	}
 }
