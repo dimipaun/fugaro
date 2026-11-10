@@ -119,7 +119,7 @@ landed.
 ## G1. `--add-entry` and `--remove-entry` (D1162, D1163, D1167). **SEC**
 
 - **Interface.** Two flags on `settingsWriteOptions` (`internal/cli/settings_set.go:259`) beside `--add`
-  and `--remove`, dispatched in the same switch (`:1769`) to `yamledit.UpsertSeqItemByKey` /
+  and `--remove`, dispatched in the same switch (`:1807`) to `yamledit.UpsertSeqItemByKey` /
   `RemoveSeqItemByKey` (`internal/yamledit/yamledit.go:294`, `:351`) for an object list, and to a
   map-member write for a map. **One entry per invocation** (D1167); the entry's key field is the row's
   own, decided per block in this task's table and pinned by its tests.
@@ -137,7 +137,7 @@ landed.
 
 ## G2. The settings-write document's entry members (D1164, D1166)
 
-- **Interface.** `settingsWriteDocVersion` (`internal/cli/settings_set.go:2184`) and the schema's const
+- **Interface.** `settingsWriteDocVersion` (`internal/cli/settings_set.go:2190`) and the schema's const
   (`schemas/settings-write.schema.json:20`) **stay at `1`**, and the entry write's members are **added as
   optional ones**: `operation`, the entry's key field and the members the entry carries. Every version-1
   member keeps its name and its meaning, so the console's edit — which pins version 1
@@ -177,7 +177,7 @@ landed.
   written through G0 and G1 against `layerRows` (`internal/settings/registry.go:411`), with
   `config publish`'s reserved-key and executable-key refusals (`internal/cli/config_publish.go:309`)
   applied to the edit's own document. The layer's `--layer project` write keeps ending with
-  `next: fugaro update` (`internal/cli/settings_set.go:1975`).
+  `next: fugaro update` (`internal/cli/settings_set.go:1981`).
 - **Red step.** `TestSettingsSetLayerProfileEntryWritesTheLayerFile` and
   `TestSettingsSetLayerAbEntryWritesTheLayerFile` — each fails today with a refusal naming the generic
   allowlist. Then `TestSettingsSetLayerRefusesAReservedKey` and

@@ -130,7 +130,7 @@ ruling that `--yes` answers that one too, outside an agent session, and the plan
 task that makes it so — *(Amended 2026-11-07: **P4 has landed**, so `--yes` answers the typed
 confirmation too, outside an agent session, which is the argv the console spawns.)* Every successful
 write ends with `next: fugaro update` (`runSettingsSet`, **S5 #1525**
-`internal/cli/settings_set.go:1975`). *Consequence:*
+`internal/cli/settings_set.go:1981`). *Consequence:*
 the console spawns this and reads its sentences; it writes no document of its own, and it never
 re-implements the diff (**D1103**).
 
@@ -192,7 +192,7 @@ output, no dry run, and no classification.** The flags were `--layer`, `--repo`,
 `--remove` and nothing else (`newSettingsSetCmd`, **S5 #1525** `internal/cli/settings_set.go:346`;
 `newSettingsUnsetCmd`, `:431`). Widening is decided inside `settingsTypedWrite` (**S5 #1525**
 `internal/cli/settings_set.go:1618`) — via `settingsCeilingKey` (`internal/cli/settings_set.go:1399`),
-`settingsLoosens` (`:1516`) and `settingsListSubset` (`:1564`) — and is **never printed as a field**;
+`settingsLoosens` (`:1555`) and `settingsListSubset` (`:1603`) — and is **never printed as a field**;
 it becomes a prompt. The only outputs are prose on stdout and `userErr`'s exit code. *Consequence:*
 the console cannot ask "is this a widening?" and must not re-derive it — the classification rules
 are S5's, and a copy in TypeScript is a second answer that will drift the day D846's set changes.
@@ -383,8 +383,8 @@ An answer here is not an approval: the plan's tasks start only when the owner ap
   values; **(c)** the console performs the write and reads the CLI's prompt behaviour from the exit
   code. *Recommendation:* **(a)**. **(b)** is the option the brief forbids and the one that is wrong
   on the merits: widening is `settingsCeilingKey` (`internal/cli/settings_set.go:1399`) **and**
-  `settingsLoosens` (`:1516`) **and** `settingsListSubset` (`:1564`) **and** `settingsTypedWrite`
-  (`:1585`), including the deliberate "a form this Fugaro does not know how to compare is treated as
+  `settingsLoosens` (`:1555`) **and** `settingsListSubset` (`:1603`) **and** `settingsTypedWrite`
+  (`:1618`), including the deliberate "a form this Fugaro does not know how to compare is treated as
   a loosening" rule — a TypeScript re-implementation would answer *narrowing* where the CLI answers
   *widening*, which is the one direction that must never be got wrong. **(c)** is refused because a
   widening's failure mode is a refusal **after** the operator confirmed a dialog that could not have

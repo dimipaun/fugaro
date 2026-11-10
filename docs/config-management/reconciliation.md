@@ -138,7 +138,7 @@ on.
   one document, so D1166 keeps the one that exists.
 - **C2 — `--add` and `--remove` already exist.** The brief asks for them as new. They are on the shared
   option struct (`internal/cli/settings_set.go:272`, `:273`) and they write **string-list** items
-  through `yamledit.AddListItem` / `RemoveListItem` (`:1772`, `:1776`). What does not exist is an entry write for
+  through `yamledit.AddListItem` / `RemoveListItem` (`:1819`, `:1823`). What does not exist is an entry write for
   a map or an object list, which is what D1162 adds and what F8 shows the editor already supports.
 - **C3 — the wildcard resolver already exists.** The brief reads the wildcard gap as a parsing gap. It
   is an allowlist gap: `settingsWriteLookup` (`internal/cli/settings_set.go:549`) already resolves a
@@ -243,7 +243,7 @@ rather than its conclusion.
 
 - **D1164 (the settings-write document keeps version 1 and gains its entry members as optional ones, and
   the console keeps working unchanged) — OPEN, recommended.**
-  Recommendation: `settingsWriteDocVersion` (`internal/cli/settings_set.go:2184`) and the schema's const
+  Recommendation: `settingsWriteDocVersion` (`internal/cli/settings_set.go:2190`) and the schema's const
   (`schemas/settings-write.schema.json:20`) **stay at `1`**, and the entry write's members — `operation`,
   the entry's key field, the entry's members — are **added as optional members**, none of them required.
   The document's own description is the rule being followed: members are only ever added within a version
@@ -276,7 +276,7 @@ rather than its conclusion.
 
 - **D1166 (the dry run, the backup and the byte compare-and-swap are the existing ones; no ETag is
   added) — OPEN, recommended.**
-  Recommendation: `--dry-run` prints the one document (`internal/cli/settings_set.go:1927`), the write
+  Recommendation: `--dry-run` prints the one document (`internal/cli/settings_set.go:1933`), the write
   backs the file up through `backupFile` (`internal/cli/init.go:2602`) and refuses a file that moved
   through the compare-and-swap (`internal/cli/settings_write.go:150`). A field never changes meaning;
   the entry fields are members **added** to the document (D1164).
@@ -407,7 +407,7 @@ rather than its conclusion.
 - **D1176 (the edit's own next step publishes; `fugaro config publish` stays, but no edit needs it) —
   OPEN, recommended.**
   Recommendation: a layer write ends with `next: fugaro update`
-  (`internal/cli/settings_set.go:1975`) and `update`'s Layer stage publishes the file every writer here
+  (`internal/cli/settings_set.go:1981`) and `update`'s Layer stage publishes the file every writer here
   has just written — the HARD RULE's own command, not a second one. `config publish` remains the
   operator's door and the door the agent runs under the gate
   ([managed spec](../managed-agent-converge/spec.md) §4.2), so nothing documented is removed; what

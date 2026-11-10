@@ -63,7 +63,7 @@ needs no change at all.
 ### 2.2 `--add-entry` and `--remove-entry`
 
 `settings set --add` and `--remove` already add and remove **items of a string-list key**
-(`internal/cli/settings_set.go:259`, `:1769`), through `yamledit.AddListItem` and
+(`internal/cli/settings_set.go:259`, `:1807`), through `yamledit.AddListItem` and
 `yamledit.RemoveListItem` (`internal/yamledit/yamledit.go:234`, `:258`). They do not
 reach a **map** (`workflows.*.cache.*.key`, `providers.*.models`) or an **object list**
 (`workflows.*.cache` is a sequence of mappings, `workflows.*.secrets` a sequence of
@@ -90,7 +90,7 @@ entry by `name`), because the registry names leaves and not blocks.
 
 **Recommendation (D1166): an entry write is the same edit as any other.** It is classified by the same
 `settingsTypedWrite` call (`internal/cli/settings_set.go:1618`), printed by the
-same dry-run document (`internal/cli/settings_set.go:1927`), confirmed through
+same dry-run document (`internal/cli/settings_set.go:1933`), confirmed through
 the same `applySettingsEdit` (`internal/cli/settings_write.go:86`), backed up
 by the same `backupFile` (`internal/cli/init.go:2602`) and refused when the file moved by
 the same byte compare-and-swap (`internal/cli/settings_write.go:150`). There is
@@ -215,7 +215,7 @@ mechanism. The layer's rows already exist in the registry
 mechanism, not a new registry.
 
 **Recommendation (D1176): the edit's own next step publishes.** `fugaro settings set --layer project`
-already ends with `next: fugaro update` (`internal/cli/settings_set.go:1975`); the
+already ends with `next: fugaro update` (`internal/cli/settings_set.go:1981`); the
 HARD RULE is that `update` publishes the layer, not that a person runs `fugaro config publish` after it.
 `fugaro config publish` therefore **stays** as the operator's own door (and is the door the agent runs
 under the gate, [managed spec](../managed-agent-converge/spec.md) §4.2), but no *edit* here requires it:
