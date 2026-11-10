@@ -137,9 +137,10 @@ The registry names `rigor` and `rigor floor` as the owners of seven keys
 command exists**. But the commands are **already designed**, and this design **builds** them rather than
 re-designing them: `fugaro rigor set` in [docs/rigor-command](../rigor-command/README.md) (D830–D839,
 D900), and `fugaro rigor floor` in the settings design (SD10,
-[docs/settings-commands](../settings-commands/README.md)). **Recommendation: the plan's rigor task is the
-one that lands them, and it takes their rules from those designs** — the rank rule (at or above the
-resolved mode), **D834**'s `hotfix` refusal, **D838**'s duplicate-glob refusal.
+[docs/settings-commands](../settings-commands/README.md)) — **which designed the same command this
+design's G7 builds, closed as G7's duplicate on 2026-11-10**. **Recommendation: the plan's rigor task
+is the one that lands them, and it takes their rules from those designs** — the rank rule (at or above
+the resolved mode), **D834**'s `hotfix` refusal, **D838**'s duplicate-glob refusal.
 
 **Recommendation (D1170): removing or lowering a `review_floor` entry takes the project's name typed at
 a terminal (D846, SD10).** `confirmTypedStrict` (`internal/cli/budget.go:250`) is that

@@ -39,7 +39,7 @@ As of 2026-11-10, read from `main`, the open pull requests and each plan's task 
 | post-review-triage | 6/14 | TR3, TR6 (in a run), TR7 to TR10, TR12; TR5 merged, BF1m (#1999) merged |
 | model-crafts | 4/10 | MC4 to MC7, MC9; owner MC10 |
 | security-classification | 6/11 | SC3, SC5, SC9 to SC11 |
-| settings-commands | about 6/12 | S6 to S11 |
+| settings-commands | about 6/12 | S6, S8 to S11; S7 closed 2026-11-10 as a duplicate of config-management's G7 |
 | rigor-modes | about 22/40 | T7.1, T7.2, T8.1, T8.3; overlay plan LV1 to LV7 essentially unstarted |
 | roles-scopes | 3/12 | RS3 (draft #1994), RS4, RS5, RS6a to RS6c, RS7, RS8, RS10; RS5 (`fugaro user`) not started |
 | review-levels-ab-jobmax | about 24/40 | A/B reviewer slot, `/jobmax` skill, `auto_launch` |
