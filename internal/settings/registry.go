@@ -849,6 +849,14 @@ var localRows = []Row{
 	loc("image_catalog.entries.*.source.image", "none", "project", docImages),
 	loc("image_catalog.entries.*.description", "none", "project", docImages),
 	loc("image_catalog.entries.*.default", "false", "project", docImages),
+	// The services an entry's image provides are the same image policy one
+	// step further (D1904): the run starts them before its tests, and the
+	// entry's own list is the only source, so a person reading the row learns
+	// which list decided it. The owner is the `fugaro project` family, as the
+	// map's row below is `fugaro image map`'s: this leaf belongs to a catalog
+	// entry and its path carries a `*`, so the generic write refuses it twice
+	// over (settings_set.go) and the family is the command that writes it.
+	loc("image_catalog.entries.*.services", "none: the run starts no backing service", "project", docImages),
 	// The repo-to-image map is the catalog's counterpart one step down (D1906):
 	// which entry each of the project's repositories runs, so it is the image
 	// policy too and one row for the whole map because the map's keys are the

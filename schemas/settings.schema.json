@@ -637,6 +637,9 @@
         "image_catalog.entries.*.default": {
           "default": "unset = false"
         },
+        "image_catalog.entries.*.services": {
+          "default": "unset = none: the run starts no backing service"
+        },
         "image_map": {
           "default": "unset = none: no repository is mapped, and the catalog's default entry decides the image"
         },

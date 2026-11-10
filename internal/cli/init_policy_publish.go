@@ -109,7 +109,14 @@ func policyConfigDrift(lc *localcfg.Config, p *projectpolicy.Policy) []policyDri
 	// differs from a node that carries another, so a catalog-only edit reaches
 	// the node through `fugaro update` with no second command.
 	if lc.ImageCatalog != nil {
-		add("image_catalog", lc.ImageCatalogEffective(nil), p.ImageCatalog, false)
+		cat := lc.ImageCatalogEffective(nil)
+		add("image_catalog", cat, p.ImageCatalog, false)
+		// The services the entries declare are derived from that same catalog
+		// (D1904) and travel as a key of their own (F20), so a config that adds
+		// or removes one is a difference this comparison has to see: comparing
+		// the catalog alone would leave an entry's services on the node exactly
+		// as they were, and the run would start what the operator just removed.
+		add("image_services", projectpolicy.ImageServicesFromCatalog(cat), p.ImageServices, false)
 	}
 	// The repo-to-image map is compared the same way and for the same reason
 	// (D1906): it is where a run's own repository is looked up, so a config that

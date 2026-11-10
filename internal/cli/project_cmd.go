@@ -935,6 +935,24 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		publishedCatalog = old.ImageCatalog
 	}
 	imageCatalog := lc.ImageCatalogEffective(publishedCatalog)
+	// The services each entry's image provides are derived from that catalog
+	// (D1904) and not kept member by member, because there is no second place
+	// they are written: an entry carries them in the catalog the operator edits,
+	// and the node carries them as a key of its own (F20's answer, in
+	// projectpolicy). A config that writes a catalog therefore states the whole
+	// block — an entry whose services were removed has them removed on the node,
+	// which is an edit the drift comparison sees. A config that writes no
+	// catalog keeps the node's block, which is the catalog's own keep rule and
+	// its reason: a machine whose config predates the key cannot restate the
+	// services, and deriving from the node's catalog would drop every one of
+	// them — the node's entries cannot carry the member at all.
+	var imageServices projectpolicy.ImageServices
+	switch {
+	case lc.ImageCatalog != nil:
+		imageServices = projectpolicy.ImageServicesFromCatalog(imageCatalog)
+	case old != nil:
+		imageServices = old.ImageServices
+	}
 	// The repo-to-image map and the bake switch are kept by that same rule
 	// (D1906, D1901), and the cost of the other reading is the catalog's: a
 	// machine whose config predates the keys — a teammate's, a CI box's — would
@@ -1006,6 +1024,7 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		ReviewFloor:          floor,
 		VerifierAccounts:     verifierAccounts,
 		ImageCatalog:         imageCatalog,
+		ImageServices:        imageServices,
 		ImageMap:             imageMap,
 		BakeRepos:            bakeRepos,
 		Orchestrator:         orchestrator,

@@ -113,8 +113,14 @@ const (
 // not the allowlist, exactly as a key the registry carries and this list does
 // not. The two rows are visible in internal/settings/registry.go, and the
 // document's own sentence names the split.
+//
+// This branch's IS9 moved the registry's figure once more, by one row and not
+// the allowlist's: `image_catalog.entries.*.services` is the catalog entry's
+// own list of the services its image provides (D1904), and the leaf a person
+// sets with the generic path like every other catalog member, so it is one row
+// the registry carries and this list does not.
 const (
-	cfmRegistryRows   = 394
+	cfmRegistryRows   = 395
 	cfmAllowlistNamed = 95
 )
 

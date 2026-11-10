@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -83,7 +84,34 @@ func launchWithCredentialsService(t *testing.T, yaml, url string, ready bool) (p
 	if _, err := launchRun(context.Background(), env, appSlug, raceSpec(t, env), time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	return rec.env, rec.secretEnv
+	return withoutServicesStamp(t, rec.env), rec.secretEnv
+}
+
+// withoutServicesStamp takes the services stamp out of a launch's plain Env,
+// and fails unless it is there exactly once: the launcher writes it on every
+// launch, the empty value included, so that an image's own ENV under the same
+// name can never answer for the entry the job was deployed with
+// (backend.ServicesEnv, servicesLaunchEnv, D1904). The tests that compare a
+// plain list to the entries the credentials-service switch produces are about
+// those entries; the stamp is the one entry every launch carries, for every
+// installation and every repository, and its value is the entry's own list or
+// empty — never a secret (the empty value is the common case here, so a test
+// that forgot it would otherwise read as "the launch wrote nothing").
+func withoutServicesStamp(t *testing.T, plain []string) []string {
+	t.Helper()
+	out := make([]string, 0, len(plain))
+	stamps := 0
+	for _, kv := range plain {
+		if strings.HasPrefix(kv, backend.ServicesEnv+"=") {
+			stamps++
+			continue
+		}
+		out = append(out, kv)
+	}
+	if stamps != 1 {
+		t.Fatalf("the launch's plain Env carries %s %d times (%v): every launch writes it once, empty when the entry declares no service", backend.ServicesEnv, stamps, plain)
+	}
+	return out
 }
 
 // TestTheCredentialsServiceURLReachesTheJobEnv: an installation that opted in
@@ -368,15 +396,16 @@ func TestALaunchOutsideACheckoutReadsTheRecordOrTheDeployedRoot(t *testing.T) {
 			if _, err := launchRun(context.Background(), env, appSlug, raceSpec(t, env), time.Now()); err != nil {
 				t.Fatal(err)
 			}
+			plain := withoutServicesStamp(t, rec.env)
 			if !tc.recorded && !tc.rootSeeded {
-				if len(rec.env) != 0 {
-					t.Fatalf("a launch with no document, no record and no tfvars of the repository's root put %v in the plain Env, want none: nothing on this machine says that root was applied with the service on, and the address is what opens the git provider keyless for a mint a job account with no invoker grant is refused", rec.env)
+				if len(plain) != 0 {
+					t.Fatalf("a launch with no document, no record and no tfvars of the repository's root put %v in the plain Env, want none: nothing on this machine says that root was applied with the service on, and the address is what opens the git provider keyless for a mint a job account with no invoker grant is refused", plain)
 				}
 				return
 			}
 			want := envCredentialsServiceURL + "=" + launchCredsURL
-			if len(rec.env) != 1 || rec.env[0] != want {
-				t.Fatalf("the launch's plain Env = %v, want exactly [%s]: the run's document could not be read, and the repository's record and this machine's tfvars of its root are what stand in for it", rec.env, want)
+			if len(plain) != 1 || plain[0] != want {
+				t.Fatalf("the launch's plain Env = %v, want exactly [%s]: the run's document could not be read, and the repository's record and this machine's tfvars of its root are what stand in for it", plain, want)
 			}
 		})
 	}
