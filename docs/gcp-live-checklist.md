@@ -826,6 +826,7 @@ probe account carries predefined grants only).
 | 139 | What an agent ID distinguishes in a gateway run's log ([`docs/task-governance/`](task-governance/implementation-plan.md), its Check 139, task T3.5, and the reconciliation's **U4**): read-only, in an **existing** sandbox gateway run's logs, the `model call` lines' `agent_id` — the main session's lines carry **an empty one**, each sub-agent a **distinct** non-empty one, and the background model's calls carry **none** — so the distinct-agent count **T7.2**'s fan-out stop spends is a sub-agent count. **It gates T7.2:** that task does not merge until this check has run | See "Check 139" below; **you** run it, read-only, on the sandbox installation only — **never `belong`** — at your own terminal, over a run that already exists, reading the gateway's `model call` entries where they are (`gcloud logging read` with the filter the CLI's own log reader builds, scoped to the run's execution) — **not** `fugaro logs`, which prints the time, severity, stage and message only and would answer nothing; **no agent runs any step of it**, and it launches nothing | Nothing: one read of one run's log entries and one `fugaro diagnose <run-id> --json`. No model call, no run, no object and no policy. **USER-RUN, NOT RUN.** |
 | 145 | The Bitbucket read consumer's facts ([`docs/bitbucket-credentials/`](bitbucket-credentials/implementation-plan.md), its Check 145, task T2.8 and the script T2.7 writes; the reconciliation's U1–U5, U8, U11, U12, U14 and U15): the sandbox consumer read from a file **you** name and never printed — the token's lifetime (U1); whether the `client_credentials` grant returns a refresh token and whether a single minted token can be revoked (U2); whether the token reaches a second workspace you belong to (U3); whether the sandbox's plan admits consumers (U4); the workspace's seat count before and after (U5); whether IP allowlisting applies to OAuth tokens, and U8 stays **UNVERIFIED** if the plan offers none (U8); whether the token response lists the granted scopes (U11); whether two grants return distinct tokens (U12); whether creating a consumer needs workspace-admin rights and whether the token then reaches admin endpoints (U14); and whether the consumer must be marked private (U15). **It gates the read mint (O4):** tasks T2.3 and T3.1 do not merge before this check passes, and if U3 shows reach beyond the workspace, D360 and D361 go back to the owner before T2.3 merges. It also shows that a write with the read token is refused | See "Check 145" below; **you** run it at your own terminal, on sandbox workspaces only, never `belong`, with the consumer file you name and the script never printing it, and **no agent runs any step of it**. The script lands with task **T2.7**; this section is task **T0.2**'s and carries no steps of its own until then | A sandbox workspace and a second one you belong to, one read consumer created as the installing person, and two `client_credentials` grants; the script's own Restore says what it leaves behind. **USER-RUN, NOT RUN.** |
 | 146 | The coordinator sweep reads a Bitbucket repository through the service, and its GitHub views are unchanged ([`docs/bitbucket-credentials/`](bitbucket-credentials/implementation-plan.md), its Check 146, task T2.10 and the script T2.9 writes; D361 and D362): on a sandbox installation with the credentials service on, the sweep's stored view for a Bitbucket repository is **read** rather than `StaleUnsupported`, and the installation's GitHub views — the ones the sweep already writes — are unchanged | See "Check 146" below; **you** run it on a sandbox installation, never `belong`, and **no agent runs any step of it**: `scripts/live-checks/check146.sh --installation <sandbox>`. The script lands with task **T2.9**; this section is task **T0.2**'s and carries no steps of its own until then | One sandbox installation with the service on and one sweep; the script's own Restore says what it leaves behind. **USER-RUN, NOT RUN.** |
+| 148 | The Bitbucket read consumer's stop, rotation and ownership transfer ([`docs/bitbucket-credentials/`](bitbucket-credentials/implementation-plan.md), its Check 148, task T3.8 and the script this task writes; U13, and D1961): on a sandbox installation with the read mint deployed, the consumer is taken **out** of the bundle and a read mint is then **refused**; its secret is regenerated and the mint serves the **new** one while the **old** secret's own `client_credentials` grant is **refused**; and ownership moves to a successor consumer under a second sandbox account, against which a read mint **succeeds** — with **U13** recording whether a token minted **before** the rotation still reads | See "Check 148" below; **you** run it at your own terminal, on `https` or a loopback `http` endpoint, on sandbox workspaces only, never `belong`, and **no agent runs any step of it**: `scripts/live-checks/check148.sh --installation <sandbox> --repo <owner/name> --consumer-file <path> --rotated-consumer-file <path> --successor-consumer-file <path>`. The row and the section are **T0.2**'s | Three sandbox consumer files **you** name and the script never prints (the bundle's own consumer, the same one after Bitbucket regenerated its secret, and a successor created under a second sandbox account), one sandbox installation with the credentials service on and its coordinator job deployed, and `gcloud`, `fugaro`, `python3` and `curl` on PATH; the script's own Restore says what it leaves behind. **USER-RUN, NOT RUN.** |
 | 149 | The console shows the stored view on the owner's own machine ([`docs/bitbucket-credentials/`](bitbucket-credentials/implementation-plan.md), its Check 149 and task T1.3; D364, and U9 end to end): `fugaro coordinator status --from-store --all --json --project <name>` reads the stored view as the signed-in person with **no key**, and the console's project view renders it — the read the console could not make while it had to run `coordinator status` itself | See "Check 149" below; **you** run it at your own terminal, on your own machine, read-only, and **no agent runs any step of it** | Nothing: two reads and one window. No project is written, no run is launched and no credential is minted. **USER-RUN, NOT RUN.** |
 | 170 | A key verifies offline in the CLI, the console and the app ([`docs/subscriptions/`](subscriptions/implementation-plan.md), its Check 170, written by task **S3.6** and run by you in task **S3.7**; **R2**, and [design/key-signing-service.md](design/key-signing-service.md) §1–§2): one key the service issued — or the owner minted by hand with S2.10's tool — is installed where each product keeps it (the CLI's `licence.key` at mode 0600, the console's key screen, the app's settings screen), the network is off on the machine and on the phone, and all three read the same tier, seats and expiry with no call made to answer. It is the reading no hermetic test can produce: each verifier's own tests hold a signature vector, and this holds a key the owner's key ring signed | See "Check 170" below; **you** run it, at your own terminal and on a sandbox installation, read-only, with the network off, and **no agent runs any step of it** | Nothing: one key installed in three places, no mint and no deploy. **USER-RUN, NOT RUN.** |
 | 171 | The free seat's three outcomes ([`docs/subscriptions/`](subscriptions/implementation-plan.md), its Check 171, written by task **S3.6** and run by you in task **S3.7**; the design's §4.1–§4.3 and UNVERIFIED **U11**): against the intake that mints with the staging key id, an address at a free email provider and a second application for a domain that already holds a free key are each **queued**, with the same uniform answer and nothing said about an existing key, and a domain the service's event store knows holds a paid subscription is **refused**. Whether an email domain, a free-mail list and the code host's API are enough to enforce "one per organisation" has never been measured | See "Check 171" below; **you** run it, against the intake that mints with the staging key id (D459 is where that intake lives), and **no agent runs any step of it** | Two applications, each declined in the admin page, so no key is minted for either; the third is refused at submission and never queued. **USER-RUN, NOT RUN.** |
@@ -11213,6 +11214,79 @@ the row are **T0.2**'s.
 
 **Restore.** This section lands none: the script's own Restore says what it leaves behind. The check
 reads a sandbox installation and writes nothing to the repository it reads. **Never run any step
+against `belong`**, and **no agent runs any step of it**.
+
+## Check 148: the read consumer's stop, rotation and ownership transfer (a sandbox installation with the read mint deployed, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **T0.2** of the Bitbucket-credentials plan
+([bitbucket-credentials/implementation-plan.md](bitbucket-credentials/implementation-plan.md), its
+"Checks this plan takes (Checks 145–154)" and its task **T3.8**; D367, and the owner's answer of
+2026-11-10, **D1961**). T3.8's verdict is **superseded in part, kept in part**: the run-mint half
+goes with S3, and the **read half** — the read consumer's own stop, rotation and ownership transfer,
+with **U13** — is kept and brought back into S2 beside **T2.6**, because the read consumer is merged
+and shipped and nothing else exercises its rotation. The script that runs it is this task's —
+`scripts/live-checks/check148.sh`, with its own test `check148_test.sh` — and the owner runs it
+beside T2.6, whose runbook section (**§12**, "The Bitbucket read consumer: creating it, and stopping,
+rotating and transferring it") it executes step by step.
+
+**What the check measures.** Three changes to the bundle entry `bitbucket-read-consumer`
+(`key`, `secret`, `workspace`), each confirmed against the read mint at
+`POST <service>/v1/bitbucket/read-token` with a body of `{"repository":"<owner/name>"}`, and each
+read through the credential-carrying checks the drill makes:
+
+- **the stop** — the entry is taken out of the bundle and a read mint is then **refused**. No Fugaro
+  command removes a bundle entry (`fugaro creds set` is the bundle's only writer and only ever adds
+  or replaces), so the drill makes this version **by hand** — `gcloud secrets versions add`, with the
+  version it replaced **disabled** — and that is what the row says it does;
+- **the rotation** — the consumer's secret regenerated at Bitbucket, the bundle written again with
+  `fugaro creds set`, and the mint **served** from the new one while the **old** secret's own
+  `client_credentials` grant at the OAuth endpoint is **refused**: a rotation that leaves the old
+  secret alive is a **FAIL**;
+- **the ownership transfer** — a successor consumer created under a **second** sandbox account,
+  written into the bundle, and a read mint confirmed against it. What the transfer leaves behind is
+  the bundle holding the **successor**, which is what the transfer is, and the two replaced
+  consumers to delete at Bitbucket;
+- **U13**, the open question this check exists for: whether a token minted **before** the rotation
+  still reads. The drill replays the pre-rotation token against the API root after the rotation and
+  records the answer either way — it is an **INFO** line, not a pass or a fail, because the
+  reconciliation carries U13 as **UNVERIFIED** and this check is what settles it. If it shows the
+  token still reads, the runbook's rotation clause and `SECURITY.md`'s custody paragraph
+  (**T2.11**) are corrected in the same sweep, not worked around.
+
+The service serves the **parsed** bundle for 30 seconds (`credsvc.BundleCacheTTL`), so every write
+is followed by a bounded wait before the mint is read: a mint read too soon after a write is the old
+document's answer, and a check that took it as the new one's would report a stop that had not
+happened. `CHECK148_MINT_WAIT` is that bound in seconds (default 90, 0 meaning one attempt).
+
+**What you type** (task T3.8's read half, beside T2.6):
+
+```bash
+scripts/live-checks/check148.sh \
+  --installation <sandbox> --repo <owner/name> \
+  --consumer-file <path> --rotated-consumer-file <path> --successor-consumer-file <path>
+```
+
+The three files are the consumer document the bundle holds today, the same consumer after Bitbucket
+regenerated its secret, and the successor created under the second sandbox account. Each is the
+mapping the entry holds — `key`, `secret`, `workspace`, one per line — and the script **never
+prints, echoes or passes one on a command line**: they reach `fugaro creds set` on stdin and the
+shell never holds a value. Its own test (`bash scripts/live-checks/check148_test.sh`, run against
+fake tools on PATH and a fake Bitbucket Cloud on a loopback port, with no network and no cloud
+project) fails if a secret or a minted token is ever written to the output or left in the scratch
+directory. One line is the confirmation: the script says what it will write and asks you to type the
+**project ID**, unless you passed `--yes`. Anything else stops without writing.
+
+**What it depends on.** The deployed read mint — **T2.4** (the service's Terraform) and **T2.5**
+(the read path) — and **T2.6**'s runbook section, which this check executes; the row and the section
+are **T0.2**'s. It is a **sandbox** check: the installation name `belong` is refused before any write
+whether you typed it as `--installation` or the config in force answers it, nothing runs in CI, and
+**no agent runs any step of it**.
+
+**Restore.** The script cleans up after itself, including on a Ctrl-C: the scratch directory — which
+holds the whole bundle document while the stop is being made, and every token the drill mints — is
+removed, and its `restore` row says whether it really went. **The bundle is not put back the way it
+was**: it ends holding the successor consumer, which is the transfer, and the `restore` row names
+the two consumers to delete at Bitbucket once you have pasted the block back. **Never run any step
 against `belong`**, and **no agent runs any step of it**.
 
 ## Check 149: the console shows the stored view on the owner's own machine (your own machine, read-only; run by you; NOT RUN)
