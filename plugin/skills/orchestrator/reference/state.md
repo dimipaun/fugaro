@@ -20,7 +20,7 @@ One document per project, in the project's Firebase Realtime Database, under `or
 - `work_items` — the things to do, each with a title, the repository, the recipe, the rigor tier, the brief, its dependencies, its `phase`, and the bookkeeping of its attempts (run id, approval, attempts, intents).
 - `decisions` — the questions in the air, each with the class it waits on and, once closed, the answer and who gave it.
 - `facts` — what the loop learned, as key and value, each with the class that wrote it.
-- `archived` — what finished, with how it ended. The daemon moves things here as the document fills, so a reader sees a bounded document rather than the whole history.
+- `archived` — what finished, with how it ended. Aging history out is the loop's, not a reader's: the retention rule keeps the document bounded, so a reader sees the work and the recent past rather than the whole story.
 
 ## The ops a patch may carry
 
@@ -31,7 +31,7 @@ One patch is `{"base_rev": N, "ops": [...]}`, at most 64 ops, and the ops apply 
 | `work_item_upsert` | `work_item`: `id` and any of `title`, `repo`, `recipe`, `rigor_tier`, `brief`, `depends_on`, `note`. A new item carries the first five. | a person, a session, the daemon |
 | `work_item_approve` | `approve`: `id`, `spec_digest` | a person only |
 | `work_item_archive` | `archive`: `id`, `outcome` | a person, a session, the daemon |
-| `decision_add` | `decision`: `id`, `question`, `waiting_on` (`person`, `session` or `daemon`) | a person, a session, the daemon |
+| `decision_add` | `decision`: `id`, `question`, `waiting_on` (`person`, `session` or `daemon`) | a person, a session, the daemon — the breaker's own question belongs to the daemon |
 | `decision_resolve` | `resolve`: `id`, `answer` | the class the decision waits on, and a person for any of them |
 | `fact_set` | `fact`: `key`, `value` | a person, a session, the daemon |
 | `fact_delete` | `fact`: `key` | a person, a session, the daemon |
