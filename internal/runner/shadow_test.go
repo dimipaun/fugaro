@@ -821,6 +821,34 @@ func TestShadowRefusalMatchesTheChampion(t *testing.T) {
 	})
 }
 
+// TestShadowNoVerdictMatchesTheChampion: the pair's endings follow the
+// champion's, and the no-verdict one is where two arms can disagree about a
+// fact neither of them can change — the arm's review round answered nothing
+// exactly as the champion's did. The champion ends `unreviewed` there
+// (TestUnreviewedRunIsNotFailed is its own case), so an arm that ended
+// `failed` would be a pair two scorers read as two different runs of the same
+// work (D559). What the arm differs in is what it writes beside the ending: it
+// publishes nothing, so its outcome is none where the champion's is a draft
+// (D568).
+func TestShadowNoVerdictMatchesTheChampion(t *testing.T) {
+	g, _ := armGW(t, armCfg(t), "50", challengerModel, armLayer)
+	pushes := countPushes(t, g.harness)
+	rec, err := g.run(t, implement("feature"), proseReview, proseReview)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusUnreviewed || rec.Outcome != runstore.OutcomeNone {
+		t.Fatalf("record = %s/%s (reason %q), want the arm %s with nothing published",
+			rec.Status, rec.Outcome, rec.Reason, runstore.StatusUnreviewed)
+	}
+	if want := "review round 1 returned no parseable verdict after a retry"; rec.Reason != want {
+		t.Fatalf("reason = %q, want %q: the arm's sentence names the round the way the champion's does", rec.Reason, want)
+	}
+	if n := pushes(); n != 0 || len(publishes(g.harness)) != 0 {
+		t.Fatalf("the unreviewed arm published something: %d push(es), %v", n, publishes(g.harness))
+	}
+}
+
 // TestShadowUploadsPatch: a challenger arm's patch object is the run's own
 // tree diff, from the commit it started at to its final head, with no commit
 // metadata in it — the pair's material, and the only thing a challenger
