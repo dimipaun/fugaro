@@ -830,7 +830,10 @@ over `docs/issues.md`'s `fugaro issue mine` section (T-IM7), moved the table's
 pin row from 118 to 119.
 Amended 2026-11-10: `internal/cli/docs_bitbucket_runbook_test.go`, the
 bitbucket-credentials folder's pin over the credentials-service runbook's
-read-consumer section, moved the table's pin row from 119 to 120.) They
+read-consumer section, moved the table's pin row from 119 to 120.
+Amended 2026-11-10: `internal/cli/docs_bitbucket_security_test.go`, the same
+folder's pin over SECURITY.md's section for the read mint and its two caller
+classes, moved it from 120 to 121.) They
 are named because the figure is a running total of other folders' guards: a folder
 that writes one moves this row in its own commit, and a reader who finds the row
 stale has found a merge that did not.
@@ -849,7 +852,7 @@ stale has found a merge that did not.
 | Files in `internal/runner` that mention `Severity` at all | 4 | `git grep -l 'Severity' -- internal/runner ':!*_test.go' \| wc -l` |
 | Image-skew `Since` constants | 35 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
 | Run outcomes | 4 | `git grep -ho 'Outcome[A-Za-z]* *= *"[a-z]*"' internal/runstore/runstore.go \| wc -l` |
-| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 120 | `ls internal/cli/docs_*_test.go \| wc -l` |
+| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 121 | `ls internal/cli/docs_*_test.go \| wc -l` |
 | Questions the in-job-review folder put to the owner, all answered | 17 | `git grep -hc '^\*\*Q[0-9]*\. ' docs/in-job-review/reconciliation.md` |
 | Published project-policy version | 4 | `sed -n 's/^const Version = //p' internal/projectpolicy/version.go` |
 | Blocks the project layer's `defaults:` may set whose value names a repository | 0 | `sed -n '/^type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -ci repo` |
