@@ -115,10 +115,9 @@ because they are about *these* documents rather than about the code:
   than shipped, so it does not claim a Windows build 0.10.0 does not have. **The other two —
   [docs/design/desktop-console.md](../design/desktop-console.md) §4.2, §7.6's rule 3, the owner-run
   table's signing row and D10's row, and [console/README.md](../../console/README.md)'s Linux
-  section — carry their notes as of 2026-11-10**, which is what Part H (T-H3) landed and the date
-  each note itself carries: the same dated note in all four places, saying which half of "Windows
-  stays out" moved — the *build* is in by the ruling above, the *signing* answer is not, and there is
-  still no Authenticode identity. That closes this item, and it changes nothing above: the ruling is a
+  section — carry their notes as of 2026-11-10**, which is what Part H (T-H3) landed: the same dated
+  note in all four places, saying which half of "Windows stays out" moved — the *build* is in by the
+  ruling above, the *signing* answer is not, and there is still no Authenticode identity. That closes this item, and it changes nothing above: the ruling is a
   plan, the plan is **approved to build but unbuilt**, and nothing on Windows has shipped, so the
   three are a stated limit rather than a contradiction (F43, C4).
 
