@@ -109,6 +109,71 @@ func TestAnUnclassifiedTypeRefusesDelete(t *testing.T) {
 	}
 }
 
+// TestTheDeleteRulesOwnReasonsFollowTheType is the guard's half of the split
+// the cover takes for the delete rule's own sentences: a list that NAMES the
+// removal's address without approving the object the plan removes — an entry
+// bound to another object, a before view that identifies nothing — is content
+// for a type D1551 takes and integrity for a type it protects. The guard
+// refused both whatever the type was, so one removal came back refused by this
+// half of the gate (Verdict.OK false, and the apply stopped) while the cover
+// wrote the same sentence as one of D1545's warnings: the plan was refused for
+// a removal D1545 says is recorded and warned, and TestGateSeesOneRemovalOnce
+// is what reads the two halves together.
+func TestTheDeleteRulesOwnReasonsFollowTheType(t *testing.T) {
+	const taken, bearing, unclassified = "google_cloud_run_v2_job", "google_storage_bucket", "google_firestore_database"
+	if RefusesRemovalType(taken) {
+		t.Fatalf("%s refuses its own removal now, so it no longer exercises D1545's side of the table", taken)
+	}
+	if !RefusesRemovalType(bearing) {
+		t.Fatalf("%s no longer refuses its own removal, so it no longer exercises D1551's data-bearing side", bearing)
+	}
+	if _, classified := DataBearingType(unclassified); classified {
+		t.Fatalf("%s is classified now: pick a type in neither table for the unclassified case", unclassified)
+	}
+	// bound is an entry that names the address for an object the plan does not
+	// show there: what Approves refuses for the identity it holds.
+	bound := func(addr string) []DeleteEntry {
+		return []DeleteEntry{{Address: addr, Before: "type=" + taken + " name=fmgd-other"}}
+	}
+	job := managedKeptFixture[taken].Change.After
+	// A view of a type whose identity turns on no per-instance attribute and
+	// carries none of the three name-derived ones identifies nothing, which is
+	// the other sentence Approves writes for a listed address (identity.go).
+	anonymous := map[string]any{"service": "run.googleapis.com"}
+	for _, tc := range []struct {
+		name, half, want string
+		typ              string
+		before           map[string]any
+		entries          []DeleteEntry
+	}{
+		{"an entry bound to another object, a type D1551 takes", "warn", "for another object", taken, job, bound("module.m." + taken + ".this")},
+		{"a before view that identifies nothing, a type D1551 takes", "warn", "does not identify", "google_project_service", anonymous,
+			[]DeleteEntry{{Address: "module.m.google_project_service.this", Before: "type=google_project_service"}}},
+		{"an entry bound to another object, a data-bearing type", "refuse", "for another object", bearing, bucketBefore("fmgd-b", "2026-01-02T03:04:05Z"), bound("module.m." + bearing + ".this")},
+		{"an entry bound to another object, an unclassified type", "refuse", "for another object", unclassified, job, bound("module.m." + unclassified + ".this")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := managedPlan(removal(tc.typ, tc.before))
+			refused, warned := GuardManaged(p, tc.entries, nil)
+			half, other := warned, refused
+			if tc.half == "refuse" {
+				half, other = refused, warned
+			}
+			if len(half) != 1 || !strings.Contains(half[0], tc.want) {
+				t.Errorf("%s: the guard gives %s %q, want one item naming %q", tc.name, tc.half, half, tc.want)
+			}
+			if len(other) != 0 {
+				t.Errorf("%s: the guard gives the other half %q, want nothing: one removal is one answer", tc.name, other)
+			}
+			// And the reason itself is the rule's own sentence either way: the
+			// same text the cover writes for it, which is what a reader parses.
+			if _, why := Approves(tc.entries, p.ResourceChanges[0]); why == "" || !strings.Contains(half[0], why) {
+				t.Errorf("%s: the item %q does not carry the delete rule's sentence %q", tc.name, half, why)
+			}
+		})
+	}
+}
+
 // TestNotCoveredSplitTellsIntegrityFromContent is D1545's split at the cover:
 // the type table and the grant table are content (recorded and warned), while
 // the managed configuration rule, the mode rule and the provider rule are

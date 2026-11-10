@@ -1117,6 +1117,71 @@ func TestGateRefusesARemovalAtAnAddressApprovedForAnotherObject(t *testing.T) {
 	}
 }
 
+// TestGateWarnsARemovalAtAnAddressApprovedForAnotherObject is the same removal
+// at the verdict, on a type D1551 leaves to D1545: the delete rule's own
+// sentence — here an entry bound to another object — is recorded and warned and
+// OK stays true, so the apply goes on with the warning in the record. The guard
+// refused it whatever the type was, which put the one sentence in Refusals AND
+// in Warnings (the cover routes it as content) and left OK false, so the plan
+// was stopped for a removal D1545 says the gate records instead — and the
+// stopped plan is the one a session would then hand back with --allow-delete,
+// the flag this rule exists to answer rather than to force.
+func TestGateWarnsARemovalAtAnAddressApprovedForAnotherObject(t *testing.T) {
+	const addr = "module.managed.google_cloud_run_v2_job.fmgd_job"
+	// Fail loudly if the fixture stops being the case it is about: a type D1551
+	// protects refuses the removal itself, and would refuse this one for a
+	// reason of its own rather than for the rule below.
+	if tf.RefusesRemovalType("google_cloud_run_v2_job") {
+		t.Fatal("google_cloud_run_v2_job refuses its own removal now: pick a type D1551 leaves to D1545")
+	}
+	// The job view is one the managed cover admits — a prefixed name and a
+	// managed account of this project — so the removal meets the delete rule
+	// and nothing else.
+	r := newRig(t)
+	// The uid is the per-instance value the delete rule binds an entry to for
+	// this type (tf.removalInstanceAttributes): a view without it identifies
+	// nothing, which is the rule's OTHER sentence and not this test's.
+	r.managedShow(t, deleted(addr, "google_cloud_run_v2_job", map[string]any{
+		"name": tf.ManagedPrefix + "job",
+		"uid":  "1234567890",
+		"template": []any{map[string]any{"template": []any{map[string]any{
+			"service_account": tf.ManagedPrefix + "run@" + gcpProject + ".iam.gserviceaccount.com"}}}},
+	}))
+	// The identity the plan removes, read off the plan: the entry below has to
+	// be about another object, and spelling the identity out would stop being
+	// one if the encoding moved.
+	var want string
+	for _, c := range r.plan(t).ResourceChanges {
+		if c.Address == addr {
+			want = tf.RemovedIdentity(c).String()
+		}
+	}
+	if want == "" {
+		t.Fatalf("the rig's plan carries no change at %s", addr)
+	}
+	// The entry names the address and another object, so the removal is one no
+	// list approves and the delete rule has its own sentence about it.
+	v := gate(t, r, spec(t, r, managedCover(), entry(addr, "type=google_cloud_run_v2_job name=fmgd-other")))
+	if len(v.Refusals) != 0 || !v.OK {
+		t.Fatalf("a removal of a classified, non-data-bearing type gives refusals %v, OK %v: D1545 records and warns it", v.Refusals, v.OK)
+	}
+	warned := false
+	for _, w := range v.Warnings {
+		if w.Address == addr && strings.Contains(w.Why, "another object") {
+			warned = true
+		}
+	}
+	if !warned {
+		t.Errorf("warnings %v, want the delete rule's own sentence about %s", v.Warnings, addr)
+	}
+	// And the warning prints the identity the entry has to hold, which is what
+	// the owner answers it with (fugaro allow-delete) — the loop this sentence
+	// exists to close, and it does not close if the sentence is gone.
+	if !slices.ContainsFunc(v.Warnings, func(w Refusal) bool { return strings.Contains(w.Why, want) }) {
+		t.Errorf("warnings %v, want the identity the plan removes (%q) printed", v.Warnings, want)
+	}
+}
+
 // A listed address with no resource in the plan changes nothing: the list is
 // read per change, so a stale entry — an address the plan no longer carries —
 // neither admits nor refuses anything.

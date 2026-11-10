@@ -219,11 +219,23 @@ func guardWalk(p *Plan, judges judge) (refused, warned []string) {
 			// never an object moved there from another one.
 			refused = append(refused, fmt.Sprintf("%s (%s): %s", addr, said, movedRemovalReason(rc)))
 		case r.ok:
-		case r.why == "" && r.warn && !removesUnderAnotherAddress(rc):
+		case r.warn && !removesUnderAnotherAddress(rc):
 			// Nothing admits this removal, and it is a content one D1545 takes
 			// rather than refuses — a delete or a replace of a classified,
 			// non-data-bearing type (D1551): recorded and warned, not stopped.
-			warned = append(warned, fmt.Sprintf("%s (%s)", addr, said))
+			// It is written in the same two shapes a refusal is: the actions
+			// alone when no list names the address, and the actions with the
+			// delete rule's own sentence beside them when a list does name it
+			// and its entry does not approve the object the plan removes (an
+			// entry bound to another object, a before view that identifies
+			// nothing). The sentence is the reader's — it is what the owner has
+			// to change — and the cover writes it for the same removal too, so
+			// the two halves of the gate say one thing about one change.
+			item := fmt.Sprintf("%s (%s)", addr, said)
+			if r.why != "" {
+				item = fmt.Sprintf("%s (%s): %s", addr, said, r.why)
+			}
+			warned = append(warned, item)
 		case r.why == "":
 			// The list does not name this address: the item Guard has always
 			// written, with the actions and nothing beside them.
@@ -262,7 +274,13 @@ func guardWalk(p *Plan, judges judge) (refused, warned []string) {
 // — a type added to allowedTypes later, which RefusesRemovalType refuses until
 // somebody classifies it. warn is set only when neither list admits the
 // removal, so an entry or an address that admits one still admits it whatever
-// its type.
+// its type — and a list that NAMES the address without approving the object the
+// plan removes (an entry bound to another object, a before view that identifies
+// nothing) does not admit it either, which is why the delete rule's own sentence
+// is a warning for a type D1551 leaves to D1545 and a refusal for a type it
+// protects. The cover routes the same sentence the same way (managed_cover.go's
+// addRemoval), so one removal is never refused by this half of the gate and
+// warned about by the other.
 //
 // The warning is not silent, and that is the point of the two answers: a warned
 // removal is printed beside the refusals and recorded (D1545's AuditRecord), so
@@ -275,12 +293,33 @@ func guardWalk(p *Plan, judges judge) (refused, warned []string) {
 func GuardManaged(p *Plan, entries []DeleteEntry, addresses []string) (refused, warned []string) {
 	return guardWalk(p, func(rc ResourceChange) verdict {
 		ok, why := Approves(entries, rc)
-		if ok || why != "" {
-			return verdict{ok: ok, why: why}
+		if ok {
+			return verdict{ok: true}
+		}
+		// why is the delete rule's own sentence — the list names this address
+		// for another object, or the plan's before view identifies nothing —
+		// and where it lands follows the type, exactly as it does in the cover
+		// (managed_cover.go's addRemoval): a refusal for a type D1551 protects,
+		// and one of D1545's warnings, the sentence beside the actions, for a
+		// type it does not. Refusing it whatever the type is what put one
+		// removal in the verdict's refusals AND in its warnings. The caller's
+		// own addresses are read below and not before it, which is the order
+		// this rule has always had: an entry that names the address is an
+		// answer about the object the plan removes, and a list of addresses is
+		// not one.
+		if why != "" {
+			if RefusesRemovalType(rc.Type) {
+				return verdict{why: why}
+			}
+			return verdict{warn: true, why: why}
 		}
 		if slices.Contains(addresses, rc.Address) {
 			return verdict{ok: true}
 		}
+		// Neither list names the address at all: the delete rule has no
+		// sentence about the object, so the item is the bare actions of a
+		// refusal — and D1545's warning, with no reason beside it, for a type
+		// D1551 does not protect.
 		return verdict{warn: !RefusesRemovalType(rc.Type)}
 	})
 }
