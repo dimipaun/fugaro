@@ -1349,17 +1349,18 @@ func TestReviewRunWithTheBudgetOffNeverReachesACredentialOfItsOwn(t *testing.T) 
 // key of its own. The class's one credential is the pairing's, and the pairing
 // is the job the platform admitted the run to (reviewCandidates, D1417), so a
 // repository whose file writes a credential of its own is refused in bootstrap
-// unless the job it was admitted to is the project's key's own variant — and
-// the sentence names what the class is served from (the credentials service's
-// review class, the pairing, and the sentinel that pairing is spelled with)
-// rather than the release the path was cut in. vertex is refused the same way:
-// it is a credential of the repository's, and the review variant mounts none of
-// them (CSR7).
+// unless the job it was admitted to is one of the project's two keys' own
+// variant — and the sentence names what the class is served from (the
+// credentials service's review class, the pairing, and the two axis values that
+// pairing is spelled with) rather than the release the path was cut in. vertex
+// is refused the same way: it is a credential of the repository's, and the
+// review variant mounts none of them (CSR7).
 //
 // This is the fail-closed direction the class exists to hold, and its other
-// direction is TestReviewRunIsServedByTheProjectsAnthropicKey: that run's
-// repository writes the same agent.auth as this one's and is admitted, because
-// its pairing names the project's key. So what refuses these two is the pairing
+// directions are TestReviewRunIsServedByTheProjectsAnthropicKey and
+// TestReviewRunOnAProviderKeyReachesTheProvider: both of those runs'
+// repositories write the same agent.auth as this one's and are admitted,
+// because their pairings name a project key. So what refuses these two is the pairing
 // and never the auth.
 //
 // The refusal is the auth's and not the budget's, so it is the same sentence
