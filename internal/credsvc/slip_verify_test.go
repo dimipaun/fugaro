@@ -649,3 +649,48 @@ func TestCallSlipHeadersAreReadOnce(t *testing.T) {
 		})
 	}
 }
+
+// TestSlipOwnerIsTheLauncherRule holds audit.go's spelling of the owner's rule
+// to auth.go's (DS1.2). The owner a line carries is the launcher's `sub` that
+// the claim verified and wrote into the record, so the two places that say
+// what a launcher's `sub` IS say one thing: digits, at most
+// maxLauncherSubDigits of them, and a string the issuer wrote rather than a
+// number this code converted.
+func TestSlipOwnerIsTheLauncherRule(t *testing.T) {
+	cases := []struct {
+		name string
+		sub  string
+		want bool
+	}{
+		{"a launcher's sub", testLauncherSub, true},
+		{"the longest one", strings.Repeat("9", maxLauncherSubDigits), true},
+		{"one digit too many", strings.Repeat("9", maxLauncherSubDigits+1), false},
+		{"empty", "", false},
+		{"a leading sign", "+" + testLauncherSub, false},
+		{"a space", "1043 5011", false},
+		{"a decimal point", "1043.5", false},
+		{"a letter", "1043a5011", false},
+		{"a non-ASCII digit", "١٤٣", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			owner := validSlipOwner(tc.sub)
+			sub, subOK := launcherSub(map[string]any{"sub": tc.sub})
+			if owner != subOK || (subOK && sub != tc.sub) {
+				t.Fatalf("validSlipOwner(%q) = %v and launcherSub answered (%q, %v): one rule, two spellings, and they have drifted", tc.sub, owner, sub, subOK)
+			}
+			if owner != tc.want {
+				t.Fatalf("validSlipOwner(%q) = %v, want %v", tc.sub, owner, tc.want)
+			}
+		})
+	}
+	// A `sub` that arrived as a JSON number is refused by both: it is not the
+	// string the issuer writes, and a value this code stringified would be a
+	// second spelling of an account id.
+	if sub, ok := launcherSub(map[string]any{"sub": float64(104329501182774832335)}); ok {
+		t.Fatalf("launcherSub accepted a numeric sub as %q", sub)
+	}
+	if validSlipOwner("1.0432950118277483e+20") {
+		t.Fatal("validSlipOwner accepted a stringified number")
+	}
+}
