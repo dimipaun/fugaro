@@ -24,6 +24,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/yamledit"
 )
@@ -1499,7 +1500,7 @@ func secretsSetProjectWide(run *stepRun, cmd *cobra.Command, env *cloudEnv, o se
 	// provider's key has no such entry and nothing to read in the sentence
 	// (code review, nit).
 	note := fmt.Sprintf("note: %s is stored project-wide for %s, where %s. Inside a shared job there is no IAM boundary between repositories: the profile is the boundary.",
-		pluginwire.Printable(name), pluginwire.Printable(env.lc.Name), projectReach(env.lc, name))
+		pluginwire.Printable(name), pluginwire.Printable(env.lc.Name), projectReach(env.lc, name, nil))
 	if _, workflow := env.lc.WorkflowSecrets[name]; workflow {
 		note += " A workflow's own secret (workflows.<n>.secrets) is shared this way only through its workflow_secrets entry, and that entry's allow_data_to is what decides which repositories mount the copy: with no entry, or with an entry that lists nothing, the name stays a repository copy instead."
 	}
@@ -1520,12 +1521,27 @@ func secretsSetProjectWide(run *stepRun, cmd *cobra.Command, env *cloudEnv, o se
 // the one case the list alone understates: it reaches the repositories it
 // matches, present and future, so the sentence says that too rather than
 // leaving the reader to read a pattern as a list.
-func projectReach(lc *localcfg.Config, logical string) string {
+//
+// p is the project's published policy, and it is a third source for the one
+// name the node carries a project_secrets-derived block for (SD17): a machine
+// whose local config holds no project_secrets.bitbucket-token entry reads the
+// allow-list the owner published, which is what admitted the repository to the
+// project copy in the first place -- so the sentence says where that list came
+// from rather than telling a person storing the shared copy that no repository
+// can mount it. nil is a caller that read no node, and the local config's
+// answer is then the only one, exactly as before. `secrets set`'s own note
+// passes nil and is right to: that path reaches the project container only
+// through a local entry (projectWideAccepted), so its reach is never the
+// node's.
+func projectReach(lc *localcfg.Config, logical string, p *projectpolicy.Policy) string {
 	repos := projectSecretAllowed(lc, logical)
 	switch {
 	case slices.Contains(repos, "any repository") || slices.Contains(repos, "*"):
 		return "every enrolled repository can mount it -- every repository a published policy admits, or, with no policy published, every repository this local config knows"
 	case len(repos) == 0:
+		if node := nodeReach(logical, p); node != "" {
+			return node
+		}
 		return "no repository can mount it: its allow_data_to lists none, and absent or empty means nobody"
 	default:
 		reach := fmt.Sprintf("only the repositories its allow_data_to lists can mount it (%s), whatever a published policy admits",
@@ -1542,6 +1558,24 @@ func projectReach(lc *localcfg.Config, logical string) string {
 		}
 		return reach
 	}
+}
+
+// nodeReach is projectReach's third source: the reach the project's published
+// policy states for the one name it carries a project_secrets-derived block
+// for, read where this machine's local config names nobody -- which is the
+// machine SD17 is about, and the one where "no repository can mount it" would
+// be false of the list that admitted the repository. "" is every other case,
+// and the local answer then stands.
+func nodeReach(logical string, p *projectpolicy.Policy) string {
+	if logical != config.BitbucketSecret || p == nil || p.BitbucketToken == nil || len(p.BitbucketToken.AllowRepos) == 0 {
+		return ""
+	}
+	reach := fmt.Sprintf("only the repositories the project's published policy admits can mount it (%s, the list %s carries for project_secrets.%s, which this machine's local config does not)",
+		pluginwire.Printable(strings.Join(p.BitbucketToken.AllowRepos, ", ")), projectpolicy.PathShared(), pluginwire.Printable(logical))
+	if slices.ContainsFunc(p.BitbucketToken.AllowRepos, func(r string) bool { return strings.Contains(r, "*") }) {
+		reach += ", and a `*` in an entry reaches every repository it matches now and later, so one onboarded afterwards mounts the copy with nothing else to do"
+	}
+	return reach
 }
 
 // repoCopiesWithVersions are the local config's repositories whose own copy

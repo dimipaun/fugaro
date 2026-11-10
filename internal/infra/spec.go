@@ -1551,10 +1551,15 @@ func Repo(in Inputs) (RepoSpec, error) {
 // ProjectSecretCandidate accepts. Being here says nothing about whether the
 // name actually resolves to the project copy -- Readiness decides that
 // against live state (design docs/design/project-secrets.md §5).
+//
+// It reads the two facts this context holds and no caller of the predicate
+// alone has -- the repository's provider and the published node -- so the
+// container a job mounts and the container update --repo's secrets stage
+// stores into are one answer and cannot disagree (SD17).
 func (c *repoCtx) projectSecretCandidates(rs RepoSpec) map[string]string {
 	out := map[string]string{}
 	add := func(logical string) {
-		if id, ok := ProjectSecretCandidate(c.lc, logical, c.in.Repo); ok {
+		if id, ok := ProjectSecretCandidateFromNode(c.lc, logical, c.in.Repo, c.provider, c.in.Policy); ok {
 			out[logical] = id
 		}
 	}
@@ -1586,7 +1591,54 @@ func (c *repoCtx) projectSecretCandidates(rs RepoSpec) map[string]string {
 // default at all (D1262). ok is false, id "" otherwise. It is exported
 // because fugaro update's secrets stage (before any RepoSpec exists) needs
 // the identical answer.
+//
+// It is ProjectSecretCandidateFromNode with no published node and no
+// provider in hand, which is the answer a caller that read no node and knows
+// no provider is asking for.
 func ProjectSecretCandidate(lc *localcfg.Config, logical, repo string) (id string, ok bool) {
+	return ProjectSecretCandidateFromNode(lc, logical, repo, "", nil)
+}
+
+// ProjectSecretCandidateFromNode is ProjectSecretCandidate with the two facts
+// only the caller has: the repository's git provider, and the project's
+// published policy node. It adds one source, the node's bitbucket_token block,
+// and it is the read SD17 answers: a machine whose local config holds no
+// project_secrets.bitbucket-token entry no longer needs the owner to copy that
+// entry to it, because the allow-list the owner published is what admits the
+// repository here.
+//
+// The source is narrow on purpose, and each of its four conditions is a rule
+// of its own:
+//
+//   - bitbucket_token is the only block of the node that is derived from
+//     project_secrets (projectpolicy.DeriveBitbucketToken), so it is the only
+//     name the node can answer for at all. Every other name's allow-list lives
+//     in a local file and nowhere else, and a name the node does not carry
+//     must not be read as one that admits nobody -- the local sources above
+//     keep the last word on those.
+//   - the provider must be bitbucket. The node's allow_repos is
+//     bitbucket-qualified by construction (projectpolicy.validBitbucketTokenBlock
+//     refuses any other provider), and the canonical form built below is what
+//     AdmitRepo compares segment against segment -- so a GitHub repository
+//     whose owner/name a Bitbucket entry happens to match would otherwise read
+//     as admitted to a credential it does not use. resolveBitbucketProxied
+//     guards the same way and for the same reason.
+//   - the local config must hold no entry for the name. An entry is the
+//     owner's own decision and the file is its source of truth (D854), so a
+//     machine that carries one keeps the answer it carries -- including the
+//     entry that names another repository, which is not a disagreement to
+//     resolve but the answer. This is resolveBitbucketProxied's rule read on
+//     the allow-list: an entry that is not there is not a disagreement, and
+//     the node is then the only answer.
+//   - the node must admit the repository. An empty allow_repos admits nothing
+//     (projectpolicy.AdmitRepo), which is the deny-all a published block with
+//     an empty list states.
+//
+// A nil node is a caller that read none -- the local-only callers, and
+// update --repo on a machine whose config names no database address -- and
+// then nothing here is added, which is the answer every caller gave before
+// this function existed.
+func ProjectSecretCandidateFromNode(lc *localcfg.Config, logical, repo, provider string, p *projectpolicy.Policy) (id string, ok bool) {
 	if lc == nil || logical == "" {
 		return "", false
 	}
@@ -1616,9 +1668,9 @@ func ProjectSecretCandidate(lc *localcfg.Config, logical, repo string) (id strin
 	if !eligible && namedAccount {
 		eligible = lc.ClaudeAccounts[account].AllowsData(repo)
 	}
-	provider, namedProvider := config.ProviderBySecret(lc.Providers, logical)
+	modelProvider, namedProvider := config.ProviderBySecret(lc.Providers, logical)
 	if !eligible && namedProvider {
-		eligible = lc.Providers[provider].AllowsData(repo)
+		eligible = lc.Providers[modelProvider].AllowsData(repo)
 	}
 	claimed := listed || swept || namedAccount || namedProvider
 	if !eligible && !claimed {
@@ -1630,10 +1682,33 @@ func ProjectSecretCandidate(lc *localcfg.Config, logical, repo string) (id strin
 		// mounts nowhere.
 		eligible = config.AllowedForWorkflowSecret(lc.WorkflowSecrets, logical, repo)
 	}
+	if !eligible && projectSecretFromNode(lc, logical, repo, provider, p) {
+		eligible = true
+	}
 	if !eligible {
 		return "", false
 	}
 	return gcp.ProjectSecretID(lc.Name, logical), true
+}
+
+// projectSecretFromNode is the published node's half of the answer, and it is
+// asked only for the one name the node carries a project_secrets-derived block
+// for. The four conditions are ProjectSecretCandidateFromNode's, in its order.
+func projectSecretFromNode(lc *localcfg.Config, logical, repo, provider string, p *projectpolicy.Policy) bool {
+	if logical != config.BitbucketSecret || p == nil || p.BitbucketToken == nil {
+		return false
+	}
+	if provider != gitprov.KindBitbucket {
+		return false
+	}
+	if _, listed := lc.ProjectSecrets[logical]; listed {
+		return false
+	}
+	canonical, err := projectpolicy.Canonical(provider, repo)
+	if err != nil {
+		return false
+	}
+	return projectpolicy.AdmitRepo(p.BitbucketToken.AllowRepos, canonical)
 }
 
 // MountSecretID is the one place that answers "which secret ID does this

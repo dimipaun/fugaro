@@ -17,9 +17,11 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -1447,4 +1449,143 @@ workflows:
 			}
 		})
 	}
+}
+
+// bitbucketTokenNode is the project's published policy for the Bitbucket
+// token, seeded into a fake Realtime Database with the rules generation that
+// makes a node visible to projectpolicy.Read. allow is the token block's
+// allow_repos, which is what the owner's project_secrets.bitbucket-token
+// entry is derived into (projectpolicy.DeriveBitbucketToken) -- so a machine
+// reading it reads the allow-list, never a value. Hermetic: the local config
+// names the fake's own URL and the fake holds the rules.
+func bitbucketTokenNode(t *testing.T, allow ...string) *gcpfake.RTDB {
+	t.Helper()
+	db := gcpfake.NewRTDB(t)
+	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
+	db.Set(projectpolicy.PathShared(), map[string]any{
+		"version":         projectpolicy.Version,
+		"allow_repos":     []string{"bitbucket/acme/app"},
+		"budget":          map[string]any{"mode": "off"},
+		"bitbucket_token": map[string]any{"allow_repos": allow},
+	})
+	return db
+}
+
+// readNodeFrom makes the rig's local config name db, so the run's own memoized
+// policy read (initRun.policy, the read update --repo already makes) reaches
+// the fake and not the network.
+func readNodeFrom(r *secretsRig, db *gcpfake.RTDB) {
+	r.e.lc.Budget = &localcfg.Budget{RTDBURL: db.URL}
+	r.e.lc.Endpoints.NoAuth = true
+}
+
+// TestUpdateRepoReadsTheAllowListFromTheNode is SD17: the allow-list the owner
+// published is what `fugaro update --repo` reads, so the operator no longer
+// copies project_secrets.bitbucket-token to every machine -- and a machine
+// without that entry is no longer handed a per-repository token.
+//
+// The rig is the operator's second machine: a Bitbucket checkout of acme/app,
+// a local config with no project_secrets block at all, and the project's
+// published node. The project copy of the token already has a version, which
+// is the ordinary state (the owner stored the value once), so the run must be
+// Done: nothing prompted for, nothing stored, and no `secrets set` line left
+// for the person -- the three things the copy-the-entry step used to be for.
+//
+// The control is the same rig with no node read: the name is then this
+// repository's own, which is what the stage answered before this change and
+// what a machine that cannot reach its project's policy still gets.
+func TestUpdateRepoReadsTheAllowListFromTheNode(t *testing.T) {
+	ctx := context.Background()
+	run := func(t *testing.T, node *gcpfake.RTDB) (*secretsRig, *initflow.Result) {
+		t.Helper()
+		r := newSecretsRig(t, bitbucketOrigin, strings.NewReader(""))
+		// The Claude credential is the one name this machine's local config
+		// carries, so the only name the node decides here is the Bitbucket
+		// token -- which is the name SD17 is about, and the only one the node
+		// carries a project_secrets-derived block for.
+		r.e.lc.ProjectSecrets = map[string]config.ProjectSecret{
+			"claude-oauth-token": {AllowDataTo: []string{"acme/app"}},
+		}
+		if node != nil {
+			readNodeFrom(r, node)
+		}
+		fakeTerminal(t) // canPrompt() is true: a name wrongly called missing would be prompted for
+		r.store.seedProject(r.e.lc.Name, "claude-oauth-token", tokenValue)
+		r.store.seedProject(r.e.lc.Name, "bitbucket-token", tokenValue)
+		res, err := r.run(t)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r, res
+	}
+
+	t.Run("the node admits this repository", func(t *testing.T) {
+		r, res := run(t, bitbucketTokenNode(t, "bitbucket/acme/app"))
+		if _, ok := infra.ProjectSecretCandidate(r.e.lc, "bitbucket-token", "acme/app"); ok {
+			t.Fatal("the local config alone admits the token, so the node half would prove nothing")
+		}
+		if got := stateOf(res, initflow.Secrets); got != initflow.Done {
+			t.Fatalf("state = %q, want done (out %q, errOut %q)", got, r.out.String(), r.errOut.String())
+		}
+		if n := r.store.setCalls(); n != 0 {
+			t.Fatalf("%d value(s) stored: a name the published allow-list covers was asked for", n)
+		}
+		text := r.out.String() + r.errOut.String()
+		for _, want := range []string{"secrets set", "Paste the value for"} {
+			if strings.Contains(text, want) {
+				t.Fatalf("%q reached the output: a covered name was asked for", want)
+			}
+		}
+		for _, l := range res.Left {
+			if strings.Contains(strings.Join(l.Commands, "\n"), "secrets set") {
+				t.Fatalf("a covered name was left as a command: %v", l.Commands)
+			}
+		}
+		noLeak(t, tokenValue, text)
+	})
+
+	// The node's list is provider-qualified, and a GitHub repository of the
+	// same owner/name uses the App key: reading the node for it would hand it
+	// a credential it does not use.
+	t.Run("a GitHub repository is not admitted by the Bitbucket block", func(t *testing.T) {
+		r := newSecretsRig(t, githubOrigin, strings.NewReader(""))
+		readNodeFrom(r, bitbucketTokenNode(t, "bitbucket/acme/app"))
+		r.stage.resolve(ctx)
+		if r.stage.projectScope("bitbucket-token") {
+			t.Fatal("a GitHub repository was admitted by the Bitbucket token's published allow-list")
+		}
+	})
+
+	// An entry the local config carries is the owner's own decision and
+	// decides: a machine that holds one keeps the answer it holds, whatever the
+	// node says (D854's rule, read on this list).
+	t.Run("a local entry keeps its answer", func(t *testing.T) {
+		r := newSecretsRig(t, bitbucketOrigin, strings.NewReader(""))
+		readNodeFrom(r, bitbucketTokenNode(t, "bitbucket/acme/app"))
+		r.e.lc.ProjectSecrets = map[string]config.ProjectSecret{
+			"bitbucket-token": {AllowDataTo: []string{"acme/other"}},
+		}
+		r.stage.resolve(ctx)
+		if r.stage.projectScope("bitbucket-token") {
+			t.Fatal("the node widened an entry the local config wrote")
+		}
+	})
+
+	// No node read is not an empty policy: a run whose config names no
+	// database address, or whose read failed, keeps the answer it had before
+	// this change -- the token is this repository's own, and the stage asks
+	// for it.
+	t.Run("no node read is not a node that admits nobody", func(t *testing.T) {
+		r, res := run(t, nil)
+		if got := stateOf(res, initflow.Secrets); got != initflow.NeedsYou {
+			t.Fatalf("state = %q, want needs-you: with no node the token is this repository's own (out %q, errOut %q)", got, r.out.String(), r.errOut.String())
+		}
+		left := ""
+		for _, l := range res.Left {
+			left += strings.Join(l.Commands, "\n") + "\n"
+		}
+		if !strings.Contains(left, "secrets set bitbucket-token --repo acme/app") {
+			t.Fatalf("the run does not leave the repository-scope command for the token:\n%s", left)
+		}
+	})
 }
