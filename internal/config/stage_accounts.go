@@ -461,12 +461,15 @@ func CredentialServesModel(typ, model string, providers map[string]ModelProvider
 }
 
 // routedSpelling is whether the model is written as a provider route's own ID:
-// the one "anthropic/<id>" shape a route may claim (CheckClaudeClaim). It is a
-// predicate of its own rather than a second copy of that rule — what it reads
-// is whether a pin has left the direct path at all, which is what makes a
-// routed ID a model the credentials that reach Anthropic cannot be sent.
+// the one shape a route may claim, which is CheckClaudeClaim's own judgement and
+// never a second copy of it — that function is where the shape is written, and
+// the vendor prefix it is written with belongs to internal/pricing's map
+// (TestRoutingHasOneResolver refuses a file that spells it again). What it reads
+// for this caller is whether a pin has left the direct path at all, which is
+// what makes a route's spelling a model the credentials that reach Anthropic
+// cannot be sent.
 func routedSpelling(model string) bool {
-	return strings.HasPrefix(model, "anthropic/")
+	return CheckClaudeClaim(model) == ""
 }
 
 // PoolModelProblems is F23's rule at config time (D1637): a pool is admitted
