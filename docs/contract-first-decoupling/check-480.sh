@@ -423,7 +423,11 @@ read_dependent() {
   if ! fugaro runs ls --repo "$REPO" --pr "$PR" --since 0 --json >"$SCRATCH/pr.json" 2>"$SCRATCH/pr.err"; then
     stop "Check 480 stopped: 'fugaro runs ls --pr $PR' could not read the pull request's runs — $(tr '\n' ' ' <"$SCRATCH/pr.err")"
   fi
-  local row
+  # The empty initial value is what makes the fallback below reachable: a plan
+  # whose dependent node carries no `run` leaves this unset, and `set -u` would
+  # end the check on that line — which is exactly the plan-plus-`--pr` reading
+  # the stop message below tells the owner to take.
+  local row=""
   if [ -n "$DEP_RUN" ]; then
     row=$(jq -c --arg run "$DEP_RUN" '[.runs[] | select(.run_id==$run)][0] // empty' "$SCRATCH/pr.json")
   fi
