@@ -505,3 +505,44 @@ func TestMigrationFromPreviousVersionConverges(t *testing.T) {
 		t.Errorf("the second migration reported %+v over %d bytes, want the node back byte for byte", nochanges, len(migrated))
 	}
 }
+
+// TestMigrateWritesTheMarkerOnlyWhereItIsMissing: the step's edit is confined
+// to the pools that need it. An entry that names an owner is the operator's own
+// answer and is left as it was written, and one that already carries the marker
+// — a node a person edited by hand, since no version-4 release writes the
+// member — is not written a second time: the step reports the pools it marked,
+// and a node whose every pool is one of those two comes back with its version
+// field alone rewritten and craft_pools reported as kept.
+func TestMigrateWritesTheMarkerOnlyWhereItIsMissing(t *testing.T) {
+	raw := []byte(`{"version":4,"craft_pools":[` +
+		`{"name":"owned","members":["vertex"],"owner":"owner@example.com"},` +
+		`{"name":"marked","members":["vertex"],"legacy_open":true}]}`)
+	migrated, changes, err := Migrate(raw)
+	if err != nil {
+		t.Fatalf("Migrate = %v", err)
+	}
+	if len(changes) != 1 || changes[0].Changed != "the version field: 4 to 5" {
+		t.Fatalf("changes = %+v, want the step to report the version field alone: no pool of this node needed a marker", changes)
+	}
+	if !slices.Contains(changes[0].Kept, "craft_pools") {
+		t.Errorf("changes[0].Kept = %v, want craft_pools: the step wrote nothing inside it", changes[0].Kept)
+	}
+	p, found, err := Decode(migrated)
+	if err != nil || !found {
+		t.Fatalf("the migrated node does not decode: (%v, %v)", found, err)
+	}
+	for _, pool := range p.CraftPools {
+		switch pool.Name {
+		case "owned":
+			if pool.LegacyOpen {
+				t.Errorf("pools.owned = %+v, want the owner the node named and no marker", pool)
+			}
+		case "marked":
+			if !pool.LegacyOpen {
+				t.Errorf("pools.marked = %+v, want the marker the node already carried", pool)
+			}
+		default:
+			t.Errorf("the migrated node gained a pool: %+v", p.CraftPools)
+		}
+	}
+}

@@ -347,9 +347,9 @@ func keptKeys(doc map[string]json.RawMessage, written ...string) []string {
 // memberValueSpan is the byte span of the value of one of the node's top-level
 // members, and its name is the caller's: a step locates the field it edits by
 // nesting rather than by spelling. It is a walk of the document's own tokens
-// rather than a search for the text `"version"`, because the name can appear
-// inside a block (a profile named version, a key of a block this Fugaro does
-// not model) and the node is what the operator's diff is read against.
+// rather than a search for the text of the member's name, because a name can
+// appear inside a block (a profile named version, a key of a block this Fugaro
+// does not model) and the node is what the operator's diff is read against.
 func memberValueSpan(raw []byte, member string) (start, end int, ok bool) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	tok, err := dec.Token()
@@ -401,10 +401,9 @@ const poolLegacyOpenMember = `"legacy_open": true`
 // entries keep their bytes, their order and their spacing, which is what makes
 // this an edit of the owner's document rather than a re-encoding of it.
 //
-// An entry that names an owner, and one already marked, are returned as they
-// are. The second is the one a hand edit produces — no version-4 release wrote
-// the member — and marking it again would be this step rewriting a value it did
-// not find.
+// An entry that names an owner is left alone, and so is one that already
+// carries the marker: only the entries this step writes count, which is what
+// `kept` and the diff's own sentence are read against.
 func markLegacyOpenPools(arr []byte) ([]byte, int, error) {
 	dec := json.NewDecoder(bytes.NewReader(arr))
 	tok, err := dec.Token()
@@ -434,7 +433,10 @@ func markLegacyOpenPools(arr []byte) ([]byte, int, error) {
 		out = append(out, chunk[:lead]...)
 		body := chunk[lead:]
 		if !poolNamesOwner(body) {
-			body, marked = withLegacyOpen(body), marked+1
+			var written bool
+			if body, written = withLegacyOpen(body); written {
+				marked++
+			}
 		}
 		out = append(out, body...)
 		prev = end
@@ -462,20 +464,22 @@ func poolNamesOwner(el []byte) bool {
 }
 
 // withLegacyOpen returns one craft_pools entry with the marker written first in
-// it, which keeps the insert a splice of the entry's own bytes. The comma is
-// there only when the entry holds something else: a pool written as {} is
-// marked without trailing punctuation, and the reader is what judges the
-// result either way.
-func withLegacyOpen(el []byte) []byte {
+// it, and whether it wrote one: an entry that already carries the member — the
+// one a hand edit produces, since no version-4 release writes it — is returned
+// as it is, and so is bytes that hold no object to write into, which the
+// reader refuses either way. Writing first keeps the insert a splice of the
+// entry's own bytes. The comma is there only when the entry holds something
+// else: a pool written as {} is marked without trailing punctuation.
+func withLegacyOpen(el []byte) ([]byte, bool) {
 	var pool map[string]json.RawMessage
 	if err := json.Unmarshal(el, &pool); err == nil {
 		if _, marked := pool["legacy_open"]; marked {
-			return el
+			return el, false
 		}
 	}
 	brace := bytes.IndexByte(el, '{')
 	if brace < 0 {
-		return el
+		return el, false
 	}
 	rest := el[brace+1:]
 	insert := []byte(poolLegacyOpenMember)
@@ -486,7 +490,7 @@ func withLegacyOpen(el []byte) []byte {
 	out = append(out, el[:brace+1]...)
 	out = append(out, insert...)
 	out = append(out, rest...)
-	return out
+	return out, true
 }
 
 // bitbucketRepublishNote is the move that finishes the migration when the node
