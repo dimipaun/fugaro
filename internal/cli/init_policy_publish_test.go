@@ -1860,6 +1860,26 @@ func TestPolicyConfigDriftSeesTheAccountChoiceKeys(t *testing.T) {
 			node: node("", nil),
 			want: nil,
 		},
+		// A stage the release behind cannot read is held back from the node, so
+		// the file's own entry for it is not a difference: the publish states
+		// nothing for it either (config.AccountStageHeldBack), and reporting it
+		// would send the operator to a command that cannot close the gap.
+		{
+			name: "the file names a stage the release behind cannot read",
+			lc:   config(func(lc *localcfg.Config) { lc.ClaudeAccountStages = accountStages("triage", "team-b") }),
+			node: node("", nil),
+			want: nil,
+		},
+		// The node's side is compared as it is: an entry the file cannot have
+		// published is still one the publish takes off, and the tooling does not
+		// say a node is in order when it carries a member no reader here would
+		// give it.
+		{
+			name: "the node names a stage the release behind cannot read",
+			lc:   config(nil),
+			node: node("", map[string]string{"triage": "team-b"}),
+			want: []string{"claude_account_stages.triage"},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var got []string

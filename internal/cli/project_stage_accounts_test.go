@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
@@ -168,5 +169,67 @@ func TestAccountChoiceKeysAreNeverShared(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// stageAccountHeldBackYAML is stageAccountProjectYAML plus an account for the
+// triage stage — the stage this release runs and no released image does: an
+// operator who writes it has made a choice the local config keeps, and the
+// publish below is where the choice either reaches a run or does not.
+const stageAccountHeldBackYAML = stageAccountProjectYAML +
+	"  triage:\n" +
+	"    claude_account: acme-overflow\n"
+
+// TestPublishHoldsBackAStageTheReleaseBehindCannotRead (T-TR5, the review's
+// finding): the node's claude_account_stages may name only the stages every job
+// image that reads it knows. The reader is an image — the runner of the release
+// behind, which `fugaro update` rebuilds behind its own confirmation and which
+// an installation can still be running, an in-flight run included — and it
+// refuses the whole node when one of those names is not a stage of its own run
+// (projectpolicy, through config.CheckStageSegment). Publishing the triage
+// entry would therefore break every run of the project on an image that is not
+// rebuilt yet, which is the one thing `fugaro update` must never do (F15,
+// docs/design/update-in-flight.md).
+//
+// What the operator's config says is kept where it was written and published by
+// the first release whose images carry the stage; the entry's own staging is
+// config.AccountStageHeldBack, and the vocabulary behind it is
+// AccountStagesAReleasedImageKnows — whose second reader this test is.
+func TestPublishHoldsBackAStageTheReleaseBehindCannotRead(t *testing.T) {
+	f := newProjectFixture(t, stageAccountHeldBackYAML)
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	p := publishedPolicy(t, f)
+	if _, ok := p.ClaudeAccountStages["triage"]; ok {
+		t.Errorf("the node carries a triage entry: the reader of the release behind refuses the whole node over that name, so every run of this project on an image that is not rebuilt yet would be refused")
+	}
+	// The keys the release behind does read are published as they are: the
+	// hold-back is one stage's entry and not the member.
+	if p.ClaudeAccountStages["review"] != "acme-overflow" {
+		t.Errorf("ClaudeAccountStages = %v, want review: acme-overflow beside the held-back stage", p.ClaudeAccountStages)
+	}
+	// The installation at the previous version converges: the reader of the
+	// release 0.22.0 is this six-name vocabulary and nothing else, and the node
+	// this release publishes carries no name outside it. Written out here
+	// rather than derived — it is the second reader's copy of
+	// config.AccountStagesAReleasedImageKnows, which
+	// TestAccountStagesAReleasedImageKnowsIsRunStagesMinusThisReleases holds to
+	// the run's own stage list.
+	released := []string{"plan", "implement", "review_first", "review", "adversarial", "fix"}
+	for stage := range p.ClaudeAccountStages {
+		if !slices.Contains(released, stage) {
+			t.Errorf("the node names %q, which the release behind has no stage for: its reader refuses the node entire (%s is not a stage of a run)", stage, stage)
+		}
+	}
+	// The control: the entry left out is the one that breaks that reader, so
+	// what makes this node readable is the hold-back and not the shape of the
+	// config — a test whose node happened to carry no such stage would pass
+	// without the publisher doing anything.
+	if !slices.Contains(config.RunStages, "triage") {
+		t.Fatal("RunStages has no triage: this test's config names a stage the run does not have, so it would pass for the wrong reason")
+	}
+	if slices.Contains(released, "triage") {
+		t.Fatal("the release-behind vocabulary carries triage: nothing needs holding back, and this test would pass for the wrong reason")
 	}
 }

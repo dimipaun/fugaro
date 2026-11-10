@@ -1,6 +1,7 @@
 package config
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -287,5 +288,55 @@ func TestPoolServingPathsNamesTheMemberNothingServes(t *testing.T) {
 	}
 	if len(unplaced) != 1 || unplaced[0] != "acme-future" {
 		t.Fatalf("unplaced = %v, want [acme-future]", unplaced)
+	}
+}
+
+// TestAccountStagesAReleasedImageKnowsIsRunStagesMinusThisReleases: the
+// vocabulary a published policy node's claude_account_stages may name and
+// still be readable by every job image that reads it. A node's reader refuses
+// the *whole* node when one of those names is not a stage of its own run
+// (projectpolicy, through CheckStageSegment), and a reader is an image:
+// `fugaro update` rebuilds the images behind its own confirmation, so an
+// installation can still be running one built before this release — an
+// in-flight run included. The list is what this release's publisher holds its
+// entries back to, so a name added to RunStages and not to the field's own
+// vocabulary is held back by construction rather than by whoever remembers.
+//
+// The six names are written out because they are a fact about a tag — the last
+// release, 0.22.0 "Sloth", whose reader has them and no triage — and not about
+// this tree. internal/cli's TestPublishHoldsBackAStageTheReleaseBehindCannotRead
+// is the second reader of the same list, and the two have to name one set for
+// the hold-back to be complete.
+func TestAccountStagesAReleasedImageKnowsIsRunStagesMinusThisReleases(t *testing.T) {
+	released := []string{"plan", "implement", "review_first", "review", "adversarial", "fix"}
+	if !slices.Equal(AccountStagesAReleasedImageKnows, released) {
+		t.Fatalf("AccountStagesAReleasedImageKnows = %v, want %v: it is the vocabulary of the release the field runs, and a name moved in or out of it is a release decision", AccountStagesAReleasedImageKnows, released)
+	}
+	// Every name of the released vocabulary is still a stage of this run: one
+	// dropped from RunStages and left here would hold nothing back and would
+	// read as a stage no release ever had.
+	for _, stage := range AccountStagesAReleasedImageKnows {
+		if !IsRunStage(stage) {
+			t.Errorf("AccountStagesAReleasedImageKnows names %q, which is not a stage of a run", stage)
+		}
+	}
+	// What is held back is exactly what this release added and nothing else:
+	// the vocabulary is derived, so a stage landing in RunStages is held back
+	// by the same change that adds it.
+	for _, stage := range RunStages {
+		want := !slices.Contains(released, stage)
+		if got := AccountStageHeldBack(stage); got != want {
+			t.Errorf("AccountStageHeldBack(%q) = %v, want %v", stage, got, want)
+		}
+	}
+	if !AccountStageHeldBack("triage") {
+		t.Error("AccountStageHeldBack(triage) = false: no released image has the stage, so a node naming it is refused whole by the image in the field")
+	}
+	// A name that is no stage of a run at all is not "held back": it never
+	// reaches the node, and CheckStageSegment is what refuses it.
+	for _, stage := range []string{"bootstrap", "finalize", ""} {
+		if AccountStageHeldBack(stage) {
+			t.Errorf("AccountStageHeldBack(%q) = true: only a stage of a run can be held back from the node", stage)
+		}
 	}
 }

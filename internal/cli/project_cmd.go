@@ -1012,9 +1012,22 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 	// known. An empty entry names nothing and is dropped, and a config that
 	// names no stage account publishes no member at all, so the node of such a
 	// project is byte for byte what it was before the key existed.
+	//
+	// A stage the release behind cannot read is held back
+	// (config.AccountStageHeldBack): the node's reader refuses the whole node
+	// over one name outside its own run, and the reader is a job image that
+	// `fugaro update` rebuilds behind its own confirmation — so publishing a
+	// stage this release added would break every run of the project on an image
+	// that is not rebuilt yet, an in-flight run included, which the update must
+	// never do (docs/design/update-in-flight.md). The operator's choice stays in
+	// the local config, and it reaches the node from the release after the one
+	// that added the stage: adding the name to
+	// config.AccountStagesAReleasedImageKnows is what lifts the hold-back, and
+	// that list moves when a release is cut and the work moves on, the way the
+	// release-skew constants beside it do.
 	var stageAccounts map[string]string
 	for stage, choice := range lc.ClaudeAccountStages {
-		if choice.ClaudeAccount == "" {
+		if choice.ClaudeAccount == "" || config.AccountStageHeldBack(stage) {
 			continue
 		}
 		if stageAccounts == nil {

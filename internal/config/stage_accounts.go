@@ -72,6 +72,44 @@ func IsRunStage(stage string) bool {
 	return slices.Contains(RunStages, stage)
 }
 
+// AccountStagesAReleasedImageKnows are the stages a *published* policy node's
+// claude_account_stages may name and still be read by every job image that
+// reads it: RunStages as of the last tag, which is the vocabulary of the reader
+// in the field.
+//
+// A node's reader validates the member's value against its own RunStages
+// (internal/projectpolicy, through CheckStageSegment) and refuses the whole
+// node over one name it does not know, and a reader is a job image: `fugaro
+// update` rebuilds the images behind its own confirmation, so an installation
+// can be running one built before this release — an in-flight run included —
+// for as long as the operator takes to confirm. Publishing a stage this release
+// added would therefore turn every run of that project into an unreadable
+// policy on an image that is not rebuilt yet, which is the one thing an update
+// must never do (docs/design/update-in-flight.md).
+//
+// The list is the six names of 0.22.0 "Sloth", the last tag, and it moves the
+// way the release-skew constants beside it move — at the start of a release
+// cycle, when the tree is rebased onto the tag just cut: the release behind a
+// new stage is then a release whose images carry it, and the entry is published
+// from that release on. A stage added and published in the same release would
+// reach the images of the release before it, which do not know the name.
+var AccountStagesAReleasedImageKnows = []string{"plan", "implement", "review_first", "review", "adversarial", "fix"}
+
+// AccountStageHeldBack reports whether a published claude_account_stages entry
+// for stage has to wait for the images to catch up: the stage is one this run
+// has and the reader in the field does not, so an entry naming it makes the
+// node unreadable there. The operator's choice stays where it was written —
+// only the published copy holds it back — and it reaches the node from the
+// release after the one that added the stage, when the release behind is one
+// whose images know the name: a publish cannot ask which image an installation
+// is running, so the wait is a release and not a check.
+//
+// A name that is no stage of a run at all is not held back: it never reaches
+// the node, because CheckStageSegment is what refuses it.
+func AccountStageHeldBack(stage string) bool {
+	return IsRunStage(stage) && !slices.Contains(AccountStagesAReleasedImageKnows, stage)
+}
+
 // IsClaudeModel reports whether id is a Claude model's ID, in either spelling a
 // pin may carry (a "claude-*" name or an explicit "anthropic/<id>"): it is the
 // overlap ladder ClaudePatterns holds, asked by the readers that have to say
