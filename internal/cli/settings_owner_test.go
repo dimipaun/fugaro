@@ -58,8 +58,8 @@ func TestSettingsReadNamesSetupForAnInstallationKey(t *testing.T) {
 			t.Errorf("%s: no owner member, and the installation's own key names the command that writes it (D1178)", key)
 			continue
 		}
-		if !strings.Contains(*row.Owner, "fugaro setup") {
-			t.Errorf("%s: owner = %q, and the command that writes it is `fugaro setup` (D1178; spec §4)", key, *row.Owner)
+		if !settingsOwnerNamesConverge(root, *row.Owner) {
+			t.Errorf("%s: owner = %q, and the installation's own keys name `fugaro setup` or `fugaro update` (D1178; spec §4)", key, *row.Owner)
 		}
 		if settingsOwnerCommandExists(root, *row.Owner) {
 			t.Errorf("%s: owner = %q is a bare command, and the design asks for a sentence naming the command rather than a name a reader takes for the key's own editor (spec §4)", key, *row.Owner)
@@ -69,11 +69,12 @@ func TestSettingsReadNamesSetupForAnInstallationKey(t *testing.T) {
 
 // TestSettingsOwnerStringsAreAClosedVocabulary is the owner property of the
 // design (spec §1, §6): every owner word the read prints is a command that
-// exists — resolved against this binary's own tree, so a rename of a command is
-// red here rather than a word nothing runs — or a sentence naming `fugaro
-// setup` or `fugaro update`. The registry's tokens are the input: a row that
-// grows a family the read's table does not carry fails here rather than
-// printing nothing, which is the hole F11 was.
+// exists or a sentence naming `fugaro setup` / `fugaro update`. A command is
+// resolved against this binary's own tree, so a rename or a removal is red here
+// rather than a word nothing runs; the family commands are the one exception,
+// and settingsOwnerIsAFamilyCommand says why. The registry's tokens are the
+// input: a row that grows a family the read's table does not carry fails here
+// rather than printing nothing, which is the hole F11 was.
 func TestSettingsOwnerStringsAreAClosedVocabulary(t *testing.T) {
 	root := NewRootCmd()
 
@@ -83,10 +84,7 @@ func TestSettingsOwnerStringsAreAClosedVocabulary(t *testing.T) {
 			t.Errorf("%s: the registry's owner token %q has no entry in the read's table (settingsOwnerCommands), so the row prints no owner (F11)", r.Key, r.Owner)
 			continue
 		}
-		if settingsOwnerCommandExists(root, owner) {
-			continue
-		}
-		if strings.Contains(owner, "fugaro setup") || strings.Contains(owner, "fugaro update") {
+		if settingsOwnerCommandExists(root, owner) || settingsOwnerIsAFamilyCommand(owner) || settingsOwnerNamesConverge(root, owner) {
 			continue
 		}
 		t.Errorf("%s: owner = %q, and a non-writable key names a command that exists or a sentence naming `fugaro setup` / `fugaro update` (D1178; spec §4)", r.Key, owner)
@@ -164,4 +162,33 @@ func settingsOwnerCommandExists(root *cobra.Command, path string) bool {
 	}
 	c, _, err := root.Find(words)
 	return err == nil && c != nil && c.Name() == words[len(words)-1]
+}
+
+// settingsOwnerNamesConverge reports whether the owner word is the sentence the
+// design asks for rather than a bare command name (spec §4): it begins with
+// `fugaro setup` or `fugaro update` — the two commands that write the
+// installation's own facts — and that command is one this binary holds. A bare
+// command name would read as the key's own editor, which none of these keys has.
+func settingsOwnerNamesConverge(root *cobra.Command, owner string) bool {
+	for _, name := range []string{"fugaro setup", "fugaro update"} {
+		if strings.HasPrefix(owner, name) && settingsOwnerCommandExists(root, name) {
+			return true
+		}
+	}
+	return false
+}
+
+// settingsOwnerIsAFamilyCommand reports whether the owner word is one of the
+// commands the write's own table names. The read's table answers with the same
+// words, so this is not a loose match: `fugaro rigor set` and `fugaro rigor
+// floor` are the rigor block's commands and G6/G7 of this plan build them, so
+// until they land the write's table — the refusal a person reads today — is
+// where their names exist, and the design has the read print them all the same.
+func settingsOwnerIsAFamilyCommand(owner string) bool {
+	for _, command := range settingsFamilyCommands {
+		if command == owner {
+			return true
+		}
+	}
+	return false
 }

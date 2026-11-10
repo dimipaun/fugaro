@@ -363,6 +363,40 @@ func layerSelected(row settings.Row, want []string) bool {
 	return false
 }
 
+// settingsOwnerCommands is the read's own table (D1178): what the owner column
+// prints, one entry per owner token the registry uses. It is a second table
+// rather than settingsFamilyCommands because that map answers the *write*'s
+// refusal and points a refused key at its family (settings_set.go), and it
+// cannot be widened to answer this question: `config` owns `max_parallel` and
+// `setup` owns `update_check`, and both are keys the generic path writes, so an
+// entry for either family would refuse two keys `settings set` carries (F11).
+// The design's cost for the second table is the one thing to keep in step —
+// TestSettingsOwnerStringsAreAClosedVocabulary resolves every entry here
+// against the command tree and fails on a token the registry has and this table
+// does not, which is the hole F11 was.
+//
+// The default owner names the generic writer, and every family that has a
+// command names it. The families whose keys are the converge's own do not: what
+// a person can run for them is `fugaro setup` or `fugaro update`, so their
+// entries carry the sentence the design asks for rather than a command name a
+// reader would take for the key's own editor and that would not write the key
+// (spec §4). It is display text and no rule reads it.
+var settingsOwnerCommands = map[string]string{
+	"settings set": "fugaro settings set",
+	"models":       "fugaro models",
+	"rigor":        "fugaro rigor set",
+	"rigor floor":  "fugaro rigor floor",
+	"accounts":     "fugaro accounts",
+	"secrets":      "fugaro secrets",
+	"project":      "fugaro project",
+	"workspace":    "fugaro workspace",
+	"image map":    "fugaro image map",
+	"setup":        "fugaro setup, which writes the installation's own facts (and fugaro update re-applies them)",
+	"update":       "fugaro update, which writes the installation's own generations",
+	"budget":       "fugaro setup, which writes the installation's own budget backend (and fugaro update re-applies it)",
+	"config":       "fugaro update, which applies the file the key is stated in",
+}
+
 // projectRow is the key at the project scope: the layer file, the local config
 // or the environment, whichever decides.
 func (r *settingsRead) projectRow(row settings.Row) setting {
@@ -385,7 +419,7 @@ func (r *settingsRead) projectRow(row settings.Row) setting {
 		State:        stateOK,
 		Sensitive:    row.Sensitive,
 		Writable:     writeErr == nil,
-		Owner:        settingsFamilyCommands[row.Owner],
+		Owner:        settingsOwnerCommands[row.Owner],
 		TargetLayer:  settingsDefaultLayer(row),
 	}
 	switch {

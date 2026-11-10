@@ -687,20 +687,27 @@ var localRows = []Row{
 	loc("log_view", "the project's default logs", "setup", docSetup),
 	loc("scheduler_region", "the region the jobs run in", "setup", docSetup),
 	loc("user", "none", "setup", docSetup),
-	loc("commit_name", "Fugaro", "setup", docSetup),
-	loc("commit_email", "Fugaro's own address", "setup", docSetup),
+	// The keys of the installation a repository's own settings file also holds
+	// say `settings set` where the allowlist carries them (D1178): commit_name,
+	// commit_email, max_parallel, base_branch, update_check, the two budget keys
+	// and watch.burn_alert_usd_per_hour are the generic path's, and a row naming
+	// any other owner is a key `settings set` refuses while writing it (F13).
+	// Everything else in these blocks is the converge's, and the read names
+	// `fugaro setup` or `fugaro update` for it.
+	loc("commit_name", "Fugaro", "settings set", docSetup),
+	loc("commit_email", "Fugaro's own address", "settings set", docSetup),
 	// max_parallel and build.machine_type are the local loader's own values:
 	// Parse fills both for a file that sets them nowhere, so a run gets them
 	// whatever the file says, and their rows carry a value rather than an
 	// "unset means" sentence (from defaultValues below, as update_check's
 	// does).
-	{Key: "max_parallel", Layers: []string{LayerLocal, LayerShared}, Merge: Replace, Owner: "config", Doc: docSetup},
-	loc("base_branch", "none: each repository's own branch", "config", docSetup),
+	{Key: "max_parallel", Layers: []string{LayerLocal, LayerShared}, Merge: Replace, Owner: "settings set", Doc: docSetup},
+	loc("base_branch", "none: each repository's own branch", "settings set", docSetup),
 	// update_check is the one key a process environment sets as well as a
 	// file (spec §2.2: env overrides local), so its row carries the env level
 	// the read prints for FUGARO_NO_UPDATE_CHECK. Its default is a value and
 	// comes from defaultValues below.
-	{Key: "update_check", Layers: []string{LayerLocal, LayerShared, LayerEnv}, Merge: Replace, Owner: "setup", Doc: docSetup},
+	{Key: "update_check", Layers: []string{LayerLocal, LayerShared, LayerEnv}, Merge: Replace, Owner: "settings set", Doc: docSetup},
 	loc("secret_rotation_days", "0: no rotation period is recorded", "secrets", docSetup),
 	loc("secret_expires", "none: no expiry date is recorded", "secrets", docSetup),
 	loc("bitbucket_api_roots", "the provider's public API", "secrets", docSetup),
@@ -733,11 +740,11 @@ var localRows = []Row{
 	loc("compute_prices.*.gib_second_usd", "the built-in list price", "setup", docSetup),
 
 	loc("budget.firebase_api_key", "none: the Realtime Database API key", "budget", docSetup),
-	loc("budget.max_run_tokens", "the deployed ceiling's", "budget", docSetup),
+	loc("budget.max_run_tokens", "the deployed ceiling's", "settings set", docSetup),
 	loc("budget.rtdb_url", "none: no Realtime Database budget backend", "budget", docSetup),
 	loc("budget.firebase_project", "the installation's GCP project", "budget", docSetup),
 	loc("budget.token_signer", "none", "budget", docSetup),
-	loc("budget.unreachable_grace", "Fugaro's own grace period", "budget", docSetup),
+	loc("budget.unreachable_grace", "Fugaro's own grace period", "settings set", docSetup),
 
 	loc("model_prices.*.input_per_m", "the built-in price", "models", docModels),
 	loc("model_prices.*.output_per_m", "the built-in price", "models", docModels),
@@ -811,7 +818,7 @@ var localRows = []Row{
 	loc("job_profiles.*.allow_repos", "every repository of the project", "project", docSetup),
 	loc("job_profiles.*.claude_accounts", "every account of the project", "project", docSetup),
 
-	loc("watch.burn_alert_usd_per_hour", "Fugaro's own alert threshold", "budget", docSetup),
+	loc("watch.burn_alert_usd_per_hour", "Fugaro's own alert threshold", "settings set", docSetup),
 	loc("mailbox.keychain_item", "the keychain item the subscription design names", "secrets", docSetup),
 	loc("credentials_service.url", "none: the credentials service is not deployed", "setup", docSetup),
 
