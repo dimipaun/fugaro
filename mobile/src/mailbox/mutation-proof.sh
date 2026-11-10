@@ -469,8 +469,14 @@ run "the lapse refuses the writes it does not keep (the launch, the merge, the c
   "    if (false) {
       return spokenRefusal(refusedByLapse, { text: body.text, at, keepText: !isAction });"
 run "the lapse is asked about the ACTION RECORD and not only about the verb" \
-  "      write: writeOf({ verb: opts.verb, action: opts.action })," \
-  "      write: writeOf({ verb: opts.verb }),"
+  "    const refusedByLapse = await lapseRefusalAt(licence, {
+      now: new Date(at),
+      write: writeOf({ verb: opts.verb, action: opts.action }),
+    });" \
+  "    const refusedByLapse = await lapseRefusalAt(licence, {
+      now: new Date(at),
+      write: writeOf({ verb: opts.verb }),
+    });"
 run "the licence's refusal is spoken in the licence's own words" \
   "    const message = offlineSpeech(verdict.code) ?? licenceSpeech(verdict.code);" \
   "    const message = offlineSpeech(verdict.code);"
