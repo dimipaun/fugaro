@@ -329,6 +329,44 @@ func entryFor(b *Bundle, c creds.Credential) (Entry, bool) {
 	return b.Lookup(c.Name)
 }
 
+// resolveEntry is R6's order read at the one place a selected candidate becomes
+// a value: the per-secret container the candidate names first (DS3.3), and the
+// bundle's entry second. It is entryFor with the per-secret read in front of
+// it, and the bundle half is that function, unchanged.
+//
+// The two halves, and why each is where it is:
+//
+//   - the per-secret read, for a candidate the grammar names: a user-supplied
+//     credential is the container the intake wrote when its owner rotated it,
+//     and it is served ahead of the bundle's entry because the bundle's is the
+//     value that was there BEFORE the rotation (R6). A candidate the grammar
+//     does not admit borrows nothing here — it is a bundle credential's name,
+//     an account's or the project's own — and it is served exactly as it was
+//     before this service knew about containers (G7).
+//   - the bundle, asked for the credential name the per-secret name holds: a
+//     rotation of a credential the bundle also holds falls back to that entry
+//     (R7), so a container that is not there serves the operator's value rather
+//     than a refusal. For a tier-C candidate the name is its own and the lookup
+//     is entryFor's selection by kind, which is what keeps the provider key out
+//     of an account's hands.
+//
+// A read that FAILED is the third answer and it is NOT a fall: the caller
+// refuses the call on it (D143). Every other answer is the entry that was
+// selected or nothing, and the caller refuses on nothing rather than forwarding
+// an empty credential.
+func (s *Server) resolveEntry(ctx context.Context, b *Bundle, c creds.Credential) (Entry, bool, error) {
+	name := c.Name
+	if c.Tier != creds.TierC {
+		e, ok, fallback, err := s.perSecrets().read(ctx, c)
+		if err != nil || ok {
+			return e, ok, err
+		}
+		name = fallback
+	}
+	e, ok := entryFor(b, creds.Credential{Name: name, Tier: c.Tier})
+	return e, ok, nil
+}
+
 // unsent is the candidates this call has not already sent to. The mark a
 // usage limit writes does not always hold its credential — a reset already in
 // the past, on a tier whose D142 window is off, leaves a mark that has
@@ -459,7 +497,18 @@ func (s *Server) forward(ctx context.Context, w http.ResponseWriter, cl *call, s
 				"no credential is usable now and none of the ones this call used may be tried again")
 			return
 		}
-		e, ok := entryFor(b, c)
+		e, ok, err := s.resolveEntry(ctx, b, c)
+		if err != nil {
+			// The per-secret read failed, and fail-closed withholds the call
+			// rather than falling to the bundle's entry (D143, R7): the value
+			// the bundle holds is the one the rotation was of, so serving it
+			// here would serve, for every run at once, exactly what an operator
+			// rotated away — silently, and with no line that says so. The
+			// sentence is the class and nothing else: no container and no value
+			// is in it.
+			s.refuseCall(ctx, w, id, PurposeForward, c.Name, wireTier(c.Tier), StatusUnavailable, ErrorStateUnavailable, perSecretRefusal)
+			return
+		}
 		if !ok {
 			// Unreachable: the candidates came from this bundle. A refusal
 			// rather than a panic, because the alternative is a service that
