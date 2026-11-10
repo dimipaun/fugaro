@@ -2356,3 +2356,207 @@ func validateStopFraction(t *testing.T, lines string) validateOutput {
 	}
 	return doc
 }
+
+// configSkewTriage is configSkewHead with the triage stage's switch written:
+// the file the triageSince launches below check out.
+func configSkewTriage(value string) string {
+	return strings.Replace(configSkewHead, "agent: { auth: api-key }", "agent: { auth: api-key, triage: "+value+" }", 1)
+}
+
+// triageSwitched is the configuration refuseTriageSkew judges: the repository
+// file's key written at value, which is the pair config.Resolve carries into a
+// run — RepoTriageSet beside the switch's own field. A nil *config.Config is a
+// file that writes no key at all, which is the state the gate passes.
+func triageSwitched(value bool) *config.Config {
+	return &config.Config{RepoTriageSet: true, Agent: config.Agent{Triage: &value}}
+}
+
+// TestLauncherRefusesTriageOnAnOlderImage is triageSince's gate, both halves of
+// it. agent.triage is read by the config decoder and not by the runner's logic:
+// a release before this one decodes fugaro.yaml with KnownFields, so the key
+// alone — whatever it says, `true` included — fails the run at bootstrap, after
+// the launch was paid for, on a key nobody can do anything about any more. The
+// stage it switches is new in this release as well, so the image's runner has
+// nothing to run either way: the way out with no image to move is to remove the
+// key, and the refusal says so.
+//
+// The judge is the workflow's build record, as every checkImageSince gate's is,
+// and the boundary is the constant's own: one release below is refused, the
+// constant and one above pass, a base that is not a release only warns, and no
+// base at all passes.
+func TestLauncherRefusesTriageOnAnOlderImage(t *testing.T) {
+	for _, c := range []struct {
+		rel     string
+		refused bool
+	}{
+		{shiftRelease(t, triageSince, -1), true},
+		{triageSince, false},
+		{shiftRelease(t, triageSince, 1), false},
+	} {
+		t.Run(c.rel, func(t *testing.T) {
+			f := newCloudFixture(t)
+			configSkewCheckout(t, f, configSkewTriage("false")+configSkewWorkflow)
+			writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", "ghcr.io/dimipaun/fugaro-base:"+c.rel)
+			_, _, err := execute(t, "run", "--run-id", "20261110-100000-abcd", "A task")
+			if !c.refused {
+				if err != nil {
+					t.Fatalf("release %s: err = %v, want launched", c.rel, err)
+				}
+				return
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Fatalf("err = %v, want the launch refused", err)
+			}
+			for _, want := range []string{
+				"fugaro.yaml's agent.triage of acme/other",
+				"needs a job image whose runner knows " + triageKnows,
+				"fugaro " + triageSince + " or later",
+				"ghcr.io/dimipaun/fugaro-base:" + c.rel + ", release " + c.rel,
+				"fugaro image refresh --repo acme/other --workflow svc",
+				"; or remove agent.triage from fugaro.yaml",
+			} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("%v lacks %q", err, want)
+				}
+			}
+			// This file wrote the off-switch, so the way out names its cost:
+			// the absent key means the stage on, and removing the key hands
+			// the switch back on the first image that reads it (TriageOn).
+			if !strings.Contains(err.Error(), "only if the off-switch may go with it") {
+				t.Errorf("a file writing agent.triage: false is not told what removing the key costs: %v", err)
+			}
+			if n := len(f.run.Executions()); n != 0 {
+				t.Errorf("%d executions, want none", n)
+			}
+		})
+	}
+	// The key is judged as text and not as a value: `triage: true` is the
+	// default — the stage running, which is what an older image does by running
+	// no stage at all — and it is refused exactly as false is. Reading the
+	// resolved switch would let this launch through to a bootstrap failure.
+	t.Run("the switch written on", func(t *testing.T) {
+		f := newCloudFixture(t)
+		dir := configSkewCheckout(t, f, configSkewTriage("true")+configSkewWorkflow)
+		writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", "ghcr.io/dimipaun/fugaro-base:"+shiftRelease(t, triageSince, -1))
+		_, _, err := execute(t, "run", "--run-id", "20261110-100000-abcd", "A task")
+		if ExitCode(err) != ExitUserError {
+			t.Fatalf("err = %v, want the launch refused", err)
+		}
+		if !strings.Contains(err.Error(), "fugaro.yaml's agent.triage of acme/other") {
+			t.Errorf("%v lacks the key's own subject", err)
+		}
+		// The way out is worded for the answer this file wrote. `triage: true`
+		// asks for the stage's own default and the absent key means the same
+		// (TriageOn), so nothing this file asked for is turned off by removing
+		// the key: a sentence offering removal as "what the key turned off asks
+		// for" would offer its author the opposite of what it wrote.
+		if !strings.Contains(err.Error(), "the absent key means the stage on") {
+			t.Errorf("%v does not say what removing the key means for a file that wrote true", err)
+		}
+		if strings.Contains(err.Error(), "the key turned off asks for") {
+			t.Errorf("%v offers a file writing agent.triage: true the off-switch's own way out", err)
+		}
+		// The same image, the same repository, a file that writes no key:
+		// nothing to gate, which is the way out the refusal names.
+		testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": configSkewHead + configSkewWorkflow})
+		commitRef(t, dir, "develop")
+		if _, _, err := execute(t, "run", "--run-id", "20261110-100000-abce", "A task"); err != nil {
+			t.Fatalf("a file that writes no agent.triage must not be gated on triageSince: %v", err)
+		}
+	})
+	// fugaro update --repo's half: a launch from outside the repository's
+	// checkout reads no fugaro.yaml at all, so the key the run will find once
+	// it has one is judged by the operator's own converge.
+	t.Run("fugaro update --repo", func(t *testing.T) {
+		below := "ghcr.io/dimipaun/fugaro-base:" + shiftRelease(t, triageSince, -1)
+		var warn bytes.Buffer
+		err := refuseTriageSkew("acme/app", triageSwitched(false), below, &warn)
+		if err == nil {
+			t.Fatal("refuseTriageSkew accepted a base image older than the release that reads the key")
+		}
+		for _, want := range []string{"fugaro.yaml's agent.triage of acme/app", triageKnows, "release " + shiftRelease(t, triageSince, -1), "fugaro update --base base"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("%v lacks %q", err, want)
+			}
+		}
+		// The way out is the one this file's own answer has, which is what
+		// taking the configuration rather than the presence bit is for: this
+		// one wrote the off-switch, so removing it has a cost and the message
+		// names it.
+		if !strings.Contains(err.Error(), "only if the off-switch may go with it") {
+			t.Errorf("a file writing agent.triage: false is not told what removing the key costs: %v", err)
+		}
+		// The boundary, and the three states that ask nothing of the image.
+		for _, ref := range []string{"ghcr.io/dimipaun/fugaro-base:" + triageSince, "ghcr.io/dimipaun/fugaro-base:" + shiftRelease(t, triageSince, 1)} {
+			var w bytes.Buffer
+			if err := refuseTriageSkew("acme/app", triageSwitched(false), ref, &w); err != nil || w.Len() != 0 {
+				t.Errorf("%q: err = %v, warn = %q, want neither", ref, err, w.String())
+			}
+		}
+		for _, c := range []struct {
+			name string
+			cfg  *config.Config
+			ref  string
+		}{
+			{"no file writes the key", nil, below},
+			{"no base image at all", triageSwitched(true), ""},
+		} {
+			var w bytes.Buffer
+			if err := refuseTriageSkew("acme/app", c.cfg, c.ref, &w); err != nil || w.Len() != 0 {
+				t.Errorf("%s: err = %v, warn = %q, want neither", c.name, err, w.String())
+			}
+		}
+		var w bytes.Buffer
+		if err := refuseTriageSkew("acme/app", triageSwitched(false), "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-1a2b3c", &w); err != nil {
+			t.Errorf("dev base: err = %v, want a warning only", err)
+		}
+		if !strings.Contains(w.String(), "not a release base image") || !strings.Contains(w.String(), "is not checked") {
+			t.Errorf("dev base: warn = %q", w.String())
+		}
+	})
+}
+
+// TestTriageSinceHasAReleaseBullet: triageSince names 0.23.0, which is not
+// tagged, so docs/release.md's Before-you-tag list is what holds the constant to
+// the release actually cut — the job every other *Since constant's bullet does.
+// Nothing else ties the number the gate accepts to the release whose config
+// reader knows the key, and a release that landed it elsewhere would otherwise
+// keep refusing images that read it.
+func TestTriageSinceHasAReleaseBullet(t *testing.T) {
+	var bullet string
+	for _, line := range strings.Split(readDoc(t, "docs/release.md"), "\n") {
+		if strings.HasPrefix(line, "- **Verify `triageSince`") {
+			bullet = line
+			break
+		}
+	}
+	if bullet == "" {
+		t.Fatal("docs/release.md's Before-you-tag list has no triageSince bullet: the checklist is where a release verifies the constant")
+	}
+	if !strings.Contains(bullet, "currently `\""+triageSince+"\"`") {
+		t.Errorf("docs/release.md's triageSince bullet does not carry the constant's release (%q)", triageSince)
+	}
+	for _, want := range []string{"agent.triage", "not tagged yet", "config.RepoTriageSet", "gateTriage"} {
+		if !strings.Contains(bullet, want) {
+			t.Errorf("docs/release.md's triageSince bullet does not say %q", want)
+		}
+	}
+	// The key has one file and not two: a bullet that sent a release looking
+	// for a layer half would have it verify a predicate no gate asks — the
+	// layer's own loader refuses the key long before an image is judged.
+	if strings.Contains(bullet, "SetsTriage") || strings.Contains(bullet, "defaults.agent.triage") {
+		t.Errorf("docs/release.md's triageSince bullet names a layer half the key does not have: agent.triage is repo-scope alone (config.Scopes)")
+	}
+}
+
+// TestTriageSinceIsTheReleaseTheDocsName: the key's own documentation names the
+// release the gate holds the job image to — the schema's sentence, which a
+// reader of fugaro.yaml sees. A reader told to upgrade for a release that does
+// not read the key moves an image for nothing, and one told nothing meets the
+// bootstrap failure the gate exists to prevent.
+func TestTriageSinceIsTheReleaseTheDocsName(t *testing.T) {
+	repoSchema := readDoc(t, "schemas/fugaro.schema.json")
+	if want := "Needs fugaro " + triageSince; !strings.Contains(repoSchema, want) {
+		t.Errorf("fugaro.yaml's schema does not name the release agent.triage ships in: want %q", want)
+	}
+}

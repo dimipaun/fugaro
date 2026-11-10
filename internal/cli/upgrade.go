@@ -324,7 +324,7 @@ func upgradeCheckout(ctx context.Context, cmd *cobra.Command, o upgradeOptions, 
 	}
 	seen[key] = loc.Root
 	if !fugaroCheckout(loc) {
-		return refuse(stepFailed, "not a Fugaro checkout: it has no fugaro.yaml and its .claude/settings.json does not wire the Fugaro plugin (set it up with fugaro setup and /fugaro:setup first)")
+		return refuse(stepFailed, "not a Fugaro checkout: it has no fugaro.yaml (set it up with fugaro setup and /fugaro:setup first)")
 	}
 	u := &upgradeCtx{cmd: cmd, w: w, o: o, loc: loc, agent: agent}
 	for i, s := range upgradeSteps {
@@ -349,14 +349,15 @@ func upgradeCheckout(ctx context.Context, cmd *cobra.Command, o upgradeOptions, 
 	return res
 }
 
-// fugaroCheckout: a checkout Fugaro is set up in, or being set up in. It has
-// a fugaro.yaml, or its settings already wire the plugin (init's plugin
-// stage runs before /fugaro:setup writes fugaro.yaml).
+// fugaroCheckout: a checkout Fugaro is set up in. It has a fugaro.yaml, and
+// that is the whole of it — a repository that never opted in has neither file
+// and is one Fugaro is not set up in, and a .claude/settings.json whose
+// marketplace an older fugaro wired is a leftover of a pin this tree no longer
+// writes by default (D940) and not a second way of being one (U1 of
+// docs/plugin-user-scope/implementation-plan.md, reconciliation.md F15).
 func fugaroCheckout(loc pluginwire.Location) bool {
-	if _, err := os.Lstat(filepath.Join(loc.Root, "fugaro.yaml")); err == nil {
-		return true
-	}
-	return pluginwire.Status(loc.Settings, Version, "").Pin != pluginwire.NotWired
+	_, err := os.Lstat(filepath.Join(loc.Root, "fugaro.yaml"))
+	return err == nil
 }
 
 func printStep(w io.Writer, r stepResult) {

@@ -18,33 +18,40 @@ import (
 // The checkout stage of the converge (initflow.Checkout): what `fugaro
 // upgrade` does for the checkout, run inside `fugaro update` — the owner's
 // rule of 2026-10-30, one fugaro update is the whole upgrade. The user is busy
-// and is not expected to run a second command, so the pin in the checkout's
-// .claude/settings.json, the plugin in Claude Code and the repository's job
-// images move here, with the version the binary just became.
+// and is not expected to run a second command, so the repository's job images
+// move here, with the version the binary just became.
 //
-// It calls upgrade's own steps and never a copy of them, because the two front
-// doors of one upgrade may not drift: a refusal (a pin newer than this binary,
-// a fork's marketplace, a cloud write in a coding agent's session, a billable
-// build not confirmed) is the step's own, in its own words. The policy step is
-// not among them: the policy stage (init_policy_migrate.go) is that migration,
-// registered for the same checkout, and running it twice would migrate one
-// node twice.
+// It calls upgrade's own step and never a copy of it, because the two front
+// doors of one upgrade may not drift: a refusal (a cloud write in a coding
+// agent's session, a billable build not confirmed) is the step's own, in its
+// own words. The policy step is not among them: the policy stage
+// (init_policy_migrate.go) is that migration, registered for the same
+// checkout, and running it twice would migrate one node twice. The pin and the
+// plugin are not among them either, and that is decision D941 (U1 of
+// docs/plugin-user-scope/implementation-plan.md): they are the plugin stage's
+// own, because that stage runs before the repository stage and the plugin
+// install is the step that clears the staleness line every command prints — a
+// step that a stopped repository, or a checkout the run never reached, may not
+// take with it (reconciliation.md F13).
 //
 // The stage is skipped, not failed, where there is no checkout to work on: a
 // `fugaro update` from a directory that is not one, or a checkout Fugaro is
-// not set up in, has no pin to move.
+// not set up in, has no job images to refresh.
 
 // checkoutSteps are fugaro upgrade's steps for the checkout, in upgrade's own
-// order, minus the policy step the converge already runs as its own stage.
-var checkoutSteps = []upgradeStep{{"pin", pinStep}, {"plugin", pluginStep}, {"cloud", cloudStep}}
+// order, minus the policy step the converge already runs as its own stage and
+// minus the pin and the plugin, which are the plugin stage's (init_plugin_
+// stage.go).
+var checkoutSteps = []upgradeStep{{"cloud", cloudStep}}
 
 type checkoutStage struct {
 	e *initEngine
 	// pastStops are the stops this run is running past this stage
 	// (initflow.PastStops), the repository stage's needs-you stop when it has
-	// one: the stage splits on it, because its pin and its plugin read no
-	// repository file and its cloud step builds from the repository the stop
-	// is about.
+	// one: the stage's cloud step builds from the repository that stop is
+	// about, so the run that is running past the stop drops it rather than
+	// building out of order, and says so in its own line rather than leaving
+	// the reader to guess what became of the images.
 	pastStops []string
 }
 
@@ -66,15 +73,16 @@ func (s *checkoutStage) PastStops(stops []string) { s.pastStops = stops }
 func (*checkoutStage) SelfConfirming() {}
 
 // LocalUnderAgent: in a coding agent's session the loop applies this stage
-// instead of leaving it for the user (initflow.LocalUnderAgent), because every
-// write it makes is on this machine — the checkout's .claude/settings.json and
-// the plugin in the user's own Claude Code — and those are the two writes the
-// user's own session makes with fugaro upgrade, on files it reads anyway. What
-// reaches outside the machine the stage refuses itself: under a marker its plan
-// drops the cloud step, with that step's own sentence (cloudAgentRefusal), and
-// the step refuses the marker again if it is ever reached another way. So the
-// pin and the plugin move in an agent's session, --yes or not, and nothing else
-// does.
+// instead of leaving it for the user (initflow.LocalUnderAgent). Every step it
+// has left is one the session may not take — the cloud half, whose writes are
+// not this machine's — so what the marker buys here is not the step but the
+// run's account of it: the stage's plan drops the cloud step under a marker,
+// in that step's own sentence (cloudAgentRefusal), and the apply leaves it for
+// the user as a named step with the commands that run it, where a stage the
+// loop never applied would be one line naming `fugaro upgrade` and nothing of
+// what became of the images. The machine's own writes — the pin and the plugin
+// in the user's own Claude Code — are the plugin stage's since U1, and that
+// stage is LocalUnderAgent for the same reason it is there.
 func (*checkoutStage) LocalUnderAgent() {}
 
 func (s *checkoutStage) Left() initflow.Left {
@@ -86,13 +94,13 @@ func (s *checkoutStage) Left() initflow.Left {
 func (s *checkoutStage) checkout() (pluginwire.Location, string) {
 	loc, ok := pluginwire.Locate(".")
 	if !ok {
-		return pluginwire.Location{}, "not in a checkout: the checkout's own steps (the plugin pin, the plugin in Claude Code, the job images) run where the checkout is"
+		return pluginwire.Location{}, "not in a checkout: the checkout's job images are refreshed where the checkout is"
 	}
 	if releaseVersion() == "" {
-		return loc, "a development build has no release to pin, install or refresh to"
+		return loc, "a development build has no release to refresh to"
 	}
 	if !fugaroCheckout(loc) {
-		return loc, "not a Fugaro checkout: it has no fugaro.yaml and its .claude/settings.json does not wire the Fugaro plugin (set it up with fugaro setup and /fugaro:setup first)"
+		return loc, "not a Fugaro checkout: it has no fugaro.yaml (set it up with fugaro setup and /fugaro:setup first)"
 	}
 	return loc, ""
 }
@@ -113,12 +121,13 @@ type plannedStep struct {
 
 // planFor is the steps this checkout's run has, and the steps it does not:
 // four reasons drop the cloud step, and none of them is a skip over a
-// failure. A coding agent's session leaves the cloud out (U7: the pin and the
-// plugin move there, the images do not — what fugaro upgrade --local does in
-// the same session), the step never having been reached to say it itself
-// because the loop applied this stage for its local half. That drop is the one
-// of the four that is parked and not skipped: the step is the user's, in the
-// terminal where it can run, and the stage reports it every run. A checkout
+// failure. A coding agent's session leaves the cloud out (U7: the plugin stage
+// moves the pin and the plugin there, the images do not — what fugaro upgrade
+// --local does in the same session), the step never having been reached to say
+// it itself because the loop applied this stage as LocalUnderAgent. That drop
+// is the one of the four that is parked and not skipped: the step is the
+// user's, in the terminal where it can run, and the stage reports it every
+// run. A checkout
 // with no origin remote has no repository for the refresh to resolve — a skip,
 // not the failure fugaro upgrade makes of that read, because there the user
 // asked for the refresh by name and here the step is one of a run. A checkout
@@ -134,13 +143,13 @@ type plannedStep struct {
 // reason it fails — an origin that is not owner/name, a checkout git cannot
 // read — is a failure here too, not a skip.
 func (s *checkoutStage) planFor(ctx context.Context, env initflow.Env, loc pluginwire.Location) ([]plannedStep, error) {
-	u := s.upgradeCtx(env, loc)
-	pinSkip, cloudSkip, cloudParked := "", "", false
+	u := s.e.upgradeCtx(env, loc)
+	cloudSkip, cloudParked := "", false
 	switch other, err := s.namesAnotherProject(loc); {
 	case err != nil:
 		return nil, err
 	case other != "":
-		pinSkip, cloudSkip = other, other
+		cloudSkip = other
 	case u.agent != "":
 		cloudSkip, cloudParked = cloudAgentRefusal(u), true
 	default:
@@ -160,10 +169,7 @@ func (s *checkoutStage) planFor(ctx context.Context, env initflow.Env, loc plugi
 	steps := make([]plannedStep, 0, len(checkoutSteps))
 	for _, step := range checkoutSteps {
 		p := plannedStep{step: step}
-		switch step.name {
-		case "pin":
-			p.skip = pinSkip
-		case "cloud":
+		if step.name == "cloud" {
 			p.skip, p.parked = cloudSkip, cloudParked
 		}
 		steps = append(steps, p)
@@ -174,18 +180,19 @@ func (s *checkoutStage) planFor(ctx context.Context, env initflow.Env, loc plugi
 // namesAnotherProject is why this checkout is not the one this run is for: its
 // fugaro.yaml names a project that is not this run's, or none at all. The
 // plugin stage gates on exactly this (init_plugin_stage.go), for the same
-// reason: a checkout of another project is not touched — its pin and its job
-// images least of all. A fugaro.yaml that cannot be read is not a pass but a
-// failure: unknown is not the same as matching, and it could name any project.
+// reason: a checkout of another project is not touched — its job images least
+// of all, and, until the pin's writer is deleted (U2), its plugin wiring. A
+// fugaro.yaml that cannot be read is not a pass but a failure: unknown is not
+// the same as matching, and it could name any project.
 func (s *checkoutStage) namesAnotherProject(loc pluginwire.Location) (string, error) {
 	data, err := readFugaroYAML(filepath.Join(loc.Root, "fugaro.yaml"))
 	switch {
 	case err == nil:
 		if p, perr := config.ProjectOf(data); perr != nil || p != s.e.lc.Name {
-			return "this checkout's fugaro.yaml names another project (or none), not " + pluginwire.Printable(s.e.lc.Name) + ": its plugin pin and its job images are not moved here", nil
+			return "this checkout's fugaro.yaml names another project (or none), not " + pluginwire.Printable(s.e.lc.Name) + ": its job images are not refreshed here", nil
 		}
 	case !errors.Is(err, os.ErrNotExist):
-		return "", fmt.Errorf("this checkout's fugaro.yaml cannot be read, so which project it names is unknown and its plugin pin and its job images are not moved: %s", oneLine(err.Error()))
+		return "", fmt.Errorf("this checkout's fugaro.yaml cannot be read, so which project it names is unknown and its job images are not refreshed: %s", oneLine(err.Error()))
 	}
 	return "", nil
 }
@@ -208,8 +215,11 @@ func (s *checkoutStage) namesAnotherProject(loc pluginwire.Location) (string, er
 // and the build submitted over it fails at the job's own steps and leaves the
 // user a second command this door may not name.
 //
-// The stage still runs its pin and its plugin: those read no repository state,
-// and the plugin is what clears the staleness line every command prints.
+// The stage's row still tolerates the stop (initflow's order): the plugin
+// stage ahead of it is where the machine's own writes happen, and what the
+// tolerance is for here is that the checkout says in its own line what became
+// of the images rather than leaving the run's account at "waits for
+// repository".
 func (s *checkoutStage) repositoryStopped() string {
 	if slices.Contains(s.pastStops, initflow.Repository) {
 		return "the repository stage stopped for the user in this run, and this checkout's job images are built for the repository it onboards: they are not refreshed here, and the next " + s.e.r.o.doorProgram() + " that gets past that stage refreshes them"
@@ -257,6 +267,12 @@ func (s *checkoutStage) detail(steps []plannedStep, loc pluginwire.Location) str
 // Anything else is something for the apply, which reports it in the step's own
 // words — and a step that fails in its check mode fails the stage here, at the
 // same point the apply would.
+//
+// The cloud step's own verdict is the one thing that check mode cannot settle
+// on its own: it reads fugaro.yaml and the local config and never a build
+// record, so the run that is taking this checkout to this release — the run
+// whose job images move with it — has to be asked about separately
+// (initEngine.checkoutBehind).
 func (s *checkoutStage) Check(ctx context.Context) (initflow.Status, error) {
 	loc, why := s.checkout()
 	if why != "" {
@@ -275,12 +291,24 @@ func (s *checkoutStage) Check(ctx context.Context) (initflow.Status, error) {
 		}
 		// Every step is checked, not just up to the first with something to
 		// do: a step that fails here fails the run before any of them
-		// writes, where the pin would otherwise have moved before the cloud
-		// step was read.
+		// writes.
 		switch r := s.checkStep(ctx, p.step, loc); r.state {
 		case stepFailed:
 			return initflow.Status{}, errors.New(r.reason)
 		case stepCurrent:
+			if p.step.name == "cloud" && s.e.checkoutBehind {
+				// The cloud step's own check reads fugaro.yaml and the local
+				// config and never a build record (cloudCheck), so it cannot
+				// see the job images the refresh moves: a run that is taking
+				// this checkout to this release is one whose job images move
+				// with it (initEngine.checkoutBehind), and what they are on is
+				// the apply's to say, not this check's. The step is the only
+				// one this stage has, so dropping it here is dropping the
+				// stage — which is what a run that stopped refreshing the
+				// repository's job images on an upgrade was doing.
+				todo = true
+				break
+			}
 			current = append(current, p.step.name)
 		default:
 			todo = true
@@ -313,7 +341,7 @@ func parked(steps []plannedStep) bool {
 // the caveat on the deployed job's config copy — belong to the apply that
 // really runs the step, not to a look at whether there is anything to do.
 func (s *checkoutStage) checkStep(ctx context.Context, step upgradeStep, loc pluginwire.Location) stepResult {
-	u := s.upgradeCtx(initflow.Env{}, loc)
+	u := s.e.upgradeCtx(initflow.Env{}, loc)
 	u.o.check = true
 	u.w = io.Discard
 	c := *s.e.r.cmd // the run's command, its output silenced: the steps' side notes go there
@@ -348,17 +376,19 @@ func (s *checkoutStage) Apply(ctx context.Context, env initflow.Env) (initflow.O
 	if err != nil {
 		return initflow.Outcome{}, err
 	}
-	u := s.upgradeCtx(env, loc)
+	u := s.e.upgradeCtx(env, loc)
 	if !env.Yes && !env.Interactive && u.agent == "" {
 		// The cloud step asks before every change, each billable build
 		// included, and there is no terminal here to ask at; the stage
 		// leaves the whole checkout for the user, which is what fugaro
 		// upgrade itself does without a terminal. A coding agent's session
-		// is not that case, and it is the one the gate has to look at: what
-		// the marker parks is the cloud half (planFor drops it), while the
-		// pin and the plugin are this machine's own writes and are exactly
-		// what the stage exists to move there — a gate that answered the
-		// marker's no-terminal run with needs-you would leave them unmoved.
+		// is not that case, and it is the one the gate has to look at: the
+		// save from leaving the stage to the user there is no longer a step
+		// of its own (the pin and the plugin became the plugin stage's, U1),
+		// and what planFor's agent arm drops is the cloud half alone — so a
+		// gate that answered the marker's no-terminal run with needs-you
+		// would leave the run's account of the images at one line naming
+		// `fugaro upgrade`, with none of the step's own sentence in it.
 		return initflow.Outcome{}, &initflow.NeedsYouError{Left: s.Left()}
 	}
 	// The refresh reads its context off the command (image_refresh.go), and the
@@ -445,15 +475,19 @@ func (*checkoutStage) Verify(context.Context) error { return nil }
 // command and output, the flags the converge carries that upgrade has too, and
 // the marker of the coding agent's session this run is in — the run's own
 // options().Agent, and not a second read of the environment, so that the
-// stage and the loop that drives it answer the marker the same way. Under a
-// marker the cloud step refuses before it reads anything, so the pin and the
-// plugin move there and the images do not: what `fugaro upgrade --local` does
-// in the same session.
-func (s *checkoutStage) upgradeCtx(env initflow.Env, loc pluginwire.Location) *upgradeCtx {
-	o := s.e.r.o
+// stages and the loop that drives them answer the marker the same way. Under a
+// marker the cloud step refuses before it reads anything, so the plugin stage
+// moves the pin and the plugin there and the images do not: what `fugaro
+// upgrade --local` does in the same session.
+//
+// It is the engine's and not one stage's, because more than one stage of the
+// converge runs a step of fugaro upgrade: the plugin stage the pin's and the
+// plugin's (`plugin:`, U1), the checkout stage the cloud half.
+func (e *initEngine) upgradeCtx(env initflow.Env, loc pluginwire.Location) *upgradeCtx {
+	o := e.r.o
 	return &upgradeCtx{
-		cmd: s.e.r.cmd,
-		w:   s.e.r.w,
+		cmd: e.r.cmd,
+		w:   e.r.w,
 		o: upgradeOptions{yes: env.Yes, allowFork: o.allowFork, refresh: refreshOptions{
 			imageSource: o.imageSource, expectDigests: o.expectDigests, cloud: o.cloud,
 			// The refresh's own run prints and asks where its command says
@@ -463,8 +497,8 @@ func (s *checkoutStage) upgradeCtx(env initflow.Env, loc pluginwire.Location) *u
 			// answer is in (G1). The reader is the same value the stage's own
 			// steps read through, so a typed-ahead answer is not lost between
 			// two readers over one stdin.
-			in: s.e.r.in, out: s.e.r.w}},
+			in: e.r.in, out: e.r.w}},
 		loc:   loc,
-		agent: s.e.options().Agent,
+		agent: e.options().Agent,
 	}
 }

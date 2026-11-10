@@ -50,7 +50,7 @@ const wsOwnerCap = "workspace_cap:\n  monthly: 25\n"
 
 // wsOwnerTwoMembers is the same table with a project the published node does
 // not carry yet: the write that admits a member, and so the one this stage
-// reserves for the owner's own typed word.
+// reserves for the owner's own session (D1555).
 const wsOwnerTwoMembers = wsOwnerTable + `  member-d:
     job_service_accounts:
       - job-account-d@member-d-gcp.iam.gserviceaccount.com
@@ -182,9 +182,8 @@ func newWSUpdateRig(t *testing.T, h *wsUpdateHome) *wsUpdateRig {
 	// The run's own streams are the door's (newInitRun): the stage writes its
 	// diff through initRun.w and puts its confirmation through initRun.asking,
 	// so a test that gives this run a reporter sees what a person would — the
-	// frame is kept off the block and off the name typed under it, and it is
-	// this shape, not a run holding the buffer directly, that proves it
-	// (newMigrationRig's own note).
+	// frame is kept off the block, and it is this shape, not a run holding the
+	// buffer directly, that proves it (newMigrationRig's own note).
 	run := newInitRun(cmd, &initOptions{door: updateDoor.name})
 	run.setProject(lc)
 	return &wsUpdateRig{h: h, s: newWorkspaceStage(&initEngine{r: run, lc: lc, path: os.Getenv("FUGARO_CONFIG")}), cmd: cmd, out: out}
@@ -344,11 +343,10 @@ func TestUpdatePublishesTheWorkspaceNodeAndMigratesAnOlderOneInPlace(t *testing.
 	t.Run("the first publish", func(t *testing.T) {
 		h := newWSUpdateHome(t, wsOwnerTable+wsOwnerCap)
 		r := newWSUpdateRig(t, h)
-		// The group's first record takes the owner's typed word rather than
+		// The group's first record is the owner's own session rather than a
 		// --yes (the whole membership is chosen where none was): the run here is
-		// the owner's own, at a terminal, typing the workspace's name.
+		// the owner's own, at a terminal, and nothing is typed at them.
 		fakeTerminal(t)
-		r.cmd.SetIn(strings.NewReader("workspace-alpha\n"))
 		oc, out, err := r.apply(t, false)
 		if err != nil {
 			t.Fatalf("the owner's run published nothing: %v\n%s", err, out)
@@ -547,14 +545,13 @@ func TestUpdateNamesTheOneCommandAndNoOther(t *testing.T) {
 	collect("check", nil, r.check(t).Detail)
 	collect("plan", nil, r.planText(t))
 	collect("left", nil, r.s.Left().Text)
-	// The same write two ways: refused by --yes (the group's first record takes
-	// the typed name, so this is the refusal sentence), then published by the
-	// owner's own word at a terminal. Both are sentences of this stage, and both
-	// have to name the one command.
+	// The same write two ways: refused by --yes (the group's first record is the
+	// owner's own session, so this is the refusal sentence), then published by
+	// the owner's own presence at a terminal. Both are sentences of this stage,
+	// and both have to name the one command.
 	_, out, err := r.apply(t, true)
 	collect("apply refused", err, out)
 	fakeTerminal(t)
-	r.cmd.SetIn(strings.NewReader("workspace-alpha\n"))
 	_, out, err = r.apply(t, false)
 	collect("apply", err, out)
 
@@ -666,11 +663,11 @@ func TestMembershipNeedsBothSides(t *testing.T) {
 // be the one silent change this stage must not make: every run of every member
 // project reads the record this write replaces.
 //
-// A removal is not a widening and it does not take the typed name: the owner
-// asked for it by editing their own table, and what the diff owes them is the
-// statement of it. The second half is the other side of the same coin: a write
-// that removes nothing says so, rather than leaving the reader to work it out
-// against the node above.
+// A removal is not a widening and it does not take the widening's fence: the
+// owner asked for it by editing their own table, and what the diff owes them is
+// the statement of it. The second half is the other side of the same coin: a
+// write that removes nothing says so, rather than leaving the reader to work it
+// out against the node above.
 func TestUpdateDiffSaysWhatItRemoves(t *testing.T) {
 	h := newWSUpdateHome(t, wsOwnerTable+wsOwnerCap)
 	p := h.project(t, "workspace-alpha")
@@ -705,6 +702,83 @@ func TestUpdateDiffSaysWhatItRemoves(t *testing.T) {
 	}
 	if got := wsRepos(t, p.db, "workspace-alpha", "member-b"); !slices.Equal(got, []string{"owner/repo-a", "owner/repo-b"}) {
 		t.Errorf("member-b's published repositories are %v, want the two the table declares", got)
+	}
+}
+
+// TestWorkspaceRemovalAsksNothingAtATerminal: a removal is not a widening, and
+// it takes the owner's own session and nothing typed at it: a person at a real
+// terminal is told what the write removes and it is written, exactly as the
+// widening's own arm does (workspacePublication.confirm). The empty stdin is
+// what makes the assertion about the prompt rather than about the code: a run
+// that asked at all would read nothing, and the member the node no longer
+// carries is the test.
+//
+// The controls are the two sessions beside it: a coding agent's is refused
+// (this file), and a run with no terminal keeps the refusal that names the flag
+// (TestUpdateDiffSaysWhatItRemoves' --yes arm and the widening tests' first
+// halves).
+func TestWorkspaceRemovalAsksNothingAtATerminal(t *testing.T) {
+	h := newWSUpdateHome(t, wsOwnerTable+wsOwnerCap)
+	p := h.project(t, "workspace-alpha")
+	// member-c is published and this installation's table does not declare it:
+	// the write this run would otherwise make is the removal of a member, which
+	// is no widening of the group and so takes nothing of the owner but their
+	// being there.
+	wsPublishedNode(t, p, "workspace-alpha", []any{
+		wsPublishedMember("member-b", "owner/repo-a", "owner/repo-b"),
+		wsPublishedMember("member-c", "owner/repo-c"),
+	}, 25_000_000)
+
+	r := newWSUpdateRig(t, h)
+	fakeTerminal(t)
+	oc, out, err := r.apply(t, false)
+	if err != nil {
+		t.Fatalf("a removal at the owner's own terminal was refused: %v\n%s", err, out)
+	}
+	if !oc.Changed {
+		t.Errorf("the removal reports no change: %s", oc.Detail)
+	}
+	for _, asked := range []string{"to confirm: ", "[y/N]"} {
+		if strings.Contains(out, asked) {
+			t.Errorf("the removal asked the owner something at their own terminal (%q):\n%s", asked, out)
+		}
+	}
+	if got := wsMembers(t, p.db, "workspace-alpha"); !slices.Equal(got, []string{"member-b"}) {
+		t.Errorf("the published members are %v, want [member-b]: the removal the diff showed did not land", got)
+	}
+}
+
+// TestWorkspaceRemovalAsksNothingOfACodingAgentsSession is the fence's other
+// half at this path: what answers for a write here is the session itself, so a
+// coding agent's is refused and the node does not move. The refusal is the
+// stage's own (initflow.AgentError) and not the loop's: this stage confirms
+// itself (initflow.SelfConfirming), so the loop's agent arm is never reached
+// here and a session that got past this would read a converged run.
+//
+// The project is NOT managed (no gate in the rig): this is the removal path the
+// gate has nothing to say about, which is the one where the session's own arm
+// was the whole of the fence.
+func TestWorkspaceRemovalAsksNothingOfACodingAgentsSession(t *testing.T) {
+	h := newWSUpdateHome(t, wsOwnerTable+wsOwnerCap)
+	p := h.project(t, "workspace-alpha")
+	wsPublishedNode(t, p, "workspace-alpha", []any{
+		wsPublishedMember("member-b", "owner/repo-a", "owner/repo-b"),
+		wsPublishedMember("member-c", "owner/repo-c"),
+	}, 25_000_000)
+
+	r := newWSUpdateRig(t, h)
+	noTerminal(t)
+	t.Setenv("CLAUDECODE", "1")
+	_, out, err := r.apply(t, false)
+	var ae *initflow.AgentError
+	if !errors.As(err, &ae) {
+		t.Fatalf("a coding agent's session removed a member from the workspace: %v\n%s", err, out)
+	}
+	if !strings.Contains(err.Error(), "CLAUDECODE") {
+		t.Errorf("the refusal does not name the marker: %v", err)
+	}
+	if got := wsMembers(t, p.db, "workspace-alpha"); !slices.Equal(got, []string{"member-b", "member-c"}) {
+		t.Errorf("the node moved in a coding agent's session: the members are %v, want the two that were published", got)
 	}
 }
 
@@ -792,7 +866,8 @@ func TestUpdateRefusesACodingAgentsSessionUnderTheGate(t *testing.T) {
 //
 // The controls are the sessions beside it: a coding agent's keeps the class
 // sentence and the refusal, and the same record on a project that is not
-// managed keeps the typed name (both in this file).
+// managed is confirmed by the person at its terminal too, one line below
+// (TestUpdateAdmittingAMemberTakesTheOwnersOwnSession).
 func TestUpdateManagedTerminalPublishesAWideningOnANote(t *testing.T) {
 	h := newWSUpdateHome(t, wsOwnerTwoMembers)
 	p := h.project(t, "workspace-alpha")
@@ -811,7 +886,7 @@ func TestUpdateManagedTerminalPublishesAWideningOnANote(t *testing.T) {
 		t.Errorf("the person at the terminal was not told what this write does:\n%s", out)
 	}
 	if strings.Contains(out, "Type workspace-alpha to confirm") {
-		t.Errorf("a managed project's own terminal was asked the typed project name, which the ruling of 2026-11-06 keeps for data loss and secret values:\n%s", out)
+		t.Errorf("a managed project's own terminal was asked the typed project name, which no step of this stage asks any more (D1540, D1555):\n%s", out)
 	}
 	if got := wsMembers(t, p.db, "workspace-alpha"); !slices.Equal(got, []string{"member-b", "member-d"}) {
 		t.Errorf("the node did not land the member the record admits: the members are %v, want member-b and member-d", got)
@@ -822,9 +897,9 @@ func TestUpdateManagedTerminalPublishesAWideningOnANote(t *testing.T) {
 // classifier, where getting the direction wrong is the defect that matters. A
 // node that states a ceiling and a record that states none leaves the group
 // with NO bound on what it spends through the workspace's own credentials, so
-// it is the largest widening this node has and it takes the typed project name.
-// A ceiling where there was none is the opposite direction — it BOUNDS the
-// group — and it is an ordinary write, which is what keeps the typed name
+// it is the largest widening this node has and it takes the owner's own
+// session. A ceiling where there was none is the opposite direction — it BOUNDS
+// the group — and it is an ordinary write, which is what keeps the fence
 // reserved for the writes that admit.
 func TestUpdateTheCeilingIsTheDirectionTheWideningIs(t *testing.T) {
 	t.Run("a dropped ceiling is a widening", func(t *testing.T) {
@@ -845,12 +920,12 @@ func TestUpdateTheCeilingIsTheDirectionTheWideningIs(t *testing.T) {
 		if !strings.Contains(out, "removed: the workspace's own ceiling of $10 a month") {
 			t.Errorf("the diff does not show the ceiling as removed:\n%s", out)
 		}
-		// And the owner's own word completes it, which is what makes the typed
-		// branch a way through rather than a wall.
+		// And the owner's own session completes it, which is what makes the
+		// widening's refusal a refusal of the session rather than a wall: the
+		// same write goes through the moment a person is at the terminal.
 		fakeTerminal(t)
-		r.cmd.SetIn(strings.NewReader("workspace-alpha\n"))
 		if _, out, err := r.apply(t, false); err != nil {
-			t.Fatalf("the typed project name did not publish the record: %v\n%s", err, out)
+			t.Fatalf("the owner's own terminal did not publish the record: %v\n%s", err, out)
 		}
 		if cap, ok := wsNode(t, p.db, "workspace-alpha")["cap"]; ok {
 			t.Errorf("the published node still carries the ceiling the record does not state: %v", cap)
@@ -882,19 +957,19 @@ func TestUpdateTheCeilingIsTheDirectionTheWideningIs(t *testing.T) {
 	})
 }
 
-// TestUpdateTheFirstRecordTakesTheTypedName: a workspace that has no published
-// record is the whole membership chosen where none was, so the write is the
-// widening the whole classifier is about — every member it names is admitted by
-// it, and from the moment it lands every run of every member reads it. --yes
-// does not stand in, the write happens on the owner's own typed word, and the
-// refusal says what was chosen rather than naming a comparison that does not
-// exist yet.
+// TestUpdateTheFirstRecordTakesTheOwnersOwnSession: a workspace that has no
+// published record is the whole membership chosen where none was, so the write
+// is the widening the whole classifier is about — every member it names is
+// admitted by it, and from the moment it lands every run of every member reads
+// it. --yes does not stand in, the write happens in the owner's own session at
+// a real terminal, and the refusal says what was chosen rather than naming a
+// comparison that does not exist yet.
 //
 // The state it closes is the one a hand edit reaches: `workspace_members` in
 // the YAML is a document this stage builds a node from, so a session that
 // edited the table past the fenced `fugaro workspace member add` would
 // otherwise publish a whole group behind a mark.
-func TestUpdateTheFirstRecordTakesTheTypedName(t *testing.T) {
+func TestUpdateTheFirstRecordTakesTheOwnersOwnSession(t *testing.T) {
 	h := newWSUpdateHome(t, wsOwnerTable+wsOwnerCap)
 	p := h.project(t, "workspace-alpha")
 
@@ -917,10 +992,9 @@ func TestUpdateTheFirstRecordTakesTheTypedName(t *testing.T) {
 	}
 
 	fakeTerminal(t)
-	r.cmd.SetIn(strings.NewReader("workspace-alpha\n"))
 	oc, out, err := r.apply(t, false)
 	if err != nil {
-		t.Fatalf("the typed project name did not publish the first record: %v\n%s", err, out)
+		t.Fatalf("the owner's own terminal did not publish the first record: %v\n%s", err, out)
 	}
 	if !oc.Changed {
 		t.Errorf("the first publish reports no change: %s", oc.Detail)
@@ -930,14 +1004,14 @@ func TestUpdateTheFirstRecordTakesTheTypedName(t *testing.T) {
 	}
 }
 
-// TestUpdateAdmittingAMemberTakesTheTypedName is the positive control under the
-// widening classifier: a publish that admits a project the node does not carry
-// is reserved for the owner's own typed word — --yes does not stand in, the
-// no-terminal session is refused with the sentence that says so, and the typed
-// name completes it. Without this the typed branch of the confirmation would be
-// dead code that no test could tell from a classifier that had stopped
-// classifying anything.
-func TestUpdateAdmittingAMemberTakesTheTypedName(t *testing.T) {
+// TestUpdateAdmittingAMemberTakesTheOwnersOwnSession is the positive control
+// under the widening classifier: a publish that admits a project the node does
+// not carry is reserved for the owner's own session — --yes does not stand in,
+// the no-terminal session is refused with the sentence that says so, and a
+// person at a real terminal completes it by being there. Without this the
+// widening's own branch of the confirmation would be dead code that no test
+// could tell from a classifier that had stopped classifying anything.
+func TestUpdateAdmittingAMemberTakesTheOwnersOwnSession(t *testing.T) {
 	h := newWSUpdateHome(t, wsOwnerTwoMembers+wsOwnerCap)
 	p := h.project(t, "workspace-alpha")
 	wsPublishedNode(t, p, "workspace-alpha", []any{
@@ -962,10 +1036,9 @@ func TestUpdateAdmittingAMemberTakesTheTypedName(t *testing.T) {
 	}
 
 	fakeTerminal(t)
-	r.cmd.SetIn(strings.NewReader("workspace-alpha\n"))
 	oc, out, err := r.apply(t, false)
 	if err != nil {
-		t.Fatalf("the typed project name did not admit the member: %v\n%s", err, out)
+		t.Fatalf("the owner's own terminal did not admit the member: %v\n%s", err, out)
 	}
 	if !oc.Changed {
 		t.Errorf("the admitted publish reports no change: %s", oc.Detail)
@@ -1029,10 +1102,9 @@ func TestUpdateRefusesANodeCarryingAKeyThisFugaroDoesNotKnow(t *testing.T) {
 // TestUpdateARaisedCeilingIsAWidening: the other half of the cap classifier,
 // with the higher ceiling on the record's side. A record that states MORE than
 // the node does raises what the group may spend through the workspace's own
-// credentials, so it is a widening and takes the owner's typed word — which is
-// what keeps a plan gate from publishing it (the class rule, D1026). Inverting
-// the comparison, or dropping the branch, would report it as nothing and let
-// --yes through.
+// credentials, so it is a widening: it takes the owner's own session, and no
+// plan gate admits it (the class rule, D1026). Inverting the comparison, or
+// dropping the branch, would report it as nothing and let --yes through.
 func TestUpdateARaisedCeilingIsAWidening(t *testing.T) {
 	h := newWSUpdateHome(t, wsOwnerTable+wsOwnerCap) // $25 a month
 	p := h.project(t, "workspace-alpha")
@@ -1054,12 +1126,11 @@ func TestUpdateARaisedCeilingIsAWidening(t *testing.T) {
 	if got := wsCeiling(t, p.db, "workspace-alpha"); got != 10_000_000 {
 		t.Errorf("the published ceiling is %d micro-dollars, want the 10 the node stated: nothing was confirmed", got)
 	}
-	// And the owner's own word completes it, which is what makes the typed
-	// branch a way through rather than a wall.
+	// And the owner's own session completes it, which is what makes the
+	// widening's refusal a refusal of the session rather than a wall.
 	fakeTerminal(t)
-	r.cmd.SetIn(strings.NewReader("workspace-alpha\n"))
 	if _, out, err := r.apply(t, false); err != nil {
-		t.Fatalf("the typed project name did not raise the ceiling: %v\n%s", err, out)
+		t.Fatalf("the owner's own terminal did not raise the ceiling: %v\n%s", err, out)
 	}
 	if got := wsCeiling(t, p.db, "workspace-alpha"); got != 25_000_000 {
 		t.Errorf("the published ceiling is %d micro-dollars, want 25000000 ($25)", got)
@@ -1070,7 +1141,7 @@ func TestUpdateARaisedCeilingIsAWidening(t *testing.T) {
 // classifier, and the smallest one — a member the node already carries, with a
 // repository the record adds to it. Every run of that repository reads the
 // record, so a repository is as much of an admission as the member itself is,
-// and it takes the same typed word. Disabling the branch reports the write as
+// and it takes the same fence. Disabling the branch reports the write as
 // nothing and lets --yes through.
 func TestUpdateANewRepositoryOnAListedMemberIsAWidening(t *testing.T) {
 	h := newWSUpdateHome(t, wsOwnerTable+wsOwnerCap) // member-b with repo-a and repo-b
@@ -1094,9 +1165,8 @@ func TestUpdateANewRepositoryOnAListedMemberIsAWidening(t *testing.T) {
 		t.Errorf("member-b's published repositories are %v, want the one the node carried: nothing was confirmed", got)
 	}
 	fakeTerminal(t)
-	r.cmd.SetIn(strings.NewReader("workspace-alpha\n"))
 	if _, out, err := r.apply(t, false); err != nil {
-		t.Fatalf("the typed project name did not add the repository: %v\n%s", err, out)
+		t.Fatalf("the owner's own terminal did not add the repository: %v\n%s", err, out)
 	}
 	if got := wsRepos(t, p.db, "workspace-alpha", "member-b"); !slices.Equal(got, []string{"owner/repo-a", "owner/repo-b"}) {
 		t.Errorf("member-b's published repositories are %v, want the two the table declares", got)
@@ -1233,9 +1303,11 @@ func TestUpdatePublishesTheWorkspaceRecordInTheRunThatNamesTheBackend(t *testing
 	r.appendConfig(t, wsOwnerTable+wsOwnerCap)
 	r.save(t)
 	fakeTerminal(t)
-	// The one thing --yes does not stand in for: the group's first record takes
-	// the project's name typed.
-	out, errOut, err := executeStdin(t, initProjectName+"\n", "update", "--firebase-project", fpID, "--budget-mode", "observe", "--yes")
+	// The one thing --yes does not stand in for: the group's first record is
+	// published in the owner's own session, at this terminal, and --yes is
+	// passed only because the other stages of this run take it. The empty stdin
+	// is what says so: a step that asked would read nothing here.
+	out, errOut, err := executeStdin(t, "", "update", "--firebase-project", fpID, "--budget-mode", "observe", "--yes")
 	s := out + errOut
 	if err != nil {
 		t.Fatalf("update --firebase-project failed: %v\n%s", err, s)
@@ -1277,7 +1349,7 @@ func TestUpdatePublishesIntoTheDatabaseTheRunHasJustPointedAt(t *testing.T) {
 	r.appendConfig(t, wsOwnerTable+wsOwnerCap)
 	r.save(t)
 	fakeTerminal(t)
-	out, errOut, err := executeStdin(t, initProjectName+"\n", "update", "--firebase-project", fpID, "--budget-mode", "observe", "--yes")
+	out, errOut, err := executeStdin(t, "", "update", "--firebase-project", fpID, "--budget-mode", "observe", "--yes")
 	s := out + errOut
 	if err != nil {
 		t.Fatalf("update --firebase-project failed: %v\n%s", err, s)

@@ -1972,7 +1972,8 @@ func Schedule(slug string) string {
 // other account name is, deduplicated and in the stages' own order: the
 // account each of config.MixedAccountStages' stage keys names, and the
 // project's default_claude_account where that key is what asks for the mix
-// (mixedDefaultAccount). The review and the adversarial review may name one
+// (mixedDefaultAccount). The stages of the mix — the senior review, the
+// adversarial review and the triage that weighs their findings — may name one
 // account and no other stage may name any
 // (docs/design/mixed-credentials.md §11): that is the one mix the owner's B0
 // ruling admits, the coder's own stages keeping the provider key the gateway
@@ -2034,7 +2035,7 @@ func mixedStageAccounts(cfg *config.Config, lc *localcfg.Config, repo string) []
 //     launch and `fugaro validate` apply), so where a stage key names another
 //     account the default is not an account of this repository's mix and no
 //     job is built for it;
-//   - one of the two stages runs an Anthropic model (config.MixedStageModel,
+//   - one of the mix's stages runs an Anthropic model (config.MixedStageModel,
 //     config.IsClaudeModel): a project that sets the key and reviews on
 //     another vendor has asked for no mix, and its key keeps the other meaning
 //     it has — the account an oauth run gives to every stage.

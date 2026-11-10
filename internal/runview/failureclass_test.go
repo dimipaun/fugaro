@@ -95,6 +95,35 @@ func TestLegacyClassFromReasonTable(t *testing.T) {
 	}
 }
 
+// TestUnreviewedRecordIsClassed: the no-verdict ending carries a class like
+// every other ending the run did not succeed under. finalize writes
+// review_unread with the unreviewed status (internal/runner's recordend, via
+// the kind the decision came back with), and a reader that did not count the
+// new status among the failure endings would answer "" for it — publishing a
+// row that says `unreviewed` with no cause on it, which is the one shape the
+// class exists to make impossible (runstore.StatusUnreviewed's own comment:
+// the class is why the run did not end succeeded).
+//
+// Mutation (take runstore.StatusUnreviewed out of failedStatus): the field
+// read, the reason read and the row's own class below all answer "".
+func TestUnreviewedRecordIsClassed(t *testing.T) {
+	rec := &runstore.Record{Status: runstore.StatusUnreviewed, Reason: "no review verdict", FailureClass: failure.ReviewUnread}
+	if got := ClassOf(rec); got != failure.ReviewUnread {
+		t.Errorf("ClassOf reads %q, want %q: the writer wrote the class with the status, and a reader that reads neither splits one cause off the row the report counts it by", got, failure.ReviewUnread)
+	}
+	// A record written before the field shipped carries the same fact in its
+	// reason, and reads the same way — the runner's own sentence for the round
+	// that answered nothing.
+	legacy := &runstore.Record{Status: runstore.StatusUnreviewed, Reason: "review round 1 returned no parseable verdict after a retry"}
+	if got := ClassOf(legacy); got != failure.ReviewUnread {
+		t.Errorf("ClassOf reads %q for a reason-only record, want %q", got, failure.ReviewUnread)
+	}
+	row := Join(Input{Task: spec, Launch: launch, Record: rec, Exec: exec(backend.StateSucceeded)}, prices, now)
+	if row.Status != string(runstore.StatusUnreviewed) || row.FailureClass != failure.ReviewUnread {
+		t.Errorf("the row reads %q / %q, want %q / %q: the row is where the reading is published", row.Status, row.FailureClass, runstore.StatusUnreviewed, failure.ReviewUnread)
+	}
+}
+
 // TestLegacyUnmatchedReasonIsUnclassified: a reason the table does not know is
 // counted rather than guessed at, and never read off the status. The three
 // shapes below are the sites that write no class of their own — a stage

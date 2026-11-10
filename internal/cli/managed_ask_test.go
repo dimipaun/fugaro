@@ -348,6 +348,21 @@ func askUpdateRig(t *testing.T, w askMarkWorld) *initRig {
 
 const askAdditiveAddress = "module.installation.google_service_account.scheduler"
 
+// freeLogName leaves the next run in this rig a log name of its own: a log is
+// named after its command, the second and the pid (report.logName) and created
+// O_EXCL, so two runs of one command inside one second collide on the name and
+// the second keeps no log at all (CL3's OpenLog). That is not a difference a
+// test may leave in place — a converge without a log cuts nothing on its screen
+// and prints the plan's own summary in full, because the brief account is the
+// log's (D1352) — so a test that compares two runs of one command in one rig
+// hands the second one the name back.
+func freeLogName(t *testing.T) {
+	t.Helper()
+	if err := os.RemoveAll(logDir(t)); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // askUpdateRun is updateRun with something typed: the flag gives prompts back,
 // so a test that means to answer one needs to be able to.
 func askUpdateRun(t *testing.T, r *initRig, stdin string, args ...string) (string, error) {
@@ -531,6 +546,7 @@ func TestUpdateAskInAProjectThatIsNotManagedIsANoOp(t *testing.T) {
 				_, _ = updateRun(t, r, "update") // the rig settled
 				before := len(r.ran(t, "apply"))
 				plain, _ := updateRun(t, r, "update")
+				freeLogName(t)
 				mid := len(r.ran(t, "apply"))
 				flagged, _ := updateRun(t, r, "update", "--ask")
 				after := len(r.ran(t, "apply"))
@@ -561,6 +577,7 @@ func TestUpdateAskOnAPlanOnlyRunSaysThereWasNothingToRestore(t *testing.T) {
 	noAgentSession(t)
 
 	plain, plainErr := updateRun(t, r, "update", "--plan-only")
+	freeLogName(t)
 	flagged, flaggedErr := updateRun(t, r, "update", "--plan-only", "--ask")
 	if ExitCode(plainErr) != ExitCode(flaggedErr) {
 		t.Errorf("--ask changed the exit code of a plan-only run: %d without it, %d with it", ExitCode(plainErr), ExitCode(flaggedErr))
@@ -649,15 +666,18 @@ func TestManagedAskGivesThePluginWiringItsYOrNBack(t *testing.T) {
 	}
 }
 
-// A billable build: askBuild is step 4's per-build confirmation, and in a
-// managed project's own terminal the gate's verdict stands in for it today
-// (GateProceeded). --ask is exactly the flag for that surface — the build's own
-// question comes back — and the control is the same call without it, which
-// confirms on the gate's verdict, prints its sentence instead and reads
-// nothing. Nothing else moves: the class the gate judged is the same YesOrTyped
-// build either way, and what --ask asks is the build's own [y/N] (T7 took the
-// typed name away from every step, this one included).
-func TestManagedAskGivesTheBuildsOwnQuestionBack(t *testing.T) {
+// A billable build is the one surface --ask does not put back: the project's
+// name typed at each build went with the prompts (T4), and a build asks nothing
+// in any session — a managed project's own terminal included. What --ask
+// restores are the steps that still ask (the base pin, the check-job update);
+// the build keeps its cost line either way, with the gate's own sentence under
+// it where the gate's verdict is what the owner reads, and without it where the
+// flag asked for the questions back (there is no question here left to ask).
+//
+// The mutation caught: announceBuild reading the confirmation conditions and
+// asking for the build's own name again — the flag case then prints a prompt
+// and fails the first assertion, and the loudest shape of it fails the control.
+func TestManagedAskDoesNotPutTheBuildsNameBack(t *testing.T) {
 	g := initflow.Managed{Managed: true, Admitted: true}
 	for _, ask := range []bool{false, true} {
 		name := "the flag"
@@ -665,7 +685,7 @@ func TestManagedAskGivesTheBuildsOwnQuestionBack(t *testing.T) {
 			name = "no flag (the control)"
 		}
 		t.Run(name, func(t *testing.T) {
-			r, spy := confirmRig(t, confirmRow{terminal: true, ask: ask}, "y")
+			r, _ := confirmRig(t, confirmRow{terminal: true, ask: ask}, "y")
 			out := &syncBuf{}
 			r.w = out
 			r.cmd.SetOut(out) // askConfirm prints its question on the command, not through r.w
@@ -677,33 +697,17 @@ func TestManagedAskGivesTheBuildsOwnQuestionBack(t *testing.T) {
 			// "managed" for (openRefreshManaged, and r.gateRestores).
 			r.refresh = &refreshManaged{}
 
-			confirmed, reachable, err := r.askBuild("builds the image for acme/app", g)
-			if err != nil {
+			if err := r.announceBuild("builds the image for acme/app", g); err != nil {
 				t.Fatal(err)
 			}
-			if !reachable || !confirmed {
-				t.Fatalf("reachable=%v confirmed=%v: a person at the terminal answers this step in both worlds", reachable, confirmed)
+			if !strings.Contains(out.String(), "builds the image for acme/app") {
+				t.Errorf("the build's own line was not printed:\n%s", out.String())
 			}
-			if ask {
-				if !strings.Contains(out.String(), "builds the image for acme/app? [y/N]: ") {
-					t.Errorf("--ask did not ask the build's own question:\n%s", out.String())
-				}
-				if !spy.read {
-					t.Errorf("--ask asked a question and never read the answer:\n%s", out.String())
-				}
-				if strings.Contains(out.String(), initflow.GateProceeded()) {
-					t.Errorf("--ask printed the gate's verdict instead of asking:\n%s", out.String())
-				}
-				return
+			if strings.Contains(out.String(), "to confirm") || strings.Contains(out.String(), "⚠ CONFIRM") {
+				t.Errorf("the removed prompt is still printed:\n%s", out.String())
 			}
-			if spy.read {
-				t.Errorf("the control read its own input: the gate's verdict stands in, so there is nothing to answer:\n%s", out.String())
-			}
-			if !strings.Contains(out.String(), initflow.GateProceeded()) {
-				t.Errorf("the control did not take the gate's verdict:\n%s", out.String())
-			}
-			if strings.Contains(out.String(), "[y/N]") {
-				t.Errorf("the control asked a question the gate stands in for:\n%s", out.String())
+			if got := strings.Contains(out.String(), initflow.GateProceeded()); got != !ask {
+				t.Errorf("the gate's sentence printed=%v, want %v:\n%s", got, !ask, out.String())
 			}
 		})
 	}

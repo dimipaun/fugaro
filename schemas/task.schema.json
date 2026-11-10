@@ -117,7 +117,11 @@
         "review_rounds": { "type": "integer", "minimum": 1, "maximum": 10 },
         "max_budget_usd": { "type": "number", "exclusiveMinimum": 0 },
         "model": { "type": "string" },
-        "total_timeout": { "type": "string", "minLength": 2, "pattern": "^([0-9]+h)?([0-9]+m)?([0-9]+s)?$" }
+        "total_timeout": { "type": "string", "minLength": 2, "pattern": "^([0-9]+h)?([0-9]+m)?([0-9]+s)?$" },
+        "max_usd": { "type": "number", "exclusiveMinimum": 0 },
+        "max_tokens": { "type": "integer", "minimum": 1 },
+        "max_time": { "type": "string", "minLength": 2, "pattern": "^([0-9]+h)?([0-9]+m)?([0-9]+s)?$" },
+        "max_review_rounds": { "type": "integer", "minimum": 1 }
       }
     },
     "requested_by": { "type": "string" },
