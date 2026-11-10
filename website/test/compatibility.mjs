@@ -24,9 +24,9 @@
 //      no web build, so the row is a removal rather than a status).
 //   5. **The "as of" stamp** (CM3, D1538). `as_of.cli` names the newest `docs/releases/vX.Y.Z.md`
 //      and `as_of.console` the newest `docs/releases/console/vX.Y.Z.md`, so a tree whose stamp is
-//      behind the release files — the release PR that writes the notes moves the stamp with them,
-//      docs/release.md, "Before you tag" — fails here rather than publishing a page whose "as of"
-//      names the wrong release.
+//      behind either fails here rather than publishing a page whose "as of" names the wrong
+//      release. The release PR writes the notes and moves the stamp with them, in one commit
+//      (`docs/release.md`, "Before you tag").
 //
 // The reader below is this file's own and reads the data file **literally**, the way
 // `test/mobile.mjs` reads `mobile-claims.yaml` and `test/caps-and-costs.mjs` reads
@@ -35,8 +35,10 @@
 // very loader it is checking would not see a loader's own mistake. It refuses what it has not
 // been taught rather than guessing at it, and every refusal names the file and the line.
 //
-// The stamp's own test reads the two release directories the way this file reads the data
-// file: it is the tree's answer that is asserted, never the page's or a module's.
+// The stamp's own test reads the two release directories off the tree the way this file reads the
+// data file, rather than through a module: the changelog's own readers filter by what the stream
+// has released (`src/lib/changelog.mjs`), and the stamp's rule is the newest file of each half,
+// ahead of its release or not.
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
