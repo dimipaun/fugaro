@@ -1,6 +1,6 @@
 # The independent senior review as a cloud job: implementation plan
 
-**Nothing here is approved.** This plan exists so that the work is ordered and reviewable.
+**Status as of 2026-11-10: done (CSR17 and CSR18 moved to api-key-review); see [docs/status.md](../status.md) for the current table.** This plan exists so that the work is ordered and reviewable.
 [reconciliation.md](reconciliation.md) §4's decisions **are all answered** — D891, D892, D893 and D894
 with the options named below, and the owner's seven rulings of 2026-11-01 (**O1–O7**) amending the ones
 they touch. An answered decision is not an

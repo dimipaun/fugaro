@@ -134,6 +134,22 @@ func pairRunIn(t *testing.T, stdin string, args ...string) (string, string, erro
 // main.go cancels on a signal.
 func pairRunCtx(t *testing.T, ctx context.Context, stdin string, args ...string) (string, string, error) {
 	t.Helper()
+	return pairRunSession(t, ctx, stdin, true, args...)
+}
+
+// pairRunSession is the one body both doors share, and terminal is the fact
+// they differ in: the code is a value, and its entry asks whether the input is
+// a terminal before it reads anything (readValue, D1540) — so a test that puts
+// the code on the reader below is the operator typing it at their own terminal,
+// which is what every pairing here is, and the one test that has no terminal
+// says so.
+func pairRunSession(t *testing.T, ctx context.Context, stdin string, terminal bool, args ...string) (string, string, error) {
+	t.Helper()
+	if terminal {
+		fakeTerminal(t)
+	} else {
+		noTerminal(t)
+	}
 	root := &cobra.Command{Use: "fugaro", SilenceUsage: true, SilenceErrors: true}
 	root.AddCommand(newPairCmd())
 	var out, errOut bytes.Buffer
@@ -576,45 +592,55 @@ func TestPairRefusalCodesNameTheCase(t *testing.T) {
 	}
 }
 
-// pairTTYReader is a terminal that fails the test when it is read. The two
-// seams below are different failures and both are needed: stdinIsTerminal is
-// the question "is this a terminal", which a --json pairing that asked it
-// would hang on, and this is the read itself, which catches the path that
-// reaches for the terminal without asking — the one that would sit on a
-// prompt nobody can see. The code step's reader is stdin in --json and
-// pairTerminal's otherwise, so pointing pairTerminal here is what makes the
-// test able to fail.
-type pairTTYReader struct{ t *testing.T }
-
-func (r pairTTYReader) Read([]byte) (int, error) {
-	r.t.Errorf("--json read the terminal")
-	return 0, io.EOF
-}
-
-// TestPairJSONNeverReadsTTY holds --json to the rule the console depends on:
-// the mode asks no terminal anything and writes no prompt — the code it needs
-// comes down the stdin line the caller handed it, both for the code step and
-// for the key that precedes it.
-func TestPairJSONNeverReadsTTY(t *testing.T) {
+// TestPairJSONReadsTheCodeFromAPipe: --json is the console's door, and the
+// console has no terminal to lend the command — it asks the operator for the
+// code itself and hands it back as one stdin line (§4.1: "the typed code is
+// read as one stdin line"). So a --json pairing whose input is a pipe and never
+// a terminal reads the code and pairs, and the events carry the whole run. It
+// asks nothing there either: a console owns the question, so the command prints
+// no prompt of its own for a --json caller to answer.
+func TestPairJSONReadsTheCodeFromAPipe(t *testing.T) {
 	f := newPairFixture(t, pairMe)
-	prev, prevTerminal := stdinIsTerminal, pairTerminal
-	stdinIsTerminal = func(io.Reader) bool {
-		t.Fatal("--json opened the terminal")
-		return false
-	}
-	pairTerminal = func(*cobra.Command) io.Reader { return pairTTYReader{t} }
-	t.Cleanup(func() { stdinIsTerminal, pairTerminal = prev, prevTerminal })
-	out, _, err := pairPair(t, f, token.Fingerprint(pairKeyBytes), "--json")
+	uid := pairFixedRand(t)
+	f.pairSeedRequest(uid, pairKey)
+	fingerprint := token.Fingerprint(pairKeyBytes)
+
+	out, errOut, err := pairRunSession(t, context.Background(), fingerprint, false, "--json")
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("a --json pairing driven over a pipe: %v", err)
+	}
+	if strings.Contains(errOut, "Type the code") {
+		t.Errorf("a --json pairing put the question to its caller:\n%s", errOut)
 	}
 	events := pairLines(t, out)
-	if len(events) != 4 || events[2].Event != pairEventCode || events[3].Event != pairEventDone {
-		t.Fatalf("events = %v, want the code step and the done event after the wait", events)
+	if len(events) != 4 || events[3].Event != pairEventDone {
+		t.Fatalf("events = %v, want the done event: the piped line is the code", events)
 	}
-	if strings.Contains(out, "type that code") {
-		t.Fatalf("--json wrote a prompt:\n%s", out)
+	if got := events[3].Document.Request.KeyFingerprint; got != fingerprint {
+		t.Fatalf("the document's fingerprint is %q, want %q", got, fingerprint)
 	}
+}
+
+// TestPairInteractiveWithoutATerminalRefusesAndReadsNothing: the interactive
+// command's code is a value, and a value is read at the operator's own terminal
+// (readValue, D1540) — §4.1 gives the stdin line to --json alone. A pairing
+// with no terminal there refuses at once, naming what it needs, rather than
+// reading the line a caller handed it.
+func TestPairInteractiveWithoutATerminalRefusesAndReadsNothing(t *testing.T) {
+	f := newPairFixture(t, pairMe)
+	uid := pairFixedRand(t)
+	f.pairSeedRequest(uid, pairKey)
+	out, _, err := pairRunSession(t, context.Background(), token.Fingerprint(pairKeyBytes), false)
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("a pairing with no terminal: err = %v, want exit 1", err)
+	}
+	if !strings.Contains(err.Error(), "terminal") {
+		t.Errorf("the refusal does not name the terminal it needs: %v", err)
+	}
+	if strings.Contains(out, `"event"`) {
+		t.Errorf("an interactive refusal wrote a --json event: %s", out)
+	}
+	f.pairNoSideEffect(t, uid)
 }
 
 func TestPairJSONRefusalExitCodes(t *testing.T) {
@@ -765,6 +791,7 @@ func TestPairWaitEndingsAreToldApart(t *testing.T) {
 // code that was never typed.
 func TestPairInterruptWhileTypingIsNotThePhone(t *testing.T) {
 	f := newPairFixture(t, pairMe)
+	fakeTerminal(t)
 	uid := pairFixedRand(t)
 	f.pairSeedRequest(uid, pairKey)
 
@@ -1191,14 +1218,17 @@ func TestPairCodeFromDecodedKey(t *testing.T) {
 	f.pairSeedRequest(uid, pairKey)
 	fingerprint := token.Fingerprint(pairKeyBytes)
 
-	out, _, err := pairRunIn(t, fingerprint)
+	out, errOut, err := pairRunIn(t, fingerprint)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{fingerprint, "type that code"} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("the prompt does not print %q:\n%s", want, out)
-		}
+	if !strings.Contains(out, fingerprint) {
+		t.Fatalf("the phone's code is not printed:\n%s", out)
+	}
+	// The prompt is the value entry's, and it goes to the command's stderr
+	// (readValue), where a --json caller's events are not.
+	if !strings.Contains(errOut, "Type the code the phone shows: ") {
+		t.Fatalf("the value entry did not ask for the code:\n%s", errOut)
 	}
 
 	// The same 32 bytes, in the padded spelling the rules also admit.
@@ -1215,14 +1245,15 @@ func TestPairCodeFromDecodedKey(t *testing.T) {
 	f2.pairNoSideEffect(t, uid2)
 }
 
-func TestPairJSONReadsCodeFromStdinLine(t *testing.T) {
+func TestPairCodeIsOneLineTypedAtTheTerminal(t *testing.T) {
 	f := newPairFixture(t, pairMe)
 	uid := pairFixedRand(t)
 	f.pairSeedRequest(uid, pairKey)
 	fingerprint := token.Fingerprint(pairKeyBytes)
 
-	// The line a person types: lower case, no hyphen, the spaces a terminal
-	// leaves around it, and a second line that must never be read.
+	// The line a person types at the terminal: lower case, no hyphen, the
+	// spaces a terminal leaves around it, and a second line that must never be
+	// read (the code is one value, read once).
 	typed := "  " + strings.ToLower(strings.ReplaceAll(fingerprint, "-", "")) + "  \nthis line is not the code\n"
 	out, _, err := pairRunIn(t, typed, "--json")
 	if err != nil {

@@ -6,6 +6,7 @@ import (
 	"io"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 
@@ -48,6 +49,11 @@ func newPlanGraphCmd() *cobra.Command {
 			"A graph this build does not understand is refused rather than rendered: a\n" +
 			"future schema version, a malformed document, an edge to a node that is not\n" +
 			"there, or a cycle.\n\n" +
+			"When the plan ran the contract-first decoupling pass, the read prints that\n" +
+			"pass's own record too: every edge the pass broke with the contract and the\n" +
+			"integration task that cover it, what the break bought measured before and\n" +
+			"after, and the contract stubs still in the checkout. A plan that broke no\n" +
+			"edge prints none of it.\n\n" +
 			"The read also answers what the planner cannot: each task's level, whether it\n" +
 			"is ready or blocked, and the plan's critical path. A task is ready when every\n" +
 			"task it needs is done, so --done names the tasks that are — an id the graph\n" +
@@ -166,8 +172,60 @@ func printPlanGraph(w io.Writer, graph plan.Graph, asJSON bool) error {
 	if graph.Bottleneck != nil {
 		fmt.Fprintf(w, "bottleneck: %s\n", planCell(*graph.Bottleneck))
 	}
+	if graph.Gain != nil {
+		if err := printPlanDecoupling(w, graph); err != nil {
+			return err
+		}
+	}
 	return nil
 }
+
+// printPlanDecoupling prints what the contract-first pass did: every edge it
+// broke with the contract that broke it and the integration task that covers
+// it, what the break bought measured before and after, and the contract stubs
+// still in the checkout. The figures are the read's own (decouple.go), which is
+// why they are printed and not asked of the planner: the terminal says what the
+// --json document carries.
+//
+// It is printed only when the read computed a gain, which is exactly when the
+// document recorded a break, so a v2 artifact and a v3 one whose plan kept
+// every edge print the lines they always did.
+func printPlanDecoupling(w io.Writer, graph plan.Graph) error {
+	fmt.Fprintln(w, "DECOUPLING")
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "TASK\tNEEDED\tCONTRACT\tINTEGRATION\tREASON")
+	for _, d := range graph.Decoupling {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
+			planCell(d.Was.Task), planCell(d.Was.Needs), planCell(d.Contract),
+			planCell(d.Integration), planCell(d.Reason))
+	}
+	if err := tw.Flush(); err != nil {
+		return err
+	}
+	gain := *graph.Gain
+	verdict := "no gain"
+	if gain.Improves {
+		verdict = "improves"
+	}
+	fmt.Fprintf(w, "gain: %d broken, %d kept, %d added; before %d %s, weight %s; after %d %s, weight %s; %s\n",
+		gain.Broken, gain.Kept, gain.AddedTasks,
+		gain.Before.Tasks, planWord(gain.Before.Tasks, "task", "tasks"), planWeight(gain.Before.Weight),
+		gain.After.Tasks, planWord(gain.After.Tasks, "task", "tasks"), planWeight(gain.After.Weight), verdict)
+	var remaining []string
+	for _, n := range graph.Nodes {
+		for _, stub := range n.StubsPresent {
+			remaining = append(remaining, planCell(n.ID)+": "+planCell(stub))
+		}
+	}
+	if len(remaining) > 0 {
+		fmt.Fprintf(w, "stubs remaining: %s\n", strings.Join(remaining, ", "))
+	}
+	return nil
+}
+
+// planWeight is a path's weight as a person reads it: the shortest form that
+// says the number exactly, so a size of one prints as "1" rather than "1.0".
+func planWeight(weight float64) string { return strconv.FormatFloat(weight, 'f', -1, 64) }
 
 // planState is a task's one word: done, ready or blocked. The three fields are
 // the document's (V2.2.3, design F7) and this reads them in the order that

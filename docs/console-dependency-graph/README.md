@@ -1,6 +1,6 @@
 # The console dependency graph — the documents
 
-**Status: plan only; nothing is implemented; no task approved.**
+**Status as of 2026-11-10: in progress, 13/17 merged; see [docs/status.md](../status.md) for the current table.**
 
 **Spec owner: Dimi Paun. Date: 2026-10-22.** Checked against `origin/main` at `cc50b5b23`.
 

@@ -1,6 +1,6 @@
 # The console dependency graph — implementation plan
 
-**Status: plan only; nothing is implemented; no task approved.** This plan builds
+**Status as of 2026-11-10: in progress, 13/17 merged; see [docs/status.md](../status.md) for the current table.** This plan builds
 [spec.md](spec.md) **as amended by [reconciliation.md](reconciliation.md)**, which wins where the
 two disagree. Each task below needs the owner's explicit go; answering a decision is not approving
 a task. Checked against `origin/main` at `cc50b5b23` on 2026-10-22.

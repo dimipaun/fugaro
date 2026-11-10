@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
 	"google.golang.org/api/googleapi"
 	secretmanager "google.golang.org/api/secretmanager/v1"
 	"gopkg.in/yaml.v3"
@@ -919,7 +918,10 @@ func credsDocRefusal(id string, err error) error {
 // use.
 func readBundleValue(ctx context.Context, in io.Reader, prompt io.Writer, name string, kind credsvc.Kind) ([]byte, error) {
 	var raw []byte
-	if f, ok := in.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
+	// As readSecret's own (secrets.go): the hidden prompt needs the file to
+	// take the echo off, so a stream a terminal was reported for and that is
+	// not one is read to EOF like any pipe.
+	if f, ok := in.(*os.File); ok && stdinIsTerminal(in) {
 		// The refusals made before the prompt: these two values are many lines,
 		// the hidden prompt reads one, and a prompt that took a first line and
 		// then failed would have made the operator paste a private key, or a
@@ -932,7 +934,7 @@ func readBundleValue(ctx context.Context, in io.Reader, prompt io.Writer, name s
 		case credsvc.KindBitbucketReadConsumer:
 			return nil, userErr("%s is %s, which spans several lines and the hidden prompt can't take; redirect it from a file: fugaro creds set %s < PATH-TO-THE-FILE", name, readConsumerShape, name)
 		}
-		b, err := readHidden(ctx, f, prompt, name)
+		b, err := readValueIn(ctx, f, prompt, valueSpec{what: name, secret: true})
 		if err != nil {
 			return nil, err
 		}

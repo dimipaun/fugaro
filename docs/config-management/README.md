@@ -1,6 +1,6 @@
 # Managing every configuration in Fugaro: no configuration file edited by hand
 
-**Status: a design, and nothing is built.** The owner gave the ruling this folder answers on
+**Status as of 2026-11-10: in progress, 5/14 merged; see [docs/status.md](../status.md) for the current table.** The owner gave the ruling this folder answers on
 **2026-11-03** — *"The idea would be not to touch any of the configuration files by hand, be it repo,
 project, or local level, meaning that we should have management commands in Fugaro just like with
 settings."* — and he accepted the audit it rests on, asking for a design with a task plan for

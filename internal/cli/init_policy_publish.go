@@ -14,10 +14,12 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rtdb"
+	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/yamledit"
 )
 
@@ -877,20 +879,44 @@ func policyEmptyAllowListWarning() string {
 }
 
 // confirmEmptyAllowList is the confirmation every publish that would write an
-// allow-list admitting nothing takes before its first write: a person types the
-// project's name at a terminal, no flag stands in for it, and a session with no
-// terminal — a script's, or a coding agent's — is refused, so an empty
-// allow-list is never written on the operator's behalf by something that cannot
-// have read the consequence (#1674). The same wording is both the confirmation
-// and the refusal, so the two cannot drift.
-func confirmEmptyAllowList(cmd *cobra.Command, lc *localcfg.Config, agent string) error {
+// allow-list admitting nothing takes before its first write: the warning below
+// is what a person reads, and what answers for the write is the run's own
+// answer to it (askConfirm) — the person at the terminal where --ask is not
+// passed, the question where it is. Nothing is typed under it (T7,
+// docs/no-prompt-policy). What confirms it is a person and nothing else:
+// initflow.PersonAtTheTerminal — a real terminal, no coding agent's marker, and
+// none of --ask, --non-interactive and --json — or, where the owner asked for
+// the question back, --ask's own answer below. --yes is deliberately not a
+// route (no door offers one for this step): the flag says "the ordinary steps",
+// and writing a node that stops every run of the project is not one. So a
+// session that can neither read the consequence nor be asked — a script's, a
+// cron entry's, a coding agent's, or --non-interactive or --json at a real
+// terminal — is refused, and an empty allow-list is never written on the
+// operator's behalf by something that cannot have read it (#1674). The same
+// wording is both the note and the refusal, so the two cannot drift.
+func confirmEmptyAllowList(cmd *cobra.Command, lc *localcfg.Config, c initflow.Conditions) error {
 	why := policyEmptyAllowListWarning()
-	// A coding agent's session is refused before any prompt: a terminal it can
-	// give itself (a pty wrapper) is not a person reading the consequence.
-	if agent != "" {
+	// A coding agent's session is refused before anything else, and
+	// --non-interactive and --json with it: a terminal is not the question, the
+	// person reading the consequence is, and a flag that says nobody is reading
+	// (or an agent that can give itself a pty) must not stand in for one. Where
+	// the command has --ask, that puts the question back, and askConfirm below
+	// owns its refusal for a session that cannot answer it. Without this, a
+	// script or a cron entry publishing a config that lists no repository would
+	// write the node unasked, and every run of the project would stop from that
+	// moment (#1674).
+	if !c.Ask && !initflow.PersonAtTheTerminal(c) {
+		return userErr("%s: %s", initflow.NeedsTerminal("the confirmation of this step"), why)
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "⚠ CONFIRM (project %s): %s\n", safetext.Field(lc.Name), why)
+	ok, err := askConfirm(cmd, "write an allow-list that admits no repository?")
+	if err != nil {
+		return err
+	}
+	if !ok {
 		return userErr("%s", why)
 	}
-	return confirmTypedStrict(cmd, lc, why, why)
+	return nil
 }
 
 // reseedPolicyKeys writes the published node's policy values back into the local
