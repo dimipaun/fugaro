@@ -38,6 +38,7 @@ const (
 	markFailed  = "✖"
 	markLeft    = "!"
 	markSkipped = "–"
+	markWaiting = "↳"
 )
 
 // convergeNoise is what the fake Terraform prints on stdout and stderr: the
@@ -231,6 +232,99 @@ func TestUpdatePlanOnlyKeepsThePlanOnTheTerminal(t *testing.T) {
 	}
 }
 
+// TestPlanOnlyKeepsTheWholeReasonInTheLog: the plan view's row is one clause on
+// the screen and the whole reason in the run's log (report.Brief), and a
+// plan-only run is where that matters most — it prints no step for any stage, so
+// the view is the whole of its account, and a reason the screen cut has nowhere
+// else to be whole. The reason a stage leaves the person is an instruction, and
+// half an instruction is not one.
+func TestPlanOnlyKeepsTheWholeReasonInTheLog(t *testing.T) {
+	r := newProjectRig(t)
+	r.existing(true)
+	r.bill.AddAccount(billingAcc, true)
+	out, _, _ := r.run(t, true, newProj+"\n"+billingAcc+"\n", "--create-project", "--link-billing", billingAcc, "--plan-only")
+	_, log := onlyLog(t, "setup")
+	cut := 0
+	for _, l := range reportLines(out) {
+		i := strings.Index(l, "…")
+		if !strings.HasPrefix(l, "  ") || i < 0 {
+			continue
+		}
+		cut++
+		head := strings.TrimRight(l[:i], " ")
+		whole := logRowOf(log, head)
+		if whole == "" {
+			t.Errorf("the log does not hold the row the screen cut:\n%s\n%s", l, log)
+			continue
+		}
+		if len(whole) <= len(l) {
+			t.Errorf("the log's row is no longer than the screen's, so what the screen cut is nowhere whole:\n%s\n%s", l, whole)
+		}
+	}
+	if cut == 0 {
+		t.Fatalf("the plan view cut nothing, so this test proves nothing:\n%s", out)
+	}
+}
+
+// logRowOf is the plan-view row a screen line was cut from: the row in the run's
+// log that begins where the screen's row does, before the ellipsis.
+func logRowOf(log, head string) string {
+	for _, l := range strings.Split(log, "\n") {
+		if strings.HasPrefix(l, head) {
+			return l
+		}
+	}
+	return ""
+}
+
+// noLogStateDir makes this test's state directory one OpenLog cannot keep a log
+// in — a link where its own directory belongs, which is one of the refusals CL3
+// names and the one no uid can write around (G5) — and returns the directory
+// behind the link, so a test can check that nothing was filed there.
+func noLogStateDir(t *testing.T) string {
+	t.Helper()
+	state, err := localcfg.UserDir(os.Getenv, runtime.GOOS, localcfg.DirState)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(state, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	elsewhere := t.TempDir()
+	if err := os.RemoveAll(filepath.Join(state, "fugaro")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(elsewhere, filepath.Join(state, "fugaro")); err != nil {
+		t.Fatal(err)
+	}
+	return elsewhere
+}
+
+// TestUpdateWithoutALogKeepsItsWholeAccount: the brief account is one clause on
+// the screen *because* the whole of the reason is in the log (report.Brief), so
+// a run that could not open one cuts nothing: the step's reason is the whole of
+// it, and the plan's own account — the addresses of what the person is about to
+// confirm — reaches the terminal, where it is the only place left for it
+// (D1352, G5, G8).
+func TestUpdateWithoutALogKeepsItsWholeAccount(t *testing.T) {
+	applyingRig(t)
+	noLogStateDir(t)
+	out, errOut, err := executeStdin(t, "", "update", "--yes")
+	if err != nil {
+		t.Fatalf("%v\n%s%s", err, out, errOut)
+	}
+	all := out + errOut
+	if !strings.Contains(all, "create module.installation.google_storage_bucket.runs") {
+		t.Errorf("the run kept Terraform's own plan out of the only account it has:\n%s", all)
+	}
+	if strings.Contains(all, "…") {
+		t.Errorf("a run with no log cut a reason it had nowhere to keep whole:\n%s", all)
+	}
+	if strings.Contains(all, "full output: ") {
+		t.Errorf("a run that opened no log printed a path to one:\n%s", all)
+	}
+}
+
 // TestUpdateFailurePrintsContextAndLogPath: a failed step prints its name, the
 // error, the lines of context behind it and the path of the log the rest is in
 // — on the screen, because an agent's session with a read-only home cannot
@@ -273,22 +367,7 @@ func TestUpdateFailurePrintsContextAndLogPath(t *testing.T) {
 // failure is the last thing a run may drop (G8).
 func TestUpdateWithoutALogKeepsTheStreamOnScreen(t *testing.T) {
 	applyingRig(t)
-	state, err := localcfg.UserDir(os.Getenv, runtime.GOOS, localcfg.DirState)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(state, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	// A link where the log's own directory belongs is one of OpenLog's
-	// refusals (CL3), and the one no uid can write around.
-	elsewhere := t.TempDir()
-	if err := os.RemoveAll(filepath.Join(state, "fugaro")); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(elsewhere, filepath.Join(state, "fugaro")); err != nil {
-		t.Fatal(err)
-	}
+	elsewhere := noLogStateDir(t)
 	out, errOut, err := executeStdin(t, "", "update", "--yes")
 	if err != nil {
 		t.Fatalf("%v\n%s%s", err, out, errOut)
@@ -772,17 +851,81 @@ func stepNames(out string) []string {
 	return names
 }
 
-// planViewRows counts the plan view's own rows: the indented "[state] stage"
-// lines a plan-only run ends on, which are not steps (nothing was opened for
-// them) and so are not counted by stepNames.
+// planViewRows counts the plan view's own rows: the indented "mark status
+// stage" lines a plan-only run ends on, which are not steps (nothing was
+// opened for them) and so are not counted by stepNames.
 func planViewRows(out string) int {
 	n := 0
 	for _, l := range reportLines(out) {
-		if strings.HasPrefix(l, "  [") {
+		if strings.HasPrefix(l, "  "+markDone) || strings.HasPrefix(l, "  "+markSkipped) ||
+			strings.HasPrefix(l, "  "+markWaiting) || strings.HasPrefix(l, "  "+markFailed) ||
+			strings.HasPrefix(l, "  "+markLeft) {
 			n++
 		}
 	}
 	return n
+}
+
+// namedLog reads back the log a run's own output points at — the path under a
+// failure or a step left for the user — for a test that has to read the whole
+// of a reason the step's line carries one clause of (report.Brief).
+func namedLog(t *testing.T, out string) string {
+	t.Helper()
+	m := fullOutputRE.FindString(out)
+	if m == "" {
+		t.Fatalf("the run names no log, so a reason it shortened is out of reach:\n%s", out)
+	}
+	b, err := os.ReadFile(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(m), "full output:")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+// newestLog reads back the newest log the runs of cmdName in this test have
+// left so far — the run that has just finished. onlyLog refuses a test that
+// runs the command twice, and a run whose reason the screen shortened keeps the
+// whole of it in its log (report.Brief).
+func newestLog(t *testing.T, cmdName string) string {
+	t.Helper()
+	dir := logDir(t)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("the run left no log directory: %v", err)
+	}
+	re := regexp.MustCompile("^" + regexp.QuoteMeta(cmdName) + `-\d{14}-\d+\.log$`)
+	newest := ""
+	for _, e := range entries {
+		if re.MatchString(e.Name()) && e.Name() > newest {
+			newest = e.Name()
+		}
+	}
+	if newest == "" {
+		t.Fatalf("no log of %s: every run keeps one", cmdName)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, newest))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+// planRowOf is the plan view's row for one stage, without the view's own
+// indent: the row starts with a marker and the status word, which is what a
+// test asserting one stage's state reads. It is "" when the view has none.
+func planRowOf(out, stage string) string {
+	for _, l := range reportLines(out) {
+		row, ok := strings.CutPrefix(l, "  ")
+		if !ok {
+			continue
+		}
+		for _, f := range strings.Fields(row) {
+			if f == stage {
+				return row
+			}
+		}
+	}
+	return ""
 }
 
 // TestUpdateUnderAgentMarkerPrintsTheSameSteps: a coding agent's session sees
@@ -805,8 +948,20 @@ func TestUpdateUnderAgentMarkerPrintsTheSameSteps(t *testing.T) {
 	agent := applyingRig(t)
 	outAgent, errAgentOut, errAgent := executeStdin(t, "", "update", "--yes")
 
-	if strings.Join(stepNames(outPerson), " ") != strings.Join(stepNames(outAgent), " ") {
-		t.Errorf("the marker changed the account's steps:\nperson:\n%s\nagent:\n%s", outPerson, outAgent)
+	// The marker changes what the run may do, not which stages it reached: the
+	// stages the agent's account names are the person's own, up to the stage
+	// the run stopped at. A run that stops leaves every stage behind it saying
+	// the same thing, and those are one waiting line (report.Waits) rather than
+	// a line each, so the agent's account names fewer of them than the
+	// person's -- the ones it does name are in the same order.
+	personStages := stepNames(outPerson)
+	agentStages := stepNames(outAgent)
+	if len(agentStages) == 0 || len(personStages) < len(agentStages) {
+		t.Fatalf("the runs' accounts name %v and %v, want the agent's the person's own up to the stop:\nperson:\n%s\nagent:\n%s",
+			personStages, agentStages, outPerson, outAgent)
+	}
+	if strings.Join(personStages[:len(agentStages)], " ") != strings.Join(agentStages, " ") {
+		t.Errorf("the marker changed the account's steps:\nperson: %v\nagent: %v", personStages, agentStages)
 	}
 	for _, out := range []string{outPerson, outAgent} {
 		lines := reportLines(out)
@@ -821,7 +976,10 @@ func TestUpdateUnderAgentMarkerPrintsTheSameSteps(t *testing.T) {
 		t.Errorf("the marker permitted %d applies, want none", n)
 	}
 	all := outAgent + errAgentOut
-	if !strings.Contains(all, "CLAUDECODE is set") || !strings.Contains(all, "left for you (installation") {
+	if !strings.Contains(all, "left for you (installation") || !strings.Contains(all, markLeft+" installation: ") {
 		t.Errorf("the refusal is not the one it was before the account moved:\n%s", all)
+	}
+	if !strings.Contains(namedLog(t, all), "CLAUDECODE is set") {
+		t.Errorf("the log does not hold the whole of the reason the step's line shortened:\n%s", all)
 	}
 }
