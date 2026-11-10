@@ -115,6 +115,41 @@ func poolMembers(names ...string) []config.Credential {
 	return out
 }
 
+// TestStageCraftFollowsF13 pins the mapping the walk reads a stage's access
+// through, and the one row where it deliberately disagrees with the role slots
+// beside it: the first-line review runs the coder's model (reviewStages) on
+// the review craft's access, so a mapping that answered by role would send
+// those calls out on the coder's credential — the wrong half of a spending and
+// egress grant. triage is D1848's and runs level 2's model, so it is the senior
+// review's access; plan is the coder's own planning, which F13 does not name.
+func TestStageCraftFollowsF13(t *testing.T) {
+	for _, tc := range []struct {
+		stage string
+		want  string
+	}{
+		{"plan", config.CraftCoder},
+		{"implement", config.CraftCoder},
+		{"fix", config.CraftCoder},
+		{"review_first", config.CraftReview},
+		{"review", config.CraftSeniorReview},
+		{"triage", config.CraftSeniorReview},
+		{stageAdversarial, config.CraftSecurityReview},
+		{"", ""},
+		{"bootstrap", ""},
+	} {
+		if got := stageCraft(tc.stage); got != tc.want {
+			t.Errorf("stageCraft(%q) = %q, want %q", tc.stage, got, tc.want)
+		}
+	}
+	// Every stage a run opens has a craft: a stage the vocabulary holds and
+	// this mapping does not would be a stage whose pool the walk never reads.
+	for _, stage := range config.RunStages {
+		if stageCraft(stage) == "" {
+			t.Errorf("the run's stage %q maps to no craft", stage)
+		}
+	}
+}
+
 // TestPoolFailsOverOnExhaustion is the plan's red step and F5's own consumer: a
 // stage whose craft goes out on a pool is served by the pool's first member,
 // that member's own exhaustion signal ends the attempt, and the stage's next
@@ -258,6 +293,66 @@ func TestSubscriptionPoolInertWithoutSwitch(t *testing.T) {
 	if !offE.Inert {
 		t.Fatalf("the pool of two subscriptions is not inert with the switch off: %+v", offE)
 	}
+
+	// D1626's own shape is not inert: one subscription with another kind
+	// beside it is what the owner's default looks like, and the rule there is
+	// per member — the subscription is stepped over while the switch is off,
+	// and the stage goes out on the member that is left. The subscription
+	// member is skipped before its own admission is read at all, so a run
+	// that never held the account is asked nothing about it.
+	mixed := config.Pool{Name: "mixed", Members: []string{"acct-one", "or-primary"}}
+	off, log := poolRun(t, poolSpec{access: "mixed", pools: []config.Pool{mixed},
+		creds: poolMembers("acct-one", "or-primary"), spread: false,
+		providers: poolProviders("or-primary"), env: poolEnv("or-primary")})
+	if e := off.stageCrafts(ctx)[config.CraftCoder]; e.Inert {
+		t.Fatalf("a subscription beside another kind made the whole pool inert: %+v", e)
+	}
+	if got := off.checkStagePool(ctx, "implement"); got != "" {
+		t.Fatalf("the stage was refused although the pool has a member the switch does not govern: %s", got)
+	}
+	if !strings.Contains(log.String(), "acct-one") || !strings.Contains(log.String(), "subscription_spread") {
+		t.Fatalf("the subscription member was not recorded as the skipped one: %q", log.String())
+	}
+	candidates, _, err := off.poolCandidates(ctx, "implement")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(candidates) != 1 || candidates[0].Name != "or-primary" {
+		t.Fatalf("the walk stands on %v, want or-primary alone", candidates)
+	}
+}
+
+// TestPoolStopsAtAMemberTheJobDoesNotHold is F20 and D1635: a run is deployed
+// with the credential it authenticates with and no other, so a walk that
+// reaches a member this container does not hold stops the run named rather
+// than running the stage as a credential its own job does not hold — the
+// record would name a credential that answered none of it.
+func TestPoolStopsAtAMemberTheJobDoesNotHold(t *testing.T) {
+	ctx := context.Background()
+	pool := config.Pool{Name: "to-vertex", Members: []string{"or-primary", "vertex"}}
+	// An api-key run holds its provider's key and not the project's own GCP
+	// service, which is what the built-in vertex credential is: the walk
+	// serves the stage on the first member and stops on the second.
+	r, _ := poolRun(t, poolSpec{access: "to-vertex", pools: []config.Pool{pool},
+		creds: poolMembers("or-primary"), providers: poolProviders("or-primary"), env: poolEnv("or-primary")})
+	if got := r.checkStagePool(ctx, "implement"); got != "" {
+		t.Fatalf("the first member did not serve the stage: %s", got)
+	}
+	r.notePoolExhausted("implement")
+	got := r.checkStagePool(ctx, "implement")
+	if !strings.Contains(got, "does not hold it") || !strings.Contains(got, "to-vertex") || !strings.Contains(got, "vertex") {
+		t.Fatalf("the walk did not stop at the member this job does not hold, got %q", got)
+	}
+
+	// The same pool in a run authenticating as vertex: the built-in
+	// credential is the project's own service account, which that run holds.
+	r, _ = poolRun(t, poolSpec{access: "to-vertex", pools: []config.Pool{pool},
+		creds: poolMembers("or-primary"), providers: poolProviders("or-primary"), env: poolEnv("or-primary")})
+	r.cfg.Agent.Auth = poolVertexAuth
+	r.notePoolExhausted("implement")
+	if got := r.checkStagePool(ctx, "implement"); got != "" {
+		t.Fatalf("a vertex run did not hold the built-in vertex credential: %s", got)
+	}
 }
 
 // TestPoolRefusedWhenAMemberDoesNotServeTheModel is F23 (D1637): a pool is
@@ -296,6 +391,13 @@ func TestVertexPoolRefusedUnderEnforce(t *testing.T) {
 	ctx := context.Background()
 	pool := config.Pool{Name: "with-vertex", Members: []string{"acct-one", "vertex"}}
 	r, _ := poolRun(t, poolSpec{access: "with-vertex", pools: []config.Pool{pool}, creds: poolMembers("acct-one")})
+	// The check is asked where the run asks it, and it refuses before any
+	// stage: bootstrap's budget gate, under enforce.
+	r.spend = Spend{Mode: "enforce"}
+	err := r.checkBudget(ctx)
+	if err == nil || !strings.Contains(err.Error(), VertexBudgetRefusal) {
+		t.Fatalf("a pool listing the built-in vertex did not refuse the run under enforce: %v", err)
+	}
 	got := r.vertexPoolRefusal(ctx)
 	if got == "" {
 		t.Fatal("a pool listing the built-in vertex was admitted under enforce")
