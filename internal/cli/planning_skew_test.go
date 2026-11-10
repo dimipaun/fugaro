@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -371,4 +372,57 @@ func TestValidateWarnsWhenTheProjectLayerSetsPlanning(t *testing.T) {
 func TestUpdateConvergesFromThePreviousVersionWithPlanningKey(t *testing.T) {
 	r := newConvergeRigYAML(t, v4Node(), refreshYAML+"planning: { decoupling: false }\n")
 	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+}
+
+// predatePlanning puts the installation's recorded base image one release below
+// planningSince, in both copies of the local config a run of the rig reads —
+// the rig's own file and the project file registerInstallation leaves, the
+// shape dropAppID has: the state of an installation whose base image predates
+// the key, which is the one F7 is about and the one the converge rig's own
+// versions cannot reach, since 1.2.2 and 1.2.3 are both above 0.22.0 and a gate
+// judged on the recorded image passes there for the wrong reason.
+func predatePlanning(t *testing.T, r *convergeRig) {
+	t.Helper()
+	from, to := pinnedRef("base", convergePrev), pinnedRef("base", shiftRelease(t, planningSince, -1))
+	for _, path := range []string{r.cfg, convergeLocalConfigPath(t)} {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := strings.Replace(string(data), from, to, 1)
+		if out == string(data) {
+			t.Fatalf("the fixture's config at %s records no %s", path, from)
+		}
+		if err := os.WriteFile(path, []byte(out), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// TestUpdateConvergesFromABaseImageThatPredatesPlanning: the convergence
+// TestUpdateConvergesFromThePreviousVersionWithPlanningKey cannot reach — an
+// installation whose recorded base image is older than planningSince, which is
+// what a person upgrading from the release before the key has, in a checkout
+// whose fugaro.yaml writes planning:. That test's fixture records 1.2.2, above
+// the constant, so it would pass whether or not the gate was ever reached.
+//
+// `fugaro update` still converges in one run here, and the second assertion is
+// why: the images stage moves the base image onto this release before the
+// repository stage reads the config its gate judges (repoEngine's
+// loadRepoConfig, after the images stage in initflow's order), so the gate is
+// handed this release's image and the key costs no second command. A gate that
+// judged the config as the run found it would refuse here and turn writing the
+// key into an operator step, which is the failure this test exists to catch.
+func TestUpdateConvergesFromABaseImageThatPredatesPlanning(t *testing.T) {
+	r := newConvergeRigYAML(t, v4Node(), refreshYAML+"planning: { decoupling: false }\n")
+	predatePlanning(t, r)
+	if got, want := projectConfigOf(t, r).BaseImages["base"], pinnedRef("base", shiftRelease(t, planningSince, -1)); got != want {
+		t.Fatalf("the installation records the base image %s, want the release before the key, %s: this is not the installation the test is about", got, want)
+	}
+
+	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+
+	if got, want := projectConfigOf(t, r).BaseImages["base"], r.pinnedBase("base", convergeRelease); got != want {
+		t.Errorf("after the update the installation records the base image %s, want this release's %s: the images stage is what moves it before the repository stage's planning gate reads the config", got, want)
+	}
 }
