@@ -98,14 +98,29 @@ func ReadLeaseNode(ctx context.Context, db CAS, agentID string) (LeaseClaim, err
 	return LeaseClaim{Holder: doc.Holder, At: stamp(doc.At)}, nil
 }
 
-// CacheStaleAfter is when a cached brief is too old to present as current.
+// Fresh reports whether the claim is being beaten: somebody holds the id and
+// its last beat is inside the lease's TTL, and not stamped so far ahead of now
+// that this release would not honour it (Lease.Read's own rule, LeaseSkew).
+// The zero claim — an id nobody holds — is never fresh.
 //
-// A daemon writes the cache after every cycle and its cycle is bounded by the
-// lease it holds — `fugaro orchestrator run` refuses an --interval longer than
-// LeaseTTL, because an interval a little under the TTL is a claim that lapses
-// under the daemon — so a cache nothing has rewritten inside one lease TTL is
-// a cache whose daemon is not driving the id any more.
-const CacheStaleAfter = LeaseTTL
+// It is the liveness signal a listing reads, and it is deliberately not the age
+// of a cached brief: a daemon beats on the lease's own cadence (LeaseBeat)
+// whatever its cycles do, while the cache is written by a *successful* cycle
+// only — `fugaro orchestrator run` accepts an --interval of the whole LeaseTTL,
+// and a cycle that failed writes no cache at all while the beat goes on — so a
+// cache older than a lease TTL is a daemon with a failed cycle, not a stopped
+// one.
+//
+// What it cannot say is which machine holds the id: the holder is a daemon's
+// own run ID, so a claim beaten elsewhere leaves this machine's cache file
+// frozen while the id is driven. A listing shows the holder and its beat beside
+// the cache's stamp, which is where that reads.
+func (c LeaseClaim) Fresh(now time.Time) bool {
+	if c.Holder == "" || c.At.IsZero() {
+		return false
+	}
+	return now.Sub(c.At) < LeaseTTL && c.At.Sub(now) <= LeaseSkew
+}
 
 // CachedBrief is one cached brief of this machine: the orchestrator id, which
 // is the file's own name, and the server time the daemon wrote it with.

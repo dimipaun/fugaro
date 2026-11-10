@@ -169,12 +169,28 @@ func TestCachedBriefsListTheLocalFiles(t *testing.T) {
 	}
 }
 
-// TestCacheStalenessIsTheLeaseTTL: a daemon's cycle is bounded by the lease it
-// holds (its own --interval may not exceed LeaseTTL), so a cache nothing has
-// rewritten inside one lease TTL is a cache whose daemon is not running.
-func TestCacheStalenessIsTheLeaseTTL(t *testing.T) {
-	if orchestrator.CacheStaleAfter != orchestrator.LeaseTTL {
-		t.Errorf("CacheStaleAfter is %s, and a daemon's cycle may not outlast the lease it holds (%s)",
-			orchestrator.CacheStaleAfter, orchestrator.LeaseTTL)
+// TestLeaseFreshnessIsTheLeaseRule: whether an id is being driven is the
+// lease's own rule (lease.go's fresh: a beat inside LeaseTTL, and a stamp no
+// further ahead than LeaseSkew), and it is what a listing asks instead of how
+// old a cached brief is — a daemon's cycles may be a whole LeaseTTL apart and a
+// cycle that failed writes no cache, while the beat goes on.
+func TestLeaseFreshnessIsTheLeaseRule(t *testing.T) {
+	cases := []struct {
+		name  string
+		claim orchestrator.LeaseClaim
+		fresh bool
+	}{
+		{"nobody holds the id", orchestrator.LeaseClaim{}, false},
+		{"a holder with no stamp", orchestrator.LeaseClaim{Holder: "macbook"}, false},
+		{"beaten just now", orchestrator.LeaseClaim{Holder: "macbook", At: listNow}, true},
+		{"beaten inside the TTL", orchestrator.LeaseClaim{Holder: "macbook", At: listNow.Add(-orchestrator.LeaseTTL + time.Second)}, true},
+		{"not beaten for the whole TTL", orchestrator.LeaseClaim{Holder: "macbook", At: listNow.Add(-orchestrator.LeaseTTL)}, false},
+		{"stamped inside the skew", orchestrator.LeaseClaim{Holder: "macbook", At: listNow.Add(orchestrator.LeaseSkew)}, true},
+		{"stamped past the skew", orchestrator.LeaseClaim{Holder: "macbook", At: listNow.Add(orchestrator.LeaseSkew + time.Second)}, false},
+	}
+	for _, c := range cases {
+		if got := c.claim.Fresh(listNow); got != c.fresh {
+			t.Errorf("%s: Fresh = %v, and the lease's own rule says %v", c.name, got, c.fresh)
+		}
 	}
 }

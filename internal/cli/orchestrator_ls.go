@@ -42,9 +42,9 @@ func newOrchestratorLsCmd() *cobra.Command {
 			"the project's database, with the holder of its lease and when that holder last\n" +
 			"beat, and every cached brief this machine holds, with the time the daemon wrote\n" +
 			"it. An orchestrator this machine runs — one with a cached brief — is `local`;\n" +
-			"one only the database holds is `central`. A cache nothing has rewritten inside\n" +
-			"a lease is stale, which is how a daemon that stopped is told from one that is\n" +
-			"driving the id. --json prints a versioned document\n" +
+			"one only the database holds is `central`. A cached brief of an id nothing is\n" +
+			"beating any more is marked stale: the daemon that wrote it has stopped driving\n" +
+			"the id, so no cycle is rewriting it. --json prints a versioned document\n" +
 			"(schemas/orchestrator-output.schema.json).\n\n" +
 			"There is no registry of processes and no port: the node and the cache file are\n" +
 			"the two things the daemon writes, and a run or a token may not read either.",
@@ -80,6 +80,8 @@ type orchestratorLsDoc struct {
 // database holds. The lease fields are what the id's lease node says and are
 // absent for an id nobody holds; the cache fields are what this machine's
 // cached brief says and are absent for an orchestrator it does not run.
+// `cache_stale` answers "is anything still rewriting that brief" from the lease
+// and not from the brief's own age: nobody is beating the id.
 type orchestratorLsEntry struct {
 	Kind        string `json:"kind"`
 	Project     string `json:"project"`
@@ -106,16 +108,16 @@ func runOrchestratorLs(cmd *cobra.Command, o *orchestratorLsOptions) error {
 	if err != nil {
 		return userErr("the daemon's cached briefs cannot be listed: %v", err)
 	}
-	// Staleness is measured against the database's own clock and never this
-	// machine's: the cached brief is stamped with the server's time (D1243,
-	// D1230), so a laptop whose clock is off would read a fresh cache as stale
-	// or a dead daemon as current, which is the whole question this listing
-	// answers.
+	// Freshness is measured against the database's own clock and never this
+	// machine's: a lease beat and a cached brief are both stamped with the
+	// server's time (D1243, D1230), so a laptop whose clock is off would read a
+	// live daemon as dead, which is the whole question this listing answers.
 	now, ok := db.ServerNow()
 	if !ok {
-		return userErr("the database answered without its own clock, and how fresh a cached brief is is measured against the server's time rather than this machine's (D1230)")
+		return userErr("the database answered without its own clock, and whether a daemon is beating is measured against the server's time rather than this machine's (D1230)")
 	}
 
+	leases := make(map[string]orchestrator.LeaseClaim, len(ids))
 	byID := make(map[string]orchestratorLsEntry, len(ids)+len(caches))
 	for _, id := range ids {
 		// The lease is read for the ids the database holds and for no other:
@@ -129,6 +131,7 @@ func runOrchestratorLs(cmd *cobra.Command, o *orchestratorLsOptions) error {
 		if !lease.At.IsZero() {
 			e.UpdatedAt = lease.At.UTC().Format(time.RFC3339)
 		}
+		leases[id] = lease
 		byID[id] = e
 	}
 	for _, c := range caches {
@@ -136,7 +139,12 @@ func runOrchestratorLs(cmd *cobra.Command, o *orchestratorLsOptions) error {
 		e.Kind = orchestratorKindLocal
 		e.Project = c.ID
 		e.CachedAt = c.At.UTC().Format(time.RFC3339)
-		e.CacheStale = now.Sub(c.At) > orchestrator.CacheStaleAfter
+		// Whether the cached brief is being kept current is the lease's
+		// question and not the cache's own age: a daemon beats its lease every
+		// LeaseBeat whatever its cycles do, and the cache is rewritten by a
+		// successful cycle only. The id nothing beats — no node at all, or a
+		// last beat past the TTL — is the id whose cache is frozen.
+		e.CacheStale = !leases[c.ID].Fresh(now)
 		byID[c.ID] = e
 	}
 	doc := orchestratorLsDoc{Version: orchestratorOutputVersion, Kind: "ls", Orchestrators: make([]orchestratorLsEntry, 0, len(byID))}

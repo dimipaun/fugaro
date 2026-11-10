@@ -3405,9 +3405,9 @@ List the orchestrators this installation has: every id whose node exists in
 the project's database, with the holder of its lease and when that holder last
 beat, and every cached brief this machine holds, with the time the daemon wrote
 it. An orchestrator this machine runs — one with a cached brief — is `local`;
-one only the database holds is `central`. A cache nothing has rewritten inside
-a lease is stale, which is how a daemon that stopped is told from one that is
-driving the id. --json prints a versioned document
+one only the database holds is `central`. A cached brief of an id nothing is
+beating any more is marked stale: the daemon that wrote it has stopped driving
+the id, so no cycle is rewriting it. --json prints a versioned document
 (schemas/orchestrator-output.schema.json).
 
 There is no registry of processes and no port: the node and the cache file are

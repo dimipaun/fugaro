@@ -148,17 +148,33 @@ func TestOrchestratorLsListsNodesAndCaches(t *testing.T) {
 	}
 }
 
-// TestOrchestratorLsStaleCacheIsMarked: the cache is the freshness of a local
-// orchestrator, so one nothing has rewritten inside a lease TTL is marked —
-// and a local orchestrator whose node the database no longer holds is still
-// listed, because the cache is what a machine that ran it has.
+// TestOrchestratorLsStaleCacheIsMarked: a cached brief is marked when nothing
+// is beating the id it belongs to — no lease at all, a last beat past the lease
+// TTL, or a claim stamped further ahead than this release honours (lease.go's
+// own rule) — and the mark is the lease's answer rather than the brief's age: a
+// daemon whose --interval is the whole TTL writes its cache a lease TTL apart,
+// and a cycle that failed writes none while its beat goes on, so an old cache is
+// not by itself a stopped daemon. A local orchestrator whose node the database
+// no longer holds is still listed, because the cache is what a machine that ran
+// it has, and nothing beats its id.
 func TestOrchestratorLsStaleCacheIsMarked(t *testing.T) {
 	f := lsFixture(t)
+	// aurora: a claim nobody has beaten inside the TTL.
 	seedOrchestratorNode(t, f, "aurora")
-	seedOrchestratorLease(t, f, "aurora", "macbook", orchestratorTestNow)
-	seedBriefCache(t, "aurora", orchestratorTestNow.Add(-orchestrator.CacheStaleAfter-time.Second))
+	seedOrchestratorLease(t, f, "aurora", "macbook", orchestratorTestNow.Add(-orchestrator.LeaseTTL-time.Second))
+	seedBriefCache(t, "aurora", orchestratorTestNow.Add(-10*time.Second))
+	// beating: the daemon's cache is older than a whole lease TTL — its cycles
+	// are as far apart as --interval allows, or its last ones failed — and its
+	// lease is beaten now, which is the daemon that is driving the id.
+	seedOrchestratorNode(t, f, "beating")
+	seedOrchestratorLease(t, f, "beating", "macbook", orchestratorTestNow)
+	seedBriefCache(t, "beating", orchestratorTestNow.Add(-orchestrator.LeaseTTL-30*time.Second))
 	// gone: a machine that ran this one, whose node the database no longer has.
 	seedBriefCache(t, "gone", orchestratorTestNow.Add(-10*time.Second))
+	// ahead: a claim stamped past the skew, which this release treats as expired.
+	seedOrchestratorNode(t, f, "ahead")
+	seedOrchestratorLease(t, f, "ahead", "macbook", orchestratorTestNow.Add(orchestrator.LeaseSkew+time.Second))
+	seedBriefCache(t, "ahead", orchestratorTestNow)
 
 	out, _, err := runOrchestrator(t, "", "orchestrator", "ls", "--json")
 	if err != nil {
@@ -176,39 +192,52 @@ func TestOrchestratorLsStaleCacheIsMarked(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &doc); err != nil {
 		t.Fatal(err)
 	}
-	byProject := map[string]bool{}
-	for _, e := range doc.Orchestrators {
-		byProject[e.Project] = true
-	}
-	if !byProject["aurora"] || !byProject["gone"] {
-		t.Fatalf("the listing is %+v, and both this machine's caches belong in it:\n%s", doc.Orchestrators, out)
+	if len(doc.Orchestrators) != 4 {
+		t.Fatalf("the listing carries %d orchestrators, and this machine caches four:\n%s", len(doc.Orchestrators), out)
 	}
 	for _, e := range doc.Orchestrators {
 		switch e.Project {
 		case "aurora":
 			if !e.CacheStale {
-				t.Errorf("aurora's cache is %s old and not marked stale:\n%s", orchestrator.CacheStaleAfter+time.Second, out)
+				t.Errorf("aurora's lease has not been beaten for %s and its cache is not marked stale:\n%s", orchestrator.LeaseTTL+time.Second, out)
+			}
+		case "beating":
+			if e.CacheStale {
+				t.Errorf("beating's cache is %s old and its lease was beaten at the server's now, so the listing reports a daemon that is driving the id as stopped:\n%s", orchestrator.LeaseTTL+30*time.Second, out)
+			}
+			if e.CachedAt == "" {
+				t.Errorf("beating is %+v, and its entry carries no stamp of when the cache was written", e)
 			}
 		case "gone":
-			if e.Kind != "local" || e.CacheStale {
-				t.Errorf("gone is %+v, and a cache-only orchestrator is a fresh local one", e)
+			if e.Kind != "local" || !e.CacheStale {
+				t.Errorf("gone is %+v, and a cache-only orchestrator is a local one nothing is beating", e)
 			}
+		case "ahead":
+			if !e.CacheStale {
+				t.Errorf("ahead's claim is stamped %s into the future and its cache is not marked stale:\n%s", orchestrator.LeaseSkew+time.Second, out)
+			}
+		default:
+			t.Errorf("the listing carries %q, which no fixture seeded", e.Project)
 		}
 	}
 }
 
-// TestOrchestratorLsStaleCacheIsMarkedInTheTable: the plain listing says which
-// cache is stale, so a person reading it is not told a daemon is driving an id
-// when nothing has rewritten its brief.
+// TestOrchestratorLsStaleCacheInTheTable: the plain listing says which cache is
+// stale, so a person reading it is not told a daemon is driving an id when
+// nothing is beating it — and it does not mark the one that is being driven.
 func TestOrchestratorLsStaleCacheInTheTable(t *testing.T) {
-	lsFixture(t)
-	seedBriefCache(t, "aurora", orchestratorTestNow.Add(-orchestrator.CacheStaleAfter-time.Minute))
+	f := lsFixture(t)
+	// stale: a cache whose id no node and no lease backs any more.
+	seedBriefCache(t, "gone", orchestratorTestNow.Add(-10*time.Second))
+	seedOrchestratorNode(t, f, "aurora")
+	seedOrchestratorLease(t, f, "aurora", "macbook", orchestratorTestNow)
+	seedBriefCache(t, "aurora", orchestratorTestNow)
 	out, _, err := runOrchestrator(t, "", "orchestrator", "ls")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if !strings.Contains(out, "stale") {
-		t.Errorf("the table does not mark the stale cache:\n%s", out)
+	if n := strings.Count(out, "(stale)"); n != 1 {
+		t.Errorf("the table marks %d caches stale, and one of the two is beaten by a live daemon:\n%s", n, out)
 	}
 }
 
