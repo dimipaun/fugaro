@@ -281,20 +281,6 @@ type Row struct {
 	StaleDraft bool `json:"stale_draft,omitempty"`
 }
 
-// Elapsed is how long the row's run has been going, from the moment it
-// started to now, and false for a row that never recorded a start. It is the
-// one read of a run that has not finished — a chain measures such a run's
-// time against its limit at this same figure (runstore.chainSeconds, stated
-// there as well because it imports this package and not the other way) —
-// and it is elapsed time and not a deadline: nothing here knows what the run
-// is allowed to take.
-func (r Row) Elapsed(now time.Time) (time.Duration, bool) {
-	if r.StartedAt == nil {
-		return 0, false
-	}
-	return now.Sub(*r.StartedAt), true
-}
-
 // Pushed reports whether the run of task t (nil when unreadable) with
 // record r pushed its branch, and the commit it pushed. A record with
 // pushed_head has. A record written before follow-ups existed has no
@@ -939,4 +925,18 @@ func Sum(rows []Row) Totals {
 		}
 	}
 	return t
+}
+
+// Elapsed is how long the row's run has been going, from the moment it
+// started to now, and false for a row that never recorded a start. It is the
+// one read of a run that has not finished — a chain measures such a run's
+// time against its limit at this same figure (runstore.chainSeconds, stated
+// there as well because that package is imported by this one) — and it is
+// elapsed time and not a deadline: nothing here knows what the run is
+// allowed to take.
+func (r Row) Elapsed(now time.Time) (time.Duration, bool) {
+	if r.StartedAt == nil {
+		return 0, false
+	}
+	return now.Sub(*r.StartedAt), true
 }
