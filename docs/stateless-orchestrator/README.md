@@ -6,6 +6,8 @@ the typed patch and the validator (#1823, `36abeffc`, 2026-11-07): `internal/orc
 own four files in `internal/orchestrator/sensitivity/` (the package also holds SC1's `floor` and `pattern` files); **O2** (#1945, `5053cbce`), the `orchestrator/`
 subtree and its rules, **O3** (#1954, `70ec7800`), the state store and the audit log, **O4** (#1825, `8e534f5d`), the guardrail policy fields, and **O6** (#1950, `6145e445`), the launcher, are merged too. Every other task is plan only, including **BF2's long-run triage rule (2026-11-08): task O14 and the decisions D1244-D1247, design only, no task approved.**
 
+**Check 300 has run: PASSED 2026-11-10.** The owner ran `bash scripts/live-checks/check300.sh --installation fugaro` with CLI 0.22.1 on the dogfood installation (project `fugaro`, GCP `fugaro-dev`) and every fact passed — the `orchestrator/` subtree and its marker on the real database, the person's own credential writing the state node (D1241's answer) while a credential-less client was refused the same node, and the deployed document byte-for-byte unchanged — so O2's fence is **verified live**; the register's row and section (`docs/gcp-live-checklist.md`) carry the record. **Checks 301 to 304 stay the owner's, and 305 stays reserved** for O16.
+
 *The status as first written, kept:* **Status: plan only; nothing is implemented; no task approved. Every decision D1220-D1243 and every question the plan raised (Q1-Q4) is answered — Q2 twice — and the last tension the answers left open, T7, was ruled on 2026-11-05, so nothing is left for the owner to rule** (reconciliation section 6).
 
 **Spec owner: the owner (Dimi Paun). Date: 2026-11-04.** Checked against `origin/main` at `5998d67c7`.
@@ -14,7 +16,7 @@ subtree and its rules, **O3** (#1954, `70ec7800`), the state store and the audit
 | --- | --- |
 | [spec.md](spec.md) | The owner's spec verbatim: the stateless orchestrator loop and its daemon addendum. Not edited |
 | [reconciliation.md](reconciliation.md) | The spec against the code (F1-F23), the hard questions, the decisions **D1220-D1247** with the owner's answers of 2026-11-04 and 2026-11-08 (BF2: D1244-D1247, the long-run triage rule), the UNVERIFIED list (U1-U10) and the tensions (T1-T7; T6 and T7 closed by the owner's answers, T7 not the recommendation) |
-| [implementation-plan.md](implementation-plan.md) | Tasks O0-O19 in three slices, the parallel levels, the shared-files table, the owner-run Checks 300-305 and the owner questions Q1-Q4 |
+| [implementation-plan.md](implementation-plan.md) | Tasks O0-O19 in three slices, the parallel levels, the shared-files table, the owner-run Checks 300-305 (300 **PASSED 2026-11-10**) and the owner questions Q1-Q4 |
 
 ## The owner's answers
 
@@ -53,7 +55,8 @@ D1243 (the session-start print reads a local cache the daemon writes) are all th
 ## The number block
 
 **D1220-D1249**, confirmed by the owner. D1220-D1247 are written (D1244-D1247 by BF2); **D1248-D1249 are reserved and unused.** Checks **300-309** are
-reserved for the plan (300-305 used, 306-309 reserved), verified free on 2026-11-04.
+reserved for the plan (300-305 used, 306-309 reserved), verified free on 2026-11-04. **Check 300 has run — PASSED 2026-11-10** — and
+301-305 stay the owner's, with 305 reserved until O16 names its files.
 
 ## The spec's typo and numbering fixes
 
