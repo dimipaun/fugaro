@@ -532,8 +532,12 @@ launch_followup() {
     fact launch FAIL "fugaro run --pr $PR was refused: $(tr '\n' ' ' <"$SCRATCH/launch.err")"
     stop "the launch was refused, and this check does not work around a refusal. The text it would have sent is in ${INSTRUCTIONS}"
   fi
-  FOLLOWUP=$(jq -r '.run // empty' "$SCRATCH/launch.json")
-  [ -n "$FOLLOWUP" ] || stop "'fugaro run --pr $PR --json' printed no run id, so the follow-up cannot be followed: $(tr '\n' ' ' <"$SCRATCH/launch.json")"
+  # `.run_id` and not `.run`: the launch names the run both ways, and `.run` is
+  # the qualified `slug/id` while a listing's `run_id` is the bare id — matching
+  # the listing on the qualified one finds nothing, and the check would poll the
+  # whole timeout for a run that finished minutes in.
+  FOLLOWUP=$(jq -r '.run_id // empty' "$SCRATCH/launch.json")
+  [ -n "$FOLLOWUP" ] || stop "'fugaro run --pr $PR --json' printed no run_id, so the follow-up cannot be followed: $(tr '\n' ' ' <"$SCRATCH/launch.json")"
   fact launch PASS "launched $FOLLOWUP on PR $PR of $REPO (status $(jq -r '.status // "?"' "$SCRATCH/launch.json")), continuing $(jq -r '.previous_run // "?"' "$SCRATCH/launch.json"): one run, spent by this check"
 }
 
