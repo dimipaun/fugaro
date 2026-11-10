@@ -3662,6 +3662,83 @@ func TestFilledProxiedListKeepsNonProxiedRepositories(t *testing.T) {
 	}
 }
 
+// TestTheFlipConvergesThroughTheUpdatesOwnRetirement is the HARD RULE's test
+// for the flip (CLAUDE.md: `fugaro update` is the whole upgrade). A repository
+// root applied by the release before the flip holds the job's accessor on the
+// Bitbucket token — the state that release wrote, and what its state file
+// still says. This tree's plan no longer produces that address, so the two
+// converge through the update's own retirement flow: the address is a row of
+// the state-vs-spec set difference, it is a type a managed project's plain
+// update retires by itself (tf.RetirableTypes), and the guard's allow-list for
+// the plan that carries its delete is the retirement's own — so no
+// `--allow-delete` and no second command is owed, and the update applies the
+// flip in one run.
+//
+// What it does NOT prove is the token itself, and the pull request has to say
+// so rather than this test: the credential a proxied run's git traffic is
+// served with is the bundle's, whose only writer is `fugaro creds set
+// bitbucket-token`, and nothing in the update's plan reads the bundle — so the
+// Terraform converges whether or not the installation's bundle holds one, and
+// a proxied repository whose bundle holds none has nothing to be served with.
+// The bundle-first order the plan's B1.13 asks for is therefore not built;
+// `fugaro doctor` is what names it today.
+func TestTheFlipConvergesThroughTheUpdatesOwnRetirement(t *testing.T) {
+	if !slices.Contains(config.ProxiedGitSecretNames, config.BitbucketSecret) {
+		t.Fatalf("config.ProxiedGitSecretNames = %v does not name %s: with the list empty the address below is produced by both sides and the retirement this test is about is empty", config.ProxiedGitSecretNames, config.BitbucketSecret)
+	}
+	// The state the release before this one wrote: the same repository, the
+	// same installation and the same node, read with the flip list empty. The
+	// list is a package var, so that is a state a test can read. Addresses is
+	// read while the list is still empty: it answers from the list at the
+	// moment it is called, not at the moment the spec was built.
+	beforeAddrs := func() []string {
+		old := config.ProxiedGitSecretNames
+		config.ProxiedGitSecretNames = nil
+		defer func() { config.ProxiedGitSecretNames = old }()
+		before, err := Repo(proxiedSandboxInputs(t, proxiedLocalEntry, publishedNode(t, true, "acme/sandbox")))
+		if err != nil {
+			t.Fatal(err)
+		}
+		ready, _, _ := readinessOf(t, newCloud(t), before)
+		return ready.Addresses()
+	}()
+	if !slices.Contains(beforeAddrs, bitbucketTokenAccessor) {
+		t.Fatalf("the state the release before the flip wrote holds no %s: the retirement assertion below would pass vacuously", bitbucketTokenAccessor)
+	}
+
+	spec, err := Repo(proxiedSandboxInputs(t, proxiedLocalEntry, publishedNode(t, true, "acme/sandbox")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, _, _ := readinessOf(t, newCloud(t), spec)
+	if slices.Contains(after.Addresses(), bitbucketTokenAccessor) {
+		t.Fatalf("this tree's plan still produces %s: the flip has not landed, and nothing below is a convergence", bitbucketTokenAccessor)
+	}
+
+	// The update's read of the two: the state's addresses minus the spec's.
+	rets := Retirements(beforeAddrs, after)
+	var row *Retirement
+	for i := range rets {
+		if rets[i].Address == bitbucketTokenAccessor {
+			row = &rets[i]
+		}
+	}
+	if row == nil {
+		t.Fatalf("the update reads no retirement for %s, so nothing takes it out of the state: the flip would leave the plan carrying a delete of an address the configuration no longer declares.\nretirement set: %v", bitbucketTokenAccessor, rets)
+	}
+	if row.Kept != "" {
+		t.Errorf("the accessor's retirement carries the promise %q: it is a binding, it holds no value, and the promise is the secret container's and the registry's alone", row.Kept)
+	}
+	for _, stop := range RetireStops(rets) {
+		if stop.Address == bitbucketTokenAccessor {
+			t.Errorf("a managed project's plain `fugaro update` does not retire %s by itself (%s): the flip would need a flag or a second run, and the one command is the whole upgrade", bitbucketTokenAccessor, stop.Why)
+		}
+	}
+	if got := RetireAllowDelete(planDeleting(bitbucketTokenAccessor), rets); !slices.Contains(got, bitbucketTokenAccessor) {
+		t.Errorf("the guard's allow-list for the flip's plan = %v, want %s among them: the retirement's own addresses are what the update may delete in the run that retires them (D502, the HARD RULE)", got, bitbucketTokenAccessor)
+	}
+}
+
 // TestNilPolicyJudgesNoEntry pins the contract Inputs.Policy's own comment
 // states, and the branch it protects: a caller that read no node at all
 // (fugaro image, fugaro doctor, --print-vars) must not refuse a local entry
