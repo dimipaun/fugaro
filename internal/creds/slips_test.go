@@ -452,6 +452,11 @@ func TestCreateRefusesWhatItCannotRecord(t *testing.T) {
 		{"a negative runtime", func(s *Slip) { s.MaxRuntime = -time.Minute }},
 		{"a claim hash nobody made", func(s *Slip) { s.ClaimHash = ClaimSecretHash("a claim hash no run wrote") }},
 		{"a claim nobody made", func(s *Slip) { s.Claimed = Claim{Account: slipAccount, At: now} }},
+		// Half a claim is a claim nobody made too, and it is the shape the
+		// instant-only test let through: Live keys on At, so an account with no
+		// instant would be a slip that is never live yet names a claimant.
+		{"a claimant with no instant", func(s *Slip) { s.Claimed = Claim{Account: slipAccount} }},
+		{"an instant with no claimant", func(s *Slip) { s.Claimed = Claim{At: now} }},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			sl := testSlip("s-unwritable")

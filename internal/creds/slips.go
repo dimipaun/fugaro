@@ -199,7 +199,9 @@ var (
 	// name its id, its owner, the run, the account the run's job is expected to
 	// present and a positive max runtime, and it must be unclaimed — a record
 	// created already claimed would be a claim nobody made, and one with no
-	// runtime would never end.
+	// runtime would never end. Unclaimed is the zero Claim in every field, so a
+	// record carrying a claimant's account with no instant, or an instant with no
+	// account, is refused as well: neither is a state a claim can be read from.
 	ErrSlipMalformed = errors.New("creds: a slip must name its id, owner, run, expected account and a positive max runtime, and must be unclaimed")
 	// ErrSlipClaimed is a second claim of a slip a run already holds. It is the
 	// refusal D1941 exists for: the first claim keeps the secret, and a later
@@ -298,13 +300,20 @@ func (s *RTDBStore) Create(ctx context.Context, sl Slip) error {
 // against, and a runtime that is not positive would leave a claimed slip that
 // never ends. Fail closed at the writer, where the mistake is, rather than at
 // every reader afterwards.
+//
+// Unclaimed means the zero Claim in EVERY field, and the test is the whole
+// struct rather than the instant alone: a record carrying a claimant's account
+// and no instant, or an instant and no account, is a claim nobody made just as
+// surely as one carrying both, and it is a state no reader can decide from —
+// Live keys on the instant, while the account is what an operator reading the
+// node takes for who asked for the run.
 func (sl Slip) checkWritable() error {
 	switch {
 	case sl.Owner == "", sl.Slug == "", sl.Run == "", sl.ExpectedAccount == "":
 		return fmt.Errorf("creds: writing the slip %q: %w", sl.ID, ErrSlipMalformed)
 	case sl.MaxRuntime <= 0:
 		return fmt.Errorf("creds: writing the slip %q: %w", sl.ID, ErrSlipMalformed)
-	case sl.ClaimHash != "" || !sl.Claimed.At.IsZero():
+	case sl.ClaimHash != "" || sl.Claimed != (Claim{}):
 		return fmt.Errorf("creds: writing the slip %q: %w", sl.ID, ErrSlipMalformed)
 	}
 	return nil
