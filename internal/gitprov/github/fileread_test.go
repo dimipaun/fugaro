@@ -19,10 +19,10 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov/httpfixture"
 )
 
-// personReadToken is the token the fake source below mints, and testdata
-// /fileread carries it as the request's own Authorization header: a read that
-// minted anywhere else fails the replay. It is a fixture value and not a
-// credential.
+// personReadToken is the token the fake source below mints, and
+// testdata/fileread carries it as the request's own Authorization header: a
+// read that minted anywhere else fails the replay. It is a fixture value and
+// not a credential.
 const personReadToken = "ghs_fixture_person_read"
 
 // fileReadDocument is the fugaro.yaml testdata/fileread/at_ref.json answers
