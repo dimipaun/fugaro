@@ -3289,7 +3289,7 @@ func TestProjectPolicyPublishKeepsTheCraftMembers(t *testing.T) {
 	// leaves on the node.
 	node := f.db.Value(projectpolicy.PathShared()).(map[string]any)
 	node["craft_credentials"] = []any{map[string]any{"name": "acme-main", "type": "openrouter"}}
-	node["craft_pools"] = []any{map[string]any{"name": "acme-pool", "strategy": "failover", "members": []any{"acme-main", "vertex"}}}
+	node["craft_pools"] = []any{map[string]any{"name": "acme-pool", "strategy": "failover", "members": []any{"acme-main", "vertex"}, "owner": "owner@example.com"}}
 	node["crafts"] = map[string]any{
 		"coder":           map[string]any{"model": "claude-opus-5-5", "access": "acme-main"},
 		"security-review": map[string]any{"model": "claude-opus-5-5", "access": "acme-pool"},

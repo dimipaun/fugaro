@@ -159,7 +159,7 @@ func TestUpdateMigratesAV3PolicyNodeAfterConfirmation(t *testing.T) {
 	if got := nodeVersionOn(t, f.db); got != projectpolicy.Version {
 		t.Fatalf("the node is version %d, want %d", got, projectpolicy.Version)
 	}
-	if !strings.Contains(out, "published (version 3) and rewritten in place as version 4") {
+	if !strings.Contains(out, fmt.Sprintf("published (version 3) and rewritten in place as version %d", projectpolicy.Version)) {
 		t.Errorf("the confirmation diff does not say what it rewrote and as what:\n%s", out)
 	}
 	if !strings.Contains(out, "⚠ CONFIRM (project aurora)") {
