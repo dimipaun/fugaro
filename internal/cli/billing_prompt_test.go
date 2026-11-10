@@ -106,10 +106,11 @@ func pickerRun(t *testing.T, terminal bool, stdin string, o *initOptions) (*init
 
 // pickerAnswers is the stdin that answers the wizard's questions before the
 // billing one — the GCP project (there is none to suggest here, so Enter is
-// not an answer), the region (Enter) and the name (Enter) — with answer
-// answering the billing question.
+// not an answer), the region (Enter), the name (Enter) and the bake switch
+// (Enter, which is the suggestion an installation that never answers it reads
+// as anyway; IS7) — with answer answering the billing question.
 func pickerAnswers(answer string) string {
-	return "proj-1234\n" + "\n" + "\n" + answer + "\n"
+	return "proj-1234\n" + "\n" + "\n" + "\n" + answer + "\n"
 }
 
 // billingListCalls is how many times the account list was asked for: the
@@ -1270,8 +1271,10 @@ func TestNothingIsEnabledWithoutAnAnswer(t *testing.T) {
 	t.Run("no line at all", func(t *testing.T) {
 		f := gcpfake.NewBilling(t)
 		pickerDisabledOnThisProject(t, f)
-		// The question is the last one, so stdin ends at the offer's prompt.
-		r, out := pickerRun(t, true, "proj-1234\n\n\n", nil)
+		// The billing question is the last one, so stdin ends at the offer's
+		// prompt: the project, the region, the name and the bake switch (Enter,
+		// IS7) are answered, and the offer's line is the one that never comes.
+		r, out := pickerRun(t, true, "proj-1234\n\n\n\n", nil)
 		ran := pickerGcloudRunner(t, f)
 		if err := r.gatherInputs(t.Context()); err != nil {
 			t.Fatalf("%v\n%s", err, out)
