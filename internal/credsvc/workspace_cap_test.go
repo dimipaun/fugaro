@@ -23,7 +23,9 @@ package credsvc
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -77,8 +79,69 @@ func wsSeedRecord(t *testing.T, db *gcpfake.RTDB, capUSD float64) {
 	})
 }
 
+// wsFencedDB is the workspace's own database with a fence around the
+// workspace's own tree: the meter may read and write the workspace's record
+// (projectpolicy.PathWorkspace) and its meter (budget.PathWorkspaceSpend), and
+// every other path is refused and recorded. It is what gives the two tests
+// below teeth: the database they hand the meter HOLDS a member's own figure,
+// and a meter that counted or wrote it — or merely read it — would have to ask
+// for that path, which this refuses and names rather than passing quietly.
+type wsFencedDB struct {
+	*rtdb.Client
+	outside []string
+	writes  []string
+}
+
+// wsFenced is the workspace's own database, seeded, fenced, and handed to the
+// meter in the fence's place.
+func wsFenced(t *testing.T) (*gcpfake.RTDB, budget.WorkspaceSpendDB, *wsFencedDB) {
+	t.Helper()
+	db, client := wsMeterDB(t)
+	fenced := &wsFencedDB{Client: client}
+	return db, fenced, fenced
+}
+
+// inside reports whether a path is one of the workspace's own: its record, or
+// its meter for the fixture's month.
+func (f *wsFencedDB) inside(path string) bool {
+	if path == projectpolicy.PathWorkspace(wsWorkspace) {
+		return true
+	}
+	return strings.HasPrefix(path, budget.PathWorkspaceSpend(wsWorkspace, budget.MonthKey(testNow())))
+}
+
+func (f *wsFencedDB) fence(path string) error {
+	if f.inside(path) {
+		return nil
+	}
+	f.outside = append(f.outside, path)
+	return fmt.Errorf("the meter asked for %s, which is not the workspace's own tree", path)
+}
+
+func (f *wsFencedDB) Get(ctx context.Context, path string, out any) (bool, error) {
+	if err := f.fence(path); err != nil {
+		return false, err
+	}
+	return f.Client.Get(ctx, path, out)
+}
+
+func (f *wsFencedDB) GetETag(ctx context.Context, path string, out any) (string, bool, error) {
+	if err := f.fence(path); err != nil {
+		return "", false, err
+	}
+	return f.Client.GetETag(ctx, path, out)
+}
+
+func (f *wsFencedDB) PutIfMatch(ctx context.Context, path, etag string, v any) error {
+	if err := f.fence(path); err != nil {
+		return err
+	}
+	f.writes = append(f.writes, path)
+	return f.Client.PutIfMatch(ctx, path, etag, v)
+}
+
 // wsMeter is the workspace's meter over one database, with the fixture's clock.
-func wsMeter(t *testing.T, client *rtdb.Client) *WorkspaceMeter {
+func wsMeter(t *testing.T, client budget.WorkspaceSpendDB) *WorkspaceMeter {
 	t.Helper()
 	m, err := NewWorkspaceMeter(WorkspaceMeterConfig{
 		Name: wsWorkspace,
@@ -220,19 +283,24 @@ func TestFailedSettleRefusesTheCall(t *testing.T) {
 
 // D1300, stated as a test so the docs cannot drift from it: the workspace's cap
 // bounds the calls the WORKSPACE's credentials pay for. A member's own runs, its
-// own ledger and its own caps are another quantity, and the meter reads no
-// member's database at all.
+// own ledger and its own caps are another quantity, and the meter touches none
+// of them.
+//
+// The member's figure is in the database the meter is handed, at the member's
+// own run path, and every path outside the workspace's own tree is refused and
+// recorded (wsFencedDB): a meter that read the member's ledger would fail here
+// by name rather than pass whatever it did.
 func TestWorkspaceCapBoundsOnlyTheCredentialsItPaysFor(t *testing.T) {
 	ctx := context.Background()
-	db, client := wsMeterDB(t)
+	db, meterDB, fenced := wsFenced(t)
 	wsSeedRecord(t, db, 2)
-	m := wsMeter(t, client)
+	m := wsMeter(t, meterDB)
 
-	// The member's own database, holding the member's own spend. Nothing the
-	// workspace's service reads: its own database is the workspace's.
-	memberDB := &wsDB{url: "https://" + wsMemberA + "-default-rtdb.firebaseio.com", nodes: map[string]any{
-		budget.PathRun(wsSlug, "20261020-090000-ab12"): map[string]any{"spent": int64(wsMicros(t, 90))},
-	}}
+	// The member's own spend — its own run's ledger node — in the very database
+	// the meter holds. It is the member's figure for the member's own cap, and
+	// the workspace's service counts none of it.
+	memberRun := budget.PathRun(wsSlug, "20261020-090000-ab12")
+	db.Set(memberRun, map[string]any{"spent": int64(wsMicros(t, 90))})
 
 	room, err := m.Room(ctx)
 	if err != nil {
@@ -259,19 +327,34 @@ func TestWorkspaceCapBoundsOnlyTheCredentialsItPaysFor(t *testing.T) {
 	if room.Settled != wsMicros(t, 0.25) {
 		t.Fatalf("the workspace's figure is %v after one $0.25 call, want $0.25", room.Settled.USD())
 	}
-	if len(memberDB.paths) != 0 {
-		t.Fatalf("the meter read the member's own database: %v", memberDB.paths)
+	// Nothing of the member's was asked for, and the member's own figure is
+	// where it was: the meter's whole world is the workspace's own tree.
+	if len(fenced.outside) != 0 {
+		t.Fatalf("the meter reached outside the workspace's own tree: %v", fenced.outside)
+	}
+	if len(fenced.writes) == 0 {
+		t.Fatal("the meter wrote nothing, so the fence above held nothing about what it writes")
+	}
+	if got := db.Value(memberRun); got == nil {
+		t.Fatalf("the member's own ledger node is gone after the workspace's call: %v", got)
 	}
 }
 
 // The advisory number reaches the member on the service's own answer and is
 // written into no node of the member's database: that is what lets the
 // workspace's service hold no write on a member at all (O1's answer).
+//
+// The member's own ledger is seeded into the database the meter holds, and the
+// whole of what the meter wrote is held to the workspace's own meter path
+// (wsFencedDB): the delivery is the header, and the only node it moves is the
+// workspace's own.
 func TestHeadroomIsDeliveredByTheServiceAndWrittenNowhere(t *testing.T) {
 	ctx := context.Background()
-	db, client := wsMeterDB(t)
+	db, meterDB, fenced := wsFenced(t)
 	wsSeedRecord(t, db, 2)
-	m := wsMeter(t, client)
+	m := wsMeter(t, meterDB)
+	memberRun := budget.PathRun(wsSlug, "20261020-090000-ab12")
+	db.Set(memberRun, map[string]any{"spent": int64(wsMicros(t, 90))})
 
 	hold, _, err := m.Reserve(ctx, wsMemberA, "call-1", wsMicros(t, 1))
 	if err != nil {
@@ -280,6 +363,9 @@ func TestHeadroomIsDeliveredByTheServiceAndWrittenNowhere(t *testing.T) {
 	defer func() {
 		if _, err := m.Settle(ctx, hold, wsMicros(t, 0.25)); err != nil {
 			t.Errorf("Settle: %v", err)
+		}
+		if got := db.Value(memberRun); got == nil {
+			t.Errorf("the member's own ledger node is gone after the reservation")
 		}
 	}()
 	room, err := m.Room(ctx)
@@ -293,13 +379,20 @@ func TestHeadroomIsDeliveredByTheServiceAndWrittenNowhere(t *testing.T) {
 		t.Fatalf("the answer carries %q as %v, want %q: the header the member's gateway reads is the wire", gateway.WorkspaceHeadroomHeader, got, want)
 	}
 
-	// The member's own database is not where the number goes. It is read-only
-	// to the service (WorkspaceMeterConfig.DB is the workspace's database and
-	// the member's is opened elsewhere, by W6), and nothing of the member's is
-	// written by the meter at all.
-	member := &wsDB{url: "https://" + wsMemberA + "-default-rtdb.firebaseio.com", nodes: map[string]any{}}
-	if len(member.nodes) != 0 || len(member.paths) != 0 {
-		t.Fatal("the meter touched the member's database")
+	// The number goes into the workspace's own meter — nowhere of the member's.
+	// The member's own ledger is in the database the meter holds (wsFencedDB),
+	// so a write of it anywhere but the workspace's own tree is refused and
+	// recorded rather than passing quietly.
+	if len(fenced.outside) != 0 {
+		t.Fatalf("the delivery reached outside the workspace's own tree: %v", fenced.outside)
+	}
+	for _, p := range fenced.writes {
+		if !strings.HasPrefix(p, budget.PathWorkspaceSpend(wsWorkspace, budget.MonthKey(testNow()))) {
+			t.Fatalf("the delivery wrote %s, which is not the workspace's own meter", p)
+		}
+	}
+	if got := db.Value(budget.PathWorkspaceSpend(wsWorkspace, budget.MonthKey(testNow()))); got == nil {
+		t.Fatal("the reservation is in no node of the workspace's own database")
 	}
 }
 
