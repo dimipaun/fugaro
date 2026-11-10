@@ -453,3 +453,34 @@ func TestSecurityKeyIsBounded(t *testing.T) {
 		t.Fatalf("problems = %s", problemsText(ps))
 	}
 }
+
+// TestReviewStopFractionNaNIsRefused is the repository's half of the stop
+// fraction's range check (Validate). `.nan` is a number to YAML and to Go's
+// comparisons alike, so a check written as `f < 0 || f > 1` alone lets it
+// through and the file that wrote it reads as the absent key —
+// DefaultReviewStopFraction, 0.8, the fraction that is not the release-old
+// behaviour but the whole point of the key. The layer's row is pinned beside
+// its siblings (TestParseProjectLayerRefusesMore); this is the repository's
+// own file, which the stop fraction's shared table cannot carry: that table
+// reads every value back against fugaro.schema.json, and its helper marshals
+// the parsed document to JSON, which has no NaN to marshal.
+func TestReviewStopFractionNaNIsRefused(t *testing.T) {
+	const file = minimalRepo + "git: { provider: github }\nagent:\n  auth: api-key\n  review_stop_fraction: .nan\n" +
+		"workflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
+	cfg, ps := Parse([]byte(file))
+	if cfg != nil {
+		t.Fatal("a file asking for a stop no run can reach resolved")
+	}
+	if len(ps) != 1 || ps[0].Path != "agent.review_stop_fraction" {
+		t.Fatalf("problems = %s", problemsText(ps))
+	}
+	if !strings.Contains(ps[0].Message, "must be greater than 0 and at most 1") {
+		t.Errorf("message = %q, want the stop fraction's own range refusal", ps[0].Message)
+	}
+	// The same file with a value the range admits resolves, so what the case
+	// above reads is the value and not the shape of the file.
+	ok := strings.Replace(file, "review_stop_fraction: .nan", "review_stop_fraction: 0.5", 1)
+	if cfg, ps := Parse([]byte(ok)); cfg == nil || len(ps) > 0 || cfg.Agent.ReviewStopFraction != 0.5 {
+		t.Fatalf("the control file did not resolve: %v, %s", cfg == nil, problemsText(ps))
+	}
+}

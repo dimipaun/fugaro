@@ -114,7 +114,7 @@ const (
 // not. The two rows are visible in internal/settings/registry.go, and the
 // document's own sentence names the split.
 const (
-	cfmRegistryRows   = 392
+	cfmRegistryRows   = 394
 	cfmAllowlistNamed = 95
 )
 
