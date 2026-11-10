@@ -196,8 +196,10 @@ func importPaths(path string) ([]string, error) {
 // writes creds.Slip, or a slip's sentinel error, is a finding, while a comment
 // or a string that merely spells one is not. A dot import of the state is a
 // finding of its own — it binds every name unqualified, so the selector walk
-// would not see a slip named at all — and so is a file that cannot be parsed,
-// because "cannot be checked" is not "is fine".
+// would not see a slip named at all — and so is a second import of the state
+// under another name, which is a second spelling of the same names that the walk,
+// reading one name, cannot see; and so is a file that cannot be parsed, because
+// "cannot be checked" is not "is fine".
 //
 // A name is not the only way in, and the first version of this scan read only
 // names (a review of this change): the slip methods hang off the store the
@@ -229,8 +231,12 @@ func importPaths(path string) ([]string, error) {
 //     builds the state the credentials service serves from locally. This is the
 //     service package alone and not the state's own — nothing outside hands that
 //     one a store, and a shape no caller writes is a hole in the guard — and a
-//     plant pins each direction. It is drawn at a function body for the reason
-//     above.
+//     plant pins each direction. It is drawn at a function body and at the
+//     hand-off, never at the store: a value built here and kept here is a store
+//     this file can still reach, so the mention is exempt only where the value
+//     leaves the file — the result of a return, or an argument of a call that
+//     names the service — and a store built into a value bound to a name, put in
+//     another value, or passed to a function of this package is a finding.
 //
 // The list is closed the way the importers are, and Marks and UpdateMark are not
 // slip methods — that distinction is what the lists below are.
@@ -242,11 +248,12 @@ func importPaths(path string) ([]string, error) {
 // its signature): the package-level name and the struct field are the shapes that
 // cross, and both are findings whatever they are used for. What is left is a
 // store that arrives from a package that may hold one (internal/credsvc) — as an
-// argument, or as a result whose signature this file does not write — and one
-// carried in an interface beside which this package's name is never written.
-// Closing that means making the store type unnameable outside the service, which
-// is a change to the marks API internal/cli reads through today, and it is
-// reported rather than made here.
+// argument, or as a result whose signature this file does not write, a value
+// returned by another file of the package included — and one carried in an
+// interface beside which this package's name is never written. Closing that means
+// making the store type unnameable outside the service, which is a change to the
+// marks API internal/cli reads through today, and it is reported rather than made
+// here.
 
 // slipImporters is the ONE-LIST of directories whose files may reach the slip
 // store. It is deliberately not credsImporters: a fourth entry, or an entry
@@ -337,6 +344,11 @@ func TestBoundaryAllowsSlipsOnlyViaService(t *testing.T) {
 		{
 			name: "a package dot-importing the state",
 			src:  "package x\n\nimport . \"github.com/dimipaun/fugaro/internal/creds\"\n\nvar s Slip\n",
+			want: true,
+		},
+		{
+			name: "a package importing the state under two names",
+			src:  "package x\n\nimport (\n\tc \"github.com/dimipaun/fugaro/internal/creds\"\n\t\"github.com/dimipaun/fugaro/internal/creds\"\n)\n\nfunc f() { st := &creds.RTDBStore{}; st.End(\"id\"); _ = c.Mark{} }\n",
 			want: true,
 		},
 		{
@@ -450,6 +462,26 @@ func TestBoundaryAllowsSlipsOnlyViaService(t *testing.T) {
 			want: true,
 		},
 		{
+			name: "a store handed to the service as an argument of the service's own call",
+			src:  "package x\n\nimport (\n\t\"github.com/dimipaun/fugaro/internal/creds\"\n\t\"github.com/dimipaun/fugaro/internal/credsvc\"\n)\n\nfunc f() { credsvc.Serve(credsvc.Config{State: &creds.RTDBStore{}}) }\n",
+			want: false,
+		},
+		{
+			name: "a store handed to the service into a value the file keeps",
+			src:  "package x\n\nimport (\n\t\"github.com/dimipaun/fugaro/internal/creds\"\n\t\"github.com/dimipaun/fugaro/internal/credsvc\"\n)\n\nfunc f() { c := credsvc.Config{State: &creds.RTDBStore{}}; c.State.End(\"id\") }\n",
+			want: true,
+		},
+		{
+			name: "a store handed to the service inside another value the file keeps",
+			src:  "package x\n\nimport (\n\t\"github.com/dimipaun/fugaro/internal/creds\"\n\t\"github.com/dimipaun/fugaro/internal/credsvc\"\n)\n\ntype h struct{ C credsvc.Config }\n\nfunc f() { x := h{C: credsvc.Config{State: &creds.RTDBStore{}}}; x.C.State.End(\"id\") }\n",
+			want: true,
+		},
+		{
+			name: "a store handed to the service through a function of this package",
+			src:  "package x\n\nimport (\n\t\"github.com/dimipaun/fugaro/internal/creds\"\n\t\"github.com/dimipaun/fugaro/internal/credsvc\"\n)\n\nfunc g(c credsvc.Config) { c.State.Claim(\"id\") }\n\nfunc f() { g(credsvc.Config{State: &creds.RTDBStore{}}) }\n",
+			want: true,
+		},
+		{
 			name: "a store handed to the state's own package, which is not the service",
 			src:  "package x\n\nimport \"github.com/dimipaun/fugaro/internal/creds\"\n\nfunc f() { sel := creds.Selector{Store: &creds.RTDBStore{}}; sel.Pick(ctx) }\n",
 			want: true,
@@ -554,6 +586,13 @@ func slipReferences(path, rel string, src []byte) []string {
 	if dot {
 		return []string{rel + " dot-imports " + credsPackage + ", so every name it holds — a slip's included — is bound unqualified and unreadable by this scan"}
 	}
+	// One name is what a caller writes. Two is a file whose other name this walk
+	// cannot see, and a mention this walk cannot see is a mention it does not
+	// report: a finding of its own, as the dot import is, rather than a walk that
+	// reads some of a file's mentions and calls it clean.
+	if names := credsImportNames(f); len(names) > 1 {
+		return []string{rel + " imports " + credsPackage + " under more than one name (" + strings.Join(names, ", ") + "), so the name this scan reads is not the only one the file writes"}
+	}
 	if !ok {
 		return nil
 	}
@@ -656,17 +695,20 @@ func exemptStoreMentions(f *ast.File, pkg string) map[ast.Node]bool {
 	}
 	// A store handed to a package that may hold one — the operator's CLI builds
 	// the state the credentials service serves from. It is drawn at a function
-	// body for the reason above: a package-level hand-off is a store another file
-	// can claim through.
+	// body for the reason above (a package-level hand-off is a store another file
+	// can claim through) and at the hand-off itself, never at the store (a review
+	// of this change): a value built here and KEPT here is a store this file can
+	// still reach, so the mention is exempt only where the value leaves the file —
+	// the result of a return, or an argument of a call that names the service —
+	// and a store built into a value bound to a name, put in another value, or
+	// passed to a function of this package is a finding again.
 	held := serviceImportNames(f)
 	for _, body := range functionBodies(f) {
 		ast.Inspect(body, func(n ast.Node) bool {
 			switch d := n.(type) {
-			case *ast.CompositeLit:
-				if namesPackage(d.Type, held) {
-					for _, el := range d.Elts {
-						storeMentions(allowed, el, pkg)
-					}
+			case *ast.ReturnStmt:
+				for _, res := range d.Results {
+					handedOn(allowed, res, held, pkg)
 				}
 			case *ast.CallExpr:
 				if namesPackage(d.Fun, held) {
@@ -679,6 +721,26 @@ func exemptStoreMentions(f *ast.File, pkg string) map[ast.Node]bool {
 		})
 	}
 	return allowed
+}
+
+// handedOn exempts the store mentions an expression hands to the service: the
+// service literals it carries, and nothing else. A store the expression merely
+// holds — the bare &creds.RTDBStore{} a function hands out, or one in a literal
+// of another package's type — is not a hand-off and stays a finding.
+func handedOn(allowed map[ast.Node]bool, e ast.Expr, held []string, pkg string) {
+	if e == nil {
+		return
+	}
+	ast.Inspect(e, func(n ast.Node) bool {
+		lit, ok := n.(*ast.CompositeLit)
+		if !ok || !namesPackage(lit.Type, held) {
+			return true
+		}
+		for _, el := range lit.Elts {
+			storeMentions(allowed, el, pkg)
+		}
+		return true
+	})
 }
 
 // functionBodies answers the bodies of the functions a file declares, which is
@@ -935,6 +997,26 @@ func mentionsCreds(e ast.Expr, pkg string) bool {
 func selectsCredsStore(e ast.Expr, stores []string) bool {
 	sel, ok := e.(*ast.SelectorExpr)
 	return ok && slices.Contains(stores, sel.Sel.Name)
+}
+
+// credsImportNames answers every local name a file binds this package to. A
+// caller writes one; a second name is a second spelling of the same names, and
+// the walk reads one spelling. A blank import binds no name and is not one.
+func credsImportNames(f *ast.File) []string {
+	var names []string
+	for _, imp := range f.Imports {
+		if strings.Trim(imp.Path.Value, `"`) != credsPackage {
+			continue
+		}
+		switch {
+		case imp.Name == nil:
+			names = append(names, "creds")
+		case imp.Name.Name == "_":
+		default:
+			names = append(names, imp.Name.Name)
+		}
+	}
+	return names
 }
 
 // credsImport answers how a file reaches this package: the local name it binds
