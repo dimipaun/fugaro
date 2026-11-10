@@ -1866,9 +1866,9 @@ once per project view, plus `--project <name>` and `--config <path>` like every
 other cloud row (§8).
 
 **It is the one read of this set that asks nothing of the host.** Without
-`--from-store` the same command reads each repository through the coordinator's
-own credential — an installation token minted from the installation's GitHub App
-— and it refuses outright under `FUGARO_CREDENTIALS_SERVICE_URL`. With
+`--from-store` the same command reads each repository through the person's own
+read-only token — the person read set (contents read, pull requests read and
+metadata read) minted at the project's own published credentials service. With
 `--from-store` it opens no host and holds no App ID, no App key and no Bitbucket
 credential: it reads the view the sweep already stored under
 `coordinator/repos/<slug>/` in the project's database, through the caller's own
@@ -2122,14 +2122,14 @@ is no second credential path, and **no credential of the host's reaches the
 document, an error or a log line**; the provider's own error text is redacted
 with the values the read held before it is reported.
 
-**The refusals.** With `FUGARO_CREDENTIALS_SERVICE_URL` set, the installation's
-credentials service holds the App's key and this command holds none, so it
-refuses **naming the service** and exits **1** before it reads the App's ID or
-key, opens a provider or mints anything (reconciliation F9). A repository on a
-host this read does not serve is refused the way the project-wide view refuses
-it — **Bitbucket, whose credential is one repository's access token and cannot
-be widened to a project** (reconciliation Q12 (A), finding #30) — and the
-sentence names the reason rather than the repository; that is also exit **1**.
+**The refusals.** A project that publishes no credentials service is one whose
+host read is refused: this command holds no GitHub App key and no Bitbucket
+credential, so there is no mint to ask, and the run's variable decides nothing
+here. A repository on a host this read does not serve is refused the way the
+project-wide view refuses it — **Bitbucket, whose credential is one
+repository's access token and cannot be widened to a project** (reconciliation
+Q12 (A), finding #30) — and the sentence names the reason rather than the
+repository; that is also exit **1**.
 A `--repo` that is not `owner/name` or a `--pr` that is not a pull request number
 is refused before any read is made, exit **1**. **Exit codes: 1 for a refusal of
 the caller's own environment or argv, 2 for a failure of the host.**
@@ -2221,8 +2221,8 @@ client §6.13's `--from-store` uses — and what admits it is
 **`roles/firebasedatabase.viewer`**, the IAM role launchers and operators hold.
 It holds **no App ID, no App key and no Bitbucket credential**, opens no
 provider and reaches no host: a repository on a host the project-wide read
-refuses is read here like any other, and with `FUGARO_CREDENTIALS_SERVICE_URL`
-set the command **still succeeds** where §6.13's host read refuses.
+refuses is read here like any other, and the run's own
+`FUGARO_CREDENTIALS_SERVICE_URL` decides nothing about either read.
 
 **"No records" and "the read failed" are different facts.** A repository the
 store holds none for is `"intents": []` at exit **0**, and so is a project whose
@@ -3343,7 +3343,7 @@ and **not** off this document or the design:
 | **`plan graph`** | **no — it reads the graph artifact in the checkout, not a cloud** (`internal/cli/plan.go`, §6.9) |
 | `plan status` | yes (`newPlanStatusCmd`, §6.12) — a task's state is a *run's* state, so it reads the runs bucket too |
 | `coordinator status` | yes (`newCoordinatorStatusCmd`, §6.13) — with `--from-store` it is the one read here that asks nothing of the host (the stored view, through the caller's own credentials), and it is a cloud read all the same: the view lives in the project's database, so it carries `--project` and `--config` like the rest |
-| `coordinator show` | yes (`newCoordinatorShowCmd`, §6.15) — the pull request read (coordinator v2 C3, D816): `--repo` and `--pr` are its own two arguments, both required, and it carries `--project` and `--config` like the rest because it resolves the repository's provider the way the project view does. **The second row here whose child mints a credential of the host's** — the first is `run`'s below, whose child is a run and mints the write-capable token it pushes and opens the pull request with; this row's is the coordinator's own read-only installation token, revoked when the command is done — so its argv is the whole of what a renderer may influence about it |
+| `coordinator show` | yes (`newCoordinatorShowCmd`, §6.15) — the pull request read (coordinator v2 C3, D816): `--repo` and `--pr` are its own two arguments, both required, and it carries `--project` and `--config` like the rest because it resolves the repository's provider the way the project view does. **The second row here whose child mints a credential of the host's** — the first is `run`'s below, whose child is a run and mints the write-capable token it pushes and opens the pull request with; this row's is the person read set's own read-only installation token (contents, pull requests and metadata, all read), revoked when the command is done — so its argv is the whole of what a renderer may influence about it |
 | `coordinator intents` | yes (`newCoordinatorIntentsCmd`, §6.16) — the declarations read (coordinator v2 C4, D827): it has **no argument of its own** (`--all` and `--json` are the console row's fixed words), and it carries `--project` and `--config` like the rest because it resolves the local config the way the project view does. **The one row here whose child asks nothing of the host at all**: the declarations are the caller's own database node, read through the same credentials §6.13's stored read uses, so there is no App key, no installation token and no provider anywhere in it |
 | `settings set\|unset` | yes (`newSettingsCmd`, §6.20) — **the second row here that writes** (the settings-edit plan's C3, design §5.1 rule 12): the dry run and the confirmed write are the same command with the same aiming pair, and the layer written is §6.19's `target_layer` rather than a flag a renderer chose |
 | **`run`** | yes (`newRunCmd`, §6.14) — **the other row here that writes**: the launch (design §5.1 rule 11) is cut for a project like every cloud command, so it carries `--project` and `--config` too, and the task itself arrives on stdin rather than as a flag |
