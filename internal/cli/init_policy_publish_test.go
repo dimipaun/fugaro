@@ -21,6 +21,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/yamledit"
 )
 
 // init_policy_publish_test.go is the publish half of the policy stage
@@ -2392,5 +2393,262 @@ func TestPolicyConfigDriftSeesTheImageMapAndTheSwitches(t *testing.T) {
 				t.Errorf("policyConfigDrift = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// localCloneURLBlock is the clone_urls block of the fixture's own config file,
+// read back through the strict loader so a test asserts the file a publish
+// reads rather than the bytes a run happened to write.
+func localCloneURLBlock(t *testing.T, f *projectFixture) map[string]string {
+	t.Helper()
+	lc, err := localcfg.Load(f.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return lc.CloneURLs
+}
+
+// nodeWithCloneURLs is the state the import is about: an installation whose
+// published node carries the clone_urls block and whose config file states none,
+// because the block had no other writer than the Firebase console until this
+// release (G3, SD5, D842). The node is published first, so the file records its
+// generation, and the block is then put on the node with the file's record moved
+// with it — the block is the only thing the two sides disagree about, which is
+// what makes the import the only work the run has.
+//
+// The block's keys are the escaped ones this package writes (escKey), and the
+// canonical name is what every reader in Go sees.
+func nodeWithCloneURLs(t *testing.T, f *projectFixture) {
+	t.Helper()
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	if block := localCloneURLBlock(t, f); block != nil {
+		t.Fatalf("the fixture's config states a clone_urls block already: %v", block)
+	}
+	node, ok := f.db.Value(projectpolicy.PathShared()).(map[string]any)
+	if !ok {
+		t.Fatalf("the node at %s is not an object", projectpolicy.PathShared())
+	}
+	node["clone_urls"] = map[string]any{
+		"github%2Facme%2Fapp": "https://github.com/acme/app",
+	}
+	f.db.Set(projectpolicy.PathShared(), node)
+	// The block was put on the node by another writer, so the generation this
+	// machine's file records is the node's own again: without the move, this
+	// run meets D854's three-way state (the node has moved past the one the
+	// file was written from) and answers a re-seed instead of the import.
+	recorded := recordedGeneration(t, f)
+	setConfig(t, f, func(s string) string {
+		out := strings.Replace(s, "policy_generation: "+recorded, "policy_generation: "+nodeETag(t, f), 1)
+		if out == s {
+			t.Fatalf("the fixture's config does not record %q:\n%s", recorded, s)
+		}
+		return out
+	})
+}
+
+// TestUpdateImportsTheNodesCloneURLsIntoTheLocalFile: the clone_urls block moved
+// out of the node and into the local config (SD5, D842), and an installation
+// whose node already carries one has it imported on the first `fugaro update`
+// after that release (§6.4, D844). The block is printed, the file is written
+// with the backup-and-atomic triple, and the run says the file is the block's
+// source from then on — because that is the half of the move the operator has
+// to know to change a clone URL again, and the node is not rewritten: an import
+// moves where the block is written, it does not publish anything.
+func TestUpdateImportsTheNodesCloneURLsIntoTheLocalFile(t *testing.T) {
+	const (
+		canonical = "github/acme/app"
+		url       = "https://github.com/acme/app"
+	)
+	f := newProjectFixture(t, "")
+	nodeWithCloneURLs(t, f)
+	nodeBefore := nodeJSON(t, f, projectpolicy.PathShared())
+	h := newMigrationRig(t, f, &initOptions{})
+
+	st, err := h.s.Check(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.State != initflow.Todo || !strings.Contains(st.Detail, "clone_urls") {
+		t.Fatalf("the check says %s %q, want the import this run makes", st.State, st.Detail)
+	}
+	out, err := h.apply(t, true)
+	if err != nil {
+		t.Fatalf("the import was refused: %v\n%s", err, out)
+	}
+	if got := localCloneURLBlock(t, f)[canonical]; got != url {
+		t.Errorf("the local config's clone_urls[%s] = %q, want the node's own entry", canonical, got)
+	}
+	if after := nodeJSON(t, f, projectpolicy.PathShared()); after != nodeBefore {
+		t.Errorf("the import rewrote the node:\nbefore %s\nafter  %s", nodeBefore, after)
+	}
+	if !strings.Contains(out, "clone_urls "+canonical+": "+url) {
+		t.Errorf("the import does not print the entry it wrote:\n%s", out)
+	}
+	// The sentence the operator has to read is that the file is the source from
+	// now on: the block has lived in the published node since before this
+	// release, and a run that moved it silently would leave them editing the
+	// node's copy for ever (and `fugaro project clone-url` editing another).
+	if !strings.Contains(out, "imported into "+f.path) || !strings.Contains(out, "the file is the block's source from now on") {
+		t.Errorf("the import does not say what it wrote and that the file is the source from now on:\n%s", out)
+	}
+	if backups, err := filepath.Glob(f.path + ".bak-*"); err != nil {
+		t.Fatal(err)
+	} else if len(backups) == 0 {
+		t.Errorf("the import wrote %s with no backup of what it replaced", f.path)
+	}
+	// The file every other writer of this installation reads is still whole:
+	// the import is one edit through the shared editor, not a rewrite of the
+	// document (D790).
+	if text := readFileString(t, f.path); !strings.Contains(text, "name: aurora") || !strings.Contains(text, "repos:") {
+		t.Errorf("the import dropped what it does not touch:\n%s", text)
+	}
+}
+
+// TestUpdateImportsTheBlockOnlyOnce: the import is the first update's business.
+// The second run meets a file that states the block, so it is the block's source
+// and there is nothing left to import — a run that imported again would rewrite
+// the file on every update, which is the same as never letting an operator's own
+// edit stand.
+func TestUpdateImportsTheBlockOnlyOnce(t *testing.T) {
+	f := newProjectFixture(t, "")
+	nodeWithCloneURLs(t, f)
+	if _, err := newMigrationRig(t, f, &initOptions{}).apply(t, true); err != nil {
+		t.Fatal(err)
+	}
+	after := readFileString(t, f.path)
+	out, err := newMigrationRig(t, f, &initOptions{}).apply(t, true)
+	if err != nil {
+		t.Fatalf("the second update was refused: %v\n%s", err, out)
+	}
+	if got := readFileString(t, f.path); got != after {
+		t.Errorf("the second update rewrote the file:\nbefore %s\nafter  %s", after, got)
+	}
+}
+
+// TestUpdateImportDeclinedLeavesBothSidesUntouched: a person who answers no to
+// the import gets what they declined and nothing else — the file it would have
+// rewritten and the node it was read from are exactly as they were (D844,
+// §6.4). The block is the node's own until the import is accepted, so the runs
+// of the project keep cloning from the URLs they clone from today.
+func TestUpdateImportDeclinedLeavesBothSidesUntouched(t *testing.T) {
+	f := newProjectFixture(t, "")
+	nodeWithCloneURLs(t, f)
+	nodeBefore := nodeJSON(t, f, projectpolicy.PathShared())
+	fileBefore := readFileString(t, f.path)
+	// --ask on a managed project is the flag that puts a confirmation back, and
+	// the import takes the stage's own write confirmation (confirmStageWrite):
+	// the run is refused where nobody can answer, and answered here with "no".
+	h := newMigrationRig(t, f, &initOptions{ask: true})
+	h.managedGate()
+	fakeTerminal(t)
+	h.cmd.SetIn(strings.NewReader("n\n"))
+	h.cmd.Flags().Bool("ask", true, "")
+
+	_, err := h.apply(t, false)
+	if err == nil {
+		t.Fatal("the import was written although the answer was no")
+	}
+	if !strings.Contains(err.Error(), "not confirmed") {
+		t.Fatalf("the refusal is not the declined confirmation: %v", err)
+	}
+	if got := localCloneURLBlock(t, f); got != nil {
+		t.Errorf("the declined import wrote the block anyway: %v", got)
+	}
+	if got := readFileString(t, f.path); got != fileBefore {
+		t.Errorf("the declined import wrote the file:\nbefore %s\nafter  %s", fileBefore, got)
+	}
+	if got := nodeJSON(t, f, projectpolicy.PathShared()); got != nodeBefore {
+		t.Errorf("the declined import wrote the node:\nbefore %s\nafter  %s", nodeBefore, got)
+	}
+}
+
+// TestUpdateSeedsNothingWhenTheNodeCarriesNeitherBlock: an installation whose
+// node carries no clone_urls block is not given one in its file. A block seeded
+// empty would be the file *stating* that the project gives no repository a URL —
+// which is what takes a published block away (localcfg.Config.CloneURLsEffective)
+// — so a default written into a file nobody wrote is not a harmless nicety but
+// the thing that stops every node-carrying installation from cloning (D843).
+func TestUpdateSeedsNothingWhenTheNodeCarriesNeitherBlock(t *testing.T) {
+	f := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	if block := localCloneURLBlock(t, f); block != nil {
+		t.Fatalf("the publish wrote a clone_urls block this test is about the absence of: %v", block)
+	}
+	h := newMigrationRig(t, f, &initOptions{})
+	if _, err := h.apply(t, true); err != nil {
+		t.Fatal(err)
+	}
+	if block := localCloneURLBlock(t, f); block != nil {
+		t.Errorf("a run seeded a clone_urls block into a file nobody wrote: %v", block)
+	}
+	if text := readFileString(t, f.path); strings.Contains(text, "clone_urls") {
+		t.Errorf("the file carries a clone_urls key the operator never wrote:\n%s", text)
+	}
+}
+
+// TestUpdatePublishesTheCloneURLsTheConfigStates: the file is the block's source
+// (SD5, D842), and `fugaro project clone-url set` names `fugaro update` as the
+// one command that publishes it. The comparison the publish is planned from has
+// to see the block, or the command would name a step that quietly does nothing:
+// the node would keep the URL it has and the operator's edit would never reach a
+// run.
+func TestUpdatePublishesTheCloneURLsTheConfigStates(t *testing.T) {
+	f := newProjectFixture(t, "clone_urls:\n  github/acme/app: https://github.com/acme/app\n")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	node, ok := f.db.Value(projectpolicy.PathShared()).(map[string]any)
+	if !ok {
+		t.Fatalf("the node at %s is not an object", projectpolicy.PathShared())
+	}
+	// The node's copy is the source the file has just replaced (§6.4's state,
+	// one release later): another URL for the same repository, and one member
+	// beside it that this binary reads as no canonical name at all.
+	node["clone_urls"] = map[string]any{
+		"github%2Facme%2Fapp":   "https://github.com/acme/app.git",
+		"github%2Facme%2Fother": "https://github.com/acme/other.git",
+	}
+	f.db.Set(projectpolicy.PathShared(), node)
+	setConfig(t, f, func(s string) string {
+		// An edit of the file is what a run records a generation for: the
+		// record is what refuses a publish over a newer node (D854), and this
+		// run is about the block alone.
+		out, err := yamledit.SetScalar([]byte(s), []string{"policy_generation"}, nodeETag(t, f))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(out)
+	})
+	h := newMigrationRig(t, f, &initOptions{})
+
+	st, err := h.s.Check(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.State != initflow.Todo || !strings.Contains(st.Detail, "clone_urls") {
+		t.Fatalf("the check says %s %q, want the block the config states", st.State, st.Detail)
+	}
+	out, err := h.apply(t, true)
+	if err != nil {
+		t.Fatalf("the publish was refused: %v\n%s", err, out)
+	}
+	pol := publishedPolicy(t, f)
+	if got := pol.CloneURL("github/acme/app"); got != "https://github.com/acme/app" {
+		t.Errorf("CloneURL(github/acme/app) = %q, want the URL this machine's config states", got)
+	}
+	if got := pol.CloneURL("github/acme/other"); got != "" {
+		t.Errorf("CloneURL(github/acme/other) = %q, want none: the config states no entry for it and the node's copy is the source the file replaced", got)
+	}
+	// The stage's own diff is a diff of members, one line per member the two
+	// sides disagree on — the entries are the explicit door's
+	// (TestBuildProjectPolicyPublishesTheLocalBlocksAndNotTheNodesCopy) — and
+	// the check names the block, so the operator knows what the update is
+	// about before they confirm it.
+	if !strings.Contains(out, "clone_urls") {
+		t.Errorf("the plan does not name the block it publishes:\n%s", out)
 	}
 }

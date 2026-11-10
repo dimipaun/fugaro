@@ -473,6 +473,13 @@ func TestBuildProjectPolicyPublishesTheLocalBlocksAndNotTheNodesCopy(t *testing.
 	if !strings.Contains(out, "clone_urls "+canonical+": https://github.com/acme/app") {
 		t.Errorf("the diff does not name the entry this publish wrote:\n%s", out)
 	}
+	// The entry the file replaced is a removal the operator has to read: the
+	// repository whose runs cloned from a URL of their own goes back to the
+	// provider's own clone URL, which is a difference in where a run's code
+	// comes from.
+	if !strings.Contains(out, "clone_urls github/acme/other removed (was https://github.com/acme/other.git)") {
+		t.Errorf("the diff does not name the entry it removed:\n%s", out)
+	}
 
 	// The other half of the rule: a config that states no block keeps the
 	// node's entries, so an installation whose file predates the key — and an

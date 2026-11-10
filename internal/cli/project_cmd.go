@@ -1934,6 +1934,20 @@ func printPolicyDiff(out io.Writer, old, new *projectpolicy.Policy, sources map[
 		}
 		fmt.Fprintf(out, "  clone_urls %s: %s\n", canonical, new.CloneURLs[canonical])
 	}
+	// An entry the node carried that this config does not is a removal the
+	// operator reading the diff has to see, for the reason its own line exists:
+	// the repository whose runs cloned from a URL of its own goes back to the
+	// provider's own clone URL. Only a config that states a block removes
+	// anything — one that states none keeps every entry, which is the line
+	// above.
+	if !keepCloneURLs && old != nil {
+		for _, canonical := range slices.Sorted(maps.Keys(old.CloneURLs)) {
+			if _, held := new.CloneURLs[canonical]; held {
+				continue
+			}
+			fmt.Fprintf(out, "  clone_urls %s removed (was %s)\n", canonical, old.CloneURLs[canonical])
+		}
+	}
 	// The credentials block is operator-written policy about spending (D152,
 	// D153, D142) and no command of this release writes one, so a publish keeps
 	// it — which is a fact the operator reading this diff has to be told, the
