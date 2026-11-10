@@ -451,9 +451,9 @@ func serviceReadRefusal(repo, ref string, cause error) error {
 }
 
 // The two states a read cannot be attempted from at all, kept as sentinels so
-// that the refusal's words are the caller's (repoConfigAtTheRef) rather than
-// the reader's: the seam answers what it found, and the message names the
-// repository and the ref.
+// that the refusal's words are one place (serviceReadRefusal) rather than the
+// reader's: the seam answers what it found, and the message names the repository
+// and the ref.
 var (
 	// errNoCredentialsService is an installation that has not opted into the
 	// credentials service, or one whose local config carries no block: the
@@ -481,6 +481,8 @@ type serviceReadCache struct {
 	byKey map[string]serviceReadResult
 }
 
+// serviceReadResult is one read's answer, kept so that the second reader of it
+// pays no second mint: the ref's own bytes, or the failure the first reader got.
 type serviceReadResult struct {
 	data []byte
 	err  error
