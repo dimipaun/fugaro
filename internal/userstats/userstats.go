@@ -95,8 +95,8 @@ type Run struct {
 	// CurrencyUSD.
 	Currency string
 	// Status is the settled status the run's record carries ("succeeded",
-	// "failed", "halted", "infra_error", "cancelled", "running"), or "" when
-	// the record settled none (NoRecord).
+	// "failed", "unreviewed", "halted", "infra_error", "cancelled",
+	// "running"), or "" when the record settled none (NoRecord).
 	Status string
 	// NoRecord is true for a run whose result.json is unusable: a run that
 	// has not finalized, and one whose record is corrupt or past its read
@@ -203,7 +203,8 @@ func Aggregate(runs []Run) Result {
 			row.InfraError++
 		default:
 			// No record at all is its own count; any other settled status
-			// -- running, cancelled -- is Other.
+			// -- running, cancelled, and unreviewed, which this view keeps
+			// here on purpose (D996: no counter of its own) -- is Other.
 			if r.NoRecord {
 				row.NoRecord++
 			} else {
