@@ -65,10 +65,11 @@ tasks are parallel by construction: **V0 and V1**, then **V2 and V5**, then **V3
 with three runs available takes **five rounds** rather than the nine a serial order of the same tasks
 takes.
 
-**Two files are written in three levels, and that is the plan's real serialisation.** Both new members
-land in `schemas/settings.schema.json` (V1 the key, V2 the price member, V3 the release each names), and
-`internal/runner/gateway.go` is written by V5 (the bootstrap check) and V7 (the stage spec). Those are
-level-by-level rebases, not conflicts: §2's table names every one.
+**Two files are written in three levels each, and that is the plan's real serialisation.** Both new
+members land in `schemas/settings.schema.json` (V1 the key, V2 the price member, V3 the release each
+names), and `internal/runner/gateway.go` is written by V5 (the bootstrap check), V4 (the stage spec's
+pin field) and V7 (the stage spec's model). Those are level-by-level rebases, not conflicts: §2's table
+names every one.
 
 ---
 
