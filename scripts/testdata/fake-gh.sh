@@ -44,6 +44,17 @@
 #                    arguments start with FAKE_GH_FLAKY fail as a dropped
 #                    connection does ("net/http: TLS handshake timeout"), and
 #                    do nothing else
+#   FAKE_GH_RUN_RELEASE / FAKE_GH_RUN_IMAGES   success (default) | failure |
+#                    cancelled | pending | missing: what the runs api reports
+#                    for that workflow's run on the tag's commit, which is the
+#                    read scripts/verify-release.sh waits on (it asks for the
+#                    runs whose head branch is the tag and whose event is
+#                    push). `pending` answers in_progress, `missing` answers
+#                    no run at all. The tag is read from the origin repo, so a
+#                    test must have pushed it.
+#   FAKE_GH_RUN_OTHER  an extra run on the tag, "name:state" (default none),
+#                    for the rule that any other workflow the tag started has
+#                    to be green too
 # The api asserts that, once a PR has merged, it is only asked about the
 # merge commit and that PR's head (checks and tree).
 # A required check name with no arm above -- one added to release-gate.sh's
@@ -192,7 +203,65 @@ case "$1 ${2:-}" in
     [ -f "$dir/pr_check_once" ] && : >"$dir/pr_check_fail"
     exit 0
     ;;
+  "workflow run")
+    # `gh workflow run ci --ref release/X.Y`, which scripts/release.sh --hotfix
+    # dispatches on the maintenance branch: nothing to do but record it, so a
+    # test can assert it was dispatched and against which ref.
+    printf '%s\n' "$*" >>"$dir/workflow_run"
+    exit 0
+    ;;
   "api "*)
+    case "$2" in
+      */actions/runs*)
+        # scripts/verify-release.sh's read of the runs a tag push started: one
+        # tab-separated line per run, in the shape its --jq asks for
+        # ([name, status, conclusion, head branch, event] | @tsv). The tag's own
+        # runs come from FAKE_GH_RUN_RELEASE / _IMAGES / _OTHER; a run of each
+        # workflow on main is answered below too and belongs to no verification,
+        # so a filter that lost its head-branch or event clause reads a row it
+        # must not. This arm's rows and verify-release.sh's --jq are one shape in
+        # two files: keep them in step.
+        case "$*" in
+          *".workflow_runs[]"*"@tsv"*) ;;
+          *)
+            echo "fake-gh.sh: the runs api was asked with a --jq this fake does not answer: $*" >&2
+            exit 1
+            ;;
+        esac
+        sha=$(printf '%s' "$2" | sed -n 's|.*head_sha=\([^&]*\).*|\1|p')
+        branch=$(git -C "$FAKE_GH_ORIGIN" tag --points-at "$sha" 2>/dev/null | head -n1)
+        # run_rows NAME STATE: one row for the workflow named NAME (the name
+        # GitHub reports, which is the workflow's own `name:`).
+        run_rows() {
+          case "$2" in
+            missing) return 0 ;;
+            success | failure | cancelled)
+              printf '%s\t%s\t%s\t%s\t%s\n' "$1" completed "$2" "$branch" push
+              ;;
+            pending)
+              printf '%s\t%s\t%s\t%s\t%s\n' "$1" in_progress - "$branch" push
+              ;;
+            *)
+              echo "fake-gh.sh: the state configured for the $1 run is '$2', not success, failure, cancelled, pending or missing" >&2
+              exit 1
+              ;;
+          esac
+        }
+        if [ -n "$branch" ]; then
+          run_rows release "${FAKE_GH_RUN_RELEASE:-success}"
+          run_rows images "${FAKE_GH_RUN_IMAGES:-success}"
+        fi
+        if [ -n "${FAKE_GH_RUN_OTHER:-}" ]; then
+          run_rows "${FAKE_GH_RUN_OTHER%%:*}" "${FAKE_GH_RUN_OTHER#*:}"
+        fi
+        # Not this tag's push: a scheduled refresh of the latest release on
+        # main, red on purpose, and a dispatch against the tag's ref (the very
+        # shape images.yml's own notes say a workflow_dispatch run has).
+        printf '%s\t%s\t%s\t%s\t%s\n' images completed failure main schedule
+        printf '%s\t%s\t%s\t%s\t%s\n' ci completed success "$branch" workflow_dispatch
+        exit 0
+        ;;
+    esac
     sha=$(printf '%s' "$2" | sed -n 's|.*/commits/\([^/?]*\)/check-runs.*|\1|p')
     gsha=$(printf '%s' "$2" | sed -n 's|.*/git/commits/\([^/?]*\)$|\1|p')
     psha=$(printf '%s' "$2" | sed -n 's|.*/commits/\([^/?]*\)/pulls.*|\1|p')
