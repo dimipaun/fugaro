@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Sourced by scripts/release.sh and scripts/verify-release.sh: ordering strict
 # X.Y.Z versions without `sort -V`. GNU sort -V is not everywhere (busybox and
 # the BSD sorts), and a `sort -V` that refuses its flag does not fail the
