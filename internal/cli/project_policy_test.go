@@ -2934,14 +2934,19 @@ func TestPolicyNodeBytesRefusesCaseFoldedRoutingMembers(t *testing.T) {
 
 // TestProjectPolicyPublishRefusesAnOlderNodeWithAWorkingRemedy: a node this
 // binary cannot read as its own shape — hand-written with no version, or with
-// an older one — is refused rather than replaced, but the refusal must name a
-// remedy that works. "Publish again" is the one it cannot: the publish is what
-// is being refused. Removing the node is the path that does.
+// one the chain cannot carry the reader across — is refused rather than
+// replaced, but the refusal must name a remedy that works. "Publish again" is
+// the one it cannot: the publish is what is being refused. Removing the node is
+// the path that does.
+//
+// The version below is two steps back and not the step immediately below this
+// one: that step's node is shape-free, so this reader reads it and a publish
+// replaces it in place — the case the test below pins.
 func TestProjectPolicyPublishRefusesAnOlderNodeWithAWorkingRemedy(t *testing.T) {
 	for name, node := range map[string]map[string]any{
-		"no version":    {"budget": map[string]any{"mode": "enforce"}},
-		"version zero":  {"version": 0, "budget": map[string]any{"mode": "enforce"}},
-		"a later shape": {"version": projectpolicy.Version - 1, "budget": map[string]any{"mode": "enforce"}},
+		"no version":     {"budget": map[string]any{"mode": "enforce"}},
+		"version zero":   {"version": 0, "budget": map[string]any{"mode": "enforce"}},
+		"an older shape": {"version": projectpolicy.Version - 2, "budget": map[string]any{"mode": "enforce"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newProjectFixture(t, "")
@@ -2967,6 +2972,37 @@ func TestProjectPolicyPublishRefusesAnOlderNodeWithAWorkingRemedy(t *testing.T) 
 				t.Fatalf("publishing after the remedy: %v", err)
 			}
 		})
+	}
+}
+
+// TestProjectPolicyPublishReplacesAShapeFreePredecessor: a node one shape-free
+// step behind this binary is read rather than refused (projectpolicy's
+// ReadsVersion), and the publish is what writes it forward: the node it leaves
+// is this release's version, and the members the owner had written into the
+// older node survive it — the `binaries` block is kept, the same keep the
+// update door pins (TestUpdateKeepsAHandWrittenBinariesBlock).
+//
+// The state is one `fugaro update` passes through rather than one an
+// installation rests in: the policy stage migrates the node, and a publish run
+// against the same node must reach the same answer instead of stopping on a
+// node it reads member for member.
+func TestProjectPolicyPublishReplacesAShapeFreePredecessor(t *testing.T) {
+	f := newProjectFixture(t, "")
+	f.db.Set(projectpolicy.PathShared(), map[string]any{
+		"version":     projectpolicy.Version - 1,
+		"budget":      map[string]any{"mode": "enforce"},
+		"allow_repos": []string{"github/acme/app"},
+		"binaries":    map[string]any{"allow": []string{"brand/*.png"}},
+	})
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatalf("the publish refused a node one shape-free version behind this binary: %v", err)
+	}
+	p := publishedPolicy(t, f)
+	if p.Version != projectpolicy.Version {
+		t.Errorf("the published node is version %d, want %d: the publish writes this release's node over a shape-free predecessor", p.Version, projectpolicy.Version)
+	}
+	if want := []string{"brand/*.png"}; !slices.Equal(p.BinariesAllow(), want) {
+		t.Errorf("BinariesAllow() = %v, want %v: the block the older node carried did not survive the publish", p.BinariesAllow(), want)
 	}
 }
 

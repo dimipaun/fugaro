@@ -73,8 +73,13 @@ func v5Node() map[string]any {
 }
 
 // v4Node is the published node the release before this one leaves behind: one
-// policy version below this binary's, so the run's policy stage has to migrate
-// it as well as move the rules generation, the base image and the plugin.
+// policy version below this binary's, so the run's policy stage has to carry it
+// forward as well as move the rules generation, the base image and the plugin.
+// This reader reads such a node as it stands (ReadsVersion: the step from 4 to
+// 5 moves the number and nothing else), so the fixture is stale on everything
+// else and on nothing about the node's own shape — which is the state the bump
+// leaves an installation in between the update's image stages and its policy
+// stage.
 func v4Node() map[string]any {
 	n := v5Node()
 	n["version"] = 4
@@ -215,9 +220,13 @@ func TestUpdateConvergesFromThePreviousRelease(t *testing.T) {
 	})
 	// The node the previous release publishes: one policy version below this
 	// binary's, so the policy stage has to carry it forward by the same run
-	// that moves everything else (D990).
+	// that moves everything else (D990). It is *not* a skew this binary reports
+	// (ReadsVersion reads the node's own shape), which is why the fixture's
+	// staleness here is the rules generation and the plugin alone: the node is
+	// written forward by the run, and the node it leaves is what the assertion
+	// in converge reads.
 	t.Run("the node the previous release publishes", func(t *testing.T) {
-		converge(t, v4Node(), []string{"policy-older-than-binary", "policy-rules-skew", "plugin-pin"})
+		converge(t, v4Node(), []string{"policy-rules-skew", "plugin-pin"})
 	})
 	// The node two versions back: a v3 node, which an installation that has not
 	// republished since 0.13.0 carries. 0.14.0's operator notes removed that
@@ -237,6 +246,13 @@ func converge(t *testing.T, node map[string]any, stale []string) {
 	t.Helper()
 	r := newConvergeRig(t, node)
 	convergeOn(t, r, stale)
+	// The node is this release's afterwards, whatever version the fixture left
+	// published: a migration step that stopped half way, or a policy stage that
+	// skipped a node it reads as it stands, leaves an installation whose next
+	// bump has one more step to carry than it should.
+	if p := convergeNode(t, r); p.Version != projectpolicy.Version {
+		t.Errorf("after one fugaro update, the published node is version %d, want %d: the upgrade is the whole move, and the node the release behind left has to reach this one in the same run", p.Version, projectpolicy.Version)
+	}
 	if got := upgradeRead(t, r.settings); !strings.Contains(got, `"ref": "v`+convergeRelease+`"`) {
 		t.Errorf("the plugin pin is still not this release's:\n%s", got)
 	}
@@ -365,9 +381,10 @@ func TestUpdateConvergesPreviousPolicy(t *testing.T) {
 	registerInstallation(t, r.initRig)
 	// The fixture is the release behind, or nothing here has to converge: the
 	// node this installation carries names neither key. It is read as raw
-	// members and not through convergeNode, because a node one policy version
-	// behind is exactly what that reader refuses — and being behind is what
-	// this test's fixture is.
+	// members rather than through convergeNode, because what this half asserts
+	// is the fixture's own bytes: the node a run of the release behind leaves
+	// is one this binary now reads (ReadsVersion), so decoding it would answer
+	// and prove nothing about the state the keys are absent from.
 	raw, err := json.Marshal(r.db.Value(projectpolicy.PathShared()))
 	if err != nil {
 		t.Fatal(err)
@@ -378,7 +395,7 @@ func TestUpdateConvergesPreviousPolicy(t *testing.T) {
 		}
 	}
 
-	convergeOn(t, r, []string{"policy-older-than-binary", "policy-rules-skew", "plugin-pin"})
+	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
 
 	p := convergeNode(t, r)
 	want := projectpolicy.ImageMap{"acme/app": "app"}

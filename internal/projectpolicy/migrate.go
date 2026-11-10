@@ -84,6 +84,52 @@ func Migratable(v int) bool {
 	return true
 }
 
+// shapeFreeSteps names the versions whose step moves the node's number and
+// nothing else: its node is, member for member, the node above it. Version 4
+// is one — the `binaries` block version 5 models is a top-level key no
+// version-4 release wrote, so a version-4 node is a version-5 node that states
+// no grant, which is what a project that never set the key means.
+//
+// The counter-example is version 3, and it is why this table is a table and
+// not a rule about numbers: that step's node needs a block (the Bitbucket
+// token's allow_repos) that only a publish derives, so its Change carries a
+// Note and a reader cannot read every version-3 node as a version-4 one.
+// TestShapeFreeStepsOnlyMoveTheNumber holds every entry here to the first
+// sentence, over a node carrying a member of every kind.
+var shapeFreeSteps = map[int]bool{
+	4: true,
+}
+
+// ReadsVersion reports whether a node written in version v is one this reader
+// reads as one of its own: v is this Version, or every step between them is
+// shape-free.
+//
+// It exists because a bump of Version is otherwise a window and not a safety
+// (version.go, D990): the credentials service and the job images are re-pinned
+// to a release at their own stages of `fugaro update`, and the policy node is
+// migrated at a stage after them, so a reader that refused the shape-identical
+// node in between would refuse every cascade and Bitbucket-proxied model call
+// for the length of the image builds — for a policy it reads member for
+// member. A version that is not shape-free is refused exactly as it was, with
+// the *VersionError and the remedy SkewSentence words: a version-3 node means
+// something the version-4 reader's own release had to derive, and reading it
+// as a version-4 one would run a policy nobody published.
+//
+// A version above this reader's is never one: there the reader is the side
+// that is behind, and the move is an upgrade of the reader and not a tolerance
+// in it.
+func ReadsVersion(v int) bool {
+	if v > Version {
+		return false
+	}
+	for from := v; from < Version; from++ {
+		if !shapeFreeSteps[from] {
+			return false
+		}
+	}
+	return true
+}
+
 // Migrate moves a published policy node forward to the version this Fugaro
 // understands, one step at a time, and reports what each step did.
 //

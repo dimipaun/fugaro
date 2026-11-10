@@ -2,7 +2,9 @@ package projectpolicy
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -397,6 +399,42 @@ func TestEveryOlderVersionHasAMigratorOrARefusal(t *testing.T) {
 		}
 		if msg := SkewSentence(ve, ReaderCLI); !strings.Contains(msg, "--delete") {
 			t.Errorf("policy version %d: SkewSentence = %q, want the older-node remedy the operator is told to run", v, msg)
+		}
+	}
+}
+
+// TestShapeFreeStepsOnlyMoveTheNumber is what lets Decode admit a node one
+// version behind (ReadsVersion): the step is called shape-free because it
+// splices the version member and nothing else, and a step that also rewrote,
+// added or dropped a member would make every node of its version a node the
+// reader above reads differently from the one its own release wrote. The node
+// below carries a member of every kind the walk has to leave alone — a block
+// with a list, a block with an object, an entry the owner edited by hand — and
+// the step's whole output must be that node with the next number in it.
+//
+// A step whose node needs a move cannot be shape-free either: its Change
+// carries a Note, which is what the operator is told to finish the job, and a
+// tolerance that admitted such a version would read the node without ever
+// printing it (version 3's Bitbucket republish is that case).
+func TestShapeFreeStepsOnlyMoveTheNumber(t *testing.T) {
+	for from := range shapeFreeSteps {
+		step, ok := migrators[from]
+		if !ok {
+			t.Fatalf("shapeFreeSteps names version %d and the chain has no step for it", from)
+		}
+		node := fmt.Sprintf(`{"version": %d, "allow_repos": ["github/acme/app"], "budget": {"mode": "enforce"},
+			"profiles": {"standard": {"secrets": ["bitbucket-token"], "allow_repos": ["github/acme/app"]}},
+			"routing": {"claude": {"via": "direct"}}, "clone_urls": {"app": "https://example.invalid/app.git"}}`, from)
+		out, ch, err := step(json.RawMessage(node))
+		if err != nil {
+			t.Fatalf("the step from %d: %v", from, err)
+		}
+		want := strings.Replace(node, fmt.Sprintf(`"version": %d`, from), fmt.Sprintf(`"version": %d`, from+1), 1)
+		if string(out) != want {
+			t.Errorf("the step from %d rewrote more than the version member:\n got %s\nwant %s", from, out, want)
+		}
+		if ch.Note != "" {
+			t.Errorf("the step from %d carries the note %q: a node whose migration needs a move after it is not one a reader can read without printing it", from, ch.Note)
 		}
 	}
 }
