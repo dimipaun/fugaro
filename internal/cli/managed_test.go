@@ -896,6 +896,15 @@ var propertyAgentSites = map[string]string{
 	// are the ones that reach it, an agent's session being refused by the
 	// installation step before that door runs at all.
 	"init_credentials.go credentialsBundleReady": "TestTheBundleIsNeverOpenedInAnAgentsSessionOrARunsProcess, TestTheRecordIsKeptUnderARunsProcessMarker and TestTheBackfillIsNotWrittenInAnAgentsSessionOrARunsProcess",
+	// The compute stage refuses a marker itself rather than leaning on the
+	// loop's gate, and it refuses FIRST, before the root's tfvars are written
+	// and planned: the stage is registered noYes, so the loop's own agent arm
+	// is not what stands in it, and a refusal read after the plan would have run
+	// terraform on a session the fence is for. The first test drives the refusal
+	// in a coding agent's session with the root untouched (no subcommand run at
+	// all) and with a terminal on its stdin as well as without one; the second
+	// drives the same step with no marker, where it applies.
+	"init_compute.go Apply": "TestComputeStageRefusesInAnAgentSession (under a marker, with the root untouched) and TestComputeStageProvisionsAfterATypedConfirmation (with none)",
 }
 
 // The policy tail (init_policy_migrate.go policyMigrationConfirm) is not in

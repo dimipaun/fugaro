@@ -1334,3 +1334,27 @@ func TestRunnerImageAgeOptional(t *testing.T) {
 		t.Fatalf("no warning: %s", logs.String())
 	}
 }
+
+// TestUnreviewedRunIsNotFailed: a run whose senior round answered nothing is
+// not a run that failed — nothing did, its tests passed — and it is not ready
+// either, because the one thing that would have shown someone read the diff is
+// the verdict it never gave. It ends under the word the vocabulary has for that
+// state, with the reason still naming the round, and the pull request stays a
+// draft (D994, D995; finalize's status switch).
+func TestUnreviewedRunIsNotFailed(t *testing.T) {
+	h := newHarness(t, "", nil)
+	rec, err := h.run(t, implement("feature"), proseReview, proseReview)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusUnreviewed || rec.Outcome != runstore.OutcomeDraft {
+		t.Fatalf("record = %+v; want %s/%s: nothing failed and nobody read the diff, which is not what %s names",
+			rec, runstore.StatusUnreviewed, runstore.OutcomeDraft, runstore.StatusFailed)
+	}
+	if want := "review round 1 returned no parseable verdict after a retry"; rec.Reason != want {
+		t.Errorf("reason = %q; want %q", rec.Reason, want)
+	}
+	if pr := onlyPR(t, h.provider); !pr.Draft {
+		t.Errorf("the pull request is ready: %+v", pr)
+	}
+}

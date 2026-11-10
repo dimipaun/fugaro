@@ -669,21 +669,22 @@ func TestThePolicyStagesConfirmationIsNeverDrawnOver(t *testing.T) {
 
 // TestTheWorkspaceStagesConfirmationIsNeverDrawnOver is the same finding on the
 // update door's second stage that asks a confirmation of its own: the workspace
-// publish prints its diff and asks the shared confirmation (confirmRemoval,
-// confirmTypedStrict), and asked through the command's own writer with no
-// question in flight it landed on the line the spinner had drawn, with the
-// redraw painting the frame over the CONFIRM block and over the project's name
-// typed under it (G1). The write this test confirms is a removal — the published
-// node lists a member the record no longer declares — so the question is the
-// ordinary y/N one and the person types the project's name at it.
+// publish prints its diff and asks confirmStageWrite, and asked through the
+// command's own writer with no question in flight it landed on the line the
+// spinner had drawn, with the redraw painting the frame over the CONFIRM block
+// and over the project's name typed under it (G1). The write this test confirms
+// is a removal — the published node lists a member the record no longer
+// declares — and the person is asked nothing at it (T15, docs/no-prompt-policy:
+// the session answers for this step, and the banner is the whole of what they
+// read).
 func TestTheWorkspaceStagesConfirmationIsNeverDrawnOver(t *testing.T) {
 	t.Setenv("TERM", "xterm-256color")
 	fakeTerminal(t)
 	writerAsTerminal(t)
-	// The workspace's own project is the one the shared confirmation helper
-	// types the name of (initProjectName), so this home is the workspace-alpha
-	// one's installation with the owner's table under that name: the record this
-	// stage publishes is named after the project that declares it.
+	// The workspace's own project is the one the shared confirmation names in
+	// its banner (initProjectName), so this home is the workspace-alpha one's
+	// installation with the owner's table under that name: the record this stage
+	// publishes is named after the project that declares it.
 	h := newWSUpdateHome(t, "")
 	h.add(t, initProjectName, "aurora-gcp", wsOwnerTable)
 	h.selectProject(t, initProjectName)
@@ -693,96 +694,16 @@ func TestTheWorkspaceStagesConfirmationIsNeverDrawnOver(t *testing.T) {
 	run := r.s.e.r
 	run.rep = report.New(report.Options{Out: r.out, Getenv: os.Getenv, IsTerminal: writerIsTerminal})
 	step := run.rep.Step(initflow.Workspace)
-	answerAQuestionMidStage(t, run, r.out, "⚠ CONFIRM (project "+initProjectName+"): ", func() error {
+	aStageConfirmsMidStageWithNothingTyped(t, run, r.out, "⚠ CONFIRM (project "+initProjectName+"): ", func() error {
 		_, err := r.s.Apply(context.Background(), initflow.Env{Interactive: true})
 		return err
 	})
 	step.Done("")
 }
 
-// answerAQuestionMidStage drives ask — the stage's call, which asks one question
-// of the person — from another goroutine and asserts what the screen shows. The
-// answer is on a pipe, so the test decides when the person has read the block
-// and typed their name, and the question is the typed one these stages ask
-// (confirmTyped's, which confirmRemoval and confirmTypedStrict are). head is the
-// question's own banner as that stage writes it: the converge's stages ask with
-// the project's name alone, and the checkout stage's cloud step asks with the
-// one a run of its own writes (askClass, which names the GCP project too).
-func answerAQuestionMidStage(t *testing.T, run *initRun, out *syncBuf, head string, ask func() error) {
-	t.Helper()
-	answer, typed := io.Pipe()
-	defer typed.Close()
-	// The answer is wired in where a question may be read, both of them: the
-	// command's own stdin (the shared confirmation helpers read it there) and
-	// the run's reader, which production builds over that same stdin
-	// (newInitRun) and which a run this one drives is given (refreshOptions.in).
-	run.cmd.SetIn(answer)
-	run.in = answer
-	done := make(chan error, 1)
-	go func() { done <- ask() }()
-
-	prompt := "Type " + initProjectName + " to confirm: "
-	waitForOutput(t, out, prompt)
-	shown := out.String()
-	at := strings.Index(shown, head)
-	if at < 0 {
-		t.Fatalf("the stage asked no confirmation, so this test proves nothing:\n%q", shown)
-	}
-	if before := shown[:at]; !strings.HasSuffix(before, "\r\x1b[K") && !strings.HasSuffix(before, "\n") {
-		t.Errorf("the spinner drew the confirmation over its own line: %q", before)
-	}
-	rest := shown[at:]
-	nl := strings.Index(rest, "\n")
-	if nl < 0 {
-		t.Fatalf("the confirmation's banner never ended, so the prompt under it cannot be read as its own line:\n%q", rest)
-	}
-	// The banner's line ends, and the run's writer puts the step in flight back
-	// the moment it does (a complete line is a line somebody watches), so one
-	// frame and the clear that takes it down may stand between the banner and
-	// the prompt — erased before the prompt is written. A line of anything else
-	// there is what this refuses: the question is read as one block.
-	between := rest[nl+1:]
-	if i := strings.LastIndex(between, "\r\x1b[K"); i >= 0 && !strings.Contains(between[:i], "\n") {
-		between = between[i+len("\r\x1b[K"):]
-	}
-	if !strings.HasPrefix(between, prompt) {
-		t.Errorf("the confirmation is not the prompt's own line, with nothing drawn between them:\n%q", rest)
-	}
-
-	// A redraw every 100ms is what the finding measured, and three intervals of
-	// quiet are what says the spinner is down. The prompt is on the screen
-	// already, so anything written here is a frame over the answer being typed.
-	quiet := len(shown)
-	time.Sleep(spinWatch)
-	if after := out.String(); len(after) != quiet {
-		t.Errorf("the spinner redrew over the prompt being answered: %q", after[quiet:])
-	}
-
-	if _, err := fmt.Fprintln(typed, initProjectName); err != nil {
-		t.Fatal(err)
-	}
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("the stage: %v\n%s", err, out.String())
-		}
-	case <-time.After(30 * time.Second):
-		t.Fatalf("the stage is still asking after the answer:\n%q", out.String())
-	}
-	// The answer puts the stage's line back: what is on the screen after the
-	// question is a line in flight again, not the stage's last line left
-	// standing — which is what a run that stopped drawing for the rest of the
-	// stage's minutes would show.
-	got := out.String()
-	if strings.HasSuffix(got, "\n") {
-		t.Errorf("the stage's line did not come back after the answer: %q", tail(got, 80))
-	}
-}
-
-// aStageConfirmsMidStageWithNothingTyped is answerAQuestionMidStage's shape for
-// the stages whose confirmation asks nothing (T7, docs/no-prompt-policy): the
-// banner is the whole of the question, so there is no prompt to wait for and no
-// answer to type. What is held is the same G1 property — the line in flight was
+// aStageConfirmsMidStageWithNothingTyped holds the stages whose confirmation
+// asks nothing (T7 and T15, docs/no-prompt-policy): the banner is the whole of
+// the question, so there is no prompt to wait for and no answer to type. What is held is the same G1 property — the line in flight was
 // taken down before the banner, so the frame the spinner had drawn is not what
 // the person reads the confirmation on — and that the stage went on by itself
 // instead of putting a question to a session it can read nothing from.

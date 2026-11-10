@@ -49,6 +49,14 @@ const (
 	// (agent.max_output_tokens.*).
 	KeyMaxOutputCoder    = "max_output_tokens.coder"
 	KeyMaxOutputReviewer = "max_output_tokens.reviewer"
+	// The project's binary allow rule (D981, D986): the paths a run may add a
+	// binary at and the largest binary it may add. They are the owner's policy
+	// node's alone — fugaro.yaml carries no such key and internal/config
+	// refuses one, because that file sits in the checkout the run's own agent
+	// writes — so the ceiling is the only layer that ever carries them and the
+	// merge's direction is what keeps them there.
+	KeyBinariesAllow    = "binaries.allow"
+	KeyBinariesMaxBytes = "binaries.max_bytes"
 	// KeyABRate is the A/B sampling rate (docs/model-ab-testing, D557). It is
 	// the one key of the ab: block the merge speaks: every other key of it is
 	// the project layer's own and is read where it is set, never merged,
@@ -438,6 +446,26 @@ type Layer struct {
 	MaxOutputCoder    int64
 	MaxOutputReviewer int64
 	AllowedModels     []string // nil = unset
+	// BinariesAllow is this layer's list of admitted binary paths:
+	// repository-relative doublestar globs. nil = unset, and for this key
+	// "unset" is the strict end rather than the loose one AllowedModels' nil
+	// is: a layer that names no path admits no binary at all (spec.md §2.1),
+	// so a non-nil list is the only thing that admits anything and the
+	// merge's intersection is the only thing a later layer may do to it.
+	//
+	// The owner's policy node is the only layer that carries it (D986): the
+	// ceiling is where it is read (internal/runner's policyCeiling), and no
+	// other layer the tree builds writes one — fugaro.yaml refuses the key,
+	// the shared config refuses a publish of it, and no project-layer or
+	// profile key carries it.
+	BinariesAllow []string
+	// BinariesMaxBytes is the largest binary a run may add at an admitted
+	// path, in bytes. 0 = unset, and the smaller positive cap wins
+	// (TightenInt), so a layer below the ceiling may only lower it. The
+	// default a node's written block takes when it names no cap (D983,
+	// 2 MiB) is filled where the block is decoded, not here: this layer
+	// carries the owner's word and invents no figure of its own.
+	BinariesMaxBytes int64
 	// ABRate is this layer's ab.rate, nil = the layer writes none. It is a
 	// pointer because 0 is a value here and not "unset": turning sampling off
 	// is the whole of what a repository's own ab: block may say (D556), and

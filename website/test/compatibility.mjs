@@ -1,11 +1,11 @@
 // website/test/compatibility.mjs — the compatibility matrix's data file
-// (docs/compatibility-matrix/implementation-plan.md, task CM1; the spec's rows as
+// (docs/compatibility-matrix/implementation-plan.md, tasks CM1 and CM3; the spec's rows as
 // docs/compatibility-matrix/reconciliation.md F1–F32 amends them, with the owner's answers
 // D1520–D1539 of 2026-11-07).
 //
 // `website/data/compatibility.yaml` is the one place a compatibility claim is written, and
 // the page renders it verbatim (D1537). That makes this file the page's only honest gate
-// until the page exists, and it holds four things:
+// until the page exists, and it holds five things:
 //
 //   1. **The closed sets.** A row's `status` is one of five and a row's `edition` is one of
 //      two, and a file that grows a sixth status or a third edition fails here rather than
@@ -22,6 +22,11 @@
 //   4. **The rows the spec claimed and the tree refuses.** No date and no price in a row's own
 //      text (D1523: an unbuilt row promises no date), and no mobile Web row (F7/D1521: there is
 //      no web build, so the row is a removal rather than a status).
+//   5. **The "as of" stamp** (CM3, D1538). `as_of.cli` names the newest `docs/releases/vX.Y.Z.md`
+//      and `as_of.console` the newest `docs/releases/console/vX.Y.Z.md`, so a tree whose stamp is
+//      behind either fails here rather than publishing a page whose "as of" names the wrong
+//      release. The release PR writes the notes and moves the stamp with them, in one commit
+//      (`docs/release.md`, "Before you tag").
 //
 // The reader below is this file's own and reads the data file **literally**, the way
 // `test/mobile.mjs` reads `mobile-claims.yaml` and `test/caps-and-costs.mjs` reads
@@ -30,13 +35,14 @@
 // very loader it is checking would not see a loader's own mistake. It refuses what it has not
 // been taught rather than guessing at it, and every refusal names the file and the line.
 //
-// The "as of" stamp's own test — that `as_of.cli` and `as_of.console` name the newest release
-// files — is CM3's, added to this file after this one landed; this file checks the stamp's
-// shape and leaves the comparison to it.
+// The stamp's own test reads the two release directories off the tree the way this file reads the
+// data file, rather than through a module: the changelog's own readers filter by what the stream
+// has released (`src/lib/changelog.mjs`), and the stamp's rule is the newest file of each half,
+// ahead of its release or not.
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import path from 'node:path'
 import { REPO } from './lib/html.mjs'
 
@@ -77,6 +83,12 @@ const OAUTH_SENTENCE = "Use of a subscription is subject to the provider's own t
 const DATE = /\b(?:19|20)\d{2}\b/
 const PRICE = /\$|\bcents?\b/i
 
+/** Where each half's release notes live: the CLI's own directory, and the console's (CM3). */
+const RELEASE_DIRS = { cli: 'docs/releases', console: 'docs/releases/console' }
+
+/** The name of a release notes file: the only name either directory holds that is a release. */
+const RELEASE_FILE = /^v(\d+)\.(\d+)\.(\d+)\.md$/
+
 /** The keys each level of the file may carry; anything else is refused, not ignored. */
 const KEYS = {
   root: ['version', 'as_of', 'never_say', 'groups'],
@@ -92,6 +104,44 @@ function repoFile(rel) {
 /** Whether this checkout carries a path (a file or a directory), by its path from the root. */
 function repoHas(rel) {
   return existsSync(path.join(REPO, rel))
+}
+
+/** A release tag's version, as a comparable triple. */
+function releaseVersion(tag) {
+  const m = /^v(\d+)\.(\d+)\.(\d+)$/.exec(tag)
+  return [Number(m[1]), Number(m[2]), Number(m[3])]
+}
+
+/**
+ * A half's release tags, newest first by the version in the file name. `docs/releases/` holds
+ * `README.md` and the console's and the app's own directories beside the CLI's files, and only
+ * a `vX.Y.Z.md` is a release: the filter is the name's, so a directory never reads as one.
+ */
+function releaseTags(dir) {
+  const at = path.join(REPO, dir)
+  assert.ok(existsSync(at), `${dir} is not in this repository, and the stamp names its newest release file`)
+  return readdirSync(at)
+    .filter((name) => RELEASE_FILE.test(name))
+    .map((name) => name.slice(0, -'.md'.length))
+    .sort((a, b) => {
+      const va = releaseVersion(a)
+      const vb = releaseVersion(b)
+      for (let i = 0; i < 3; i++) {
+        if (va[i] !== vb[i]) return vb[i] - va[i]
+      }
+      return 0
+    })
+}
+
+/** Each half's newest release file: the tag its stamp must name (D1538). */
+function newestReleases() {
+  const out = {}
+  for (const [key, dir] of Object.entries(RELEASE_DIRS)) {
+    const tags = releaseTags(dir)
+    assert.ok(tags.length > 0, `${dir} holds no release file, so there is no release for as_of.${key} to name`)
+    out[key] = tags[0]
+  }
+  return out
 }
 
 /** A line's own comment, taken off outside quotes so a `#` in a note is text. */
@@ -224,6 +274,18 @@ function unknownKeys(map, allowed, what) {
 }
 
 /**
+ * The file as this reader read it, for the file's *other* gate:
+ * `website/test/compatibility-page.mjs` holds the built page to the rows this file carries, and
+ * it reads them here rather than parsing the YAML a second time — which is what the file itself
+ * means when it says the page-wide test reads its `never_say` list rather than repeating it. A
+ * second reader would be a second rule, and the two would drift into disagreeing about the file
+ * the page renders.
+ */
+export function compatibilityFacts() {
+  return FILE
+}
+
+/**
  * Every way the file departs from the rules above, as lines — the whole gate, so that a
  * plant below can be held to the one line it is about.
  */
@@ -308,16 +370,42 @@ export function problems(doc) {
   return out
 }
 
+/**
+ * The stamp's own gate: every way `as_of` departs from the release files, as lines. `as_of.cli`
+ * names the newest `docs/releases/vX.Y.Z.md` and `as_of.console` the newest
+ * `docs/releases/console/vX.Y.Z.md` (D1538), so a stamp behind the newest file — the state a
+ * release PR that wrote its notes and left the stamp alone leaves behind — is refused here
+ * rather than published as the page's "as of". The release files are read from the tree, and
+ * `newest` is an argument so a case can hold the check to a stamp it writes itself.
+ */
+export function stampProblems(doc, newest = newestReleases()) {
+  const out = []
+  for (const [key, dir] of Object.entries(RELEASE_DIRS)) {
+    const stamp = doc.as_of?.[key]
+    if (stamp === newest[key]) continue
+    out.push(
+      `${DATA} writes as_of.${key} as ${JSON.stringify(stamp)}; the newest ${dir}/vX.Y.Z.md is ${newest[key]}, ` +
+        `and the stamp names the release each half of the matrix was last read against (D1538)`,
+    )
+  }
+  return out
+}
+
 const RAW = existsSync(path.join(REPO, DATA)) ? repoFile(DATA) : ''
 const FILE = RAW === '' ? {} : parse(RAW)
 
-/** The file with one edit, and the problems that edit leaves — the shape every plant uses. */
-function planted(from, to) {
+/** The file with one edit, read back — the anchor check every plant needs, and only that. */
+function edited(from, to) {
   assert.ok(
     RAW.includes(from),
     `this case's anchor ${JSON.stringify(from)} is not in ${DATA}, so the edit it makes proves nothing — fix the anchor, never the rule`,
   )
-  return problems(parse(RAW.replace(from, to)))
+  return parse(RAW.replace(from, to))
+}
+
+/** The file with one edit, and the problems that edit leaves — the shape every plant uses. */
+function planted(from, to) {
+  return problems(edited(from, to))
 }
 
 /** That the plant left exactly the problem a message names, and not silence. */
@@ -340,6 +428,37 @@ test('the data file is there, and every row of it passes every rule', () => {
     `${DATA} departs from its own rules:\n${found.map((problem) => `  - ${problem}`).join('\n')}`,
   )
   assert.ok(rowsOf(FILE).length >= 40, `${DATA} carries ${rowsOf(FILE).length} rows, and the reconciliation's findings map to the spec's own rows`)
+})
+
+test('the stamp names the newest release file of each half', () => {
+  const newest = newestReleases()
+  const found = stampProblems(FILE, newest)
+  assert.deepEqual(
+    found,
+    [],
+    `${DATA} is stamped against a release that is not the newest of its half:\n${found.map((problem) => `  - ${problem}`).join('\n')}`,
+  )
+  for (const [key, dir] of Object.entries(RELEASE_DIRS)) {
+    assert.ok(
+      releaseTags(dir).length > 1,
+      `${dir} holds ${releaseTags(dir).length} release file(s), so a stamp fallen behind the newest (${newest[key]}) could not be told from one that names it, and the case below would prove nothing`,
+    )
+  }
+})
+
+test('a stamp behind the newest release file is refused', () => {
+  const newest = newestReleases()
+  for (const [key, dir] of Object.entries(RELEASE_DIRS)) {
+    const older = releaseTags(dir)[1]
+    assert.ok(older, `${dir} holds no release file below its newest (${newest[key]}), so this case cannot plant a stamp one release behind`)
+    const anchor = key === 'cli' ? `as_of:\n  cli: ${newest.cli}` : `  console: ${newest.console}`
+    const plant = key === 'cli' ? `as_of:\n  cli: ${older}` : `  console: ${older}`
+    refused(
+      stampProblems(edited(anchor, plant), newest),
+      `writes as_of.${key} as "${older}"`,
+      `A stamp one release behind the newest ${dir}/vX.Y.Z.md must be refused: the release PR that writes the notes moves the stamp with them (docs/release.md, "Before you tag"), and a tree that skipped it would publish a page naming the release before this one.`,
+    )
+  }
 })
 
 test('a status outside the five, and an edition outside the two, are refused', () => {

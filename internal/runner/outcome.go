@@ -27,6 +27,82 @@ func latestVerifiedTest(records []verify.Record, sha string) *verify.Record {
 // exists for the final commit.
 const ReasonNoVerifiedTest = "no verified test run on the final commit"
 
+// Kind is which of the three endings Decide's answer is, as one word beside
+// the reason and the class: what the record's status is written from (D995).
+// It is an enum of its own rather than a reading of the reason, because the
+// reason is a sentence a later task may reword, and a sentence is not a thing
+// a status may move on.
+type Kind string
+
+const (
+	// KindReady is the run this rule publishes ready: a clean verified test on
+	// the commit that ships and a last review round the mode lets through.
+	KindReady Kind = "ready"
+	// KindBlocked is every run Decide refuses readiness for a cause of its
+	// own: tests failing on the final commit, a verify record that is not
+	// there, findings the mode does not tolerate, a fix no round read, a
+	// question the run is waiting on the owner for. The record's status for it
+	// is the failure one, which is what `failed` means: a policy decision the
+	// runner made correctly.
+	KindBlocked Kind = "blocked"
+	// KindUnreviewed is the run no review verdict exists for, and it is one
+	// Kind for F6's two states (D994): a senior round that answered nothing
+	// after the retry, and a run with no round for this rule to read at all.
+	// Nothing failed in either — the tests passed — and nothing read the diff
+	// either, which is the state `unreviewed` names and no other word does.
+	KindUnreviewed Kind = "unreviewed"
+)
+
+// Decision is Decide's answer as one value: the readiness, the reason the run
+// did not become ready, the failure class the cause is filed under, and the
+// Kind the ending's status is written from (D995). The four travel together
+// because finalize replaces the answer whole — a refusal found at finalize
+// writes its own reason, class and kind (blockedDecision) — and a status read
+// apart from the sentence it describes is how a run came to be filed as failed
+// for a review nobody held.
+type Decision struct {
+	// Ready is whether the pull request may be published ready.
+	Ready bool
+	// Reason is why it may not, "" for a ready answer, and the sentence the
+	// record, the pull request's status section and the launcher print.
+	Reason string
+	// Class is the reason's cause, in the vocabulary a record's failure_class
+	// holds. It is empty for a ready run, the way a succeeded record carries
+	// none.
+	Class failure.Class
+	// Kind is which ending this is. Ready is true exactly when it is
+	// KindReady, and the constructors below are the only way this package
+	// builds one.
+	Kind Kind
+}
+
+// readyDecision is Decide's yes: the reason a tolerated or accepted round earns
+// it — which the record and the pull request's status section print — or ""
+// where the run needed no acceptance. Either way it carries no class, the way
+// a succeeded record carries none.
+func readyDecision(reason string) Decision {
+	return Decision{Ready: true, Reason: reason, Kind: KindReady}
+}
+
+// blockedDecision is Decide's no for a cause of the run's own, and the answer
+// every writer that replaces Decide's sentence hands over — finalize's own
+// first failure, a halt, a refusal found after the last round, a pull request
+// that could not be set up (D995). The kind is blocked rather than unreviewed
+// because the sentence is not Decide's: the run did not end for the absence of
+// a verdict, and a status written from the absence would name a state the
+// record's own reason contradicts.
+func blockedDecision(reason string, class failure.Class) Decision {
+	return Decision{Reason: reason, Class: class, Kind: KindBlocked}
+}
+
+// unreviewedDecision is Decide's no for the two states F6 names: a senior
+// round that answered nothing, and no round at all. Both carry the same class
+// — review_unread, which is what the vocabulary says happened — and the same
+// kind, which is what the status is written from.
+func unreviewedDecision(reason string) Decision {
+	return Decision{Reason: reason, Class: failure.ReviewUnread, Kind: KindUnreviewed}
+}
+
 // Decide applies the PR outcome rule (design §4.2): ready only if the latest
 // test record on finalSHA with a clean tree passed and the last review either
 // shipped or left nothing the run's mode blocks on (T3.1, D7). A clean or
@@ -58,13 +134,19 @@ const ReasonNoVerifiedTest = "no verified test run on the final commit"
 // the site that knows which refusal the run carries — nothing downstream reads
 // the sentence back to work one out (design §4.2). A run Decide makes ready
 // carries no class, the way a succeeded record carries none.
-func Decide(records []verify.Record, finalSHA string, last *runstore.ReviewSummary, pol FindingsPolicy, owner *runstore.OwnerDecisions) (bool, string, failure.Class) {
+//
+// The answer is one value, and its Kind is what finalize's status switch reads
+// instead of the sentence (Decision, D995): this is the only site that knows
+// whether the run was refused for a cause of its own or for the absence of a
+// verdict, and that difference is the difference between `failed` and the label
+// a run no review answered carries.
+func Decide(records []verify.Record, finalSHA string, last *runstore.ReviewSummary, pol FindingsPolicy, owner *runstore.OwnerDecisions) Decision {
 	latest := latestVerifiedTest(records, finalSHA)
 	switch {
 	case latest == nil:
-		return false, ReasonNoVerifiedTest, failure.ClassForVerify(verify.Record{}, finalSHA)
+		return blockedDecision(ReasonNoVerifiedTest, failure.ClassForVerify(verify.Record{}, finalSHA))
 	case !latest.Passed:
-		return false, "tests failing on the final commit", failure.ClassForVerify(*latest, finalSHA)
+		return blockedDecision("tests failing on the final commit", failure.ClassForVerify(*latest, finalSHA))
 	case pendingOwner(owner) > 0:
 		// Above the verdicts, and above the tolerance below: the round that
 		// left these did not fail, it asked a question the run cannot answer,
@@ -77,9 +159,9 @@ func Decide(records []verify.Record, finalSHA string, last *runstore.ReviewSumma
 		// design's §3 has no row for it, which is what unclassified says. A
 		// halt on the same decisions reads its class off the halt's own reason
 		// instead (haltClass), where no family holds it either.
-		return false, ownerWaitingReason(pendingOwner(owner)), failure.Unclassified
+		return blockedDecision(ownerWaitingReason(pendingOwner(owner)), failure.Unclassified)
 	case last == nil:
-		return false, "no review verdict", failure.ReviewUnread
+		return unreviewedDecision("no review verdict")
 	case last.Verdict == "none":
 		// A review round that produced no parseable verdict, after the retry
 		// the loop gives it (seniorLoop), is not a tolerance of findings: it
@@ -90,7 +172,7 @@ func Decide(records []verify.Record, finalSHA string, last *runstore.ReviewSumma
 		// wrote, and a coder that can make the reviewer answer nothing twice
 		// would otherwise have its work shipped unread. The pull request stays
 		// a draft and the reason says which round it was (reviewsPart).
-		return false, fmt.Sprintf("review round %d returned no parseable verdict after a retry", last.Round), failure.ReviewUnread
+		return unreviewedDecision(fmt.Sprintf("review round %d returned no parseable verdict after a retry", last.Round))
 	case last.Verdict != "ship":
 		if len(pol.StopBlocking) > 0 {
 			// The stop accepts what a run's rounds left it, and the one thing it
@@ -99,7 +181,7 @@ func Decide(records []verify.Record, finalSHA string, last *runstore.ReviewSumma
 			// so a level under it that the stop does not take is a reason this
 			// sentence has to name: a reader who went to the round the count's
 			// own reason points at would find nothing blocking there.
-			return false, stopBlockingReason(pol.StopBlocking), failure.ReviewNotConverged
+			return blockedDecision(stopBlockingReason(pol.StopBlocking), failure.ReviewNotConverged)
 		}
 		// The mode takes this round whole — the stop accepts it, or its own row
 		// tolerates it — and the round read an earlier commit than the one the
@@ -110,7 +192,7 @@ func Decide(records []verify.Record, finalSHA string, last *runstore.ReviewSumma
 		// about the round, and neither reaches the commit that ships, so the
 		// pull request stays a draft whose reason names the round (BF1m).
 		if pol.UnreadFix != nil && pol.tolerates(last) && !pol.raisedAfterReview() {
-			return false, unreadFixReason(*pol.UnreadFix), failure.ReviewUnread
+			return blockedDecision(unreadFixReason(*pol.UnreadFix), failure.ReviewUnread)
 		}
 		if pol.acceptsAtStop(last) {
 			// The run stopped without shipping a round, and what the round
@@ -119,16 +201,16 @@ func Decide(records []verify.Record, finalSHA string, last *runstore.ReviewSumma
 			// staying a draft, and the reason names the half of the stop
 			// rule that ended the rounds — the record's own two words
 			// (runstore.StopRoundsSpent, StopTimeThreshold).
-			return true, fmt.Sprintf("review round %d left %s, accepted at %s (%s)",
-				last.Round, Plural(len(pol.Tolerated), "finding"), pol.Mode, pol.AtStop), ""
+			return readyDecision(fmt.Sprintf("review round %d left %s, accepted at %s (%s)",
+				last.Round, Plural(len(pol.Tolerated), "finding"), pol.Mode, pol.AtStop))
 		}
 		if pol.tolerates(last) && !pol.raisedAfterReview() {
-			return true, fmt.Sprintf("review round %d left %s, tolerated at %s", last.Round, Plural(len(pol.Tolerated), "finding"), pol.Mode), ""
+			return readyDecision(fmt.Sprintf("review round %d left %s, tolerated at %s", last.Round, Plural(len(pol.Tolerated), "finding"), pol.Mode))
 		}
 		if pol.Raised != nil {
-			return false, pol.raiseReason(last), failure.ReviewNotConverged
+			return blockedDecision(pol.raiseReason(last), failure.ReviewNotConverged)
 		}
-		return false, fmt.Sprintf("review round %d still has %s", last.Round, Plural(last.Findings, "finding")), failure.ReviewNotConverged
+		return blockedDecision(fmt.Sprintf("review round %d still has %s", last.Round, Plural(last.Findings, "finding")), failure.ReviewNotConverged)
 	case pol.HeldBack != nil:
 		// The level that decided shipped, and an enabled level above it did
 		// not: readiness is decided by the highest level that ran, and only
@@ -136,9 +218,9 @@ func Decide(records []verify.Record, finalSHA string, last *runstore.ReviewSumma
 		// The case sits below the tolerance on purpose — a round the mode
 		// tolerates is not a ship, and the level it came from is the one
 		// Decide is reading, not one held back beside it.
-		return false, heldBackReason(*pol.HeldBack), failure.ReviewNotConverged
+		return blockedDecision(heldBackReason(*pol.HeldBack), failure.ReviewNotConverged)
 	}
-	return true, "", ""
+	return readyDecision("")
 }
 
 // heldBackReason is Decide's reason for a run whose deciding level shipped and
