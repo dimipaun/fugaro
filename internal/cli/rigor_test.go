@@ -154,6 +154,45 @@ func TestRigorSetRefusesHotfix(t *testing.T) {
 	}
 }
 
+// The fence a raising write keeps, which is the one arm of it nothing else here
+// reads. A mode below the resolved one is refused in a session by the `Typed`
+// class before the session is consulted, and a managed project's session is
+// refused by the gate's allowlist, so both of those refusals hold even if the
+// document were read as a repository's own file. What turns a session away from
+// this write is that the file is NOT one: it is this machine's project layer
+// file, outside every checkout, and a session may not write it in any direction.
+// The document is at `pro` and the mode asked for is `critical`, so nothing else
+// in this command has a reason to refuse it.
+func TestRigorSetRefusesARaisingWriteInAnAgentSession(t *testing.T) {
+	settingsWriteHome(t)
+	path := rigorModeSet(t, rigorAnchors, "pro")
+	before := readFileString(t, path)
+	agentSession(t)
+
+	for _, args := range [][]string{
+		{"rigor", "set", "critical"},
+		{"rigor", "set", "critical", "--yes"},
+		{"rigor", "set", "critical", "--area", "docs/**", "--name", "docs"},
+	} {
+		out, _, err := execute(t, args...)
+		if err == nil {
+			t.Fatalf("%v wrote to the project layer file from a coding agent's session:\n%s", args, out)
+		}
+		if !strings.Contains(err.Error(), "coding agent's session") {
+			t.Errorf("%v: the refusal does not name the session: %v", args, err)
+		}
+		if !strings.Contains(out, "default: critical") && !strings.Contains(out, "match: docs/**") {
+			t.Errorf("%v: the refused write printed no diff:\n%s", args, out)
+		}
+		if !strings.Contains(err.Error(), "fugaro rigor set") {
+			t.Errorf("%v: the refusal does not print the command to run: %v", args, err)
+		}
+		if got := readFileString(t, path); got != before {
+			t.Fatalf("%v: the refused write changed the layer file:\n%s", args, got)
+		}
+	}
+}
+
 // The red step, third part: the ordinary write. A mode at or above what the
 // project resolves to is written into this machine's own project layer file
 // (D830), through the shared write path: the document is re-read strictly, the
