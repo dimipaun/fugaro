@@ -114,9 +114,19 @@ func TestWiringStageConfirmsAndMergesOnly(t *testing.T) {
 			t.Errorf("the merged file lacks %s:\n%s", want, data)
 		}
 	}
-	for _, want := range []string{"Updated", "git diff", "Claude Code installs the plugin", "fugaro update again", "/plugin marketplace update fugaro"} {
+	// The closing note is the converge's own (pluginWired) and not the
+	// update-skills one: this run IS `fugaro update`, and its install half —
+	// which has no claude to run on this rig — is the step that note would
+	// name, with the commands to run it by hand printed on the step's own line
+	// above (/plugin marketplace add …#v0.2.0, the claude-less fallback).
+	for _, want := range []string{"Updated", "git diff", "was not installed by this run", "Claude Code installs the plugin", "only trust folders you trust"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("the output lacks %q:\n%s", want, out.String())
+		}
+	}
+	for _, bad := range []string{pluginFirstRun, pluginRefresh} {
+		if strings.Contains(out.String(), bad) {
+			t.Errorf("the run prints the update-skills note %q, which sends its own reader to the command it is running:\n%s", bad, out.String())
 		}
 	}
 	// The second run has nothing to do, and says so.

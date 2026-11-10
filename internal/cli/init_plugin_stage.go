@@ -34,22 +34,36 @@ import (
 // loop with no way out (reconciliation.md F13, #1836). Both halves are writes
 // on this machine, which is why the stage is LocalUnderAgent.
 
-// pluginFirstRun ends the wiring. Observed live 2026-10-07 (cause not
+// pluginTrust ends every wiring note: what a repository's settings may name,
+// and the one thing the reader of a fresh pin has to know about them. It is
+// shared so the two notes below and the converge's own (pluginWired) cannot
+// come to say different things about the same file.
+const pluginTrust = "A repository's settings can install a plugin from the marketplace they name, so only trust folders you trust.\n"
+
+// pluginFirstRun ends the wiring of `fugaro update-skills`: that command pins
+// the settings and installs nothing, so its reader does have to be sent to the
+// stage that installs the plugin. Observed live 2026-10-07 (cause not
 // verified): after init wired the settings, opening Claude Code in the folder
 // did not make the skills available and the plugin had to be installed by
 // hand. fugaro update's plugin step (the same one fugaro upgrade runs, Task 6,
 // docs/design/upgrade.md) does that same work, including its own claude-less
 // fallback (noClaudeHint), so this text points there instead of repeating the
 // manual commands (code review of upgrade task 9, 2026-10-09).
+//
+// It is update-skills' note and NOT the converge's: `fugaro update` is the
+// command it names, and a run that printed this would send its own reader back
+// to itself (the owner's feedback of 2026-11-10). pluginWired is what that run
+// prints instead.
 const pluginFirstRun = "Run fugaro update to install the plugin for you.\n" +
 	"Once this is committed, Claude Code installs the plugin when you open this folder in a new session and trust it.\n" +
 	"If the /fugaro: skills are not listed (for example the folder was already trusted), run fugaro update again; without claude on your PATH it prints the slash commands to type in Claude Code instead. fugaro doctor then shows the plugin as installed.\n" +
-	"A repository's settings can install a plugin from the marketplace they name, so only trust folders you trust.\n"
+	pluginTrust
 
 // pluginRefresh follows a changed pin: Claude Code reports the new version but
 // shows the plugin as "not cached" and its skills disappear until the
 // marketplace is updated (verified live, V2); no restart is needed. See
-// pluginFirstRun: fugaro update's plugin step runs the manual command too.
+// pluginFirstRun: fugaro update's plugin step runs the manual command too, and
+// this is update-skills' note for the same reason.
 const pluginRefresh = "Run fugaro update to refresh it for you, or in Claude Code run /plugin marketplace update fugaro (until then the plugin shows \"not cached\" and its skills are gone).\n"
 
 type pluginStage struct {
@@ -381,7 +395,7 @@ func (s *pluginStage) Apply(ctx context.Context, env initflow.Env) (initflow.Out
 		if err := ch.Apply(); err != nil {
 			return initflow.Outcome{}, err
 		}
-		fmt.Fprintf(r.w, "Updated %s to pin the Fugaro plugin at %s. Review it with git diff and commit it like any change.\n%s%s", ch.Path, ch.Tag, pluginRefresh, pluginFirstRun)
+		fmt.Fprintf(r.w, "Updated %s to pin the Fugaro plugin at %s. Review it with git diff and commit it like any change.\n", ch.Path, ch.Tag)
 		changed, detail = true, "wired "+ch.Path+" to "+ch.Tag
 	}
 	// The install half, in upgrade's own words: the step prints its line under
@@ -390,6 +404,11 @@ func (s *pluginStage) Apply(ctx context.Context, env initflow.Env) (initflow.Out
 	inst := s.install(ctx, env, false)
 	if s.found {
 		printStep(s.e.r.w, inst)
+	}
+	if ch != nil && ch.Changed {
+		// The wiring's closing note, after the install half: it says what
+		// became of it, and it is read under the step's own line (pluginWired).
+		fmt.Fprint(s.e.r.w, pluginWired(inst))
 	}
 	switch inst.state {
 	case stepFailed:
@@ -408,6 +427,27 @@ func (s *pluginStage) Apply(ctx context.Context, env initflow.Env) (initflow.Out
 		return initflow.Outcome{Detail: "No changes"}, nil
 	}
 	return initflow.Outcome{Changed: true, Detail: detail}, nil
+}
+
+// pluginWired is the converge's closing note after the wiring write, in place
+// of the two notes written for `fugaro update-skills` (pluginFirstRun,
+// pluginRefresh): those send their reader to `fugaro update` — "install the
+// plugin for you", "refresh it for you", "run fugaro update again" — and this
+// run IS that command, with the install half that is the step they name
+// printed just above (the owner's feedback of 2026-11-10). What the note says
+// instead is what became of that half, which is the fact the two notes were
+// standing in for.
+//
+// The install half is not always this run's to make: a machine with no claude
+// on PATH skips it, and the step's own line above already carries the commands
+// to run by hand (noClaudeHint), so the note points at it rather than
+// repeating them.
+func pluginWired(inst stepResult) string {
+	if inst.state == stepDone || inst.state == stepCurrent {
+		return "Claude Code has the plugin: open a new session in this folder, or restart a running one, to pick the pin up.\n" + pluginTrust
+	}
+	return "The plugin in Claude Code was not installed by this run (the line above says why, and the commands to run it by hand where there are any).\n" +
+		"Once this is committed, Claude Code installs the plugin when you open this folder in a new session and trust it; fugaro doctor then shows the plugin as installed.\n" + pluginTrust
 }
 
 func (s *pluginStage) leftFor(st *initflow.Status) initflow.Left {

@@ -656,3 +656,57 @@ func columnAt(s string, i int) int {
 // ansiRE is a terminal escape sequence: what the reporter paints a frame with,
 // and nothing a person reads as a column.
 var ansiRE = regexp.MustCompile("\x1b\\[[0-9;]*[a-zA-Z]")
+
+// TestUpdateNeverSendsThePersonToUpdateFromInsideIt: the converge's plugin
+// stage used to end its wiring with the two notes written for `fugaro
+// update-skills` — a command that pins the settings and installs nothing, so
+// its own reader does have to be sent to `fugaro update`. Inside `fugaro
+// update` the same two notes told the person to run the command they were
+// running, and the install half of this very stage is the step they point at
+// (the owner's feedback of 2026-11-10). Both worlds are read, because what
+// becomes of the install half is what the note now says instead: the fake
+// claude installs the plugin in one, and the other is the machine with no
+// claude on PATH, where the step's own line carries the commands to run.
+func TestUpdateNeverSendsThePersonToUpdateFromInsideIt(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// noClaude is the machine the install half cannot run on.
+		noClaude bool
+		// want is what the closing note says instead of the command name.
+		want string
+	}{
+		{"claude on PATH, so this run installs it", false, "Claude Code has the plugin"},
+		{"no claude on PATH: the step above says which commands to run", true, "not installed by this run"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newConvergeRig(t, v4Node())
+			currentRelease(t)
+			skillWarned.Store(false)
+			t.Cleanup(func() { skillWarned.Store(false) })
+			if tc.noClaude {
+				noClaudeOnPath(t)
+			}
+			_ = r
+
+			out, errOut, err := executeStdin(t, "", "update", "--yes")
+			if err != nil {
+				t.Fatalf("fugaro update failed (exit %d): %v\n%s\n%s", ExitCode(err), err, out, errOut)
+			}
+			// The two notes of `fugaro update-skills`, which installs nothing and
+			// so does send its own reader there. Inside this run each of them
+			// names the command the person just ran, and the step that does the
+			// work two lines above.
+			for _, bad := range []string{pluginFirstRun, pluginRefresh} {
+				if strings.Contains(out, bad) {
+					t.Errorf("the run prints the update-skills note %q: that is the command this run IS, and the install half of this stage is the step it names\n%s", bad, out)
+				}
+			}
+			if !strings.Contains(out, tc.want) {
+				t.Errorf("the closing note does not say what became of the install half (want %q):\n%s", tc.want, out)
+			}
+			if !strings.Contains(out, "only trust folders you trust") {
+				t.Errorf("the trust caveat is gone from the wiring's closing note:\n%s", out)
+			}
+		})
+	}
+}
