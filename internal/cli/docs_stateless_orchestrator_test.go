@@ -7,11 +7,12 @@ package cli
 // D1220-D1247) and implementation-plan.md (O0-O19). Nothing in it pins a
 // command or a flag — BF2's plan names `fugaro runs watch`, which no task here
 // has built. What rots silently is pinned here: the block the decisions
-// live in, the rulings that are not the recommendation (D1235, the retry rule
-// and T7), Q2 answered a second time, the three round-1 questions the owner has
-// now answered, the last tension the answers left open — T7, the daemon-unit
+// live in, the rulings that are not the recommendation (D1235, the retry rule,
+// T7 and T8), Q2 answered a second time, the three round-1 questions the owner
+// now answered, the tension the answers left open — T7, the daemon-unit
 // carve-out of the HARD RULE, ruled on 2026-11-05 and refused in favour of
-// `fugaro update` re-rendering an installed unit — BF2's long-run triage rule
+// `fugaro update` re-rendering an installed unit, and T8, ruled on 2026-11-10,
+// which takes the terminal's typed ask back off that step — BF2's long-run triage rule
 // (D1244-D1247, O14, answered 2026-11-08: the threshold, the three inputs, the
 // three outcomes, the fail-closed reading and the read-only print), the facts a
 // rewrite would quietly drop (D1243's cache writer and O10's level, the 14-day
@@ -121,19 +122,22 @@ func TestDocsStatelessOrchestratorOwnerQuestionsAreAnswered(t *testing.T) {
 }
 
 // The owner's rulings that are not the recommendation have to be readable as
-// deviations: D1235 (pinned above) and the retry rule. A deviation recorded as
-// a recommendation is a record the owner cannot read.
+// deviations: D1235 (pinned above), the retry rule, T7 and T8. A deviation
+// recorded as a recommendation is a record the owner cannot read.
 func TestDocsStatelessOrchestratorDeviationsAreMarked(t *testing.T) {
 	plan := soRead(t, soPlan)
 	readme := soRead(t, soReadme)
 	if !strings.Contains(plan, "Retry rule (2026-11-04, not the recommendation)") {
 		t.Errorf("%s: the retry rule is not marked as not the recommendation", soPlan)
 	}
-	if !strings.Contains(readme, "three rulings are not") {
+	if !strings.Contains(readme, "four rulings are not") {
 		t.Errorf("%s: the README no longer names the rulings that are not the recommendation", soReadme)
 	}
 	if !strings.Contains(readme, "T7") || !strings.Contains(plan, "T7") {
 		t.Errorf("the tension T7 is not named in the README and the plan")
+	}
+	if !strings.Contains(readme, "T8") || !strings.Contains(plan, "T8") {
+		t.Errorf("the tension T8 is not named in the README and the plan")
 	}
 }
 
@@ -226,6 +230,74 @@ func TestDocsStatelessOrchestratorT7IsRuled(t *testing.T) {
 			if strings.Contains(f.text, gone) {
 				t.Errorf("%s: the superseded T7 wording is still there (%q)", f.name, gone)
 			}
+		}
+	}
+}
+
+// T8 is the owner's newest ruling and, like T7, it is not the recommendation:
+// it takes the typed ask T7 had put on the update door's own unit step back off
+// it, because `fugaro update` is the whole upgrade with no extra confirmation
+// prompt. The design's own paragraph still carries T7's wording, so both must
+// now say which of the two stands. What a later edit must not drop: the
+// ruling, its date, that it is not the recommendation, the T7 sentence it
+// overrides (named, not deleted), the consequence stated plainly instead of
+// left for a reader to find, the one place the reversal lives and the two tests
+// that hold it. The code side is pinned too: the step must ask nothing (no
+// prompt call in the file) and must point at this record rather than assert a
+// ruling the folder does not carry.
+func TestDocsStatelessOrchestratorUnitRerenderAsksNothing(t *testing.T) {
+	plan := soRead(t, soPlan)
+	rec := soRead(t, soReconciled)
+	readme := soRead(t, soReadme)
+	// The folder wraps its lines, so a ruling that spans two of them is one
+	// sentence here: collapse the whitespace before looking for it.
+	flat := func(s string) string { return strings.Join(strings.Fields(s), " ") }
+	for _, f := range []struct{ name, text string }{
+		{soPlan, flat(plan)}, {soReconciled, flat(rec)}, {soReadme, flat(readme)},
+	} {
+		if !strings.Contains(f.text, "2026-11-10") {
+			t.Errorf("%s: T8's ruling carries no date", f.name)
+		}
+		if !strings.Contains(f.text, "T8") {
+			t.Errorf("%s: the ruling of 2026-11-10 is not named T8", f.name)
+		}
+		if !strings.Contains(f.text, "not the recommendation") {
+			t.Errorf("%s: T8's ruling is not marked as not the recommendation", f.name)
+		}
+		if !strings.Contains(f.text, "asks nothing at a terminal") {
+			t.Errorf("%s: T8's ruling does not say the step asks nothing at a terminal", f.name)
+		}
+		if !strings.Contains(f.text, "supersede") {
+			t.Errorf("%s: T8 does not say it supersedes T7's typed ask", f.name)
+		}
+		if !strings.Contains(f.text, "a release that changes only the unit's template asks the person nothing") {
+			t.Errorf("%s: T8's consequence is not stated plainly", f.name)
+		}
+	}
+	if !strings.Contains(flat(plan), "supersedes T7's \"a terminal asks for the step's own class, which is `Typed`\" above") {
+		t.Errorf("%s: the superseded T7 sentence is not named as superseded where it stands", soPlan)
+	}
+	if !strings.Contains(readme, "T1-T8") {
+		t.Errorf("%s: the reconciliation's own row still ends the tensions at T7", soReadme)
+	}
+	for _, want := range []string{
+		"TestDocsStatelessOrchestratorUnitRerenderAsksNothing",
+		"TestUpdateRerendersAnInstalledUnitWhenTheTemplateChanged",
+		"`internal/cli/update_unit_stage.go`'s `Apply`",
+	} {
+		if !strings.Contains(flat(rec), want) {
+			t.Errorf("%s: T8's ruled follow-through %q is gone", soReconciled, want)
+		}
+	}
+	src := stageSource(t, "update_unit_stage.go")
+	for _, gone := range []string{"r.confirm(", "r.typed("} {
+		if strings.Contains(src, gone) {
+			t.Errorf("update_unit_stage.go calls %s: T8 rules that the step asks nothing", gone)
+		}
+	}
+	for _, want := range []string{"2026-11-10", "reconciliation.md", "TestDocsStatelessOrchestratorUnitRerenderAsksNothing"} {
+		if !strings.Contains(src, want) {
+			t.Errorf("update_unit_stage.go does not point at the record of its ruling (%q missing)", want)
 		}
 	}
 }

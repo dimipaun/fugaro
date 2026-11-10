@@ -35,7 +35,16 @@ import (
 // anything, and re-rendering a unit the person installed themselves — from the
 // same template, naming the same stable binary — is not a new write of code
 // into their login. An extra confirmation here would be exactly the operator
-// step T7 exists to remove (the owner's complaint of 2026-11-10).
+// step T7 exists to remove.
+//
+// That last sentence is not this file's reading: it is the owner's ruling of
+// 2026-11-10 (T8 — `fugaro update` stays the whole upgrade with no extra
+// confirmation prompt), recorded with its date in
+// docs/stateless-orchestrator/reconciliation.md, and it supersedes the typed
+// ask T7's own paragraph had put on this step. The pin is
+// TestDocsStatelessOrchestratorUnitRerenderAsksNothing, the behavior is
+// TestUpdateRerendersAnInstalledUnitWhenTheTemplateChanged, and the reversal is
+// one place — Apply, just below.
 type updateUnitStage struct{ e *initEngine }
 
 func newUpdateUnitStage(e *initEngine) *updateUnitStage { return &updateUnitStage{e: e} }

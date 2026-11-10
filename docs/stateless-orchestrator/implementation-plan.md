@@ -470,6 +470,18 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
   and the drift stays visible through `doctor` and O10's nudge until the person runs the command themselves. **`fugaro orchestrator install` stays the
   explicit command** — the first install on a machine that skipped `setup`, and repair — and the re-render reuses its installer rather than a second
   copy of it, but **no release's `### For operators` ever needs it**. `Migrate` stays the daemon's own start-up (O8), so this step carries no state work.
+
+  **The owner's answer of 2026-11-10 on the step's confirmation (reconciliation T8; NOT the recommendation — it supersedes T7's "a terminal asks for the
+  step's own class, which is `Typed`" above).** The owner's complaint of **2026-11-10** is that `fugaro update` stays the whole upgrade **with no extra
+  confirmation prompt**, and it decides open item (1) of T7's ruling: **the re-render step asks nothing at a terminal.** It prints its line of the plan —
+  the file it re-renders and where it lives — and re-renders it, which is the standing Q2 gave the setup step's line (no extra confirmation, because the
+  step is a line of a plan the person already reads before it is applied). Everything T7 fenced stays fenced and nothing is widened: `--yes` never covers
+  the step, so an unattended run leaves it for the person and names `fugaro update`; a coding agent's session writes no unit; a run with nobody at it
+  writes no unit; the managed gate stays exactly as it is; and `update` never installs one. The consequence is stated rather than hidden: **a release that
+  changes only the unit's template asks the person nothing**, because no covered stage has anything to change and the run's single confirmation is asked
+  lazily. `TestUpdateRerendersAnInstalledUnitWhenTheTemplateChanged` holds the behavior — `askedSomething` fails it if the step ever prints a question —
+  and `TestDocsStatelessOrchestratorUnitRerenderAsksNothing` holds this paragraph. **The reversal is one place**: `internal/cli/update_unit_stage.go`'s
+  `Apply`, plus this paragraph and that pin.
 - **Schema/rules/config change:** none.
 - **Tests:** `TestLaunchdPlistMatchesTheGolden`, `TestSystemdUnitMatchesTheGolden`, `TestInstallWritesOnlyUnderTheUserHome`, `TestWindowsIsRefusedNamed`,
   `TestUninstallRemovesWhatInstallWrote`, `TestInstallRefusedUnderAnAgentMarker`, `TestUnitPointsAtTheStableBinaryPath` (never a versioned

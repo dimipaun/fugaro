@@ -574,6 +574,31 @@ where Q2 gave the setup step its no-prompt reading, is reported rather than deci
 template against the file on disk, so an edit a person made by hand is overwritten by the next `fugaro update` — which is what `fugaro orchestrator
 install` already does — and telling such an edit from an old template would need a second stamp. **Reported, not decided** (O9).
 
+**T8. The unit step's confirmation, ruled on 2026-11-10 (ANSWERED 2026-11-10 — and the answer is NOT the recommendation; it supersedes T7's "a terminal
+asks for that step's class").** This is open item (1) above, closed by the owner. The owner's complaint of **2026-11-10** is that `fugaro update` stays
+the whole upgrade **with no extra confirmation prompt**: a step `update` runs by itself may not add a question to the one command the person types, which
+is the same objection Q2's ruling raised for a managed project and the reason T6 is closed. **The ruling: the re-render step asks nothing at a terminal
+either.** `fugaro update` prints the step as a line of the plan it shows — the file it re-renders and where it lives — and re-renders it, which is the
+standing Q2 gave the setup step's line ("no extra confirmation, because the step is a line of a plan the person already reads before it is applied").
+What stays exactly as T7 left it, and is not widened by this answer: **`--yes` never covers the step**, so a run that cannot ask a person leaves it for
+the person and names `fugaro update`; **a coding agent's session writes no unit** (the G2 marker rule), and the drift stays visible through `doctor` and
+the session-start nudge; **a run with nobody at it writes no unit**; **the managed gate stays as it is** (the implementation plan's O9: no new exemption, and
+`gatedStages` is untouched); and **`update` still never installs a unit** — a machine that did not choose the daemon still gets none from `update`, and
+the setup door is the door that writes the first one. The consequence, stated rather than hidden: **a release that changes only the unit's template asks
+the person nothing.** No covered stage has anything to change in that release, so the run's single confirmation — asked lazily, only when a stage in
+front of it has something to do — is never printed, and the unit is re-rendered and the service reloaded on the strength of the plan line alone. That is
+the trade the ruling makes: one command, no questions, on a write to the person's own file under their own home that names the same program it already
+named. The reversal is one place — `internal/cli/update_unit_stage.go`'s `Apply` — plus this document and the pin that holds the ruling;
+`TestDocsStatelessOrchestratorUnitRerenderAsksNothing` is that pin, and `TestUpdateRerendersAnInstalledUnitWhenTheTemplateChanged` holds the behavior
+(`askedSomething` fails the test if the step ever prints a question).
+
+**Open items T8's ruling leaves (reported, not decided).** (1) `fugaro setup`'s first install and T8's re-render are the same stage under one name and now
+answer a plan line the same way, so the class T7 asked for exists nowhere: a unit is code that runs at every login, and the step that writes or
+re-renders one is fenced by the session (no marker, a person at the terminal, no `--yes`) rather than by a typed word. **Reported** (O9); the fence is
+what the security review of the write path was given, and **whether the typed word comes back is the owner's to rule, not this task's**. (2) The update
+door's step and the setup door's step are one name in `initflow`'s order and two implementations (`initStages` picks by door), so a rule that has to hold
+for both — the fence above — is stated twice. **Reported** (O9).
+
 **Open items BF2's triage rule leaves (2026-11-08; reported, not decided).** (1) **The findings file is BF1's, and BF1 is not on `main`** (U10), so
 the rule's third input does not exist yet: until it lands the triage fails closed on every long run — it cancels nothing, merges nothing and recommends
 only, which is the rule's own fourth outcome (D1247), tried before the two outcomes that act on the run — so the fail-closed reading is the fixed order's, not a promise about them. That is the safe reading, not a working one. (2) **The automatic merge is the first merge this design takes away from a person.** It is bounded
