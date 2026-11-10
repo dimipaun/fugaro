@@ -1,6 +1,6 @@
 # Launching a run for a repository without its checkout: spec
 
-**Status: design answered by the owner 2026-11-04; plan only; A0 landed (2026-11-10, the person read set); A1–A4, B1–B2, C1 and D1 not started; no other task approved.**
+**Status: design answered by the owner 2026-11-04; plan only; A0 and A1 landed (2026-11-10, the person read set and the file-at-a-ref reader); A2–A4, B1–B2, C1 and D1 not started; no other task approved.**
 
 The numbered decisions this file leans on (**D901**–**D919**) are in
 [reconciliation.md §3](reconciliation.md), each with the cost of the alternative and the owner's answer
