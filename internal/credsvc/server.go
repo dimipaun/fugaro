@@ -1128,9 +1128,11 @@ func newSlipCache() *slipCache { return &slipCache{entries: map[string]slipEntry
 
 // get answers the body held for id, if one is held and its window has not
 // passed at now. An entry past its window is dropped where it is found rather
-// than by a sweeper: the map holds only slips this service verified, so it is
-// as large as the installation's live runs and no larger, and a sweep would be
-// a second place for its bound to be stated.
+// than by a sweeper, because a sweep is the eviction the spec says this cache
+// has none of: a slip whose calls stop leaves its entry behind until the
+// instance goes away, and a cache that is per instance and lost on scale-to-zero
+// is what the spec accepts in exchange for reading the record once in five
+// minutes.
 func (c *slipCache) get(id string, now time.Time) (creds.Slip, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -1301,8 +1303,8 @@ func (s *Server) verifyCallSlip(ctx context.Context, r *http.Request, id Identit
 	}
 
 	now := s.now()
-	sl, cached := s.slips.get(slipID, now)
-	if !cached {
+	sl, held := s.slips.get(slipID, now)
+	if !held {
 		read, found, err := s.cfg.Slips.Slip(ctx, slipID)
 		if err != nil {
 			// The state the slip must be read from could not be read: a refusal
@@ -1321,7 +1323,16 @@ func (s *Server) verifyCallSlip(ctx context.Context, r *http.Request, id Identit
 		s.endSlip(ctx, slipID, "its runtime has passed")
 		return nil, slipNotThisRunsRefusal()
 	}
-	s.slips.put(slipID, sl, now)
+	if !held {
+		// The window is measured from the READ that just happened and never
+		// from the call: a put on every call would slide it, and a run that
+		// calls this service as its runs do — every model call — would then
+		// hold a body the record could have changed under for as long as it
+		// keeps calling. Five minutes is the whole of what the spec accepts a
+		// finished or revoked job keeps access for (F14), so the body is
+		// re-read from the record once the window has passed.
+		s.slips.put(slipID, sl, now)
+	}
 	return &slipBinding{id: slipID, owner: sl.Owner, allowed: slices.Clone(sl.Allowed), secret: secret}, nil
 }
 
@@ -1407,7 +1418,16 @@ func slipOffering(b *slipBinding, cands []creds.Credential, notAdmitted []Tried)
 // of what "belongs to a person or to the project" means to this service (R9).
 // A name outside the grammar is a bundle entry's, and the bundle's keys are a
 // closed set this service already decided about.
+//
+// The PREFIX is the test, which is the reading the grant already holds a name
+// to (checkGrantedNames, fail-closed for the same case): a name that carries
+// fugaro_u_ or fugaro_p_ and does not parse — an upper-case letter, an
+// ambiguous separator, no name half at all — is a name of the grammar's kind
+// that this service cannot read, and one it cannot read as somebody else's is
+// not thereby nobody's. Only a name with neither prefix is a bundle entry's.
 func slipRequiresSlip(name string) bool {
-	_, err := secretname.Parse(name)
-	return err == nil
+	if _, err := secretname.Parse(name); err == nil {
+		return true
+	}
+	return strings.HasPrefix(name, secretname.UserPrefix) || strings.HasPrefix(name, secretname.ProjectPrefix)
 }

@@ -42,6 +42,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
+	"github.com/dimipaun/fugaro/internal/secretname"
 )
 
 // ---------------------------------------------------------------------------
@@ -193,6 +194,24 @@ func TestSlipLessCallForOwnedCredentialRefused(t *testing.T) {
 		wantSkipped(t, skipped, owned)
 	})
 
+	t.Run("a name the grammar cannot read still needs a slip", func(t *testing.T) {
+		// The prefix is the whole of the test, as it is where a grant is held
+		// to the same rule (checkGrantedNames): a name that announces a person
+		// or the project and cannot be read as one is not thereby a bundle
+		// entry's, so the fence is closed for it and not open.
+		for _, name := range []string{
+			secretname.UserPrefix + testOtherSub + "_GitHub-Pat",
+			secretname.UserPrefix + testOtherSub,
+			secretname.ProjectPrefix + "Shared-Token",
+		} {
+			out, skipped := slipOffering(nil, []creds.Credential{{Name: name, Tier: creds.TierA}}, nil)
+			if len(out) != 0 {
+				t.Errorf("a slip-less call is offered %v, want nothing: %q carries a grammar prefix and no slip covers it", names(out), name)
+			}
+			wantSkipped(t, skipped, name)
+		}
+	})
+
 	t.Run("the slip-less path serves what it served before", func(t *testing.T) {
 		s := newSlips(t, testLauncherAccount)
 		resp, body := s.call(t, callBody("slip-less"))
@@ -335,6 +354,50 @@ func TestCacheOnlyHoldsSlipBody(t *testing.T) {
 	// worth: five minutes, and no longer.
 	s.now = s.now.Add(slipBodyTTL + time.Second)
 	resp, body = s.slipCall(t, sl, "after-the-cache")
+	if e := wantRefusal(t, resp, body, StatusUnverified, ErrorUnverifiedRunIdentity); e.Message != slipNotThisRuns {
+		t.Errorf("the refusal is answered %q, want %q", e.Message, slipNotThisRuns)
+	}
+}
+
+// TestCallsDoNotSlideTheCacheWindow: the spec's cache is "keyed by slip ID,
+// 5-minute lifetime", and a lifetime that every call renewed would be no
+// lifetime at all for the run that calls this service most — every model call
+// of a long run would renew it, and the "finished or revoked job keeps access
+// for up to 5 minutes" the spec accepts would become "for as long as it keeps
+// calling".
+//
+// The record is ended out from under the cache (the store's End, as another
+// instance's max-runtime end or an operator's own hand would), the call inside
+// the window is served from the body, and the call after the window — measured
+// from the READ, not from the last hit — reads the record again and finds it
+// gone. An implementation that put the body back on every call fails on the
+// last step, which is the one this test exists for.
+func TestCallsDoNotSlideTheCacheWindow(t *testing.T) {
+	s := newSlips(t, testLauncherAccount)
+	// Three answers: the mutant this test is written against serves the last
+	// call rather than refusing it, and a script that ran out would report the
+	// fake's own error instead of the answer the test is about.
+	s.serveCalls(3)
+	sl := s.claimedSlip(t, 3600, testSlipCredential)
+
+	if resp, body := s.slipCall(t, sl, "warm-the-cache"); resp.StatusCode != http.StatusOK {
+		t.Fatalf("the slip's own call is answered %d, want 200: %s", resp.StatusCode, body)
+	}
+	if err := s.store.End(context.Background(), sl.id); err != nil {
+		t.Fatalf("ending the slip: %v", err)
+	}
+
+	// Inside the window of the read that cached the body, so the hit is
+	// served — and, under a sliding window, would be the hit that renews it.
+	s.now = s.now.Add(slipBodyTTL - time.Minute)
+	if resp, body := s.slipCall(t, sl, "inside-the-window"); resp.StatusCode != http.StatusOK {
+		t.Fatalf("the call inside the window is answered %d, want the cached body's 200: %s", resp.StatusCode, body)
+	}
+
+	// Past the window of that read, and two minutes short of the window a
+	// sliding refresh would have opened.
+	s.now = s.now.Add(2 * time.Minute)
+	resp, body := s.slipCall(t, sl, "past-the-window")
 	if e := wantRefusal(t, resp, body, StatusUnverified, ErrorUnverifiedRunIdentity); e.Message != slipNotThisRuns {
 		t.Errorf("the refusal is answered %q, want %q", e.Message, slipNotThisRuns)
 	}
