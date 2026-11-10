@@ -2286,6 +2286,7 @@ Subcommands:
 - `fugaro image render` -- Print the Dockerfile that builds the workflow's derived image
 - `fugaro image rm` -- Remove an image catalog entry from this machine's project config
 - `fugaro image status` -- Show each workflow's image: when it was built and from what, and its last daily check
+- `fugaro image survey` -- Report the project's repositories and the image signals each one carries (read-only)
 
 ## `fugaro image add`
 
@@ -2711,6 +2712,41 @@ Flags:
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | only this repository (owner/name, or a path inside its checkout, as the local config's repos has it) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro image survey`
+
+Report the project's repositories and the image signals each one carries (read-only)
+
+Report what a project-level image setup would have to work from: every
+repository this machine's project config lists, the signals each one carries
+(its lockfiles and version files, a Dockerfile and its base image, its CI
+file, and the services its compose or Testcontainers files name), and the
+catalog, repository-to-image map and bake setting the project has today.
+
+Nothing is cloned, built or written: each repository is read through the
+code host's own file API with the token this shell holds, at a fixed list of
+paths, and a path that is not there is a signal the repository does not have.
+A repository whose provider cannot be opened — no credential, an unknown
+provider, a host whose adapter cannot read a file — is reported as unread
+rather than left out, so a project of 50+ repositories is surveyed in one
+read and what could not be read is visible.
+
+Usage: `fugaro image survey`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for survey |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
 
 Subcommands:
 

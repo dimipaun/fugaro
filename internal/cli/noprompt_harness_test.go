@@ -359,6 +359,7 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro image render":      "refuses outside a git checkout, which is what the world is",
 	"fugaro image selftest":    "reads its spec from the closed stdin and returns on the EOF",
 	"fugaro image status":      "prints the no-project-config refusal",
+	"fugaro image survey":      "prints the no-project-config refusal",
 	"fugaro issue list":        "reads this machine's issue folder, which holds nothing in this world, and prints no row",
 	"fugaro managed status":    "prints the no-project-config refusal",
 	"fugaro models ls":         "prints the built-in list with no project selected",
