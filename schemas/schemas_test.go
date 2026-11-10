@@ -3868,6 +3868,80 @@ func TestResultSchemaTierMatchesTheGoVocabulary(t *testing.T) {
 	}
 }
 
+// TestResultSchemaExpectedScopeMatchesTheGoRules (plan T8.3, spec §3): the
+// record's expected_scope echoes the task's own field, and result.schema.json
+// carries the same bounds and the same blank rule task.schema.json does. The
+// schema is additionalProperties: false, so without the property every record a
+// scoped run writes is schema-invalid for every consumer of the published
+// document; and a bound that drifted between the two documents would let a
+// reader of one accept what the writer of the other never wrote.
+func TestResultSchemaExpectedScopeMatchesTheGoRules(t *testing.T) {
+	data, err := os.ReadFile("result.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	var scope struct {
+		MaxItems int `json:"maxItems"`
+		Items    struct {
+			Pattern   string `json:"pattern"`
+			MaxLength int    `json:"maxLength"`
+		} `json:"items"`
+	}
+	if raw, ok := doc.Properties["expected_scope"]; !ok {
+		t.Fatal("result.schema.json has no expected_scope property")
+	} else if err := json.Unmarshal(raw, &scope); err != nil {
+		t.Fatal(err)
+	}
+	if scope.MaxItems != task.MaxDeclaredPaths {
+		t.Errorf("schema expected_scope maxItems %d != task.MaxDeclaredPaths %d", scope.MaxItems, task.MaxDeclaredPaths)
+	}
+	if scope.Items.MaxLength != task.MaxDeclaredPathBytes {
+		t.Errorf("schema expected_scope items maxLength %d != task.MaxDeclaredPathBytes %d", scope.Items.MaxLength, task.MaxDeclaredPathBytes)
+	}
+	if scope.Items.Pattern != `\S` {
+		t.Errorf("schema expected_scope items pattern %q does not refuse a blank entry, which Spec.Validate does", scope.Items.Pattern)
+	}
+
+	// The schema decides what a consumer accepts, so it is asked directly: the
+	// scope a run's task declared is a record the document admits, and the
+	// shapes the parser refuses — a blank entry, an entry past the byte bound,
+	// a list past the count — are refused here too.
+	sch := compile(t, "result.schema.json")
+	record := func(scope string) string {
+		return `{"version":1,"run_id":"20261028-170609-abcd","status":"succeeded","stage":"finalize","outcome":"ready",` +
+			`"cost_usd":0,"started_at":"2026-10-28T17:06:09Z","expected_scope":` + scope + `}`
+	}
+	inst, err := jsonschema.UnmarshalJSON(strings.NewReader(record(`["internal/digest/**","docs/*.md"]`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(inst); err != nil {
+		t.Errorf("a record carrying the scope its task declared does not validate: %v", err)
+	}
+	for _, tc := range []struct {
+		name  string
+		scope string
+	}{
+		{"a blank entry", `["internal/digest/**","  "]`},
+		{"an entry past the byte bound", `["` + strings.Repeat("a", task.MaxDeclaredPathBytes+1) + `"]`},
+		{"a list past the count", `[` + strings.TrimSuffix(strings.Repeat(`"a.go",`, task.MaxDeclaredPaths+1), ",") + `]`},
+	} {
+		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(record(tc.scope)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sch.Validate(inst); err == nil {
+			t.Errorf("the schema accepts %s, which the task parser refuses", tc.name)
+		}
+	}
+}
+
 // TestTaskSchemaABBlock: task.schema.json carries the pair block (model A/B
 // A1.1) in both arms and refuses the shapes task.Spec.Validate refuses. The
 // schema is additionalProperties: false, so without the property every task a

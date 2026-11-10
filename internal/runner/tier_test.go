@@ -1,6 +1,7 @@
 package runner_test
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/task"
@@ -53,5 +54,48 @@ func TestRunRecordCarriesTheZeroExpectationInAnUntaggedBuild(t *testing.T) {
 	}
 	if rec.Tier.Tier != tier.Small || rec.Tier.ExpectedUSD != 0 || rec.Tier.ExpectedMinutes != 0 {
 		t.Errorf("the block = %+v, want the tier the task carried with the zero expectation an untagged build resolves", rec.Tier)
+	}
+}
+
+// TestRunRecordCarriesTheTaskExpectedScope (plan T8.3, spec §3): the scope a
+// task says it expects the run to touch is echoed onto the record. The digest
+// is handed records and nothing else, and its scope-drift flag compares the
+// paths a run changed against this list (D522, D528), so a scope that stayed in
+// the task would be a flag no report could raise.
+//
+// The list is copied and not aliased: the spec is the caller's, and a record
+// sharing its backing array would change under a later write to it.
+func TestRunRecordCarriesTheTaskExpectedScope(t *testing.T) {
+	scope := []string{"internal/digest/**", "docs/*.md"}
+	spec := &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main",
+		Workflow: "app", Task: "Add a feature", ExpectedScope: scope}
+	h := newHarness(t, "", spec)
+	rec, err := h.run(t, implement("feature"), review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(rec.ExpectedScope, scope) {
+		t.Fatalf("the record's expected scope = %v, want the task's %v", rec.ExpectedScope, scope)
+	}
+	scope[0] = "internal/runner/**"
+	if rec.ExpectedScope[0] == scope[0] {
+		t.Errorf("the record shares the task's slice: writing the task changed the record")
+	}
+}
+
+// TestRunRecordWithoutAnExpectedScope: a task that declares no scope records
+// none — the field is absent, never an empty list — so a reader can tell a run
+// nobody declared a scope for from one whose scope was empty, and the digest
+// raises no drift for either.
+func TestRunRecordWithoutAnExpectedScope(t *testing.T) {
+	spec := &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main",
+		Workflow: "app", Task: "Add a feature"}
+	h := newHarness(t, "", spec)
+	rec, err := h.run(t, implement("feature"), review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.ExpectedScope != nil {
+		t.Errorf("the record of a task that declared no expected scope carries %v", rec.ExpectedScope)
 	}
 }
