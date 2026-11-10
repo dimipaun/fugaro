@@ -566,6 +566,20 @@ func catalogConfig(ctx context.Context, o cloudOptions) (string, *localcfg.Confi
 // it is the project's effective one and not this file's: the map is a node
 // member a machine other than this one publishes.
 //
+// A repository with no checkout here is asked about the map alone, and never
+// left unasked: the map is the project's own claim about that repository's job,
+// written and published from whichever machine the owner wrote it on, so a
+// removal that deletes the entry it names leaves the node pointing the
+// repository at an entry that is gone — which refuses that repository's next
+// `fugaro update` and every `fugaro run` of it, whether or not this machine can
+// read its fugaro.yaml. What the missing checkout costs is the rest of the
+// resolution: a repository that names nothing and is not mapped runs the
+// catalog's default only through a workflow this machine cannot read, and
+// asking the default's arm on the zero workflow would refuse every removal for
+// every repository it has no checkout of. That is why the map claim is asked
+// through Selection.Reference, which the map (and a pin) sets and the default's
+// arm does not.
+//
 // A job the resolver gives no entry to is not one of them: it runs no catalog
 // image at all, and a removal cannot leave it on an entry it never had.
 func catalogPointedAt(ctx context.Context, lc *localcfg.Config, cat *config.Catalog, imap map[string]string, entry string) (string, []string, error) {
@@ -573,6 +587,15 @@ func catalogPointedAt(ctx context.Context, lc *localcfg.Config, cat *config.Cata
 	for _, repo := range slices.Sorted(maps.Keys(lc.Repos)) {
 		cfg := checkoutConfig(ctx, repo)
 		if cfg == nil {
+			sel, err := catalog.JobImage(catalog.ImageRequest{
+				Catalog:   cat,
+				ImageMap:  imap,
+				Canonical: repo,
+				Backend:   catalog.Backend(lc.Backend()),
+			})
+			if err == nil && sel.Source == catalog.SourceCatalog && sel.Reference && sel.Entry.Name == entry {
+				return fmt.Sprintf("the job of %s (this project's image_map gives it that entry)", pluginwire.Printable(repo)), nil, nil
+			}
 			unasked = append(unasked, repo)
 			continue
 		}

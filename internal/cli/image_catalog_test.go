@@ -430,6 +430,52 @@ func TestImageRmRefusesAnEntryThePublishedMapPointsAt(t *testing.T) {
 	}
 }
 
+// TestImageRmRefusesAnEntryTheMapPointsAtWithoutACheckout: the map is the
+// project's own claim about a repository's job (D1906), and it is the claim a
+// removal can leave dangling whether or not this machine has a checkout of that
+// repository. A guard that skipped a repository with no checkout asked nothing
+// about it and removed the entry the map gives it — the same state the checkout
+// half of TestImageRmRefusesAnEntryThePublishedMapPointsAt covers, reached from
+// the machine that has no file to read: the node goes on pointing the
+// repository at an entry that is gone, and its next `fugaro update` and every
+// `fugaro run` of it refuse with catalog.UnknownMappedEntryError until someone
+// republishes the map.
+//
+// The removal of an entry the map gives nobody is still allowed, so what
+// refuses here is the mapping and not the missing checkout.
+func TestImageRmRefusesAnEntryTheMapPointsAtWithoutACheckout(t *testing.T) {
+	publishedMapFixture(t)
+	// No catalogCheckout here: this machine has no checkout of acme/app, which
+	// the project's config lists and the published map gives tools.
+	path := os.Getenv("FUGARO_CONFIG")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err = execute(t, "image", "rm", "tools")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("exit %d, err %v, want the removal refused: the published map points acme/app at the entry, and a checkout here is not what makes that true", ExitCode(err), err)
+	}
+	for _, want := range []string{"tools", "acme/app", "image_map"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal %v lacks %q", err, want)
+		}
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Error("a refused rm still wrote the config")
+	}
+
+	// The control: the default entry the map gives nobody is still removable.
+	if _, _, err := execute(t, "image", "rm", "base"); err != nil {
+		t.Fatalf("removing the entry no mapping names: %v", err)
+	}
+}
+
 // TestImageCatalogGateIsSpelledApartFromThePriceCatalog: the image family's
 // skew gate is the image catalog's own pair (D1156), so it judges an image
 // document by the release that reads image_catalog and never by the price
