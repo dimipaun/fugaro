@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bufio"
 	"encoding/json"
 	"errors"
 	"io/fs"
@@ -307,8 +308,15 @@ func TestCreateResumesItsOwnProject(t *testing.T) {
 	r.bill.AddAccount(billingAcc, true)
 	out, _, _ := r.run(t, true, newProj+"\n"+billingAcc+"\n", "--create-project", "--link-billing", billingAcc, "--plan-only")
 	r.nothingDone(t, "a resumed project (plan)")
-	if !strings.Contains(out, "[done]") || !strings.Contains(out, "billing is already linked") {
-		t.Errorf("the project stage is not reported done, with billing left as it is:\n%s", out)
+	if row := planRowOf(out, "project"); !strings.HasPrefix(row, markDone+" done") || !strings.Contains(row, "exists") {
+		t.Errorf("the project stage is not reported done with the project it found: %q\n%s", row, out)
+	}
+	// The row is one clause on the screen and the whole reason in the run's log
+	// (report.Brief), and this row is cut before what billing is left as: a
+	// plan-only run prints no step for the stage, so the log's copy of the row
+	// is the only whole one there is.
+	if log := newestLog(t, "setup"); !strings.Contains(log, "billing is already linked") {
+		t.Errorf("the log does not hold the reason the row was cut at:\n%s", log)
 	}
 	_, _, _ = r.run(t, true, newProj+"\n"+billingAcc+"\n", "--create-project", "--link-billing", billingAcc)
 	r.nothingDone(t, "a resumed project")
@@ -862,8 +870,11 @@ func TestRelinkNeverHappens(t *testing.T) {
 	if n := r.bill.Attempts(); n != 0 {
 		t.Errorf("unreadable billing: %d write(s) attempted", n)
 	}
-	if ExitCode(err) != ExitUserError || !strings.Contains(out, "cannot be read") || !strings.Contains(out, "gcloud billing projects link") {
-		t.Errorf("exit %d\n%s", ExitCode(err), out)
+	// The stage's line is one clause of its reason and the log the whole of it
+	// (report.Brief): the read that failed, and the line that links.
+	whole := out + namedLog(t, out)
+	if ExitCode(err) != ExitUserError || !strings.Contains(whole, "cannot be read") || !strings.Contains(whole, "gcloud billing projects link") {
+		t.Errorf("exit %d\n%s", ExitCode(err), whole)
 	}
 
 	r = newProjectRig(t)
@@ -874,8 +885,9 @@ func TestRelinkNeverHappens(t *testing.T) {
 	if n := r.bill.Attempts(); n != 0 {
 		t.Errorf("a suspended link: %d write(s) attempted", n)
 	}
-	if ExitCode(err) != ExitUserError || !strings.Contains(out, "never replaces an existing link") {
-		t.Errorf("exit %d\n%s", ExitCode(err), out)
+	whole = out + namedLog(t, out)
+	if ExitCode(err) != ExitUserError || !strings.Contains(whole, "never replaces an existing link") {
+		t.Errorf("exit %d\n%s", ExitCode(err), whole)
 	}
 
 	r = newProjectRig(t)
@@ -1197,8 +1209,11 @@ func TestTheBillingListIsNarrow(t *testing.T) {
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d (%v), want 1: the link a project already has is the user's to change\n%s", ExitCode(err), err, out)
 	}
-	if !strings.Contains(out, "never replaces an existing link") {
-		t.Errorf("the run does not report the link it found, so this is not the path that knows about it:\n%s", out)
+	// The stage's reason is one clause on the screen and the whole of it in the
+	// log (report.Brief); the accounts' own names are looked for on the screen
+	// alone, which is the rule they are held to.
+	if whole := out + namedLog(t, out); !strings.Contains(whole, "never replaces an existing link") {
+		t.Errorf("the run does not report the link it found, so this is not the path that knows about it:\n%s", whole)
 	}
 	for _, leak := range []string{linked, offered, "billingAccounts/"} {
 		if strings.Contains(out, leak) {
@@ -1328,11 +1343,21 @@ func TestBillingPendingIsAStatusInJSON(t *testing.T) {
 // TestAPausedFirstRunWritesItsConfig: the first run that pauses for billing
 // writes the local config, marked setup_pending: billing, so a rerun resumes
 // exactly there; a run with a config already writes nothing here.
+//
+// What the paused run was answered travels with the config (IS7, D1901). It is
+// the run that writes the bake switch and the one run that never reaches
+// writeConfig — the Project stage is before Installation — so an answer carried
+// only there would be lost for good: the rerun has a config, the wizard asks it
+// nothing, and an absent key means yes.
 func TestAPausedFirstRunWritesItsConfig(t *testing.T) {
 	r := newProjectRig(t)
-	e := rigEngine(t, r.initRig, &initOptions{door: setupDoor.name, createProject: true})
+	// The answer a no is: bakeReposChanged with the zero answer, which is what
+	// --bake-repos=false and a person typing no both leave on the options.
+	e := rigEngine(t, r.initRig, &initOptions{door: setupDoor.name, createProject: true, bakeReposChanged: true})
 	e.old = nil
 	e.path = filepath.Join(t.TempDir(), "projects", initProjectName+".yaml")
+	var out strings.Builder
+	e.r.w = &out
 	s := newProjectStage(e)
 	err := s.pause([]string{"created project " + newProj})
 	var bp *initflow.BillingPausedError
@@ -1347,12 +1372,45 @@ func TestAPausedFirstRunWritesItsConfig(t *testing.T) {
 	if perr != nil {
 		t.Fatal(perr)
 	}
+	if lc.BakeRepos == nil || *lc.BakeRepos {
+		t.Fatalf("the paused run's config carries bake_repos = %v, and this run was answered no:\n%s", lc.BakeRepos, data)
+	}
+	if got := lc.BakeReposEffective(nil); got == nil || *got {
+		t.Errorf("the file's answer reads as %v to the build's own rule, want no", got)
+	}
+	if !strings.Contains(out.String(), "fugaro settings set bake_repos") || !strings.Contains(out.String(), "rebuilt") {
+		t.Errorf("the paused run wrote the bake switch and does not say what that costs:\n%s", out.String())
+	}
 	pe := &initEngine{r: e.r, lc: lc, old: data}
 	if !pe.firstRun() {
 		t.Error("a config marked setup_pending is not resumed as a first run")
 	}
 	if (&initEngine{lc: &localcfg.Config{}, old: data}).firstRun() {
 		t.Error("a config with no setup_pending is a first run")
+	}
+
+	// The rerun writes that config again (the installation stage's writeConfig)
+	// and has no answer of its own to carry: the wizard asks a run with a
+	// project config nothing, so the value the paused run wrote is the one the
+	// file keeps — and so the one the rerun's policy stage publishes and its
+	// build reads.
+	rerun := &initRun{o: &initOptions{door: setupDoor.name}, w: &strings.Builder{}, in: bufio.NewReader(strings.NewReader("")), cmd: NewRootCmd()}
+	spec, serr := infra.Installation(lc, infra.InstallOptions{})
+	if serr != nil {
+		t.Fatal(serr)
+	}
+	if err := rerun.writeConfig(t.Context(), lc, spec, infra.InstallationOutputs{RunsBucket: "fugaro-runs-" + newProj}, e.path, data, true); err != nil {
+		t.Fatalf("the rerun's write: %v", err)
+	}
+	after, aerr := localcfg.Load(e.path)
+	if aerr != nil {
+		t.Fatal(aerr)
+	}
+	if after.BakeRepos == nil || *after.BakeRepos {
+		t.Errorf("after the rerun's write the config carries bake_repos = %v, want the answer the paused run was given: no run asks again", after.BakeRepos)
+	}
+	if after.SetupPending != "" {
+		t.Errorf("the rerun left setup_pending = %q: the config it wrote is the finished one", after.SetupPending)
 	}
 }
 

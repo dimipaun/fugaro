@@ -206,9 +206,11 @@ func TestAPerRunCapBetweenOneAndTwoTimesTheEstimateHasRoom(t *testing.T) {
 	}
 }
 
-// TestUnknownPriceRefusesTheBuild: a price the catalog does not carry refuses
-// the build, and no configuration may supply one (D1550). It is the operator's
-// refusal (exit 1: fix the machine type), not the network's.
+// TestUnknownPriceRefusesTheBuild: a price the catalog does not carry leaves
+// the build with no lease, and no configuration may supply one (D1550). take
+// reports it as a buildUnpricedError, which openBuildLease turns into a warning
+// and an uncounted build (the owner's ruling of 2026-11-10: an estimate that
+// cannot be made never stops a build).
 func TestUnknownPriceRefusesTheBuild(t *testing.T) {
 	f, c := imageCostFixture(t, fakePricer{err: &budget.NoPriceError{MachineType: "E2_HIGHCPU_8", Region: "us-east5",
 		Why: "no row's description matches"}})
@@ -662,4 +664,20 @@ func flagsNamed(msg string) []string {
 		out = append(out, strings.TrimPrefix(f, "--"))
 	}
 	return out
+}
+
+func TestAnUnpricedBuildIsReportedAsUnpriced(t *testing.T) {
+	for name, err := range map[string]error{
+		"no row":        &budget.NoPriceError{MachineType: "E2_HIGHCPU_8", Region: "us-east5", Why: "no row's description matches"},
+		"a failed read": errors.New("the catalog would not answer"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, c := imageCostFixture(t, fakePricer{err: err})
+			_, _, got := c.take(context.Background(), "build-1")
+			var unpriced *buildUnpricedError
+			if !errors.As(got, &unpriced) {
+				t.Fatalf("take returned %v, want a buildUnpricedError", got)
+			}
+		})
+	}
 }

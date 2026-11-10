@@ -210,6 +210,12 @@ func TestPolicyKeyPathGovernance(t *testing.T) {
 		{policy.KeyMaxRunTokens, "agent.max_run_tokens"},
 		{policy.KeyMaxOutputCoder, "agent.max_output_tokens.coder"},
 		{policy.KeyMaxOutputReviewer, "agent.max_output_tokens.reviewer"},
+		// The triage switch (D1854): the node's own member is the repository's
+		// agent.triage, so a key left to the fall-through would report the
+		// ignored value under budget.triage, a key no file has, and the
+		// operator it is meant to send to agent.triage would look in a block
+		// that cannot carry it.
+		{policy.KeyTriage, "agent.triage"},
 	} {
 		if got := PolicyKeyPath(c.key); got != c.want {
 			t.Errorf("PolicyKeyPath(%q) = %q, want %q", c.key, got, c.want)

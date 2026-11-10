@@ -179,6 +179,11 @@ func openBuildLease(ctx context.Context, w io.Writer, lc *localcfg.Config, repo,
 		fmt.Fprintf(w, "fugaro: gave back %s a CLI that died mid-build left open, so the day no longer counts %s\n", leases, them)
 	}
 	l, advisory, err := cost.take(ctx, id)
+	var unpriced *buildUnpricedError
+	if errors.As(err, &unpriced) {
+		fmt.Fprintf(w, "fugaro: warning: this build's cost could not be estimated, so it takes no lease and nothing counts its cost: %s\n", oneLine(unpriced.Error()))
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}

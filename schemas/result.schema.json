@@ -252,8 +252,8 @@
         },
         "sources": {
           "type": "object",
-          "additionalProperties": { "enum": ["ceiling", "default-branch", "branch", "policy"] },
-          "description": "Policy key to the layer that set its effective value: ceiling, policy (the project's published node, which replaces the ceiling key by key), default-branch or branch."
+          "additionalProperties": { "enum": ["ceiling", "default-branch", "branch", "chain", "policy"] },
+          "description": "Policy key to the layer that set its effective value: ceiling, policy (the project's published node, which replaces the ceiling key by key), default-branch, branch or chain (a launch's own chain limits, merged last of all)."
         },
         "ignored": {
           "type": "array",
@@ -266,8 +266,8 @@
               "key": { "type": "string" },
               "value": { "type": "string" },
               "effective": { "type": "string" },
-              "source": { "enum": ["ceiling", "default-branch", "branch", "policy"], "description": "The layer of the effective value." },
-              "from": { "enum": ["ceiling", "default-branch", "branch"], "description": "The layer that asked for the dropped value. The ceiling is here for one case: a stage timeout the run's own timeouts.stage bounds at least as tightly, which the run drops and records (T7.6) — the layer that wrote it can be the project layer's governance, which is the ceiling." },
+              "source": { "enum": ["ceiling", "default-branch", "branch", "chain", "policy"], "description": "The layer of the effective value." },
+              "from": { "enum": ["ceiling", "default-branch", "branch", "chain"], "description": "The layer that asked for the dropped value. The ceiling is here for one case: a stage timeout the run's own timeouts.stage bounds at least as tightly, which the run drops and records (T7.6) — the layer that wrote it can be the project layer's governance, which is the ceiling. chain is a launch's own chain limits, the last layer a value is asked for from." },
               "clamped": { "type": "boolean", "description": "True for the one shape that is not 'looser than the limits in force': a stage timeout the run's own timeouts.stage bounds at least as tightly, which the run drops rather than give a deadline of its own (T7.6). Absent (false) for the merge's looser values, which is also a stage timeout dropped because a tighter layer capped it — the two cannot be told apart by key, source and from alone." }
             }
           }
@@ -423,6 +423,12 @@
         "expected_usd": { "type": "number", "minimum": 0, "description": "What a run of the tier is expected to cost, in dollars (policy.TierExpectation.ExpectedUSD). Bounded below and not above, like the same figure in fugaro.schema.json's governance.tiers: the project layer may loosen a tier past any figure Fugaro ships, and an expectation over the per-run cap is still only an expectation (G6), so a ceiling here would be a record the runner legally wrote that its own published schema calls impossible." },
         "expected_minutes": { "type": "integer", "minimum": 0, "description": "What a run of the tier is expected to take, in minutes (policy.TierExpectation.ExpectedMinutes). Bounded below and not above, for the reason expected_usd is." }
       }
+    },
+    "expected_scope": {
+      "type": "array",
+      "description": "Roughly which files or areas the run's task expected it to touch (docs/task-governance/implementation-plan.md T8.3, spec §3's expectation envelope): the task's own expected_scope, echoed onto the record because the digest is handed records and nothing else, and the digest's scope-drift flag compares the paths in changed_files against it (D522, D528). It is paths and never prose, and nothing acts on it — the flag is report only (G8). Absent — never an empty list — for a run whose task declared no scope, which is every launch that writes no task file and every record written before this field existed, so an old reader sees the record it always saw and version stays 1 (the field is additive). A blank entry is no path (the same rule as task.InputNameBlank's, expressed as the pattern), and both bounds are task.MaxDeclaredPaths and task.MaxDeclaredPathBytes, the bounds the task parser applies to the field this echoes.",
+      "items": { "type": "string", "pattern": "\\S", "maxLength": 200 },
+      "maxItems": 100
     },
     "backlog": {
       "type": "array",

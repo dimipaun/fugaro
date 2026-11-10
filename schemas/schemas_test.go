@@ -24,6 +24,8 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/digest"
 	"github.com/dimipaun/fugaro/internal/failure"
+	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/imagesurvey"
 	"github.com/dimipaun/fugaro/internal/orchestrator/sensitivity"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/recipe"
@@ -2731,8 +2733,11 @@ func TestPolicyRecordSchema(t *testing.T) {
 // The schema's layer names and internal/policy's are one list. The runner
 // writes whichever the merge produced — "policy" for a key the project's
 // published node named (PR #379), the rest for the ceiling, the default
-// branch and the run's branch — so a Go constant the schema does not carry is
-// a stored result.json the repository's own validator rejects. `from` stays
+// branch, the run's branch and the chain (a launch's own limits, merged last
+// of all, F4) — so a Go constant the schema does not carry is a stored
+// result.json the repository's own validator rejects. The chain layer is in
+// all three lists for that reason: the merge names it as a key's source and as
+// the layer a dropped value was asked for from. `from` stays
 // without "policy" on purpose: the node is not a later layer that can ask for
 // a looser value, it *is* the first layer, and its keys are replaced rather
 // than loosened (plan task 1.3, H1). It carries "ceiling" for the one case a
@@ -2774,11 +2779,11 @@ func TestPolicyRecordSchemaLayersAgreeWithGo(t *testing.T) {
 		want []string
 	}{
 		{"policy.sources", enum(at(pol, "sources", "additionalProperties", "enum")),
-			slices.Sorted(slices.Values([]string{policy.SourceCeiling, policy.SourceDefaultBranch, policy.SourceBranch, policy.SourcePolicy}))},
+			slices.Sorted(slices.Values([]string{policy.SourceCeiling, policy.SourceDefaultBranch, policy.SourceBranch, policy.SourceChain, policy.SourcePolicy}))},
 		{"policy.ignored[].source", enum(at(pol, "ignored", "items", "properties", "source", "enum")),
-			slices.Sorted(slices.Values([]string{policy.SourceCeiling, policy.SourceDefaultBranch, policy.SourceBranch, policy.SourcePolicy}))},
+			slices.Sorted(slices.Values([]string{policy.SourceCeiling, policy.SourceDefaultBranch, policy.SourceBranch, policy.SourceChain, policy.SourcePolicy}))},
 		{"policy.ignored[].from", enum(at(pol, "ignored", "items", "properties", "from", "enum")),
-			slices.Sorted(slices.Values([]string{policy.SourceCeiling, policy.SourceDefaultBranch, policy.SourceBranch}))},
+			slices.Sorted(slices.Values([]string{policy.SourceCeiling, policy.SourceDefaultBranch, policy.SourceBranch, policy.SourceChain}))},
 	} {
 		if !slices.Equal(where.got, where.want) {
 			t.Errorf("schema's %s = %v, internal/policy's layers are %v", where.name, where.got, where.want)
@@ -4055,6 +4060,80 @@ func TestResultSchemaTierMatchesTheGoVocabulary(t *testing.T) {
 	}
 	if err := compile(t, "result.schema.json").Validate(inst); err != nil {
 		t.Errorf("a record carrying a tier expectation the configuration side permits does not validate: %v", err)
+	}
+}
+
+// TestResultSchemaExpectedScopeMatchesTheGoRules (plan T8.3, spec §3): the
+// record's expected_scope echoes the task's own field, and result.schema.json
+// carries the same bounds and the same blank rule task.schema.json does. The
+// schema is additionalProperties: false, so without the property every record a
+// scoped run writes is schema-invalid for every consumer of the published
+// document; and a bound that drifted between the two documents would let a
+// reader of one accept what the writer of the other never wrote.
+func TestResultSchemaExpectedScopeMatchesTheGoRules(t *testing.T) {
+	data, err := os.ReadFile("result.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	var scope struct {
+		MaxItems int `json:"maxItems"`
+		Items    struct {
+			Pattern   string `json:"pattern"`
+			MaxLength int    `json:"maxLength"`
+		} `json:"items"`
+	}
+	if raw, ok := doc.Properties["expected_scope"]; !ok {
+		t.Fatal("result.schema.json has no expected_scope property")
+	} else if err := json.Unmarshal(raw, &scope); err != nil {
+		t.Fatal(err)
+	}
+	if scope.MaxItems != task.MaxDeclaredPaths {
+		t.Errorf("schema expected_scope maxItems %d != task.MaxDeclaredPaths %d", scope.MaxItems, task.MaxDeclaredPaths)
+	}
+	if scope.Items.MaxLength != task.MaxDeclaredPathBytes {
+		t.Errorf("schema expected_scope items maxLength %d != task.MaxDeclaredPathBytes %d", scope.Items.MaxLength, task.MaxDeclaredPathBytes)
+	}
+	if scope.Items.Pattern != `\S` {
+		t.Errorf("schema expected_scope items pattern %q does not refuse a blank entry, which Spec.Validate does", scope.Items.Pattern)
+	}
+
+	// The schema decides what a consumer accepts, so it is asked directly: the
+	// scope a run's task declared is a record the document admits, and the
+	// shapes the parser refuses — a blank entry, an entry past the byte bound,
+	// a list past the count — are refused here too.
+	sch := compile(t, "result.schema.json")
+	record := func(scope string) string {
+		return `{"version":1,"run_id":"20261028-170609-abcd","status":"succeeded","stage":"finalize","outcome":"ready",` +
+			`"cost_usd":0,"started_at":"2026-10-28T17:06:09Z","expected_scope":` + scope + `}`
+	}
+	inst, err := jsonschema.UnmarshalJSON(strings.NewReader(record(`["internal/digest/**","docs/*.md"]`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(inst); err != nil {
+		t.Errorf("a record carrying the scope its task declared does not validate: %v", err)
+	}
+	for _, tc := range []struct {
+		name  string
+		scope string
+	}{
+		{"a blank entry", `["internal/digest/**","  "]`},
+		{"an entry past the byte bound", `["` + strings.Repeat("a", task.MaxDeclaredPathBytes+1) + `"]`},
+		{"a list past the count", `[` + strings.TrimSuffix(strings.Repeat(`"a.go",`, task.MaxDeclaredPaths+1), ",") + `]`},
+	} {
+		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(record(tc.scope)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sch.Validate(inst); err == nil {
+			t.Errorf("the schema accepts %s, which the task parser refuses", tc.name)
+		}
 	}
 }
 
@@ -5629,6 +5708,84 @@ func TestModelsLsSchema(t *testing.T) {
 			t.Errorf("required is %v, and the document always carries %q", req, key)
 		}
 	}
+}
+
+// TestImageSurveySchema holds schemas/image-survey.schema.json to the document
+// `fugaro image survey --json` prints and to the Go constants that document's
+// closed vocabulary is written as. The repositories, signals and catalog
+// entries are dynamic — one per line of the project's configuration — so the
+// schema cannot pin them by name; what it can pin, and what this test checks,
+// is that the schema loads (a broken $ref between $defs is exactly where a
+// hand edit breaks), that version is imageSurveyDocVersion, that a signal's
+// six kinds are the imagesurvey constants and that the four members a consumer
+// reads without a nil check are required. A seventh kind, or a renamed one, is
+// red here rather than in a consumer that branches on it.
+//
+// The document itself is validated against this schema by
+// TestSurveyJSONMatchesSchema in internal/cli, which is where the command that
+// writes it lives.
+func TestImageSurveySchema(t *testing.T) {
+	raw, err := os.ReadFile("image-survey.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	compile(t, "image-survey.schema.json")
+
+	consts := goConstValues(t, "../internal/cli/image_survey.go")
+	version := nodeOf(t, doc, "properties", "version")
+	if version["const"] != float64(1) {
+		t.Errorf("version: const = %v, and the document's first version is 1 (D784)", version["const"])
+	}
+	if got, _ := version["$comment"].(string); !strings.Contains(got, "imageSurveyDocVersion") || consts["imageSurveyDocVersion"] != "1" {
+		t.Errorf("version: $comment = %q, and imageSurveyDocVersion in internal/cli/image_survey.go is %q", got, consts["imageSurveyDocVersion"])
+	}
+	kinds := goConstValues(t, "../internal/imagesurvey/signals.go")
+	want := make([]string, 0, 6)
+	for _, name := range []string{
+		"KindLockfile", "KindVersion", "KindDockerfile", "KindCI", "KindCompose", "KindTestcontainers",
+	} {
+		if kinds[name] == "" {
+			t.Errorf("internal/imagesurvey/signals.go declares no %s", name)
+			continue
+		}
+		if !slices.Contains(imagesurveyKinds(t), kinds[name]) {
+			t.Errorf("%s = %q, and the package answers no signal with it", name, kinds[name])
+		}
+		want = append(want, kinds[name])
+	}
+	if got := stringsOf(t, doc, "$defs", "finding", "properties", "kind", "enum"); !slices.Equal(got, want) {
+		t.Errorf("$defs.finding.kind: the enum is %v, and the command writes %v", got, want)
+	}
+	// The providers a row can name are gitprov's own kinds, and the two the
+	// survey can read are the ones catalog.Readable admits; a third would have
+	// to be added to both.
+	if got := stringsOf(t, doc, "$defs", "repo", "properties", "provider", "enum"); !slices.Equal(got, []string{gitprov.KindGitHub, gitprov.KindBitbucket}) {
+		t.Errorf("$defs.repo.provider: the enum is %v, want the two readable kinds", got)
+	}
+	req := stringsOf(t, doc, "required")
+	for _, key := range []string{"version", "project", "repos", "setup"} {
+		if !slices.Contains(req, key) {
+			t.Errorf("required is %v, and the document always carries %q", req, key)
+		}
+	}
+}
+
+// imagesurveyKinds is every kind the survey's own rules answer with: the enum
+// above is checked against what the package does, not only against the
+// constants' names.
+func imagesurveyKinds(t *testing.T) []string {
+	t.Helper()
+	out := make([]string, 0, len(imagesurvey.Signals()))
+	for _, s := range imagesurvey.Signals() {
+		if !slices.Contains(out, s.Kind) {
+			out = append(out, s.Kind)
+		}
+	}
+	return out
 }
 
 // TestModelsSearchSchema holds schemas/models-search.schema.json to the

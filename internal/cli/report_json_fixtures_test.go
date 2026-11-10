@@ -215,6 +215,16 @@ var jsonCases = map[string]jsonCase{
 			return []string{"issue", "list"}
 		},
 	},
+	"issue mine": {
+		// No project and no store here, which is the run this fixture wants:
+		// the notes that say so go to stderr and stdout is the one document.
+		// Not a read: the listing uploads this machine's own pending records
+		// before it prints them (F10 keeps it to the local files in a coding
+		// agent's session, which is not the session this pin runs).
+		run: func(t *testing.T) []string {
+			return []string{"issue", "mine"}
+		},
+	},
 	"issue show": {
 		why: "the read goes to the repository's host, and this package has no fake for a GitHub issue",
 	},

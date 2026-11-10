@@ -331,6 +331,25 @@ type Policy struct {
 	// existed.
 	ReviewFloor map[rigor.Mode][]policy.Level `json:"review_floor,omitempty"`
 
+	// Triage is the owner's switch for the run's triage stage (D1854): the
+	// step that weighs a review round's findings before the fix round takes
+	// them. false turns it off for every repository of the installation, true
+	// leaves it on where its mode has it at all (config.TriageMode — startup
+	// and pro, D1851), and an absent member says nothing.
+	//
+	// It belongs to this node for the reason ReviewFloor does: it decides how
+	// much review a run gets, so a launcher must not be able to move it, and
+	// the shared file and the task are both launcher-written
+	// (docs/design/bucket-iam.md §10 L1, L2). The repository's own
+	// agent.triage is the other home, and it is the *only* one a repository
+	// has: a run merges the node's answer over the file's as the stricter of
+	// the two (internal/policy's Merge), so a repository may turn the stage off
+	// for itself and may not turn it back on under a node that turned it off.
+	//
+	// Only false has an effect that true cannot undo, which is why a project
+	// that sets neither publishes no member: the node of such a project stays
+	// byte for byte what it was before this member existed.
+	Triage *bool `json:"triage,omitempty"`
 	// Binaries is the project's binary allow rule (D981, D986): the paths a run
 	// may add a binary at, and the largest one it may add. It belongs to this
 	// node for the floor's reason — the owner writes it and the runner fails
@@ -517,6 +536,7 @@ var knownTopLevelKeys = map[string]bool{
 	"default_claude_account": true, "claude_account_stages": true,
 	"crafts": true, "craft_credentials": true, "craft_pools": true,
 	"orchestrator": true,
+	"triage":       true,
 }
 
 // Budget is the ceiling a run is held to. An absent field is zero and means
@@ -1377,6 +1397,11 @@ func decodeWithKeys(raw []byte, keys map[string]bool) (*Policy, bool, error) {
 			return nil, true, err
 		}
 		p.ReviewFloor = floor
+	}
+	if traw, ok := doc["triage"]; ok && !IsNull(traw) {
+		if err := json.Unmarshal(traw, &p.Triage); err != nil {
+			return nil, true, fmt.Errorf("projectpolicy: triage: %w", err)
+		}
 	}
 	if vraw, ok := doc["verifier_accounts"]; ok && !IsNull(vraw) {
 		if err := json.Unmarshal(vraw, &p.VerifierAccounts); err != nil {

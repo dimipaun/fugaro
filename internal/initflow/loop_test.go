@@ -134,7 +134,7 @@ func reporterTo(out *bytes.Buffer, o report.Options) *report.Reporter {
 // marks are the reporter's own markers, read from a reporter rather than
 // copied: the tests below assert the loop's lines carry them, so a change to
 // a mark stays a change in one place.
-type marks struct{ done, skipped, failed, left string }
+type marks struct{ done, skipped, failed, left, waiting string }
 
 func reporterMarks(t *testing.T) marks {
 	t.Helper()
@@ -144,11 +144,14 @@ func reporterMarks(t *testing.T) marks {
 		end(r.Step("probe"))
 		return strings.Fields(strings.TrimSpace(b.String()))[0]
 	}
+	var w bytes.Buffer
+	report.New(report.Options{Out: &w, NoColor: true}).Waits([]string{"probe"}, "x")
 	return marks{
 		done:    probe(func(s *report.Step) { s.Done("") }),
 		skipped: probe(func(s *report.Step) { s.Skipped("") }),
 		failed:  probe(func(s *report.Step) { s.Failed(errors.New("x"), nil) }),
 		left:    probe(func(s *report.Step) { s.Left("") }),
+		waiting: strings.Fields(strings.TrimSpace(w.String()))[0],
 	}
 }
 
@@ -166,7 +169,7 @@ func (m marks) steps(view string) []string {
 }
 
 func (m marks) isStep(line string) bool {
-	for _, mark := range []string{m.done, m.skipped, m.failed, m.left} {
+	for _, mark := range []string{m.done, m.skipped, m.failed, m.left, m.waiting} {
 		if strings.HasPrefix(line, mark+" ") {
 			return true
 		}
@@ -179,7 +182,7 @@ func (m marks) isStep(line string) bool {
 // another one's prefix (installation2 is not installation).
 func (m marks) line(view, stage string) string {
 	for _, l := range m.steps(view) {
-		for _, mark := range []string{m.done, m.skipped, m.failed, m.left} {
+		for _, mark := range []string{m.done, m.skipped, m.failed, m.left, m.waiting} {
 			rest, ok := strings.CutPrefix(l, mark+" "+stage)
 			if ok && (rest == "" || strings.HasPrefix(rest, " ") || strings.HasPrefix(rest, ":")) {
 				return l
@@ -739,7 +742,7 @@ func TestPlanViewIsHonestAboutDependents(t *testing.T) {
 	if _, err := Run(context.Background(), stages, opts); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"fugaro: project aurora (GCP aurora-prod, us-east5)", "[done]", "[will do]", "installation", "14 to create", "after installation"} {
+	for _, want := range []string{"fugaro: project aurora (GCP aurora-prod, us-east5)", "done", "will do", "installation", "14 to create", "after installation"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("%q not in the view:\n%s", want, out.String())
 		}
@@ -1295,6 +1298,78 @@ func TestARefusedStepIsNeverTheStagesOwnPrompt(t *testing.T) {
 	}
 }
 
+// TestARefusalBlockIsThreeShortLines: what a refusal prints is the block and
+// not the paragraph behind it — what was refused, why in a clause and what to
+// do, one line each — and none of it is Terraform's: the reason carries the
+// rule's address and no line of the block may show it, because the address is
+// in the log the step's own line names and the terminal names the thing in
+// Fugaro's words (the owner's feedback of 2026-11-09). The whole sentence
+// stays Left.Text, which is what a tool and the log read.
+func TestARefusalBlockIsThreeShortLines(t *testing.T) {
+	const address = "module.installation.google_storage_bucket_iam_member.runs_outsider[\"user:a@example.com\"]"
+	const reason = "the managed gate did not admit this step: a managed project applies the steps this gate judged and no others (D1012) — refused by cover: " + address + " — grants a member the review does not list"
+	block := func(t *testing.T, ge *GatedError) []string {
+		t.Helper()
+		var log []string
+		var out bytes.Buffer
+		f := &fake{name: Installation, log: &log, applyErr: ge}
+		o := Options{Out: &out, ManagedGate: func(string) bool { return true }, Yes: true, Agent: "CLAUDECODE"}
+		res, err := Run(context.Background(), []Stage{f}, o)
+		if err != nil || res.Failed != nil || len(res.Left) != 1 {
+			t.Fatalf("err %v res %+v", err, res)
+		}
+		lf := res.Left[0]
+		if !strings.Contains(lf.Text, address) {
+			t.Errorf("the refusal's own text is not the whole sentence: %q", lf.Text)
+		}
+		lines := strings.Split(out.String(), "\n")
+		head := "left for you (" + Installation + ", " + string(LeftRefused) + "): "
+		for i, line := range lines {
+			if !strings.HasPrefix(line, head) {
+				continue
+			}
+			got := []string{line}
+			for j := i + 1; j < len(lines) && strings.HasPrefix(lines[j], "    "); j++ {
+				got = append(got, strings.TrimSpace(lines[j]))
+			}
+			return got
+		}
+		t.Fatalf("the refusal printed no block:\n%s", out.String())
+		return nil
+	}
+
+	plan := block(t, &GatedError{Reason: reason, Err: errors.New(reason), Refusal: GateRefusedPlan,
+		Reasons: []string{"cover: grants a member the review does not list"}})
+	if len(plan) != 3 {
+		t.Errorf("the refusal's block is %d lines, want three at most: %q", len(plan), plan)
+	}
+	joined := strings.Join(plan, "\n")
+	for _, want := range []string{"refused this step and nothing was written", "refused by cover: grants a member the review does not list", "a person files an issue with this line"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("the block does not say %q: %q", want, plan)
+		}
+	}
+	for _, line := range plan {
+		if strings.Contains(line, "module.") || strings.Contains(line, "google_") {
+			t.Errorf("the block prints Terraform's own address: %q", line)
+		}
+		if n := len([]rune(line)); n > 100 {
+			t.Errorf("the block's line is %d characters long, which is the paragraph it replaced: %q", n, line)
+		}
+	}
+
+	// The unjudged refusal is the other answer and says so: no plan is blamed
+	// and no issue is filed for a run that failed.
+	unjudged := block(t, &GatedError{Reason: reason, Err: errors.New(reason), Refusal: GateRefusedUnread})
+	joined = strings.Join(unjudged, "\n")
+	if !strings.Contains(joined, "did not judge this step") || !strings.Contains(joined, "not of your plan") {
+		t.Errorf("the unjudged refusal is not the run's own failure: %q", unjudged)
+	}
+	if strings.Contains(joined, "files an issue") {
+		t.Errorf("a step the gate never judged sends the reader to file an issue: %q", unjudged)
+	}
+}
+
 func TestNoTerminalErrorDropsTheYesHintForAnAgent(t *testing.T) {
 	plain := (&NoTerminalError{Stage: "installation"}).Error()
 	if !strings.Contains(plain, "--yes") {
@@ -1637,8 +1712,10 @@ func convergeStages(log *[]string) []Stage {
 
 func TestLoopDefaultViewIsOneLinePerStage(t *testing.T) {
 	// The run's account is one line per stage and one closing line: the
-	// "[state] stage" words and the "result" header are the plan view's and
-	// go with it, and nothing but the reporter's own lines carries a result.
+	// status words and the "result" header belong to the plan view and go with
+	// it, and nothing but the reporter's own lines carries a result. The run of
+	// stages that wait behind the one the user owes is one line, so the four
+	// stages of this run are four lines -- three results and the wait.
 	var log []string
 	var out bytes.Buffer
 	opts := yesOpts()
@@ -1663,8 +1740,8 @@ func TestLoopDefaultViewIsOneLinePerStage(t *testing.T) {
 	if !strings.HasPrefix(got[2], m.left) {
 		t.Errorf("the stage the user owes does not carry the left-for-you marker:\n%s", out.String())
 	}
-	if !strings.HasPrefix(got[3], m.skipped) {
-		t.Errorf("a stage that never ran does not carry its own marker:\n%s", out.String())
+	if !strings.HasPrefix(got[3], m.waiting) {
+		t.Errorf("a stage that never ran does not carry the waiting marker:\n%s", out.String())
 	}
 	if strings.Contains(strings.Join(got, "\n"), "[") || strings.Contains(out.String(), ": result") {
 		t.Errorf("the plan view's words are in the run's account:\n%s", out.String())
@@ -1937,9 +2014,10 @@ func TestLoopVerboseStreamsEverything(t *testing.T) {
 }
 
 func TestLoopPlanOnlyViewUnchanged(t *testing.T) {
-	// The plan view is not a run: it keeps its one line per stage and the
-	// "[state] stage" words the tests and the docs quote, and it reports no
-	// step, so a reporter adds no closing line to it.
+	// The plan view is not a run: it keeps its one line per stage -- a status
+	// as the reporter's mark and coloured word, the stage's name, and a short
+	// reason -- and it reports no step, so a reporter adds no closing line to
+	// it.
 	var log []string
 	var out bytes.Buffer
 	stages := fakes(&log, Preflight, Installation, Firebase)
@@ -1953,23 +2031,23 @@ func TestLoopPlanOnlyViewUnchanged(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := `fugaro: project aurora (GCP aurora-prod, us-east5)
-  [done]       preflight
-  [will do]    installation     14 to create
-  [will do]    firebase         after installation
+  ✔ done         preflight
+  ○ will do      installation     14 to create
+  ○ will do      firebase         after installation
 `
 	if out.String() != want {
 		t.Errorf("the plan view changed:\n%s\nwant:\n%s", out.String(), want)
 	}
 }
 
-func TestLoopNoReporterPrintsAsToday(t *testing.T) {
-	// A nil reporter is the loop's own account, word for word: every caller
-	// that has not moved onto the reporter prints exactly what it printed
-	// before, closing line and all. One word moved with the gating rule
-	// (RunsPastStop, #1836): the plan view's "after X" names the stage that
-	// gates the line rather than the first one that is not done, so repository
-	// reads "after secrets" here -- the stage this run stops at, which the
-	// account below then says in full ("waits for secrets").
+func TestLoopNoReporterPrintsThePlainAccount(t *testing.T) {
+	// A nil reporter is the loop's own account, with no colour and no escape
+	// codes: every caller that has not moved onto the reporter prints the
+	// same lines, plain. One word moved with the gating rule (RunsPastStop,
+	// #1836): the plan view's "after X" names the stage that gates the line
+	// rather than the first one that is not done, so repository reads "after
+	// secrets" here -- the stage this run stops at, which the account below
+	// then says in full ("waits for secrets").
 	var log []string
 	var out bytes.Buffer
 	opts := yesOpts()
@@ -1979,16 +2057,16 @@ func TestLoopNoReporterPrintsAsToday(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := `fugaro: project aurora (GCP aurora-prod, us-east5)
-  [done]       preflight
-  [will do]    installation
-  [needs you]  secrets
-  [will do]    repository       after secrets
+  ✔ done         preflight
+  ○ will do      installation
+  ! left for you secrets
+  ○ will do      repository       after secrets
 fugaro: result
 fugaro: project aurora (GCP aurora-prod, us-east5)
-  [done]       preflight
-  [changed]    installation     applied
-  [needs you]  secrets
-  [blocked]    repository       waits for secrets
+  ✔ done         preflight
+  ✔ changed      installation     applied
+  ! left for you secrets
+  ↳ waiting      repository       waits for secrets
 left for you (secrets, prompt): run fugaro update in your terminal
 `
 	if out.String() != want {
@@ -1998,8 +2076,9 @@ left for you (secrets, prompt): run fugaro update in your terminal
 
 func TestLoopBillingStagesAreNotTicks(t *testing.T) {
 	// Billing pending is the user's to resolve and waiting for billing is a
-	// stage that cannot run until they do: neither is a green tick, and a
-	// stage that needs no billing applies as it always did.
+	// stage that cannot run until they do: neither is a green tick, a stage
+	// that needs no billing applies as it always did, and the stages that wait
+	// for the account print one line between them rather than one each.
 	var log []string
 	var out bytes.Buffer
 	stages := fakes(&log, Preflight, Project, Installation, Images, Secrets, Plugin, Repository)
@@ -2016,17 +2095,34 @@ func TestLoopBillingStagesAreNotTicks(t *testing.T) {
 	}
 	m := reporterMarks(t)
 	got := out.String()
-	if steps := m.steps(got); len(steps) != len(stages) {
-		t.Fatalf("the account is %d step lines, want one per stage:\n%s", len(steps), got)
+	// Seven stages, five lines: the stages behind the billing account wait for
+	// the same thing and are one line, and the stages that ran print their own.
+	steps := m.steps(got)
+	if len(steps) != 5 {
+		t.Fatalf("the account is %d step lines, want one per stage with the billing waits collapsed:\n%s", len(steps), got)
 	}
-	for _, stage := range []string{Project, Installation, Images, Secrets, Repository} {
+	for _, stage := range []string{Preflight, Project, Plugin, Repository} {
 		line := m.line(got, stage)
-		if !strings.HasPrefix(line, m.left+" "+stage) {
-			t.Errorf("%s is %q, want the reporter's left-for-you marker:\n%s", stage, line, got)
+		if !strings.Contains(line, stage) {
+			t.Errorf("no line for %s:\n%s", stage, got)
 		}
+	}
+	if line := m.line(got, Project); !strings.HasPrefix(line, m.left+" "+Project) {
+		t.Errorf("%s is %q, want the reporter's left-for-you marker:\n%s", Project, line, got)
+	}
+	if line := m.line(got, Preflight); !strings.HasPrefix(line, m.done+" "+Preflight) {
+		t.Errorf("%s is %q, want the tick:\n%s", Preflight, line, got)
 	}
 	if line := m.line(got, Plugin); !strings.HasPrefix(line, m.done+" "+Plugin) {
 		t.Errorf("the stage that needs no billing is %q, want the tick:\n%s", line, got)
+	}
+	if line := m.line(got, Repository); !strings.HasPrefix(line, m.waiting+" "+Repository) {
+		t.Errorf("%s is %q, want the waiting marker:\n%s", Repository, line, got)
+	}
+	// The three stages behind the billing account are one line, not three.
+	want := m.waiting + " " + Installation + ", " + Images + ", " + Secrets + " wait for the billing account"
+	if !slices.Contains(outputLines(got), want) {
+		t.Errorf("the billing waits are not one line %q:\n%s", want, got)
 	}
 	if !strings.Contains(got, "left for you (project, command): billing is not linked yet") {
 		t.Errorf("the left-for-you block is missing:\n%s", got)

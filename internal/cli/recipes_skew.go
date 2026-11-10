@@ -749,6 +749,28 @@ const rigorRequestSince = "0.11.1"
 // field too (tierGateSubject), on the same image.
 const governanceSince = "0.13.0"
 
+// launchLimitsSince is the release whose runner knows the four chain limits a
+// launch may write into task.json's overrides (max_usd, max_tokens, max_time,
+// max_review_rounds; docs/run-limit-carry-over §2, D1041). task.Parse decodes
+// with DisallowUnknownFields, so a runner older than this refuses the whole
+// task: a launch that carries one is gated here rather than started on a job
+// that dies at bootstrap.
+const launchLimitsSince = "0.22.0"
+
+// chainLimitsKnows is what such a runner knows, as the gate names it.
+const chainLimitsKnows = "the chain's limits its task carries (max_usd, max_tokens, max_time, max_review_rounds)"
+
+// chainLimitsSubject is what the gate says the launch carries: the four flags
+// that write the four fields. A launch that reuses a stored task — --retry, or
+// a repeated --run-id of one that never launched — carries limits no flag of
+// this call named, which is why the subject names the fields as well as the
+// flags.
+const chainLimitsSubject = "a chain limit (--max-usd, --max-tokens, --max-time, --max-review-rounds)"
+
+// chainLimitsAlt is the gate's other cure: the launch can drop the limits,
+// where the image cannot be brought forward.
+const chainLimitsAlt = "; or drop the chain limits from the launch, which needs a job image whose runner knows them before it can carry one"
+
 // authorSince is the first fugaro release whose runner reads a task's author
 // field (task.Spec.Author, the launcher's identity a launch records for the
 // repositories that opted in, D604/D606): an older runner refuses the field
@@ -1786,6 +1808,129 @@ func checkCloneStopFractionImage(lc *localcfg.Config, spec *task.Spec, cfg *conf
 	}
 	subject, alt := stopFractionSubject(spec.Repo, fromRepo, fromLayer)
 	return checkCloneImageSince(lc, spec, stopFractionSince, subject, stopFractionKnows(fromRepo, fromLayer), "; or "+alt, warn)
+}
+
+// triageSince is the first fugaro release whose config reader knows
+// fugaro.yaml's agent.triage — the triage stage's switch (D1854) — and whose
+// runner has the stage at all (D1851). fugaro.yaml is decoded with KnownFields,
+// so a runner built from an older image refuses the key at bootstrap, before
+// the agent starts and after the launch was paid for. It is refused whatever
+// the key says, which is why the gate reads the text (Config.RepoTriageSet) and
+// not the resolved switch: a file writing `triage: true` asks for the default
+// and dies exactly like one writing false.
+//
+// The key has one file, not two: agent.triage is repo-scope alone
+// (config.Scopes), so there is no layer half here the way stopFractionSince
+// reads one — a project layer that writes it is refused by the layer's own
+// loader long before any image is judged. It carries no shipped flag, for
+// noneModelSince's reason: refusing every image that predates the release is
+// the direction this gate wants, and an image with no release tag (a dev
+// build, a hand-pushed one) only warns. It names 0.23.0, the release this work
+// ships in ("Tapir", the CLI minor after the tagged 0.22.0), which is not
+// tagged yet: docs/release.md's Before-you-tag list verifies the number against
+// the tag actually cut. It is not 0.22.0: that release is tagged (06347d98) and
+// its config reader has no agent.triage, so a gate naming it would admit an
+// image that refuses the key at bootstrap — the failure this gate exists to
+// prevent, arriving after the launch was paid for.
+const triageSince = "0.23.0"
+
+// triageKnows names, for the image gates' messages, what the job image's
+// runner has to know: the stage itself and the key that turns it off. The
+// message reads "needs a job image whose runner knows <this>".
+const triageKnows = "the triage stage and its switch (agent.triage)"
+
+// triageSubject names, for the gates' messages, which file wrote the key and
+// the way out its author has. The way out is not one sentence for both values
+// of a switch: the absent key means the stage is on (Agent.TriageOn), so a file
+// that wrote true loses nothing by removing the key — the key's absence asks for
+// the answer it wrote — while one that wrote false gives the stage back to its
+// default on the first image that reads the file. Offering the second sentence
+// to the first file, as "which is what the key turned off asks for", offers its
+// author the opposite of what it wrote.
+//
+// written is the key's own field (Agent.Triage): nil is the key absent, which no
+// caller reaches — triageSources gates all three — and reads as false, the
+// branch that has a cost to name.
+func triageSubject(repo string, written *bool) (subject, alt string) {
+	subject = "fugaro.yaml's agent.triage of " + repo
+	if written != nil && *written {
+		return subject, "remove agent.triage from fugaro.yaml: the absent key means the stage on, which is what this file writes, and a job image that predates the stage runs no triage whatever the file says"
+	}
+	return subject, "remove agent.triage from fugaro.yaml only if the off-switch may go with it: a job image that predates the stage runs no triage, and the first image that reads the key finds the stage on again"
+}
+
+// triageSources reports, for the launch's triageSince gate, whether the
+// configuration the run will read writes the key: the repository's own
+// fugaro.yaml and nothing else (Config.RepoTriageSet). There is no layer to
+// ask, unlike stopFractionSources' second half — config.Scopes gives
+// agent.triage InRepo alone, so a project layer writing it never reaches a
+// resolution at all.
+func triageSources(cfg *config.Config) bool {
+	return cfg != nil && cfg.RepoTriageSet
+}
+
+// triageImageWarnings warns, once, that a configuration which writes
+// agent.triage (RepoTriageSet) needs every job image on triageSince. It is
+// validate's half of checkTriageImage, and a warning rather than a Problem for
+// rigorImageWarnings' reason: the file is valid, and what has to move is the
+// installation's image, which is why both ways to move one are named.
+func triageImageWarnings(c *config.Config) []config.Problem {
+	if !triageSources(c) {
+		return nil
+	}
+	return []config.Problem{{Path: "agent.triage", Message: "this file's agent.triage needs fugaro " + triageSince + " or later in the job image that runs it, and in the CLI of everyone who reads this file: an older runner decodes the file strictly and refuses the run at bootstrap. Run fugaro update --base base in your own terminal window to move the installation's base image, and fugaro image refresh for a workflow's own derived image"}}
+}
+
+// refuseTriageSkew refuses fugaro update --repo, before any cloud effect, when
+// the configuration the checkout resolves writes agent.triage and the
+// installation's base image predates triageSince — a runner built from it
+// decodes fugaro.yaml with KnownFields and refuses the run at bootstrap on a key
+// it does not know. It is the half checkTriageImage cannot be: a launch from
+// outside a checkout reads no fugaro.yaml at all, so the key the run will find
+// once it has one is judged here, by the operator's own converge
+// (refuseRigorSkew's shape and its reason). The states of ref are read as
+// refuseRigorSkew reads them: no base image passes, one that is not a release
+// only warns. It takes the configuration rather than the one bit gateTriage
+// would pass, because the way out its message offers is worded for the answer
+// the file wrote (triageSubject, Agent.Triage).
+func refuseTriageSkew(repo string, cfg *config.Config, ref string, warn io.Writer) error {
+	if !triageSources(cfg) {
+		return nil
+	}
+	subject, alt := triageSubject(repo, cfg.Agent.Triage)
+	switch rel, ok := releaseOf(ref); {
+	case ref == "":
+	case !ok:
+		fmt.Fprintf(warn, "warning: %s cannot be judged: the installation's base image is %s, which is not a release base image, so whether its runner reads the key is not checked\n",
+			subject, pluginwire.Printable(ref))
+	case imagePredates(rel, triageSince):
+		return userErr("%s needs a job image whose runner knows %s (fugaro %s or later), but the installation's base image is %s, release %s: an older runner decodes the file strictly and refuses the run at bootstrap on a key it does not know. Run fugaro update --base base in your own terminal window to move the installation's base image to a current release, or %s",
+			subject, triageKnows, triageSince, pluginwire.Printable(ref), rel, alt)
+	}
+	return nil
+}
+
+// checkTriageImage refuses a launch whose job image runs a fugaro older than
+// triageSince while the configuration the run reads writes agent.triage: that
+// runner decodes fugaro.yaml with KnownFields, so the key alone kills the run at
+// bootstrap. The judge is the build record's base_ref, as every checkImageSince
+// gate's is.
+func checkTriageImage(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind string, cfg *config.Config, warn io.Writer) error {
+	if !triageSources(cfg) {
+		return nil
+	}
+	subject, alt := triageSubject(spec.Repo, cfg.Agent.Triage)
+	return checkImageSince(ctx, env, slug, spec, kind, triageSince, subject, triageKnows, "; or "+alt, warn)
+}
+
+// checkCloneTriageImage is checkTriageImage for a checkout: clone workflow: see
+// checkCloneImageSince.
+func checkCloneTriageImage(lc *localcfg.Config, spec *task.Spec, cfg *config.Config, warn io.Writer) error {
+	if !triageSources(cfg) {
+		return nil
+	}
+	subject, alt := triageSubject(spec.Repo, cfg.Agent.Triage)
+	return checkCloneImageSince(lc, spec, triageSince, subject, triageKnows, "; or "+alt, warn)
 }
 
 // reviewJobKnows names, for this gate's messages, what the job image's runner

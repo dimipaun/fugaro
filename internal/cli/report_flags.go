@@ -50,6 +50,23 @@ const verboseFlag = "verbose"
 // mid-line. Every failure to open one is "no log" and never a failed command
 // (G5), so the error is not returned and the sink is nil.
 func reporterFor(cmd *cobra.Command, name string, secrets func() []string) (*report.Reporter, report.Sink) {
+	return openReporter(cmd, name, secrets, false)
+}
+
+// convergeReporter is reporterFor for the converge — `fugaro setup` and
+// `fugaro update` — which is the one family on the brief account: a step's
+// reason is one clause on the terminal and whole in the log (report.Brief —
+// the owner's feedback of 2026-11-09 asked for one line per step, and a stage
+// that leaves something alone has a paragraph of why). Everything else about
+// the reporter is reporterFor's, so the two cannot disagree about colour, the
+// spinner or the log.
+func convergeReporter(cmd *cobra.Command, name string, secrets func() []string) (*report.Reporter, report.Sink) {
+	return openReporter(cmd, name, secrets, true)
+}
+
+// openReporter builds one reporter for one command's run, and turns the brief
+// account on only for a run that got a log: what Brief cuts, the log holds.
+func openReporter(cmd *cobra.Command, name string, secrets func() []string, converge bool) (*report.Reporter, report.Sink) {
 	o := report.Options{
 		Out:        cmd.OutOrStdout(),
 		Err:        cmd.ErrOrStderr(),
@@ -64,7 +81,11 @@ func reporterFor(cmd *cobra.Command, name string, secrets func() []string) (*rep
 	if err != nil {
 		return report.New(o), nil
 	}
-	o.Sink = sink
+	// The brief account is one clause on the screen *because* the whole of the
+	// reason is in the log (Options.Brief). A run that could not open one — a
+	// state directory that is a link, foreign-owned or read-only, G5 — cuts
+	// nothing: what it printed is all there is.
+	o.Brief, o.Sink = converge, sink
 	return report.New(o), sink
 }
 
