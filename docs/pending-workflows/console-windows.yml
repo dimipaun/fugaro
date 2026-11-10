@@ -102,6 +102,15 @@
 # workflow with several jobs. All of it in one commit, or the test that holds
 # them together fails.
 #
+# **The two rulings are read together here, because they are the two reasons
+# this job cannot move into console-tests.yml**: it is not in the gate (above),
+# and it is **never on a pull request** -- not even path-filtered, which is the
+# D7(c) ruling this header states and the `on:` block below carries. One ruling
+# is why the file it would join cannot hold it: the gate's list is derived from
+# that file's single job, so a second job there is a gate change. The other is
+# why it must not: console-tests.yml runs on every pull request, which is the one
+# trigger the owner ruled out entirely.
+#
 # WHAT THIS FILE IS
 #
 #   - **A release-time job, and the only place the console's unit suite ever runs
