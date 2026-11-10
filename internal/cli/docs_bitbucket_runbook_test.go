@@ -10,8 +10,9 @@ import (
 // documents (T2.6 of docs/bitbucket-credentials/implementation-plan.md). The
 // runbook is where an operator acts while something is already wrong, so its
 // read-consumer section is held to three things a later edit can quietly
-// break: the two clauses Check 145 has not settled stay marked UNVERIFIED
-// (U14, U15), the steps name real commands and a real credential entry, and
+// break: the clause Check 145 has not settled stays marked UNVERIFIED (U14)
+// while the one the reconciliation closed reads as closed (U15), the steps
+// name real commands and a real credential entry, and
 // the code the section documents is cited by the symbols that exist on this
 // branch -- a runbook that cites a symbol the code has renamed sends the
 // operator to a file that does not answer them.
@@ -58,37 +59,54 @@ var bitbucketRunbookCitations = []struct {
 // leave behind.
 var readConsumerNoConsumerRE = regexp.MustCompile(`ErrReadNoConsumer = errors\.New\("([^"]+)"\)`)
 
-// TestDocsBitbucketRunbookReadConsumerIsMarkedUnverified: the section states
-// the two clauses that depend on Check 145, each as the unsettled question it
-// is. U14 (whether creating a consumer needs workspace-admin rights) and U15
-// (whether the consumer must be private) are the two Bitbucket Cloud's own
-// pages disagree about, and a runbook that picks an answer silently is worse
-// than one that says it does not know: the operator creates the consumer
-// exactly once, under a person's own account, and finds out afterwards.
+// TestDocsBitbucketRunbookReadConsumerIsMarkedUnverified: the section tells the
+// open question from the closed one where the operator creates the consumer.
+// U14 (whether creating a consumer needs workspace-admin rights) is the one
+// Check 145 has not settled, and a runbook that picks an answer silently is
+// worse than one that says it does not know. U15 (whether the consumer must be
+// private) was closed on 2026-11-10 — Bitbucket's create form offers no such
+// choice and the grant worked for the consumer it made — so the section says
+// that rather than carrying a mark the reconciliation has already lifted.
 func TestDocsBitbucketRunbookReadConsumerIsMarkedUnverified(t *testing.T) {
 	section := flattenDoc(docSection(t, bitbucketRunbook, readDoc(t, bitbucketRunbook), bitbucketRunbookReadConsumerHeading))
 	for _, want := range []string{
-		// The two open questions, by their own numbers, each with what it
-		// decides and the word that keeps it from reading as a reading.
+		// The open question, by its own number, with what it decides and the
+		// word that keeps it from reading as a reading.
 		"**U14**",
-		"**U15**",
 		"UNVERIFIED",
 		"workspace-admin rights",
+		// The closed one, with the reading that closed it rather than a mark.
+		"**U15**",
 		"private",
-		// The check that settles them, named so a reader knows what to wait
-		// for rather than who to ask.
+		"closed (2026-11-10)",
+		"offers no such choice",
+		// The check that settles what is left, named so a reader knows what to
+		// wait for rather than who to ask.
 		"check145.sh",
 		"Check 145",
 	} {
 		if !strings.Contains(section, want) {
-			t.Errorf("%s's %q section does not say %q: the clauses Check 145 has not settled have to read as unsettled where the operator creates the consumer", bitbucketRunbook, bitbucketRunbookReadConsumerHeading, want)
+			t.Errorf("%s's %q section does not say %q: the clause Check 145 has not settled has to read as unsettled where the operator creates the consumer, and the one the reconciliation closed has to read as closed", bitbucketRunbook, bitbucketRunbookReadConsumerHeading, want)
 		}
 	}
-	// Both clauses have to be marked, not just mentioned: the paragraph that
-	// carries U14 and U15 is the one that says UNVERIFIED, and a later edit
-	// that split them would leave one of them reading as an answer.
+	// U14's mark has to be there, not just U14: a later edit that dropped it
+	// would leave the question reading as an answer.
 	if n := strings.Count(section, "UNVERIFIED"); n < 1 {
-		t.Errorf("%s's read-consumer section carries %d UNVERIFIED marks, want at least one covering U14 and U15", bitbucketRunbook, n)
+		t.Errorf("%s's read-consumer section carries %d UNVERIFIED marks, want at least one for U14", bitbucketRunbook, n)
+	}
+	// And U15 carries none: the paragraph that states it is the paragraph that
+	// says it is closed, and a mark left beside it would be the runbook telling
+	// an operator that a settled question is open.
+	i := strings.Index(section, "**U15**")
+	if i < 0 {
+		t.Fatalf("%s's read-consumer section no longer states U15", bitbucketRunbook)
+	}
+	u15 := section[i:]
+	if j := strings.Index(u15, "**Write it with"); j >= 0 {
+		u15 = u15[:j]
+	}
+	if strings.Contains(u15, "UNVERIFIED") {
+		t.Errorf("%s's read-consumer section marks U15 UNVERIFIED: the reconciliation closed it on 2026-11-10 (the create form offers no such choice), so the mark belongs to U14 alone", bitbucketRunbook)
 	}
 }
 

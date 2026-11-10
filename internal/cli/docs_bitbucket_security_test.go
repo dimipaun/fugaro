@@ -105,8 +105,14 @@ func TestDocsBitbucketSecurityNamesTheReadMintAndItsCustody(t *testing.T) {
 		// G5's record of a mint, and R2's shape for it.
 		"one audit line per mint",
 		"never a value",
-		// G10 and G11: the token goes to Bitbucket's own root, and a
-		// repository in another workspace is refused by name.
+		// G10 and G11: the token is spent against Bitbucket's own API root and
+		// the consumer's key and secret are what the service presents at
+		// Bitbucket's own OAuth root, and a repository in another workspace is
+		// refused by name. The two roots are told apart where they are named: a
+		// section that sent "the token" to the OAuth root would be describing an
+		// exchange that does not happen, since the exchange is what mints it.
+		"Bitbucket's own API root",
+		"never one a repository's configuration overrode",
 		"Bitbucket's own OAuth root",
 		"by name",
 		// O6's custody, in the words the answer uses.

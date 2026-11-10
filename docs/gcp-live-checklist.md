@@ -11230,8 +11230,10 @@ verdict for T3.8 is **superseded in part, kept in part**: the run-mint half goes
 **read half** — the read consumer's own stop, rotation and ownership transfer, with **U13** — is
 kept, because the read consumer is merged and shipped and nothing else exercises its rotation. What
 this row and section register is that half, which the folder's own reconciliation already carries as
-live (its "Numbers this work holds": **148** "with only its read half live"), and D1961's answer cell
-is the answering sweep's to fill. The script that runs it is this task's —
+live (**148** "in S2 with only its read half live",
+[bitbucket-credentials/reconciliation-secrets-brokering.md](bitbucket-credentials/reconciliation-secrets-brokering.md),
+its "Numbers this work holds"; D1961's own cell reads **2026-11-10: recommended**, and the plan's
+checks table carries the verdict in place). The script that runs it is this task's —
 `scripts/live-checks/check148.sh`, with its own test `check148_test.sh` — and the owner runs it
 beside **T2.6**, whose runbook section (**§12**, "The Bitbucket read consumer: creating it, and
 stopping, rotating and transferring it") it executes step by step.
@@ -11247,7 +11249,9 @@ read through the credential-carrying checks the drill makes:
   `refuseRead` and `internal/credsvc/wire.go`'s statuses. All three readings are needed, because the
   status and the type are not the missing consumer's alone: `internal/credsvc/bitbucket.go` answers
   the operator's stop switches it cannot read, the kill switch, a bundle that fails to load, a
-  failed Bitbucket exchange and a failed audit with the same `503 state_unavailable`, and only the
+  failed Bitbucket exchange, a token whose scopes this route will not hand on
+  (`ErrReadUnexpectedScopes`) and a failed audit with the same `503 state_unavailable` — an example
+  rather than the whole of the list, since an answer it could not build is another — so only the
   message tells them apart. That is the only answer the row counts as a stop: a curl timeout, a
   Cloud Run 429 or 5xx, a `503 state_unavailable` whose message is another state's, or an answer
   that is not a document is the run **not knowing**, so the script keeps waiting and then fails the
