@@ -1,6 +1,6 @@
 # `fugaro settings`: implementation plan
 
-**The design is approved; the tasks queue for CLI 0.15.0 (and console 0.117.0).** SD1–SD18 were
+**Status as of 2026-11-10: in progress, about 6/12 merged; see [docs/status.md](../status.md) for the current table.** SD1–SD18 were
 answered by the owner on 2026-10-31 ([reconciliation.md](reconciliation.md) §3), and so were this
 plan's own decisions (§4): **all of D840–D854 were answered that day, every one as recommended,
 D854 — the stale local copy — included, its answer being the generation recorded**, which is what S3

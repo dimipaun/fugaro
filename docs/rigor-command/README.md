@@ -1,6 +1,6 @@
 # `fugaro rigor`: managing a project's rigor mode with one command
 
-**Status: design approved; tasks queue for CLI 0.15.0 (and console 0.117.0).** Every decision is
+**Status as of 2026-11-10: in progress, 2/10 merged; see [docs/status.md](../status.md) for the current table.** Every decision is
 answered: **D830 and D831** by the owner's SD4 ruling of 2026-10-31, **D832–D839 on 2026-10-31, all
 as recommended**, and the one decision the plan **cites** from another design — **D854**, whether the
 `Layer` stage records the object generation it reads at the seed — **answered by the owner on

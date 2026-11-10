@@ -4893,7 +4893,10 @@ rest of the pack does here is unverified rather than known to work.
 portable executable, no arm64 — and **no release asset**: the installer is the
 job's own build artifact and is **not** attached to `console-vX.Y.Z`
 (`docs/release.md`; the release carries macOS and Linux and nothing else). The
-job that produces it is staged under `docs/pending-workflows/`, runs on
+job that produces it is staged under `docs/pending-workflows/`, and its own
+document is `docs/pending-workflows/README.md`'s `## console-windows.yml`
+section, which carries the job's status, the copy-in commands and the reason it
+is a workflow of its own rather than a leg of the tests job. It runs on
 `windows-latest` **at release time only** — the release tag or a manual
 dispatch, never on a pull request — holds no secret at all, and is what the
 release checklist's by-hand dry run dispatches before a tag.

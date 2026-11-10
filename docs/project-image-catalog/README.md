@@ -1,6 +1,6 @@
 # The project image catalog: named images a project curates by hand
 
-**Status: design only; nothing here is approved and no code follows from this folder.** This document
+**Status as of 2026-11-10: done; see [docs/status.md](../status.md) for the current table.** This document
 set reconciles one brief — the owner's project image catalog spec, received 2026-11-02 and kept
 verbatim in [spec.md](spec.md) — against the code on `origin/main`, decides every ambiguity it opens,
 and plans the build. The spec's own summary: "Job images move from repo-centric to project-centric. A
