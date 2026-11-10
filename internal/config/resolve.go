@@ -116,6 +116,7 @@ func Resolve(data []byte, l *ProjectLayer) (*Config, *Resolution, []Problem) {
 		repo.RepoLevelsNoneModelSet = setsLevelsNoneModel(tree)
 		repo.RepoPlanningSet = setsPlanning(tree)
 		repo.RepoStopFractionSet = setsStopFraction(tree)
+		repo.RepoTriageSet = setsTriage(tree)
 		res := &Resolution{Sources: map[string]string{}}
 		markLeaves(tree, "", SourceRepo, res.Sources)
 		res.ConfigSHA256 = repo.SHA256()
@@ -166,6 +167,7 @@ func Resolve(data []byte, l *ProjectLayer) (*Config, *Resolution, []Problem) {
 	c.RepoLevelsNoneModelSet = setsLevelsNoneModel(tree)
 	c.RepoPlanningSet = setsPlanning(tree)
 	c.RepoStopFractionSet = setsStopFraction(tree)
+	c.RepoTriageSet = setsTriage(tree)
 	applyDefaults(&c)
 	if ps := Validate(&c); len(ps) > 0 {
 		return nil, nil, annotate(ps, res, profileOf)
@@ -479,6 +481,29 @@ func setsStopFraction(tree map[string]any) bool {
 		return false
 	}
 	_, ok = agent["review_stop_fraction"]
+	return ok
+}
+
+// setsTriage is setsStopFraction for the agent.triage key: whether the
+// repository's text writes it, at any value. It reads the tree and not the
+// resolved Agent.Triage for the reason the fields beside it read the tree — a
+// runner older than triageSince (internal/cli) decodes the file with
+// KnownFields and refuses agent.triage whatever it says, so the key's presence
+// is the question the image-skew gate needs, and the resolved pointer answers
+// a different one (what the switch says). Its answer becomes
+// Config.RepoTriageSet.
+//
+// The project layer's half of this key does not exist: agent.triage is not a
+// layer key at all (config.Scopes gives it InRepo alone), so there is no
+// ProjectLayer.SetsTriage beside SetsStopFraction. The owner's published node
+// is the other home, and it is carried into the run as a ceiling
+// (policy.Layer.Triage) rather than through this tree.
+func setsTriage(tree map[string]any) bool {
+	agent, ok := tree["agent"].(map[string]any)
+	if !ok {
+		return false
+	}
+	_, ok = agent["triage"]
 	return ok
 }
 

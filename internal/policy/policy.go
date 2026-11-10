@@ -70,6 +70,13 @@ const (
 	// the project layer's own and is read where it is set, never merged,
 	// because a repository may only turn sampling off (D556).
 	KeyABRate = "ab.rate"
+	// KeyTriage is the triage stage's switch (docs/post-review-triage, D1854):
+	// the repository's own agent.triage, and the owner's published policy node,
+	// merged tighter-only so that off wins wherever it is written. It is a key
+	// of the merge and not of one layer because the two homes meet only here —
+	// the node arrives on the ceiling and the repository's file in the checked
+	// out branch.
+	KeyTriage = "triage"
 	// The governance keys, spelled as fugaro.yaml spells them under
 	// governance: (docs/task-governance/spec.md §2, §5). The three stages are
 	// the ones a run's governance bounds: an artifact run's plan and render
@@ -499,6 +506,19 @@ type Layer struct {
 	// and a sampler wired to it would read "no rate here" as "no rate
 	// anywhere".
 	ABRate *float64
+	// Triage is this layer's triage switch: nil = the layer writes none,
+	// false = the stage is off, true = it is on where its mode has it at all
+	// (config.TriageMode). A pointer because false is a value here and not
+	// "unset": turning the stage off is the whole of what an owner's policy
+	// node and a repository may say about it, and the merge has to be able to
+	// tell either from a layer that says nothing (see Merge).
+	//
+	// The two homes it has are the ones D1854 names: the repository's own
+	// agent.triage, read from the base branch, and the owner-only policy node,
+	// which internal/runner puts on the ceiling. Off is the stricter answer, so
+	// the merge takes it wherever it appears and drops a layer's true under an
+	// effective false.
+	Triage *bool
 	// Governance is this layer's governance limits; the zero value sets
 	// none, which is what leaves the ceiling's own alone (see Governance).
 	Governance Governance
@@ -537,6 +557,16 @@ type Layer struct {
 // The method shadows Layer.ReviewFloor, the field the merge fills: the whole
 // map is e.Layer.ReviewFloor, and a mode's levels are asked for here.
 func (e Effective) ReviewFloor(mode rigor.Mode) []Level { return e.Layer.ReviewFloor[mode] }
+
+// TriageOff reports whether the merged layers turn the triage stage off: any
+// layer that wrote the switch wrote false, which is what an owner's published
+// node does to every repository of an installation and what a repository does
+// to itself (D1854). It is the question a reader has — the stage runs unless
+// this is true, and only in the two modes whose table has it
+// (config.TriageMode) — so the direction of the merge is read through one
+// method rather than by dereferencing a pointer every caller would have to
+// remember to read as "off wins".
+func (e Effective) TriageOff() bool { return e.Triage != nil && !*e.Triage }
 
 // Effective is the merged policy plus where each key came from.
 type Effective struct {

@@ -733,6 +733,65 @@ func TestABMergeTightenOnly(t *testing.T) {
 	}
 }
 
+// TestAgentTriageOffInPolicyWinsOverARepositoryOn is D1854's direction for the
+// triage stage's switch, read at the layer the rule belongs to: the switch has
+// two homes — the repository's own fugaro.yaml (config.Agent.Triage) and the
+// owner's published policy node (Layer.Triage, which the runner puts on the
+// ceiling beside every other key of the node) — and only one direction between
+// them. Off is the stricter answer, so a repository may turn the stage off for
+// itself under a node that is silent, and may not turn it back on under a node
+// that turned it off: the merge drops the repository's `true` and records it,
+// the way it drops a looser cap.
+//
+// The layers are the three Merge is always handed — the owner's node as the
+// ceiling, the project's default branch, the task's own branch — because the
+// question is what a run reads once they meet, and a repository writes two of
+// the three.
+func TestAgentTriageOffInPolicyWinsOverARepositoryOn(t *testing.T) {
+	on, off := true, false
+	cases := []struct {
+		name                 string
+		ceiling, def, branch *bool
+		wantOff              bool
+		wantSrc              string
+		ignored              int
+	}{
+		{"nothing set", nil, nil, nil, false, "", 0},
+		{"the repository turns it off", nil, nil, &off, true, "branch", 0},
+		{"the default branch turns it off", nil, &off, nil, true, "default-branch", 0},
+		{"the owner's node turns it off", &off, nil, nil, true, "ceiling", 0},
+		{"the owner's node turns it off over a repository on", &off, nil, &on, true, "ceiling", 1},
+		{"the owner's node turns it off over a default-branch on", &off, &on, &on, true, "ceiling", 2},
+		{"a repository on under a silent node", nil, nil, &on, false, "branch", 0},
+		{"the owner's node turns it on, the repository off", &on, nil, &off, true, "branch", 0},
+		{"a branch off under a default-branch on", nil, &on, &off, true, "branch", 0},
+		{"a branch on under a default-branch off", nil, &off, &on, true, "default-branch", 1},
+		{"the repository says off twice", nil, &off, &off, true, "default-branch", 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := Merge(Layer{Triage: tc.ceiling}, Layer{Triage: tc.def}, Layer{Triage: tc.branch})
+			if got := e.TriageOff(); got != tc.wantOff {
+				t.Fatalf("TriageOff() = %v, want %v (Triage = %v)", got, tc.wantOff, e.Triage)
+			}
+			if got := e.Sources[KeyTriage]; got != tc.wantSrc {
+				t.Errorf("Sources[%s] = %q, want %q", KeyTriage, got, tc.wantSrc)
+			}
+			if len(e.Ignored) != tc.ignored {
+				t.Fatalf("Ignored = %v, want %d record(s)", e.Ignored, tc.ignored)
+			}
+			for _, ig := range e.Ignored {
+				if ig.Key != KeyTriage || ig.Value != "true" || ig.Effective != "false" {
+					t.Errorf("Ignored = %+v: a dropped value is the repository's true under an effective false", ig)
+				}
+				if ig.Source != tc.wantSrc {
+					t.Errorf("Ignored = %+v: source = %q, want the layer the effective value came from, %q", ig, ig.Source, tc.wantSrc)
+				}
+			}
+		})
+	}
+}
+
 // TestMergeNamesTheChainLayer pins the two things the chain layer needs of
 // this package (docs/run-limit-carry-over F4, D1055): a layer past the run's
 // own file is named "chain" and not "branch" — the number did not come from

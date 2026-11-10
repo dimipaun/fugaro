@@ -347,6 +347,9 @@
         "agent.review_stop_fraction": {
           "default": "unset = 0.8 (config.DefaultReviewStopFraction)"
         },
+        "agent.triage": {
+          "default": "unset = on (startup and pro only, config.TriageMode)"
+        },
         "backend": {
           "default": "unset = cloud-run"
         },
@@ -1229,6 +1232,9 @@
         "stages.review_first.claude_account": {
           "default": "unset = the project's default account"
         },
+        "stages.triage.claude_account": {
+          "default": "unset = the project's default account"
+        },
         "terraform.alert_email": {
           "default": "unset = none: no budget alert is mailed"
         },
@@ -1255,6 +1261,9 @@
         },
         "terraform.state_bucket": {
           "default": "unset = the installation's state bucket"
+        },
+        "triage": {
+          "default": "unset = true: a review round's findings are judged by the triage stage in the modes that triage at all, and a written false turns the stage off for the project"
         },
         "update_check": {
           "$comment": "config.DefaultUpdateCheck",

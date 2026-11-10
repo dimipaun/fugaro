@@ -1860,6 +1860,26 @@ func TestPolicyConfigDriftSeesTheAccountChoiceKeys(t *testing.T) {
 			node: node("", nil),
 			want: nil,
 		},
+		// A stage the release behind cannot read is held back from the node, so
+		// the file's own entry for it is not a difference: the publish states
+		// nothing for it either (config.AccountStageHeldBack), and reporting it
+		// would send the operator to a command that cannot close the gap.
+		{
+			name: "the file names a stage the release behind cannot read",
+			lc:   config(func(lc *localcfg.Config) { lc.ClaudeAccountStages = accountStages("triage", "team-b") }),
+			node: node("", nil),
+			want: nil,
+		},
+		// The node's side is compared as it is: an entry the file cannot have
+		// published is still one the publish takes off, and the tooling does not
+		// say a node is in order when it carries a member no reader here would
+		// give it.
+		{
+			name: "the node names a stage the release behind cannot read",
+			lc:   config(nil),
+			node: node("", map[string]string{"triage": "team-b"}),
+			want: []string{"claude_account_stages.triage"},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var got []string
@@ -2245,8 +2265,8 @@ func TestPolicyPublishRefusesACatalogContextMember(t *testing.T) {
 	}
 }
 
-// TestPolicyConfigDriftSeesTheImageMapAndTheBakeSwitch is the comparison the
-// two new members get (D1901, D1906): a config that states a mapping or an
+// TestPolicyConfigDriftSeesTheImageMapAndTheSwitches is the comparison the
+// new members get (D1854, D1901, D1906): a config that states a mapping or an
 // answer the node does not carry is exactly the gap `fugaro update` exists to
 // close, and a config silent about either keeps the node's.
 //
@@ -2255,7 +2275,7 @@ func TestPolicyPublishRefusesACatalogContextMember(t *testing.T) {
 // the escaped one (ImageMap), so a comparison done in the config's spelling
 // would report a difference the operator cannot act on and republish the whole
 // node on every run.
-func TestPolicyConfigDriftSeesTheImageMapAndTheBakeSwitch(t *testing.T) {
+func TestPolicyConfigDriftSeesTheImageMapAndTheSwitches(t *testing.T) {
 	file := func(mut func(*localcfg.Config)) *localcfg.Config {
 		lc := &localcfg.Config{Budget: &localcfg.Budget{Mode: "enforce", PerRunUSD: 5}}
 		if mut != nil {
@@ -2335,6 +2355,30 @@ func TestPolicyConfigDriftSeesTheImageMapAndTheBakeSwitch(t *testing.T) {
 			"the config is silent about the switch and the node answers no",
 			file(nil),
 			node(func(p *projectpolicy.Policy) { p.BakeRepos = &no }),
+			nil,
+		},
+		{
+			"the config turns triage off where the node says nothing",
+			file(func(lc *localcfg.Config) { lc.Triage = &no }),
+			node(nil),
+			[]string{"triage"},
+		},
+		{
+			"the config's triage answer is the node's",
+			file(func(lc *localcfg.Config) { lc.Triage = &no }),
+			node(func(p *projectpolicy.Policy) { p.Triage = &no }),
+			nil,
+		},
+		{
+			"the config turns triage off where the node turns it on",
+			file(func(lc *localcfg.Config) { lc.Triage = &no }),
+			node(func(p *projectpolicy.Policy) { p.Triage = &yes }),
+			[]string{"triage"},
+		},
+		{
+			"the config is silent about triage and the node turns it off",
+			file(nil),
+			node(func(p *projectpolicy.Policy) { p.Triage = &no }),
 			nil,
 		},
 	}

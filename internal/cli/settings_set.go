@@ -129,6 +129,7 @@ var settingsGenericKeys = map[string]bool{
 	"stages.plan.claude_account":         true,
 	"stages.review.claude_account":       true,
 	"stages.review_first.claude_account": true,
+	"stages.triage.claude_account":       true,
 	// A repository's workflows.* (37 rows) and the project layer's profiles.*
 	// (36), in the registry's own order.
 	"workflows.*.profile":                            true,
@@ -365,7 +366,7 @@ writes nothing and is answered rather than refused.
 
 A stage's Claude account is a key of its own — ` + "`stages.<stage>.claude_account`" + `, one
 per stage name this binary runs (plan, implement, review_first, review,
-adversarial, fix) — and it is how a stage is repointed from one account to
+adversarial, triage, fix) — and it is how a stage is repointed from one account to
 another without editing the local config by hand. Its value is a name the local
 config's claude_accounts declares, or ` + "`default`" + ` for the unsuffixed account: an
 undeclared name is refused naming the declared ones, and an account whose
