@@ -12,6 +12,10 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 )
 
+// check96Script is Check 96's own script: the register tells the owner to run
+// it, and the block it prints is what the section below explains.
+const check96Script = "scripts/live-checks/check96.sh"
+
 // pipeIntoPythonHeredocRE matches a pipe into `python3` on a line that opens a
 // heredoc further along it: the one shape whose stdin the heredoc wins.
 //
@@ -180,10 +184,11 @@ func TestDocsCheck96IsWrittenAndSaysWhatIsNotYetTrue(t *testing.T) {
 		// Secret hygiene: a check that mints credentials has to say where they go.
 		"greps its own text for `ghs_`",
 		"**Never paste a token of any kind",
-		// The job's spec is read from the file the guard wrote, by path: a heredoc takes
-		// stdin, so the `printf … | python3 - <<'PY'` this step first used handed python the
-		// script and an empty stdin, and the step printed none of its facts.
-		"python3 - \"$W/job.json\" <<'PY'",
+		// The check is ONE command now: the register tells the owner to run the
+		// script rather than to paste five guard-block steps by hand, and the
+		// script is named as the artifact the block comes from.
+		"**Run it:** `bash scripts/live-checks/check96.sh`",
+		"scripts/live-checks/check96.sh",
 		// The wiring, which the check has to state per job: the launch sets the
 		// variable on a switched-on repository's per-repository job and on no
 		// other, so the expected answer is true there and false on a shared
@@ -210,8 +215,11 @@ func TestDocsCheck96IsWrittenAndSaysWhatIsNotYetTrue(t *testing.T) {
 			t.Errorf("docs/gcp-live-checklist.md's Check 96 does not say %q: the check is the live statement of D145's change, and this is a clause a reader takes the check's behaviour from", want)
 		}
 	}
-	if !strings.Contains(check, "# 0") {
-		t.Errorf("docs/gcp-live-checklist.md's Check 96 no longer reads its own scratch directory back to 0: the Restore's final assertion is that no file the check wrote survives it")
+	if !strings.Contains(check, "no scratch directory and no token in any file") {
+		t.Errorf("docs/gcp-live-checklist.md's Check 96 no longer reads its own scratch directory back: the Restore's final assertion is that no file the check wrote survives it, and the script's own `restore` row is where that is read now")
+	}
+	if !strings.Contains(check, "one `FACT <key>: <verdict> — <detail>` line per key") {
+		t.Errorf("docs/gcp-live-checklist.md's Check 96 no longer says what the block it asks the owner to paste back is made of: the owner diffs a pasted block against the section's own list of keys")
 	}
 
 	// The register's row 96 carries two of the same claims, and two reviews found
@@ -536,10 +544,67 @@ func check96Section(t *testing.T) string {
 // `printf '%s' "$ANSWER" | python3 - "$CHK96_SANDBOX_REPO" <<'PY'` — the argv
 // form the first regex missed → FAIL, which is the widening this test's regex
 // was extended for.
+// TestCheck96RegisterNamesEveryBlockKey: the register's "Reading the `CHECK 96
+// RESULT` block:" paragraph is what the owner diffs a pasted block against, so
+// it names every key the block prints, and what the block prints is the
+// script's own BLOCK_KEYS rather than a paraphrase of it. The paragraph, and
+// not the whole section, is the check: several of these keys are named again in
+// the prose above (`mint`, `pairing` and `app-key` are the claims themselves),
+// and a key the paragraph leaves out reads as a key the block was not meant to
+// print — `restore`, `survivors` and `xtrace` are the three whose absence would
+// leave a reader taking a run that left a user behind, or one whose shell was
+// tracing, as a complete result.
+//
+// The script is also held to the harness that runs it: a script whose test is
+// not wired into scripts/live_checks_test.go is a script nothing checks, and
+// Check 96's test is the only thing that runs a step of it.
+//
+// Mutations (verified, run and restored): take `secret-scan` out of the
+// paragraph's parenthetical — the key a run that leaked would print, and the
+// one a reader has to be able to place; take `xtrace` out of the key list, and
+// the paragraph no longer names a key BLOCK_KEYS prints; delete the
+// `{"check96.sh", "check96_test.sh"}` line from scripts/live_checks_test.go —
+// red on the wiring.
+func TestCheck96RegisterNamesEveryBlockKey(t *testing.T) {
+	script := readRepoFile(t, check96Script)
+	keys := blockKeys(t, script)
+	// A parse that reads nothing (or reads the comment above the array) would
+	// make this test vacuous.
+	if len(keys) < 10 {
+		t.Fatalf("%s: BLOCK_KEYS parsed as %d keys (%v), which cannot be the block", check96Script, len(keys), keys)
+	}
+	sec := check96Section(t)
+	const heading = "**Reading the `CHECK 96 RESULT` block:**"
+	i := strings.Index(sec, heading)
+	if i < 0 {
+		t.Fatalf("docs/gcp-live-checklist.md: the Check 96 section has no %q paragraph", heading)
+	}
+	para := sec[i:]
+	if j := strings.Index(para, "\n\n"); j >= 0 {
+		para = para[:j]
+	}
+	for _, k := range keys {
+		if !strings.Contains(para, "`"+k+"`") {
+			t.Errorf("docs/gcp-live-checklist.md's Check 96 %q paragraph does not name the block key `%s`, which check96.sh's BLOCK_KEYS prints", heading, k)
+		}
+	}
+	if got := readRepoFile(t, "scripts/live_checks_test.go"); !strings.Contains(got, `{"check96.sh", "check96_test.sh"}`) {
+		t.Errorf("scripts/live_checks_test.go does not run %s's own test: the owner-run check's only automated proof is that suite", check96Script)
+	}
+}
+
 func TestDocsChecklistHasNoPipeIntoPythonHeredoc(t *testing.T) {
 	register := readDoc(t, "docs/gcp-live-checklist.md")
 	if m := pipeIntoPythonHeredocRE.FindString(register); m != "" {
 		t.Errorf("docs/gcp-live-checklist.md pipes a document into a python heredoc (%q): bash gives the heredoc stdin, so the script reads EOF instead of the document and the step prints none of its facts. Pass the document as a file or an argv argument (the form the register's other heredocs use), or use `python3 -c`.", m)
+	}
+	// The same rule over Check 96's shell, which is where its blocks live now:
+	// the defect this test was extended for was in the register's step text and
+	// the step text moved into scripts/live-checks/check96.sh, so a rule that
+	// still read only the register would be watching the document the defect
+	// left rather than the script it landed in.
+	if m := pipeIntoPythonHeredocRE.FindString(readRepoFile(t, check96Script)); m != "" {
+		t.Errorf("%s pipes a document into a python heredoc (%q): bash gives the heredoc stdin, so the program reads EOF instead of the document. Check 96 reads every document through its own reader with the document on the program's stdin (`python3 \"$SCRATCH/reader.py\" <file`), which is the form that works.", check96Script, m)
 	}
 }
 
@@ -596,9 +661,21 @@ var apostropheInWordRE = regexp.MustCompile(`[A-Za-z]'[A-Za-z]`)
 func TestDocsCheck96ShellBlocksRunAndCloseTheirHeredocs(t *testing.T) {
 	section := check96Section(t)
 	blocks := bashBlocks(section)
-	if len(blocks) < 6 {
-		t.Fatalf("Check 96 has %d ```bash blocks; the section is the register's shell and it does not have fewer than six", len(blocks))
+	// The section is prose plus the one command now: the five step blocks and
+	// their guard block were replaced by `**Run it:**`, and the shell that used
+	// to be in the register is the script. What is left in the section is the
+	// command itself, and the rules below run over it as before.
+	if len(blocks) < 1 {
+		t.Fatalf("Check 96 has %d ```bash blocks; the section has to carry at least the one command it tells the owner to run", len(blocks))
 	}
+	// The script's own shell is held to the same three rules: it is the artifact
+	// that runs now, so its heredocs are the ones that decide whether a read
+	// happens at all. The whole file is one block for that purpose.
+	script := readRepoFile(t, check96Script)
+	if !strings.Contains(script, "<<'READER_EOF'") {
+		t.Errorf("%s no longer carries a `<<'READER_EOF'` heredoc: Check 96's shell is held here for the heredoc rules, and a script whose reads moved to another file would pass them vacuously", check96Script)
+	}
+	blocks = append(blocks, strings.Split(strings.TrimRight(script, "\n"), "\n"))
 
 	for i, block := range blocks {
 		// 1. Every heredoc a block opens is closed by a delimiter at column 0, and

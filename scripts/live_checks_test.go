@@ -30,7 +30,9 @@ import (
 // Realtime Database behind a fake `curl` for Check 191, and a fake `gcloud`
 // that evaluates the conditions of Check 340's own IAM bindings for Check 340,
 // and fake `gcloud`, `fugaro` and a fake RTDB behind a fake `curl` for Check
-// 300 -- or, for Check 145, against a fake Bitbucket Cloud on a loopback port,
+// 300, and fake `gcloud`, `fugaro` and a fake credentials service, GitHub and
+// Identity Toolkit behind a fake `curl` for Check 96 -- or, for Check 145,
+// against a fake Bitbucket Cloud on a loopback port,
 // so no network, no cloud project and no credential is touched here, and no
 // live step of any of them is run by an agent. Check 130's fake is a fake `curl` alone, answering
 // the three anonymous GETs the check makes about a repository; its fake
@@ -59,6 +61,7 @@ var liveCheckScripts = []struct {
 	{"check191.sh", "check191_test.sh"},
 	{"check300.sh", "check300_test.sh"},
 	{"check340.sh", "check340_test.sh"},
+	{"check96.sh", "check96_test.sh"},
 }
 
 // liveCheckTimeout is each shard's own deadline. The scripts are independent
