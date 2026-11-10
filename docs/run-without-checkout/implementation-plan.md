@@ -1,6 +1,6 @@
 # Launching a run for a repository without its checkout: implementation plan
 
-**Status: design answered by the owner 2026-11-04; plan only; A0 landed (2026-11-10, the person read set); A1–A4, B1–B2, C1 and D1 not started; no other task approved.**
+**Status: design answered by the owner 2026-11-04; plan only; A0 and A1 landed (2026-11-10, the person read set and the file-at-a-ref reader); A2–A4, B1–B2, C1 and D1 not started; no other task approved.**
 
 The decisions each task answers are named in its heading; they are **D901–D915** in
 [reconciliation.md §3](reconciliation.md), answered by the owner on 2026-11-04, each with the reason for
@@ -70,8 +70,7 @@ whole `internal/cli` or `internal/runner` run.
 - **Landed:** 2026-11-10, as option 1: `github.PersonReadTokenPermissions` (`contents`, `pull_requests`
   and `metadata`, all read) beside the five sets, asked for by `githubRead`, with
   `CoordinatorTokenPermissions` and its fixture body left exactly as they were. What follows in this
-  plan — A1's reader, A3's end-to-end read, B1's status line and B2's note — is written against that
-  set.
+  plan — A3's end-to-end read, B1's status line and B2's note — is written against that set.
 
 ## A1. The file at a ref, read with the person's read-only token (D910, D911). **SEC**
 
@@ -115,6 +114,13 @@ whole `internal/cli` or `internal/runner` run.
 - **Red step:** `TestFileAtAsksForTheRefItWasGiven` is red against a package with no such function, and
   a first implementation that reads the working tree or the default branch keeps it red.
 - **Commit:** `github: read one file at a ref through the person's read mint`.
+- **Landed:** 2026-11-10: `github.FileAt` and its two sentinels, `ErrFileNotFound` and `ErrRefNotFound`,
+  in `internal/gitprov/github/fileread.go` — over `Contents`, a `ServiceHeldKey` provider with the
+  caller's `gitprov.TokenSource` installed — with `fileread_test.go` and the four
+  `testdata/fileread/*.json` replays beside it. The read is hermetic (a fake `gitprov.TokenSource` and an
+  `httpfixture` replay), so it waited on nothing from A0: what A0 gates is the live path, and A3's
+  end-to-end read is the test that exercises it. What A3 calls, and what its messages read, is the two
+  sentinels; the absent-file one is the row that selects nothing.
 
 ## A2. The narrowing that needs no credential (D905, D908, D909, D912)
 
@@ -306,7 +312,7 @@ order they are edited in:
 | `internal/credsvc/githubread.go` | A0 | A0 only: the constant `githubRead` asks with — and the route's own doc comment, which states the old set in prose |
 | `internal/credsvc/githubread_test.go` | A0 | A0 only: `TestGitHubReadAsksForNoWrite`'s `want` |
 | `internal/gitprov/github/contents.go` | none | Read by A1 and **not edited**: A1 wraps `Contents`, it does not widen it |
-| `docs/run-without-checkout/README.md` | A0, B1 | The Status line moved once with A0 (2026-11-10) and moves once more when A3 lands |
+| `docs/run-without-checkout/README.md` | A0, A1, B1 | The Status line is the folder's claim about the tree, so every landing moves it: it moved with A0 and again with A1 (2026-11-10), and B1 moves it once more when A3 lands |
 | `internal/gitprov/github/fileread.go` | A1 | A1 only (new) |
 
 **A0 goes first and alone** — it is the service's own mint, and everything else that reads a file waits

@@ -6,21 +6,23 @@ package cli
 // operator themselves (D902, 2026-11-04), and the plan (A0–A4, B1–B2, C1, D1)
 // that builds it.
 //
-// **A0 has landed**, and it is the one task of the plan that is in the tree:
-// `internal/gitprov/github` carries `personReadTokenPermissions` and its exported
-// accessor, and the credentials service's GitHub read mint asks with it, so the
-// token the route hands out carries `contents: read` beside the coordinator's two
-// and the file read this design is for is served where the project publishes a
-// service. The folder's four documents are the record of the ask and of each
-// answer, and every sentence in them that says what the tree does is a claim that
-// went stale the day A0 landed: a status line still reading "nothing implemented",
-// a spec section saying the read is refused until A0 lands, a reconciliation
-// finding saying the mint's set does not cover a file read, and a D915 row still
-// marked unanswered. Those are what this file checks — against the tree, not
-// against the brief — and what it leaves alone is the ask itself: spec.md is the
-// design's own account of the behaviour and reconciliation.md keeps each decision
-// with the date and the reason the owner answered it, so the answers stay as
-// written even where the wording around them moves.
+// **A0 and A1 have landed**, and they are the tasks of the plan that are in the
+// tree: `internal/gitprov/github` carries `personReadTokenPermissions` and its
+// exported accessor, and the credentials service's GitHub read mint asks with it,
+// so the token the route hands out carries `contents: read` beside the
+// coordinator's two and the file read this design is for is served where the
+// project publishes a service; and `github.FileAt` reads one file at a ref through
+// a `gitprov.TokenSource` its caller supplies, which is what A3's launcher seam is
+// built on. The folder's four documents are the record of the ask and of each
+// answer, and every sentence in them that says what the tree does is a claim
+// that went stale the day a task landed: a status line still reading "nothing
+// implemented", a spec section saying the read is refused until A0 lands, a
+// reconciliation finding saying the mint's set does not cover a file read, and a
+// D915 row still marked unanswered. Those are what this file checks — against the
+// tree, not against the brief — and what it leaves alone is the ask itself:
+// spec.md is the design's own account of the behaviour and reconciliation.md keeps
+// each decision with the date and the reason the owner answered it, so the answers
+// stay as written even where the wording around them moves.
 
 import (
 	"strings"
