@@ -92,8 +92,8 @@ func TestParallelismSkillGraphExampleIsReadable(t *testing.T) {
 	if doc.Plan == "" {
 		t.Error("the example names no plan")
 	}
-	if len(doc.Nodes) != 5 || len(doc.Edges) != 4 {
-		t.Fatalf("the example carries %d nodes and %d edges, want the five and the four it shows: the two tasks, the contract, the integration task and the change request, with the edges that join them", len(doc.Nodes), len(doc.Edges))
+	if len(doc.Nodes) != 5 || len(doc.Edges) != 3 {
+		t.Fatalf("the example carries %d nodes and %d edges, want the five and the three it shows: the two tasks, the contract, the integration task and the change request, with the edges that join them — the broken edge is gone from `edges`, and the contract waits for nothing, which is what the break turns on", len(doc.Nodes), len(doc.Edges))
 	}
 	for _, n := range doc.Nodes {
 		if n.Title == "" {
@@ -186,6 +186,37 @@ func TestParallelismSkillGraphExampleIsReadableAtV3(t *testing.T) {
 		if len(c.Affects) == 0 {
 			t.Errorf("the example's change %q affects no task: the tasks a change reaches are what an unlaunched dependent's edge and a launched one's follow-up are read from", c.Change)
 		}
+	}
+
+	// The read's verdict on the example, which is what the example has to
+	// satisfy: the section this one sits in says a break the read reports as no
+	// gain is one to undo, so an example the read weighs as no gain teaches the
+	// pass by a plan the skill itself tells a planner to throw away — and the
+	// planner following it writes the contract as a task waiting on one side,
+	// which leaves the dependent waiting on that side through the contract.
+	//
+	// The figures are read off the read rather than pinned here (D1816 — the
+	// arithmetic is the CLI's): the verdict is the property, and a size or a
+	// footprint that drifts until the weight no longer shrinks is exactly what
+	// this catches.
+	graph, err := plan.Analyze(parallelismSkillPath, doc, nil)
+	if err != nil {
+		t.Fatalf("the read refused the example in %s: %v", parallelismSkillPath, err)
+	}
+	if graph.Gain == nil {
+		t.Fatal("the read reports no gain for the example, so it weighed no break: `gain` is what says whether the pass paid, and it is absent for a graph that broke no edge")
+	}
+	added := 0
+	for _, n := range doc.Nodes {
+		if n.Kind != "" {
+			added++
+		}
+	}
+	if graph.Gain.Broken != len(doc.Decoupling) || graph.Gain.AddedTasks != added {
+		t.Errorf("the read reports the example as %d broken edge(s) and %d added task(s), want the %d its `decoupling` record names and the %d nodes the pass added: the verdict below is read off the same figures", graph.Gain.Broken, graph.Gain.AddedTasks, len(doc.Decoupling), added)
+	}
+	if !graph.Gain.Improves {
+		t.Fatalf("`fugaro plan graph` reports the example's break as no gain: the weighted path is %v after against %v before, and the section's rule is that such a break is one to undo. The example has to be a break that pays — the contract waiting for neither side, and the pair it separates weighing more than the contract and its integration task", graph.Gain.After.Weight, graph.Gain.Before.Weight)
 	}
 }
 

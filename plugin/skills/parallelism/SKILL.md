@@ -45,7 +45,7 @@ Three planning techniques get a graph there: **contracts first** (the bullet bel
 
 A plan you write as a file can carry its tasks as a graph the CLI reads. Write it beside the plan: `docs/plans/foo.md` is described by `docs/plans/foo.graph.json`, and `fugaro plan graph --plan docs/plans/foo.md --json` prints that document — a person can read the same file.
 
-The example below is a plan that broke one edge with a contract: T1 to T2, with C1 the contract that settled the shape, I1 the task that re-joins them, and R1 a change request later raised against C1.
+The example below is a plan that broke one edge with a contract: T1 to T2, with C1 the contract that settled the shape, I1 the task that re-joins them, and R1 a change request later raised against C1. C1 waits for nothing, which is what makes the break real: a contract written from T1's own types would leave T2 waiting on T1 through it, and `fugaro plan graph` would report that break as no gain — a break to undo rather than to write down.
 
 ```json
 {
@@ -56,14 +56,14 @@ The example below is a plan that broke one edge with a contract: T1 to T2, with 
     {"id": "T1", "title": "the parser", "run": null, "version": null, "size": 3,
      "footprint": {"prediction": true, "paths": ["internal/parse/**"]}
     },
-    {"id": "T2", "title": "the read", "run": null, "version": null,
+    {"id": "T2", "title": "the read", "run": null, "version": null, "size": 2,
      "footprint": {"prediction": true, "paths": ["internal/cli/read.go"]}
     },
     {"id": "C1", "title": "the record's shape", "kind": "contract", "run": null, "version": null, "size": 0.5,
      "stubs": ["internal/record/record_stub.go"],
      "footprint": {"prediction": true, "paths": ["internal/record/record.go", "internal/record/record_stub.go"]}
     },
-    {"id": "I1", "title": "wire the record in", "kind": "integration", "run": null, "version": null,
+    {"id": "I1", "title": "wire the record in", "kind": "integration", "run": null, "version": null, "size": 0.5,
      "footprint": {"prediction": true, "paths": ["internal/record/record_stub.go"]}
     },
     {"id": "R1", "title": "the record's shape, amended", "kind": "contract_change", "run": null, "version": null,
@@ -71,7 +71,6 @@ The example below is a plan that broke one edge with a contract: T1 to T2, with 
     }
   ],
   "edges": [
-    {"task": "C1", "needs": "T1", "reason": "the contract is written from the parser's own types"},
     {"task": "T2", "needs": "C1", "reason": "the read is built against the record's shape"},
     {"task": "I1", "needs": "T1", "reason": "the integration runs both sides"},
     {"task": "I1", "needs": "T2", "reason": "the integration runs both sides"}
