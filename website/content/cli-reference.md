@@ -2366,7 +2366,8 @@ run's is, and a build no cap has room for is refused with the cap, what the
 day counts and the one command that raises it (fugaro budget show says what
 the project holds). A CLI that died mid-build leaves its reservation open
 and the next build gives it back. Pricing an image comes from the Cloud
-Billing catalog, so a build whose price cannot be read is not submitted.
+Billing catalog, and a build whose price cannot be read is submitted
+uncounted, after one line that says so.
 An installation whose project config sets no budget.rtdb_url has no budget
 backend and no lease to take: its builds are submitted uncounted, and
 fugaro update --firebase-project in the checkout adds the backend.
