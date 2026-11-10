@@ -2359,6 +2359,10 @@ func (r *run) bootstrap(ctx context.Context) error {
 	// own governance's, which resolvePolicy settles, and the tier acts on
 	// nothing yet.
 	r.recordTier()
+	// The scope the task expected the run to touch (tier.go, T8.3): the
+	// expectation envelope's other half, recorded beside the tier so the digest
+	// can flag a run that changed a path outside it.
+	r.recordExpectedScope()
 	// The plan is derived here, *after* the policy: the routing switch is
 	// applied inside resolvePolicy, and the levels it resolved with it are what
 	// decide which steps the plan carries (L2.1's O7). A plan derived before

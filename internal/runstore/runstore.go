@@ -1014,6 +1014,15 @@ type Record struct {
 	// Nothing reads it yet, as with Backlog below; it is written because the
 	// record is what survives the run, and T8.2 is what acts on it.
 	Tier *TierRecord `json:"tier,omitempty"`
+	// ExpectedScope is roughly which files or areas the run's task expected it
+	// to touch (docs/task-governance/implementation-plan.md T8.3, spec §3): the
+	// task's own expected_scope, echoed onto the record because the digest is
+	// handed records and nothing else, and the scope-drift flag is the MIT
+	// digest's (D522, D528). It is paths and not prose, each bounded as the
+	// task parser bounds one, and nothing acts on it: the flag is report only
+	// (G8). Absent — never an empty list — for a run whose task declared no
+	// scope, which is every launch that writes no task file.
+	ExpectedScope []string `json:"expected_scope,omitempty"`
 	// Backlog is the ids of the backlog items this run filed for what it
 	// left open, in the order it filed them: the `<YYYYMMDD-NN>` names
 	// their files under docs/backlog/ are known by (docs/rigor-modes/

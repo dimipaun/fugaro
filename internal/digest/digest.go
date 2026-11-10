@@ -28,7 +28,10 @@ import (
 	"math"
 	"slices"
 	"sort"
+	"strings"
 	"time"
+
+	"github.com/bmatcuk/doublestar/v4"
 
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
@@ -93,10 +96,18 @@ const (
 	// (runstore.HaltReviewScope): this one is a report line, and reading it
 	// as a stop would be reading a flag as a halt.
 	FlagReviewScopeDrift = "review_scope_drift"
+	// FlagScopeDrift is a run that changed a path the scope its task declared
+	// does not name (T8.3, D332): the expectation envelope's "roughly which
+	// files or areas" against the paths the run really touched. It is report
+	// only (G8) — D332 keeps a heuristic in the reports until the reports show
+	// it is reliable, and this one is raised from two sets a record wrote — and
+	// it is absent for a run whose task declared no scope, because a flag
+	// raised from a set that is not there would say nothing.
+	FlagScopeDrift = "scope_drift"
 )
 
 // FlagNames is every flag this report raises, in the order it prints.
-var FlagNames = []string{FlagReviewCalls, FlagSubagents, FlagHalt, FlagFixRounds, FlagRepeatedCommand, FlagReviewScopeDrift}
+var FlagNames = []string{FlagReviewCalls, FlagSubagents, FlagHalt, FlagFixRounds, FlagRepeatedCommand, FlagReviewScopeDrift, FlagScopeDrift}
 
 // other is what a value outside its known set renders as (G1).
 const other = "other"
@@ -223,6 +234,43 @@ type Stage struct {
 	AgentsKnown bool
 }
 
+// Expectation is one run's tier expectation beside what the run really spent
+// and took: the per-run figures a tier calibration reads (T8.3, spec §6).
+//
+// Every run of the period that carries a tier is here, whether the report
+// shows it as a row or not, because a calibration reads a window and not the
+// rows a size cap trimmed. Every field is a bounded figure or a value of the
+// closed tier vocabulary, so nothing here can carry a word a record chose (G1),
+// and the report itself renders none of it: what a build does with the figures
+// is its section hook's business (section.go).
+type Expectation struct {
+	// Tier is the tier the run was dispatched at, one of tier.Tiers.
+	Tier string
+	// ExpectedUSD and ExpectedMinutes are what that tier expected of the run:
+	// the figures the record carries, which a repository's own layers may have
+	// tightened and which are never a cap (G6). Both are read the way every
+	// other figure a record carries is — bounded, and no figure at all when
+	// they cannot be one — so zero reads as "no expectation" and never as a
+	// free run (G1, G5).
+	ExpectedUSD     budget.Micros
+	ExpectedMinutes int64
+	// Billed is what the run's model calls cost, in the report's own unit.
+	Billed budget.Micros
+	// Duration is how long the run took, and DurationKnown is false when the
+	// record's window cannot give one — no start, or a finish before it. An
+	// unknown duration is not a zero one: a reader that has no figure leaves
+	// the run out rather than read it as instant (G5).
+	Duration      time.Duration
+	DurationKnown bool
+	// Governance is true when a governance tripwire halted the run: what such
+	// a run spent is the tripwire's figure and not the tier's, so a
+	// calibration leaves it out of the window (spec §6).
+	Governance bool
+	// Finished is when the run finished, UTC: the window a calibration reads
+	// is ordered by it.
+	Finished time.Time
+}
+
 // Figures is a set of runs' totals.
 type Figures struct {
 	Runs     int
@@ -280,6 +328,11 @@ type Digest struct {
 	// name. It is the per-recipe figure D326's third rule reads month over
 	// month.
 	Recipes map[string]budget.Micros
+	// Expectations is every run of the period that carries a tier, ordered by
+	// its finish time: the figures a calibration reads (T8.3). The report
+	// renders none of them, and the order is the runs' own so that a hook
+	// reading the window is a pure function of this digest (G3).
+	Expectations []Expectation
 	// Dropped is how many selected rows the size cap left out.
 	Dropped int
 }
@@ -293,6 +346,7 @@ func Build(recs []runstore.Record, p Period) Digest {
 	all := make([]Run, 0, len(recs))
 	byRecipe := map[string][]budget.Micros{}
 	byClass := map[failure.Class]*ClassCount{}
+	var expectations []Expectation
 	total := Figures{}
 	for i := range recs {
 		rec := &recs[i]
@@ -301,6 +355,9 @@ func Build(recs []runstore.Record, p Period) Digest {
 		}
 		r := row(rec)
 		all = append(all, r)
+		if exp, ok := expectation(rec); ok {
+			expectations = append(expectations, exp)
+		}
 		name := recipeName(rec)
 		byRecipe[name] = append(byRecipe[name], cost(r))
 		if class := runview.ClassOf(rec); class != "" {
@@ -351,15 +408,98 @@ func Build(recs []runstore.Record, p Period) Digest {
 	}
 
 	d := Digest{
-		Period:   p,
-		Runs:     append(flagged, rest...),
-		Stages:   stages(recs, p),
-		Total:    total,
-		Flags:    flagCounts(all),
-		Failures: classCounts(byClass),
-		Recipes:  recipeMedians(byRecipe),
+		Period:       p,
+		Runs:         append(flagged, rest...),
+		Stages:       stages(recs, p),
+		Total:        total,
+		Flags:        flagCounts(all),
+		Failures:     classCounts(byClass),
+		Recipes:      recipeMedians(byRecipe),
+		Expectations: byFinished(expectations),
 	}
 	return capTo(d, MaxBytes)
+}
+
+// expectation is one record as a calibration reads it, and whether it is one
+// at all: a run that carries no tier has no expectation to compare against,
+// and a tier the vocabulary does not know is a block no runner resolved
+// (runstore.TierRecord.Bounded), which is the answer the field's absence
+// gives.
+func expectation(rec *runstore.Record) (Expectation, bool) {
+	t := rec.Tier.Bounded()
+	if t == nil {
+		return Expectation{}, false
+	}
+	exp := Expectation{
+		Tier:            string(t.Tier),
+		ExpectedUSD:     usd(t.ExpectedUSD),
+		ExpectedMinutes: expectedMinutes(t.ExpectedMinutes),
+		Billed:          billed(rec),
+		Governance:      governanceHalt(rec),
+		Finished:        rec.FinishedAt.UTC(),
+	}
+	if !rec.StartedAt.IsZero() {
+		if d := rec.FinishedAt.Sub(rec.StartedAt); d >= 0 {
+			exp.Duration, exp.DurationKnown = d, true
+		}
+	}
+	return exp, true
+}
+
+// expectedMinutes is a record's expected duration in minutes, bounded the way
+// a count is: a figure outside what an expectation can be is no figure, which
+// zero already means here.
+func expectedMinutes(v int64) int64 {
+	if v < 0 || v > maxCount {
+		return 0
+	}
+	return v
+}
+
+// governanceHalt is whether a governance tripwire stopped the run (T6.1,
+// D329): the reasons a checkpoint carries, which a calibration leaves out of
+// its window. A budget or credential halt is not one of them — a run that ran
+// out of money or a credential says nothing about what its tier expected.
+func governanceHalt(rec *runstore.Record) bool {
+	if rec.Halt == nil {
+		return false
+	}
+	return slices.Contains(runstore.GovernanceHaltReasons(), rec.Halt.Reason)
+}
+
+// byFinished is the expectations ordered by finish time, and by the figures
+// themselves where two runs finished in the same second: Build is handed the
+// records in any order, so an order the hook reads a window off has to be the
+// runs' own and not the caller's.
+func byFinished(exp []Expectation) []Expectation {
+	sort.Slice(exp, func(i, j int) bool {
+		a, b := exp[i], exp[j]
+		if !a.Finished.Equal(b.Finished) {
+			return a.Finished.Before(b.Finished)
+		}
+		return lessExpectation(a, b)
+	})
+	return exp
+}
+
+// lessExpectation orders two expectations that finished at the same instant by
+// every figure they carry. Two runs that agree on all of them are the same
+// entry as far as a reader of the window is concerned, so the order between
+// them cannot change what one computes.
+func lessExpectation(a, b Expectation) bool {
+	switch {
+	case a.Tier != b.Tier:
+		return a.Tier < b.Tier
+	case a.Billed != b.Billed:
+		return a.Billed < b.Billed
+	case a.Duration != b.Duration:
+		return a.Duration < b.Duration
+	case a.ExpectedUSD != b.ExpectedUSD:
+		return a.ExpectedUSD < b.ExpectedUSD
+	case a.ExpectedMinutes != b.ExpectedMinutes:
+		return a.ExpectedMinutes < b.ExpectedMinutes
+	}
+	return !a.Governance && b.Governance
 }
 
 // classCounts is the period's failures in the vocabulary's order, one row per
@@ -474,6 +614,9 @@ func flags(rec *runstore.Record) []Flag {
 	if reviewScopeDrift(rec) {
 		out = append(out, Flag{Name: FlagReviewScopeDrift})
 	}
+	if scopeDrift(rec) {
+		out = append(out, Flag{Name: FlagScopeDrift})
+	}
 	return out
 }
 
@@ -543,6 +686,75 @@ func repeatedCommand(rec *runstore.Record) bool {
 func reviewScopeDrift(rec *runstore.Record) bool {
 	sc := rec.ReviewScope
 	return sc != nil && !sc.Truncated && sc.WhyNot == runstore.ReviewScopeRangeMoved && len(sc.Outside) > 0
+}
+
+// scopeDrift reports whether the record says the run changed a path the scope
+// its task declared does not name (T8.3, D332): the expectation envelope's
+// "roughly which files or areas" against what the run really touched. It is
+// report only (G8) — nothing halts on it — and it is raised from two sets the
+// record wrote, so a forged record can raise it and nothing else.
+//
+// A run whose task declared no scope, and a record written before the field
+// existed, carries none and is never flagged: with no scope there is nothing
+// the paths could be outside of. The changed-file set is the run's own bounded
+// list, so a set the record truncated can only hide drift and never invent it,
+// which is the opposite of the review-scope comparison above: there the flag
+// rests on a difference between two capped sets, and here on one path that is
+// in the set and outside the scope whatever the rest of the set holds.
+func scopeDrift(rec *runstore.Record) bool {
+	scope := declaredScope(rec.ExpectedScope)
+	if len(scope) == 0 || rec.ChangedFiles == nil {
+		return false
+	}
+	for _, p := range rec.ChangedFiles.Paths {
+		if p == "" {
+			continue
+		}
+		if !matchesAny(scope, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// declaredScope is a record's expected scope as a reader may use it. The
+// record is an object the job's service account can write, so the list read
+// back is not trusted to be the one a task declared: it is bounded again the
+// way the task parser bounds it (task.MaxDeclaredPaths entries of at most
+// task.MaxDeclaredPathBytes), and a pattern the matcher cannot read is dropped
+// rather than kept as one nothing matches — a pattern no path could match
+// would raise the flag for every run that carried it.
+func declaredScope(scope []string) []string {
+	if len(scope) == 0 {
+		return nil
+	}
+	out := make([]string, 0, min(len(scope), task.MaxDeclaredPaths))
+	for _, p := range scope {
+		if len(out) == task.MaxDeclaredPaths {
+			break
+		}
+		if strings.TrimSpace(p) == "" || len(p) > task.MaxDeclaredPathBytes {
+			continue
+		}
+		if !doublestar.ValidatePattern(p) {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+// matchesAny reports whether a changed path is one of the patterns the scope
+// declared, by the same doublestar matcher rigor matches a run's declared
+// paths with (F14): a scope is written the way a task's own paths are, so the
+// two are read by one rule.
+func matchesAny(scope []string, path string) bool {
+	for _, p := range scope {
+		if ok, err := doublestar.Match(p, path); err == nil && ok {
+			return true
+		}
+	}
+	return false
 }
 
 // stages is every stage name's figures over the period's runs, in name order
