@@ -1129,6 +1129,15 @@ func settingsEntryBlockPattern(key string) (string, settingsEntryBlock, bool) {
 //     by the family refusal before the allowlist is reached, while the block's
 //     spelling is one only this path writes at all. The block is listed in
 //     settingsGenericKeys, so nothing is written here that list does not carry.
+//     The divergence this leaves is deliberate: an entry may name a member
+//     whose leaf spelling the family refusal turns away
+//     (`layer.defaults.agent --add-entry model=X` beside
+//     `layer.defaults.agent.model X`), because D1175 hands these blocks to this
+//     path whole — the plan's own red step is an `ab` entry landing, and every
+//     ab member is a `models` row — and the owner column is a name G12 renames,
+//     which is where the two spellings converge. What the entry does not skip
+//     is the classification: the write is fenced as the leaf key it wrote
+//     (settingsEntryLeafKey, D1165).
 //
 // A leaf marked Sensitive, or leaves that disagree about their layers, refuse
 // the block: the first because the entry's value would be printed in the diff
@@ -1348,6 +1357,30 @@ func settingsEntryRemove(old []byte, keyPath []string, block settingsEntryBlock,
 		entryKey:   block.keyField,
 		entryValue: value,
 	}, nil
+}
+
+// settingsEntryLeafKey is the key an entry write into one of the project
+// layer's blocks really writes, "" for every other write.
+//
+// The registry holds a row for each member of those blocks and none for the
+// block a person names (`layer.ab.rate` is a row, `layer.ab` is not), so a map
+// entry — one member of the block — is a write of that member's own key, and
+// the key a run reads is the member's. D1165's "an entry write is classified
+// ... exactly as a scalar write is" cannot mean a different answer for the same
+// key, and the ceiling fence is one of the checks it names: the two spellings
+// of one edit answer the widening question alike, which is what the dry run's
+// `widening` (D1106) and the gate's typed rule (settingsOwnerOnlyRule, D1026)
+// read.
+//
+// The other two shapes keep the block as what classifies them, for the reason
+// D1165 gives them the block: a repository's entry is classified by the block
+// itself, and an object list's entry is a mapping rather than one member, so
+// no single key of it is the setting the write moves.
+func settingsEntryLeafKey(key string, block settingsEntryBlock, entry *settingsEntryWrite) string {
+	if entry == nil || block.kind != settingsEntryMap || !strings.HasPrefix(key, "layer.") {
+		return ""
+	}
+	return key + "." + entry.entryKey
 }
 
 // settingsCeilingAgentKeys are the agent block's own caps. D846's prefix test
@@ -1584,10 +1617,15 @@ func settingsListSubset(a, b string) bool {
 // owner's own hand, and the sentence saying what it widens: the write prints it
 // and the dry run carries it as `why`, and it no longer ends by naming a
 // question, because a widening asks none (settings_write.go, D1552).
-// mode is the edit being made: set, unset, add or remove. `remove` takes one
-// member out of a list, which narrows it, so it is never the typed form and has
-// no case below; `unset` always is, for a ceiling, because it hands the
-// decision to a looser layer.
+// mode is the edit being made: set, unset, add, remove, add-entry or
+// remove-entry. `remove` takes one member out of a list, which narrows it, so it
+// is never the typed form and has no case below; `unset` always is, for a
+// ceiling, because it hands the decision to a looser layer, and a map entry's
+// `remove-entry` is that same removal of the member the file holds. `add-entry`
+// on a map is SetScalar under another name, so a ceiling's own comparison is
+// the `set` one: the key it is asked about is the member's
+// (settingsEntryLeafKey), and the value the command line carried is the
+// member's value.
 func settingsTypedWrite(row settings.Row, oldValue, newValue, mode string) (bool, string) {
 	key := row.Key
 	ceilingWhy := "this raises a limit: the file it would edit decides the ceiling of every run this branch starts"
@@ -1595,11 +1633,11 @@ func settingsTypedWrite(row settings.Row, oldValue, newValue, mode string) (bool
 	followupAddWhy := "this widens who is trusted: a run then acts on comments from an account it did not act on before"
 	if settingsCeilingKey(key) {
 		switch mode {
-		case "unset":
+		case "unset", "remove-entry":
 			return true, "removing a ceiling hands the decision back to a looser layer"
 		case "add":
 			return true, ceilingWhy
-		case "set":
+		case "set", "add-entry":
 			if settingsLoosens(key, oldValue, newValue) {
 				return true, ceilingWhy
 			}
@@ -1768,10 +1806,13 @@ func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) e
 	// entryAddr is the entry an entry write is about, nil for every other write:
 	// the two are what the checks below need from the edit. entryDoc is the same
 	// write seen by the dry run, which is the only reader of the entry's own
-	// members (D1164).
+	// members (D1164), and entryBlock is the block it lands in, which is what
+	// says whether the entry is one member of a map and so a leaf key of its own
+	// (settingsEntryLeafKey).
 	var removed string
 	var entryAddr *settingsEntryAddr
 	var entryDoc *settingsEntryWrite
+	var entryBlock settingsEntryBlock
 	switch {
 	case o.add != "":
 		mode = "add"
@@ -1799,6 +1840,7 @@ func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) e
 		}
 		if err == nil {
 			newData, entryAddr, entryDoc = written.data, &written.addr, &written
+			entryBlock = block
 		}
 	default:
 		newData, err = yamledit.SetScalar(old, target.keyPath, value)
@@ -1846,11 +1888,29 @@ func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) e
 	// The widening check compares against the tighter of the file's own value
 	// and what a run gets today; the document's `old` is the file's own value,
 	// which is what a window shows the operator as the value being changed.
-	base := oldValue
-	if settingsCeilingKey(key) {
-		base = settingsCeilingBase(cmd.Context(), row, oldValue)
+	//
+	// A write that entered one of the project layer's blocks is classified as
+	// the leaf key it wrote and not as the block it named (settingsEntryLeafKey,
+	// D1165): the block is a shape and the member is the setting, so an entry
+	// that raises or removes a cap meets the same fence the leaf's own spelling
+	// meets. The entry's own value is the member's, which is what the fence
+	// compares — the entry rendering above is for the window and the record.
+	checked, checkedOld, checkedNew := row, oldValue, newValue
+	if leafKey := settingsEntryLeafKey(key, entryBlock, entryDoc); leafKey != "" {
+		if leafRow, _, ok := settingsWriteLookup(leafKey); ok {
+			// The row keeps the key as written, as settingsWriteLookup's own
+			// contract says: the fence reads the key it names.
+			leafRow.Key = leafKey
+			checked = leafRow
+			checkedOld = settingsValueIn(old, append(slices.Clone(target.keyPath), entryDoc.entryKey))
+			checkedNew = entryDoc.entryValue
+		}
 	}
-	typed, why := settingsTypedWrite(row, base, value, mode)
+	base := checkedOld
+	if settingsCeilingKey(checked.Key) {
+		base = settingsCeilingBase(cmd.Context(), checked, checkedOld)
+	}
+	typed, why := settingsTypedWrite(checked, base, checkedNew, mode)
 	if !changed {
 		// An edit that writes nothing asks for nothing: the real write prints
 		// "already reads what was asked for" and demands no typed name, so the

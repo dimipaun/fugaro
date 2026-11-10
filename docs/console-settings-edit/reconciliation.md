@@ -130,7 +130,7 @@ ruling that `--yes` answers that one too, outside an agent session, and the plan
 task that makes it so — *(Amended 2026-11-07: **P4 has landed**, so `--yes` answers the typed
 confirmation too, outside an agent session, which is the argv the console spawns.)* Every successful
 write ends with `next: fugaro update` (`runSettingsSet`, **S5 #1525**
-`internal/cli/settings_set.go:1915`). *Consequence:*
+`internal/cli/settings_set.go:1975`). *Consequence:*
 the console spawns this and reads its sentences; it writes no document of its own, and it never
 re-implements the diff (**D1103**).
 
@@ -191,7 +191,7 @@ prerequisite **P2**.
 output, no dry run, and no classification.** The flags were `--layer`, `--repo`, `--yes`, `--add` and
 `--remove` and nothing else (`newSettingsSetCmd`, **S5 #1525** `internal/cli/settings_set.go:346`;
 `newSettingsUnsetCmd`, `:431`). Widening is decided inside `settingsTypedWrite` (**S5 #1525**
-`internal/cli/settings_set.go:1585`) — via `settingsCeilingKey` (`internal/cli/settings_set.go:1366`),
+`internal/cli/settings_set.go:1618`) — via `settingsCeilingKey` (`internal/cli/settings_set.go:1399`),
 `settingsLoosens` (`:1516`) and `settingsListSubset` (`:1564`) — and is **never printed as a field**;
 it becomes a prompt. The only outputs are prose on stdout and `userErr`'s exit code. *Consequence:*
 the console cannot ask "is this a widening?" and must not re-derive it — the classification rules
@@ -382,7 +382,7 @@ An answer here is not an approval: the plan's tasks start only when the owner ap
   backup; **(b)** the console re-derives widening from the registry's key list and the old/new
   values; **(c)** the console performs the write and reads the CLI's prompt behaviour from the exit
   code. *Recommendation:* **(a)**. **(b)** is the option the brief forbids and the one that is wrong
-  on the merits: widening is `settingsCeilingKey` (`internal/cli/settings_set.go:1366`) **and**
+  on the merits: widening is `settingsCeilingKey` (`internal/cli/settings_set.go:1399`) **and**
   `settingsLoosens` (`:1516`) **and** `settingsListSubset` (`:1564`) **and** `settingsTypedWrite`
   (`:1585`), including the deliberate "a form this Fugaro does not know how to compare is treated as
   a loosening" rule — a TypeScript re-implementation would answer *narrowing* where the CLI answers
@@ -400,7 +400,7 @@ An answer here is not an approval: the plan's tasks start only when the owner ap
 - **D1107 (ANSWERED by the owner, 2026-11-01, and not as this design recommended: `--yes` is allowed
   for a widening, and there is no console-only hook). S5's widening path needs the project's name
   typed at a terminal, and the console has no terminal. What happens to a widening?** *The problem,
-  stated plainly:* `settingsTypedWrite` (**S5 #1525** `internal/cli/settings_set.go:1585`) marks a
+  stated plainly:* `settingsTypedWrite` (**S5 #1525** `internal/cli/settings_set.go:1618`) marks a
   loosened ceiling, a removed ceiling and a `followup.*` key turned on as the typed form;
   `applySettingsEdit` then calls `confirmTypedStrict` (`internal/cli/budget.go:251`), which requires
   a terminal (`stdinIsTerminal`) and compares the typed line against the project's name, and which
