@@ -11148,8 +11148,10 @@ mint is written to answers, so it may not merge before they exist.
   allowlisting, **U8 stays UNVERIFIED** and task **T2.11** says so in `SECURITY.md` for the read
   token.
 - **U11** — whether the token response **lists the granted scopes**. The service cannot read a
-  consumer's configured scopes, so if it does not, the minimum-scope rule (G7) rests on Check 147
-  alone, and the plan says so where that reading is written.
+  consumer's configured scopes, so if it does not, the minimum-scope rule (G7) has nothing left to
+  fall back on: the run-token half went with S3, and **D1960 (answered 2026-11-10) retired Check
+  147**, the number that once carried it, so the plan's G7 row reads the question as moot — no run
+  token is minted for a rule to bound.
 - **U12** — whether repeated grants return **distinct tokens**, which bears on attribution and on
   the audit line every mint writes.
 - **U14** — whether creating a consumer needs **workspace-admin rights**, and whether the token then

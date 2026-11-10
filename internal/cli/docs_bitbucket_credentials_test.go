@@ -116,13 +116,14 @@ func TestDocsBitbucketCredentialsIsWritten(t *testing.T) {
 		bitbucketCredentialsS3Parked,
 		"The active plan is **S0–S2**",
 		// The two number blocks this work holds, with what is written in each
-		// and what is reserved. A block is extended by appending to it and the
-		// table that summarises it is elsewhere, which is how a range goes stale.
+		// and what is reserved — the check row naming what each number now is,
+		// because D1960 retired 147 and D1961 moved 148's read half into S2.
 		"| **D360–D389** |",
 		"| **Checks 145–154** |",
 		"**D360–D367** are written and answered",
 		"**D368–D389** are reserved and unused",
-		"**145–149** are proposed by the plan",
+		"**145, 146, 148 and 149** are the plan's",
+		"**147** is retired as reserved and unused (D1960, answered 2026-11-10)",
 		"**150–154** are reserved and unused",
 	}, bitbucketCredentialsIndexedFiles...) {
 		if !strings.Contains(readme, want) {

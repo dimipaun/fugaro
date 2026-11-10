@@ -35,10 +35,10 @@ written to the owner's answers of 2026-10-26:
 - **O4, answered 2026-11-01 (B3).** Check 145 is a precondition of the first read mint. The plan is
   written to it.
 - **O6, answered 2026-11-01 (B4).** The read mint's custody is accepted and documented (T2.11).
-- **To ask the owner (from the amendment review):** the read half of Check 148 is parked with the
-  rest of Check 148. That half is the stop, rotation and transfer drill for the read consumer, and
-  U13. Should it come back into S2? D367 asks for rotation and ownership transfer to be a task
-  **and** a check.
+- **Answered 2026-11-10 (was "to ask the owner", from the amendment review):** the read half of
+  Check 148 **comes back into S2**. That half is the stop, rotation and transfer drill for the read
+  consumer, and U13. D367 asks for rotation and ownership transfer to be a task **and** a check, and
+  T2.6 alone is the task. It is **D1961**, answered as recommended.
 - **Recorded reading of O2:** "two consumers" is read as the design, so only the read kind is built
   now.
 
@@ -83,6 +83,14 @@ T3.4 by B1.10, T3.6 by B1.8's flip, and T3.5 with T3.7 and Check 147 — with tw
 **T3.3**'s cross-repository trust paths and **T3.8**'s read half stay owed. **S2 is untouched and
 still owed**: T2.6, T2.11, and T1.3 as the owner's own run. The reading's decisions are
 **D1960–D1962**, and its block is **D1960–D1979**.
+
+**Amended 2026-11-10: the owner answered D1960–D1962, all three as recommended.** **D1960** retires
+Check 147 as reserved and unused: the number has no script, its subject went with T3.5, and the
+proxy's own owner-run checks are 191 and 192. **D1961** brings Check 148's read half back into S2 as
+an owner-run check beside T2.6; its run-mint half stays with S3. **D1962** writes T2.6 now, with its
+two Check 145 clauses (U14 and U15) marked **UNVERIFIED**, so the task's block on BB3 is lifted.
+Every consequence below is carried in place: the §S2 task, the §S3 verdict table, the checks table
+and the edges.
 
 **D366 lands in no task by design.** Nothing is built for Data Center. BB5 pins the API root for
 the service-minted read path, which also keeps it on Bitbucket Cloud. T3.2, which is parked, does
@@ -140,7 +148,7 @@ run mint apply when S3 returns.
 | G4 | The read mint admits exactly two caller classes, and each only on the read-mint route. The **person class** (BB4) admits the installation's operators, by their verified Google ID token email. The **coordinator class** (BB5) admits only the coordinator account's verified email. Every other account is refused by name, including the coordinator's planned resident service (coordinator P7), and a caller presenting a run identity is refused | BB4, BB5 |
 | G5 | No consumer key, consumer secret, minted token or **refresh token** appears in any answer, log, error, audit line, run record or comment. A refresh token is never forwarded to a caller | BB1, BB4, BB5, T3.1, T3.2 |
 | G6 | The console child gets no new environment key, and its CSP stays `connect-src 'none'` | T1.2 |
-| G7 | The run consumer's scopes are the minimum set from T3.5. The service can enforce this only if the token response lists scopes (U11); otherwise Check 147 is the only enforcement | T3.5, Check 147 |
+| G7 | The run consumer's scopes are the minimum set from T3.5. The service can enforce this only if the token response lists scopes (U11); otherwise Check 147 is the only enforcement. **Moot: D1960 (answered 2026-11-10) retired Check 147, and no run token is minted** | T3.5, Check 147 (retired, D1960) |
 | G8 | Without the service, every Bitbucket path and the GitHub sweep behave exactly as they do on `main` | BB4 (`TestCoordinatorShowGitHubUnchanged`), BB5 (`TestSweepGitHubUnchangedWithService`, `TestSweepBitbucketUnchangedWithoutService`), T3.2 (`TestRunPathUnchangedWithoutService`) |
 | G9 | With the service on, only repositories whose `bitbucket_via_service` switch is on (set by Terraform on the job) use the service path or lose their mounted token. Every other Bitbucket repository is unchanged. The switch is a code path; the allow-list entry is the exposure | T3.0, T3.2, T3.6 |
 | G10 | A service-minted token is never sent to an overridden API root (`FUGARO_BITBUCKET_API_URL`) | BB4, BB5, T3.2 (`TestServicePathRefusesAPIRootOverride`) |
@@ -188,7 +196,9 @@ run mint apply when S3 returns.
 **T0.2 Register Checks 145, 146 and 149.**
 
 - **Files:** `docs/gcp-live-checklist.md`, with rows and sections for 145, 146 and 149, each
-  marked NOT RUN. Checks 147 and 148 are parked with S3 and stay reserved.
+  marked NOT RUN. Checks 147 and 148 are parked with S3 and stay reserved. **Amended 2026-11-10
+  (D1960, D1961):** the register still carries neither, but 147 is retired for good and 148's read
+  half belongs to S2 — see "Checks this plan takes" below.
 - **Tests:** the existing register pins.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/cli -run Docs -count=1`.
 - **Depends on:** none.
@@ -650,16 +660,22 @@ T2.10 (Check 146). It comes after BB4 because it reuses the read mint BB4 builds
 retarget and its subject did not move — what moved is who the consumer is minted to, which the
 runbook now says.*
 
-*Verdict 2026-11-10: **Kept, and owed.** Nothing builds it: `docs/credentials-service/runbook.md`
-has no sentence about the read consumer — its §11 is the proxy's, a different holder — and the code
-it documents is merged (`internal/credsvc/bundle.go`'s `BitbucketReadConsumerSecret`,
-`internal/credsvc/auth.go`'s person class, `ee/coordinator/cli/coordinator_show.go`). D1962 asks
-whether it ships now with its two Check 145 clauses marked UNVERIFIED, or waits for the check.*
+*Verdict 2026-11-10: **Kept, owed, and unblocked by D1962** (answered 2026-11-10). Nothing builds
+it: `docs/credentials-service/runbook.md` has no sentence about the read consumer — its §11 is the
+proxy's, a different holder — and the code it documents is merged (`internal/credsvc/bundle.go`'s
+`BitbucketReadConsumerSecret`, `internal/credsvc/auth.go`'s person class,
+`ee/coordinator/cli/coordinator_show.go`). **D1962 was answered as recommended: the runbook is
+written now**, with U14 (whether creating a consumer needs workspace-admin rights) and U15 (whether
+the consumer must be private) marked **UNVERIFIED**, because Check 145 has not run (U6, D468). The
+task's block on BB3 is lifted with it: what Check 145 settles is those two clauses, and the rest of
+the procedure is settled by merged code and by the owner's B1–B6 answers.*
 
 - **What it documents:**
   - creating the read consumer under the installing person's account, with read scopes only;
   - that its token acts as that person, read-only, and stops working when the person leaves;
-  - whether a consumer must be private, once Check 145 has said (U15);
+  - whether a consumer must be private, once Check 145 has said (U15). **Until then the clause is
+    written with the mark D1962 gives it: UNVERIFIED**, as is U14, whether creating a consumer
+    needs workspace-admin rights. Check 145's results replace both marks when it runs (U6, D468).
   - writing them with `fugaro creds set`;
   - **the stop switch**: take the consumer out of the bundle;
   - **rotation**: regenerate the secret, write a new bundle version, confirm a mint;
@@ -679,7 +695,9 @@ whether it ships now with its two Check 145 clauses marked UNVERIFIED, or waits 
 - **Tests:** `TestDocsBitbucketRunbook*` checks that the read consumer and its read scopes are
   named, and that the creation, stop, rotation and transfer steps are present.
 - **Command:** `GOFLAGS=-p=2 go test ./internal/cli -run Docs -count=1`.
-- **Depends on:** BB3, whose results the runbook states (U14, U15).
+- **Depends on:** nothing that has not run: **D1962 (answered 2026-11-10) lifted this task's block
+  on BB3**, and its two Check 145 clauses land marked UNVERIFIED instead. Its text describes merged
+  code, and `docs/git-providers.md` is shared with T1.1.
 - **Red step:** the new test fails before the text lands.
 - **Reviewer:** **opus + independent review** (a credential procedure). **Owner-run:** no.
 - **Commit:** `docs: the Bitbucket read consumer: creation, stop, rotation and ownership transfer`.
@@ -738,6 +756,13 @@ following the old plan lands somewhere.
 The class itself is not dropped — it is BB5's — but S2's first mint is a person's, for
 `coordinator show`, so the coordinator job is no longer what S2 is built around.
 
+**Check 148's read half is S2's too (D1961, answered 2026-11-10).** The check was written for S3 and
+parked with it. Its read half — the read consumer's stop switch, rotation and ownership transfer,
+with U13 — is the drill for a credential S2 built, shipped and handed to a person (BB2, BB4, BB5),
+and S2 is where T2.6's runbook documents the same four operations. It is therefore an **owner-run
+check of S2, written beside T2.6**, and its run-mint half stays with S3. That is the whole of
+T3.8's kept part; T3.8's own body below still carries it, as the record of how it was written.
+
 ### S3, PARKED: the service mints Bitbucket run tokens (D360, D363, T1)
 
 **Parked by the owner on 2026-10-26 (O1).** Runs keep their per-repository access tokens. S3 is
@@ -752,7 +777,8 @@ deferred until a push and pull-request proxy exists (D363(d)), and it is not can
 - **O7's rule binds S3 when it returns:** review-only and artifact runs get **no** write token
   (F33, U16).
 - The parked parts are: T3.0–T3.8, Checks 147 and 148, the run consumer (F21), and the SECURITY.md
-  statements of T3.4.
+  statements of T3.4. **Amended 2026-11-10:** Check 147 is retired (D1960) and Check 148's read half
+  is S2's (D1961), so what stays parked of those two is Check 148's run-mint clause alone.
 
 **Verdicts 2026-11-10, against the proxy chain** (the reading is
 [reconciliation-secrets-brokering.md](reconciliation-secrets-brokering.md) §2). S3 was parked
@@ -768,10 +794,10 @@ verdict is split.
 | **T3.2** the runner gets its token from the service | **Superseded** | `internal/gateway/gitforward.go` (B1.6) with `internal/gitprov/providers/providers.go`'s `Proxied`, installed by `internal/runner/runner.go`'s `startProxiedGit` (B1.7); its "no fallback to the mounted token" is B1.8's drop, whose flip is B1.13 part two |
 | **T3.3** comment identity and the trust paths | **Superseded in part, Kept in part** | The identity half goes with the run consumer: there is no consumer-owned person identity, and what a run may comment is B1.4's REST allow-list behind B1.5's route. The cross-repository trust paths stay owed |
 | **T3.4** `SECURITY.md` and the docs say it plainly | **Superseded** | B1.10's "The Bitbucket git proxy" and B1.13 part one's operator notes. Its subject was a minted run token's reach, and no token is minted; the sentences it was to replace are still true for a non-proxied run |
-| **T3.5** the minimum run scopes, and their check | **Superseded — Check 147 with it** | Nothing is minted, so there is no run scope set to enforce: the service spends the credential the operator stored. D1960 asks the owner to retire 147 |
+| **T3.5** the minimum run scopes, and their check | **Superseded — Check 147 with it** | Nothing is minted, so there is no run scope set to enforce: the service spends the credential the operator stored. **D1960 (answered 2026-11-10) retired Check 147 as reserved and unused** |
 | **T3.6** the per-repository drop of the job's own token | **Superseded** | `internal/config/providers.go`'s `ProxiedGitSecretNames` with `internal/infra/spec.go`'s `RepoSpec.BitbucketProxied` and `deploy/terraform/gcp/modules/workflow/sa.tf` (B1.8). Only the flip is owed |
-| **T3.7** Check 147 (OWNER-RUN) | **Superseded** | The check is dropped with T3.5; the proxy's own owner-run check is `scripts/live-checks/check191.sh` and the register's row 191 (B1.11, B1.12), with 192 for the flip |
-| **T3.8** Check 148: the stop, rotation and transfer drill | **Superseded in part, Kept in part** | The run-mint half goes with S3; the read half is the read consumer's own drill, and D1961 asks the owner to bring it back into S2 |
+| **T3.7** Check 147 (OWNER-RUN) | **Superseded — the check is dropped** | The check is dropped with T3.5; the proxy's own owner-run check is `scripts/live-checks/check191.sh` and the register's row 191 (B1.11, B1.12), with 192 for the flip. **D1960 (answered 2026-11-10) retired the number** |
+| **T3.8** Check 148: the stop, rotation and transfer drill | **Superseded in part, Kept in part** | The run-mint half goes with S3; the read half is the read consumer's own drill, and **D1961 (answered 2026-11-10) brought it back into S2** as an owner-run check beside T2.6 |
 
 **T3.0 The per-repository switch, rendered into the job (F25, G9).**
 
@@ -971,7 +997,8 @@ tests this task names are not.*
   token that carries more.
   - If Check 145 shows that it does not list them, no service-side enforcement is built, and
     `TestRunMintRefusesWiderScopes` is dropped. G7 then rests on Check 147 alone, and SECURITY.md
-    says so.
+    says so. **Amended 2026-11-10 (D1960):** the number is retired with this task, so there is no
+    enforcement left for G7 to rest on, and the G7 row above reads the question as moot.
 - **Runbook:** the scope sets are added to `docs/credentials-service/runbook.md`.
 - **Check 147's script:**
   - runs one sandbox run;
@@ -1032,9 +1059,12 @@ tests this task names are not.*
 **T3.8 Check 148: the stop, rotation and ownership-transfer drill (OWNER-RUN, D367).**
 
 *Verdict 2026-11-10: **superseded in part, kept in part.** The run-mint half goes with S3. The read
-half — the read consumer's own stop, rotation and ownership transfer, with U13 — is Kept: the read
-consumer is merged and shipped, nothing else exercises its rotation, and D1961 asks the owner to
-bring it back into S2 beside T2.6.*
+half — the read consumer's own stop, rotation and ownership transfer, with U13 — is Kept, and
+**D1961 (answered 2026-11-10) brought it back into S2 as an owner-run check beside T2.6**: the read
+consumer is merged and shipped, nothing else exercises its rotation, and D367 asked for rotation and
+ownership transfer to be a task **and** a check. The check the task below describes is therefore S2's
+now (see the checks table and S2's own note on it), and the run-mint clause in its last step is the
+only part of it that goes with S3.*
 
 - **What the owner does:** follows the runbook on a sandbox:
   - takes the read consumer out of the bundle, and confirms a read mint is refused;
@@ -1058,9 +1088,13 @@ retargeted ones: BB4 is the read mint's front door and everything Bitbucket-faci
 - C3.9f/g → BB4 (outside this plan: the C3.9 chain, PR #1514)
 - BB4 → BB5
 - T1.1 → BB5
-- BB3 → T2.6
 - BB4 and BB5 → T2.11
 - T0.2 → every owner-run check
+
+**T2.6 has no edge to BB3** (D1962, answered 2026-11-10): the runbook is written now, with its two
+Check 145 clauses marked UNVERIFIED, so the check it used to wait on is no longer on its path.
+**Check 148's read half (D1961) is an owner-run check of S2**, beside T2.6, and T0.2 is its only
+edge — it needs a deployed read mint and the runbook, not a task of this plan.
 
 **Levels** (the tasks in one level run concurrently):
 
@@ -1126,6 +1160,9 @@ minting, with the S2 numbers they name left as they were written:
 - T3.2 and T3.5 → T3.7
 - T2.6, T2.4 and T2.5 → T3.8
 
+T3.8's read half is no longer parked: **D1961 (answered 2026-11-10) made it an owner-run check of
+S2**, so the last edge above survives only for the run-mint half that is not built.
+
 Those old numbers are the pre-retarget ones; "What the retarget moved" at the end of S2 says where
 each went. When S3 is re-planned against the proxy, its levels, its edges and its shared-files rows
 are derived again, from the tasks as they then stand. T3.4 is the second writer of `SECURITY.md`
@@ -1138,17 +1175,17 @@ golden plans and the workflow module.
 | --- | --- | --- | --- |
 | 145 | The consumer facts: U1–U5, U8, U11, U12, U14 and U15. **It gates the read mint (B3/O4)** | owner | T0.2 (section), BB3 (script) |
 | 146 | The coordinator sweep reads a Bitbucket repository through the service, and its GitHub views are unchanged | owner | T0.2, BB5 |
-| 147, **parked with S3** | A sandbox run on a minted token works with exactly the minimum scopes. It records the token's reach into a second repository, the pipeline trigger, and U10 | owner | T0.2, T3.5 |
-| 148, **parked with S3** | The stop, rotation and ownership-transfer drill, with U13 | owner | reserved |
+| 147, **retired (D1960)** | Nothing: the number is retired as reserved and unused. Its subject — a sandbox run on a service-minted token with exactly the minimum scopes — went with S3 (T3.5), and the proxy's own owner-run checks are 191 and 192 (B1.11) | — | — |
+| 148, **S2's, read half only (D1961)** | The read consumer's stop, rotation and ownership transfer, with U13. The run-mint half went with S3 | owner | S2, beside T2.6 |
 | 149 | The console shows the stored view on the owner's own machine (U9, end to end) | owner | T0.2 |
 
 Checks 150–154 are reserved and unused.
 
-**Amended 2026-11-10.** Check 147's subject — a sandbox run on a service-minted token, with exactly
-the minimum scopes — is gone with S3 (T3.5), and the number has no script and no register row.
-D1960 asks the owner to retire it, and D1961 to bring 148's read half back into S2; until the owner
-answers, the table above stands as written. The proxy chain's own owner-run checks are 191 and 192,
-written by B1.11.
+**Amended 2026-11-10.** The owner answered D1960–D1962 as recommended. **147 is retired as reserved
+and unused** (D1960): its subject went with S3 (T3.5), it has no script and no register row, and a
+number the plan names as "written by T3.5" would point a reader at a task that will never be built.
+**148 returns into S2 with only its read half live** (D1961), as an owner-run check beside T2.6. The
+proxy chain's own owner-run checks are 191 and 192, written by B1.11.
 
 ## Release actions
 
