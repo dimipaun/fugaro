@@ -2,10 +2,12 @@ package cli
 
 import (
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
+	"github.com/dimipaun/fugaro/internal/settings"
 )
 
 // G4's tests (docs/config-management/implementation-plan.md, D1175): the
@@ -189,5 +191,73 @@ func TestSettingsSetLayerEntryInAManagedSessionIsRefusedByTheGate(t *testing.T) 
 	recs := r.audits(t)
 	if len(recs) != 1 || recs[0].Verdict != managedmode.AuditRefused {
 		t.Fatalf("the refusal left %+v, want exactly one refused record", recs)
+	}
+}
+
+// TestSettingsLayerEntryBlocksResolveToTheirLeaves: every project-layer block
+// the entry table names is one the registry has rows for, whose layers agree and
+// none of which is Sensitive. Those are the three facts settingsEntryRow reads
+// the row it builds out of, and the table is what says an entry of the block can
+// be written at all: a block whose leaves a later release renames, moves to
+// another layer or marks Sensitive would otherwise be a name that resolves to a
+// row this Fugaro invents rather than reads.
+func TestSettingsLayerEntryBlocksResolveToTheirLeaves(t *testing.T) {
+	blocks := 0
+	for _, pattern := range settingsEntryBlockOrder {
+		if !strings.HasPrefix(pattern, "layer.") {
+			continue
+		}
+		blocks++
+		leaves := 0
+		var layers []string
+		for _, r := range settings.Rows() {
+			if !strings.HasPrefix(r.Key, pattern+".") {
+				continue
+			}
+			leaves++
+			if layers == nil {
+				layers = r.Layers
+				continue
+			}
+			if !slices.Equal(layers, r.Layers) {
+				t.Errorf("%s's leaves disagree about the layers they are set at: %v against %v, and the block's row is built from the first of them", pattern, layers, r.Layers)
+			}
+		}
+		if leaves == 0 {
+			t.Errorf("%s is in the entry table and no registry row names a member of it: an entry write of the block would be refused as one no row names", pattern)
+			continue
+		}
+		if !slices.Contains(layers, settings.LayerProject) {
+			t.Errorf("%s's leaves are set at %v and not at the project layer, so a --layer project write of the block has no layer the row names: the entry would be refused by settingsResolveTarget rather than written", pattern, layers)
+		}
+		if r, ok := settings.Lookup(pattern); ok {
+			t.Errorf("%s is a registry row of its own (%s): a block the registry holds needs no row built for it, and the two would answer the same write differently", pattern, r.Key)
+		}
+	}
+	if blocks == 0 {
+		t.Fatal("the entry table holds no project-layer block, so nothing here is checked")
+	}
+}
+
+// TestSettingsSetLayerCacheEntryIsRefusedByTheKeyFieldRule: the layer's cache is
+// the one block this pair reaches and cannot address (D1163, spec §2.2) — its
+// key field holds a list of files rather than a name — so an entry of it is
+// refused with that sentence rather than with "takes no entry", exactly as a
+// repository's own cache is.
+func TestSettingsSetLayerCacheEntryIsRefusedByTheKeyFieldRule(t *testing.T) {
+	settingsWriteHome(t)
+	path := settingsWriteLayerFile(t, settingsLayerProfiles)
+	before := readFileString(t, path)
+	noTerminal(t)
+
+	out, _, err := execute(t, "settings", "set", "layer.profiles.web.cache", "--add-entry", "key=pip", "--layer", "project")
+	if err == nil {
+		t.Fatalf("a cache entry of the layer was written:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "key field") || !strings.Contains(err.Error(), "a list of files and not a name") {
+		t.Errorf("the refusal is not D1163's key-field rule over the layer's cache: %v", err)
+	}
+	if readFileString(t, path) != before {
+		t.Error("the layer file changed under a refused cache entry")
 	}
 }

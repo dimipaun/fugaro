@@ -5421,7 +5421,7 @@ Flags:
 | `--ask` | bool | `false` | no | in a project whose marks say it is managed, ask the confirmation this write would otherwise get (the y/N) instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back — a widening is the owner's own step and is asked nothing with or without it (D1552). Refused where nobody can answer them (a coding agent's session, a pipe, --non-interactive); a no-op with a sentence in a project that is not managed; refused beside --yes |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--dry-run` | bool | `false` | no | print what the edit would do and write nothing |
-| `--executable-changes` | bool | `false` | no | allow a --layer repo write that changes a workflow's commands or image steps (they run as shell in this repository's runs) |
+| `--executable-changes` | bool | `false` | no | allow a --layer repo write that changes a workflow's commands or image steps, or a --layer project write that changes a profile's commands or image steps (both run as shell in every run of the repositories that take them) |
 | `-h`, `--help` | bool | `false` | no | help for set |
 | `--json` | bool | `false` | no | print the dry run's document (with --dry-run) |
 | `--layer` | string | "" | no | the layer to write (local, project, repo) |
@@ -5472,7 +5472,7 @@ Flags:
 | `--ask` | bool | `false` | no | in a project whose marks say it is managed, ask the confirmation this removal would otherwise get instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back. Refused where nobody can answer it (a coding agent's session, a pipe, --non-interactive); a no-op with a sentence in a project that is not managed; refused beside --yes, --dry-run and --json |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--dry-run` | bool | `false` | no | print what the edit would do and write nothing |
-| `--executable-changes` | bool | `false` | no | allow a --layer repo write that takes away a workflow's commands or image steps (they run as shell in this repository's runs) |
+| `--executable-changes` | bool | `false` | no | allow a --layer repo write that takes away a workflow's commands or image steps, or a --layer project write that changes a profile's commands or image steps (both run as shell in every run of the repositories that take them) |
 | `-h`, `--help` | bool | `false` | no | help for unset |
 | `--json` | bool | `false` | no | print the dry run's document (with --dry-run) |
 | `--layer` | string | "" | no | the layer to write (local, project, repo) |

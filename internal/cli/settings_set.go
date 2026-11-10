@@ -419,7 +419,7 @@ Every write ends with one line: next: fugaro update.`,
 	f.StringVar(&o.remove, "remove", "", "remove an item from a string-list key")
 	f.StringArrayVar(&o.addEntry, "add-entry", nil, "add one entry to a map or an object list (field=value, once per member the entry has)")
 	f.StringArrayVar(&o.removeEntry, "remove-entry", nil, "remove one entry from a map or an object list (the member's name, or the key field's value)")
-	f.BoolVar(&o.executableChanges, "executable-changes", false, "allow a --layer repo write that changes a workflow's commands or image steps (they run as shell in this repository's runs)")
+	f.BoolVar(&o.executableChanges, "executable-changes", false, "allow a --layer repo write that changes a workflow's commands or image steps, or a --layer project write that changes a profile's commands or image steps (both run as shell in every run of the repositories that take them)")
 	f.BoolVar(&o.dryRun, "dry-run", false, "print what the edit would do and write nothing")
 	f.BoolVar(&o.jsonOut, "json", false, "print the dry run's document (with --dry-run)")
 	return cmd
@@ -467,7 +467,7 @@ Every write ends with one line: next: fugaro update.`,
 	f.StringVar(&o.repo, "repo", "", "the repository whose fugaro.yaml to edit (owner/name, or a path inside its checkout)")
 	f.BoolVar(&o.yes, "yes", false, "confirm the write without a prompt")
 	f.BoolVar(&o.ask, "ask", false, "in a project whose marks say it is managed, ask the confirmation this removal would otherwise get instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back. Refused where nobody can answer it (a coding agent's session, a pipe, --non-interactive); a no-op with a sentence in a project that is not managed; refused beside --yes, --dry-run and --json")
-	f.BoolVar(&o.executableChanges, "executable-changes", false, "allow a --layer repo write that takes away a workflow's commands or image steps (they run as shell in this repository's runs)")
+	f.BoolVar(&o.executableChanges, "executable-changes", false, "allow a --layer repo write that takes away a workflow's commands or image steps, or a --layer project write that changes a profile's commands or image steps (both run as shell in every run of the repositories that take them)")
 	f.BoolVar(&o.dryRun, "dry-run", false, "print what the edit would do and write nothing")
 	f.BoolVar(&o.jsonOut, "json", false, "print the dry run's document (with --dry-run)")
 	return cmd
