@@ -50,12 +50,12 @@ is a different thing: it is the **mount** drop, and while it is empty a proxied 
 `bitbucket-token` secret and accessor, so the token is still one read of the runner's `/proc` away
 even though the run's own git traffic carries none.
 
-Two things are **not** on `main`, and both matter below: `internal/config/providers.go`'s
-`ProxiedGitSecretNames` is still `[]string{}`, so the job's mount stays (the flip is B1.13 part two,
-held on Check 191 in draft #2166); and this folder's own S2 read path —
-`ee/coordinator/cli/coordinator_show.go`, `internal/credsvc/bitbucket.go`'s read mint,
-`internal/credsvc/auth.go`'s person class — is untouched by the chain, because it reads through a
-**person's** credential rather than a run's.
+One thing is **not** on `main`: `internal/config/providers.go`'s `ProxiedGitSecretNames` is still
+`[]string{}`, so the job's mount stays — the flip is B1.13 part two, held on Check 191 in draft
+#2166. And this folder's own S2 read path — `ee/coordinator/cli/coordinator_show.go`,
+`internal/credsvc/bitbucket.go`'s read mint, `internal/credsvc/auth.go`'s person class — is
+**untouched by the chain**: it is merged (§2, BB2, BB4 and BB5), and the chain builds none of it,
+because it reads through a **person's** credential rather than a run's.
 
 ## 2. Every task, and what builds it
 
