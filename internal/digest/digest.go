@@ -696,20 +696,19 @@ func reviewScopeDrift(rec *runstore.Record) bool {
 //
 // A run whose task declared no scope, and a record written before the field
 // existed, carries none and is never flagged: with no scope there is nothing
-// the paths could be outside of. The changed-file set is the run's own bounded
-// list, so a set the record truncated can only hide drift and never invent it,
-// which is the opposite of the review-scope comparison above: there the flag
-// rests on a difference between two capped sets, and here on one path that is
-// in the set and outside the scope whatever the rest of the set holds.
+// the paths could be outside of. The changed-file set is bounded the way every
+// other figure a record carries is, and a set the bound truncated can only hide
+// drift and never invent it, which is the opposite of the review-scope
+// comparison above: there the flag rests on a difference between two capped
+// sets, and here on one path that is in the set and outside the scope whatever
+// the rest of the set holds.
 func scopeDrift(rec *runstore.Record) bool {
 	scope := declaredScope(rec.ExpectedScope)
-	if len(scope) == 0 || rec.ChangedFiles == nil {
+	files := rec.ChangedFiles.Bounded()
+	if len(scope) == 0 || files == nil {
 		return false
 	}
-	for _, p := range rec.ChangedFiles.Paths {
-		if p == "" {
-			continue
-		}
+	for _, p := range files.Paths {
 		if !matchesAny(scope, p) {
 			return true
 		}

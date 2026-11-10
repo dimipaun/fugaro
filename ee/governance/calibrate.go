@@ -213,11 +213,16 @@ func calibrate(t tier.Tier, runs []digest.Expectation) Calibration {
 // is in. A ratio at or past a bound is the bound: the window is evidence about
 // the figure it holds and not a reason to move a default further than the
 // bound allows (G9).
+//
+// The figure is exact and not rounded to whole cents, which is the report's own
+// money renderer and the section's own claim: a base of $0.25 held at the floor
+// is $0.125, and a suggestion rounded up to $0.13 would be one the bounds the
+// section prints above it do not hold.
 func suggest(base budget.Micros, ratio float64) budget.Micros {
 	if base <= 0 {
 		return 0
 	}
-	return budget.Micros(math.Round(float64(base) * bounded(ratio)))
+	return budget.Micros(math.Round(float64(base) * boundedRatio(ratio)))
 }
 
 // suggestMinutes is suggest for a duration in whole minutes, never zero: a
@@ -227,11 +232,11 @@ func suggestMinutes(base int64, ratio float64) int64 {
 	if base <= 0 {
 		return 0
 	}
-	return max(int64(math.Round(float64(base)*bounded(ratio))), 1)
+	return max(int64(math.Round(float64(base)*boundedRatio(ratio))), 1)
 }
 
-// bounded is ratio held inside SuggestionFloor..SuggestionCeiling.
-func bounded(ratio float64) float64 {
+// boundedRatio is ratio held inside SuggestionFloor..SuggestionCeiling.
+func boundedRatio(ratio float64) float64 {
 	return math.Min(math.Max(ratio, SuggestionFloor), SuggestionCeiling)
 }
 

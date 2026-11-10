@@ -62,7 +62,8 @@ func (r *run) tierExpectation(t tier.Tier) policy.TierExpectation {
 // the scope-drift flag compares the paths the run changed against this list
 // (D522, D528). A task that declares no scope records none — the field is
 // absent, never an empty list — and the flag is raised only where a scope was
-// declared, so an untiered and unscoped launch records what it always did.
+// declared, so a launch whose task declares none records what every launch
+// recorded before this field existed.
 //
 // The list is copied rather than aliased: the spec is the caller's, and a
 // record that shared its backing array would change under a later mutation of
