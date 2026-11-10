@@ -724,9 +724,8 @@ export class CliSource implements FugaroSource {
    * argument at all -- the whole argv is the spawn row's, `--all --json` -- and
    * like the stored view above its child asks nothing of the host: the
    * declarations are the caller's own database node, read through the same
-   * store and the same ADC, so this read succeeds with
-   * `FUGARO_CREDENTIALS_SERVICE_URL` set where `coordinatorShow`'s host read
-   * refuses. */
+   * store and the same ADC, so this read needs no published credentials service
+   * where `coordinatorShow`'s host read needs the one its project publishes. */
   coordinatorIntents(args: ValidatedArguments): Promise<Snapshot> {
     return this.#readDocument('coordinator.intents', args)
   }
@@ -738,7 +737,7 @@ export class CliSource implements FugaroSource {
    * project flags main-process state settles -- and like the declarations read
    * above its child asks nothing of the host: the marks and the audit trail are
    * the caller's own database node, read through the same store and the same
-   * ADC, so this read succeeds with `FUGARO_CREDENTIALS_SERVICE_URL` set. **The
+   * ADC, so this read needs no credentials service of any kind. **The
    * subset is the command's** -- `argv` is not in it (D1476) -- so nothing this
    * process does can widen or narrow what a screen is shown. */
   managedStatus(args: ValidatedArguments): Promise<Snapshot> {

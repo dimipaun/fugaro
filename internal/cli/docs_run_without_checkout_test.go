@@ -125,8 +125,13 @@ func TestDocsRunWithoutCheckoutRecordsD915Answered(t *testing.T) {
 		t.Fatalf("%s no longer carries a §3 row for D915: it is the decision A0 implements, and this check reads it", rwcDir+"reconciliation.md")
 	}
 	row := recon[i:]
+	// D915 is the last row of §3, so the row runs to the section's end: the
+	// next row's marker is the first bound and the next heading the second.
 	if j := strings.Index(row[1:], "| **D9"); j >= 0 {
 		row = row[:j+1]
+	}
+	if j := strings.Index(row, " ## "); j >= 0 {
+		row = row[:j]
 	}
 	if strings.Contains(row, "no answer") || strings.Contains(row, "Open") {
 		t.Errorf("%s's D915 row is still recorded as unanswered: the set of its own landed with A0, and the answer this row carries is the one the plan was written against", rwcDir+"reconciliation.md")

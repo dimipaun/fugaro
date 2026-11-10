@@ -1492,10 +1492,10 @@ export const CONSOLE_OPERATIONS = [
   // for the one repository and revoked when the command is done. That is why the two arguments below are
   // the whole of what a renderer can influence about this argv: there is no key
   // for a token, a host, a path, an endpoint or a flag, and the row in
-  // `src/main/spawn.ts` declares the same two keys and no other word. Under
-  // `FUGARO_CREDENTIALS_SERVICE_URL` the command refuses -- the service holds
-  // the App's key and this read is not a run -- which the screen draws as its
-  // own refusal.
+  // `src/main/spawn.ts` declares the same two keys and no other word. A project
+  // that publishes no credentials service is one whose host read is refused --
+  // the read resolves the service from the project's own published block and
+  // from nothing else -- which the screen draws as its own refusal.
   {
     name: 'coordinator.show',
     method: 'coordinatorShow',
