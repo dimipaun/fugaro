@@ -472,6 +472,143 @@ func TestGrantRefusedForAnotherOwnersToken(t *testing.T) {
 	})
 }
 
+// TestGrantTakesNoRunIdentity: the grant's door, and the sibling of
+// TestRunIdentityRefusedOnReadRoute (auth_test.go) one class along. A grant is
+// asked for BEFORE the run exists, so a caller presenting a run identity — or
+// naming a job — is a call of a shape this route does not have. The caller was
+// verified by its own class by then, so the refusal is written: exactly one
+// line, naming the launcher and the act, with no run, no job and no repository
+// in it. It is what keeps the launcher class from becoming a second way in for
+// a run, and no slip may be written by a call it refuses.
+func TestGrantTakesNoRunIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		extra func(*http.Request)
+	}{
+		{"a run identity", func(r *http.Request) { r.Header.Set(HeaderRunIdentity, "a-run-identity-token") }},
+		{"a job name", func(r *http.Request) { r.Header.Set(HeaderRunJob, "fugaro-a-job") }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newSlips(t, testLauncherAccount)
+			resp, body := s.grantCall(t, grantBody(t, s.slug, s.run, testJobSA, 3600, testSlipCredential), tc.extra)
+			wantRefusal(t, resp, body, StatusUnverified, ErrorUnverifiedRunIdentity)
+			if got := s.slipIDs(t); len(got) != 0 {
+				t.Errorf("a grant refused at the door wrote %v", got)
+			}
+			lines := auditLines(t, s.audit)
+			if len(lines) != 1 {
+				t.Fatalf("the refused grant wrote %d audit lines, want exactly 1: %v", len(lines), lines)
+			}
+			wantSlipLine(t, lines[0], PurposeSlipGrant, ErrorUnverifiedRunIdentity, map[string]any{
+				"caller": testLauncherAccount, "run": "", "repository": "", "job": "",
+				"credential": "", "tier": "",
+			})
+		})
+	}
+}
+
+// TestAnUnknownBodyMemberIsRefused: both new bodies decode STRICTLY, as every
+// body of this service does. A member this release does not model is a refusal
+// rather than a member silently dropped — and on these two routes the dropped
+// member would be the worst kind: a grant that permits nothing, or one that
+// never ends, decided by a field nobody read.
+func TestAnUnknownBodyMemberIsRefused(t *testing.T) {
+	// The contract's own body with one member this release does not model
+	// appended, so the refusal is the unknown member and not a body that was
+	// malformed in some other way.
+	withUnknown := func(body string) string {
+		return strings.TrimSuffix(body, "}") + `,"unknown":1}`
+	}
+
+	t.Run("the grant's body", func(t *testing.T) {
+		s := newSlips(t, testLauncherAccount)
+		body := withUnknown(grantBody(t, s.slug, s.run, testJobSA, 3600, testSlipCredential))
+		resp, answer := s.grantCall(t, body)
+		wantRefusal(t, resp, answer, StatusRequestRefused, ErrorRequestRefused)
+		if got := s.slipIDs(t); len(got) != 0 {
+			t.Errorf("a grant whose body carried an unknown member wrote %v", got)
+		}
+		lines := auditLines(t, s.audit)
+		if len(lines) != 1 {
+			t.Fatalf("the refused grant wrote %d audit lines, want exactly 1: %v", len(lines), lines)
+		}
+		wantSlipLine(t, lines[0], PurposeSlipGrant, ErrorRequestRefused, map[string]any{
+			"caller": testLauncherAccount, "run": "", "repository": "", "job": "",
+			"credential": "", "tier": "",
+		})
+	})
+
+	t.Run("the claim's body", func(t *testing.T) {
+		s := newSlips(t, testLauncherAccount)
+		granted := s.grantOK(t, grantBody(t, s.slug, s.run, testJobSA, 3600, testSlipCredential))
+		body := withUnknown(claimBody(t, "fugaro-aurora-app-abc12"))
+		resp, answer := s.claimCall(t, granted.Slip, body)
+		wantRefusal(t, resp, answer, StatusRequestRefused, ErrorRequestRefused)
+		if sl := s.slip(t, granted.Slip); sl.ClaimHash != "" {
+			t.Error("a claim whose body carried an unknown member claimed the slip")
+		}
+		lines := auditLines(t, s.audit)
+		if len(lines) != 1 {
+			t.Fatalf("the refused claim wrote %d audit lines, want exactly 1: %v", len(lines), lines)
+		}
+		wantSlipLine(t, lines[0], PurposeSlipClaim, ErrorRequestRefused, map[string]any{
+			"run": s.run, "repository": s.slug, "job": s.job, "caller": testJobSA,
+			"credential": "", "tier": "",
+		})
+	})
+}
+
+// TestTheSlipHeadersAreReadOnce: the two headers the new routes read carry one
+// value each — the slip the call is about, and the claim secret it presents —
+// and a call that sends either twice is a request this contract does not read.
+// It is the rule every other header of this service keeps (oneHeader), and on
+// these two it matters more than usual: a header read twice is a service
+// choosing between two values a caller sent, which is how a fence becomes a
+// guess.
+func TestTheSlipHeadersAreReadOnce(t *testing.T) {
+	t.Run("the slip id", func(t *testing.T) {
+		s := newSlips(t, testLauncherAccount)
+		granted := s.grantOK(t, grantBody(t, s.slug, s.run, testJobSA, 3600, testSlipCredential))
+		// claimCall sets the header once; this adds a second value to it.
+		resp, body := s.claimCall(t, granted.Slip, claimBody(t, ""), func(r *http.Request) {
+			r.Header.Add(HeaderSlip, granted.Slip)
+		})
+		wantRefusal(t, resp, body, StatusRequestRefused, ErrorRequestRefused)
+		if sl := s.slip(t, granted.Slip); sl.ClaimHash != "" {
+			t.Error("a call carrying two slip ids claimed the slip")
+		}
+		lines := auditLines(t, s.audit)
+		if len(lines) != 1 {
+			t.Fatalf("the refused call wrote %d audit lines, want exactly 1: %v", len(lines), lines)
+		}
+		wantSlipLine(t, lines[0], PurposeSlipClaim, ErrorRequestRefused, map[string]any{
+			"run": s.run, "repository": s.slug, "job": s.job, "caller": testJobSA,
+			"credential": "", "tier": "",
+		})
+	})
+
+	t.Run("the claim secret", func(t *testing.T) {
+		s := newSlips(t, testLauncherAccount)
+		granted := s.grantOK(t, grantBody(t, s.slug, s.run, testJobSA, 3600, testSlipCredential))
+		resp, body := s.claimCall(t, granted.Slip, claimBody(t, ""), func(r *http.Request) {
+			r.Header.Add(HeaderSlipClaim, fakeCred(t, "one-claim-secret"))
+			r.Header.Add(HeaderSlipClaim, fakeCred(t, "another-claim-secret"))
+		})
+		wantRefusal(t, resp, body, StatusRequestRefused, ErrorRequestRefused)
+		if sl := s.slip(t, granted.Slip); sl.ClaimHash != "" {
+			t.Error("a call presenting two claim secrets claimed the slip")
+		}
+		lines := auditLines(t, s.audit)
+		if len(lines) != 1 {
+			t.Fatalf("the refused call wrote %d audit lines, want exactly 1: %v", len(lines), lines)
+		}
+		wantSlipLine(t, lines[0], PurposeSlipClaim, ErrorRequestRefused, map[string]any{
+			"run": s.run, "repository": s.slug, "job": s.job, "caller": testJobSA,
+			"credential": "", "tier": "",
+		})
+	})
+}
+
 // TestSlipIDAloneIsNotEnough: G3. The id is not a bearer ticket — it travels to
 // the job in its environment and the agent can read that (F22) — so every call
 // is admitted by what the slip binds and never by the id.
@@ -612,6 +749,83 @@ func TestCallWithoutClaimSecretRefused(t *testing.T) {
 			"run": s.run, "repository": s.slug, "job": s.job, "caller": testJobSA,
 		})
 	}
+}
+
+// TestAnotherRunCannotReadASlipBack: the READING form's half of F23. The claim
+// is once-only, so every call after it presents the claim secret and is
+// answered the claim's own reading (D1941) — and that call is decided by the
+// SAME binding: the slip's run, its repository and its expected account. A
+// second run of the repository holds the secret (a launcher mints run
+// identities, SECURITY.md) and must still be refused, because the slip is not
+// its own. This is the branch DS1.6 serves credential values from, so it is
+// pinned before anything is served from it.
+//
+// The refusal is the ONE sentence every refusal the record makes is answered
+// with, and exactly one line records it — naming the run that CALLED, which is
+// the identity the shared parse verified.
+func TestAnotherRunCannotReadASlipBack(t *testing.T) {
+	s := newSlips(t, testLauncherAccount)
+	granted := s.grantOK(t, grantBody(t, s.slug, s.run, testJobSA, 3600, testSlipCredential))
+	claimed := s.claimOK(t, granted.Slip, claimBody(t, ""))
+	if claimed.ClaimSecret == "" {
+		t.Fatal("the claim answered no claim secret")
+	}
+
+	other := otherRun()
+	resp, body := s.claimCall(t, granted.Slip, claimBody(t, ""),
+		withClaim(claimed.ClaimSecret),
+		func(r *http.Request) { r.Header.Set(HeaderRunIdentity, s.runTokenFor(other)) })
+	if e := wantRefusal(t, resp, body, StatusUnverified, ErrorUnverifiedRunIdentity); e.Message != slipNotThisRuns {
+		t.Errorf("the refusal is answered %q, want the one sentence every refusal of the record gives (%q)", e.Message, slipNotThisRuns)
+	}
+
+	// The slip the run it names holds is untouched, and it still answers ITS
+	// runner: a reading call refused by another run is not a revocation.
+	kept := s.claimOK(t, granted.Slip, claimBody(t, ""), withClaim(claimed.ClaimSecret))
+	if !kept.ExpiresAt.Equal(claimed.ExpiresAt) {
+		t.Errorf("the reading answers the expiry %s, want the claim's own %s", kept.ExpiresAt, claimed.ExpiresAt)
+	}
+	lines := auditLines(t, s.audit)
+	if len(lines) != 1 {
+		t.Fatalf("the refused reading wrote %d audit lines, want exactly 1: %v", len(lines), lines)
+	}
+	wantSlipLine(t, lines[0], PurposeSlipClaim, ErrorUnverifiedRunIdentity, map[string]any{
+		"run": other, "repository": s.slug, "job": s.job, "caller": testJobSA,
+		"credential": "", "tier": "",
+	})
+}
+
+// TestAReadingCallAfterTheRuntimeIsRefused: the reading form's other half, and
+// R10's own point — a slip serves for the runtime it was granted and no longer.
+// The secret is the right one and the identity is the slip's own run; what has
+// run out is the slip, so the call is refused with the same one sentence, one
+// line, and no reading. The clock is the fixture's, so the runtime is granted
+// short and then passed rather than waited out.
+func TestAReadingCallAfterTheRuntimeIsRefused(t *testing.T) {
+	s := newSlips(t, testLauncherAccount)
+	const runtimeSeconds = 60
+	granted := s.grantOK(t, grantBody(t, s.slug, s.run, testJobSA, runtimeSeconds, testSlipCredential))
+	claimed := s.claimOK(t, granted.Slip, claimBody(t, ""))
+	if claimed.ClaimSecret == "" {
+		t.Fatal("the claim answered no claim secret")
+	}
+
+	// One second past what the slip was granted, measured from the claim (the
+	// reading form's own boundary is the claim's instant and not the call's).
+	s.now = s.now.Add((runtimeSeconds + 1) * time.Second)
+
+	resp, body := s.claimCall(t, granted.Slip, claimBody(t, ""), withClaim(claimed.ClaimSecret))
+	if e := wantRefusal(t, resp, body, StatusUnverified, ErrorUnverifiedRunIdentity); e.Message != slipNotThisRuns {
+		t.Errorf("the refusal is answered %q, want the one sentence every refusal of the record gives (%q)", e.Message, slipNotThisRuns)
+	}
+	lines := auditLines(t, s.audit)
+	if len(lines) != 1 {
+		t.Fatalf("the refused reading wrote %d audit lines, want exactly 1: %v", len(lines), lines)
+	}
+	wantSlipLine(t, lines[0], PurposeSlipClaim, ErrorUnverifiedRunIdentity, map[string]any{
+		"run": s.run, "repository": s.slug, "job": s.job, "caller": testJobSA,
+		"credential": "", "tier": "",
+	})
 }
 
 // TestOtherJobAccountCannotClaim: D1937/R8. The unverifiable execution id the
