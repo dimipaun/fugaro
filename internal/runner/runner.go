@@ -3682,14 +3682,16 @@ func (r *run) levelFocus(level policy.Level) string {
 // as it reaches the stage: the level's own effort and EffortVars' variables for
 // the stage's route, the two answers a reader of it needs. The effort is "" and
 // the variables are nil for a stage that is not a review one, for a level with
-// no effort of its own, and for a provider route, whose calls run with thinking
-// off (G5, D725) -- an empty effort is then the same statement the stage's own
-// environment makes.
+// no effort of its own, and for a stage a provider serves
+// (stageServedByProvider), whose calls run with thinking off (G5, D725) -- an
+// empty effort is then the same statement the stage's own environment makes.
 //
 // It exists so the one rule is spelled once: reviewFacts records the effort that
 // reached the stage and applyStageEffort merges the variables into the stage's
 // pins, and both have to ask the same question of the level, the pins and the
-// route.
+// route. That question is stageServedByProvider, the one stagePins asks of the
+// same stage, so a stage cannot be given the route's variables and an effort
+// beside them.
 func (r *run) reviewEffort(stage string) (string, map[string]string, error) {
 	s, ok := reviewStageOf(stage)
 	if !ok {
@@ -3699,7 +3701,7 @@ func (r *run) reviewEffort(stage string) (string, map[string]string, error) {
 	if effort == "" {
 		return "", nil, nil
 	}
-	vars, err := agent.EffortVars(effort, r.stageOnProviderRoute(r.stageModel(stage), r.backgroundModel()))
+	vars, err := agent.EffortVars(effort, r.stageServedByProvider(r.stageModel(stage), r.backgroundModel()))
 	if err != nil || len(vars) == 0 {
 		return "", nil, err
 	}
@@ -3714,9 +3716,10 @@ func (r *run) reviewEffort(stage string) (string, map[string]string, error) {
 // the run's configuration.
 //
 // The effort is the value that reached the stage rather than the one a layer
-// asked for: EffortVars drops a provider route's, whose calls run with thinking
-// off (G5, D725), so an empty effort is the same statement the stage's own
-// environment makes. Nothing is answered for a stage that is not a review one.
+// asked for: EffortVars drops a provider-served stage's, whose calls run with
+// thinking off (G5, D725), so an empty effort is the same statement the stage's
+// own environment makes. Nothing is answered for a stage that is not a review
+// one.
 func (r *run) reviewFacts(stage string) (model, effort string) {
 	model = r.stageModel(stage)
 	effort, _, err := r.reviewEffort(stage)
@@ -3732,8 +3735,8 @@ func (r *run) reviewFacts(stage string) (model, effort string) {
 // beside them because the pins are what the stage's environment and its managed
 // settings both read, and one answer is what keeps a stage from running under
 // two (stagePins, agentenv.go). Nothing is merged for a stage that is not a
-// review, for a level with no effort, or for a provider route, whose calls run
-// with thinking off (G5, D725).
+// review, for a level with no effort, or for a stage a provider serves, whose
+// calls run with thinking off (G5, D725).
 func (r *run) applyStageEffort(stage string, pins map[string]string) (map[string]string, error) {
 	_, vars, err := r.reviewEffort(stage)
 	if err != nil {

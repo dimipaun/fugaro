@@ -9,7 +9,7 @@ As of 2026-11-10, read from `main`, the open pull requests and each plan's task 
 | licensing | 17/23 | owner-run only |
 | credentials-service | about 32/36 | owner checks; Check 96 holds C2.3 |
 | console-dependency-graph | 13/17 | GV3.1, GV3.2, GV4.1 |
-| bitbucket-credentials | 9/12 | T2.6, T2.11; owner Checks 149 and 145; S3 superseded by the secrets-brokering proxy chain (2026-11-10), except T3.3's trust paths and T3.8's read half, which are kept; D1960–D1962 open (its reconciliation-secrets-brokering.md) |
+| bitbucket-credentials | 9/12 | T2.6, T2.11; owner Checks 149 and 145, and 148's read half (S2, D1961); S3 superseded by the secrets-brokering proxy chain (2026-11-10), except T3.3's trust paths; Check 147 retired (D1960) and T2.6 unblocked (D1962); D1960–D1962 answered 2026-11-10 as recommended (its reconciliation-secrets-brokering.md) |
 | mcp-server | 8/12 | M4 store (draft #2117), M5b (draft #2114, a follow-up in a run); M9 deferred |
 | issue-mine | 5/7 | T-IM3, T-IM7 (in a run); T-IM6 merged |
 | contract-first-decoupling | 4/7 | CD4, CD5, CD7 |
@@ -23,9 +23,10 @@ As of 2026-11-10, read from `main`, the open pull requests and each plan's task 
 
 | Spec | Merged | Left |
 | --- | --- | --- |
-| stateless-orchestrator | 10/19 | O8 (draft #2064), O9 to O14, O16, O19; owner Checks 300 to 305 |
+| stateless-orchestrator | 10/19 | O8 (draft #2064), O9 to O14, O16, O19; owner Checks 301 to 304 (300 PASSED 2026-11-10); 305 reserved |
 | api-key-review | 6/11 | AK6b (draft #2172), AK7, AK9, AK10; owner Check 330 |
 | secrets-brokering | 18/30 | B1.13 flip (draft #2166, held on Check 191), B1.15, B1.16, B2.1 to B5.1; owner Checks 191 and 192. Dynamic-delivery subfolder: DS0.1, DS1.3 and DS2.0 merged, DS2.1 in a run |
+| vision-model | plan only, 0/9 built (V0–V8); not started, nothing approved; owner Checks 520 and 521 not run |
 | subscriptions | about 17/51 | about 22 tasks; 10 owner-run |
 | workspaces | 6/10 | W3 and W6 (drafts), W7, W9 |
 | no-prompt-policy | 9/17 | T4 and T7 (drafts), T9 (draft #2232) to T13; owner T14; T15 merged, and `update` asks nothing (#2082) |
@@ -43,10 +44,10 @@ As of 2026-11-10, read from `main`, the open pull requests and each plan's task 
 | rigor-modes | about 22/40 | T7.1, T7.2, T8.1, T8.3; overlay plan LV1 to LV7 essentially unstarted |
 | roles-scopes | 3/12 | RS3 (draft #1994), RS4, RS5, RS6a to RS6c, RS7, RS8, RS10; RS5 (`fugaro user`) not started |
 | review-levels-ab-jobmax | about 24/40 | A/B reviewer slot, `/jobmax` skill, `auto_launch` |
-| forge-authorship-images | about 9/25 | about 16, much overlapping image-setup |
+| forge-authorship-images | 9/25 (A1, A2a, A2b, A3, A4, C3, C4, C7, E1); C8's C8a built; E0 closed as superseded (roles-scopes) | 15; the image-setup overlap is C6 and C8's C8b/C8c, not about 16 — [reconciliation-image-setup.md](forge-authorship-images/reconciliation-image-setup.md) |
 | go-to-market | 4/12 | the cost-estimate half (`fugaro estimate`) |
 | model-ab-testing | 3/18 | the sampler and the pair launch |
-| bitbucket-workspace-token | 7/13 | T1.4, T2.2, T2.4, T2.6 and T2.7 left; T2.9 superseded by the secrets-brokering proxy chain (2026-11-10); T2.11's step 5 missing from the shipped notes; D1980–D1984 open (its reconciliation-secrets-brokering.md) |
+| bitbucket-workspace-token | 7/13 | T1.4, T2.2, T2.4, T2.6 and T2.7 left; T2.9 closed as replaced by the secrets-brokering proxy chain (D1981, 2026-11-10); T2.11's step 5 now a dated amendment to the shipped 0.14.0 operator notes (D1984); T2.6's three corrections landed (D1983); D1980–D1984 answered 2026-11-10 as recommended (its reconciliation-secrets-brokering.md) |
 | run-limit-carry-over | 4/10 | L0 to L3 merged, L4 in a run, L5 onward waiting |
 | binary-allow-rule | 2/11 | NV1 and NV2 merged, AR0 (draft #2202) held on the update-ordering fix; AR1 and AR3 to AR5 wait behind it |
 | plugin-user-scope | 1/10 | U1 merged, U2 in a run; `fugaro upgrade` is still on main |
@@ -60,12 +61,6 @@ As of 2026-11-10, read from `main`, the open pull requests and each plan's task 
 | mobile-auth | 2/7; parked |
 | repo-image-removal | **PARKED** (2/11; parked by image-setup, D1900) |
 | voice-module, collateral, backlog, plans | no plan or not a spec |
-
-## Open points
-
-1. Overlapping chains to reconcile (owner, 2026-11-10): forge-authorship-images against image-setup, and bitbucket-credentials and bitbucket-workspace-token against secrets-brokering. repo-image-removal stays parked.
-2. Four chains whose release slots passed are now being built (run-limit-carry-over, binary-allow-rule, plugin-user-scope, run-without-checkout). Each still needs a release slot.
-3. Pull requests #2118 and #2131 are both S3.5 (the key service's infrastructure); one is a duplicate.
 
 ## Done
 

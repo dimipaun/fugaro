@@ -795,7 +795,12 @@ carry an empty owner's-answer cell, the number block sits above every claim the 
 and every task in the plan states its files, its red step and its reviewer tier.
 Amended 2026-11-08: that move was resolved away by the batch merge that landed the
 same pin beside `de90e93c`'s recount of the doubled row, so the table's row moves from
-113 to 114 and carries the tree's figure again. Amended 2026-11-09: `7297a7e4` (#2013,
+113 to 114 and carries the tree's figure again. Amended 2026-11-08:
+`internal/cli/docs_check361_test.go`, the workspaces work's pin over its Check 361
+section of the live checklist (W3, added with the check on 2026-11-07), is a pin no
+line above counted — it landed on the workspaces branch while this row was being
+recounted — so the row moves from 114 to 115, the merged tree's own figure rather than
+the chain's next number. Amended 2026-11-09: `7297a7e4` (#2013,
 the security-classification work) added one top-level `fugaro.yaml` key, one config
 scope row and one image-skew `Since` constant, and left three rows below at the
 counts of the tree before it, so they move with the tree: the top-level keys from
@@ -852,7 +857,7 @@ stale has found a merge that did not.
 | Files in `internal/runner` that mention `Severity` at all | 4 | `git grep -l 'Severity' -- internal/runner ':!*_test.go' \| wc -l` |
 | Image-skew `Since` constants | 35 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
 | Run outcomes | 4 | `git grep -ho 'Outcome[A-Za-z]* *= *"[a-z]*"' internal/runstore/runstore.go \| wc -l` |
-| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 121 | `ls internal/cli/docs_*_test.go \| wc -l` |
+| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 122 | `ls internal/cli/docs_*_test.go \| wc -l` |
 | Questions the in-job-review folder put to the owner, all answered | 17 | `git grep -hc '^\*\*Q[0-9]*\. ' docs/in-job-review/reconciliation.md` |
 | Published project-policy version | 4 | `sed -n 's/^const Version = //p' internal/projectpolicy/version.go` |
 | Blocks the project layer's `defaults:` may set whose value names a repository | 0 | `sed -n '/^type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -ci repo` |

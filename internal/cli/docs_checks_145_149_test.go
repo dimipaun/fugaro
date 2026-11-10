@@ -14,12 +14,13 @@ import (
 // "Numbers this work holds"). Four of it are registered here: 145, the consumer
 // facts that gate the read mint; 146, the coordinator sweep reading Bitbucket
 // through the service; 148, the read consumer's stop, rotation and ownership
-// transfer (the run-mint half of the number stays parked, the read half is kept
-// — the plan's verdict for T3.8, and D1961); and 149, the console showing the
-// stored view on the owner's own machine. 147 is **parked with S3** — the slice
-// that mints run tokens is deferred until a push and pull-request proxy exists —
-// so it stays reserved, and the register must carry neither a row nor a section
-// for it; 150–154 are reserved and unused.
+// transfer (the run-mint half went with S3, the read half came back into S2 as
+// an owner-run check beside T2.6 — D1961, answered 2026-11-10); and 149, the
+// console showing the stored view on the owner's own machine. 147 is **not
+// registered by it**: S3 — the slice that mints run tokens is deferred until a
+// push and pull-request proxy exists — took 147's subject, and the owner retired
+// the number as reserved and unused (D1960, answered 2026-11-10). The register
+// must carry neither a row nor a section for it; 150–154 are reserved and unused.
 //
 // What these tests hold, and why the register needs each one: a check is
 // registered by two things — a row in the summary table and a `## Check N`
@@ -36,12 +37,14 @@ import (
 // the row: the pairing is what fails, and it names the number.
 
 // bitbucketRegisterChecks are the four checks this work registers now, and
-// bitbucketParkedChecks the one that stays reserved with S3. They are held apart
-// because the failure modes are opposite: a registered check missing half its
-// registration, and a parked check that acquired one.
+// bitbucketUnregisteredChecks the one the register must keep carrying nothing
+// for. They are held apart because the failure modes are opposite: a registered
+// check missing half its registration, and a number that acquired a registration
+// it is not owed — 147 is retired as reserved and unused (D1960), so it gets
+// neither a row nor a section here.
 var (
-	bitbucketRegisterChecks = []string{"145", "146", "148", "149"}
-	bitbucketParkedChecks   = []string{"147"}
+	bitbucketRegisterChecks     = []string{"145", "146", "148", "149"}
+	bitbucketUnregisteredChecks = []string{"147"}
 )
 
 // bitbucketCheckRowRE matches a register summary row's first cell: the number
@@ -88,6 +91,19 @@ func TestDocsChecks145149AreRegistered(t *testing.T) {
 				t.Errorf("Check %s's section does not say %q: the check is owner-run and has not been run, and a section that leaves either half out reads as something an agent did", number, want)
 			}
 		}
+		// Check 145's U11 line once made the minimum-scope rule (G7) rest on
+		// Check 147, and D1960 retired that number on 2026-11-10: a line that
+		// still hands G7's enforcement to it contradicts the plan's own G7 row,
+		// which reads the question as moot, and the register is where a reader
+		// meets the question first.
+		if number == "145" {
+			if strings.Contains(flat, "rests on check 147") {
+				t.Errorf("Check 145's U11 line still makes the minimum-scope rule rest on Check 147: D1960 retired the number as reserved and unused, and the plan's G7 row reads the question as moot")
+			}
+			if !strings.Contains(flat, "d1960") {
+				t.Errorf("Check 145's U11 line does not say the number it once named was retired (D1960)")
+			}
+		}
 	}
 
 	// The rows and the sections run in number order, so a reader who follows the
@@ -103,45 +119,38 @@ func TestDocsChecks145149AreRegistered(t *testing.T) {
 	}
 }
 
-// TestDocsChecks147StaysReserved: 147 is parked with S3, so the register carries
-// neither a row nor a section for it. A number that acquired a row while its
-// slice is parked is a check a reader would try to run, and the register's own
-// rule is that a reserved number is never given a subject until the work that
-// holds it starts. 148 is not among them any more: its read half is kept and
-// registered, and only the run-mint half stays with S3.
-func TestDocsChecks147StaysReserved(t *testing.T) {
+// TestDocsChecks147StaysUnregistered: the register carries neither a row nor a
+// section for 147, which is retired as reserved and unused (D1960). A number that
+// acquired a row is a check a reader would try to run, and the register's own
+// rule is that a number no task writes a script for is never given a subject.
+// 148 is not among them: its read half is S2's owner-run check beside T2.6
+// (D1961), registered with its script.
+func TestDocsChecks147StaysUnregistered(t *testing.T) {
 	register := readDoc(t, liveChecksDoc)
-	for _, number := range bitbucketParkedChecks {
+	for _, number := range bitbucketUnregisteredChecks {
 		if bitbucketCheckRowRE(number).MatchString(register) {
-			t.Errorf("%s's register has a `| %s |` row: Check %s is parked with S3 and stays reserved, so it has no row until the slice is unparked", liveChecksDoc, number, number)
+			t.Errorf("%s's register has a `| %s |` row: Check %s is not registered by this work, so it has no row", liveChecksDoc, number, number)
 		}
 		if strings.Contains(register, "\n## Check "+number+":") {
-			t.Errorf("%s has a `## Check %s:` section: Check %s is parked with S3 and stays reserved, so it has no section until the slice is unparked", liveChecksDoc, number, number)
+			t.Errorf("%s has a `## Check %s:` section: Check %s is not registered by this work, so it has no section", liveChecksDoc, number, number)
 		}
 	}
 
 	// The block's own statement of itself is read from the plan that claims it:
-	// the block is 145–154, 147 is parked with S3, 148's read half is kept (the
-	// plan's verdict for T3.8, which is what the register's row and section
-	// stand on — D1961's answer cell is still the answering sweep's) and
+	// 145–149 are the block, and it says of each of its two numbers outside the
+	// register's plain rows what that number now is — 147 retired (D1960,
+	// answered 2026-11-10) and 148 S2's read half only (D1961, the same day),
+	// which is what the register's row and section for 148 stand on — while
 	// 150–154 are reserved.
-	//
-	// The pin on 148 is the KEEP and not the plan's checks table row: that row
-	// still reads "148, **parked with S3** ... | reserved |" because the sweep
-	// that answers D1960–D1962 is another task's, and a pin on a row that sweep
-	// replaces would fail on the branch doing the replacing rather than on the
-	// drift. What must not drift is the plan's own record of why this register
-	// registers 148 at all — if the plan stops keeping the read half, the
-	// registration here is a check the plan has withdrawn.
 	plan := flattenDoc(readDoc(t, "docs/bitbucket-credentials/implementation-plan.md"))
 	for _, want := range []string{
 		"Checks 145–154",
-		"147, **parked with S3**",
-		"the read half is the read consumer's own drill",
+		"147, **retired (D1960)**",
+		"148, **S2's, read half only (D1961)**",
 		"Checks 150–154 are reserved and unused.",
 	} {
 		if !strings.Contains(plan, want) {
-			t.Errorf("docs/bitbucket-credentials/implementation-plan.md no longer says %q: the register's rows are this work's block, and the block is what says which numbers are parked", want)
+			t.Errorf("docs/bitbucket-credentials/implementation-plan.md no longer says %q: the register's rows are this work's block, and the block is what says what each of its numbers is", want)
 		}
 	}
 	// The count of rows and sections the register carries for the block is the
@@ -154,7 +163,7 @@ func TestDocsChecks147StaysReserved(t *testing.T) {
 		}
 	}
 	if want := len(bitbucketRegisterChecks); rows != want {
-		t.Errorf("%s carries %d of the block's rows (145–149), want %d: %s are registered and %s stay reserved", liveChecksDoc, rows, want, strings.Join(bitbucketRegisterChecks, ", "), strings.Join(bitbucketParkedChecks, ", "))
+		t.Errorf("%s carries %d of the block's rows (145–149), want %d: %s are registered and %s get no row", liveChecksDoc, rows, want, strings.Join(bitbucketRegisterChecks, ", "), strings.Join(bitbucketUnregisteredChecks, ", "))
 	}
 }
 
