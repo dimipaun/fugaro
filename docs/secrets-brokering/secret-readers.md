@@ -58,9 +58,9 @@ the mount and the accessor **given up** for that repository's job — the accoun
 credential the service's for that repository and nothing else. Every Bitbucket repository the node
 does not proxy keeps everything (G9), whichever installation it belongs to. E3, the **build
 account keeps its own copy until S4**, so a build's Dockerfile can still reach the token and a
-rotation writes both. The flip is per installation and per secret class (D500), and it shipped in
-the release the proxy chain ships in — 0.23.0, the owner's ruling of 2026-11-09 — behind the owner's
-live Check 191.
+rotation writes both. The flip is per installation and per secret class (D500), and it ships in the
+release after the proxy chain's — 0.23.0, where the chain's own is 0.22.0, the owner's ruling of
+2026-11-09 — behind the owner's live Check 191, which has not run yet.
 
 An **Editor is deliberately not a row**, though this audit named it as one until 2026-10-29:
 `roles/editor` carries `secretmanager.secrets.getIamPolicy` and delete but not

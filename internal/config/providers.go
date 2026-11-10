@@ -626,8 +626,9 @@ func IsServiceHeldSecretEnv(env, name string) bool {
 // deploy/terraform's TestProxiedGitSecretNamesMatchTheModule, and read beside
 // the module's own bitbucket_proxied input.
 //
-// It is FILLED, and that is B1.13 part two: the flip ships in the release the
-// proxy chain ships in — 0.23.0, the owner's ruling of 2026-11-09 — behind the
+// It is FILLED, and that is B1.13 part two: the flip ships in 0.23.0 — the
+// release after the proxy chain's, which is the one `proxySince` names (0.22.0,
+// internal/cli/recipes_skew.go), the owner's ruling of 2026-11-09 — behind the
 // owner's Check 191 on the released chain and their go on it (D500, G1; the
 // plan's B1.13 and its S1 row). The module's mirror, the guard test and the
 // tftest runs moved in that one commit. Two gates still stand in front of the
@@ -636,6 +637,15 @@ func IsServiceHeldSecretEnv(env, name string) bool {
 // this list changed nothing for a repository the node does not admit, and a
 // proxied repository's job gives up the mount and the accessor its run no
 // longer reads.
+//
+// There is no version gate on that fill, and that is the one thing this list
+// needs a person for: the drop is compiled in and fires wherever the two gates
+// above hold, so a tree carrying this list shipped as 0.22.0 would take a
+// proxied installation's mount away one release early — with the operator
+// steps that go with it a release away, and before Check 191 has run on the
+// chain. The fill therefore merges only once the chain's own release (0.22.0)
+// is tagged and Check 191 has passed on it, which is what the branch carrying
+// it waits for.
 var ProxiedGitSecretNames = []string{BitbucketSecret}
 
 // ProviderBySecret is the provider whose key is the secret named secret.

@@ -4761,9 +4761,9 @@ func TestServiceHeldSecretsMatchTheCredentialsService(t *testing.T) {
 // var.bitbucket_proxied is true. Every other Bitbucket repository — of an
 // installation that opted in or not — keeps both (G9).
 //
-// Both sides name the Bitbucket token since the flip (B1.13 part two; the
-// release the proxy chain ships in, the owner's ruling of 2026-11-09), and the
-// test holds them to each other: with the module's list filled and Go's empty
+// Both sides name the Bitbucket token since the flip (B1.13 part two; 0.23.0,
+// the release after the proxy chain's, the owner's ruling of 2026-11-09), and
+// the test holds them to each other: with the module's list filled and Go's empty
 // (or the reverse), one side plans a drop the other does not produce, which is
 // the drift this test refuses.
 func TestProxiedGitSecretNamesMatchTheModule(t *testing.T) {
