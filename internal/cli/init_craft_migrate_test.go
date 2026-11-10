@@ -135,11 +135,12 @@ func TestCraftMigrationIsIdempotent(t *testing.T) {
 		t.Errorf("the second migration changed the file:\n%s", lineDiff(string(once), string(twice)))
 	}
 
-	// The same has to hold for a config the migration cannot convert whole.
-	// Its report belongs to the run that does the deriving — the one whose diff
-	// a person reads — and not to every later write of a file the migration
-	// leaves exactly as it is: a note printed on every update stops being read,
-	// and the keys it is about are the same keys every time.
+	// A config the migration cannot convert whole is the other half of the
+	// rule, and it is not about idempotence of the file but of the report: the
+	// keys it cannot convert are named whenever it is run, because the file
+	// says the same unresolved thing every time and the person who has to
+	// handle them reads this run's output. Silence would swallow a key that
+	// needs the owner — nothing else in the tree reports one.
 	left := parseLocalConfig(t, `version: 1
 name: aurora
 gcp_project: proj-1234
@@ -152,14 +153,28 @@ default_claude_account: team-a
 stages:
   implement: { claude_account: team-b }
 `)
-	if notes := migrateCraftKeys(left); len(notes) == 0 {
+	first := migrateCraftKeys(left)
+	if len(first) == 0 {
 		t.Fatal("the run that derived the crafts reported nothing about the craft it could not convert")
 	}
-	if notes := migrateCraftKeys(left); len(notes) != 0 {
-		t.Errorf("a converged config reported the keys it cannot convert again: %v", notes)
+	// The work it did converged: the second call adds nothing, and the file it
+	// leaves is the file the first call left.
+	converged, err := left.Marshal()
+	if err != nil {
+		t.Fatal(err)
 	}
-	// An account that appears later does not: then the run is working on the
-	// file again, and the keys it still cannot convert are news again with it.
+	if second := migrateCraftKeys(left); len(second) != len(first) {
+		t.Errorf("the second run reported %v, want the keys the first run could not convert: %v", second, first)
+	}
+	again, err := left.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(converged, again) {
+		t.Errorf("the second run changed the file:\n%s", lineDiff(string(converged), string(again)))
+	}
+	// An account that appears later is converted, and the note about the craft
+	// the migration still cannot convert comes with it.
 	left.ClaudeAccounts["team-c"] = config.ClaudeAccount{}
 	if notes := migrateCraftKeys(left); len(notes) == 0 {
 		t.Error("a run with an account left to convert reported nothing about the craft it still cannot convert")
@@ -234,6 +249,27 @@ default_claude_account: vertex
 `,
 			want:  []string{"vertex"},
 			notes: []string{"vertex", "credential"},
+		},
+		{
+			// A credential of another kind already holds the account's name. A
+			// craft's access names a name and not a type, so a key written here
+			// would send that craft's calls to the other credential — an
+			// OpenRouter key, say — while this account's token serves nothing.
+			// The name is taken, so nothing is derived and the clash is named.
+			name: "an account whose name a credential of another type holds",
+			yaml: `version: 1
+name: aurora
+gcp_project: proj-1234
+region: us-east5
+runs_bucket: fugaro-runs-proj-1234
+claude_accounts:
+  team-a: { allow_data_to: [dimipaun/fugaro] }
+credentials:
+  - { name: team-a, type: openrouter }
+default_claude_account: team-a
+`,
+			want:  []string{"team-a"},
+			notes: []string{"team-a", "another type (openrouter)"},
 		},
 		{
 			name: "one craft, two accounts",
@@ -469,6 +505,65 @@ func TestUpdateReportsTheKeysItCannotConvert(t *testing.T) {
 	}
 }
 
+// TestWriteLocalConfigReportsAnUnconvertibleAccountOnACurrentFile: the notes
+// are a state of the file and not a delta, so a write whose file is already
+// current reports the account it cannot convert under the line that says so,
+// and never before the confirmation a diff is asked for. A config the
+// migration converted whole has no note on either path, which is what keeps
+// the converged installation's `fugaro update` silent.
+func TestWriteLocalConfigReportsAnUnconvertibleAccountOnACurrentFile(t *testing.T) {
+	// The account's name is a pool's, so no credential may be derived from it
+	// and no craft key may name it: the migration has nothing to add, and a
+	// note to print.
+	lc := parseLocalConfig(t, `version: 1
+name: aurora
+gcp_project: proj-1234
+region: us-east5
+runs_bucket: fugaro-runs-proj-1234
+claude_accounts:
+  team-a: { allow_data_to: [dimipaun/fugaro] }
+credentials:
+  - { name: spare, type: claude-oauth }
+pools:
+  - { name: team-a, members: [spare] }
+default_claude_account: team-a
+`)
+	isolateProjects(t, t.TempDir())
+	t.Chdir(t.TempDir())
+	var out bytes.Buffer
+	cmd := newSetupCmd()
+	cmd.SetOut(&out)
+	r := newInitRun(cmd, &initOptions{yes: true, cloud: cloudOptions{stderr: discard}})
+	path := filepath.Join(t.TempDir(), "config.yaml")
+
+	if err := r.writeLocalConfig(lc, path, nil, true); err != nil {
+		t.Fatal(err)
+	}
+	written := out.String()
+	note := "note: the account team-a"
+	if at, wrote := strings.Index(written, note), strings.Index(written, "wrote "+path); wrote < 0 || at < wrote {
+		t.Errorf("the write did not report the account it could not convert (wrote at %d, note at %d):\n%s", wrote, at, written)
+	}
+
+	out.Reset()
+	if err := r.writeLocalConfig(lc, path, readFile(t, path), true); err != nil {
+		t.Fatal(err)
+	}
+	current := out.String()
+	if up, at := strings.Index(current, "is up to date"), strings.Index(current, note); up < 0 || at < up {
+		t.Errorf("the current file did not report the account it cannot convert (up to date at %d, note at %d):\n%s", up, at, current)
+	}
+
+	// The same path with a config the migration converts whole says nothing.
+	out.Reset()
+	if err := r.writeLocalConfig(parseLocalConfig(t, previousInstallation), path, readFile(t, path), true); err != nil {
+		t.Fatal(err)
+	}
+	if got := out.String(); strings.Contains(got, "note:") {
+		t.Errorf("a converged config reported something:\n%s", got)
+	}
+}
+
 // v4NodeWithAccounts is v4Node carrying the account-choice members this
 // fixture's local config states, so the policy stage's publish is a publish of
 // the verifier list alone: an account key the node does not carry is a widening
@@ -527,9 +622,12 @@ func resolveCrafts(t *testing.T, lc *localcfg.Config) map[string]craft.Effective
 	return eff
 }
 
+// holdsCredential is whether the migration derived the account's own credential
+// — the typed entry this migration writes. A credential of another type under
+// the same name is the clash it refuses over, not the entry it derived.
 func holdsCredential(lc *localcfg.Config, name string) bool {
 	for _, cred := range lc.Credentials {
-		if cred.Name == name {
+		if cred.Name == name && cred.Type == config.CredentialTypeClaudeOAuth {
 			return true
 		}
 	}

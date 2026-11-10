@@ -27,9 +27,13 @@ import (
 //
 // Everything it cannot convert faithfully it leaves alone and says so, rather
 // than writing a craft key that means something else than the key it came
-// from. What it says is said once, in the run that does the work: a config the
-// migration has nothing left to add to is silent, so `fugaro update` on a
-// converged installation reports the same keys no second time.
+// from. What it says is about the keys left unconverted and not about the work
+// of one run: a config with nothing left to convert has nothing to say —
+// `fugaro update` on a converged installation is silent — while a key no
+// credential of this release may stand for is named on every write of that
+// file until the owner handles it. The file says the same unresolved thing
+// every time, and a report a person has to act on is not one this migration
+// may print once and forget.
 
 // stageCraft is the craft a run stage's own account key belongs to: the craft
 // whose model and access serve the stage. The mapping is the tree's own, not a
@@ -61,12 +65,14 @@ func stageCraft(stage string) string {
 // installation holds, in place, and returns the lines the caller prints about
 // the keys it could not convert.
 //
-// It returns nothing when there was nothing left to add — the config is
-// converged, or holds none of the older vocabulary — which is what makes the
-// door idempotent in the sense that matters for a person: the keys it could
-// not convert are reported in the run that derives the rest, and not again on
-// every write of the file afterwards. A config that still has an account to
-// convert reports again, because then the run is doing the work again.
+// It returns nothing when there is nothing to say: a config it converted whole
+// says nothing at all, and neither does one holding none of the older
+// vocabulary. What it could not convert is returned whether or not this call
+// derived anything else — a delta is not what decides whether a person has to
+// read a note. An account no credential of this release may stand for, or a
+// craft whose stages name two, is the same unresolved state on the next write
+// of the file, and the person who has to act on it is reading this run's
+// output rather than the run that first found it.
 //
 // What it writes is shown by the local config's own diff; only the keys that
 // need a person are returned, because a line per derived key would bury them.
@@ -74,13 +80,7 @@ func migrateCraftKeys(c *localcfg.Config) []string {
 	if c == nil || (len(c.ClaudeAccounts) == 0 && c.DefaultClaudeAccount == "" && len(c.ClaudeAccountStages) == 0) {
 		return nil
 	}
-	credentials, crafts := len(c.Credentials), c.Crafts
-	refused := deriveCraftCredentials(c)
-	notes := deriveCraftAccesses(c, refused)
-	if len(c.Credentials) == credentials && c.Crafts == crafts {
-		return nil
-	}
-	return notes
+	return deriveCraftAccesses(c, deriveCraftCredentials(c))
 }
 
 // deriveCraftCredentials turns the installation's named Claude accounts into
@@ -108,9 +108,9 @@ func deriveCraftCredentials(c *localcfg.Config) map[string]string {
 	if len(c.ClaudeAccounts) == 0 {
 		return nil
 	}
-	have := make(map[string]bool, len(c.Credentials))
+	have := make(map[string]string, len(c.Credentials))
 	for _, cred := range c.Credentials {
-		have[cred.Name] = true
+		have[cred.Name] = cred.Type
 	}
 	// A credential and a pool live in one namespace — a craft's access names
 	// one of them and does not say which — and config.ValidatePools refuses a
@@ -126,8 +126,18 @@ func deriveCraftCredentials(c *localcfg.Config) map[string]string {
 	}
 	var refused map[string]string
 	for _, name := range slices.Sorted(maps.Keys(c.ClaudeAccounts)) {
+		typ, held := have[name]
 		switch {
-		case have[name]:
+		case held && typ == config.CredentialTypeClaudeOAuth:
+			// The account's own typed entry, already written: nothing to add.
+			continue
+		case held:
+			// A credential of another kind holds the name, and a craft's access
+			// names a name and not a type: a key written here would send the
+			// craft's calls to that credential rather than to this account's
+			// token. The name is taken, so the account goes nowhere and the
+			// clash is reported.
+			refused = setReason(refused, name, anotherTypeHolds(typ))
 			continue
 		case pools[name]:
 			refused = setReason(refused, name, "its name is already a pool's, and a credential and a pool of one name would leave a craft's access naming one of them undecided")
@@ -144,6 +154,14 @@ func deriveCraftCredentials(c *localcfg.Config) map[string]string {
 		c.Credentials = append(slices.Clone(c.Credentials), cand)
 	}
 	return refused
+}
+
+// anotherTypeHolds spells the clash of a name a credential of another kind
+// already holds: the account's token is not what that name resolves to, so no
+// craft key may be written for it. Every credential declares a type (the loader
+// requires one), which is what makes this a clash of kinds.
+func anotherTypeHolds(typ string) string {
+	return "a credential of another type (" + typ + ") already holds its name, so a craft key would name that credential and not this account"
 }
 
 // setReason records why an account was not converted, keeping the map nil
@@ -301,11 +319,14 @@ func orAbsent(name string) string {
 }
 
 // craftAccessDefined is whether name is something a craft's access may resolve
-// to: a credential this config now holds, or the built-in vertex (D1624). A
-// pool's name is not among them — an access naming one would resolve to the
-// pool, which is not the account the stage runs on today — and a name no
-// credential was derived for is dropped by the caller before it is asked, so
-// what is left is a name the resolver finds and the account it stands for.
+// to: a credential of the account's own kind that this config now holds, or the
+// built-in vertex (D1624). A pool's name is not among them — an access naming
+// one would resolve to the pool, which is not the account the stage runs on
+// today — and neither is a credential of another type under the same name,
+// which resolves to another credential than the account's token (a clash
+// deriveCraftCredentials refuses before this is asked). A name no credential
+// was derived for is dropped by the caller before it is asked, so what is left
+// is a name the resolver finds and the account it stands for.
 func craftAccessDefined(c *localcfg.Config, name string) bool {
 	if config.ValidCredentialRef(name) != "" {
 		return false
@@ -313,7 +334,9 @@ func craftAccessDefined(c *localcfg.Config, name string) bool {
 	if slices.ContainsFunc(config.BuiltinCredentials(), func(b config.Credential) bool { return b.Name == name }) {
 		return true
 	}
-	return slices.ContainsFunc(c.Credentials, func(cred config.Credential) bool { return cred.Name == name })
+	return slices.ContainsFunc(c.Credentials, func(cred config.Credential) bool {
+		return cred.Name == name && cred.Type == config.CredentialTypeClaudeOAuth
+	})
 }
 
 // setCraftAccess writes one craft's access, leaving its model half alone: the

@@ -144,6 +144,14 @@ type accountsRmPlan struct {
 	allow    []string
 	secretID string
 	rest     []string // the profiles that still list the account after the edit
+	// crafts is the crafts whose access names the typed entry this removal
+	// takes away. They are cleared with it rather than refused over: the key is
+	// the one `fugaro update`'s own conversion writes (init_craft_migrate.go),
+	// no command of this release writes a crafts key — the generic path refuses
+	// a family-owned row (settings_set.go) — and a refusal naming a remedy that
+	// does not exist sends the owner to a hand edit. Empty for a run that
+	// removes no typed entry.
+	crafts []string
 }
 
 // runAccountsRm is the order spec §4 forces: everything that can refuse does,
@@ -288,6 +296,9 @@ func accountsRmResolve(path string, lc *localcfg.Config, name, want string, old 
 			plan.rest = append(plan.rest, p)
 		}
 	}
+	if plan.drop && plan.typed {
+		plan.crafts = accountsRmCraftAccesses(lc, name)
+	}
 
 	next := old
 	if plan.entry {
@@ -309,7 +320,7 @@ func accountsRmResolve(path string, lc *localcfg.Config, name, want string, old 
 	// credentials block by this removal is a credential whose secret and job are
 	// gone that a pool would still be admitted to list.
 	if plan.drop && plan.typed {
-		if err := accountsRmTypedNamed(lc, name); err != nil {
+		if err := accountsRmPoolMember(lc, name); err != nil {
 			return accountsRmPlan{}, nil, nil, err
 		}
 		n, err := yamledit.RemoveSeqItemByKeyWithOptions(next, []string{"credentials"}, "name", name,
@@ -318,6 +329,19 @@ func accountsRmResolve(path string, lc *localcfg.Config, name, want string, old 
 			return accountsRmPlan{}, nil, nil, userErr("credentials.%s: %v", pluginwire.Printable(name), err)
 		}
 		next = n
+		// A craft's access that named the entry goes on the same bytes: the
+		// entry it named is gone, so an access left behind resolves to no
+		// credential at all, and no command of this release could repoint it
+		// (accountsRmPlan.crafts). The sentence this run prints names every key
+		// it clears.
+		for _, craft := range plan.crafts {
+			n, err := yamledit.RemoveKeyWithOptions(next, []string{"crafts", craft, "access"},
+				yamledit.RemoveOptions{DropEmptyParents: true})
+			if err != nil {
+				return accountsRmPlan{}, nil, nil, userErr("crafts.%s.access: %v", craft, err)
+			}
+			next = n
+		}
 	}
 	// The edit is read back strictly before it is written, as add's is: a file
 	// this Fugaro cannot load is a file the owner's very next command refuses,
@@ -344,19 +368,22 @@ func accountsRmTyped(lc *localcfg.Config, name string) bool {
 	return false
 }
 
-// accountsRmTypedNamed refuses an account whose typed entry is still named: the
-// entry goes with the account, and a craft's access or a pool's members left
-// pointing at a credential no run can serve is the state the --type guard in
-// `accounts add` exists to keep out of the file. It is the refusal
-// `accounts pool rm` makes for a pool a craft names, at the other end of the
-// same name.
-func accountsRmTypedNamed(lc *localcfg.Config, name string) error {
+// accountsRmPoolMember refuses an account whose typed entry is still a pool's
+// member: the entry goes with the account, and a pool left listing a member no
+// block defines is the file this config's own loader refuses — the state the
+// --type guard in `accounts add` exists to keep out of the file. It is the
+// refusal `accounts pool rm` makes for a pool a craft names, at the other end
+// of the same name.
+//
+// A craft's access is not refused here, and the difference between the two is
+// what makes the refusal worth printing: a pool's members have a command that
+// drops one (`accounts pool rm`), so the owner can act on this, while nothing
+// in this release writes a crafts key — the migration is its only writer
+// (init_craft_migrate.go) and the generic path refuses a family-owned row
+// (settings_set.go) — so pointing at one would be pointing at a hand edit. The
+// entry's own crafts are cleared with it instead (accountsRmCraftAccesses).
+func accountsRmPoolMember(lc *localcfg.Config, name string) error {
 	var named []string
-	for _, craft := range config.CraftNames {
-		if lc.Crafts.Of(craft).Access == name {
-			named = append(named, "crafts."+craft+".access")
-		}
-	}
 	for _, p := range lc.Pools {
 		if slices.Contains(p.Members, name) {
 			named = append(named, "pools."+pluginwire.Printable(p.Name)+".members")
@@ -365,9 +392,20 @@ func accountsRmTypedNamed(lc *localcfg.Config, name string) error {
 	if len(named) == 0 {
 		return nil
 	}
-	where := strings.Join(named, " and ")
-	return userErr("credentials.%s is still named by %s, so removing the account would leave it with nothing to spend: point it at another credential or pool first, then run this again; nothing was written",
-		pluginwire.Printable(name), where)
+	return userErr("credentials.%s is still a member of %s, so removing the account would leave the pool with a member no block defines: run `fugaro accounts pool rm` for that pool first, then run this again; nothing was written",
+		pluginwire.Printable(name), strings.Join(named, " and "))
+}
+
+// accountsRmCraftAccesses is the crafts whose access names this account's typed
+// entry, in config.CraftNames' order.
+func accountsRmCraftAccesses(lc *localcfg.Config, name string) []string {
+	var out []string
+	for _, craft := range config.CraftNames {
+		if lc.Crafts.Of(craft).Access == name {
+			out = append(out, craft)
+		}
+	}
+	return out
 }
 
 // accountsRmServing is the profiles that list the account, in the order every
@@ -909,6 +947,14 @@ func accountsRmWhat(plan accountsRmPlan) string {
 	if plan.typed {
 		parts = append(parts, fmt.Sprintf("remove credentials.%s (the typed entry the account was declared with)",
 			pluginwire.Printable(plan.name)))
+		if len(plan.crafts) > 0 {
+			keys := make([]string, 0, len(plan.crafts))
+			for _, craft := range plan.crafts {
+				keys = append(keys, "crafts."+craft+".access")
+			}
+			parts = append(parts, fmt.Sprintf("clear %s, which named that entry and would have nothing to spend without it",
+				strings.Join(keys, " and ")))
+		}
 	}
 	parts = append(parts,
 		fmt.Sprintf("delete the secret %s (Secret Manager's own delete, which cannot be undone here)", plan.secretID),

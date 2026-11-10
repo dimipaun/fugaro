@@ -3345,8 +3345,10 @@ func (r *initRun) writeLocalConfig(next *localcfg.Config, path string, old []byt
 	// (init_craft_migrate.go). It runs on the config about to be written —
 	// after the rest of this run's own changes — and adds nothing to a config
 	// that already holds them, so nothing is written twice. What it could not
-	// convert is printed with the write it belongs to, and never for a file
-	// this run does not change: the notes describe the file as it now is.
+	// convert is printed where this run reports on the file — with the write,
+	// or under the line saying the file is already current — and never before
+	// the confirmation: the notes describe the file as it now is, and a config
+	// the migration converted whole has none.
 	migrationNotes := migrateCraftKeys(next)
 	data, err := next.Marshal()
 	if err != nil {
@@ -3358,6 +3360,13 @@ func (r *initRun) writeLocalConfig(next *localcfg.Config, path string, old []byt
 	r.res.Config = path
 	if old != nil && bytes.Equal(old, data) {
 		fmt.Fprintf(r.w, "The local config %s is up to date.\n", path)
+		// The keys the migration cannot convert are named here too: the file is
+		// current and still holds them, so they are a state of the file and not
+		// a change this run would make. A converged config has no note at all
+		// (migrateCraftKeys), so this says nothing about one.
+		for _, note := range migrationNotes {
+			fmt.Fprintf(r.w, "note: %s\n", note)
+		}
 		return nil
 	}
 	fmt.Fprintf(r.w, "The local config %s changes:\n%s", path, lineDiff(string(old), string(data)))
