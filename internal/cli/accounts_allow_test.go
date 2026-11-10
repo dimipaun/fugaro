@@ -70,3 +70,161 @@ func accountsAllowBytes(t *testing.T, path string) []byte {
 	}
 	return b
 }
+
+// TestAccountsAllowCreatesTheAccountWithItsAllowList is the pair's first form:
+// a NAME the config does not declare yet is declared by `allow` with the
+// repositories it was given, so an account whose token may be spent from one
+// repository needs no `accounts add` and no second command. The list is
+// written into a claude_accounts block the file did not have, which is the
+// edit's own work and not a block written by hand.
+func TestAccountsAllowCreatesTheAccountWithItsAllowList(t *testing.T) {
+	_, path := settingsWriteHome(t)
+	if before := string(accountsAllowBytes(t, path)); strings.Contains(before, "claude_accounts") {
+		t.Fatalf("the fixture declares an account, so it cannot show the block being created:\n%s", before)
+	}
+
+	if _, _, err := execute(t, "accounts", "allow", "team-b", "owner/repo-x"); err != nil {
+		t.Fatalf("accounts allow team-b owner/repo-x: %v", err)
+	}
+
+	lc := accountsAllowLoad(t, path)
+	if got := lc.ClaudeAccounts["team-b"].AllowDataTo; !slices.Equal(got, []string{"owner/repo-x"}) {
+		t.Fatalf("claude_accounts.team-b.allow_data_to = %v, want the repository this run named alone", got)
+	}
+}
+
+// TestAccountsDenyRemovesIt is the other direction: `deny` takes the
+// repository out of the list and leaves the rest of the entry where it is —
+// the other repositories the account may be spent from, and the account
+// itself, which stays declared (an account with no repositories is an account
+// no run may choose, not a name the file forgot).
+func TestAccountsDenyRemovesIt(t *testing.T) {
+	_, path := settingsWriteHomeWith(t, accountsAllowLocal)
+	if _, _, err := execute(t, "accounts", "allow", "team-a", "owner/repo-b"); err != nil {
+		t.Fatalf("accounts allow team-a owner/repo-b: %v", err)
+	}
+
+	if _, _, err := execute(t, "accounts", "deny", "team-a", "owner/repo-a"); err != nil {
+		t.Fatalf("accounts deny team-a owner/repo-a: %v", err)
+	}
+
+	lc := accountsAllowLoad(t, path)
+	if got := lc.ClaudeAccounts["team-a"].AllowDataTo; !slices.Equal(got, []string{"owner/repo-b"}) {
+		t.Fatalf("claude_accounts.team-a.allow_data_to = %v, want the one repository neither direction removed", got)
+	}
+
+	// The last repository goes the same way, and the account stays declared:
+	// an account with an empty list is one no run may choose, which is the
+	// state `deny` is asked for, and it is not a name the file quietly loses.
+	if _, _, err := execute(t, "accounts", "deny", "team-a", "owner/repo-b"); err != nil {
+		t.Fatalf("accounts deny team-a owner/repo-b: %v", err)
+	}
+	lc = accountsAllowLoad(t, path)
+	acct, ok := lc.ClaudeAccounts["team-a"]
+	if !ok {
+		t.Fatalf("removing the last repository took the account itself out of the config: %v", lc.ClaudeAccounts)
+	}
+	if len(acct.AllowDataTo) != 0 {
+		t.Errorf("claude_accounts.team-a.allow_data_to = %v, want no repository left", acct.AllowDataTo)
+	}
+}
+
+// TestAccountsDenyRefusesASubsetViolation is the rule a removal can break and
+// an addition cannot (accountsAddSubsetRule's rule, read on the account's own
+// list). The profile admits the repository the account would stop covering, so
+// the removal is refused with nothing written — silently narrowing what the
+// token may be spent from, in a profile that still admits it, is the state the
+// rule exists to prevent.
+func TestAccountsDenyRefusesASubsetViolation(t *testing.T) {
+	local := accountsAllowLocal + `
+profiles:
+  standard:
+    provider: github
+    cpu: 2
+    memory: 8Gi
+    timeout_class: 6h
+    allow_repos:
+      - github/owner/repo-a
+    claude_accounts:
+      - team-a
+`
+	_, path := settingsWriteHomeWith(t, local)
+	before := accountsAllowBytes(t, path)
+
+	_, _, err := execute(t, "accounts", "deny", "team-a", "owner/repo-a")
+	if err == nil {
+		t.Fatal("the subset rule was not applied")
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Errorf("exit %d, want a user error: %v", ExitCode(err), err)
+	}
+	for _, want := range []string{"owner/repo-a", "profiles.standard"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	if !strings.Contains(err.Error(), "nothing was written") {
+		t.Errorf("the refusal does not say nothing was written: %v", err)
+	}
+	if after := accountsAllowBytes(t, path); string(after) != string(before) {
+		t.Errorf("a refused removal wrote the file:\n%s", after)
+	}
+}
+
+// TestAccountsAllowPrintsOnlyFugaroUpdateNext is the closing line's own rule
+// (spec §2.5): one local file edit leaves exactly one step, and the run says
+// that step and no other. A second "next:" line would be a second thing for
+// the person to do, which no settings write has — the publish the change
+// reaches the project's runs through is `fugaro update`'s own.
+func TestAccountsAllowPrintsOnlyFugaroUpdateNext(t *testing.T) {
+	settingsWriteHomeWith(t, accountsAllowLocal)
+
+	out, _, err := execute(t, "accounts", "allow", "team-a", "owner/repo-b")
+	if err != nil {
+		t.Fatalf("accounts allow team-a owner/repo-b: %v", err)
+	}
+
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if got := lines[len(lines)-1]; got != "next: fugaro update" {
+		t.Errorf("the run ends on %q, want the one line every settings write ends on", got)
+	}
+	var nexts []string
+	for _, line := range lines {
+		if strings.HasPrefix(line, "next:") {
+			nexts = append(nexts, line)
+		}
+	}
+	if len(nexts) != 1 {
+		t.Errorf("the run prints %d next: lines (%v), want exactly one", len(nexts), nexts)
+	}
+}
+
+// TestAccountsLsShowsWhatAccountsAddAndAllowWrote is the read-back: the names
+// `accounts ls` answers with are decided by the very list these two commands
+// write, so a repository the allow_list holds is one the account may be
+// chosen by, and one it does not hold is not. The fixture's declaration is
+// what `accounts add` leaves behind (claude_accounts.NAME.allow_data_to);
+// `allow` is what adds the second repository, and both are read here through
+// the loader's own answer rather than through the file.
+func TestAccountsLsShowsWhatAccountsAddAndAllowWrote(t *testing.T) {
+	settingsWriteHomeWith(t, accountsAllowLocal)
+	if _, _, err := execute(t, "accounts", "allow", "team-a", "owner/repo-b"); err != nil {
+		t.Fatalf("accounts allow team-a owner/repo-b: %v", err)
+	}
+
+	out, _, err := execute(t, "accounts", "ls", "--repo", "owner/repo-b")
+	if err != nil {
+		t.Fatalf("accounts ls --repo owner/repo-b: %v", err)
+	}
+	if !strings.Contains(out, "team-a") {
+		t.Errorf("the repository accounts allow wrote is not one the account may be chosen by:\n%s", out)
+	}
+
+	other, _, err := execute(t, "accounts", "ls", "--repo", "owner/repo-c")
+	if err != nil {
+		t.Fatalf("accounts ls --repo owner/repo-c: %v", err)
+	}
+	if strings.Contains(other, "team-a") {
+		t.Errorf("a repository no list holds is one the account may be chosen by:\n%s", other)
+	}
+}
