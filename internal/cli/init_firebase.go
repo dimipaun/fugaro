@@ -28,8 +28,20 @@ const printVarsUngatedFirebase = "--print-vars is ungated and makes no cloud cal
 
 // firebaseVars is the installation's and the Firebase root's tfvars as one
 // JSON object, for --print-vars.
+//
+// It carries the workspace pin's account for the same reason the apply does: a
+// member whose config names a workspace has the read bound to that account, and
+// a printed document that dropped the key would disagree with the installation
+// it stands for — the reading of it an owner cannot trust. The pin is in the
+// local config, so it needs no cloud call (what --print-vars by design makes
+// none of), unlike the history and coordinator accounts, which come from an
+// apply's outputs and are therefore absent here.
 func (r *initRun) firebaseVars(inst []byte, spec infra.InstallationSpec, lc *localcfg.Config) ([]byte, error) {
-	fs, err := infra.Firebase(spec, infra.FirebaseInputs{FP: r.o.firebaseProject(), BudgetAdmins: r.budgetAdmins(lc)})
+	fs, err := infra.Firebase(spec, infra.FirebaseInputs{
+		FP:                      r.o.firebaseProject(),
+		BudgetAdmins:            r.budgetAdmins(lc),
+		WorkspaceServiceAccount: lc.WorkspacePin.ServiceAccount,
+	})
 	if err != nil {
 		return nil, initErr(err)
 	}

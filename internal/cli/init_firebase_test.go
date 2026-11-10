@@ -2622,3 +2622,35 @@ func TestSetupBindsTheWorkspaceReadToThePinnedAccount(t *testing.T) {
 		t.Errorf("an installation in no workspace passes %v for workspace_service_account, want \"\"", got)
 	}
 }
+
+// And the printed variables carry it too: --print-vars is what a person reads
+// to see what their installation holds, so a member whose config names a
+// workspace must see the account the Firebase root binds. The pin is in the
+// local config, so printing it costs no cloud call — the same carry the
+// credentials service's own entry gets, for the same reason.
+func TestTheFirebasePrintVarsCarryTheWorkspacePin(t *testing.T) {
+	r := newFBRig(t)
+	b, err := os.ReadFile(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(r.cfg, append(b, "\n"+wsPin...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := executeStdin(t, "", "update", "--firebase-project", fpID, "--print-vars")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	var both struct {
+		Firebase map[string]any `json:"firebase"`
+	}
+	if err := json.Unmarshal([]byte(out), &both); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if got, want := both.Firebase["workspace_service_account"], "marker-workspace@project-ws.iam.gserviceaccount.com"; got != want {
+		t.Errorf("--print-vars printed workspace_service_account = %v, want the pin's %q: a document that dropped it disagrees with the apply", got, want)
+	}
+	if len(r.calls(t)) != 0 {
+		t.Errorf("--print-vars made calls: terraform %q", r.calls(t))
+	}
+}
