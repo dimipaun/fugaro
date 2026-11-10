@@ -162,9 +162,9 @@ func TestRunFallsBackWithoutSlipRoute(t *testing.T) {
 // slip written there would be handed to a second launch, and a slip is one
 // run's.
 //
-// Mutation (verified, run and restored): store the id in the task object at
-// the launch (write a task carrying it on the grant path) and this fails on
-// the object's own bytes.
+// Mutation (verified, run and restored): in the launch, write the granted id
+// onto the task object (`spec.Task` plus that entry, `s.WriteTask`) and this
+// fails on the object's own bytes.
 func TestSlipIDNotInTaskFile(t *testing.T) {
 	r := newSlipLaunchRig(t)
 	plain := r.launch(t, func(req credsvc.SlipGrantRequest) (credsvc.SlipGrantResponse, error) {
