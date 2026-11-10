@@ -3680,7 +3680,7 @@ func catalogDockerAsk(ctx context.Context, env *cloudEnv, slug string, spec *tas
 // because the file is not always there. The desktop console spawns `fugaro run
 // --repo` from a private empty directory on every machine, and `--repo` may be
 // run from anywhere, so a launcher with no checkout of this repository reads
-// no fugaro.yaml and cannot ask catalog.Applies — while the job it is about to
+// no fugaro.yaml and cannot ask the resolver — while the job it is about to
 // start is still the one the catalog deployed, and the services its tests need
 // are still that entry's. Reading the workflow first (as this did) left such a
 // launch with the zero entry, an empty stamp and a run whose tests fail on a
@@ -3743,7 +3743,7 @@ func deployedCatalogEntry(ctx context.Context, env *cloudEnv, slug string, spec 
 	// The job is the workflow's own when it is a shared project job: the
 	// catalog's jobs are per-repository ones, and the sole kind a shared
 	// project job runs — a clone workflow (launchProjectJobFor) — is the kind
-	// catalog.Applies takes out of this rule.
+	// the resolver takes out of this rule (SourceBase and SourceShared).
 	variant, ok := jobWorkflow(spec.Workflow, spec.OAuthToken)
 	if !ok {
 		// Not a job name: the launch itself refuses the variant a few lines

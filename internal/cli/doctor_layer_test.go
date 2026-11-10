@@ -600,7 +600,7 @@ func TestDoctorImageConfigSkipsCatalogWorkflows(t *testing.T) {
 }
 
 // TestDoctorImageConfigComparesWorkflowsTheCatalogDoesNotCover: the guard is
-// the catalog's own predicate (catalog.Applies), not a blank cheque. A
+// the resolver's own answer (catalog.JobImage), not a blank cheque. A
 // workflow that names nothing and needs nothing, in a project whose catalog
 // marks no entry default, is one the catalog does not speak for: its image
 // is a derived build, and its stale record is still the warning it was.
@@ -630,10 +630,10 @@ func TestDoctorImageConfigComparesWorkflowsTheCatalogDoesNotCover(t *testing.T) 
 // where every workflow runs the derived image — internal/infra's
 // catalogJobImage and run.go's catalogDockerAsk both stop at cat == nil — so
 // the per-workflow record is the image its jobs start on and is compared like
-// any other workflow's. catalog.Applies answers true for a pin however empty
-// the catalog is (a pin is the repository's own claim), so the catalog guard
-// alone took such a workflow for the catalog's and no line judged its image at
-// all. The other nil is a catalog nobody read: there the node that did not
+// any other workflow's. A pin is the repository's own claim on its image, so
+// the resolver answers with the pinned name however empty the catalog is, and
+// the catalog guard alone took such a workflow for the catalog's and no line
+// judged its image at all. The other nil is a catalog nobody read: there the node that did not
 // answer may hold the entry a pin names, one whose tags cover a workflow's
 // needs:, or the default a workflow that names nothing runs, so no workflow is
 // judged and imageCatalogUnreadCheck is the line that says so. A catalog
@@ -723,9 +723,9 @@ func TestDoctorImageConfigComparesAPinWithNoCatalog(t *testing.T) {
 	})
 
 	// A workflow that names nothing runs the project's default, and whether the
-	// node nobody read marks one is the single clause of catalog.Applies that
+	// node nobody read marks one is the single clause of the resolver that
 	// reads the catalog — so the unread state asks MayApply instead, which is
-	// that predicate without the clause, and the workflow is left to the
+	// that question without the clause, and the workflow is left to the
 	// catalog. Judged here it would be compared against the derived image,
 	// which its jobs run only if the node marks no default at all.
 	// Mutation (run, restore): drop the `catUnknown && catalog.MayApply(w)`

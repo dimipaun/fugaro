@@ -548,9 +548,9 @@ func prebuiltSmokeChecks(ctx context.Context, env *cloudEnv, rb *blobx.Bucket, s
 }
 
 // workflowCatalogEntry is the catalog entry the workflow w runs, and whether
-// the project's image catalog decides its image at all. It is catalog.Applies
-// — the predicate the deploy-time job spec (internal/infra) and the launch's
-// image rule (run.go) ask — asked of the same catalog those two resolve
+// the project's image catalog decides its image at all. It asks the one
+// resolver the deploy-time job spec (internal/infra) and the launch's image
+// rule (run.go) ask (catalog.JobImage), of the same catalog those two resolve
 // (effectiveCatalog, handed in as cat), so doctor judges the workflows the
 // deployed job's own image came from.
 //
@@ -572,10 +572,11 @@ func prebuiltSmokeChecks(ctx context.Context, env *cloudEnv, rb *blobx.Bucket, s
 // the comparison would then name a build of an image its jobs never run — the
 // loop imageConfigChecks' own comment is about.
 //
-// The question asked in that state is therefore MayApply's and not Applies':
-// whether the catalog could speak for this workflow at all, without asking it
-// the one thing that is not known. A workflow Applies refuses only for want of
-// a default is the catalog's here, because the node nobody read may mark one,
+// The question asked in that state is therefore MayApply's and not the
+// resolver's: whether the catalog could speak for this workflow at all,
+// without asking it the one thing that is not known. A workflow the resolver
+// would give no entry for want of a default is the catalog's here, because the
+// node nobody read may mark one,
 // and the entry returned is the pin's name by itself (no source) for a pin,
 // and nothing at all for one the catalog would have chosen — the caller judges
 // what it can of that, which is the entry it was given or nothing.

@@ -351,67 +351,34 @@ func mustImage(t *testing.T, req ImageRequest) Selection {
 	return sel
 }
 
-// mustApplies is Applies with its error swallowed, which is how it answers:
-// a refused selection is not one the project's images decide.
-func mustApplies(t *testing.T, req ImageRequest) bool {
-	t.Helper()
-	return Applies(req)
-}
-
-// TestAppliesIsTheJobsTheCatalogGivesAnImageTo pins which workflows the
-// project's images speak for at all, because two callers ask it and each of
-// them refuses on the answer: the deploy-time job spec, and the launcher
-// judging the same job's image against the backend it picks. A workflow one of
-// them judged by the project and the other did not would be refused for an
-// entry it does not run, or asked for a Docker socket it never needed.
-// MayApply, the half of the question that reads neither the catalog nor the
-// map, is pinned here beside it: doctor asks it for a project it could not
-// read.
+// TestMayApplyIsWhichWorkflowsTheSelectionCouldSpeakFor pins the half of the
+// question that reads no project at all, because doctor asks it for a project
+// whose catalog it could not read: whether the image selection could speak for
+// a workflow, without asking the catalog whether it marks a default or the map
+// whether it names this repository. The two checkout kinds whose image is the
+// installation's own are the ones it refuses; every other workflow is one the
+// selection may speak for, whatever its keys say.
 //
-// Mutation (drop the D1900 arm, so a workflow's own image keys take it out of
-// the selection again): the two "its own" rows below answer false for a
-// project that marks a default, and a repository whose job runs the project's
-// image is judged as if it ran its own — the deploy-time job spec would deploy
-// it on the image the project builds for it while doctor judges another.
-func TestAppliesIsTheJobsTheCatalogGivesAnImageTo(t *testing.T) {
-	// defaulted marks one entry as the project default, which is what a
-	// repository that names nothing needs to be the project's at all.
-	defaulted := testCatalog()
-	defaulted.Entries[1].Default = true
-	override := config.Workflow{Image: config.Image{Apt: []string{"jq"}}}
-	baked := config.Workflow{Checkout: config.CheckoutBaked}
-	req := func(cat config.Catalog, w config.Workflow) ImageRequest {
-		return ImageRequest{Catalog: &cat, Workflow: w, Backend: CloudRun, Canonical: "acme/api"}
-	}
-
+// Mutation (refuse a workflow that keeps its own image definition): doctor
+// would read a repository outside the catalog's reach as one it is judging,
+// where the whole point of the question in that state is that the node nobody
+// read may still give it an entry (D1900).
+func TestMayApplyIsWhichWorkflowsTheSelectionCouldSpeakFor(t *testing.T) {
 	for name, tt := range map[string]struct {
-		req  ImageRequest
+		w    config.Workflow
 		want bool
 	}{
-		"a repository that needs a tag":               {req(testCatalog(), config.Workflow{Checkout: config.CheckoutBaked, Needs: []string{"node"}}), true},
-		"a repository that pins an entry":             {req(testCatalog(), config.Workflow{Checkout: config.CheckoutBaked, ImageName: "backend"}), true},
-		"a repository that names nothing, a default":  {req(defaulted, baked), true},
-		"a repository that names nothing, no default": {req(testCatalog(), baked), false},
-		"its own image definition, a default":         {req(defaulted, override), true},
-		"its own Dockerfile, a default": {req(defaulted, config.Workflow{
-			Checkout: config.CheckoutBaked, Dockerfile: "docker/Dockerfile"}), true},
-		"its own image definition, no default": {req(testCatalog(), override), false},
-		"a clone workflow":                     {req(testCatalog(), config.Workflow{Checkout: config.CheckoutClone, Needs: []string{"node"}}), false},
-		"a shared workflow":                    {req(testCatalog(), config.Workflow{Checkout: config.CheckoutShared, Needs: []string{"node"}}), false},
+		"a repository that needs a tag":   {config.Workflow{Checkout: config.CheckoutBaked, Needs: []string{"node"}}, true},
+		"a repository that pins an entry": {config.Workflow{Checkout: config.CheckoutBaked, ImageName: "backend"}, true},
+		"a repository that names nothing": {config.Workflow{Checkout: config.CheckoutBaked}, true},
+		"its own image definition":        {config.Workflow{Checkout: config.CheckoutBaked, Image: config.Image{Apt: []string{"jq"}}}, true},
+		"its own Dockerfile":              {config.Workflow{Checkout: config.CheckoutBaked, Dockerfile: "docker/Dockerfile"}, true},
+		"a clone workflow":                {config.Workflow{Checkout: config.CheckoutClone, Needs: []string{"node"}}, false},
+		"a shared workflow":               {config.Workflow{Checkout: config.CheckoutShared, Needs: []string{"node"}}, false},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if got := mustApplies(t, tt.req); got != tt.want {
-				t.Fatalf("Applies = %v, want %v", got, tt.want)
-			}
-			// MayApply is the half of it that reads no project at all: it
-			// answers whether the selection could speak for the workflow, which
-			// is every row but the two checkout kinds whose image is the
-			// installation's own. Doctor asks it for a project it could not
-			// read, where whether a default is marked or a repository mapped is
-			// exactly what is not known.
-			wantMay := name != "a clone workflow" && name != "a shared workflow"
-			if got := MayApply(tt.req.Workflow); got != wantMay {
-				t.Fatalf("MayApply = %v, want %v", got, wantMay)
+			if got := MayApply(tt.w); got != tt.want {
+				t.Fatalf("MayApply = %v, want %v", got, tt.want)
 			}
 		})
 	}

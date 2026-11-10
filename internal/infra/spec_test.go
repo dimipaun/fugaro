@@ -3880,8 +3880,9 @@ func TestSpecBakedWorkflowRunsTheCatalogsChoice(t *testing.T) {
 // that job carried (FUGARO_REMOTE and no FUGARO_CHECKOUT). R1 (#1698, D1191)
 // refuses a prebuilt entry on a baked workflow where the spec is built, and
 // the only two checkout kinds that leave the catalog inert — clone and shared
-// — make catalog.Applies false, so catalogJobImage returns an empty entry for
-// them and WorkflowSpec.CatalogPrebuilt is never set from this path: the
+// — are the resolver's base and shared layers, so catalogJobImage returns an
+// empty entry for them and WorkflowSpec.CatalogPrebuilt is never set from this
+// path: the
 // remote's `|| ws.CatalogPrebuilt` clause is unreachable, and no allowed
 // configuration exercises it. The behaviour those tests were about — the
 // remote on a job whose image holds no checkout, credential-free — stays
@@ -4104,8 +4105,8 @@ func TestBakedWorkflowRefusesAPrebuiltCatalogEntry(t *testing.T) {
 // before the catalog was asked. The check below holds that: the configuration
 // this control runs on is one a repository can write, and the same one with a
 // reference added is not. Its job runs the installation's base image and the
-// catalog does not speak for it at all (catalog.Applies), so the entry the test
-// above refuses is inert here and the spec is built.
+// catalog does not speak for it at all (the resolver's shared layer), so the
+// entry the test above refuses is inert here and the spec is built.
 func TestCloneWorkflowAcceptsAPrebuiltCatalogEntry(t *testing.T) {
 	in := catalogInputs(t, &config.Catalog{Entries: prebuiltCatalogEntries()})
 	w := in.Cfg.Workflows["bare"]

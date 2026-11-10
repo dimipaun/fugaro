@@ -1250,7 +1250,8 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 	// The image's origin, written for the run on EVERY workflow job: the
 	// catalog entry this job's image came from, and empty on a job the
 	// catalog did not choose (a repository-built image, a checkout: clone or
-	// shared job, whose entry is empty, catalog.Applies refusing both). The
+	// shared job, whose entry is empty, because the resolver answers those
+	// with the base and shared layers and no entry). The
 	// key is written even when empty because the runner reads os.Environ,
 	// which includes a derived image's own ENV: a repository Dockerfile that
 	// sets FUGARO_IMAGE_ENTRY would otherwise run with a stamp the deploy

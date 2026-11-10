@@ -307,7 +307,7 @@ type Source string
 
 const (
 	// SourceCatalog is an entry of the project's image catalog: the resolver's
-	// answer for a job the project's images are what decide (Applies).
+	// answer for a job the project's images are what decide.
 	SourceCatalog Source = "catalog"
 	// SourceRepo is the image this project builds for the repository itself.
 	// It is the answer only where the project has no image for the job at all
@@ -566,35 +566,21 @@ func UnknownMappedEntryError(repo, name string) error {
 		ErrUnknownEntry, repo, name)
 }
 
-// Applies reports whether the project's image selection is what decides this
-// job's image at all: whether JobImage answers with a catalog entry rather
-// than with the repository's own image, the base image or the shared layer.
+// MayApply reads neither the catalog nor the map: whether req is a job the
+// image selection could speak for at all — a baked checkout, whose image is
+// one this project builds or a catalog entry's, and not a clone or shared
+// checkout, whose image is the installation's own. It is for a caller holding
+// a project whose image selection it could not read, where what JobImage would
+// ask — whether the catalog marks a default, whether the map names this
+// repository — is exactly what is not known, and a workflow that names nothing
+// runs a project image when the node says so. Such a caller treats the
+// workflow as the selection's when MayApply says so; the two checkout kinds it
+// refuses are not the selection's in any state.
 //
-// Both halves of a selection ask it: the deploy-time job spec, which fixes the
-// job's image (F7), and the launcher, which judges the image again against the
-// backend it picks (D1149). A workflow one of them judged by the catalog and
-// the other did not would be refused for an entry it does not run, or asked
-// for a Docker socket it never needed, so the predicate lives here and not
-// twice.
-//
-// It is JobImage's own answer and not a second reading of the same keys, and
-// the errors JobImage raises are no answer: a selection that is refused is not
-// one the catalog decides.
-func Applies(req ImageRequest) bool {
-	sel, err := JobImage(req)
-	return err == nil && sel.Source == SourceCatalog
-}
-
-// MayApply is the half of Applies that reads neither the catalog nor the map:
-// whether req is a job the image selection could speak for at all — a baked
-// checkout, whose image is one this project builds or a catalog entry's, and
-// not a clone or shared checkout, whose image is the installation's own. It is
-// for a caller holding a project whose image selection it could not read,
-// where what Applies would ask — whether the catalog marks a default, whether
-// the map names this repository — is exactly what is not known, and a workflow
-// that names nothing runs a project image when the node says so. Such a caller
-// treats the workflow as the selection's when MayApply says so; the two
-// checkout kinds it refuses are not the selection's in any state.
+// Whether the selection is what decides a job whose configuration IS readable
+// is JobImage's own answer and not a second reading of the same keys: a caller
+// asks it and switches on Source, and a selection it refuses is not one the
+// catalog decides.
 func MayApply(w config.Workflow) bool {
 	return w.Checkout != config.CheckoutClone && w.Checkout != config.CheckoutShared
 }
