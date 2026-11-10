@@ -111,7 +111,7 @@ IS1–IS13 with IS6 unused); its own folder's merged count is stale in both dire
 | **D4** — advisory merge order | **Kept** | same, and on D3 |
 | **E0** — the roles design (D446) | **Superseded** | E0's own text says it is "a separate spec and reconciliation, owned by the owner"; that spec is now [docs/roles-scopes](../roles-scopes/) (spec 2026-11-07, D1580–D1593, tasks RS1–RS10), extending the roles design E0 names (`docs/design/roles.md`). Reconciliation §6's **O5** — "the roles design (D446) is a prerequisite of Slice E's writes; nobody owns it yet" — is answered by that folder, so nothing is left for E0 to write here. Its one shipped output, `fugaro user`, is E1's |
 | **E1** — `fugaro user ls\|add\|rm` over the IAM lists | **Merged** | `internal/cli/user.go` `newUserCmd` (registered in `internal/cli/root.go`), pinned by `internal/cli/user_test.go` (`TestUserAddWritesLauncher`, `TestUserAddRefusesDomain`, `TestUserRefusesStaleLocalList`, `TestUserInviteHasNoSecret`); `plugin/skills/working/SKILL.md` names the command |
-| **X1** — the live-check entries | **Kept** | `docs/gcp-live-checklist.md` has no Check 230, 231, 232, 234 or 235 section, and `internal/cli/docs_forge_checks_test.go` does not exist. image-setup reserves Checks 500–509 (its own), and secrets-brokering's dynamic-delivery holds 510–511: neither block is this folder's, and this folder's 230–249 stays reserved |
+| **X1** — the live-check entries | **Kept** | `docs/gcp-live-checklist.md` has no Check 230, 231, 232, 234 or 235 section, and `internal/cli/docs_forge_checks_test.go` does not exist. image-setup reserves Checks 500–509 (its own; IS13 assigns 500 and 501), and secrets-brokering's dynamic-delivery holds Checks 510–519 (510 and 511 assigned, 512–519 reserved): neither block is this folder's, and this folder's 230–249 stays reserved |
 
 ## 3. What image-setup does *not* cover
 
@@ -145,11 +145,16 @@ cost, and an **empty answer cell** — answering one is not approving a task. **
 changes any answered decision**: D617–D622, D618's fork-under-user-control and the 2026-11-02
 CATALOG FIRST ruling stand as they are.
 
-**Numbering, re-checked 2026-11-10** (the check the README's numbers table asks for): the highest
+**Numbering, re-checked 2026-11-10** (the check the README's numbers table asks for, and a reading of
+that day only — open pull requests appear and merge, so a later reconciliation re-runs it rather than
+trusting this sentence): the highest
 decision written on `main` is **D1959**, the top of secrets-brokering/dynamic-delivery's reserved
-block (D1930–D1959, D1947–D1959 unused); the highest used in any open pull request is **D1945**. This
-folder's own block **D600–D679** is intact on `main` and unused in every open pull request
-(D650–D679 are reserved and unused), so these decisions take **D650–D653** from it, above D649 (the
+block (D1930–D1959, D1947–D1959 unused); the highest used in any open pull request is **D2019**, the
+top of vision-model's D2000–D2019 (`fugaro/20261110-152350-dcf2`), with
+recon-bitbucket-secrets (`fugaro/20261110-150432-32bd`) holding D1960–D1979 and the
+bitbucket-workspace-token folder's D1980–D1999. Neither of those reaches this folder's block: this
+folder's own **D600–D679** is intact on `main` and unused in every one of those pull requests
+(D650–D679 are reserved and unused there), so these decisions take **D650–D653** from it, above D649 (the
 highest answer this folder holds) and below the reserved top; **D654–D659** of the block stay held
 for this file's own follow-ups.
 

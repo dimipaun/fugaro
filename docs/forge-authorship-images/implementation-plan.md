@@ -730,7 +730,8 @@ from E0.
 
 - **State:** Kept — `docs/gcp-live-checklist.md` has no Check 230, 231, 232, 234 or 235 section, and
   `internal/cli/docs_forge_checks_test.go` does not exist. The image setup plan reserves Checks
-  500–509 and secrets-brokering's dynamic-delivery holds 510–511; 230–249 stays this folder's.
+  500–509 and secrets-brokering's dynamic-delivery holds Checks 510–519; 230–249 stays this
+  folder's.
 
 - **Files:** `docs/gcp-live-checklist.md` (Checks 230, 231, 232, 234, 235, each NOT RUN, with its
   prerequisites, the exact commands and the task that makes it runnable),
