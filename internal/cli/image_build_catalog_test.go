@@ -471,6 +471,34 @@ func TestCatalogBuildSubmitsTheContextIdentity(t *testing.T) {
 	} else if env, _ := st["env"].([]any); !slices.Contains(env, "COMMIT="+sha) {
 		t.Errorf("the context step's env is %v, want it to check out %s", env, sha)
 	}
+	// The smoke's own spec is rendered from the commit the build bakes, which
+	// for a context entry is the commit its definition was read at: the smoke
+	// checks the baked checkout against the commit the spec names, so one
+	// rendered from the checkout's HEAD would fail wherever the operator is not
+	// standing on the source branch's head. The two commits differ here, so a
+	// spec naming the wrong one is not the same spec.
+	var smoke image.SelftestSpec
+	if err := json.Unmarshal(catalogBuildSelftest(t, fb), &smoke); err != nil {
+		t.Fatalf("the smoke's spec is not one: %v", err)
+	}
+	if smoke.Commit != sha {
+		t.Errorf("the smoke checks the checkout against %q, want the commit the build bakes (%s)", smoke.Commit, sha)
+	}
+	if smoke.Origin != "https://bitbucket.org/acme/app.git" {
+		t.Errorf("the smoke's origin is %q, want the entry's repository", smoke.Origin)
+	}
+}
+
+// catalogBuildSelftest is the smoke's spec as the request carries it: the
+// decoded _SELFTEST_B64 the build hands to `fugaro image selftest`.
+func catalogBuildSelftest(t *testing.T, fb *gcpfake.Build) []byte {
+	t.Helper()
+	b64, _ := catalogBuildSubs(t, fb)["_SELFTEST_B64"].(string)
+	raw, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		t.Fatalf("_SELFTEST_B64 = %q: %v", b64, err)
+	}
+	return raw
 }
 
 // TestCatalogBuildRefusesACopyAnotherPublisherStaged: the definition, the

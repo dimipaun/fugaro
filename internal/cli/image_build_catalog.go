@@ -198,11 +198,12 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 	if note := buildRecordNote(lc); note != "" {
 		fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: warning: %s\n", note)
 	}
-	// The commit every entry's build is pinned to: the checkout's own HEAD.
-	// A build reads one object and resolves no ref of its own (PIC3's copy
-	// answers with bytes and no commit), so the operator's commit is what
-	// this submission states, and what the image's revision label and the
-	// entry's record then carry.
+	// The commit an entry's build is pinned to when the entry names no
+	// context: the checkout's own HEAD. A build reads one object and resolves
+	// no ref of its own (PIC3's copy answers with bytes and no commit), so the
+	// operator's commit is what this submission states, and what the image's
+	// revision label and the entry's record then carry. An entry that names a
+	// context states the commit its copy resolved instead (D1395), below.
 	commit, err := gitRead(ctx, root, "rev-parse", "HEAD")
 	if err != nil {
 		return userErr("reading the checkout's commit: %v", err)
@@ -217,19 +218,12 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 	if err != nil {
 		return userErr("%v", err)
 	}
-	gitID, selftestJSON := "", []byte(nil)
+	gitID := ""
 	var secrets []config.Secret
 	if builds {
 		gitID, err = gitSecretID(ctx, lc, rs, "the catalog build of "+rs.Name)
 		if err != nil {
 			return err
-		}
-		selftest, err := image.SpecForCloud(cfg, workflow, commit, repoURL)
-		if err != nil {
-			return userErr("%v", err)
-		}
-		if selftestJSON, err = json.Marshal(selftest); err != nil {
-			return userErr("%v", err)
 		}
 		if secrets, err = catalogBuildSecrets(cfg); err != nil {
 			return err
@@ -426,6 +420,20 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 				spec.Context = e.Source.Context
 				spec.ContextCommit, spec.ContextSHA256 = string(stagedCommit), string(stagedHash)
 				spec.Definition.SourceCommit = spec.ContextCommit
+			}
+			// The smoke is rendered from the commit this build bakes — the
+			// entry's own where it names a context, the checkout's HEAD
+			// otherwise — because the smoke checks the baked checkout against
+			// the commit the spec names (image.checkCheckout): one rendered
+			// from the checkout's HEAD for a context entry would fail unless
+			// the operator happened to be standing on the source branch's head.
+			smoke, err := image.SpecForCloud(cfg, workflow, spec.Definition.SourceCommit, repoURL)
+			if err != nil {
+				return withLease(userErr("%v", err), lease.release(ctx))
+			}
+			selftestJSON, err := json.Marshal(smoke)
+			if err != nil {
+				return withLease(userErr("%v", err), lease.release(ctx))
 			}
 			spec.WorkflowSecrets, spec.Selftest = secrets, selftestJSON
 		}
