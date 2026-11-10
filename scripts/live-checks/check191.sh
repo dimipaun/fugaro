@@ -464,6 +464,13 @@ def switch_state(ok, problem, repo):
     accounts, so the arms are told apart by doctor's own words: a rewording
     there makes this row one the check could not measure rather than a wrong
     answer.
+
+    The problem it is handed is doctor's whole one. Doctor's list of accounts
+    follows the sentence that introduces it, so a copy cut at the length a
+    printed field is held to would hide a repository named past the cut and
+    answer `on` for a repository the service does not admit — which is why the
+    `switch` reading classifies on the full text and truncates only what it
+    prints.
     """
     if ok:
         return "noservice" if "has no credentials service" in problem else "on"
@@ -575,11 +582,16 @@ elif cmd == "switch":
         for c in checks:
             if not isinstance(c, dict) or c.get("id") != "credentials-service-deployed":
                 continue
-            problem = text(c.get("problem") or "")
+            # The WHOLE problem is what the arms are told apart on and what the
+            # repository is looked for in, and only the field the row prints is
+            # cut: doctor's list of accounts grows with the installation, and a
+            # repository named past the cap would otherwise read as one the
+            # service admits — the answer this reading exists to refuse.
+            full = " ".join(str(c.get("problem") or "").split())
             print("read=yes")
             print("present=yes")
-            print("state=%s" % switch_state(bool(c.get("ok")), problem, repo))
-            print("problem=%s" % problem)
+            print("state=%s" % switch_state(bool(c.get("ok")), full, repo))
+            print("problem=%s" % text(full))
             break
         else:
             print("read=yes")

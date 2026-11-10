@@ -772,6 +772,86 @@ DOCTOR_EOF
   expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "an unsettled grant: no run launched"
 }
 
+test_the_switch_is_read_from_doctor_s_whole_sentence() {
+  local dir=$work/switchlong
+  prepare "$dir"
+  # Doctor's list of accounts grows with the installation, and the repository
+  # this check is about can be named far past the length a printed field is held
+  # to. The row must be read from doctor's whole sentence: a classification over
+  # a cut copy would answer "on" here, PASS `proxied`, and launch the three real
+  # runs at the direct path — the outcome this reading exists to prevent.
+  cat >"$dir/state/doctor.json" <<'DOCTOR_EOF'
+{"ok":false,"checks":[{"id":"credentials-service-deployed","ok":false,"severity":"warning","problem":"the credentials service fugaro-credentials is deployed and grants no roles/run.invoker to workspace-a/one (web), workspace-a/two (web), workspace-a/three (web), workspace-a/four (web), workspace-a/five (web), workspace-a/six (web), workspace-a/repo-a (web): a run of workspace-a/repo-a (web) that is on the switch would fail to fetch a model credential. The grant follows the switch, and the switch follows the repository's own agent.auth, so a repository of that list that does not run with agent.auth: cascade has the service held off for it: the published policy's proxy: true is inert there — it brokers nothing, and its runs hold their own Bitbucket token instead of being served one"}],"project":{"name":"fugaro","gcp_project":"fugaro-dev","region":"us-east5"}}
+DOCTOR_EOF
+  run_check "$dir" "$script"
+  expect_status "$status" 1 "a repository named past the printed cap"
+  expect_contains "$out" "FACT proxied: FAIL" "a repository past the cap: the row is a FAIL"
+  expect_contains "$out" "the credentials-service switch is OFF for workspace-a/repo-a" "a repository past the cap: the row says what is off"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "a repository past the cap: no run launched"
+}
+
+test_another_repositorys_missing_grant_is_not_this_repositorys_switch() {
+  local dir=$work/switchothers
+  prepare "$dir"
+  # Doctor names the accounts the service does not admit, and this one names two
+  # other repositories: the sandbox repository this check is about is admitted,
+  # so the switch is on for it and the check is not stopped by a neighbour's
+  # grant. The row must pass and the runs below must be launched.
+  cat >"$dir/state/doctor.json" <<'DOCTOR_EOF'
+{"ok":false,"checks":[{"id":"credentials-service-deployed","ok":false,"severity":"warning","problem":"the credentials service fugaro-credentials is deployed and grants no roles/run.invoker to workspace-a/repo-b (web), workspace-a/plain (web): a run of workspace-a/repo-b (web), workspace-a/plain (web) that is on the switch would fail to fetch a model credential"}],"project":{"name":"fugaro","gcp_project":"fugaro-dev","region":"us-east5"}}
+DOCTOR_EOF
+  run_check "$dir" "$script"
+  expect_status "$status" 0 "another repository's missing grant"
+  expect_contains "$out" "FACT proxied: PASS" "another repository's missing grant: this repository's row passes"
+  expect_contains "$out" "FACT run-outcome: PASS" "another repository's missing grant: the check went on and launched its runs"
+  expect_contains "$(cat "$dir/logs/fugaro.calls")" "--run-id $(rid_of "$dir" work)" "another repository's missing grant: the working run was launched"
+}
+
+test_a_doctor_arm_the_reading_does_not_know_is_unmeasured() {
+  local dir=$work/switchother
+  prepare "$dir"
+  # Doctor's arm for a service whose bundle holds nothing to serve: every job
+  # account may invoke it, and every model call of a run against it is refused.
+  # It is none of the arms this reading knows, and it may not be read as a
+  # switch that is on — a PASS there would launch three runs on a service that
+  # can serve none of them.
+  cat >"$dir/state/doctor.json" <<'DOCTOR_EOF'
+{"ok":false,"checks":[{"id":"credentials-service-deployed","ok":false,"severity":"warning","problem":"the credentials service fugaro-credentials is deployed and serving, and it admits nobody: every job account may invoke it, and the bundle it serves from (fugaro-project-fugaro-creds-bundle-3f1c2b4a5d6e7f80) holds no version, so the loader fails closed and every model call of a run against it is refused"}],"project":{"name":"fugaro","gcp_project":"fugaro-dev","region":"us-east5"}}
+DOCTOR_EOF
+  run_check "$dir" "$script"
+  expect_status "$status" 2 "doctor's empty-bundle arm"
+  expect_contains "$out" "FACT proxied: FAIL" "an arm this reading does not know: the row is a FAIL"
+  expect_contains "$out" "state: other" "an arm this reading does not know: the row carries the state it read"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "an arm this reading does not know: no run launched"
+}
+
+test_an_installation_with_no_credentials_service_is_a_failure() {
+  local dir=$work/switchoffinstall
+  prepare "$dir"
+  # DON1's own state, and the one an installation mid-opt-in is in: the block is
+  # not written (doctor's ok info arm) or Cloud Run has no service at all (its
+  # warning arm). Nothing is served either way, so `proxy: true` brokers nothing
+  # and the check may not pass `proxied` on the policy alone.
+  cat >"$dir/state/doctor.json" <<'DOCTOR_EOF'
+{"ok":true,"checks":[{"id":"credentials-service-deployed","ok":true,"severity":"info","problem":"the installation has no credentials service (fugaro-credentials): an ordinary fugaro update deploys one on every installation that can hold it — it needs the installation's Firebase backend and at least one repository job — and writes the block this check reads"}],"project":{"name":"fugaro","gcp_project":"fugaro-dev","region":"us-east5"}}
+DOCTOR_EOF
+  run_check "$dir" "$script"
+  expect_status "$status" 1 "an installation with no credentials service"
+  expect_contains "$out" "FACT proxied: FAIL" "no credentials service: the row is a FAIL"
+  expect_contains "$out" "the installation has no credentials service this check could read" "no credentials service: the row says what is off"
+  expect_contains "$out" "Run 'fugaro update'" "no credentials service: the remedy names the deploy"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "no credentials service: no run launched"
+  # The same state one apply along: the block is written and Cloud Run answers
+  # NOT_FOUND for the service.
+  cat >"$dir/state/doctor.json" <<'DOCTOR_EOF'
+{"ok":false,"checks":[{"id":"credentials-service-deployed","ok":false,"severity":"warning","problem":"the local config opted this installation into the credentials service (fugaro-credentials), and Cloud Run has no service fugaro-credentials in project fugaro-dev, region us-east5: every run of it would fail to fetch a model credential"}],"project":{"name":"fugaro","gcp_project":"fugaro-dev","region":"us-east5"}}
+DOCTOR_EOF
+  run_check "$dir" "$script"
+  expect_status "$status" 1 "a service that was never created"
+  expect_contains "$out" "FACT proxied: FAIL" "a missing service: the row is a FAIL"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "a missing service: no run launched"
+}
+
 test_happy_path() {
   local dir=$work/happy
   prepare "$dir"
@@ -1135,7 +1215,11 @@ t test_the_run_id_must_name_today
 t test_the_run_id_base_must_be_todays_date_and_a_time
 t test_the_fake_run_refuses_an_id_the_cli_would_refuse
 t test_the_switch_being_off_stops_the_check
+t test_the_switch_is_read_from_doctor_s_whole_sentence
+t test_another_repositorys_missing_grant_is_not_this_repositorys_switch
 t test_a_switch_the_check_cannot_read_is_unmeasured
+t test_a_doctor_arm_the_reading_does_not_know_is_unmeasured
+t test_an_installation_with_no_credentials_service_is_a_failure
 t test_happy_path
 t test_a_run_that_did_not_succeed_is_a_failure
 t test_a_refusal_the_service_wrote_no_class_line_for_is_a_failure
