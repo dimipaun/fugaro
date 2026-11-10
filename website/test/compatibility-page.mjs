@@ -33,16 +33,27 @@
 //      own `<h1>` — which is the check that the hub's typed entry title and the page agree. The
 //      page-wide gates (`a11y.mjs`, `linkcheck.mjs`, `budget.mjs`, `origins.mjs`, `copy.mjs`,
 //      `fold.mjs`, `meta.mjs`) read every built page and so read this one without a line here.
+//   5. **And the loader's own refusals, each one seen to fire.** `src/content.ts`'s
+//      `loadCompatibility()` refuses a state of the data file before a page is rendered from it:
+//      the closed sets of statuses and editions, the groups in the spec's order, an
+//      edition on every row of a group or on none, and the evidence path behind every
+//      present-tense row. None of them is reachable from a page that was built — a file that got
+//      past the loader got a page — so each one is planted in a copy of the data file and the
+//      *build* is held to it, the way this site's other data-file loaders are
+//      (`test/console-screens.mjs`, `test/changelog-page.mjs`). No rule is written out again:
+//      the plant is the defect, and the sentence the loader throws is what the case reads.
 //
 // A gate whose refusal has never been seen to fire is a gate nobody knows the shape of, so the
-// last case mutates the **built page** — one edit per refusal, taken from the artifact itself
-// rather than from a fixture that approximates it — and proves each one arrives naming what is
-// wrong. Standard library only; no network (Global Constraint 4).
+// last cases mutate the **built page** — one edit per refusal, taken from the artifact itself
+// rather than from a fixture that approximates it — and the **data file** it was built from, and
+// prove each refusal arrives naming what is wrong. Standard library only; no network
+// (Global Constraint 4).
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
+import { buildCopy } from './lib/build.mjs'
 import { DIST, builtPages, findAll, parse, textOf } from './lib/html.mjs'
 import { compatibilityFacts } from './compatibility.mjs'
 
@@ -434,4 +445,171 @@ test('every refusal fires on the defect it names, on the built page itself', () 
     'does not carry /compatibility/',
     'a page whose menu dropped the route is not refused',
   )
+})
+
+// ---- the loader's own refusals, kept ------------------------------------------------------
+
+/**
+ * Build a copy of the repository with `website/data/compatibility.yaml` edited, and hand back
+ * what the build produced.
+ *
+ * Every plant below is an edit to the file's own text, and a case whose edit changes nothing
+ * fails rather than passes: an anchor that drifted out of the file would otherwise leave a copy
+ * the loader accepts, and the case would go green having proved nothing. The copy is
+ * `website/test/lib/build.mjs`'s — the tree minus what a site build does not read — so the paths
+ * the loader holds to their shape are not on disk there either: a shape is this reader's
+ * business, and `website/test/compatibility.mjs` is what holds each path to the tree in the
+ * checkout.
+ */
+function buildWithMatrix(t, edit) {
+  return buildCopy(
+    t,
+    ({ site }) => {
+      const file = path.join(site, 'data', 'compatibility.yaml')
+      const before = readFileSync(file, 'utf8')
+      const after = edit(before)
+      assert.notEqual(
+        after,
+        before,
+        `this case's edit made no change to website/data/compatibility.yaml, so the build below reads the file as it is and the case proves nothing — fix the anchor against the file, never the rule`,
+      )
+      writeFileSync(file, after)
+    },
+    'fugaro-compatibility-matrix-',
+  )
+}
+
+/**
+ * The loader's refusals, one plant each: `what` is the defect as a reviewer reads it, `edit`
+ * makes it in the file, and `wants` are the fragments `src/content.ts`'s own sentence has to
+ * carry — the file it refused, and the thing it refused.
+ *
+ * The list is not a second copy of the loader's rules, and that is the point of reading the
+ * *build* rather than the file: a refusal deleted from the loader and a refusal this file forgot
+ * are the same failure seen from the two sides, and the case names it either way. It is also the
+ * half `website/test/compatibility.mjs` cannot reach — that file holds the shipped rows to their
+ * rules, and a rule the file's rows happen to satisfy is one nobody has watched throw.
+ */
+const MATRIX_REFUSALS = [
+  {
+    what: 'a format version this reader does not know',
+    edit: (yaml) => yaml.replace(/^version: 1$/m, 'version: 2'),
+    wants: [/website\/data\/compatibility\.yaml/, /version is 2/, /format version 1/],
+  },
+  {
+    what: 'a key at the document root nobody reads',
+    edit: (yaml) => `${yaml}schedule: "the owner's"\n`,
+    wants: [/website\/data\/compatibility\.yaml/, /"schedule"/],
+  },
+  {
+    what: 'a key in as_of nobody reads',
+    edit: (yaml) => yaml.replace(/^ {2}console: v0\.120\.0$/m, '  console: v0.120.0\n  mobile: v0.5.0'),
+    wants: [/as_of/, /"mobile"/],
+  },
+  {
+    what: 'an as_of.cli that is not written as a release version',
+    edit: (yaml) => yaml.replace(/^ {2}cli: v0\.20\.3$/m, '  cli: 0.20.3'),
+    wants: [/as_of\.cli/, /v0\.20\.3 \(D1538\)/],
+  },
+  {
+    what: 'a never_say list with no phrase in it',
+    edit: (yaml) => yaml.replace(/^never_say:\n(?: {2}- .*\n)+/m, 'never_say: []\n'),
+    wants: [/never_say is empty/],
+  },
+  {
+    what: 'a group whose title is empty',
+    edit: (yaml) => yaml.replace(/^ {4}title: "Console \(Electron\)"$/m, '    title: ""'),
+    wants: [/title is empty/],
+  },
+  {
+    what: 'a group with no row in it',
+    edit: (yaml) => yaml.replace(/^ {4}rows:\n(?= {6}- name: "Claude Code")[\s\S]*?(?=^ {2}- id: model-access)/m, '    rows: []\n'),
+    wants: [/carries no row/, /one table per group/],
+  },
+  {
+    what: 'a key on a group nobody reads',
+    edit: (yaml) => yaml.replace(/^ {4}title: "Issue trackers"$/m, '    title: "Issue trackers"\n    subtitle: "nope"'),
+    wants: [/"subtitle"/],
+  },
+  {
+    what: 'a status outside the file’s five',
+    edit: (yaml) =>
+      yaml.replace(
+        /^ {8}status: supported\n {8}edition: core\n {8}note: "Apple silicon and Intel\."$/m,
+        '        status: partial\n        edition: core\n        note: "Apple silicon and Intel."',
+      ),
+    wants: [/carries the status "partial"/, /D1520/],
+  },
+  {
+    what: 'an edition that is neither core nor subscription',
+    edit: (yaml) =>
+      yaml.replace(
+        /^ {8}status: supported\n {8}edition: core\n {8}note: "Apple silicon and Intel\."$/m,
+        '        status: supported\n        edition: ce\n        note: "Apple silicon and Intel."',
+      ),
+    wants: [/carries the edition "ce"/, /D1522/],
+  },
+  {
+    what: 'a row that carries no note',
+    edit: (yaml) =>
+      yaml.replace(
+        /^ {8}status: supported\n {8}edition: core\n {8}note: "Apple silicon and Intel\."$/m,
+        '        status: supported\n        edition: core\n        note: ""',
+      ),
+    wants: [/carries no note/],
+  },
+  {
+    what: 'a row that names an empty evidence path',
+    edit: (yaml) =>
+      yaml.replace(
+        /^ {8}note: "Apple silicon and Intel\."\n {8}evidence: "\.goreleaser\.yaml"$/m,
+        '        note: "Apple silicon and Intel."\n        evidence: ""',
+      ),
+    wants: [/names an empty evidence path/],
+  },
+  {
+    what: 'a key on a row nobody reads',
+    edit: (yaml) => yaml.replace(/^ {8}note: "No plan for email\."$/m, '        note: "No plan for email."\n        nickname: "nope"'),
+    wants: [/"nickname"/],
+  },
+  {
+    what: 'a group that writes an edition on some of its rows rather than all of them',
+    edit: (yaml) =>
+      yaml.replace(
+        /^ {8}status: supported\n {8}edition: subscription\n {8}note: "One universal build for Apple silicon and Intel\."$/m,
+        '        status: supported\n        note: "One universal build for Apple silicon and Intel."',
+      ),
+    wants: [/writes an edition on 3 of its 4 rows/],
+  },
+  {
+    what: 'an edition on every row of a group whose spec table has no Edition column',
+    edit: (yaml) =>
+      yaml.replace(/^ {2}- id: agent-harness\n[\s\S]*?(?=^ {2}- id: model-access)/m, (block) => block.replace(/^( {8}status: .+)$/gm, '$1\n        edition: core')),
+    wants: [/is one of the groups whose spec table has an Edition column/],
+  },
+  {
+    what: 'a supported row with no evidence path behind it',
+    edit: (yaml) => yaml.replace(/^ {8}evidence: "internal\/agent"\n/m, ''),
+    wants: [/names no evidence path/],
+  },
+  {
+    what: 'no group at all',
+    edit: (yaml) => yaml.replace(/\ngroups:\n[\s\S]*$/, '\ngroups: []\n'),
+    wants: [/groups is empty/],
+  },
+  {
+    what: 'a group whose id is not one of the spec’s',
+    edit: (yaml) => yaml.replace(/^ {2}- id: backends$/m, '  - id: platforms'),
+    wants: [/the spec's groups, in the spec's order/],
+  },
+]
+
+test('the build stops on a matrix the loader refuses, naming the file and the defect', (t) => {
+  for (const { what, edit, wants } of MATRIX_REFUSALS) {
+    const built = buildWithMatrix(t, edit)
+    assert.notEqual(built.status, 0, `the build accepted ${what} in website/data/compatibility.yaml:\n${built.output}`)
+    for (const want of wants) {
+      assert.match(built.output, want, `the failure for ${what} does not carry ${want}:\n${built.output}`)
+    }
+  }
 })
