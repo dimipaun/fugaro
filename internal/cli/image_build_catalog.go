@@ -352,7 +352,8 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 			if err != nil {
 				return withLease(userErr("%v", err), lease.release(ctx))
 			}
-			if err := writeCatalogDockerfile(ctx, rb, opener, env.repoProvider(e.Source.Repo, cfg), e); err != nil {
+			src, err := writeCatalogDockerfile(ctx, rb, opener, env.repoProvider(e.Source.Repo, cfg), e)
+			if err != nil {
 				// A provider opened without the credential its environment did
 				// not carry fails here with its own sentence, which is left
 				// exactly as it is; the hint says where the token actually is
@@ -364,6 +365,11 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 				}
 				return withLease(err, lease.release(ctx))
 			}
+			// A test seam between the copy above and the read-back below
+			// (catalogCopyRace): another publisher's copy of this entry can
+			// land in that window, which is what the check the read-back ends
+			// with refuses.
+			catalogCopyRace(ctx, rb, e)
 			// What the build pins and records is the copy itself: its bytes and
 			// its object generation, read back from the one object the build
 			// reads, so the request states what the bucket holds and not what
@@ -408,6 +414,14 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 				stagedHash, _, err := rb.Read(ctx, hashKey)
 				if err != nil {
 					return withLease(remote(err), lease.release(ctx))
+				}
+				// The three reads above are three objects and not one, so what
+				// they answered is checked against what this command staged
+				// before any of it reaches the request: a definition read here
+				// beside another publisher's commit and digest would be built
+				// on a context it was never resolved with.
+				if err := refuseMixedCatalogCopy(e, src, data, string(stagedCommit), string(stagedHash)); err != nil {
+					return withLease(err, lease.release(ctx))
 				}
 				spec.Context = e.Source.Context
 				spec.ContextCommit, spec.ContextSHA256 = string(stagedCommit), string(stagedHash)

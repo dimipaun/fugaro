@@ -473,6 +473,54 @@ func TestCatalogBuildSubmitsTheContextIdentity(t *testing.T) {
 	}
 }
 
+// TestCatalogBuildRefusesACopyAnotherPublisherStaged: the definition, the
+// commit and the context digest a request is built from are three objects, and
+// another publisher staging this entry's copy between the copy and the
+// submission's read-back leaves the bucket holding one revision's definition
+// beside another's identity. The build's pin step sees the definition alone —
+// its generation and its sha256 — so a request made from that mix would pass it
+// and then build one revision's Dockerfile on another's context, recording the
+// stale commit beside the newer digest. It is refused instead, before anything
+// is submitted, and the next run reads the whole copy the other publisher left.
+func TestCatalogBuildRefusesACopyAnotherPublisherStaged(t *testing.T) {
+	fb, _, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildContextYAML)
+	// The commit the entry's branch resolves to, and the definition it holds:
+	// the values this command's own copy stages.
+	const sha = "3f2b1c0d9e8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c"
+	atCommit := map[string]string{".fugaro/base.Dockerfile": catalogBuildFetched, "ci/Dockerfile": "FROM example.invalid/base\n"}
+	stubCatalogProviderState(t, fake.State{
+		Branches: map[string]map[string]string{"main": {".fugaro/base.Dockerfile": catalogBuildFetched}},
+		Commits:  map[string]string{"main": sha},
+		Trees:    map[string]map[string]string{sha: atCommit},
+	})
+	f.sm.AllowAccess()
+	putSecretID(t, f.sm, mustSlug(gitprov.KindBitbucket, "acme/app"), config.BitbucketSecret, []byte(catalogTokenPlaceholder))
+
+	// The other publisher's Dockerfile: another revision of the same entry,
+	// staged after this command's copy and before its read-back, which is the
+	// window catalogCopyRace stands in for.
+	const other = "FROM example.invalid/other\nRUN true\n"
+	race := catalogCopyRace
+	t.Cleanup(func() { catalogCopyRace = race })
+	catalogCopyRace = func(_ context.Context, b *blobx.Bucket, e config.Entry) {
+		key, err := config.CatalogDockerfileKey(e.Name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := b.Put(context.Background(), key, []byte(other), catalogDockerfileType); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	_, _, err := executeBuild(t, "image", "build", "base", "--base", "b:1")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "base") || !strings.Contains(err.Error(), "another publisher") {
+		t.Fatalf("exit %d, err %v: a copy another publisher staged is refused by name", ExitCode(err), err)
+	}
+	if buildPosts(fb) != 0 {
+		t.Errorf("a copy of two revisions reached Cloud Build: %d posts", buildPosts(fb))
+	}
+}
+
 // TestImageBuildWithoutACatalogKeepsItsMeaning: a project that has published
 // no catalog keeps today's per-workflow meaning exactly — `fugaro image build`
 // submits the workflow's derived build — and a name given there is refused

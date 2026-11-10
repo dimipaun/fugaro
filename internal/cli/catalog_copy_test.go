@@ -37,7 +37,7 @@ func TestCatalogDockerfileIsCopiedUnderBuildsCatalog(t *testing.T) {
 		Kind: config.SourceDockerfile, Repo: "acme/app", Path: "docker/agent.Dockerfile",
 	}}
 	open := catalogOpen(&fake.Provider{Repo: "acme/app", State: fake.State{Files: map[string]string{"docker/agent.Dockerfile": def}}})
-	if err := writeCatalogDockerfile(ctx, b, open, gitprov.KindGitHub, e); err != nil {
+	if _, err := writeCatalogDockerfile(ctx, b, open, gitprov.KindGitHub, e); err != nil {
 		t.Fatalf("writeCatalogDockerfile: %v", err)
 	}
 	key, err := config.CatalogDockerfileKey("agent")
@@ -67,7 +67,7 @@ func TestCatalogCopySkipsAnUnchangedDockerfile(t *testing.T) {
 	}}
 	p := &fake.Provider{Repo: "acme/app", State: fake.State{Files: map[string]string{"docker/agent.Dockerfile": first}}}
 	open := catalogOpen(p)
-	if err := writeCatalogDockerfile(ctx, b, open, gitprov.KindGitHub, e); err != nil {
+	if _, err := writeCatalogDockerfile(ctx, b, open, gitprov.KindGitHub, e); err != nil {
 		t.Fatalf("writeCatalogDockerfile: %v", err)
 	}
 	key, err := config.CatalogDockerfileKey("agent")
@@ -78,7 +78,7 @@ func TestCatalogCopySkipsAnUnchangedDockerfile(t *testing.T) {
 	if err != nil || string(data) != first {
 		t.Fatalf("the copy is %q (%v), want %q", data, err, first)
 	}
-	if err := writeCatalogDockerfile(ctx, b, open, gitprov.KindGitHub, e); err != nil {
+	if _, err := writeCatalogDockerfile(ctx, b, open, gitprov.KindGitHub, e); err != nil {
 		t.Fatalf("republishing wrote %v", err)
 	}
 	if _, again, err := b.Read(ctx, key); err != nil || again != gen {
@@ -86,7 +86,7 @@ func TestCatalogCopySkipsAnUnchangedDockerfile(t *testing.T) {
 	}
 	const second = first + "RUN echo changed\n"
 	p.State.Files["docker/agent.Dockerfile"] = second
-	if err := writeCatalogDockerfile(ctx, b, open, gitprov.KindGitHub, e); err != nil {
+	if _, err := writeCatalogDockerfile(ctx, b, open, gitprov.KindGitHub, e); err != nil {
 		t.Fatalf("republishing a changed definition: %v", err)
 	}
 	if data, _, err := b.Read(ctx, key); err != nil || string(data) != second {
@@ -125,7 +125,7 @@ func TestCatalogCopyReadsTheDockerfileAndTheContextAtOneCommit(t *testing.T) {
 			"ci/Dockerfile":           ctxFile,
 		}},
 	}})
-	if err := writeCatalogDockerfile(ctx, b, open, gitprov.KindGitHub, e); err != nil {
+	if _, err := writeCatalogDockerfile(ctx, b, open, gitprov.KindGitHub, e); err != nil {
 		t.Fatalf("writeCatalogDockerfile: %v", err)
 	}
 	if got := catalogObject(t, b, config.CatalogDockerfileKey, "agent"); got != atCommit {
@@ -176,7 +176,7 @@ func TestCatalogCopyStagesTheContextHash(t *testing.T) {
 	ctx := context.Background()
 	p, b, e := contextCopy(t)
 	open := catalogOpen(p)
-	if err := writeCatalogDockerfile(ctx, b, open, gitprov.KindGitHub, e); err != nil {
+	if _, err := writeCatalogDockerfile(ctx, b, open, gitprov.KindGitHub, e); err != nil {
 		t.Fatalf("writeCatalogDockerfile: %v", err)
 	}
 	key, err := config.CatalogContextHashKey("agent")
@@ -190,7 +190,7 @@ func TestCatalogCopyStagesTheContextHash(t *testing.T) {
 	if want := contextDigestOf(contextTree()); string(data) != want {
 		t.Fatalf("the staged context hash is %q, want the digest of the tree %q", data, want)
 	}
-	if err := writeCatalogDockerfile(ctx, b, open, gitprov.KindGitHub, e); err != nil {
+	if _, err := writeCatalogDockerfile(ctx, b, open, gitprov.KindGitHub, e); err != nil {
 		t.Fatalf("republishing an unchanged context: %v", err)
 	}
 	if _, again, err := b.Read(ctx, key); err != nil || again != gen {
@@ -202,7 +202,7 @@ func TestCatalogCopyStagesTheContextHash(t *testing.T) {
 		t.Errorf("the staged commit is %q, want %q", got, p.State.Commits["main"])
 	}
 	p.State.Trees[p.State.Commits["main"]]["ci/src/main.go"] = "package other\n"
-	if err := writeCatalogDockerfile(ctx, b, open, gitprov.KindGitHub, e); err != nil {
+	if _, err := writeCatalogDockerfile(ctx, b, open, gitprov.KindGitHub, e); err != nil {
 		t.Fatalf("republishing a changed context: %v", err)
 	}
 	if data, _, err := b.Read(ctx, key); err != nil || string(data) == contextDigestOf(contextTree()) {
@@ -220,7 +220,8 @@ func TestCatalogCopyStagesAContextWrittenWithItsTrailingSlash(t *testing.T) {
 	ctx := context.Background()
 	p, b, e := contextCopy(t)
 	e.Source.Context = "ci/"
-	if err := writeCatalogDockerfile(ctx, b, catalogOpen(p), gitprov.KindGitHub, e); err != nil {
+	src, err := writeCatalogDockerfile(ctx, b, catalogOpen(p), gitprov.KindGitHub, e)
+	if err != nil {
 		t.Fatalf("writeCatalogDockerfile of a context written with its trailing slash: %v", err)
 	}
 	if got, want := catalogObject(t, b, config.CatalogContextHashKey, "agent"), contextDigestOf(contextTree()); got != want {
@@ -228,6 +229,15 @@ func TestCatalogCopyStagesAContextWrittenWithItsTrailingSlash(t *testing.T) {
 	}
 	if got := catalogObject(t, b, config.CatalogContextCommitKey, "agent"); got != p.State.Commits["main"] {
 		t.Errorf("the staged commit is %q, want %q", got, p.State.Commits["main"])
+	}
+	// What the copy answers with is what it staged: the submission checks the
+	// objects it reads back against these three values, so a copy that answered
+	// anything else would refuse its own copy.
+	if string(src.Dockerfile) != p.State.Branches["main"]["docker/agent.Dockerfile"] {
+		t.Errorf("the copy answers with the definition %q, want the bytes it staged", src.Dockerfile)
+	}
+	if src.Commit != p.State.Commits["main"] || src.ContextHash != contextDigestOf(contextTree()) {
+		t.Errorf("the copy answers with commit %q and digest %q, want the two values it staged", src.Commit, src.ContextHash)
 	}
 }
 
@@ -242,7 +252,7 @@ func TestCatalogCopyBoundsTheContext(t *testing.T) {
 	for i := 0; i <= catalog.MaxContextFiles; i++ {
 		tree[fmt.Sprintf("ci/file-%05d", i)] = "x"
 	}
-	err := writeCatalogDockerfile(ctx, b, catalogOpen(p), gitprov.KindGitHub, e)
+	_, err := writeCatalogDockerfile(ctx, b, catalogOpen(p), gitprov.KindGitHub, e)
 	if !errors.Is(err, gitprov.ErrTreeTooLarge) {
 		t.Fatalf("err = %v, want the bound's own error", err)
 	}
@@ -276,7 +286,7 @@ func TestCatalogCopyWithoutAContextIsUnchanged(t *testing.T) {
 		Branches: map[string]map[string]string{"main": {"docker/agent.Dockerfile": def}},
 		Commits:  map[string]string{"main": "3f2b1c0d9e8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c"},
 	}})
-	if err := writeCatalogDockerfile(ctx, b, open, gitprov.KindGitHub, e); err != nil {
+	if _, err := writeCatalogDockerfile(ctx, b, open, gitprov.KindGitHub, e); err != nil {
 		t.Fatalf("writeCatalogDockerfile: %v", err)
 	}
 	if got := catalogObject(t, b, config.CatalogDockerfileKey, "agent"); got != def {
@@ -366,7 +376,7 @@ func TestCatalogInlineDefinitionIsWrittenFromState(t *testing.T) {
 		t.Fatal("an inline definition opened a provider")
 		return nil, nil, nil
 	}
-	if err := writeCatalogDockerfile(ctx, b, open, gitprov.KindGitHub, e); err != nil {
+	if _, err := writeCatalogDockerfile(ctx, b, open, gitprov.KindGitHub, e); err != nil {
 		t.Fatalf("writeCatalogDockerfile: %v", err)
 	}
 	key, err := config.CatalogDockerfileKey("inline-agent")
@@ -379,7 +389,7 @@ func TestCatalogInlineDefinitionIsWrittenFromState(t *testing.T) {
 	}
 	// An entry with no Dockerfile to build (a prebuilt image, PIC5's kind)
 	// is refused rather than copied.
-	if err := writeCatalogDockerfile(ctx, b, open, gitprov.KindGitHub, config.Entry{
+	if _, err := writeCatalogDockerfile(ctx, b, open, gitprov.KindGitHub, config.Entry{
 		Name: "prebuilt", Source: config.Source{Kind: config.SourceImage, Image: "ghcr.io/acme/app:1.2"},
 	}); err == nil || !strings.Contains(err.Error(), "image") {
 		t.Fatalf("a prebuilt image entry was copied: %v", err)

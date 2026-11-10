@@ -9,6 +9,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/catalog"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 )
 
 // catalogDockerfileType is the copied definition's content type: a
@@ -41,32 +42,39 @@ const catalogDockerfileType = "text/plain; charset=utf-8"
 // builds/catalog/ is outside a launcher's write grant (docs/design/
 // bucket-iam.md), so a refused write is reported with the operator text
 // operatorWriteErr writes, and its lead says what did not happen.
-func writeCatalogDockerfile(ctx context.Context, b *blobx.Bucket, open gitprov.Opener, kind string, e config.Entry) error {
+//
+// What it answers with is what it staged: the bytes, the commit and the
+// digest the objects were written from. The caller reads those objects back
+// to build its request from what the bucket holds rather than from what this
+// process resolved a moment earlier, and the values it staged are what tells
+// it the copy it read back is this one and not another publisher's
+// (refuseMixedCatalogCopy).
+func writeCatalogDockerfile(ctx context.Context, b *blobx.Bucket, open gitprov.Opener, kind string, e config.Entry) (catalog.Source, error) {
 	// The keys first: a name that is not one is refused before any credential
 	// is used to read a definition, and the refusal is the helper's own
 	// sentence (it does not repeat the name, which is what reached it).
 	key, err := config.CatalogDockerfileKey(e.Name)
 	if err != nil {
-		return err
+		return catalog.Source{}, err
 	}
 	var commitKey, hashKey string
 	if e.Source.Context != "" {
 		if commitKey, err = config.CatalogContextCommitKey(e.Name); err != nil {
-			return err
+			return catalog.Source{}, err
 		}
 		if hashKey, err = config.CatalogContextHashKey(e.Name); err != nil {
-			return err
+			return catalog.Source{}, err
 		}
 	}
 	src, err := catalog.Resolve(ctx, open, kind, e)
 	if err != nil {
-		return err
+		return catalog.Source{}, err
 	}
 	if err := writeCatalogObject(ctx, b, key, src.Dockerfile, catalogDockerfileType, catalog.MaxDockerfileBytes, catalogCopyLead); err != nil {
-		return err
+		return catalog.Source{}, err
 	}
 	if e.Source.Context == "" {
-		return nil
+		return src, nil
 	}
 	// The two values are a commit and a digest: short, and read back by a
 	// build's own substitution and by the check. They are written after the
@@ -74,9 +82,47 @@ func writeCatalogDockerfile(ctx context.Context, b *blobx.Bucket, open gitprov.O
 	// and the digest last: it is the object the check reads, and an entry
 	// whose digest is staged is an entry whose context was read whole.
 	if err := writeCatalogObject(ctx, b, commitKey, []byte(src.Commit), catalogIdentityType, catalogIdentityBytes, catalogCommitLead); err != nil {
-		return err
+		return catalog.Source{}, err
 	}
-	return writeCatalogObject(ctx, b, hashKey, []byte(src.ContextHash), catalogIdentityType, catalogIdentityBytes, catalogHashLead)
+	if err := writeCatalogObject(ctx, b, hashKey, []byte(src.ContextHash), catalogIdentityType, catalogIdentityBytes, catalogHashLead); err != nil {
+		return catalog.Source{}, err
+	}
+	return src, nil
+}
+
+// refuseMixedCatalogCopy refuses a copy that is not the one this command
+// staged: the definition read back from the bucket, the commit and the context
+// digest have to be the three values one resolution answered (src).
+//
+// They are three objects, written one after another and read back the same way,
+// and two publishers of one entry interleave — the copy's own read-compare-write
+// assumes one (writeCatalogObject). A bucket holding one publisher's definition
+// beside another's commit and digest is what that leaves, and a request built
+// from it would pass the build's pin step, which sees the definition alone (its
+// generation and its sha256), and then build one revision's Dockerfile on
+// another revision's context, recording the stale commit beside the newer
+// definition's digest. Nothing here can order two writers' objects, so the mix
+// is refused before anything is submitted: the copy's read-compare-write leaves
+// the bucket holding one revision's three objects, and the next run reads that
+// whole copy.
+//
+// part names the value that differed, so the sentence says which of the three
+// moved.
+func refuseMixedCatalogCopy(e config.Entry, src catalog.Source, definition []byte, commit, hash string) error {
+	part := ""
+	switch {
+	case !bytes.Equal(definition, src.Dockerfile):
+		part = "Dockerfile"
+	case commit != src.Commit:
+		part = "commit"
+	case hash != src.ContextHash:
+		part = "context digest"
+	}
+	if part == "" {
+		return nil
+	}
+	return userErr("nothing was submitted: the copy of %s in the runs bucket is not the one this command staged — another publisher staged a different revision of it while this ran (the %s read back is not the one this command copied); run the command again",
+		pluginwire.Printable(e.Name), part)
 }
 
 // writeCatalogObject puts data at key unless the object already holds it:
@@ -143,3 +189,10 @@ const (
 	catalogCommitLead = "the commit the entry's Dockerfile and context were read at was not staged in the runs bucket"
 	catalogHashLead   = "the digest of the entry's context was not staged in the runs bucket"
 )
+
+// catalogCopyRace is a test seam between a catalog copy and the submission's
+// read-back of it, mirroring layer_copy.go's layerCopyWriteRace: a test hook
+// can stage another publisher's copy of the entry here, which is the
+// interleaving the read-back refuses (refuseMixedCatalogCopy) and the one
+// nothing else can put in a test's way.
+var catalogCopyRace = func(ctx context.Context, b *blobx.Bucket, e config.Entry) {}
