@@ -570,11 +570,14 @@ func TestDocsConfigManagementLeavesTheBudgetKeysWithTheGenericWriter(t *testing.
 	}
 }
 
-// cfmGateTasks is the ten tasks the plan's own fifth section lists -- "the ten
-// commands in §5", as that plan's §6 calls them: the ones that add to a command
-// this design manages, whether or not they call the managed build's gate or its
-// audit writer. The spec's §5 table owes every one of them a row and owes a row
-// to nothing else, so this list is the left-hand side of that equality and
+// cfmGateTasks is the ten tasks of the plan that add a command or an operation
+// -- "the ten commands in §5", as that plan's §6 calls them. Its fifth section
+// groups all fourteen by the managed build's gate and audit calls and is the
+// reason the ten can be read off it: G2 adds a document's members, G5 rides a
+// stage of `update`, G12 renames an owner string and G13 writes these rows, and
+// the other ten each extend a command this design manages. The spec's §5 table
+// owes every one of them a row and owes a row to nothing else, so this list is
+// the left-hand side of that equality and
 // `TestDocsConfigManagementNoSecondWritePath` reads the same list.
 var cfmGateTasks = []string{"G0", "G1", "G3", "G4", "G6", "G7", "G8", "G9", "G10", "G11"}
 
@@ -757,7 +760,7 @@ func TestDocsConfigManagementRowsCoverEveryNewCommand(t *testing.T) {
 		seen[cells[0]] = true
 	}
 	if len(rows) != len(cfmGateRows) {
-		t.Errorf("%s' §5 table holds %d rows and the plan's fifth section lists %d tasks: the table is that list's row set, one row each", cfmSpec, len(rows), len(cfmGateRows))
+		t.Errorf("%s' §5 table holds %d rows and the plan writes %d tasks that add a command or an operation: the table is that list's row set, one row each", cfmSpec, len(rows), len(cfmGateRows))
 	}
 	answered := map[string]bool{}
 	for _, want := range cfmGateRows {
@@ -779,7 +782,7 @@ func TestDocsConfigManagementRowsCoverEveryNewCommand(t *testing.T) {
 	}
 	for _, task := range cfmGateTasks {
 		if !answered[task] {
-			t.Errorf("the plan's fifth section lists %s and the spec's fifth section owes it no row: the two lists are the same set, and one a reader cannot pair is a command whose gate rule nobody wrote", task)
+			t.Errorf("the plan writes %s as a task that adds a command and the spec's fifth section owes it no row: the two lists are the same set, and one a reader cannot pair is a command whose gate rule nobody wrote", task)
 		}
 	}
 	// A row that extends one of the registry's families is spelled from that
@@ -843,9 +846,13 @@ func TestDocsConfigManagementEveryRowNamesItsRefuser(t *testing.T) {
 // than leaving the table's claim about the installation unchecked.
 func TestDocsConfigManagementInstallationFactsHaveNoWriter(t *testing.T) {
 	facts := cfmInstallationFacts(t)
-	// The facts the table owes, through the same predicate the write path
-	// uses: the three refusals settingsWriteRowHinted makes before the
-	// allowlist is asked are applied here in the same order.
+	// The facts the table owes, through the write path's own refusals
+	// (settingsRefuseRow), in the order it asks them: the sensitive rows and
+	// the rows a family owns are out, and so is every row the allowlist
+	// carries. Its `*` refusal is the one this predicate does not apply,
+	// because a registry row's own spelling carries the `*` and the fact the
+	// table lists is the row: a wildcard row the allowlist does not name has
+	// no writer for any of its entries, which is what a row here says.
 	want := map[string]bool{}
 	for _, r := range settings.Rows() {
 		if r.Owner != "setup" && r.Owner != "update" {
@@ -867,6 +874,8 @@ func TestDocsConfigManagementInstallationFactsHaveNoWriter(t *testing.T) {
 			reason := "it is not a registry row at all"
 			if row, ok := settings.Lookup(key); ok {
 				switch {
+				case row.Sensitive:
+					reason = "its row is sensitive, and no fact in this table has a value a diff may print"
 				case row.Owner != "setup" && row.Owner != "update":
 					reason = "its row's owner is " + strconv.Quote(row.Owner) + ", which is not setup's or update's"
 				case settingsGenericKey(key):
