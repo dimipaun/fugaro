@@ -87,6 +87,7 @@ As of 2026-11-10, read from `main`, the open pull requests and each plan's task 
 | windows-cli | 10/31; superseded by console-windows |
 | mobile-auth | 2/7; parked |
 | repo-image-removal | **PARKED** (2/11; parked by image-setup, D1900) |
+| vision-model | plan only, 0/9 built (V0–V8); not started, nothing approved; owner Checks 520 and 521 not run |
 | voice-module, collateral, backlog, plans | no plan or not a spec |
 
 ## Open points
