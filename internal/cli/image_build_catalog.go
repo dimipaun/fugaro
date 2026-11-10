@@ -279,9 +279,12 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 	}
 	imageMap := lc.ImageMapEffective(publishedMap)
 	bakeRepos := lc.BakeReposEffective(publishedBake)
-	// A project that maps nothing gets no line and no stage: the bake is the
-	// map's, and an installation that predates it is byte for byte what it was
-	// (which is what keeps fugaro update a one-command upgrade).
+	// A checkout that names no catalog entry and that no map names gets no
+	// stage and no line, which is every installation that predates both
+	// fields; one that already names an entry in its own workflow runs that
+	// entry's image by its own answer (T1 reading (b)), so its build composes
+	// a stage for it and says so. No path under fugaro update writes a
+	// definition at all (O1), which is what keeps it a one-command upgrade.
 	bakeRepo := imagebake.Repo{Repo: canon, Slug: rs.Slug, URL: repoURL, Branch: cmp.Or(rs.BaseBranch, "main")}
 	bakeRef := bakeReference(cfg)
 	// The image is spelled from the host the installation's registries are

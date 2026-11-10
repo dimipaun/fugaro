@@ -1,6 +1,6 @@
 # Image setup skill: the spec reconciled against the code
 
-**Status: the owner's answers to D1900–D1906, T1, O3 and O4 were given 2026-11-09; nothing is implemented and no task is approved.**
+**Status: the owner's answers to D1900–D1906, T1, O3 and O4 were given 2026-11-09; no task is approved, and the only thing implemented is IS8b — the bake step O3 (b) unblocked — which landed on its own before approval (implementation-plan.md).**
 Checked against `origin/main` at `871ce0569` on 2026-11-09. **Where this file disagrees with [spec.md](spec.md), this file wins.**
 Findings are `F1…`, decisions `D1900–D1929` (this work's block; D1907–D1929 reserved and unused), checks `500–509` (reserved; none taken).
 A citation names a file and a symbol, never a line.

@@ -487,10 +487,12 @@ func doctorChecks(t *testing.T, root string) doctorOutput {
 // (IS8b, the owner's O3 reading (b); the HARD RULE, F15).
 //
 // The image itself converges at the rebuild the catalog already has (D1148's
-// schedule, O1): `fugaro update` builds and copies no entry, which is also what
-// keeps the bake from arriving anywhere an operator asked for none. What the
-// build then writes is pinned by TestCatalogBuildBakesTheMappedReposCheckout,
-// and the same bytes are what the nightly rebuild reads
+// schedule, O1): `fugaro update` builds and copies no entry, so a bake arrives
+// only at a build an operator runs, and a project that never mapped anything
+// and whose checkouts name no entry keeps byte for byte what it had. What such
+// a build then writes is pinned by TestCatalogBuildBakesTheMappedReposCheckout
+// and TestCatalogBuildBakesTheEntryTheCheckoutNames, and the same bytes are
+// what the nightly rebuild reads
 // (TestCatalogCheckJobSmokesABakedDefinitionWhereTheImagePutIt).
 func TestUpdateConvergesImageBake(t *testing.T) {
 	r := newConvergeRig(t, v4Node())

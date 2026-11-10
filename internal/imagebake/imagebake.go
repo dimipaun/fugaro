@@ -42,11 +42,18 @@
 // # When nothing is baked
 //
 // Nothing is baked unless the entry being built is the image the repository
-// runs (a catalog reference in its own workflow beats the project's map, T1
-// reading (b); otherwise the map decides) and the project's bake switch is on
-// (D1901, absent = on). A project that maps nothing is byte-for-byte what it
-// was, which is what keeps `fugaro update` a one-command upgrade for every
-// installation that predates the map.
+// runs — a catalog reference in its own workflow beats the project's map (T1
+// reading (b)), and the map answers for a repository that names none — and the
+// project's bake switch is on (D1901, absent = on).
+//
+// An installation that predates both fields is byte-for-byte what it was, and
+// not because it maps nothing: a checkout of it names no catalog reference
+// either, so the map answers for it and there is no map, and no entry is that
+// checkout's own. A checkout that already names an entry in its workflow is
+// the exception, and it is the intended one: that repository runs that entry's
+// image by its own answer (T1 (b)), so its next build composes the stage for
+// it, and the build says so. Nothing here is written by `fugaro update`, which
+// copies and builds no entry (O1): a bake arrives at a build an operator runs.
 package imagebake
 
 import (

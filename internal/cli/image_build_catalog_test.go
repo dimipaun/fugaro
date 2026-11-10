@@ -786,13 +786,18 @@ func TestCatalogBuildBakesTheMappedReposCheckout(t *testing.T) {
 	}
 }
 
-// TestCatalogBuildBakesNothingWithoutTheMap: an installation that maps nothing
-// — every installation before this release, and one whose operator answered no
-// — is byte for byte what it was: no stage is composed, the copy is the
-// entry's own definition, the smoke is the spec it was, and no line about the
-// bake is printed. This is the half of the HARD RULE that keeps `fugaro
-// update` a one-command upgrade: nothing about the bake arrives until the
-// project asks for one.
+// TestCatalogBuildBakesNothingWithoutTheMap: a checkout that names no catalog
+// entry of its own and that the project's map does not put on this one — every
+// installation before this release, and one whose operator answered no — is
+// byte for byte what it was: no stage is composed, the copy is the entry's own
+// definition, the smoke is the spec it was, and no line about the bake is
+// printed. A checkout that already names the entry in its own workflow is the
+// one exception, and TestCatalogBuildBakesTheEntryTheCheckoutNames is its
+// case: T1 reading (b) makes that repository's own answer the image it runs.
+//
+// This is the half of the HARD RULE that keeps `fugaro update` a one-command
+// upgrade: no path under it writes a definition at all (O1), so nothing about
+// the bake arrives until a build an operator runs composes it.
 func TestCatalogBuildBakesNothingWithoutTheMap(t *testing.T) {
 	for name, tc := range map[string]struct{ yaml, note string }{
 		// The previous release's installation, and one whose operator never
@@ -832,6 +837,41 @@ func TestCatalogBuildBakesNothingWithoutTheMap(t *testing.T) {
 				t.Errorf("stderr = %q, want the reason the bake did not happen (%s)", stderr, tc.note)
 			}
 		})
+	}
+}
+
+// TestCatalogBuildBakesTheEntryTheCheckoutNames: the repository's own workflow
+// is the first answer to which image its jobs run (T1 reading (b)), and the
+// bake follows the repository's answer before the project's map — with no map
+// and no `bake_repos` anywhere, a checkout whose workflow names an entry still
+// gets that entry's image composed for it, because that repository runs that
+// image by name and D1901's switch is on until an operator says otherwise.
+func TestCatalogBuildBakesTheEntryTheCheckoutNames(t *testing.T) {
+	// The repository's own reference: `image_name: tools` in its workflow
+	// (D1155), and no image_map and no bake_repos in the project at all.
+	repo := strings.Replace(bitbucketYAML, "app: {", "app: { image_name: tools,", 1)
+	if repo == bitbucketYAML {
+		t.Fatal("the fixture workflow has changed shape")
+	}
+	fb, gcs, _ := catalogBuildCheckoutFor(t, repo, catalogBuildYAML, gitprov.KindBitbucket, "")
+
+	_, stderr, err := executeBuild(t, "image", "build", "tools", "--base", "b:1")
+	if err != nil {
+		t.Fatalf("%v (%s)", err, stderr)
+	}
+	dir := "/work/baked/" + mustSlug(gitprov.KindBitbucket, "acme/app")
+	got, _ := catalogCopy(t, gcs, "tools")
+	if baked, ok := imagebake.BakedDir([]byte(got)); !ok || baked != dir {
+		t.Errorf("the copy bakes at %q, %v; want %s: the checkout's own workflow names this entry, so its jobs run it", baked, ok, dir)
+	}
+	if !strings.Contains(stderr, "bakes the checkout of acme/app at "+dir) {
+		t.Errorf("stderr = %q, want the line naming the baked checkout", stderr)
+	}
+	// The entry the checkout does not run is nobody's to bake: building it
+	// composes nothing (TestCatalogBuildBakesNothingWithoutTheMap is the whole
+	// of that case, subtest by subtest).
+	if subs := catalogBuildSubs(t, fb); subs["_CATALOG_TAG"] != sha256Hex([]byte(got)) {
+		t.Errorf("_CATALOG_TAG = %v, want the composed definition's sha256", subs["_CATALOG_TAG"])
 	}
 }
 

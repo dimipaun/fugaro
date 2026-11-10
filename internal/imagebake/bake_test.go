@@ -115,6 +115,30 @@ func TestDecideReferenceBeatsTheMap(t *testing.T) {
 	}
 }
 
+// TestDecideBakesTheEntryTheCheckoutNamesWithNoMap: a repository whose own
+// workflow names the entry being built runs that entry's image by its own
+// answer (T1 reading (b)), so the bake belongs there even when the project has
+// no map at all — the map is what answers for a repository that names none,
+// and it is not what makes a repository's own image bakeable. This is the case
+// an installation that predates both fields meets when its checkouts already
+// pin entries, and its next build of one composes a stage for it.
+func TestDecideBakesTheEntryTheCheckoutNamesWithNoMap(t *testing.T) {
+	req := reqApp()
+	req.Map = nil
+	req.Reference = "app"
+	if p := Decide(req); p.Baked == nil {
+		t.Fatalf("Decide baked nothing (%s): the checkout names this entry in its own workflow and the project's switch is on", p.Reason)
+	} else if !p.Notable {
+		t.Error("the plan is not notable: a bake is a line a build prints, and this one changed an entry's definition on a project that set no map")
+	}
+	// And what the repository does NOT name stays untouched: with no map, an
+	// entry the checkout names nowhere is not the image it runs.
+	req.Reference = ""
+	if p := Decide(req); p.Baked != nil || p.Notable {
+		t.Errorf("Decide baked %+v for an entry the checkout names nowhere and the project does not map", p)
+	}
+}
+
 // TestDecideBakeSwitchOff: D1901's switch, off, keeps the checkout out of every
 // image and says so.
 func TestDecideBakeSwitchOff(t *testing.T) {
@@ -217,7 +241,8 @@ func TestAppendAndBakedDir(t *testing.T) {
 		t.Error("BakedDir accepted a marker naming a path outside Root: a definition's own text can then move the smoke's checkout")
 	}
 	// A definition that bakes nothing comes back byte for byte, which is what
-	// keeps an installation with no map converging to exactly what it had.
+	// keeps an installation that names no entry and is mapped to none exactly
+	// what it had.
 	off, err := Append(own, Decide(func() Request { r := reqApp(); r.Bake = false; return r }()))
 	if err != nil {
 		t.Fatal(err)
