@@ -502,6 +502,33 @@ export interface ConsoleOperation {
    * paid views, and the kill switch's state.
    */
   readonly refusedAfterLapse?: true
+  /**
+   * `installationArgument` names the payload argument that carries the
+   * installation this row acts on, for a row whose target is not the console's
+   * own active binding. `run.launch` is the one row with it today: its payload
+   * names the installation to launch, and `src/main/launch.ts` resolves that name
+   * against this console's records and spawns **that** installation -- handing its
+   * child that installation's key, not the binding's.
+   *
+   * **It is a column for `refusedAfterLapse`'s reason, and it is what keeps the
+   * lapse gate honest about which installation it is asking about.** The gate
+   * (`src/main/licence-state.ts`) reads the licence state of the installation an
+   * operation acts on, and the row -- not the entry point -- says where that
+   * installation is spelled: a gate that read the active binding for every row
+   * would admit a launch of a lapsed installation while the console was driving a
+   * valid one, spawn it, and hand it the lapsed installation's key. A row that
+   * acts on the active installation carries no such column, because its payload
+   * names no installation at all (`settings.edit` writes the settings document of
+   * the installation the console is driving), and `undefined` is then the honest
+   * answer to "which installation is this for".
+   *
+   * `assertReachableSurface` holds the column to a **required `installationName`
+   * argument of the row itself**, so the one failure that would be silent --
+   * pointing it at a free-text field, whose value no installation answers for,
+   * which would read as the no-key state and admit the operation -- fails closed
+   * at registration instead.
+   */
+  readonly installationArgument?: string
 }
 
 /**
@@ -1038,6 +1065,14 @@ export const CONSOLE_OPERATIONS = [
     // T12): a lapsed installation is read-only, and the launch is half of what
     // read-only means.
     refusedAfterLapse: true,
+    // **And the installation the lapse is about is this payload's own.** The
+    // launcher resolves the name below against this console's records and spawns
+    // *that* installation (`launch.ts`), handing its child that installation's
+    // key -- so the gate has to ask about the name the renderer sent, not about
+    // the binding the console happens to be driving. `settings.edit`, the lapse's
+    // other row, carries no such column: its flow reads and writes the active
+    // installation's own settings document.
+    installationArgument: 'installation',
     // The five fields, and nothing else: no `--pr`, no `--retry`, no `--recipe`,
     // no mode, no path, no ref, no workflow, no budget escape. Every one of them
     // is on `NEVER_REACHABLE`'s argv rows below, because a closed schema is not
@@ -3600,7 +3635,8 @@ function boundReason(message: string): string {
  * assertReachableSurface throws unless every entry of a table is one the console
  * may drive: its command and its flags are clear of `NEVER_REACHABLE`, the flags
  * it fixes are the surface's own two, the lapse's refused class holds only rows
- * that spawn a command, and no two entries share a name.
+ * that spawn a command and names its target installation only in a required
+ * `installationName` argument of its own, and no two entries share a name.
  *
  * It takes the table as an argument so that the guard is a pure function of one
  * and the test can hand it the mutation directly -- a table with `budget kill`
@@ -3632,6 +3668,24 @@ export function assertReachableSurface(operations: readonly ConsoleOperation[]):
       throw new Error(
         `${operation.name} is refused after a lapse and spawns no command: the operations the lapse takes away are the ones that spawn a command, and the console's own answers stay`,
       )
+    }
+    // The lapse gate asks about the installation a row's own payload names
+    // (`installationArgument`), so the column has to name an argument of this
+    // same row that really is one. Anything else fails here rather than at the
+    // gate: a column pointing at a free-text field would ask the licence store
+    // about a string no installation answers for -- the no-key state, which
+    // refuses nothing, so the operation would be admitted while the installation
+    // it acts on had lapsed -- and a column naming no argument of the row at all
+    // would hand the gate `undefined` and silently ask about the active binding
+    // instead. A later row that wants to point this at something else has to
+    // come back here and say why, which is the point.
+    if (operation.installationArgument !== undefined) {
+      const named = operation.args.find((argument) => argument.key === operation.installationArgument)
+      if (named === undefined || named.required !== true || named.kind !== 'installationName') {
+        throw new Error(
+          `${operation.name} names the installation it acts on in ${JSON.stringify(operation.installationArgument)}, which is not a required \`installationName\` argument of this row: the lapse gate reads the target installation out of the row's own payload, and an argument that is not one would have it ask about the wrong installation`,
+        )
+      }
     }
     if (names.has(operation.name)) {
       throw new Error(`${operation.name} appears twice, so the surface has two operations with one name`)

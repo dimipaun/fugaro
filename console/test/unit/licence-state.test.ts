@@ -19,6 +19,16 @@
 //     the real bridge, and assert that the source behind the handler was never
 //     reached -- a gate applied after the handler would answer the same sentence
 //     and have spawned the launch anyway;
+//   - **the gate asks about the installation the operation acts on.** A row whose
+//     payload names an installation (`run.launch`, whose row carries
+//     `installationArgument`) is judged on *that* installation's key: the
+//     launcher resolves the name a renderer sent and spawns that installation,
+//     with that installation's key in the child's environment, so a gate keyed
+//     on the console's active binding would admit a lapsed installation's launch
+//     while driving a valid one, and would refuse a valid installation's launch
+//     after the rail moved. Rows that name none (`settings.edit`, whose flow
+//     writes the active installation's own settings document) are judged on the
+//     binding, which is the installation they act on;
 //   - **every other operation answers**, at every state but the lapse. That is
 //     the design's kept set: every read (the paid views included), the console's
 //     own surface, the kill switch's state, and the key screen, which is the way
@@ -175,10 +185,12 @@ function answeredBy() {
 /**
  * lapsedConsole is the surface as `src/main/index.ts` registers it: the whole
  * allow-list, wrapped by the lapse gate, behind the real registrar and the real
- * bridge. `current` is a function, so a test can move the state under the gate;
- * `wrapped` is what `lapseHandlers` answered, for the whole-surface cases.
+ * bridge. `current` is a function, so a test can move the state under the gate
+ * and answer for more than one installation -- it is handed the installation the
+ * operation acts on, or `undefined` for a row that names none; `wrapped` is what
+ * `lapseHandlers` answered, for the whole-surface cases.
  */
-function lapsedConsole(current: () => LicenceReply) {
+function lapsedConsole(current: (installation: string | undefined) => LicenceReply) {
   const source = answeredBy()
   const ipcMain = recordingIpcMain()
   const wrapped = lapseHandlers(source.handlers, current)
@@ -244,6 +256,25 @@ describe('the refused class is the table\'s column', () => {
       (operation) => operation.name,
     )
     expect([...marked].sort()).toEqual([...THE_REFUSED].sort())
+  })
+
+  it('names the target installation on the launch row, and on no other of the two', () => {
+    // The second column the gate reads, and the reason the two rows are not
+    // decided the same way: the launch acts on the installation its payload
+    // names, and the settings write acts on the installation the console is
+    // driving. `assertReachableSurface` (`ipc.ts`) holds the column's *shape*
+    // -- a required `installationName` argument of the same row -- and this
+    // holds the *set*: a settings write given an installation argument would ask
+    // the store about a name its own payload never carries.
+    expect(
+      OPERATIONS.filter((operation) => operation.refusedAfterLapse === true).map((operation) => [
+        operation.name,
+        operation.installationArgument,
+      ]),
+    ).toEqual([
+      ['run.launch', 'installation'],
+      ['settings.edit', undefined],
+    ])
   })
 
   it('leaves the key screen unmarked, because a lapse it could not leave is a trap', () => {
@@ -381,6 +412,62 @@ describe('the lapse, at the handler', () => {
     store = AT['grace'] as LicenceReply
     expect(await launch(WELL_FORMED['run.launch'])).toEqual({ ok: true, data: {} })
     expect(reached).toEqual(['run.launch'])
+  })
+
+  it('judges the launch on the installation its payload names, and the settings write on the binding', async () => {
+    // **The bug this holds shut.** `run.launch`'s payload names the installation
+    // to launch, and the launcher resolves that name against the console's own
+    // records and spawns *that* installation -- handing its child that
+    // installation's key (`src/main/launch.ts`). A gate that read only the active
+    // binding would therefore admit a lapsed installation's launch whenever the
+    // console was driving a valid one, and spawn it; the reverse is the milder
+    // half: a valid installation's launch refused because the rail had moved.
+    //
+    // `settings.edit` is the same fact from the other side: its payload carries
+    // no installation at all, and its flow reads and writes the settings document
+    // of the installation this console is driving, so the binding *is* its
+    // target.
+    const asked: (string | undefined)[] = []
+    const states: Record<string, LicenceReply> = {
+      active: AT['lapsed'] as LicenceReply,
+      sandbox: AT['valid'] as LicenceReply,
+    }
+    const { bridge, reached } = lapsedConsole((installation) => {
+      asked.push(installation)
+      return states[installation ?? 'active'] as LicenceReply
+    })
+    // The console is driving a lapsed installation and the payload names a valid
+    // one: the launch is admitted, and the installation it names is the one the
+    // gate asked about.
+    expect(await bridgeMethod(bridge, 'run.launch')(WELL_FORMED['run.launch'])).toEqual({
+      ok: true,
+      data: {},
+    })
+    expect(reached).toEqual(['run.launch'])
+    expect(asked).toEqual(['sandbox'])
+    // The settings write names no installation, so it is judged on the binding
+    // -- which has lapsed -- and its handler is never reached.
+    expect(await bridgeMethod(bridge, 'settings.edit')(WELL_FORMED['settings.edit'])).toEqual({
+      ok: false,
+      reason: LAPSE_REFUSAL,
+    })
+    expect(reached).toEqual(['run.launch'])
+    expect(asked).toEqual(['sandbox', undefined])
+  })
+
+  it('refuses a launch of a lapsed installation while the console drives a valid one', async () => {
+    const states: Record<string, LicenceReply> = {
+      active: AT['valid'] as LicenceReply,
+      sandbox: AT['lapsed'] as LicenceReply,
+    }
+    const { bridge, reached } = lapsedConsole(
+      (installation) => states[installation ?? 'active'] as LicenceReply,
+    )
+    expect(await bridgeMethod(bridge, 'run.launch')(WELL_FORMED['run.launch'])).toEqual({
+      ok: false,
+      reason: LAPSE_REFUSAL,
+    })
+    expect(reached).toEqual([])
   })
 
   it('wraps nothing else, and answers a frozen surface', async () => {

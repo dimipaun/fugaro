@@ -50,6 +50,16 @@ function refusesAfterLapse(operation: ConsoleOperation): boolean {
 }
 
 /**
+ * installationArgumentOf answers the payload argument a row acts on an
+ * installation through, or `undefined` for a row that acts on the console's own
+ * active binding. It takes the row widened for `refusesAfterLapse`' reason and
+ * no other -- the optional columns are not on every row's literal type.
+ */
+function installationArgumentOf(operation: ConsoleOperation): string | undefined {
+  return operation.installationArgument
+}
+
+/**
  * ProductLicenceState is the design's state table (§5.1-§5.5), in this console's
  * own words for it. It is deliberately **not** the verifier's `LicenceState`
  * (`src/main/licence.ts`): the verifier answers about a *key* -- `expired` is a
@@ -128,6 +138,20 @@ function lapsed(): never {
  * session must get the launch back at the next call. A gate closed over one copy
  * of the reply would keep refusing until the console was restarted.
  *
+ * **`current` is asked about the installation the operation acts on, and the
+ * row says which that is.** A row carrying `installationArgument` (`ipc.ts`)
+ * names the installation in its own payload, and that is the installation the
+ * operation really reaches: `run.launch` resolves the name a renderer sent
+ * against this console's records and spawns **that** installation, with that
+ * installation's key in the child's environment (`src/main/launch.ts`). So a gate
+ * that asked about the console's active binding for every row would be wrong in
+ * both directions -- it would admit a launch of a lapsed installation while
+ * driving a valid one, and it would refuse a valid installation's launch after
+ * the rail moved -- and the first of those is the one that spends. A row with no
+ * such column acts on the active installation (`settings.edit` writes the
+ * settings document the console is driving), which is what `undefined` means to
+ * `current`.
+ *
  * **Only the rows carrying `refusedAfterLapse` are wrapped.** Every other
  * operation is the very handler it was handed -- the same function object, not a
  * wrapper that happens to call it -- so there is exactly one place a refusal can
@@ -138,14 +162,22 @@ function lapsed(): never {
  */
 export function lapseHandlers(
   handlers: ConsoleHandlers,
-  current: () => LicenceReply,
+  current: (installation: string | undefined) => LicenceReply,
 ): ConsoleHandlers {
   const wrapped: Record<OperationName, ConsoleHandler> = { ...handlers }
   for (const operation of CONSOLE_OPERATIONS) {
     if (!refusesAfterLapse(operation)) continue
     const inner = handlers[operation.name]
+    const named = installationArgumentOf(operation)
     wrapped[operation.name] = async (args) => {
-      if (licenceStateOf(current()) === 'lapsed') lapsed()
+      // The argument is required and validated before any handler runs, and
+      // `assertReachableSurface` holds the column to a required
+      // `installationName` argument of this very row -- so this is a narrowing
+      // and not a second check, and `undefined` here is the row that names no
+      // installation and means the active binding.
+      const target = named === undefined ? undefined : args[named]
+      const installation = typeof target === 'string' && target !== '' ? target : undefined
+      if (licenceStateOf(current(installation)) === 'lapsed') lapsed()
       return inner(args)
     }
   }

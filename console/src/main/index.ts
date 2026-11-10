@@ -486,11 +486,26 @@ function licenceRead(): unknown {
 }
 
 /**
- * activeLicenceReply is the state the lapse gate reads (`lapseHandlers`,
+ * licenceReplyFor is the state the lapse gate reads (`lapseHandlers`,
  * `src/main/licence-state.ts`, subscriptions plan S6.2): the store's answer about
- * the active installation's key, as `licence.read` answers it.
+ * the key of the installation the operation acts on -- the installation the row's
+ * own payload names (`installationArgument` in `ipc.ts`, which is `run.launch`'s
+ * `installation` today), or, for a row that names none, the console's active
+ * binding, which is the installation those rows act on (`settings.edit` writes
+ * the settings document of the installation this console is driving).
  *
- * **It is tolerant where `licenceRead` throws, and that is the whole
+ * **The target installation is read, never assumed.** `run.launch` resolves the
+ * name its payload carries against this console's records and spawns **that**
+ * installation, handing its child that installation's key (`src/main/launch.ts`)
+ * -- so a gate keyed on `activeBinding` alone would admit a launch of a lapsed
+ * installation while the console was driving a valid one, and would refuse a
+ * valid installation's launch after the rail moved. The row says where the name
+ * is spelled and this function turns it into the store's answer; a name no
+ * installation answers for is the store's `none`, which refuses nothing and is
+ * right: the launch's own lookup is what refuses an installation this console
+ * does not have.
+ *
+ * **It is tolerant where `licenceRead` throws, and that is the rest of the
  * difference.** `licence.read` answers a *renderer* that asked about the console
  * it is driving, so the console's own no-installation sentence
  * (`NO_ACTIVE_INSTALLATION`, D13) is the right answer there. The gate is not a
@@ -499,13 +514,12 @@ function licenceRead(): unknown {
  * from the rail, not from a binding. A wrapper that threw here would turn a
  * launch into a refusal with `dispatch`'s own sentence about the installation,
  * which is a refusal of the wrong thing; `{state: 'none'}` is the state that
- * refuses nothing, and there is nothing to launch without a binding anyway
- * (`activeBinding` is what the launch's own handler resolves against).
+ * refuses nothing.
  */
-function activeLicenceReply(): LicenceReply {
-  const binding = activeBinding()
-  if (binding === null) return { state: 'none' }
-  return licenceStore.read(binding.project, new Date())
+function licenceReplyFor(installation: string | undefined): LicenceReply {
+  const project = installation ?? activeBinding()?.project
+  if (project === undefined) return { state: 'none' }
+  return licenceStore.read(project, new Date())
 }
 
 /** licenceSave is `licence.save`'s handler, and the console's third write: the
@@ -1004,14 +1018,17 @@ let registered = false
  * lapse gate is outside because its state is the installation's own and it is
  * read per call from the licence store, exactly as the handshake's is from the
  * stored answer, so a renewal pasted during a session lifts the launch's refusal
- * at the next call. A reduced console still launches; a lapsed one does not.
+ * at the next call. The state it reads is the one belonging to the installation
+ * the operation acts on -- the name in the row's own payload where it carries one,
+ * the active binding otherwise (`licenceReplyFor` above). A reduced console still
+ * launches; a lapsed one does not.
  */
 function registerHandlers(): void {
   if (registered) return
   registered = true
   registerConsoleHandlers(
     ipcMain,
-    lapseHandlers(reducedModeHandlers(gated, storedCompatibility), activeLicenceReply),
+    lapseHandlers(reducedModeHandlers(gated, storedCompatibility), licenceReplyFor),
   )
 }
 

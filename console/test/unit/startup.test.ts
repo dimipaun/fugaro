@@ -1029,13 +1029,16 @@ describe('the entry point puts the surface on ipcMain, and only when it may', ()
     // key's grace period has passed (subscriptions plan S6.2, design §5.1 rule
     // 13). Each gate is handed a *function* and not a value: the stored answer
     // for the handshake, and the licence store's own reply for the lapse, so
-    // neither can answer for a state the console has left.
+    // neither can answer for a state the console has left. The lapse's reader
+    // is `licenceReplyFor`, and it takes the installation as an argument,
+    // because a row whose payload names one launches *that* installation and
+    // must be judged on that installation's key.
     //
     // The statement is read with its whitespace flattened, because it is one
     // call written over four lines: what the pin is about is the two wrappers
     // and their order, not the wrap.
     expect(indexSource.replace(/\s+/g, ' ')).toContain(
-      'registerConsoleHandlers( ipcMain, lapseHandlers(reducedModeHandlers(gated, storedCompatibility), activeLicenceReply), )',
+      'registerConsoleHandlers( ipcMain, lapseHandlers(reducedModeHandlers(gated, storedCompatibility), licenceReplyFor), )',
     )
     // One registration site, because `ipcMain.handle` throws on a second
     // listener for a channel it already has: a second call anywhere would be a
