@@ -753,6 +753,167 @@ func TestUpdateAtPreviousVersionConverges(t *testing.T) {
 	}
 }
 
+// TestUpdateResolvedWindowIsTheRecordedSpan: the window the summary's list is
+// read against is (X, Y] — Y this build's release, X the recorded release when
+// that is below Y and the recorded previous_release when it is not (F17, D1754,
+// D1757). Both halves are one line of updateResolvedWindow and the whole list
+// hangs off the difference: taking previous_release for X widens an ordinary
+// update's window to include the fixes the update before it printed, and taking
+// the recorded release for X on a re-run narrows it to nothing.
+func TestUpdateResolvedWindowIsTheRecordedSpan(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// record is the releases the installation record was advanced to, in
+		// order; none at all says the bucket holds no record.
+		record   []string
+		corrupt  bool
+		version  string
+		previous string
+	}{
+		{
+			name: "the recorded release is the bound when it is below this build",
+			// The update before this one spanned 1.2.1..1.2.2, so this one's
+			// window starts where that one stopped.
+			record:   []string{"1.2.1", convergePrev},
+			version:  convergeRelease,
+			previous: convergePrev,
+		},
+		{
+			name: "a first record names no release before it",
+			// The record's own previous_release is empty and its release is
+			// not: the window still starts at the release it holds.
+			record:   []string{convergePrev},
+			version:  convergeRelease,
+			previous: convergePrev,
+		},
+		{
+			name:     "a re-run at this release repeats the window it recorded",
+			record:   []string{"1.2.1", convergeRelease},
+			version:  convergeRelease,
+			previous: "1.2.1",
+		},
+		{
+			name:     "no record is no window",
+			version:  convergeRelease,
+			previous: "",
+		},
+		{
+			name:     "a record this build cannot read is no window",
+			corrupt:  true,
+			version:  convergeRelease,
+			previous: "",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			retryEnv(t)
+			withVersion(t, tc.version)
+			b, _ := resolvedBucket(t)
+			for _, v := range tc.record {
+				if _, err := installrec.Advance(t.Context(), b, v); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.corrupt {
+				// A record whose release is not a release: the read fails, and
+				// a window nobody can answer is left empty rather than guessed
+				// at (installrec.Read).
+				bad := []byte(`{"format":1,"release":"not-a-release"}`)
+				if _, err := b.Create(t.Context(), installrec.Object, bad, "application/json"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			got := updateResolvedWindow(t.Context(), b)
+			if got.Previous != tc.previous {
+				t.Errorf("the window's lower bound is %q, want %q", got.Previous, tc.previous)
+			}
+			if got.Release != tc.version || got.Running != tc.version {
+				t.Errorf("the window is (%q, %q] running %q, want this build's %q at both ends",
+					got.Previous, got.Release, got.Running, tc.version)
+			}
+		})
+	}
+}
+
+// TestUpdateDoesNotReReportTheLastWindowsFixes: an issue fixed by the release
+// the update before this one installed was reported by that update, under its
+// own summary. This update's window starts at that release (F17), so the fix is
+// not one of the issues "this update fixes" a second time — and it is not
+// dropped either: a pass that never got to report it is what the earlier-fixes
+// block is for (F6).
+func TestUpdateDoesNotReReportTheLastWindowsFixes(t *testing.T) {
+	retryEnv(t)
+	withVersion(t, convergeRelease)
+	b, dir := resolvedBucket(t)
+	// The installation has updated twice with a build that writes the record:
+	// the last update spanned 1.2.1..1.2.2, which is where this one starts.
+	for _, v := range []string{"1.2.1", convergePrev} {
+		if _, err := installrec.Advance(t.Context(), b, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	up := resolvedFiled(t, b, 1234, retryFingerprint, "the update stopped half way", "")
+	// A fix of the release the last update installed, which that update's own
+	// pass marked: the issue is still submitted here, so this run's pass finds
+	// it again.
+	stubUpdateResolve(t, resolvedReader{1234: issueresolve.ClosedCompleted{Milestone: convergePrev}})
+
+	r, out := resolvedRig(t, nil, dir)
+	r.updateResolved(t.Context())
+
+	if strings.Contains(out.String(), resolvedSummaryLead) {
+		t.Errorf("an update counted the last window's fix as one of its own:\n%s", out.String())
+	}
+	want := fmt.Sprintf("%s\n#%04d (the update stopped half way)\n", resolvedAlsoHead, up.Number)
+	if !strings.Contains(out.String(), want) {
+		t.Errorf("the fix before this window was not reported as an earlier one:\n%s", out.String())
+	}
+}
+
+// TestUpdateResolvedPrintsOneOfferLineInOneRun: the step's line about an issue
+// whose command came from this machine's own file and the retry offer's are one
+// sentence (resolvedFixedLine, O4), and one run prints it once — the session the
+// step ran in makes no difference to what its reader sees. A person's run says
+// so with the file's own mark; a coding agent's session makes no mark, there or
+// in the offer (F16d), so the run remembers what it printed in memory.
+func TestUpdateResolvedPrintsOneOfferLineInOneRun(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		agent bool
+	}{
+		{"a person's own update", false},
+		{"a coding agent's session", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			retryEnv(t)
+			b, dir := resolvedBucket(t)
+			up := resolvedFiled(t, b, 1234, retryFingerprint, "the update stopped half way", "")
+			// Another machine's update already marked it resolved (F18), so the
+			// step has a fix to print with the pass asking GitHub nothing.
+			if err := issues.SetResolved(t.Context(), b, up.Number, retryRelease, 0, retryAt); err != nil {
+				t.Fatal(err)
+			}
+			retryFile(t, retryStore(t), up.Number, "fugaro update")
+			stubUpdateResolve(t, resolvedReader{})
+			if tc.agent {
+				t.Setenv(agentMarkers[0], "1")
+			}
+
+			// The run's own two steps, in the order the door runs them: the
+			// step inside the converge, the offer as the door's last line.
+			r, out := resolvedRig(t, nil, dir)
+			r.updateResolved(t.Context())
+			updateRetryHint(r.cmd, r.o, nil)
+
+			if got := strings.Count(out.String(), resolvedSummaryLead); got != 1 {
+				t.Fatalf("the run printed %d summaries, so this test proves nothing:\n%s", got, out.String())
+			}
+			if got := strings.Count(out.String(), resolvedFixedLine(up.Number, "fugaro update", true)); got != 1 {
+				t.Errorf("the run printed the offer line %d times, want once:\n%s", got, out.String())
+			}
+		})
+	}
+}
+
 // TestUpdateAlsoFixedLine: a fix whose release is at or below the one the last
 // update spanned was fixed before this window, and a machine that met GitHub
 // offline is why nobody was told (F6). It is reported, under its own heading,

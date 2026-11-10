@@ -170,6 +170,17 @@ type initOptions struct {
 	// the command the user is actually running rather than one that no longer
 	// exists.
 	door string
+
+	// resolvedPrinted is what this run has already said about its own issues,
+	// by the pair that names one project's issue (F8): the ones whose fixed
+	// line the resolved-issues step printed from this machine's own file
+	// (update_resolved.go). The retry offer below the step says the same
+	// sentence about the same issue, and one run says it once — the two
+	// memories that would otherwise say so are both writes, and neither is
+	// made in a coding agent's session (F16d). It is the run's own, so it is
+	// read by the offer and reset by nothing: a door's options live for one
+	// run.
+	resolvedPrinted map[resolvedKey]bool
 }
 
 // convergeDoor is one of the two front doors of the converge (setup.go,

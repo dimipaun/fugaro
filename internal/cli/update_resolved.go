@@ -197,6 +197,7 @@ func (r *initRun) printResolvedIssues(ctx context.Context, b *blobx.Bucket) []re
 	}
 	news, older, mark := r.resolvedFixes(ctx, b, res, rows, window)
 	r.printResolvedList(news, older)
+	r.markResolvedPrinted(mark)
 	if agent == "" {
 		r.markResolvedOffered(mark)
 	}
@@ -385,12 +386,32 @@ func resolvedFixedLine(number int, command string, local bool) string {
 	return fmt.Sprintf("#%04d%s%s%s%s", number, resolvedFixedLead, command, resolvedShared, resolvedMayChange)
 }
 
+// markResolvedPrinted is what the run remembers about the lines it has just
+// printed: the issues whose command came from this machine's own file, by the
+// pair that names one project's issue (F8). The retry offer below the step
+// says the same sentence about the same issue, and one run says it once
+// (resolvedFixedLine is both lines). The file's own mark is the memory across
+// runs; this is the memory inside one, and it is the one that holds where that
+// write did not happen — a coding agent's session makes none (F16d), and a
+// store that cannot be written leaves it unwritten in a person's run too.
+func (r *initRun) markResolvedPrinted(mark []issues.Issue) {
+	if len(mark) == 0 {
+		return
+	}
+	if r.o.resolvedPrinted == nil {
+		r.o.resolvedPrinted = make(map[resolvedKey]bool, len(mark))
+	}
+	for _, i := range mark {
+		r.o.resolvedPrinted[resolvedKey{i.Number, i.Fingerprint}] = true
+	}
+}
+
 // markResolvedOffered records that this machine has now been told about the
 // issues the summary named its own command for (D1735): the flag is local and
-// stays local, so the retry offer below this step does not print the same
-// sentence about the same issue a second time. Best effort, like everything
-// else here — a store that cannot be written offers the line again on the next
-// update and fails nothing.
+// stays local, so the next update's retry offer does not print the same
+// sentence about the same issue again. Best effort, like everything else here —
+// a store that cannot be written offers the line again on the next update and
+// fails nothing.
 func (r *initRun) markResolvedOffered(mark []issues.Issue) {
 	if len(mark) == 0 {
 		return

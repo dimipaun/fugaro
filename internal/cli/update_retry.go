@@ -173,6 +173,12 @@ func updateRetryHint(cmd *cobra.Command, o *initOptions, args []string) {
 	if err != nil {
 		return
 	}
+	// What this run has already printed about its own issues is not the offer's
+	// to print again: T-RU5's step above prints the same sentence, and dropping
+	// the issues here rather than in retryHintLines is what keeps a run that
+	// printed the line from opening a bucket for the issues the person has
+	// already been told about.
+	local = retryUnprinted(local, o.resolvedPrinted)
 	// Nothing of this machine's is waiting for a release that fixed it: the
 	// shared store is not read at all, so an ordinary update — the
 	// overwhelmingly common one, a machine that filed nothing — opens no
@@ -239,6 +245,28 @@ func updateRetryOffers(o *initOptions) bool {
 		return false
 	}
 	return true
+}
+
+// retryUnprinted is local without the issues this run has already printed the
+// offer's own line for: the resolved-issues step above the offer says the same
+// sentence (resolvedFixedLine) about an issue whose command came from this
+// machine's own file, and one run says it once.
+//
+// The file's "offered" mark says the same thing across runs, and the scan below
+// reads it; this is the statement inside one run, where that mark is not there
+// to read — a coding agent's session writes none (F16d), and a store that
+// cannot be written leaves it unwritten in a person's run.
+func retryUnprinted(local []issues.Issue, printed map[resolvedKey]bool) []issues.Issue {
+	if len(printed) == 0 {
+		return local
+	}
+	kept := make([]issues.Issue, 0, len(local))
+	for _, i := range local {
+		if !printed[resolvedKey{i.Number, i.Fingerprint}] {
+			kept = append(kept, i)
+		}
+	}
+	return kept
 }
 
 // retryHintLines is the offer's whole decision over the two stores: the lines
