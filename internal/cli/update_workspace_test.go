@@ -708,6 +708,85 @@ func TestUpdateDiffSaysWhatItRemoves(t *testing.T) {
 	}
 }
 
+// TestWorkspaceRemovalAsksNothingAtATerminal: the removal half of the fence
+// D1555 puts in the typed name's place. A removal is not a widening — the
+// record no longer declares a member, and the diff says so — and what it takes
+// is the owner's own session and nothing typed at it: a person at a real
+// terminal is told what the write removes and it is written, exactly as the
+// widening's own arm does (workspacePublication.confirm). The empty stdin is
+// what makes the assertion about the prompt rather than about the code: a run
+// that asked at all would read nothing, and the member the node no longer
+// carries is the test.
+//
+// The controls are the two sessions beside it: a coding agent's is refused
+// (this file), and a run with no terminal keeps the refusal that names the flag
+// (TestUpdateDiffSaysWhatItRemoves' --yes arm and the widening tests' first
+// halves).
+func TestWorkspaceRemovalAsksNothingAtATerminal(t *testing.T) {
+	h := newWSUpdateHome(t, wsOwnerTable+wsOwnerCap)
+	p := h.project(t, "workspace-alpha")
+	// member-c is published and this installation's table does not declare it:
+	// the write this run would otherwise make is the removal of a member, the
+	// change the typed project name was reserved for.
+	wsPublishedNode(t, p, "workspace-alpha", []any{
+		wsPublishedMember("member-b", "owner/repo-a", "owner/repo-b"),
+		wsPublishedMember("member-c", "owner/repo-c"),
+	}, 25_000_000)
+
+	r := newWSUpdateRig(t, h)
+	fakeTerminal(t)
+	oc, out, err := r.apply(t, false)
+	if err != nil {
+		t.Fatalf("a removal at the owner's own terminal was refused: %v\n%s", err, out)
+	}
+	if !oc.Changed {
+		t.Errorf("the removal reports no change: %s", oc.Detail)
+	}
+	for _, asked := range []string{"to confirm: ", "[y/N]"} {
+		if strings.Contains(out, asked) {
+			t.Errorf("the removal asked the owner something at their own terminal (%q):\n%s", asked, out)
+		}
+	}
+	if got := wsMembers(t, p.db, "workspace-alpha"); !slices.Equal(got, []string{"member-b"}) {
+		t.Errorf("the published members are %v, want [member-b]: the removal the diff showed did not land", got)
+	}
+}
+
+// TestWorkspaceRemovalAsksNothingOfACodingAgentsSession is the fence's other
+// half at this path: what replaces the typed name for a removal is the session
+// itself, so a coding agent's is refused and the node does not move. The
+// refusal is the stage's own (initflow.AgentError) and not the loop's: this
+// stage confirms itself (initflow.SelfConfirming), so the loop's agent arm is
+// never reached here and a session that got past this would read a converged
+// run.
+//
+// The project is NOT managed (no gate in the rig): this is the removal path the
+// gate has nothing to say about, which is the one where the typed name was the
+// whole of the fence.
+func TestWorkspaceRemovalAsksNothingOfACodingAgentsSession(t *testing.T) {
+	h := newWSUpdateHome(t, wsOwnerTable+wsOwnerCap)
+	p := h.project(t, "workspace-alpha")
+	wsPublishedNode(t, p, "workspace-alpha", []any{
+		wsPublishedMember("member-b", "owner/repo-a", "owner/repo-b"),
+		wsPublishedMember("member-c", "owner/repo-c"),
+	}, 25_000_000)
+
+	r := newWSUpdateRig(t, h)
+	noTerminal(t)
+	t.Setenv("CLAUDECODE", "1")
+	_, out, err := r.apply(t, false)
+	var ae *initflow.AgentError
+	if !errors.As(err, &ae) {
+		t.Fatalf("a coding agent's session removed a member from the workspace: %v\n%s", err, out)
+	}
+	if !strings.Contains(err.Error(), "CLAUDECODE") {
+		t.Errorf("the refusal does not name the marker: %v", err)
+	}
+	if got := wsMembers(t, p.db, "workspace-alpha"); !slices.Equal(got, []string{"member-b", "member-c"}) {
+		t.Errorf("the node moved in a coding agent's session: the members are %v, want the two that were published", got)
+	}
+}
+
 // TestUpdateRefusesACodingAgentsSession: this publish is the owner's word, and
 // a coding agent's session has none to give. `--yes` is the flag such a session
 // passes, and what it stands in for here is the ordinary y/N of a diff that
