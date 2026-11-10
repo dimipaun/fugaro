@@ -2422,6 +2422,53 @@ func TestCheckoutWithoutTheFileStillResolvesTheRefsRecipe(t *testing.T) {
 	}
 }
 
+// TestRetryWithNoProviderEntryRefusesInsteadOfGuessingTheJob is the provider
+// the job decision must not guess at. The local config's entry for a repository
+// may name no provider at all (localcfg: the key is optional) and repoSlug then
+// falls back to the checkout's fugaro.yaml — a fallback a --retry never makes,
+// because its slug comes from the stored run (retrySpec, newFollowUpSpec): the
+// decision is reached with no checkout and no provider. Reading "" as "no
+// shared job serves this repository" (SharedJobProvider("") is false) put a
+// GitHub clone workflow of a project that published a profile on the
+// per-repository job — the claim taken, the budget token minted, and nothing
+// downstream to disagree with it, since a per-repository job carries no
+// profile. An unknown provider is not a Bitbucket one: only a provider this
+// launcher knows rules the shared job out (D908), and what is left for the rest
+// is the refusal every other launch of a repository with no checkout gets
+// (D912).
+//
+// Mutation (run, restore): drop the `provider != ""` guard — this retry
+// launches on the per-repository job and the assertions below fail on it.
+func TestRetryWithNoProviderEntryRefusesInsteadOfGuessingTheJob(t *testing.T) {
+	f := newProjectJobFixture(t)
+	rewriteConfig(t, "acme/app: { provider: github, base_branch: main, workflows: [web] }",
+		"acme/app: { base_branch: main, workflows: [web] }")
+	const run = "20261110-120000-aaaa"
+	ctx := context.Background()
+	b, err := blob.OpenBucket(ctx, f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	spec := &task.Spec{Version: 1, RunID: run, Repo: "acme/app", Ref: "main", Workflow: "web", Task: "Add a feature", RequestedBy: "someone@example.com"}
+	if err := runstore.Open(b, appSlug, run).CreateTask(ctx, spec); err != nil {
+		t.Fatal(err)
+	}
+	isolateCache(t)
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir())
+	_, _, err = execute(t, "run", "--retry", run)
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a user error", err)
+	}
+	if !strings.Contains(err.Error(), "acme/app") || !strings.Contains(err.Error(), "checkout") {
+		t.Errorf("the refusal does not name the repository and its checkout: %v", err)
+	}
+	if calls := f.run.RunRequests(); len(calls) != 0 {
+		t.Errorf("the refused launch asked Cloud Run for %d job(s): %+v", len(calls), calls)
+	}
+}
+
 // TestCheckoutWithoutTheFileStillResolvesTheRefsWorkflow is the workflow's own
 // half of the same finding, and the one a reader met first: resolveWorkflow ran
 // with the checkout closure bound before withLaunchDocument, so a checkout whose

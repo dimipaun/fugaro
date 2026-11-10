@@ -90,8 +90,17 @@ func (e *cloudEnv) launchProjectJobFor(ctx context.Context, spec *task.Spec) (*l
 		// localRepoProvider, which needs no checkout (F3): the comparison below
 		// would dereference a nil co, and the local config's entry is the one
 		// source that answers without a document.
+		//
+		// Only a provider this command knows and no shared job serves rules the
+		// shared job out. An unknown one does not: the local entry's provider is
+		// optional (localcfg), and the slug's own answer is the checkout's
+		// git.provider, which a launch with no checkout cannot read — so ruling
+		// the shared job out on the entry's silence would let a launch past the
+		// document below onto a job the policy did not choose (D905). It falls
+		// through instead, and the refusals below answer as for any other
+		// provider.
 		provider := e.localRepoProvider(spec.Repo)
-		if !infra.SharedJobProvider(provider) {
+		if provider != "" && !infra.SharedJobProvider(provider) {
 			return nil, nil
 		}
 		// The read below is only the question "has this project published
