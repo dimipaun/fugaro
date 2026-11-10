@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // noprompt_harness_test.go is the closed-stdin harness of the no-prompt policy
@@ -216,6 +217,22 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	// to remove, which its seed sets.
 	"fugaro settings set":   {args: []string{"base_branch", "main"}, reaches: "write base_branch in"},
 	"fugaro settings unset": {args: []string{"base_branch"}, reaches: "remove base_branch from", seed: closedStdinSetBaseBranch},
+	// The two workflow writes are repository-scoped, so their fixture's world
+	// is a checkout of a repository of the world's own project, whose file
+	// already defines the workflows they work on — and what they write there is
+	// a block of commands, so the flag the executable-key refusal asks for is
+	// part of the fixture. The sentence naming the block is the proof the run
+	// reached the write rather than the "not a checkout" refusal.
+	"fugaro workflow add": {
+		args:    []string{"docs", "--set", "commands.build=make docs", "--set", "commands.test=make test", "--executable-changes"},
+		reaches: "create workflows.docs in",
+		seed:    closedStdinWorkflowSeed(""),
+	},
+	"fugaro workflow rm": {
+		args:    []string{"docs", "--executable-changes"},
+		reaches: "remove workflows.docs from",
+		seed:    closedStdinWorkflowSeed(workflowDocs),
+	},
 	// watch is the one leaf whose contract is not to return: it follows the
 	// project until it is interrupted. --once is its own one snapshot, which is
 	// the run this harness can hold to a deadline.
@@ -607,6 +624,26 @@ func closedStdinSetBaseBranch(t *testing.T, f *budgetFixture) {
 func closedStdinPoolSeed(t *testing.T, f *budgetFixture) {
 	t.Helper()
 	f.appendConfig(t, "credentials:\n  - name: team-a\n    type: claude-oauth\n  - name: team-b\n    type: claude-oauth\npools:\n  - name: claude-pool\n    members:\n      - team-a\n")
+}
+
+// closedStdinWorkflowSeed makes the world's own directory a checkout of a
+// repository of project aurora — the project the world's config selects —
+// whose file defines the workflow web and, when extra is not "", the block the
+// caller puts there too. The directory is already the world's temporary one, so
+// it is the same "the current directory's checkout" a person runs these writes
+// in.
+func closedStdinWorkflowSeed(extra string) func(*testing.T, *budgetFixture) {
+	return func(t *testing.T, _ *budgetFixture) {
+		t.Helper()
+		dir, err := os.Getwd()
+		if err != nil {
+			t.Fatal(err)
+		}
+		testutil.Git(t, dir, "init", "-q")
+		if err := os.WriteFile(filepath.Join(dir, "fugaro.yaml"), []byte(settingsRepoYAML(extra)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 
 // closedStdinWorld is the state every leaf is run in: one hermetic
