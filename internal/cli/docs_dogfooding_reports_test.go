@@ -106,7 +106,9 @@ func TestDocsDogfoodingNamesTheLaunchThatWritesThem(t *testing.T) {
 // job, no workflow and no routine (D965), so a page that left the reader to
 // infer a schedule is a page a person reads as one Fugaro keeps for them.
 func TestDocsDogfoodingKeepsTheCadenceTheOwners(t *testing.T) {
-	flat := flattenDoc(dogfoodingReportsSection(t))
+	// Folded, because the rule is the page's own sentence and the page opens it
+	// with a capital.
+	flat := strings.ToLower(flattenDoc(dogfoodingReportsSection(t)))
 	for _, want := range []string{
 		// The schedule is the owner's, said as a rule rather than implied.
 		"the schedule is the owner's",
