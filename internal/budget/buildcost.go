@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -248,7 +249,8 @@ func buildResource(b PriceBook, shape BuildMachine, resource, region string) (pr
 	want := shape.Family + " " + resource + " utilization per minute in " + region
 	var found []BuildSKU
 	for _, sku := range b.SKUs {
-		if sku.Description == want {
+		// The catalog writes "E2 CPU" in most regions and "E2 cpu" in us-east5.
+		if strings.EqualFold(sku.Description, want) {
 			found = append(found, sku)
 		}
 	}

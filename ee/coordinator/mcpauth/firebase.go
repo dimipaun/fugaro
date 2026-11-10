@@ -14,8 +14,10 @@
 // do.
 //
 // This file is M6: Firebase at the authorize endpoint. The person's sign-in is
-// approved by a paired device and the session that approval produced is the
-// signer (D923), so the coordinator only ever VERIFIES an ID token — it mints
+// approved by the act M5b takes, whose proof is the session's own ID token —
+// the endpoint cannot tell a paired device from any other holder of one
+// (spec.md §3, §8) — and that session is the signer (D923), so the coordinator
+// only ever VERIFIES an ID token — it mints
 // none, it holds no signer role, and there is no code path here that could
 // answer "this person signed in" for somebody who did not. What is verified is
 // the token the installation's own project signs: the issuer is built from the
@@ -277,13 +279,23 @@ func ParseGrantType(s string) (GrantType, error) {
 // decodeIDToken decodes a compact JWT's header and payload WITHOUT verifying
 // it, and nothing it answers is trusted on its own: VerifyIDToken holds the
 // signature against the published keys before it reads a claim.
+//
+// Every segment has to be the base64url alphabet and nothing else, and that
+// check is here — in front of both decodes — because it is about the token
+// STRING rather than about decoding: a byte a decoder would skip is a spelling
+// of the same token, and the act that spends one keys on the string.
 func decodeIDToken(tok string) (head, claims map[string]any, err error) {
 	if tok == "" || len(tok) > maxIDTokenBytes {
 		return nil, nil, errors.New("mcpauth: not a JWT of a usable size")
 	}
 	parts := strings.Split(tok, ".")
-	if len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
+	if len(parts) != 3 {
 		return nil, nil, errors.New("mcpauth: not a compact JWT")
+	}
+	for _, seg := range parts {
+		if !isBase64URLText(seg) {
+			return nil, nil, errors.New("mcpauth: a JWT segment is not base64url")
+		}
 	}
 	if head, err = decodeSegment(parts[0]); err != nil {
 		return nil, nil, err
@@ -299,7 +311,7 @@ func decodeIDToken(tok string) (head, claims map[string]any, err error) {
 // half-read, because a payload that is one claim set and then another is not a
 // payload whose claims are the ones that were signed.
 func decodeSegment(s string) (map[string]any, error) {
-	raw, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(s, "="))
+	raw, err := base64.RawURLEncoding.DecodeString(s)
 	if err != nil {
 		return nil, errors.New("mcpauth: a JWT segment is not base64url")
 	}
@@ -317,13 +329,48 @@ func decodeSegment(s string) (map[string]any, error) {
 	return out, nil
 }
 
+// isBase64URLText reports whether s is unpadded base64url text and no other
+// byte — not even one a decoder would skip.
+//
+// It is the rule that makes a token one string, and the act that spends a token
+// is why it has to be a rule: Go's base64 decoder ignores a CR or LF anywhere in
+// its input, Strict included, so a newline inside a segment decodes to the same
+// bytes as the segment without it — while the spend is recorded under the
+// token's own text (TokenHash), so every spelling of one signature would be a
+// spend key of its own and one leaked sign-in would approve one flow per
+// newline. Padding is refused with the rest of it: what this front door admits
+// is the unpadded spelling, which is the one the signature's Strict decode
+// reads.
+func isBase64URLText(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; {
+		case c >= 'A' && c <= 'Z', c >= 'a' && c <= 'z', c >= '0' && c <= '9', c == '-', c == '_':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 // verifyRS256 checks a compact JWT's RS256 signature against key.
+//
+// The decode is Strict, which is one half of a rule the act's spend depends on
+// and not a decoding nicety: base64url writes one signature in more than one
+// way — the bits the final character has left over are the decoder's to ignore
+// — and Strict admits only the spelling that leaves those bits zero. It is one
+// half because Strict still ignores a CR or LF anywhere in its input, so the
+// signature on its own would still have more than one admitted spelling: what
+// makes the token one string is decodeIDToken's alphabet, and what makes the
+// spending string the verified one is the two together.
 func verifyRS256(tok string, key *rsa.PublicKey) error {
 	parts := strings.Split(tok, ".")
 	if len(parts) != 3 {
 		return errors.New("mcpauth: not a compact JWT")
 	}
-	sig, err := base64.RawURLEncoding.DecodeString(parts[2])
+	sig, err := base64.RawURLEncoding.Strict().DecodeString(parts[2])
 	if err != nil {
 		return errors.New("mcpauth: the signature is not base64url")
 	}

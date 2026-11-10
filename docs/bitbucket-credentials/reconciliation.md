@@ -755,8 +755,10 @@ the first slice that mints (S2's BB4 and S3's T3.1).
   Check 148.
 - **U14.** Whether creating a consumer needs workspace-admin rights, and whether the token then
   carries admin reach beyond its scopes. Check 145.
-- **U15.** Whether the `client_credentials` grant needs the consumer marked "private". This is a
-  reviewer's recollection, not a page. Check 145; the runbook (T2.6) says so once it is known.
+- **U15 (closed 2026-11-10).** Whether the `client_credentials` grant needs the consumer marked
+  "private". Check 145 ran against `edgeappinc` and the grant succeeded for the consumer the
+  create form makes; the owner reports the form offers no private/non-private choice, so there is
+  nothing for the runbook (T2.6) to tell an operator to set.
 - **U16.** Whether the run identity (the Firebase token for `r~<slug>~<run>`) or anything else the
   service can verify carries the run's kind (artifact, review, follow-up). This bears on O7.
 
