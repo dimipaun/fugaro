@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -346,12 +347,17 @@ func TestStateBriefFencesAndCleansStoredText(t *testing.T) {
 
 // TestStateBriefOfflineReadsOnlyTheCache: D1243's print reads the file the
 // daemon writes and reaches no node at all — proved by a database client whose
-// every call fails, which the run never makes.
+// every call fails, which the run never makes. The file is placed through the
+// writer's own path, so a reader that drifted from the daemon's cache directory
+// would look for the brief somewhere the daemon never writes it.
 func TestStateBriefOfflineReadsOnlyTheCache(t *testing.T) {
 	f := newOrchestratorFixture(t)
 	seedOrchestratorState(t, f, workItemUpsert("web-fix", "fix the flaky test"))
-	cache := filepath.Join(t.TempDir(), "fugaro", "orchestrator", orchestratorTestID+".json")
-	t.Setenv("XDG_CACHE_HOME", filepath.Dir(filepath.Dir(filepath.Dir(cache))))
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	cache, err := orchestrator.BriefCachePath(os.Getenv, runtime.GOOS, orchestratorTestID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := os.MkdirAll(filepath.Dir(cache), 0o755); err != nil {
 		t.Fatal(err)
 	}

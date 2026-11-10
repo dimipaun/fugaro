@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -47,10 +48,14 @@ func TestNodeIDsListTheSubtree(t *testing.T) {
 		f.Set(path, json.RawMessage(`{"schema_version":1}`))
 	}
 	// A key no path can be built from: `PathState` refuses it, so this release
-	// could not read the node even if it listed the name.
-	f.Set(orchestrator.SubtreeRoot+"/"+".not-an-id", json.RawMessage(`{}`))
+	// could not read the node even if it listed the name. Each carries a node of
+	// its own — an empty one is pruned, as in the real database — because a key
+	// that never reached the subtree would leave the id filter unread.
+	for _, key := range []string{".not-an-id", "Zulu", strings.Repeat("z", 65)} {
+		f.Set(orchestrator.SubtreeRoot+"/"+key, json.RawMessage(`{"schema_version":1}`))
+	}
 	// A sibling of the orchestrator subtree is not one of its ids.
-	f.Set("coordinator/aurora", json.RawMessage(`{}`))
+	f.Set("coordinator/aurora", json.RawMessage(`{"schema_version":1}`))
 
 	ids, err := orchestrator.NodeIDs(ctx, rtdbClient(t, f))
 	if err != nil {
@@ -143,6 +148,14 @@ func TestCachedBriefsListTheLocalFiles(t *testing.T) {
 	})
 	write(".brief-1234.tmp", map[string]any{"schema_version": 1})
 	write("notes.txt", "not a cache")
+	// Named like a cache and not an orchestrator id: the file's name is the id
+	// the listing reports, so one this release could build no node path from is
+	// left out like any other file that is not the daemon's.
+	write("Zulu.json", map[string]any{
+		"schema_version": orchestrator.BriefCacheVersion,
+		"brief":          "the brief of a name that is not an id",
+		"written_at":     listNow.Format(time.RFC3339),
+	})
 
 	got, err = orchestrator.CachedBriefs(os.Getenv, "linux")
 	if err != nil {
