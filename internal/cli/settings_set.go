@@ -214,6 +214,18 @@ var settingsGenericKeys = map[string]bool{
 	"layer.ab.challengers":       true,
 	"layer.ab.judge_model":       true,
 	"layer.ab.exchange_rate":     true,
+	// The three blocks above, spelled as the block rather than as its leaves
+	// (G4, D1175): the registry holds a row for each leaf and none for the
+	// block, and a person writes the block when they add or take away one entry
+	// of it (--add-entry, --remove-entry). settingsWriteLookup reaches them
+	// through the entry table — the same table a repository's blocks are in —
+	// and this list is what says the generic path owns them. The layer's
+	// `defaults.agent` and `defaults.git` need no entry here: the
+	// `layer.defaults.` prefix below covers them, which is §4.4's own spelling
+	// of that block.
+	"layer.ab":                               true,
+	"layer.profiles.*.commands.rerun_failed": true,
+	"layer.profiles.*.cache":                 true,
 }
 
 // settingsGenericPrefixes are the blocks spec §4.4 hands to the generic path
@@ -484,13 +496,25 @@ func settingsWriteListRow(key string) (settings.Row, error) {
 
 // settingsWriteRowHinted is settingsWriteRow with list saying whether the write
 // is an --add or a --remove. list reaches no refusal but the unknown-key one:
-// which rows this path writes is the same question either way.
+// which rows this path writes is the same question either way. What it finds is
+// refused by settingsRefuseRow.
 func settingsWriteRowHinted(key string, list bool) (settings.Row, error) {
 	row, registry, ok := settingsWriteLookup(key)
 	if !ok {
 		return settings.Row{}, userErr("%s: no setting has that name; the nearest are %s",
 			key, strings.Join(nearestSettings(key, settingsWriteHintRows(list)), ", "))
 	}
+	return settingsRefuseRow(key, registry, row)
+}
+
+// settingsRefuseRow is the refusals over a row and the registry spelling that
+// names it, in the order they are asked. It is settingsWriteRowHinted's own
+// second half, lifted out because the project layer's blocks have a row the
+// registry does not hold (settingsEntryRow builds it from the block's
+// leaves) and a row built here must meet the same sentences in the same order as
+// one found in the registry — a second copy of them would be a second answer to
+// what the generic path writes.
+func settingsRefuseRow(key, registry string, row settings.Row) (settings.Row, error) {
 	if row.Sensitive {
 		return settings.Row{}, userErr("%s is a sensitive setting, and the generic path never writes one: its value would be printed in the diff this command shows (spec §2.3)", key)
 	}
@@ -1006,8 +1030,9 @@ type settingsEntryBlock struct {
 
 // settingsEntryBlocks is that table, keyed by the registry's own spelling of
 // the block. The registry carries no shape, so the table stands beside the
-// writes that read it, and it is deliberately short: it is the blocks a
-// repository's fugaro.yaml holds whose entries can be addressed at all.
+// writes that read it, and it is deliberately short: it is the blocks of the two
+// documents this path writes — a repository's fugaro.yaml and the project
+// layer file — whose entries can be addressed at all.
 //
 // A cache entry's key field is `key` (D1163, spec §2.2), and its value is a
 // list of files rather than a scalar — so the keyed lookup this pair writes
@@ -1021,6 +1046,25 @@ var settingsEntryBlocks = map[string]settingsEntryBlock{
 	"workflows.*.commands.rerun_failed": {kind: settingsEntryMap},
 	"workflows.*.secrets":               {kind: settingsEntryList, keyField: "name", widens: true},
 	"workflows.*.cache":                 {kind: settingsEntryList},
+	// The project layer's blocks (G4, D1175, spec §3.6): `defaults.*`'s three,
+	// its `ab` and the profile blocks a repository's own file has too. Their
+	// leaves are the rows the registry holds one at a time
+	// (`layer.defaults.agent.model`, `layer.ab.rate`,
+	// `layer.profiles.*.commands.rerun_failed.command`), so the block a person
+	// writes an entry of is a row settingsWriteLookup does not find and
+	// settingsEntryRow builds from them — which is why the block's layers
+	// are the leaves' own and not a second answer here.
+	"layer.defaults.agent":                   {kind: settingsEntryMap},
+	"layer.defaults.git":                     {kind: settingsEntryMap},
+	"layer.defaults.rigor":                   {kind: settingsEntryMap},
+	"layer.ab":                               {kind: settingsEntryMap},
+	"layer.profiles.*.commands.rerun_failed": {kind: settingsEntryMap},
+	// The layer's cache is a repository's cache one word deeper, and its entry
+	// has no key field for the same reason (D1163, spec §2.2): the field that
+	// names a cache entry holds a list of files, so the keyed lookup this pair
+	// writes through could never find one. It is in the table so the refusal a
+	// person gets is that sentence rather than "takes no entry".
+	"layer.profiles.*.cache": {kind: settingsEntryList},
 }
 
 // settingsEntryBlockOrder is the table's own order, and the lookup walks it
@@ -1031,6 +1075,12 @@ var settingsEntryBlockOrder = []string{
 	"workflows.*.commands.rerun_failed",
 	"workflows.*.secrets",
 	"workflows.*.cache",
+	"layer.defaults.agent",
+	"layer.defaults.git",
+	"layer.defaults.rigor",
+	"layer.ab",
+	"layer.profiles.*.commands.rerun_failed",
+	"layer.profiles.*.cache",
 }
 
 // settingsEntryBlockOf is the block a key names, matched the way
@@ -1038,12 +1088,80 @@ var settingsEntryBlockOrder = []string{
 // against the key as the command line spelled it, so `workflows.web.secrets`
 // reaches the `workflows.*.secrets` row.
 func settingsEntryBlockOf(key string) (settingsEntryBlock, bool) {
+	_, block, ok := settingsEntryBlockPattern(key)
+	return block, ok
+}
+
+// settingsEntryBlockPattern is settingsEntryBlockOf's own walk, answering the
+// pattern it matched beside the block: the pattern is the spelling the registry
+// rows for the block's members are keyed under, and the project layer's blocks
+// are told from a repository's by it.
+func settingsEntryBlockPattern(key string) (string, settingsEntryBlock, bool) {
 	for _, pattern := range settingsEntryBlockOrder {
 		if settingsPatternMatch(pattern, key) {
-			return settingsEntryBlocks[pattern], true
+			return pattern, settingsEntryBlocks[pattern], true
 		}
 	}
-	return settingsEntryBlock{}, false
+	return "", settingsEntryBlock{}, false
+}
+
+// settingsEntryRow is the row an entry write names.
+//
+// For a repository's blocks it is settingsWriteRow and nothing else: the
+// registry holds the block itself (`workflows.*.secrets`,
+// `workflows.*.cache`) and the refusals are the ones every write meets.
+//
+// The project layer's blocks are the exception D1175 writes down. The registry
+// spells their members leaf by leaf — `layer.ab.rate`,
+// `layer.profiles.*.commands.rerun_failed.command` — and holds no row for the
+// block a person names, because a block is a shape and not a key. So the row is
+// built from the leaves here and handed to the same refusals as any other
+// (settingsRefuseRow), which is what keeps one answer to what the generic path
+// writes. Two things about it are decided rather than derived:
+//
+//   - the layers are the leaves' own (D1161's rule: the row supplies the layer,
+//     and the leaves are the only rows there are), so a session outside the
+//     installation, where the project layer is not writable, is refused by
+//     settingsResolveTarget in its own words rather than here;
+//   - the owner is the generic writer's. The leaves name a family — `models`
+//     for the ab block — and that column's rename to the command that owns the
+//     key is D1178's task (G12): until it lands, a leaf's spelling is refused
+//     by the family refusal before the allowlist is reached, while the block's
+//     spelling is one only this path writes at all. The block is listed in
+//     settingsGenericKeys, so nothing is written here that list does not carry.
+//
+// A leaf marked Sensitive, or leaves that disagree about their layers, refuse
+// the block: the first because the entry's value would be printed in the diff
+// this command shows (spec §2.3), the second because this Fugaro would not know
+// which file to write.
+func settingsEntryRow(key string) (settings.Row, error) {
+	pattern, _, ok := settingsEntryBlockPattern(key)
+	if !ok || !strings.HasPrefix(pattern, "layer.") {
+		return settingsWriteRow(key)
+	}
+	// The owner column is the registry's own default, the words every generic
+	// row carries (internal/settings/registry.go: the rows a family does not
+	// claim are "settings set"). It is what settingsFamilyCommands reads, and
+	// the block belongs to no family's command: see the second point above.
+	row := settings.Row{Key: key, Merge: settings.Replace, Owner: "settings set"}
+	for _, r := range settings.Rows() {
+		if !strings.HasPrefix(r.Key, pattern+".") {
+			continue
+		}
+		if row.Layers == nil {
+			row.Layers, row.Sensitive = slices.Clone(r.Layers), r.Sensitive
+			continue
+		}
+		if !slices.Equal(row.Layers, r.Layers) {
+			return settings.Row{}, userErr("%s: the registry's rows for its members disagree about the layers they are set at (%s against %s), so this Fugaro has no one layer to write the block in",
+				key, strings.Join(row.Layers, ", "), strings.Join(r.Layers, ", "))
+		}
+		row.Sensitive = row.Sensitive || r.Sensitive
+	}
+	if len(row.Layers) == 0 {
+		return settings.Row{}, userErr("%s: no row of the settings registry names a member of it, so this Fugaro has no layer to write the block in", key)
+	}
+	return settingsRefuseRow(key, pattern, row)
 }
 
 // settingsEntryAddr is the entry an entry write is about, in the old bytes and
@@ -1612,8 +1730,14 @@ func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) e
 		}
 	}
 	lookup := settingsWriteRow
-	if list {
+	switch {
+	case list:
 		lookup = settingsWriteListRow
+	case entry:
+		// An entry write names the block, and the project layer's blocks have
+		// no row of their own (D1175): settingsEntryRow builds the row from the
+		// block's leaves and refuses it by the same sentences as any other.
+		lookup = settingsEntryRow
 	}
 	row, err := lookup(key)
 	if err != nil {
@@ -1768,6 +1892,14 @@ func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) e
 	if err != nil {
 		return err
 	}
+	// The layer document's own reserved keys, in a coding agent's session
+	// (D1175, spec §4.2). It is after the gate and never instead of it: a
+	// managed project's gate refuses the same key and records that refusal
+	// (D1025), and this is the sentence the project whose marks prove nothing
+	// keeps.
+	if err := settingsLayerReservedGate(cmd, target, key, old, newData); err != nil {
+		return err
+	}
 	// --ask, once the marks are read: the sentence it prints, or the refusal
 	// that stops the run before a byte is written (managed_ask.go). It is
 	// after the gate's own admit and never instead of it.
@@ -1875,6 +2007,10 @@ func runSettingsUnset(cmd *cobra.Command, args []string, o settingsWriteOptions)
 	if err != nil {
 		return err
 	}
+	// The layer document's own reserved keys, as on the set path above.
+	if err := settingsLayerReservedGate(cmd, target, key, old, newData); err != nil {
+		return err
+	}
 	if err := askDecide(cmd.OutOrStdout(), askFlags{ask: o.ask, yes: o.yes}, managed.Managed, settingsEditConditions(cmd, edit)); err != nil {
 		return err
 	}
@@ -1890,6 +2026,34 @@ func runSettingsUnset(cmd *cobra.Command, args []string, o settingsWriteOptions)
 	}
 	fmt.Fprintln(cmd.OutOrStdout(), "next: fugaro update")
 	return nil
+}
+
+// settingsLayerReservedGate is config publish's reserved-run refusal
+// (settingsReservedRefusal, over its own layerReservedRuns) read over the key a
+// project-layer edit names, in a coding agent's session.
+//
+// It is the layer file's own answer rather than the session fence's: this file
+// decides which profile every repository of the project runs under, so a session
+// that reaches for its governance block, its budget or the agent's token reads
+// the rule it hit — the sentence `fugaro config publish` answers with — instead
+// of "run this yourself at your own terminal", which is what every other layer
+// write in a session keeps. The owner's own terminal is untouched: a reserved
+// key is exactly what those rows are for there, and the file is one they publish
+// by hand (TestSettingsSetLayersGovernanceBlockIsAWideningThatAsksNothing).
+//
+// The diff comes first, as it does before the fence: a session that was refused
+// reads what it tried to write. Nothing else of the edit happens — no backup, no
+// write (SD9).
+func settingsLayerReservedGate(cmd *cobra.Command, target settingsTarget, key string, old, newData []byte) error {
+	if target.kind != settingsDocLayer || settingsGateMarker(processTerminal()) == "" {
+		return nil
+	}
+	refusal := settingsReservedRefusal(key)
+	if refusal == "" {
+		return nil
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "%s\n%s", target.path, settingsEditDiff(old, newData))
+	return userErr("%s", refusal)
 }
 
 // settingsDryRunFlags refuses the flag combinations a dry run does not take.
