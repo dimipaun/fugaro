@@ -7,31 +7,42 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/craft"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
-// The run's ordered failover over a pool (docs/model-crafts/spec.md §2,
-// reconciliation F5, F10, F20, F23, D1622, D1626, D1627, D1635, D1637; plan
-// task MC5). It is accountchoice.go's shape asked of a pool instead of the
-// owner's accounts: a stage whose craft's access names a pool walks that
-// pool's members in order, skipping the ones this repository may not be served
-// by, and a stage-start check refuses the stage the walk cannot serve.
+// The run's pools (docs/model-crafts/spec.md §2, reconciliation F5, F8, F10,
+// F13, F20, F23, D1622, D1624, D1626, D1627, D1634, D1637; plan task MC5): the
+// craft a stage's calls go out on, the credential or pool its access names, and
+// whether this run may serve the stage with it at all.
 //
-// Four properties are the whole of the design, and each is a way this code
-// could go wrong:
+// **What this path can do with a pool, and what it cannot.** It SELECTS: the
+// pool's rules decide whether the stage runs and which of its members the
+// stage's calls go out on, and a stage this path cannot serve is refused before
+// it opens, naming the pool, its members and the reason. It cannot FAIL OVER
+// from one member to the next, and the reason is the configuration rather than
+// this file: a stage's calls go to the one route that claims its model
+// (gateway.routeFor), a run's routes are built once when its gateway starts,
+// and a model belongs to one provider — config refuses two providers claiming
+// one model (providerOverlapProblems), the gateway refuses two routes claiming
+// one model (validateRoutes). So at most one member of a pool this path serves
+// can be sent the stage's model, and the pool's own rule (F23, D1637: every
+// member serves the model ID as written) is what makes that true of the pools
+// this path admits. Failover across members belongs to the credentials service,
+// which holds the tier order over OAuth and API-key members and one credential
+// sticky per run (D1634, MC6), and to a run whose launcher fetched the next
+// member's secret and built it a route — machinery no release has yet.
+//
+// Three further properties are the rest of the design, and each is a way this
+// code could go wrong:
 //
 //   - **A member that does not admit the repository is skipped, not fatal.**
 //     Every credential serves a provider that receives the repository's code,
-//     so the member's own allow_data_to bounds it (F10), and D1627 says a
+//     so the member's own admission bounds it (F10), and D1627 says a
 //     non-admitting member is skipped and recorded while a pool with no
-//     admitting member refuses the stage. A member skipped for it is a member
-//     the walk steps over, which is what keeps one narrow member from blocking
-//     a shared pool — and the reverse reading (refuse the pool) is the one
-//     that loses a run a credential the owner did admit it.
+//     admitting member refuses the stage.
 //   - **The subscription switch is the owner's and off unless he turns it
 //     on.** A pool of two or more Claude OAuth subscriptions serves nothing
 //     while the switch is off (D1622), and inside a pool that also holds
@@ -47,24 +58,20 @@ import (
 //     silent fallback, exactly as a chosen account is in accountchoice.go —
 //     and for the same reason: the record would name a credential that did not
 //     answer the stage.
-//   - **Nothing inside an attempt moves the walk.** A stage's transcript, its
-//     cost and its verdict belong to one member, so only the answers that end
-//     an attempt advance it (poolEndedTheAttempt, and the credential service's
-//     typed answer for the path this one does not serve), and the attempt that
-//     follows is the next member's.
 //
-// Two halves of the spec are deliberately not here. Which member serves which
-// credential type is D1634's: the credentials service serves Anthropic-key and
-// OAuth members (MC6) and this walk serves the runner path's, so a member of a
-// type this walk cannot serve is not held by this job and the stage is refused
-// naming it. And what the walk served is recorded in the log as it is chosen;
-// the record's own craft_credentials field is MC8's, and the account the stage
-// ran as keeps the field it has (recordStageAccount).
+// Which member serves which credential type is D1634's: the credentials service
+// serves Anthropic-key and OAuth members (MC6) and this path serves the ones
+// whose key the job holds — a provider's, and the built-in vertex in a run that
+// authenticates as it. A member of the other path, or of a type neither path
+// serves, is not held here and is refused by name.
+//
+// What the run resolved is recorded in the log as each stage chooses it; the
+// record's own craft_credentials field is MC8's, and the account a stage ran as
+// keeps the field it has (recordStageAccount).
 
-// poolChoice is one run's walk: the switch as this run read it, the crafts it
-// resolved, and what each stage has already been through. It is written on the
-// stage's own goroutine (stageOnce's hook and notePoolExhausted), the way
-// accountChoice is.
+// poolChoice is one run's pool state: the switch as this run read it and the
+// crafts it resolved. It is written on the stage's own goroutine (stageOnce's
+// hook), the way accountChoice is.
 type poolChoice struct {
 	// read is whether the subscription switch has been read, and spread what
 	// it said. It is read at most once per run: the node cannot change under
@@ -75,10 +82,6 @@ type poolChoice struct {
 	// once. An access is resolved from the run's own file and the owner's
 	// published node, and neither changes under a run.
 	crafts map[string]craft.Effective
-	// failovers counts, per stage, how many of that stage's attempts have
-	// ended on the exhaustion of the member serving them: it is the index the
-	// walk stands on, so the attempt that follows starts on the next member.
-	failovers map[string]int
 }
 
 // poolVertexAuth is agent.auth's Vertex spelling, the way checkBudget and
@@ -89,8 +92,8 @@ type poolChoice struct {
 // vertex and not "whatever the default is today".
 const poolVertexAuth = "vertex"
 
-// The two reasons a member is skipped rather than walked over silently. They
-// are sentences because they are logged and, for the second, refused.
+// The two reasons a member is skipped rather than refused. They are sentences
+// because they are logged and, the first of them, refused with.
 const (
 	// poolSkipNotAdmitted is F10's and D1627's skip: the member serves a
 	// provider the repository is not admitted to, so its key is not in this
@@ -105,8 +108,8 @@ const (
 	poolSkipSubscription = "the project's subscription_spread switch is off, so this subscription is not spread"
 )
 
-// poolSkip is one member the walk stepped over and why, so the line the run
-// writes when it chooses a member says what it passed.
+// poolSkip is one member this path cannot serve the stage with and why, so the
+// line the run writes says what the pool held and what became of each member.
 type poolSkip struct {
 	Member config.PoolMember
 	Why    string
@@ -205,7 +208,7 @@ const craftNodeKeyPrefix = "crafts"
 // stageCrafts is the resolver's answer for this run's crafts, computed once. A
 // node this run cannot read is no crafts at all, and every craft then answers
 // the project's default credential — which is what a run does today, and the
-// reason the walk is dormant in an installation that publishes none.
+// reason a pool changes nothing in an installation that publishes none.
 func (r *run) stageCrafts(ctx context.Context) map[string]craft.Effective {
 	c := &r.pools
 	if c.crafts != nil {
@@ -252,7 +255,7 @@ func (r *run) stagePool(ctx context.Context, stage string) (config.Pool, []confi
 func (r *run) poolMemberAdmits(m config.PoolMember, admittedAccounts []string) (bool, string) {
 	switch m.Type {
 	case config.CredentialTypeClaudeOAuth:
-		if !slices.Contains(admittedAccounts, selectedName(m.Name)) {
+		if !slices.Contains(admittedAccounts, m.Name) {
 			return false, poolSkipNotAdmitted
 		}
 		return true, ""
@@ -272,10 +275,10 @@ func (r *run) poolMemberAdmits(m config.PoolMember, admittedAccounts []string) (
 		// there is no provider to be admitted to and no secret to hand over.
 		return true, ""
 	}
-	// A member of a type this walk cannot place is not admitted, and the
-	// path that would judge it is the one that serves it: an Anthropic key is
-	// the credentials service's (D1634, MC6), whose own admission rule is
-	// that service's.
+	// A member of a type this path cannot place is not admitted, and the path
+	// that would judge it is the one that serves it: an Anthropic key is the
+	// credentials service's (D1634, MC6), whose own admission rule is that
+	// service's.
 	return false, "no path this run serves admits this member's type"
 }
 
@@ -284,10 +287,10 @@ func (r *run) poolMemberAdmits(m config.PoolMember, admittedAccounts []string) (
 // holds.
 //
 // A job holds the one credential it was deployed with and no other (F20,
-// D1635): the runner path's member is a provider whose key is mounted in the
-// job's environment, and the built-in vertex is the project's own service
-// account, which a run authenticating as vertex holds and no other run does.
-// The credentials service's members — the OAuth subscription and the Anthropic
+// D1635): this path's member is a provider whose key is mounted in the job's
+// environment, and the built-in vertex is the project's own service account,
+// which a run authenticating as vertex holds and no other run does. The
+// credentials service's members — the OAuth subscription and the Anthropic
 // key — are deliberately not held here: that path selects among them itself
 // (D1634, MC6), and a runner that accepted one would be a second design for
 // the same choice.
@@ -309,23 +312,27 @@ func (r *run) poolMemberHeld(m config.PoolMember) bool {
 	return false
 }
 
-// poolCandidates is the ordered list this stage's walk stands on: the pool's
-// members as it lists them (D1632's order is the order), with the ones this
-// stage may not be served by stepped over and returned with the reason they
-// were. An error is a rule this run could not read, which the caller refuses
-// the stage on rather than walking a list it could not compute.
-func (r *run) poolCandidates(ctx context.Context, stage string) ([]config.PoolMember, []poolSkip, error) {
-	pool, creds, ok := r.stagePool(ctx, stage)
-	if !ok {
-		return nil, nil, nil
-	}
+// poolMember is the pool's member this stage's calls go out on: the member
+// this job holds, that this repository's admission covers, and that serves the
+// stage's model as written (F23). The members that fail those rules are
+// returned with the reason they did, which is what the refusal and the run's
+// own log are made of.
+//
+// There is at most one such member, and the rules above are why: a pool this
+// path admits has every member serving the stage's model as written (F23), and
+// a model belongs to one provider (config.providerOverlapProblems) — so one
+// member at most, in a run whose providers are the ones its own launcher
+// mounted. A second one could only come from a configuration that let two
+// providers serve one model, which is the configuration a failover over this
+// path would need and which nothing in this release can write.
+func (r *run) poolMember(ctx context.Context, stage string, pool config.Pool, creds []config.Credential) (config.PoolMember, []poolSkip, error) {
 	spread := r.subscriptionSpread(ctx)
-	var out []config.PoolMember
+	var served []config.PoolMember
 	var skipped []poolSkip
 	// The accounts a pool's subscription members are judged against are read
-	// only when the pool actually lists one this run may walk: a pool of the
-	// runner path's own kinds is answered without the account walk, and the
-	// list is read once however many members ask for it.
+	// only when the pool actually lists one whose admission this path asks
+	// about: a pool of this path's own kinds is answered without the account
+	// walk, and the list is read once however many members ask for it.
 	var admittedAccounts []string
 	accountsRead := false
 	for _, m := range config.PoolMembers(pool, creds) {
@@ -342,7 +349,7 @@ func (r *run) poolCandidates(ctx context.Context, stage string) ([]config.PoolMe
 				accountsRead = true
 				var err error
 				if admittedAccounts, err = r.stageAccountCandidates(ctx); err != nil {
-					return nil, nil, err
+					return config.PoolMember{}, nil, err
 				}
 			}
 		}
@@ -350,9 +357,32 @@ func (r *run) poolCandidates(ctx context.Context, stage string) ([]config.PoolMe
 			skipped = append(skipped, poolSkip{m, why})
 			continue
 		}
-		out = append(out, m)
+		if !r.poolMemberHeld(m) {
+			skipped = append(skipped, poolSkip{m, poolMemberNotHeld})
+			continue
+		}
+		if !config.PoolMemberServesModel(m, r.stageModel(stage), r.modelProviders()) {
+			skipped = append(skipped, poolSkip{m, poolMemberServesNothing(r.stageModel(stage))})
+			continue
+		}
+		served = append(served, m)
 	}
-	return out, skipped, nil
+	if len(served) == 0 {
+		return config.PoolMember{}, skipped, nil
+	}
+	return served[0], skipped, nil
+}
+
+// poolMemberNotHeld is why a member this job does not hold cannot serve a
+// stage (F20, D1635), asked of a member one at a time rather than of the
+// whole pool: a pool that holds one member this job serves and one it does
+// not is refused for the second, and the line says which.
+const poolMemberNotHeld = "this job does not hold the member's credential: a run is deployed with the credential it authenticates with — a provider's key in its environment, or, for vertex, the project's own service account — and a pool's next member's secret is fetched at a stage boundary by the launcher or the credentials service, which this release does not do for this path"
+
+// poolMemberServesNothing is why a member cannot be sent the stage's model
+// (F23, D1637), as one clause of the pool's refusal.
+func poolMemberServesNothing(model string) string {
+	return fmt.Sprintf("it does not serve %s as written, and a pool is admitted only if every member serves the model the stage runs", model)
 }
 
 // vertexPoolRefusal is D1626's other half, asked once per run before any
@@ -414,54 +444,54 @@ func (r *run) checkPoolModels(ctx context.Context) error {
 	return refusal("a pool the run's crafts name is not admitted", ps)
 }
 
-// checkStagePool is the walk's stage-start decision, and it returns the
-// refusal for a stage this run may not run. "" is every stage this run may:
-// the craft's access names no pool, the pool serves nothing yet and the run
-// holds the credential the walk stands on.
-func (r *run) checkStagePool(ctx context.Context, stage string) string {
+// checkStagePool is the pool's stage-start decision: the member this stage's
+// calls go out on, and the refusal for a stage this run may not run. A zero
+// member with no refusal is every stage this run may run without a pool: the
+// craft's access names no pool at all.
+//
+// The member it answers with is the one the run already serves the stage with
+// — the provider whose route claims the stage's model, or the project's own
+// GCP service in a run authenticating as vertex — and this check is what makes
+// the pool's rules decide whether that member may serve at all. Nothing is
+// re-pointed here, because nothing can be: see the head of this file.
+func (r *run) checkStagePool(ctx context.Context, stage string) (config.PoolMember, string) {
 	pool, creds, ok := r.stagePool(ctx, stage)
 	if !ok {
-		return ""
+		return config.PoolMember{}, ""
 	}
 	if e := r.stageCrafts(ctx)[stageCraft(stage)]; e.Inert {
-		return fmt.Sprintf("the stage's %s craft goes out on the pool %q, and that pool serves nothing yet: it lists %d Claude OAuth subscription credentials, and Fugaro spreads a run across subscriptions only when the project's subscription_spread switch is on (it is off). Turn the switch on, or list one subscription with another kind of credential beside it, which needs no switch",
+		return config.PoolMember{}, fmt.Sprintf("the stage's %s craft goes out on the pool %q, and that pool serves nothing yet: it lists %d Claude OAuth subscription credentials, and Fugaro spreads a run across subscriptions only when the project's subscription_spread switch is on (it is off). Turn the switch on, or list one subscription with another kind of credential beside it, which needs no switch",
 			stageCraft(stage), pool.Name, oauthMembers(pool, creds))
 	}
-	candidates, skipped, err := r.poolCandidates(ctx, stage)
+	member, skipped, err := r.poolMember(ctx, stage, pool, creds)
 	if err != nil {
-		return err.Error()
+		return config.PoolMember{}, err.Error()
 	}
 	log := r.d.Log.With("stage", stage, "pool", pool.Name)
 	for _, s := range skipped {
-		log.Info("pool: a member this stage may not be served by was skipped",
+		log.Info("pool: a member this stage cannot be served by was skipped",
 			"member", s.Member.Name, "type", s.Member.Type, "why", s.Why)
 	}
-	if len(candidates) == 0 {
-		return fmt.Sprintf("the pool %q lists %s and this repository is admitted to none of them: every member's own allow_data_to — or, for a Claude account, its allow_repos — leaves this repository out, and a member is skipped rather than used. List a member this repository may be served by, or name a credential the stage can go out on directly",
-			pool.Name, strings.Join(memberNames(config.PoolMembers(pool, creds)), ", "))
+	if member.Name == "" {
+		return config.PoolMember{}, fmt.Sprintf("the pool %q lists %s, and this run can be served by none of them: %s",
+			pool.Name, strings.Join(memberNames(config.PoolMembers(pool, creds)), ", "), skippedText(skipped))
 	}
-	at := r.pools.failovers[stage]
-	if at >= len(candidates) {
-		return fmt.Sprintf("every member of the pool %q has already refused this stage: the run stood on %d of them (%s), and the pool holds no further one",
-			pool.Name, len(candidates), strings.Join(memberNames(candidates), ", "))
+	log.Info("pool: the stage's calls go out on the pool's member", "member", member.Name, "type", member.Type)
+	return member, ""
+}
+
+// skippedText is what the pool's members became, one clause each, so a refusal
+// says what the owner wrote and why none of it can serve this run: the
+// entries are the pool's own order, which is the order the owner reads.
+func skippedText(skipped []poolSkip) string {
+	if len(skipped) == 0 {
+		return "the pool holds no member"
 	}
-	m := candidates[at]
-	if at > 0 {
-		log.Info("pool failover: the stage's next attempt is the pool's next member",
-			"from", candidates[at-1].Name, "to", m.Name)
+	parts := make([]string, 0, len(skipped))
+	for _, s := range skipped {
+		parts = append(parts, fmt.Sprintf("%s: %s", s.Member.Name, s.Why))
 	}
-	// A member this container does not hold ends the run named, and the two
-	// halves of why are the design's: a job mounts one credential before it
-	// starts (F20), and the credential a pool's next member names is fetched
-	// at a stage boundary by the launcher or the credentials service and
-	// never mid-stage (D1635). No file this task owns fetches one, so a
-	// failover past the member the job holds stops here rather than running a
-	// stage as a credential its own job does not hold.
-	if !r.poolMemberHeld(m) {
-		return fmt.Sprintf("the pool %q names %s, a %s credential, as the next member this stage would be served by, and this job does not hold it: a run is deployed with the one credential it authenticates with — a provider's key in its environment, or, for vertex, the project's own service account — and a pool's next member's secret is fetched at a stage boundary by the launcher or the credentials service, which this release does not do for its own path. The run stops rather than run the stage as a credential its own job does not hold: the record would name a credential that did not answer it",
-			pool.Name, m.Name, m.Type)
-	}
-	return ""
+	return strings.Join(parts, "; ")
 }
 
 // oauthMembers is how many of the pool's members are Claude OAuth
@@ -477,62 +507,11 @@ func oauthMembers(pool config.Pool, creds []config.Credential) int {
 }
 
 // memberNames are the given members' names, in the order they came in: a pool's
-// order for the pool's members, the walk's for the ones it may stand on.
+// order for the pool's members, the run's for the ones it serves.
 func memberNames(ms []config.PoolMember) []string {
 	out := make([]string, len(ms))
 	for i, m := range ms {
 		out[i] = m.Name
 	}
 	return out
-}
-
-// notePoolExhausted records that the attempt of stage that has just ended was
-// ended by the exhaustion of the pool member serving it, so the stage's next
-// attempt is the walk's next member. It is the only thing that advances the
-// walk, and it runs where the answer is turned into the stage's end
-// (stageOnce): nothing inside an attempt can move a stage to another member.
-func (r *run) notePoolExhausted(stage string) {
-	c := &r.pools
-	if c.failovers == nil {
-		c.failovers = map[string]int{}
-	}
-	c.failovers[stage]++
-}
-
-// poolLimitedError is the ending of an attempt the pool member serving it
-// refused as spent (F5). It is not a failure: it ends the attempt the way the
-// account's own allowance ends one (accountLimitedError), so the stage's next
-// attempt is the walk's next member. Its text is never recorded or shown --
-// what a run may serve leaves nothing behind but the member that served the
-// attempt and the member that takes the next one, each written where it is
-// chosen.
-type poolLimitedError struct{}
-
-func (e *poolLimitedError) Error() string {
-	return "the pool member's own exhaustion ended the attempt"
-}
-
-// poolEndedTheAttempt reports whether the attempt that just ended did so
-// because the pool member serving it had nothing left rather than because of
-// anything about the work. It is the walk's whole classifier, and it is
-// deliberately closed: a result event with the error flag, and the text one of
-// that member's *own type's* signals (exhaustionSignals, gateway.go) carries.
-//
-// The type is the member's and not the run's credential kind, which is what F5
-// is about: a spent subscription's wording is not an API key's signal, and
-// reading it for one would move a run off a member that was answering. A
-// successful stage is nothing for the walk to move, whatever its text says.
-func (r *run) poolEndedTheAttempt(ctx context.Context, stage string, res agent.Result) bool {
-	if !res.IsError {
-		return false
-	}
-	candidates, _, err := r.poolCandidates(ctx, stage)
-	if err != nil {
-		return false
-	}
-	at := r.pools.failovers[stage]
-	if at >= len(candidates) {
-		return false
-	}
-	return credentialExhaustedText(candidates[at].Type, res.Text)
 }

@@ -4200,18 +4200,6 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request, opts st
 			req.SessionID, req.Resume = agent.NewSessionID(), false
 			continue
 		}
-		// The pool member serving this attempt had nothing left (F5, MC5), and
-		// the two things the account's own case says hold here: it is a fresh
-		// attempt rather than a resumed one — a session carried across members
-		// would put one member's conversation into another's attempt — and the
-		// stage's stage-start check stops the walk once the pool's own list is
-		// exhausted, so no bound of its own is needed.
-		var spent *poolLimitedError
-		if errors.As(err, &spent) {
-			r.countTokens(res)
-			req.SessionID, req.Resume = agent.NewSessionID(), false
-			continue
-		}
 		var ex *exhaustedError
 		if !errors.As(err, &ex) {
 			return res, ok, err
@@ -4377,10 +4365,12 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 		return agent.Result{}, false, errors.New(reason)
 	}
 	// The stage's own credential or pool (poolchoice.go, MC5): the craft this
-	// stage's calls go out on, the member of its pool this attempt stands on,
-	// and a stage whose pool serves nothing yet or names a member this job
-	// does not hold refused here rather than run as another credential.
-	if reason := r.checkStagePool(ctx, name); reason != "" {
+	// stage's calls go out on, the pool member that serves it, and a stage
+	// whose pool serves nothing yet or names a member this job does not hold
+	// refused here rather than run as another credential. The member is the one
+	// the run's own route for the stage's model already carries; the check
+	// decides whether the pool lets it serve at all.
+	if _, reason := r.checkStagePool(ctx, name); reason != "" {
 		r.fail("stage " + name + ": " + reason)
 		return agent.Result{}, false, errors.New(reason)
 	}
@@ -4745,23 +4735,6 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 	case res.IsError && opts.Skippable && r.skippable(ctx, stageCtx):
 		r.save(ctx)
 		return res, false, skippedError{fmt.Errorf("the agent reported an error (%s)", res.Subtype)}
-	// The pool member serving this attempt had nothing left (F5, MC5): the
-	// credential that served the call refused it, and nothing about the work
-	// did, so the stage is not failed — it is the attempt the walk's next
-	// member makes, and stage's own loop runs it there. The classifier reads
-	// the signal of the member's own type (poolEndedTheAttempt), which is what
-	// F5 is about: a spent subscription's wording is no API key's signal.
-	//
-	// It comes after the Skippable case above for the account's own reason —
-	// a skipped stage has no next attempt for the walk to serve — and before
-	// the account's case below, because a stage whose craft names a pool is
-	// served by that pool: the walk that chose the member is the one that
-	// moves off it.
-	case r.poolEndedTheAttempt(ctx, name, res):
-		r.notePoolExhausted(name)
-		log.Info("the pool member's own exhaustion ended this attempt, so the stage's next attempt is the pool's next member", "stage", name)
-		r.save(ctx)
-		return res, false, &poolLimitedError{}
 	// The account's own subscription allowance ended this attempt (A7b, spec
 	// §11.3): the attempt was refused by the credential that served it and not
 	// by anything about the work, so with the walk on it is not a failed stage

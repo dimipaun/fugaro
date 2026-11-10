@@ -400,34 +400,52 @@ func TestPoolHasVertexMember(t *testing.T) {
 	}
 }
 
-// TestCredentialServesModelSplitsTheTwoSpellings pins F23/D1637's rule: the
+// TestPoolMemberServesModelSplitsTheTwoSpellings pins F23/D1637's rule: the
 // credentials that reach Anthropic itself and Vertex take Claude's own ID, an
-// OpenRouter credential takes the ID the provider's route claims, and neither
+// OpenRouter member takes the ID its own provider's route claims, and neither
 // takes the other's. It is the whole of "as written": there is no per-member
 // mapping, so the two spellings cannot both serve one craft's model string.
-func TestCredentialServesModelSplitsTheTwoSpellings(t *testing.T) {
-	providers := map[string]ModelProvider{"acme-router": {
-		Kind: ModelProviderKind, BaseURL: "https://router.example/api", Auth: "bearer",
-		Models: []string{"anthropic/claude-sonnet-5.5", "deepseek/*"},
-	}}
+//
+// The OpenRouter row is the one that has to be asked of the member rather than
+// of the run's providers: "acme-router" owns one spelling and a second provider
+// owns the other, and a member that named the second would be a member the
+// run's routes could not send the model to at all.
+func TestPoolMemberServesModelSplitsTheTwoSpellings(t *testing.T) {
+	providers := map[string]ModelProvider{
+		"acme-router": {
+			Kind: ModelProviderKind, BaseURL: "https://router.example/api", Auth: "bearer",
+			Models: []string{"anthropic/claude-sonnet-5.5", "deepseek/*"},
+		},
+		"acme-other": {
+			Kind: ModelProviderKind, BaseURL: "https://other.example/api", Auth: "bearer",
+			Models: []string{"meta/llama-4"},
+		},
+	}
 	const direct, routed, other = "claude-sonnet-5-5", "anthropic/claude-sonnet-5.5", "deepseek/deepseek-v4-flash"
 	for _, tc := range []struct {
-		typ, model string
-		want       bool
+		member PoolMember
+		model  string
+		want   bool
 	}{
-		{CredentialTypeClaudeOAuth, direct, true},
-		{CredentialTypeClaudeOAuth, routed, false},
-		{CredentialTypeAnthropic, direct, true},
-		{CredentialTypeVertex, direct, true},
-		{CredentialTypeVertex, other, false},
-		{CredentialTypeOpenRouter, routed, true},
-		{CredentialTypeOpenRouter, other, true},
-		{CredentialTypeOpenRouter, direct, false},
-		{CredentialTypeOpenAI, direct, false},
-		{"", direct, false},
+		{PoolMember{Name: "acme-oauth", Type: CredentialTypeClaudeOAuth}, direct, true},
+		{PoolMember{Name: "acme-oauth", Type: CredentialTypeClaudeOAuth}, routed, false},
+		{PoolMember{Name: "acme-key", Type: CredentialTypeAnthropic}, direct, true},
+		{PoolMember{Name: CredentialVertex, Type: CredentialTypeVertex}, direct, true},
+		{PoolMember{Name: CredentialVertex, Type: CredentialTypeVertex}, other, false},
+		{PoolMember{Name: "acme-router", Type: CredentialTypeOpenRouter}, routed, true},
+		{PoolMember{Name: "acme-router", Type: CredentialTypeOpenRouter}, other, true},
+		{PoolMember{Name: "acme-router", Type: CredentialTypeOpenRouter}, direct, false},
+		// The member's own provider, not another one of the run's: acme-other
+		// serves llama alone, so it is no member of a pool the coder's Claude
+		// route ID goes out on — however many providers the run holds.
+		{PoolMember{Name: "acme-other", Type: CredentialTypeOpenRouter}, routed, false},
+		// A member naming no provider this run holds serves nothing.
+		{PoolMember{Name: "acme-gone", Type: CredentialTypeOpenRouter}, routed, false},
+		{PoolMember{Name: "acme-oauth", Type: CredentialTypeOpenAI}, direct, false},
+		{PoolMember{Name: "acme-oauth"}, direct, false},
 	} {
-		if got := CredentialServesModel(tc.typ, tc.model, providers); got != tc.want {
-			t.Errorf("CredentialServesModel(%q, %q) = %v, want %v", tc.typ, tc.model, got, tc.want)
+		if got := PoolMemberServesModel(tc.member, tc.model, providers); got != tc.want {
+			t.Errorf("PoolMemberServesModel(%+v, %q) = %v, want %v", tc.member, tc.model, got, tc.want)
 		}
 	}
 }

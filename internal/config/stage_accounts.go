@@ -428,14 +428,19 @@ func PoolHasVertexMember(p Pool, creds []Credential) string {
 	return ""
 }
 
-// CredentialServesModel reports whether a credential of this type serves the
-// model ID as written (F23, D1637). There is no per-member mapping: a craft
-// names one model string, the routes are resolved once per run
-// (RoutingClaudeFor), and a pool is admitted only if every member can be sent
-// that same string.
+// PoolMemberServesModel reports whether THIS member serves the model ID as
+// written (F23, D1637). There is no per-member mapping: a craft names one model
+// string, the routes are resolved once per run (RoutingClaudeFor), and a pool is
+// admitted only if every member can be sent that same string. The member and not
+// its type is the subject, because for an OpenRouter member the answer is the
+// member's OWN provider's: a pool naming two providers, one whose models carry
+// the stage's ID and one whose models carry another, is a pool whose second
+// member cannot be sent the model at all — the run's routes send it to the first
+// (gateway.routeFor, one route per model), so admitting the pool on the
+// strength of a provider the member is not would be admitting a failover onto
+// a route that does not exist.
 //
-// The two spellings are the whole of it, and they are why this is a rule
-// rather than a lookup:
+// The two spellings are the whole of the rule:
 //
 //   - the credentials that reach Anthropic itself — the OAuth subscription,
 //     the API key — and the Vertex credential, which serves Claude under the
@@ -443,19 +448,19 @@ func PoolHasVertexMember(p Pool, creds []Credential) string {
 //     routed model ID is not one of them: "anthropic/<id>" is the spelling a
 //     route claims (CheckClaudeClaim), and a run whose pins carry it has left
 //     the direct path.
-//   - an OpenRouter credential takes the model ID the provider's route claims,
-//     so the model must be one this run's providers serve (ProviderFor). Claude
-//     itself is never among them: no provider may claim a Claude model except
-//     through that one explicit spelling.
+//   - an OpenRouter member takes the model ID its own provider's route claims,
+//     so the model must be one that member's provider serves (Providers is the
+//     run's own set, already narrowed to the repository's providers). Claude
+//     itself is never claimed there except through that one explicit spelling.
 //
 // A type neither path serves serves nothing.
-func CredentialServesModel(typ, model string, providers map[string]ModelProvider) bool {
-	switch typ {
+func PoolMemberServesModel(m PoolMember, model string, providers map[string]ModelProvider) bool {
+	switch m.Type {
 	case CredentialTypeClaudeOAuth, CredentialTypeAnthropic, CredentialTypeVertex:
 		return IsClaudeModel(model) && !routedSpelling(model)
 	case CredentialTypeOpenRouter:
-		_, _, ok := ProviderFor(providers, model)
-		return ok
+		p, ok := providers[m.Name]
+		return ok && p.Matches(model)
 	}
 	return false
 }
@@ -487,7 +492,7 @@ func routedSpelling(model string) bool {
 func PoolModelProblems(p Pool, creds []Credential, model string, providers map[string]ModelProvider, path string) []Problem {
 	var ps []Problem
 	for _, m := range PoolMembers(p, creds) {
-		if m.Path == "" || CredentialServesModel(m.Type, model, providers) {
+		if m.Path == "" || PoolMemberServesModel(m, model, providers) {
 			continue
 		}
 		ps = append(ps, Problem{Path: path, Message: fmt.Sprintf(
