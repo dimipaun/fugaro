@@ -167,7 +167,7 @@ func (s *pluginStage) plan1(ctx context.Context) (*pluginwire.Change, *initflow.
 	return ch, nil, nil
 }
 
-// Check is check plus the one fact a later stage reads off this stage: a
+// Check is status plus the one fact a later stage reads off this stage: a
 // plugin stage with something to do is this run taking the checkout — and this
 // machine's plugin — to this release, and the checkout's own cloud half, the
 // job images built FROM the base the images stage pins in this same run, is
@@ -177,33 +177,38 @@ func (s *pluginStage) plan1(ctx context.Context) (*pluginwire.Change, *initflow.
 // stage's pin write and the install that clears the version behind it — and
 // the execution pass checks this stage again after the apply that changed both.
 func (s *pluginStage) Check(ctx context.Context) (initflow.Status, error) {
-	st, err := s.check(ctx)
+	_, st, err := s.status(ctx)
 	if err == nil && st.State == initflow.Todo {
 		s.e.checkoutBehind = true
 	}
 	return st, err
 }
 
-func (s *pluginStage) check(ctx context.Context) (initflow.Status, error) {
+// status is the stage's whole answer, and it is one function because Check and
+// Plan have to read the same thing: the wiring half's change and its skip line,
+// and the install half's state, which has been a step of this stage since U1
+// (the plugin in the user's own Claude Code). The change comes back with it for
+// the plan, which is what prints the diff of a wiring half about to change.
+func (s *pluginStage) status(ctx context.Context) (*pluginwire.Change, initflow.Status, error) {
 	ch, st, err := s.plan(ctx)
 	switch {
 	case err != nil:
-		return initflow.Status{}, err
+		return nil, initflow.Status{}, err
 	case st != nil && st.State == initflow.NeedsYou:
 		// The wiring half cannot be read at all: the stage stops there, as it
 		// did before the install half was its own, and nothing is installed.
-		return *st, nil
+		return ch, *st, nil
 	}
 	inst := s.install(ctx, initflow.Env{}, true)
 	switch {
 	case inst.state == stepFailed:
-		return initflow.Status{}, errors.New(inst.reason)
+		return nil, initflow.Status{}, errors.New(inst.reason)
 	case inst.state == stepStale:
 		// The plugin in Claude Code is a release behind what this fugaro
 		// installs: something to do, whatever the pin says — a pin already at
 		// this release and an install that never happened is exactly the state
 		// both halves have to read the same way (#1836c).
-		return initflow.Status{State: initflow.Todo, Detail: behindLine(ch, inst)}, nil
+		return ch, initflow.Status{State: initflow.Todo, Detail: behindLine(ch, inst)}, nil
 	case ch != nil && ch.Changed:
 		// The wiring half has work of its own here, and its line is the more
 		// telling of the two: the install half's own line is printed by the
@@ -212,7 +217,7 @@ func (s *pluginStage) check(ctx context.Context) (initflow.Status, error) {
 		if s.ask {
 			d += "; asks you to type the repository's name first (it is not the project's yet)"
 		}
-		return initflow.Status{State: initflow.Todo, Detail: d}, nil
+		return ch, initflow.Status{State: initflow.Todo, Detail: d}, nil
 	case s.found && s.installs() && inst.state != stepCurrent:
 		// The install half is a step of this stage and it is not up to date:
 		// nothing installed on this machine, or a record this fugaro cannot
@@ -222,18 +227,18 @@ func (s *pluginStage) check(ctx context.Context) (initflow.Status, error) {
 		// plugin in Claude Code is the same one for every checkout, so a
 		// checkout this run may not wire is not a machine that needs nothing
 		// (U1, F13).
-		return initflow.Status{State: initflow.Todo, Detail: "installs the plugin in Claude Code: " + inst.reason}, nil
+		return ch, initflow.Status{State: initflow.Todo, Detail: "installs the plugin in Claude Code: " + inst.reason}, nil
 	case st != nil:
 		// This checkout is not one to wire (or this build has no release tag to
 		// pin to), and the install half is current or is not a step here: the
 		// wiring half's own skip line is the stage's answer.
-		return *st, nil
+		return ch, *st, nil
 	}
 	d := "No changes: " + ch.Path + " pins the plugin to " + ch.Tag
 	if ch.Disabled {
 		d += " (the repository disables it)"
 	}
-	return initflow.Status{State: initflow.Done, Detail: d + "; " + inst.reason}, nil
+	return ch, initflow.Status{State: initflow.Done, Detail: d + "; " + inst.reason}, nil
 }
 
 // behindLine is the stage's line when the two halves disagree: the pin is not
@@ -288,19 +293,24 @@ func (s *pluginStage) install(ctx context.Context, env initflow.Env, check bool)
 	return r
 }
 
+// Plan words the stage's own answer (status), the same one Check decides on and
+// in the same words: the plan-only view is what a run would do, and a plan that
+// read the wiring half alone said "No changes" in the states where this stage
+// installs the plugin into Claude Code — the pin already this release's and the
+// install behind it, or a wiring half skipped where the install half is not
+// (init_plugin_stage.go's status, and TestPluginStagePlanOnlySaysTheInstallRuns).
 func (s *pluginStage) Plan(ctx context.Context, _ initflow.Env) (initflow.Plan, error) {
-	ch, st, err := s.plan(ctx)
+	ch, st, err := s.status(ctx)
 	if err != nil {
 		return initflow.Plan{}, err
 	}
-	if st != nil {
-		return initflow.Plan{Detail: st.Detail, NothingToDo: st.State != initflow.NeedsYou}, nil
+	if ch != nil && ch.Changed {
+		// The diff is the plan's own half of this stage's output: the apply
+		// prints it too, and a plan-only run is where it is read before
+		// anything is written.
+		fmt.Fprintf(s.e.r.w, "%s\n%s%s", ch.Path, ch.Diff(), ch.NoticeText())
 	}
-	if !ch.Changed {
-		return initflow.Plan{NothingToDo: true, Detail: "No changes"}, nil
-	}
-	fmt.Fprintf(s.e.r.w, "%s\n%s%s", ch.Path, ch.Diff(), ch.NoticeText())
-	return initflow.Plan{Detail: "adds the Fugaro plugin to " + ch.Path + ", pinned to " + ch.Tag}, nil
+	return initflow.Plan{Detail: st.Detail, NothingToDo: st.State != initflow.Todo && st.State != initflow.NeedsYou}, nil
 }
 
 func (s *pluginStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outcome, error) {

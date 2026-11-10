@@ -326,3 +326,66 @@ func TestWiringStageWiresALinkedWorktree(t *testing.T) {
 		t.Errorf("the pin was written in the checkout the worktree was made from, which this command is not in")
 	}
 }
+
+// The plan-only view says what the run will do about the install half. Since U1
+// the stage installs the plugin into the user's own Claude Code, and a plan that
+// read only the wiring half reported the stage as done — "No changes" — in the
+// very states the run installs it: the pin already this release's with nothing
+// installed, the pin current with Claude Code's own record behind (#1836c), and
+// a wiring half that is skipped where the install half is not (the plugin is
+// one per machine, the wiring is per checkout). The last case is the other
+// direction, so the plan does not become a stage that always has something to
+// do: a checkout at this release, installed, is done and says so.
+func TestPluginStagePlanOnlySaysTheInstallRuns(t *testing.T) {
+	const (
+		installedAtThisRelease = `{"version":2,"plugins":{"fugaro@fugaro":[{"scope":"user","version":"0.5.1"}]}}`
+		installedBehind        = `{"version":2,"plugins":{"fugaro@fugaro":[{"scope":"user","version":"0.5.0"}]}}`
+	)
+	for _, tc := range []struct {
+		name string
+		// noOrigin leaves the checkout without a remote, which is the wiring
+		// half's own skip (the install half is the machine's, not the
+		// checkout's); installed is what Claude Code records as installed.
+		noOrigin  bool
+		installed string
+		want      initflow.State
+		wantSay   string
+	}{
+		{name: "the pin is this release's and nothing is installed", want: initflow.Todo,
+			wantSay: "installs the plugin in Claude Code"},
+		{name: "the pin is this release's and Claude Code's plugin is behind", installed: installedBehind,
+			want: initflow.Todo, wantSay: "Claude Code's own plugin is behind"},
+		{name: "the wiring half is skipped and the install half is not", noOrigin: true,
+			want: initflow.Todo, wantSay: "installs the plugin in Claude Code"},
+		{name: "the pin and the installed plugin are this release's", installed: installedAtThisRelease,
+			want: initflow.Done, wantSay: "No changes"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			releaseBuild(t, "0.5.1")
+			cfg := t.TempDir()
+			t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+			dir := repoCheckout(t, githubOrigin, "")
+			t.Chdir(dir)
+			checkoutFile(t, filepath.Join(dir, ".claude", "settings.json"), wiredAt("v0.5.1"))
+			if tc.noOrigin {
+				testutil.Git(t, dir, "remote", "remove", "origin")
+			}
+			if tc.installed != "" {
+				checkoutFile(t, filepath.Join(cfg, "plugins", "installed_plugins.json"), tc.installed)
+			}
+
+			e, out := stageEngine(t, "", &initOptions{planOnly: true})
+			res := runPlugin(t, e)
+			if res.Failed != nil {
+				t.Fatalf("the plan-only run failed: %+v\n%s", res.Failed, out)
+			}
+			st := res.Stages[0]
+			if st.State != tc.want {
+				t.Errorf("a plan-only run shows the plugin stage as %q, want %q: the plan has to say what the run will do about the install half, which is a step of this stage (U1)\n%s", st.State, tc.want, out)
+			}
+			if !strings.Contains(st.Detail, tc.wantSay) {
+				t.Errorf("the plan says %q, which does not say %q\n%s", st.Detail, tc.wantSay, out)
+			}
+		})
+	}
+}
