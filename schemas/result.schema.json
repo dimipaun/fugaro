@@ -19,7 +19,7 @@
       "additionalProperties": { "type": "string", "maxLength": 64 }
     },
     "execution": { "type": "string", "description": "The canonical full execution name; empty or absent for local runs." },
-    "status": { "enum": ["running", "succeeded", "failed", "infra_error", "cancelled", "halted"] },
+    "status": { "enum": ["running", "succeeded", "failed", "unreviewed", "infra_error", "cancelled", "halted"] },
     "stage": { "enum": ["bootstrap", "plan", "implement", "review_first", "review", "fix", "render", "finalize", "writeback"], "description": "The step the run is in. plan and render are a mode: artifact run's optional plan stage and its render step (design artifact-runs.md §3)." },
     "outcome": { "enum": ["", "ready", "draft", "none", "reviewed", "artifacts"], "description": "Empty while the run is in progress. artifacts is a mode: artifact run whose deliverable is in the runs bucket: it opens no pull request." },
     "reason": { "type": "string" },
