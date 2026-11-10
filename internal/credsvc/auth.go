@@ -660,16 +660,9 @@ func NewAuthenticator(cfg AuthConfig) (*Authenticator, error) {
 	// hold the same addresses on the ordinary installation, and the two are
 	// classes of different routes (the read mints and the grant route), which is
 	// not the overlap G4 refuses.
-	launchers := make(map[string]string, len(cfg.LauncherAccounts))
-	for _, email := range cfg.LauncherAccounts {
-		folded, ok := foldEmail(email)
-		if !ok {
-			return nil, errors.New("credsvc: a launcher account is not a printable ASCII email address")
-		}
-		if strings.HasSuffix(folded, ".gserviceaccount.com") {
-			return nil, errors.New("credsvc: a launcher account is a service account address, and the launcher class is the people who launch runs")
-		}
-		launchers[folded] = email
+	launchers, err := foldLauncherAccounts(cfg.LauncherAccounts)
+	if err != nil {
+		return nil, err
 	}
 	now := cfg.Now
 	if now == nil {
@@ -853,31 +846,10 @@ func (a *Authenticator) verifyJob(ctx context.Context, tok string, now time.Time
 // not. Every Google service account address is ASCII, so nothing a real caller
 // presents is lost by the rule.
 func (a *Authenticator) callerClaims(ctx context.Context, tok string) (map[string]any, string, error) {
-	head, claims, err := decodeJWT(tok)
-	if err != nil {
-		return nil, "", fmt.Errorf("%w: the caller's ID token is not a JWT", ErrUnverifiedJob)
-	}
-	if alg := claimString(head, "alg"); alg != "RS256" {
-		return nil, "", fmt.Errorf("%w: the caller's ID token is not signed with RS256", ErrUnverifiedJob)
-	}
-	key, err := a.cfg.JobKeys.Key(ctx, claimString(head, "kid"))
-	if err != nil {
-		if errors.Is(err, ErrUnknownKeyID) {
-			return nil, "", fmt.Errorf("%w: %w", ErrUnverifiedJob, err)
-		}
-		return nil, "", err
-	}
-	if err := verifySignature(tok, key); err != nil {
-		return nil, "", fmt.Errorf("%w: the caller's ID token's signature does not verify", ErrUnverifiedJob)
-	}
-	if iss := claimString(claims, "iss"); iss != "https://accounts.google.com" && iss != "accounts.google.com" {
-		return nil, "", fmt.Errorf("%w: the caller's ID token was not issued by Google", ErrUnverifiedJob)
-	}
-	folded, ok := foldEmail(claimString(claims, "email"))
-	if !ok {
-		return nil, "", fmt.Errorf("%w: the caller's email claim is not a service account address", ErrUnverifiedJob)
-	}
-	return claims, folded, nil
+	// The body is callerClaimsFrom's, because the intake verifies the launcher
+	// class over Google's ID-token keys alone and must run this check rather
+	// than a second spelling of it (launchers.go).
+	return callerClaimsFrom(ctx, a.cfg.JobKeys, tok)
 }
 
 // VerifyVerifier admits the caller of the verify route, or refuses it with
@@ -1165,37 +1137,10 @@ const maxLauncherSubDigits = 21
 // another process's route entirely), so a Request is the one thing its caller
 // cannot build.
 func (a *Authenticator) VerifyLauncher(ctx context.Context, tok string) (LauncherCaller, error) {
-	now := a.now()
-	claims, folded, err := a.callerClaims(ctx, tok)
-	if err != nil {
-		return LauncherCaller{}, err
-	}
-	account, ok := a.launcherAccounts[folded]
-	if !ok {
-		// The reason names the class and never the address: it is the caller's
-		// own claim set, and the package doc's no-echo rule is that no refusal
-		// repeats what a caller presented.
-		return LauncherCaller{}, fmt.Errorf("%w: the caller is not one of this installation's launchers, so it may not be granted a slip", ErrUnverifiedJob)
-	}
-	// The audience is this class's own line, and it admits the two the person
-	// class admits (checkCallerAudience is per class for exactly this reason).
-	if err := checkCallerAudience(claims, a.cfg.Audience, GcloudAudience); err != nil {
-		return LauncherCaller{}, err
-	}
-	if err := checkCallerToken(claims, now); err != nil {
-		return LauncherCaller{}, err
-	}
-	sub, ok := launcherSub(claims)
-	if !ok {
-		// The refusal names the claim and never its content: a `sub` this class
-		// will not carry is caller text, and the package's no-echo rule holds
-		// for it as it does for the key id. It is not ErrUnverified: the
-		// identity is not in doubt — what is missing is the one fact the routes
-		// below need, and there is nothing a caller could fix by presenting
-		// another token of the same account.
-		return LauncherCaller{}, fmt.Errorf("%w: the caller's ID token carries no Google account id (a numeric sub), so no secret could be written under its prefix", ErrUnverifiedJob)
-	}
-	return LauncherCaller{Account: account, Sub: sub}, nil
+	// The body is verifyLauncherCaller's, because the intake verifies this
+	// class too and over a construction that holds only what the class reads
+	// (launchers.go): one body, so a rule added to it reaches both.
+	return verifyLauncherCaller(ctx, a.cfg.JobKeys, a.launcherAccounts, a.cfg.Audience, a.now(), tok)
 }
 
 // launcherSub reads the token's `sub` claim and holds it to the shape the
