@@ -760,6 +760,105 @@ func TestDocsWindowsConsoleClaimsAboutOtherFilesAreTrue(t *testing.T) {
 	}
 }
 
+// TestDocsWindowsConsoleNotesSayWhichHalfMoved pins the dated notes this work
+// owes outside docs/console-windows/.
+//
+// The sentence "Windows stays out" is one claim this repository makes in four
+// places (F43), and the owner's ruling of 2026-10-20 moves half of it: the
+// console's Windows *build* is in by that ruling -- the console drives the
+// *Linux* `fugaro` inside a WSL distribution, and the pack is staged as a
+// release-time job -- while the *signing* answer is untouched, because there is
+// still no Authenticode identity and none is planned. Each place keeps its own
+// sentence and gains a dated note that says which half moved: a rewrite would
+// claim more than the ruling does, and a note is the thing a reader can check.
+//
+// Three of the four are read here, each as the block it is made in -- section
+// 4.2's list, section 7.6's rule 3, the owner-run table's Windows-signing row
+// and D10's answer cell. The fourth is the console's own README, read in
+// docs_desktop_console_test.go, the file this package's console boundary
+// allow-list admits to a console/ path.
+//
+// The same ruling reached docs/windows-cli/wsl.md, whose console row says the
+// console is out of scope because it needs a Windows CLI first (O1, F43): the
+// console's own route is what removes that need for the console, while the CLI
+// track's F40 stays true of the CLI. Both the paragraph above that table and
+// the row itself are read here.
+//
+// The mutations that prove it: delete one note, move one out of the block it
+// belongs to, and put the release document's "still carry the older sentence"
+// clause back. Each fails here.
+func TestDocsWindowsConsoleNotesSayWhichHalfMoved(t *testing.T) {
+	const design = "docs/design/desktop-console.md"
+	designDoc := readDoc(t, design)
+
+	// Every note says the same three things, because "which half moved" is only
+	// checkable if the note names both halves and the identity neither one has:
+	// the date, the build half with the pack's own staged path, the signing half,
+	// and the Authenticode identity that does not exist.
+	note := []string{
+		windowsConsoleNoteDate,
+		"the *build* half",
+		"the signing half",
+		"Authenticode",
+		windowsConsoleWorkflowPath,
+	}
+	for _, tc := range []struct{ what, start, stop string }{
+		{"section 4.2's Windows bullet", "- **Windows as a *packaged* deliverable**", "\n- **The backing-repository history view**"},
+		{"section 7.6's rule 3", "3. **Windows is untouched.**", "\n4. **What does not come with it.**"},
+		{"the owner-run table's Windows-signing row", "| Windows signing |", "\n"},
+		{"D10's answer cell", "| **D10** |", "\n"},
+	} {
+		block := flattenDoc(windowsConsoleBlock(t, design, designDoc, tc.start, tc.stop))
+		for _, want := range note {
+			if !strings.Contains(block, want) {
+				t.Errorf("%s's %s carries no dated note (%q is missing): the owner's ruling of 2026-10-20 moves half of \"Windows stays out\" -- the build is in, the signing answer is not -- and each of the four places has to say which half, in its own block, rather than being rewritten", design, tc.what, want)
+			}
+		}
+	}
+
+	// docs/windows-cli/wsl.md: the paragraph that sends the console's own
+	// question to the design's D10, and the table row that answers it "out of
+	// scope". Both halves are read there, bounded by the table under them so a
+	// note in the wrong one of the two cannot satisfy both.
+	const wsl = "docs/windows-cli/wsl.md"
+	wslDoc := readDoc(t, wsl)
+	notSubstitute := flattenDoc(windowsConsoleBlock(t, wsl, wslDoc, "What WSL is *not* is a substitute for the port", "\n## Install it, inside WSL"))
+	for _, want := range []string{windowsConsoleNoteDate, "reaches", "wsl.exe", "unsigned"} {
+		if !strings.Contains(notSubstitute, want) {
+			t.Errorf("%s's paragraph about what a Windows CLI would still buy no longer carries %q: the console reaches a WSL-only installation itself, and the sentence that says it cannot is the one this note is for", wsl, want)
+		}
+	}
+	row := flattenDoc(windowsConsoleBlock(t, wsl, wslDoc, "| The desktop console |", "\n"))
+	for _, want := range []string{windowsConsoleNoteDate, "Windows CLI", "no longer", "wsl.exe", "unsigned"} {
+		if !strings.Contains(row, want) {
+			t.Errorf("%s's desktop-console table row no longer carries %q: the row's \"it needs a Windows CLI first\" is half reversed for the console, and the note has to say which half -- the CLI track's F40 stays true of the CLI", wsl, want)
+		}
+	}
+
+	// And the release document, which is where a reader arrives from: it says in
+	// the console paragraph that these places carry the older sentence and that
+	// theirs land with Part H. That was true while they did; after this change it
+	// is the notes rather than the older sentences that a reader finds there.
+	const release = "docs/release.md"
+	releaseDoc := readDoc(t, release)
+	console := flattenDoc(windowsConsoleBlock(t, release, releaseDoc, "- **The console is its own release, `console-vX.Y.Z`, never an asset of the CLI's**", "\n- **Dry-run the Windows pack before the tag, by hand.**"))
+	for _, want := range []string{windowsConsoleNoteDate, "saying which half"} {
+		if !strings.Contains(console, want) {
+			t.Errorf("%s's console paragraph no longer carries %q: it is the paragraph that says which half of \"Windows stays out\" moved, and after Part H's notes land it is what a reader is sent to", release, want)
+		}
+	}
+	for _, gone := range []string{"still carry the older sentence", "its pack is red until"} {
+		if strings.Contains(console, gone) {
+			t.Errorf("%s's console paragraph still says %q: the four places carry their dated notes, and the Parts B and C edits the pack was said to be waiting on have landed -- what has not happened is a run", release, gone)
+		}
+	}
+}
+
+// windowsConsoleNoteDate is the date the notes T-H3 owes carry: the landing
+// date of the change that wrote them, which is what a reader comparing them
+// against the ruling of 2026-10-20 they record is looking for.
+const windowsConsoleNoteDate = "2026-11-10"
+
 // windowsConsoleBlock is the text from start to the first line after it that
 // begins with stop, or to the end when stop is empty. It is how these tests
 // read a claim in the section it is made in rather than anywhere in the file --
