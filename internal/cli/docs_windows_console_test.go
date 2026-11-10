@@ -699,13 +699,27 @@ func TestWindowsConsoleStagingTellsTheOwnerWhatToCopyWhere(t *testing.T) {
 	// The site's page names it among the pending workflows and says when it
 	// runs. website/test/readme.mjs checks the set and the count word; this is
 	// the claim inside that sentence, which nothing else reads.
+	//
+	// The name is read against the tree for the reason the status line above is:
+	// the page's sentence counts what `docs/pending-workflows/` holds, and the
+	// copy-in takes the staged copy away, so the page stops printing the staged
+	// path in that same commit -- it has to, because
+	// TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere reads every backticked
+	// `docs/pending-workflows/<name>.yml` on that page as a claim that the file
+	// is still pending, and the pending set is the directory's. What the page
+	// says about the pack once it runs is the claim that does not move: the bare
+	// name, and that it is a release-time job rather than a pull-request check.
 	site := flattenDoc(readDoc(t, "website/README.md"))
+	named := "`console-windows.yml`"
+	if docExists(t, windowsConsoleWorkflowPath) {
+		named = "`" + windowsConsoleWorkflowPath + "`"
+	}
 	for _, want := range []string{
-		"`docs/pending-workflows/console-windows.yml`",
+		named,
 		"release time",
 	} {
 		if !strings.Contains(site, want) {
-			t.Errorf("website/README.md no longer carries %q about the console's Windows pack: the page names every pending workflow, and a reader who follows the name needs to know it runs at release time rather than on their pull request", want)
+			t.Errorf("website/README.md no longer carries %q about the console's Windows pack: the page names it while it is pending and records it once it runs, and a reader who follows the name needs to know it runs at release time rather than on their pull request", want)
 		}
 	}
 

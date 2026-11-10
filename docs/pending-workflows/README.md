@@ -1,12 +1,10 @@
 # Pending workflow changes
 
-**Two files are pending: `console-windows.yml`** (the console's Windows
-installer pack, 2026-10-20 — a release-time job, not a pull-request check; see
-`## console-windows.yml` below) **and `images.yml`** (the images workflow with
+**One file is pending: `images.yml`** (the images workflow with
 the nightly's republish of an unchanged base skipped, 2026-11-05, issue #1745;
 see `## images.yml` — staged again below).
 **Four further files here are not workflows at all: `website-promote-comments.md`, `mobile-release-comments.md`, `console-release-comments.md` and `console-linux-comments.md`** — comment-only corrections. The first three were staged on **2026-11-07**, for three workflow files whose comments still say a reviewer approves a release; the fourth on **2026-11-09**, for a comment of `.github/workflows/console-linux.yml` whose count of pinned Electron hashes went stale when the `win32-x64` hash landed. They are `.md` on purpose: they are not pending workflows, they are not enumerated as such by the docs tests or by `website/test/readme.mjs`, and neither count above moves. See `## The comment-only fragments` below.
-**Two other files stay staged here by design: `console-tests.yml` and `console-release.yml`.** Both were copied into `.github/workflows/` by the owner, and unlike every other file here their staged copies are kept, because their tests assert the copy under `.github/workflows/` is byte-identical to the staged one (see their sections below). Nothing else is pending: the shared package's test job, `shared-tests.yml` (mobile plan Task P4.3), was copied into `.github/workflows/` by the owner on 2026-10-22 (its staged copy is removed; see `## shared-tests.yml` below); Dependabot's watch over `console/`'s npm dependencies, `dependabot-console.yml`, was copied over `.github/dependabot.yml` on the owner's approval of 2026-10-23 (its staged copy is removed; see `## dependabot-console.yml` below); the mobile app's release workflow, `mobile-release.yml`, was copied into `.github/workflows/` on the owner's approval of 2026-10-23 (its staged copy is removed; see `## mobile-release.yml` below); the website's two manual deploy workflows, `website-preview.yml` and `website-promote.yml` (#566), were copied into `.github/workflows/` by the owner (their staged copies are removed); `ci.yml` was copied in on 2026-10-17 (#504, staged copy removed in #508); and `images.yml` was copied in and its staged copy removed in `6b57ba9`, staged again by C1.14 for the credentials service's image leg, and that copy was applied and removed on 2026-10-30 (see `## images.yml` below). A future workflow change that a run needs is staged here as the real file plus the change, and the owner copies it in.
+**Two other files stay staged here by design: `console-tests.yml` and `console-release.yml`.** Both were copied into `.github/workflows/` by the owner, and unlike every other file here their staged copies are kept, because their tests assert the copy under `.github/workflows/` is byte-identical to the staged one (see their sections below). Nothing else is pending: the shared package's test job, `shared-tests.yml` (mobile plan Task P4.3), was copied into `.github/workflows/` by the owner on 2026-10-22 (its staged copy is removed; see `## shared-tests.yml` below); Dependabot's watch over `console/`'s npm dependencies, `dependabot-console.yml`, was copied over `.github/dependabot.yml` on the owner's approval of 2026-10-23 (its staged copy is removed; see `## dependabot-console.yml` below); the mobile app's release workflow, `mobile-release.yml`, was copied into `.github/workflows/` on the owner's approval of 2026-10-23 (its staged copy is removed; see `## mobile-release.yml` below); the console's Windows installer pack, `console-windows.yml`, was copied into `.github/workflows/` and its staged copy removed on 2026-11-09 (see `## console-windows.yml` below, which is the record from there on); the website's two manual deploy workflows, `website-preview.yml` and `website-promote.yml` (#566), were copied into `.github/workflows/` by the owner (their staged copies are removed); `ci.yml` was copied in on 2026-10-17 (#504, staged copy removed in #508); and `images.yml` was copied in and its staged copy removed in `6b57ba9`, staged again by C1.14 for the credentials service's image leg, and that copy was applied and removed on 2026-10-30 (see `## images.yml` below). A future workflow change that a run needs is staged here as the real file plus the change, and the owner copies it in.
 
 **2026-11-07: the three release environments no longer require a reviewer.** The owner removed the approval click from `website-live`, `console-release` and `mobile-release` — the three GitHub environments the website's promote, the console's signing and the mobile app's build-and-submit read their material through. The environments themselves stay: they are what carries each deployment branch policy, each environment secret and each set of repository variables. What holds a job to a reviewed commit is now stated in one place — `docs/release.md`, "What fences a release now": the deployment branch policy (`main` only for `website-live` and `mobile-release`, `console-v*` tags for `console-release`, plus `mobile-v*` for the app's own tags), the Workload Identity Federation provider's `refs/heads/main` and `workflow_dispatch` condition for the website's two workflows, the **"protect release tags"** ruleset over `v*`, `console-v*` and `mobile-v*` (which restricts updates and deletions — its **creation** rule is an owner step that page gives, still owed), and `scripts/release-gate.sh`, which each publishing workflow runs first — a script read from the tagged tree, so it catches a tag on an off-main or red commit rather than someone who controls that tree. **A second step is owed on that same page, and it is not a setting that exists yet either**: a guard on the mobile workflow's manual dispatch, whose trigger carries none where `website-promote.yml`'s job carries `github.actor`. That page also gives the one `gh api` call that puts a click back, with no id written down. **Every sentence below that says a person approves a deployment, or that the owner is an environment's only required reviewer, is the record of what was true before that date** — including the ones about `console-release` and `website-live`, which are applied files whose comments still carry the old text; `## The comment-only fragments` below holds the corrections for those comments.
 
@@ -1313,16 +1311,24 @@ the directory in both directions, and the site's paragraph by
 
 ## `console-windows.yml`
 
-**Status: `console-windows.yml` is staged and pending.** Nothing has been copied
-in — `.github/workflows/console-windows.yml` does not exist — so the job has
-never run, and the copy-in below is what is left to do. Every `console/` edit
-the job's own header once waited on has landed (the three are named below); the
-header says so first. **This line is rewritten by the copy-in as well**:
+**Status: `console-windows.yml` is applied, not pending.** Its staged copy was
+copied into `.github/workflows/console-windows.yml` and removed on **2026-11-09**,
+so this section is the record of the change from there on and the copy-in below
+is the record of how it happened. **The job has still never run** — no dispatch
+and no release tag has reached it — so its first run is still where the pack is
+proven rather than assumed, and every `console/` edit the job's own header once
+waited on has landed (the three are named below); the header says so first.
+**This line is rewritten by a copy-in**:
 `TestWindowsConsoleStagingTellsTheOwnerWhatToCopyWhere` reads it against the
 tree in both directions — `staged and pending` while the staged copy is here,
 `applied, not pending` once the copy-in has removed it — the way the two
 sentences that count what this directory holds are counted against it by
 `TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere`.
+(**The applied file's own header still opens with `STAGED, NOT APPLIED` and
+carries the copy-in commands, and it is not this page's to correct**: an agent
+run may not write under `.github/workflows/`, which is the whole reason a change
+is staged here, so that edit is a human's follow-up rather than part of the
+copy-in.)
 
 The desktop console's **Windows pack**, staged on **2026-10-20** by the run that
 planned the console's Windows build, and re-cut the same day for the owner's
