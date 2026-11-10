@@ -2388,6 +2388,40 @@ func TestCheckoutWithoutTheFileStillJudgesTheCloneGate(t *testing.T) {
 	}
 }
 
+// projectJobRecipeRepoYAML is projectJobRepoYAML with agent.recipe named: the
+// document that decides the run's recipe, which the launch resolves before the
+// task is written.
+func projectJobRecipeRepoYAML(name string) string {
+	return strings.Replace(projectJobRepoYAML, "  auth: api-key\n", "  auth: api-key\n  recipe: "+name+"\n", 1)
+}
+
+// TestCheckoutWithoutTheFileStillResolvesTheRefsRecipe is the same launch one
+// reader further in than the clone gate: the attempt plan. The plan runs before
+// finishLaunch and resolved the recipe from the working tree alone
+// (resolveAttemptPlan, chooseRecipe), so a checkout whose tree has no
+// fugaro.yaml and whose ref names agent.recipe wrote no recipe into its task —
+// spec.Recipe nil — and the runner, which reads agent.recipe at the ref after
+// cloning it, then used a recipe the launch never resolved: no note, no
+// mode: artifact carry, no review-mode refusal and no image gate, where the
+// same launch with the file in the tree has all four.
+//
+// Mutation (run, restore): drop the withLaunchDocument call from
+// resolveAttemptPlan — this task's recipe is nil again.
+func TestCheckoutWithoutTheFileStillResolvesTheRefsRecipe(t *testing.T) {
+	f := newProjectJobFixture(t)
+	dir := projectJobCheckoutYAML(t, projectJobRecipeRepoYAML("solo"))
+	if err := os.Remove(filepath.Join(dir, "fugaro.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	const run = "20261110-100000-aaaa"
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", run, "Add a feature"); err != nil {
+		t.Fatalf("a launch whose ref names a recipe and whose tree has no fugaro.yaml: %v", err)
+	}
+	if r := readSpecOf(t, f.cloudFixture, appSlug, run).Recipe; r == nil || r.Name != "solo" {
+		t.Fatalf("the task's recipe = %+v, want the solo the ref's fugaro.yaml names", r)
+	}
+}
+
 // TestNoCheckoutGitHubRefusalNamesTheCheckoutAndTheRef is D912's first
 // message: a launch with no checkout of the repository anywhere, on a project
 // that has published a profile, is refused — the provider is one a shared job

@@ -1663,6 +1663,15 @@ func resolveAttemptPlan(ctx context.Context, env *cloudEnv, o *runOptions, total
 	} else {
 		base = specBaseBranch(env.layersBaseBranch(ctx, repo))
 	}
+	// The launch's own document, resolved here and not left to finishLaunch:
+	// the plan below reads it too (chooseRecipe), and a plan that read the
+	// working tree while the launch read the ref's file writes a task whose
+	// recipe is not the one the run applies — the runner resolves agent.recipe
+	// at the ref it clones. Here, because the ref the read is made at is what
+	// the two lines above resolve. Idempotent, so finishLaunch's own call — the
+	// one a launch shape with no attempt plan behind it (a follow-up, a review,
+	// a retry, the daemon's) still needs — answers with this same document.
+	ctx = withLaunchDocument(ctx, repo, ref)
 	me, err := env.lc.Me(ctx)
 	if err != nil {
 		return nil, userErr("%v", err)
@@ -1676,6 +1685,11 @@ func resolveAttemptPlan(ctx context.Context, env *cloudEnv, o *runOptions, total
 	if err != nil {
 		return nil, err
 	}
+	// The closure above is bound to the working tree and memoizes it, so it is
+	// built again over the ctx that carries the launch's document: the reader
+	// below is one of the launch's, and the recipe it resolves is written into
+	// the task the runner applies at the ref.
+	checkout = checkoutOf(ctx, repo)
 	root := checkoutRoot(ctx, repo)
 	rcp, mode, err := chooseRecipe(ctx, env, o.recipe, checkout, root, warn, forAttempts)
 	if err != nil {
