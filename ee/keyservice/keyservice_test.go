@@ -54,6 +54,7 @@ const (
 	repositoryTwoURL = "https://code.example/acme/gadget"
 	privateURL       = "https://code.example/acme/private"
 	unlicensedURL    = "https://code.example/acme/proprietary"
+	unapprovedURL    = "https://code.example/acme/unapproved"
 	openSourceOrg    = "code.example/acme/widget"
 	applicantAddress = "dev@acme.example"
 )
@@ -222,6 +223,7 @@ func newFixtureWith(t *testing.T, env Environment, edit func(*fixture)) *fixture
 		"acme/gadget":      {Public: true, Licence: "Apache-2.0"},
 		"acme/private":     {Public: false, Licence: "MIT"},
 		"acme/proprietary": {Public: true, Licence: "LicenseRef-Proprietary"},
+		"acme/unapproved":  {Public: true, Licence: "OpenSSL"},
 	}}
 	f.proofs = &proofSpy{proved: true, organisation: openSourceOrg}
 	f.recording = &recordingMints{inner: Minter{Signer: f.signer, Keys: f.keys, Environment: env, Now: f.clock}}

@@ -165,39 +165,43 @@ type Proofs interface {
 // this check does not evaluate — is a refusal, because the cost of a wrong
 // refusal to an honest maintainer is a mail to the owner and the cost of a
 // wrong admission is a licence nobody granted (§4.6).
+//
+// That asymmetry is why the list holds what it holds and no more: an id SPDX
+// records as not approved — `0BSD`, `BSD-3-Clause-Clear`, `OpenSSL` and `X11`
+// among the permissive ones a code host's metadata actually carries — is absent
+// rather than admitted on the strength of how permissive it looks, and an id
+// whose approval is in doubt is absent for the same reason until the owner's
+// update adds it. `TestTheLicenceTableIsTheOSIsApprovedList` holds both halves
+// of that.
 var osiApproved = map[string]bool{
-	"0BSD":               true,
-	"AGPL-3.0-only":      true,
-	"AGPL-3.0-or-later":  true,
-	"Apache-2.0":         true,
-	"Artistic-2.0":       true,
-	"BSD-2-Clause":       true,
-	"BSD-3-Clause":       true,
-	"BSD-3-Clause-Clear": true,
-	"BSL-1.0":            true,
-	"CDDL-1.0":           true,
-	"EPL-2.0":            true,
-	"EUPL-1.2":           true,
-	"GPL-2.0-only":       true,
-	"GPL-2.0-or-later":   true,
-	"GPL-3.0-only":       true,
-	"GPL-3.0-or-later":   true,
-	"ISC":                true,
-	"LGPL-2.1-only":      true,
-	"LGPL-2.1-or-later":  true,
-	"LGPL-3.0-only":      true,
-	"LGPL-3.0-or-later":  true,
-	"MIT":                true,
-	"MPL-2.0":            true,
-	"MS-PL":              true,
-	"NCSA":               true,
-	"OFL-1.1":            true,
-	"OpenSSL":            true,
-	"PostgreSQL":         true,
-	"Python-2.0":         true,
-	"Unlicense":          true,
-	"X11":                true,
-	"Zlib":               true,
+	"AGPL-3.0-only":     true,
+	"AGPL-3.0-or-later": true,
+	"Apache-2.0":        true,
+	"Artistic-2.0":      true,
+	"BSD-2-Clause":      true,
+	"BSD-3-Clause":      true,
+	"BSL-1.0":           true,
+	"CDDL-1.0":          true,
+	"EPL-2.0":           true,
+	"EUPL-1.2":          true,
+	"GPL-2.0-only":      true,
+	"GPL-2.0-or-later":  true,
+	"GPL-3.0-only":      true,
+	"GPL-3.0-or-later":  true,
+	"ISC":               true,
+	"LGPL-2.1-only":     true,
+	"LGPL-2.1-or-later": true,
+	"LGPL-3.0-only":     true,
+	"LGPL-3.0-or-later": true,
+	"MIT":               true,
+	"MPL-2.0":           true,
+	"MS-PL":             true,
+	"NCSA":              true,
+	"OFL-1.1":           true,
+	"PostgreSQL":        true,
+	"Python-2.0":        true,
+	"Unlicense":         true,
+	"Zlib":              true,
 }
 
 // openSourceControl runs §4.4's two gates in one place: every repository the

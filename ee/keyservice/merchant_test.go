@@ -157,6 +157,122 @@ func TestReplayedOrOutOfOrderEventIsIgnored(t *testing.T) {
 	}
 }
 
+// TestAnEventForAnUnknownSubscriptionIsRefused: a cancellation or a seat change
+// the store has no subscription for is an event the service cannot place — it
+// arrived before the purchase it belongs to. Answering 200 drops it for good,
+// which is the reproduced failure: the purchase that follows is saved
+// uncancelled and the renewal mints a paid key for a customer who has left. The
+// merchant is told to send it again, and the retry is what applies it.
+func TestAnEventForAnUnknownSubscriptionIsRefused(t *testing.T) {
+	f := newFixture(t)
+	// The cancellation happens first and is delivered first; the purchase it
+	// belongs to happened before it and arrives after it, which is the ordinary
+	// out-of-order pair (the two are ordered by their own instants, §5.2).
+	bought := f.now
+	cancelled := bought.Add(time.Minute)
+	for _, e := range []Event{
+		{ID: "evt-1", Type: EventCancellation, Organisation: "acme.example", OccurredAt: cancelled},
+		{ID: "evt-2", Type: EventSeatChange, Organisation: "acme.example", Seats: 9, OccurredAt: cancelled},
+	} {
+		if rec := f.event(e); rec.Code != http.StatusInternalServerError {
+			t.Errorf("a %s for a subscription the store does not hold was answered %d, want 500: the merchant's retry is the only thing that can apply it", e.Type, rec.Code)
+		}
+	}
+	if got := f.signer.calls; got != 0 {
+		t.Errorf("an event for a subscription the store does not hold signed %d key(s), want none", got)
+	}
+	if _, held, _ := f.store.Subscription(context.Background(), "sub-acme.example"); held {
+		t.Error("an event for a subscription the store does not hold stored one, want nothing written")
+	}
+
+	// The purchase, which is the one type that creates the subscription and so
+	// the one that needs nothing stored to apply.
+	f.deliver(Event{
+		ID:           "evt-3",
+		Type:         EventPurchase,
+		Mode:         ModeFor(f.env),
+		OccurredAt:   bought,
+		Subscription: "sub-acme.example",
+		Organisation: "acme.example",
+		Email:        buyerAddress("acme.example"),
+		Seats:        5,
+		TermDays:     365,
+	})
+	if got := len(f.records()); got != 1 {
+		t.Fatalf("the purchase recorded %d key(s), want the buyer's one", got)
+	}
+
+	// The redelivery of the cancellation, carrying the instant it always carried.
+	if rec := f.event(Event{ID: "evt-1", Type: EventCancellation, Organisation: "acme.example", OccurredAt: cancelled}); rec.Code != http.StatusOK {
+		t.Fatalf("the redelivered cancellation was answered %d, want 200: the subscription it belongs to is stored now", rec.Code)
+	}
+	sub, held, err := f.store.Subscription(context.Background(), "sub-acme.example")
+	if err != nil || !held {
+		t.Fatalf("the subscription is %v, held=%v, want the purchase's own", err, held)
+	}
+	if !sub.Cancelled {
+		t.Error("the redelivered cancellation did not stop the reissue, want it applied: the event answered with a failure is the one the retry lands")
+	}
+
+	// And the renewal a stored but uncancelled subscription would have allowed
+	// does not happen.
+	f.advance(365*day - 31*day)
+	if _, renewed, err := f.svc.Renew(context.Background(), "sub-acme.example"); err != nil || renewed {
+		t.Errorf("a cancelled subscription renewed (renewed=%v, err=%v), want nothing: a cancellation stops the reissue", renewed, err)
+	}
+}
+
+// TestAnEventWhosePurchaseWasNotSavedIsRefused is the same state reached the
+// other way: the purchase minted and mailed the key, the store refused the
+// subscription write, and the customer's cancellation arrives before the
+// merchant's retry of the purchase. It has to be a failure too — the shape has
+// no subscription to move yet — and the retry of the purchase is what finishes
+// the state the cancellation then lands on.
+func TestAnEventWhosePurchaseWasNotSavedIsRefused(t *testing.T) {
+	f, store := newFailingStore(t)
+	bought := f.now
+	cancelled := bought.Add(time.Minute)
+	purchase := Event{
+		ID:           "evt-1",
+		Type:         EventPurchase,
+		Mode:         ModeFor(f.env),
+		OccurredAt:   bought,
+		Subscription: "sub-acme.example",
+		Organisation: "acme.example",
+		Email:        buyerAddress("acme.example"),
+		Seats:        5,
+		TermDays:     365,
+	}
+	store.refuse = 1
+	if rec := f.deliver(purchase); rec.Code != http.StatusInternalServerError {
+		t.Fatalf("a purchase whose subscription write failed was answered %d, want 500", rec.Code)
+	}
+	if got := len(f.records()); got != 1 {
+		t.Fatalf("the failed purchase recorded %d key(s), want the one the customer holds", got)
+	}
+
+	if rec := f.event(Event{ID: "evt-2", Type: EventCancellation, Organisation: "acme.example", OccurredAt: cancelled}); rec.Code != http.StatusInternalServerError {
+		t.Errorf("a cancellation whose purchase was not saved was answered %d, want 500: dropped here it is lost, and the retried purchase would save an uncancelled subscription", rec.Code)
+	}
+
+	// The merchant's retry of the purchase finishes the state off the record, and
+	// the cancellation then applies.
+	f.deliver(purchase)
+	if _, held, _ := f.store.Subscription(context.Background(), "sub-acme.example"); !held {
+		t.Fatal("the redelivered purchase left no subscription, want the state the record describes")
+	}
+	if rec := f.event(Event{ID: "evt-2", Type: EventCancellation, Organisation: "acme.example", OccurredAt: cancelled}); rec.Code != http.StatusOK {
+		t.Fatalf("the retried cancellation was answered %d, want 200", rec.Code)
+	}
+	sub, _, err := f.store.Subscription(context.Background(), "sub-acme.example")
+	if err != nil {
+		t.Fatalf("reading the subscription: %v", err)
+	}
+	if !sub.Cancelled {
+		t.Error("the retried cancellation did not stop the reissue, want the subscription cancelled")
+	}
+}
+
 // TestRenewalKeyIssuesThirtyDaysBeforeExpiry: T26 — the next key issues 30 days
 // before the current one expires, its `issued` is the day the service runs and
 // its `expires` is the end of the term it covers, so the two keys overlap and

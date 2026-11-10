@@ -548,12 +548,27 @@ func fail(w http.ResponseWriter, err error) {
 // address reads the one field all three forms share: one email address, and
 // nothing else.
 //
-// It is strict on purpose. The value ends up in a mail header's recipient, so
-// any whitespace or control character in it is a header injection and is refused
-// rather than trimmed (§7.2, TestApplicantFieldsCannotInjectMailHeaders), and a
-// comma, an angle bracket or a quote is the same hole written differently. The
-// cost is that a pasted address with a trailing space is refused; the benefit is
-// that the only thing the intake ever mails to is an address it read whole.
+// It is strict on purpose, and it reads each half by its own grammar rather than
+// by a list of characters to refuse. The value ends up in a mail header's
+// recipient, so any whitespace or control character in it is a header injection
+// and is refused rather than trimmed (§7.2,
+// TestApplicantFieldsCannotInjectMailHeaders); everything else RFC 5322's
+// `specials` list holds — the comma, the angle bracket, the semicolon, the
+// quote, the backslash, the comment — is not atext and not a label, so it fails
+// here by the same rule that admits `dev@acme.example` and needs no second list
+// to keep in step.
+//
+// Reading the domain as a name of labels is what the three eligibility checks
+// stand on: the free-mail queue (§4.1), the one-free-key-per-domain count (§4.2)
+// and the paid-domain refusal (§4.3) all compare the domain, so a domain that is
+// not one is a domain they compare wrongly. `maintainer@gmail.example(x)` is the
+// case that names it — a comment, deliverable by net/mail to gmail.example and
+// by no parse a domain equal to gmail.example — which would otherwise walk past
+// all three.
+//
+// The cost is that a pasted address carrying a trailing space, a comment or a
+// quoted local part is refused; the benefit is that the only address the intake
+// mails to, and the only domain it counts, is one it read whole.
 func address(raw string) (string, bool) {
 	if raw == "" || len(raw) > 254 {
 		return "", false
@@ -563,17 +578,85 @@ func address(raw string) (string, bool) {
 			return "", false
 		}
 	}
-	if strings.ContainsAny(raw, "<>,;\"\\") {
-		return "", false
-	}
 	local, domain, found := strings.Cut(raw, "@")
-	if !found || local == "" || domain == "" || strings.Contains(domain, "@") {
+	if !found || !localPart(local) {
 		return "", false
 	}
-	if !strings.Contains(domain, ".") || strings.HasPrefix(domain, ".") || strings.HasSuffix(domain, ".") {
+	domain = strings.ToLower(domain)
+	if !domainName(domain) {
 		return "", false
 	}
-	return local + "@" + strings.ToLower(domain), true
+	return local + "@" + domain, true
+}
+
+// localPart is RFC 5322's dot-atom: one or more atext atoms joined by single
+// dots. A leading, trailing or doubled dot is a different production and not
+// this one, which is why the atoms are read rather than the characters.
+func localPart(local string) bool {
+	if local == "" || len(local) > 64 || strings.HasPrefix(local, ".") || strings.HasSuffix(local, ".") {
+		return false
+	}
+	for _, atom := range strings.Split(local, ".") {
+		if atom == "" {
+			return false
+		}
+		for i := 0; i < len(atom); i++ {
+			if !isAtext(atom[i]) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// isAtext is RFC 5322's `atext`: the characters a bare word is made of. Every
+// character `specials` names is outside it, which is what makes the local part's
+// grammar the header-injection rule as well as the address one.
+func isAtext(c byte) bool {
+	switch {
+	case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+		return true
+	}
+	return strings.IndexByte("!#$%&'*+-/=?^_`{|}~", c) >= 0
+}
+
+// domainName is a dotted name of at least two labels, which is the shape §4.1's
+// list and §4.2's count compare: a comment, a quoted string, a bracketed address
+// literal and a name that is not ASCII all fail here, so the domain the checks
+// read is one a mail provider reads the same way. A name of one label — the
+// `localhost` an address is not reachable at — is refused for the same reason
+// the rest of the form is: the intake mails, and it has nothing to mail to.
+func domainName(domain string) bool {
+	if len(domain) > 253 {
+		return false
+	}
+	labels := strings.Split(domain, ".")
+	if len(labels) < 2 {
+		return false
+	}
+	for _, label := range labels {
+		if !domainLabel(label) {
+			return false
+		}
+	}
+	return true
+}
+
+// domainLabel is one label of a name: one to 63 characters, a letter or a digit,
+// with a hyphen inside it and at neither end.
+func domainLabel(label string) bool {
+	if label == "" || len(label) > 63 {
+		return false
+	}
+	for i := 0; i < len(label); i++ {
+		switch c := label[i]; {
+		case c >= 'a' && c <= 'z', c >= '0' && c <= '9':
+		case c == '-' && i > 0 && i < len(label)-1:
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // domainOf is the part of an address §4.2's proxy counts: the domain, which is

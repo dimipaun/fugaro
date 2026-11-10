@@ -70,9 +70,11 @@ var (
 	// ErrSignature is a body the merchant did not sign, or a header this
 	// service cannot read as its scheme.
 	ErrSignature = errors.New("keyservice: the merchant's signature does not verify over this body")
-	// ErrUnknownSubscription is a renewal asked for by an id the store does not
-	// hold: an event ordering the service missed, which is the deploy's to
-	// reconcile and not a mint to force.
+	// ErrUnknownSubscription is an id the store does not hold: a renewal asked
+	// for by one, or an event about one, which is an ordering the service missed
+	// rather than a mint to force. What reaches the merchant is a `500` and
+	// therefore a redelivery, which is the whole of the repair this shape can
+	// offer — an event dropped here is one nothing will ever apply.
 	ErrUnknownSubscription = errors.New("keyservice: there is no subscription by that id")
 	// ErrNoBuyer is an event the service cannot deliver a key for: the paid path
 	// mails the key to the buyer's own address, and an event whose address is
@@ -216,6 +218,18 @@ func (s *Service) webhook(w http.ResponseWriter, r *http.Request) {
 // subscription's own order, then the type. Both guards are before any mint, and
 // both are refusals to act rather than errors — a redelivery and a late event
 // are the merchant's ordinary traffic.
+//
+// An event about a subscription the store does not hold is the one case that is
+// an error, and it is a `500` so the merchant sends it again. It is not
+// hypothetical: a cancellation arriving before the purchase it belongs to, or
+// after a purchase whose subscription write failed, is exactly the state a
+// store without transactions leaves — and dropping such an event silently loses
+// it for good, because the purchase that follows saves an uncancelled
+// subscription and the renewal then mints a paid key for a customer who has
+// left. A purchase is the exception, because it is what creates the
+// subscription. The other repair — a tombstone the store keeps for an event it
+// has no subscription for — is a shape the durable backend (S3.5) would have to
+// grow, and a retry the owner can see is the one this shape can offer.
 func (s *Service) apply(ctx context.Context, e Event) error {
 	if record, held, err := s.recorded(ctx, e.ID); err != nil {
 		return err
@@ -236,12 +250,12 @@ func (s *Service) apply(ctx context.Context, e Event) error {
 		return s.purchased(ctx, e)
 	case EventSeatChange:
 		if !held {
-			return nil
+			return fmt.Errorf("%w: the seat change %s for the subscription %s", ErrUnknownSubscription, e.ID, e.Subscription)
 		}
 		return s.seatChanged(ctx, e, sub)
 	case EventCancellation:
 		if !held {
-			return nil
+			return fmt.Errorf("%w: the cancellation %s for the subscription %s", ErrUnknownSubscription, e.ID, e.Subscription)
 		}
 		sub.Cancelled = true
 		sub.At = e.OccurredAt

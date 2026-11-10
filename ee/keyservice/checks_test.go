@@ -153,6 +153,9 @@ func TestOpenSourceCheckRefusesAPrivateOrNonOSIRepository(t *testing.T) {
 	}{
 		{name: "a private repository", url: privateURL},
 		{name: "a repository under a licence the OSI does not approve", url: unlicensedURL},
+		// A licence that reads as permissive and is not approved: the host's
+		// metadata carries the id, the table has no business admitting it.
+		{name: "a repository under a permissive licence the OSI does not approve", url: unapprovedURL},
 		{name: "a URL the code host cannot answer for", url: "https://elsewhere.example/acme/widget"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -169,6 +172,41 @@ func TestOpenSourceCheckRefusesAPrivateOrNonOSIRepository(t *testing.T) {
 				t.Errorf("%s was queued (%+v), want a refusal: the queue is not the checks' fallback (§4.5)", tc.name, queued)
 			}
 		})
+	}
+}
+
+// TestTheLicenceTableIsTheOSIsApprovedList holds §4.4's data to the design's
+// rule — the licences the OSI approves are the ones admitted — with the ids a
+// code host's metadata actually carries on both sides of it.
+//
+// It is a test rather than a comment because the rule is a data set with an
+// update path, and the failure it guards is a permissive-looking id being added
+// because it looks permissive: `0BSD`, `BSD-3-Clause-Clear`, `OpenSSL` and `X11`
+// are the ones that were here and are not approved. SPDX's own `isOsiApproved`
+// field is the comparison the list should be held to, and it is not in this tree
+// and not reachable from a hermetic run — so the four are pinned by name and the
+// owner's update is what re-checks the rest.
+func TestTheLicenceTableIsTheOSIsApprovedList(t *testing.T) {
+	for _, id := range []string{"MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "GPL-3.0-only", "LGPL-2.1-or-later", "MPL-2.0", "ISC", "Unlicense", "PostgreSQL", "OFL-1.1", "EUPL-1.2"} {
+		if !osiApproved[id] {
+			t.Errorf("%s is not admitted, want it in the table: it is on the OSI's approved list, and a refusal here is an honest maintainer refused", id)
+		}
+	}
+	for _, id := range []string{
+		// Permissive and not approved: what the table exists to keep out.
+		"0BSD",
+		"BSD-3-Clause-Clear",
+		"OpenSSL",
+		"X11",
+		// And what is not an id at all, which a host's metadata can still say.
+		"",
+		"NOASSERTION",
+		"LicenseRef-Proprietary",
+		"MIT OR Apache-2.0",
+	} {
+		if osiApproved[id] {
+			t.Errorf("%q is admitted, want a refusal: it is not a licence the OSI approves, and §4.4 refuses a repository the check cannot place", id)
+		}
 	}
 }
 
@@ -367,9 +405,27 @@ func TestAnswersDoNotRevealAnExistingKey(t *testing.T) {
 // TestTheChecksRefuseANonAddress keeps the one field the three forms share to
 // an address: a value that is not one is answered uniformly and reaches neither
 // the mail path nor the store.
+//
+// The list is the specials RFC 5322 allows *around* an address and not in one,
+// most of them with no whitespace anywhere to catch them: an address the intake
+// reads whole is one it can mail to and count by, and `maintainer@gmail.example(x)`
+// is the case that costs three checks at once — §4.1's free-mail list, §4.2's
+// one-per-domain count and §4.3's paid-domain refusal all compare the domain,
+// while net/mail delivers that address to gmail.example.
 func TestTheChecksRefuseANonAddress(t *testing.T) {
 	f := newFixture(t)
-	for _, raw := range []string{"", "not-an-address", "two@example.example, three@example.example", "no-domain@localhost"} {
+	for _, raw := range []string{
+		"",
+		"not-an-address",
+		"two@example.example, three@example.example",
+		"no-domain@localhost",
+		"a@b.example,victim@c.example",
+		"a@b.example;victim@c.example",
+		"maintainer@gmail.example(x)",
+		"\"dev\"@acme.example",
+		"dev@acme.example>",
+		"dev\\v@acme.example",
+	} {
 		rec := f.post(RouteFreeSeat, url.Values{"email": {raw}})
 		answerBody(t, rec)
 	}
@@ -378,6 +434,64 @@ func TestTheChecksRefuseANonAddress(t *testing.T) {
 	}
 	if len(f.queued()) != 0 {
 		t.Errorf("a refused address queued %d application(s), want none", len(f.queued()))
+	}
+}
+
+// TestAddressReadsEachHalfByItsOwnGrammar is the same rule one layer down, where
+// the two halves can be read apart: the local part is RFC 5322's dot-atom, which
+// is what refuses a header injection's punctuation, and the domain is a name of
+// labels, which is what the three eligibility checks compare. Both are pinned
+// here, because through the routes every refusal is the one answer page (§7.1)
+// and a whole table can go green for the wrong reason.
+func TestAddressReadsEachHalfByItsOwnGrammar(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{name: "a plain address", raw: "dev@acme.example", want: "dev@acme.example"},
+		{name: "a domain of any case", raw: "dev@ACME.Example", want: "dev@acme.example"},
+		{name: "atext and dots in the local part", raw: "first.last+tag_1@sub.acme.example", want: "first.last+tag_1@sub.acme.example"},
+
+		// What the mail header cannot carry: a control character, whatever the
+		// local part's grammar says about the rest of it.
+		{name: "a header line", raw: "dev@acme.example\r\nBcc: victim@elsewhere.example"},
+		{name: "a space", raw: "dev@acme.example (a comment)"},
+
+		// The specials, none of which is atext or a label.
+		{name: "a comma", raw: "a@b.example,victim@c.example"},
+		{name: "a semicolon", raw: "a@b.example;victim@c.example"},
+		{name: "a comment in the domain", raw: "maintainer@gmail.example(x)"},
+		{name: "a quoted local part", raw: "\"dev\"@acme.example"},
+		{name: "an angle bracket", raw: "dev@acme.example>"},
+		{name: "a backslash", raw: "dev\\v@acme.example"},
+		{name: "an address literal", raw: "dev@[192.0.2.1]"},
+		{name: "a second at sign", raw: "dev@acme.example@other.example"},
+		{name: "a character outside ASCII", raw: "dév@acme.example"},
+
+		// Dots, which are a separator and not a character of either half.
+		{name: "a leading dot", raw: ".dev@acme.example"},
+		{name: "a doubled dot", raw: "de..v@acme.example"},
+		{name: "a trailing dot", raw: "dev.@acme.example"},
+		{name: "a leading dot in the domain", raw: "dev@.acme.example"},
+		{name: "an empty domain label", raw: "dev@acme..example"},
+
+		// Labels of a name, and the shape of a name at all.
+		{name: "a label opening with a hyphen", raw: "dev@-acme.example"},
+		{name: "a label closing with a hyphen", raw: "dev@acme.example-"},
+		{name: "one label", raw: "dev@acme"},
+		{name: "no at sign", raw: "dev.acme.example"},
+	} {
+		got, ok := address(tc.raw)
+		if tc.want == "" {
+			if ok {
+				t.Errorf("%s: address(%q) read %q, want a refusal", tc.name, tc.raw, got)
+			}
+			continue
+		}
+		if !ok || got != tc.want {
+			t.Errorf("%s: address(%q) = %q, %v, want %q", tc.name, tc.raw, got, ok, tc.want)
+		}
 	}
 }
 
