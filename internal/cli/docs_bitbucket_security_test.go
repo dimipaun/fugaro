@@ -121,21 +121,35 @@ func TestDocsBitbucketSecurityNamesTheReadMintAndItsCustody(t *testing.T) {
 	}
 }
 
-// TestDocsBitbucketSecurityLeavesU3AndU8Open: the two questions about the read
-// token's reach that Check 145 has not settled stay open in this document too.
-// U8 is the plan's own bullet -- "whether IP allowlisting applies to the read
-// token, or that it is unknown" -- and U3 is the consumer's reach beyond the
-// workspace; a document that claimed either would be claiming a live result
-// nobody has measured, which is the one thing a security page must not do.
-func TestDocsBitbucketSecurityLeavesU3AndU8Open(t *testing.T) {
+// TestDocsBitbucketSecurityLeavesU3U8U11AndU14Open: the four questions about
+// the read token's reach that Check 145 has not settled stay open in this
+// document too. U8 is the plan's own bullet -- "whether IP allowlisting applies
+// to the read token, or that it is unknown" -- and U3 is the consumer's reach
+// beyond the workspace; U11 is whether Bitbucket's token answer names the
+// granted scopes at all, which is what the mint's allow-list refuses against,
+// and U14 is whether the token reaches admin endpoints beyond its scopes. A
+// document that claimed any of them would be claiming a live result nobody has
+// measured, which is the one thing a security page must not do -- and U11 and
+// U14 are the two that bound the section's own read-only claim, so a reader who
+// takes that claim as a guarantee is a reader this test exists for.
+func TestDocsBitbucketSecurityLeavesU3U8U11AndU14Open(t *testing.T) {
 	flattened := flattenDoc(readDoc(t, bitbucketSecurityDoc))
 	section := flattenDoc(docSection(t, bitbucketSecurityDoc, readDoc(t, bitbucketSecurityDoc), bitbucketSecurityHeading))
 	for _, want := range []string{
 		"**U3**",
 		"**U8**",
+		"**U11**",
+		"**U14**",
 		"IP allowlisting",
 		"not settled",
 		"Check 145",
+		// The read-only claim carries its own two qualifications where it is
+		// made, rather than only in the paragraph about the reach: the claim is
+		// the one a reader quotes, and an open question named a paragraph later
+		// is an open question the quote does not carry.
+		"refuses a scope the token answer",
+		"lists the granted scopes at all is unmeasured",
+		"admin endpoints beyond its scopes",
 	} {
 		if !strings.Contains(section, want) {
 			t.Errorf("%s's %q section does not say %q: an unanswered live question has to read as unanswered where the reach is described", bitbucketSecurityDoc, bitbucketSecurityHeading, want)
@@ -146,6 +160,11 @@ func TestDocsBitbucketSecurityLeavesU3AndU8Open(t *testing.T) {
 	// one would not see.
 	if strings.Contains(flattened, "IP allowlisting applies to the read token") {
 		t.Errorf("%s claims the allowlisting applies to the read token, which Check 145 has not measured", bitbucketSecurityDoc)
+	}
+	// The same backstop for the read-only claim: a flat "can write nowhere" with
+	// no open question beside it is the overstatement this test was added for.
+	if strings.Contains(flattened, "Nothing this mint returns can write anywhere:") {
+		t.Errorf("%s states the read-only claim flatly: the allow-list refuses only a scope the token answer names (U11) and admin reach beyond the scopes is unmeasured (U14), so the claim has to carry both", bitbucketSecurityDoc)
 	}
 }
 

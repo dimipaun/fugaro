@@ -310,6 +310,13 @@ import http.server, json, os, secrets, sys
 
 DIR = os.environ["FAKE148_DIR"]
 ENTRY = "bitbucket-read-consumer"
+# The sentence internal/credsvc's read mint answers with when the bundle holds no
+# read consumer (bitbucket.go's ErrReadNoConsumer, carried as the wire body's
+# message). The fake writes it on the absent-consumer answer, so the drill's stop
+# row is held to the real contract and not only to the real status: the service
+# answers the kill switch, a bundle that fails to load, a failed Bitbucket
+# exchange and a failed audit with that same 503 state_unavailable.
+NO_CONSUMER_MESSAGE = "credsvc: the credentials bundle holds no Bitbucket read consumer"
 
 
 def mode():
@@ -402,18 +409,25 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if m.get("mint") == "never":
             present = False
         if not present:
-            # The service's own refusal of a bundle with no read consumer:
-            # 503 state_unavailable (internal/credsvc/bitbucket.go's
-            # ErrReadNoConsumer through refuseRead, wire.go's statuses). A case
-            # can answer something else — a 5xx, or nothing at all — which is
-            # the run not knowing rather than a refusal.
+            # The service's own refusal of a bundle with no read consumer: 503
+            # state_unavailable (internal/credsvc/bitbucket.go's ErrReadNoConsumer
+            # through refuseRead, wire.go's statuses) carrying that error's own
+            # sentence, which is the only thing that tells it apart from the
+            # service's other 503 state_unavailable answers. A case can answer
+            # something else — a 5xx, another message, or nothing at all — which
+            # is the run not knowing rather than the refusal a stop is read on.
             absent = m.get("mint_absent") or ""
             if absent == "none":
                 self.close_connection = True
                 self.wfile.flush()
                 return
-            self.answer(int(m.get("mint_absent_status") or 503),
-                        {"error": m.get("mint_absent_error") or "state_unavailable"})
+            body = {"error": m.get("mint_absent_error") or "state_unavailable"}
+            message = m.get("mint_absent_message")
+            if message is None:
+                message = NO_CONSUMER_MESSAGE
+            if message != "none":
+                body["message"] = message
+            self.answer(int(m.get("mint_absent_status") or 503), body)
             return
         token = "%s-%s" % ("READTOKEN-SENTINEL-148-must-not-be-printed", secrets.token_hex(4))
         with open(os.path.join(DIR, "tokens"), "a", encoding="utf-8") as fh:
@@ -770,6 +784,29 @@ test_a_5xx_after_the_stop_is_not_a_pass() {
   # mint serves again, so the rows below are measured rather than guessed.
   expect_contains "$out" "FACT restore-consumer: PASS — " "a 500 after the stop: the drill went on"
   assert_no_secret "$dir" "a 500 after the stop"
+}
+
+# THE THIRD RED STEP, and the one the status and the code cannot catch: a 503
+# state_unavailable that is not the missing read consumer. internal/credsvc
+# answers an unreadable stop switch, the kill switch, a bundle that fails to load
+# (a hand-stripped document the loader refuses), a failed Bitbucket exchange and
+# a failed audit with that same status and type; only ErrReadNoConsumer's own
+# sentence tells the missing consumer from them. A stop row read on the pair
+# alone passes here, which is a stop reported for a service that is stopped for
+# an entirely different reason.
+test_a_503_that_is_not_the_no_consumer_refusal_is_not_a_pass() {
+  setup_case stopkillswitch
+  write_mode "$dir" '{"mint_absent_message": "credsvc: the credentials service is stopped by the operator kill switch"}'
+  default_args
+  RUN148_ENV=(CHECK148_MINT_WAIT=0)
+  run148
+  expect_status "$status" 1 "a kill-switch 503 after the stop"
+  expect_contains "$out" "FACT stop: FAIL — " "a kill-switch 503: the stop row fails"
+  expect_absent "$out" "FACT stop: PASS" "a kill-switch 503: no PASS for the stop"
+  expect_contains "$out" "503 (state_unavailable)" "a kill-switch 503: the row names the answer it got"
+  expect_contains "$out" "a message that is not ErrReadNoConsumer's" "a kill-switch 503: the row says what was missing"
+  expect_absent "$out" "carrying ErrReadNoConsumer's message" "a kill-switch 503: the pass sentence is not written"
+  assert_no_secret "$dir" "a kill-switch 503"
 }
 
 # The refusal vocabulary is the service's own (internal/credsvc/wire.go), and a
@@ -1338,6 +1375,7 @@ t() {
 
 t test_happy_path
 t test_a_5xx_after_the_stop_is_not_a_pass
+t test_a_503_that_is_not_the_no_consumer_refusal_is_not_a_pass
 t test_the_services_own_refusal_codes_reach_the_block
 t test_an_unanswered_mint_after_the_stop_is_not_a_pass
 t test_a_mint_that_outlives_the_stop_is_a_fail

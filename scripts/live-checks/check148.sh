@@ -505,6 +505,7 @@ mint_once() {
   MINT_EXPIRES=$(field_of expires "$answer")
   MINT_TOKEN=$(field_of token "$answer")
   MINT_ANSWERED=$(field_of answered "$answer")
+  MINT_NO_CONSUMER=$(field_of noconsumer "$answer")
   if [ "$MINT_TOKEN" = yes ]; then
     CREDENTIAL_FILES+=("$SCRATCH/token-$n")
   fi
@@ -524,23 +525,35 @@ mint_want() {
     case "$want" in
     ok) [ "$MINT_STATUS" = 200 ] && return 0 ;;
     refused)
-      # Only the service's own refusal is a refusal. A bundle without the read
-      # consumer is refused with 503 state_unavailable
-      # (internal/credsvc/bitbucket.go's ErrReadNoConsumer through refuseRead,
-      # whose statuses are wire.go's: 503 for everything the service cannot
-      # answer now, 403 for an unverified caller, 400 for a request its own
-      # rules refuse). Anything else — a curl timeout (000), a Cloud Run 429 or
-      # 5xx, an answer that is not a document — is this run NOT KNOWING, and a
-      # stop reported on any non-200 would be a stop that may never have
-      # happened, which is the one thing this check exists to avoid. So those
-      # keep waiting, and the row fails at the bound saying which answer it got.
-      [ "$MINT_STATUS" = 503 ] && [ "$MINT_CODE" = state_unavailable ] && return 0
+      # Only the service's own no-consumer refusal is a stop, and it takes all
+      # three readings: 503, state_unavailable (internal/credsvc/wire.go's status
+      # and type) and ErrReadNoConsumer's own message
+      # (internal/credsvc/bitbucket.go, which the reader matches and reports as
+      # one word). The status and the type alone are not enough: the service
+      # answers the stop switches it cannot read, the kill switch, a bundle that
+      # fails to load, a failed Bitbucket exchange and a failed audit with the
+      # same 503 state_unavailable, and only the sentence tells them apart. And
+      # anything else at all — a curl timeout (000), a Cloud Run 429 or 5xx, an
+      # answer that is not a document — is this run NOT KNOWING. A stop reported
+      # on any of those would be a stop that may never have happened, which is
+      # the one thing this check exists to avoid; so they keep waiting and the
+      # row fails at the bound saying which answer it got.
+      [ "$MINT_STATUS" = 503 ] && [ "$MINT_CODE" = state_unavailable ] \
+        && [ "$MINT_NO_CONSUMER" = yes ] && return 0
       ;;
     esac
     if [ "$waited" -ge "$MINT_WAIT" ]; then
       return 1
     fi
-    say "$what: the service answered ${MINT_STATUS}${MINT_CODE:+ (refused: ${MINT_CODE})}, which is not what this write should have made it answer yet; waiting for the bundle cache (${waited}s of ${MINT_WAIT}s)"
+    local seen="${MINT_STATUS}${MINT_CODE:+ (refused: ${MINT_CODE})}"
+    # A 503 state_unavailable that is not the no-consumer sentence does not age
+    # into one: the service is not serving for another reason. The wait goes on
+    # -- the cache is still the first thing to rule out -- but the line says
+    # which refusal it is looking at.
+    if [ "$MINT_STATUS" = 503 ] && [ "$MINT_CODE" = state_unavailable ] && [ "$MINT_NO_CONSUMER" != yes ]; then
+      seen="$seen, and not with the no-consumer message this write should have made it answer with"
+    fi
+    say "$what: the service answered ${seen}, which is not what this write should have made it answer yet; waiting for the bundle cache (${waited}s of ${MINT_WAIT}s)"
     sleep "$step"
     waited=$((waited + step))
   done
@@ -606,7 +619,7 @@ step_stop() {
   fi
   LEFTOVER="the bundle holds the document with the bitbucket-read-consumer entry taken out (version $VERSION, with version $before disabled)"
   if mint_want stop refused "the stop"; then
-    fact stop PASS "with the entry out of the bundle (version $VERSION; version $before disabled) the read mint is refused: the service answered ${MINT_STATUS}${MINT_CODE:+ (refused: ${MINT_CODE})}, and a bundle with no read consumer is refused rather than served from another entry"
+    fact stop PASS "with the entry out of the bundle (version $VERSION; version $before disabled) the read mint is refused with the service's own no-consumer answer: ${MINT_STATUS}${MINT_CODE:+ (refused: ${MINT_CODE})} carrying ErrReadNoConsumer's message, so the bundle the service reads really holds no read consumer rather than being served from another entry"
     return 0
   fi
   # Which answer the bound ran out on decides what the row can say. A 200 is the
@@ -618,7 +631,11 @@ step_stop() {
     local note=""
     if [ "$MINT_STATUS" = 000 ]; then note=$(curl_note); fi
     if [ "$MINT_ANSWERED" = no ]; then note="$note (the answer was not a document at all)"; fi
-    fact stop FAIL "the read mint did not answer with the service's own refusal ${MINT_WAIT}s after the entry was taken out of the bundle: the service answered ${MINT_STATUS}${MINT_CODE:+ (${MINT_CODE})}${note}. A bundle with no read consumer is refused 503 state_unavailable, so this row is a reading this run does not have rather than a stop it measured — read the service's own log and the bundle with fugaro creds ls before you trust a stop"
+    local why="this row is a reading this run does not have rather than a stop it measured"
+    if [ "$MINT_STATUS" = 503 ] && [ "$MINT_CODE" = state_unavailable ]; then
+      why="the service answered that status and type with a message that is not ErrReadNoConsumer's, and it answers the stop switches it cannot read, the kill switch, a bundle that fails to load, a failed Bitbucket exchange and a failed audit with the same pair — so which of those this is cannot be read from here"
+    fi
+    fact stop FAIL "the read mint did not answer with the service's own refusal ${MINT_WAIT}s after the entry was taken out of the bundle: the service answered ${MINT_STATUS}${MINT_CODE:+ (${MINT_CODE})}${note}. The refusal a stop is read on is 503 state_unavailable carrying ErrReadNoConsumer's own message, and ${why} — read the service's own log and the bundle with fugaro creds ls before you trust a stop"
   fi
   return 1
 }
@@ -841,6 +858,7 @@ main() {
   MINT_EXPIRES=""
   MINT_TOKEN=""
   MINT_ANSWERED=""
+  MINT_NO_CONSUMER=""
 
   guard_endpoint "the OAuth root" "$OAUTH_URL"
   guard_endpoint "the API root" "$API_URL"
@@ -904,6 +922,16 @@ CODES = {
     "unsupported_grant_type", "unauthorized_client", "server_error",
     "bad_request", "method_not_allowed", "conflict", "too_many_requests",
 }
+# The sentence internal/credsvc's read mint answers with when the credentials
+# bundle holds no read consumer (bitbucket.go's ErrReadNoConsumer, carried as
+# the wire body's message). The service refuses a whole family of states with
+# the same 503 state_unavailable -- the operator's stop switches it cannot read,
+# the kill switch, a bundle that fails to load, a failed Bitbucket exchange, a
+# failed audit -- so the status and the type cannot tell the missing consumer
+# from any of them. Only this sentence can, and the stop row reads on it: a 503
+# state_unavailable that says something else is a service not serving for
+# another reason, not a stop this run measured.
+NO_CONSUMER = "credsvc: the credentials bundle holds no Bitbucket read consumer"
 
 
 def die(message):
@@ -1111,9 +1139,15 @@ def cmd_mint(path, tokenout, repo):
         print("repo=-")
         print("expires=absent")
         print("answered=no")
+        print("noconsumer=no")
         return
     code = doc.get("error") if isinstance(doc, dict) else None
     print("code=%s" % (code if isinstance(code, str) and code in CODES else ""))
+    # Whether this refusal is the one a stop is read on, as one word: yes or no.
+    # The message itself is never printed -- it is the service's text, and what
+    # the shell needs from it is only whether it is ErrReadNoConsumer's.
+    message = doc.get("message") if isinstance(doc, dict) else None
+    print("noconsumer=%s" % ("yes" if message == NO_CONSUMER else "no"))
     if not isinstance(doc, dict) or not isinstance(doc.get("token"), str) or not doc["token"].strip():
         print("token=no")
         print("repo=-")

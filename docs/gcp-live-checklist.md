@@ -11237,11 +11237,16 @@ stopping, rotating and transferring it") it executes step by step.
 read through the credential-carrying checks the drill makes:
 
 - **the stop** — the entry is taken out of the bundle and a read mint is then **refused**, and the
-  refusal is the service's own: **503** with `error: state_unavailable` — `internal/credsvc`'s
-  `ErrReadNoConsumer` through `refuseRead` and `internal/credsvc/wire.go`'s statuses. That is the
-  only answer the row counts as a stop: a curl timeout, a Cloud Run 429 or 5xx, or an answer that is
-  not a document is the run **not knowing**, so the script keeps waiting and then fails the row with
-  the answer it got, rather than reporting a stop that may never have happened. No Fugaro command
+  refusal is the service's own: **503** with `error: state_unavailable` **carrying
+  `ErrReadNoConsumer`'s own sentence** — `internal/credsvc`'s `ErrReadNoConsumer` through
+  `refuseRead` and `internal/credsvc/wire.go`'s statuses. All three readings are needed, because the
+  status and the type are not the missing consumer's alone: `internal/credsvc/bitbucket.go` answers
+  the operator's stop switches it cannot read, the kill switch, a bundle that fails to load, a
+  failed Bitbucket exchange and a failed audit with the same `503 state_unavailable`, and only the
+  message tells them apart. That is the only answer the row counts as a stop: a curl timeout, a
+  Cloud Run 429 or 5xx, a `503 state_unavailable` whose message is another state's, or an answer
+  that is not a document is the run **not knowing**, so the script keeps waiting and then fails the
+  row with the answer it got, rather than reporting a stop that may never have happened. No Fugaro command
   removes a bundle entry (`fugaro creds set` is the bundle's only writer and only ever adds or
   replaces), so the drill makes this version **by hand** — `gcloud secrets versions add`, with the
   version it replaced **disabled** — and that is what the row says it does;
