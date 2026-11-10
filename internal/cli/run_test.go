@@ -1748,37 +1748,40 @@ func TestTheDockerTagAsksTheVMBackendForTheSocket(t *testing.T) {
 			t.Fatalf("ask = %v, err = %v, want neither", ask, err)
 		}
 	})
-	// A workflow that keeps its own image definition is the project's job like
-	// any other while the project gives it an image (D1900): the definition
-	// keys are ignored, its job runs the default entry — the docker entry here
-	// — and the launcher judges that entry's tag. The three shapes of the
-	// fixture are the three the deployed image can be in.
-	t.Run("its own image definition is the project's job", func(t *testing.T) {
+	// A workflow that keeps its own image definition keeps the image THIS
+	// project builds for the repository: while the project's default is an
+	// entry such a job cannot run — the docker-tagged dind here, which a baked
+	// job would be refused at deploy time for carrying (D1191) — the resolver
+	// sets the default aside for that workflow (catalog.JobImage, D1900), so
+	// the catalog does not speak for this job and the launcher must not judge
+	// the tag of an entry the job does not run. What a deploy of this release
+	// gives such a workflow is the derived image, which no entry is, and that
+	// is the state the two backends below are asked about: neither refuses the
+	// launch nor asks a VM for a socket.
+	//
+	// The second state — the job deployed with the entry's own image — is
+	// asserted too, and it is one no deploy of this release produces: the entry
+	// it runs is the one the workflow's definition key is set aside in favour
+	// of, so a job carrying it was deployed by a release that gave it the entry
+	// or had its file edited afterwards. The launcher answers it as it answers
+	// a workflow this project never spoke for (the release before this one's
+	// catalog.Applies, on the same fixture): nothing is refused and nothing is
+	// asked for, because the file this launcher reads is not the one the job
+	// was deployed from and no entry of the catalog is this job's.
+	t.Run("its own image definition is not the catalog's", func(t *testing.T) {
 		const defined = "{ image: { apt: [jq] }, commands: { build: sh b.sh, test: sh t.sh } }"
 		derived := gcp.ImageName(gcp.DefaultRegistryHost("us-east5", "proj-1234")+"/"+gcp.RegistryRepoID(appSlug), appSlug, "web") + ":latest"
-		t.Run("still deployed on the repository's own image", func(t *testing.T) {
-			f := newCloudFixture(t)
-			dockerCheckout(t, defined)
-			_, err := catalogDockerAsk(context.Background(), deployedLaunchEnv(t, f, backend.CloudRunCodec(), dockerDefaultCatalogYAML, derived), appSlug, spec)
-			if err == nil || !strings.Contains(err.Error(), "fugaro update") {
-				t.Fatalf("err = %v, want the catalog-moved refusal naming fugaro update: the deploy under the release that honoured the definition key gave this job an image the project no longer gives it", err)
-			}
-		})
-		for name, codec := range map[string]backend.Codec{"cloud-run": backend.CloudRunCodec(), "cloud-batch": backend.BatchCodec()} {
-			t.Run("deployed on the entry's image, "+name, func(t *testing.T) {
-				f := newCloudFixture(t)
-				dockerCheckout(t, defined)
-				ask, err := catalogDockerAsk(context.Background(), deployedLaunchEnv(t, f, codec, dockerDefaultCatalogYAML, "ghcr.io/acme/dind:1"), appSlug, spec)
-				if name == "cloud-run" {
-					if ask || err == nil || !strings.Contains(err.Error(), "Cloud Run gen-2 has no Docker daemon") {
-						t.Fatalf("ask = %v, err = %v, want the docker entry's Cloud Run refusal, which the definition key used to keep this job out of", ask, err)
+		for name, deployed := range map[string]string{"the repository's own image": derived, "the entry's own image": "ghcr.io/acme/dind:1"} {
+			for backendName, codec := range map[string]backend.Codec{"cloud-run": backend.CloudRunCodec(), "cloud-batch": backend.BatchCodec()} {
+				t.Run(name+", "+backendName, func(t *testing.T) {
+					f := newCloudFixture(t)
+					dockerCheckout(t, defined)
+					ask, err := catalogDockerAsk(context.Background(), deployedLaunchEnv(t, f, codec, dockerDefaultCatalogYAML, deployed), appSlug, spec)
+					if err != nil || ask {
+						t.Fatalf("ask = %v, err = %v, want neither: a workflow that wrote an image definition of its own is not the catalog's job while the project's default is one its job cannot run, so the entry's docker tag is not this run's", ask, err)
 					}
-					return
-				}
-				if err != nil || !ask {
-					t.Fatalf("ask = %v, err = %v, want the VM socket the deployed entry's tag asks for", ask, err)
-				}
-			})
+				})
+			}
 		}
 	})
 }

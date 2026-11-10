@@ -433,6 +433,68 @@ func TestUpdateConvergesNoCatalogDefault(t *testing.T) {
 	}
 }
 
+// TestUpdateConvergesAPrebuiltDefaultBesideAWorkflowsOwnImage is the HARD
+// RULE at the one shape this release's D1900 could have broken: a project whose
+// catalog marks a PREBUILT entry as its default, in a checkout whose workflows
+// wrote a `dockerfile:` of their own. On the release behind those workflows
+// were left out of the catalog entirely, so they ran the image this project
+// builds for them and the installation deployed; D1900 routes every workflow
+// through the catalog, and the default it would have handed such a workflow is
+// an entry the job-spec builder refuses (D1191, infra's unbuiltOnBaked) — so
+// the door would have stopped and asked for a manual config edit, which is the
+// second command the HARD RULE (F15) rules out.
+//
+// The resolver sets that default aside for a workflow that wrote an image of
+// its own (catalog.JobImage), so the installation converges on the images it
+// already runs: no catalog entry is any job's, and the images stage rebuilds
+// exactly the per-repository images the records show. Both workflows write the
+// key, because a workflow that wrote none has no image of its own to keep and
+// is refused in so many words — the shape D1191 exists for, on this release and
+// on the one behind alike.
+func TestUpdateConvergesAPrebuiltDefaultBesideAWorkflowsOwnImage(t *testing.T) {
+	const entry = "standard"
+	yaml := "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: oauth }\nworkflows:\n" +
+		"  app: { dockerfile: .fugaro/app.Dockerfile, commands: { build: sh build.sh, test: sh test.sh } }\n" +
+		"  api: { dockerfile: .fugaro/api.Dockerfile, commands: { build: sh build.sh, test: sh test.sh } }\n"
+	r := newConvergeRigYAML(t, v4Node(), yaml)
+	// The two Dockerfiles the workflows name, as the repository behind had
+	// them: `fugaro validate` reads a workflow's dockerfile: as a file that is
+	// there, so a checkout without them is not the shape this test is about.
+	const def = "ARG FUGARO_BASE\nFROM ${FUGARO_BASE}\nRUN git clone \"$REPO_URL\" /work/repo\n"
+	for _, wf := range []string{"app", "api"} {
+		checkoutFile(t, filepath.Join(r.root, ".fugaro", wf+".Dockerfile"), def)
+	}
+	// The prebuilt default is what the release behind deploys with: the entry
+	// is the project's own image, already built and pushed, so no job of this
+	// installation has a build of it to wait for.
+	r.appendConfig(t, "image_catalog:\n  entries:\n"+
+		"    - name: "+entry+"\n      default: true\n      tags: [node]\n"+
+		"      source: { kind: image, image: ghcr.io/dimipaun/"+entry+":1.0 }\n")
+	registerInstallation(t, r.initRig)
+	if p := convergeNode(t, r); p.ImageCatalog != nil {
+		t.Fatalf("the fixture's node already carries a catalog (%v): it is not an installation whose policy predates it", p.ImageCatalog)
+	}
+
+	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+
+	p := convergeNode(t, r)
+	if p.ImageCatalog == nil || len(p.ImageCatalog.Entries) != 1 || p.ImageCatalog.Entries[0].Name != entry || !p.ImageCatalog.Entries[0].Default {
+		t.Fatalf("after one fugaro update, the published node's image_catalog = %+v, want the one local entry %s, marked default: the catalog did not reach the node", p.ImageCatalog, entry)
+	}
+	// The same two builds as the converge rig's own count: a workflow that
+	// wrote a dockerfile: keeps the image this project builds for it, so the
+	// cloud step rebuilds each workflow's own job image and no job is handed
+	// the prebuilt entry the catalog marks.
+	if n := len(r.builder.specs); n != 2 {
+		t.Fatalf("%d job image(s) reached Cloud Build, want one per workflow: a workflow that wrote a dockerfile: of its own keeps its own image, because the catalog's default is one its job cannot run", n)
+	}
+	for _, s := range r.builder.specs {
+		if strings.Contains(s.Image, "catalog-"+entry) {
+			t.Errorf("workflow %s was built as %s, want the repository's own derived image: the prebuilt default holds no checkout of this repository, so it is set aside for a job that wrote an image of its own (D1191, D1900)", s.Workflow, s.Image)
+		}
+	}
+}
+
 // TestEntryServicesOlderReaderConverges: an installation whose local project
 // config declares the services a catalog entry's image provides — the fact this
 // release adds (D1904, IS9) — reaches the published node with `fugaro update`

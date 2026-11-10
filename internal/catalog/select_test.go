@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -393,8 +394,15 @@ func TestMayApplyIsWhichWorkflowsTheSelectionCouldSpeakFor(t *testing.T) {
 // key this resolver did not name would leave the person's `image:` block in
 // their file meaning nothing, with no line anywhere saying so.
 func TestJobImageIgnoresRepoLevelConfig(t *testing.T) {
-	cat := testCatalog()
-	cat.Entries[1].Default = true // frontend: node, the project's default
+	// The default is an entry this job can run, which is what makes the
+	// workflow's own keys ignored rather than the default set aside: a project
+	// whose default is a prebuilt image keeps the workflow's own image instead
+	// (TestJobImageKeepsOwnImageWhenTheDefaultCannotRun).
+	cat := config.Catalog{Entries: []config.Entry{
+		{Name: "frontend", Default: true, Tags: []string{"node"}, Source: config.Source{Kind: config.SourceDockerfile, Repo: "acme/images", Path: "frontend/Dockerfile"}},
+		entry("frontend", "node", false),
+		entry("data", "postgres redis", false),
+	}}
 	w := config.Workflow{
 		Checkout:   config.CheckoutBaked,
 		Image:      config.Image{Apt: []string{"jq"}},
@@ -413,6 +421,108 @@ func TestJobImageIgnoresRepoLevelConfig(t *testing.T) {
 		if !strings.Contains(sel.Warnings[i], key) {
 			t.Errorf("warning %d = %q, want it to name %s", i, sel.Warnings[i], key)
 		}
+	}
+}
+
+// TestJobImageKeepsOwnImageWhenTheDefaultCannotRun is D1900 read against the
+// two defaults a job cannot run: D1191's prebuilt entry, which holds no
+// checkout of the repository a baked image builds from, and D1149's
+// docker-tagged entry on a backend with no daemon. A workflow that wrote an
+// image definition of its own keeps running it, with a warning naming the key
+// and the entry, because the alternative is refusing a configuration that
+// deploys today — the manual config edit the HARD RULE on `fugaro update`
+// rules out. A workflow that wrote no definition of its own has nothing of its
+// own to keep and is left to the refusal, which names where its fix is.
+func TestJobImageKeepsOwnImageWhenTheDefaultCannotRun(t *testing.T) {
+	prebuilt := config.Catalog{Entries: []config.Entry{entry("standard", "", true)}}
+	dockerTagged := config.Catalog{Entries: []config.Entry{{
+		Name:    "standard",
+		Default: true,
+		Tags:    []string{DockerTag},
+		Source:  config.Source{Kind: config.SourceInline, Inline: "FROM scratch\n"},
+	}}}
+	builtDefault := config.Catalog{Entries: []config.Entry{{
+		Name:    "frontend",
+		Default: true,
+		Source:  config.Source{Kind: config.SourceDockerfile, Repo: "acme/images", Path: "frontend/Dockerfile"},
+	}}}
+	baked := func(w config.Workflow) config.Workflow {
+		w.Checkout = config.CheckoutBaked
+		return w
+	}
+	for name, tt := range map[string]struct {
+		cat config.Catalog
+		w   config.Workflow
+		key string
+		why string
+	}{
+		"dockerfile: against a prebuilt default": {
+			cat: prebuilt,
+			w:   baked(config.Workflow{Dockerfile: "docker/Dockerfile"}),
+			key: "dockerfile:", why: "prebuilt",
+		},
+		"image: against a prebuilt default": {
+			cat: prebuilt,
+			w:   baked(config.Workflow{Image: config.Image{Apt: []string{"jq"}}}),
+			key: "image:", why: "prebuilt",
+		},
+		"dockerfile: against a docker-tagged default": {
+			cat: dockerTagged,
+			w:   baked(config.Workflow{Dockerfile: "docker/Dockerfile"}),
+			key: "dockerfile:", why: DockerTag,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			sel := mustImage(t, ImageRequest{Catalog: &tt.cat, Workflow: tt.w, Backend: CloudRun, Canonical: "acme/api"})
+			if sel.Source != SourceRepo {
+				t.Fatalf("resolved %+v, want the repository's own image: the default is an entry this job cannot run and the workflow wrote a definition of its own", sel)
+			}
+			if len(sel.Warnings) != 1 {
+				t.Fatalf("warnings = %q, want the one the set-aside default carries", sel.Warnings)
+			}
+			for _, want := range []string{tt.key, "standard", tt.why} {
+				if !strings.Contains(sel.Warnings[0], want) {
+					t.Errorf("warning = %q, want it to name %s", sel.Warnings[0], want)
+				}
+			}
+		})
+	}
+
+	// The controls. A workflow that wrote only rebuild: has no image of its own,
+	// so it is not this shape and the prebuilt default stays its answer — which
+	// the job-spec builder then refuses (D1191). A workflow that wrote nothing
+	// at all met the docker-tagged default on Cloud Run before this fallback and
+	// still does: the refusal is the resolver's own (D1149), and there is no
+	// image of the job's own for the catalog's answer to be set aside in favour
+	// of. A default this job *can* run stays the answer for a workflow that
+	// wrote a definition, with D1900's warning for the key it set aside, on
+	// Cloud Run and on the VM alike.
+	sel := mustImage(t, ImageRequest{Catalog: &prebuilt, Workflow: baked(config.Workflow{Rebuild: config.Rebuild{Check: "weekly"}}), Backend: CloudRun, Canonical: "acme/api"})
+	if sel.Source != SourceCatalog || sel.Entry.Name != "standard" {
+		t.Fatalf("resolved %+v, want the prebuilt default standard: rebuild: alone is no image of the workflow's own to keep", sel)
+	}
+	if _, err := JobImage(ImageRequest{Catalog: &dockerTagged, Workflow: baked(config.Workflow{}), Backend: CloudRun, Canonical: "acme/api"}); err == nil {
+		t.Fatal("a docker-tagged default was given to a workflow that wrote nothing of its own on Cloud Run")
+	} else if !errors.Is(err, ErrDockerOnCloudRun) {
+		t.Fatalf("refusal of the docker-tagged default = %v, want D1149's refusal", err)
+	}
+	for name, back := range map[string]Backend{"Cloud Run": CloudRun, "the VM": Batch} {
+		t.Run(name, func(t *testing.T) {
+			sel := mustImage(t, ImageRequest{Catalog: &builtDefault, Workflow: baked(config.Workflow{Dockerfile: "docker/Dockerfile"}), Backend: back, Canonical: "acme/api"})
+			if sel.Source != SourceCatalog || sel.Entry.Name != "frontend" {
+				t.Fatalf("resolved %+v, want the project's default frontend: it is an entry this job can run", sel)
+			}
+			if len(sel.Warnings) != 1 || !strings.Contains(sel.Warnings[0], "dockerfile:") {
+				t.Fatalf("warnings = %q, want the ignored dockerfile: named once", sel.Warnings)
+			}
+		})
+	}
+	// The same catalogue on the VM: the docker-tagged default is runnable there
+	// (the backend's container carries the host's socket), so it is the answer
+	// and not a default set aside.
+	sel = mustImage(t, ImageRequest{Catalog: &dockerTagged, Workflow: baked(config.Workflow{Dockerfile: "docker/Dockerfile"}), Backend: Batch, Canonical: "acme/api"})
+	if sel.Source != SourceCatalog || sel.Entry.Name != "standard" {
+		t.Fatalf("resolved %+v, want the docker-tagged default on the VM: the backend has a daemon", sel)
 	}
 }
 

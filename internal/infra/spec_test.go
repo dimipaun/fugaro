@@ -4095,6 +4095,49 @@ func TestBakedWorkflowRefusesAPrebuiltCatalogEntry(t *testing.T) {
 	}
 }
 
+// TestBakedWorkflowKeepsItsOwnImageBesideAPrebuiltDefault is the refusal
+// above read against this release's D1900, and the shape the HARD RULE on
+// `fugaro update` is about: the same prebuilt default and the same baked
+// workflow, with one difference — the workflow wrote a dockerfile: of its own.
+// On the release behind such a workflow was left out of the catalog entirely
+// and ran the image this project builds for it; D1900 routes it through the
+// catalog, so without the resolver's fallback this configuration would be
+// refused here and `fugaro update` would stop and ask for a manual config edit.
+//
+// What it asserts is that the workflow keeps its own image — the derived tag
+// this repository's build writes, with no catalog entry and no refusal — and
+// that the warning says which of the two answers the job's image is: the
+// person reading a run has to know that the catalog's default was set aside
+// for this workflow.
+func TestBakedWorkflowKeepsItsOwnImageBesideAPrebuiltDefault(t *testing.T) {
+	in := catalogInputs(t, &config.Catalog{Entries: prebuiltCatalogEntries()})
+	w := in.Cfg.Workflows["bare"]
+	w.Dockerfile = ".fugaro/bare.Dockerfile"
+	in.Cfg.Workflows = map[string]config.Workflow{"bare": w}
+	rs, err := Repo(in)
+	if err != nil {
+		t.Fatalf("Repo = %v, want no error: a workflow that wrote a dockerfile: of its own keeps the image this project builds for it, while the project's prebuilt default is refused for a workflow that wrote none (D1191, D1900, the HARD RULE on update)", err)
+	}
+	ws := rs.Workflows["bare"]
+	if ws.CatalogEntry != "" {
+		t.Errorf("the workflow runs catalog entry %q, want none: the prebuilt default holds no checkout of this repository, so it is set aside for a job that wrote an image of its own", ws.CatalogEntry)
+	}
+	if !strings.Contains(ws.Image, "acme-webapp") || !strings.HasSuffix(ws.Image, ":latest") {
+		t.Errorf("the workflow's image = %q, want this repository's own derived tag", ws.Image)
+	}
+	if len(ws.Warnings) != 1 || !strings.Contains(ws.Warnings[0], "dockerfile:") || !strings.Contains(ws.Warnings[0], "standard") {
+		t.Errorf("the workflow's warnings = %q, want the one naming its dockerfile: and the default entry it set aside", ws.Warnings)
+	}
+	// The refusal above still holds for the same workflow with the key taken
+	// away: the fallback is a workflow's own image, not a relaxation of D1191.
+	without := in.Cfg.Workflows["bare"]
+	without.Dockerfile = ""
+	in.Cfg.Workflows = map[string]config.Workflow{"bare": without}
+	if _, err := Repo(in); err == nil {
+		t.Fatal("the same workflow without the dockerfile: was accepted, so the control above proves nothing about the fallback")
+	}
+}
+
 // TestCloneWorkflowAcceptsAPrebuiltCatalogEntry is the control for the refusal
 // above, and the reason it is not "prebuilt entries are refused": what the
 // refusal is about is the baked checkout kind. The workflow is `bare` — one
@@ -4130,29 +4173,6 @@ func TestCloneWorkflowAcceptsAPrebuiltCatalogEntry(t *testing.T) {
 	}
 	if got := rs.Workflows["bare"].CatalogEntry; got != "" {
 		t.Errorf("the clone workflow runs catalog entry %q, want none: the catalog does not speak for a clone workflow", got)
-	}
-}
-
-// TestBuiltSourceKindsClassifyEveryCatalogSourceKind holds the fail-closed
-// half of D1191's rule to the kinds that exist: builtSourceKinds is what a
-// build writes rather than what it does not, which is only safe while every
-// kind the catalog offers is decided somewhere, so a kind added to
-// config.SourceKinds has to be classified here in the same change. Without
-// this, the new kind would be refused as prebuilt on every baked workflow —
-// a false refusal of a configuration the rest of the tree builds — until
-// somebody noticed.
-func TestBuiltSourceKindsClassifyEveryCatalogSourceKind(t *testing.T) {
-	for _, k := range config.SourceKinds {
-		kind := config.SourceKind(k)
-		built := slices.Contains(builtSourceKinds, kind)
-		if want := kind != config.SourceImage; built != want {
-			t.Errorf("builtSourceKinds holds %s = %v, want %v: a kind the catalog gains is classified as built or as prebuilt in the same change, or every baked workflow on an entry of that kind is refused (D1191)", k, built, want)
-		}
-	}
-	for _, kind := range builtSourceKinds {
-		if !slices.ContainsFunc(config.SourceKinds, func(k string) bool { return config.SourceKind(k) == kind }) {
-			t.Errorf("builtSourceKinds holds %q, which is no kind of config.SourceKinds: the list is read as a classification of the kinds the catalog has", kind)
-		}
 	}
 }
 

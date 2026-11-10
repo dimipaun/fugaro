@@ -418,6 +418,16 @@ func (s Selection) Image(im Images) string {
 // default leaves the job on the image it runs today rather than refusing it —
 // the state an installation that has not curated its catalog is in, which
 // `fugaro update` has to converge through (O4 b, the HARD RULE on update).
+//
+// The default is the one answer that can be an entry this job cannot run — a
+// prebuilt image holds no checkout of this repository, which a baked job's
+// image has to (D1191, infra's unbuiltOnBaked), and a docker-tagged one wants
+// a daemon the job's backend has not got (D1149). A workflow that wrote an
+// image definition of its own then keeps the image it runs today, with a
+// warning saying so: the alternative is a refusal on a configuration that
+// deploys, which is a second command for the person running `fugaro update`
+// and the state O4 b exists to keep out. A workflow that wrote none is left
+// to the refusal, because there is no image of its own to keep.
 func JobImage(req ImageRequest) (Selection, error) {
 	w := req.Workflow
 	switch w.Checkout {
@@ -462,10 +472,14 @@ func JobImage(req ImageRequest) (Selection, error) {
 			}
 			sel = Selection{Source: SourceCatalog, Entry: e.Entry, Reference: true}
 		default:
-			if _, ok := Default(*req.Catalog); !ok {
+			marked, ok := Default(*req.Catalog)
+			if !ok {
 				// No default to run and nothing naming one: the repository
 				// keeps the image this project builds for it (O4 b).
 				return Selection{Source: SourceRepo}, nil
+			}
+			if why := req.cannotRun(marked); why != "" && definesOwnImage(w) {
+				return Selection{Source: SourceRepo, Warnings: []string{defaultSetAside(w, marked, why)}}, nil
 			}
 			e, err := req.choose("")
 			if err != nil {
@@ -476,6 +490,48 @@ func JobImage(req ImageRequest) (Selection, error) {
 	}
 	sel.Warnings = append(sel.Warnings, ignoredRepoKeys(w, sel.Entry)...)
 	return sel, nil
+}
+
+// definesOwnImage reports whether w states an image this project builds for
+// its repository: the two definition keys D1900 sets aside while the project
+// gives the job an image, and — where the project's default is an entry the
+// job cannot run — the image the job keeps.
+//
+// rebuild: is not one of them. It asks for the image a workflow's definition
+// produces to be rebuilt on a schedule, so a workflow that wrote only rebuild:
+// has no image of its own that could be kept, and it is not the key the
+// fallback is about.
+func definesOwnImage(w config.Workflow) bool {
+	return !w.Image.IsZero() || w.Dockerfile != ""
+}
+
+// cannotRun names why this job cannot run entry, "" when it can. It is the
+// resolver's own reading of the two conditions the job-spec builder refuses a
+// job on: a source kind no Fugaro build writes an image from (D1191) and a
+// docker-tagged entry on a backend with no daemon (D1149). Both are conditions
+// of the project's configuration, which the resolver sees the same way every
+// caller does (F21), and neither is the answer's here: what JobImage does with
+// them is the default branch's, where a repository's own image is available.
+func (req ImageRequest) cannotRun(e config.Entry) string {
+	if !BuildsImage(e) {
+		return "its source is a prebuilt image, which holds no checkout of this repository"
+	}
+	if (Job{Backend: req.Backend}).carriesDocker(e) {
+		return "it is tagged " + DockerTag + ", which needs a backend with a Docker daemon"
+	}
+	return ""
+}
+
+// defaultSetAside is the warning a job carries when the project's default is
+// put aside for it: it names the key that is doing the work instead, so the
+// person reading the run knows which image their job starts on and why it is
+// not the one the project marks.
+func defaultSetAside(w config.Workflow, e config.Entry, why string) string {
+	key := "dockerfile:"
+	if !w.Image.IsZero() {
+		key = "image:"
+	}
+	return fmt.Sprintf("this workflow's %s is what its job runs: the project's image catalog gives its job the image of the default entry %s, which this job cannot run because %s, so the catalog's default is set aside for this job (D1900)", key, e.Name, why)
 }
 
 // choice is the selection's call into the tag-cover rule: req's catalog, the

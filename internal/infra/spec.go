@@ -953,21 +953,11 @@ func (c *repoCtx) jobImage(name string, w config.Workflow) (catalog.Selection, e
 	if err != nil {
 		return catalog.Selection{}, userErr("workflow %s: %w", name, err)
 	}
-	if sel.Source == catalog.SourceCatalog && !slices.Contains(builtSourceKinds, sel.Entry.Source.Kind) {
+	if sel.Source == catalog.SourceCatalog && !catalog.BuildsImage(sel.Entry) {
 		return catalog.Selection{}, unbuiltOnBaked(name, sel.Entry)
 	}
 	return sel, nil
 }
-
-// builtSourceKinds are the catalog source kinds a Fugaro build writes an image
-// from (PIC4): a Dockerfile at a repository or inline in the catalog. The list
-// is what is built rather than what is not, so a kind added to the catalog
-// later is refused by D1191's rule until someone states that a build writes it.
-// That is the direction the failure is safe in: the list lagging behind a kind
-// the catalog gains refuses a configuration by name, and the sentence names
-// both ways out, where the opposite list would hold a kind to be built that no
-// build in this installation writes — the shape D1191 refuses.
-var builtSourceKinds = []config.SourceKind{config.SourceDockerfile, config.SourceInline}
 
 // unbuiltOnBaked is D1191's refusal, raised where the job spec is built and not
 // by the job (F14). It names the entry, what it is built from and the two ways

@@ -3866,8 +3866,11 @@ func existingLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, spec 
 // Which jobs the project's images speak for is the one resolver (catalog.
 // JobImage, D1900), asked exactly as the deploy-time spec builder asks it: a
 // workflow that runs the base image or a shared layer is not one of them, and
-// asking the rule on its behalf would refuse a launch for an entry the job
-// does not run.
+// neither is one that wrote an image definition of its own while the project's
+// default is an entry such a job cannot run — the resolver sets that default
+// aside for it, so its job runs the image this project builds for the
+// repository. Asking the rule on either one's behalf would refuse a launch for
+// an entry the job does not run.
 //
 // A catalog that no longer agrees with the deployed image — the entry the
 // image is was removed or renamed, the workflow now pins another one, or the
