@@ -586,6 +586,37 @@ func TestTheBearerCredentialIsTheOnlyWayIn(t *testing.T) {
 		}
 	})
 
+	t.Run("a spent ID token presented as a bearer", func(t *testing.T) {
+		// M5b's own record, and the shape the lookup reads the family for: a
+		// device's act spends the Firebase ID token as a record that names no
+		// family (spendSignIn), because the token is not a grant of this front
+		// door and belongs to none. Presenting that token as a bearer is
+		// answered the way a value this installation never minted is, which is
+		// what spec.md §8 wants of a Firebase token: it is never an access
+		// token, and a lookup that resolved one would be this door reading an
+		// identity out of a token it did not issue. What has to say so is the
+		// absent family: read as a family that is merely missing, the record
+		// reaches the family read with an empty id, which this store cannot
+		// name as a key at all — and then the answer is 500 server_error for a
+		// caller that did nothing wrong.
+		token := approvalToken(t)
+		binding, number := ts.startFlow(t, authorizeQuery(clientID, testClientRedirect))
+		if rec := ts.deviceApprove(t, binding, number, token); rec.Code != http.StatusOK {
+			t.Fatalf("the paired device's act answered %d (%s); want it to record the approval", rec.Code, strings.TrimSpace(rec.Body.String()))
+		}
+		// The record has to be there to be refused: a refusal that would read
+		// the same over an absent record would say nothing about the empty
+		// family this test is here for.
+		if _, ok := ts.store.objects(t)[tokenPrefix+TokenHash(token)]; !ok {
+			t.Fatalf("the spend wrote no record under %s: a refusal over a record that is not there is about a value this installation never minted", tokenPrefix+TokenHash(token))
+		}
+		rec := ts.rpc(t, token, toolsListBody)
+		wantBearerRefusal(t, rec, http.StatusUnauthorized, "invalid_token")
+		if strings.Contains(rec.Body.String(), token) {
+			t.Errorf("the refusal quotes the credential it refused: %s", rec.Body.String())
+		}
+	})
+
 	t.Run("a family that was revoked", func(t *testing.T) {
 		// A revoke is one delete of the family (D930), after which the record
 		// does not resolve at all: the refusal is the same one a stranger's

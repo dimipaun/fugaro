@@ -107,16 +107,31 @@ const (
 	// door an owner can turn on today. M5's clause is "M5 is built"
 	// and not "M5 is built in this pull request": the line outlives the pull
 	// request, and a phrase that named one would be false on `main` the day it
-	// merged. The clause carries its own exception -- the paired device M-a
-	// asks for, which M5's approve step does not build: the page renders its
-	// number and posts it back from the browser that answered it, which binds
+	// merged. M5's clause used to carry an exception -- the paired device M-a
+	// asks for, which M5's approve step did not build: the page rendered its
+	// number and posted it back from the browser that answered it, which bound
 	// the page to the flow and not a device to a person, so a status line
-	// saying M5 were built whole would be the claim the review found. That
-	// exception is M5b -- the owner's ruling of 2026-11-07 made the
-	// paired-device approval a task of its own and a hard prerequisite before
-	// any binary links the front door -- so the line names it and the test
-	// below holds the plan to it. M7's clause is the same shape: the resource
-	// server and the tool registry are built and the tasks after it are not,
+	// saying M5 were built whole was the claim the review found. That exception
+	// was M5b -- the owner's ruling of 2026-11-07 made the paired-device
+	// approval a task of its own and a hard prerequisite before any binary
+	// links the front door -- and M5b is built, but what it built is the
+	// endpoint's half, and M-a's first requirement is still not met: the act is
+	// proved by the ID token and by no key a device holds, so the endpoint
+	// cannot tell a paired device from any other holder of one, and any browser
+	// holding a session token produces the same act the page's own form does.
+	// Naming that gap is this line's whole job: "the approval this front door
+	// takes is the paired device's" was the claim, and it would let a wiring
+	// task delete the guard while the owner's prerequisite is unmet, so the
+	// line states M-a's first requirement as not met instead -- H1's accepted
+	// residual risk, whose closing change, the device-held key registered at
+	// pairing, is built nowhere and in no task. What is unbuilt beside it is
+	// the delivery of a flow to the paired device, which `approval.go`'s own
+	// header says is not built ("How the flow reaches the paired device is not
+	// built here"): nothing renders a QR of the flow's binding and no launcher
+	// reads the page, so the act the endpoint accepts is one no client produces
+	// yet. Both exceptions sit on M5b's clause for the same reason M7's, M10's
+	// and M8's sit on theirs. M7's clause is the same shape: the resource server
+	// and the tool registry are built and the tasks after it are not,
 	// and naming M7 built says nothing about a merge, for the reason M5's
 	// clause does not. Its clause carries an exception of its own -- the
 	// reading of the installation's published state, which is where D933's two
@@ -133,16 +148,18 @@ const (
 	// the direction that matters least (a task described as owing less than it
 	// does), which is why it is named here as removed rather than left to look
 	// like an oversight. M8's is the same shape once more: the four read tools are built and
-	// no binary registers them, and the wiring that would is what M5b gates, so
-	// its exception is named the same way and for the same reason -- a line
-	// saying M8 were built whole would claim a reach no process has. M9's clause
+	// no binary registers them, and the wiring that would serve them is carried
+	// by no task of this plan -- M5b gated it and is built, so the gate is met
+	// and the exception is named for what is missing rather than for what
+	// waits: a line saying M8 were built whole would claim a reach no process
+	// has. M9's clause
 	// names a second fact beside "not started", because the task it was waiting
 	// on stopped existing: the launch-override fence was ruled on twice on
 	// 2026-11-09 -- built as a split launcher role first, and declined later the
 	// same day -- so M9 waits on M4 and M7 alone and no task of the plan builds a
 	// fence. A line that still said M9 waited on one would name a task the plan
 	// removed and a control the tree does not have.
-	mcpStatus = "**Status: design answered by the owner 2026-11-04; M1, M2, M3, M4, M6 and M10 are built and merged on `main`; the front door M4 creates is OFF on every installation until a release writes the flag that turns it on, `fugaro update --mcp-server` (D934); M5 is built except the paired device M-a asks for, which is M5b and is a hard prerequisite before any binary links the front door (the owner's ruling of 2026-11-07); M7 is built except the reading of the installation's published state its lists come from, which no task of this plan carries; M8 is built except the wiring that would serve its four read tools, which is the task M5b gates; M9 is not started, and the launch-override fence it was to wait on is declined for v1 and left unbuilt (the owner's ruling of 2026-11-09); this folder approves no task.**"
+	mcpStatus = "**Status: design answered by the owner 2026-11-04; M1, M2, M3, M4, M6 and M10 are built and merged on `main`; the front door M4 creates is OFF on every installation until a release writes the flag that turns it on, `fugaro update --mcp-server` (D934); M5 is built and M5b is built with it — the paired-device approval the owner ruled a task of its own on 2026-11-07 — and what is built of it is the endpoint's half: the authorize POST takes the device's act as a shape of its own, the ID token is spent once and a family ages, all of it proved by the ID token and by no device key, so M-a's first requirement is not met — the endpoint cannot tell a paired device from any other holder of one, which is H1's accepted residual risk — and the delivery of a flow to that device, with no QR of the flow's binding rendered and no launcher reading the page, is built nowhere and carried by no task of this plan; M7 is built except the reading of the installation's published state its lists come from, which no task of this plan carries; M8 is built except the wiring that would serve its four read tools, which no binary has and no task of this plan carries; M9 is not started, and the launch-override fence it was to wait on is declined for v1 and left unbuilt (the owner's ruling of 2026-11-09); this folder approves no task.**"
 )
 
 func mcpDocs() []string { return []string{mcpReadme, mcpSpec, mcpReconciled, mcpPlan} }
@@ -242,6 +259,15 @@ func TestDocsMCPServerIsWritten(t *testing.T) {
 		// looking wireable once M5 was in.
 		"M5b is a hard prerequisite before anything wires the front door",
 		"M5b must land before it may be relaxed",
+		// And what M5b itself left, in its own section: the endpoint's half of the
+		// device requirement -- the shape, the spend and the family's age -- with
+		// M-a's first requirement stated as NOT met and the delivery to the paired
+		// device named as owed rather than as built. A plan that read as having
+		// built the requirement whole is the reading a wiring task mounts the door
+		// on, and it is the reading the review of this branch found here.
+		"**What landed is the part of the first requirement the",
+		"**Both are owed, and named as owed**",
+		"**M-a's first requirement stands unmet**",
 	} {
 		if !strings.Contains(plan, want) {
 			t.Errorf("%s does not state %q: the plan gates every task on the security review and on the licence, it names which tasks are marked mandatory, and it states which tasks the amendment deferred and which it cancelled -- a later edit that dropped any of those would leave a task looking startable",
@@ -460,18 +486,25 @@ func TestDocsMCPServerDisclosesWhatTheCodeDoesNotDo(t *testing.T) {
 		// than as what the code does, with the line that hashes without a key.
 		"The keyed hashes and the MACs the store is specified to write",
 		"Both are designed and not built",
-		"the store hashes with a plain unkeyed `sha256` (`ee/coordinator/mcpauth/store.go:398`)",
+		"the store hashes with a plain unkeyed `sha256` (`ee/coordinator/mcpauth/store.go:503`)",
 		// And the two bounds, with the owner named as the one who assigns them
 		// and the wiring task named as the carrier until he does.
 		"Who owns the two bounds the open registration endpoint is accepted under",
 		"What is owed is the owner's assignment",
 		"the task that mounts this package on a binary carries both bounds and deletes `TestNoBinaryLinksTheFrontDoorYet`",
+		// And M5b's own: the endpoint's half is built, M-a's first requirement is
+		// stated as not met, and the delivery of a flow to the paired device is
+		// not -- the half the endpoint waits for and no task of the plan carries.
+		// The status line names both as M5b's exceptions and this is the section
+		// behind that clause.
+		"**and neither is the delivery of a flow to the paired device**",
+		"**Neither is carried by any task of this plan**",
 		// And the one M7 itself leaves unbuilt: the reading of the published
 		// state its two lists come from. The seam is in the tree and the
 		// reading is not, so the section names both and names its carrier.
 		"Where the front door's own two lists are read from",
 		"no implementation of that interface over the published state is in the tree and no task of this plan carries one",
-		"the wiring task that mounts this package on a binary — the one M5b gates — owes this reading beside the two bounds above",
+		"the wiring task that mounts this package on a binary owes this reading beside the two bounds above",
 		// And the one M8 itself leaves unserved: the four read tools are
 		// built and registered on no binary, so the wiring that would serve
 		// them is named, and with it where the slugs it needs come from.
@@ -519,8 +552,10 @@ func TestDocsMCPServerDisclosesWhatTheCodeDoesNotDo(t *testing.T) {
 		// still owes: the seam is merged and the reading behind it is nobody's.
 		"nothing in the tree implements it over that state, because no task of the plan carries the reading",
 		// And M8's, in the same place and the same shape: the four read tools
-		// are built and served by no binary, which is the wiring M5b gates.
-		"no binary registers them, which is the wiring M5b gates",
+		// are built and served by no binary, and the wiring that would serve
+		// them is carried by no task of the plan -- M5b gated it and is built,
+		// so what is missing is the wiring and not the approval.
+		"no binary registers them, which is the wiring no task of this plan carries",
 	} {
 		if !strings.Contains(rec, want) {
 			t.Errorf("%s does not state %q: each gap is raised there as a finding for the owner to assign, and a reconciliation that dropped one would leave the caveat in the spec with nothing behind it", mcpReconciled, want)
