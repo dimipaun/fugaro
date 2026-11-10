@@ -4,7 +4,7 @@ Builds [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md) (
 
 ## Status
 
-**Status as of 2026-11-10: in progress, 5/14 merged; see [docs/status.md](../status.md) for the current table.** Each task needs the owner's explicit go; an answer to a
+**Status as of 2026-11-10: in progress, 7/14 merged; see [docs/status.md](../status.md) for the current table.** Each task needs the owner's explicit go; an answer to a
 decision is not a go. The owner's answers that shaped this plan, all 2026-11-08: D1840 (an agent inside the floor),
 D1843 (record, then a CLI files tasks), D1845 (follow BF1m at a cap), D1847 (**all levels, not the recommendation**),
 D1848 (the senior reviewer's model), D1849 (a CLI command launches follow-ups), D1851 (Startup, Pro, Hotfix: amended after round 2: Hotfix dropped, Startup and Pro only),

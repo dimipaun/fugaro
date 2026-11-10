@@ -58,7 +58,7 @@ As of 2026-11-10, read from `main`, the open pull requests and each plan's task 
 | cli-output-console-graph | 19/30 | CL6, CL9 to CL11, CG4 to CG6, CG13 |
 | issues-resolved-on-update | 3/8 | T-RU4 to T-RU8 |
 | catalog-build-context | 2/5 | CB2, CB4, CB5 |
-| post-review-triage | 5/14 | TR3, TR5 to TR10, TR12; waits on BF1m (#1999) |
+| post-review-triage | 7/14 | TR7a, TR7b, TR8 to TR10, TR12, TR13 |
 | model-crafts | 4/10 | MC4 to MC7, MC9; owner MC10 |
 | security-classification | 6/11 | SC3, SC5, SC9 to SC11 |
 | settings-commands | about 6/12 | S6 to S11 |
