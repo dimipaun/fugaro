@@ -62,12 +62,6 @@ As of 2026-11-10, read from `main`, the open pull requests and each plan's task 
 | repo-image-removal | **PARKED** (2/11; parked by image-setup, D1900) |
 | voice-module, collateral, backlog, plans | no plan or not a spec |
 
-## Open points
-
-1. Overlapping chains to reconcile (owner, 2026-11-10): forge-authorship-images against image-setup, and bitbucket-credentials and bitbucket-workspace-token against secrets-brokering. repo-image-removal stays parked.
-2. Four chains whose release slots passed are now being built (run-limit-carry-over, binary-allow-rule, plugin-user-scope, run-without-checkout). Each still needs a release slot.
-3. Pull requests #2118 and #2131 are both S3.5 (the key service's infrastructure); one is a duplicate.
-
 ## Done
 
 | Spec | Left |
