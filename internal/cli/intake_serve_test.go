@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -307,6 +308,33 @@ func TestIntakeServeRefusesHTTP2DebugStill(t *testing.T) {
 				t.Fatalf("err = %v, want the http2debug refusal: a process that served would print the headers of a call that carries a credential", err)
 			}
 		})
+	}
+}
+
+// TestIntakeServeDoesNotEchoTheBucketWhenItCannotOpenIt is the no-echo rule at
+// the one place a wrapping error would break it: blobx's own error quotes the
+// URL it was handed, which is the value of FUGARO_RUNS_BUCKET, and this
+// process's log is Cloud Logging. The refusal names the variable and what it
+// must be, and nothing the deployment held.
+func TestIntakeServeDoesNotEchoTheBucketWhenItCannotOpenIt(t *testing.T) {
+	intakeTest = &intakeWiring{
+		secrets: func(context.Context, string) (intake.SecretStore, error) { return stubIntakeStore{}, nil },
+		bucket: func(context.Context, string) (*blobx.Bucket, error) {
+			return nil, errors.New("opening bucket gs://s3cr3t-bucket-name: the account cannot read it")
+		},
+	}
+	t.Cleanup(func() { intakeTest = nil })
+	_, err := intakeServiceConfig(context.Background(), envFrom(intakeServeEnv), io.Discard)
+	if err == nil {
+		t.Fatal("want a refusal")
+	}
+	if !strings.Contains(err.Error(), envRunsBucket) {
+		t.Fatalf("err = %v, want a refusal naming %s", err, envRunsBucket)
+	}
+	for _, value := range []string{"s3cr3t-bucket-name", intakeServeEnv[envRunsBucket]} {
+		if strings.Contains(err.Error(), value) {
+			t.Errorf("err = %v, which carries %q", err, value)
+		}
 	}
 }
 

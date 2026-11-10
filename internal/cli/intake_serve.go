@@ -236,7 +236,11 @@ func intakeServiceConfig(ctx context.Context, getenv func(string) string, errw i
 	}
 	objects, err := bucket(ctx, bucketName)
 	if err != nil {
-		return intake.Config{}, remote(fmt.Errorf("the runs bucket holding the derived admin list could not be opened: %w", err))
+		// Deliberately NOT the opener's own error: blobx's quotes the URL it
+		// was handed, which is what this variable held —
+		// credentialsServiceConfig's rule for the database URL, for the same
+		// reason (this process's log is Cloud Logging).
+		return intake.Config{}, remote(fmt.Errorf("%s could not be opened as the runs bucket it names, as the intake's own service account", envRunsBucket))
 	}
 	list, err := intake.NewBucketAdminList(objects)
 	if err != nil {
