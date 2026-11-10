@@ -892,7 +892,7 @@ step_policy_switch() {
     return 1
     ;;
   unread | other | "")
-    unmeasured proxied "fugaro doctor's credentials-service-deployed row could not be read or is one this check does not recognise (state: ${state:-none}; doctor: ${problem:-no line}): whether the credentials-service switch is on for ${REPO} was NOT measured, and every row below would be read about a path this check never settled. Read 'fugaro doctor --project fugaro --json' yourself, and fetch the check's exit and the error it printed (${SCRATCH}/doctor-switch.err) before anything is launched"
+    unmeasured proxied "fugaro doctor's credentials-service-deployed row could not be read or is one this check does not recognise (state: ${state:-none}; doctor: ${problem:-no line}): whether the credentials-service switch is on for ${REPO} was NOT measured, and every row below would be read about a path this check never settled. Run 'fugaro doctor --project fugaro --json' yourself, read that row, and settle it before anything is launched"
     return 1
     ;;
   esac
