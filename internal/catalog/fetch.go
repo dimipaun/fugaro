@@ -132,7 +132,10 @@ func definition(e config.Entry, data []byte) ([]byte, error) {
 // clone URL with the token in its userinfo), its marker list is a denylist a
 // name can be written around, and an ARG that says nothing (ARG NPM_TOKEN with
 // the value from --build-arg) is refused on the name alone because the value
-// reaches the layer either way.
+// reaches the layer either way. The one thing a name alone cannot decide is
+// whether it names a credential or a pointer to one, so a variable the line
+// gives a path is let through — see pathValue, which is what keeps the
+// platform's own GOOGLE_APPLICATION_CREDENTIALS definition buildable.
 //
 // The heuristic's limits are named rather than left to be found. The guard
 // reads instructions whose name is ARG, ENV or ONBUILD of either, and not a
@@ -180,6 +183,10 @@ func refuseCredentialIn(e config.Entry, data []byte) error {
 // whose variable reaches a layer, so both are read. esc is the definition's
 // own escape character (dockerfileLines), which decides how the line is cut
 // into words.
+//
+// A name is refused on its own only when the line gives it no path: see
+// pathValue for the one shape that is let through, a variable that points at a
+// file rather than carrying one.
 func refuseCredentialNames(e config.Entry, line string, esc byte) error {
 	inst, rest := splitInstruction(line)
 	if inst == "ONBUILD" {
@@ -188,13 +195,51 @@ func refuseCredentialNames(e config.Entry, line string, esc byte) error {
 	if inst != "ARG" && inst != "ENV" {
 		return nil
 	}
-	for _, name := range instructionNames(inst, rest, esc) {
-		if credentialShaped(name) {
+	for _, v := range instructionVars(inst, rest, esc) {
+		if credentialShaped(v.name) && !pathValue(v.value) {
 			return fmt.Errorf("the catalog entry %s: its Dockerfile sets %s %s, a name a credential is carried in; a build argument or an environment variable with a secret in it reaches the image, so mount the value with RUN --mount=type=secret instead",
-				nameOf(e), inst, pluginwire.Printable(name))
+				nameOf(e), inst, pluginwire.Printable(v.name))
 		}
 	}
 	return nil
+}
+
+// instructionVar is one variable an ARG or ENV line sets, with the value the
+// line gives it: empty where the line gives none (ARG FOO, or ENV FOO with
+// nothing after it), which is not the same as a variable set to nothing, but is
+// the same to the one reader here.
+type instructionVar struct{ name, value string }
+
+// pathValue reports whether a value a definition gives a variable is a path
+// rather than a credential. A value that begins with `/`, `./`, `../` or `~/`
+// names a location, and a location is not a secret: the credential, where there
+// is one, is the file behind it — which is the shape the BuildKit secret mount
+// this guard's refusal names also produces — while a token written into a
+// Dockerfile does not begin with a path separator (NPM's npm_..., GitHub's
+// ghp_..., AWS's AKIA... and base64 with one lead byte of 64 chance at the
+// most).
+//
+// The test is on the value rather than on the name because the name cannot
+// carry the difference: GOOGLE_APPLICATION_CREDENTIALS, AWS_SHARED_CREDENTIALS_FILE,
+// API_KEY_PATH and SSH_PRIVATE_KEY_PATH are pointers — the platform's own
+// variables name files, and the guard's own refusal (mount the value with
+// RUN --mount=type=secret) tells an author to write exactly that shape — and
+// refusing them would refuse a definition that carries no credential at all,
+// with a remedy (rename the variable) that is not open to a reserved name.
+// docs/gcp-live-checklist.md's Check 291 builds such a Dockerfile.
+//
+// The exemption is a path literal, and not a path written through a variable:
+// ENV X=$HOME/.aws/credentials is refused with the rest, because a reference is
+// where a value comes from rather than a value, and there is nothing here to
+// read. That errs toward refusing, which is the direction this guard errs in.
+func pathValue(value string) bool {
+	value = strings.TrimSpace(value)
+	for _, prefix := range []string{"/", "./", "../", "~/"} {
+		if strings.HasPrefix(value, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // dockerfileLines returns a definition's logical lines: an instruction whose
@@ -231,7 +276,12 @@ func dockerfileLines(data []byte) ([]string, byte) {
 	var cont strings.Builder
 	joining := false
 	for _, physical := range strings.Split(text, "\n") {
-		line := strings.TrimSuffix(physical, "\r")
+		// Every trailing carriage return goes, as the parser trims them all
+		// (trimNewline is bytes.TrimRight(src, "\r\n")): one left behind is a
+		// character of the line, and a line that ends `\r\r` then hides its own
+		// continuation from trimContinuation and reads as a name no marker
+		// matches.
+		line := strings.TrimRight(physical, "\r")
 		comment := strings.HasPrefix(strings.TrimLeftFunc(line, unicode.IsSpace), "#")
 		if comment || joining {
 			if joining && strings.TrimSpace(line) == "" {
@@ -433,10 +483,10 @@ func withoutBuilderFlags(rest string) string {
 	return ""
 }
 
-// instructionNames returns the variable names one ARG or ENV line sets, from
-// the line's arguments (splitInstruction) and the definition's escape
-// character.
-func instructionNames(inst, rest string, esc byte) []string {
+// instructionVars returns the variables one ARG or ENV line sets, each with the
+// value the line gives it, from the line's arguments (splitInstruction) and the
+// definition's escape character.
+func instructionVars(inst, rest string, esc byte) []instructionVar {
 	if inst == "ARG" {
 		// Every word of an ARG line is its own build argument (ARG FOO BAR
 		// declares both, and each takes the value of a --build-arg of its own
@@ -447,16 +497,16 @@ func instructionNames(inst, rest string, esc byte) []string {
 		// a plain split on whitespace: a quoted default holds blanks, and
 		// cutting one into words would read a value as a name and refuse a
 		// definition that sets none.
-		var names []string
+		var vars []instructionVar
 		for _, word := range dockerfileWords(rest, esc) {
-			name, _, _ := strings.Cut(word, "=")
+			name, value, _ := strings.Cut(word, "=")
 			if name != "" {
-				names = append(names, name)
+				vars = append(vars, instructionVar{name: name, value: value})
 			}
 		}
-		return names
+		return vars
 	}
-	return envNames(rest, esc)
+	return envVars(rest, esc)
 }
 
 // dockerfileWords cuts a line's arguments into the words the parser cuts them
@@ -548,9 +598,10 @@ func dockerfileWords(rest string, esc byte) []string {
 	return words
 }
 
-// envNames returns the names an ENV line sets: the modern form is one or more
-// key=value pairs on the one line, the legacy one a single name with the value
-// after it. Both forms are still written, and a Dockerfile mixes them.
+// envVars returns the variables an ENV line sets, each with its value: the
+// modern form is one or more key=value pairs on the one line, the legacy one a
+// single name with the value after it. Both forms are still written, and a
+// Dockerfile mixes them.
 //
 // Which form the line is, and where one pair ends and the next begins, is the
 // parser's own reading (parseNameVal): the words are the parser's words
@@ -560,7 +611,7 @@ func dockerfileWords(rest string, esc byte) []string {
 // the next quote byte, and ignoring the escape character — reads the line a
 // build does not: in ENV A="\" B=" NPM_TOKEN=1 the escaped quote is a character
 // of the first value to a build, which then goes on to set NPM_TOKEN.
-func envNames(rest string, esc byte) []string {
+func envVars(rest string, esc byte) []instructionVar {
 	words := dockerfileWords(rest, esc)
 	if len(words) == 0 {
 		return nil
@@ -568,25 +619,31 @@ func envNames(rest string, esc byte) []string {
 	if !strings.Contains(words[0], "=") {
 		// Legacy: ENV name value..., where the name is what stands before the
 		// first whitespace of the line as it was written (the parser splits the
-		// raw text here, not the words).
-		if sp := strings.IndexAny(rest, dockerSpace); sp >= 0 {
-			return []string{rest[:sp]}
+		// raw text here, not the words), and the value is the rest of the line
+		// (parseNameVal joins the words after the name).
+		sp := strings.IndexAny(rest, dockerSpace)
+		if sp < 0 {
+			return []instructionVar{{name: rest}}
 		}
-		return []string{rest}
+		value := ""
+		if len(words) > 1 {
+			value = strings.Join(words[1:], " ")
+		}
+		return []instructionVar{{name: rest[:sp], value: value}}
 	}
-	var names []string
+	var vars []instructionVar
 	for _, word := range words {
 		// A word with no '=' is a syntax error to a build, so nothing after it
 		// is a pair either.
-		name, _, ok := strings.Cut(word, "=")
+		name, value, ok := strings.Cut(word, "=")
 		if !ok {
 			break
 		}
 		if name != "" {
-			names = append(names, name)
+			vars = append(vars, instructionVar{name: name, value: value})
 		}
 	}
-	return names
+	return vars
 }
 
 // credentialMarkers are the substrings that make a variable name
@@ -596,7 +653,12 @@ func envNames(rest string, esc byte) []string {
 //
 // The list is a denylist, and deliberately a short one: a word here refuses a
 // definition, so a word that also names something harmless (auth, key, pass,
-// user) would refuse definitions that carry no credential. The words that are
+// user) would refuse definitions that carry no credential. What the name alone
+// cannot settle is a pointer: GOOGLE_APPLICATION_CREDENTIALS and
+// AWS_SHARED_CREDENTIALS_FILE hold credential and are set on every GCP and AWS
+// image, and API_KEY_PATH and SSH_PRIVATE_KEY_PATH hold apikey and privatekey
+// and name a file. Those are held back by the value and not by the list
+// (pathValue), so no marker is dropped for them. The words that are
 // here name a credential and nothing else, and the ones that are not are
 // covered by the shape they are written in — AWS_SECRET_ACCESS_KEY and
 // AWS_ACCESS_KEY_ID are here through secret and accesskey, GITHUB_TOKEN and

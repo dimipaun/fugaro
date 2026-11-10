@@ -320,6 +320,17 @@ func TestDockerfileSecretArgRefused(t *testing.T) {
 		// is either never looked at or read out of the middle of a value.
 		"FROM example.invalid/base\nENV A=\"\\\" B=\" NPM_TOKEN=1\n",
 		"FROM example.invalid/base\nENV A=\"a\\\"b\" NPM_TOKEN=1\n",
+		// A credential-shaped name is refused unless the line gives it a path
+		// (pathValue): a name that holds a credential and does not point at one
+		// still carries what --build-arg or the environment puts in the layer.
+		"FROM example.invalid/base\nENV GOOGLE_APPLICATION_CREDENTIALS={\"type\":\"service_account\"}\n",
+		"FROM example.invalid/base\nENV GOOGLE_APPLICATION_CREDENTIALS=$HOME/.config/gcloud/adc.json\n",
+		"FROM example.invalid/base\nENV AWS_SHARED_CREDENTIALS_FILE=credentials.ini\n",
+		"FROM example.invalid/base\nARG API_KEY_PATH\n",
+		// Every trailing carriage return is the parser's to trim
+		// (trimNewline is bytes.TrimRight(src, "\r\n")), so a doubled one does
+		// not hide the continuation: a build reads ARG NPM_TOKEN here.
+		"FROM example.invalid/base\r\r\nARG NPM_\\\r\r\nTOKEN\r\r\n",
 	} {
 		_, err := Fetch(ctx, nil, gitprov.KindGitHub, inlineEntry(def))
 		if err == nil {
@@ -371,6 +382,18 @@ func TestDockerfileSecretArgRefused(t *testing.T) {
 		// one: the quotes are what make it one word, and the words inside them
 		// are a value and not names.
 		"FROM example.invalid/base\nARG NOTES=\"no credentials here\"\n",
+		// A pointer is not a credential: a name that is credential-shaped but is
+		// given a path carries no secret into the layer, and the platform's own
+		// names are pointers. The first of these is the definition
+		// docs/gcp-live-checklist.md's Check 291 builds — an entry that cannot be
+		// renamed and has to be accepted for that check to run at all.
+		"FROM example.invalid/base\nENV NEXUS_BASEURL=https://example.invalid/repository/maven-public/\nENV GOOGLE_APPLICATION_CREDENTIALS=/dev/null\n",
+		"FROM example.invalid/base\nENV GOOGLE_APPLICATION_CREDENTIALS /dev/null\n",
+		"FROM example.invalid/base\nENV AWS_SHARED_CREDENTIALS_FILE=/root/.aws/credentials\n",
+		"FROM example.invalid/base\nENV API_KEY_PATH=/run/secrets/api_key\n",
+		"FROM example.invalid/base\nARG SSH_PRIVATE_KEY_PATH=/home/fugaro/.ssh/id_ed25519\n",
+		"FROM example.invalid/base\nENV X=1 CREDENTIALS_FILE=./creds.json\n",
+		"FROM example.invalid/base\nONBUILD ENV GOOGLE_APPLICATION_CREDENTIALS=/dev/null\n",
 	} {
 		if _, err := Fetch(ctx, nil, gitprov.KindGitHub, inlineEntry(def)); err != nil {
 			t.Errorf("the definition %q was refused: %v", def, err)
