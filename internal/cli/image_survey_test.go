@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -30,6 +31,10 @@ import (
 type surveyProvider struct {
 	*fake.Provider
 	kind string
+	// cancel, when set, runs just before the first read of the fixed list: the
+	// caller's own cancellation arriving mid-survey, which is the one failure
+	// that is not the repository's.
+	cancel func()
 
 	mu    sync.Mutex
 	paths []string
@@ -37,8 +42,12 @@ type surveyProvider struct {
 
 func (p *surveyProvider) Contents(ctx context.Context, path, ref string) ([]byte, error) {
 	p.mu.Lock()
+	first := len(p.paths) == 0
 	p.paths = append(p.paths, path)
 	p.mu.Unlock()
+	if first && p.cancel != nil {
+		p.cancel()
+	}
 	return p.Provider.Contents(ctx, path, ref)
 }
 
@@ -394,6 +403,60 @@ func TestSurveySetupUnreadIsReported(t *testing.T) {
 	}
 }
 
+// executeSurveyCtx runs the command tree with a context the test controls.
+func executeSurveyCtx(t *testing.T, ctx context.Context, args ...string) (string, error) {
+	t.Helper()
+	cmd := NewRootCmd()
+	var out, errOut bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	cmd.SetContext(ctx)
+	cmd.SetArgs(NormalizeArgs(args))
+	return out.String(), cmd.Execute()
+}
+
+// TestSurveyStopsOnACancelledContext: the survey the caller stops — Ctrl-C at
+// a terminal — is the caller's own cancellation, not a repository nobody could
+// read. It stops the command with the reason instead of marking rows unread,
+// working through the remaining repositories and exiting 0 with a
+// full-looking report of a read that never finished.
+func TestSurveyStopsOnACancelledContext(t *testing.T) {
+	newCloudFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ps, _ := surveyStub(t, map[string]map[string]string{
+		"acme/app":  {"Dockerfile": "FROM node:20\n"},
+		"acme/zeta": {"Dockerfile": "FROM node:20\n"},
+	})
+	// The cancellation arrives on the first read, as it does when the owner
+	// stops the survey with a repository half read.
+	ps["acme/app"].cancel = cancel
+
+	out, err := executeSurveyCtx(t, ctx, "image", "survey")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled: a stopped survey is not a report of anything", err)
+	}
+	if out != "" {
+		t.Errorf("the command printed a report of a read it did not finish:\n%s", out)
+	}
+	if got := len(ps["acme/app"].read()); got != 1 {
+		t.Errorf("the cancelled repository was asked for %d paths, want the one read the stop interrupted", got)
+	}
+	if got := len(ps["acme/zeta"].read()); got != 0 {
+		t.Errorf("the survey read %d paths of a repository after the context was done, want none", got)
+	}
+
+	// The same cancellation before any read at all: the command still stops
+	// with the reason rather than surveying from a context nobody is waiting
+	// on.
+	cancelled, stop := context.WithCancel(context.Background())
+	stop()
+	ps["acme/app"].cancel = nil
+	if out, err := executeSurveyCtx(t, cancelled, "image", "survey", "--json"); !errors.Is(err, context.Canceled) {
+		t.Errorf("a survey started on a done context: err = %v, want context.Canceled\n%s", err, out)
+	}
+}
+
 // TestSurveyGateRowReadOnly: the survey is a report, so it belongs to no row
 // of the managed gate's set and needs none — it writes nothing, and it runs
 // unchanged in the coding agent's session the gate refuses every owner-level
@@ -461,7 +524,7 @@ func bucketTree(t *testing.T, dir string) []string {
 // against schemas/image-survey.schema.json, the contract a consumer reads it
 // by (D784).
 func TestSurveyJSONMatchesSchema(t *testing.T) {
-	f := newCloudFixture(t)
+	f := newBudgetFixture(t, "")
 	f.appendConfig(t, "  acme/service: { provider: bitbucket }\n")
 	surveyStub(t, map[string]map[string]string{
 		"acme/app": {
@@ -470,6 +533,13 @@ func TestSurveyJSONMatchesSchema(t *testing.T) {
 		},
 		"acme/service": {".nvmrc": "20\n"},
 	})
+	// A map an owner wrote by hand, with the two entries no image name is
+	// written for: "" and a JSON null, which decodes to the same empty string.
+	// Nothing refuses the published node on this key, and the schema below
+	// refuses an empty value (minLength 1), so the document has to drop them
+	// rather than carry them and fail its own contract.
+	f.db.Set(projectpolicy.PathShared(), json.RawMessage(
+		`{"image_map": {"acme/app": "base", "acme/blank": "", "acme/none": null}, "bake_repos": false}`))
 
 	out, _, err := execute(t, "image", "survey", "--json")
 	if err != nil {
@@ -541,9 +611,12 @@ func TestSurveyJSONMatchesSchema(t *testing.T) {
 			t.Errorf("no row carries a %q signal, so the schema's enum branch for it is unchecked", want)
 		}
 	}
-	// A project that never published a map or a bake setting is the document's
-	// own defaults: no map, and baking (D1901).
-	if len(decoded.Setup.ImageMap) != 0 || !decoded.Setup.BakeRepos {
-		t.Errorf("setup = %+v, want an empty map and bake_repos true", decoded.Setup)
+	// The node's own values, with the entries that name no image left out: a
+	// document carrying them would fail the schema above.
+	if got := decoded.Setup.ImageMap; len(got) != 1 || got["acme/app"] != "base" {
+		t.Errorf("setup.image_map = %v, want only the entry that names an image", got)
+	}
+	if decoded.Setup.BakeRepos {
+		t.Errorf("setup = %+v, want the node's own bake setting", decoded.Setup)
 	}
 }

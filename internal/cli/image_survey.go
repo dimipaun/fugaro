@@ -123,9 +123,23 @@ func runImageSurvey(cmd *cobra.Command, o cloudOptions, asJSON bool) error {
 	}
 	out := imageSurveyOut{Version: imageSurveyDocVersion, Project: env.lc.Name, Repos: []imageSurveyRepo{}}
 	for _, repo := range slices.Sorted(maps.Keys(env.lc.Repos)) {
-		out.Repos = append(out.Repos, surveyRepo(ctx, env, open, repo))
+		// A survey the caller stopped stops here: a cancelled context is not a
+		// repository nobody could read, and the command answers it rather than
+		// working through the remaining 49 rows and exiting 0 (the rule
+		// `fugaro logs` and `fugaro cancel` keep).
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		row, err := surveyRepo(ctx, env, open, repo)
+		if err != nil {
+			return err
+		}
+		out.Repos = append(out.Repos, row)
 	}
 	out.Setup = surveySetup(ctx, env, cmd.ErrOrStderr())
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	w := cmd.OutOrStdout()
 	if asJSON {
 		return writeJSON(w, out)
@@ -137,11 +151,15 @@ func runImageSurvey(cmd *cobra.Command, o cloudOptions, asJSON bool) error {
 // back empty-handed is a field of the row rather than an error of the command:
 // one repository the survey cannot reach is not a reason to refuse the other
 // 49, and the skill is the caller that decides what an unread repository means.
-func surveyRepo(ctx context.Context, env *cloudEnv, open gitprov.Opener, repo string) imageSurveyRepo {
+//
+// The one error it answers is the caller's own cancellation, which is not a
+// repository's failure and must not be reported as one: the survey stops
+// instead of printing a full-looking report of a read that was interrupted.
+func surveyRepo(ctx context.Context, env *cloudEnv, open gitprov.Opener, repo string) (imageSurveyRepo, error) {
 	row := imageSurveyRepo{Repo: pluginwire.Printable(repo), Signals: []imagesurvey.Finding{}}
 	if _, _, ok := gitprov.SplitRepo(repo); !ok {
 		row.Unread = "the local config's entry is not the owner/name of a repository"
-		return row
+		return row, nil
 	}
 	// The provider kind is the local config's entry and the checkout's
 	// fugaro.yaml (env.repoProvider), which is the kind every other command
@@ -154,7 +172,7 @@ func surveyRepo(ctx context.Context, env *cloudEnv, open gitprov.Opener, repo st
 	row.Provider = env.repoProvider(repo, co)
 	if row.Provider == "" {
 		row.Unread = "this machine cannot tell which git provider it is on: set provider in its repos entry of the local config, or run the survey from its checkout"
-		return row
+		return row, nil
 	}
 	// catalog.Readable is the offline list of the kinds whose adapter can read
 	// a file, and the type assertion below is what the opened provider
@@ -162,22 +180,25 @@ func surveyRepo(ctx context.Context, env *cloudEnv, open gitprov.Opener, repo st
 	// second is the truth for a host this build does not know.
 	if !catalog.Readable(row.Provider) {
 		row.Unread = unreadableProvider(row.Provider)
-		return row
+		return row, nil
 	}
 	p, _, err := open(ctx, row.Provider, repo)
 	if err != nil {
 		row.Unread = "the provider could not be opened: " + oneLine(err.Error())
-		return row
+		return row, nil
 	}
 	r, ok := p.(gitprov.ContentsReader)
 	if !ok {
 		row.Unread = unreadableProvider(row.Provider)
-		return row
+		return row, nil
 	}
 	findings, read, err := imagesurvey.Read(ctx, r, "")
 	if err != nil {
-		row.Unread = "the reads were stopped: " + oneLine(err.Error())
-		return row
+		// Read answers an error only for a context that is done, which is the
+		// caller's own and not this repository's (imagesurvey/signals.go: the
+		// one failure that is not a path's). The command stops with it rather
+		// than recording it as a repository nobody could read.
+		return imageSurveyRepo{}, err
 	}
 	if read == 0 {
 		// Not one path answered. ContentsReader answers the same error for a
@@ -190,10 +211,10 @@ func surveyRepo(ctx context.Context, env *cloudEnv, open gitprov.Opener, repo st
 		// provider that answered nothing.
 		row.Unread = fmt.Sprintf("not one of the %d files the survey reads could be read from it, which is what a repository that is not there, a credential that reads nothing there and a repository whose files are none of the ones the survey reads all look like",
 			len(imagesurvey.Paths()))
-		return row
+		return row, nil
 	}
 	row.Signals = findings
-	return row
+	return row, nil
 }
 
 // unreadableProvider is why a row on a provider with no file API has no
@@ -276,7 +297,18 @@ func surveyPolicySetup(ctx context.Context, env *cloudEnv) (map[string]string, b
 	// Both halves of the map are the node's own text (an operator writes it by
 	// hand, and a repository name reaches a terminal and an agent's context
 	// from here), so both are printed through pluginwire.Printable.
+	//
+	// An entry that names no image is left out: nothing refuses the node on
+	// this key — image_map is in no other schema and in no projectpolicy
+	// field, so the published document is unvalidated here — and this report's
+	// own schema refuses an empty value (minLength 1), so an owner's "" (or a
+	// JSON null, which decodes to the same empty string) would otherwise make
+	// the survey print a document that fails the contract it is published
+	// under. A mapping to no image is not a mapping this report carries.
 	for repo, image := range node.ImageMap {
+		if image == "" {
+			continue
+		}
 		imageMap[pluginwire.Printable(repo)] = pluginwire.Printable(image)
 	}
 	if node.BakeRepos != nil {
