@@ -203,28 +203,38 @@ func importPaths(path string) ([]string, error) {
 // names (a review of this change): the slip methods hang off the store the
 // marks are read through, so a file can reach Create, Slip, Claim and End
 // through a store VALUE without this package's name appearing at the call site.
-// Two walks close that, and a file that reaches a slip method now has to write a
-// store's type or name this package somewhere in itself:
+// Following values is not a thing a parse can do, and two attempts to narrow it
+// showed why (a second review): a store copied to another name, ranged over,
+// indexed, or taken as a method value reaches a slip method through a value the
+// walk has lost. So the scan does not follow values. It reports the MENTION:
+// outside the service, naming creds.RTDBStore or creds.SlipStore at all is a
+// finding, because a file that holds a store has to write one of those names
+// somewhere to get one — and this is the point a reader should take, that the
+// rule is deliberately coarser than the call it is about.
 //
-//   - a store DECLARED here — a variable, a parameter, a result or a struct
-//     field whose written type is a creds store. Holding one, or handing one to
-//     another package, means writing the type, so this is also what catches a
-//     store that arrives from a call whose signature this file cannot see
-//     (st := helper() where helper returns one: helper's own file writes the
-//     type, and that file is a finding);
-//   - a store BOUND here — an identifier assigned from an expression that names
-//     this package, a call like creds.NewStore(db) included, with a slip method
-//     called on it.
+// Three shapes are exempt, and each of them is the marks half of this boundary —
+// the one thing internal/cli imports this package for (C1.21):
 //
-// The limit is the one no parse can pass: a store that arrives from a package
-// that may hold one (internal/credsvc) — as an argument, or under a type that
-// package aliased — or one carried in an interface beside which this package's
-// name is never written. Closing that means making the store type unnameable
-// outside the service, which is a change to the marks API — internal/cli reads
-// the marks through it today ((&creds.RTDBStore{DB: db}).Marks) — and it is
-// reported rather than made here. The marks half stays allowed either way:
-// Marks and UpdateMark are not slip methods, which is the distinction the list
-// below is.
+//   - the store built inline as the receiver of a marks call, and never held:
+//     (&creds.RTDBStore{DB: db}).Marks(ctx);
+//   - the store bound to a name the file uses only for the marks: every other
+//     appearance of that identifier is a marks receiver or another binding of
+//     that name (store := &creds.RTDBStore{DB: db}; store.UpdateMark(...)). A
+//     copy, an argument, an index or a method value is none of those, so the
+//     name stops being marks-only and the mention becomes a finding again;
+//   - the store handed to a package that may hold one: the operator's CLI builds
+//     the state the credentials service serves from locally.
+//
+// The list is closed the way the importers are, and Marks and UpdateMark are not
+// slip methods — that distinction is what the lists below are.
+//
+// The limit is the one no parse can pass, and it is narrower than it was: a
+// store that arrives from a package that may hold one (internal/credsvc) — as an
+// argument, or as a result whose signature this file does not write — is not
+// followed, and neither is one carried in an interface beside which this
+// package's name is never written. Closing that means making the store type
+// unnameable outside the service, which is a change to the marks API
+// internal/cli reads through today, and it is reported rather than made here.
 
 // slipImporters is the ONE-LIST of directories whose files may reach the slip
 // store. It is deliberately not credsImporters: a fourth entry, or an entry
@@ -254,20 +264,30 @@ var slipNames = []string{
 // slipMethods are the SlipStore methods. A call of one of them on a value of a
 // creds store is reaching the slip store just as plainly as naming SlipStore
 // is, and it is the form that does not spell this package's name at the call
-// site — so the scan follows the value to the call (a review of this change).
+// site — which is why the store's TYPE is what the scan reports.
 var slipMethods = []string{"Create", "Slip", "Claim", "End"}
 
 // slipStoreTypes are the type names of this package a slip method can be called
 // through: the concrete store, which implements SlipStore, and the interface
-// itself (also in slipNames, because naming it at all is reaching the slip
-// half). A file that names either of these and calls a slip method on the value
-// is a finding however it spelled the value.
+// itself. Naming either of them outside the service is a finding, because a file
+// that holds a store writes one of these names to get one, however it then
+// reaches the value (the marks shapes below excepted).
 var slipStoreTypes = []string{"RTDBStore", "SlipStore"}
 
+// markMethods are the two methods a file outside the service may call on a creds
+// store: the marks read and the marks write, which is what `fugaro accounts`
+// does (C1.21). Every other method the store carries is the slip half's.
+var markMethods = []string{"Marks", "UpdateMark"}
+
+// servicePackages are the import paths whose packages may hold a creds store: the
+// state's own package, and the service's. A store a file outside hands to one of
+// them — the operator's CLI building the state the service serves from — is the
+// last of the three exempt shapes.
+var servicePackages = []string{credsPackage, "github.com/dimipaun/fugaro/internal/credsvc"}
+
 // TestBoundaryAllowsSlipsOnlyViaService fails if a file outside slipImporters
-// reaches the slip store — by naming a slip, by declaring a value whose type is
-// a creds store, or by calling a slip method on one — or if the state is
-// dot-imported anywhere.
+// reaches the slip store — by naming a slip, by naming a creds store's type, or
+// by calling a slip method on one — or if the state is dot-imported anywhere.
 func TestBoundaryAllowsSlipsOnlyViaService(t *testing.T) {
 	// The scan is proved first, on sources this test states, so that an empty
 	// result over the module below is a result and not a walk that read nothing.
@@ -362,6 +382,26 @@ func TestBoundaryAllowsSlipsOnlyViaService(t *testing.T) {
 			want: true,
 		},
 		{
+			name: "a store copied to another name and claimed through",
+			src:  "package x\n\nimport \"github.com/dimipaun/fugaro/internal/creds\"\n\nfunc f() { st := &creds.RTDBStore{}; s2 := st; s2.Claim(\"id\") }\n",
+			want: true,
+		},
+		{
+			name: "a store ranged over and claimed through",
+			src:  "package x\n\nimport \"github.com/dimipaun/fugaro/internal/creds\"\n\nfunc f() { for _, st := range []*creds.RTDBStore{{}} { st.Claim(\"id\") } }\n",
+			want: true,
+		},
+		{
+			name: "a store indexed and ended through",
+			src:  "package x\n\nimport \"github.com/dimipaun/fugaro/internal/creds\"\n\nfunc f() { s := []*creds.RTDBStore{{}}; s[0].End(\"id\") }\n",
+			want: true,
+		},
+		{
+			name: "a store's claim taken as a method value and called",
+			src:  "package x\n\nimport \"github.com/dimipaun/fugaro/internal/creds\"\n\nfunc f() { g := &creds.RTDBStore{}; c := g.Claim; c(\"id\") }\n",
+			want: true,
+		},
+		{
 			name: "a store's marks read, which is not a slip",
 			src:  "package x\n\nimport \"github.com/dimipaun/fugaro/internal/creds\"\n\nfunc f() { (&creds.RTDBStore{}).Marks(ctx) }\n",
 			want: false,
@@ -375,6 +415,16 @@ func TestBoundaryAllowsSlipsOnlyViaService(t *testing.T) {
 			name: "a store inferred by var and its marks read, which is not a slip",
 			src:  "package x\n\nimport \"github.com/dimipaun/fugaro/internal/creds\"\n\nfunc f() { var st = &creds.RTDBStore{}; st.Marks(ctx) }\n",
 			want: false,
+		},
+		{
+			name: "a store handed to the service, which may hold one",
+			src:  "package x\n\nimport (\n\t\"github.com/dimipaun/fugaro/internal/creds\"\n\t\"github.com/dimipaun/fugaro/internal/credsvc\"\n)\n\nvar c = credsvc.Config{State: &creds.RTDBStore{}}\n",
+			want: false,
+		},
+		{
+			name: "a store whose name escapes to a copy, which the marks shapes do not cover",
+			src:  "package x\n\nimport \"github.com/dimipaun/fugaro/internal/creds\"\n\nfunc f() { st := &creds.RTDBStore{}; st.Marks(ctx); s2 := st; _ = s2 }\n",
+			want: true,
 		},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -404,7 +454,7 @@ func TestBoundaryAllowsSlipsOnlyViaService(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(found) > 0 {
-		t.Fatalf("a file outside the service reaches the slip store:\n  %s\n\nA slip is the service's grant to ONE run (D1932): the grant is what a launcher asks for, the claim is what the run's job presents, and no operator command grants, claims or ends one (G10). Reading the marks is the one thing this package is imported for outside the service (fugaro accounts, C1.21), and it is done with the store inline, calling only Marks and UpdateMark: a package outside the service may hold no creds store of its own, because holding one is what reaches the slip half. Read or write slips from internal/credsvc, or add the directory to slipImporters with its reason if this is genuinely a new caller.", strings.Join(found, "\n  "))
+		t.Fatalf("a file outside the service reaches the slip store:\n  %s\n\nA slip is the service's grant to ONE run (D1932): the grant is what a launcher asks for, the claim is what the run's job presents, and no operator command grants, claims or ends one (G10). Reading the marks is the one thing this package is imported for outside the service (fugaro accounts, C1.21), and it is done with the store built inline as a marks receiver, held in a name used only for the marks, or handed to the service: a file outside the service has no other business naming a creds store, because naming one is how a store is got, and a store is what the slip half hangs off. Read or write slips from internal/credsvc, or add the directory to slipImporters with its reason if this is genuinely a new caller.", strings.Join(found, "\n  "))
 	}
 
 	// The one-list is exactly the two callers above, for the reason
@@ -421,8 +471,8 @@ func TestBoundaryAllowsSlipsOnlyViaService(t *testing.T) {
 // walk the module does.
 //
 // Three ways, because a name is not the only one: the identifiers of the slip
-// half named through this package, a value DECLARED with a creds store's type,
-// and a slip method called on a store the file bound (a review of this change).
+// half named through this package, a mention of a creds store type (which the
+// marks shapes except), and a slip method called on a store the file bound.
 func slipReferences(path, rel string, src []byte) []string {
 	f, err := parser.ParseFile(token.NewFileSet(), path, src, 0)
 	if err != nil || f == nil {
@@ -435,38 +485,38 @@ func slipReferences(path, rel string, src []byte) []string {
 	if !ok {
 		return nil
 	}
+	// The mentions of the store type this file is allowed to write: the marks
+	// shapes, and a store handed to a package that may hold one.
+	allowed := exemptStoreMentions(f, name)
 	// The identifiers this file binds a creds value to: a slip method called on
-	// one of them is the call the name walk below cannot see.
+	// one of them is the call the mention walk below cannot see.
 	stores := credsStoreNames(f, name)
 	var found []string
 	ast.Inspect(f, func(n ast.Node) bool {
-		switch d := n.(type) {
-		// A declaration with the type written out: the file can hold a store,
-		// and it is how one arrives from a call whose signature is elsewhere.
-		case *ast.Field:
-			if t := credsStoreType(d.Type, name); t != "" {
-				found = append(found, rel+" declares "+declNames(d.Names)+" of type "+name+"."+t)
-			}
-		case *ast.ValueSpec:
-			if t := credsStoreType(d.Type, name); t != "" {
-				found = append(found, rel+" declares "+declNames(d.Names)+" of type "+name+"."+t)
-			}
-		// An alias is the same holding under another name: the calls on it are
-		// the store's own, and this package's name appears only here.
-		case *ast.TypeSpec:
-			if t := credsStoreType(d.Type, name); t != "" {
-				found = append(found, rel+" declares the type "+d.Name.Name+" as "+name+"."+t)
-			}
-		}
 		sel, ok := n.(*ast.SelectorExpr)
 		if !ok {
 			return true
 		}
-		if x, ok := sel.X.(*ast.Ident); ok {
-			switch {
-			case x.Name == name && slices.Contains(slipNames, sel.Sel.Name):
+		if x, ok := sel.X.(*ast.Ident); ok && x.Name == name {
+			// The name walk first, so SlipStore — a name of the slip half
+			// besides being a store a method is called on — has no exempt shape
+			// at all.
+			if slices.Contains(slipNames, sel.Sel.Name) {
 				found = append(found, rel+" names "+name+"."+sel.Sel.Name)
-			case slices.Contains(stores, x.Name) && slices.Contains(slipMethods, sel.Sel.Name):
+				return true
+			}
+			// The node the scan is about: a file that holds a store writes this
+			// name, and following the value from here is what two attempts
+			// showed a parse cannot do.
+			if isStoreMention(n, name) {
+				if !allowed[n] {
+					found = append(found, rel+" names "+name+"."+sel.Sel.Name+", the store the slip methods hang off")
+				}
+				return true
+			}
+		}
+		if x, ok := sel.X.(*ast.Ident); ok {
+			if slices.Contains(stores, x.Name) && slices.Contains(slipMethods, sel.Sel.Name) {
 				found = append(found, rel+" calls "+x.Name+"."+sel.Sel.Name+", a slip method on a "+name+" store it holds")
 			}
 			return true
@@ -482,17 +532,199 @@ func slipReferences(path, rel string, src []byte) []string {
 	return found
 }
 
-// declNames names the identifiers a declaration binds, or "a value" when it
-// binds none, which is a function's result.
-func declNames(names []*ast.Ident) string {
-	if len(names) == 0 {
-		return "a value"
+// exemptStoreMentions answers the mentions of a creds store type a file outside
+// the service is allowed to write — the three shapes the section comment names.
+// They are keyed by their own node, so a file that spells the type once for the
+// marks and once for a store it claims through is still found for the second.
+func exemptStoreMentions(f *ast.File, pkg string) map[ast.Node]bool {
+	allowed := map[ast.Node]bool{}
+	// A store built inline as the receiver of a marks call, and never held.
+	ast.Inspect(f, func(n ast.Node) bool {
+		sel, ok := n.(*ast.SelectorExpr)
+		if !ok || !slices.Contains(markMethods, sel.Sel.Name) {
+			return true
+		}
+		if t := storeLiteralType(sel.X, pkg); t != nil {
+			allowed[t] = true
+		}
+		return true
+	})
+	// A store bound to a name the file uses only for the marks: every other
+	// appearance of that identifier is a marks receiver or another binding of the
+	// name. A copy, an argument, an index or a method value is none of those, so
+	// the name stops being marks-only and the mention stays a finding.
+	only := marksOnlyNames(f)
+	ast.Inspect(f, func(n ast.Node) bool {
+		switch d := n.(type) {
+		case *ast.AssignStmt:
+			for i, rhs := range d.Rhs {
+				if id, ok := identAt(d.Lhs, i); ok && only[id.Name] {
+					storeMentions(allowed, rhs, pkg)
+				}
+			}
+		case *ast.ValueSpec:
+			for i, v := range d.Values {
+				if i < len(d.Names) && only[d.Names[i].Name] {
+					storeMentions(allowed, v, pkg)
+				}
+			}
+		}
+		return true
+	})
+	// A store handed to a package that may hold one — the operator's CLI builds
+	// the state the credentials service serves from.
+	held := serviceImportNames(f)
+	ast.Inspect(f, func(n ast.Node) bool {
+		switch d := n.(type) {
+		case *ast.CompositeLit:
+			if namesPackage(d.Type, held) {
+				for _, el := range d.Elts {
+					storeMentions(allowed, el, pkg)
+				}
+			}
+		case *ast.CallExpr:
+			if namesPackage(d.Fun, held) {
+				for _, arg := range d.Args {
+					storeMentions(allowed, arg, pkg)
+				}
+			}
+		}
+		return true
+	})
+	return allowed
+}
+
+// storeMentions adds every mention of a creds store type in an expression to a
+// set.
+func storeMentions(set map[ast.Node]bool, e ast.Expr, pkg string) {
+	if e == nil {
+		return
 	}
-	out := make([]string, 0, len(names))
-	for _, n := range names {
-		out = append(out, n.Name)
+	ast.Inspect(e, func(n ast.Node) bool {
+		if isStoreMention(n, pkg) {
+			set[n] = true
+		}
+		return true
+	})
+}
+
+// isStoreMention reports whether a node is a mention of a creds store type,
+// however the file spelled it.
+func isStoreMention(n ast.Node, pkg string) bool {
+	sel, ok := n.(*ast.SelectorExpr)
+	if !ok {
+		return false
 	}
-	return strings.Join(out, ", ")
+	x, ok := sel.X.(*ast.Ident)
+	return ok && x.Name == pkg && slices.Contains(slipStoreTypes, sel.Sel.Name)
+}
+
+// marksOnlyNames answers the identifiers whose every appearance in the file is a
+// binding of the name or the receiver of a marks call. Appearances are counted
+// rather than scoped, deliberately: the file is all the scan has, and a name
+// with more appearances than the two shapes account for is a name whose uses
+// this rule cannot see — which fails closed, and names nothing a reader cannot
+// check by looking at the file.
+func marksOnlyNames(f *ast.File) map[string]bool {
+	appearances := map[string]int{}
+	bindings := map[string]int{}
+	marks := map[string]int{}
+	ast.Inspect(f, func(n ast.Node) bool {
+		switch d := n.(type) {
+		case *ast.Ident:
+			appearances[d.Name]++
+		case *ast.AssignStmt:
+			for _, lhs := range d.Lhs {
+				if id, ok := lhs.(*ast.Ident); ok {
+					bindings[id.Name]++
+				}
+			}
+		case *ast.ValueSpec:
+			for _, id := range d.Names {
+				bindings[id.Name]++
+			}
+		case *ast.SelectorExpr:
+			if x, ok := d.X.(*ast.Ident); ok && slices.Contains(markMethods, d.Sel.Name) {
+				marks[x.Name]++
+			}
+		}
+		return true
+	})
+	only := map[string]bool{}
+	for name, n := range appearances {
+		if name != "_" && n == bindings[name]+marks[name] {
+			only[name] = true
+		}
+	}
+	return only
+}
+
+// identAt answers the identifier an assignment binds at one position, if it
+// binds one there at all.
+func identAt(lhs []ast.Expr, i int) (*ast.Ident, bool) {
+	if i >= len(lhs) {
+		return nil, false
+	}
+	id, ok := lhs[i].(*ast.Ident)
+	return id, ok
+}
+
+// storeLiteralType answers the store mention inside an expression that builds
+// one — the composite literal's type node, which is the mention itself — or nil
+// when the expression builds something else. &, and the parentheses a receiver
+// is written with, are unwrapped.
+func storeLiteralType(e ast.Expr, pkg string) ast.Expr {
+	for {
+		switch x := e.(type) {
+		case *ast.ParenExpr:
+			e = x.X
+		case *ast.UnaryExpr:
+			if x.Op != token.AND {
+				return nil
+			}
+			e = x.X
+		case *ast.CompositeLit:
+			if credsStoreType(x.Type, pkg) == "" {
+				return nil
+			}
+			return x.Type
+		default:
+			return nil
+		}
+	}
+}
+
+// serviceImportNames answers the local names a file binds the packages that may
+// hold a creds store to.
+func serviceImportNames(f *ast.File) []string {
+	var names []string
+	for _, imp := range f.Imports {
+		path := strings.Trim(imp.Path.Value, `"`)
+		if !slices.Contains(servicePackages, path) {
+			continue
+		}
+		if imp.Name == nil {
+			if i := strings.LastIndex(path, "/"); i >= 0 {
+				names = append(names, path[i+1:])
+			}
+			continue
+		}
+		if imp.Name.Name != "_" && imp.Name.Name != "." {
+			names = append(names, imp.Name.Name)
+		}
+	}
+	return names
+}
+
+// namesPackage reports whether an expression names one of these packages, as a
+// call or a literal of it does.
+func namesPackage(e ast.Expr, names []string) bool {
+	sel, ok := e.(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	x, ok := sel.X.(*ast.Ident)
+	return ok && slices.Contains(names, x.Name)
 }
 
 // credsStoreNames answers the identifiers a file binds a creds value to: a
