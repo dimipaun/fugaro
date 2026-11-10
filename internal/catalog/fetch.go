@@ -141,9 +141,12 @@ func definition(e config.Entry, data []byte) ([]byte, error) {
 // (RUN <<EOF ...) is read as instructions, because the guard does not track
 // where a body ends: a body line that spells an ARG or an ENV whose name is
 // credential-shaped is refused, which errs toward refusing and says so in the
-// message. All of it holds for a definition whose author is not looking for
-// the guard — an author who is can name the ARG anything, which no reading of
-// the text can prevent.
+// message. A URL with userinfo is refused wherever it is written, a comment
+// included, because the whole definition is what the bucket holds: the guard
+// cannot tell a real token from one written as an example, and the way out for
+// prose that needs the shape is to write it without the userinfo. All of it
+// holds for a definition whose author is not looking for the guard — an author
+// who is can name the ARG anything, which no reading of the text can prevent.
 //
 // The refusal never repeats what it found. A URL with userinfo holds the
 // credential itself, and a refusal that echoed it would leak it into the log
