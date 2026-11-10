@@ -106,6 +106,32 @@ func TestSettingsOwnerStringsAreAClosedVocabulary(t *testing.T) {
 	}
 }
 
+// TestSettingsOwnerFileCarriersNameTheCommandThatCarriesTheFile closes the
+// blind spot the vocabulary test above has by construction, and which the
+// senior review of this task put a finding on: a sentence passes there as long
+// as its head is a command of the tree, so the `config` token could read
+// `fugaro update, which applies the file the key is stated in` — a command that
+// applies the file and never edits it — and every test stayed green. The two
+// file-carrier tokens name the command that writes the file the key is stated
+// in (D1515): `fugaro config publish` carries the project layer's half,
+// `fugaro config init` writes a checkout's own `fugaro.yaml`.
+func TestSettingsOwnerFileCarriersNameTheCommandThatCarriesTheFile(t *testing.T) {
+	for _, tc := range []struct{ token, command string }{
+		{"config", "fugaro config publish"},
+		{"config init", "fugaro config init"},
+	} {
+		owner, ok := settingsOwnerCommands[tc.token]
+		if !ok {
+			t.Errorf("%s: no entry in the read's table, and the registry's rows name that token", tc.token)
+			continue
+		}
+		head, _, _ := strings.Cut(owner, ",")
+		if got := strings.TrimSpace(head); got != tc.command {
+			t.Errorf("%s: the owner reads %q, and the command that writes the file the key is stated in is %q (D1515)", tc.token, owner, tc.command)
+		}
+	}
+}
+
 // TestSettingsRefusedRowsNameNoGenericWriter is the pair a reader cannot draw:
 // the console prints `written by <owner>, not by the generic path` on a
 // `writable: false` row, so a refused row that names the generic writer says in
