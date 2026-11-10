@@ -1,6 +1,6 @@
 # Dynamic secret delivery: reconciliation
 
-**Status: the owner answered D1930–D1943 on 2026-11-09, all as recommended (D1938–D1940 after review round 1, D1941–D1943 after round 2). One item (O1) awaits confirmation. Plan only; nothing is implemented; no task approved.**
+**Status: the owner answered D1930–D1946 on 2026-11-09, all as recommended (D1938–D1940 after review round 1, D1941–D1943 after round 2, D1944–D1946 after round 3). No item is open. Plan only; nothing is implemented; no task approved.**
 Checked against `origin/main` at `934bb23f8`, 2026-11-09. **Where this file disagrees with [spec.md](spec.md), it wins.**
 
 The addendum asked to be merged with the existing secrets and credentials brokering spec as one unified
@@ -139,6 +139,9 @@ is only partly true (F4).
 | **D1941** | Slip theft between launchers (F28) | The claim returns a claim secret kept only in the runner's memory and required on every call; the runner claims at start, not at the first model call | Document owner-only as policy, not a boundary | **2026-11-09: the recommendation.** It fences other launchers only; the agent can still read the runner's memory (F22) |
 | **D1942** | Existing pools (F34) | Migrated pools get no owner and stay usable as today (legacy-open), with a doctor line asking an admin to name one | Owner = the operator who ran `update`: silently blocks other launchers | **2026-11-09: the recommendation.** |
 | **D1943** | Slip forgery by database admins (F33) | Accept and document in SECURITY.md | MAC each slip: a signing key to hold and rotate | **2026-11-09: the recommendation.** |
+| **D1944** | Grant-route replay of a gcloud-audience token (was O1) | Accept and document in SECURITY.md, extending D1939 | Refuse the gcloud audience on grants: every launcher needs an extra mint step | **2026-11-09: the recommendation.** |
+| **D1945** | A slip-less older CLI served a stale bundle entry after an intake rotation | Accept and document in the release notes; `update` prompts the upgrade | Refuse old CLIs once a rotation exists: breaks the update-safe rule | **2026-11-09: the recommendation.** |
+| **D1946** | A docs pin test for this folder | Leave it in DS0.2; this PR stays docs-only | Add it here: a code change nobody asked for | **2026-11-09: the recommendation.** |
 | **D1937** | Slip binding | Verified job SA plus one-time claim; execution name audit-only | Launcher-written execution ID: unverifiable | **2026-11-09: the recommendation.** F7 |
 
 No answer deviates from a recommendation, and no two answers conflict. D1938–D1940 were raised by review round 1.
@@ -176,7 +179,7 @@ No answer deviates from a recommendation, and no two answers conflict. D1938–D
 
 ## 7. Open tensions and open items for the owner
 
-**O1 (awaits the owner):** D1939 accepts replay of a gcloud-audience token at the intake; the launcher class also accepts that audience, so the same token replayed at the slip grant route by another launcher would get a slip for the victim's per-user tokens on the replayer's run. Recommendation: extend D1939's acceptance to the grant route and say so in SECURITY.md (DS4.3); alternative: require the launcher class to refuse the gcloud audience, which cannot work for people using plain `gcloud` tokens. Not decided here. Also noted: R6 with R9 leaves a slip-less older CLI served the stale bundle entry after a rotation through the intake. None other open beyond this. One note for the owner's confirmation: D1931 reverses Q6's "not a name-prefix IAM fence" for
+None. O1 (replay at the grant route) is D1944, the stale-bundle note is D1945 and the docs pin is D1946, all answered 2026-11-09 as recommended. One note for the owner's confirmation: D1931 reverses Q6's "not a name-prefix IAM fence" for
 user-supplied credentials only, which the owner's recommended answer already accepts; the intake's
 `create` permission cannot be fenced by IAM, which R3 states plainly.
 

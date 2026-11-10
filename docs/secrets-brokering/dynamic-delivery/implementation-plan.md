@@ -1,7 +1,7 @@
 # Dynamic secret delivery: implementation plan
 
 **Status: plan only; nothing is implemented; no task is approved.** It builds [spec.md](spec.md) as amended by
-[reconciliation.md](reconciliation.md) (D1930–D1943, R1–R12, answered 2026-11-09, all as recommended). Each
+[reconciliation.md](reconciliation.md) (D1930–D1946, R1–R12, answered 2026-11-09, all as recommended). Each
 task needs the owner's own explicit go; answering a decision is not approving a task. Base: `main` at
 `934bb23f8`. Numbers held: **D1930–D1959**, **Checks 510–519** (510 and 511 used here; 512–519 reserved).
 
@@ -240,7 +240,7 @@ named tests only.
 
 ### DS4.3 Docs, SECURITY and release notes
 - **Files:** `SECURITY.md` (edit), `website/content/security.md` (regenerated), `docs/releases/vNEXT.md` (edit or new), `docs/secrets-brokering/README.md` (edit)
-- **Interfaces:** states the new trust boundary (intake write power, the prefix accessor, the slip) and what a hostile launcher can do, that launchers can steal an unclaimed slip only before the runner's start-up claim and never the claim secret (D1941), that database admins can forge a slip (D1943), and that a replayed gcloud-audience token gives an admin overwrite and delete of other members' prefixes as well as their own, and (if the owner confirms O1) also gets a slip at the grant route (D1939, F9), and that Cloud Run invoker is per service so the launcher class's check is the only fence between members and the service's other routes (F36); `### For operators`: "run `fugaro update`" plus what it asks.
+- **Interfaces:** states the new trust boundary (intake write power, the prefix accessor, the slip) and what a hostile launcher can do, that launchers can steal an unclaimed slip only before the runner's start-up claim and never the claim secret (D1941), that database admins can forge a slip (D1943), and that a replayed gcloud-audience token gives an admin overwrite and delete of other members' prefixes as well as their own, and also gets a slip at the grant route (D1939, D1944, F9), and that an older slip-less CLI is served the stale bundle entry after a rotation (D1945), and that Cloud Run invoker is per service so the launcher class's check is the only fence between members and the service's other routes (F36); `### For operators`: "run `fugaro update`" plus what it asks.
 - **Tests:** `go test ./internal/cli/ -run Docs -count=1`; `npm run check` in `website/` for the regenerated page.
 - **Depends on:** DS2.3, DS3.2, DS4.1. **Commit:** `docs: SECURITY and the release notes for dynamic delivery`
 - **Red step:** the website security test fails on drift before regeneration.
