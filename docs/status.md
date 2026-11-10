@@ -61,7 +61,7 @@ As of 2026-11-10, read from `main`, the open pull requests and each plan's task 
 | security-classification | 6/11 | SC3, SC5, SC9 to SC11 |
 | settings-commands | about 6/12 | S6 to S11 |
 | rigor-modes | about 22/40 | T7.1, T7.2, T8.1, T8.3; overlay plan LV1 to LV7 essentially unstarted |
-| rigor-command | 2/10 | R2 to R8 |
+| rigor-command | 3/10 | R6, R7, W; R2 to R5 closed 2026-11-10 as duplicates of the two winning plans |
 | review-levels-ab-jobmax | about 24/40 | A/B reviewer slot, `/jobmax` skill, `auto_launch` |
 | forge-authorship-images | about 9/25 | about 16, much overlapping image-setup |
 | go-to-market | 4/12 | the cost-estimate half (`fugaro estimate`) |

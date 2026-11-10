@@ -1,6 +1,6 @@
 # `fugaro rigor`: managing a project's rigor mode with one command
 
-**Status as of 2026-11-10: in progress, 2/10 merged; see [docs/status.md](../status.md) for the current table.** Every decision is
+**Status as of 2026-11-10: 3/10 merged, and R2–R5 closed as duplicates of the two winning plans; see [docs/status.md](../status.md) for the current table.** Every decision is
 answered: **D830 and D831** by the owner's SD4 ruling of 2026-10-31, **D832–D839 on 2026-10-31, all
 as recommended**, and the one decision the plan **cites** from another design — **D854**, whether the
 `Layer` stage records the object generation it reads at the seed — **answered by the owner on
@@ -12,6 +12,21 @@ wizard asks the project's rigor mode explicitly — was added on 2026-10-31 at t
 plan are written to those answers and the tasks may start. The CLI tasks R0–R8 and W are 0.15.0's; the
 console half is not a task here (D836) — it is the read-only project view, and it queues for console
 0.117.0 with the rest of that work.
+
+**The owner's ruling of 2026-11-10: this plan's duplicates are closed, and the settings and
+config-management plans win.** Four tasks here build the same command, key or writer as a task of
+[docs/settings-commands](../settings-commands/implementation-plan.md) or
+[docs/config-management](../config-management/implementation-plan.md): **R2** (the rigor ops on the
+shared editor) is config-management **G0–G2** with **G4**; **R4** and **R5** (`fugaro rigor set`,
+`unset` and `--repo`) are config-management **G6**; and **R3** (`fugaro rigor show`) is the
+settings design's read, **S0–S2 and S4**. Each of the four carries the ruling's marker in
+[implementation-plan.md](implementation-plan.md), keeps its section as the record of what was
+designed — **G6 re-reads that record as its own first step** — and keeps its number, which is never
+reused. **R0, R1 and R8 are merged and stay exactly as they are**: R0 and R1 landed on `main`, and
+R8's refusal landed with **#1478** on 2026-10-31. **R6, R7 and W stay open.** Where the winners do not
+carry behaviour a closed task designed — `show`'s four sections and its versioned `--json`, and the
+`--repo R` half of `set` — it is listed under *behaviour not covered by the winners* in the pull
+request that carries this ruling, for the owner to decide, rather than dropped here.
 
 **Asked by:** the owner, 2026-10-31: "I want [the rigor mode default] at the project level, and we
 should have a fugaro command to manage that!"
@@ -78,17 +93,20 @@ not exist.
   and not "by whoever gets there first": rigor's R2 and the settings tasks depend on it and never
   fork it.
 - **The state word is `unpublished`, everywhere.** The local document has bytes the published object
-  does not: `rigor show`, `fugaro config layer` and doctor all call that **`unpublished`**, and all
-  three decide it the same way — the **same sha256 comparison** of the local file's bytes against
-  the published object's. One word, one comparison, three surfaces. And it is one state with **two
+  does not: `fugaro settings`, `fugaro config layer` and doctor all call that **`unpublished`**, and
+  all three decide it the same way — the **same sha256 comparison** of the local file's bytes against
+  the published object's. One word, one comparison, three surfaces. (**R3** designed a fourth,
+  `fugaro rigor show`; it is closed as a duplicate of the read, so the surfaces are these three, and
+  the read is the one that prints the word for a rigor key.) And it is one state with **two
   causes**, which the recorded generation (D854, answered) tells apart: a **local edit**, when the
   recorded generation is still the published one, and a **stale copy from another machine**, when
   the recorded generation is not the published one. The surfaces that print the word say which of
   the two it is, because the remedies differ — publish this file, or re-seed it from the published
   object.
 - **The no-checkout wording is `unknown (no checkout on this machine)`** in both designs — the
-  string `fugaro rigor show` prints for a repository whose own `fugaro.yaml` this machine has no
-  checkout for. Neither design guesses a mode it could not read.
+  string `fugaro settings --repo R` prints for a repository whose own `fugaro.yaml` this machine has
+  no checkout for. Neither design guesses a mode it could not read. (**R3** designed the sentence
+  for `fugaro rigor show`; the read carries it, so the sentence survives the closing of that task.)
 - **The joint order.** The editor comes first because two designs call it; the layer stage comes
   before the commands because a command that writes a layer nothing publishes is the second command
   the HARD RULE forbids (F18); the write half comes before `set` because `set` is what calls it.
@@ -99,8 +117,8 @@ not exist.
 | 2 | settings | the policy stage (S3) |
 | 3 | settings | the read half (S0–S2, S4) |
 | 4 | rigor | the local layer file, then the stage that publishes it: **R0** (the path `LayerFile`, `config publish`'s default and doctor's `local-layer-file` check — no stage yet) and **R1** (the `Layer` stage in `update` that seeds and publishes it, which needs R0's file) |
-| 5 | settings | set (S5) — the shared write helper R4 and R5 call, `internal/cli/settings_write.go`: diff, confirmation, agent-session refusal, backup, atomic write |
-| 6 | rigor and models | rigor R2–R5, and the `models` work |
+| 5 | settings | set (S5) — the shared write helper the rigor commands call, `internal/cli/settings_write.go`: diff, confirmation, agent-session refusal, backup, atomic write |
+| 6 | config-management and settings | the rigor commands **this plan designed and the owner closed as duplicates of theirs on 2026-11-10** — R2's splice (their **G0–G2** with **G4**), R3's read (their **S0–S2, S4**), R4's and R5's `set`, `unset` and `--repo` (their **G6**) — plus the `fugaro rigor floor` both designs claim (**S7** and config-management's **G7**), and the `models` work |
 
 This work's own tasks keep their levels in [implementation-plan.md](implementation-plan.md); the
 table above is the order the two designs land in together, and a task here that names a settings
@@ -120,8 +138,9 @@ file above it, and a path and a symbol survive.
 
 ## What this folder is not
 
-- **Not code.** It is a design, and the owner has decided it: R0–R8 are tasks for a later run, in
-  this release's queue.
+- **Not code.** It is a design, and the owner has decided it. **R0, R1 and R8 are merged; R2–R5 are
+  closed as duplicates of the two winning plans (2026-11-10); R6, R7 and W are the tasks left for a
+  later run.**
 - **Not a licence to widen it.** Every decision this folder held is answered (D830–D839), so a task
   here may start — but a task that finds a *new* decision reports it rather than picking an answer,
   and the decisions answered above are not reopened by an implementer's convenience. **D854 is
