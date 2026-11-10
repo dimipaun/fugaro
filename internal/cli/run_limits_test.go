@@ -131,6 +131,43 @@ func TestRunRefusesALooseningMaxTimeAgainstTotalTimeout(t *testing.T) {
 	}
 }
 
+// TestRunRefusesALimitAboveTheModeScaledCeiling: the ceiling a run starts from
+// is the deployed dollar cap scaled by the run's own rigor mode (D16, plan
+// T6.1 — the runner's envCeiling does the same scaling at bootstrap), not the
+// deployed cap itself. The limit here sits between the two, above Pro's 85% of
+// the installation's $5 cap and under the cap itself, so the refusal can only
+// be the scaling: judged against the unscaled figure the launch accepts a
+// --max-usd the runner's own merge drops as looser, and reports a limit that
+// never took effect — the silent drop D1043 exists to prevent.
+func TestRunRefusesALimitAboveTheModeScaledCeiling(t *testing.T) {
+	f := newCloudFixture(t)
+	f.appendConfig(t, "budget: { mode: enforce, per_run_usd: 5 }\n")
+	limitsImage(t, f)
+	limitsCheckout(t)
+	_, _, err := execute(t, "run", "--repo", limitsRepo, "--run-id", "20261110-170000-abcd", "--max-usd", "4.5", "A task")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a --max-usd above the mode's share of the cap refused", err)
+	}
+	for _, want := range []string{"--max-usd 4.5 is above the chain dollar limit this launch resolves",
+		"the owner's ceiling sets 4.25", "a launch can only tighten a limit"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("err = %v, want it to name %q", err, want)
+		}
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Fatalf("%d executions, want none", n)
+	}
+	// Under the mode's share the limit is accepted and written as it stands:
+	// the scaling lowers the ceiling, and never refuses a limit the lowered
+	// ceiling still carries.
+	if _, _, err := execute(t, "run", "--repo", limitsRepo, "--run-id", "20261110-170001-abcd", "--max-usd", "4", "A task"); err != nil {
+		t.Fatalf("--max-usd 4 is under Pro's share of the $5 cap: %v", err)
+	}
+	if o := readSpec(t, f, "20261110-170001-abcd").Overrides; o.MaxUSD == nil || *o.MaxUSD != 4 {
+		t.Fatalf("overrides = %+v, want the 4 dollars written", o)
+	}
+}
+
 // TestRunAcceptsATighteningLimit: every dimension the launch names is written
 // into the task's overrides as the merged effective value, which for a limit
 // that tightened is the caller's own number. Nothing loosens here, so nothing

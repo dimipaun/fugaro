@@ -24,6 +24,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/policy"
+	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/rigor"
@@ -397,10 +398,11 @@ type chainLimitPolicy struct {
 // the run will read (launchLevelsConfig), which is never nil: a launcher with
 // no checkout of the repository merges the project layer the task carries.
 func chainLimitPolicyOf(ctx context.Context, env *cloudEnv, spec *task.Spec, cfg *config.Config) chainLimitPolicy {
+	mode := rigor.Resolve(cfg.RigorConfig(), rigor.Request{Mode: rigor.Mode(spec.Rigor), Paths: spec.Paths}).Mode
 	c := chainLimitPolicy{
-		ceiling: ceilingLayer(env.lc),
+		ceiling: modeScaledCeiling(ceilingLayer(env.lc), mode),
 		under:   []policy.Layer{defaultBranchPolicyLayer(ctx, spec.Repo), runner.FileLayer(cfg)},
-		mode:    rigor.Resolve(cfg.RigorConfig(), rigor.Request{Mode: rigor.Mode(spec.Rigor), Paths: spec.Paths}).Mode,
+		mode:    mode,
 	}
 	// The node is what the owner says now, where the ceiling is the copy the
 	// job was deployed with, and the runner reads it that way at bootstrap
@@ -421,6 +423,32 @@ func chainLimitPolicyOf(ctx context.Context, env *cloudEnv, spec *task.Spec, cfg
 		c.ceiling.MaxRunTokens, c.fromNode[policy.KeyMaxRunTokens] = v, true
 	}
 	return c
+}
+
+// modeScaledCeiling is the ceiling the runner's bootstrap merge will build for
+// this run: the deployed dollar cap scaled by the run's own rigor mode
+// (config.RigorBudgetCap, D16, plan T6.1), and nothing else touched.
+//
+// The launcher's own ceiling is the deployed figure, and the runner's is not:
+// envCeiling scales the cap by the mode, so a run of mode Pro starts from 85%
+// of it. Judging the merge's chain layer against the unscaled cap accepts a
+// --max-usd between the two and writes it into the task, where the runner's own
+// merge then drops it as looser than the ceiling — the silent drop D1043 exists
+// to prevent, with the launcher reporting a figure that never took effect. Only
+// the dollars are scaled, and only the ceiling's own cap: the token ceiling is
+// the deployed one (envCeiling), and a cap the published node sets is the
+// owner's word taken exactly as it stands (policyCeiling, H1) — which is why
+// this runs before the node's keys are folded in above it.
+func modeScaledCeiling(l policy.Layer, mode rigor.Mode) policy.Layer {
+	if l.PerRunUSD <= 0 {
+		return l
+	}
+	deployed, err := pricing.FromUSD(l.PerRunUSD)
+	if err != nil {
+		return l
+	}
+	l.PerRunUSD = config.RigorBudgetCap(mode, deployed).USD()
+	return l
 }
 
 // merge merges the launch's chain layer under the policy above and returns the
