@@ -1,7 +1,6 @@
 package infra
 
 import (
-	"bytes"
 	"encoding/json"
 	"go/ast"
 	"go/parser"
@@ -11,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -1453,31 +1453,69 @@ profiles:
 //
 // Mutation (run, restore): read the account's token in the deployer or the
 // launcher (any `sm.Access(...)` outside the files below) — the scan fails
-// with the file that did it.
+// with the file that did it. The other spellings a read can take are held by
+// TestAPayloadReadInTheIntakesAdapterFailsTheScan.
 func TestNoSecretValueReadUnderInternal(t *testing.T) {
-	// The files allowed to name a secret-value read, and what each one is.
-	allowed := map[string]string{
-		"backend/gcp/secrets.go": "the Secret Manager client: Access is the GitHub App key pre-check's one read, Set writes values",
-		"cli/creds.go":           "C1.25's owner-run `fugaro creds set`/`creds ls` over the same ONE bundle container (Q6): set reads the document it is about to rewrite",
-		"cli/githubapp.go":       "the GitHub App key pre-check of init and doctor",
-		"credsvc/bundle.go":      "the credentials service's ONE bundle container (Q6): the service attaches the credential upstream, and it is the only Fugaro process that ever holds a model credential's value",
+	unlisted, stale := secretValueReadFindings(goFilesUnderInternal(t))
+	for _, f := range unlisted {
+		t.Errorf("internal/%s names a secret-value read (%v), and only these files may: %v. A Claude OAuth token reaches a run by the platform's mount, never through Fugaro", f, secretValueReadNames, slices.Sorted(maps.Keys(secretValueReadAllowed)))
 	}
-	// The reads, by the API each one is spelled with: the google-api client's
-	// Versions.Access and the cloud.google.com/go client's AccessSecretVersion.
-	//
-	// A secretmanager.SecretPayload is deliberately not a token here, though it
-	// was one until the intake landed (DS2.1). It is the type a version is
-	// WRITTEN with — AddSecretVersionRequest.Payload, at every site in this tree
-	// that names it (backend/gcp/secrets.go, cli/creds.go, and the intake's own
-	// adapter) — so it caught writers and no reader the two calls above miss:
-	// reading through either client is a call, `.Access(` or
-	// `AccessSecretVersion`, and the payload a read answers with comes back
-	// through one of them. Narrowing the list keeps every reader it found (all
-	// four files below still match) and stops reporting a file that can only
-	// write.
-	reads := []string{".Access(", "AccessSecretVersion"}
-	var found []string
-	root := ".." // internal/
+	// And every allowed file is still one, so a removal is noticed too.
+	for _, f := range stale {
+		t.Errorf("internal/%s no longer reads a secret value, and it is on the allow-list for %s: update the list rather than letting it drift", f, secretValueReadAllowed[f])
+	}
+}
+
+// secretValueReadAllowed are the files allowed to name a secret-value read, and
+// what each one is.
+var secretValueReadAllowed = map[string]string{
+	"backend/gcp/secrets.go": "the Secret Manager client: Access is the GitHub App key pre-check's one read, Set writes values",
+	"cli/creds.go":           "C1.25's owner-run `fugaro creds set`/`creds ls` over the same ONE bundle container (Q6): set reads the document it is about to rewrite",
+	"cli/githubapp.go":       "the GitHub App key pre-check of init and doctor",
+	"credsvc/bundle.go":      "the credentials service's ONE bundle container (Q6): the service attaches the credential upstream, and it is the only Fugaro process that ever holds a model credential's value",
+}
+
+// secretValueReadNames are the reads, by the API each one is spelled with: the
+// google-api client's Versions.Access, the cloud.google.com/go client's
+// AccessSecretVersion, and the REST form — a version is read by a `:access` on
+// its path, which is how a client that spells the call out itself reads one.
+var secretValueReadNames = []string{".Access(", "AccessSecretVersion", ":access\""}
+
+// secretValueWrittenPayload is the ONE naming of the payload type that is not a
+// read: AddSecretVersionRequest's own field, which is how every writer in this
+// tree spells it (backend/gcp/secrets.go, cli/creds.go, and the intake's own
+// adapter). The type was a read token of its own until the intake landed, and
+// that is the sensitivity a read inside the intake's adapter needs: the file is
+// a writer, deploy/terraform's reader guard holds it only as an exception
+// (E22), and this scan is the one guard left that can catch a read added to it.
+// So the write form is skipped and every other naming of the type is a read —
+// a payload a version's value arrives in is one however the file came by it.
+var secretValueWrittenPayload = regexp.MustCompile(`Payload:\s*&secretmanager\.SecretPayload\{`)
+
+// namesASecretValueRead reports whether a file's source names a read of a
+// secret's value.
+func namesASecretValueRead(src string) bool {
+	for _, name := range secretValueReadNames {
+		if strings.Contains(src, name) {
+			return true
+		}
+	}
+	return strings.Contains(secretValueWrittenPayload.ReplaceAllString(src, ""), "SecretPayload")
+}
+
+// goSource is one Go file the scan reads: its path under internal/ and its
+// source, so the guard can be run over a file that is not on disk.
+type goSource struct {
+	rel string
+	src string
+}
+
+// goFilesUnderInternal is every non-test Go file under internal/, which is the
+// scope the guard names.
+func goFilesUnderInternal(t *testing.T) []goSource {
+	t.Helper()
+	const root = ".." // internal/
+	var files []goSource
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -1489,30 +1527,98 @@ func TestNoSecretValueReadUnderInternal(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		for _, r := range reads {
-			if bytes.Contains(b, []byte(r)) {
-				rel, err := filepath.Rel(root, p)
-				if err != nil {
-					return err
-				}
-				found = append(found, filepath.ToSlash(rel))
-				return nil
-			}
+		rel, err := filepath.Rel(root, p)
+		if err != nil {
+			return err
 		}
+		files = append(files, goSource{rel: filepath.ToSlash(rel), src: string(b)})
 		return nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, f := range found {
-		if _, ok := allowed[f]; !ok {
-			t.Errorf("internal/%s names a secret-value read (%v), and only these files may: %v. A Claude OAuth token reaches a run by the platform's mount, never through Fugaro", f, reads, slices.Sorted(maps.Keys(allowed)))
+	return files
+}
+
+// secretValueReadFindings is the guard's whole answer over a set of files: the
+// ones that name a read with no exception row, and the rows whose file no
+// longer names one.
+func secretValueReadFindings(files []goSource) (unlisted, stale []string) {
+	found := map[string]bool{}
+	for _, f := range files {
+		if !namesASecretValueRead(f.src) {
+			continue
+		}
+		found[f.rel] = true
+		if _, ok := secretValueReadAllowed[f.rel]; !ok {
+			unlisted = append(unlisted, f.rel)
 		}
 	}
-	// And every allowed file is still one, so a removal is noticed too.
-	for f := range allowed {
-		if !slices.Contains(found, f) {
-			t.Errorf("internal/%s no longer reads a secret value, and it is on the allow-list for %s: update the list rather than letting it drift", f, allowed[f])
+	for f := range secretValueReadAllowed {
+		if !found[f] {
+			stale = append(stale, f)
+		}
+	}
+	slices.Sort(unlisted)
+	slices.Sort(stale)
+	return unlisted, stale
+}
+
+// TestAPayloadReadInTheIntakesAdapterFailsTheScan holds the reader that no
+// other guard can: internal/intake/gcp.go is on deploy/terraform's reader list
+// as a writer (E22), so a read added inside it is invisible to that scan, and
+// this one has no row for the file to excuse it. Each case is a spelling such a
+// read could take, put into the real adapter's source and asked of the real
+// guard over the real tree — the write form the adapter actually has is the
+// run's own control, since it must stay invisible for the file to need no row
+// at all.
+func TestAPayloadReadInTheIntakesAdapterFailsTheScan(t *testing.T) {
+	const rel = "intake/gcp.go"
+	files := goFilesUnderInternal(t)
+	if unlisted, stale := secretValueReadFindings(files); len(unlisted) != 0 || len(stale) != 0 {
+		t.Fatalf("the tree already fails this guard (unlisted %v, stale %v), so a mutation here would prove nothing", unlisted, stale)
+	}
+	var real string
+	for _, f := range files {
+		if f.rel == rel {
+			real = f.src
+		}
+	}
+	if real == "" {
+		t.Fatalf("%s is not a file this guard reads, so this test is not about the guard's blind spot", rel)
+	}
+	for _, tc := range []struct{ what, read string }{
+		{"a version read decoded into the payload type", `
+var payload secretmanager.SecretPayload
+if err := json.Unmarshal(body, &payload); err != nil {
+	return "", err
+}
+return string(payload.Data), nil
+`},
+		{"a version read over REST", `
+resp, err := http.Get(s.svc.BasePath + "/secrets/" + id + "/versions/latest:access")
+if err != nil {
+	return "", err
+}
+defer resp.Body.Close()
+`},
+		{"a version read through the cloud client", `
+got, err := c.AccessSecretVersion(ctx, &secretmanagerpb.AccessSecretVersionRequest{Name: id})
+if err != nil {
+	return "", err
+}
+return string(got.Payload.Data), nil
+`},
+	} {
+		mutated := slices.Clone(files)
+		for i := range mutated {
+			if mutated[i].rel == rel {
+				mutated[i].src = real + "\nfunc mutated(id string) (string, error) {\n" + tc.read + "}\n"
+			}
+		}
+		unlisted, stale := secretValueReadFindings(mutated)
+		if len(unlisted) != 1 || unlisted[0] != rel || len(stale) != 0 {
+			t.Errorf("%s in internal/%s: the guard reports unlisted %v and stale %v, want just %s", tc.what, rel, unlisted, stale, rel)
 		}
 	}
 }
