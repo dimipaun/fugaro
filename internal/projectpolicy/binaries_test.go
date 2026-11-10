@@ -289,7 +289,7 @@ func TestBinariesBlockRefusesAMemberItDoesNotRead(t *testing.T) {
 	for _, tc := range []struct{ name, block string }{
 		{"an unknown member", `{"allow": [], "max_size": 1}`},
 		{"a case-folded member", `{"allow": [], "Max_Bytes": 1}`},
-		{"a member written twice", `{"allow": ["brand/*.png"], "allow": ["console/**"]}`},
+		{"a member written twice", `{"allow": ["brand/*.png"], "allow": ["website/public/**"]}`},
 		{"not an object", `[]`},
 		{"a bare string", `"brand/*.png"`},
 	} {
