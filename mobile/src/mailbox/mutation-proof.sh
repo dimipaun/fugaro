@@ -452,12 +452,17 @@ run "the SDK's queue is real, which is what the client's claim rests on (store.j
   mobile/src/mailbox/store.js src/mailbox/client.test.js
 
 # 11. The lapse (S6.3; D436, T12; the design is docs/design/lapse-read-only.md
-#     §4). Six guards in client.js, three in state.js -- the refuser this client
-#     gained, and the two readings its table makes -- one in index.js, the door
-#     that must not hand the rules out, and three at the hops a launch's
-#     CLASSIFICATION travels (the typed input, the spoken dialogue and the voice
-#     screen P6.12 sends through). The last two plant what the two scans exist
-#     to catch: a second enforcement in the app, and a rule on the door.
+#     §4). Seven guards in client.js -- the refuser this client gained, the
+#     QUESTION it answers (§5.7's second door, which classifies the write it is
+#     asked about as `send` does) and the five beside them -- three in state.js,
+#     the refuser and the two readings its table makes -- one in index.js, the
+#     door that must not hand the rules out, and four at the hops a launch's
+#     CLASSIFICATION travels: the typed input, the spoken dialogue, the voice
+#     screen P6.12 sends through, and the voice screen's own OFFLINE door, where
+#     the licence has to answer before the screen answers "the orchestrator is
+#     offline" for a licence's reason. The two scan guards plant what the two
+#     scans exist to catch: a second enforcement in the app, and a rule on the
+#     door.
 run "the lapse refuses the writes it does not keep (the launch, the merge, the config change)" \
   "    if (refusedByLapse !== null) {
       return spokenRefusal(refusedByLapse, { text: body.text, at, keepText: !isAction });" \
@@ -548,6 +553,29 @@ run "the screen passes the classification on instead of swallowing it (screen.js
   "    const sent = await client.send(text, options);" \
   "    const sent = await client.send(text);" \
   mobile/src/voice/screen.js src/voice/screen.test.js
+# The screen's own OFFLINE pre-check sits in FRONT of `send` -- it has to, or a
+# write would escape while offline -- so it is the one place where a licence
+# reason and a network reason are both true and the screen answers first. The
+# question above is what stops it masking the licence (§5.7, and §4.4's "a lapse
+# may not be the reason the app hears nothing"), and the licence's answer must
+# WIN rather than only be asked for.
+run "the licence's answer beats this screen's own offline refusal (screen.js)" \
+  "      if (refusedByLicence !== null) return refusedByLicence;" \
+  "      if (false) return refusedByLicence;" \
+  mobile/src/voice/screen.js src/voice/screen.test.js
+# The question is a second door into the SAME table, so it classifies what it is
+# asked about exactly as `send` does: classify nothing here and every lapsed
+# write reads as chatter, which the lapse keeps.
+run "the licence question classifies the write it is asked about (client.js)" \
+  "    const refused = await lapseRefusalAt(licence, {
+      now: new Date(at),
+      write: writeOf({ verb: opts.verb, action: opts.action }),
+    });" \
+  "    const refused = await lapseRefusalAt(licence, {
+      now: new Date(at),
+      write: writeOf({}),
+    });" \
+  mobile/src/mailbox/client.js src/mailbox/client.test.js
 
 echo
 echo "guards proved: $killed killed, $survivors survived, $unapplied not applied"

@@ -752,6 +752,57 @@ export function createMailboxClient(options = {}) {
     return refuse(written.code, written.field);
   }
 
+  /**
+   * The LICENCE's answer for one write, asked before anything else and reported
+   * as the refusal `send` would return -- and nothing else (S6.3; the design's
+   * §5.7).
+   *
+   * A screen with a refusal of its own asks this first. The voice screen will
+   * not accept a message while P1.4 says offline, and that pre-check sits in
+   * front of `send` -- so on its own it answers "the orchestrator is offline"
+   * for a licence's reason, which §5.7 forbids: the owner is sent to wait for a
+   * network that is not the problem, and the sentence naming the key screen
+   * (which is never gated) is never said. The licence outranks the gate here
+   * for the same reason it does inside `send`, and a screen cannot reach that
+   * order without the write path.
+   *
+   * It writes nothing: no id is minted, no key is touched and the store is not
+   * reached. What it does is report the refusal the way `send` reports one --
+   * spoken, and the text kept as `unsent()` for a message -- because it IS the
+   * same refusal, made by the same table.
+   *
+   * `null` is "the licence has no opinion": a kept class (a message, a cancel,
+   * the kill switch), a state that keeps this write, or a client built with no
+   * port at all. A caller's own refusal then stands where it stood.
+   *
+   * @param {unknown} text what the owner said
+   * @param {{action?: object, verb?: string}} [options] the caller's
+   *   classification, exactly as `send` takes it
+   * @returns {Promise<object|null>} the refusal, or `null`
+   */
+  async function licenceRefusal(text, options) {
+    if (typeof text !== 'string' || text === '') return null;
+    if (text.length > TEXT_MAX) return null;
+    const body = redact(text);
+    if (!body.ok) return null;
+    const at = clock();
+    if (at === null) return null;
+    const opts = options === undefined || options === null ? {} : options;
+    if (typeof opts !== 'object' || Array.isArray(opts)) {
+      throw new TypeError('licenceRefusal: the options must be an object');
+    }
+    const refused = await lapseRefusalAt(licence, {
+      now: new Date(at),
+      write: writeOf({ verb: opts.verb, action: opts.action }),
+    });
+    if (refused === null) return null;
+    return spokenRefusal(refused, {
+      text: body.text,
+      at,
+      keepText: !Object.hasOwn(opts, 'action'),
+    });
+  }
+
   // flushMutating re-writes every message the outbox has not answered, oldest
   // first, with the SAME record -- id and `at` included. It is the reconnect
   // half of the client, and it mutates `outbound`, which is why `flush` and
@@ -1073,6 +1124,7 @@ export function createMailboxClient(options = {}) {
     ok: true,
     paths,
     send: (text, options) => serial(() => send(text, options)),
+    licenceRefusal: (text, options) => serial(() => licenceRefusal(text, options)),
     flush: () => serial(() => flush()),
     poll: () => serial(() => poll()),
     pending,

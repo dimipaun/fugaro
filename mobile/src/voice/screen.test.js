@@ -430,6 +430,7 @@ test('the poll\'s presence goes through that same guard, which is the path the a
   const stub = {
     send: async () => Object.freeze({ ok: true }),
     poll: async () => Object.freeze({ ok: true, presence: { state: 'gone', reason: 'nonsense' } }),
+    licenceRefusal: async () => null,
   };
   const screen = createVoiceScreen({ pipeline: h.pipeline, client: stub, now: h.now, holder: PHONE });
 
@@ -512,6 +513,52 @@ test('a transcript that arrives while offline is refused too, and nothing is wri
   assert.equal(h.writes(), before, 'nothing reached the store');
   assert.deepEqual(h.screen.state().refused, { code: 'offline', field: 'presence' });
   assert.equal(h.screen.state().transcript.text, 'run the tests', 'and what was heard is still shown');
+});
+
+test('offline and lapsed at once: the licence answers this door, and the network does not', async () => {
+  // The masking the design forbids (§5.7, and §4.4's rule that "a lapse may not
+  // be the reason the app hears nothing"): a lapsed owner must
+  // not be told "the orchestrator is offline", which sends them to wait for a
+  // network that is not the problem, when the way out is the key screen.
+  //
+  // This screen's own refusal sits in FRONT of `client.send` -- it has to, or a
+  // write would escape while offline -- so on its own it would answer a lapsed
+  // launch with its own offline code. Both states are true of the one utterance
+  // here: no heartbeat was ever planted, and the port is held at the lapse.
+  const h = await harness({ licence: lapsedPort() });
+  await h.screen.poll();
+  assert.equal(h.screen.state().offline, true, 'the orchestrator is not there');
+  const before = h.writes();
+
+  // The refusal is SPOKEN (`state.js`'s own sentence, through the app's
+  // speaker), so the utterance is played out the way every other one in this
+  // file is.
+  const refused = h.screen.accept('run the release', { verb: 'launch' });
+  await settle();
+  h.tts.finish();
+  const accepted = await refused;
+  assert.equal(accepted.ok, false);
+  assert.equal(accepted.code, LICENCE_STATE_CODES.LAPSED, 'the licence\'s answer, and not this screen\'s');
+  assert.deepEqual(h.tts.spoken(), [LICENCE_SPEECH[LICENCE_STATE_CODES.LAPSED]],
+    'the owner hears the licence\'s own sentence, which names the key screen');
+  await settle();
+  assert.equal(h.writes(), before, 'nothing reached the store');
+  // Not recorded as this screen's own: `refused` is what THIS screen refused,
+  // and the licence's refusal is the client's, returned as the client's (the
+  // rule P6.10's stale refusal follows too).
+  assert.equal(h.screen.state().refused, null);
+
+  // The control, on the wiring the app ships today (no licence port, so no
+  // opinion): this screen's own refusal stands exactly where it stood, code and
+  // record both. Without it the assertion above could be an offline refusal
+  // that some other change replaced, rather than the licence answering.
+  const plain = await harness();
+  await plain.screen.poll();
+  assert.deepEqual(
+    { ...(await plain.screen.accept('run the release', { verb: 'launch' })) },
+    { ok: false, code: 'offline', field: 'presence' },
+  );
+  assert.deepEqual(plain.screen.state().refused, { code: 'offline', field: 'presence' }, 'and it is recorded here');
 });
 
 // --- the plan, sentence three ----------------------------------------------
@@ -680,6 +727,15 @@ test('the screen is built from a pipeline, a client, a clock and a holder, and s
   const deps = { pipeline: h.pipeline, client: h.client, now: h.now, holder: PHONE };
   assert.throws(() => createVoiceScreen({ ...deps, pipeline: {} }), TypeError);
   assert.throws(() => createVoiceScreen({ ...deps, client: { send: () => {} } }), TypeError);
+  // A client this screen can send with and poll but not ASK about the licence
+  // is a wiring failure too (S6.3): `accept` asks it before its own offline
+  // refusal, and a screen that refused offline otherwise would be answering
+  // "the orchestrator is offline" for a licence's reason.
+  assert.throws(
+    () => createVoiceScreen({ ...deps, client: { send: () => {}, poll: () => {} } }),
+    TypeError,
+    'the licence question is part of the client this screen needs',
+  );
   assert.throws(() => createVoiceScreen({ ...deps, now: 'now' }), TypeError);
   assert.throws(() => createVoiceScreen({ ...deps, holder: '' }), TypeError);
   assert.throws(() => createVoiceScreen({ ...deps, switch: 'sometimes' }), TypeError);

@@ -460,15 +460,18 @@ test('the client is frozen, and so are the paths it writes to', async () => {
   }, TypeError);
 });
 
-test('the client object is exactly its seven names, and nothing else is on it', async () => {
+test('the client object is exactly its eight names, and nothing else is on it', async () => {
   // `index.test.js` pins the DOOR's export set; the object the builder returns
   // is the other half of the same rule, and it is the one a screen holds. A
   // `raw(path, value)` added here "for one screen" would be a second write path
   // with its own key handling -- the thing D113 and this whole task are about.
   // `unsent` is P6.10's one addition, and it is a read: the utterances the gate
-  // refused, which nothing here will ever send.
+  // refused, which nothing here will ever send. `licenceRefusal` is S6.3's
+  // addition and it is a read too -- the refusal the licence would make for one
+  // write, which a screen with a refusal of its own asks before it makes one.
   const h = await harness();
-  assert.deepEqual(Object.keys(h.client).sort(), ['flush', 'ok', 'paths', 'pending', 'poll', 'send', 'unsent']);
+  assert.deepEqual(Object.keys(h.client).sort(),
+    ['flush', 'licenceRefusal', 'ok', 'paths', 'pending', 'poll', 'send', 'unsent']);
   for (const name of ['raw', 'write', 'read', 'store', 'keys', 'key', 'mac', 'database', 'ref']) {
     assert.equal(name in h.client, false, name);
   }
@@ -1609,12 +1612,14 @@ test('nothing in the module reads a clock, a random source, a file or a global',
   }
 
   // ... and the count of Date constructions, which is what makes the anchor
-  // above exactly as strong as it should be: this module builds exactly ONE
-  // `Date`, over the moment it was handed (`send`'s `at`, D117's clock) and over
-  // nothing else. A second one over anything but `at` is a flagged change.
+  // above exactly as strong as it should be: **every** `Date` this module builds
+  // is over the moment it was handed (`at`, D117's clock), and over nothing
+  // else. There are two -- `send`'s and the licence question's (S6.3: a screen
+  // asks the licence at its own moment, and the port takes a `Date`) -- and each
+  // one is read by this line: a third over anything but `at` is a flagged change.
   const built = [...code(readFileSync(new URL('client.js', import.meta.url), 'utf8'))
     .matchAll(/\bnew Date\s*\(([^)]*)\)/g)].map((match) => match[1].trim());
-  assert.deepEqual(built, ['at'], 'the client builds one Date, from the clock it was given');
+  assert.deepEqual(built, ['at', 'at'], 'the client builds its Dates from the clock it was given');
 });
 
 /**
@@ -2153,6 +2158,48 @@ test('after the grace a launch is refused, and nothing is minted, signed or writ
     { text: 'launch the docs task', at: T0, code: LICENCE_STATE_CODES.LAPSED },
   ]);
   assert.deepEqual(h.client.pending(), []);
+});
+
+test('the licence can be asked about one write without writing it, which is what a screen asks first', async () => {
+  // S6.3's second door into the same table, and it is a QUESTION rather than a
+  // write. A screen with a refusal of its own -- the voice screen will not
+  // accept a message while P1.4 says offline -- would otherwise answer "the
+  // orchestrator is offline" for a licence's reason, which §5.7 forbids; and it
+  // cannot make the licence's refusal itself, because the lapse is decided in
+  // the write path and nowhere else. So the write path is asked, and what comes
+  // back is the refusal `send` would have returned, reported the same way.
+  const lapse = licenceIn(LICENCE_STATES.LAPSED);
+  const h = await harness({ licence: lapse.port, keys: countingKeys(new SecretStore(new MemorySecureStore())) });
+
+  const refused = await h.client.licenceRefusal('launch the docs task', { verb: 'launch' });
+  assert.deepEqual(refused, lapsedRefusal(), 'the refusal `send` returns, in the same shape');
+  assert.deepEqual(h.speaker.spoken(), [LICENCE_SPEECH[LICENCE_STATE_CODES.LAPSED]], 'and it is said out loud');
+  assert.deepEqual(h.store.writes(), [], 'nothing was written');
+  assert.equal(h.minted(), 0, 'no id was minted');
+  assert.deepEqual(h.keys.asked(), [], 'and the pairing key was never touched');
+  assert.deepEqual(h.client.unsent(), [
+    { text: 'launch the docs task', at: T0, code: LICENCE_STATE_CODES.LAPSED },
+  ], 'the text is kept for a resend, exactly as a refused `send` keeps it');
+
+  // An action record is refused too, and NOT kept: D167's rule is about what the
+  // utterance is, and this is the same refusal by the same table.
+  const merged = await h.client.licenceRefusal('merge it', { action: mergeRecord(T0) });
+  assert.equal(merged.code, LICENCE_STATE_CODES.LAPSED);
+  assert.equal(h.client.unsent().length, 1, 'a refused action is not kept as unsent text');
+
+  // A kept write gets NO answer: the licence has no opinion about a message, a
+  // cancel or the kill switch, so the caller's own refusal stands where it
+  // stood -- and the store is not opened to say so.
+  const reads = lapse.read().length;
+  assert.equal(await h.client.licenceRefusal('how is it going'), null, 'chatter is a kept class');
+  assert.equal(await h.client.licenceRefusal('stop everything', { verb: 'kill-switch' }), null);
+  assert.equal(lapse.read().length, reads, 'and neither of them reads the licence store');
+
+  // Every other state has no opinion either, and asking writes nothing at all.
+  const keeps = await harness({ licence: licenceIn(LICENCE_STATES.VALID).port });
+  assert.equal(await keeps.client.licenceRefusal('launch the docs task', { verb: 'launch' }), null);
+  assert.deepEqual(keeps.speaker.spoken(), [], 'nothing is said about a licence that is in order');
+  assert.deepEqual(keeps.store.writes(), [], 'and the question is not a write');
 });
 
 test('after the grace the configuration change is refused too', async () => {
