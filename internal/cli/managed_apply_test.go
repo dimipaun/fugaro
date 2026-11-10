@@ -371,7 +371,11 @@ func TestManagedApplyPrintsAContentWarningAndKeepsNoRecordOfIt(t *testing.T) {
 	// project — whose one change is the removal of a Run job no entry of the
 	// owner's list approves (the rig's allow list holds nothing), which is a
 	// warning and not a refusal because google_cloud_run_v2_job is classified
-	// and not data-bearing (D1551).
+	// and not data-bearing (D1551). The job the removal takes away is the
+	// managed project's own — its name carries the prefix and it runs as one of
+	// the project's managed accounts — because a delete is read as the resource
+	// it removes (removed), so a before view that was not this project's would
+	// be refused for that reason instead of warning.
 	b, err := json.Marshal(map[string]any{
 		"format_version": "1.2",
 		"configuration": map[string]any{"provider_config": map[string]any{"google": map[string]any{
@@ -381,7 +385,10 @@ func TestManagedApplyPrintsAContentWarningAndKeepsNoRecordOfIt(t *testing.T) {
 			"address": "module.managed.google_cloud_run_v2_job.worker", "mode": "managed",
 			"type": "google_cloud_run_v2_job", "name": "worker",
 			"provider_name": "registry.terraform.io/hashicorp/google",
-			"change":        map[string]any{"actions": []string{"delete"}, "before": map[string]any{"name": "worker"}}}},
+			"change": map[string]any{"actions": []string{"delete"}, "before": map[string]any{
+				"name": tf.ManagedPrefix + "worker",
+				"template": []any{map[string]any{"template": []any{map[string]any{
+					"service_account": tf.ManagedPrefix + "worker@" + initProject + ".iam.gserviceaccount.com"}}}}}}}},
 	})
 	if err != nil {
 		t.Fatal(err)

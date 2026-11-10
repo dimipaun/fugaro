@@ -126,6 +126,24 @@ func TestNotCoveredSplitTellsIntegrityFromContent(t *testing.T) {
 	dataMode.ResourceChanges[0].Mode = "data"
 	foreign := managedPlan(mrc("google_storage_bucket", map[string]any{"name": ManagedPrefix + "bucket"}))
 	foreign.ResourceChanges[0].ProviderName = "registry.terraform.io/hashicorp/aws"
+	// The rest of the resource chain, one fixture each: every rule of it below
+	// the type table is D1549's, so each of these is integrity whatever the
+	// change's actions are, and a mutation that made one content — a warning the
+	// plan then applies — has to fail a test (the table below is what fails it).
+	authoritativeIAM := managedPlan(mrc("google_storage_bucket_iam_binding",
+		map[string]any{"bucket": ManagedPrefix + "bucket"}))
+	serviceKey := managedPlan(mrc("google_service_account_key", nil))
+	billing := managedPlan(mrc("google_billing_budget", map[string]any{"billing_account": "billingAccounts/CCCC-DDDD"}))
+	// managedResource's name rule: a kept type whose own name is not the
+	// managed project's.
+	outsidePrefix := managedPlan(mrc("google_cloud_run_v2_job", map[string]any{"name": "fugaro-coordinator"}))
+	// managedProject: a well-named resource that lands in another project.
+	otherProject := managedPlan(mrc("google_storage_bucket", map[string]any{"name": ManagedPrefix + "bucket", "project": "other"}))
+	// The import rules, which read the plan's importing block rather than its
+	// views: an ID outside this run's projects.
+	imported := mrc("google_storage_bucket", map[string]any{"name": ManagedPrefix + "bucket"})
+	imported.Change.Importing = &Importing{ID: "other-project/fugaro-bucket"}
+	foreignImport := managedPlan(imported)
 
 	for _, tc := range []struct {
 		name, half, want string
@@ -134,6 +152,12 @@ func TestNotCoveredSplitTellsIntegrityFromContent(t *testing.T) {
 		{"a provisioner", "integrity", "a provisioner", provisioner},
 		{"a data source", "integrity", "a data source", dataMode},
 		{"a foreign provider", "integrity", "registry.terraform.io/hashicorp/aws", foreign},
+		{"an authoritative IAM resource", "integrity", "an authoritative IAM resource", authoritativeIAM},
+		{"a service account key", "integrity", "a service account key", serviceKey},
+		{"a billing account the review did not show", "integrity", "billing account CCCC-DDDD", billing},
+		{"a name outside the managed prefix", "integrity", `"fugaro-coordinator", outside the managed prefix`, outsidePrefix},
+		{"a resource in another project", "integrity", "in project other, which is not this run's", otherProject},
+		{"an import outside this run's projects", "integrity", "which is not in the managed project's projects", foreignImport},
 		{"a dropped type", "content", "allowlist leaves out", managedPlan(mrc("google_logging_project_sink", nil))},
 		{"a grant the table does not make", "content", "basic role", managedPlan(mrc("google_storage_bucket_iam_member",
 			map[string]any{"bucket": ManagedPrefix + "bucket", "member": "serviceAccount:" + managedAccount, "role": "roles/owner"}))},
@@ -216,16 +240,22 @@ func TestAReplaceIsJudgedOnWhatItCreates(t *testing.T) {
 				t.Errorf("NotCovered holds %d items, the split holds %d: the halves are the whole answer", got, want)
 			}
 
-			// The same resource DELETED and not replaced is still only the
-			// warning: a plain delete has no after view for the rules below to
-			// read, so the walk stops at D1545's record-and-warn exactly as it
-			// did before this arm carried on for a replace.
+			// The same resource DELETED and not replaced is judged on what it
+			// REMOVES: a delete creates nothing, so terraform writes the object
+			// in before and null in after, and the walk below reads that view
+			// (removed) rather than an empty after. The case's own bad view is
+			// moved into before, which is what makes the two halves of one
+			// resource answer the same way — a removal warned about and the
+			// resource it takes away refused for the same reason a create of it
+			// would be.
 			gone := tc.change
 			gone.Change.Actions = []string{"delete"}
+			gone.Change.Before = tc.change.Change.After
 			gone.Change.After = nil
+			gone.Change.AfterUnknown = nil
 			integrity, content = testCover.NotCoveredSplit(&Plan{FormatVersion: "1.2", ResourceChanges: []ResourceChange{gone}}, nil)
-			if len(integrity) != 0 {
-				t.Errorf("the delete gives integrity %q, want nothing: a delete creates no resource for those rules to read", integrity)
+			if len(integrity) != 1 || !strings.Contains(integrity[0], tc.want) {
+				t.Errorf("the delete gives integrity %q, want one refusal of the removed view naming %q: a removal is not a way past the rules below it", integrity, tc.want)
 			}
 			if len(content) != 1 || !strings.Contains(content[0], "actions delete") {
 				t.Errorf("the delete gives content %q, want one warning for the removal", content)
@@ -243,8 +273,9 @@ func TestAReplaceIsJudgedOnWhatItCreates(t *testing.T) {
 // notCoveredResource keeps. Every case below is one of those arms whose
 // created half is in another project, so the walk below the arm has something
 // to refuse: the removal stays one warning and the refusal is the create's. A
-// pure delete of the same object is still only the warning, which is the arm
-// the walk is allowed to end at.
+// pure delete of the same object is judged on the object it REMOVES instead,
+// so the removal stays one warning while the resource it takes away is read —
+// which refuses it when it is not this run's.
 func TestAManagedReplaceIsJudgedOnWhatItCreates(t *testing.T) {
 	// The fixture is a kept resource of a type D1551 does NOT protect, so its
 	// removal is one of D1545's warnings rather than a refusal of its own —
@@ -304,19 +335,54 @@ func TestAManagedReplaceIsJudgedOnWhatItCreates(t *testing.T) {
 		})
 	}
 
-	// And a pure delete of the same object is the arm the walk DOES end at:
-	// nothing is created, so there is nothing below to read and the removal's
-	// own warning is the whole answer. The unlisted arm is the one that always
-	// warns, so the case is written on it.
-	gone := replaced()
-	gone.Change.Actions = []string{"delete"}
-	gone.Change.After = nil
-	integrity, content := managedTestCover().NotCoveredSplit(managedPlan(gone), nil)
+	// And a pure delete is judged the same way — the walk does not end at the
+	// removal's warning, it reads the object being removed (removed). This
+	// fixture's own object, removed, is this run's: the warning is the whole
+	// answer, as it always was. The same object removed from somebody else's
+	// project is refused for the resource rule, which is the hole a delete that
+	// ended at its warning left open — an unlisted destroy of a kept type was
+	// waved through whatever it took away, a resource in another project, a name
+	// outside the managed prefix, an object whose type says nothing about
+	// removal.
+	ours := job
+	ours.Change.Actions = []string{"delete"}
+	ours.Change.Before = maps.Clone(job.Change.After)
+	ours.Change.After = nil
+	ours.Change.AfterUnknown = nil
+	integrity, content := managedTestCover().NotCoveredSplit(managedPlan(ours), nil)
 	if len(integrity) != 0 {
-		t.Errorf("a delete gives integrity %q, want nothing: only the removal is read", integrity)
+		t.Errorf("a delete of this run's own object gives integrity %q, want nothing: the removal's own warning is the whole answer", integrity)
 	}
 	if len(content) != 1 || !strings.Contains(content[0], "not on the owner's delete list") {
 		t.Errorf("a delete gives content %q, want the one warning", content)
+	}
+
+	elsewhere := ours
+	elsewhere.Change.Before = maps.Clone(ours.Change.Before)
+	elsewhere.Change.Before["project"] = "somebody-elses-project"
+	integrity, content = managedTestCover().NotCoveredSplit(managedPlan(elsewhere), nil)
+	if len(integrity) != 1 || !strings.Contains(integrity[0], "not this run's") {
+		t.Errorf("a delete of somebody else's object gives integrity %q, want one refusal of the removed resource", integrity)
+	}
+	if len(content) != 1 || !strings.Contains(content[0], "not on the owner's delete list") {
+		t.Errorf("that delete gives content %q, want the one warning for the removal", content)
+	}
+
+	// The same arm on the other half of managedResource's rule, and the shape
+	// the finding was written with: an unlisted destroy of a kept type whose
+	// name is not the managed project's is refused for the name, where before
+	// the walk ended at the removal's warning.
+	outside := managedOutsideFixture[job.Type]
+	outside.Change.Actions = []string{"delete"}
+	outside.Change.Before = maps.Clone(outside.Change.After)
+	outside.Change.After = nil
+	outside.Change.AfterUnknown = nil
+	integrity, content = managedTestCover().NotCoveredSplit(managedPlan(outside), nil)
+	if len(integrity) != 1 || !strings.Contains(integrity[0], ManagedPrefix) {
+		t.Errorf("a delete of a name outside the prefix gives integrity %q, want one refusal naming %s", integrity, ManagedPrefix)
+	}
+	if len(content) != 1 || !strings.Contains(content[0], "not on the owner's delete list") {
+		t.Errorf("that delete gives content %q, want the one warning for the removal", content)
 	}
 }
 

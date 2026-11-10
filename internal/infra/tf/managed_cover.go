@@ -422,13 +422,17 @@ func (c ManagedCover) notCoveredSplit(p *Plan, imports []ImportKey) (all, integr
 		// this gate exists to avoid. The same holds for a removal the list does
 		// NOT admit, and for the reasons the delete rule refuses one with: their
 		// answer is about the removal — a refusal, or D1545's warning for a type
-		// D1551 takes — and the resource a replace creates is judged underneath
-		// it all the same. Only an answer that decides the whole change ends the
-		// walk here: a destroy, which has nothing in after to read, and an
-		// integrity removal (RefusesRemovalType's data-bearing or unclassified
-		// type), which refuses the change whatever it creates. That is the side
-		// of the line Cover's own walk stands on, where a removal that is not
-		// content stops at its answer and a content one carries on.
+		// D1551 takes — and the resource is judged underneath it all the same.
+		// Only ONE answer ends the walk here: an integrity removal
+		// (RefusesRemovalType's data-bearing or unclassified type), which refuses
+		// the change whatever else it does. A removal the list warned about does
+		// not, and neither does a destroy: a destroy has nothing in after for the
+		// created view's rules to read, but the resource it REMOVES is read all
+		// the same (removed, below), so a destroy whose object is in another
+		// project, outside the managed prefix, or of a dropped type is refused
+		// for that reason and not waved through on the removal's warning — which
+		// is the hole a warning that ended the walk would open, and the one the
+		// same walk's replace half closes for a replace.
 		// acts is one of managedActions' sets past the switch below, so a set
 		// that names "delete" is a destroy or a replace, and the two are told
 		// apart by how many actions it has.
@@ -450,7 +454,7 @@ func (c ManagedCover) notCoveredSplit(p *Plan, imports []ImportKey) (all, integr
 			// nothing to record but the address, which is no longer an
 			// approval.
 			addRemoval(rc, "actions "+strings.Join(acts, ", ")+": "+notOnDeleteListReason(rc))
-			if destroy || RefusesRemovalType(rc.Type) {
+			if RefusesRemovalType(rc.Type) {
 				continue
 			}
 		// The list names an address, and the object a removal takes away is
@@ -462,7 +466,7 @@ func (c ManagedCover) notCoveredSplit(p *Plan, imports []ImportKey) (all, integr
 			continue
 		case removes && !managedRemovalReasons[rc.ActionReason]:
 			addRemoval(rc, "actions "+strings.Join(acts, ", ")+": action_reason "+rc.ActionReason+", which the managed delete rule does not know")
-			if destroy || RefusesRemovalType(rc.Type) {
+			if RefusesRemovalType(rc.Type) {
 				continue
 			}
 		// And the last of the list's own rules: the entry names the address,
@@ -472,7 +476,7 @@ func (c ManagedCover) notCoveredSplit(p *Plan, imports []ImportKey) (all, integr
 		case removes:
 			if ok, why := Approves(c.AllowDelete, rc); !ok {
 				addRemoval(rc, "actions "+strings.Join(acts, ", ")+": "+why)
-				if destroy || RefusesRemovalType(rc.Type) {
+				if RefusesRemovalType(rc.Type) {
 					continue
 				}
 			}

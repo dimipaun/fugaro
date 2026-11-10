@@ -1138,18 +1138,22 @@ func (c Cover) notCoveredSplit(p *Plan, imports []ImportKey) (all, integrity, co
 				continue
 			}
 			// A removal of a classified, non-data-bearing type: what D1545
-			// records and warns about. A REPLACE is not finished by its warning
-			// — the walk carries on to judge the resource it creates exactly as
-			// a create is, because the warning was the whole answer once and
-			// that made a replace a way past every rule below that D1549 keeps
-			// refusing: a scheduler pointed at another host, a custom role
-			// widened, an image from somewhere else, a resource moved to another
-			// project. Only a plain delete ends here, since it has nothing in
-			// after for those rules to read. ManagedCover's own walk stands on
-			// this side of the line too (managed_cover.go's `if destroy`).
+			// records and warns about. Its warning is not the whole answer
+			// either — the walk carries on to judge the resource underneath it,
+			// because a warning that ended the walk would make a removal a way
+			// past every rule below that D1549 keeps refusing: a replace of a
+			// scheduler pointed at another host, a custom role widened, an image
+			// from somewhere else, a resource moved to another project. A REPLACE
+			// is judged on what it creates; a plain DELETE creates nothing, so
+			// terraform writes the destroyed resource in before and null in
+			// after, and the same rules are handed the removed view instead
+			// (removed, managed_cover.go) — otherwise a name outside the
+			// projects, a resource of a type the modules dropped or an object
+			// whose removal is refused for good would be waved through on the
+			// removal's own warning.
 			addContent(rc, "actions "+strings.Join(acts, ", "))
 			if slices.Equal(acts, []string{"delete"}) {
-				continue
+				rc = removed(rc)
 			}
 		}
 		if allOf(acts, "no-op", "read") && rc.Change.Importing == nil {
