@@ -449,8 +449,29 @@ step_account() {
     die "could not grant $ACCOUNT roles/iam.serviceAccountTokenCreator on ${SA_EMAIL}: the check has to act AS the throwaway account (the owner's own role answers every row yes), and impersonation needs that grant. Nothing else was written"
   fi
   TOKEN=$(token_for_sa || true)
-  [ -n "$TOKEN" ] || die "gcloud could not mint an access token for ${SA_EMAIL}: check that $ACCOUNT holds roles/iam.serviceAccountTokenCreator on it (the binding was written and may need a minute)"
+  [ -n "$TOKEN" ] || wait_for_token
   say "acting as ${SA_EMAIL} from here on (no token is printed)"
+}
+
+# wait_for_token: the impersonated access token, retried until it can be minted.
+# The roles/iam.serviceAccountTokenCreator binding was written a moment ago, and
+# a fresh binding is not always visible yet: minting is the FIRST thing that needs
+# it, so without this wait a project whose IAM is a minute behind ends the run
+# (exit 2) before a single row is read — while every other IAM-dependent read here
+# retries. The token is never printed, by this or any other path.
+wait_for_token() {
+  local waited=0
+  while :; do
+    [ "$waited" -lt "$IAM_WAIT_SECONDS" ] || break
+    sleep "$IAM_POLL_SECONDS"
+    waited=$((waited + IAM_POLL_SECONDS))
+    TOKEN=$(token_for_sa || true)
+    if [ -n "$TOKEN" ]; then
+      say "the impersonation grant became visible after ${waited}s of waiting (CHECK510_IAM_POLL_SECONDS=${IAM_POLL_SECONDS} between attempts)"
+      return 0
+    fi
+  done
+  die "gcloud could not mint an access token for ${SA_EMAIL} within ${IAM_WAIT_SECONDS}s, with the roles/iam.serviceAccountTokenCreator binding for ${ACCOUNT} written on it: a fresh binding can take a minute to be seen (rerun with a longer CHECK510_IAM_WAIT_SECONDS), and the grant has to be one ${ACCOUNT} really holds — run 'gcloud auth print-access-token --impersonate-service-account=$SA_EMAIL' here yourself to read the error. Nothing else was written"
 }
 
 step_make_probes() {
@@ -637,7 +658,14 @@ step_list() {
   # condition admits nothing at all. The owner's own listing is the control — a
   # conditioned listing that reads empty while the unconditioned one sees this
   # check's own containers is what says the condition admits no list.
-  seen_owner=$(gcloud_admin secrets list --format='value(name)' 2>/dev/null | grep -c 'chk510-' || true)
+  #
+  # Both listings are counted by this run's OWN probe names, never by a substring
+  # of them: only two of the five carry `chk510-` (the fugaro-<slug>-... pair),
+  # while the two fugaro_u_ probes and the fugaro_p_ one carry `chk510a-`,
+  # `chk510b-` and `chk510shared-`. A substring count would therefore read 0 for
+  # a listing IAM had fenced to exactly the two prefixes — and PASS on the very
+  # reading this row exists to catch.
+  seen_owner=$(gcloud_admin secrets list --format='value(name)' 2>/dev/null | sed 's|.*/secrets/||' | probes_in || true)
   api GET "$(api_url)/secrets?pageSize=200"
   if [ "$CONDITION_LIVE" != yes ]; then
     not_live list-condition-admits-nothing "whether a conditioned grant admits secrets.list at all"
@@ -654,12 +682,32 @@ step_list() {
     return 0
     ;;
   esac
-  seen_conditioned=$(grep -c 'chk510-' "$API_BODY_FILE" 2>/dev/null || true)
+  seen_conditioned=$(listing_ids "$API_BODY_FILE" | probes_in || true)
   if [ "$seen_conditioned" -eq 0 ] && [ "$seen_owner" -gt 0 ]; then
-    fact list-condition-admits-nothing PASS "the conditioned grant listed 0 of the ${seen_owner} chk510- containers the owner's own listing sees: the condition admits no secrets.list at all, which is why the intake's list is granted UNCONDITIONED (F30) and the service's list sits beside its prefix accessor"
+    fact list-condition-admits-nothing PASS "the conditioned grant listed none of the ${seen_owner} probe containers this run made that the owner's own listing sees: the condition admits no secrets.list at all, which is why the intake's list is granted UNCONDITIONED (F30) and the service's list sits beside its prefix accessor"
   else
-    fact list-condition-admits-nothing FAIL "the conditioned grant listed ${seen_conditioned} chk510- names while the owner's own listing sees ${seen_owner}: the condition did NOT admit nothing, so secrets.list IS fenced by name here and F30's reading — and the unconditioned list DS2.2 writes — returns to the owner"
+    fact list-condition-admits-nothing FAIL "the conditioned grant listed ${seen_conditioned} of the ${seen_owner} probe containers this run made while the owner's own listing sees them: the condition did NOT admit nothing, so secrets.list IS fenced by name here and F30's reading — and the unconditioned list DS2.2 writes — returns to the owner"
   fi
+}
+
+# probes_in: how many of this run's five probe containers the secret IDs on
+# stdin name, one per line. Each name is matched WHOLE: the second delete-row
+# probe's id is the first one's with a `2` on the end, so a substring test would
+# count a container that is not there. `seen_owner`'s and `seen_conditioned`'s
+# listings are read through this one function, so the two counts are the same
+# measurement.
+probes_in() {
+  local ids seen=0 name
+  ids=$(cat)
+  for name in "$PROBE_U" "$PROBE_P" "$PROBE_N" "$PROBE_U2" "$PROBE_N2"; do
+    if printf '%s\n' "$ids" | grep -qxF "$name"; then seen=$((seen + 1)); fi
+  done
+  printf '%d' "$seen"
+}
+
+# listing_ids FILE: the secret IDs a Secret Manager listing body names.
+listing_ids() { # listing_ids FILE
+  grep -o '"name": *"[^"]*"' "$1" 2>/dev/null | sed 's|.*/secrets/||; s|"$||'
 }
 
 # step_id_length: the largest secret ID Secret Manager admits, measured rather

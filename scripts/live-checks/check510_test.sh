@@ -162,7 +162,18 @@ config)
   ;;
 auth)
   if [ "$sub2" = "print-access-token" ]; then
-    [ "$mode" = token-fails ] && exit 1
+    case "$mode" in
+    token-fails) exit 1 ;;
+    token-fails-once)
+      # A fresh token-creator binding becoming visible: the first mint is
+      # refused and the second answered, which the check has to wait through
+      # rather than end the run on.
+      tries=$(cat "$state/token.tries" 2>/dev/null || printf '0')
+      tries=$((tries + 1))
+      printf '%s\n' "$tries" >"$state/token.tries"
+      [ "$tries" -gt 1 ] || exit 1
+      ;;
+    esac
     # A stand-in token, minted FOR whoever the caller asked to impersonate: the
     # fake `curl` reads the member out of it, so the check really acts as the
     # throwaway account and not as the owner.
@@ -483,6 +494,7 @@ fi
 
 allowed=no
 conditional_seen=no
+list_expr=""
 if [ -f "$state/bindings.tsv" ]; then
   while IFS=$'\t' read -r bmember brole btitle bexpr; do
     [ -n "$bmember" ] || continue
@@ -506,6 +518,16 @@ if [ -f "$state/bindings.tsv" ]; then
     secrets.list)
       if [ "$mode" = list-admits-some ]; then
         allowed=yes
+        break
+      fi
+      # The mode that models what a real conditioned listing does: the grant
+      # admits the call AND IAM filters the names it answers to the ones the
+      # condition admits. F30 says a listing is made on the project, where such
+      # a condition admits nothing — which is the reading the check's row is
+      # for, and the one this mode lets the suite see fail.
+      if [ "$mode" = list-admits-the-prefixes-only ]; then
+        allowed=yes
+        list_expr=$bexpr
         break
       fi
       ;;
@@ -591,12 +613,17 @@ secrets.list)
   # policy admits, and the row's reading depends on that. It is what makes the
   # check's own ordering observable — every role carrying secrets.create also
   # carries secrets.list, so a list row asked AFTER the unconditioned create
-  # grant is admitted and reads these names.
+  # grant is admitted and reads these names. A conditioned grant answers under
+  # its condition: `list_expr` is the granting binding's own expression, and the
+  # names are filtered through it exactly as IAM would.
   names=$(cd "$state/secrets" && ls -1 2>/dev/null || true)
   first=yes
   {
     printf '{"secrets":['
     for n in ${names:-}; do
+      if [ -n "$list_expr" ] && ! condition_allows_name "$list_expr" "projects/$number/secrets/$n"; then
+        continue
+      fi
       [ "$first" = yes ] || printf ','
       first=no
       # The project NUMBER is what a real listing carries, too.
@@ -1016,6 +1043,35 @@ test_a_conditioned_list_that_admits_something_is_a_failure() {
   expect_contains "$out" "returns to the owner" "a conditioned list that listed: what follows"
 }
 
+test_a_conditioned_list_fenced_to_the_prefixes_is_a_failure() {
+  # The reading the row exists to catch (F30): IAM answers the conditioned
+  # listing, filtered to the names the condition admits. The containers outside
+  # the prefixes — the two carrying F6's fugaro-<slug>-… shape — are then absent,
+  # so a count taken over a substring of the probe names reads "admitted
+  # nothing" and passes. The count has to be over the run's own probe names.
+  local dir=$work/listfence
+  prepare "$dir"
+  run_check "$dir" FAKE_MODE=list-admits-the-prefixes-only
+  expect_status "$status" 1 "a conditioned list fenced to the prefixes"
+  expect_contains "$out" "FACT list-condition-admits-nothing: FAIL" "a conditioned list fenced to the prefixes: the row"
+  expect_contains "$out" "listed 2 of the 4" "a conditioned list fenced to the prefixes: the counts"
+  expect_contains "$out" "returns to the owner" "a conditioned list fenced to the prefixes: what follows"
+}
+
+test_a_token_that_is_not_visible_at_first_is_waited_for() {
+  # A fresh roles/iam.serviceAccountTokenCreator binding is not always visible
+  # at once, and minting the impersonated token is the first thing that needs
+  # it: the check waits it out, as every other IAM-dependent read here does,
+  # rather than ending the run before a single row is read.
+  local dir=$work/tokenwait
+  prepare "$dir"
+  run_check "$dir" FAKE_MODE=token-fails-once CHECK510_IAM_WAIT_SECONDS=2 CHECK510_IAM_POLL_SECONDS=1
+  expect_status "$status" 0 "a token that is not visible at first"
+  expect_contains "$err" "became visible after 1s" "a token that is not visible at first: the wait is said"
+  expect_contains "$out" "FACT condition-version-add-allow: PASS" "a token that is not visible at first: the run read its rows"
+  assert_clean "$dir" "a token that is not visible at first"
+}
+
 test_a_grant_that_never_propagates_is_not_measured() {
   # A refusal beside a grant nobody has shown to be live is not the condition
   # refusing, so every row that depends on it is reported as not measured and
@@ -1180,6 +1236,8 @@ t test_a_delete_refused_with_something_other_than_403_is_a_failure
 t test_a_conditioned_create_that_is_admitted_is_a_failure
 t test_a_create_that_is_not_admitted_unconditioned_is_unmeasured
 t test_a_conditioned_list_that_admits_something_is_a_failure
+t test_a_conditioned_list_fenced_to_the_prefixes_is_a_failure
+t test_a_token_that_is_not_visible_at_first_is_waited_for
 t test_a_grant_that_never_propagates_is_not_measured
 t test_the_length_bisection_reads_the_limit
 t test_a_length_above_the_probe_is_unmeasured
