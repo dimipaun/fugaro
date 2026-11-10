@@ -171,6 +171,7 @@ func mineIssue(ctx context.Context, b storeReader, digest string, rec Issue) (Mi
 		Number:      rec.Number,
 		Summary:     rec.Summary,
 		Status:      MineStatus(rec.Status),
+		Fingerprint: rec.Fingerprint,
 		SubmittedAt: rec.SubmittedAt,
 		ResolvedAt:  rec.ResolvedAt,
 		DismissedAt: rec.DismissedAt,

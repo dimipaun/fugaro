@@ -43,7 +43,7 @@ Subcommands:
 - `fugaro graph` -- Print the project's dependency graph
 - `fugaro help` -- Help about any command
 - `fugaro image` -- Build and inspect a workflow's derived container image
-- `fugaro issue` -- Read and dismiss the issues saved on this machine
+- `fugaro issue` -- Read the issues saved on this machine, and the ones you reported
 - `fugaro logs` -- Print a run's logs from Cloud Logging
 - `fugaro managed` -- Act on a managed project (a project created by fugaro with the coding agent's refusal removed)
 - `fugaro models` -- Show the models this project can run, and where each is served
@@ -2754,20 +2754,23 @@ This command has no subcommands.
 
 ## `fugaro issue`
 
-Read and dismiss the issues saved on this machine
+Read the issues saved on this machine, and the ones you reported
 
 Read the issues saved on this machine.
 
 An issue is one Markdown file under the user's state directory, holding
 the whole issue: a strict header and the diagnosis' own words. `list`
-shows what is saved, `show` prints one, and `dismiss` sets one aside so
-nothing is filed for it. An issue is named by its local ID
+shows what is saved, `show` prints one, `dismiss` sets one aside so
+nothing is filed for it, and `mine` reads the project's own store for
+the issues this user reported. An issue is named by its local ID
 (`local-<run stem>`) until it has been uploaded, and by its number
 (`#0007`) from then on; `show` and `dismiss` take either.
 
-Nothing here is uploaded: the issue stays on this machine, and the text
-of a record is printed as data — it comes from log text this machine did
-not write.
+Nothing `list`, `show` or `dismiss` does leaves this machine. `mine` —
+and `list --mine`, which is the same read — is the one that does: it
+uploads this machine's own pending records to the project's store on the
+way to listing them. Either way the text of a record is printed as data:
+it comes from log text this machine did not write.
 
 Usage: `fugaro issue`
 
@@ -2781,6 +2784,7 @@ Subcommands:
 
 - `fugaro issue dismiss` -- Mark an issue as not worth filing
 - `fugaro issue list` -- List the issues saved on this machine
+- `fugaro issue mine` -- List the issues this user reported, from the project's store
 - `fugaro issue show` -- Print one issue: its number (#0007) or its local ID
 
 ## `fugaro issue dismiss`
@@ -2822,12 +2826,20 @@ List the issues saved on this machine, one row each.
 A row names the issue the way `show` and `dismiss` take it —
 its number once it has been uploaded, its local ID before — with the
 class the diagnosis gave it, where it stands, and its one-line summary.
-Nothing is uploaded and nothing is filed: the listing is this machine's
-own folder, read.
+A plain listing uploads nothing and files nothing: it is this
+machine's own folder, read. --mine writes, exactly as `mine` does:
+it uploads this machine's own pending issues before it lists them.
+
+--mine lists the issues this user reported to the project instead: the
+same rows `fugaro issue mine` prints, from the same read, so the two
+commands answer with one listing (F12). --all goes with --mine and only
+with it: this machine's own folder keeps every record until it is
+deleted, and the 30-day rule is about the project's issues, not about
+the files here.
 
 --json prints the records themselves, in the shape
-schemas/issue-record.schema.json describes, which is the document a
-reader outside this binary consumes.
+schemas/issue-record.schema.json describes — or, with --mine, the
+document schemas/issue-mine.schema.json describes.
 
 Usage: `fugaro issue list`
 
@@ -2835,7 +2847,51 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
+| `--all` | bool | `false` | no | with --mine: show the issues finished more than 30 days ago |
 | `-h`, `--help` | bool | `false` | no | help for list |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--mine` | bool | `false` | no | list the issues this user reported to the project |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro issue mine`
+
+List the issues this user reported, from the project's store
+
+List the issues this machine's user reported to the project.
+
+The rows are the issues this user created and the ones their report was
+merged into, read from the shared store the project's runs bucket keeps:
+the number and the summary, where the issue stands, when it was hit,
+submitted, resolved or dismissed, the link to the GitHub issue once it
+has one, the release that fixed it and whether this machine is on it.
+Other people who hit the issue are counted, never named.
+
+A resolved issue this machine has not been updated to prints the one
+command that fixes that — `fugaro update`. For one this machine already
+has, the row offers the command this machine's own issue file recorded,
+and nothing is run: the row is a listing.
+
+An issue finished more than 30 days ago is hidden; --all shows it. With
+the shared store unreadable — no network, no project selected — the rows
+are the last successful read this machine cached, or the local files
+alone, and the listing says which. In a coding agent's session only those
+two are read and nothing is uploaded.
+
+--json prints one versioned document, whose shape
+schemas/issue-mine.schema.json describes. GitHub is read for nothing here:
+the release a record names is what says an issue is fixed.
+
+Usage: `fugaro issue mine`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--all` | bool | `false` | no | show the issues finished more than 30 days ago |
+| `-h`, `--help` | bool | `false` | no | help for mine |
 | `--json` | bool | `false` | no | print machine-readable output |
 
 Subcommands:

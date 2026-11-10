@@ -16,12 +16,15 @@ import (
 // saved on this machine — the record and its local store are internal/issues
 // (T-IS1).
 //
-// The folder is the user's own state directory, so nothing here reads a
-// credential, a project or a bucket: `list`, `show` and `dismiss` are reads
-// and one local write. The shared store, the upload and the filing on GitHub
-// are later slices, which is why `dismiss` refuses in a coding agent's session
-// even though it writes no cloud record (D1730): the dismissal it makes is
-// what a steered agent would use to bury a real bug.
+// The folder is the user's own state directory: `list`, `show` and `dismiss`
+// are reads and one local write, and resolve no credential, no project and no
+// bucket. `mine` is the one that reaches the cloud (T-IM6): it reads the
+// project's own store and, on the way, uploads this machine's pending records
+// — which is why the parent's help says so rather than promising that nothing
+// here is uploaded. Filing an issue on GitHub is a later slice, which is why
+// `dismiss` refuses in a coding agent's session even though it writes no cloud
+// record (D1730): the dismissal it makes is what a steered agent would use to
+// bury a real bug.
 //
 // The help names no command that saves an issue, because none is in this tree
 // yet: the diagnosis that writes one is another plan's, and a reference that
@@ -29,19 +32,22 @@ import (
 func newIssueCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "issue",
-		Short: "Read and dismiss the issues saved on this machine",
+		Short: "Read the issues saved on this machine, and the ones you reported",
 		Long: "Read the issues saved on this machine.\n\n" +
 			"An issue is one Markdown file under the user's state directory, holding\n" +
 			"the whole issue: a strict header and the diagnosis' own words. `list`\n" +
-			"shows what is saved, `show` prints one, and `dismiss` sets one aside so\n" +
-			"nothing is filed for it. An issue is named by its local ID\n" +
+			"shows what is saved, `show` prints one, `dismiss` sets one aside so\n" +
+			"nothing is filed for it, and `mine` reads the project's own store for\n" +
+			"the issues this user reported. An issue is named by its local ID\n" +
 			"(`local-<run stem>`) until it has been uploaded, and by its number\n" +
 			"(`#0007`) from then on; `show` and `dismiss` take either.\n\n" +
-			"Nothing here is uploaded: the issue stays on this machine, and the text\n" +
-			"of a record is printed as data — it comes from log text this machine did\n" +
-			"not write.",
+			"Nothing `list`, `show` or `dismiss` does leaves this machine. `mine` —\n" +
+			"and `list --mine`, which is the same read — is the one that does: it\n" +
+			"uploads this machine's own pending records to the project's store on the\n" +
+			"way to listing them. Either way the text of a record is printed as data:\n" +
+			"it comes from log text this machine did not write.",
 	}
-	cmd.AddCommand(newIssueListCmd(), newIssueShowCmd(), newIssueDismissCmd())
+	cmd.AddCommand(newIssueListCmd(), newIssueShowCmd(), newIssueDismissCmd(), newIssueMineCmd())
 	return cmd
 }
 
