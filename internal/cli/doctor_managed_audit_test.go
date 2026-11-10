@@ -68,12 +68,19 @@ func newManagedAuditRig(t *testing.T, o managedAuditOpts) *managedAuditRig {
 
 // file writes one record of the day through the writer the commands themselves
 // call, so what the check reads back is an object this program produced and not
-// one a test hand-wrote.
-func (r *managedAuditRig) file(t *testing.T, command, doc string, verdict managedmode.AuditVerdict, at time.Time) managedmode.AuditRecord {
+// one a test hand-wrote. warnings are the CONTENT rules a warned verdict
+// recorded (D1545), and they are passed only with AuditWarned: the record's own
+// writer reads its verdict off the Converge, so a test that filed a warned
+// record with no warnings would be building a state no command can reach.
+func (r *managedAuditRig) file(t *testing.T, command, doc string, verdict managedmode.AuditVerdict, at time.Time, warnings ...string) managedmode.AuditRecord {
 	t.Helper()
 	conv := managedmode.ConvergeAdmitted([]byte(doc), initflow.YesOrTyped, []string{"every key is in the registry"})
-	if verdict == managedmode.AuditRefused {
+	switch verdict {
+	case managedmode.AuditRefused:
 		conv = managedmode.ConvergeRefused([]byte(doc), initflow.YesOrTyped, []string{"the plan removes an address the owner's list does not name"})
+	case managedmode.AuditWarned:
+		conv = managedmode.ConvergeWarned([]byte(doc), initflow.YesOrTyped,
+			[]string{"the cover of the embedded roots refused no change of this plan that its integrity rules judge — the changes it did not announce did not refuse it, and they are this record's warnings (D1545)"}, warnings)
 	}
 	rec := managedmode.AuditRecordFor(managedmode.AuditFacts{
 		Command: command, Project: "aurora", GCPProject: "proj-1234",
@@ -161,6 +168,43 @@ func TestDoctorManagedAuditIsSilentOutsideAManagedProject(t *testing.T) {
 				t.Errorf("check = %+v, want no managed-audit check for a project that is not managed", c)
 			}
 		})
+	}
+}
+
+// TestDoctorFlagsAnOutOfTableGrant: under D1545 the cover tables record and
+// warn instead of refusing, so the audit record is the only place a change they
+// did not announce outlives the session that applied it — and doctor is what
+// reads it back (T2's ruling of 2026-11-07: "harden the record (versioning,
+// `doctor` reads)"). A warned record is a finding the default view prints,
+// carrying the rules THEMSELVES and not a count: the rule is what an owner
+// checks against the plan, and a count would send them to the bucket for the
+// one fact this check exists to put on the screen.
+//
+// What it does not do is fail doctor. The apply was admitted by the gate D1545
+// keeps and D1549's integrity refusals all held, so the installation is where
+// the gate said it should be and what the reader has is a decision rather than
+// a fault: doctor without --strict still passes, and the installation that is
+// broken is the one whose records cannot be read at all.
+func TestDoctorFlagsAnOutOfTableGrant(t *testing.T) {
+	r := newManagedAuditRig(t, managedAuditOpts{})
+	const grant = "cover: module.installation.google_project_iam_member.extra — this grant is not one the review's grant table holds, so no confirmation of the owner's announced it"
+	r.file(t, "fugaro update", `{"version":1}`, managedmode.AuditWarned, managedAuditTestNow.Add(-2*time.Hour), grant)
+	o := doctorJSON(t)
+	c, ok := doctorCheckByID(o.Checks, "managed-audit")
+	if !ok {
+		t.Fatalf("no managed-audit check: %+v", o.Checks)
+	}
+	if c.OK || c.Severity != "warning" || c.Class != doctorClassActionable {
+		t.Errorf("check = %+v, want a warning the default view prints: a rule the tables did not announce applied, and the session that read it is gone", c)
+	}
+	if !strings.Contains(c.Problem, grant) {
+		t.Errorf("problem = %q, want the rule itself (%q): a count is not something an owner can check against the plan", c.Problem, grant)
+	}
+	if !strings.Contains(c.Problem, "fugaro update") || !strings.Contains(c.Problem, "warned") {
+		t.Errorf("problem = %q, want the record's own command and verdict", c.Problem)
+	}
+	if !o.OK {
+		t.Errorf("doctor failed an installation whose gate admitted every step it ran: a warned apply is a decision, not a fault (%+v)", o.Checks)
 	}
 }
 
