@@ -1165,7 +1165,7 @@ discover:
    service by a verified email, so D933's answer — the project's own two lists — is the shape the
    repository already has rather than one invented here.
 3. **Three commands are now on `main`**: `fugaro settings` (`internal/cli/settings.go:61`),
-   `fugaro rigor` (`internal/cli/settings_set.go:46` names `fugaro rigor set` as the owner of the
+   `fugaro rigor` (`internal/cli/settings_set.go:47` names `fugaro rigor set` as the owner of the
    rigor keys) and `fugaro accounts` (`internal/cli/accounts.go:24`). F21's gap is unchanged — none
    of them writes an MCP token — but the CLI surface a token-minting command would join exists, and
    F21's own row is the finding that says so.
