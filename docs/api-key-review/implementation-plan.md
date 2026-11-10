@@ -186,7 +186,7 @@ could touch).
 they are off the levels and off the critical path, so their files are booked here only so that a later
 task knows they are taken. **As of 2026-11-10 the rows that name AK9 and AK10 are written by MC6 of
 `docs/model-crafts`** (§6 item 12, that folder's D1638 and F26): the two tasks are folded into it, so
-the `—` rows below are its writers now, booked here to keep this folder's inventory of them complete
+the `—` rows above are its writers now, booked here to keep this folder's inventory of them complete
 and to say that no task here writes them.
 
 `internal/credsvc/cascade.go` is booked twice across two levels — AK4's candidate list and AK6b's tier
