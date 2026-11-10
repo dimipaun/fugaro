@@ -116,7 +116,7 @@ func TestDocsDiagnoseAgentStatusAndChecks(t *testing.T) {
 			}
 		}
 		if strings.Contains(line, "nothing is implemented") {
-			t.Errorf("%s%s: the current status line still says nothing is implemented, though internal/diagnoseagent/creds.go and creds_test.go are in the tree: %s", dgaDir, f, line)
+			t.Errorf("%s%s: the current status line still says nothing is implemented, though internal/diagnoseagent/creds.go, creds_test.go, run.go and run_test.go are in the tree: %s", dgaDir, f, line)
 		}
 		if !strings.Contains(dgaRead(t, f), dgaStatus) {
 			t.Errorf("%s%s: the status as first written, %q, is gone: the folder keeps the line it was written with below the current one, so the claim stays readable as what was true of that moment", dgaDir, f, dgaStatus)
