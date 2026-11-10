@@ -77,8 +77,9 @@ whole `internal/cli` or `internal/runner` run.
 - **Files:** `internal/gitprov/github/fileread.go` (new), `internal/gitprov/github/fileread_test.go`
   (new), `internal/gitprov/github/testdata/fileread/*.json` (new: an `httpfixture` replay of one file
   read, one file the ref does not carry, one ref the repository does not have, one read the forge
-  refuses, the two 404s whose bodies this code cannot read as either answer, and the two the
-  confirmation refuses — the repository and the ref).
+  refuses, the two 404s whose bodies this code cannot read as either answer, the two the confirmation
+  refuses — the repository and the ref — and the no-ref read the repository confirmation alone
+  answers).
 - **Interfaces:** `FileAt(ctx context.Context, o Options, ts gitprov.TokenSource, repo, ref, path string) ([]byte, error)`,
   built over what the package already has rather than over a second HTTP client (reconciliation F6): it
   assembles `Options` for `repo` with `ServiceHeldKey: true`, installs `ts` (`UseServiceTokens` accepts
@@ -128,6 +129,8 @@ whole `internal/cli` or `internal/runner` run.
   `TestFileAtRefusesA404ForARepositoryItCannotReach` and `TestFileAtRefusesA404WhereTheRefDoesNotResolve`
   (the read and the confirmation both answering `Not Found`, and the read answering `Not Found` with a
   ref that does not resolve: neither sentinel, and the confirmation's own error kept),
+  `TestFileAtConfirmsTheRepositoryAloneWhenNoRefIsNamed` (the fix's other spelling: a read that names no
+  ref is confirmed by the repository call and makes no second one),
   `TestFileAtUsesTheTokenSourceItIsGiven`
   (a fake `gitprov.TokenSource` observes one mint and the request carries its token), and
   `TestFileAtRefusesARepositoryItCannotName`. The kind, encoding and size refusals are `Contents`'s own
