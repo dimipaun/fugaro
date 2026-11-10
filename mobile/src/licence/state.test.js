@@ -197,6 +197,38 @@ test('a key this build cannot verify reads as no key, and not as a lapse', () =>
   assert.equal(lapseRefusal(read.state, WRITES.LAUNCH), null, 'and it keeps the launch');
 });
 
+test('a key state this table has not learned reads as the lapse, and refuses the launch', () => {
+  // A later verifier names a fourth state (`verify.js` names three: valid,
+  // grace, expired) and this table has learned nothing of it. The reading is
+  // the LAPSE and not a working state -- `licenceState` says why where it
+  // maps: the refusal is the safe direction, and a key whose state nobody can
+  // name is not a licence the app may spend. The other reading would spend it.
+  const unknown = { latest: () => ({ state: 'renewed', claims: claimsFor() }) };
+  const read = licenceState({ keys: ['a key text this stub never reads'], verifier: unknown, now: at(ISSUED) });
+  assert.deepEqual(
+    read,
+    { state: LICENCE_STATES.LAPSED, claims: claimsFor() },
+    'an unknown key state is the lapse, and its claims come back with it',
+  );
+  // And the lapse's own behaviour follows from the reading, which is the point
+  // of failing in this direction: the launch and the configuration are refused
+  // and T12's cancel is kept.
+  assert.notEqual(lapseRefusal(read.state, WRITES.LAUNCH), null, 'the launch is refused');
+  assert.notEqual(lapseRefusal(read.state, WRITES.CONFIG), null, 'and so is the configuration');
+  assert.equal(lapseRefusal(read.state, WRITES.CANCEL), null, 'while the cancel is kept');
+
+  // The same stub naming a state the table KNOWS is read as that state, so the
+  // reading above is the unknown name's doing and not the stub's: a fallback
+  // that answered for every stub would pass the assertions above and say
+  // nothing.
+  const known = { latest: () => ({ state: 'grace', claims: null }) };
+  assert.equal(
+    licenceState({ keys: ['a key text this stub never reads'], verifier: known, now: at(ISSUED) }).state,
+    LICENCE_STATES.GRACE,
+    'a state the table knows is still read as itself',
+  );
+});
+
 test('the renewal is the key that applies (T26), and its later expiry is the state', () => {
   const production = signer('prod-2026');
   const first = mint(production, claimsFor({ expires: ISSUED + 365 * DAY }));

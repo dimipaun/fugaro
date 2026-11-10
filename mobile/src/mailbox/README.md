@@ -482,13 +482,14 @@ cost of the false refusal is a phone that cannot speak.
 ## The mutation proof
 
 ```sh
-mobile/src/mailbox/mutation-proof.sh     # 67 guards, one planted bug each
+mobile/src/mailbox/mutation-proof.sh     # 68 guards, one planted bug each
 ```
 
 Every mutation disables exactly one guard and must make that guard's own suite
 fail: `client.js` and `client.test.js` for most of them -- and, since S6.3,
 `src/licence/state.js` with `state.test.js` for the lapse's table (the kept set
-that closes, and the kept write that is never read) and `src/licence/index.js`
+that closes, the kept write that is never read, and a key state the table has
+not learned) and `src/licence/index.js`
 with `verify.test.js` for the door (the rules it must not hand a screen) --
 and, since the fix round for PR #604, `mac.js` with `mac.test.js` (the tag
 comparison), `store.js` with `store.test.js` and, for the read's own-key rule,
@@ -577,6 +578,7 @@ than a claim.
 | a licence port that cannot be asked is a wiring failure | `a licence port that cannot be asked is a wiring failure, like every other port` |
 | a kept write is kept without reading the licence store (in `src/licence/state.js`) | `the write path reads the port for the writes a lapse could refuse, and never for the ones it keeps` -- run against `src/licence/state.test.js` |
 | the kept set is closed: a write it does not name is refused at a lapse (in `src/licence/state.js`) | `a lapse keeps the message, the cancel and the kill switch, and refuses the launch, the merge and the configuration` -- run against `src/licence/state.test.js` |
+| a key state the table has not learned is read as working (in `src/licence/state.js`) | `a key state this table has not learned reads as the lapse, and refuses the launch` -- run against `src/licence/state.test.js` |
 | the lapse's rules are reached from a second file (a plant in `src/app/root.js`) | `the lapse's rules are reached by the write path alone` |
 | the door hands a rule out to every screen (a plant in `src/licence/index.js`) | `the door hands out the state's names and none of the write path's rules` -- run against `src/licence/verify.test.js` |
 

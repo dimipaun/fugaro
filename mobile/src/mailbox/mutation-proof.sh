@@ -449,10 +449,11 @@ run "the SDK's queue is real, which is what the client's claim rests on (store.j
   mobile/src/mailbox/store.js src/mailbox/client.test.js
 
 # 11. The lapse (S6.3; D436, T12; the design is docs/design/lapse-read-only.md
-#     §4). Six guards in client.js, two in state.js -- the refuser this client
-#     gained, and the table it reads -- and one in index.js, the door that must
-#     not hand the rules out. The last two plant what the two scans exist to
-#     catch: a second enforcement in the app, and a rule on the door.
+#     §4). Six guards in client.js, three in state.js -- the refuser this client
+#     gained, and the two readings its table makes -- and one in index.js, the
+#     door that must not hand the rules out. The last two plant what the two
+#     scans exist to catch: a second enforcement in the app, and a rule on the
+#     door.
 run "the lapse refuses the writes it does not keep (the launch, the merge, the config change)" \
   "    if (refusedByLapse !== null) {
       return spokenRefusal(refusedByLapse, { text: body.text, at, keepText: !isAction });" \
@@ -510,6 +511,10 @@ run "the kept set is closed: a write it does not name is refused at a lapse (sta
   return Object.freeze({ ok: false, code: LICENCE_STATE_CODES.LAPSED, field: 'licence' });" \
   "  return null;
   return Object.freeze({ ok: false, code: LICENCE_STATE_CODES.LAPSED, field: 'licence' });" \
+  mobile/src/licence/state.js src/licence/state.test.js
+run "a key state the table has not learned is read as the lapse, not as working (state.js)" \
+  "PRODUCT_OF_KEY_STATE[latest.state] ?? LICENCE_STATES.LAPSED" \
+  "PRODUCT_OF_KEY_STATE[latest.state] ?? LICENCE_STATES.VALID" \
   mobile/src/licence/state.js src/licence/state.test.js
 run "the lapse's rules are reached from a second file (the scan)" \
   "export function createRoot({ React, store, View, Text, Pressable, useDemo, screens, onLeaveDemo }) {" \
