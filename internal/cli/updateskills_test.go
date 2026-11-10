@@ -53,9 +53,6 @@ func skillCheckout(t *testing.T, content string) (root, settings string) {
 	return root, settings
 }
 
-// skillCheckoutYAML is the fugaro.yaml of the fixtures above: enough for the
-// checkout gate and for the steps that read the file, naming a project no
-// test's local config selects.
 // plainCheckout is a git checkout Fugaro is not set up in: no fugaro.yaml, so
 // the checkout gate refuses it before any step runs (U1: the wiring an older
 // fugaro left in .claude/settings.json is not a second way of being a Fugaro
@@ -74,6 +71,9 @@ func plainCheckout(t *testing.T) string {
 // reasons it is).
 const skillCheckoutRepo = "acme/away"
 
+// skillCheckoutYAML is the fugaro.yaml of the fixtures above: enough for the
+// checkout gate and for the steps that read the file, naming a project no
+// test's local config selects.
 const skillCheckoutYAML = "version: 1\nproject: aurora\ngit: { provider: github }\n" +
 	"workflows:\n  app: { commands: { build: sh build.sh, test: sh test.sh } }\n"
 

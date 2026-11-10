@@ -239,9 +239,9 @@ func converge(t *testing.T, node map[string]any, stale []string) {
 	// by the cloud step (the stage's apply mode reads the build records, where
 	// its check mode reads only the local config: upgrade_cloud.go's
 	// cloudCheck). The plugin step is the plugin stage's now, the checkout
-	// stage is its cloud step alone, and its check reads that step current —
-	// the images stage pinned this release's base before it, and the records
-	// the repository stage just wrote are this release's.
+	// stage is its cloud step alone, and its check reads that step current:
+	// the images stage pinned this release's base in the local config the
+	// check reads before the checkout stage ran at all.
 	if n := len(r.builder.specs); n != 2 {
 		t.Errorf("%d job image(s) reached Cloud Build, want the checkout's two workflows, built by the repository stage: the job images of a repository this run onboarded are refreshed here", n)
 	}

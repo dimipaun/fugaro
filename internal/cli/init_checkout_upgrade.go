@@ -285,8 +285,7 @@ func (s *checkoutStage) Check(ctx context.Context) (initflow.Status, error) {
 		}
 		// Every step is checked, not just up to the first with something to
 		// do: a step that fails here fails the run before any of them
-		// writes, where the pin would otherwise have moved before the cloud
-		// step was read.
+		// writes.
 		switch r := s.checkStep(ctx, p.step, loc); r.state {
 		case stepFailed:
 			return initflow.Status{}, errors.New(r.reason)
