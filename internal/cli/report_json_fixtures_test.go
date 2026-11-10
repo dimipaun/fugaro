@@ -208,6 +208,20 @@ var jsonCases = map[string]jsonCase{
 			return []string{"image", "status"}
 		},
 	},
+	"image survey": {
+		reads: true,
+		run: func(t *testing.T) []string {
+			jsonCloud(t)
+			// A repository is read through its host's own file API, and this
+			// package has no host: the command's opener is the seam
+			// (openSurveyProvider), and surveyStub — the one the survey's own
+			// tests install — hands it the project's repository file-backed.
+			surveyStub(t, map[string]map[string]string{
+				"acme/app": {"package.json": `{"name":"app"}`},
+			})
+			return []string{"image", "survey"}
+		},
+	},
 	"issue list": {
 		reads: true,
 		run: func(t *testing.T) []string {

@@ -367,11 +367,25 @@ func (s *Server) probeDue(ctx context.Context, sel *creds.Selector, id Identity,
 		return false
 	}
 	probed[c.Name] = true
-	e, ok := b.Lookup(c.Name)
-	if !ok {
-		// Unreachable: the candidates came from this bundle. A refusal rather
-		// than a panic, because the alternative is a service that crashes on a
-		// state it cannot name.
+	// The probe's credential is resolved the way the call's own is (DS3.3, R6):
+	// the per-secret container the candidate names first, the bundle's entry for
+	// it second. A probe that looked the candidate up in the bundle under its own
+	// name would find nothing there for a per-secret one — no entry is named by
+	// the grammar — so it would not be made at all, and the mark would stay where
+	// it is: the run would be answered a wait, again and again, for a probe
+	// nobody makes (waitFloor is the bound on that loop, not its cause).
+	//
+	// A read that FAILED is no probe, and neither is a candidate that resolves to
+	// nothing: a probe is made on the value the call itself would be served by,
+	// and a failed read is exactly what withholds that value (D143). Nothing is
+	// served and nothing is spent — the run is answered the wait its selection
+	// gave it.
+	e, ok, err := s.resolveEntry(ctx, b, c)
+	if err != nil || !ok {
+		// Nothing resolved. Unreachable in the shape this service deploys —
+		// every candidate is the bundle's or the slip's own per-secret list, and
+		// each of those resolves to an entry or to a failed read — and a refusal
+		// rather than a panic, as on every other path that cannot name its state.
 		return false
 	}
 	return s.probeOne(ctx, sel, id, creds.Run{Slug: id.Slug, ID: id.Run}, c, e, cl)
