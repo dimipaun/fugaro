@@ -236,7 +236,11 @@ func importPaths(path string) ([]string, error) {
 //     this file can still reach, so the mention is exempt only where the value
 //     leaves the file — the result of a return, or an argument of a call that
 //     names the service — and a store built into a value bound to a name, put in
-//     another value, or passed to a function of this package is a finding.
+//     another value, or passed to a function of this package is a finding. The
+//     walk stops at a function literal, which is a body of its own rather than
+//     part of the expression carrying it: the argument of a service call covers
+//     the literal's stores otherwise, and the copies and indexes that reach a slip
+//     method through a value are holes again.
 //
 // The list is closed the way the importers are, and Marks and UpdateMark are not
 // slip methods — that distinction is what the lists below are.
@@ -477,6 +481,21 @@ func TestBoundaryAllowsSlipsOnlyViaService(t *testing.T) {
 			want: true,
 		},
 		{
+			name: "a store copied inside a function literal handed to the service",
+			src:  "package x\n\nimport (\n\t\"github.com/dimipaun/fugaro/internal/creds\"\n\t\"github.com/dimipaun/fugaro/internal/credsvc\"\n)\n\nfunc f() { credsvc.WithScrub(func(s string) string { st := &creds.RTDBStore{}; s2 := st; s2.Claim(\"id\"); return s }) }\n",
+			want: true,
+		},
+		{
+			name: "a store indexed inside a function literal handed to the service",
+			src:  "package x\n\nimport (\n\t\"github.com/dimipaun/fugaro/internal/creds\"\n\t\"github.com/dimipaun/fugaro/internal/credsvc\"\n)\n\nfunc f() { credsvc.WithScrub(func(s string) string { g := []*creds.RTDBStore{{}}; g[0].End(\"id\"); return s }) }\n",
+			want: true,
+		},
+		{
+			name: "a store in a service literal inside a function literal the file returns",
+			src:  "package x\n\nimport (\n\t\"github.com/dimipaun/fugaro/internal/creds\"\n\t\"github.com/dimipaun/fugaro/internal/credsvc\"\n)\n\nfunc f() any { return func() credsvc.Config { return credsvc.Config{State: &creds.RTDBStore{}} } }\n",
+			want: true,
+		},
+		{
 			name: "a store handed to the service through a function of this package",
 			src:  "package x\n\nimport (\n\t\"github.com/dimipaun/fugaro/internal/creds\"\n\t\"github.com/dimipaun/fugaro/internal/credsvc\"\n)\n\nfunc g(c credsvc.Config) { c.State.Claim(\"id\") }\n\nfunc f() { g(credsvc.Config{State: &creds.RTDBStore{}}) }\n",
 			want: true,
@@ -701,10 +720,18 @@ func exemptStoreMentions(f *ast.File, pkg string) map[ast.Node]bool {
 	// still reach, so the mention is exempt only where the value leaves the file —
 	// the result of a return, or an argument of a call that names the service —
 	// and a store built into a value bound to a name, put in another value, or
-	// passed to a function of this package is a finding again.
+	// passed to a function of this package is a finding again. A function literal
+	// is a body of its own and not part of the expression that carries it, so the
+	// walk stops at one (a review of this change): a store inside a literal handed
+	// to the service is reached by the code that runs the literal, which is this
+	// file, and the literal's own return hands its store to whoever calls the
+	// literal rather than out of the file.
 	held := serviceImportNames(f)
 	for _, body := range functionBodies(f) {
 		ast.Inspect(body, func(n ast.Node) bool {
+			if isFuncLit(n) {
+				return false
+			}
 			switch d := n.(type) {
 			case *ast.ReturnStmt:
 				for _, res := range d.Results {
@@ -732,6 +759,9 @@ func handedOn(allowed map[ast.Node]bool, e ast.Expr, held []string, pkg string) 
 		return
 	}
 	ast.Inspect(e, func(n ast.Node) bool {
+		if isFuncLit(n) {
+			return false
+		}
 		lit, ok := n.(*ast.CompositeLit)
 		if !ok || !namesPackage(lit.Type, held) {
 			return true
@@ -763,11 +793,25 @@ func storeMentions(set map[ast.Node]bool, e ast.Expr, pkg string) {
 		return
 	}
 	ast.Inspect(e, func(n ast.Node) bool {
+		if isFuncLit(n) {
+			return false
+		}
 		if isStoreMention(n, pkg) {
 			set[n] = true
 		}
 		return true
 	})
+}
+
+// isFuncLit reports whether a node is a function literal, which both walks stop
+// at (a review of this change): a literal is a body of its own, so a store inside
+// one is reached by the code that runs it and not by the expression that carries
+// it. An exemption drawn on the carrying expression — the argument of a service
+// call, the result of a return — otherwise covers the whole literal, and the
+// copies and indexes the plant table pins are holes again.
+func isFuncLit(n ast.Node) bool {
+	_, ok := n.(*ast.FuncLit)
+	return ok
 }
 
 // isStoreMention reports whether a node is a mention of a creds store type,
