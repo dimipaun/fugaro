@@ -3610,9 +3610,11 @@ func existingLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, spec 
 // would apply the tag's rule to an entry the run does not have. Nothing else
 // the ask can say refuses a launch: a backend that has no deployed job to
 // read (Cloud Batch starts one per run and keeps none) cannot be asked at all,
-// a job not deployed yet is refused by the launch's own step, and a catalog
-// the launcher cannot read — no checkout of this repository, no fugaro.yaml, a
-// file this binary cannot parse — is the deploy-time arm's to refuse (F7).
+// a job not deployed yet is refused by the launch's own step, and a launcher
+// with no checkout of this repository reads no workflow file, so whether the
+// catalog speaks for this workflow is the deploy-time arm's to refuse (F7) —
+// the ask answers nothing here, and the deployed image's entry is still read
+// and stamped (deployedCatalogEntry).
 //
 // The workflow it judges is the one in this launcher's working tree, as the
 // artifact gate's recipe is (recipeForLaunch) and for the same reason: the
@@ -3629,25 +3631,35 @@ func catalogDockerAsk(ctx context.Context, env *cloudEnv, slug string, spec *tas
 }
 
 // deployedCatalogEntry is the catalog entry the job this launch starts was
-// DEPLOYED with, and whether the catalog speaks for that job at all. It is
-// catalogDockerAsk's own resolution, split out because the launch needs the
-// entry itself beside the docker answer: the services the entry declares are
-// stamped into the launch's environment (servicesLaunchEnv), and they have to
-// be the deployed entry's for the same reason the tag rule does — a job's
-// image is fixed when the job is deployed, so a fresh selection could name a
-// different entry than the run starts on (D1149).
+// DEPLOYED with, and whether the catalog speaks for that job's workflow at all
+// (the second is what the tag rule is asked on). It is catalogDockerAsk's own
+// resolution, split out because the launch needs the entry itself beside the
+// docker answer: the services the entry declares are stamped into the launch's
+// environment (servicesLaunchEnv), and they have to be the deployed entry's
+// for the same reason the tag rule does — a job's image is fixed when the job
+// is deployed, so a fresh selection could name a different entry than the run
+// starts on (D1149).
+//
+// The entry is read from the deployed job's IMAGE alone, and the workflow file
+// only decides whether the catalog speaks for it: the two must come apart
+// because the file is not always there. The desktop console spawns `fugaro run
+// --repo` from a private empty directory on every machine, and `--repo` may be
+// run from anywhere, so a launcher with no checkout of this repository reads
+// no fugaro.yaml and cannot ask catalog.Applies — while the job it is about to
+// start is still the one the catalog deployed, and the services its tests need
+// are still that entry's. Reading the workflow first (as this did) left such a
+// launch with the zero entry, an empty stamp and a run whose tests fail on a
+// service nobody started, with nothing said about why (F12).
+//
+// So what a missing workflow file costs is the tag rule's answer — the pin and
+// coverage claims below are claims ABOUT the workflow, and nothing refuses
+// over a workflow this launcher cannot read — and what it costs nothing is the
+// entry: the deployed image is the catalog's whether or not a checkout here
+// can read the file that describes the job.
 //
 // (`catalogDockerAsk` stays as the two composed for the callers that want the
 // answer alone, which is every reader of the tag rule.)
 func deployedCatalogEntry(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec) (config.Entry, bool, error) {
-	co := checkoutConfig(ctx, spec.Repo)
-	if co == nil {
-		return config.Entry{}, false, nil
-	}
-	w, ok := co.Workflows[spec.Workflow]
-	if !ok {
-		return config.Entry{}, false, nil
-	}
 	var published *config.Catalog
 	var pol *projectpolicy.Policy
 	if p, found, err := env.policy.read(ctx, env.lc); err != nil {
@@ -3656,13 +3668,22 @@ func deployedCatalogEntry(ctx context.Context, env *cloudEnv, slug string, spec 
 		pol, published = p, p.ImageCatalog
 	}
 	cat := env.lc.ImageCatalogEffective(published)
-	if cat == nil || !catalog.Applies(*cat, w) {
+	if cat == nil {
 		return config.Entry{}, false, nil
 	}
-	// The job is the workflow's own: the catalog's jobs are per-repository
-	// ones, and the sole kind a shared project job runs — a clone workflow
-	// (launchProjectJobFor) — is the kind catalog.Applies has just taken out
-	// of this rule.
+	// The workflow this launcher has a file for, if it has one at all, and
+	// whether the catalog speaks for it.
+	speaks := false
+	var w config.Workflow
+	if co := checkoutConfig(ctx, spec.Repo); co != nil {
+		if wt, ok := co.Workflows[spec.Workflow]; ok {
+			w, speaks = wt, catalog.Applies(*cat, wt)
+		}
+	}
+	// The job is the workflow's own when it is a shared project job: the
+	// catalog's jobs are per-repository ones, and the sole kind a shared
+	// project job runs — a clone workflow (launchProjectJobFor) — is the kind
+	// catalog.Applies takes out of this rule.
 	variant, ok := jobWorkflow(spec.Workflow, spec.OAuthToken)
 	if !ok {
 		// Not a job name: the launch itself refuses the variant a few lines
@@ -3674,33 +3695,48 @@ func deployedCatalogEntry(ctx context.Context, env *cloudEnv, slug string, spec 
 	if !ok {
 		// A backend that keeps no deployed job to read (Cloud Batch starts
 		// one per run and keeps none) cannot say what image the run starts
-		// on, so the tag's rule has nothing to judge here.
+		// on: the tag's rule has nothing to judge here, and neither has the
+		// entry's services — Batch runs every job on the installation's own
+		// image and not a catalog entry's, so no entry is what the run starts
+		// on and the stamp is the empty one. The installation that turns that
+		// backend on states that contract with it (design compute-backend.md
+		// §8.1); until then the config refuses it (internal/localcfg).
 		return config.Entry{}, false, nil
 	}
 	image, deployed, err := be.JobImage(ctx, name)
 	if err != nil {
+		// Refused rather than answered empty, whatever the workflow file
+		// says: the entry is what decides whether this run's tests get their
+		// backing services, and a launch that cannot read its own job is one
+		// nobody can say that about.
 		return config.Entry{}, false, remote(err)
 	}
 	if !deployed {
-		// Not deployed: nothing can start on an image this rule has not seen,
+		// Not deployed: nothing can start on an image none of this has seen,
 		// and the launch's own step refuses the missing job.
 		return config.Entry{}, false, nil
 	}
 	entry, ok := catalogEntryOf(*cat, image)
 	if !ok {
+		if !speaks {
+			// A workflow the catalog does not speak for keeps its own image,
+			// which is no entry's: the empty stamp, as for a job the catalog
+			// gave no image to at all.
+			return config.Entry{}, false, nil
+		}
 		return config.Entry{}, false, catalogMovedErr(spec.Workflow, name, image)
 	}
 	// A pin is the repository's own claim about which entry its job runs, and
 	// it is a claim about the deployed image too (D1155): a repository that
 	// now names another entry has a job deployed with an image this catalog
 	// does not give it.
-	if w.ImageName != "" && w.ImageName != entry.Name {
+	if speaks && w.ImageName != "" && w.ImageName != entry.Name {
 		return config.Entry{}, false, catalogMovedErr(spec.Workflow, name, image)
 	}
 	// The tags the workflow needs, against the entry the job actually runs:
 	// the deploy refused an uncovered needed set before the job existed, so
 	// this one changed under it.
-	if !catalog.Covers(entry.Tags, w.Needs) {
+	if speaks && !catalog.Covers(entry.Tags, w.Needs) {
 		return config.Entry{}, false, catalogMovedErr(spec.Workflow, name, image)
 	}
 	// The services the entry provides, from the same side the entry itself
@@ -3714,7 +3750,7 @@ func deployedCatalogEntry(ctx context.Context, env *cloudEnv, slug string, spec 
 	if env.lc.ImageCatalog == nil {
 		entry.Services = pol.ServicesFor(entry.Name)
 	}
-	return entry, true, nil
+	return entry, speaks, nil
 }
 
 // catalogDockerOn answers the docker tag's rule for the entry a job was
@@ -3915,6 +3951,12 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 	// refused launch has no token to drop, and before the declaration, which
 	// is the coordinator's record that this run is about to work — a refusal
 	// must leave nothing behind that says otherwise.
+	//
+	// catalogued is whether the catalog speaks for this workflow at all, which
+	// is what the tag rule is asked on and NOT whether the entry was found:
+	// a launch with no checkout of this repository resolves the entry from the
+	// deployed image alone (deployedCatalogEntry), so it has services to stamp
+	// and no workflow file to ask the tag rule about.
 	entry, catalogued, err := deployedCatalogEntry(hctx, env, slug, spec)
 	if err != nil {
 		rctx, rcancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
@@ -4025,12 +4067,12 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 	svcAuth, deployed := env.repoServiceAuth(ctx, spec, launchWarn)
 	lspec.Env = credentialsServiceLaunchEnv(env.lc, jobName, spec.Repo, svcAuth, deployed)
 	// The services the job's own catalog entry declares, on EVERY launch and
-	// empty where this job's image is not the catalog's (backend.ServicesEnv
+	// empty where the deployed image is no catalog entry (backend.ServicesEnv
 	// states why the key is always written, and why it is not a reserved
 	// name): the runner reads the entry's list back to start the services its
 	// tests need, and a key always set is what keeps an image's own ENV under
 	// the same name from answering for the entry. entry is the zero value for
-	// a job the catalog does not speak for, which writes the empty stamp.
+	// a job whose deployed image no entry is, which writes the empty stamp.
 	lspec.Env = append(lspec.Env, servicesLaunchEnv(entry))
 	if reviewJob {
 		// The marker is the whole fact (internal/runner's EnvReviewJob): the

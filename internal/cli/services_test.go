@@ -12,6 +12,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // TestServicesStampAlwaysWritten: the launch stamps the services the job's
@@ -104,9 +105,20 @@ const servicesCatalogYAML = `image_catalog:
 // with a different list, so a launcher that answered with the map, with another
 // entry's list or with the script's own default fails here too.
 //
-// Mutation (verified, run and restored): drop `entry.Services = pol.ServicesFor(...)`
-// in deployedCatalogEntry (the node half only: the local catalog still carries
-// its own list), and the node case launches with an empty stamp.
+// Each half is run in both checkout states (forEachCheckoutState): the entry is
+// read from the DEPLOYED job's image, and the workflow file only decides
+// whether the catalog speaks for that workflow — so a launcher with no checkout
+// of the repository, which is every console launch, still stamps the entry it
+// is about to start. That is a fixed bug of this branch's own: the checkout was
+// read first, and a launch without one stamped the empty list.
+//
+// Mutations (verified, run and restored): drop
+// `entry.Services = pol.ServicesFor(...)` in deployedCatalogEntry (the node
+// half only: the local catalog still carries its own list), and the node cases
+// launch with an empty stamp; return early from deployedCatalogEntry when
+// checkoutConfig has nothing (`co == nil`), as the branch did, and both
+// outside-any-checkout cases launch with an empty stamp while both checkout
+// cases pass.
 
 // servicesLaunchJob is the deployment read a launch makes of its backend: the
 // real one (gcp.Backend.JobImage) answers with the image the job was deployed
@@ -170,14 +182,46 @@ func servicesStamp(t *testing.T, plain []string) string {
 	return value
 }
 
-func TestServicesStampReachesTheLaunchFromTheLocalCatalog(t *testing.T) {
-	f := newLaunchBudget(t, "enforce")
-	f.appendConfig(t, servicesCatalogYAML)
-	dockerCheckout(t, needsNode)
-	rec := servicesLaunch(t, f.cloudFixture, servicesEntryImage)
-	if got, want := servicesStamp(t, rec.env), "postgres redis"; got != want {
-		t.Errorf("the launch's %s = %q, want %q: the entry the job was deployed with declares them, and this machine's catalog is what speaks for that entry here", backend.ServicesEnv, got, want)
+// forEachCheckoutState runs body in the two states a launcher can be in about
+// the repository's checkout: with one — the operator's own, where fugaro.yaml
+// is readable and catalog.Applies can be asked — and without one, which is
+// every launch the desktop console spawns (`fugaro run --repo` from a private
+// empty directory) and every `fugaro run --repo` from anywhere else. The stamp
+// has to be the deployed entry's in BOTH, and the without is the half that
+// fails silently: with no file to read, the entry is the deployed job's image
+// alone, and a launcher that gave up on it there starts the services of no
+// entry at all — every test of an image that declares one then fails in a
+// stage's output, with no word about the services being the reason (F12).
+func forEachCheckoutState(t *testing.T, body func(t *testing.T)) {
+	t.Helper()
+	for _, tc := range []struct {
+		name     string
+		checkout bool
+	}{
+		{"from the repository's checkout", true},
+		{"outside any checkout", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.checkout {
+				dockerCheckout(t, needsNode)
+			} else {
+				testutil.IsolateGit(t)
+				t.Chdir(t.TempDir())
+			}
+			body(t)
+		})
 	}
+}
+
+func TestServicesStampReachesTheLaunchFromTheLocalCatalog(t *testing.T) {
+	forEachCheckoutState(t, func(t *testing.T) {
+		f := newLaunchBudget(t, "enforce")
+		f.appendConfig(t, servicesCatalogYAML)
+		rec := servicesLaunch(t, f.cloudFixture, servicesEntryImage)
+		if got, want := servicesStamp(t, rec.env), "postgres redis"; got != want {
+			t.Errorf("the launch's %s = %q, want %q: the entry the job was deployed with declares them, and this machine's own catalog is what speaks for that entry here", backend.ServicesEnv, got, want)
+		}
+	})
 }
 
 // servicesNode is the published policy node of the second case: the same
@@ -199,15 +243,16 @@ func servicesNode() map[string]any {
 }
 
 func TestServicesStampReachesTheLaunchFromThePublishedNode(t *testing.T) {
-	f := newLaunchBudget(t, "enforce")
-	f.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.PolicyRulesVersion)
-	f.db.Set(projectpolicy.PathShared(), servicesNode())
-	if cfg := readFileString(t, os.Getenv("FUGARO_CONFIG")); strings.Contains(cfg, "image_catalog") {
-		t.Fatalf("the fixture's machine writes a catalog of its own, so this case is not the one it is about:\n%s", cfg)
-	}
-	dockerCheckout(t, needsNode)
-	rec := servicesLaunch(t, f.cloudFixture, servicesEntryImage)
-	if got, want := servicesStamp(t, rec.env), "postgres redis"; got != want {
-		t.Errorf("the launch's %s = %q, want %q: the node's image_services carries this entry's list, and the node is the only side that speaks for the catalog on a machine with no catalog of its own", backend.ServicesEnv, got, want)
-	}
+	forEachCheckoutState(t, func(t *testing.T) {
+		f := newLaunchBudget(t, "enforce")
+		f.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.PolicyRulesVersion)
+		f.db.Set(projectpolicy.PathShared(), servicesNode())
+		if cfg := readFileString(t, os.Getenv("FUGARO_CONFIG")); strings.Contains(cfg, "image_catalog") {
+			t.Fatalf("the fixture's machine writes a catalog of its own, so this case is not the one it is about:\n%s", cfg)
+		}
+		rec := servicesLaunch(t, f.cloudFixture, servicesEntryImage)
+		if got, want := servicesStamp(t, rec.env), "postgres redis"; got != want {
+			t.Errorf("the launch's %s = %q, want %q: the node's image_services carries this entry's list, and the node is the only side that speaks for the catalog on a machine with no catalog of its own", backend.ServicesEnv, got, want)
+		}
+	})
 }
