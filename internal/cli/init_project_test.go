@@ -1043,8 +1043,11 @@ func TestBillingLinkedWhileTheRunDecidesIsNotReplaced(t *testing.T) {
 	if n := r.bill.Attempts(); n != 0 {
 		t.Errorf("%d write(s) attempted\n%s", n, out)
 	}
-	if !strings.Contains(out, "never changes an existing link") {
-		t.Errorf("the run does not report the link it found between the two reads (%v)\n%s", err, out)
+	// The stage's reason is one clause on the screen and the whole of it in the
+	// log (report.Brief), and this clause is not the first: it is the log the
+	// line the run names that keeps it.
+	if whole := out + namedLog(t, out); !strings.Contains(whole, "never changes an existing link") {
+		t.Errorf("the run does not report the link it found between the two reads (%v)\n%s", err, whole)
 	}
 }
 
