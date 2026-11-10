@@ -34,8 +34,9 @@ that carries this ruling rather than dropped here.
   setting a key to an **empty mapping** — `review_floor: {}`, written as a mapping node and never as
   the string `"{}"` — and expanding a flow `{}` back into a block mapping when the first entry is
   written again (G7's `set` after the last `unset`). **The package landed (2026-11-01, #1467 and
-  #1501) and E3 is not done**: it carries the generic operations above — set a scalar, remove a key, add or remove a
-  list item, upsert or remove a sequence item by key — and **neither of the two this bullet names**.
+  #1501) and E3 is not done**: it carries the generic operations above — set a scalar, remove a key,
+  add or remove a list item, upsert or remove a sequence item by key — and **neither of the two this
+  bullet names**.
   An empty `{}` is refused outright (`internal/yamledit/flow.go`: "nothing is written into a
   collection with no members"), and no operation expands a flow mapping back into a block mapping, so
   a `review_floor` of nothing cannot be written today and the winner of S7, config-management's G7,
