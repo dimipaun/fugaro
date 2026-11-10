@@ -63,11 +63,12 @@ type launchProjectJob struct {
 func (e *cloudEnv) launchProjectJobFor(ctx context.Context, spec *task.Spec) (*launchProjectJob, error) {
 	// The workflow's own checkout: says whether this is a clone workflow, and
 	// which profile it selects. Both are read from the repository's own
-	// fugaro.yaml, so a checkout that cannot be read — the working directory
-	// is not repo's (fugaro run --repo ... from a machine that does not hold
-	// it), or it is and the file is missing or does not resolve over the
-	// project layer — leaves no answer to either. checkoutParse says nil for
-	// both, and the refusal below names both.
+	// fugaro.yaml, and checkoutParse answers nil for two states that are not
+	// one case: the working directory is not repo's checkout at all (fugaro
+	// run --repo ... from a machine that does not hold it), or it is and the
+	// working tree cannot give the file. The branch below is the ordered
+	// decision that tells them apart — what the provider rules out, what the
+	// checkout's own objects can answer, and what is left to refuse.
 	co := checkoutConfig(ctx, spec.Repo)
 	if co == nil {
 		// A launch with no config in hand is an ordered decision, and the

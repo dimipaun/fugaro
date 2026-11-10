@@ -190,9 +190,11 @@ func PaidCommandNames() []string { return slices.Clone(paidCommandNames) }
 func (c *Cloud) RunsBucket() *blobx.Bucket { return c.env.bucket }
 
 // RepoProvider is repo's git provider kind, as Cloud.RepoSlug resolves it: the
-// local config's entry first, then the checkout's fugaro.yaml. co must be
-// non-nil: the reader CheckoutOf answers can return nil, and a nil co panics on
-// its Git field.
+// local config's entry first, then the checkout's fugaro.yaml. The reader
+// CheckoutOf answers can return nil, and a nil co is an empty answer rather
+// than a panic: a caller with no checkout — a launch from outside the
+// repository's own (docs/run-without-checkout) — reads what the local config
+// says and nothing else.
 func (c *Cloud) RepoProvider(repo string, co *config.Config) string {
 	return c.env.repoProvider(repo, co)
 }
