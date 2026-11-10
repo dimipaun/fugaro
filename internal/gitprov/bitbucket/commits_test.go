@@ -221,6 +221,45 @@ func TestTreeStopsTheWalkOnThePageThatIsOverItsLimit(t *testing.T) {
 	}
 }
 
+// TestTreeRefusesAListingThatNeverEnds: the caller's ceiling is not what stops
+// every listing — an API that keeps answering with a next page would walk for
+// ever, and a context whose every entry is a directory counts against no file
+// ceiling at all — so the walk has a page count of its own. The page past that
+// bound is never asked for, and the page at it was, which is what the server's
+// record of the requests shows.
+func TestTreeRefusesAListingThatNeverEnds(t *testing.T) {
+	f := newCommitsServer(t)
+	page := func(n int) commitsReply {
+		return commitsReply{status: 200, ctype: "application/json",
+			body:   fmt.Sprintf(`{"values": [{"path": "ci/dir%d", "type": "commit_directory"}]}`, n),
+			header: map[string]string{"Link": fmt.Sprintf("<{{server}}%sci/?pagelen=100&recursive=true&page=%d>; rel=\"next\"", srcBase, n+1)}}
+	}
+	at := func(n int) string {
+		if n == 1 {
+			return srcBase + "ci/?pagelen=100&recursive=true"
+		}
+		return fmt.Sprintf("%sci/?pagelen=100&recursive=true&page=%d", srcBase, n)
+	}
+	for n := 1; n <= maxSrcPages; n++ {
+		f.routes[at(n)] = page(n)
+	}
+
+	p := f.provider(t)
+	_, err := p.Tree(ctx, "ci", commitSHA, gitprov.TreeLimit{MaxFiles: 10, MaxBytes: 1 << 20})
+	if err == nil {
+		t.Fatal("a listing that never ends was walked to its end")
+	}
+	if !strings.Contains(err.Error(), fmt.Sprintf("the %d pages this read walks", maxSrcPages)) {
+		t.Fatalf("Tree error = %v, want the walk's own bound", err)
+	}
+	if !f.asked(at(maxSrcPages)) {
+		t.Error("the walk stopped before the page its bound allows")
+	}
+	if f.asked(at(maxSrcPages + 1)) {
+		t.Error("the walk asked for the page past its bound")
+	}
+}
+
 // TestTreeRefusesADirectoryOverItsLimit: a directory over the byte ceiling is
 // refused as soon as the listing says so — the file that took it over is never
 // read, which is what the server's record of the requests shows.
