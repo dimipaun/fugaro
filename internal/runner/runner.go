@@ -5233,8 +5233,11 @@ func (r *run) finalize(ctx context.Context) error {
 	dec := Decide(records, decided, decidedRound, pol, r.rec.OwnerDecisions)
 	r.rec.Tolerated = r.toleratedRecord(pol, decidedRound)
 	r.rec.Accepted = r.acceptedRecord(pol, decidedRound)
+	// The answer is replaced whole rather than having its sentence rewritten:
+	// the one reason this fires on is Decide's own, and the kind it came with is
+	// the one the replacement keeps (Decision, D995).
 	if committed && dec.Reason == ReasonNoVerifiedTest {
-		dec.Reason = "uncommitted changes were committed at finalize, after the last verified test run"
+		dec = blockedDecision("uncommitted changes were committed at finalize, after the last verified test run", dec.Class)
 	}
 	// A run whose diff matched a security row and whose escalation was refused
 	// is not ready, whatever Decide answered (D1509): the level the

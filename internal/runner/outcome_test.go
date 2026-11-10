@@ -728,3 +728,137 @@ func TestDecideRefusalsCarryTheirClass(t *testing.T) {
 		})
 	}
 }
+
+// TestNoSeniorRoundIsUnreviewed is F6's second state: a run that reaches
+// readiness with no review round to read answers exactly as one whose round
+// answered nothing does. Nothing failed in it — its tests passed, which is how
+// it reached this rule at all — and nothing read it either, so `last == nil`
+// carries the same reason class and kind the no-verdict round does (D994,
+// D995). The two are one answer written by one constructor, which is why they
+// are pinned together: a run that slipped a label no round exists for and a run
+// whose round said nothing are the same absence of a review.
+func TestNoSeniorRoundIsUnreviewed(t *testing.T) {
+	pass := verify.Record{Kind: verify.KindTest, HeadSHA: "abc", CleanTree: true, Passed: true}
+	for _, tc := range []struct {
+		name   string
+		last   *runstore.ReviewSummary
+		reason string
+	}{
+		// No round to read: a run whose loop never got a review verdict onto
+		// the record.
+		{"no senior round", nil, "no review verdict"},
+		// A round that produced nothing, retry included: the sentence still
+		// names which round, because a reader has to know how far the run got.
+		{"a round that answered nothing", &runstore.ReviewSummary{Round: 2, Verdict: "none"}, "review round 2 returned no parseable verdict after a retry"},
+	} {
+		dec := Decide([]verify.Record{pass}, "abc", tc.last, FindingsPolicy{}, nil)
+		if dec.Ready || dec.Kind != KindUnreviewed {
+			t.Errorf("%s: Decide = %+v, want the label a run no review answered carries", tc.name, dec)
+		}
+		if dec.Reason != tc.reason {
+			t.Errorf("%s: reason = %q, want %q", tc.name, dec.Reason, tc.reason)
+		}
+		if dec.Class != failure.ReviewUnread {
+			t.Errorf("%s: class = %q, want %q", tc.name, dec.Class, failure.ReviewUnread)
+		}
+	}
+}
+
+// TestDecideClassMatchesTheReadiness is the one invariant finalize's switch
+// leans on (runner.go): the Kind is what the status is written from, so a run
+// Decide made ready is KindReady and nothing else, a run it refused without a
+// verdict is KindUnreviewed, and every other refusal is blocked. A ready answer
+// carries no class either, the way a succeeded record carries none.
+//
+// The two are asserted apart from the class on purpose. review_unread is the
+// class of two refusals that are *not* the label — a fix no round read, and
+// nothing else in this table — because the class describes the cause and the
+// Kind describes the ending: a run whose tolerated round was followed by work
+// nobody reviewed did not go unread for want of a reviewer, it went unread
+// because the mode's own rule could not reach the commit that ships. Moving the
+// status on the class would label such a run as one no review ever answered.
+func TestDecideClassMatchesTheReadiness(t *testing.T) {
+	pass := verify.Record{Kind: verify.KindTest, HeadSHA: "abc", CleanTree: true, Passed: true}
+	fail := verify.Record{Kind: verify.KindTest, HeadSHA: "abc", CleanTree: true}
+	dirty := verify.Record{Kind: verify.KindTest, HeadSHA: "abc", Passed: true}
+	ship := &runstore.ReviewSummary{Round: 1, Verdict: "ship"}
+	noVerdict := &runstore.ReviewSummary{Round: 2, Verdict: "none"}
+	changes := &runstore.ReviewSummary{Round: 2, Verdict: "changes", Findings: 1}
+	waiting := runstore.NewOwnerDecisions([]runstore.OwnerDecision{{Summary: "clear the licence with legal"}})
+	acceptedAtStop := findingsPolicyOf(optedIn, rigor.Startup, 2, []rigor.Score{big}, runstore.StopRoundsSpent)
+	unreadFix := findingsPolicyOf(optedIn, rigor.Startup, 2, []rigor.Score{tiny}, "")
+	unreadFix.UnreadFix = changes
+	stopBlocking := findingsPolicyOf(optedIn, rigor.Startup, 2, []rigor.Score{big}, runstore.StopRoundsSpent)
+	stopBlocking.StopBlocking = []runstore.ReviewSummary{{Round: 1, Verdict: "changes", Findings: 3, Tier: runstore.TierSenior}}
+	cases := []struct {
+		name    string
+		records []verify.Record
+		last    *runstore.ReviewSummary
+		pol     FindingsPolicy
+		owner   *runstore.OwnerDecisions
+		kind    Kind
+	}{
+		{"a shipped round is ready", []verify.Record{pass}, ship, FindingsPolicy{}, nil, KindReady},
+		{"a tolerated round is ready", []verify.Record{pass}, changes,
+			findingsPolicyOf(optedIn, rigor.Startup, 2, []rigor.Score{tiny}, ""), nil, KindReady},
+		{"a round accepted at the stop is ready", []verify.Record{pass}, changes, acceptedAtStop, nil, KindReady},
+
+		{"no test record is blocked", nil, ship, FindingsPolicy{}, nil, KindBlocked},
+		{"a failing test is blocked", []verify.Record{fail}, ship, FindingsPolicy{}, nil, KindBlocked},
+		{"a test that did not run clean is blocked", []verify.Record{dirty}, ship, FindingsPolicy{}, nil, KindBlocked},
+		{"a question the owner has not answered is blocked", []verify.Record{pass}, ship, FindingsPolicy{}, waiting, KindBlocked},
+		{"findings the mode does not tolerate are blocked", []verify.Record{pass}, changes, FindingsPolicy{}, nil, KindBlocked},
+		{"a fix no round read is blocked, not unreviewed", []verify.Record{pass}, changes, unreadFix, nil, KindBlocked},
+		{"a level under the stop's own is blocked", []verify.Record{pass}, changes, stopBlocking, nil, KindBlocked},
+		{"a level held back is blocked", []verify.Record{pass}, ship,
+			FindingsPolicy{HeldBack: &runstore.ReviewSummary{Round: 1, Verdict: "changes"}}, nil, KindBlocked},
+
+		// The label's two states (F6), and no third one below them.
+		{"no review round is unreviewed", []verify.Record{pass}, nil, FindingsPolicy{}, nil, KindUnreviewed},
+		{"a round that answered nothing is unreviewed", []verify.Record{pass}, noVerdict, FindingsPolicy{}, nil, KindUnreviewed},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dec := Decide(tc.records, "abc", tc.last, tc.pol, tc.owner)
+			if dec.Kind != tc.kind {
+				t.Fatalf("Decide = %+v, want the %s ending", dec, tc.kind)
+			}
+			if dec.Ready != (dec.Kind == KindReady) {
+				t.Errorf("Decide = %+v: ready and the ready kind are the same answer, and finalize's switch writes the status from the kind alone", dec)
+			}
+			if dec.Ready && dec.Class != "" {
+				t.Errorf("Decide = %+v: a ready run carries no failure class, as a succeeded record carries none", dec)
+			}
+			if dec.Kind == KindUnreviewed && (dec.Class != failure.ReviewUnread || dec.Ready) {
+				t.Errorf("Decide = %+v: the label is a draft whose class is %q", dec, failure.ReviewUnread)
+			}
+		})
+	}
+}
+
+// TestFindingsBlocksStayFailed is D991's other half: the label NV1 adds is for
+// the run nobody read, and a round that *did* read the diff and left findings
+// the mode does not let through is the run the runner refused — `failed`, which
+// is what it has always been, whatever the round's own verdict was. The Kind is
+// blocked at every mode, so the switch's unreviewed case cannot take it, and
+// the class stays the count's (review_not_converged). The status itself is
+// pinned end to end by TestRealBlockerStillFailsTheRun.
+func TestFindingsBlocksStayFailed(t *testing.T) {
+	pass := verify.Record{Kind: verify.KindTest, HeadSHA: "abc", CleanTree: true, Passed: true}
+	last := &runstore.ReviewSummary{Round: 2, Verdict: "changes", Findings: 1}
+	// The severity override is the one finding every mode refuses (D2): the
+	// rows of TestDecideByMode above are the modes' tolerances, and this is the
+	// finding none of them holds.
+	for _, mode := range rigor.Modes {
+		dec := Decide([]verify.Record{pass}, "abc", last, findingsPolicyOf(optedIn, mode, 2, []rigor.Score{catastrophic}, ""), nil)
+		if dec.Kind != KindBlocked || dec.Ready {
+			t.Errorf("%s: Decide = %+v, want the refusal `failed` names", mode, dec)
+		}
+		if dec.Class != failure.ReviewNotConverged {
+			t.Errorf("%s: class = %q, want %q", mode, dec.Class, failure.ReviewNotConverged)
+		}
+		if dec.Reason != "review round 2 still has 1 finding" {
+			t.Errorf("%s: reason = %q, want the count's own", mode, dec.Reason)
+		}
+	}
+}
