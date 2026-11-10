@@ -204,7 +204,11 @@ func (e *initEngine) writeAdminList(ctx context.Context) {
 	}
 	defer b.Close()
 	if err := b.Put(ctx, roleaccess.PathAdminList, data, "application/json"); err != nil {
-		r.warn(fmt.Sprintf("the admin list was not written: %s", safetext.FieldErr(operatorWriteErr(e.lc.BucketURL(), roleaccess.PathAdminList, err, "the admin list was not written"))))
+		// operatorWriteErr is the bucket's refusal for the one account that may
+		// write outside runs/, tokens/ and issues/ (H8): an update run by a
+		// launcher reads the roster but cannot publish the list, and what it can
+		// do about that is the command the refusal names.
+		r.warn(fmt.Sprintf("the admin list was not written: %s", safetext.FieldErr(operatorWriteErr(e.lc.BucketURL(), roleaccess.PathAdminList, err))))
 		return
 	}
 	fmt.Fprintf(r.w, "admin list: %d project admin(s) in %s, the object the intake reads before it writes to the shared prefix. It lags a role change until the next `fugaro update`: a grant or a revocation reaches the intake in the run after it.\n",

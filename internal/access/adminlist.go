@@ -76,18 +76,19 @@ const (
 // spelling of a grant, and a wire shape that carried it would invite a reader
 // to compare it against a bare address.
 //
-// Sub is the Google account ID and is optional: the roster (F27) is keyed by
-// email and holds no account ID, so a list derived from it carries none, and
-// the field is here for the readers that need it — R10 resolves a policy's
-// owner and allowed_users to a `sub` at grant time (DS3.1, DS2.1). An absent
-// sub matches nobody: a reader that looked a caller up by sub finds no entry
-// rather than an entry that stands for everyone with no account ID.
+// Sub is the Google account ID and is optional, which is the plan's "email and
+// sub where known": the roster (F27) is keyed by email and holds no account ID,
+// so a list derived from it carries none, and the field is what a derivation
+// that knows one writes and a reader that holds a caller's `sub` compares
+// against (R10 resolves a policy's owner and allowed_users to one at grant
+// time). An absent sub matches nobody: a reader looking a caller up by account
+// ID finds no entry, rather than an entry that stands for every caller who has
+// none.
 type Admin struct {
 	// Email is the member's canonical address, as Member folds it.
 	Email string `json:"email"`
-	// Sub is the member's Google account ID (the token's `sub`, the numeric
-	// account identifier of U2), and empty when the derivation did not know
-	// one.
+	// Sub is the member's Google account ID: the numeric identifier the `sub`
+	// claim carries (U2), and empty when the derivation did not know one.
 	Sub string `json:"sub,omitempty"`
 }
 
