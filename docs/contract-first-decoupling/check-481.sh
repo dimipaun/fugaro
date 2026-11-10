@@ -12,9 +12,12 @@
 # planner wrote, and this is how that is learnt.
 #
 # The wall clock is OBSERVED, not read: no listing carries a run's end time, so
-# this check watches each batch's own rows until every one of them is terminal
-# and takes the span from the earliest start it saw to the poll that saw the last
-# one settle. That is why it is started while the batches are running: a batch
+# this check watches both batches' rows in one loop until every one of them is
+# terminal, and takes each span from the earliest start that batch's rows carry
+# to the poll that first saw it settle — one loop and not one batch after the
+# other, because the batch that settles first is the faster one and waiting on
+# the other would miss exactly the reading this check exists for. That is why it
+# is started while the batches are running: a batch
 # that is already over when the check first looks cannot be measured after the
 # fact, and its row says so (UNVERIFIED) rather than reporting a number nobody
 # measured. The accuracy is the poll interval, which the row prints.
@@ -320,69 +323,86 @@ start_epoch() {
   jq -r '[.runs[] | ((.started_at // .created) | sub("\\.[0-9]+"; "") | sub("\\+00:00$"; "Z") | fromdateiso8601)] | min' "$1" 2>/dev/null
 }
 
-# watch_batch KEY NAME ESTIMATE: the batch's wall clock, observed. It polls the
-# batch's rows until every one of them is terminal and takes the span from the
-# earliest start it saw to the poll that saw the last one settle. A batch whose
-# rows are already terminal on the first poll cannot be measured this way, and
-# saying what it did instead would be a figure nobody took.
-watch_batch() {
-  local key=$1 name=$2 estimate=$3
-  local batch_json="$SCRATCH/batch-$key.json"
-  local first=yes start="" start_raw="" n settled now deadline
-  deadline=$(( $(date +%s) + WAIT_SECONDS ))
+# watch_batches: both batches' wall clocks, observed together. One poll reads
+# both listings and each batch's end is the poll that first sees it settled.
+# Watching one batch and then the other would miss the batch that settled while
+# the loop waited on the first — and the shape that settles first is the faster
+# one, which is exactly the reading this check exists for: a break whose
+# decoupled batch finishes no sooner than the sequential one. Each span runs
+# from the earliest start the rows carry to that poll, because no read publishes
+# a run's end.
+#
+# A batch whose rows are already terminal on the first poll cannot be measured
+# this way, and saying what it did instead would be a figure nobody took.
+watch_batches() {
+  local keys=(decoupled-batch sequential-batch)
+  local names=("$DECOUPLED_BATCH" "$SEQUENTIAL_BATCH")
+  local estimates=("the shape the pass wrote" "the shape the plan had before the pass")
+  local bfin=(no no) bstart=("" "") bstartraw=("" "")
+  local deadline=$(( $(date +%s) + WAIT_SECONDS ))
+  local first=yes i key name estimate json n settled now wall statuses cost
   while :; do
-    if ! fugaro runs ls --batch "$name" --since 0 --json >"$batch_json" 2>"$SCRATCH/batch-$key.err"; then
-      # A listing that cannot be read is not a finding about the plan: the wall
-      # clock is the only thing this row measures, and a check that could not
-      # take it has nothing to say about the gain either way. It is left
-      # unmeasured — the row says which figure is missing and why — rather than
-      # failed, which would read as a break the read reported and the clock
-      # refused.
-      fact "$key" UNVERIFIED "'fugaro runs ls --batch $name' could not list the batch — $(tr '\n' ' ' <"$SCRATCH/batch-$key.err") The wall clock is the figure this row measures and the listing is the only place it comes from, so nothing is concluded about the plan here: check that the installation can read the runs bucket (fugaro doctor) and run the check again"
-      return 0
-    fi
-    n=$(jq -r '.runs | length' "$batch_json")
-    settled=$(jq -r '[.runs[] | select(.terminal == true)] | length' "$batch_json")
-    if [ "$n" -gt 0 ] && [ -z "$start" ]; then
-      start=$(start_epoch "$batch_json" || true)
-      start_raw=$(jq -r '[.runs[] | (.started_at // .created)] | min' "$batch_json")
-      owner "batch '$name': $n run(s), the first started $start_raw"
-    fi
     now=$(date +%s)
-    if [ "$n" -gt 0 ] && [ "$settled" -eq "$n" ]; then
-      if [ "$first" = yes ]; then
-        fact "$key" UNVERIFIED "batch '$name' was already over when this check first looked ($n run(s), all terminal): the span is observable only while the batch runs, so this figure is not taken after the fact. Run the check right after launching the batches and it measures them"
-        return 0
+    for i in 0 1; do
+      [ "${bfin[$i]}" = yes ] && continue
+      key=${keys[$i]} name=${names[$i]} estimate=${estimates[$i]}
+      json="$SCRATCH/batch-$key.json"
+      if ! fugaro runs ls --batch "$name" --since 0 --json >"$json" 2>"$SCRATCH/batch-$key.err"; then
+        # A listing that cannot be read is not a finding about the plan: the wall
+        # clock is the only thing this row measures, and a check that could not
+        # take it has nothing to say about the gain either way. It is left
+        # unmeasured — the row says which figure is missing and why — rather than
+        # failed, which would read as a break the read reported and the clock
+        # refused.
+        fact "$key" UNVERIFIED "'fugaro runs ls --batch $name' could not list the batch — $(tr '\n' ' ' <"$SCRATCH/batch-$key.err") The wall clock is the figure this row measures and the listing is the only place it comes from, so nothing is concluded about the plan here: check that the installation can read the runs bucket (fugaro doctor) and run the check again"
+        bfin[i]=yes
+        continue
       fi
-      if [ -z "$start" ]; then
-        fact "$key" UNVERIFIED "batch '$name' has $n run(s) and none of them carries a readable start time ($start_raw), so the span from the first start cannot be taken"
-        return 0
+      n=$(jq -r '.runs | length' "$json")
+      settled=$(jq -r '[.runs[] | select(.terminal == true)] | length' "$json")
+      if [ "$n" -gt 0 ] && [ -z "${bstart[$i]}" ]; then
+        bstart[i]=$(start_epoch "$json" || true)
+        bstartraw[i]=$(jq -r '[.runs[] | (.started_at // .created)] | min' "$json")
+        owner "batch '$name': $n run(s), the first started ${bstartraw[$i]}"
       fi
-      local wall=$((now - start))
-      local statuses
-      statuses=$(jq -r '[.runs[].status] | group_by(.) | map("\(length) \(.[0])") | join(", ")' "$batch_json")
-      local cost
-      cost=$(jq -r '.totals.total_usd' "$batch_json")
-      fact "$key" PASS "batch '$name': $n run(s) ($statuses), wall clock $(fmt_duration "$wall") observed live (starts read from the rows, the end the poll at ${POLL_SECONDS}s), $cost USD, $estimate"
-      if [ "$key" = decoupled-batch ]; then
-        DECOUPLED_WALL=$wall
-      else
-        SEQUENTIAL_WALL=$wall
+      if [ "$n" -gt 0 ] && [ "$settled" -eq "$n" ]; then
+        if [ "$first" = yes ]; then
+          fact "$key" UNVERIFIED "batch '$name' was already over when this check first looked ($n run(s), all terminal): the span is observable only while the batch runs, so this figure is not taken after the fact. Run the check right after launching the batches and it measures them"
+          bfin[i]=yes
+          continue
+        fi
+        if [ -z "${bstart[$i]}" ]; then
+          fact "$key" UNVERIFIED "batch '$name' has $n run(s) and none of them carries a readable start time (${bstartraw[$i]}), so the span from the first start cannot be taken"
+          bfin[i]=yes
+          continue
+        fi
+        wall=$((now - ${bstart[$i]}))
+        statuses=$(jq -r '[.runs[].status] | group_by(.) | map("\(length) \(.[0])") | join(", ")' "$json")
+        cost=$(jq -r '.totals.total_usd' "$json")
+        fact "$key" PASS "batch '$name': $n run(s) ($statuses), wall clock $(fmt_duration "$wall") observed live (starts read from the rows, the end the poll at ${POLL_SECONDS}s), $cost USD, $estimate"
+        if [ "$key" = decoupled-batch ]; then
+          DECOUPLED_WALL=$wall
+        else
+          SEQUENTIAL_WALL=$wall
+        fi
+        bfin[i]=yes
+        continue
       fi
-      return 0
-    fi
-    if [ "$now" -ge "$deadline" ]; then
-      if [ "$n" -eq 0 ]; then
-        fact "$key" UNVERIFIED "no run carries the batch name '$name' after ${WAIT_SECONDS}s: the check cannot measure a batch nothing was launched in. Launch it with --batch $name, then run the check again"
-      else
-        fact "$key" FAIL "batch '$name' still had $((n - settled)) of $n run(s) going after ${WAIT_SECONDS}s: the wall clock is not measured for a batch that has not settled. Watch it with 'fugaro runs ls --watch --batch $name' and re-run the check while it is going"
+      if [ "$now" -ge "$deadline" ]; then
+        if [ "$n" -eq 0 ]; then
+          fact "$key" UNVERIFIED "no run carries the batch name '$name' after ${WAIT_SECONDS}s: the check cannot measure a batch nothing was launched in. Launch it with --batch $name, then run the check again"
+        else
+          fact "$key" FAIL "batch '$name' still had $((n - settled)) of $n run(s) going after ${WAIT_SECONDS}s: the wall clock is not measured for a batch that has not settled. Watch it with 'fugaro runs ls --watch --batch $name' and re-run the check while it is going"
+        fi
+        bfin[i]=yes
+        continue
       fi
-      return 0
-    fi
+    done
+    [ "${bfin[0]}${bfin[1]}" = yesyes ] && return 0
     if [ "$first" = yes ]; then
-      owner "batch '$name': waiting for its runs to settle (re-reading every ${POLL_SECONDS}s, up to ${WAIT_SECONDS}s)"
+      owner "waiting for the runs to settle (re-reading every ${POLL_SECONDS}s, up to ${WAIT_SECONDS}s)"
+      first=no
     fi
-    first=no
     sleep "$POLL_SECONDS"
   done
 }
@@ -481,8 +501,7 @@ main() {
   [ -n "$PLAN" ] || die "Check 481: name the plan to measure (usage: $USAGE)"
   guard_setup
   read_gain
-  watch_batch decoupled-batch "$DECOUPLED_BATCH" "the shape the pass wrote"
-  watch_batch sequential-batch "$SEQUENTIAL_BATCH" "the shape the plan had before the pass"
+  watch_batches
   compare
   REACHED_END=yes
 }
