@@ -131,7 +131,6 @@ func newUpdateCmdWith(o *initOptions) *cobra.Command {
 	return cmd
 }
 
-
 // writeAdminList is D1940's step: the roster's project-scoped admins, derived
 // and published as the bucket object the intake reads (internal/access's
 // adminlist.go).
