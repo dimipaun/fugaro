@@ -370,3 +370,67 @@ func TestChainRefusesALinkedRunWithNoRecord(t *testing.T) {
 		})
 	}
 }
+
+// chainOfCaps is one chain read with the per-run caps the caller resolved.
+func chainOfCaps(t *testing.T, b *blob.Bucket, from string, ledgers LedgerReader, caps PerRunCaps) *Chain {
+	t.Helper()
+	c, err := ResolveChain(ctx, Open(b, "acme-app", from), ledgers, caps, chainNow)
+	if err != nil {
+		t.Fatalf("ResolveChain(%s) = %v", from, err)
+	}
+	return c
+}
+
+// A --max-tokens chain in the ordinary installation, where agent.max_run_tokens
+// is unset (0 is none) and the database has no per-run token cap, so the only
+// token bound in play is the chain's own: the caller passes that as the
+// bound, and the run whose ledger cannot be read is charged it. The chain then
+// reads spent rather than keeping its whole token budget -- remaining(tokens)
+// overstated by that run's whole spend is exactly what D1049 forbids.
+func TestChainUnreadableLedgerChargesTheChainBound(t *testing.T) {
+	const limit = 2_000_000
+	f := &fakeLedgers{
+		found:  map[string]Ledger{chainRoot: {Tokens: 1_000}, chainMid: {Tokens: 1_000}},
+		absent: map[string]bool{chainTip: true},
+	}
+	c := chainOfCaps(t, chainBucket(t), chainTip, f, PerRunCaps{USD: 5_000_000, Tokens: limit})
+	got := c.Remaining(limit, Tokens)
+	if !got.Measured || got.Amount > 0 {
+		t.Fatalf("Remaining(%d tokens) = %+v, want the chain read as spent, not its budget handed back", limit, got)
+	}
+}
+
+// A ledger that cannot be read and a dimension the caller has no bound for:
+// there is no cap to charge and charging nothing would read the run as free
+// (D1049), so the dimension is reported unmeasured -- never as a zero, and
+// never as the sum of the runs that could be read, which is a lower bound and
+// not the figure. A chain limited on the other dimension still reads whole.
+func TestChainUnreadableLedgerWithNoBoundIsUnmeasured(t *testing.T) {
+	f := &fakeLedgers{
+		found:  map[string]Ledger{chainRoot: {Reserved: 1_000_000}, chainMid: {Reserved: 1_000_000}},
+		absent: map[string]bool{chainTip: true},
+	}
+	b := chainBucket(t)
+	c := chainOfCaps(t, b, chainTip, f, PerRunCaps{Tokens: 25_000})
+	if got := c.Used(USD); got.Measured || got.Amount != 0 {
+		t.Fatalf("Used(usd) = %+v, want no figure: the run in flight cannot be bounded in dollars", got)
+	}
+	if got := c.Remaining(9_000_000, USD); got.Measured {
+		t.Fatalf("Remaining(usd) = %+v, want it unmeasured, not the whole limit", got)
+	}
+	if got := c.Used(Tokens); !got.Measured || got.Amount != 25_000 {
+		t.Fatalf("Used(tokens) = %+v, want the 25_000 the caller bounded", got)
+	}
+	if got := c.Used(Time); !got.Measured {
+		t.Fatalf("Used(time) = %+v, want the records' own figure untouched", got)
+	}
+	// No bound on either half: both money dimensions are unmeasured, and the
+	// run is still named for a reader that has to say why.
+	c = chainOfCaps(t, b, chainTip, f, PerRunCaps{})
+	if got := c.Used(Tokens); got.Measured {
+		t.Fatalf("Used(tokens) with no bound = %+v, want it unmeasured", got)
+	}
+	if len(c.Charged) != 1 || c.Charged[0].Run != chainTip {
+		t.Fatalf("Charged = %+v, want the run whose ledger could not be read", c.Charged)
+	}
+}

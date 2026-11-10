@@ -36,13 +36,19 @@ type Amount float64
 // measured it at all.
 type Figure struct {
 	Amount Amount
-	// Measured is false when the chain has no figure for the dimension. With
-	// the budget off there is no ledger, and no run record carries a
-	// whole-run token total — result.json's only token figures are the
-	// gateway's cache sums, which exclude the input and output tokens a cap
-	// counts — so a budget-off chain does not measure tokens rather than
-	// approximating them (D1051, F8). A reader prints that; a false Measured
-	// is never a zero that was read.
+	// Measured is false when the chain has no figure for the dimension, and
+	// Amount is then nothing to read rather than a number to trust. It is
+	// false in two cases. With the budget off there is no ledger, and no run
+	// record carries a whole-run token total — result.json's only token
+	// figures are the gateway's cache sums, which exclude the input and
+	// output tokens a cap counts — so a budget-off chain does not measure
+	// tokens rather than approximating them (D1051, F8). And a run whose
+	// ledger cannot be read leaves the dimension it could not be charged in
+	// unmeasured, where the caller's PerRunCaps had no bound for it: the
+	// only other figures available are a zero and the sum of the runs that
+	// could be read, both of which say the chain spent less than it may have
+	// (D1049). A reader prints that; a false Measured is never a zero that
+	// was read.
 	Measured bool
 }
 
@@ -80,25 +86,34 @@ type LedgerReader interface {
 	ReadLedger(ctx context.Context, slug, run string) (Ledger, bool, error)
 }
 
-// PerRunCaps is the per-run cap a ledger that cannot be read is charged
-// (D1049): the largest amount that run could have been holding. Both are the
-// figures the caller resolved — the effective per-run cap and its token twin
-// — and neither is the chain's own limit, which is the root launch's number
-// and lives in its stored task (D1046).
+// PerRunCaps is, per dimension, the largest amount one run of this chain
+// could have been holding, and so what a ledger that cannot be read is
+// charged (D1049). The caller passes the bounds it resolved: the effective
+// per-run cap where the installation sets one — the lower of the policy's
+// and the database's — and otherwise **the chain's own limit for that
+// dimension**, which is then the tightest bound in play. Neither is the
+// chain's limit where a per-run cap exists: that one is the root launch's
+// number and lives in its stored task (D1046).
 //
-// **The caller passes the caps it resolved, and a caller whose installation
-// sets no per-run cap refuses the launch instead.** A zero here is a cap that
-// allows nothing, not the absence of one, and this type cannot tell the two
-// apart: with no cap at all the zero it would carry charges an unreadable
-// ledger nothing, which is the one figure D1049 forbids (a missing ledger
-// read as free restores the whole chain's budget, F14). The case is
-// reachable with the budget on: budget.Caps.PerRun reports ok false when
-// neither the repository's nor the global per-run cap is set anywhere, and
-// budget.Session.Admit halts on that only under Enforcing or LocalEnforce,
-// so an observe-mode installation can run — and launch a --max-* chain —
-// with no per-run cap for any hop. Whoever resolves the caps owns that
-// refusal, exactly as Admit already refuses a run whose lease could not be
-// bounded; this read has no honest figure to charge and will not invent one.
+// **Zero is the absence of a bound**, in this codebase's own vocabulary for
+// both dimensions: policy.PerRunUSD is documented `0 = unset` and
+// agent.max_run_tokens (FUGARO_MAX_RUN_TOKENS) `0 is none`, and the per-run
+// token cap is optional policy with no database counterpart, so an
+// installation with no token bound is the ordinary case rather than a
+// strange one. A database per-run cap of literally zero is the one thing
+// this reading costs: it bounds a run to spending nothing, so no such run
+// can be holding anything, and reading it as no bound at all only makes the
+// token and dollar dimensions *more* cautious than they need to be.
+//
+// A dimension the caller has no bound for cannot be charged, and this read
+// never charges a zero (D1049: a missing ledger read as free restores the
+// whole chain's budget, F14). That dimension is reported **unmeasured** —
+// see Figure.Measured — and the run is named in Charged, so a caller
+// enforcing a limit on it knows the figure is unknown rather than smaller
+// than it is. Refusing the whole read instead would stop a chain over a
+// dimension it may not even limit (a --max-usd chain in an installation that
+// sets no token cap), and D1049 is explicit that one failed read is not a
+// stopped chain.
 type PerRunCaps struct {
 	USD    pricing.Micros
 	Tokens int64
@@ -106,8 +121,10 @@ type PerRunCaps struct {
 
 // LedgerMiss is one run of a chain whose ledger could not be read, and which
 // of the two ways it failed: Err set is a read that failed, Err nil a node
-// the database does not have. Both are charged the per-run cap (D1049), and
-// they are kept apart here because a reader names which one it hit (L1).
+// the database does not have. Both are charged the per-run cap (D1049) —
+// and in a dimension the caller's PerRunCaps has no bound for, charged
+// nothing and left unmeasured instead — and they are kept apart here because
+// a reader names which one it hit (L1).
 type LedgerMiss struct {
 	Run string
 	Err error
@@ -153,6 +170,17 @@ func (c *Chain) Remaining(limit Amount, dim Dimension) Figure {
 	return Figure{Amount: limit - used.Amount, Measured: true}
 }
 
+// figure is one dimension's reading, and none at all when the dimension is
+// not measured: a sum over the runs that could be read is a lower bound, and
+// a lower bound reported as the figure is the one thing an unmeasured
+// dimension must not hand a reader.
+func figure(a Amount, measured bool) Figure {
+	if !measured {
+		return Figure{}
+	}
+	return Figure{Amount: a, Measured: true}
+}
+
 // ResolveChain reads the chain the run of s belongs to: the runs its records
 // link back to the root, and what each of them has already spent.
 //
@@ -175,8 +203,9 @@ func (c *Chain) Remaining(limit Amount, dim Dimension) Figure {
 //
 // ledgers is the budget database, nil when the budget is off — where the
 // records are the figures and the chain is UNENFORCED (D1046) — perRun is
-// what a run whose ledger cannot be read is charged (D1049), and now is the
-// moment a run still in flight is measured at.
+// what a run whose ledger cannot be read is charged (D1049), leaving each
+// dimension it holds no bound for unmeasured, and now is the moment a run
+// still in flight is measured at.
 func ResolveChain(ctx context.Context, s *Store, ledgers LedgerReader, perRun PerRunCaps, now time.Time) (*Chain, error) {
 	from := s.RunID()
 	if from == "" {
@@ -230,6 +259,7 @@ func ResolveChain(ctx context.Context, s *Store, ledgers LedgerReader, perRun Pe
 	c.Runs, c.Root = ids, ids[0]
 
 	var usd, tokens, seconds, rounds Amount
+	unbound := map[Dimension]bool{}
 	for _, id := range ids {
 		rec := records[id]
 		if rec == nil {
@@ -246,15 +276,28 @@ func ResolveChain(ctx context.Context, s *Store, ledgers LedgerReader, perRun Pe
 		l, found, err := ledgers.ReadLedger(ctx, s.Slug(), id)
 		if err != nil || !found {
 			c.Charged = append(c.Charged, LedgerMiss{Run: id, Err: err})
-			usd += Amount(perRun.USD)
-			tokens += Amount(perRun.Tokens)
+			// A dimension the caller has no bound for is not charged: a
+			// zero here reads the run as free, which is the figure D1049
+			// forbids, so the dimension is reported unmeasured instead (and
+			// not as the sum of the runs that could be read, which is a
+			// lower bound rather than the figure).
+			if perRun.USD == 0 {
+				unbound[USD] = true
+			} else {
+				usd += Amount(perRun.USD)
+			}
+			if perRun.Tokens == 0 {
+				unbound[Tokens] = true
+			} else {
+				tokens += Amount(perRun.Tokens)
+			}
 			continue
 		}
 		usd += Amount(l.Held())
 		tokens += Amount(l.Tokens)
 	}
-	c.used[USD] = Figure{Amount: usd, Measured: true}
-	c.used[Tokens] = Figure{Amount: tokens, Measured: ledgers != nil}
+	c.used[USD] = figure(usd, !unbound[USD])
+	c.used[Tokens] = figure(tokens, ledgers != nil && !unbound[Tokens])
 	c.used[Time] = Figure{Amount: seconds, Measured: true}
 	c.used[ReviewRounds] = Figure{Amount: rounds, Measured: true}
 	return c, nil
