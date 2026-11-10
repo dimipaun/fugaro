@@ -962,11 +962,13 @@ const SETTINGS_DOC_VERSION = 1
  * other reason. */
 const SETTINGS_VERSION_WORD = 'settings --json is version '
 
-/** SETTINGS_OWNED_WORD introduces the command family that writes a key the
- * generic path does not. The words after it are the document's own `owner`,
- * which is S5's mapping of the registry's owner to a command family
- * (`settingsFamilyCommands`, `internal/cli/settings_set.go`), so the console
- * names no family of its own and keeps no list to drift. */
+/** SETTINGS_OWNED_WORD introduces the command that writes a key the generic path
+ * does not. The words after it are the document's own `owner`, which is the
+ * read's own mapping of a registry row's owner to the command that writes it --
+ * a family's name, or the sentence naming `fugaro setup` or `fugaro update` for
+ * a key that is the installation's own (`settingsOwnerCommands`,
+ * `internal/cli/settings_read.go`, D1178) -- so the console names no command of
+ * its own and keeps no list to drift. */
 const SETTINGS_OWNED_WORD = 'written by '
 
 /** SETTINGS_NOT_GENERIC_WORD is the rest of that sentence, S5's own phrase
@@ -1025,7 +1027,7 @@ type SettingsRowsRead =
  * 2026-10-30, which `src/shared/schema.ts` applies to the documents it admits,
  * applied here because this screen reads its own documents. A member of another
  * type is **never coerced**: a `scope` that is a number would become `''`, an
- * `owner` that is a number would make the row look like one no family writes,
+ * `owner` that is a number would make the row look like one no command writes,
  * and a `writable` spelled `"true"` would decide against a pencil on a wrong
  * reading of the document -- each of them a claim the CLI never made. The table
  * is refused instead, whole, and the panel says so (`SETTINGS_ROW_SHAPE_BECAUSE`).
@@ -1035,7 +1037,7 @@ type SettingsRowsRead =
  *
  * The three writability members (`writable`, `owner`, `target_layer`, D1102) are
  * read the other way round: a member that is **absent** is a CLI whose read does
- * not carry it, which is a row with no pencil and no owning family, and never a
+ * not carry it, which is a row with no pencil and no command named for it, and never a
  * refused table. The owner's ruling of 2026-11-03 is that the console keeps no
  * floor of its own here -- it does not compare a version and it does not name a
  * release that would have written the members -- so an older CLI draws the table
@@ -1134,8 +1136,9 @@ function settingsRowsAt(raw: unknown): SettingsRowsRead {
  *     names a non-empty `target_layer`. The second half matters: `target_layer`
  *     empty is a key S5 would not write with the layer it has, so there is no
  *     write to offer and the row is drawn without a pencil;
- *   - a row with `writable: false` is drawn with the family that *does* write it
- *     -- `owner`, in the document's own words, empty when no family is known;
+ *   - a row with `writable: false` is drawn with the command that *does* write it
+ *     -- `owner`, in the document's own words: a family, or the sentence naming
+ *     `fugaro setup` or `fugaro update` for a key that is the installation's own;
  *   - **a member of the wrong type withholds the table** rather than being
  *     coerced (`settingsRowAt`), and so does a `settings` member that is not a
  *     list at all: the panel is the read's own unavailable state with the
@@ -1757,9 +1760,11 @@ export function fillProjectsModels(factory: ScreenFactory, model: ProjectsModels
  * rather than six "Edit"s. What it opens is the entry's to bind (`entry.ts`,
  * `paintSettings`), and the entry binds it: the drawing is a function of the
  * document and attaches no listener of its own. A row the
- * generic path does not write draws the family that does instead -- the
- * document's own `owner`, in S5's own words -- and a row with no family at all
- * draws no word about one, because the console does not know who writes it.
+ * generic path does not write draws the command that does instead -- the
+ * document's own `owner`, in the CLI's own words: a family's name, or the
+ * sentence naming `fugaro setup` or `fugaro update` for a key that is the
+ * installation's own (D1178). A document from a CLI that names no command on
+ * such a row draws no word about one, because the console knows of none.
  *
  * Everything from the document goes through `putText` with the class its wire
  * key declares; the two console sentences go through `literal`. The state is

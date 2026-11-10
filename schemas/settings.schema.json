@@ -209,7 +209,7 @@
         },
         "owner": {
           "type": "string",
-          "description": "The command family that writes a key the generic path does not — `fugaro models`, `fugaro rigor set`, `fugaro rigor floor`, `fugaro accounts`, `fugaro secrets`, `fugaro project` — and the empty string for a key no family owns, which is the installation's own plumbing: the honest answer, and never an invented name (D1102, D1111). Display text, not an authority: it is the sentence `settings set` refuses with, and no rule reads it. Written on every row by this CLI; absent from a document an older CLI wrote, where it means the same as the empty string."
+          "description": "The command that writes the key, named on every row (D1178): `fugaro settings set` for a key the generic path writes, the family that writes one it does not — `fugaro models`, `fugaro rigor set`, `fugaro rigor floor`, `fugaro accounts`, `fugaro secrets`, `fugaro project`, `fugaro workspace`, `fugaro image map` — and, for a key that is the installation's own and no command edits, a sentence naming `fugaro setup` or `fugaro update` rather than a command a reader would take for the key's own editor. Display text, not an authority: where `settings set` refuses a key in a family's name it is that refusal's own words, and no rule reads it. Written on every row by this CLI; absent from a document an older CLI wrote, where it means the same as the empty string."
         },
         "target_layer": {
           "type": "string",
