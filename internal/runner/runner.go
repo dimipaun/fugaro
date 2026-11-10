@@ -2665,6 +2665,13 @@ func (r *run) bootstrap(ctx context.Context) error {
 		// because only now has the previous record been read.
 		r.recordRuling()
 	}
+	// The backing services this job's image provides, started now that the
+	// checkout and the agent's environment exist and before any stage runs
+	// (D1904, startServices): the entry's own list is the only source, and a
+	// run whose entry declares none starts nothing.
+	if err := r.startServices(ctx); err != nil {
+		return err
+	}
 	// A kill switch or the grace may have halted the run while bootstrap
 	// was busy: nothing is pushed yet, so it ends as a bootstrap halt.
 	if err := r.haltedErr(); err != nil {

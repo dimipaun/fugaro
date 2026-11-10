@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"slices"
@@ -47,6 +48,20 @@ import (
 // this package. This alias is what internal/infra (spec.go) sets the variable
 // from, the way it takes CheckoutEnv.
 const ImageEntryEnv = backend.ImageEntryEnv
+
+// ServicesEnv is the environment variable the launcher sets to the services
+// the catalog entry of this job's image provides (D1904): the entry's own
+// list, space separated, which startServices runs `fugaro-services start`
+// with before the run's tests. It is written on every launch, the empty value
+// included, so an image's own ENV under the same name can never forge it
+// (backend.ServicesEnv states the rule; this alias is the reader's side of it,
+// the way ImageEntryEnv's is).
+//
+// It is not FUGARO_-prefixed-only by accident: config.ReservedEnv drops every
+// FUGARO_ name from the agent's own environment, so the list never reaches the
+// agent through the image-env passthrough either — the runner is the only
+// reader, and a repository's text cannot add a service to it.
+const ServicesEnv = backend.ServicesEnv
 
 // CheckoutEnv is the job environment variable internal/infra sets to the
 // workflow's own config.Checkout value (clone or shared) on a workflow whose
@@ -176,6 +191,61 @@ func (r *run) provision(ctx context.Context) error {
 	})
 	r.save(ctx)
 	return err
+}
+
+// servicesScript is the program the base image ships for the backing services
+// a test suite wants (the runtime contract, images/common/fugaro-services):
+// `start` brings up every service its FUGARO_SERVICES names and returns 0
+// once they all answer, so it is idempotent and a run may call it beside the
+// command a repository's test: already calls.
+const servicesScript = "fugaro-services"
+
+// startServices starts the backing services the catalog entry of this job's
+// image provides, before any test runs (D1904). The list is the entry's own
+// — what the launcher stamped into this job's environment from the deployed
+// entry, never the repository's text and never the image's own ENV
+// (ServicesEnv) — and it is the only source: a run whose stamp is empty
+// starts nothing at all rather than the script's own default of all three,
+// because no entry declared a service and the script's default would be a
+// list read from somewhere other than the entry.
+//
+// It runs with the agent's own environment (r.env, agent.BuildEnv's), which
+// is the environment a stage's tests run in: the same PATH, the same HOME and
+// the same state directory the repository's own `fugaro-services start` sees,
+// and none of the run's credentials — starting a local PostgreSQL or Redis
+// has no business holding the model key or a git token. The list is appended
+// to that environment and not carried by it: config.ReservedEnv drops every
+// FUGARO_ name from the agent's environment, service stamp included, so the
+// one command that has to read it is handed it here.
+//
+// A failure ends bootstrap: the entry's own image declares these services, so
+// a service that does not come up is the image's contract broken, and every
+// test the run would go on to make would fail on it with the reason buried in
+// a stage's output instead of named here. Nothing of the script's output is
+// recorded or logged (it may quote the repository's own paths and config), so
+// the error carries the exit code alone.
+func (r *run) startServices(ctx context.Context) error {
+	want := strings.TrimSpace(envLookup(r.d.Env, ServicesEnv))
+	if want == "" {
+		return nil
+	}
+	sctx, cancel := context.WithTimeout(ctx, r.wf.Timeouts.Verify.Duration)
+	defer cancel()
+	code, err := procgroup.Run(sctx, procgroup.Cmd{
+		Name: "sh",
+		Args: []string{"-c", servicesScript + " start"},
+		Dir:  r.d.WorkDir,
+		Env:  append(slices.Clone(r.env), ServicesEnv+"="+want),
+	})
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return fmt.Errorf("%s start did not finish within %s, so the services this image declares are not up", servicesScript, r.wf.Timeouts.Verify.Duration)
+	case err != nil:
+		return fmt.Errorf("starting the services this image declares: %w", err)
+	case code != 0:
+		return fmt.Errorf("%s start failed with exit status %d, so the services this image declares are not up: the image has to install them (the entry's services list and the base image's own packages)", servicesScript, code)
+	}
+	return nil
 }
 
 // provisionGitToken is the GITHUB_TOKEN provision hands mise: the run's git

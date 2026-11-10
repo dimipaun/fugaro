@@ -3621,23 +3621,43 @@ func existingLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, spec 
 // is the residual the deploy-time arm does not have — that arm builds the spec
 // the job is deployed with, from the same file (F7).
 func catalogDockerAsk(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec) (bool, error) {
+	entry, ok, err := deployedCatalogEntry(ctx, env, slug, spec)
+	if err != nil || !ok {
+		return false, err
+	}
+	return catalogDockerOn(env, spec.Workflow, entry)
+}
+
+// deployedCatalogEntry is the catalog entry the job this launch starts was
+// DEPLOYED with, and whether the catalog speaks for that job at all. It is
+// catalogDockerAsk's own resolution, split out because the launch needs the
+// entry itself beside the docker answer: the services the entry declares are
+// stamped into the launch's environment (servicesLaunchEnv), and they have to
+// be the deployed entry's for the same reason the tag rule does — a job's
+// image is fixed when the job is deployed, so a fresh selection could name a
+// different entry than the run starts on (D1149).
+//
+// (`catalogDockerAsk` stays as the two composed for the callers that want the
+// answer alone, which is every reader of the tag rule.)
+func deployedCatalogEntry(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec) (config.Entry, bool, error) {
 	co := checkoutConfig(ctx, spec.Repo)
 	if co == nil {
-		return false, nil
+		return config.Entry{}, false, nil
 	}
 	w, ok := co.Workflows[spec.Workflow]
 	if !ok {
-		return false, nil
+		return config.Entry{}, false, nil
 	}
 	var published *config.Catalog
+	var pol *projectpolicy.Policy
 	if p, found, err := env.policy.read(ctx, env.lc); err != nil {
-		return false, remote(policyReadErr(err))
+		return config.Entry{}, false, remote(policyReadErr(err))
 	} else if found {
-		published = p.ImageCatalog
+		pol, published = p, p.ImageCatalog
 	}
 	cat := env.lc.ImageCatalogEffective(published)
 	if cat == nil || !catalog.Applies(*cat, w) {
-		return false, nil
+		return config.Entry{}, false, nil
 	}
 	// The job is the workflow's own: the catalog's jobs are per-repository
 	// ones, and the sole kind a shared project job runs — a clone workflow
@@ -3647,7 +3667,7 @@ func catalogDockerAsk(ctx context.Context, env *cloudEnv, slug string, spec *tas
 	if !ok {
 		// Not a job name: the launch itself refuses the variant a few lines
 		// on.
-		return false, nil
+		return config.Entry{}, false, nil
 	}
 	name := gcp.JobName(slug, variant)
 	be, ok := env.be.(jobImageReader)
@@ -3655,34 +3675,54 @@ func catalogDockerAsk(ctx context.Context, env *cloudEnv, slug string, spec *tas
 		// A backend that keeps no deployed job to read (Cloud Batch starts
 		// one per run and keeps none) cannot say what image the run starts
 		// on, so the tag's rule has nothing to judge here.
-		return false, nil
+		return config.Entry{}, false, nil
 	}
 	image, deployed, err := be.JobImage(ctx, name)
 	if err != nil {
-		return false, remote(err)
+		return config.Entry{}, false, remote(err)
 	}
 	if !deployed {
 		// Not deployed: nothing can start on an image this rule has not seen,
 		// and the launch's own step refuses the missing job.
-		return false, nil
+		return config.Entry{}, false, nil
 	}
 	entry, ok := catalogEntryOf(*cat, image)
 	if !ok {
-		return false, catalogMovedErr(spec.Workflow, name, image)
+		return config.Entry{}, false, catalogMovedErr(spec.Workflow, name, image)
 	}
 	// A pin is the repository's own claim about which entry its job runs, and
 	// it is a claim about the deployed image too (D1155): a repository that
 	// now names another entry has a job deployed with an image this catalog
 	// does not give it.
 	if w.ImageName != "" && w.ImageName != entry.Name {
-		return false, catalogMovedErr(spec.Workflow, name, image)
+		return config.Entry{}, false, catalogMovedErr(spec.Workflow, name, image)
 	}
 	// The tags the workflow needs, against the entry the job actually runs:
 	// the deploy refused an uncovered needed set before the job existed, so
 	// this one changed under it.
 	if !catalog.Covers(entry.Tags, w.Needs) {
-		return false, catalogMovedErr(spec.Workflow, name, image)
+		return config.Entry{}, false, catalogMovedErr(spec.Workflow, name, image)
 	}
+	// The services the entry provides, from the same side the entry itself
+	// came from: this machine's own catalog when it writes one — the list is a
+	// config field and never a member of the node's block (F20) — and the
+	// published node's own key when the node is what speaks for the catalog
+	// (localcfg's keep rule, ImageCatalogEffective). The launch stamps the
+	// answer into the run's environment (servicesLaunchEnv), which is the only
+	// way the run hears it: the node's block cannot carry it without breaking
+	// readers of the release behind.
+	if env.lc.ImageCatalog == nil {
+		entry.Services = pol.ServicesFor(entry.Name)
+	}
+	return entry, true, nil
+}
+
+// catalogDockerOn answers the docker tag's rule for the entry a job was
+// deployed with (D1149): whether this run needs a Docker daemon because that
+// entry's image carries the docker tag, and refuses the launch where the
+// backend the job would run on cannot give it one. The entry carries the tag
+// or it does not; the backend decides the rest.
+func catalogDockerOn(env *cloudEnv, workflow string, entry config.Entry) (bool, error) {
 	if !slices.Contains(entry.Tags, catalog.DockerTag) {
 		return false, nil
 	}
@@ -3690,7 +3730,7 @@ func catalogDockerAsk(ctx context.Context, env *cloudEnv, slug string, spec *tas
 		return true, nil
 	}
 	// The deployed image carries the tag on a backend with no daemon.
-	return false, userErr("workflow %s: %v", spec.Workflow, catalog.DockerOnCloudRunError())
+	return false, userErr("workflow %s: %v", workflow, catalog.DockerOnCloudRunError())
 }
 
 // jobImageReader is the backend's deployment read (gcp.Backend.JobImage): the
@@ -3864,19 +3904,32 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		rcancel()
 		return res, userErr("run %s was cancelled; start a new one", task.ShortRun(oneLine(res.Run)))
 	}
-	// The docker tag's rule, before anything of this launch is written or
-	// reported (D1149): a run whose DEPLOYED job image carries the docker tag
+	// The entry the job this launch starts on was DEPLOYED with, read once
+	// for the two facts about that image the launch needs (D1149, D1904): the
+	// docker tag's rule below, and the services the entry declares, which are
+	// stamped into the launch's environment further down so the run starts
+	// exactly what its own entry lists. It is the docker tag's rule and not a
+	// fresh selection: a run whose DEPLOYED job image carries the docker tag
 	// is refused here on a backend with no daemon, and on the VM backend the
 	// answer asks the backend for the socket. Before the mint below, so a
 	// refused launch has no token to drop, and before the declaration, which
 	// is the coordinator's record that this run is about to work — a refusal
 	// must leave nothing behind that says otherwise.
-	docker, err := catalogDockerAsk(hctx, env, slug, spec)
+	entry, catalogued, err := deployedCatalogEntry(hctx, env, slug, spec)
 	if err != nil {
 		rctx, rcancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		releaseClaim(rctx, env, s, holder)
 		rcancel()
 		return res, err
+	}
+	var docker bool
+	if catalogued {
+		if docker, err = catalogDockerOn(env, spec.Workflow, entry); err != nil {
+			rctx, rcancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+			releaseClaim(rctx, env, s, holder)
+			rcancel()
+			return res, err
+		}
 	}
 	// The launch declares itself to the coordinator's record (P4), beside the
 	// claim it just won: the caller the task already names, the branch the run
@@ -3971,6 +4024,14 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 	}
 	svcAuth, deployed := env.repoServiceAuth(ctx, spec, launchWarn)
 	lspec.Env = credentialsServiceLaunchEnv(env.lc, jobName, spec.Repo, svcAuth, deployed)
+	// The services the job's own catalog entry declares, on EVERY launch and
+	// empty where this job's image is not the catalog's (backend.ServicesEnv
+	// states why the key is always written, and why it is not a reserved
+	// name): the runner reads the entry's list back to start the services its
+	// tests need, and a key always set is what keeps an image's own ENV under
+	// the same name from answering for the entry. entry is the zero value for
+	// a job the catalog does not speak for, which writes the empty stamp.
+	lspec.Env = append(lspec.Env, servicesLaunchEnv(entry))
 	if reviewJob {
 		// The marker is the whole fact (internal/runner's EnvReviewJob): the
 		// variant's own deployment carries the credentials service's address,
@@ -4158,6 +4219,25 @@ func (e *cloudEnv) repoServiceAuth(ctx context.Context, spec *task.Spec, warn io
 // record that lags a bundle emptied since the apply cannot withdraw the address
 // on its own here: the deployed root still answers for the machine that applied
 // it.
+// servicesLaunchEnv is the launch entry that stamps the services the job's
+// own catalog entry declares: backend.ServicesEnv set to the entry's list,
+// space separated, which is exactly the value `fugaro-services` reads.
+//
+// It is one entry on EVERY launch, the empty value included, and that is the
+// whole point of writing it here rather than on the job at deploy time (which
+// internal/infra does for the image-entry stamp): the runner reads its own
+// environment, and on a job whose image is a catalog entry's that environment
+// carries the image's own ENV — so an image that set FUGARO_SERVICES itself
+// would have the run start services no entry declared, and the entry's list is
+// the only source these services may come from. An entry the launch sets
+// overrides whatever the image holds, and a zero entry (a job the catalog does
+// not speak for, or one whose entry declares no service) writes the empty
+// stamp, which the runner reads as "no service" rather than as the script's
+// own default of all three.
+func servicesLaunchEnv(entry config.Entry) string {
+	return backend.ServicesEnv + "=" + strings.Join(entry.Services, " ")
+}
+
 func credentialsServiceLaunchEnv(lc *localcfg.Config, job, repo, auth string, deployed bool) []string {
 	if job != "" || lc == nil {
 		return nil
