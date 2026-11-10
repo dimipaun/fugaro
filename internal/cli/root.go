@@ -254,6 +254,11 @@ func newCoreRoot() *cobra.Command {
 		// credentials serve` is what the image's CMD names, and hidden so it
 		// is not something an operator is offered.
 		newCredentialsCmd(),
+		// The secrets intake's own entry point (DS2.1): hidden for the same
+		// reason and registered for the same reason, because a Cloud Run
+		// service's container sets no command and the image's CMD is what
+		// names `fugaro intake serve` (intake_serve.go).
+		newIntakeCmd(),
 	)
 	annotateManagedMutating(root)
 	return root
