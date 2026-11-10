@@ -730,6 +730,118 @@ func providerReviewSvc(t *testing.T) *svc {
 	})
 }
 
+// ---------------------------------------------------------------------------
+// Which entry a selected candidate resolves to (AK6b)
+// ---------------------------------------------------------------------------
+
+// TestEntryForResolvesTheProviderKeyByKind is the guard over the one place a
+// selected candidate becomes a bundle entry: entryFor resolves a tier-C
+// candidate by KIND and every other candidate by name, and the document below
+// holds a credential under each of those, so a resolution that fell back to the
+// name would answer the account where the provider's key was selected.
+//
+// An account named claude-oauth-token-provider-key is legal — the sentinel
+// carries a doubled dash, so no account name is reserved for this credential,
+// and TestBundleHoldsAProviderKey proves the two entries live in one document —
+// and the two carry different values, so what the fallback attaches is a real
+// substitution and not a spelling: the call would leave for the provider's own
+// endpoint carrying the account's OAuth token, under an answer that names the
+// provider key's tier and name. That is what the function's own comment
+// forbids, and the load-bearing half of it is the tier test, because the two
+// credentials go by one name.
+//
+// No SERVED call reaches this rule in this release: creds.Select refuses every
+// tier-C candidate before a credential is sent (checkCandidates), which
+// TestProviderKeyEntryIsNotOfferedToAnyOtherCaller holds end to end. The rule is
+// therefore held here, and the last third drives it through send so that the
+// wrong credential would be one at the upstream's door and not only in a return
+// value.
+func TestEntryForResolvesTheProviderKeyByKind(t *testing.T) {
+	doc := append(providerBundleDoc(t, testProviderBase, providerAuthBearer),
+		[]byte(config.ClaudeAccountSecret(config.ProviderKeySecret)+": "+fakeCred(t, "account")+"\n")...)
+	b, err := ParseBundle(doc)
+	if err != nil {
+		t.Fatalf("parsing a bundle holding the provider key beside an account named after it: %v", err)
+	}
+	// The fixture is what this test needs it to be, or the assertions below
+	// would pass over a document that holds only one of the two.
+	if e, ok := b.ProviderKey(); !ok || e.Kind != KindProvider || e.Value() != fakeCred(t, "provider-key") {
+		t.Fatalf("the fixture's document does not hold the provider entry: %+v, %v", e, ok)
+	}
+	if e, ok := b.Lookup(config.ProviderKeySecret); !ok || e.Tier != creds.TierA || e.Value() != fakeCred(t, "account") {
+		t.Fatalf("the fixture's document does not hold the account named after the credential: %+v, %v", e, ok)
+	}
+
+	// The tier is what chooses. Dropping the tier-C arm answers the account's
+	// entry here, which is the substitution: a different kind, a different
+	// value, and no endpoint of its own.
+	e, ok := entryFor(b, creds.Credential{Name: config.ProviderKeySecret, Tier: creds.TierC})
+	if !ok {
+		t.Fatal("entryFor answered nothing for the provider key's own tier-C candidate, and the document holds the entry")
+	}
+	if e.Kind != KindProvider || e.Value() != fakeCred(t, "provider-key") || e.baseURL != testProviderBase || e.auth != providerAuthBearer {
+		t.Errorf("entryFor(tier C) = %+v, want the provider entry the document holds (%q, %q, %q)",
+			e, fakeCred(t, "provider-key"), testProviderBase, providerAuthBearer)
+	}
+	if got, ok := entryFor(b, creds.Credential{Name: config.ProviderKeySecret, Tier: creds.TierA}); !ok || got.Kind == KindProvider || got.Value() != fakeCred(t, "account") {
+		t.Errorf("entryFor(tier A) = (%+v, %v), want the account that goes by that name and not the provider entry", got, ok)
+	}
+
+	// And both halves fail closed: a tier-C candidate whose name is not the
+	// provider entry's is not an entry — the credential is reached by kind, so a
+	// tier-C spelling of another name is nothing this bundle can serve — and a
+	// name the document does not hold is not one either.
+	if got, ok := entryFor(b, creds.Credential{Name: testSecondPaidKey, Tier: creds.TierC}); ok {
+		t.Errorf("a tier-C candidate named %q resolved to %+v, and the bundle's provider entry goes by %q", testSecondPaidKey, got, config.ProviderKeySecret)
+	}
+	if got, ok := entryFor(b, creds.Credential{Name: "not-in-this-bundle", Tier: creds.TierB}); ok {
+		t.Errorf("a name the bundle does not hold resolved to %+v", got)
+	}
+	// A document with no provider entry answers nothing rather than an empty
+	// credential: the caller refuses on false, it never forwards "" (D143).
+	plain, err := ParseBundle(bundleDoc(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := entryFor(plain, creds.Credential{Name: config.ProviderKeySecret, Tier: creds.TierC}); ok || got.Value() != "" {
+		t.Errorf("entryFor on a document without the entry = (%+v, %v), want nothing", got, ok)
+	}
+
+	// What entryFor answers is what send attaches to the call. A substitution
+	// here is a substitution on the wire, so the credential is read off the
+	// request the provider's endpoint saw: the key under the shape the entry
+	// names, at the entry's own prefix, and the account's token nowhere.
+	s := newSvc(t)
+	ans, err := s.server.send(context.Background(), providerCall(t, MessagesPath), e)
+	if err != nil {
+		t.Fatalf("the provider call was not sent: %v", err)
+	}
+	defer ans.resp.Body.Close()
+	if ans.credential != fakeCred(t, "provider-key") {
+		t.Error("the answer is redacted with a value that is not the provider key's")
+	}
+	if n := s.up.Count(); n != 1 {
+		t.Fatalf("the provider saw %d requests, want 1", n)
+	}
+	req := s.up.Seen()[0]
+	if got, want := req.Header.Get("Authorization"), "Bearer "+fakeCred(t, "provider-key"); got != want {
+		t.Errorf("the call carried Authorization = %q, want the key entryFor answered under the shape the entry names", got)
+	}
+	if got := req.Header.Get("x-api-key"); got != "" {
+		t.Errorf("the call carried x-api-key = %q, and the entry names bearer", got)
+	}
+	for name, vals := range req.Header {
+		for _, v := range vals {
+			if strings.Contains(v, fakeCred(t, "account")) {
+				t.Errorf("the call carries the account's token in %s", name)
+			}
+		}
+	}
+	if got := req.URL.Path; got != "/api"+MessagesPath {
+		t.Errorf("the call went to %q, want the provider entry's own endpoint: the account has none", got)
+	}
+}
+
 // TestReviewCandidateListStillOffersThePairingAccount is the new rule's second
 // direction: a pairing that names a Claude account is served exactly as it was
 // before the sentinel existed — that account's own tier-A entry, one entry long,
