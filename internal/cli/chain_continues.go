@@ -375,6 +375,12 @@ func chainPerRunCaps(ctx context.Context, env *cloudEnv) runstore.PerRunCaps {
 // begins one; limit is the chain's own limit as the run that began it stored it
 // (or, for a first run, what this launch's own --max-* wrote); enforced is
 // whether a spent chain refuses the launch at all (D1046).
+//
+// A launch that begins a chain — or one whose chain could not be read, where
+// this launch's own figures stand for it — is the one shape with no request
+// apart from the limit: its own --max-* is the chain's limit (D1041) and the
+// remaining is drawn from it, so what it writes is that limit less what the
+// caller stated the chain has used elsewhere (D1048).
 func chainRemaining(chain *runstore.Chain, limit task.Overrides, spec *task.Spec, o *runOptions, enforced bool, warn io.Writer) (task.Overrides, error) {
 	next := spec.Overrides
 	// A launch that begins a chain and states nothing to charge it with has
@@ -392,7 +398,7 @@ func chainRemaining(chain *runstore.Chain, limit task.Overrides, spec *task.Spec
 		}
 	}
 	var err error
-	if used, err = chainUsedRaised(used, o.used, limit, next); err != nil {
+	if used, err = chainUsedRaised(used, o.used, limit); err != nil {
 		return task.Overrides{}, err
 	}
 	for _, d := range chainDimensions() {
@@ -424,8 +430,14 @@ func chainRemaining(chain *runstore.Chain, limit task.Overrides, spec *task.Spec
 		// than find a looser one in the task. One at or below it is what the launch
 		// writes, so the figure a caller typed is the limit this run carries
 		// wherever the chain can still pay for it.
+		//
+		// A launch that begins a chain has no second figure to hold under a
+		// remaining, because the one it typed IS the chain's limit and the
+		// remaining is drawn from it: holding it under a remaining drawn from
+		// itself would refuse every --used-* above zero, and name the caller's
+		// own limit as though it were the work already done.
 		spend := rem
-		if req, ok := chainLimitAmount(next, d); ok {
+		if req, ok := chainLimitAmount(next, d); ok && chain != nil {
 			if req > rem {
 				return task.Overrides{}, userErr("--max-%s %s is above what is left of this chain's %s limit (%s of %s used): a launch can only tighten what a chain has left, never re-open what it spent. Pass %s or less, or raise the chain's limit where it is set",
 					chainDimensionFlag(d), chainFlagAmount(d, req), chainDimensionWord(d), chainAmountText(d, spent), chainAmountText(d, lim), chainAmountText(d, rem))
@@ -460,10 +472,15 @@ func chainRemaining(chain *runstore.Chain, limit task.Overrides, spec *task.Spec
 // A dimension the engine does not measure has no figure to raise, and there the
 // caller's own number is the only one there is: it is accepted, which is the
 // honest use of the knob in a chain whose budget is off (the token dimension,
-// D1051). A --used-* for a dimension neither the chain's limit nor this launch's
-// own request covers is refused: there is no limit for the figure to be charged
-// against, so accepting it would report a charge nothing carries.
-func chainUsedRaised(used map[runstore.Dimension]runstore.Figure, u chainUsedFigures, limit, request task.Overrides) (map[runstore.Dimension]runstore.Figure, error) {
+// D1051).
+//
+// A --used-* for a dimension the chain does not limit is refused, and the
+// chain's limit is the only one that counts: what the figure raises is the
+// charge a chain counts against its own limit (D1048), and this launch's
+// --max-* bounds the run instead — the per-run cap, not a figure the chain
+// holds. Accepting one there would either report a charge nothing carries, or
+// be dropped by the write that fills in each limited dimension.
+func chainUsedRaised(used map[runstore.Dimension]runstore.Figure, u chainUsedFigures, limit task.Overrides) (map[runstore.Dimension]runstore.Figure, error) {
 	stated := map[runstore.Dimension]runstore.Amount{}
 	if v := u.usd; v != nil {
 		micros, err := pricing.FromUSD(*v)
@@ -487,9 +504,8 @@ func chainUsedRaised(used map[runstore.Dimension]runstore.Figure, u chainUsedFig
 			continue
 		}
 		if _, limited := chainLimitAmount(limit, d); !limited {
-			if _, asked := chainLimitAmount(request, d); !asked {
-				return nil, userErr("--used-%s needs a chain limit: neither the chain this launch is in nor this launch itself bounds what it may spend, so there is no limit for the figure to be charged against", chainDimensionFlag(d))
-			}
+			return nil, userErr("--used-%s needs a chain limit: the chain this launch is in does not bound its %s spend, so there is no limit for the figure to be charged against. A launch's own --max-%s caps the run and not the chain; leave the flag out, or begin a chain that sets --max-%s",
+				chainDimensionFlag(d), chainDimensionWord(d), chainDimensionFlag(d), chainDimensionFlag(d))
 		}
 		have := used[d]
 		if have.Measured && amount < have.Amount {

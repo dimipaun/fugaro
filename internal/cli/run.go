@@ -657,6 +657,25 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 		slug, spec, reused, err = prSpec(ctx, env, o, text, total, cmd.ErrOrStderr())
 	default:
 		slug, spec, err = newSpec(ctx, env, o, text, total, cmd.ErrOrStderr())
+		// A repeated --continues launch is the same run, and what its chain
+		// left it is what its stored task says: that launch wrote the
+		// remaining the chain had at the moment it ran, and a chain read now
+		// answers another figure as soon as a run behind it spends or a run
+		// still in flight ages (runstore's chainSeconds measures an unfinished
+		// run to now). So a repeat is answered from the stored task, the way a
+		// --pr follow-up's is (storedFollowUp): reused when it is this call's
+		// own launch — a --run-id repeat is idempotent as any other — refused
+		// when the run ID holds a different one, and built fresh when it holds
+		// nothing.
+		if err == nil && o.continues != "" && o.runID != "" {
+			var have *task.Spec
+			if have, err = storedRepeat(ctx, env, slug, o, 0, text, total); err != nil {
+				return err
+			}
+			if have != nil {
+				spec, reused = have, true
+			}
+		}
 	}
 	if err != nil {
 		return err
@@ -832,7 +851,11 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 	if prior != nil && len(o.attach) > 0 {
 		return launchResult{}, userErr("run ID %s has already launched; --attach uploads a run's files before it starts, so it never adds attachments to a run that already went — use a new run ID", spec.RunID)
 	}
-	if prior == nil && reused {
+	// The check is the pull request link's, and IsFollowUp is the stored task's
+	// own branch: a reused --retry or a reused --pr follow-up carries one, while
+	// a reused --continues task carries none — its link is the run the caller
+	// named and there is no PR to re-read.
+	if prior == nil && reused && spec.IsFollowUp() {
 		if err := recheckFollowUp(ctx, env, slug, spec, warn); err != nil {
 			return launchResult{}, err
 		}

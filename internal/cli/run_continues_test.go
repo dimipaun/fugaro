@@ -59,6 +59,15 @@ func seedChainRun(t *testing.T, f *cloudFixture, id string, costUSD float64, o t
 	spec := firstRunSpec(id)
 	spec.Overrides = o
 	seedSpec(t, f, spec, false)
+	seedChainSpend(t, f, id, costUSD)
+}
+
+// seedChainSpend rewrites id's record with a model spend of costUSD, which is
+// the figure a chain with the budget off reads for it: a chain spends more
+// without the run being launched a second time, which is what a task already
+// written cannot express (seedChainRun's own task is CreateTask's, once).
+func seedChainSpend(t *testing.T, f *cloudFixture, id string, costUSD float64) {
+	t.Helper()
 	rec := prRecord(id, "", 0, costUSD)
 	rec.Branch, rec.Status, rec.Stage, rec.Outcome = "fugaro/"+id, runstore.StatusHalted, "writeback", runstore.OutcomeNone
 	rec.PR, rec.PushedHead = nil, ""
@@ -281,6 +290,105 @@ func TestRunRefusesAUsedFigureBelowWhatTheEngineRead(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("err = %v, want it to name %q", err, want)
 		}
+	}
+}
+
+// TestRunStatesWhatAChainItBeginsHasUsed: a launch that begins a chain states
+// its limit itself, so --used-* charges that limit for work the chain's own
+// runs do not hold (D1048) and what is left is what the launch writes:
+// --max-usd 5 with --used-usd 3 begins a chain with 2 dollars left. There is no
+// request apart from the limit here — the figure this launch typed IS the
+// chain's limit (D1041) — so the two are not held under one another, and a
+// --used-* that spends the whole limit is refused rather than launched with
+// nothing.
+func TestRunStatesWhatAChainItBeginsHasUsed(t *testing.T) {
+	f := chainRig(t)
+	if _, _, err := execute(t, "run", "--repo", limitsRepo, "--run-id", chainFu,
+		"--max-usd", "5", "--used-usd", "3", "A task"); err != nil {
+		t.Fatal(err)
+	}
+	if o := chainTask(t, f, chainFu).Overrides; o.MaxUSD == nil || *o.MaxUSD != 2 {
+		t.Fatalf("overrides = %+v, want 2 dollars (5 less the 3 the chain has already used)", o)
+	}
+	if n := len(f.run.Executions()); n != 1 {
+		t.Fatalf("%d executions, want the chain's first run launched", n)
+	}
+	_, _, err := execute(t, "run", "--repo", limitsRepo, "--run-id", wallRunIDAt(0, "131500", "d4d4"),
+		"--max-usd", "2", "--used-usd", "3", "A task")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a --used-* that spends the whole limit refused", err)
+	}
+	for _, want := range []string{"--used-usd 3 dollars leaves nothing of this launch's --max-usd 2 dollars", "Lower the figure"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("err = %v, want it to name %q", err, want)
+		}
+	}
+}
+
+// TestRunRefusesAUsedFigureWithNoChainLimit: what --used-* raises is the charge
+// a chain counts against its own limit (D1048), so a dimension the chain does
+// not limit has no charge to raise: the figure is refused rather than accepted
+// and then dropped by the write. A launch's own --max-usd is not the chain's
+// limit — it caps the run — and a --pr follow-up takes the chain's limit from
+// the run that began it, which set none in the first subtest.
+func TestRunRefusesAUsedFigureWithNoChainLimit(t *testing.T) {
+	t.Run("a chain that sets no dollar limit", func(t *testing.T) {
+		f := chainRig(t)
+		seedChainPRRoot(t, f, chainRun, chainSpent, task.Overrides{})
+		_, _, err := execute(t, "run", "--repo", limitsRepo, "--pr", "7", "--run-id", chainFu,
+			"--max-usd", "5", "--used-usd", "3", "A task")
+		if ExitCode(err) != ExitUserError {
+			t.Fatalf("err = %v, want a --used-usd on a chain that limits nothing refused", err)
+		}
+		for _, want := range []string{"--used-usd needs a chain limit", "caps the run and not the chain"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("err = %v, want it to name %q", err, want)
+			}
+		}
+		if n := len(f.run.Executions()); n != 0 {
+			t.Fatalf("%d executions, want none", n)
+		}
+	})
+	t.Run("a first run that sets no limit of its own", func(t *testing.T) {
+		f := chainRig(t)
+		wantRefused(t, f, "--used-usd needs a chain limit", "run", "--repo", limitsRepo, "--run-id", chainFu, "--used-usd", "3", "A task")
+	})
+}
+
+// TestRunContinuesARepeatIsIdempotent: the figures a --continues launch writes
+// are the chain's at the moment it ran, so a repeat is answered from the stored
+// task rather than from a chain read made now — a --run-id repeat is idempotent
+// as any other (docs/design/v1.md), the same way a repeated --pr follow-up is.
+// The chain's spend moves between the two calls here, which is exactly what a
+// second read would answer differently, and the repeat is still that task and
+// not the same command refused as a different one.
+func TestRunContinuesARepeatIsIdempotent(t *testing.T) {
+	f := chainRig(t)
+	usd := chainUSD
+	seedChainRun(t, f, chainRun, chainSpent, task.Overrides{MaxUSD: &usd})
+	args := []string{"run", "--repo", limitsRepo, "--continues", chainRun, "--run-id", chainFu, "A task"}
+	if _, _, err := execute(t, args...); err != nil {
+		t.Fatal(err)
+	}
+	if o := chainTask(t, f, chainFu).Overrides; o.MaxUSD == nil || *o.MaxUSD != chainUSD-chainSpent {
+		t.Fatalf("overrides = %+v, want the chain's remaining %v dollars", o, chainUSD-chainSpent)
+	}
+	// The chain spends 1.5 dollars more: a fresh read would leave 1.5 where the
+	// stored task says 3.
+	seedChainSpend(t, f, chainRun, 3.5)
+	if out, _, err := execute(t, args...); err != nil || !strings.Contains(out, "already launched") {
+		t.Fatalf("the repeat of a --continues launch: %v, output:\n%s", err, out)
+	}
+	if o := chainTask(t, f, chainFu).Overrides; o.MaxUSD == nil || *o.MaxUSD != chainUSD-chainSpent {
+		t.Fatalf("overrides = %+v after the repeat, want the stored remaining untouched", o)
+	}
+	if n := len(f.run.Executions()); n != 1 {
+		t.Fatalf("%d executions, want 1", n)
+	}
+	// The reuse is not a licence to drop the guard: a repeat naming another
+	// figure is a different task, as a repeated --pr follow-up's is.
+	if _, _, err := execute(t, "run", "--repo", limitsRepo, "--continues", chainRun, "--run-id", chainFu, "--max-usd", "2", "A task"); err == nil || !strings.Contains(err.Error(), "already holds a different task") {
+		t.Fatalf("err = %v, want a repeat naming another limit refused as a different task", err)
 	}
 }
 

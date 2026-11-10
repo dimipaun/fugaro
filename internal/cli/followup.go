@@ -574,6 +574,18 @@ func repeatOverrides(have *task.Spec, o *runOptions, total time.Duration) task.O
 // reused as it is, its previous_run and requested_by included. Any other
 // stored task is refused; nil means there is none.
 func storedFollowUp(ctx context.Context, env *cloudEnv, slug string, o *runOptions, text string, total time.Duration) (*task.Spec, error) {
+	return storedRepeat(ctx, env, slug, o, o.pr[0], text, total)
+}
+
+// storedRepeat is the same rule for every launch shape that repeats against a
+// stored task, with the pull request passed rather than read off this call: a
+// --continues launch names no --pr and the task it repeats carries none either
+// (pr 0). The figures such a task holds include what the chain resolved when
+// it was written (chainInherit), so a repeat that re-read the chain instead of
+// the stored task would derive another remaining every time a run behind it
+// spends or a run in flight ages, and refuse the repeated command as a
+// different task. The task is what the run reads; a repeat answers with it.
+func storedRepeat(ctx context.Context, env *cloudEnv, slug string, o *runOptions, pr int, text string, total time.Duration) (*task.Spec, error) {
 	have, err := readTask(ctx, env, slug, o.runID)
 	if errors.Is(err, runstore.ErrNotFound) {
 		return nil, nil
@@ -613,7 +625,7 @@ func storedFollowUp(ctx context.Context, env *cloudEnv, slug string, o *runOptio
 	// pending decisions again must carry the same ruling, and one that gives
 	// none repeats the stored task — the ruling it holds stands — rather than
 	// being refused as a different one.
-	if have.PR != o.pr[0] || have.Task != text || have.Batch != o.batch || (o.title != "" && have.Title != o.title) || string(a) != string(b) || (o.recipe != "" && o.recipe != haveRecipe) ||
+	if have.PR != pr || have.Task != text || have.Batch != o.batch || (o.title != "" && have.Title != o.title) || string(a) != string(b) || (o.recipe != "" && o.recipe != haveRecipe) ||
 		(o.token != "" && o.token != cmp.Or(have.OAuthToken, config.DefaultClaudeAccount)) ||
 		(o.planTask != "" && have.PlanTask != o.planTask) ||
 		(o.rigor != "" && string(have.Rigor) != o.rigor) ||
