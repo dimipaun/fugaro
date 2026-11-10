@@ -159,7 +159,7 @@ line read from `result.json` stages' **model** spend only (`:489-538`).
 
 **The runs bucket's readers and writers, exactly.** Its lifecycle rule deletes
 objects under `runs/` at `bucket_lifecycle.runs_days`, **default 90**
-(`deploy/terraform/gcp/modules/installation/bucket.tf:16-24`,
+(`deploy/terraform/gcp/modules/installation/bucket.tf:29-37`,
 `variables.tf:109-121`) — and that is the *whole* run record: `result.json`,
 `report.md` and the transcripts expire with the artifacts. IAM
 (`docs/design/bucket-iam.md` §H4, `:126-128`): an operator holds
@@ -1010,7 +1010,7 @@ not currently read them.
 ## 7. Retention
 
 **The fact: everything under `runs/` is deleted at `runs_days`, default 90**
-(`deploy/terraform/gcp/modules/installation/bucket.tf:16-24`,
+(`deploy/terraform/gcp/modules/installation/bucket.tf:29-37`,
 `variables.tf:109-121`). An artifact at `runs/<slug>/<run>/artifacts/...`
 therefore lives **exactly as long as the run record it belongs to** —
 `result.json`, `report.md`, the transcripts, the session and the artifact all
@@ -1635,7 +1635,7 @@ line read for it — the plan's Review Focus repeats the important ones):
 |---|---|---|
 | V1 | The run prefix is `runs/<slug>/<run>/`, and the object names are `task.json`, `result.json`, `launch.json`, `cancel`, `report.md`, `transcripts/<stage>-<n>.jsonl`, `session/session.json`, `verify/<n>.json` | `internal/runstore/runstore.go:386-387,492,502,547`, `internal/runner/runner.go:1710,2132,2192`, `internal/runstore/session.go:39` |
 | V2 | `blobx.Open` accepts `gs://` **and** `file://`, so an artifact path is testable with no cloud | `blobx.Open` call sites `internal/cli/exec.go:146,296`, its flag default `:59`, `internal/e2e/budget_test.go:129` |
-| V3 | The bucket deletes `runs/` objects at `runs_days` (default 90); `builds/` has no rule | `deploy/terraform/gcp/modules/installation/bucket.tf:16-24,63`, `variables.tf:109-121` |
+| V3 | The bucket deletes `runs/` objects at `runs_days` (default 90); `builds/` has no rule | `deploy/terraform/gcp/modules/installation/bucket.tf:29-37,78`, `variables.tf:109-121` |
 | V4 | A run's account is scoped to the **repository's** prefixes (`runs`, `cache`, `locks`), **not** to one run; a launcher reads the whole bucket and writes under `runs/`; an operator has `objectAdmin`; project Owners/Editors bypass it | `internal/backend/gcp/names.go:374,383-389`, `deploy/terraform/gcp/modules/workflow/sa.tf:24-33`, `docs/design/bucket-iam.md:88,126-128`, `SECURITY.md:36,62` |
 | V5 | `mode:` is `implement|review`; `review` is the no-git-token, no-PR precedent, with the outcome `reviewed` | `internal/recipe/recipe.go:38-42,356-362,632-639`, `docs/design/generic-tool.md:195-203`, `internal/runner/runner.go:635` |
 | V6 | The `check` step is deterministic, runs `verify.Run` in the checkout as the agent's user, may only come first, and may name only `commands.build|test|lint` | `internal/recipe/recipe.go:47-62`, `internal/runner/gate.go:61,125-132`, `internal/verify/verify.go:176,243`, `schemas/recipe.schema.json` |
