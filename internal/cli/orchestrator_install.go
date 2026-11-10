@@ -136,7 +136,13 @@ func installUnit(ctx context.Context, m service.Manager, u service.Unit) error {
 		return err
 	}
 	if err := orchestratorReload(ctx, m, u); err != nil {
-		return err
+		// The file is written and the manager did not read it, so this is the
+		// one state the two converge steps cannot repair: the next run compares
+		// the text, finds it current, and reloads nothing (a reload with nothing
+		// to reload would make every run noisy). The failure names the command
+		// that loads the file regardless of its text, which is the way out.
+		return fmt.Errorf("%w (the unit's file is written at %s; `%s orchestrator install` loads it again)",
+			err, safetext.Field(u.Path), selfCommand())
 	}
 	return nil
 }

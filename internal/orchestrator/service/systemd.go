@@ -73,10 +73,15 @@ func (systemd) Render(getenv func(string) string, binaryPath string) (Unit, erro
 // and a path with a space in it — a home directory with one is ordinary — would
 // otherwise be read as two.
 //
-// The two escapes are the ones systemd's parser defines for a double-quoted
-// argument (backslash and the quote itself), and % is doubled because it is a
-// specifier there: a path holding one would otherwise be substituted as a
-// variable name rather than named.
+// The escapes are systemd's own for a double-quoted argument. The backslash and
+// the quote are the two the parser defines for the quoting itself; \n, \r and \t
+// are the C-style escapes it reads back as the characters they name, and a raw
+// newline in a path would end the directive and leave whatever followed it
+// parsed as a directive of its own; % is doubled because it is a specifier
+// there; and $ is doubled for the same reason read the other way round —
+// systemd expands a variable in an ExecStart line whatever its quoting, so a
+// path holding a dollar would run something other than the path that was
+// written unless the dollar is doubled into the literal it stands for.
 func quoteSystemdArg(s string) string {
 	var b strings.Builder
 	b.WriteByte('"')
@@ -84,6 +89,14 @@ func quoteSystemdArg(s string) string {
 		switch r {
 		case '%':
 			b.WriteString("%%")
+		case '$':
+			b.WriteString("$$")
+		case '\n':
+			b.WriteString(`\n`)
+		case '\r':
+			b.WriteString(`\r`)
+		case '\t':
+			b.WriteString(`\t`)
 		case '\\', '"':
 			b.WriteByte('\\')
 			b.WriteRune(r)

@@ -191,8 +191,56 @@ func TestSystemdDoublesASpecifier(t *testing.T) {
 	}
 }
 
+// TestSystemdEscapesADollarAndALineBreak: quoting is not the only rewriting
+// systemd's parser does. It expands a variable in an ExecStart line whatever the
+// quoting, so a path holding a dollar has to be doubled into a literal; and a
+// raw newline ends the directive, so the rest of the path would be parsed as a
+// directive of its own — which is how a path could name a second thing to run
+// rather than the program it is.
+func TestSystemdEscapesADollarAndALineBreak(t *testing.T) {
+	if got, want := quoteSystemdArg("/opt/$HOME/fugaro"), `"/opt/$$HOME/fugaro"`; got != want {
+		t.Errorf("quoteSystemdArg = %s, want %s", got, want)
+	}
+	if got, want := quoteSystemdArg("/opt/${fugaro}/fugaro"), `"/opt/$${fugaro}/fugaro"`; got != want {
+		t.Errorf("quoteSystemdArg = %s, want %s", got, want)
+	}
+	if got, want := quoteSystemdArg("/opt/a\nb/fugaro"), `"/opt/a\nb/fugaro"`; got != want {
+		t.Errorf("quoteSystemdArg = %s, want %s", got, want)
+	}
+
+	// And the template the escape ends up in: a path that would otherwise end
+	// the ExecStart line stays on it — the newline is the two characters \n —
+	// so no line of the unit is a directive the path carried in.
+	u, err := Render(mapGetenv(map[string]string{"HOME": "/home/a"}), "linux",
+		"/opt/a\nRestart=no\nExecStartPre=/bin/false\n$X/fugaro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(u.Text, "\n") {
+		for _, own := range []string{"Restart=no", "ExecStartPre="} {
+			if strings.HasPrefix(line, own) {
+				t.Errorf("the path carried %q into the unit as a directive of its own:\n%s", own, u.Text)
+			}
+		}
+	}
+	if got, want := len(strings.Split(u.Text, "\n")), len(strings.Split(systemdUnitTemplate, "\n")); got != want {
+		t.Errorf("the unit is %d lines, and the template is %d: the path added one:\n%s", got, want, u.Text)
+	}
+	// The path's dollar is doubled, twice: the path is named twice, and neither
+	// naming is left as one systemd would expand.
+	if n := strings.Count(u.Text, "$$X/fugaro"); n != 2 {
+		t.Errorf("the path's dollar is doubled %d times, and the unit names the path twice:\n%s", n, u.Text)
+	}
+	if n := strings.Count(u.Text, "$"); n != 4 {
+		t.Errorf("the unit carries %d dollars, and four is the two doubled pairs:\n%s", n, u.Text)
+	}
+}
+
 // TestLaunchdEscapesXMLText: a plist is XML, so a path holding an ampersand is
-// character data and not markup.
+// character data and not markup. Every one of the five predefined entities is
+// escaped, because a path is arbitrary text and a template that carried only
+// some of them would be one escaped character away from a plist the parser
+// reads as markup.
 func TestLaunchdEscapesXMLText(t *testing.T) {
 	u, err := Render(mapGetenv(map[string]string{"HOME": darwinHome}), "darwin", "/opt/a&b/fugaro")
 	if err != nil {
@@ -200,6 +248,13 @@ func TestLaunchdEscapesXMLText(t *testing.T) {
 	}
 	if !strings.Contains(u.Text, "<string>/opt/a&amp;b/fugaro</string>") {
 		t.Errorf("the plist does not escape the path as XML text:\n%s", u.Text)
+	}
+	for _, tc := range []struct{ in, want string }{
+		{"&", "&amp;"}, {"<", "&lt;"}, {">", "&gt;"}, {`"`, "&quot;"}, {"'", "&apos;"},
+	} {
+		if got := xmlText("/opt/a" + tc.in + "b/fugaro"); !strings.Contains(got, tc.want) {
+			t.Errorf("xmlText(%q) = %q, which does not carry %s", tc.in, got, tc.want)
+		}
 	}
 }
 

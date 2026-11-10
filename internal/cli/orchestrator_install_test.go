@@ -25,6 +25,9 @@ type unitFake struct {
 	platform string
 	reloads  []service.Unit
 	removes  []service.Unit
+	// reloadErr is the manager refusing to read the file, which is the one
+	// state a written unit can be left in.
+	reloadErr error
 }
 
 func (f *unitFake) Platform() string { return f.platform }
@@ -35,7 +38,7 @@ func (f *unitFake) Render(func(string) string, string) (service.Unit, error) {
 
 func (f *unitFake) Reload(_ context.Context, u service.Unit) error {
 	f.reloads = append(f.reloads, u)
-	return nil
+	return f.reloadErr
 }
 
 func (f *unitFake) Remove(_ context.Context, u service.Unit) error {
@@ -124,6 +127,33 @@ func TestInstallWritesOnlyUnderTheUserHome(t *testing.T) {
 	}
 	if len(f.removes) != 0 {
 		t.Errorf("install removed something: %v", f.removes)
+	}
+}
+
+// TestInstallNamesTheCommandThatLoadsAUnitTheManagerRefused: the file is written
+// before the manager is asked to read it, so a reload that fails leaves a unit
+// that is this release's own text — and that is the one state neither converge
+// step repairs, because the text on disk is current and a reload with nothing to
+// reload is exactly what keeps a repeated `fugaro update` quiet (T7). The
+// failure is the only place that state is named, so it names the command that
+// loads the file whatever its text.
+func TestInstallNamesTheCommandThatLoadsAUnitTheManagerRefused(t *testing.T) {
+	unitHome(t)
+	f := fakeUnitService(t)
+	f.reloadErr = errors.New("the manager refused")
+	typed(t)
+	out, _, err := executeStdin(t, "install\n", "orchestrator", "install")
+	if err == nil {
+		t.Fatalf("install succeeded although the manager refused to load the unit:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "orchestrator install") {
+		t.Errorf("the failure does not name the command that loads the file again: %v", err)
+	}
+	if !strings.Contains(err.Error(), currentUnit(t).Path) {
+		t.Errorf("the failure does not name the file it left behind: %v", err)
+	}
+	if data, readErr := os.ReadFile(currentUnit(t).Path); readErr != nil || string(data) != currentUnit(t).Text {
+		t.Errorf("the written unit is not what this release renders (read %v):\n%s", readErr, data)
 	}
 }
 
