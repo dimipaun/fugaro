@@ -1029,6 +1029,34 @@ test_the_served_direction_waits_the_bundle_cache_out() {
   assert_no_secret "$dir" "the served direction waits"
 }
 
+# And the other side of that wait: a 200 read INSIDE the cache's lifetime, which
+# is a mint the service did serve and a document this run cannot say which of the
+# two it was. The bound is the case here -- the mint answers 200 every time and
+# the run still must not read it as the write being served, so the row says what
+# it got rather than claiming a serve it did not measure. It is the branch a
+# case that only ever saw the waited-out reading would leave untested, and the
+# numbers in the row are the ones it actually waited and was configured for.
+test_a_200_inside_the_cache_window_is_not_a_serve() {
+  setup_case oktoosoon
+  default_args
+  RUN148_ENV=(CHECK148_CACHE_WAIT=30 CHECK148_MINT_WAIT=5)
+  run148
+  expect_status "$status" 1 "a 200 inside the cache"
+  expect_contains "$out" "FACT restore-consumer: FAIL — " "a 200 inside the cache: the row fails rather than claiming a serve"
+  expect_absent "$out" "FACT restore-consumer: PASS" "a 200 inside the cache: no PASS for the restored consumer"
+  expect_contains "$out" "the credential the write replaced rather than the one it wrote" "a 200 inside the cache: the row says which two documents it cannot tell apart"
+  expect_contains "$out" "200 5s after the write" "a 200 inside the cache: the row carries the wait it really took"
+  expect_contains "$out" "the 30s this run waits" "a 200 inside the cache: the row carries the wait it was configured for"
+  # Both numbers are expanded into the row, not left as the shell's own text: a
+  # row that printed its placeholders would be a row nobody can act on.
+  expect_absent "$out" '${MINT_WAITED}' "a 200 inside the cache: the wait is not printed as a placeholder"
+  expect_absent "$out" '${CACHE_WAIT}' "a 200 inside the cache: the configured wait is not printed as a placeholder"
+  # The bound is the mint's, not the drill's: the rows below still run, so the
+  # owner gets the whole block and not one row about the first write.
+  expect_contains "$out" "FACT transfer: FAIL — " "a 200 inside the cache: the rest of the drill still ran"
+  assert_no_secret "$dir" "a 200 inside the cache"
+}
+
 # And an answer that is not the mint at all -- a proxy, a load balancer, anything
 # else answering in front of the service with a 200 and a body that is not the
 # mint's document. The status is 200 and there is no credential in it, so a row
@@ -1521,6 +1549,7 @@ t test_a_versions_add_that_landed_and_failed_is_not_reported_as_nothing
 t test_a_versions_disable_that_failed_is_no_claim_about_the_version
 t test_a_creds_set_that_landed_and_failed_is_not_reported_as_nothing
 t test_the_served_direction_waits_the_bundle_cache_out
+t test_a_200_inside_the_cache_window_is_not_a_serve
 t test_a_200_that_is_not_the_mint_is_not_a_serve
 t test_a_200_without_a_token_is_not_a_serve
 t test_a_rotation_that_leaves_the_old_secret_alive_is_a_fail

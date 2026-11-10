@@ -56,9 +56,10 @@
 # The wait cuts both ways, and the served direction is the one a bound alone
 # cannot settle: the document a write REPLACED answers with a 200 too, so a mint
 # read a moment after the write can be the old credential's mint and read as the
-# new one's. What tells the two apart is the cache's own lifetime — the document
-# a read can be answered from was parsed at or before the write, so a 200 read at
-# or after credsvc.BundleCacheTTL is a read of the document the write made.
+# new one's. What tells the two apart is the cache's own lifetime — the loader
+# serves a parsed document only while that parse is younger than
+# credsvc.BundleCacheTTL, so a 200 read at or after the TTL can only come from a
+# parse that happened after the write, which is the write's own document.
 # CHECK148_CACHE_WAIT is that lifetime in seconds (default 40, so the reading is
 # taken clear of the 30-second TTL and of the loop's own step; 0 reads once,
 # which is what the script's own test uses).
@@ -551,10 +552,10 @@ mint_want() {
       # the document this write replaced is served for its own cache lifetime and
       # answers a 200 too, so a mint read a moment after the write can be the OLD
       # credential's mint, with the row below claiming it as the new one's. What
-      # makes a 200 readable is the clock rather than the body: the document a
-      # read can be served from was parsed at or before the write, so a 200 read
-      # at or after the cache's lifetime is a read of the document the write
-      # made.
+      # makes a 200 readable is the clock rather than the body: the loader serves
+      # a parsed document only while that parse is younger than the cache's
+      # lifetime, so a 200 read that far after the write can only come from a
+      # parse that happened after it — the document the write made.
       if [ "$MINT_STATUS" = 200 ] && [ "$MINT_ANSWERED" = yes ] && [ "$waited" -ge "$CACHE_WAIT" ]; then
         MINT_WAITED=$waited
         return 0
@@ -621,7 +622,7 @@ mint_note() {
 # served it is exactly what this run cannot read.
 mint_ok_got() {
   if [ "$MINT_STATUS" = 200 ] && [ "$MINT_ANSWERED" = yes ]; then
-    printf 'the service answered 200 ${MINT_WAITED}s after the write, which is inside the ${CACHE_WAIT}s the parsed bundle is served for, so this mint may be the credential the write replaced rather than the one it wrote — and only a reading taken once that cache has expired tells the two apart (raise CHECK148_MINT_WAIT above CHECK148_CACHE_WAIT and run it again)'
+    printf 'the service answered 200 %ss after the write, which is inside the %ss this run waits for the bundle cache to expire, so this mint may be the credential the write replaced rather than the one it wrote — and only a reading taken once that cache has expired tells the two apart (raise CHECK148_MINT_WAIT above CHECK148_CACHE_WAIT and run it again)' "$MINT_WAITED" "$CACHE_WAIT"
     return 0
   fi
   printf 'the service answered %s%s' "${MINT_STATUS}${MINT_CODE:+ (refused: ${MINT_CODE})}" "$(mint_note)"
