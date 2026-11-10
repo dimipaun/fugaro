@@ -394,6 +394,29 @@ func TestEvidenceCollectFailsWhenTheLogCannotBeRead(t *testing.T) {
 	}
 }
 
+// TestEvidenceCollectGivesUpOnALogThatNeverProgresses: Open is a seam, so the
+// reader behind it is not always the log store's own file. A reader that
+// answers every call with nothing and no error must end the collection rather
+// than spin it: a diagnosis that never returns is a diagnosis nobody gets.
+func TestEvidenceCollectGivesUpOnALogThatNeverProgresses(t *testing.T) {
+	getenv := evidenceEnv(t)
+	id := evidenceID()
+	_, err := Collect(context.Background(), id, Options{
+		Version: "v0.5.2", Getenv: getenv, GOOS: "linux",
+		Open: func(cmdlog.ID) (io.ReadCloser, error) {
+			return io.NopCloser(evidenceStall{}), nil
+		},
+	})
+	if !errors.Is(err, io.ErrNoProgress) {
+		t.Fatalf("Collect = %v, want the read to give up: an empty read is not the end of a stream", err)
+	}
+}
+
+// evidenceStall reads nothing forever without ever saying so.
+type evidenceStall struct{}
+
+func (evidenceStall) Read([]byte) (int, error) { return 0, nil }
+
 // evidenceNames is a folder's file names, sorted, for a failure message.
 func evidenceNames(files map[string]string) []string {
 	names := make([]string, 0, len(files))

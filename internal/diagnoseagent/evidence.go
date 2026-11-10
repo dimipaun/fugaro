@@ -163,7 +163,7 @@ func Collect(ctx context.Context, id cmdlog.ID, o Options) (Evidence, error) {
 	}
 	base, dir, err := o.writeFiles(id, files)
 	if err != nil {
-		return Evidence{}, err
+		return Evidence{}, fmt.Errorf("diagnoseagent: no evidence for %s: %w", id, err)
 	}
 	ev.EvidenceDir = filepath.Join(base, dir)
 	return ev, nil
@@ -183,6 +183,15 @@ type evidenceFile struct {
 // how much was left out, because a failed command's reason is the last thing it
 // wrote. A log that fits is written as it stands, and the two are told apart by
 // the note rather than by a marker in the text.
+//
+// One thing the cap costs, and it is not paid back anywhere: a value that
+// straddles the byte the cap cuts at is split, and neither pass knows half of
+// one — only the part after the cut is redacted. Removing that would mean
+// redacting the whole log before the cut, which is the memory this cap exists
+// to bound, or a streaming redactor internal/redact does not have (T-DG2).
+// What it can cost is bounded by the note above: the file says it is the end of
+// a longer log, so a fragment at its very first byte is a fragment the agent
+// knows was cut, and the rest of maxLogBytes — the failure itself — is whole.
 func (o Options) logText(id cmdlog.ID) (string, error) {
 	r, err := o.Open(id)
 	if err != nil {
@@ -211,7 +220,9 @@ func (o Options) logText(id cmdlog.ID) (string, error) {
 // tailOf reads r and returns at most max bytes of its end, the number of bytes
 // it holds, and the read's error. It is read a chunk at a time and the front is
 // dropped as it goes, so a stream of any size costs max bytes of memory — the
-// buffer is slid rather than grown.
+// buffer is slid rather than grown. The whole stream is still read, because
+// what was left out is a number the file has to state (logText), and the reader
+// is a local file the log store wrote.
 func tailOf(r io.Reader, max int64) ([]byte, int64, error) {
 	if max <= 0 {
 		return nil, 0, nil
@@ -222,14 +233,27 @@ func tailOf(r io.Reader, max int64) ([]byte, int64, error) {
 	if int64(len(chunk)) > max {
 		chunk = make([]byte, max)
 	}
+	// A reader that answers every call with nothing and no error is not a
+	// reader that reached its end, and without this the loop below would spin
+	// on it forever. Open is a seam a caller supplies, so it is not only this
+	// package's own file reader that has to terminate (io.Copy gives up after
+	// the same number of empty reads).
+	const maxEmptyReads = 100
+	empty := 0
 	for {
 		n, err := r.Read(chunk)
 		if n > 0 {
+			empty = 0
 			total += int64(n)
 			buf = append(buf, chunk[:n]...)
 			if int64(len(buf)) > max {
 				copy(buf, buf[int64(len(buf))-max:])
 				buf = buf[:max]
+			}
+		} else if err == nil {
+			empty++
+			if empty >= maxEmptyReads {
+				return nil, total, io.ErrNoProgress
 			}
 		}
 		if errors.Is(err, io.EOF) {
@@ -385,10 +409,10 @@ func checkEvidenceDir(root *os.Root, name string) error {
 		return err
 	}
 	if !fi.IsDir() {
-		return fmt.Errorf("diagnoseagent: %s is not a directory", name)
+		return fmt.Errorf("%s is not a directory", name)
 	}
 	if !ownedByUser(fi) {
-		return fmt.Errorf("diagnoseagent: %s is not this user's directory, so this diagnosis will not leave a log it read in it", name)
+		return fmt.Errorf("%s is not this user's directory, so this diagnosis will not leave a log it read in it", name)
 	}
 	if fi.Mode().Perm() != evidenceDirMode {
 		_ = root.Chmod(name, evidenceDirMode)
@@ -400,7 +424,11 @@ func checkEvidenceDir(root *os.Root, name string) error {
 // name and never writing through a name already there: the path is
 // attacker-influenced and the names are predictable, so what is at the name
 // decides nothing (the rule internal/srctree's writeRecord makes for its own
-// record). The file is 0600 from its first byte.
+// record). A name holding a file is replaced, because a second collection of
+// one run ID is the diagnosis as it is now; a name holding something else — a
+// directory, which Remove cannot take — is refused rather than removed, as
+// internal/srctree refuses an occupied one. The file is 0600 from its first
+// byte.
 func writeEvidence(root *os.Root, dir, name, text string) error {
 	at := filepath.Join(dir, name)
 	if err := root.Remove(at); err != nil && !errors.Is(err, fs.ErrNotExist) {
