@@ -139,6 +139,13 @@ logging)
     sed "s/@RUN@/$run/g" "$tmpl"
     ;;
   *)
+    if [ -n "${FAKE96_COUNT_NOT_JSON:-}" ]; then
+      # `gcloud logging read` exiting 0 with something this check cannot parse —
+      # a notice on stdout, or a document that is not a list of entries. It is
+      # the case a count is taken from a log that was never read.
+      printf '%s\n' "$FAKE96_COUNT_NOT_JSON"
+      exit 0
+    fi
     n=0
     [ -f "$FAKE96_DIR/count-called" ] && n=$(cat "$FAKE96_DIR/count-called")
     n=$((n + 1))
@@ -313,7 +320,12 @@ case "$url" in
   body='{}'
   ;;
 *accounts:batchGet*)
-  if [ "${FAKE96_SURVIVOR:-no}" = yes ]; then
+  if [ -n "${FAKE96_BATCHGET_NOT_JSON:-}" ]; then
+    # The user list read back as something this check cannot parse. The row's
+    # whole assertion is the count out of this document, so a case wants it to
+    # stop the run rather than to read back as an empty count.
+    body=$FAKE96_BATCHGET_NOT_JSON
+  elif [ "${FAKE96_SURVIVOR:-no}" = yes ]; then
     body=$(python3 - "$FAKE96_DIR/deleted" <<'PY'
 import json, sys
 try:
@@ -852,6 +864,24 @@ test_a_service_reachable_without_iam_is_a_fail() {
   expect_contains "$out" "BY THE SERVICE" "a service without IAM: who answered the call"
 }
 
+test_a_log_that_cannot_be_counted_is_not_a_passing_front_end_row() {
+  setup_case uncountable
+  # `gcloud logging read` exits 0 with something this check cannot parse. The
+  # front-end row takes a count of the service's log before its call and one
+  # after, and PASSes when the two are equal — and two counts that were never
+  # read are both the empty string, which is equal to itself. That shape printed
+  # `front-end: PASS` asserting "an unauthenticated request never reaches the
+  # container" from a log the check had not read, which is the one thing this row
+  # must never do: the fence it reads is the whole reason the account table is a
+  # second gate rather than the only one. The read has to stop the run instead.
+  RUN96_ENV=(FAKE96_COUNT_NOT_JSON='WARNING: a gcloud notice on stdout, and not a document')
+  run96
+  expect_status "$status" 2 "a log that cannot be counted"
+  expect_absent "$out" "FACT front-end: PASS" "a log that cannot be counted: the row that would assert the fence from a log never read"
+  expect_contains "$out" "FACT front-end: FAIL — not reached" "a log that cannot be counted: the row records that it was never measured"
+  expect_contains "$out" "the service's own log could not be read" "a log that cannot be counted: what stopped the run"
+}
+
 test_a_scratch_directory_that_cannot_be_removed_is_a_fail() {
   setup_case restore
   # The fake `rm` refuses the scratch directory itself, so the check's own
@@ -948,6 +978,22 @@ test_a_user_that_survived_the_deletions_is_a_fail() {
   expect_contains "$out" "FACT survivors: FAIL — " "a surviving user: the row"
   expect_contains "$out" "the read-back IS the assertion" "a surviving user: why it is a finding"
   expect_contains "$out" "FACT restore: PASS — " "a surviving user: the deletions did happen"
+}
+
+test_a_user_list_that_cannot_be_read_back_stops_the_run() {
+  setup_case unreadable
+  # The last step reads the project's user list back and its assertion is the
+  # count out of that document. A list this check cannot parse used to read back
+  # as an empty count — a document never read scored as a count, and the FAIL
+  # that followed named no number at all. The read stops the run now: "could not
+  # tell" is what this is, and it is exit 2 rather than a row that looks like a
+  # measurement.
+  RUN96_ENV=(FAKE96_BATCHGET_NOT_JSON='<html>the user list, unreadable</html>')
+  run96
+  expect_status "$status" 2 "a user list that cannot be read back"
+  expect_absent "$out" "the read-back IS the assertion" "a user list that cannot be read back: the row that would report a count it never read"
+  expect_contains "$out" "FACT survivors: FAIL — not reached" "a user list that cannot be read back: the row records that it was never measured"
+  expect_contains "$out" "the project's user list is not the document this check reads" "a user list that cannot be read back: what stopped the run"
 }
 
 test_a_line_that_carries_a_token_is_dropped_and_reported() {
@@ -1049,6 +1095,7 @@ t test_a_mint_whose_answer_names_another_repository_is_a_fail
 t test_a_mint_whose_answer_is_a_longer_name_ending_in_the_run_repository_is_a_fail
 t test_a_mint_whose_expiry_is_outside_the_hour_is_a_fail
 t test_a_service_reachable_without_iam_is_a_fail
+t test_a_log_that_cannot_be_counted_is_not_a_passing_front_end_row
 t test_a_mint_that_answers_other_than_200_is_a_fail
 t test_a_mint_that_answers_200_with_no_token_stops
 t test_a_pairing_that_is_answered_is_the_finding
@@ -1056,6 +1103,7 @@ t test_a_refusal_with_no_audit_line_is_the_finding
 t test_a_mint_that_answered_and_left_no_line_is_a_fail
 t test_an_outsider_that_is_answered_is_the_finding
 t test_a_user_that_survived_the_deletions_is_a_fail
+t test_a_user_list_that_cannot_be_read_back_stops_the_run
 t test_a_scratch_directory_that_cannot_be_removed_is_a_fail
 t test_a_line_that_carries_a_token_is_dropped_and_reported
 t test_xtrace_is_refused

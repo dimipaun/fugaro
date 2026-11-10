@@ -941,11 +941,19 @@ step_survivors() {
     say "deleted the run identity user $uid: status $code"
   done
   at=""
-  local answer left
+  local answer read_back left
   answer=$(printf 'url = "https://identitytoolkit.googleapis.com/v1/projects/%s/accounts:batchGet?maxResults=1000"\nheader = "Authorization: Bearer %s"\n' "$FB" "$(gcloud auth print-access-token 2>/dev/null)" | curl -sS --config -) \
     || stop "the project's user list could not be read back, so this run cannot say whether what it created is gone"
-  left=$(printf '%s' "$answer" | reader uids "${UIDS_CREATED[@]+"${UIDS_CREATED[@]}"}" | sed -n 's/^left=//p') \
-    || stop "the project's user list is not the document this check reads"
+  # The reader's status, not sed's: the count it prints is the whole assertion of
+  # this row, and a list this check cannot parse would otherwise read back as the
+  # empty string — a document that was never read scored as a count. It fails
+  # closed (an empty count is not zero, so the row FAILs), and the FAIL's own
+  # sentence would name no number at all, which is why the read stops the run
+  # instead: a list that cannot be read is a fact this check cannot tell.
+  read_back=$(printf '%s' "$answer" | reader uids "${UIDS_CREATED[@]+"${UIDS_CREATED[@]}"}") \
+    || stop "the project's user list is not the document this check reads, so whether what this run created is gone cannot be read back"
+  left=$(field_of left "$read_back")
+  [ -n "$left" ] || stop "the project's user list was read back and carries no count: this row's assertion is that count, and it cannot be taken from a document that does not carry one"
   SURVIVORS_DONE=yes
   if [ "$left" = 0 ]; then
     fact survivors PASS "the two run identity users this check exchanged were deleted ($deleted of ${#UIDS_CREATED[@]} answered 200) and the project's own user list holds 0 of their uids: nothing this check created survives it"
@@ -964,7 +972,19 @@ audit_lines() {
     "resource.type=\"cloud_run_revision\" resource.labels.service_name=\"$SVC\" $1"; then
     return 1
   fi
-  field_of lines "$(reader count <"$SCRATCH/audit-count.json")"
+  # The reader's own status is part of the read. `gcloud logging read` can exit 0
+  # with something this check cannot parse -- a notice on stdout, a shape that is
+  # not a list -- and a count taken from that document is the empty string. The
+  # counts this row hands out are compared with each other for equality, and two
+  # empty strings are equal: that is the shape in which a row asserts "the service
+  # wrote no line for it" from a log it never read. So the reader is read as a
+  # value whose status is checked, and a count that is not there fails the read
+  # rather than reading as zero.
+  local ans lines
+  ans=$(reader count <"$SCRATCH/audit-count.json") || return 1
+  lines=$(field_of lines "$ans")
+  [ -n "$lines" ] || return 1
+  printf '%s' "$lines"
 }
 
 # audit_for RUN — the service's audit lines for one run id, as the reader's
@@ -1155,12 +1175,16 @@ def fail(message):
     sys.exit(1)
 
 
-def load(path=None):
-    raw = open(path, encoding="utf-8").read() if path else sys.stdin.read()
+def parse_json(raw):
     try:
         return json.loads(raw)
     except ValueError as e:
         fail("not JSON: %s" % e)
+
+
+def load(path=None):
+    raw = open(path, encoding="utf-8").read() if path else sys.stdin.read()
+    return parse_json(raw)
 
 
 def env_of(container):
@@ -1484,9 +1508,19 @@ def cmd_audit():
 
 
 def cmd_count():
+    """The entry count of a log read, for the one row that compares two of them.
+
+    It goes through the same parse as every other subcommand rather than a
+    `json.loads` of its own: a document that does not parse has to fail here --
+    and the caller has to see that failure -- because the count it would
+    otherwise print is the empty string, and an empty string is what a
+    comparison of two counts reads as equal. Nothing printed at all is no
+    entries, which is a count of zero and not a failure."""
     raw = sys.stdin.read()
-    lines = json.loads(raw) if raw.strip() else []
-    print("lines=%d" % len(lines))
+    entries = [] if not raw.strip() else parse_json(raw)
+    if not isinstance(entries, list):
+        fail("the log read is not a list of entries")
+    print("lines=%d" % len(entries))
 
 
 def cmd_uids(wanted):

@@ -318,6 +318,21 @@ func TestDocsCheck96IsWrittenAndSaysWhatIsNotYetTrue(t *testing.T) {
 	if !strings.Contains(check, "so this row reads the **body** the call came back with") {
 		t.Errorf("docs/gcp-live-checklist.md's Check 96 no longer says the `front-end` row reads the body the unauthenticated call came back with: the status and the unmoved audit-line count are the same for Cloud Run's own refusal and for a service deployed without IAM, whose `refuseIdentity` answers the same `403` and writes no line either, so without the body the row would pass a service anyone can call")
 	}
+	// And the counts it compares have to be counts it read. The row's two audit
+	// reads are compared for equality, and a `gcloud logging read` that exits 0
+	// with a document this check cannot parse leaves both empty — equal to each
+	// other — which is a PASS asserting "the service wrote no line for it" from a
+	// log that was never read. The section says the read that cannot be counted
+	// stops the run instead, and the script's `audit_lines` is held to checking
+	// the reader's status.
+	// Mutation (run and restored): `audit_lines` put back to
+	// `field_of lines "$(reader count <…)"` → FAIL.
+	if !strings.Contains(check, "it compares only two counts it actually read") {
+		t.Errorf("docs/gcp-live-checklist.md's Check 96 no longer says the `front-end` row compares two counts it actually read: the equality test over two counts that were never taken is true, so the row would record a PASS about the service's log from a document it could not parse")
+	}
+	if body := check96ShellFunc(t, readRepoFile(t, check96Script), "audit_lines() {"); !strings.Contains(body, `ans=$(reader count <"$SCRATCH/audit-count.json") || return 1`) || !strings.Contains(body, "[ -n \"$lines\" ] || return 1") {
+		t.Errorf("scripts/live-checks/check96.sh's `audit_lines` no longer checks the count it hands out (%q): the counts this row compares are taken through `field_of`, whose pipeline succeeds on empty input, so an unread log gives two empty counts that compare equal and the row PASSes on a log it never read", strings.TrimSpace(body))
+	}
 	if body := check96ShellFunc(t, readRepoFile(t, check96Script), "step_front_end() {"); !strings.Contains(body, `reader refusal <"$SCRATCH/noident.json"`) || !strings.Contains(body, "BY THE SERVICE") {
 		t.Errorf("scripts/live-checks/check96.sh's `step_front_end` no longer tells the two `403`s apart by the body (%q): the section states that discrimination as this row's mechanism, and a step that read the status and the line count alone would pass a service deployed without Cloud Run IAM", strings.TrimSpace(body))
 	}
