@@ -293,31 +293,42 @@ func TestTheGrantCallRefusesAURLItWillNotSendATokenTo(t *testing.T) {
 // whatever host the Location named. The second server here is exactly that
 // host, and it must never be reached.
 //
+// Every 3xx is asked, because they differ in what a client that followed one
+// would do with this request: 302 and 303 turn the POST into a GET at the new
+// host, which is the token carried to it in the header and the body dropped,
+// and 307 and 308 send the POST there whole. A launcher that wants the token to
+// reach only the service it judged sends it nowhere else under any of them.
+//
 // Mutation (verified, run and restored): drop the CheckRedirect from
 // slipClient and this fails on the request that reached it.
 func TestTheGrantCallDoesNotFollowARedirect(t *testing.T) {
-	reached := 0
-	elsewhere := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		reached++
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"slip":"` + fakeSlipID + `"}`))
-	}))
-	t.Cleanup(elsewhere.Close)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, elsewhere.URL+credsvc.SlipPath, http.StatusTemporaryRedirect)
-	}))
-	t.Cleanup(srv.Close)
-	prev := slipIdentity
-	slipIdentity = func(context.Context, string) (string, error) { return fakeLauncherToken, nil }
-	t.Cleanup(func() { slipIdentity = prev })
+	for _, code := range []int{
+		http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther,
+		http.StatusTemporaryRedirect, http.StatusPermanentRedirect,
+	} {
+		reached := 0
+		elsewhere := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			reached++
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"slip":"` + fakeSlipID + `"}`))
+		}))
+		t.Cleanup(elsewhere.Close)
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, elsewhere.URL+credsvc.SlipPath, code)
+		}))
+		t.Cleanup(srv.Close)
+		prev := slipIdentity
+		slipIdentity = func(context.Context, string) (string, error) { return fakeLauncherToken, nil }
+		t.Cleanup(func() { slipIdentity = prev })
 
-	req := credsvc.SlipGrantRequest{Slug: appSlug, Run: "20261110-100000-abcd",
-		Account: "fugaro-web-abcde@proj.iam.gserviceaccount.com", Credentials: []string{config.CredentialVertex}, MaxRuntimeSeconds: 3600}
-	if _, err := slipGrantOverService(context.Background(), srv.URL, req); err == nil {
-		t.Fatal("the grant call followed a redirect, want a refusal: the launcher's identity token is a bearer credential and the redirect names the host it would go to")
-	}
-	if reached != 0 {
-		t.Errorf("the redirected grant call reached the host the Location named (%d requests), want none", reached)
+		req := credsvc.SlipGrantRequest{Slug: appSlug, Run: "20261110-100000-abcd",
+			Account: "fugaro-web-abcde@proj.iam.gserviceaccount.com", Credentials: []string{config.CredentialVertex}, MaxRuntimeSeconds: 3600}
+		if _, err := slipGrantOverService(context.Background(), srv.URL, req); err == nil {
+			t.Errorf("the grant call followed a %d, want a refusal: the launcher's identity token is a bearer credential and the redirect names the host it would go to", code)
+		}
+		if reached != 0 {
+			t.Errorf("the grant call redirected with a %d reached the host the Location named (%d requests), want none", code, reached)
+		}
 	}
 }
 
