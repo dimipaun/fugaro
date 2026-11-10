@@ -267,6 +267,77 @@ func TestVerifyReleaseRefusesAPatchWithNoCherryPickTrailer(t *testing.T) {
 	res.requireVerifyFailureContaining(t, "none of its own commits carries a \"(cherry picked from commit <sha>)\" trailer")
 }
 
+// TestVerifyReleaseRefusesAFixCommittedByHand: --fix is optional and a
+// cherry-pick is not the only way a commit reaches the branch, so the trailer
+// check alone read a fix written straight onto release/X.Y as nothing at all:
+// the bump's trailer held the tag to main, and the hand-written fix -- on no
+// commit of main, and never merged back -- was reported verified. The one thing
+// a hotfix writes by hand is the release's own text, so that is the only commit
+// with no trailer this accepts.
+func TestVerifyReleaseRefusesAFixCommittedByHand(t *testing.T) {
+	r := newHotfixRepo(t)
+	git := func(args ...string) string { return strings.TrimSpace(testutil.Git(t, r.local, args...)) }
+	git("checkout", "--quiet", "-b", "release/0.12", "v0.12.0")
+	git("cherry-pick", "-x", r.bump)
+	// The release's own text, committed by hand as docs/release.md says, and
+	// allowed for exactly that reason.
+	writeHighlights(t, r.local, "0.12.1", "- The fix.\n")
+	writeSummaries(t, r.local, map[string]string{"0.12.1": "A fix."})
+	setStreamCurrent(t, r.local, "0.12.1")
+	git("add", "-A")
+	git("commit", "--quiet", "-m", "release: the notes, the summary line and the stream's current")
+	// The fix itself, committed on the branch instead of cherry-picked from main.
+	if err := os.WriteFile(filepath.Join(r.local, "fix.txt"), []byte("the fix, written here\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "-A")
+	git("commit", "--quiet", "-m", "fix: the thing that was wrong")
+	git("push", "--quiet", "origin", "release/0.12")
+	git("tag", "-a", "v0.12.1", "-m", "Fugaro v0.12.1")
+	git("push", "--quiet", "origin", "refs/tags/v0.12.1")
+	git("checkout", "--quiet", "main")
+
+	g := newGHState(t, r.releaseRepo, greenChecks())
+	res := r.verify(t, g, 60, "v0.12.1")
+	res.requireVerifyFailureContaining(t, "changes fix.txt")
+	if !strings.Contains(res.out, "is not a cherry-pick of one that is") {
+		t.Errorf("the refusal does not say the commit is not a cherry-pick of a commit on main:\n%s", res.out)
+	}
+}
+
+// TestVerifyReleaseRefusesATrailerThatNamesAnotherChange: a trailer is text, so
+// writing one is not evidence by itself. What makes it evidence is the diff
+// under it -- the patch-id -- so a branch commit that keeps a pick's trailer
+// while carrying a change of its own cannot be read as the fix main has.
+func TestVerifyReleaseRefusesATrailerThatNamesAnotherChange(t *testing.T) {
+	r := newHotfixRepo(t)
+	git := func(args ...string) string { return strings.TrimSpace(testutil.Git(t, r.local, args...)) }
+	git("checkout", "--quiet", "-b", "release/0.12", "v0.12.0")
+	git("cherry-pick", "-x", r.fix)
+	git("cherry-pick", "-x", r.bump)
+	// The trailer the bump's pick carries stays; the change under it does not
+	// (--amend keeps the message, which is the shape a trailer written to
+	// satisfy a check has).
+	if err := os.WriteFile(filepath.Join(r.local, "fix.txt"), []byte("not what main carries\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "-A")
+	git("commit", "--quiet", "--amend", "--no-edit")
+	writeHighlights(t, r.local, "0.12.1", "- The fix.\n")
+	writeSummaries(t, r.local, map[string]string{"0.12.1": "A fix."})
+	setStreamCurrent(t, r.local, "0.12.1")
+	git("add", "-A")
+	git("commit", "--quiet", "-m", "release: v0.12.1")
+	git("push", "--quiet", "origin", "release/0.12")
+	git("tag", "-a", "v0.12.1", "-m", "Fugaro v0.12.1")
+	git("push", "--quiet", "origin", "refs/tags/v0.12.1")
+	git("checkout", "--quiet", "main")
+
+	g := newGHState(t, r.releaseRepo, greenChecks())
+	res := r.verify(t, g, 60, "v0.12.1")
+	res.requireVerifyFailureContaining(t, "whose trailer names "+r.bump)
+}
+
 // TestVerifyReleaseRefusesWhenMainIsBehindTheTag: the branch is never merged
 // back, so a plugin version main does not carry leaves main serving a plugin
 // older than the published tag (scripts/release-gate.sh refuses it too).

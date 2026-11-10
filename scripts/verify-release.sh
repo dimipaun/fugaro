@@ -30,14 +30,20 @@
 #      and reaches this check with it.
 #   4. For a patch tag (Z of 1 or more, the shape docs/release.md's "Hotfix
 #      releases" cut from release/X.Y): every commit the tag carries and main
-#      does not is one main does carry -- the fix and the plugin bump the branch
-#      was cut with are both cherry-picked from it, and every commit of the tag
-#      that is not on origin/main and was picked with -x (`git cherry-pick -x`,
-#      which records "(cherry picked from commit <sha>)") names an ancestor of
-#      origin/main -- and main's own plugin version is the tag's or newer, the
-#      same rule scripts/release-gate.sh refuses on. A patch tag whose branch
-#      commits carry no such trailer at all is refused: the fix has to be on
-#      main, and a cherry-pick without -x leaves nothing to check it by.
+#      does not is one of exactly two things. It is a cherry-pick of a commit on
+#      main -- the fix and the plugin bump the branch was cut with are both
+#      picked from it with -x (`git cherry-pick -x`, which records
+#      "(cherry picked from commit <sha>)"), the commit the trailer names has to
+#      be an ancestor of origin/main, and its patch-id has to be this commit's,
+#      so a trailer cannot vouch for a change that is not the one it names -- or
+#      it is one of the three files the release's own text lives in (the notes
+#      for this version, its line in the release summaries and the cli stream's
+#      current), which the branch's hand-written commits are. A commit that is
+#      neither is a change of its own that no commit of main carries, and the
+#      branch is never merged back, so main loses it: that, and a tree whose own
+#      commits carry no trailer at all (nothing to hold them to main by), are
+#      refused. main's own plugin version must be the tag's or newer too, the
+#      same rule scripts/release-gate.sh refuses on.
 #
 # Read-only: it fetches, reads the GitHub API and pulls image manifests, and
 # changes nothing on origin -- no tag, no branch, no release. Needs gh
@@ -149,6 +155,16 @@ if [ "$remote_tip" != "$tip" ]; then
   exit 1
 fi
 
+# patch_of prints the git patch-id of one commit's diff: what "the same change"
+# means below. `--stable` is spelled out because the other algorithm varies with
+# the git version; awk keeps the id alone, dropping the commit column git
+# patch-id prints beside it. A diff with nothing in it -- a merge, an empty
+# commit -- prints nothing at all, which compares equal on both sides and is
+# right: there is no change there that could have been lost.
+patch_of() {
+  git diff-tree --no-commit-id -p -r "$1" | git patch-id --stable | awk '{print $1}'
+}
+
 # ---- 4 (before the wait: a missing fix is worth knowing at once) ----------
 # patch_note is the paragraph the summary prints for a patch tag; empty when
 # the tag is not one.
@@ -161,8 +177,12 @@ if [ "$z" -ge 1 ]; then
     patch_note="on main"
   else
     # The tag's own commits: what the maintenance branch carries and main does
-    # not. A commit without the -x trailer (a release note written by hand on
-    # the branch) is not a cherry-pick and has nothing to point at main with.
+    # not. A tree with not one trailer in it is refused before any of it is
+    # read: a patch release carries the plugin bump main holds, so a branch
+    # whose own commits are all hand-written is a branch nothing holds to main.
+    # Then each commit, which is a cherry-pick of a commit on main or one of the
+    # three files the release's own text lives in; the header comment of this
+    # file says why, and what a commit that is neither means.
     trailers=$(git log --format=%B "$tip" --not refs/remotes/origin/main \
       | sed -n 's/.*(cherry picked from commit \([0-9a-f]\{7,40\}\)).*/\1/p' | sort -u)
     if [ -z "$trailers" ]; then
@@ -170,12 +190,35 @@ if [ "$z" -ge 1 ]; then
       exit 1
     fi
     n=0
-    for sha in $trailers; do
-      if ! git merge-base --is-ancestor "$sha" refs/remotes/origin/main; then
-        echo "$tag carries a commit that is not on origin/main: the commit $sha, which some commit of this tag names in its \"(cherry picked from commit ...)\" trailer. A fix has to land on main first, through a PR as usual, so main never loses it (docs/release.md, \"Hotfix releases\")" >&2
-        exit 1
+    for commit in $(git log --format=%H "$tip" --not refs/remotes/origin/main); do
+      picked=$(git log -1 --format=%B "$commit" \
+        | sed -n 's/.*(cherry picked from commit \([0-9a-f]\{7,40\}\)).*/\1/p')
+      if [ -n "$picked" ]; then
+        for sha in $picked; do
+          if ! git merge-base --is-ancestor "$sha" refs/remotes/origin/main 2>/dev/null; then
+            echo "$tag carries a commit that is not on origin/main: the commit $sha, which some commit of this tag names in its \"(cherry picked from commit ...)\" trailer. A fix has to land on main first, through a PR as usual, so main never loses it (docs/release.md, \"Hotfix releases\")" >&2
+            exit 1
+          fi
+          if [ "$(patch_of "$sha")" != "$(patch_of "$commit")" ]; then
+            echo "$tag carries a commit whose trailer names $sha, and the change under it is not the change $sha makes ($(git log -1 --format=%h "$commit") is not the pick it says it is, or the pick was applied over different content than main's). A hotfix's cherry-picks carry the fix as main has it: a trailer vouches for a main commit only when the diff under it is that commit's (docs/release.md, \"Hotfix releases\")" >&2
+            exit 1
+          fi
+          n=$((n + 1))
+        done
+        continue
       fi
-      n=$((n + 1))
+      # No trailer: the only thing a hotfix writes by hand on the branch is the
+      # release's own text, so a commit with no trailer may touch those three
+      # paths and nothing else.
+      for path in $(git diff-tree --no-commit-id --name-only -r "$commit"); do
+        case "$path" in
+          "docs/releases/$tag.md" | website/data/release-summaries.yaml | docs/release-streams.yaml) ;;
+          *)
+            echo "$tag carries a commit that is not on origin/main and is not a cherry-pick of one that is: $(git log -1 --format=%h "$commit") \"$(git log -1 --format=%s "$commit")\" changes $path. A hotfix's commits are the fix and the plugin bump cherry-picked from main with -x, or the release's own text -- docs/releases/$tag.md, its line in website/data/release-summaries.yaml and the cli stream's current in docs/release-streams.yaml -- and nothing else: a fix committed straight onto the branch is on no commit of main, and the branch is never merged back, so main loses it (docs/release.md, \"Hotfix releases\")" >&2
+            exit 1
+            ;;
+        esac
+      done
     done
     patch_note="$n cherry-picked commit(s), each on origin/main"
   fi
