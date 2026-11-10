@@ -1,11 +1,16 @@
-// website/test/lib/exempt.mjs — D188's three reference pages, in one place (redesign part P4;
+// website/test/lib/exempt.mjs — the pages D188 exempts, in one place (redesign part P4;
 // changes spec of 2026-10-18, item 2).
 //
-// Two gates exempt the same pages, and for the same reason: `/docs/`, `/security/` and
-// `/changelog/` render a document of this repository rather than a page of the site, so the
-// words on them are that document's own and neither the whole-page word ceiling nor the
-// retired-word rule is the site's to keep over them (D188, which exempts them from the ceiling;
-// the changes spec's item 2 retires the word everywhere else).
+// Two gates exempt the same pages, and for the same reason: they render a document of this
+// repository rather than a page of the site, so the words on them are that document's own and
+// neither the whole-page word ceiling nor the retired-word rule is the site's to keep over
+// them (D188, which exempts them from the ceiling; the changes spec's item 2 retires the word
+// everywhere else). `/docs/` and `/changelog/` render a document whole, `/security/` renders
+// two sections of one and links the rest, `/legal/subscription-terms/` renders the agreement
+// text, and `/compatibility/` — the last of them, added by the compatibility matrix plan's
+// CM2 — renders the rows of `website/data/compatibility.yaml`, the repository's own record of
+// what each feature's status is, which is the matrix's own 800-odd words and not the site's
+// pitch.
 //
 // **Why the list is written once, here.** Two lists would be two rules, and the failure they
 // drift into is quiet: a page added to one and not the other is a page the site exempts from
@@ -30,7 +35,13 @@ import { REPO } from './html.mjs'
 export const RECONCILIATION = 'docs/website/redesign/reconciliation.md'
 
 /** The pages D188 exempts: the ones that render a document of this repository. */
-export const DOCUMENT_PAGES = new Set(['/docs/', '/security/', '/changelog/', '/legal/subscription-terms/'])
+export const DOCUMENT_PAGES = new Set([
+  '/docs/',
+  '/security/',
+  '/changelog/',
+  '/legal/subscription-terms/',
+  '/compatibility/',
+])
 
 /** The ruling itself, as written. */
 export function readReconciliation() {

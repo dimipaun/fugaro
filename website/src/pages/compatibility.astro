@@ -1,0 +1,299 @@
+---
+/**
+ * website/src/pages/compatibility.astro — the compatibility matrix (the compatibility matrix
+ * plan, `docs/compatibility-matrix/implementation-plan.md`, task CM2; D1520–D1539, the
+ * reconciliation's findings F1–F32).
+ *
+ * **The page renders `website/data/compatibility.yaml` and writes no claim of its own**
+ * (D1537). Every heading, every row and every note below arrives out of that file through
+ * `website/src/content.ts`'s `loadCompatibility()`, which refuses a status or an edition
+ * outside the two closed sets the page has a legend for, a group with no row, and a phrase
+ * from the file's own `never_say` list — the claims the reconciliation marked Wrong, so the
+ * page cannot be built out of one. That split is the whole design: a row that is wrong is a
+ * row to fix in the file, and the page is the file rendered, so
+ * `website/test/compatibility-page.mjs` holds the built page to the file row by row rather
+ * than to a copy of it typed here.
+ *
+ * **The lead is the page's own, and it is the only prose here that is not the file's.** It
+ * says what the page is and how to read it, it promises nothing, it dates nothing (the
+ * matrix's own rows carry no date, D1523), and it is also the page's `<meta name="description">`,
+ * so a search result carries the words a reader meets at the top of the page.
+ *
+ * **The navigation entry is not here, and that is deliberate**: the owner has to approve a
+ * change to the menu (`.claude/rules/website.md`), so until that approval the page is
+ * reachable at its own URL and from the Docs hub, which is the link the plan's CM2 asks for
+ * and the one `docs.astro` carries. `website/test/compatibility-page.mjs` reads the hub's
+ * link rather than a menu entry for the same reason.
+ *
+ * **The stamp is the file's `as_of`, and one line of it is all the page says about it**: the
+ * two versions the matrix was last read against (D1538). Refreshing them is the release
+ * procedure's business, and CM3's test is what fails a tree whose stamp is behind the newest
+ * release file; this page renders whatever the file holds rather than a second copy of it.
+ *
+ * The look is the bold redesign's (P1's `base.css` §2c): the headline is the display scale's
+ * largest step with the accent's gradient on it, the section headings are its middle step, and
+ * every colour and every space below is a design token, so the contrast `website/test/a11y.mjs`
+ * computes is the contrast a reader gets (W1.2). The matrix is the site's first `<table>`:
+ * a group's rows are four facts per feature, and a table is what a reader scans by column.
+ */
+import Base from '../layouts/Base.astro'
+import { COMPATIBILITY_EDITIONS, COMPATIBILITY_STATUS_LABELS, COMPATIBILITY_STATUSES, loadCompatibility } from '../content.ts'
+
+/**
+ * The lead: what the page is, and the one sentence that tells a reader how to read it. It is
+ * also the page's description. It says nothing about a schedule and names no product date —
+ * what is not supported today is what its own row says, and the rows carry no dates (D1523).
+ */
+const LEAD =
+  'What Fugaro supports today, what is still to come, and what is not planned. Every row carries a mark from the legend below.'
+
+const { asOf, groups } = loadCompatibility()
+
+/** The legend, in the order the vocabulary is written: one entry per status the file may carry. */
+const legend = COMPATIBILITY_STATUSES.map((status) => ({ status, ...COMPATIBILITY_STATUS_LABELS[status] }))
+---
+
+<Base title="Compatibility" description={LEAD}>
+  <article class="compat">
+    {/* The page's first band: the headline and the lead, the shape every page of the site
+        opens with. The legend follows the heading below rather than the lead, because the
+        region between the `h1` and the first `h2` is the page's lead and `budget.mjs`
+        measures it (D188): a legend in the lead would be read as the page's opening prose. */}
+    <section class="compat-hero">
+      <h1 class="compat-title display-xl">
+        What Fugaro <span class="gradient-text">supports</span>
+      </h1>
+      <p class="compat-lead">{LEAD}</p>
+    </section>
+
+    <section class="compat-matrix" aria-labelledby="compat-matrix-heading">
+      <h2 class="compat-heading display-lg" id="compat-matrix-heading">The matrix</h2>
+
+      {/* The stamp (D1538): the two releases the matrix was last read against, read from the
+          file's own `as_of` rather than typed here. It says when the page was last checked
+          and nothing else — no date, because the release is the unit the matrix moves in. */}
+      <p class="compat-stamp">
+        Read against Fugaro <code>{asOf.cli}</code> and the console <code>{asOf.console}</code>.
+      </p>
+
+      {/* The legend: every status the file may carry, each with its glyph and its word, so a
+          mark in a row is one a reader can look up. The glyph is decoration beside the word
+          and is hidden from assistive technology — the word is the mark, and a reader who
+          cannot tell the five glyphs apart reads it. */}
+      <ul class="compat-legend">
+        {
+          legend.map((mark) => (
+            <li class="compat-legend-item">
+              <span class="compat-glyph" aria-hidden="true">{mark.glyph}</span>
+              {mark.label}
+            </li>
+          ))
+        }
+      </ul>
+
+      {groups.map((group) => {
+        // The spec's Edition column is the group's, not the row's: the groups whose table has
+        // one have it on every row (CM1 refuses a row of such a group without one), so the
+        // column is drawn when the group's own rows carry editions.
+        const hasEdition = group.rows.some((row) => row.edition !== null)
+        const headingId = `${group.id}-heading`
+        return (
+          <section class="compat-group" id={group.id} aria-labelledby={headingId}>
+            <h3 class="compat-group-title display-md" id={headingId}>{group.title}</h3>
+            {/* The spec's own prose for the group, where the reconciliation kept it (F32).
+                It is the file's sentence and not the page's, like every row below it. */}
+            {group.note !== null && <p class="compat-group-note">{group.note}</p>}
+            <div class="compat-table-wrap">
+              <table class="compat-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Name</th>
+                    <th scope="col">Status</th>
+                    {hasEdition && <th scope="col">Edition</th>}
+                    <th scope="col">Notes</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {group.rows.map((row) => (
+                    <tr>
+                      <th scope="row" class="compat-name">{row.name}</th>
+                      <td class="compat-status-cell">
+                        <span class="compat-status" data-status={row.status}>
+                          <span class="compat-glyph" aria-hidden="true">
+                            {COMPATIBILITY_STATUS_LABELS[row.status].glyph}
+                          </span>
+                          {COMPATIBILITY_STATUS_LABELS[row.status].label}
+                        </span>
+                      </td>
+                      {hasEdition && (
+                        <td class="compat-edition">
+                          {row.edition === null ? '' : COMPATIBILITY_EDITIONS[row.edition]}
+                        </td>
+                      )}
+                      <td class="compat-note">{row.note}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )
+      })}
+    </section>
+  </article>
+</Base>
+
+<style>
+  /* Every value below is a design token (W1.2): no colour, no space and no type size is
+     written as a literal, so this page moves with the palette and the scale rather than
+     against them. */
+
+  /* The opening band: the headline and the lead, the room a section starts after. */
+  .compat-hero {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+    padding-bottom: var(--space-xl);
+  }
+
+  .compat-title {
+    max-width: 20ch;
+    margin: 0;
+  }
+
+  .compat-lead {
+    max-width: 60ch;
+    margin: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-xl);
+    line-height: var(--leading-snug);
+  }
+
+  .compat-heading {
+    margin: 0 0 var(--space-md);
+  }
+
+  /* The stamp: a line under the heading, in the mono face and the smallest step, because both
+     of the things it names are version strings. */
+  .compat-stamp {
+    margin: 0 0 var(--space-lg);
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .compat-stamp code {
+    font-family: var(--font-mono);
+  }
+
+  /* The legend: a wrapping row of marks, each with its glyph and its word. A list rather than
+     a paragraph, so every mark is one item and a reader of the markup meets them one by one. */
+  .compat-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-xs) var(--space-lg);
+    margin: 0 0 var(--space-2xl);
+    padding: 0;
+    list-style: none;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+  }
+
+  .compat-legend-item {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-2xs);
+  }
+
+  /* The glyph of a status, wherever it stands: the legend's and the rows'. It is a mark and
+     not text, so it carries no colour of its own beyond the muted tone it shares with the
+     word beside it. */
+  .compat-glyph {
+    flex: none;
+    font-family: var(--font-sans);
+  }
+
+  /* One group: its heading, the spec's own prose, and its table. */
+  .compat-group {
+    margin: 0 0 var(--space-2xl);
+  }
+
+  .compat-group-title {
+    margin: 0 0 var(--space-2xs);
+  }
+
+  .compat-group-note {
+    max-width: var(--measure);
+    margin: 0 0 var(--space-sm);
+    color: var(--text-muted);
+  }
+
+  /* The table's box: a hairline and a radius, and a horizontal scroll rather than a squeezed
+     column on a phone — a matrix read sideways is a matrix a reader can still read. */
+  .compat-table-wrap {
+    overflow-x: auto;
+    border: var(--border-width) solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface);
+  }
+
+  .compat-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--font-size-sm);
+    text-align: left;
+  }
+
+  .compat-table th,
+  .compat-table td {
+    padding: var(--space-xs) var(--space-sm);
+    border-bottom: var(--border-width) solid var(--border);
+    vertical-align: top;
+  }
+
+  /* The last row's own edge is the box's, so the two do not draw a double line. */
+  .compat-table tr:last-child th,
+  .compat-table tr:last-child td {
+    border-bottom: 0;
+  }
+
+  .compat-table thead th {
+    color: var(--text-muted);
+    font-weight: var(--weight-semibold);
+    white-space: nowrap;
+  }
+
+  /* The header row's own tone, so a reader scanning the table finds the columns before the
+     rows. It is the palette's own surface one step in, not a second colour invented here. */
+  .compat-table thead {
+    background: var(--panel);
+  }
+
+  .compat-name {
+    font-weight: var(--weight-semibold);
+  }
+
+  /* The status: the glyph and the word, and the word is the mark (a reader who cannot tell
+     the glyphs apart reads it). The supported rows are the ones a reader can act on today, so
+     they carry the page's ordinary text tone and everything else the muted one — a difference
+     of tone beside the word, never instead of it. */
+  .compat-status {
+    display: inline-flex;
+    align-items: baseline;
+    gap: var(--space-3xs);
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+
+  .compat-status[data-status='supported'] {
+    color: var(--text);
+  }
+
+  .compat-edition {
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+
+  .compat-note {
+    min-width: 22rem;
+  }
+</style>

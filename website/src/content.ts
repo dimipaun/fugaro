@@ -1406,6 +1406,187 @@ export function loadMobileClaims(): MobileClaimsFacts {
   return { claims }
 }
 
+// website/data/compatibility.yaml — what Fugaro supports, and what it does not.
+// ---------------------------------------------------------------------------------------
+
+/**
+ * One row of the compatibility matrix: the feature, the status the page marks it with, the
+ * edition it belongs to where the matrix carries one, and the sentence a reader reads.
+ *
+ * The `evidence` path CM1's test holds every present-tense row to is **not** read here: it
+ * is the file's own proof of the claim, not a fact the page renders, and a column of
+ * repository paths is not what a reader of a compatibility matrix came for.
+ */
+export interface CompatibilityRow {
+  /** The feature or platform, as the page's first column reads it. */
+  name: string
+  /** One of `COMPATIBILITY_STATUSES`. */
+  status: string
+  /** `core`, `subscription`, or null in the groups whose spec table has no Edition column. */
+  edition: string | null
+  /** What the row says besides its name. */
+  note: string
+}
+
+/** One group of the matrix: the spec's own heading, its prose, and its rows in its order. */
+export interface CompatibilityGroup {
+  /** The page's anchor for the group. */
+  id: string
+  /** The group's heading, as the page renders it. */
+  title: string
+  /** The spec's own prose for the group, where the reconciliation kept it. */
+  note: string | null
+  rows: CompatibilityRow[]
+}
+
+/** website/data/compatibility.yaml, validated. */
+export interface CompatibilityFacts {
+  /** The release each half of the matrix was last read against (D1538). */
+  asOf: { cli: string; console: string }
+  /** The phrases the page may not be made of — the reconciliation's findings marked Wrong. */
+  neverSay: string[]
+  groups: CompatibilityGroup[]
+}
+
+const COMPATIBILITY_FILE = 'website/data/compatibility.yaml'
+
+const COMPATIBILITY_KEYS = ['version', 'as_of', 'never_say', 'groups']
+const COMPATIBILITY_GROUP_KEYS = ['id', 'title', 'note', 'rows']
+const COMPATIBILITY_ROW_KEYS = ['name', 'status', 'edition', 'note', 'evidence']
+
+/**
+ * The five statuses, and nothing else (D1520). **The order is the legend's**: the page
+ * renders one legend entry per status in this order, and the whole point of a closed set is
+ * that the mark a row carries is one a reader can look up. It is written here rather than in
+ * the page for the same reason the states of the phone app's claims are
+ * (`MOBILE_CLAIM_STATES`): the page renders the vocabulary and does not own it.
+ */
+export const COMPATIBILITY_STATUSES = ['supported', 'coming-soon', 'built-not-enabled', 'roadmap', 'not-planned']
+
+/**
+ * What each status is called and marked with where the page renders it. The glyph is not a
+ * colour and not the whole of the mark: a reader who cannot tell the five glyphs apart reads
+ * the word beside it, which is what `website/test/compatibility-page.mjs` holds the page to.
+ */
+export const COMPATIBILITY_STATUS_LABELS: { [status: string]: { glyph: string; label: string } } = {
+  supported: { glyph: '✅', label: 'Supported' },
+  'coming-soon': { glyph: '🔜', label: 'Coming soon' },
+  'built-not-enabled': { glyph: '🚧', label: 'Built, not enabled' },
+  roadmap: { glyph: '🗺️', label: 'Roadmap' },
+  'not-planned': { glyph: '❌', label: 'Not planned' },
+}
+
+/** The two editions, and how the page names them (D1522; never "CE" or "EE"). */
+export const COMPATIBILITY_EDITIONS: { [edition: string]: string } = {
+  core: 'Core (MIT)',
+  subscription: 'Subscription',
+}
+
+/**
+ * The matrix, as `website/data/compatibility.yaml` writes it (the compatibility matrix plan,
+ * task CM1; D1520–D1539).
+ *
+ * **The page renders this file and writes no claim of its own** (D1537): the file is the one
+ * place a compatibility claim is written, so a row that is wrong is a row to fix in the file
+ * rather than a sentence to rewrite in the page — the same split `mobile-claims.yaml` has for
+ * the phone page's bullets. That is why the checks here are the file's own closed sets and
+ * nothing about the page: a status or an edition outside the vocabulary is a row the page
+ * has no mark for, and a group with no row is a heading the page would render over an empty
+ * table.
+ *
+ * The two wordings the owner answered are checked here as well as in CM1's test, because the
+ * page renders the row and the build is the last place a second legal sentence could reach a
+ * reader: the file's own `never_say` list is refused in every string the page prints.
+ */
+export function loadCompatibility(): CompatibilityFacts {
+  const file = COMPATIBILITY_FILE
+  const doc = asMap(
+    parseYAML(
+      readBytes(
+        path.join(DATA_DIR, 'compatibility.yaml'),
+        'what Fugaro supports today and what it does not: one row per claim, with the status the page marks it with, the edition it belongs to and the repository path that backs it (the compatibility matrix plan, task CM1; D1520–D1539)',
+      ),
+      file,
+    ),
+    file,
+    'the document',
+  )
+  refuseUnknownKeys(doc, COMPATIBILITY_KEYS, file)
+  if (doc.version !== 1) {
+    throw new Error(`${file}: version is ${describe(doc.version)}, and this reader knows version 1: the matrix's own format version is bumped with a shape it cannot read (W1.3 step 2).`)
+  }
+
+  const asOfDoc = asMap(doc.as_of, file, 'as_of')
+  refuseUnknownKeys(asOfDoc, ['cli', 'console'], `${file} as_of`)
+  const asOf = {
+    cli: asString(asOfDoc.cli, file, 'as_of.cli'),
+    console: asString(asOfDoc.console, file, 'as_of.console'),
+  }
+  for (const [key, value] of Object.entries(asOf)) {
+    if (!/^v\d+\.\d+\.\d+$/.test(value)) {
+      throw new Error(`${file}: as_of.${key} is ${JSON.stringify(value)}, and it is the version of the release the matrix was last read against, as in v0.20.3 (D1538).`)
+    }
+  }
+
+  const neverSay = asList(doc.never_say, file, 'never_say').map((phrase, index) => asString(phrase, file, `never_say[${index}]`))
+  if (neverSay.length === 0) {
+    throw new Error(`${file}: never_say is empty, and it is the list of phrases the reconciliation marked Wrong: without it the page could be made of a claim the repository contradicts (D1537).`)
+  }
+
+  const groups = asList(doc.groups, file, 'groups').map((entry, index) => {
+    const what = `groups[${index}]`
+    const group = asMap(entry, file, what)
+    refuseUnknownKeys(group, COMPATIBILITY_GROUP_KEYS, `${file} ${what}`)
+    const id = asString(group.id, file, `${what}.id`)
+    const title = asString(group.title, file, `${what}.title`)
+    const note = group.note === undefined ? null : asString(group.note, file, `${what}.note`)
+
+    const rows = asList(group.rows, file, `${what}.rows`).map((rowEntry, rowIndex) => {
+      const where = `${what}.rows[${rowIndex}]`
+      const row = asMap(rowEntry, file, where)
+      refuseUnknownKeys(row, COMPATIBILITY_ROW_KEYS, `${file} ${where}`)
+
+      const name = asString(row.name, file, `${where}.name`)
+      const status = asString(row.status, file, `${where}.status`)
+      if (!COMPATIBILITY_STATUSES.includes(status)) {
+        throw new Error(
+          `${file}: ${where} (${JSON.stringify(name)}) carries the status ${JSON.stringify(status)}, and the five the page has a mark for are ${COMPATIBILITY_STATUSES.map((one) => `\`${one}\``).join(', ')} — a sixth status would render as one of them or as nothing at all (D1520).`,
+        )
+      }
+      const edition = row.edition === undefined ? null : asString(row.edition, file, `${where}.edition`)
+      if (edition !== null && COMPATIBILITY_EDITIONS[edition] === undefined) {
+        throw new Error(`${file}: ${where} (${JSON.stringify(name)}) carries the edition ${JSON.stringify(edition)}, and the two the page names are \`core\` (Core (MIT)) and \`subscription\` (D1522).`)
+      }
+      const rowNote = asString(row.note, file, `${where}.note`)
+      return { name, status, edition, note: rowNote }
+    })
+
+    if (rows.length === 0) {
+      throw new Error(`${file}: ${what} (${JSON.stringify(title)}) carries no row, and the page renders one table per group: a heading over an empty table is a section that says nothing (the plan's "Interfaces").`)
+    }
+    return { id, title, note, rows }
+  })
+
+  if (groups.length === 0) {
+    throw new Error(`${file}: groups is empty, and this file is the page: the compatibility page is the legend and the groups under it, so a build with no group is a page that says nothing about what is supported.`)
+  }
+
+  for (const group of groups) {
+    const strings = [group.title, group.note ?? '', ...group.rows.flatMap((row) => [row.name, row.note])]
+    for (const phrase of neverSay) {
+      for (const text of strings) {
+        if (text.includes(phrase)) {
+          throw new Error(
+            `${file}: the group ${group.id} carries the phrase ${JSON.stringify(phrase)}, which is one of the claims the reconciliation marked Wrong: the page renders this file verbatim, so a phrase that may not reach a reader is refused here as well as by test/compatibility.mjs (F12, F19, F23, F29).`,
+          )
+        }
+      }
+    }
+  }
+
+  return { asOf, neverSay, groups }
+}
+
 // website/data/why-gcp.yaml — the claims the "Why GCP" page renders.
 // ---------------------------------------------------------------------------------------
 
