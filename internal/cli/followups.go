@@ -188,18 +188,21 @@ func runFollowUps(cmd *cobra.Command, o cloudOptions, ref string, launch bool, m
 	// The findings are the record's own block, put through the writer's own
 	// bound (runstore.NewDeferred): the record is job-written data, and a
 	// finding whose key, summary or reason is missing names nothing a reader
-	// could file or fix.
+	// could file or fix. A run that deferred nothing carries no block at all,
+	// and that is a plan with no tasks rather than a refusal: most runs defer
+	// nothing, and asking about one is a question with an answer.
 	findings := []runstore.DeferredFinding{}
-	if d := runstore.NewDeferred(rec.Deferred.Findings); d != nil {
-		findings = d.Findings
+	total := 0
+	if rec.Deferred != nil {
+		total = rec.Deferred.Total
+		if d := runstore.NewDeferred(rec.Deferred.Findings); d != nil {
+			findings = d.Findings
+		}
 	}
 	out := followUpsOut{
 		Version: followUpsDocVersion, Repo: repo, Slug: slug, RunID: runID, Branch: branch,
-		PR: info.Number, PRURL: info.URL, Deferred: len(findings), Max: max, Launched: launch,
+		PR: info.Number, PRURL: info.URL, Deferred: len(findings), Total: total, Max: max,
 		Tasks: []followUpsTask{},
-	}
-	if rec.Deferred != nil {
-		out.Total = rec.Deferred.Total
 	}
 	mode := followUpsParentMode(rec.Rigor)
 	groups := followUpsGroups(findings)
@@ -224,6 +227,11 @@ func runFollowUps(cmd *cobra.Command, o cloudOptions, ref string, launch bool, m
 			Keys: g.keys, Summary: firstSummary(g), Rigor: string(mode), Status: "planned",
 		})
 	}
+	// Launched is what the call did with the plan, not the flag it was given: a
+	// --launch call whose every group already has a run filed nothing, and a
+	// document that said otherwise would send its reader to the run list for
+	// tasks that are not there.
+	out.Launched = launch && len(out.Tasks) > 0
 	if launch {
 		for i, g := range pending {
 			spec, err := followUpsTaskSpec(ctx, env, repo, runID, parent, g, mode, info)
@@ -619,6 +627,13 @@ func printFollowUps(w io.Writer, out followUpsOut) error {
 		_, err := fmt.Fprintf(w, "launched %d %s as debt tasks (fugaro runs ls --debt)\n", len(out.Tasks), plural(len(out.Tasks), "task", "tasks"))
 		return err
 	}
-	_, err := fmt.Fprintf(w, "nothing was launched; repeat with --launch to file them as debt tasks\n")
+	// A call with nothing pending filed nothing, whether or not it was asked
+	// to: telling its caller to repeat with --launch would send them around a
+	// loop that ends in the same line.
+	if len(out.Tasks) == 0 {
+		_, err := fmt.Fprintln(w, "nothing was launched: every group already has a run")
+		return err
+	}
+	_, err := fmt.Fprintln(w, "nothing was launched; repeat with --launch to file them as debt tasks")
 	return err
 }

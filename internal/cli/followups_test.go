@@ -768,3 +768,59 @@ func TestFollowUpSinceHasAReleaseBullet(t *testing.T) {
 		}
 	}
 }
+
+// TestFollowupsSaysWhenNothingWasDeferred: most runs defer nothing, and their
+// record carries no block at all — runstore writes DeferredFindings only when
+// a deferral took effect. Asking about such a run is a question with an answer
+// rather than a refusal, and --launch writes nothing: there is no group to file.
+func TestFollowupsSaysWhenNothingWasDeferred(t *testing.T) {
+	f := newCloudFixture(t)
+	launchable(t, f)
+	parent := wallRunIDAt(0, "090000", "aaaa")
+	seedParent(t, f, parent, parentRecord(parent))
+	followUpsStub(t, followUpPR(7, "fugaro/"+parent, gitprov.PRMerged))
+
+	before := followUpsRuns(t, f)
+	out, _, err := execute(t, "followups", parent)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !strings.Contains(out, "nothing was deferred, so there is nothing to file") {
+		t.Errorf("the plan does not say the run deferred nothing:\n%s", out)
+	}
+	doc := followUpsDoc(t, parent, "--launch")
+	if doc.Deferred != 0 || doc.Total != 0 || len(doc.Tasks) != 0 || doc.Launched {
+		t.Errorf("a run that deferred nothing reported %+v, want no task and no launch", doc)
+	}
+	if after := followUpsRuns(t, f); !slices.Equal(before, after) {
+		t.Errorf("the call wrote %v, want %v", after, before)
+	}
+}
+
+// TestFollowupsSaysWhenEveryGroupIsAlreadyFiled: a --launch call with nothing
+// left to file filed nothing, and says so rather than reporting a launch of
+// zero tasks — the repeat of a run whose every group already has one, which is
+// the second half of "a second call files only what is left".
+func TestFollowupsSaysWhenEveryGroupIsAlreadyFiled(t *testing.T) {
+	f := newCloudFixture(t)
+	parent := mergedParent(t, f, allDeferred(t))
+	launchable(t, f)
+	first := followUpsDoc(t, parent, "--launch")
+	if len(first.Tasks) != 3 || !first.Launched {
+		t.Fatalf("the first call = %+v, want the three groups launched", first)
+	}
+
+	out, _, err := execute(t, "followups", parent, "--launch")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !strings.Contains(out, "nothing was launched: every group already has a run") {
+		t.Errorf("the repeat does not say every group is filed:\n%s", out)
+	}
+	if n := len(f.run.Executions()); n != 3 {
+		t.Errorf("%d executions, want 3: the first call's three and none from the repeat", n)
+	}
+	if doc := followUpsDoc(t, parent, "--launch"); doc.Launched || len(doc.Tasks) != 0 {
+		t.Errorf("the repeat reported %+v, want nothing launched", doc)
+	}
+}
