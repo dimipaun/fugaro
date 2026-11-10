@@ -1940,18 +1940,21 @@ func checkCloneTriageImage(lc *localcfg.Config, spec *task.Spec, cfg *config.Con
 // spec at bootstrap — bytes in the bucket under a run that never starts, after
 // the launch was paid for.
 //
-// It names 0.23.0, the release this work ships in ("Tapir", the CLI minor after
-// the tagged 0.22.0), which is not tagged yet: docs/release.md's Before-you-tag
-// list verifies the number against the tag actually cut, the way it does for
-// every other *Since constant. It is not 0.22.0: that release is tagged
-// (06347d98) and its task reader has neither field, so a gate naming it would
-// admit an image that refuses the task at bootstrap.
+// It names 0.22.0, the release whose task reader carries both fields: they
+// landed with T-TR4 (#2057), a release before the command that writes them, so
+// the constant is the older of the two and not the release this work ships in.
+// A constant naming the newer one — 0.23.0, which is not tagged yet — would
+// refuse the job image every current installation runs, and `fugaro image
+// refresh` rebuilds from the same base and is refused again. docs/release.md's
+// Before-you-tag list verifies the number against the tag actually cut and
+// against internal/task at that tag, the way it does for every other *Since
+// constant.
 //
 // The gate fires on the fields themselves and not on the command, since the
 // bytes are what the older runner refuses: a hand-written or migrated task
 // carrying them is refused the same way, and `fugaro run --plan-task` on a
 // filed task is judged here too.
-const followUpSince = "0.23.0"
+const followUpSince = "0.22.0"
 
 // followUpKnows names, for the gates' messages, what the job image's runner has
 // to know. The message reads "needs a job image whose runner knows <this>".

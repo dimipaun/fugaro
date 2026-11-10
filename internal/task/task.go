@@ -417,15 +417,20 @@ type Spec struct {
 	// by a runner that has never heard of the field. A task that carries one
 	// needs a runner that knows it: Parse decodes with DisallowUnknownFields,
 	// so an older runner refuses the whole spec — the skew every new task
-	// field has, and the reason a launch that would set it is to be gated the
-	// way rigor's own request is. That gate is T-TR10's of the same plan and
-	// does not exist yet, so today only a task written by hand can carry the
-	// field.
+	// field has, and the reason a launch that would set it is gated the way
+	// rigor's own request is: `fugaro run` refuses a job image older than the
+	// release whose runner reads the field (internal/cli/recipes_skew.go's
+	// followUpSince, T-TR10), and `fugaro followups --launch` is what writes
+	// it.
 	//
 	// The parent is checked (Validate below) and the keys are not: a key
 	// names a finding of the parent's own record — a hash of a file and a
 	// summary (D1850) — and is only ever compared with the keys that record
-	// carries, never joined into a path, a command or a prompt.
+	// carries, never joined into a path or a command. The one prompt a key
+	// reaches is the brief the CLI files it in, and that brief treats it as
+	// the record's own text, neutralized and indented like the summary beside
+	// it (internal/cli/followups.go's followUpKeys): a reader of that block
+	// trusts no value in it, keys included.
 	FollowUpOf *FollowUpOf `json:"follow_up_of,omitempty"`
 	// Debt marks the same task as one filed from a triage deferral rather
 	// than asked for: what `fugaro runs ls --debt` lists. False is every
@@ -446,9 +451,9 @@ type FollowUpOf struct {
 	// carries: one task per group, and the ungrouped case is one key. A task
 	// the CLI files always names at least one, since a group is formed from
 	// the deferrals themselves, but nothing here requires it: a key is only
-	// ever compared for equality with the keys of the parent's record, never
-	// joined into a path, a command or a prompt, and one key alone is read by
-	// nobody.
+	// ever compared for equality with the keys of the parent's record, and
+	// the one prompt it is written into fences it as data (Spec.FollowUpOf's
+	// own comment), so one key alone is read by nobody.
 	Keys []string `json:"keys,omitempty"`
 }
 
