@@ -94,13 +94,16 @@ func TestRunsLSRigorColumn(t *testing.T) {
 		}
 		return ""
 	}
-	if got := line("110000-abcd"); !strings.HasSuffix(got, "critical (area payments +1)") {
+	// The RUN cell is the ending the four rows need to tell them apart: they
+	// share their last four characters, so each is extended through the dash
+	// until it does not (spec.md §3), and that cell is how a row is found.
+	if got := line("10000-abcd"); !strings.HasSuffix(got, "critical (area payments +1)") {
 		t.Errorf("a run with two areas: %q", got)
 	}
-	if got := line("120000-abcd"); !strings.HasSuffix(got, "pro (repo)") {
+	if got := line("20000-abcd"); !strings.HasSuffix(got, "pro (repo)") {
 		t.Errorf("a run with no area: %q", got)
 	}
-	if got := line("130000-abcd"); !strings.HasSuffix(got, "-") {
+	if got := line("30000-abcd"); !strings.HasSuffix(got, "-") {
 		t.Errorf("a run that resolved none: %q", got)
 	}
 }

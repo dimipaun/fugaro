@@ -30,6 +30,7 @@ package cli
 //     per release.
 
 import (
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -519,6 +520,115 @@ func TestWindowsConsoleWorkflowIsReleaseTimeOnly(t *testing.T) {
 	}
 }
 
+// TestWindowsConsolePackIsNotInTheReleaseGate is D8(a)'s guard: the staged
+// Windows job's check name is not a name the release gate requires, and the
+// file's own header says why. The structural reason is the gate's derivation --
+// it reads console-tests.yml's **single** job -- and D7(c)'s release-time-only
+// trigger is stated as a property of this job, not as a difference from that
+// file's triggers: console-tests.yml is dispatched by hand today, so its
+// trigger is not what keeps the Windows pack out of it, and a sentence saying
+// otherwise would be false in the tree it ships in.
+//
+// The gate's list itself is TestReleaseGateRequiresTheConsoleCheck's subject,
+// and it is re-read here rather than restated: the console's names are derived
+// from the applied workflow by that test's own derivation, so a tree in which
+// it would fail fails here too, by name.
+//
+// The mutations that prove it: add `console-windows` to scripts/release-gate.sh's
+// `names=(...)` array (and to the `#   ` block above it) and both list cases
+// fail; delete the header's "NOT in the gate" sentence, or its
+// "never on a pull request", and the header case fails by naming the sentence;
+// put the false "console-tests.yml runs on every pull request" reason back and
+// the forbidden-phrase case fails by naming it.
+func TestWindowsConsolePackIsNotInTheReleaseGate(t *testing.T) {
+	text, path := consoleWorkflowText(t, windowsConsoleWorkflowPath, appliedConsoleWindowsPath)
+
+	// The gate, read the way the test that owns it reads it: the `names=(...)`
+	// array and the `#   ` comment block above it, which that script's own
+	// comment asks a reader to keep in step with it.
+	_, required, commented := readReleaseGate(t)
+	for _, c := range []struct {
+		what  string
+		names []string
+	}{
+		{"the names=(...) array", required},
+		{"the `#   ` comment block above it", commented},
+	} {
+		if slices.Contains(c.names, windowsConsoleJobName) {
+			t.Errorf("%s's %s carries %q: the owner's answer to D8 is that the Windows pack does not gate a release -- a red Windows pack is information rather than a blocked release -- and the leg would have to land with a widened derivation, changing which checks gate every tag in this repository (docs/console-windows/reconciliation.md D8(a), finding F41)", releaseGatePath, c.what, windowsConsoleJobName)
+		}
+	}
+
+	// And the tree is in the state TestReleaseGateRequiresTheConsoleCheck
+	// requires: the console's names still derive from the applied workflow, and
+	// none of them is this job's. A derivation that refused would fatal inside
+	// consoleGateCheckNames, which is that test's first half failing here by name.
+	for _, name := range consoleGateCheckNames(t) {
+		if strings.Contains(name, windowsConsoleJobName) {
+			t.Errorf("%s reports the check %q: this test reads the console's names out of the workflow the release gate is derived from, and the Windows pack is a different workflow's job -- a Windows leg there is the gate change D8(a) refuses", appliedConsoleTestsPath, name)
+		}
+	}
+
+	// The derivation itself cannot read this workflow, which is the mechanical
+	// half of "it cannot join the gate": a job the derivation can read is a job a
+	// later edit could add to the names array in one line.
+	if names, err := deriveConsoleCheckNames(text); err == nil {
+		t.Errorf("%s: deriveConsoleCheckNames read the staged Windows workflow and derived %v. The derivation is written for console-tests.yml's shape -- one job with a matrix -- and it refuses anything else so a second job cannot join the gate unnoticed; a Windows job it reads is that refusal lost", path, names)
+	}
+
+	// The two rulings, in the header a reader opens rather than in the staging
+	// README they may not. The gate's derivation is the structural reason, and
+	// D7(c)'s trigger is this job's own property -- stated as such, because the
+	// two files' triggers do not differ: console-tests.yml's only one is
+	// `workflow_dispatch` since the owner's ruling of 2026-11-07, so a sentence
+	// claiming it runs on every pull request would be a reason that does not hold
+	// in the tree this file ships in.
+	header := flattenDoc(windowsConsoleBlock(t, path, text, "# WHY THIS IS ITS OWN WORKFLOW", "\n# WHAT THIS FILE IS"))
+	for _, want := range []string{
+		"NOT in the gate",
+		"refuses a workflow with more than one job",
+		"names=(...)",
+		"never on a pull request",
+		"workflow_dispatch` today",
+	} {
+		if !strings.Contains(header, want) {
+			t.Errorf("%s's own-workflow section no longer carries %q: the gate's list is derived from console-tests.yml's single job, this job is never on a pull request, and console-tests.yml is dispatched by hand today -- a reason that treats it as a pull-request workflow is false (D8(a), D7(c))", path, want)
+		}
+	}
+
+	// And the staging README says the same two things, where the owner reads what
+	// they are about to copy in.
+	section := flattenDoc(consoleReadmeSection(t, readDoc(t, "docs/pending-workflows/README.md"), "## `console-windows.yml`"))
+	for _, want := range []string{
+		"NOT in the gate",
+		"more than one job",
+		"never on a pull request",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("docs/pending-workflows/README.md's `console-windows.yml` section no longer carries %q: the owner is the one who copies the file in, and the section is where they read that the pack does not gate a release and does not run on a pull request", want)
+		}
+	}
+
+	// And neither text may reach for the reason that is no longer true:
+	// console-tests.yml stopped running on pull requests in the owner's ruling of
+	// 2026-11-07 (e5d6ba7c), so "it runs on every pull request" is exactly the
+	// sort of claim this work would otherwise record as the owner's reasoning --
+	// a reader would decide on it, and no pinned string above would catch it.
+	// (The same sentence is still in console-tests.yml's own header, which an
+	// agent run may not edit: the file under .github/workflows/ would have to
+	// move with it, and this run cannot push one.)
+	for _, c := range []struct{ what, text string }{
+		{"docs/pending-workflows/console-windows.yml's own-workflow section", header},
+		{"docs/pending-workflows/README.md's `console-windows.yml` section", section},
+	} {
+		for _, forbidden := range []string{"runs on every pull request", "runs on every one", "on every pull request from any branch"} {
+			if strings.Contains(c.text, forbidden) {
+				t.Errorf("%s says %q of a workflow: console-tests.yml's only trigger is workflow_dispatch since the owner's ruling of 2026-11-07, so this is a reason that does not hold in the tree it ships in", c.what, forbidden)
+			}
+		}
+	}
+}
+
 // TestWindowsConsoleStagingTellsTheOwnerWhatToCopyWhere is the two sentences
 // outside docs/console-windows/ that the staging moves, held to the file they
 // describe: the staging README's own section for the pack, and the site page
@@ -638,7 +748,9 @@ func TestDocsWindowsConsoleReleaseDocsCarryTheDryRun(t *testing.T) {
 //     the ones the `## console-linux.yml` section already gives, and they are
 //     not: that copy-in deletes the very file those sentences name.
 //   - `docs/release.md` said the console *has* a Windows build, which nothing
-//     has built, while two other documents still say Windows stays out.
+//     has built, while two other documents still said Windows stays out.
+//   - Its own O7 item, and the reconciliation's, went on saying the design's
+//     and the console's README's notes were outstanding after they landed.
 //
 // The mutations that prove it: put "§4 U13" back; put "`SECURITY.md` already
 // says" back; drop `docs/release.md` from the surface list; put the
@@ -743,7 +855,7 @@ func TestDocsWindowsConsoleClaimsAboutOtherFilesAreTrue(t *testing.T) {
 		}
 	}
 	if strings.Contains(release, "the console has a Windows build") {
-		t.Errorf("docs/release.md says the console has a Windows build again: the plan is approved but unbuilt, the pack is red until its Parts B and C land, and docs/design/desktop-console.md and the console's own README still say Windows stays out")
+		t.Errorf("docs/release.md says the console has a Windows build again: the plan is approved but unbuilt, no host has carried a `--win` pack to an artifact, and docs/design/desktop-console.md and the console's own README carry dated notes that say the build half moved and the signing half did not")
 	}
 
 	// 6. And the figure the suite's size is given as, in the two other places it
@@ -758,7 +870,138 @@ func TestDocsWindowsConsoleClaimsAboutOtherFilesAreTrue(t *testing.T) {
 	if !strings.Contains(recon, "57 `.ts` files") {
 		t.Errorf("docs/console-windows/reconciliation.md's U3 no longer gives the unit suite's size as 57 `.ts` files: the census rule is that a figure travels with the command that returns it, and this is the figure U3 is about")
 	}
+
+	// 7. And the two planning records this landing falsifies. This folder's
+	// README carries O7 as the item that owes the other documents their notes,
+	// and the reconciliation carries it as a finding, and both said in the
+	// present tense that those notes were still outstanding. Landing them turns
+	// that into a false claim about files outside this folder, which is what
+	// this test is for: docs/release.md's twin clause was deleted in this very
+	// change for the identical reason, and a reader who arrives at O7 from the
+	// plan has to be able to trust it as much as that paragraph. There is no
+	// later task that would notice: O7 is the last item of §5 and Part H's
+	// other tasks do not read this folder.
+	//
+	// The mutations that prove it: put "are still untouched and still say
+	// Windows stays out" back in the README's item, and take "Satisfied
+	// 2026-11-10" off the reconciliation's.
+	o7 := flattenDoc(windowsConsoleBlock(t, index, idx, "- **O7 —", "## Related"))
+	if !strings.Contains(o7, "carry their notes as of 2026-11-10") {
+		t.Errorf("%s's O7 item no longer carries %q: Part H (T-H3) landed the notes it owes on 2026-11-10, and an item still reading as outstanding contradicts the design, the console's own README and docs/release.md at once", index, "carry their notes as of 2026-11-10")
+	}
+	if strings.Contains(o7, "still untouched and still say Windows stays out") {
+		t.Errorf("%s's O7 item says the design and the console's README \"are still untouched and still say Windows stays out\" again: both carry their dated notes as of 2026-11-10, which is what %q records", index, "carry their notes as of 2026-11-10")
+	}
+	reconO7 := flattenDoc(windowsConsoleBlock(t, "docs/console-windows/reconciliation.md", recon, "- **O7 —", "## 6. UNVERIFIED"))
+	if !strings.Contains(reconO7, "Satisfied 2026-11-10") {
+		t.Errorf("docs/console-windows/reconciliation.md's O7 finding is not marked satisfied: the three documents it names all carry the dated note as of 2026-11-10, and a finding left open in the document the plan is written from sends the next reader to write them a second time")
+	}
 }
+
+// TestDocsWindowsConsoleNotesSayWhichHalfMoved pins the dated notes this work
+// owes outside docs/console-windows/.
+//
+// The sentence "Windows stays out" is one claim this repository makes in four
+// documents (F43: this design, docs/release.md, the console's own README and
+// docs/windows-cli/wsl.md), and inside the design it is written four times.
+// The owner's ruling of 2026-10-20 moves half of it: the console's Windows
+// *build* is in by that ruling -- the console drives the *Linux* `fugaro` inside
+// a WSL distribution, and the pack is staged as a release-time job -- while the
+// *signing* answer is untouched, because there is still no Authenticode identity
+// and none is planned. Each place keeps its own sentence and gains a dated note
+// that says which half moved: a rewrite would claim more than the ruling does,
+// and a note is the thing a reader can check.
+//
+// The design's four are read here, each as the block it is made in -- section
+// 4.2's list, section 7.6's rule 3, the owner-run table's Windows-signing row
+// and D10's answer cell -- and so are docs/release.md's paragraph and
+// docs/windows-cli/wsl.md's paragraph and row. The console's own README's
+// section is the one note not read here: it is read in
+// docs_desktop_console_test.go, which is the file this package's console
+// boundary allow-list admits to a path under the console tree -- the reason is
+// written there rather than here, because a Go file in this package may not
+// spell such a path (docs_console_boundary_test.go, Task 0.3 a3).
+//
+// docs/windows-cli/wsl.md's pair is the same ruling read the other way round: its
+// console row says the console is out of scope because it needs a Windows CLI
+// first, and the console's own route is what removes that need for the console,
+// while the CLI track's F40 stays true of the CLI (O1, F43) -- so both the
+// paragraph above that table and the row itself are read here too.
+//
+// The mutations that prove it: delete one note, move one out of the block it
+// belongs to, and put the release document's "still carry the older sentence"
+// clause back. Each fails here.
+func TestDocsWindowsConsoleNotesSayWhichHalfMoved(t *testing.T) {
+	const design = "docs/design/desktop-console.md"
+	designDoc := readDoc(t, design)
+
+	// Every note says the same three things, because "which half moved" is only
+	// checkable if the note names both halves and the identity neither one has:
+	// the date, the build half with the pack's own staged path, the signing half,
+	// and the Authenticode identity that does not exist.
+	note := []string{
+		windowsConsoleNoteDate,
+		"the *build* half",
+		"the signing half",
+		"Authenticode",
+		windowsConsoleWorkflowPath,
+	}
+	for _, tc := range []struct{ what, start, stop string }{
+		{"section 4.2's Windows bullet", "- **Windows as a *packaged* deliverable**", "\n- **The backing-repository history view**"},
+		{"section 7.6's rule 3", "3. **Windows is untouched.**", "\n4. **What does not come with it.**"},
+		{"the owner-run table's Windows-signing row", "| Windows signing |", "\n"},
+		{"D10's answer cell", "| **D10** |", "\n"},
+	} {
+		block := flattenDoc(windowsConsoleBlock(t, design, designDoc, tc.start, tc.stop))
+		for _, want := range note {
+			if !strings.Contains(block, want) {
+				t.Errorf("%s's %s carries no dated note (%q is missing): the owner's ruling of 2026-10-20 moves half of \"Windows stays out\" -- the build is in, the signing answer is not -- and each of the four places has to say which half, in its own block, rather than being rewritten", design, tc.what, want)
+			}
+		}
+	}
+
+	// docs/windows-cli/wsl.md: the paragraph that sends the console's own
+	// question to the design's D10, and the table row that answers it "out of
+	// scope". Both halves are read there, bounded by the table under them so a
+	// note in the wrong one of the two cannot satisfy both.
+	const wsl = "docs/windows-cli/wsl.md"
+	wslDoc := readDoc(t, wsl)
+	notSubstitute := flattenDoc(windowsConsoleBlock(t, wsl, wslDoc, "What WSL is *not* is a substitute for the port", "\n## Install it, inside WSL"))
+	for _, want := range []string{windowsConsoleNoteDate, "reaches", "wsl.exe", "unsigned"} {
+		if !strings.Contains(notSubstitute, want) {
+			t.Errorf("%s's paragraph about what a Windows CLI would still buy no longer carries %q: the console reaches a WSL-only installation itself, and the sentence that says it cannot is the one this note is for", wsl, want)
+		}
+	}
+	row := flattenDoc(windowsConsoleBlock(t, wsl, wslDoc, "| The desktop console |", "\n"))
+	for _, want := range []string{windowsConsoleNoteDate, "Windows CLI", "no longer", "wsl.exe", "unsigned"} {
+		if !strings.Contains(row, want) {
+			t.Errorf("%s's desktop-console table row no longer carries %q: the row's \"it needs a Windows CLI first\" is half reversed for the console, and the note has to say which half -- the CLI track's F40 stays true of the CLI", wsl, want)
+		}
+	}
+
+	// And the release document, which is where a reader arrives from: it says in
+	// the console paragraph that these places carry the older sentence and that
+	// theirs land with Part H. That was true while they did; after this change it
+	// is the notes rather than the older sentences that a reader finds there.
+	const release = "docs/release.md"
+	releaseDoc := readDoc(t, release)
+	console := flattenDoc(windowsConsoleBlock(t, release, releaseDoc, "- **The console is its own release, `console-vX.Y.Z`, never an asset of the CLI's**", "\n- **Dry-run the Windows pack before the tag, by hand.**"))
+	for _, want := range []string{windowsConsoleNoteDate, "saying which half"} {
+		if !strings.Contains(console, want) {
+			t.Errorf("%s's console paragraph no longer carries %q: it is the paragraph that says which half of \"Windows stays out\" moved, and after Part H's notes land it is what a reader is sent to", release, want)
+		}
+	}
+	for _, gone := range []string{"still carry the older sentence", "its pack is red until"} {
+		if strings.Contains(console, gone) {
+			t.Errorf("%s's console paragraph still says %q: the four places carry their dated notes, and the Parts B and C edits the pack was said to be waiting on have landed -- what has not happened is a run", release, gone)
+		}
+	}
+}
+
+// windowsConsoleNoteDate is the date the notes T-H3 owes carry: the landing
+// date of the change that wrote them, which is what a reader comparing them
+// against the ruling of 2026-10-20 they record is looking for.
+const windowsConsoleNoteDate = "2026-11-10"
 
 // windowsConsoleBlock is the text from start to the first line after it that
 // begins with stop, or to the end when stop is empty. It is how these tests

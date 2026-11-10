@@ -1023,6 +1023,7 @@ esac; done
 		cmd.Env = []string{"PATH=" + bin + ":" + os.Getenv("PATH"), "HOME=" + dir, "TMPDIR=" + tmp, "ARGV=" + argv, "CAPTURE=" + capture,
 			"REPO_URL=https://bitbucket.org/acme/app.git", "BASE_BRANCH=main",
 			"FUGARO_BASE=example.com/base:1", "IMAGE=example.com/img", "SECRET_ENVS=NPM_TOKEN", "NPM_TOKEN=" + npmToken,
+			"CONTEXT_DIR=" + filepath.Join(ws, "context"),
 			"BUILD_ID=b7", "BUILDER_OUTPUT=" + builderOut, "DIGEST=" + digest}
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("step %s: %v\n%s", st.ID, err, out)
@@ -1045,7 +1046,8 @@ esac; done
 		"--build-arg FUGARO_BUILT_AT=2026-09-29T10:00:00Z", "--build-arg FUGARO_COMMIT=c0ffee",
 		"--label org.opencontainers.image.revision=c0ffee",
 		"--label org.opencontainers.image.created=2026-09-29T10:00:00Z", "--label dev.fugaro.base.digest=sha256:abc",
-		"--tag example.com/img:candidate-b7 ", "docker push example.com/img:candidate-b7\n",
+		"--file " + filepath.Join(ws, "context", "Dockerfile"),
+		"--tag example.com/img:candidate-b7 " + filepath.Join(ws, "context") + "\n", "docker push example.com/img:candidate-b7\n",
 	} {
 		if !strings.Contains(string(logged), want) {
 			t.Errorf("the build lacks %q:\n%s", want, logged)

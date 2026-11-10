@@ -18,8 +18,8 @@ import (
 // base image built from this checkout. It also sets the pinned versions
 // read from the Dockerfile's own ARGs, so smoke.sh checks the image's
 // Claude Code and gh against them, not just against the smoke output's
-// shape; smoke.sh's own base case checks every other pin (mise, gcloud,
-// the harness Node and so on) and the tools.tsv presence table.
+// shape; smoke.sh's own base case checks every other pin (mise, gcloud and
+// so on) and the tools.tsv presence table.
 func TestBaseImageSmoke(t *testing.T) {
 	image := testutil.BaseImageOf(t, "base")
 	df := baseDockerfile(t)
@@ -60,45 +60,6 @@ func TestBaseGitHonoursNoLazyFetch(t *testing.T) {
 	}
 }
 
-// retiredKeyNode is a Node.js release signed by a key from the "Other keys
-// used to sign some previous releases" list, not a current releaser's:
-// v18.17.0's SHASUMS256.txt.sig was made by Danielle Adams's
-// 74F12602B6F1C4E913FAA37AD3A89613643B6201 (checked with gpgv on
-// 2026-09-27).
-const retiredKeyNode = "18.17.0"
-
-// TestInstallNodeUsesTheBakedKeyring runs install-node the way a derived
-// build does for image.node, with every key source unreachable: the
-// keyring baked into the base must be enough, including for a release
-// signed by a retired key. Without that keyring, install-node must refuse
-// rather than skip verification.
-func TestInstallNodeUsesTheBakedKeyring(t *testing.T) {
-	image := testutil.BaseImageOf(t, "base")
-	blocked := []string{"run", "--rm", "--user", "root"}
-	for _, host := range []string{"keys.openpgp.org", "keyserver.ubuntu.com", "raw.githubusercontent.com", "github.com"} {
-		blocked = append(blocked, "--add-host", host+":127.0.0.1")
-	}
-	blocked = append(blocked, image, "sh", "-c")
-	// install-node's PATH change is local to its own process (sh does not
-	// export it back to its parent), and the base deliberately keeps a
-	// plain install-node install off the image's PATH (design
-	// docs/design/base-image.md section 6: node comes from mise in this
-	// world now; install-node is the standalone helper that bakes the
-	// private harness Node at build time, the same way). So the installed
-	// node is called by its install path (the default NODE_PREFIX,
-	// /opt/node), not bare "node".
-	out := testutil.Docker(t, append(blocked,
-		"test -s /usr/local/lib/fugaro/nodejs.gpg && /usr/local/lib/fugaro/install-node "+retiredKeyNode+" >&2 && /opt/node/bin/node -v")...)
-	if !strings.HasSuffix(out, "v"+retiredKeyNode) {
-		t.Fatalf("/opt/node/bin/node -v after install-node %s = %q", retiredKeyNode, out)
-	}
-	cmd := exec.Command("docker", append(blocked,
-		"rm /usr/local/lib/fugaro/nodejs.gpg && /usr/local/lib/fugaro/install-node "+retiredKeyNode)...)
-	if out, err := cmd.CombinedOutput(); err == nil || !strings.Contains(string(out), "no Node.js release keyring") {
-		t.Fatalf("install-node without the keyring: err=%v\n%s", err, out)
-	}
-}
-
 // TestBaseImageHardening keeps D1's hardening on Debian 13: not root, no
 // passwordless sudo, the expected setuid and setgid sets (sudo and su are
 // still setuid here; every derived build strips them), ssh-keysign and
@@ -126,8 +87,9 @@ func TestBaseImageHardening(t *testing.T) {
 
 // TestBaseImageTools checks that every tools.tsv row answers with no network
 // and an empty HOME, as the CI smoke runs it, that the same report carries
-// the mise cache directory check (the spec smoke.sh sends), and that mise
-// and the harness Node stay apart (no node on the bare base's PATH).
+// the mise cache directory check (the spec smoke.sh sends), and that the
+// base carries no node of its own: a project's Node comes from mise, and the
+// private harness Node went with the harnesses (image setup skill IS4).
 func TestBaseImageTools(t *testing.T) {
 	img := testutil.BaseImageOf(t, "base")
 	cmd := exec.Command("docker", "run", "--rm", "-i", "--network", "none", img, "fugaro", "image", "selftest")

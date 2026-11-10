@@ -147,6 +147,7 @@ p.run-follow-up,
 p.degraded-notice,
 p.degraded-warning,
 p.unavailable-reason,
+p.unavailable-remedy,
 p.unavailable-sentence,
 div.unavailable-searched,
 p.live-review-empty,
@@ -1192,6 +1193,27 @@ span.unavailable-searched-count {
   font-size: var(--font-size-xs);
 }
 
+/* The unavailable screen's state mark, one selector per `data-kind` the
+ * design's state table names (§2.9, the one table of every state variant): a
+ * console with no `fugaro` it can read is one of four failures or a refusal,
+ * and the four are four different instructions rather than four spellings of
+ * one. The rule on the page's left extent is the second carrier and never the
+ * only one -- the headline above it says which failure this is in the state's
+ * own words (`no fugaro binary`, `no WSL on this machine`, ...), which is
+ * section 3.5's rule 1 -- and its tone is the one section 3.2 gives the pair
+ * the state belongs to: `--warn` (attention) where the route to a CLI is there
+ * and the CLI is what is missing, `--error` where the route itself is not on
+ * this machine. A refusal keeps the attention tone it has always had. */
+section.console-unavailable[data-kind='no-binary'],
+section.console-unavailable[data-kind='no-fugaro-in-distro'] {
+  border-left: 3px solid var(--warn);
+}
+
+section.console-unavailable[data-kind='no-wsl'],
+section.console-unavailable[data-kind='no-distro'] {
+  border-left: 3px solid var(--error);
+}
+
 section.console-unavailable[data-kind='refused'] {
   border-left: 3px solid var(--warn);
 }
@@ -1249,6 +1271,23 @@ main p {
 }
 
 #picker-warnings li {
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  line-height: var(--leading-normal);
+}
+
+/* This machine's WSL distributions, under the CLI's warning lines (Part G,
+ * T-G3): a heading of its own, because it is the one part of this window that
+ * is not this console's record of an installation, and one line per
+ * distribution in the muted colour -- the names are `wsl.exe`'s, read here and
+ * not claimed here (design section 2.2). */
+#picker-distros h2 {
+  margin: 0 0 var(--space-sm);
+  font-size: var(--font-size-base);
+  font-weight: var(--weight-semibold);
+}
+
+#picker-distros li {
   color: var(--text-muted);
   font-size: var(--font-size-sm);
   line-height: var(--leading-normal);
@@ -1817,6 +1856,7 @@ p.graph-empty {
   li.run-log-line,
   div.unavailable-body,
   #picker-warnings li,
+  #picker-distros li,
   #picker-onboarding,
   #picker-list li {
     background: Canvas;

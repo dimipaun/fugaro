@@ -213,6 +213,31 @@ func recordHeaderMembers(t *testing.T) []string {
 	return out
 }
 
+// writtenHeaderMembers is the members Marshal actually writes into a record's
+// header, measured on a record saved with every transition still to come: a
+// member a record may leave out is one that header does not carry.
+func writtenHeaderMembers(t *testing.T) []string {
+	t.Helper()
+	data, err := Marshal(issueLocal())
+	if err != nil {
+		t.Fatalf("marshalling the record: %v", err)
+	}
+	head, _, err := splitRecord(data)
+	if err != nil {
+		t.Fatalf("splitting the record: %v", err)
+	}
+	var header map[string]any
+	if err := yaml.Unmarshal(head, &header); err != nil {
+		t.Fatalf("reading the record's header:\n%s\ngave: %v", head, err)
+	}
+	out := make([]string, 0, len(header))
+	for name := range header {
+		out = append(out, name)
+	}
+	slices.Sort(out)
+	return out
+}
+
 // recordInstance is a record's header as the JSON value model the validator
 // reads, which is how a consumer outside this binary sees a record.
 func recordInstance(t *testing.T, i Issue) any {
@@ -257,11 +282,22 @@ func TestSchemaMatchesRecord(t *testing.T) {
 	if !slices.Equal(got, want) {
 		t.Errorf("the schema's members are %v, and the record's are %v", got, want)
 	}
-	// Every header member is required: Marshal writes all of them, empty
-	// included, so a document without one is not a record this package wrote.
-	for _, name := range recordHeaderMembers(t) {
+	// Every member the header always carries is required: Marshal writes all of
+	// them, empty included, so a document without one is not a record this
+	// package wrote. The members a record may leave out are the other way
+	// round, and the two lists together are every member the header has.
+	always := writtenHeaderMembers(t)
+	for _, name := range always {
 		if !slices.Contains(stringsOf(t, doc, "required"), name) {
 			t.Errorf("the schema does not require %q, and the header always carries it", name)
+		}
+	}
+	for _, name := range recordHeaderMembers(t) {
+		if slices.Contains(always, name) {
+			continue
+		}
+		if slices.Contains(stringsOf(t, doc, "required"), name) {
+			t.Errorf("the schema requires %q, and a record this package writes may leave it out", name)
 		}
 	}
 

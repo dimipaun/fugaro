@@ -220,6 +220,19 @@ func catalogBuildPlan(t *testing.T, lc *localcfg.Config, entries []string, entry
 	}
 }
 
+// catalogPrebuiltPlan is catalogBuildPlan for the prebuilt entry the catalog
+// fixture holds: what the document says the invocation submits is drawn from
+// each entry's own source, so the entry arrives with its kind and its
+// reference rather than with a bare name.
+func catalogPrebuiltPlan(t *testing.T, lc *localcfg.Config) buildPlan {
+	t.Helper()
+	p := catalogBuildPlan(t, lc, []string{"prebuilt"}, "prebuilt")
+	p.What = catalogBuildBanner([]config.Entry{
+		{Name: "prebuilt", Source: config.Source{Kind: config.SourceImage, Image: "docker.io/library/node:22"}},
+	}, lc.Build.MachineType, p.Account, p.Registry)
+	return p
+}
+
 // planDigest is the digest the record of p must carry: the sha256 of the
 // document's own bytes, computed here rather than by the code under test
 // (gateDigest is the oracle internal/managed's own audit tests use).
@@ -929,5 +942,54 @@ func TestImageBuildManagedAnswersAMarkItCannotRead(t *testing.T) {
 	}
 	if got := w.audits(t); len(got) != 0 {
 		t.Errorf("a gate the read never opened left %d records (%+v)", len(got), got)
+	}
+}
+
+// TestPrebuiltEntrySmokedIsJudgedByTheGate: a prebuilt entry's smoke-only run
+// is a billable Cloud Build like any other, so D1013's row judges it — the
+// bound, the kill switch, the entry and the account the run is submitted as
+// are the same facts they are for a build. The two rules that are about a
+// build's own inputs, the base image and the registry the build pushes into,
+// are left out rather than reported as passed: a smoke reads no base and
+// pushes nothing, and a record saying the verdict was reached on them would
+// name values this run does not carry.
+//
+// The plan document is the invocation's own — the bound, the machine type and
+// the base the operator passed are the command's inputs for the entries it was
+// given — so its digest is the document this admission was made about.
+func TestPrebuiltEntrySmokedIsJudgedByTheGate(t *testing.T) {
+	fb, _, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildYAML)
+	w := managedBuildWorld(t, f, managedBuildMarker(1))
+	noAgentSession(t)
+	fakeTerminal(t)
+	lc := fixtureConfig(t)
+
+	out, errOut, err := executeStdinReader(t, &unreadStdin{}, "image", "build", "prebuilt", "--base", "b:1")
+	if err != nil {
+		t.Fatalf("%v\n%s%s", err, out, errOut)
+	}
+	if buildPosts(fb) != 1 {
+		t.Fatalf("the prebuilt entry's run was submitted %d times, want one\n%s%s", buildPosts(fb), out, errOut)
+	}
+	rec := oneRecord(t, w, managedmode.AuditAdmitted)
+	if plan := catalogPrebuiltPlan(t, lc); rec.PlanDigest != planDigest(t, plan) {
+		t.Errorf("the record's plan_digest is %q, want the sha256 of the document this admission was made about (%q)", rec.PlanDigest, planDigest(t, plan))
+	}
+	rules := strings.Join(rec.Rules, "; ")
+	for _, rule := range []string{
+		"the build is an entry of this project's effective catalog (prebuilt)",
+		"the entry is written in this project's own state (prebuilt names no source repository)",
+		"the build runs as this project's own build account",
+		"the project's kill switch is off",
+		"the build is this checkout's own repository (acme/app)",
+	} {
+		if !strings.Contains(rules, rule) {
+			t.Errorf("the admitted record does not carry the rule %q: %s", rule, rules)
+		}
+	}
+	for _, rule := range []string{"pull-through reference", "pushes into this installation's own registry"} {
+		if strings.Contains(rules, rule) {
+			t.Errorf("the smoke's record carries %q, which is about a build's own inputs and not this run's: %s", rule, rules)
+		}
 	}
 }

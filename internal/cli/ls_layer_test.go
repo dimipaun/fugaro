@@ -47,10 +47,13 @@ func TestLsShowsTheLayerColumnOnlyWhenARunHasOne(t *testing.T) {
 	// checks the document contains "gen 3" and "gen 3 (not applied)"
 	// somewhere would still pass if the two cells were swapped between
 	// rows, so each is pinned to its own line's suffix instead.
+	// The RUN cell is the ending the three rows need to tell them apart: they
+	// share their last four characters, so each is extended until it does not
+	// (spec.md §3), and that ending is the line's first cell.
 	for run, want := range map[string]string{
-		"s/20261008-100000-abcd": "gen 3",
-		"s/20261008-110000-abcd": "gen 3 (not applied)",
-		"s/20261008-120000-abcd": "-",
+		"00000-abcd": "gen 3",
+		"10000-abcd": "gen 3 (not applied)",
+		"20000-abcd": "-",
 	} {
 		if line := layerLine(t, out, run); !strings.HasSuffix(line, want) {
 			t.Errorf("%s: line %q, want suffix %q", run, line, want)

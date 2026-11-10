@@ -241,8 +241,8 @@ describe('the fake wsl.exe', () => {
     expect(child.path).not.toContain(';')
   })
 
-  it('passes the eleven CHILD_ENV_KEYS and nothing else across the boundary', () => {
-    // The double's half of D5(a). A sentinel that is not one of the eleven keys
+  it('passes CHILD_ENV_KEYS and nothing else across the boundary', () => {
+    // The double's half of D5(a). A sentinel that is not one of the boundary keys
     // is planted in the environment the console hands `wsl.exe`, and it must not
     // reach the child: a fake that forwarded its whole environment would make
     // every later assertion about the credential boundary a claim about a fake
@@ -283,7 +283,7 @@ describe('the fake wsl.exe', () => {
     expect(only(wsl.children()).envKeys).not.toContain('WSLENV')
 
     // And with a share list that *does* name a variable, the safe direction is
-    // asserted rather than assumed: this fake passes the eleven keys and nothing
+    // asserted rather than assumed: this fake passes those keys and nothing
     // else whatever the list says, so a listed host variable stays on the host's
     // side of the boundary. The console writes the list empty for exactly this
     // reason, and this case says what the fake would do if it did not.

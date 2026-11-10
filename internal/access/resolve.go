@@ -36,10 +36,12 @@ type Input struct {
 	// deny-all policy or no policy at all.
 	AllowRepos []string
 	// Lapse is the licence-gate input (D1582): true while a subscription has
-	// lapsed. No rule in this package reads it — a lapse limits the
+	// lapsed. No role rule in this package reads it — a lapse limits the
 	// Subscription surfaces (ee/, RS9), never the MIT core the resolver
 	// answers for, so it must not drop anybody's role — and it is carried here
-	// so the surface that does limit them has the one input asking for it.
+	// so the surface that does limit them has the one input asking for it. The
+	// one reader is lapse.go's SubscriptionAllowed, and what it limits with is
+	// ee/'s, not this package's.
 	Lapse bool
 }
 

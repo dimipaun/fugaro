@@ -87,6 +87,14 @@
               "items": { "$ref": "#/$defs/rigorArea" }
             }
           }
+        },
+        "planning": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "What the planning pass does for every repository of this project (docs/contract-first-decoupling). The same key may be set in a repository's own planning: block, where it replaces the project's value: the pass's switch is a preference and not a bound, so a repository may turn it back on where the project turned it off. Fugaro before 0.22.0 refuses the key, in every repository of the project. The layer is decoded strictly, so a job image older than the release that reads it fails at bootstrap on a key its runner does not know: `fugaro update --repo` refuses to deploy such a job before any cloud effect, and `fugaro run` refuses the launch from a checkout of the repository.",
+          "properties": {
+            "decoupling": { "type": "boolean", "description": "The dependency-breaking pass, for every repository of the project that sets no planning.decoupling of its own: true runs the pass, false leaves it out." }
+          }
         }
       }
     },

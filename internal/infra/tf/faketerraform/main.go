@@ -4,8 +4,8 @@
 //
 // FAKE_TERRAFORM_SCRIPT holds a JSON object keyed by subcommand ("version",
 // "init", "plan", "show", "show -json", "apply", "output", "state rm"); each
-// value gives the exit code, the stdout and stderr to print, and files to
-// write (relative to the working directory). A subcommand the script doesn't
+// value gives the exit code, the stdout and stderr to print (each optionally
+// repeated, "repeat"), and files to write (relative to the working directory). A subcommand the script doesn't
 // name exits 0 with no output, except "version", which reports 1.16.4. A key
 // "<subcommand>@<root>" (such as "output@firebase") applies to the working
 // directory of that name only and wins over the plain key there.
@@ -27,6 +27,12 @@
 // Every invocation appends one JSON line (argv, environment and working
 // directory) to FAKE_TERRAFORM_LOG, and an -out=<file> argument makes it write
 // a plan file holding PlanMarker.
+//
+// A -var-file argument that does not exist is refused with the error terraform
+// itself prints and exit 1, in either form terraform accepts it
+// ("-var-file=<file>" and "-var-file <file>"): the CLI writes the root's
+// tfvars into the directory it plans in, and a run whose plan does not find
+// them is a failure however healthy the fake's script is.
 package main
 
 import (
@@ -45,6 +51,12 @@ type step struct {
 	Stdout string            `json:"stdout"`
 	Stderr string            `json:"stderr"`
 	Files  map[string]string `json:"files"`
+	// Repeat is how many times Stdout and Stderr are printed (0 and 1 both
+	// mean once). It is here because the script travels in an environment
+	// variable, which Linux caps at about 128 KB per string: a test of what
+	// fugaro does with a stderr bigger than the tail it keeps cannot write
+	// that stderr into the script, only multiply a short one.
+	Repeat int `json:"repeat"`
 }
 
 // Call is one line of FAKE_TERRAFORM_LOG.
@@ -98,6 +110,22 @@ func run(args []string) int {
 		st = step{Stdout: `{"terraform_version":"1.16.4","platform":"linux_amd64","provider_selections":{},"terraform_outdated":false}`}
 	}
 
+	// A -var-file that is not there is terraform's own failure, and the fake
+	// makes it too: the CLI writes the tfvars into the working directory it
+	// plans in, and a fake that answered 0 for a missing one would let a
+	// workdir rebuilt between the write and the plan pass as a converged run.
+	// Both forms of the flag are read (varFileArg); a trailing "-var-file"
+	// with no value is terraform's own argument error and not this check's.
+	for i := range args {
+		path, found := varFileArg(args, i)
+		if !found {
+			continue
+		}
+		if _, err := os.Stat(path); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: Failed to read variables file\n\nGiven variables file %s does not exist.\n", path)
+			return 1
+		}
+	}
 	for _, a := range args {
 		if out, found := strings.CutPrefix(a, "-out="); found {
 			if err := os.WriteFile(out, []byte(PlanMarker), 0o600); err != nil {
@@ -112,9 +140,23 @@ func run(args []string) int {
 			return 3
 		}
 	}
-	fmt.Fprint(os.Stdout, st.Stdout)
-	fmt.Fprint(os.Stderr, st.Stderr)
+	repeat := max(st.Repeat, 1)
+	fmt.Fprint(os.Stdout, strings.Repeat(st.Stdout, repeat))
+	fmt.Fprint(os.Stderr, strings.Repeat(st.Stderr, repeat))
 	return st.Exit
+}
+
+// varFileArg is the variables file args[i] names, in either form terraform
+// accepts the flag: "-var-file=<file>", or "-var-file" with the file as the
+// next argument. A "-var-file" with nothing after it names none.
+func varFileArg(args []string, i int) (string, bool) {
+	if path, found := strings.CutPrefix(args[i], "-var-file="); found {
+		return path, true
+	}
+	if args[i] == "-var-file" && i+1 < len(args) {
+		return args[i+1], true
+	}
+	return "", false
 }
 
 // scriptKey is the script key of one invocation. "state rm" is one

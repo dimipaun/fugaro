@@ -190,8 +190,8 @@ brief asked to be verified, and two of its entries were wrong):
 | A sha256 of an output blob | **Nowhere.** Every existing sha256 is a naming hash, a cache key or a config/recipe digest; no blob is hashed. Content type **is** recorded, implicitly, as the object's own content type on write (`internal/blobx/blobx.go:111`), never in `result.json`. |
 | "the job's service account can write only its own run's prefix" | **Wrong as stated:** the condition is the **repository's** prefix (`runs/<slug>/`, plus `cache/`, `locks/`), shared by all of that repository's runs (`names.go:374,383-389`). |
 | "Cloud Run job CPU/memory limits (up to 8 vCPU and 32 GiB)" | **VERIFIED in this repository's code** (`internal/backend/gcp/limits.go:36-38,55` and its test). |
-| "the compute-instance backend … Tasks 1-3 implemented behind a flag" | **Partly wrong, and less wrong than when this design was first written.** The design is merged (#375) and Tasks 1–3 are merged (#380, #381 and **#389**, the VM price table — `internal/backend/batch/prices.go`'s `MachineType`/`MachineTypeOf`/`ForMachineType` and `backend.Execution.MachineType`/`BilledWindow`, read at `origin/main` b9d5c5d); the gate is not a flag but a **config refusal** — `backend: cloud-batch` is refused by `internal/localcfg/localcfg.go:711-719`, and what remains unmerged is the backend's *enable* work, not its price table. **§5.3 and D3 are written against this and V18 carries the corrected citation.** |
-| "GPUs" | **UNVERIFIED, and promised by nothing.** `compute-backend.md` §6.3 lists *"Windows VMs, GPUs, TPUs"* as out of scope (`:1485`). See §5.4 and §13. |
+| "the compute-instance backend … Tasks 1-3 implemented behind a flag" | **Partly wrong, and less wrong than when this design was first written.** The design is merged (#375) and Tasks 1–3 are merged (#380, #381 and **#389**, the VM price table — `internal/backend/batch/prices.go`'s `MachineType`/`MachineTypeOf`/`ForMachineType` and `backend.Execution.MachineType`/`BilledWindow`, read at `origin/main` b9d5c5d); the gate is not a flag but a **config refusal** — `backend: cloud-batch` is refused by `internal/localcfg/localcfg.go:737-745`, and what remains unmerged is the backend's *enable* work, not its price table. **§5.3 and D3 are written against this and V18 carries the corrected citation.** |
+| "GPUs" | **UNVERIFIED, and promised by nothing.** `compute-backend.md` §6.3 lists *"Windows VMs, GPUs, TPUs"* as out of scope (`:1511`). See §5.4 and §13. |
 | "`mode: review` is the PRECEDENT of a run that needs no git token" | **VERIFIED** (`docs/design/generic-tool.md:198`, `internal/runner/runner.go:635`). |
 
 ## 2. What is missing, in one list
@@ -681,7 +681,7 @@ write:
    the other launch notes. It is **not a gate**, it is printed once per launch
    and **only when `--attach` carried a file**, and it never tells a default
    Claude workflow that its screenshot "routes nowhere": `lc.Providers` holds
-   only the non-Anthropic backends (`internal/localcfg/localcfg.go:89-91`), so a
+   only the non-Anthropic backends (`internal/localcfg/localcfg.go:90-92`), so a
    set read from it alone would be empty exactly for the owner's own workflows.
    The *local* wording is for the case where nothing receives the bytes at all —
    no claiming provider **and** no auth route.
@@ -898,7 +898,7 @@ VM from its boot window with Compute Engine's one-minute minimum
 `VMMinimumBilled`, `BilledWindow`, `WindowNote`) — and it records the
 same `compute_usd` shape Cloud Run's does. What is *not* merged is the enable
 work: `backend: cloud-batch` is still refused by config validation
-(`internal/localcfg/localcfg.go:711-719`). Its value for a render is real and
+(`internal/localcfg/localcfg.go:737-745`). Its value for a render is real and
 narrow: **a Docker-capable VM** means the render can run in *any* container
 image rather than in the repository's own derived image, the 8-vCPU ceiling
 becomes a machine-type choice, and a very heavy render stops competing with
@@ -932,7 +932,7 @@ rates `VCPUSecondUSD` and `GiBSecondUSD`, the two quantities `VCPU` and
 rate and a count field, and there is neither; a VM run bills *the machine type's*
 quantities rather than the workflow's, `Prices.Quantities` at `:285-289`, and the
 launcher's own table leaves those quantities zero,
-`internal/localcfg/localcfg.go:868-874`).
+`internal/localcfg/localcfg.go:894-900`).
 **§13 carries this as a question for the owner, and no task in the plan may
 assume a GPU.**
 
@@ -950,7 +950,7 @@ vCPU/memory over the run's elapsed wall clock.
 **So a runaway render's only cap is the clock (D4).** Say the number plainly:
 8 vCPU and 32 GiB for two hours, at the installation's own compute prices
 (`FUGARO_COMPUTE_PRICES`, `internal/infra/spec.go:44-46,682`; the launcher reads
-them through `localcfg.ComputePrices`, `internal/localcfg/localcfg.go:73-75`),
+them through `localcfg.ComputePrices`, `internal/localcfg/localcfg.go:74-76`),
 is the worst case a *single* artifact run can bill — and because the caps do not look at it, the
 run can be at 2% of its model cap and 100% of its clock while it does it.
 That is not a hole this design can close cheaply, and it is not a hole this
@@ -988,7 +988,7 @@ model-only history, and that is what it should stay). **`Prices.Quantities` is
 deliberately not in that path**: it exists for a table that bills a *machine
 type* (`internal/backend/backend.go:285-289`), and the launcher's table cannot:
 `localcfg.PriceOverride` builds its `backend.Prices` from the two per-second
-fields alone, leaving `VCPU`/`MemoryGiB` zero (`internal/localcfg/localcfg.go:868-874`),
+fields alone, leaving `VCPU`/`MemoryGiB` zero (`internal/localcfg/localcfg.go:894-900`),
 so `Quantities` would return the caller's own figures unchanged. A launcher
 prices the run's requested resources, which on Cloud Run is what the run is
 billed for. **The basis is
@@ -1317,7 +1317,7 @@ produced (out), and files an operator handed to a model-driven job (in).
 
    **The correction the review asked for:** `lc.Providers` is documented as
    **"the non-Anthropic backends models may be routed to"**
-   (`internal/localcfg/localcfg.go:89-91`), so a set built from it *alone* is
+   (`internal/localcfg/localcfg.go:90-92`), so a set built from it *alone* is
    **empty for a default Claude workflow** — and a line that read "routes
    nowhere" there would be telling an owner their screenshot stays local while it
    is on its way to the model's route. The line therefore never claims the file
@@ -1650,7 +1650,7 @@ line read for it — the plan's Review Focus repeats the important ones):
 | V15 | `result.json`'s schema is `additionalProperties: false` and is validated **only by tests**, never at read time; readers use the Go struct | `schemas/result.schema.json`, `schemas/schemas_test.go:23`, `internal/runstore/runstore.go:532` |
 | V16 | `runs ls` and `diagnose` read named files, never enumerate the prefix | `internal/cli/runs.go:379-390`, `internal/cli/diagnose.go:158,177` |
 | V17 | The launcher mints the run id, writes `task.json`, then submits the execution — so `--attach` has a place to stand | `internal/cli/run.go:887,1329,1574`, `internal/runstore/runstore.go:509` |
-| V18 | The VM backend is a merged design (#375) with **Tasks 1–3 merged** (#380, #381, #389 — the price table included); `backend: cloud-batch` is refused by config validation, not by a flag; a VM run prices the machine type's quantities from its boot window | `internal/localcfg/localcfg.go:711-719`, `internal/backend/batch/prices.go` (`MachineType`, `MachineTypeOf`, `ForMachineType`), `internal/backend/backend.go:103,147,174-205,285-289,292-296` (`MachineType`, `VMMinimumBilled`, `BilledWindow`, `WindowNote`, `Prices.Quantities`, `Prices.ComputeUSD` — it is `backend.Prices.ComputeUSD`, there is no `pricing.ComputeUSD`), read at `origin/main` b9d5c5d |
+| V18 | The VM backend is a merged design (#375) with **Tasks 1–3 merged** (#380, #381, #389 — the price table included); `backend: cloud-batch` is refused by config validation, not by a flag; a VM run prices the machine type's quantities from its boot window | `internal/localcfg/localcfg.go:737-745`, `internal/backend/batch/prices.go` (`MachineType`, `MachineTypeOf`, `ForMachineType`), `internal/backend/backend.go:103,147,174-205,285-289,292-296` (`MachineType`, `VMMinimumBilled`, `BilledWindow`, `WindowNote`, `Prices.Quantities`, `Prices.ComputeUSD` — it is `backend.Prices.ComputeUSD`, there is no `pricing.ComputeUSD`), read at `origin/main` b9d5c5d |
 | V19 | GPUs are out of scope in the VM design, by name | `docs/design/compute-backend.md:1485` (§6.3) |
 | V20 | A repository-less run needs project-centric phase 3's project jobs, which are not shipped; `checkout: clone` is not shipped either | `docs/design/project-centric.md:15,66-68,109`, `internal/cli/recipes_skew.go:51-58`, `internal/cli/docs_checkout_test.go:123-132` |
 | V21 | Check numbers: rows exist for 40–47 (`:317-324`) and 57 (`:325`); **48–56 are reserved by the project-centric plan** (PR #366) and 57 by the compute backend, so **58 is the next free number**; Check 43's guard block is at `:1437-1458` and "never `belong`" at `:1431` | `docs/gcp-live-checklist.md:250-257,317-325,1431,1437-1458` |

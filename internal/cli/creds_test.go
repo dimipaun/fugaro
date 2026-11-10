@@ -1242,6 +1242,27 @@ func TestCredsSetBitbucketToken(t *testing.T) {
 			t.Fatalf("%d request(s) were made from an agent's session", n)
 		}
 	})
+
+	// The help is what the operator reads at the step that writes this entry
+	// (docs/credentials-service/runbook.md §11), so it cannot say the proxy
+	// does not exist yet while SECURITY.md, docs/git-providers.md and the
+	// runbook document it as built. It says which repositories the entry
+	// serves, and keeps the half that is still true on this tree: the job of
+	// every other Bitbucket repository still mounts its own copy.
+	t.Run("the help names the proxy that issues it", func(t *testing.T) {
+		help := newCredsSetCmd().Long
+		if !strings.Contains(help, "the git proxy issues this entry for the repositories the published node admits with proxy: true") {
+			t.Errorf("`creds set` help does not say what the %s entry is for: %q", config.BitbucketSecret, help)
+		}
+		if !strings.Contains(help, "every other Bitbucket run's job still uses its own mounted copy until the flip") {
+			t.Errorf("`creds set` help does not keep the mount that is still there on this tree: %q", help)
+		}
+		for _, banned := range []string{"a later release adds", "still uses its own mounted token"} {
+			if strings.Contains(help, banned) {
+				t.Errorf("`creds set` help still says %q: the proxy is built and this command writes the entry it issues", banned)
+			}
+		}
+	})
 }
 
 // TestCredsSetBitbucketConsumerFromStdin: the read consumer (F21, BB2) is the

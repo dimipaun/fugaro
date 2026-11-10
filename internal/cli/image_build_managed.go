@@ -322,6 +322,13 @@ func (m *buildManaged) recorded(ctx context.Context) error {
 // that entry's source repository — plus the kill switch and the restatements
 // every rule set in this package carries.
 //
+// A prebuilt entry is judged by the same row read for what its run is — an
+// entry of the catalog, submitted as this project's own build account, within
+// the bound, under the same switch — and the two rules that are about a build's
+// own inputs (the base and the registry it pushes to) are not its own and are
+// left out rather than reported as passed (the bound counts a smoke the same
+// way: it is a billable Cloud Build either way).
+//
 // Every rule here restates something the command has already enforced by the
 // time it submits — an entry of the catalog it read, the checkout's own
 // repository, a base that is not another project's pull-through reference, this
@@ -331,12 +338,22 @@ func (m *buildManaged) recorded(ctx context.Context) error {
 // submitted (infra.Repo's spec) and never over the inputs that produced them,
 // and the gate is the last place a drift between the two would be seen.
 func buildRules(lc *localcfg.Config, cat *config.Catalog, e config.Entry, p buildPlan, killRule string) (rules, refused []string) {
-	host, err := infra.RegistryHost(lc)
-	if err != nil {
-		// A host this installation's own config cannot state is not a build
-		// this gate can judge: the rules below are stated over it, and a rule
-		// that cannot be evaluated is a refusal rather than a pass.
-		return nil, []string{"this installation's own registry host is readable (" + safetext.FieldErr(err).Error() + ")"}
+	// A prebuilt entry's run is a smoke-only Cloud Build (F10/IS11): it builds
+	// from no base and pushes into no registry, so the two rules stated over
+	// those are not its own, and reporting them as passed would say the verdict
+	// was reached on values this submission does not carry. Everything else
+	// below is stated over the same values either way — the entry, the account
+	// the run is submitted as, the kill switch and the repository.
+	prebuilt := e.Source.Kind == config.SourceImage
+	host := ""
+	if !prebuilt {
+		var err error
+		if host, err = infra.RegistryHost(lc); err != nil {
+			// A host this installation's own config cannot state is not a build
+			// this gate can judge: the rules below are stated over it, and a rule
+			// that cannot be evaluated is a refusal rather than a pass.
+			return nil, []string{"this installation's own registry host is readable (" + safetext.FieldErr(err).Error() + ")"}
+		}
 	}
 	// The entry exists in the effective catalog. The name is re-looked-up
 	// rather than taken from the entry that was found: the two are the same
@@ -389,15 +406,17 @@ func buildRules(lc *localcfg.Config, cat *config.Catalog, e config.Entry, p buil
 	} else {
 		rules = append(rules, "the build is this checkout's own repository ("+safetext.Field(p.Repo)+")")
 	}
-	if foreignProxyRef(p.Base, host, p.Kind, baseOwner(lc)) {
-		refused = append(refused, "the base image is not another project's pull-through reference ("+safetext.Field(p.Base)+" is)")
-	} else {
-		rules = append(rules, "the base image is not another project's pull-through reference ("+safetext.Field(p.Base)+")")
-	}
-	if !strings.HasPrefix(p.Registry, host+"/") {
-		refused = append(refused, "the build pushes into this installation's own registry ("+safetext.Field(p.Registry)+" is not under "+safetext.Field(host)+"/)")
-	} else {
-		rules = append(rules, "the build pushes into this installation's own registry ("+safetext.Field(p.Registry)+")")
+	if !prebuilt {
+		if foreignProxyRef(p.Base, host, p.Kind, baseOwner(lc)) {
+			refused = append(refused, "the base image is not another project's pull-through reference ("+safetext.Field(p.Base)+" is)")
+		} else {
+			rules = append(rules, "the base image is not another project's pull-through reference ("+safetext.Field(p.Base)+")")
+		}
+		if !strings.HasPrefix(p.Registry, host+"/") {
+			refused = append(refused, "the build pushes into this installation's own registry ("+safetext.Field(p.Registry)+" is not under "+safetext.Field(host)+"/)")
+		} else {
+			rules = append(rules, "the build pushes into this installation's own registry ("+safetext.Field(p.Registry)+")")
+		}
 	}
 	return rules, refused
 }

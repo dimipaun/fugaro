@@ -347,6 +347,9 @@
         "backend": {
           "default": "unset = cloud-run"
         },
+        "bake_repos": {
+          "default": "unset = true: a repository the build can read is baked into the image its job runs"
+        },
         "base_branch": {
           "default": "unset = none: each repository's own branch"
         },
@@ -631,6 +634,9 @@
         "image_catalog.entries.*.default": {
           "default": "unset = false"
         },
+        "image_map": {
+          "default": "unset = none: no repository is mapped, and the catalog's default entry decides the image"
+        },
         "image_source": {
           "default": "unset = none: no base pin has been recorded"
         },
@@ -800,6 +806,9 @@
         },
         "layer.defaults.rigor.default": {
           "default": "unset = the built-in mode (pro)"
+        },
+        "layer.defaults.planning.decoupling": {
+          "default": "unset = true"
         },
         "layer.gcp_project": {
           "default": "unset = the installation's GCP project"
@@ -1153,6 +1162,10 @@
         "repos.*.workflows": {
           "default": "unset = every workflow the repository defines"
         },
+        "planning.decoupling": {
+          "$comment": "config.DefaultPlanningDecoupling",
+          "default": "true"
+        },
         "review_floor": {
           "default": "unset = none: no floor is added"
         },
@@ -1187,6 +1200,24 @@
           "default": "unset = none: setup ran to the end"
         },
         "stages.*.claude_account": {
+          "default": "unset = the project's default account"
+        },
+        "stages.adversarial.claude_account": {
+          "default": "unset = the project's default account"
+        },
+        "stages.fix.claude_account": {
+          "default": "unset = the project's default account"
+        },
+        "stages.implement.claude_account": {
+          "default": "unset = the project's default account"
+        },
+        "stages.plan.claude_account": {
+          "default": "unset = the project's default account"
+        },
+        "stages.review.claude_account": {
+          "default": "unset = the project's default account"
+        },
+        "stages.review_first.claude_account": {
           "default": "unset = the project's default account"
         },
         "terraform.alert_email": {

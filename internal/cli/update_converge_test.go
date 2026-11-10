@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -142,9 +143,14 @@ func newConvergeRigYAML(t *testing.T, node map[string]any, yaml string) *converg
 	putWorkflowRecordFrom("app", convergePrev, pinnedRef("base", convergePrev))
 	putWorkflowRecordFrom("api", convergePrev, pinnedRef("base", convergePrev))
 
+	// The marketplace an installation one release old has on the machine is the
+	// unpinned one a previous fugaro declared, so the plugin step clears it and
+	// declares it at this release's tag: the clear takes the older install with
+	// it (claude's own record of the removal), and the install that follows the
+	// pinned add is the one that leaves this release's version.
 	f := testutil.NewClaudePluginFake(t, ourMarket, userInstall(convergePrev))
-	f.On(t, "plugins", userInstall(convergeRelease), argsUpdMarket...)
-	f.On(t, "plugins", userInstall(convergeRelease), argsUpdUser...)
+	f.On(t, "plugins", "[]", argsRemove...)
+	f.On(t, "plugins", userInstall(convergeRelease), argsInstall...)
 	useFakeClaude(t, f)
 
 	seedAppSecret(t, r.initRig, "github-app-key")
@@ -237,7 +243,11 @@ func converge(t *testing.T, node map[string]any, stale []string) {
 // a test that has to look at the database the run left behind — the rules it
 // deployed, the markers it wrote — reaches it through here rather than building
 // a rig of its own and then running the door against another one.
-func convergeOn(t *testing.T, r *convergeRig, stale []string) {
+//
+// It returns the run's own stdout, so a test that is about what the door SAID —
+// the line it prints about the runs in flight — reads the transcript the person
+// read rather than running the door a second time.
+func convergeOn(t *testing.T, r *convergeRig, stale []string) string {
 	t.Helper()
 	currentRelease(t)
 
@@ -281,6 +291,74 @@ func convergeOn(t *testing.T, r *convergeRig, stale []string) {
 	if !strings.Contains(out, convergeRelease) {
 		t.Errorf("the run never names the release it converged to:\n%s", out)
 	}
+	return out
+}
+
+// TestUpdateConvergesPreviousPolicy: an installation whose local project config
+// names a repo-to-image map and the bake switch — the two keys this release
+// adds to the policy node (D1901, D1906) — reaches them with `fugaro update`
+// alone. The node the fixture carries is the previous release's, so neither key
+// is on it, and the run's policy stage is what publishes both: no second
+// command, which is what this test is for (the HARD RULE, F15).
+//
+// The node is read back through internal/projectpolicy's own decoder, so what
+// the assertions are made against is what a run of the project reads — and the
+// keep rule the two keys are published under is the assertion's second half: a
+// file that writes them replaces what the node holds, where a machine whose
+// config is silent about them keeps it (the catalog's rule, D1140).
+func TestUpdateConvergesPreviousPolicy(t *testing.T) {
+	r := newConvergeRig(t, v4Node())
+	// The local config states both, which is all an operator does after this
+	// release: `fugaro image map set` writes the map, and the bake switch is
+	// the setup wizard's answer or `fugaro settings set bake_repos`.
+	r.appendConfig(t, "image_map:\n  acme/app: app\nbake_repos: false\n")
+	// A run selected by its checkout reads the copy registerInstallation made in
+	// the projects directory and not this file (FUGARO_CONFIG is empty here), so
+	// the file is registered again after the append and the run reads what this
+	// test wrote.
+	registerInstallation(t, r.initRig)
+	// The fixture is the release behind, or nothing here has to converge: the
+	// node this installation carries names neither key.
+	if p := convergeNode(t, r); p.ImageMap != nil || p.BakeRepos != nil {
+		t.Fatalf("the fixture's node already carries image_map = %v and bake_repos = %v: it is not an installation whose policy predates both",
+			p.ImageMap, p.BakeRepos)
+	}
+
+	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+
+	p := convergeNode(t, r)
+	want := projectpolicy.ImageMap{"acme/app": "app"}
+	if !reflect.DeepEqual(p.ImageMap, want) {
+		t.Errorf("after one fugaro update, the published node's image_map = %v, want %v: the map the local config names did not reach the node, so a run would fall back to the catalog's default image",
+			p.ImageMap, want)
+	}
+	if p.BakeRepos == nil || *p.BakeRepos {
+		t.Errorf("after one fugaro update, the published node's bake_repos = %v, want a written false: the switch the local config states did not reach the node",
+			p.BakeRepos)
+	}
+	if p.BakesRepos() {
+		t.Error("the published node bakes repos, want it not to: the reader every run uses is what a run would act on")
+	}
+}
+
+// convergeNode is the policy node the fixture's installation carries, decoded
+// by the reader a run of the project uses.
+func convergeNode(t *testing.T, r *convergeRig) *projectpolicy.Policy {
+	t.Helper()
+	v := r.db.Value(projectpolicy.PathShared())
+	if v == nil {
+		t.Fatalf("no policy node at %s", projectpolicy.PathShared())
+	}
+
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, found, err := projectpolicy.Decode(b)
+	if err != nil || !found {
+		t.Fatalf("the node at %s does not decode (found=%v): %v", projectpolicy.PathShared(), found, err)
+	}
+	return p
 }
 
 // TestUpdateConvergesTheOrchestratorRulesFromThePreviousGeneration: an

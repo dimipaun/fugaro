@@ -1,6 +1,7 @@
 package settings
 
 import (
+	"slices"
 	"strconv"
 	"testing"
 
@@ -66,11 +67,13 @@ func TestRegistryDefaultsMatchApplyDefaults(t *testing.T) {
 	readers := map[string]func() string{
 		"git.base_branch":    func() string { return plain.Git.BaseBranch },
 		"git.pr.early_draft": func() string { return strconv.FormatBool(*plain.Git.PR.EarlyDraft) },
-		"agent.auth":         func() string { return plain.Agent.Auth },
+
+		"agent.auth": func() string { return plain.Agent.Auth },
 		"agent.max_budget_usd": func() string {
 			return strconv.FormatFloat(plain.Agent.MaxBudgetUSD, 'f', -1, 64)
 		},
 		"agent.first_line_review":      func() string { return plain.Agent.FirstLineReview },
+		"planning.decoupling":          func() string { return strconv.FormatBool(plain.Planning.DecouplingOn()) },
 		"workflows.*.checkout":         func() string { return web.Checkout },
 		"workflows.*.resources.cpu":    func() string { return strconv.Itoa(web.Resources.CPU) },
 		"workflows.*.resources.memory": func() string { return web.Resources.Memory },
@@ -126,6 +129,37 @@ func TestRegistryDefaultsMatchApplyDefaults(t *testing.T) {
 		if r.Default.Value == "" {
 			t.Errorf("%s: a reader for a row whose default is a sentence", key)
 		}
+	}
+}
+
+// TestPlanningDecouplingDefaultsOn: Fugaro ships the dependency-breaking pass
+// on, so the registry states a value rather than an "unset means" sentence and
+// a repository that writes no planning: block gets that value — what
+// `fugaro settings planning.decoupling --json` prints for it, and what the
+// parallelism skill reads before it decides to run the pass at all (D1813).
+func TestPlanningDecouplingDefaultsOn(t *testing.T) {
+	r, ok := Lookup("planning.decoupling")
+	if !ok {
+		t.Fatal("planning.decoupling: the registry has no such key")
+	}
+	if r.Default.Value != "true" || r.Default.Const != "config.DefaultPlanningDecoupling" {
+		t.Errorf("planning.decoupling: Default = {%q %q}, want the pass on and the constant that holds it", r.Default.Value, r.Default.Const)
+	}
+	// The narrowest layer that sets the key decides (D1813): the key is a
+	// preference, not a bound, so a repository's own value replaces the
+	// project's rather than only tightening it.
+	if r.Merge != Replace {
+		t.Errorf("planning.decoupling: Merge = %q, want %q", r.Merge, Replace)
+	}
+	if !slices.Equal(r.Layers, []string{LayerProject, LayerRepo}) {
+		t.Errorf("planning.decoupling: Layers = %v, want the project and the repository", r.Layers)
+	}
+	c, _, ps := config.Resolve([]byte(minimalRepo), nil)
+	if len(ps) > 0 {
+		t.Fatalf("the minimal repository is refused: %v", ps)
+	}
+	if !c.Planning.DecouplingOn() {
+		t.Error("a file that writes no planning: block resolved the pass off")
 	}
 }
 

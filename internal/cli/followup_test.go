@@ -159,12 +159,12 @@ func TestRunPRPrintsPRBranch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := markDone + " launch " + appSlug + "/" + fuID + " (follow-up of PR #7, after " + rootID + ")\n  branch fugaro/" + rootID + "\n  logs https://"
+	want := markDone + " launch " + task.ShortRun(fuID) + " (follow-up of PR #7, after " + task.ShortRun(rootID) + ")\n  branch fugaro/" + rootID + "\n  logs https://"
 	if !strings.HasPrefix(out, want) {
 		t.Fatalf("output:\n%s\nwant prefix:\n%s", out, want)
 	}
 	out, _, err = execute(t, args...)
-	if want := markSkipped + " launch " + appSlug + "/" + fuID + " (follow-up of PR #7, after " + rootID + ") already launched\n  branch fugaro/" + rootID + "\n"; err != nil || !strings.HasPrefix(out, want) {
+	if want := markSkipped + " launch " + task.ShortRun(fuID) + " (follow-up of PR #7, after " + task.ShortRun(rootID) + ") already launched\n  branch fugaro/" + rootID + "\n"; err != nil || !strings.HasPrefix(out, want) {
 		t.Fatalf("repeat: %v, output:\n%s\nwant prefix:\n%s", err, out, want)
 	}
 	if n := len(f.run.Executions()); n != 1 {
@@ -193,7 +193,7 @@ func TestRunPRRefusesActiveRun(t *testing.T) {
 		FollowUp: &runstore.FollowUp{PR: 7, PreviousRun: rootID}})
 	n := len(f.run.Executions())
 	_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), active) || !strings.Contains(err.Error(), "still") ||
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), task.ShortRun(active)) || !strings.Contains(err.Error(), "still") ||
 		!strings.Contains(err.Error(), "fugaro runs ls --pr 7 --repo acme/app") {
 		t.Fatalf("err = %v", err)
 	}
@@ -208,7 +208,48 @@ func TestRunPRRefusesErrorRow(t *testing.T) {
 	bad := wallRunIDAt(0, "000100", "bbbb")
 	seedSpec(t, f, followUpSpec(bad, rootID, rootID, 7), false)
 	putBuildObject(t, f, "runs/"+appSlug+"/"+bad+"/result.json", []byte("{not json"))
-	wantRefused(t, f, bad, "run", "--repo", "acme/app", "--pr", "7")
+	wantRefused(t, f, task.ShortRun(bad), "run", "--repo", "acme/app", "--pr", "7")
+}
+
+// TestRunPRRefusalHintResolves: checkRoot refuses a PR whose branch names a
+// root run whose result.json is unreadable. That run is named by its ending —
+// never the whole ID, and never a `<slug>/<ending>`, which is a listing's cell
+// and not a reference any command takes (locateRun's ParseRef wants the whole
+// pair) — and the refusal hands the reader `fugaro diagnose <ending>`. The
+// root here is older than the window the follow-up reads, so it does not show
+// in the PR's rows: its own refusal is the one that prints, and its hint is a
+// name the CLI has to resolve.
+func TestRunPRRefusalHintResolves(t *testing.T) {
+	f := newCloudFixture(t)
+	root := wallRunIDAt(100, "090000", "aaaa")
+	seedRoot(t, f, root, time.Now().Add(-100*24*time.Hour))
+	putBuildObject(t, f, "runs/"+appSlug+"/"+root+"/result.json", []byte("{not json"))
+	seedFollowUp(t, f, wallRunIDAt(0, "120000", "f00d"), root, root, time.Now().Add(-time.Hour), runstore.StatusSucceeded, true)
+
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "unreadable result.json") {
+		t.Fatalf("err = %v, want the root run's unreadable result.json", err)
+	}
+	after, ok := strings.CutPrefix(strings.TrimSpace(err.Error()), "run "+task.ShortRun(root)+", which PR #7's branch names,")
+	if !ok {
+		t.Fatalf("err = %v, want the refusal to name the root run by its ending %s first", err, task.ShortRun(root))
+	}
+	_, hint, ok := strings.Cut(after, "see fugaro diagnose ")
+	if !ok {
+		t.Fatalf("err = %v, want the refusal to hand over fugaro diagnose", err)
+	}
+	if hint = strings.TrimSpace(hint); strings.Contains(hint, "/") {
+		t.Fatalf("the refusal says fugaro diagnose %q: a <slug>/<ending> is a listing's cell, and locateRun refuses it as a shape", hint)
+	}
+	// diagnose is the command the hint names: the name it prints has to be one
+	// that command answers with the run the refusal is about.
+	out, errOut, err := execute(t, "diagnose", "--json", hint)
+	if err != nil {
+		t.Fatalf("fugaro diagnose %q -- the hint the refusal prints -- = %v (%s)", hint, err, errOut)
+	}
+	if !strings.Contains(out, root) {
+		t.Fatalf("fugaro diagnose %q named no run of %s:\n%s", hint, root, out)
+	}
 }
 
 func TestRunPRRefusesLiveLock(t *testing.T) {
@@ -220,7 +261,7 @@ func TestRunPRRefusesLiveLock(t *testing.T) {
 		putBuildObject(t, f, lock.Key(appSlug, "fugaro/"+rootID), data)
 	}
 	putLock(time.Now().Add(time.Hour))
-	wantRefused(t, f, "branch busy: run "+holder, "run", "--repo", "acme/app", "--pr", "7")
+	wantRefused(t, f, "branch busy: run "+task.ShortRun(holder), "run", "--repo", "acme/app", "--pr", "7")
 	// An expired lock is the runner's to take over.
 	putLock(time.Now().Add(-time.Minute))
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7"); err != nil {
@@ -257,7 +298,7 @@ func TestRunPRForgedRecordNeverBypassesTheLock(t *testing.T) {
 			}
 			data, _ := json.Marshal(lock.Holder{RunID: holder, ExpiresAt: time.Now().Add(time.Hour)})
 			putBuildObject(t, f, lock.Key(appSlug, "fugaro/"+rootID), data)
-			wantRefused(t, f, "branch busy: run "+holder, "run", "--repo", "acme/app", "--pr", "7")
+			wantRefused(t, f, "branch busy: run "+task.ShortRun(holder), "run", "--repo", "acme/app", "--pr", "7")
 		})
 	}
 }
@@ -281,8 +322,8 @@ func TestRunPRTakesOverLockWhenBackendConfirmsTermination(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a lock whose holder's execution the backend confirms ended: %v (%s)", err, errOut)
 	}
-	if !strings.Contains(errOut, holder) {
-		t.Fatalf("stderr = %q, want a note naming %s", errOut, holder)
+	if !strings.Contains(errOut, task.ShortRun(holder)) {
+		t.Fatalf("stderr = %q, want a note naming %s", errOut, task.ShortRun(holder))
 	}
 	path := filepath.Join(strings.TrimPrefix(f.bucket, "file://"), key)
 	if _, err := os.Stat(path); err == nil {
@@ -302,7 +343,7 @@ func TestRunPRRefusesLockWhenExecutionStillRunning(t *testing.T) {
 	putBuildObject(t, f, lock.Key(appSlug, "fugaro/"+rootID), data)
 	n := len(f.run.Executions())
 	_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "branch busy: run "+holder) {
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "branch busy: run "+task.ShortRun(holder)) {
 		t.Fatalf("err = %v", err)
 	}
 	if len(f.run.Executions()) != n {
@@ -319,7 +360,7 @@ func TestRunPRRefusesLockWhenExecutionUnknown(t *testing.T) {
 	const unknownExec = "projects/proj-1234/locations/us-east5/jobs/fugaro-acme-app-web/executions/fugaro-acme-app-web-99999"
 	data, _ := json.Marshal(lock.Holder{RunID: holder, Execution: unknownExec, ExpiresAt: time.Now().Add(time.Hour)})
 	putBuildObject(t, f, lock.Key(appSlug, "fugaro/"+rootID), data)
-	wantRefused(t, f, "branch busy: run "+holder, "run", "--repo", "acme/app", "--pr", "7")
+	wantRefused(t, f, "branch busy: run "+task.ShortRun(holder), "run", "--repo", "acme/app", "--pr", "7")
 }
 
 // mismatchedNameBackend answers every Execution call truthfully except
@@ -364,8 +405,8 @@ func TestCheckBranchLockRequiresTheSameExecutionNamed(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = checkBranchLock(context.Background(), env, appSlug, branch, time.Now(), io.Discard)
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "branch busy: run "+holder) {
-		t.Fatalf("err = %v, want branch busy naming %s", err, holder)
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "branch busy: run "+task.ShortRun(holder)) {
+		t.Fatalf("err = %v, want branch busy naming %s", err, task.ShortRun(holder))
 	}
 	if ok, _ := env.bucket.Exists(context.Background(), key); !ok {
 		t.Fatal("the lock was taken over on a mismatched execution name")
@@ -396,7 +437,7 @@ func TestCheckBranchLockForbiddenDeleteNamesTheOperatorCommand(t *testing.T) {
 	var errOut strings.Builder
 	err = checkBranchLock(context.Background(), env, appSlug, branch, time.Now(), &errOut)
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "an operator must clear it") ||
-		!strings.Contains(err.Error(), "gcloud storage rm") || !strings.Contains(err.Error(), holder) {
+		!strings.Contains(err.Error(), "gcloud storage rm") || !strings.Contains(err.Error(), task.ShortRun(holder)) {
 		t.Fatalf("err = %v", err)
 	}
 	// The generation named is the one Takeover itself verified (its own
@@ -454,8 +495,8 @@ func TestLockClearMessageNeverReReadsTheGeneration(t *testing.T) {
 		}
 	})
 	err = checkBranchLock(context.Background(), env, appSlug, branch, time.Now(), io.Discard)
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), holder) || strings.Contains(err.Error(), rival) {
-		t.Fatalf("err = %v, want it to name %s, not the rival %s that replaced the lock afterward", err, holder, rival)
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), task.ShortRun(holder)) || strings.Contains(err.Error(), task.ShortRun(rival)) {
+		t.Fatalf("err = %v, want it to name %s, not the rival %s that replaced the lock afterward", err, task.ShortRun(holder), task.ShortRun(rival))
 	}
 	wantSuffix := fmt.Sprintf("#%d", wantGen)
 	if !strings.HasSuffix(strings.TrimSpace(err.Error()), wantSuffix) {
@@ -482,7 +523,7 @@ func TestLockClearMessageRefusesToNameAnUnpinnedCommand(t *testing.T) {
 	if strings.Contains(msg, "gcloud storage rm") {
 		t.Fatalf("message = %q, must not print an unpinned rm command", msg)
 	}
-	if !strings.Contains(msg, "could not be read") || !strings.Contains(msg, "20261010-000100-bbbb") {
+	if !strings.Contains(msg, "could not be read") || !strings.Contains(msg, task.ShortRun("20261010-000100-bbbb")) {
 		t.Fatalf("message = %q, want it to say the lock could not be read, naming the run", msg)
 	}
 }
@@ -566,8 +607,8 @@ func TestRunPRRefusesWhenLockChangesDuringTakeover(t *testing.T) {
 	})
 	n := len(f.run.Executions())
 	_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "branch busy: run "+holder) {
-		t.Fatalf("err = %v, want branch busy naming %s", err, holder)
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "branch busy: run "+task.ShortRun(holder)) {
+		t.Fatalf("err = %v, want branch busy naming %s", err, task.ShortRun(holder))
 	}
 	if len(f.run.Executions()) != n {
 		t.Fatal("a follow-up launched despite the lock changing during its takeover")
@@ -678,7 +719,7 @@ func TestRunPRWarnsUnlaunched(t *testing.T) {
 	waiting := wallRunIDAt(0, "000100", "bbbb")
 	seedSpec(t, f, followUpSpec(waiting, rootID, rootID, 7), false)
 	_, errOut, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID)
-	if err != nil || !strings.Contains(errOut, waiting) || !strings.Contains(errOut, "never launched") {
+	if err != nil || !strings.Contains(errOut, task.ShortRun(waiting)) || !strings.Contains(errOut, "never launched") {
 		t.Fatalf("stderr %q, %v", errOut, err)
 	}
 	if got := readSpec(t, f, fuID); got.PreviousRun != rootID {

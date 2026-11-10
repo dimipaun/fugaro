@@ -840,11 +840,11 @@ is *another command*. This slice's reading of it, stated because a reviewer must
   the installation reads it; [reconciliation.md](reconciliation.md) §3): the list is a **new top-level key
   of the published policy node**, `verifier_accounts`, written from the local configuration by update's own
   policy stage (C3.9g3). It is a field this slice adds, and not a value **derived** from a field that
-  already existed: the node's whole key set (`internal/projectpolicy/policy.go:269`–`:276`) holds no
+  already existed: the node's whole key set (`internal/projectpolicy/policy.go:270`–`:277`) holds no
   identity, which is why the reading that would have avoided a new key has nothing to stand on. The
   service's variable is built by the same run from that node: the update's credentials stage
   (`internal/cli/init_credentials.go`) reads it and hands the list to `internal/infra/tfvars.go`'s
-  `Credentials()` (`:289`), which takes the local configuration's own list when it states one and the node's
+  `Credentials()` (`:290`), which takes the local configuration's own list when it states one and the node's
   otherwise — the keep rule §5.4 states, applied here because the credentials stage runs before the policy
   stage (`internal/cli/init_stages.go:168`–`:187`): what it reads is the node the previous `fugaro update`
   left, which is exactly where a second operator's machine finds a list its own config does not carry. Nothing
@@ -873,9 +873,9 @@ is *another command*. This slice's reading of it, stated because a reviewer must
   older than the field tolerates it and logs it (`internal/runner/projectpolicy.go:125`–`:131`); **every CLI
   older than the field refuses the node** — `fugaro run` (`internal/cli/launch_budget.go:156`), publishing
   and the update's own policy stage (`internal/cli/project_cmd.go:499`), the readers `policy show`,
-  `project show` and `repos ls` (`refuseUnknownPolicyKeys`, `project_cmd.go:2823`) and the migration
-  (`init_policy_migrate.go:578`) — because the operator is the one who can fix a misspelling
-  (`internal/projectpolicy/policy.go:261`). So **once a verifier is published, every teammate on an older
+  `project show` and `repos ls` (`refuseUnknownPolicyKeys`, `project_cmd.go:2848`) and the migration
+  (`init_policy_migrate.go:595`) — because the operator is the one who can fix a misspelling
+  (`internal/projectpolicy/policy.go:262`). So **once a verifier is published, every teammate on an older
   CLI cannot launch until they upgrade**, which is why its publisher **omits the key when the list is
   empty** — empty meaning the effective list of §5.4, this config's own when it states one and the node's
   otherwise: an installation that does not use the reviewer publishes no member at all, and its node is byte
@@ -883,8 +883,8 @@ is *another command*. This slice's reading of it, stated because a reviewer must
   already follows). **How that older reader is tested is stated rather than implied**: `knownTopLevelKeys`
   holds the key today, so a test cannot reach the older reader by picking a different key — it decodes the
   fixture node **twice**, once under the current key set and once under a **copy of the list as it stood
-  before this key** — which is why `Decode` (`internal/projectpolicy/policy.go:696`) reads its key set
-  through a parameter the package's own test can pass, the loop at `:723` being where the list is built —
+  before this key** — which is why `Decode` (`internal/projectpolicy/policy.go:736`) reads its key set
+  through a parameter the package's own test can pass, the loop at `:763` being where the list is built —
   and the second decode is the node an older CLI refuses and an older runner logs. The release notes carry
   that as an operator step — **`### For operators`: upgrade every launcher before naming a verifier** — and
   an installation that names none takes no step at all. **No

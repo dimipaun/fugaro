@@ -760,14 +760,20 @@ func TestDigestHasNoPersonField(t *testing.T) {
 // first, and the report says how many it left out.
 func TestDigestSizeCap(t *testing.T) {
 	p := week43(t)
-	// A budget small enough to make the rule exact.
-	small := Build([]runstore.Record{
+	recs := []runstore.Record{
 		flaggedRun(t, "20261021-090000-0001", 0.01),
 		flaggedRun(t, "20261021-090000-0002", 0.02),
-		run(t, "20261021-090000-0003", "2026-10-21T09:00:00Z", 1, 0),
-		run(t, "20261021-090000-0004", "2026-10-21T09:00:00Z", 2, 0),
-		run(t, "20261021-090000-0005", "2026-10-21T09:00:00Z", 3, 0),
-	}, p)
+	}
+	// Enough unflagged runs that the table holds four of them: the note a drop
+	// adds costs about three rows, so a table of three would lose every
+	// unflagged row and the rule would show nothing.
+	for i := 1; i <= 22; i++ {
+		recs = append(recs, run(t, fmt.Sprintf("20261021-090000-%04d", 100+i), "2026-10-21T09:00:00Z", float64(i), 0))
+	}
+	small := Build(recs, p)
+	// The rows the build chose, taken before capTo's drops shift the array the
+	// two digests share.
+	before := append([]Run(nil), small.Runs...)
 	// A budget one byte under the report's own size, so the rule is exercised
 	// exactly: which rows go, and what the report says about them. How many go
 	// is not pinned here -- the note that reports a drop costs bytes of its
@@ -793,7 +799,7 @@ func TestDigestSizeCap(t *testing.T) {
 		shown[r.ID] = r
 	}
 	dropped := 0
-	for _, r := range small.Runs {
+	for _, r := range before {
 		if _, ok := shown[r.ID]; ok {
 			continue
 		}
@@ -811,10 +817,10 @@ func TestDigestSizeCap(t *testing.T) {
 	if dropped != got.Dropped {
 		t.Errorf("capTo says it dropped %d rows, %d are gone from the table", got.Dropped, dropped)
 	}
-	if _, ok := shown["20261021-090000-0005"]; !ok {
+	if _, ok := shown["20261021-090000-0122"]; !ok {
 		t.Error("capTo dropped the dearest unflagged row")
 	}
-	if _, ok := shown["20261021-090000-0003"]; ok {
+	if _, ok := shown["20261021-090000-0119"]; ok {
 		t.Error("capTo kept the cheapest unflagged row in an over-budget report")
 	}
 
@@ -825,7 +831,7 @@ func TestDigestSizeCap(t *testing.T) {
 	for flagged < 500 && len(Markdown(Build(flaggedRuns(t, flagged+1), p))) < MaxBytes-256 {
 		flagged++
 	}
-	recs := flaggedRuns(t, flagged)
+	recs = flaggedRuns(t, flagged)
 	for i := 1; i <= 10; i++ {
 		recs = append(recs, run(t, fmt.Sprintf("20261021-1100%02d-abcd", i), "2026-10-21T09:00:00Z", float64(i), 0))
 	}
@@ -914,7 +920,7 @@ func TestDigestRendersNoRecordText(t *testing.T) {
 			if strings.Contains(out, planted) {
 				t.Errorf("the report prints %q, planted in the record's %s", planted, leaf.path)
 			}
-			if leaf.path != ".RunID" && !strings.Contains(out, id) {
+			if leaf.path != ".RunID" && !strings.Contains(out, task.ShortRun(id)) {
 				t.Errorf("the report does not show the run whose %s holds %q: the check proves nothing", leaf.path, planted)
 			}
 		}
@@ -1077,5 +1083,83 @@ func fullRecord(t *testing.T) runstore.Record {
 		},
 		Backlog:       []string{"20261021-01"},
 		BacklogClosed: []string{"20261021-02"},
+	}
+}
+
+// TestDigestRunTableShortID: the report's tables name each run by its short ID
+// (spec.md §1), extended only as far as the rows printed together need
+// (spec.md §3), while the summary block keeps the figures it always had.
+//
+// The two runs below share their four hex digits and differ in the second
+// before the dash, so the shortest ending that tells them apart is six
+// characters -- the extension crosses the dash (F1) -- and the failures table
+// names the failing run by the same ending the run table shows, because both
+// tables are the one report.
+func TestDigestRunTableShortID(t *testing.T) {
+	d := Build([]runstore.Record{
+		failing(t, "20261021-090001-3bb2", 0.10, failure.InfraError, "the stage timed out"),
+		run(t, "20261021-090002-3bb2", "2026-10-21T09:00:00Z", 0.20, 0),
+	}, week43(t))
+	out := string(Markdown(d))
+	for _, want := range []string{
+		"| `1-3bb2` | failed |",
+		"| `2-3bb2` | succeeded |",
+		"| `" + string(failure.InfraError) + "` | 1 |",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the report lacks %q:\n%s", want, out)
+		}
+	}
+	if n := strings.Count(out, "`1-3bb2`"); n != 2 {
+		t.Errorf("the failing run is named `1-3bb2` %d times, want 2 -- its run-table row and the failures table's example:\n%s", n, out)
+	}
+	if strings.Contains(out, "20261021-") {
+		t.Errorf("the report prints a run ID's launch stamp:\n%s", out)
+	}
+}
+
+// TestDigestFailureExampleOffTheRunTableShortID: the failures table names a run
+// the run table need not show -- its example is picked over every run of the
+// period, and the cap drops rows afterwards -- so markdownCore computes its
+// endings over the report's rows *and* its examples together (printed). The
+// example below is one of the rows the cap drops, and it shares its four
+// characters with a row the cap keeps: its cell carries the ending that tells
+// the two apart, and the kept row carries it too. Computed over the shown rows
+// alone, the cell would be empty and the kept row short by two characters.
+func TestDigestFailureExampleOffTheRunTableShortID(t *testing.T) {
+	p := week43(t)
+	recs := []runstore.Record{
+		flaggedRun(t, "20261021-080001-aaaa", 0.01),
+		flaggedRun(t, "20261021-080002-bbbb", 0.02),
+	}
+	// A period long enough that the table holds four unflagged rows -- MinDear's
+	// three and the share's fourth -- because the cap drops the three cheapest of
+	// them (the note a drop adds costs about three rows, TestDigestSizeCap): a row
+	// is still shown beside the example it drops.
+	for i := 1; i <= 20; i++ {
+		recs = append(recs, run(t, fmt.Sprintf("20261021-0900%02d-0000", i), "2026-10-21T09:00:00Z", float64(i), 0))
+	}
+	// The dearest two of the table, sharing their four characters: the cap keeps
+	// one and drops the other, which is the failures table's own example.
+	recs = append(recs,
+		run(t, "20261021-100000-a1b2", "2026-10-21T09:00:00Z", 22, 0),
+		failing(t, "20261021-100001-a1b2", 21, failure.InfraError, "the stage timed out"),
+	)
+	small := Build(recs, p)
+	got := capTo(small, len(markdownCore(small))-1)
+	shown := map[string]bool{}
+	for _, r := range got.Runs {
+		shown[r.ID] = true
+	}
+	if got.Dropped == 0 || !shown["20261021-100000-a1b2"] || shown["20261021-100001-a1b2"] {
+		t.Fatalf("the cap left %v shown and dropped %d: want the failing example dropped and the row it collides with kept",
+			got.Runs, got.Dropped)
+	}
+	out := string(Markdown(got))
+	if want := fmt.Sprintf("| `%s` | 1 | $21.00 | `1-a1b2` |", failure.InfraError); !strings.Contains(out, want) {
+		t.Errorf("the failures table lacks %q, the example the run table no longer shows:\n%s", want, out)
+	}
+	if want := "| `0-a1b2` | succeeded |"; !strings.Contains(out, want) {
+		t.Errorf("the run table lacks %q, the row the off-table example collides with:\n%s", want, out)
 	}
 }

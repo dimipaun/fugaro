@@ -151,6 +151,14 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+	// The two-converge test runs one of its two fugaro updates as a second
+	// process of this binary (update_lock_test.go): the lock is the kernel's
+	// between processes, so the exclusion has to be tested between processes.
+	// It is dispatched here, past the seams above and before the tests, and it
+	// puts back the three homes the setup above replaced with its own.
+	if os.Getenv(convergeChildEnv) != "" {
+		os.Exit(runConvergeChild())
+	}
 	code := m.Run()
 	cleanupFakes()
 	os.Exit(code)

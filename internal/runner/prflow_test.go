@@ -16,6 +16,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -1076,7 +1077,7 @@ func TestMarkerOnlyTitleFallsBack(t *testing.T) {
 	if rec, err := h.run(t, mk, review("ship", 0)); err != nil || rec.Outcome != runstore.OutcomeReady {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
 	}
-	if title := onlyPR(t, h.provider).Title; title != "Fugaro run "+runID {
+	if title := onlyPR(t, h.provider).Title; title != "Fugaro run "+task.ShortRun(runID) {
 		t.Fatalf("title = %q", title)
 	}
 }

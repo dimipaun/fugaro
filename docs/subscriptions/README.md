@@ -4,7 +4,11 @@
 owner-run — and no task is approved; the task-by-task census against `origin/main` is
 [status-2026-11-07.md](status-2026-11-07.md).** Since that census the counsel addendum (S0.2) has
 been written: [counsel-packet.md](counsel-packet.md) asks counsel only what the Terms' own list does
-not already ask, and it is what S8.4's next round answers. D430–D448 and the Terms draft's
+not already ask, and it is what S8.4's next round answers. The lapse state's core half has landed as
+well (RS9 of [docs/roles-scopes](../roles-scopes/implementation-plan.md), 2026-11-09): the licence
+input and the seam a Subscription surface asks through exist (`access.Input.Lapse`,
+`access.SetSubscriptionLimit`, with the actions a lapse keeps in `ee/register`), so S6.1–S6.3 fill a
+seam rather than invent one. Nothing is limited today: no surface asks it yet. D430–D448 and the Terms draft's
 owner questions B1–B17 were answered by the owner on 2026-10-27 (D432, D443 and D445 partly, and
 D433, D434, D436, D437, D438, D440, D444, B6, B7 and B13 not the recommendation). The owner
 ruled every open tension, T10–T26, O4 and the key binding, the same day (T10, T11, T21 and T25

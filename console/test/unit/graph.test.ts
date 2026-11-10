@@ -44,6 +44,7 @@ import type { GraphView, PlanStatusView, RunView } from '../../src/shared/schema
 import { GRAPH_ROW_GAP, nodeKey } from '../../src/renderer/graph/layout'
 import type { WorkerLike } from '../../src/renderer/graph/layout-client'
 import { GRAPH_MAX_TITLE_CODE_POINTS, GRAPH_SCOPE_NO_RELEASE, STATE_WORDS, buildGraphModel } from '../../src/renderer/graph/model'
+import { STAMP_LEAD, stampOf } from '../../src/renderer/section'
 import { WRITE_UNAVAILABLE } from '../../src/renderer/writes'
 import { LIVE_PR_NO_LINK_REASON } from '../../src/renderer/screens/live'
 import { PR_NO_LINK_REASON } from '../../src/renderer/screens/run'
@@ -2030,5 +2031,26 @@ describe('the graph screen and its scope', () => {
     // state of the read and not a strip the drawing always wears.
     await screen.load(DOCUMENT, RUNS)
     expect(classedIn(drawingOf(screen), 'graph-scope-notice')).toHaveLength(0)
+  })
+
+  it('draws the as-of time beside a source state, and nothing where the source named none', async () => {
+    // CG11's third interface clause: `source_state` is drawn as words **with**
+    // the as-of time. The state word says which of the four states the source
+    // reported (`up`/`stale`/`down`/`unreadable`); the stamp says what its
+    // figures are worth, which is the fact a word cannot carry -- and it is
+    // `section.ts`'s own line and clock, so a coordinator row and a cached
+    // section's stamp read the same way.
+    const { screen } = screenWith()
+    await screen.loadScope(SCOPE_DOCUMENT)
+    const drawn = drawingOf(screen)
+    const sources = classedIn(drawn, 'graph-source')
+    const at = `${STAMP_LEAD} ${stampOf(Date.parse('2026-11-07T10:00:00Z'))}`
+    expect(classedIn(sources[0] ?? drawn, 'graph-source-asof').map((each) => each.textContent)).toEqual([at])
+    // **`as_of: null` is drawn as nothing at all.** It means "the source does
+    // not say" and never "now" (`schema.ts`), and the one-shot read's coordinator
+    // scope is exactly the case that sends it: a clock drawn there would be a
+    // time the console made up, in the one cell a reader trusts to be a
+    // document's.
+    expect(classedIn(sources[1] ?? drawn, 'graph-source-asof')).toHaveLength(0)
   })
 })

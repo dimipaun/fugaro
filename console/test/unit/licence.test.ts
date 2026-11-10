@@ -119,11 +119,12 @@ function b64url(text: string): string {
 }
 
 /** spell joins the three parts, in the order the design fixes: the key id
- * first, in the clear, then the payload, then the signature over the payload's
- * bytes. */
+ * first, **in the clear** -- it is the one part nothing decodes, so it is the
+ * text the keyring is keyed by -- then the payload, then the signature over the
+ * payload's bytes. */
 function spell(id: string, payload: Uint8Array, signature: Uint8Array): string {
   return [
-    b64url(id),
+    id,
     Buffer.from(payload).toString('base64url'),
     Buffer.from(signature).toString('base64url'),
   ].join('.')
@@ -212,19 +213,19 @@ describe('the licence key', () => {
     // The other two parts are not base64url at all, and not JSON either: if the
     // id were looked up after them, this sentence would be about a part.
     const reason = refusalOf(
-      verifyLicenceKey(`${b64url('someone-else')}.!!!not-base64url!!!.????`, at(ISSUED), acme.keyring),
+      verifyLicenceKey('someone-else.!!!not-base64url!!!.????', at(ISSUED), acme.keyring),
     )
 
     expect(reason).toContain('someone-else')
     expect(reason).not.toMatch(/decode|claims/)
   })
 
-  it('VerifyUnknownKeyID: a key whose id does not decode is refused without a name', () => {
-    // `!` is not in the base64url alphabet, so there is no id to look up and no
-    // name to draw.
+  it('VerifyUnknownKeyID: a key whose id is not base64url is refused without a name', () => {
+    // `!` is not in the base64url alphabet, so the first part is not an id the
+    // design allows and there is no name to draw.
     const reason = refusalOf(verifyLicenceKey('!!!!.AAAA.BBBB', at(ISSUED), PRODUCTION_KEYRING))
 
-    expect(reason).toMatch(/id does not decode/)
+    expect(reason).toMatch(/id is not spelled in base64url/)
   })
 
   it('StagingKeyIDIsRefused: a key minted under a staging id is refused by the production verifier', () => {
@@ -480,7 +481,7 @@ describe('the negative vectors', () => {
     }
 
     // An empty part is a part that does not decode, named as the part it is.
-    const empty = `${b64url(acme.id)}..${b64url('x')}`
+    const empty = `${acme.id}..${b64url('x')}`
     expect(refusalOf(verifyLicenceKey(empty, at(ISSUED), acme.keyring))).toMatch(/has a payload that does not decode/)
 
     // A key arrives from a file's line or a paste, and neither adds meaning to
