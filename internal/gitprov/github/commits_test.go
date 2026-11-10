@@ -1,11 +1,13 @@
 package github
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/gitprov/httpjson"
 )
 
 // commitSHA is the commit the reads here resolve to: forty lower-hex
@@ -126,10 +128,10 @@ func TestTreeReadsADirectoryWrittenWithItsTrailingSlash(t *testing.T) {
 
 // TestTreeRefusesAFileTooLargeForOneBlobReply: a blob reply carries the file
 // base64 inside a JSON object, and the client bounds one reply, so a file over
-// three quarters of that has no reply that holds it whatever ceiling the
-// caller gave — the caller's is larger. It is refused by name before the read,
-// which is the exchange this fixture does not hold: a file left to the read
-// would come back as a truncated reply and a decoding error that names no
+// the largest one reply can hold has no reply that holds it whatever ceiling
+// the caller gave — the caller's is larger. It is refused by name before the
+// read, which is the exchange this fixture does not hold: a file left to the
+// read would come back as a truncated reply and a decoding error that names no
 // file.
 func TestTreeRefusesAFileTooLargeForOneBlobReply(t *testing.T) {
 	p := contentsProvider(t, append(mintExchanges(t),
@@ -143,6 +145,33 @@ func TestTreeRefusesAFileTooLargeForOneBlobReply(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), gitprov.ErrTreeTooLarge.Error()) || !strings.Contains(err.Error(), "big.bin") {
 		t.Errorf("Tree error = %v, want it to name the file and carry %v", err, gitprov.ErrTreeTooLarge)
+	}
+}
+
+// TestTreeReadsAFileAtTheBlobReplyBound: the bound is the largest file whose
+// whole reply the client reads, so a file of exactly that size is read end to
+// end. The base64 wrapping and the JSON object around it are what the bound
+// leaves room for beside the file's own bytes, so a bound derived from those
+// bytes alone would have this file's reply truncated — which is the decoding
+// error that names no file, and the reason the refusal above refuses by name.
+func TestTreeReadsAFileAtTheBlobReplyBound(t *testing.T) {
+	big := bytes.Repeat([]byte("x"), maxBlobBytes)
+	reply := blobReply(big)
+	if len(reply) > httpjson.MaxReplyBytes {
+		t.Fatalf("the reply for a file at the bound is %d bytes, over the %d the client reads whole", len(reply), httpjson.MaxReplyBytes)
+	}
+	p := contentsProvider(t, append(mintExchanges(t),
+		contentsExchange(t, "/repos/acme/web/git/trees/"+commitSHA+"?recursive=1", 200, treeListing(false,
+			treeEntryJSON("ci/big.bin", "blob", len(big)),
+		)),
+		contentsExchange(t, "/repos/acme/web/git/blobs/"+blobSHA, 200, reply),
+	)...)
+	files, err := p.Tree(ctx, "ci", commitSHA, gitprov.TreeLimit{MaxFiles: 10, MaxBytes: 1 << 30})
+	if err != nil {
+		t.Fatalf("Tree of a file at the blob bound: %v", err)
+	}
+	if len(files) != 1 || len(files[0].Data) != len(big) {
+		t.Fatalf("Tree = %d files, want the one file at the bound read whole", len(files))
 	}
 }
 

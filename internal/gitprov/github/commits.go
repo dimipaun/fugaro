@@ -26,12 +26,31 @@ const maxTreeEntries = 100_000
 
 // maxBlobBytes is the largest file this adapter can read out of a tree: one
 // blob reply carries the file base64-encoded inside a JSON object, and the
-// client that reads the reply bounds it at httpjson.MaxReplyBytes, so a file
-// over three quarters of that has no reply that holds it. The caller's own
-// ceiling can be larger — a context's is — and this is the one this adapter
-// cannot go past: a file over it is refused by name before the read rather
-// than left to surface as a truncated reply's decoding error.
-const maxBlobBytes = httpjson.MaxReplyBytes / 4 * 3
+// client that reads the reply truncates it at httpjson.MaxReplyBytes, which
+// surfaces as a decoding error that names no file. The caller's own ceiling can
+// be larger — a context's is — so this is the one this adapter cannot go past,
+// and a file over it is refused by name before the read (Tree).
+//
+// It is the largest file whose whole reply fits, and the reply spends more than
+// the file's own bytes: four base64 characters per three bytes, the line breaks
+// GitHub wraps that base64 with, and the object around it (blobEnvelopeBytes).
+// Each line costs its blobLineChars characters plus the blobLineBreakBytes JSON
+// writes its newline as, so the base64 one reply holds is the bound less the
+// envelope at 60 characters per 62 bytes of reply. The expression below solves
+// that for the file's own size, rounding down at every step.
+const maxBlobBytes = (httpjson.MaxReplyBytes - blobEnvelopeBytes) /
+	(blobLineChars + blobLineBreakBytes) * blobLineChars / 4 * 3
+
+// blobLineChars is how GitHub wraps a blob reply's base64 and
+// blobLineBreakBytes what JSON writes each line's newline as; the envelope is
+// the room the object around the content has — its keys, the object id, the
+// size, the URL and the encoding — which a file at the bound has to leave room
+// for as well.
+const (
+	blobLineChars      = 60
+	blobLineBreakBytes = 2
+	blobEnvelopeBytes  = 1 << 10
+)
 
 // Commit implements gitprov.CommitReader: the commit a ref names, through
 // GET /repos/{owner}/{repo}/commits/{ref} — the ref one escaped path segment,
