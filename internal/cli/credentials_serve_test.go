@@ -805,16 +805,19 @@ func TestCredentialsServiceRefusalsNeverCarryAValue(t *testing.T) {
 // The other direction is a name this command reads that nothing sets, which is
 // a fact the service silently does not have.
 //
-// The list is the seven REQUIRED names plus the four optional ones, which is
+// The list is the seven REQUIRED names plus the five optional ones, which is
 // the whole of what the module renders and what this command reads: the
 // optional ones belong here because a name the module sets and this command
 // does not read is the same mistake whether the command requires it or reads it
 // outside the loop. Which of the names is which is pinned by the tests around
 // this one, not by this comparison.
 //
-// All four are rendered conditionally — the module sets each of them only on an
+// All five are rendered conditionally — the module sets each of them only on an
 // installation where it applies — and the reason they belong here rather than
-// in credentialsServiceEnvNames is pinned by the tests around this one.
+// in credentialsServiceEnvNames is pinned by the tests around this one. One of
+// them, FUGARO_LAUNCHER_ACCOUNTS (D1938), is rendered by no module yet and is
+// read from CredentialsServiceEnvAwaitingTheModule below, which is the same
+// cover-first order FUGARO_REVIEW_JOB_ACCOUNTS followed.
 //
 // internal/infra/tf's credentialsServiceEnv is the third side of this, and it
 // is held to the module by that package's own test (the cover's allow-list

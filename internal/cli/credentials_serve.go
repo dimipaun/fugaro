@@ -62,13 +62,16 @@ import (
 // audience its callers' ID tokens are minted for -- the service resource's own
 // uri) and FUGARO_JOB_ACCOUNTS (the installation's per-repository jobs as
 // {"provider","repo","workflow"} triples, from which the job service accounts
-// are derived). Four more names are read beside those seven, each OPTIONAL
+// are derived). Five more names are read beside those seven, each OPTIONAL
 // because the module renders it only where it applies: FUGARO_VERIFIER_ACCOUNTS
 // (C3.9g2), FUGARO_PERSON_ACCOUNTS and FUGARO_COORDINATOR_ACCOUNT (the read
-// mint's two classes, BB4 and BB5) and FUGARO_REVIEW_JOB_ACCOUNTS (the
+// mint's two classes, BB4 and BB5), FUGARO_REVIEW_JOB_ACCOUNTS (the
 // review-only project jobs, C3.9a's class: {"profile","provider","account"}
 // triples the service derives each review job's account from, the same document
-// kind FUGARO_JOB_ACCOUNTS is). The names are held by a second thing:
+// kind FUGARO_JOB_ACCOUNTS is) and FUGARO_LAUNCHER_ACCOUNTS (the launcher class
+// of D1938, the fifth: the addresses that may ask the service for a slip and
+// reach the intake, which is a class of those two routes and of none the seven
+// above serve). The names are held by a second thing:
 // internal/infra/tf's credentialsServiceEnv is the allow-list init's cover
 // applies to the service's container, so a name outside it is refused at plan
 // time, and the two lists move together -- an environment variable is not a
