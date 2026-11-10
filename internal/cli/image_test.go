@@ -440,6 +440,61 @@ func TestImageBuildCountsTheWholeReservationWhenTheWatchIsLost(t *testing.T) {
 	wholeReservationCounted(t, f.db, mustSlug("bitbucket", "acme/app"), "for a build whose watch was lost")
 }
 
+// TestImageBuildCountsWhatAWatchedBuildSpent: the other direction of the settle
+// above, and the one the caps depend on. Cloud Build reports a finished build's
+// status, image and log and no billed time, so the watch's own clock is the
+// measurement (buildSpend, image_build_lease.go): the minutes it saw, at the
+// rate the lease was taken at, capped at what the lease holds. What the day
+// counts for a build that ended is that figure — the whole reservation is the
+// fixed hour the build was allowed to cost, and the caps are what stands in
+// place of the confirmation T4 removed (D1543), so a completed build that moved
+// them by nothing, or by the whole hour, is the defect this pins.
+//
+// Mutation (run, restore): `return 0` from buildSpend's watched half and the day
+// counts 0 µ$ for a build that ran; `return unspent` there and it counts the
+// whole 936 000 µ$ reservation — measured, both of them, by putting each in and
+// running this file's settle tests: nothing but this test and TestBuildSpend
+// moves, because the build is reported as built, the lease as settled and the
+// exit code zero either way.
+func TestImageBuildCountsWhatAWatchedBuildSpent(t *testing.T) {
+	fb, f := cloudBuildCheckout(t, false)
+	slug := mustSlug("bitbucket", "acme/app")
+	out, stderr, err := executeBuild(t, "image", "build", "--base", "b:1")
+	if err != nil {
+		t.Fatalf("%v (%s)", err, stderr)
+	}
+	if !strings.HasPrefix(out, "built ") {
+		t.Fatalf("output = %q: this test is about a build that ended, so it has to be one this command watched to SUCCESS", out)
+	}
+	if buildPosts(fb) != 1 || buildGets(fb) == 0 {
+		t.Fatalf("the build was submitted %d times and its status read %d times, want the one submission this command waited on", buildPosts(fb), buildGets(fb))
+	}
+	// Hermetically the wait lasts milliseconds, and Cloud Build bills a partial
+	// minute as a whole one: the figure is the first minute of the lease's hour.
+	rate := buildRate(t)
+	countedOnTheDay(t, f.db, slug, rate.MicrosPerMinute,
+		"for a build this command watched to SUCCESS: the minute the watch measured is what it spent, while the whole reservation is what the arms that never watched one leave")
+	// And the rest of the reservation is back with the caps: the lease keeps
+	// what the build spent and reads as settled.
+	var leases map[string]budget.BuildLease
+	client, err := newBudgetClient(context.Background(), f.db.URL, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Get(context.Background(), budget.PathBuildLeases(slug), &leases); err != nil {
+		t.Fatal(err)
+	}
+	if len(leases) != 1 {
+		t.Fatalf("%d build leases are in the database, want the one this build took: %v", len(leases), leases)
+	}
+	for id, l := range leases {
+		if l.State != budget.BuildLeaseSettled || l.Settled != rate.MicrosPerMinute || l.Released != l.Reserved-l.Settled {
+			t.Errorf("the lease %s reads %s with %d µ$ settled and %d µ$ released of its %d µ$ reservation, want it settled for the first minute (%d µ$) with the rest given back",
+				id, l.State, l.Settled, l.Released, l.Reserved, rate.MicrosPerMinute)
+		}
+	}
+}
+
 // buildGets are the build status reads the fake served: what tells a test that
 // the watch of a build is under way. The submission itself is a POST to the
 // builds collection, which this does not count.

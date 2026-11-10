@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
@@ -125,20 +126,29 @@ func buildBudgetCaps(db *gcpfake.RTDB) {
 	db.Set(budget.PathLimits, map[string]any{"maxReserveMicros": 100 * usd1})
 }
 
-// wholeReservationCounted fails the test unless the day counts the WHOLE of a
-// build's reservation: the repository's and the project's day counters and the
-// repository's spent leaf all hold what the lease reserved, priced here from the
-// same book the fixture sizes every build with. It is what a build that is out
-// and unbounded by this command's watch has to leave — the whole thing, not the
-// minutes a watch saw before it was lost and not nothing at all. why names the
-// build the caller is asserting about, so a failure reads as its own case.
-func wholeReservationCounted(t *testing.T, db *gcpfake.RTDB, slug, why string) {
+// buildRate is the rate this package's stubBuildPricer answers every build of a
+// test with, read here for the figures a settle is asserted against: the whole
+// reservation a lease takes (Estimate) and the first minute of it
+// (MicrosPerMinute), which is what a build this command watched to an end
+// records (buildSpend).
+func buildRate(t *testing.T) budget.BuildRate {
 	t.Helper()
 	rate, err := budget.BuildCost(pricedBook(), "E2_HIGHCPU_8", "us-east5")
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := rate.Estimate()
+	return rate
+}
+
+// countedOnTheDay fails the test unless the day counts want for one build: the
+// repository's and the project's day counters and the repository's spent leaf
+// all hold it. A settled lease leaves one figure in all three — the money the
+// lease did not give back, which is what the build spent — so both directions of
+// the settle are this same assertion with a different want. why says which build
+// the caller is asserting about, and what its figure is, so a failure reads as
+// its own case.
+func countedOnTheDay(t *testing.T, db *gcpfake.RTDB, slug string, want budget.Micros, why string) {
+	t.Helper()
 	client, err := newBudgetClient(context.Background(), db.URL, true)
 	if err != nil {
 		t.Fatal(err)
@@ -156,8 +166,61 @@ func wholeReservationCounted(t *testing.T, db *gcpfake.RTDB, slug, why string) {
 		{"the repository's day spend", read.State.Repo.Spent},
 	} {
 		if c.got != want {
-			t.Errorf("%s is %d µ$ %s, want the whole %d µ$ reservation: a build nothing here watched records all of it, and the first minute of it is what the other direction leaves", c.what, c.got, why, want)
+			t.Errorf("%s is %d µ$ %s, want %d µ$", c.what, c.got, why, want)
 		}
+	}
+}
+
+// wholeReservationCounted is countedOnTheDay for the build this command never
+// watched to an end: the day counts the WHOLE of its reservation, priced here
+// from the same book the fixture sizes every build with — the whole thing, not
+// the minutes a watch saw before it was lost and not nothing at all. why names
+// the build the caller is asserting about, so a failure reads as its own case.
+func wholeReservationCounted(t *testing.T, db *gcpfake.RTDB, slug, why string) {
+	t.Helper()
+	countedOnTheDay(t, db, slug, buildRate(t).Estimate(),
+		why+": a build nothing here watched records all of it, and the first minute of it is what the other direction leaves")
+}
+
+// TestBuildSpend: the four things the figure a watched build records is made of
+// — the watch's own clock, priced at the rate the lease was taken at, rounded
+// up to whole minutes the way Cloud Build bills them, and capped at what the
+// lease holds — and the unwatched arm, which takes the whole reservation
+// whatever the clock says. The reservation IS the rate: a lease reserves the
+// build's fixed timeout at the machine's rate (BuildRate.Estimate), so the rate
+// is recovered from the lease rather than carried beside it, and a lease taken
+// at another machine's rate prices the same seconds at its own.
+//
+// The lease is one e2-highcpu-8 build at this package's fixture rate: 936 000 µ$
+// reserved, 15 600 µ$ a minute.
+func TestBuildSpend(t *testing.T) {
+	const fixture = budget.Micros(936_000)
+	for _, tc := range []struct {
+		name     string
+		reserved budget.Micros
+		waited   bool
+		elapsed  time.Duration
+		want     budget.Micros
+		why      string
+	}{
+		{name: "a partial minute is billed as a whole one", reserved: fixture, waited: true, elapsed: 30 * time.Second, want: 15_600,
+			why: "rounding down would hand back time the build spent"},
+		{name: "the second minute is billed as soon as it is entered", reserved: fixture, waited: true, elapsed: 61 * time.Second, want: 31_200,
+			why: "a build of a minute and a second costs two minutes"},
+		{name: "an hour at the rate is the whole reservation", reserved: fixture, waited: true, elapsed: 60 * time.Minute, want: fixture,
+			why: "the fixed timeout's own sixty minutes are what the lease holds"},
+		{name: "a build that outlived its hour still holds one reservation", reserved: fixture, waited: true, elapsed: 3 * time.Hour, want: fixture,
+			why: "the lease holds one reservation, and Settle refuses an amount over it"},
+		{name: "an unwatched build records the whole reservation", reserved: fixture, waited: false, elapsed: 30 * time.Second, want: fixture,
+			why: "nothing here knows how long it runs, and giving the reservation back would let a loop of --no-wait submissions run uncounted"},
+		{name: "a lease taken at another rate prices the same seconds at its own", reserved: 60_000, waited: true, elapsed: 2 * time.Minute, want: 2_000,
+			why: "60 000 µ$ over the fixed hour is 1 000 µ$ a minute"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := buildSpend(budget.BuildLease{Reserved: tc.reserved}, tc.waited, tc.elapsed); got != tc.want {
+				t.Errorf("buildSpend = %d µ$, want %d: %s", got, tc.want, tc.why)
+			}
+		})
 	}
 }
 
