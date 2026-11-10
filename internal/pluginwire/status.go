@@ -43,9 +43,17 @@ func (s State) Severity() Severity {
 }
 
 // Fix is the one-line remedy for the state.
+//
+// NotWired and Unpinned have none: a repository with no pin is a repository
+// nothing writes one into any more — the merge was deleted outright (D949,
+// answered 2026-11-04; U2 of docs/plugin-user-scope/implementation-plan.md),
+// and fugaro update-skills installs the plugin on the machine instead — and a
+// marketplace that carries no ref simply follows the default branch. Outdated
+// keeps its line: the entry is there, and fugaro update is the door that takes
+// it out (D943).
 func (s State) Fix() string {
 	switch s {
-	case Outdated, NotWired, Unpinned:
+	case Outdated:
 		return "run fugaro update"
 	case Newer:
 		return "upgrade fugaro (brew upgrade dimipaun/tap/fugaro); fugaro upgrade never moves a pin down"

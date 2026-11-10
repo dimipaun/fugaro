@@ -15,7 +15,7 @@ type Input struct {
 	Root      string    // the checkout's top directory
 	Want      string    // this fugaro's release version, X.Y.Z
 	Ref       string    // the release tag the marketplace must carry, vX.Y.Z
-	Repo      string    // the marketplace repository: pluginwire.Repo, or a fork allowed with --allow-fork
+	Repo      string    // the marketplace repository: pluginwire.Repo, always Fugaro's own since D949
 	Markets   []Market  // claude plugin marketplace list --json
 	Installed []Install // claude plugin list --json
 }
@@ -140,9 +140,11 @@ func refNewer(ref, want string) bool {
 //     refreshed, then the plugin installed at user scope when nothing applies
 //     or a Clear is in the plan — on the cleared path it is what puts back the
 //     install the clear takes from a machine whose own settings leave the name
-//     undeclared — and each stale scope updated (local, project, user). The
-//     install and those updates are Repair when a Clear is in the plan: which
-//     of them the clear left anything to do is not knowable before it runs.
+//     undeclared — and a stale user install updated. (A stale project or local
+//     install is not updated: those installs are a checkout's own settings and
+//     not this step's to move, D949.) The install and that update are Repair
+//     when a Clear is in the plan: which of them the clear left anything to do
+//     is not knowable before it runs.
 //
 // Every call it returns passes Allowed.
 func Decide(in Input) (Plan, error) {

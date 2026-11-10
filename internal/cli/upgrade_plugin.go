@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"strings"
 
 	"github.com/dimipaun/fugaro/internal/claudeplugin"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
@@ -41,9 +40,9 @@ func pluginStep(ctx context.Context, u *upgradeCtx) stepResult {
 	fail := func(err error) stepResult {
 		return stepResult{state: stepFailed, code: ExitUserError, reason: oneLine(err.Error())}
 	}
-	// The pin the checkout's own settings carry, and the one Claude Code's
-	// marketplace is declared at: releaseVersion is X.Y.Z, so Tag cannot fail
-	// here, and a marketplace is never pinned to anything but a release tag.
+	// The tag Claude Code's marketplace is declared at: releaseVersion is
+	// X.Y.Z, so Tag cannot fail here. Nothing reads a pin off the checkout any
+	// more (D949): the marketplace this step declares is Fugaro's own.
 	tag, err := pluginwire.Tag(ver)
 	if err != nil {
 		return fail(err)
@@ -55,10 +54,7 @@ func pluginStep(ctx context.Context, u *upgradeCtx) stepResult {
 	if err != nil {
 		return fail(err)
 	}
-	repo, why := marketRepo(u)
-	if repo == "" {
-		return stepResult{state: stepSkipped, reason: why}
-	}
+	repo := pluginwire.Repo
 	fmt.Fprintf(u.w, "  using claude at %s\n", pluginwire.Printable(bin))
 	run := &claudeplugin.Runner{Bin: bin, Dir: u.loc.Root, Out: u.w}
 	markets, err := run.Markets(ctx)
@@ -189,20 +185,4 @@ func pluginCheck(u *upgradeCtx, ver string) stepResult {
 		return stepResult{state: stepCurrent, reason: fmt.Sprintf("installed %s, newer than this fugaro %s (brew upgrade dimipaun/tap/fugaro)", r.Version, ver)}
 	}
 	return stepResult{state: stepCurrent, reason: "installed " + r.Version}
-}
-
-// marketRepo is the marketplace repository the plugin step passes to claude:
-// dimipaun/fugaro, or, with --allow-fork, the fork the checkout's pin names
-// when it is a valid owner/name; "" and the reason otherwise.
-func marketRepo(u *upgradeCtx) (repo, why string) {
-	r := pluginwire.Status(u.loc.Settings, Version, "")
-	switch {
-	case r.Repo == "" || strings.EqualFold(r.Repo, pluginwire.Repo):
-		return pluginwire.Repo, ""
-	case !u.o.allowFork:
-		return "", "the checkout's marketplace is " + pluginwire.Printable(r.Repo) + ", not " + pluginwire.Repo + ": pass --allow-fork if that fork is yours"
-	case !claudeplugin.ValidRepo(r.Repo):
-		return "", "the checkout's marketplace " + pluginwire.Printable(r.Repo) + " is not a GitHub owner/name fugaro passes to claude"
-	}
-	return r.Repo, ""
 }

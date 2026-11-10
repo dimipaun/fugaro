@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -23,7 +22,7 @@ import (
 // ends the run, and the exit code is the worst.
 
 type upgradeOptions struct {
-	check, local, yes, allowFork bool
+	check, local, yes bool
 	// refresh holds the cloud step's flags, passed on to runImageRefresh.
 	refresh refreshOptions
 }
@@ -65,7 +64,7 @@ type upgradeStep struct {
 }
 
 // upgradeSteps run in this order for each checkout.
-var upgradeSteps = []upgradeStep{{"pin", pinStep}, {"plugin", pluginStep}, {"cloud", cloudStep}, {"rules", rulesStep}, {"policy", policyStep}}
+var upgradeSteps = []upgradeStep{{"plugin", pluginStep}, {"cloud", cloudStep}, {"rules", rulesStep}, {"policy", policyStep}}
 
 type checkoutResult struct {
 	path  string // as given
@@ -163,7 +162,6 @@ checkout's steps and, for one that stopped, the line to rerun.`,
 	f.BoolVar(&o.check, "check", false, "write nothing, run no claude command, make no cloud call: print what each step would do and exit 1 when anything is stale")
 	f.BoolVar(&o.local, "local", false, "run the pin and plugin steps only, and skip the cloud, rules and policy steps (the only mode that does everything it can inside a coding agent's session)")
 	f.BoolVar(&o.yes, "yes", false, "confirm every step that asks without a terminal, and without asking: the cloud step's base copy, check-job update and each billable build (with no cap), the security rules deployment, and a policy migration or publish that does not loosen the published node (a publish that would loosen it is typed at your own terminal and this flag does not stand in); never in a coding agent's session")
-	f.BoolVar(&o.allowFork, "allow-fork", false, "move the ref of a marketplace repository other than dimipaun/fugaro (a fork you host) to this release's tag, and add it to Claude Code")
 	f.StringVar(&o.refresh.repo, "repo", "", "owner/name (or a path inside its checkout) of the repository; it must be the checkout's origin (one PATH only)")
 	f.StringArrayVar(&o.refresh.workflows, "workflow", nil, "a workflow to refresh (repeatable; default: every workflow in fugaro.yaml; one PATH only)")
 	f.StringVar(&o.refresh.imageSource, "image-source", "", "the registry and owner the release base images come from: a base kind is resolved and signature-verified there and pinned through the installation's remote repository (default ghcr.io/dimipaun)")
@@ -231,7 +229,7 @@ func (o upgradeOptions) again(path string) string {
 	for _, f := range []struct {
 		on   bool
 		name string
-	}{{o.check, "--check"}, {o.local, "--local"}, {o.yes, "--yes"}, {o.allowFork, "--allow-fork"}} {
+	}{{o.check, "--check"}, {o.local, "--local"}, {o.yes, "--yes"}} {
 		if f.on {
 			args = append(args, f.name)
 		}
@@ -444,56 +442,6 @@ func upgradeExit(results []checkoutResult) error {
 	return nil
 }
 
-// pinStep is fugaro update-skills for the checkout, with its rules (never a
-// commit; a fork's marketplace moves only with --allow-fork; a file that is
-// not valid JSON is never rewritten), and one more (U10): a pin newer than
-// this fugaro is never moved down.
-func pinStep(_ context.Context, u *upgradeCtx) stepResult {
-	settings := u.loc.Settings
-	shown := pluginwire.Printable(settings)
-	if _, err := pluginwire.Tag(Version); err != nil {
-		return stepResult{state: stepSkipped, reason: "a development build has no release tag to pin the plugin to"}
-	}
-	// U10 for every marketplace and enablement state: Status says Newer only
-	// for an enabled dimipaun/fugaro pin, yet Plan rewrites a fork's or a
-	// disabled plugin's ref just the same.
-	if ref := pluginwire.Status(settings, Version, "").Ref; refAboveBinary(ref) {
-		return stepResult{state: stepFailed, code: ExitUserError, reason: fmt.Sprintf("the plugin is pinned to %s, newer than this fugaro %s, and fugaro upgrade never moves a pin down: run brew upgrade dimipaun/tap/fugaro, then fugaro upgrade again",
-			strings.TrimPrefix(ref, "v"), strings.TrimPrefix(Version, "v"))}
-	}
-	ch, err := pluginwire.Plan(settings, Version, u.o.allowFork)
-	var fk *pluginwire.ForkError
-	switch {
-	case errors.As(err, &fk):
-		warnUpgradeFork(u, pluginwire.Printable(fk.Repo))
-		reason := "the marketplace is the fork " + pluginwire.Printable(fk.Repo) + ": pass --allow-fork if it is yours (only its ref moves)"
-		if u.o.check {
-			return stepResult{state: stepStale, reason: reason}
-		}
-		return stepResult{state: stepFailed, code: ExitUserError, reason: reason}
-	case err != nil:
-		fmt.Fprintf(u.w, "the file was not changed; fix it, or merge this in by hand:\n\n%s", pluginwire.Snippet(Version))
-		return stepResult{state: stepFailed, code: ExitUserError, reason: oneLine(err.Error())}
-	}
-	if ch.Foreign != "" {
-		warnUpgradeFork(u, ch.Foreign)
-	}
-	if ch.Note != "" {
-		fmt.Fprintf(u.cmd.ErrOrStderr(), "note: %s\n", multiLine(ch.Note))
-	}
-	if !ch.Changed {
-		return stepResult{state: stepCurrent, reason: "pinned to " + ch.Tag}
-	}
-	if u.o.check {
-		return stepResult{state: stepStale, reason: "the pin moves to " + ch.Tag + " in " + shown}
-	}
-	fmt.Fprintf(u.w, "%s\n%s%s", shown, ch.Diff(), ch.NoticeText())
-	if err := ch.Apply(); err != nil {
-		return stepResult{state: stepFailed, code: ExitUserError, reason: oneLine(err.Error())}
-	}
-	return stepResult{state: stepDone, reason: "pinned to " + ch.Tag + " in " + shown + ": review it with git diff and commit it like any change"}
-}
-
 // checkPolicyCaveat is what --check says for the step it cannot answer: whether
 // the published policy node is current is a fact of the project's Realtime
 // Database and of nothing in the checkout, and reading it there is the cloud
@@ -665,35 +613,4 @@ func rulesStep(ctx context.Context, u *upgradeCtx) stepResult {
 		return stepResult{state: stepFailed, code: ExitUserError, reason: oneLine(err.Error())}
 	}
 	return stepResult{state: stepDone, reason: fmt.Sprintf("deployed the security rules (generation %d) and recorded it", projectpolicy.RulesVersion)}
-}
-
-// warnUpgradeFork is update-skills' warning, said whenever the checkout's
-// marketplace is a fork, whether or not --allow-fork lets its ref move.
-func warnUpgradeFork(u *upgradeCtx, repo string) {
-	fmt.Fprintf(u.cmd.ErrOrStderr(), "WARNING: the %q marketplace in %s is %s, not %s. Its skills are not Fugaro's; Claude Code can install that plugin for anyone who trusts the folder. Check it is yours.\n",
-		pluginwire.Marketplace, pluginwire.Printable(u.loc.Settings), repo, pluginwire.Repo)
-}
-
-// refAboveBinary: ref is a release tag vX.Y.Z newer than this binary's.
-func refAboveBinary(ref string) bool {
-	bin, err := pluginwire.Tag(Version)
-	if err != nil || !pluginwire.ValidTag(ref) {
-		return false
-	}
-	a, b := tagNumbers(ref), tagNumbers(bin)
-	for i := range a {
-		if a[i] != b[i] {
-			return a[i] > b[i]
-		}
-	}
-	return false
-}
-
-// tagNumbers splits a tag that pluginwire.ValidTag accepts.
-func tagNumbers(tag string) [3]int {
-	var n [3]int
-	for i, p := range strings.SplitN(strings.TrimPrefix(tag, "v"), ".", 3) {
-		n[i], _ = strconv.Atoi(p)
-	}
-	return n
 }

@@ -38,7 +38,6 @@ func TestDecide(t *testing.T) {
 	upd := []string{"plugin", "marketplace", "update", "fugaro"}
 	inst := []string{"plugin", "install", "fugaro@fugaro", "--scope", "user"}
 	updU := []string{"plugin", "update", "fugaro@fugaro", "--scope", "user"}
-	updP := []string{"plugin", "update", "fugaro@fugaro", "--scope", "project"}
 	for _, tc := range []struct {
 		name      string
 		markets   []Market
@@ -51,9 +50,12 @@ func TestDecide(t *testing.T) {
 		{"marketplace only", pinned, nil, [][]string{upd, inst}, "", nil},
 		{"current: nothing to do", pinned, []Install{user("0.5.2")}, nil, "0.5.2", nil},
 		{"user install behind", pinned, []Install{user("0.5.1")}, [][]string{upd, updU}, "0.5.1", nil},
-		{"this checkout's project install behind", pinned, []Install{user("0.5.2"), project("0.5.1", root)}, [][]string{upd, updP}, "0.5.1", nil},
+		// A project or local install is a checkout's own settings, so it is not
+		// this step's to move (D949, U2): the marketplace is refreshed and the
+		// install is left where it stands, at the version it was installed at.
+		{"this checkout's project install behind", pinned, []Install{user("0.5.2"), project("0.5.1", root)}, [][]string{upd}, "0.5.1", nil},
 		{"another checkout's install is not ours to update", pinned, []Install{user("0.5.2"), project("0.4.0", other)}, nil, "0.5.2", nil},
-		{"both behind", pinned, []Install{project("0.5.0", root), user("0.5.1")}, [][]string{upd, updP, updU}, "0.5.0", nil},
+		{"both behind", pinned, []Install{project("0.5.0", root), user("0.5.1")}, [][]string{upd, updU}, "0.5.0", nil},
 		{"another plugin does not count", pinned, []Install{{ID: "superpowers@claude-plugins-official", Version: "6.4.1", Scope: "user"}}, [][]string{upd, inst}, "", nil},
 		{"a managed install is left alone", pinned, []Install{{ID: "fugaro@fugaro", Version: "0.4.0", Scope: "managed"}}, [][]string{upd, inst}, "", nil},
 		{"marketplace missing, plugin current", nil, []Install{user("0.5.2")}, [][]string{add}, "0.5.2", nil},
@@ -73,8 +75,9 @@ func TestDecide(t *testing.T) {
 		{"marketplace at an older tag", older, []Install{user("0.5.1")}, [][]string{rm, add, upd, inst, updU}, "0.5.1", [][]string{backAt("v0.5.1"), inst}},
 		// This checkout's own settings declare the marketplace too, so the clear
 		// leaves the project install standing, at the version it was installed
-		// at: it is the update at its scope that moves it.
-		{"unpinned marketplace, this checkout's project install", unpinned, []Install{project("0.5.1", root)}, [][]string{rm, add, upd, inst, updP}, "0.5.1", [][]string{back, inst}},
+		// at, and a checkout's own install is not this step's to move (D949, U2):
+		// the user scope install is all the plan makes.
+		{"unpinned marketplace, this checkout's project install", unpinned, []Install{project("0.5.1", root)}, [][]string{rm, add, upd, inst}, "0.5.1", [][]string{back, inst}},
 		// Nothing installed, so the clear takes the declaration alone, and the
 		// declaration alone is what a failed add puts back.
 		{"unpinned marketplace, nothing installed", unpinned, nil, [][]string{rm, add, upd, inst}, "", [][]string{back}},
