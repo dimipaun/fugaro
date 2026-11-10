@@ -443,13 +443,12 @@ func JobImage(req ImageRequest) (Selection, error) {
 	default:
 		name, mapped := req.mappedEntry()
 		if req.Catalog == nil {
-			if mapped {
-				// The map names an entry of a catalog this project does not
-				// have: no job of it can run what the map says, and quietly
-				// running the repository's own image instead would leave the
-				// map a person wrote meaning nothing.
-				return Selection{}, UnknownMappedEntryError(req.Canonical, name)
-			}
+			// A project that publishes no catalog has nothing for the map to
+			// point into, so the map is not yet a claim about any job: the
+			// repository keeps its own image as it does with no default (O4 b),
+			// which is the state a map written before the catalog is built in.
+			// A map naming an entry the project's catalog does not hold is
+			// refused below, where there is a catalog to be wrong about.
 			return Selection{Source: SourceRepo}, nil
 		}
 		switch {
