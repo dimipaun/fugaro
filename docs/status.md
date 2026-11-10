@@ -9,7 +9,7 @@ As of 2026-11-10, read from `main`, the open pull requests and each plan's task 
 | licensing | 17/23 | owner-run only |
 | credentials-service | about 32/36 | owner checks; Check 96 holds C2.3 |
 | console-dependency-graph | 13/17 | GV3.1, GV3.2, GV4.1 |
-| bitbucket-credentials | 9/12 | T2.6, T2.11; owner Checks 149 and 145; S3 superseded by the secrets-brokering proxy chain (2026-11-10) |
+| bitbucket-credentials | 9/12 | T2.6, T2.11; owner Checks 149 and 145; S3 superseded by the secrets-brokering proxy chain (2026-11-10), except T3.3's trust paths and T3.8's read half, which are kept; D1960–D1962 open (its reconciliation-secrets-brokering.md) |
 | mcp-server | 8/12 | M4 store (draft #2117), M5b (draft #2114, a follow-up in a run); M9 deferred |
 | issue-mine | 5/7 | T-IM3, T-IM7 (in a run); T-IM6 merged |
 | contract-first-decoupling | 4/7 | CD4, CD5, CD7 |
@@ -46,7 +46,7 @@ As of 2026-11-10, read from `main`, the open pull requests and each plan's task 
 | forge-authorship-images | about 9/25 | about 16, much overlapping image-setup |
 | go-to-market | 4/12 | the cost-estimate half (`fugaro estimate`) |
 | model-ab-testing | 3/18 | the sampler and the pair launch |
-| bitbucket-workspace-token | 7/13 | T2.2, T2.4, T2.6, T2.9, owner checks; the proxy chain probably makes T2.2 and T2.9 moot |
+| bitbucket-workspace-token | 7/13 | T1.4, T2.2, T2.4, T2.6 and T2.7 left; T2.9 superseded by the secrets-brokering proxy chain (2026-11-10); T2.11's step 5 missing from the shipped notes; D1980–D1984 open (its reconciliation-secrets-brokering.md) |
 | run-limit-carry-over | 4/10 | L0 to L3 merged, L4 in a run, L5 onward waiting |
 | binary-allow-rule | 2/11 | NV1 and NV2 merged, AR0 (draft #2202) held on the update-ordering fix; AR1 and AR3 to AR5 wait behind it |
 | plugin-user-scope | 1/10 | U1 merged, U2 in a run; `fugaro upgrade` is still on main |
