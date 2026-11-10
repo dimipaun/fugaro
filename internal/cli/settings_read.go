@@ -420,14 +420,18 @@ func (r *settingsRead) projectRow(row settings.Row) setting {
 	// row with a varying segment is a map entry the write refuses whatever
 	// list carries it.
 	_, writeErr := settingsWriteRow(row.Key)
-	// The owner is asked of the write as well (D1178): a spelling the generic
-	// path refuses is no command's edit, so it names none rather than naming
-	// the writer that just refused it — a row reading `fugaro settings set`
-	// beside `writable: false` says a command writes a key it will not write.
-	// The rows that answer nothing are the map spellings, whose literal `*`
-	// the write refuses while it writes their concrete spellings
-	// (`layer.profiles.*.base` against `layer.profiles.java.base`), and the
-	// sensitive rows the generic path carries under another name.
+	// The owner is asked of the write as well (D1178): the default token means
+	// "`settings set` writes it", so a row the write refuses may not carry it —
+	// `fugaro settings set` beside `writable: false` says in one breath that the
+	// command writes the key and that it does not, and the console draws exactly
+	// that pair as `written by fugaro settings set, not by the generic path`. A
+	// family's token and the file-carriers' (`config`, `config init`) are
+	// untouched by this: their rows are refused by the generic path and name the
+	// command that does write them. The rows left naming nothing are the map
+	// spellings, whose literal `*` the write refuses while it writes their
+	// concrete spellings (`layer.profiles.*.base` against
+	// `layer.profiles.java.base`), and the sensitive rows the generic path
+	// carries under another name.
 	owner := settingsOwnerCommands[row.Owner]
 	if writeErr != nil && row.Owner == settingsOwnerDefaultToken {
 		owner = ""
