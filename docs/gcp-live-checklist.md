@@ -11156,7 +11156,7 @@ mint is written to answers, so it may not merge before they exist.
   the audit line every mint writes.
 - **U14** — whether creating a consumer needs **workspace-admin rights**, and whether the token then
   carries admin reach beyond its scopes.
-- **U15** — whether the consumer must be marked **private**.
+- **U15** — whether the consumer must be marked **private**. Closed 2026-11-10: the create form offers no such choice, and the grant worked for the consumer it made.
 
 The script ends with a `CHECK 145 RESULT` block, like `check90.sh`, for you to paste back.
 
