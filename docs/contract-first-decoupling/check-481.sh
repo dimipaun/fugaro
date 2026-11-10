@@ -239,12 +239,32 @@ on_signal() {
 }
 
 # --------------------------------------------------------------- the guards
-guard_xtrace() {
+guard_setup() {
   if [ "$XTRACE_AT_START" = yes ]; then
     fact xtrace FAIL "this shell was started with tracing on, which prints the plan's figures and the run rows into the log you would then paste"
     stop "this shell is tracing (bash -x). Run it without -x: bash docs/contract-first-decoupling/check-481.sh <plan>"
   fi
-  fact setup PASS "bash, jq and fugaro are on PATH; this shell is not tracing; the plan is $PLAN and the batches watched are '$DECOUPLED_BATCH' and '$SEQUENTIAL_BATCH'"
+  guard_start_parse
+  fact setup PASS "bash, jq and fugaro are on PATH; this shell is not tracing; the plan is $PLAN and the batches watched are '$DECOUPLED_BATCH' and '$SEQUENTIAL_BATCH'; a run's start time reads out of the listing, fraction of a second and all"
+}
+
+# guard_start_parse: start_epoch against both shapes of the timestamp the run
+# rows carry. The listing marshals the runner's own `time.Time`, so a start at a
+# whole second reads `...:08Z` and every other one reads `...:08.123456789Z` —
+# the fraction before the `Z`, not at the end of the string. A parse that reads
+# only the first shape returns nothing for almost every real row, and a start the
+# check cannot read leaves each batch UNVERIFIED with nothing said about the
+# plan, which is a silent INCOMPLETE rather than an error: so the format is
+# proved here, at the start, against the check's own parse.
+guard_start_parse() {
+  local nanos="$SCRATCH/start-nanos.json" whole="$SCRATCH/start-whole.json" got_nanos got_whole
+  printf '{"runs":[{"started_at":"2026-11-10T17:53:08.123456789Z"}]}\n' >"$nanos"
+  printf '{"runs":[{"started_at":"2026-11-10T17:53:08Z"}]}\n' >"$whole"
+  got_nanos=$(start_epoch "$nanos" || true)
+  got_whole=$(start_epoch "$whole" || true)
+  if [ -z "$got_nanos" ] || [ "$got_nanos" != "$got_whole" ]; then
+    stop "Check 481 stopped: a run's start time cannot be read out of the listing. This jq read the same second as '${got_nanos:-nothing}' with its fraction of a second ('2026-11-10T17:53:08.123456789Z') and '${got_whole:-nothing}' without it ('2026-11-10T17:53:08Z'), and a start the check cannot read leaves every batch unmeasured — an INCOMPLETE with nothing said about the plan rather than a failure it could report"
+  fi
 }
 
 # ------------------------------------------------------------------ the gain
@@ -290,8 +310,14 @@ fmt_duration() {
 # run that never started). The listing is the only place a run's start is
 # published — no read carries its end — which is why the rest of the span is
 # measured by watching rather than read afterwards.
+#
+# `fromdateiso8601` reads whole seconds only, and the listing carries a fraction
+# of one (`time.Time` marshalled, so RFC3339Nano): the fraction is stripped
+# wherever it sits and not only at the end of the string, because what follows it
+# is the `Z` and not nothing. An anchored strip reads the sample of whole seconds
+# the guard proves and nothing else.
 start_epoch() {
-  jq -r '[.runs[] | ((.started_at // .created) | sub("\\.[0-9]+$"; "") | sub("\\+00:00$"; "Z") | fromdateiso8601)] | min' "$1" 2>/dev/null
+  jq -r '[.runs[] | ((.started_at // .created) | sub("\\.[0-9]+"; "") | sub("\\+00:00$"; "Z") | fromdateiso8601)] | min' "$1" 2>/dev/null
 }
 
 # watch_batch KEY NAME ESTIMATE: the batch's wall clock, observed. It polls the
@@ -453,7 +479,7 @@ main() {
     return 0
   fi
   [ -n "$PLAN" ] || die "Check 481: name the plan to measure (usage: $USAGE)"
-  guard_xtrace
+  guard_setup
   read_gain
   watch_batch decoupled-batch "$DECOUPLED_BATCH" "the shape the pass wrote"
   watch_batch sequential-batch "$SEQUENTIAL_BATCH" "the shape the plan had before the pass"
