@@ -86,7 +86,7 @@ which credential serves a review call. A provider key riding the sentinel
 `config.AnthropicKeyAccount` would be a second credential under a value an installation already
 spells, carrying the Anthropic key's admissions and its meaning, and `offeredToReview` matching by
 name **and** tier would have to offer two credentials where the class's whole rule is exactly one with
-no fallback. So the provider key gets a value of its own (**AK6a**, 24 files — AK4's and AK5's readers
+no fallback. So the provider key gets a value of its own (**AK6a**, 26 files — AK4's and AK5's readers
 for a second value, which is what §6.7's "6–8" estimate was short of) and the service half is
 **AK6b** (9 files). §6.7 is amended to say so in the same pass (§6 item 9).
 
@@ -133,6 +133,8 @@ could touch).
 | `internal/cli/run.go` | L2 | AK5, then AK6a (the second axis value) |
 | `internal/cli/project_job.go` | L2 | AK5 (the sentinel's own job), then AK6a |
 | `internal/cli/project_job_test.go` | L2 | AK5 (the same), then AK6a |
+| `internal/cli/settings_set.go` | L2 | AK6a (the stage-account write path's reading of an axis value that is no account) |
+| `internal/cli/settings_stages_test.go` | L2 | AK6a (the same) |
 | `internal/credsvc/sharedjobs_test.go` | L2 | AK4, then AK5, then AK6a (the agreement test gains the value) |
 | `internal/infra/projectjobs.go` | L2 | AK4 (the sentinel's refusal), then AK5, then AK6a |
 | `internal/infra/projectjobs_test.go` | L2 | AK4 (the same), then AK5, then AK6a |
@@ -190,8 +192,14 @@ test (the same: AK4's prose says the sentinel is not deployable, AK5 makes it de
 `internal/credsvc/sharedjobs_test.go` (AK4's agreement test gains the axis value). AK5 also books
 `internal/cli/project_job.go` and its test, which no task booked and which the placement it makes is
 unreachable without: the account axis is resolved there, so a sentinel the launcher cannot place on
-its own job is a sentinel the deployer deploys and no launch reaches. A task that needs a file another
-**level** holds adds itself to this table in the same commit.
+its own job is a sentinel the deployer deploys and no launch reaches. **AK6a books
+`internal/cli/settings_set.go` and `internal/cli/settings_stages_test.go` on the same terms**, and it
+is the same accident twice: `settingsStageAccountRule` (#2123, which landed the day this table was
+last amended and after it) is the write path's own reading of a `stages.<s>.claude_account` value, and
+its sentinel arm was added for AK4/AK5's value alone — so a second axis value that
+`config.ValidClaudeAccountRef` admits falls through to the declared-account lookup, whose sentence
+prescribes `fugaro accounts add <value>`, which `config.ValidateClaudeAccounts` refuses. A task that
+needs a file another **level** holds adds itself to this table in the same commit.
 
 ## 3. The tasks
 
@@ -530,20 +538,23 @@ the right one and this plan's six-file AK6 was the loser** (§1's own paragraph,
 provider key needs **its own value on the account axis**, because that value is the admission unit
 and the pairing — not the cascade's selector — fixes which credential serves a review call.
 
-**Files (24):** `internal/config/claude_accounts.go` and its test, `internal/config/project_secrets.go`
+**Files (26):** `internal/config/claude_accounts.go` and its test, `internal/config/project_secrets.go`
 and its test, `internal/projectpolicy/accounts.go` and its test, `internal/projectpolicy/policy.go`,
 `internal/projectpolicy/stage_accounts_test.go`, `internal/localcfg/localcfg.go` and its test,
 `internal/infra/projectjobs.go` and its test, `internal/cli/project_job.go` and its test,
-`internal/cli/run.go`, `internal/task/task.go` and its test, `schemas/task.schema.json` and
-`schemas/schemas_test.go`, `deploy/terraform/gcp/modules/project/variables.tf`, `docs/project-layer.md`,
+`internal/cli/run.go`, `internal/cli/settings_set.go` and `internal/cli/settings_stages_test.go` (both
+§2's preamble books for AK6a: #2123's stage-account write rule), `internal/task/task.go` and its test,
+`schemas/task.schema.json` and `schemas/schemas_test.go`,
+`deploy/terraform/gcp/modules/project/variables.tf`, `docs/project-layer.md`,
 and `internal/credsvc/review.go`, `internal/credsvc/review_test.go` and
-`internal/credsvc/sharedjobs_test.go`. **All twenty-four are rows §2 already books at L2** — the axis's
-readers AK4 and AK5 built, which is what its preamble means by `then AK6a` — and two of them,
-`internal/credsvc/review.go` and `internal/credsvc/review_test.go` (the pairing's own type and its
-offer rule), are the files §6.7's CSR17 booked and this plan's AK6 did not: that is the disagreement
-the reconciliation settled in CSR17's favour. The third `internal/credsvc` row,
-`sharedjobs_test.go`, was already booked and needs only the new value in its assertion. **No new secret, no new resource, no new grant:** the value is
-an axis value, and the credential it names is AK6b's bundle key.
+`internal/credsvc/sharedjobs_test.go`. **All twenty-four of the axis's readers are rows §2 already
+books at L2** — the readers AK4 and AK5 built, which is what its preamble means by `then AK6a` — and
+two of them, `internal/credsvc/review.go` and `internal/credsvc/review_test.go` (the pairing's own
+type and its offer rule), are the files §6.7's CSR17 booked and this plan's AK6 did not: that is the
+disagreement the reconciliation settled in CSR17's favour. The third `internal/credsvc` row,
+`sharedjobs_test.go`, was already booked and needs only the new value in its assertion. **No new
+secret, no new resource, no new grant:** the value is an axis value, and the credential it names is
+AK6b's bundle key.
 
 **Interfaces:** the account axis gains **a second value of its own** beside
 `config.AnthropicKeyAccount` — a constant in `internal/config/claude_accounts.go`, called here the
@@ -1116,7 +1127,7 @@ that reconciliation found, and item 11 the release precondition AK6b cannot ship
    selector fixes which credential serves a review call, and `offeredToReview` matches by name **and**
    tier, so a provider key riding the sentinel would carry the Anthropic key's own admissions and force
    the class to offer two credentials where its rule is exactly one with no fallback. **AK6 is
-   therefore two tasks**: **AK6a** (the second axis value — 24 files, and **`internal/credsvc/review.go`
+   therefore two tasks**: **AK6a** (the second axis value — 26 files, and **`internal/credsvc/review.go`
    among them, the file §6.7 booked and this plan did not**) and **AK6b** (the service's document, its
    offer and its forward — 9 files). **AK7 is amended** to CSR18 minus two clauses: `internal/gateway/gateway.go`
    is dropped (its own condition was "if the upstream kind or the auth shape moves", and with D1418

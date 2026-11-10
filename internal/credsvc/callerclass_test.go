@@ -3,30 +3,37 @@ package credsvc
 // The caller-class matrix (BB4, G4): every class this service admits, on every
 // route it serves, admitted or refused exactly as designed.
 //
-// The classes are five — a per-repository job, a review job, a verifier, a
-// person and the coordinator (BB5) — and each is matched against its OWN list
-// (verifyJob against the job accounts, VerifyVerifier against the verifier
-// list, and the read mint's one admission against the people and, when the
-// installation has one, the coordinator account). "Which list a caller is
-// looked up in is what makes it a class" is the whole of the design, and it is
-// a property no single-route test can hold: a mutant that made the read mint's
-// admission also read the job or verifier lists left every test in this
-// package green, because each of them only ever presented the token of the
-// class it was about.
+// The classes of these six routes are five — a per-repository job, a review
+// job, a verifier, a person and the coordinator (BB5) — and each is matched
+// against its OWN list (verifyJob against the job accounts, VerifyVerifier
+// against the verifier list, and the read mint's one admission against the
+// people and, when the installation has one, the coordinator account). "Which
+// list a caller is looked up in is what makes it a class" is the whole of the
+// design, and it is a property no single-route test can hold: a mutant that
+// made the read mint's admission also read the job or verifier lists left
+// every test in this package green, because each of them only ever presented
+// the token of the class it was about.
 //
-// So this file presents all five to all six routes. The table below is the
-// design written down, cell by cell, and a cell that answers something else —
-// including a route that answers 200 to a caller of another class — is a
+// So this file presents six classes to all six routes. The sixth is the
+// launcher (D1938), whose list no route here reads: it is admitted on the grant
+// route and on the intake (DS1.3, DS2.1), which are not routes of this matrix,
+// so its whole row is refusals — the half of the cross-class rule (G13) this
+// half of the design can hold today, and the reason a class added later cannot
+// quietly become a caller of a route the design never gave it. The table below
+// is the design written down, cell by cell, and a cell that answers something
+// else — including a route that answers 200 to a caller of another class — is a
 // failure that names itself.
 //
 // The matrix is read TWICE, because the audience is the second thing the
 // classes do not share: once with every class presenting a token for the
 // service's own URL (classVerdicts), and once with every class presenting the
 // token a plain `gcloud auth print-identity-token` gives a user account
-// (gcloudVerdicts, GcloudAudience) — which exactly one class, the person, may
-// carry. The second pass is what a mutant that widened the new acceptance to
-// another class fails, and no single-route test could hold it: each of them
-// presents only the class it is about.
+// (gcloudVerdicts, GcloudAudience) — which exactly one class OF THESE ROUTES,
+// the person, may carry. The launcher may carry it too and is admitted by none
+// of the six, so the person's two read-mint cells stay the only admission
+// either pass has. The second pass is what a mutant that widened the new
+// acceptance to another class fails, and no single-route test could hold it:
+// each of them presents only the class it is about.
 //
 // The refusals a class that holds no run identity gets on the three routes the
 // shared parse reads (mint, sign, messages) are that parse's own
@@ -103,12 +110,12 @@ func (h classMatrixTransport) RoundTrip(r *http.Request) (*http.Response, error)
 	return h.upstream.RoundTrip(r)
 }
 
-// classMatrixSvc is one installation configured with ALL five classes at once
-// and behind all five routes: the job fixture's own repository, a review job
+// classMatrixSvc is one installation configured with ALL six classes at once
+// and behind all six routes: the job fixture's own repository, a review job
 // whose account the published node admits, a verifier, a person, the
-// coordinator's own account, the fake GitHub a mint reaches, the fake
-// bitbucket.org the read mint reaches, and the bundle holding every entry the
-// five routes read.
+// coordinator's own account, a launcher, the fake GitHub a mint reaches, the
+// fake bitbucket.org the read mint reaches, and the bundle holding every entry
+// the five routes that read one do.
 func classMatrixSvc(t *testing.T) (*svc, *bitbucketFake) {
 	t.Helper()
 	bb := newBitbucketFake(t)
@@ -127,10 +134,15 @@ func classMatrixSvc(t *testing.T) (*svc, *bitbucketFake) {
 			VerifierAccounts:   []string{testVerifierSA},
 			PersonAccounts:     []string{testPersonAccount},
 			CoordinatorAccount: testCoordinatorAccount,
-			Now:                func() time.Time { return s.now },
+			// The launcher is configured and holds no route here: its row below
+			// is what says so, and a list that is absent from the configuration
+			// could not tell "refused by the class" from "refused because
+			// nobody was configured" (DS1.2, D1938).
+			LauncherAccounts: []string{testLauncherAccount},
+			Now:              func() time.Time { return s.now },
 		})
 		if err != nil {
-			t.Fatalf("the four classes cannot be configured together: %v", err)
+			t.Fatalf("the matrix's classes cannot be configured together: %v", err)
 		}
 		cfg.Auth, s.auth = auth, auth
 		cfg.ReviewAccounts = []ReviewJobAccount{{Email: testReviewSA, Account: testReviewAccount}}
@@ -215,6 +227,21 @@ var classVerdicts = map[string]classVerdict{
 	"coordinator/mint":        {StatusUnverified, ErrorUnverifiedRunIdentity},
 	"coordinator/sign":        {StatusUnverified, ErrorUnverifiedRunIdentity},
 	"coordinator/messages":    {StatusUnverified, ErrorUnverifiedRunIdentity},
+
+	// The launcher (D1938, DS1.2) is refused by every cell, and the shape of
+	// the refusals is what says why: the three routes a class's list answers
+	// refuse it as an unverified caller (its address is on none of those
+	// lists), and the three the shared parse reads refuse it for the run
+	// identity it does not hold — the same six answers the verifier gets, which
+	// is what a class of another route's looks like from here. Its own two
+	// routes, the grant and the intake (DS1.3, DS2.1), are not served by this
+	// matrix yet; when they are, its row there is the one that admits it.
+	"launcher/read-token":  {StatusUnverified, ErrorUnverifiedJobIdentity},
+	"launcher/github-read": {StatusUnverified, ErrorUnverifiedJobIdentity},
+	"launcher/verify":      {StatusUnverified, ErrorUnverifiedJobIdentity},
+	"launcher/mint":        {StatusUnverified, ErrorUnverifiedRunIdentity},
+	"launcher/sign":        {StatusUnverified, ErrorUnverifiedRunIdentity},
+	"launcher/messages":    {StatusUnverified, ErrorUnverifiedRunIdentity},
 }
 
 // gcloudVerdicts is the same matrix read with the OTHER audience a person's ID
@@ -232,9 +259,17 @@ var classVerdicts = map[string]classVerdict{
 // read cell green-where-they-must-be-red, which is what this table exists to
 // catch.
 //
+// The launcher class (D1938) is the case that says the audience is not what
+// admits: it MAY carry this one (VerifyLauncher admits it and this service's
+// URL alike), and its row here is refusals — six of them, the same six the
+// verifier gets — because its routes are the grant route and the intake, which
+// this matrix does not serve. A mutant that let a gcloud-audience token through
+// one of these six routes for the class that can really mint one moves a cell
+// of that row, and this is the only table that would see it.
+//
 // The cells that are the same as classVerdicts' are the same for the same
 // reason: the shared parse reads the run identity before any class does, so the
-// three identity routes refuse the three classes that hold no run identity
+// three identity routes refuse the four classes that hold no run identity
 // whatever their token's audience is.
 var gcloudVerdicts = map[string]classVerdict{
 	"job/read-token":  {StatusUnverified, ErrorUnverifiedJobIdentity},
@@ -271,6 +306,20 @@ var gcloudVerdicts = map[string]classVerdict{
 	"coordinator/mint":        {StatusUnverified, ErrorUnverifiedRunIdentity},
 	"coordinator/sign":        {StatusUnverified, ErrorUnverifiedRunIdentity},
 	"coordinator/messages":    {StatusUnverified, ErrorUnverifiedRunIdentity},
+
+	// The launcher's row is classVerdicts' row word for word: this audience is
+	// one it MAY carry (VerifyLauncher admits both, GcloudAudience), and not
+	// one cell of this matrix admits the class anyway — so a class that carries
+	// it is not thereby a caller of any of these six routes. That is the cell
+	// a mutant which let the launcher through somewhere would have to move, and
+	// moving it here is what makes the person's two read mints the only
+	// admission this pass has.
+	"launcher/read-token":  {StatusUnverified, ErrorUnverifiedJobIdentity},
+	"launcher/github-read": {StatusUnverified, ErrorUnverifiedJobIdentity},
+	"launcher/verify":      {StatusUnverified, ErrorUnverifiedJobIdentity},
+	"launcher/mint":        {StatusUnverified, ErrorUnverifiedRunIdentity},
+	"launcher/sign":        {StatusUnverified, ErrorUnverifiedRunIdentity},
+	"launcher/messages":    {StatusUnverified, ErrorUnverifiedRunIdentity},
 }
 
 // audienceClaim is the mutation that puts aud on a class's token: the empty
@@ -323,6 +372,16 @@ func TestRouteCallerClassMatrix(t *testing.T) {
 		{
 			name:  "coordinator",
 			token: func(s *svc, aud string) string { return s.personToken(testCoordinatorAccount, audienceClaim(aud)) },
+			run:   func(*svc) string { return "" },
+		},
+		{
+			// The launcher's token is the shape a member's own mint gives it:
+			// their address, and either audience (a user account can carry
+			// gcloud's own and this service's URL). The account id a launcher
+			// is answered with (LauncherCaller.Sub) is not part of a call to
+			// any route below, so the fixture's own sub is what is presented.
+			name:  "launcher",
+			token: func(s *svc, aud string) string { return s.personToken(testLauncherAccount, audienceClaim(aud)) },
 			run:   func(*svc) string { return "" },
 		},
 	}

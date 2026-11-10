@@ -250,7 +250,8 @@ func TestPolicyPublishKeepsTheCredentialsBlock(t *testing.T) {
 	})
 	// The node carries no allow-list and this publish does not re-seed one
 	// (P4), so the document it would write admits no repository: that is the
-	// confirmation an empty allow-list takes (#1674), typed here.
+	// warning an empty allow-list is published under (#1674), answered by the
+	// person at the terminal with nothing typed (T7).
 	typed(t)
 	out, _, err := executeStdin(t, "aurora\n", "project", "policy", "publish")
 	if err != nil {

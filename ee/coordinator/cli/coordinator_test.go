@@ -1392,8 +1392,10 @@ func TestCoordinatorStatusSurvivesGarbledRunObjects(t *testing.T) {
 	if !v.Records[0].InFlight {
 		t.Error("the run with no readable record is not in flight: nothing readable said it finished, and the safe direction is to report it")
 	}
-	if !strings.Contains(errOut, id) || !strings.Contains(errOut, "unreadable") {
-		t.Errorf("stderr = %q, want the read's own warning naming %s and the unreadable object", errOut, id)
+	// The warning names the run by its ending, like every other human line
+	// (spec.md §1, D1705).
+	if !strings.Contains(errOut, "/"+task.ShortRun(id)) || !strings.Contains(errOut, "unreadable") {
+		t.Errorf("stderr = %q, want the read's own warning naming run %s and the unreadable object", errOut, task.ShortRun(id))
 	}
 }
 

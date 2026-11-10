@@ -200,9 +200,10 @@ func TestGoldenCredentialsServiceCarriesItsNames(t *testing.T) {
 	// (CredentialsServiceEnvAwaitingTheModule), so the plan plus that list is
 	// what the allow-list must hold — and each name on that list is checked
 	// against the plan first, which is the tripwire that fails once the module
-	// starts rendering it and the entry is left behind. The list is empty here:
-	// this branch is the module that renders its one entry, so the plan alone
-	// spells the allow-list.
+	// starts rendering it and the entry is left behind. The list holds one name
+	// here -- FUGARO_LAUNCHER_ACCOUNTS, the launcher class's list, which arrives
+	// with the class and is rendered by the module in a later change (DS2.2) --
+	// so the plan plus that list spells the allow-list.
 	names := slices.Sorted(maps.Keys(want))
 	allowed := slices.Clone(credentialsServiceEnv)
 	slices.Sort(allowed)

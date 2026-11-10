@@ -107,17 +107,19 @@ func TestRefreshBaseStepYesNoTerminal(t *testing.T) {
 	}
 }
 
-// A declined base copy stops the step: nothing is copied or recorded.
-func TestRefreshBaseStepDeclined(t *testing.T) {
+// Without a terminal the base step is left: nothing is pinned or recorded
+// (T7: nothing is typed at a confirmation, so where no person is there to
+// answer, the step is the user's and the run stops).
+func TestRefreshBaseStepNoTerminalIsLeft(t *testing.T) {
 	r := newImagesRig(t, "1.2.3")
 	t.Chdir(repoCheckout(t, githubOrigin, refreshYAML))
 	e := rigEngine(t, r.initRig, &initOptions{})
-	out := atTerminal(t, e, "nope\n")
+	out := atNoTerminal(e)
 	if err := e.r.refreshBase(t.Context(), e, []string{"base"}); err == nil || r.dst.puts != 0 {
-		t.Fatalf("declined: %v, %d puts\n%s", err, r.dst.puts, out.String())
+		t.Fatalf("no terminal: %v, %d puts\n%s", err, r.dst.puts, out.String())
 	}
 	if got := r.localConfig(t).BaseImages["base"]; got != "" {
-		t.Fatalf("base_images.base was recorded despite the decline: %s", got)
+		t.Fatalf("base_images.base was recorded without a terminal: %s", got)
 	}
 }
 
@@ -393,8 +395,9 @@ func checkJobOwner(t *testing.T, provider, repo string) (slug, label string) {
 	return slug, label
 }
 
-// Step 3 moves the image and the spec's base together, after the typed
-// name, and says No changes on a rerun. A decline leaves the job untouched.
+// Step 3 moves the image and the spec's base together, after the person at
+// the terminal confirms it (nothing is typed: T7), and says No changes on a
+// rerun. With no terminal the step is left and the job untouched.
 func TestRefreshCheckJobStep(t *testing.T) {
 	r := newInitRig(t)
 	e := rigEngine(t, r, &initOptions{})
@@ -409,12 +412,12 @@ func TestRefreshCheckJobStep(t *testing.T) {
 	}
 	lc.BaseImages = map[string]string{"base": newRef}
 	tg := &refreshTarget{lc: lc, spec: infra.RepoSpec{Name: "acme/sandbox", Slug: slug, Label: label}, kinds: []string{"base"}}
-	// Declined: nothing written.
-	out := atTerminal(t, e, "nope\n")
+	// No terminal: the step is left and nothing is written.
+	out := atNoTerminal(e)
 	if err := e.r.refreshCheckJob(t.Context(), tg); err == nil || len(r.run.Patches()) != 0 {
-		t.Fatalf("declined: %v, %d patches\n%s", err, len(r.run.Patches()), out.String())
+		t.Fatalf("no terminal: %v, %d patches\n%s", err, len(r.run.Patches()), out.String())
 	}
-	out = atTerminal(t, e, initProjectName+"\n")
+	out = atTerminal(t, e, "")
 	if err := e.r.refreshCheckJob(t.Context(), tg); err != nil {
 		t.Fatalf("%v\n%s", err, out.String())
 	}
@@ -436,8 +439,8 @@ func TestRefreshCheckJobStep(t *testing.T) {
 }
 
 // 2026-10-08 decision: --yes confirms the check-job update without a
-// terminal, after showing the same old/new diff as a typed run, with its own
-// "confirmed by --yes" line.
+// terminal, after showing the same old/new diff as a run at the owner's
+// terminal, with its own "confirmed by --yes" line.
 func TestRefreshCheckJobStepYesNoTerminal(t *testing.T) {
 	r := newInitRig(t)
 	e := rigEngine(t, r, &initOptions{yes: true})
@@ -583,8 +586,9 @@ func buildTargetOpts(t *testing.T, r *anchorModeRig, o *initOptions) (*initEngin
 }
 
 // Step 4 rebuilds the stale workflow only, from the base the base step
-// recorded, after the typed name; a declined build stops it. No step here
-// touches Terraform.
+// recorded, after the person at the terminal confirms each build (nothing is
+// typed: T7); a build nobody can confirm stops it. No step here touches
+// Terraform.
 func TestRefreshBuildsStartFromTheNewBase(t *testing.T) {
 	useVersion(t, "0.5.1")
 	r := newAnchorModeRig(t, refreshYAML, true)
@@ -593,11 +597,11 @@ func TestRefreshBuildsStartFromTheNewBase(t *testing.T) {
 	p := &refreshPlan{workflows: []string{"api", "app"}}
 	putWorkflowRecordFrom("app", "0.5.1", managedRef("base", "0.5.1"))
 	putWorkflowRecordFrom("api", "0.4.0", managedRef("base", "0.4.0"))
-	atTerminal(t, e, "nope\n")
-	if err := e.r.refreshBuilds(t.Context(), p, tg); err == nil || !strings.Contains(err.Error(), "not confirmed") || len(fb.specs) != 0 {
-		t.Fatalf("declined: %v, %d builds", err, len(fb.specs))
+	atNoTerminal(e)
+	if err := e.r.refreshBuilds(t.Context(), p, tg); err == nil || !strings.Contains(err.Error(), "needs a terminal") || len(fb.specs) != 0 {
+		t.Fatalf("no terminal: %v, %d builds", err, len(fb.specs))
 	}
-	out := atTerminal(t, e, initProjectName+"\n")
+	out := atTerminal(t, e, "")
 	if err := e.r.refreshBuilds(t.Context(), p, tg); err != nil {
 		t.Fatalf("%v\n%s", err, out.String())
 	}
@@ -719,16 +723,16 @@ func TestRefreshBuildsOnTheBaseKind(t *testing.T) {
 	}
 }
 
-// A decline on the first of several stale workflows stops the loop: the
+// An unconfirmed first build of several stale workflows stops the loop: the
 // builds after it are never submitted (D9).
-func TestRefreshBuildsDeclineStopsSubsequentBuilds(t *testing.T) {
+func TestRefreshBuildsUnconfirmedStopsSubsequentBuilds(t *testing.T) {
 	useVersion(t, "0.5.1")
 	r := newAnchorModeRig(t, refreshYAML, true)
 	fb := useFakeBuilder(t)
 	e, tg := buildTarget(t, r)
 	p := &refreshPlan{workflows: []string{"api", "app"}}
 	// Neither has a build record: both are todo.
-	out := atTerminal(t, e, "nope\n")
+	out := atNoTerminal(e)
 	err := e.r.refreshBuilds(t.Context(), p, tg)
 	if err == nil || !strings.Contains(err.Error(), "api") || len(fb.specs) != 0 {
 		t.Fatalf("%v, %d builds\n%s", err, len(fb.specs), out.String())
@@ -771,12 +775,12 @@ func TestRefreshMovesCloneJob(t *testing.T) {
 	p := &refreshPlan{workflows: []string{"app"}}
 	tg := &refreshTarget{lc: lc, cfg: cfg, spec: infra.RepoSpec{Name: "acme/app", Slug: slug, Label: label,
 		Workflows: map[string]infra.WorkflowSpec{"app": {Job: jobName}}}}
-	// Declined: nothing written.
-	out := atTerminal(t, e, "nope\n")
+	// No terminal: the step is left and nothing is written.
+	out := atNoTerminal(e)
 	if err := e.r.refreshBuilds(t.Context(), p, tg); err == nil || len(r.run.Patches()) != 0 {
-		t.Fatalf("declined: %v, %d patches\n%s", err, len(r.run.Patches()), out.String())
+		t.Fatalf("no terminal: %v, %d patches\n%s", err, len(r.run.Patches()), out.String())
 	}
-	out = atTerminal(t, e, initProjectName+"\n")
+	out = atTerminal(t, e, "")
 	if err := e.r.refreshBuilds(t.Context(), p, tg); err != nil {
 		t.Fatalf("%v\n%s", err, out.String())
 	}
@@ -983,7 +987,7 @@ func TestRefreshBuildsRecordReadErrorStopsBuilds(t *testing.T) {
 	}
 }
 
-// The build confirmation is askBuild's (the project's name typed, or --yes:
+// The build confirmation is askBuild's (the person at the terminal, or --yes:
 // 2026-10-08 decision), never the run's own confirmation or a plain,
 // un-gated ask.
 func TestRefreshBuildsConfirmationIsTypedOrYes(t *testing.T) {
@@ -1275,16 +1279,19 @@ func TestRefreshBuildsFailureStopsTheLoop(t *testing.T) {
 	}
 }
 
-// A failure or a decline after a finished build names it, and keeps the
-// notes.
+// A failure or a declined build after a finished build names it, and keeps the
+// notes. A decline is only reachable through --ask now (T7: the person at the
+// terminal is the whole confirmation otherwise), so that case answers the y/N
+// twice: yes for the first build, no for the second.
 func TestRefreshBuildsNameWhatFinished(t *testing.T) {
 	for _, tc := range []struct {
-		name, second string
-		failOn       int
-		want         string
+		name, stdin string
+		ask         bool
+		failOn      int
+		want        string
 	}{
-		{"failed", initProjectName + "\n", 2, "quota"},
-		{"declined", "nope\n", 0, "not confirmed"},
+		{"failed", "", false, 2, "quota"},
+		{"declined", "y\nn\n", true, 0, "not confirmed"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			useVersion(t, "0.5.1")
@@ -1292,7 +1299,16 @@ func TestRefreshBuildsNameWhatFinished(t *testing.T) {
 			useFailingBuilder(t, tc.failOn)
 			e, tg := buildTarget(t, r)
 			p := &refreshPlan{workflows: []string{"api", "app"}}
-			out := atTerminal(t, e, initProjectName+"\n"+tc.second)
+			if tc.ask {
+				e.r.o.ask = true
+				e.r.cmd.Flags().Bool("ask", true, "")
+				// This command's own read of the marks, which is the one --ask
+				// answers for here: `fugaro image refresh` reads them into
+				// r.refresh, and non-nil is exactly a project they answered
+				// "managed" for (openRefreshManaged, and r.gateRestores).
+				e.r.refresh = &refreshManaged{}
+			}
+			out := atTerminal(t, e, tc.stdin)
 			err := e.r.refreshBuilds(t.Context(), p, tg)
 			if err == nil || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), "built before this: api") {
 				t.Fatalf("err %v\n%s", err, out.String())

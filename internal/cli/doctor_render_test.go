@@ -602,6 +602,12 @@ func TestDoctorSweepWarningsAreOneLine(t *testing.T) {
 // line, so the default view prints the short form of its per-instance prefix —
 // the pair to image-config-'s — and the whole text stays in --all and --json.
 //
+// The prefix carries the prebuilt entry's two states as well, and the short
+// form is one sentence for the ID, so it has to be true of them: the second
+// case below is the smoke state (the line an owner of a prebuilt entry reads
+// there), and its sentence says nothing about a build the check never looked
+// for on such an entry.
+//
 // Mutation (run, restore): drop the image-catalog- entry from
 // doctorShortsByPrefix, and this test fails: the line is the check's own
 // sentence, clipped where the sha256s are.
@@ -611,7 +617,7 @@ func TestDoctorCatalogImageLineIsItsShortForm(t *testing.T) {
 			strings.Repeat("a", 12) + ", built from " + strings.Repeat("b", 12) + ")",
 		Fix: "the daily image check rebuilds it; to do it now: fugaro image build go"}
 	got := doctorItemLine(t, c)
-	const want = "warning image-catalog-app: its project image catalog entry has no build, or one built from another definition than the runs bucket holds."
+	const want = "warning image-catalog-app: its project image catalog entry has no build or smoke of what its jobs start on, or one of another definition or reference."
 	if !strings.HasPrefix(got, want) {
 		t.Errorf("the catalog check is not printed in its short form:\n%s", got)
 	}
@@ -620,6 +626,20 @@ func TestDoctorCatalogImageLineIsItsShortForm(t *testing.T) {
 	}
 	if !strings.Contains(got, "fugaro image build go") {
 		t.Errorf("the default view drops the fix:\n%s", got)
+	}
+	// The prebuilt entry's own line, which the same ID and prefix carry: the
+	// check's sentence names the reference and the smoke, and the short form
+	// is the one both states share.
+	smoked := doctorCheck{ID: "image-catalog-app", Severity: "warning",
+		Problem: "workflow app runs the project image catalog's entry node22, the prebuilt image docker.io/library/node:22, and no smoke of that reference has been recorded: " +
+			"either it was never smoked or its smoke failed, and its jobs start on an image nothing has checked against the runtime contract",
+		Fix: "fugaro image build node22 smokes it in Cloud Build, which fails there if the image is not one a job can start on"}
+	line := doctorItemLine(t, smoked)
+	if !strings.HasPrefix(line, want) {
+		t.Errorf("the prebuilt entry's smoke check is not printed in the same short form:\n%s", line)
+	}
+	if !strings.Contains(line, "fugaro image build node22") {
+		t.Errorf("the default view drops the prebuilt entry's fix:\n%s", line)
 	}
 }
 

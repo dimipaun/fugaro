@@ -194,7 +194,7 @@ func TestGrantRulesNameOnlyKnownTypesAndRoles(t *testing.T) {
 			t.Errorf("%s has no roles", typ)
 		}
 		for key, w := range row {
-			if w == 0 || w&^(toPeople|toAccounts|toDeployer|toCredentials|toCoordinator|toVerifier|toCatalogCheck) != 0 {
+			if w == 0 || w&^(toPeople|toAccounts|toDeployer|toCredentials|toCoordinator|toVerifier|toCatalogCheck|toMCP) != 0 {
 				t.Errorf("%s %s: bad principal kinds %d", typ, key, w)
 			}
 			if id, ok := strings.CutPrefix(key, customKey); ok {
@@ -1278,5 +1278,141 @@ func TestCatalogCheckRecordsGrant(t *testing.T) {
 				t.Errorf("NotCovered = %q, want it to contain %q", got[0], tc.want)
 			}
 		})
+	}
+}
+
+// TestMCPAccountIsItsOwnPrincipalKind: the front door's own account (D920,
+// D935) is a principal of its own kind, like the credentials service's, the
+// coordinator's, the verifier's and the project's catalog check job, and for
+// the same reason: as one of FugaroAccounts every toAccounts row would have
+// accepted it, and this account serves a public endpoint — a plan that rode
+// one of those rows would be one grant away from making spec.md §8's "there is
+// no credential to reach" false.
+//
+// Its ONE grant is the store's: the account, roles/storage.objectAdmin,
+// `fugaro-mcpauth-<the installation's project>`, no condition. The bit alone is
+// not enough — mcpauthStoreGrant narrows the row to that grant, the way
+// catalogRecordsGrant narrows the catalog check job's objectUser one — so the
+// runs bucket's objectAdmin (which the operators hold and this account does
+// not), the store's role to another member and the store's role under a
+// condition are each refused.
+//
+// The covered case is the point of the change: `fugaro update --mcp-server` is
+// one command, and the store's grant is one of the two things it creates, so a
+// plan review that refused it would ask the owner for a second confirmation on
+// the release that turns the front door on (M10's finding on this task's first
+// round).
+//
+// Mutation (run, restore): give any OTHER row the toMCP bit and the row loop
+// fails; drop the isMCPMember case from checkGrant and the covered case fails
+// (the account reads as an address nobody listed); drop mcpauthStoreGrant from
+// grant and the runs bucket's objectAdmin to this account is covered — the bit
+// alone, with no bucket to narrow it — which is what makes the check the
+// narrowing rather than the row.
+func TestMCPAccountIsItsOwnPrincipalKind(t *testing.T) {
+	const store = MCPServerStorePrefix + "proj-1"
+	const member = "serviceAccount:" + MCPServerAccountID + "@proj-1.iam.gserviceaccount.com"
+	const rowType, rowRole = "google_storage_bucket_iam_member", "roles/storage.objectAdmin"
+	if slices.Contains(FugaroAccounts, MCPServerAccountID) {
+		t.Errorf("the front door's account is one of FugaroAccounts, so every toAccounts row accepts it")
+	}
+	rows := 0
+	for typ, row := range grantRules {
+		for key, w := range row {
+			if w&toMCP == 0 {
+				continue
+			}
+			rows++
+			if typ != rowType || key != rowRole {
+				t.Errorf("%s %s: the row accepts the front door's account, whose one grant is D935's store", typ, key)
+			}
+		}
+	}
+	if rows != 1 {
+		t.Errorf("%d rows carry toMCP, want the one the module writes for this account: %s %s", rows, rowType, rowRole)
+	}
+
+	// The grant as the module writes it, on the store's own bucket.
+	storeGrant := rc(rowType, map[string]any{"member": member, "role": rowRole, "bucket": store}, map[string]any{}, "create")
+	if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{storeGrant}}, nil); len(got) != 0 {
+		t.Errorf("D935's store grant to the front door's account: NotCovered = %q, want it covered: the store and its one grant are what `fugaro update --mcp-server` creates, and a plan review that refused them would ask for a second confirmation on the release that turns the front door on", got)
+	}
+
+	// Everything else this account could be handed, one case each. The
+	// condition is the shape the modules write elsewhere (a bucket grant's one
+	// condition block), so the case is about the store's grant carrying none
+	// and not about the expression.
+	cond := []any{map[string]any{"title": gcp.LauncherBucketConditionTitle, "expression": gcp.LauncherBucketCondition(store), "description": nil}}
+	for _, tc := range []struct {
+		what  string
+		after map[string]any
+	}{
+		{"objectViewer on the store", map[string]any{"member": member, "role": "roles/storage.objectViewer", "bucket": store}},
+		{"objectAdmin on the store to the operators' own bucket", map[string]any{"member": member, "role": rowRole, "bucket": "fugaro-runs-proj-1"}},
+		{"objectAdmin on the store to a bucket that is nobody's", map[string]any{"member": member, "role": rowRole, "bucket": "someone-elses-bucket"}},
+		{"objectAdmin on the store to a person on the review screen", map[string]any{"member": "user:me@example.com", "role": rowRole, "bucket": store}},
+		{"objectAdmin on the store to a job account", map[string]any{"member": "serviceAccount:fugaro-history@proj-1.iam.gserviceaccount.com", "role": rowRole, "bucket": store}},
+		{"objectAdmin on the store to a lookalike in another project", map[string]any{"member": "serviceAccount:" + MCPServerAccountID + "@fp-2.iam.gserviceaccount.com", "role": rowRole, "bucket": store}},
+		{"objectAdmin on the store under a condition", map[string]any{"member": member, "role": rowRole, "bucket": store, "condition": cond}},
+		{"objectAdmin on the store with a computed role", map[string]any{"member": member, "bucket": store}},
+	} {
+		ch := rc(rowType, tc.after, map[string]any{}, "create")
+		if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil); len(got) == 0 {
+			t.Errorf("%s is covered: the front door's account holds one grant, roles/storage.objectAdmin on the store D935 gives it, and nothing else", tc.what)
+		}
+	}
+
+	// Listed on the review screen by mistake, it is still not a person: the
+	// kind is read before the list, as the deployer's, the credentials
+	// service's and the catalog check job's are, so a listed address cannot
+	// hand this account a role of the operators' own. (The store's own grant
+	// stays covered when the address is listed, and that is the row being the
+	// account's and not the list: what a person's row would add to this account
+	// — the runs bucket's objectAdmin — is refused here.)
+	listed := Cover{Projects: testCover.Projects, Region: testCover.Region, Buckets: testCover.Buckets, Listed: []string{member}}
+	ch := rc(rowType, map[string]any{"member": member, "role": rowRole, "bucket": "fugaro-runs-proj-1"}, map[string]any{}, "create")
+	if got := listed.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil); len(got) == 0 {
+		t.Errorf("objectAdmin on the runs bucket to the front door's account, listed on the review screen, is covered: the account is not a person, and the runs bucket's objects are the operators'")
+	}
+
+	// And the account is the installation's: the same ID in another project is
+	// nobody this installation creates, on its own project's store or not.
+	for _, b := range []string{store, "fugaro-mcpauth-fp-2"} {
+		ch := rc(rowType, map[string]any{"member": "serviceAccount:" + MCPServerAccountID + "@fp-2.iam.gserviceaccount.com", "role": rowRole, "bucket": b}, map[string]any{}, "create")
+		if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil); len(got) == 0 {
+			t.Errorf("objectAdmin on %s to %s@fp-2 is covered: the front door is %s@proj-1 and nothing else", b, MCPServerAccountID, MCPServerAccountID)
+		}
+	}
+}
+
+// The front door's names in cover.go are their writers' own: this package
+// cannot import internal/infra or ee/coordinator/mcpauth (both lead back to
+// it), so the account ID is written twice and the store's prefix three times —
+// the module that creates the bucket, the store's own Go constructor and the
+// plan review. A rename on any writer's side would leave an account or a
+// bucket the review no longer recognises: the store's grant would be refused on
+// every installation, or — the direction that matters — a row's bit would sit
+// on a name nobody creates.
+func TestCoverMCPNamesAreTheWritersNames(t *testing.T) {
+	for _, tc := range []struct {
+		path, where string
+		want        *regexp.Regexp
+	}{
+		{filepath.Join("..", "coordinator_service.go"), "internal/infra/coordinator_service.go",
+			regexp.MustCompile(`(?m)^const MCPServerAccountID = "` + MCPServerAccountID + `"$`)},
+		{filepath.Join("..", "..", "..", "deploy", "terraform", "gcp", "modules", "installation", "mcpauth_store.tf"),
+			"deploy/terraform/gcp/modules/installation/mcpauth_store.tf",
+			regexp.MustCompile(`(?m)^\s*mcpauth_store_bucket = "` + regexp.QuoteMeta(MCPServerStorePrefix) + `\$\{var\.project\}"$`)},
+		{filepath.Join("..", "..", "..", "ee", "coordinator", "mcpauth", "store_bucket.go"),
+			"ee/coordinator/mcpauth/store_bucket.go",
+			regexp.MustCompile(`(?m)^func StoreBucketName\(gcpProject string\) string \{ return "` + regexp.QuoteMeta(MCPServerStorePrefix) + `" \+ gcpProject \}$`)},
+	} {
+		b, err := os.ReadFile(tc.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !tc.want.Match(b) {
+			t.Errorf("%s declares no name tf/cover.go holds the front door's account and its store by: update tf/cover.go's literal with it", tc.where)
+		}
 	}
 }

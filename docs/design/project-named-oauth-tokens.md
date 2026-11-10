@@ -197,7 +197,7 @@ profiles:
 **Schema version.** `profiles.<p>.claude_accounts` is a new field inside a profile entry, and the
 policy's rule for that case is written in the decoder: the profiles block is decoded with
 `DisallowUnknownFields`, and "a newer profile field bumps Version, which is what refuses a node
-this binary cannot read" (`internal/projectpolicy/policy.go:501-519`). So `projectpolicy.Version`
+this binary cannot read" (`internal/projectpolicy/policy.go:541-559`). So `projectpolicy.Version`
 goes from 2 to 3 (`internal/projectpolicy/version.go:24`). The `accounts` block itself is a new
 top-level key, which an older reader tolerates and lists in `UnknownKeys` (`policy.go:28-31,
 183-187`); the bump is what keeps an older runner from running past a gate it does not know, the

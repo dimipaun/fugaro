@@ -31,9 +31,9 @@ updates:
   # section 5.2 and this plan's open item 5). `directory` is the console's own
   # package directory, and the reason is that it is the one Dependabot is being
   # asked to watch: this repository ships several npm packages -- `shared/`,
-  # `website/`, `mobile/`, `deploy/sandbox/` and the two test harnesses under
-  # `images/base/harnesses/` and `internal/budget/rules/emulator/`, each with a
-  # committed lockfile installed by `npm ci` -- and the owner's ruling extends
+  # `website/`, `mobile/`, `deploy/sandbox/` and the emulator test harness under
+  # `internal/budget/rules/emulator/`, each with a committed lockfile installed
+  # by `npm ci` -- and the owner's ruling extends
   # Dependabot's scope to the console and to no other. `/console` names it;
   # `directory: /` would name the repository root, which is not a package at
   # all, so the field is the scope decision and not an incidentally correct

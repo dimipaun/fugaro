@@ -901,6 +901,19 @@ func repoScope(r showRepo) string {
 	return r.Slug + "'s"
 }
 
+// runningEndings is the ending each of a document's running entries is shown
+// by, resolved over the whole document: the blocks under the repositories are
+// one screen's listing, so an entry is named by the shortest ending that tells
+// it from every other entry on that screen, whichever repository that entry
+// belongs to (spec.md §3, F15, task.DisplayRuns).
+func runningEndings(runs []showRun) map[task.Ref]string {
+	refs := make([]task.Ref, 0, len(runs))
+	for _, e := range runs {
+		refs = append(refs, task.Ref{Slug: e.Slug, RunID: e.Run})
+	}
+	return task.DisplayRuns(refs)
+}
+
 func printShow(w io.Writer, d *budgetShowDoc, showCompute bool) {
 	mode := d.Mode
 	if mode == "" {
@@ -920,6 +933,13 @@ func printShow(w io.Writer, d *budgetShowDoc, showCompute bool) {
 	fmt.Fprintf(w, "  today: counted %s, spent %s, notional %s (subscription, not billed)\n", usdVal(g.CountedUSD), usdVal(g.SpentUSD), usdVal(g.NotionalUSD))
 	fmt.Fprintf(w, "  headroom: %s\n  kill switch: %s\n", usdText(g.HeadroomUSD), killText(g.Kill))
 	fmt.Fprintf(w, "defaults for repositories without a cap of their own: daily %s, per-run %s\n", usdText(d.Defaults.RepoDailyCapUSD), usdText(d.Defaults.RepoPerRunCapUSD))
+	// The running blocks are one screen's listing of runs, so their endings are
+	// resolved over every entry the screen prints and not block by block: two
+	// repositories whose runs share their last four characters are told apart
+	// here exactly as `runs ls --all` tells them apart, and the pair that
+	// collides is the pair the reader has in front of them (spec.md §3, F15).
+	// --json's own rows keep the full ID (D1705).
+	endings := runningEndings(d.Running)
 	for _, r := range d.Repos {
 		name := r.Slug
 		if r.Repo != "" {
@@ -960,7 +980,7 @@ func printShow(w io.Writer, d *budgetShowDoc, showCompute bool) {
 			if e.Stale {
 				state += " (no heartbeat)"
 			}
-			fmt.Fprintf(tw, "    %s\t%s\t%s\t%s\t%s\n", oneLine(clipRunes(e.Run, 200)), oneLine(clipRunes(e.Workflow, 200)), state, usdVal(e.SpentUSD), oneLine(clipRunes(e.Title, 200)))
+			fmt.Fprintf(tw, "    %s\t%s\t%s\t%s\t%s\n", oneLine(endings[task.Ref{Slug: e.Slug, RunID: e.Run}]), oneLine(clipRunes(e.Workflow, 200)), state, usdVal(e.SpentUSD), oneLine(clipRunes(e.Title, 200)))
 		}
 		_ = tw.Flush()
 	}

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/initflow"
 )
 
 func (r *fbRig) dbCreates() int {
@@ -43,41 +44,45 @@ func ownMark() map[string]any {
 const denyAllReformatted = "// locked\nrules_version = '2';\nservice cloud.firestore {\n match /databases/{database}/documents {\n  match /{document=**} {\n   allow read, write: if false; /* nobody */\n  }\n }\n}"
 
 func TestEnsureCreatesOnceAfterConfirmation(t *testing.T) {
+	// A person at the terminal is the confirmation, and nothing is typed under
+	// it (T7): the database is created once, from the plan the banner listed.
 	r := newFBRig(t)
 	fakeTerminal(t)
-	// The installation and Firebase applies are confirmed; the database step is not.
-	out, _, err := executeStdin(t, names(2), "setup", "--firebase-project", fpID)
-	if err == nil {
-		t.Fatalf("not confirmed, yet init succeeded:\n%s", out)
-	}
-	if r.fsWrites() != 0 {
-		t.Errorf("Firestore was written before the confirmation (creates %d, rules %d)", r.dbCreates(), r.rules.Writes())
+	out, _, err := executeStdin(t, "", "setup", "--firebase-project", fpID)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
 	}
 	for _, want := range []string{"Cloud Firestore database: CREATE", "us-east5", "PERMANENT", "deny-all rules", "Firestore mark: write meta/installation", "permanent and can never be changed"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the confirmation lacks %q:\n%s", want, out)
 		}
 	}
-	// Confirmed.
-	r2 := newFBRig(t)
-	if out, _, err := executeStdin(t, "us-east5\n", "setup", "--firebase-project", fpID, "--yes"); err != nil {
-		t.Fatalf("%v\n%s", err, out)
-	}
-	if n := r2.dbCreates(); n != 1 {
+	if n := r.dbCreates(); n != 1 {
 		t.Errorf("database creates = %d, want 1", n)
 	}
-	loc, prot := r2.fs.Database()
+	loc, prot := r.fs.Database()
 	if loc != "us-east5" || prot != "DELETE_PROTECTION_ENABLED" {
 		t.Errorf("database = %s %s", loc, prot)
 	}
-	if src, ok := r2.rules.Source(); !ok || src != infra.FirestoreRules {
+	if src, ok := r.rules.Source(); !ok || src != infra.FirestoreRules {
 		t.Errorf("rules = %q %v", src, ok)
 	}
-	m, ok := r2.fs.Value("meta", "installation")
+	m, ok := r.fs.Value("meta", "installation")
 	if !ok || m["project"] != initProjectName || m["gcp_project"] != initProject || m["firebase_project"] != fpID || m["managed_by"] != "fugaro" {
 		t.Errorf("mark = %v", m)
 	}
-	r2.noDeletes(t)
+	r.noDeletes(t)
+
+	// Nobody can confirm it: the step is the user's, and Firestore is untouched.
+	r2 := newFBRig(t)
+	noTerminal(t)
+	out, _, err = executeStdin(t, "", "setup", "--firebase-project", fpID)
+	if err == nil || !strings.Contains(err.Error(), "needs a real terminal") {
+		t.Fatalf("err = %v\n%s", err, out)
+	}
+	if r2.fsWrites() != 0 {
+		t.Errorf("Firestore was written without a confirmation (creates %d, rules %d)", r2.dbCreates(), r2.rules.Writes())
+	}
 }
 
 func TestEnsureAdoptsExisting(t *testing.T) {
@@ -114,11 +119,14 @@ func TestEnsureRefusesOtherLocation(t *testing.T) {
 	r.noDeletes(t)
 }
 
+// The database's step is applied only where it is confirmed, and a person at
+// the terminal is the confirmation now (T7): a run nobody can confirm writes
+// nothing to Firestore.
 func TestEnsureNeedsConfirm(t *testing.T) {
 	r := newFBRig(t)
-	fakeTerminal(t)
-	if _, _, err := executeStdin(t, names(2)+"nope\n", "setup", "--firebase-project", fpID); err == nil {
-		t.Fatal("a wrong confirmation was accepted")
+	noTerminal(t)
+	if _, _, err := executeStdin(t, "", "setup", "--firebase-project", fpID); err == nil {
+		t.Fatal("a run nobody can confirm wrote the database")
 	}
 	if r.fsWrites() != 0 {
 		t.Errorf("Firestore was written without a confirmation")
@@ -323,31 +331,33 @@ func TestHalfFailedRerunCompletes(t *testing.T) {
 	}
 }
 
+// A database is created only where its permanent location was confirmed, and
+// the confirmation is the person at the terminal, never a line of stdin (T7):
+// no terminal, nothing created; a person there, one create.
 func TestLocationConfirmationRequiredToCreate(t *testing.T) {
-	// The shared confirmations are typed (3), the location is not: no create.
-	for name, loc := range map[string]string{"missing": "", "wrong": "nam5\n"} {
-		t.Run(name, func(t *testing.T) {
-			r := newFBRig(t)
-			fakeTerminal(t)
-			out, _, err := executeStdin(t, names(3)+loc, "setup", "--firebase-project", fpID)
-			if err == nil || !strings.Contains(err.Error()+out, "us-east5") {
-				t.Fatalf("err = %v\n%s", err, out)
-			}
-			if r.fsWrites() != 0 {
-				t.Error("something was created without the location typed")
-			}
-			if _, ok := r.fs.Value("meta", "installation"); ok {
-				t.Error("marked")
-			}
-		})
-	}
 	r := newFBRig(t)
+	noTerminal(t)
+	out, _, err := executeStdin(t, "", "setup", "--firebase-project", fpID)
+	if err == nil || !strings.Contains(err.Error(), "needs a real terminal") {
+		t.Fatalf("err = %v\n%s", err, out)
+	}
+	if r.fsWrites() != 0 {
+		t.Error("something was created without a confirmation")
+	}
+	if _, ok := r.fs.Value("meta", "installation"); ok {
+		t.Error("marked")
+	}
+
+	r2 := newFBRig(t)
 	fakeTerminal(t)
-	if out, _, err := executeStdin(t, names(3)+"us-east5\n", "setup", "--firebase-project", fpID); err != nil && !strings.Contains(err.Error(), "confirm") {
+	if out, _, err := executeStdin(t, "", "setup", "--firebase-project", fpID); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if r.dbCreates() != 1 {
-		t.Errorf("creates = %d with the location typed", r.dbCreates())
+	if r2.dbCreates() != 1 {
+		t.Errorf("creates = %d with a person at the terminal", r2.dbCreates())
+	}
+	if loc, _ := r2.fs.Database(); loc != infra.FirestoreLocation {
+		t.Errorf("database = %s", loc)
 	}
 }
 
@@ -492,9 +502,11 @@ func TestReadBackAfterCreateRetriesAPIPropagation(t *testing.T) {
 // and the scheduler run is not where the Firestore database is created. The
 // two are separate constants that happen to hold the same value today
 // (reconciliation C1), and a database's location is permanent, so the
-// confirmation keeps coming from infra.FirestoreLocation and stays typed: a
-// run whose region is nowhere near the database's location still prompts for
-// the location, refuses the region typed there, and takes the location.
+// confirmation keeps coming from infra.FirestoreLocation and stays Typed in
+// `setup`: a run whose region is nowhere near the database's location reads
+// the note from infra.FirestoreLocation alone and confirms it by being at the
+// terminal, with nothing typed (T7). Where nobody can confirm it, the step is
+// left.
 func TestRegionCannotChangeTheFirestoreLocation(t *testing.T) {
 	const elsewhere = "europe-west4"
 	if elsewhere == infra.FirestoreLocation {
@@ -503,26 +515,33 @@ func TestRegionCannotChangeTheFirestoreLocation(t *testing.T) {
 	c := condition{name: "a region elsewhere", terminal: true,
 		opts: initOptions{door: setupDoor.name, cloud: cloudOptions{gcpProject: initProject, region: elsewhere}}}
 
-	r, spy, out := c.run(t, elsewhere+"\n")
-	err := r.confirmLocation()
-	if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), infra.FirestoreLocation) {
-		t.Fatalf("the region %s was taken for the database's location: %v\n%s", elsewhere, err, out)
+	r, spy, out := c.run(t, "")
+	if err := r.confirmLocation(); err != nil {
+		t.Fatalf("a person at the terminal did not confirm the location: %v\n%s", err, out)
 	}
-	if !spy.read {
-		t.Error("the database's location was not asked for")
+	if spy.read {
+		t.Error("the database's location was read: nothing is typed at a confirmation (T7)")
 	}
 	if r.o.cloud.region != elsewhere {
 		t.Errorf("the run's region = %q, want the one it was given (%s)", r.o.cloud.region, elsewhere)
 	}
 	if got := out.String(); !strings.Contains(got, "the Firestore database is created in "+infra.FirestoreLocation) ||
-		!strings.Contains(got, "Type "+infra.FirestoreLocation+" to create it there") || strings.Contains(got, elsewhere) {
+		!strings.Contains(got, "can NEVER be changed") || strings.Contains(got, elsewhere) {
 		t.Errorf("the confirmation does not come from %s alone:\n%s", infra.FirestoreLocation, got)
 	}
 
-	// The location itself, typed, is the confirmation — in this door and in
-	// the other, whatever region the run holds.
-	r2, _, out2 := c.run(t, infra.FirestoreLocation+"\n")
-	if err := r2.confirmLocation(); err != nil {
-		t.Fatalf("the database's location typed: %v\n%s", err, out2)
+	// Nobody can confirm it: the step is left, and the note is all that was
+	// printed — the region the run holds is not an answer either.
+	pipe := c
+	pipe.terminal = false
+	r2, spy2, out2 := pipe.run(t, elsewhere+"\n")
+	err := r2.confirmLocation()
+	var ny *initflow.NeedsYouError
+	if err == nil || !asNeedsYou(err, &ny) || spy2.read {
+		t.Fatalf("err %v, read %v: the location was confirmed with no terminal", err, spy2.read)
+	}
+	if got := out2.String(); !strings.Contains(got, "the Firestore database is created in "+infra.FirestoreLocation) ||
+		strings.Contains(got, elsewhere) {
+		t.Errorf("the note does not come from %s alone:\n%s", infra.FirestoreLocation, got)
 	}
 }

@@ -1,6 +1,6 @@
 # Compatibility matrix
 
-**Status: plan only; nothing is implemented; no task approved.** Spec owner: Dimi Paun. Date:
+**Status as of 2026-11-10: in progress, 1/4 merged; see [docs/status.md](../status.md) for the current table.** Spec owner: Dimi Paun. Date:
 2026-11-07 (checked against `origin/main`).
 
 A public page of what Fugaro supports today and what it does not, built from the owner's draft.

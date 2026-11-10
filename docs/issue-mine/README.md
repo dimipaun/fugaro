@@ -1,6 +1,6 @@
 # `fugaro issue mine`: what happened to my issues
 
-**Status: plan only; nothing is implemented; no task approved.** Spec owner: Dimi Paun. Written 2026-11-08.
+**Status as of 2026-11-10: in progress, 4/7 merged; see [docs/status.md](../status.md) for the current table.** Spec owner: Dimi Paun. Written 2026-11-08.
 
 - [spec.md](spec.md): the spec as received.
 - [reconciliation.md](reconciliation.md): findings F1–F18, decisions D1780–D1784 (all answered 2026-11-08; D1784 is not the recommendation), open items O1–O5 (answered 2026-11-08; O4 is not the recommendation) (answered 2026-11-08; O4 is not the recommendation), UNVERIFIED. Wins over the spec.

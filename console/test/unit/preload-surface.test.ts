@@ -53,6 +53,11 @@ import {
   createConfirmBridge,
   isConfirmReply,
 } from '../../src/preload/confirm'
+import {
+  INSTALLATION_BRIDGE_KEY,
+  INSTALLATION_BRIDGE_PREFIX,
+  INSTALLATION_OPERATIONS,
+} from '../../src/preload/installations'
 import { builtFile, builtPath } from '../support/built'
 
 /**
@@ -391,5 +396,100 @@ describe('the confirmation window’s built preload', () => {
     }
     expect(CONFIRM_BRIDGE_PREFIX).toBe('confirm:')
     expect(CONSOLE_BRIDGE_KEY).not.toBe(CONFIRM_BRIDGE_KEY)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The installations picker's preload (Part G, T-G3)
+// ---------------------------------------------------------------------------
+
+/** runBuiltPicker runs `dist/preload/installations.js` the way `runBuiltConfirm`
+ * runs the confirmation window's, and for the same reason: the third document's
+ * guarded block is four lines that no other test executes, and the row this task
+ * adds -- the distro list -- is only observable on the wire. */
+function runBuiltPicker(
+  scope: { readonly window?: Record<string, unknown>; readonly document?: unknown },
+  reply: unknown = { ok: true, data: { kind: 'listed', distributions: [] } },
+): {
+  readonly required: readonly string[]
+  readonly exposed: readonly { readonly key: string; readonly api: unknown }[]
+  readonly window: Record<string, unknown> | undefined
+  readonly sent: readonly { readonly channel: string; readonly args: readonly unknown[] }[]
+} {
+  const source = builtFile('preload/installations.js')
+  const required: string[] = []
+  const sent: { channel: string; args: readonly unknown[] }[] = []
+  const bridge = recordingBridge(scope.window)
+  const renderer: RendererLike = {
+    async invoke(channel: string, ...args: unknown[]): Promise<unknown> {
+      sent.push({ channel, args })
+      return reply
+    },
+  }
+  const sandbox: Record<string, unknown> = {
+    ...scope,
+    require(specifier: string): unknown {
+      required.push(specifier)
+      if (specifier !== 'electron') throw new Error(`the preload required ${specifier}`)
+      return { contextBridge: bridge, ipcRenderer: renderer }
+    },
+    module: { exports: {} },
+    exports: {},
+    console,
+  }
+  runInContext(source, createContext(sandbox), { filename: 'preload/installations.js' })
+  return { required, exposed: bridge.exposed, window: scope.window, sent }
+}
+
+describe('the installations picker’s built preload', () => {
+  it('exposes one method per row, under its own key, and nothing else', () => {
+    const { exposed, window, required } = runBuiltPicker({ window: {}, document: {} })
+    expect(exposed.map((entry) => entry.key)).toEqual([INSTALLATION_BRIDGE_KEY])
+    expect(Object.keys(window ?? {}).sort()).toEqual([INSTALLATION_BRIDGE_KEY])
+    const api = (window ?? {})[INSTALLATION_BRIDGE_KEY] as Record<string, unknown>
+    expect(Object.isFrozen(api)).toBe(true)
+    // The six rows the picker had, and the distro list this task adds: the
+    // surface is the table's own names, so a method that is not a row -- or a
+    // row with no method -- fails here.
+    expect(Object.keys(api).sort()).toEqual(
+      ['operations', 'version', ...INSTALLATION_OPERATIONS.map(([name]) => name)].sort(),
+    )
+    expect([...(api['operations'] as readonly string[])]).toEqual(INSTALLATION_OPERATIONS.map(([name]) => name))
+    expect(required).toEqual(['electron'])
+  })
+
+  it('sends the distro list’s channel with no arguments', async () => {
+    const { window, sent } = runBuiltPicker({ window: {}, document: {} })
+    const api = (window ?? {})[INSTALLATION_BRIDGE_KEY] as { distros: () => Promise<unknown> }
+    expect(await api.distros()).toStrictEqual({ ok: true, data: { kind: 'listed', distributions: [] } })
+    expect(sent).toStrictEqual([{ channel: `${INSTALLATION_BRIDGE_PREFIX}distros`, args: [] }])
+    // The channel is a row of the picker's own table and not a spelling written
+    // here: a bridge that built the name itself would pass the assertion above
+    // and drift from `src/main/installations.ts` at the next rename.
+    expect(INSTALLATION_OPERATIONS).toContainEqual(['distros', 'distros'])
+  })
+
+  it('is inert where there is no renderer, and does not reach Electron first', () => {
+    const { required, exposed, window } = runBuiltPicker({ window: {} })
+    expect(required).toEqual([])
+    expect(exposed).toEqual([])
+    expect(window).toEqual({})
+  })
+
+  it('never lets the picker’s renderer reach the ipcRenderer it was built over', () => {
+    const { window } = runBuiltPicker({ window: {}, document: {} })
+    const api = (window ?? {})[INSTALLATION_BRIDGE_KEY]
+    const forbidden: readonly (readonly [string, unknown])[] = [
+      ['the ipcRenderer itself', SENTINEL],
+      ['the ipcRenderer’s invoke', SENTINEL.invoke],
+      ['a value the ipcRenderer carries', SENTINEL.treasury],
+      ['the ipcRenderer’s prototype', Object.getPrototypeOf(SENTINEL)],
+    ]
+    for (const value of reachable(api)) {
+      for (const [what, target] of forbidden) {
+        expect(value === target, `the exposed surface reaches ${what}`).toBe(false)
+      }
+    }
+    expect(JSON.stringify(api)).not.toContain('treasury')
   })
 })

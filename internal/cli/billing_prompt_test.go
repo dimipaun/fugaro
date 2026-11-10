@@ -27,10 +27,12 @@ import (
 // (2026-10-20): at a real terminal the wizard lists the open billing accounts
 // the operator can use, by number, picks by number, takes a single account as
 // the default, and on none says the one clear thing about creating one in the
-// console and prints today's guided line. Where any of the four conditions
-// canType() names fails — no terminal, --non-interactive, --json, a coding
-// agent's session — nothing is listed and the run is exactly today's run
-// (Global Constraint 8, reconciliation F6).
+// console and prints today's guided line. Where the question is not asked at
+// all — --non-interactive, --json, --yes, --print-vars, a coding agent's
+// session — nothing is listed and the run is exactly today's run (Global
+// Constraint 8, reconciliation F6). Where it *is* asked and there is no
+// terminal, the answer is a value and readValue refuses it at once, naming
+// --link-billing, before a single account is read (T7, D1540).
 //
 // The account ids here are built at run time from the test's name, never a
 // literal that looks like one, and every source is a fake: no test in this
@@ -219,8 +221,8 @@ func TestPickerEnterOnSeveralAccountsAsksAgain(t *testing.T) {
 	if r.o.linkBilling != offered[1] {
 		t.Errorf("Enter on a list of two left the question answered with %q, want the number typed after it (%q)\n%s", r.o.linkBilling, offered[1], out)
 	}
-	if n := strings.Count(out.String(), "Billing account"); n < 2 {
-		t.Errorf("the empty answer was taken as an answer: the question was shown %d time(s), want it asked again\n%s", n, out)
+	if n := strings.Count(out.String(), "Type the billing account"); n < 2 {
+		t.Errorf("the empty answer was taken as an answer: the entry was shown %d time(s), want it asked again\n%s", n, out)
 	}
 	if strings.Contains(out.String(), "[1]") {
 		t.Errorf("the question offers a default it does not have — with two accounts there is nothing for Enter to take:\n%s", out)
@@ -254,6 +256,29 @@ func TestPickerSingleAccountIsTheDefault(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "[1]") {
 		t.Errorf("the question does not show the single account as the default:\n%s", out)
+	}
+}
+
+// TestPickerEndedInputLinksNothing: the same run as the default test with the
+// input ending at the billing question instead of an empty line there. An input
+// that ends is a question nobody answered, so the run stops with nothing linked
+// rather than linking the only account the operator was shown (T7, D1540: the
+// suggestion is what Enter takes, and only a person may take it).
+func TestPickerEndedInputLinksNothing(t *testing.T) {
+	f := gcpfake.NewBilling(t)
+	only := pickerAccountID(t, "only")
+	f.AddAccountNamed(only, "the operator's own account", true)
+	r, out := pickerRun(t, true, "proj-1234\n\n\n", nil)
+	pickerSources(t, f)
+	err := r.gatherInputs(t.Context())
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("ended input: exit %d, %v\n%s", ExitCode(err), err, out)
+	}
+	if !strings.Contains(err.Error(), "the input ended") {
+		t.Errorf("the refusal does not say the input ended: %v", err)
+	}
+	if r.o.linkBilling != "" {
+		t.Errorf("an ended input linked %q, want nothing\n%s", r.o.linkBilling, out)
 	}
 }
 
@@ -367,7 +392,7 @@ func TestPickerNeverRunsInAnAgentSession(t *testing.T) {
 	if err := r.gatherInputs(t.Context()); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if !strings.Contains(out.String(), "GCP project ID") {
+	if !strings.Contains(out.String(), "the GCP project's ID") {
 		t.Errorf("the run asks nothing at all, and only the billing question is an agent's to refuse:\n%s", out)
 	}
 	if r.o.linkBilling != "" || billingListCalls(f) != 0 || strings.Contains(out.String(), acct) {
@@ -375,9 +400,15 @@ func TestPickerNeverRunsInAnAgentSession(t *testing.T) {
 	}
 }
 
-// TestPickerNeverRunsWithoutATerminal: no terminal is the fourth condition,
-// and a pipe is what has none.
-func TestPickerNeverRunsWithoutATerminal(t *testing.T) {
+// TestBillingChoiceFailsAtOnceWithoutATerminal: the answer is a value, and a
+// value is read at a terminal and nowhere else (T7, D1540). Here the question
+// is asked — this run's flags leave it unanswered and nothing about the
+// session says it asks nothing — and the run is refused at once, in the
+// sentence that names the flag supplying the same value, rather than waiting
+// on a person who is not there or quietly linking nothing. The refusal comes
+// before any account is read: the operator's own account list is not a thing a
+// run nobody can answer has any business reading.
+func TestBillingChoiceFailsAtOnceWithoutATerminal(t *testing.T) {
 	f := gcpfake.NewBilling(t)
 	acct := pickerAccountID(t, "one")
 	f.AddAccountNamed(acct, "the operator's own account", true)
@@ -385,8 +416,12 @@ func TestPickerNeverRunsWithoutATerminal(t *testing.T) {
 	r, out := pickerRun(t, false, "", &initOptions{createProject: true, name: "aurora",
 		cloud: cloudOptions{gcpProject: "proj-1234", region: defaultRegion}})
 	pickerSources(t, f)
-	if err := r.gatherInputs(t.Context()); err != nil {
-		t.Fatalf("%v\n%s", err, out)
+	err := r.gatherInputs(t.Context())
+	if err == nil {
+		t.Fatalf("a run with no terminal answered its own billing question:\n%s", out)
+	}
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "--link-billing") {
+		t.Errorf("exit %d, %v: the refusal does not name the flag that answers it", ExitCode(err), err)
 	}
 	if out.Len() != 0 {
 		t.Errorf("a pipe is no terminal, and the wizard asked something into it:\n%s", out)
@@ -625,40 +660,35 @@ func TestPickerOutputHasNoAccountUnderJSON(t *testing.T) {
 	}
 }
 
-// TestPickerStillTypesTheAccountBeforeLinking: what the question records is
+// TestPickerStillLinksThroughTheStageConfirmation: what the question records is
 // --link-billing's own field, so the account still goes through the project
-// stage's typed banner before anything is linked, and the typed id — not the
-// pick — is what links it. A wrong id refuses, and links nothing.
-func TestPickerStillTypesTheAccountBeforeLinking(t *testing.T) {
+// stage's banner before anything is linked: the pick is not a shortcut past it,
+// and the account the flag names — not a line left on stdin — is the one the
+// link is made to (T7, docs/no-prompt-policy: nothing is typed under the
+// banner).
+func TestPickerStillLinksThroughTheStageConfirmation(t *testing.T) {
 	picked := pickerAccountID(t, "picked")
 
-	t.Run("the picked id typed", func(t *testing.T) {
+	t.Run("the picked account", func(t *testing.T) {
 		r := newProjectRig(t)
 		r.bill.AddAccountNamed(picked, "the operator's own account", true)
-		// The two typed ids the run asks for are the project's and the
-		// account's; the review that follows is a third, and it is the other
-		// tests' (the link is made before it, which is what this pins).
-		out, _, _ := r.run(t, true, newProj+"\n"+picked+"\n", "--create-project", "--link-billing", picked)
-		if !strings.Contains(out, "this LINKS billing account "+picked) || !strings.Contains(out, "to link it") {
-			t.Errorf("the picked account did not go through the typed banner:\n%s", out)
+		out, _, _ := r.run(t, true, "", "--create-project", "--link-billing", picked)
+		if !strings.Contains(out, "⚠ CONFIRM: this LINKS billing account "+picked) {
+			t.Errorf("the picked account did not go through the stage's own banner:\n%s", out)
 		}
 		if links := r.bill.Links(); len(links) != 1 || links[0].Account != picked {
-			t.Errorf("links %v, want the one account the typed id confirmed", links)
+			t.Errorf("links %v, want the one account the flag named", links)
 		}
 	})
 
-	t.Run("another id typed", func(t *testing.T) {
+	t.Run("another account on stdin", func(t *testing.T) {
 		r := newProjectRig(t)
 		r.bill.AddAccountNamed(picked, "the operator's own account", true)
-		out, _, err := r.run(t, true, newProj+"\n"+billingAcc+"\n", "--create-project", "--link-billing", picked)
-		if err == nil || ExitCode(err) != ExitUserError {
-			t.Fatalf("a wrong typed id linked the account (%v):\n%s", err, out)
-		}
-		if len(r.bill.Links()) != 0 {
-			t.Errorf("a wrong typed id linked %v", r.bill.Links())
-		}
-		if !strings.Contains(out, "not confirmed") {
-			t.Errorf("the refusal does not say the account was not confirmed:\n%s", out)
+		// The line is the account a person might type out of habit: it is not
+		// read for the link, so the flag's account is the one linked.
+		out, _, _ := r.run(t, true, billingAcc+"\n", "--create-project", "--link-billing", picked)
+		if links := r.bill.Links(); len(links) != 1 || links[0].Account != picked {
+			t.Errorf("links %v, want the flag's own account and not the line on stdin\n%s", links, out)
 		}
 	})
 }
@@ -1190,13 +1220,17 @@ func TestRefusalWhenTheProjectsNumberCannotBeRead(t *testing.T) {
 	}
 }
 
-// TestEnablingIsTypedAndNeverUnderYes: the offer is a typed step, like the
-// project stage's banners — a word that is not the project's own ID leaves the
-// API off — and --yes never covers it: a --yes run is a run that asked for no
-// question, so it is not offered the enable at all (asksBilling), and nothing
-// about a project changes there.
-func TestEnablingIsTypedAndNeverUnderYes(t *testing.T) {
-	t.Run("the project's ID is what enables it", func(t *testing.T) {
+// TestEnablingIsTheRunsOwnConfirmationAndNeverUnderYes: the offer is one of the
+// run's own confirmations, like the project stage's banners — a person at the
+// terminal reads the note naming the project and the API and the enable runs,
+// with nothing typed for it (T7, docs/no-prompt-policy) — and --yes never
+// covers it: a --yes run is a run that asked for no question, so it is not
+// offered the enable at all (asksBilling), and nothing about a project changes
+// there.
+func TestEnablingIsTheRunsOwnConfirmationAndNeverUnderYes(t *testing.T) {
+	t.Run("a person at the terminal", func(t *testing.T) {
+		// The line on stdin is what a person might type out of habit: nothing
+		// of it reaches the offer, which enables the API whatever it says.
 		for _, answer := range []string{"", "yes", "proj-12345"} {
 			f := gcpfake.NewBilling(t)
 			pickerDisabledOnThisProject(t, f)
@@ -1206,13 +1240,10 @@ func TestEnablingIsTypedAndNeverUnderYes(t *testing.T) {
 				t.Fatalf("%v\n%s", err, out)
 			}
 			if !strings.Contains(out.String(), "CONFIRM") {
-				t.Errorf("the answer %q was not asked for as a confirmation:\n%s", answer, out)
+				t.Errorf("the answer %q was not shown the note the enable is confirmed under:\n%s", answer, out)
 			}
-			if len(pickerEnables(ran)) != 0 {
-				t.Errorf("the answer %q enabled the API: %v\n%s", answer, pickerEnables(ran), out)
-			}
-			if !strings.Contains(out.String(), pickerEnableLine(t, f)) {
-				t.Errorf("the answer %q left no line to run instead:\n%s", answer, out)
+			if got := pickerEnables(ran); len(got) != 1 {
+				t.Errorf("the answer %q enabled the API %d time(s), want once with nothing typed: %v\n%s", answer, len(got), got, out)
 			}
 		}
 	})
@@ -1236,51 +1267,12 @@ func TestEnablingIsTypedAndNeverUnderYes(t *testing.T) {
 	})
 }
 
-// TestNothingIsEnabledWithoutAnAnswer: nothing enables the API but an answer
-// this run can act on. An empty line is the way out of the question, a run with
-// no line at all (EOF) has answered nothing, and a gcloud that is not on PATH —
+// TestNothingIsEnabledWithoutAnAnswer: the enable is the run's own command, so
+// what it does not have is a way to be half-run. A gcloud that is not on PATH —
 // or an enable that fails — leaves the project exactly as it was, with the line
-// to run by hand in front of the operator.
+// to run by hand in front of the operator, and the API's state is not asked for
+// a second time: no answer changed it.
 func TestNothingIsEnabledWithoutAnAnswer(t *testing.T) {
-	t.Run("an empty line", func(t *testing.T) {
-		f := gcpfake.NewBilling(t)
-		pickerDisabledOnThisProject(t, f)
-		r, out := pickerRun(t, true, pickerAnswers(""), nil)
-		ran := pickerGcloudRunner(t, f)
-		if err := r.gatherInputs(t.Context()); err != nil {
-			t.Fatalf("%v\n%s", err, out)
-		}
-		if len(pickerEnables(ran)) != 0 {
-			t.Errorf("an empty answer enabled the API: %v", pickerEnables(ran))
-		}
-		// Read before the line below, which asks internal/billing for the
-		// enable line itself (one more read of the same fake): this counts what
-		// the run asked for. Nothing was enabled, so there is nothing new to
-		// read — a second read after a decline would be a second read of an
-		// answer that has not changed.
-		asked := billingListCalls(f)
-		if !strings.Contains(out.String(), pickerEnableLine(t, f)) {
-			t.Errorf("the decline left no line to run instead:\n%s", out)
-		}
-		if asked != 1 {
-			t.Errorf("the run asked for the account list %d time(s) after a decline, want once", asked)
-		}
-	})
-
-	t.Run("no line at all", func(t *testing.T) {
-		f := gcpfake.NewBilling(t)
-		pickerDisabledOnThisProject(t, f)
-		// The question is the last one, so stdin ends at the offer's prompt.
-		r, out := pickerRun(t, true, "proj-1234\n\n\n", nil)
-		ran := pickerGcloudRunner(t, f)
-		if err := r.gatherInputs(t.Context()); err != nil {
-			t.Fatalf("%v\n%s", err, out)
-		}
-		if len(pickerEnables(ran)) != 0 {
-			t.Errorf("a run that answered nothing enabled the API: %v", pickerEnables(ran))
-		}
-	})
-
 	t.Run("gcloud is not on PATH", func(t *testing.T) {
 		f := gcpfake.NewBilling(t)
 		pickerDisabledOnThisProject(t, f)
