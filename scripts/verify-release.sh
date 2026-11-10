@@ -51,6 +51,7 @@ cd "$repo_root"
 # A dropped connection to GitHub while waiting is retried, a bounded number of
 # times, rather than failing the verification (scripts/retry.sh).
 . scripts/retry.sh
+. scripts/versions.sh
 
 timeout_minutes=45
 tag=""
@@ -184,7 +185,7 @@ if [ "$z" -ge 1 ]; then
   main_plugin=$(git show refs/remotes/origin/main:plugin/.claude-plugin/plugin.json 2>/dev/null \
     | sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
   if [[ ! $main_plugin =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] \
-    || [ "$(printf '%s\n%s\n' "$main_plugin" "$version" | sort -V | tail -n1)" != "$main_plugin" ]; then
+    || [ "$(printf '%s\n%s\n' "$main_plugin" "$version" | highest_version)" != "$main_plugin" ]; then
     echo "main's plugin/.claude-plugin/plugin.json says '${main_plugin:-nothing}' and $tag is $version: a patch release's plugin bump is made on main first (docs/release.md, \"Hotfix releases\"), and scripts/release-gate.sh refuses such a tag too" >&2
     exit 1
   fi
@@ -258,7 +259,15 @@ done
 refs=""
 base_refs=""
 move_major=0
-top=$(git tag -l "v${version%%.*}.*" | grep -E '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' | sort -V | tail -n1)
+top=$(git tag -l "v${version%%.*}.*" | sed -n 's/^v//p' | highest_version)
+if [ -z "$top" ]; then
+  # The moving <major> ref is checked only when this tag is the top of its
+  # major, so a read that answers nothing would skip it and still report the
+  # release verified: refuse rather than verify less than the summary says.
+  echo "no strict v${version%%.*}.* tag could be read from this checkout, so whether $tag is the top of its major cannot be known (the moving <major> image ref is published only at the top of one): fetch the tags (git fetch --tags) and re-run scripts/verify-release.sh $tag" >&2
+  exit 1
+fi
+top="v$top"
 [ "$top" = "$tag" ] && move_major=1
 for kind in history base credentials; do
   git cat-file -e "refs/tags/$tag:images/$kind/Dockerfile" 2>/dev/null || continue

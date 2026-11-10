@@ -860,6 +860,28 @@ func TestDryRunRefusesWhenGoIsMissing(t *testing.T) {
 	}
 }
 
+// TestReleaseRefusesWhenDockerIsMissing: the release's last step pulls the
+// images the release published, so docker missing is one of the preconditions,
+// refused before the branch, the pull request and the tag -- not after the tag
+// exists, where the verifier would stop with the tag already pushed.
+func TestReleaseRefusesWhenDockerIsMissing(t *testing.T) {
+	r := newReleaseRepo(t)
+	g := newGHState(t, r, greenChecks()).with("PATH=" + pathWithoutDocker(t, fakeBinDir(t)))
+
+	res := runRelease(t, r, g, "", "0.12.0")
+
+	res.requireFailureContaining(t, "docker is not on PATH")
+	if refExists(t, r.bare, "refs/heads/release/v0.12.0") {
+		t.Error("a run refused for docker created the release branch")
+	}
+	if refExists(t, r.bare, "refs/tags/v0.12.0") {
+		t.Error("a run refused for docker tagged the release")
+	}
+	if n := countLog(t, g, "repo view"); n != 0 {
+		t.Errorf("the run reached gh (%d call(s)): docker is refused with the preconditions, before anything outward-facing", n)
+	}
+}
+
 // writeFixtureFile writes name into the fixture checkout, commits it on main
 // and pushes it, so release.sh's clean-tree and main-equals-origin/main
 // preconditions still hold when a test needs one more file on main.
@@ -880,10 +902,31 @@ func writeFixtureFile(t *testing.T, dir, name, content string) {
 // of PATH -- so the absence is built by subtraction.
 func pathWithoutGo(t *testing.T, extra ...string) string {
 	t.Helper()
+	return pathWithoutTools(t, []string{"go", "gofmt"}, extra...)
+}
+
+// pathWithoutDocker is the same subtraction for docker, which the fake bin dir
+// carries: the release refuses without it, because the verifier it ends with
+// pulls the images the release published.
+func pathWithoutDocker(t *testing.T, extra ...string) string {
+	t.Helper()
+	return pathWithoutTools(t, []string{"docker"}, extra...)
+}
+
+// pathWithoutTools returns a directory holding a link to every command on PATH
+// except the names in without, plus the entries in extra first (which must
+// shadow any real one). A name is skipped however many directories hold it, so
+// the absence holds on a machine that has the tool installed in several places.
+func pathWithoutTools(t *testing.T, without []string, extra ...string) string {
+	t.Helper()
+	skip := make(map[string]bool, len(without))
+	for _, name := range without {
+		skip[name] = true
+	}
 	dir := t.TempDir()
 	link := func(src string) {
 		name := filepath.Base(src)
-		if name == "go" || name == "gofmt" {
+		if skip[name] {
 			return
 		}
 		dst := filepath.Join(dir, name)

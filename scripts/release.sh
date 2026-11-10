@@ -71,6 +71,7 @@ set -eu
 repo_root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$repo_root"
 . scripts/retry.sh
+. scripts/versions.sh
 
 yes=0
 dry_run=0
@@ -195,11 +196,10 @@ version_gt() {
 
 # latest_released_version prints the highest existing strict vX.Y.Z tag's
 # version (other than the one being released; -rc and four-part tags do not
-# count), or nothing when there is none. Sorted via a zero-padded numeric key
-# so it needs only a plain `sort`, not GNU sort -V (this runs on a
-# developer's machine, not just CI).
+# count), or nothing when there is none. The ordering is scripts/versions.sh's
+# (a zero-padded key, so a plain `sort` is enough).
 latest_released_version() {
-  git tag -l 'v*' | grep -E '^v(0|[1-9][0-9]*)(\.(0|[1-9][0-9]*)){2}$' | grep -vxF "$tag" | sed 's/^v//' | awk -F. '{printf "%020d%020d%020d %s\n", $1, $2, $3, $0}' | sort | tail -1 | awk '{print $2}'
+  git tag -l 'v*' | sed -n 's/^v//p' | grep -vxF "$version" | highest_version
 }
 
 # released_version_docs check|write X.Y.Z handles the two doc lines that name
@@ -422,9 +422,13 @@ run_hotfix() {
   # Only the newest line may be patched from a maintenance branch: a patch of an
   # older line is published as GitHub's latest release, and the Homebrew cask
   # follows the tag.
-  newest=$(git tag -l 'v*' | grep -E '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' | sort -V | tail -n1)
-  if [ "${newest%.*}" != "v$line" ]; then
-    echo "$tag is a patch of the line v$line, but a newer line exists ($newest): a maintenance release would be published as the latest release, so only the newest line may be patched from its maintenance branch (docs/release.md, \"Hotfix releases\")" >&2
+  newest=$(git tag -l 'v*' | sed -n 's/^v//p' | highest_version)
+  if [ -z "$newest" ]; then
+    echo "no strict vX.Y.Z tag could be read from this checkout, so whether v$line is the newest line cannot be known: fetch the tags (git fetch --tags) and re-run \"$rerun\"" >&2
+    return 1
+  fi
+  if [ "${newest%.*}" != "$line" ]; then
+    echo "$tag is a patch of the line v$line, but a newer line exists (v$newest): a maintenance release would be published as the latest release, so only the newest line may be patched from its maintenance branch (docs/release.md, \"Hotfix releases\")" >&2
     return 1
   fi
   # main's plugin version is the tag's or newer, so the bump PR landed on main
@@ -433,7 +437,7 @@ run_hotfix() {
   # gate refuses the tag (0.21.1, 2026-11-09).
   main_plugin=$(plugin_version_at refs/remotes/origin/main)
   if [[ ! $main_plugin =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] \
-    || [ "$(printf '%s\n%s\n' "$main_plugin" "$version" | sort -V | tail -n1)" != "$main_plugin" ]; then
+    || [ "$(printf '%s\n%s\n' "$main_plugin" "$version" | highest_version)" != "$main_plugin" ]; then
     echo "main's plugin/.claude-plugin/plugin.json says '${main_plugin:-nothing}' and $tag is $version: a hotfix's plugin bump is merged to main first, through a PR as usual, and cherry-picked onto $branch with the fix (docs/release.md, \"Hotfix releases\")" >&2
     return 1
   fi
@@ -459,9 +463,13 @@ run_hotfix() {
     echo "tag $tag exists locally; delete it (git tag -d $tag) if it is a leftover, or push it (git push origin refs/tags/$tag) if the release is done, then re-run \"$rerun\"" >&2
     return 1
   fi
-  line_latest=$(git tag -l "v$line.*" | grep -E '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' | sort -V | tail -n1)
-  if ! version_gt "$version" "${line_latest#v}"; then
-    echo "version $version is not greater than the line's latest tag $line_latest" >&2
+  line_latest=$(git tag -l "v$line.*" | sed -n 's/^v//p' | highest_version)
+  if [ -z "$line_latest" ]; then
+    echo "no strict v$line.* tag could be read from this checkout, so the line's latest release cannot be known: fetch the tags (git fetch --tags) and re-run \"$rerun\"" >&2
+    return 1
+  fi
+  if ! version_gt "$version" "$line_latest"; then
+    echo "version $version is not greater than the line's latest tag v$line_latest" >&2
     return 1
   fi
 
@@ -469,8 +477,8 @@ run_hotfix() {
   # when origin already has release/X.Y, reused -- but only when it descends
   # from vX.Y.0, which is the ancestry the gate reads, so a branch that merely
   # shares the name is refused rather than tagged.
-  base_ref=$line_latest
-  base_desc=$line_latest
+  base_ref="v$line_latest"
+  base_desc="v$line_latest"
   if retry_read git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
     retry_read git fetch --quiet origin "refs/heads/$branch:refs/remotes/origin/$branch"
     if ! git merge-base --is-ancestor "$first_sha" "refs/remotes/origin/$branch"; then
@@ -611,6 +619,16 @@ branch="release/$tag"
 
 if [ -n "$(git status --porcelain)" ]; then
   echo "the working tree is not clean; commit or stash first" >&2
+  exit 1
+fi
+
+# Both paths end with scripts/verify-release.sh, which refuses without docker
+# when the tagged tree holds an images/*/Dockerfile -- every release does -- and
+# it runs after the tag is pushed, where a refusal is not recoverable. Checked
+# here instead, with the other preconditions, so a machine without docker never
+# gets as far as the branch, the pull request or the tag.
+if ! command -v docker >/dev/null 2>&1; then
+  echo "docker is not on PATH, and the release's last step, scripts/verify-release.sh, pulls the images the release published (images/verify-public.sh) to prove they can be read without a login: install docker, then re-run \"$rerun\"" >&2
   exit 1
 fi
 
