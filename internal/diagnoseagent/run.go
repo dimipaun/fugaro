@@ -566,9 +566,13 @@ type Request struct {
 	Cap Cap
 	// SourceDir is the read-only source tree at the installed version: the
 	// child's working directory, and the first of the two folders it may read.
+	// An absolute path, because it is also what the other one is resolved
+	// against (validate).
 	SourceDir string
 	// EvidenceDir holds the redacted log, the doctor output, the version and
-	// the effective configuration: the second folder, named with --add-dir.
+	// the effective configuration: the second folder, named with --add-dir, and
+	// so resolved by the client against the working directory above rather than
+	// against this process's. Absolute for that reason (validate).
 	EvidenceDir string
 	// Bin is the claude binary; "" is `claude` on PATH.
 	Bin string
@@ -810,6 +814,15 @@ func (r Request) validate() error {
 	} {
 		if dir.path == "" {
 			return fmt.Errorf("%s is one of the two folders the agent may read and this request names none (D1602)", dir.what)
+		}
+		// A relative path is refused rather than resolved: the child's working
+		// directory is the source tree, so the client resolves --add-dir
+		// against that, and os.Stat resolves the same string against this
+		// process's own directory. The folder checked here would then not be
+		// the folder the agent is confined to, and a ".." in it would put the
+		// boundary above the source tree.
+		if !filepath.IsAbs(dir.path) {
+			return fmt.Errorf("%s is %s, which is not an absolute path: the child runs in the source tree and resolves a folder of its own against that, so this process would check one folder and the child would be confined to another", dir.what, safetext.OneLine(dir.path))
 		}
 		info, err := os.Stat(dir.path)
 		if err != nil {

@@ -590,23 +590,45 @@ func TestRunRefusesAZeroHandle(t *testing.T) {
 // TestRunRefusesToStartWithoutTheTwoFolders: a folder that is not there is a
 // caller's mistake, and starting the child anyway would hand it a working
 // directory that does not exist and a prompt pointing at nothing.
+//
+// The last two cases are the other half of what makes a folder the folder that
+// was checked: they are relative, and they exist, so nothing but the shape of
+// the path is wrong with them. That shape is enough. The child's working
+// directory is the source tree, so the client resolves --add-dir against that
+// and not against the directory this process was started in: a relative
+// evidence folder would be checked here and confined there — two folders, with
+// the one the agent may read never having been read by this process — and a
+// ".." in the path would put the confinement's boundary above the source tree.
+// A caller that has a relative path has to resolve it, which is a decision
+// about which folder it meant and not this package's to make.
 func TestRunRefusesToStartWithoutTheTwoFolders(t *testing.T) {
 	source, evidence := runFolders(t)
 	for _, tc := range []struct {
 		name         string
 		source, evid string
+		// want is a phrase the refusal has to carry, or "" when any refusal
+		// will do. The relative cases carry one, because a refusal for another
+		// reason would leave what they are about unproven: the case passes only
+		// if the path's shape is what was refused.
+		want string
 	}{
-		{"no source tree", "", evidence},
-		{"no evidence folder", source, ""},
-		{"a source tree that is not there", filepath.Join(source, "gone"), evidence},
-		{"an evidence folder that is a file", source, filepath.Join(source, "main.go")},
+		{"no source tree", "", evidence, ""},
+		{"no evidence folder", source, "", ""},
+		{"a source tree that is not there", filepath.Join(source, "gone"), evidence, ""},
+		{"an evidence folder that is a file", source, filepath.Join(source, "main.go"), ""},
+		{"a source tree named relative to this process", ".", evidence, "not an absolute path"},
+		{"an evidence folder named relative to this process", source, ".", "not an absolute path"},
 	} {
 		req := Request{
 			Handle: runHandle(t, runValue(t, "folders")), Prompt: "prompt", Nonce: NewNonce(),
 			SourceDir: tc.source, EvidenceDir: tc.evid,
 		}
-		if _, err := Run(context.Background(), req); err == nil {
+		_, err := Run(context.Background(), req)
+		switch {
+		case err == nil:
 			t.Errorf("%s: Run started a child", tc.name)
+		case tc.want != "" && !strings.Contains(err.Error(), tc.want):
+			t.Errorf("%s: refused, but for another reason than the one this case is about, so the path's shape is still unchecked: %v", tc.name, err)
 		}
 	}
 }
