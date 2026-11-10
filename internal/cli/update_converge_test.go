@@ -41,8 +41,12 @@ var argsUpdUser = []string{"plugin", "update", "fugaro@fugaro", "--scope", "user
 //     policy-rules-skew fires and the rules stage has to deploy;
 //   - the local config records the previous release's base image, so
 //     policy-vs-jobs fires and the images stage has to re-pin it;
-//   - the checkout is pinned to the previous release's plugin and has it
-//     installed, so plugin-pin fires and the checkout stage has to move both.
+//   - the checkout still carries the pin the previous release wrote, and that
+//     release's plugin is installed, so plugin-pin fires — the pin is a
+//     leftover nothing in the tree moves any more (U2 of
+//     docs/plugin-user-scope/implementation-plan.md, D949), which U5's
+//     migration takes out — and the checkout stage has to move the
+//     installation.
 type convergeRig struct {
 	*imagesRig
 	root     string
@@ -248,9 +252,16 @@ func TestUpdateConvergesFromThePreviousRelease(t *testing.T) {
 func converge(t *testing.T, node map[string]any, stale []string) {
 	t.Helper()
 	r := newConvergeRig(t, node)
-	convergeOn(t, r, stale)
-	if got := upgradeRead(t, r.settings); !strings.Contains(got, `"ref": "v`+convergeRelease+`"`) {
-		t.Errorf("the plugin pin is still not this release's:\n%s", got)
+	out := convergeOn(t, r, stale)
+	// Nothing in the tree writes a pin any more (U2, D949): the settings the
+	// checkout carried come out of the run byte for byte as they went in, and
+	// what the run moves is the plugin Claude Code has installed, at user
+	// scope — the one the plugin stage is about now.
+	if got := upgradeRead(t, r.settings); got != wiredAt("v"+convergePrev) {
+		t.Errorf("the checkout's settings changed, and nothing writes a pin any more:\n%s", got)
+	}
+	if !strings.Contains(out, "plugin: done: installed "+convergeRelease) {
+		t.Errorf("the plugin step did not converge the install on this release's version:\n%s", out)
 	}
 	// This run onboarded the repository itself (it is the run the anchor writes
 	// fugaro.yaml's gcp_project: line in, which leaves the working tree
@@ -305,7 +316,13 @@ func convergeOn(t *testing.T, r *convergeRig, stale []string) string {
 	}
 
 	after := doctorChecks(t, r.root)
-	for _, id := range []string{"cli-version", "plugin-pin", "base-image", "policy-vs-jobs", "policy-older-than-binary", "policy-rules-skew"} {
+	// plugin-pin is deliberately not asserted here (U2, D949): the pin a
+	// checkout carries is a leftover no run writes or moves any more, so what
+	// it reports — the old entry this fixture carries, or "not wired" where
+	// the checkout has no pin at all — is not this run's to converge. U5's
+	// migration is what takes it out, and this fixture is asserted on it
+	// before the run above all the same.
+	for _, id := range []string{"cli-version", "base-image", "policy-vs-jobs", "policy-older-than-binary", "policy-rules-skew"} {
 		if c, ok := doctorCheckByID(after.Checks, id); ok && !c.OK {
 			t.Errorf("after fugaro update, doctor's %s check still fires: %s (fix: %s)", id, c.Problem, c.Fix)
 		}

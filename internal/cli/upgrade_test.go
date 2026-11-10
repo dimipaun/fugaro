@@ -563,7 +563,12 @@ func TestUpgradeSameCheckoutOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	out, _, err := executeStdin(t, "", "upgrade", "--local", root, filepath.Join(root, ".claude"), link, sub)
-	if err != nil || strings.Count(out, "== "+root) != 1 || strings.Count(out, "checkout: skipped: the same checkout as "+root) != 3 {
+	// The checkout is walked once — the section header names the checkout the
+	// path resolved to, so it is printed for the duplicate too — and the other
+	// three paths are skipped with the one they are: the same checkout through
+	// .claude, through a symbolic link, and a subdirectory of it.
+	if err != nil || strings.Count(out, "checkout: skipped: the same checkout as "+root) != 3 ||
+		strings.Count(out, "plugin: skipped") != 1 || strings.Count(out, "nothing to do: "+root) != 1 {
 		t.Fatalf("%v\n%s", err, out)
 	}
 }
