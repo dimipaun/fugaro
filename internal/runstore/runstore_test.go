@@ -22,6 +22,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/triage"
 	"github.com/dimipaun/fugaro/internal/verify"
 )
 
@@ -442,8 +443,11 @@ func TestTriageBlockRoundTrips(t *testing.T) {
 // MaxTriageEntries, the judge's reason and the group key at MaxTriageLine — and
 // a round a reader cannot place is not stored at all: one the run never
 // numbered, or one whose mode or level is outside its vocabulary. An entry the
-// record cannot read is dropped from its round rather than stored, and a block
-// holding nothing is nil, the way a run that triaged nothing writes none.
+// record cannot read is dropped from its round rather than stored — an index
+// below 0 included, which the schema refuses and internal/triage's own reader
+// does too, so a constructor that kept one would hand a reader a record its own
+// published schema rejects — and a block holding nothing is nil, the way a run
+// that triaged nothing writes none.
 func TestNewTriageBoundsWhatItStores(t *testing.T) {
 	entry := TriageEntry{Key: "9f2a1c", Verdict: VerdictDefer, Reason: "doc drift", Source: TriageSourceAgent}
 	round := TriageRound{Round: 1, Mode: rigor.Startup, Level: policy.LevelL2, Entries: []TriageEntry{entry}}
@@ -501,6 +505,7 @@ func TestNewTriageBoundsWhatItStores(t *testing.T) {
 	}{
 		{"no key", TriageEntry{Verdict: VerdictDefer, Reason: "why", Source: TriageSourceAgent}},
 		{"no reason", TriageEntry{Key: "k", Verdict: VerdictDefer, Source: TriageSourceAgent}},
+		{"an index below the round", TriageEntry{Index: -1, Key: "k", Verdict: VerdictDefer, Reason: "why", Source: TriageSourceAgent}},
 		{"a verdict outside the two", TriageEntry{Key: "k", Verdict: TriageVerdict("maybe"), Reason: "why", Source: TriageSourceAgent}},
 		{"a source outside the four", TriageEntry{Key: "k", Verdict: VerdictDefer, Reason: "why", Source: TriageSource("judge")}},
 		{"no source", TriageEntry{Key: "k", Verdict: VerdictDefer, Reason: "why"}},
@@ -512,6 +517,44 @@ func TestNewTriageBoundsWhatItStores(t *testing.T) {
 	}
 	if tr := NewTriage(nil); tr != nil {
 		t.Errorf("NewTriage(nil) = %+v, want nil", tr)
+	}
+}
+
+// TestTriageSourcesCoverTheStagesVocabulary: the record's four sources hold
+// internal/triage's three, spelled the same way, and add the cap's. The two
+// vocabularies are separate declarations — the record restates the stage's
+// rather than importing it, because it holds one value the stage's does not
+// (D1858) — so nothing but this test stops them drifting: NewTriage and
+// NewDeferred drop an unrecognised source rather than failing, so a spelling
+// changed on one side alone would silently empty the other's records instead of
+// breaking a build.
+//
+// The cap's source is asserted to be outside the stage's vocabulary, which is
+// what makes the record's set the larger one rather than a restatement.
+func TestTriageSourcesCoverTheStagesVocabulary(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		stage  triage.Source
+		record TriageSource
+	}{
+		{"a judge's own verdict", triage.SourceAgent, TriageSourceAgent},
+		{"the table's own call", triage.SourceTable, TriageSourceTable},
+		{"the failed call's fallback", triage.SourceFailSafe, TriageSourceFailSafe},
+	} {
+		if TriageSource(tc.stage) != tc.record {
+			t.Errorf("%s: the record spells it %q and internal/triage spells it %q", tc.name, tc.record, tc.stage)
+		}
+		if !knownSource(TriageSource(tc.stage)) {
+			t.Errorf("%s: the record does not know internal/triage's %q", tc.name, tc.stage)
+		}
+	}
+	if !knownSource(TriageSourceCap) {
+		t.Errorf("the record does not know its own cap source %q", TriageSourceCap)
+	}
+	for _, s := range []triage.Source{triage.SourceAgent, triage.SourceTable, triage.SourceFailSafe} {
+		if TriageSource(s) == TriageSourceCap {
+			t.Errorf("the cap's source %q is internal/triage's %q: it is the record's own", TriageSourceCap, s)
+		}
 	}
 }
 

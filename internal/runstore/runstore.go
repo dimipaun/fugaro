@@ -657,9 +657,12 @@ const (
 
 // TriageSource says where a verdict or a deferral came from, so a reader can
 // tell a judge's call from the table's fallback (D1846) and from the cap's
-// (D1858). It is the record's vocabulary and not internal/triage's: the cap's
-// deferrals are not a verdict any judge answers, so the two sets are not the
-// same and neither is a prefix of the other.
+// (D1858). It is the record's own vocabulary and not internal/triage's: it
+// holds internal/triage's three spellings and adds the cap's, whose deferral is
+// not a verdict any judge answers and which no triage.Source names. The three
+// shared spellings are the same words on purpose — the record restates them
+// rather than importing them, because the two sets differ — and
+// TestTriageSourcesCoverTheStagesVocabulary holds the two to each other.
 type TriageSource string
 
 const (
@@ -752,10 +755,12 @@ type TriageEntry struct {
 // The rounds are capped at MaxTriageRounds and one round's entries at
 // MaxTriageEntries, the reason and the group key are clipped to MaxTriageLine,
 // and a round or an entry a reader cannot place is dropped: a round with no
-// number, a mode or a level outside its vocabulary, and an entry with no key,
-// no reason, a word outside the two or a source outside the four. A round whose
-// every entry was dropped is still kept when it is failed, because that is the
-// fact the round carries.
+// number, a mode or a level outside its vocabulary, and an entry at a negative
+// index, with no key, no reason, a word outside the two or a source outside the
+// four — an index below 0 names no position in any round, which is the same
+// refusal internal/triage's own reader makes of a verdict. A round whose every
+// entry was dropped is still kept when it is failed, because that is the fact
+// the round carries.
 func NewTriage(rounds []TriageRound) *TriageRecord {
 	if len(rounds) == 0 {
 		return nil
@@ -773,7 +778,7 @@ func NewTriage(rounds []TriageRound) *TriageRecord {
 			if len(entries) >= MaxTriageEntries {
 				break
 			}
-			if e.Key == "" || e.Reason == "" || !knownVerdict(e.Verdict) || !knownSource(e.Source) {
+			if e.Index < 0 || e.Key == "" || e.Reason == "" || !knownVerdict(e.Verdict) || !knownSource(e.Source) {
 				continue
 			}
 			e.Reason, e.Group = clipRunes(e.Reason, MaxTriageLine), clipRunes(e.Group, MaxTriageLine)
