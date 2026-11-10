@@ -312,23 +312,34 @@ func (r *run) poolCandidates(ctx context.Context, stage string) ([]config.PoolMe
 	if !ok {
 		return nil, nil, nil
 	}
-	admitted, err := r.stageAccountCandidates(ctx)
-	if err != nil {
-		return nil, nil, err
-	}
 	spread := r.subscriptionSpread(ctx)
 	var out []config.PoolMember
 	var skipped []poolSkip
+	// The accounts a pool's subscription members are judged against are read
+	// only when the pool actually lists one this run may walk: a pool of the
+	// runner path's own kinds is answered without the account walk, and the
+	// list is read once however many members ask for it.
+	var admittedAccounts []string
+	accountsRead := false
 	for _, m := range config.PoolMembers(pool, creds) {
 		// The subscription member of a pool that is not all subscriptions
 		// (D1622's wholly-inert pool is refused before this is asked): while
 		// the switch is off the owner has not agreed to spread a run across
 		// subscriptions, and the member is stepped over rather than used.
-		if m.Type == config.CredentialTypeClaudeOAuth && !spread {
-			skipped = append(skipped, poolSkip{m, poolSkipSubscription})
-			continue
+		if m.Type == config.CredentialTypeClaudeOAuth {
+			if !spread {
+				skipped = append(skipped, poolSkip{m, poolSkipSubscription})
+				continue
+			}
+			if !accountsRead {
+				accountsRead = true
+				var err error
+				if admittedAccounts, err = r.stageAccountCandidates(ctx); err != nil {
+					return nil, nil, err
+				}
+			}
 		}
-		if admits, why := r.poolMemberAdmits(m, admitted); !admits {
+		if admits, why := r.poolMemberAdmits(m, admittedAccounts); !admits {
 			skipped = append(skipped, poolSkip{m, why})
 			continue
 		}
