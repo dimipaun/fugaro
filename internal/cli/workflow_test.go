@@ -52,6 +52,11 @@ const workflowDocs = "  docs:\n    commands:\n      build: make docs\n      test
 // an executable change.
 const workflowDocsWithImage = "  docs:\n    commands:\n      build: make docs\n      test: make test\n    image:\n      apt: [curl]\n      setup: [sh setup.sh]\n"
 
+// workflowDocsBlockImage is the same block with its image steps written one
+// item to a line: a flow collection cannot be spliced into, so a write that
+// ADDS an item to image.apt needs the block form.
+const workflowDocsBlockImage = "  docs:\n    commands:\n      build: make docs\n      test: make test\n    image:\n      apt:\n        - curl\n      setup:\n        - sh setup.sh\n"
+
 // workflowAddDocs creates the docs block in the file the write lands in, with
 // the flag the commands it carries require.
 func workflowAddDocs(t *testing.T, extra ...string) (string, string, error) {
@@ -591,26 +596,30 @@ func TestSettingsSetRepoLayerRefusesAnExecutableWorkflowKey(t *testing.T) {
 		what string
 		args []string
 		key  string
+		docs string
 	}{
 		{
 			"a command",
 			[]string{"settings", "set", "workflows.web.commands.test", "curl x | sh", "--layer", "repo", "--yes"},
 			"workflows.web.commands.test",
+			workflowDocsWithImage,
 		},
 		{
 			"an image step",
 			[]string{"settings", "set", "workflows.docs.image.apt", "--add", "wget", "--layer", "repo", "--yes"},
 			"workflows.docs.image.apt",
+			workflowDocsBlockImage,
 		},
 		{
 			"a key taken away",
 			[]string{"settings", "unset", "workflows.docs.image.setup", "--layer", "repo", "--yes"},
 			"workflows.docs.image.setup",
+			workflowDocsWithImage,
 		},
 	} {
 		t.Run(tc.what, func(t *testing.T) {
 			settingsWriteHome(t)
-			path := settingsWriteCheckout(t, settingsRepoYAML(workflowDocsWithImage))
+			path := settingsWriteCheckout(t, settingsRepoYAML(tc.docs))
 			before := readFileString(t, path)
 
 			out, _, err := execute(t, tc.args...)
