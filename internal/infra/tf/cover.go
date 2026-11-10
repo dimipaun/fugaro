@@ -115,6 +115,16 @@ var allowedTypes = map[string]bool{
 // expression byte for byte (catalogReadGrant), and the records grant carries
 // the shape of a per-repository prefix condition, so only the account differs
 // (TestCatalogCheckAccountIsItsOwnPrincipalKind, TestCatalogCheckRecordsGrant).
+//
+// MCP is the front door's own account (D920, D935), its own kind for the
+// catalog check job's reason: as one of FugaroAccounts every toAccounts row
+// would have accepted it, and the account's whole point is that it reaches the
+// runs bucket's read (D932) and the store its records live in (D935) and
+// nothing else — a public endpoint whose identity could ride a job's
+// datastore.user or a launcher's role would be the "there is no credential to
+// reach" of spec.md §8 one grant away from false. Exactly one row carries the
+// bit, and it is narrowed further by the bucket it is on
+// (mcpauthStoreGrant, TestMCPAccountIsItsOwnPrincipalKind).
 type who uint8
 
 const (
@@ -125,6 +135,7 @@ const (
 	toCoordinator
 	toVerifier
 	toCatalogCheck
+	toMCP
 )
 
 // customKey is how grantRules names a custom role of the installation (by its
@@ -199,7 +210,17 @@ var grantRules = map[string]map[string]who{
 		DeployerTokenCreatorRole: toPeople,
 	},
 	"google_storage_bucket_iam_member": {
-		"roles/storage.objectAdmin": toPeople,
+		// objectAdmin is the operators' role on the runs bucket (iam.tf), and
+		// — since M4's store half — the front door's account's one role on the
+		// store D935 gives it (modules/installation/mcpauth_store.tf). The
+		// account is its own kind (toMCP) and not a job account, and what
+		// makes its grant the module's own is not the row but the BUCKET:
+		// mcpauthStoreGrant accepts exactly this account, exactly this role, on
+		// exactly `fugaro-mcpauth-<the installation's project>` and under no
+		// condition, so a plan that moved the role to another bucket, or this
+		// bucket's role to another member, is refused —
+		// TestMCPAccountIsItsOwnPrincipalKind's subject.
+		"roles/storage.objectAdmin": toPeople | toMCP,
 		// objectUser is people only under the launchers' condition
 		// (bucketCondition). objectViewer's toCoordinator is the aggregation
 		// job's reader on the runs bucket (coordinator plan P5): the account is
@@ -401,6 +422,26 @@ const VerifierAccountID = "fugaro-verifier"
 // that pins the grant to one repository's records condition (D1148).
 const CatalogCheckAccountID = "fugaro-catalog-check"
 
+// MCPServerAccountID is the front door's own service account (D920), the one
+// modules/installation/coordinator.tf creates in the installation's project
+// and the service runs as; internal/infra.MCPServerAccountID is the same name
+// on the writer's side, and TestCoverMCPNamesAreTheWritersNames pins the two
+// together. It is NOT among FugaroAccounts, for the catalog check job's
+// reason: its one role is the store's (D935), so it is read as a kind of its
+// own (toMCP) and every role it is given is refused unless a row carries that
+// bit — which the objectAdmin row alone does, and only through
+// mcpauthStoreGrant, the check that pins the grant to D935's store.
+const MCPServerAccountID = "fugaro-mcp"
+
+// MCPServerStorePrefix begins the name of D935's store: the installation
+// module's own local is `fugaro-mcpauth-${var.project}`
+// (modules/installation/mcpauth_store.tf), a function of the project alone and
+// deliberately outside the managed `fmgd-` prefix the deployer's conditioned
+// storage role is bound on. A literal here for MCPServerAccountID's reason
+// (this package cannot import internal/infra, which imports it), pinned to the
+// module by TestCoverMCPNamesAreTheWritersNames.
+const MCPServerStorePrefix = "fugaro-mcpauth-"
+
 // FugaroRoles are the custom role IDs the modules create; FugaroAccounts the
 // fixed service account IDs a toAccounts row accepts. Job and build accounts
 // are fugaro-<readable>-<8 hex>. The deployer account (DeployerAccountID) and
@@ -408,8 +449,9 @@ const CatalogCheckAccountID = "fugaro-catalog-check"
 // FugaroAccounts: each holds roles of its own and nothing a job holds, so each
 // is its own kind of principal (toDeployer, toCredentials). The coordinator's
 // writer (CoordinatorAccountID) is not among them either, and neither is the
-// project's catalog check job (CatalogCheckAccountID), for the same reason
-// (toCoordinator, toCatalogCheck).
+// project's catalog check job (CatalogCheckAccountID), nor the front door's
+// own account (MCPServerAccountID), for the same reason (toCoordinator,
+// toCatalogCheck, toMCP).
 var (
 	FugaroRoles    = []string{"fugaroLauncher", "fugaroJobRunner", "fugaroBuildSubmitter", "fugaroTagMover", "fugaroTokenMinter", "fugaroHistory", "fugaroReaper", "fugaroPreloadBuilder", CloudAssetRole, CredentialsDatabaseRole, DeployerRole, DeployerStorageRole, DeployerSecretRole, DeployerAccountRole, DeployerAPIKeyRole, DeployerRepositoryRole, DeployerRunJobRole, DeployerSchedulerRole}
 	FugaroAccounts = []string{"fugaro-scheduler", "fugaro-history", "fugaro-token-signer", "fugaro-reaper", "fugaro-preload"}
@@ -753,6 +795,58 @@ func (c Cover) isVerifierMember(m string) bool {
 func (c Cover) isCatalogCheckMember(m string) bool {
 	p := c.installationProject()
 	return p != "" && m == "serviceAccount:"+CatalogCheckAccountID+"@"+p+".iam.gserviceaccount.com"
+}
+
+// isMCPMember is whether m is exactly the front door's own account as an IAM
+// member, in the installation's project: the account coordinator.tf creates
+// and the service runs as (MCPServerAccountID).
+func (c Cover) isMCPMember(m string) bool {
+	p := c.installationProject()
+	return p != "" && m == "serviceAccount:"+MCPServerAccountID+"@"+p+".iam.gserviceaccount.com"
+}
+
+// mcpauthStoreBucket is the name of D935's store in this cover's installation
+// project — MCPServerStorePrefix + the project — and "" when the cover has
+// none. It is the same name for every installation of that project, which is
+// what lets a plan review recognise the one bucket the front door's account
+// may reach without being told its name.
+func (c Cover) mcpauthStoreBucket() string {
+	if p := c.installationProject(); p != "" {
+		return MCPServerStorePrefix + p
+	}
+	return ""
+}
+
+// mcpauthStoreGrant says why a bucket grant to the front door's own account is
+// not D935's store grant, "" when it is: the account's one role is
+// roles/storage.objectAdmin, on the store's bucket, under no condition — the
+// single binding modules/installation/mcpauth_store.tf makes. It is what
+// narrows the objectAdmin row's toMCP bit, the way catalogRecordsGrant narrows
+// the catalog check job's objectUser one, so the bit cannot be moved to
+// another role, another bucket or a condition: the account serves the front
+// door's records and holds nothing else, and a plan that gave it the runs
+// bucket's objects (or the store to anyone else) would be a widening no
+// `fugaro update` confirmation announced.
+func (c Cover) mcpauthStoreGrant(rc ResourceChange) string {
+	ch := rc.Change
+	store := c.mcpauthStoreBucket()
+	if role := str(ch.After["role"]); role != "roles/storage.objectAdmin" {
+		return "grants the front door's account " + role + " on a bucket, and its one role is roles/storage.objectAdmin on the store D935 gives it"
+	}
+	if b := str(ch.After["bucket"]); store == "" || b != store {
+		return "grants the front door's account a role on bucket " + b + ", which is not the store D935 gives it"
+	}
+	if m := str(ch.After["member"]); !c.isMCPMember(m) {
+		return "grants D935's store role to " + m + ", which is not the front door's own account"
+	}
+	conds, why := grantConditions(ch, "a bucket grant")
+	switch {
+	case why != "":
+		return why
+	case len(conds) != 0:
+		return "grants the front door's account its store role under a condition, which the module never sets"
+	}
+	return ""
 }
 
 // isDeployerMember is whether m is exactly this run's deployer account as an
@@ -1175,6 +1269,16 @@ func planDeployer(p *Plan) deployerPlan {
 func (c Cover) grant(rc ResourceChange, creates, createdSAIDs, heldSAIDs map[string]bool, dep deployerPlan) string {
 	t := rc.Type
 	why := c.checkGrant(t, rc.Change, creates[modulePrefix(rc)+"|google_service_account"], creates[modulePrefix(rc)+"|google_project_iam_custom_role"], dep.createsRole)
+	// The front door's account's row is one grant and not a role: the bit it
+	// carries in grantRules opens the objectAdmin cell, and mcpauthStoreGrant
+	// is what closes it again to D935's store — the account, that role, that
+	// bucket, no condition. A plan that moved any of the four is refused here
+	// even though the row would otherwise accept it: objectAdmin on the runs
+	// bucket to the front door's account, say, which no module grants, or the
+	// store's objectAdmin to an account that is not this one.
+	if why == "" && t == "google_storage_bucket_iam_member" && c.isMCPMember(str(rc.Change.After["member"])) {
+		why = c.mcpauthStoreGrant(rc)
+	}
 	if why == "" && t == "google_storage_bucket_iam_member" {
 		why = c.bucketCondition(rc, createdSAIDs, heldSAIDs)
 	}
@@ -1389,6 +1493,16 @@ func (c Cover) checkGrant(typ string, ch Change, createsSA, createsRole, creates
 			// otherwise be able to grant it a launcher's or an operator's
 			// role.
 			kind = toCatalogCheck
+		case c.isMCPMember(m):
+			// ... and the front door's own account (D920, D935): its own kind,
+			// which one row accepts — objectAdmin on D935's store, and only
+			// through mcpauthStoreGrant, which reads the bucket, the role and
+			// the condition as well as the member — so every other grant it is
+			// given is refused and the update that carries one asks its owner.
+			// Read here, before the review screen's list, for the deployer's
+			// reason: a plan that listed the front door's address would
+			// otherwise be able to grant it any toAccounts row's role.
+			kind = toMCP
 		case slices.Contains(c.Listed, m):
 			if !strings.HasPrefix(m, "user:") && !strings.HasPrefix(m, "group:") && !strings.HasPrefix(m, "serviceAccount:") {
 				return fmt.Sprintf("grants to %s, which is not a user, group or service account", m)
@@ -2186,7 +2300,13 @@ func (c Cover) attributes(rc ResourceChange, creates, createdSAIDs, heldSAIDs ma
 	if rc.Type == "google_storage_bucket_object" || (strings.HasPrefix(rc.Type, "google_storage_bucket_") && strings.HasSuffix(rc.Type, "_iam_member")) {
 		switch b := str(a["bucket"]); {
 		case b != "":
-			if !slices.Contains(c.Buckets, b) {
+			// The store D935 gives the front door is this run's own bucket
+			// too, but it is not in c.Buckets — the review screen lists the
+			// buckets the installation's people and jobs already use, and the
+			// store is the front door's alone — so it is admitted here for the
+			// one grant that names it (mcpauthStoreGrant, which reads the
+			// member and the role as well) and for nothing else.
+			if !slices.Contains(c.Buckets, b) && c.mcpauthStoreGrant(rc) != "" {
 				return "on bucket " + b + ", which is not this run's"
 			}
 		case !unknown(rc.Change, "bucket") || !creates[pre+"|google_storage_bucket"]:
