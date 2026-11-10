@@ -3,6 +3,7 @@ package schemas_test
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -6063,4 +6064,120 @@ func stripDescriptions(v any) any {
 		return out
 	}
 	return v
+}
+
+// TestTaskSchemaAcceptsTheLaunchLimits ties schemas/task.schema.json's four
+// per-launch chain limits to the decoder (L2, D1041, D1056): a task the
+// launcher writes at --max-usd, --max-tokens, --max-time or
+// --max-review-rounds validates against the published schema, which is what
+// a repository's CI checks a task.json against, and the schema's floors are
+// the decoder's for the three numeric caps (a cap of zero or less is refused
+// in both places, so a spec the schema accepts is never one task.Parse then
+// refuses). `max_time` is the exception, and it is total_timeout's own: the
+// pattern states the duration's form and not its sign, because "at least one
+// non-zero digit" is no single pattern over `([0-9]+h)?([0-9]+m)?([0-9]+s)?`,
+// so a positive duration is the decoder's rule for both duration members, as
+// the schema's other not-expressible rules are.
+//
+// The four are additive inside version 1: the members are what is added,
+// not a new format, so the version stays 1 and a task carrying none is still
+// valid.
+func TestTaskSchemaAcceptsTheLaunchLimits(t *testing.T) {
+	sch := compile(t, "task.schema.json")
+	validate := func(field string, spec task.Spec) error {
+		t.Helper()
+		data, err := json.Marshal(spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sch.Validate(inst); err != nil {
+			return fmt.Errorf("%s: %w", field, err)
+		}
+		return nil
+	}
+	usd, tokens, rounds := 12.5, int64(900000), 7
+	head := task.Spec{Version: 1, RunID: "20261108-120000-abcd", Repo: "owner/repo-a", Ref: "main", Task: "do it"}
+	all := head
+	all.Overrides = task.Overrides{MaxUSD: &usd, MaxTokens: &tokens, MaxTime: "3h", MaxReviewRounds: &rounds}
+	if err := validate("all four", all); err != nil {
+		t.Errorf("schema rejects a task carrying the launch limits: %v", err)
+	}
+	if err := validate("none", head); err != nil {
+		t.Errorf("schema rejects a task carrying no launch limit: %v", err)
+	}
+	for _, tc := range []struct {
+		name string
+		o    task.Overrides
+	}{
+		{"only the dollar cap", task.Overrides{MaxUSD: &usd}},
+		{"only the token cap", task.Overrides{MaxTokens: &tokens}},
+		{"only the wall time", task.Overrides{MaxTime: "45m"}},
+		{"only the review-round cap", task.Overrides{MaxReviewRounds: &rounds}},
+	} {
+		spec := head
+		spec.Overrides = tc.o
+		if err := validate(tc.name, spec); err != nil {
+			t.Errorf("schema rejects a task carrying %s: %v", tc.name, err)
+		}
+	}
+	zero := 0
+	zeroUSD, zeroTokens := 0.0, int64(0)
+	negativeUSD := -1.0
+	for _, tc := range []struct {
+		name string
+		o    task.Overrides
+	}{
+		{"a zero dollar cap", task.Overrides{MaxUSD: &zeroUSD}},
+		{"a negative dollar cap", task.Overrides{MaxUSD: &negativeUSD}},
+		{"a zero token cap", task.Overrides{MaxTokens: &zeroTokens}},
+		{"a wall time that is not a duration", task.Overrides{MaxTime: "soon"}},
+		{"a zero review-round cap", task.Overrides{MaxReviewRounds: &zero}},
+	} {
+		spec := head
+		spec.Overrides = tc.o
+		if err := validate(tc.name, spec); err == nil {
+			t.Errorf("schema accepts %s, which task.Parse refuses", tc.name)
+		}
+	}
+}
+
+// TestTaskSchemaStillRefusesAnUnknownMember: the schema's overrides block
+// closes its member list (additionalProperties: false), so the four limits
+// are the whole addition — a near miss of one of them (max_spend,
+// max_usd_cap, a recipe's max_rounds, max_review_rounds at the top level) is
+// refused rather than read as something else. It is the same rule the
+// decoder applies with DisallowUnknownFields, and the one an older job image
+// relies on: a task carrying a member the runner does not know is refused,
+// not silently run without its limit.
+func TestTaskSchemaStillRefusesAnUnknownMember(t *testing.T) {
+	sch := compile(t, "task.schema.json")
+	head := `{"version":1,"run_id":"20261108-120000-abcd","repo":"owner/repo-a","ref":"main","task":"do it"`
+	for _, tc := range []struct{ name, lit string }{
+		{"a near miss of the dollar cap", `"max_spend":5`},
+		{"a near miss of the token cap", `"max_token":900000`},
+		{"a near miss of the wall time", `"max_timeout":"45m"`},
+		{"a near miss of the review-round cap", `"max_rounds":3`},
+		{"a chain limit spelled a second way", `"max_review_rounds":3,"max-Review-Rounds":3`},
+		{"a chain limit as a string", `"max_usd":"5"`},
+		{"a chain limit as a boolean", `"max_tokens":true`},
+	} {
+		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(head + `,"overrides":{` + tc.lit + "}}"))
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if err := sch.Validate(inst); err == nil {
+			t.Errorf("schema accepts %s: %s", tc.name, tc.lit)
+		}
+	}
+	inst, err := jsonschema.UnmarshalJSON(strings.NewReader(head + `,"max_usd":5}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(inst); err == nil {
+		t.Error("schema accepts a chain limit outside overrides")
+	}
 }

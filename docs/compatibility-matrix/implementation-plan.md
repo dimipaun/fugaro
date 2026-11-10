@@ -72,7 +72,7 @@ the reconciliation's findings F1–F31.
 - **Schema/rules/config change:** a skill change: **security-sensitive path** (`.claude/**`).
 - **Tests:** the stamp test; `go test ./internal/cli -run Docs` for the release doc's pins.
 - **Command:** `cd website && node --test test/compatibility.mjs`; `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs' -count=1`.
-- **Depends on:** CM1, and the stale-docs task DOC1 (**in flight, not on main**: it edits the same skill and `docs/release.md` for the website promote step; CM3 launches after DOC1 merges).
+- **Depends on:** CM1, and the stale-docs task DOC1 (**merged**, #1897: it wrote the website promote step in the same two files, the skill and `docs/release.md`, so CM3's step is written against the release procedure as DOC1 left it).
 - **Red step:** the stamp test fails against a stamp one release behind.
 - **Reviewer tier:** **opus + mandatory independent review** (ask for the in-run level 3, never a
   second local review).
