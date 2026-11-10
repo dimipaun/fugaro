@@ -197,9 +197,14 @@ func TestMineMembershipReadsNoObjects(t *testing.T) {
 			t.Errorf("the read took back the index object %q: the listing answers who is on which issue, and its names are all a reader needs (F7)", key)
 		}
 	}
-	// The two listings are the user's own index and one issue's occurrences,
-	// never a prefix that spans other reporters or other issues (F7).
-	if want := []string{reporterPrefix(Digest(ana)), occurrencePrefix(up.Number)}; !slices.Equal(c.listPrefixes, want) {
+	// Three listings: the user's own index, the user's own hits on the issue,
+	// and the issue's occurrences — never a prefix that spans other reporters or
+	// other issues (F7).
+	if want := []string{
+		reporterPrefix(Digest(ana)),
+		occurrenceDigestPrefix(up.Number, Digest(ana)),
+		occurrencePrefix(up.Number),
+	}; !slices.Equal(c.listPrefixes, want) {
 		t.Errorf("the read listed %v, want %v", c.listPrefixes, want)
 	}
 }
@@ -414,6 +419,56 @@ func TestMineOccurrenceCapBoundsTheCount(t *testing.T) {
 	}
 	if row := mineRowOf(t, got, up.Number); row.OthersHit != mineOccurrenceCap {
 		t.Errorf("others = %d, want %d: the listing stops at the cap, so the names past it are not people a row counts", row.OthersHit, mineOccurrenceCap)
+	}
+}
+
+// The user's own hits are listed under their own digest, so a launcher's flood
+// of names that sort below it — any launcher can write the prefix (F24), and the
+// count's listing stops at the cap — cannot leave the user without a hit time or
+// without the regression their own flagged hit carries (F7).
+func TestMineFloodDoesNotHideTheUsersOwnHits(t *testing.T) {
+	ctx := context.Background()
+	b := sharedBucket(t)
+	ana, bo := "ana@example.test", "bo@example.test"
+	fp := fingerprint("81")
+	up := upload(t, ctx, b, hit("update-20261107183012-48213", fp, bo, "0.9.0", issueAt))
+	// bo's issue is filed and a release fixes it, so ana's hit at the fix is the
+	// bug back (F14) — and ana is not its creator, so her hit time comes from her
+	// own occurrences rather than from the record.
+	claim, err := Claim(ctx, b, up.Number, bo, sharedAt)
+	if err != nil {
+		t.Fatalf("claiming issue %d: %v", up.Number, err)
+	}
+	if err := RecordSubmitted(ctx, b, claim, "https://github.com/dimipaun/fugaro/issues/1", sharedAt); err != nil {
+		t.Fatalf("filing issue %d: %v", up.Number, err)
+	}
+	if err := SetResolved(ctx, b, up.Number, "0.20.0", 0, sharedAt); err != nil {
+		t.Fatalf("resolving issue %d: %v", up.Number, err)
+	}
+	mine := issueAt.Add(-time.Hour)
+	upload(t, ctx, b, hit("update-20261107183014-48215", fp, ana, "0.21.0", mine))
+	// A flood that fills the count's cap on its own, so the read of the whole
+	// prefix stops before ana's name. The flood's digests sort below hers, which
+	// is what makes them hide her: a digest is a hash, so the fixture says which
+	// user that is rather than choosing one.
+	seedOccurrences(t, ctx, b, up.Number, mineOccurrenceCap)
+	if high := fmt.Sprintf("%016x", mineOccurrenceCap-1); high >= Digest(ana) {
+		t.Fatalf("the flood's digests do not sort below %s: the case is not made", Digest(ana))
+	}
+
+	got, err := ListMine(ctx, b, verified(ana), sharedAt)
+	if err != nil {
+		t.Fatalf("reading mine: %v", err)
+	}
+	row := mineRowOf(t, got, up.Number)
+	if row.HitAt == nil || !row.HitAt.Equal(mine) {
+		t.Errorf("hit at = %v, want the user's own hit %s: a flood under other digests is not the user's own view", row.HitAt, mine)
+	}
+	if !row.Regression {
+		t.Errorf("the row = %+v, want the regression the user's own flagged hit carries", row)
+	}
+	if row.OthersHit != mineOccurrenceCap+1 {
+		t.Errorf("others = %d, want %d: the flood filled the count's cap, so this case is the one it makes", row.OthersHit, mineOccurrenceCap+1)
 	}
 }
 

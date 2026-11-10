@@ -191,25 +191,33 @@ func mineIssue(ctx context.Context, b storeReader, digest string, rec Issue) (Mi
 	return out, nil
 }
 
-// mineOcc is what one issue's occurrence names say about this user: whose hits
-// they are, when the user's earliest one was, the user's own objects to read
-// for the regression flag, and whether that flag is set.
+// mineOcc is what one issue's occurrences say about this user: whose hits they
+// are, when the user's earliest one was, and whether the user's own hits carry
+// the regression flag.
 type mineOcc struct {
 	digests    map[string]bool
 	hitAt      *time.Time
-	ownKeys    []string
 	regression bool
 }
 
-// mineOccurrences lists one issue's occurrences, names only, and derives from
-// the names whose hits they are and when this user's earliest one was (F7).
+// mineOccurrences derives, from one issue's occurrence names, who hit it, when
+// this user's earliest hit was, and whether their own hits carry the regression
+// flag (F7, F14).
 //
-// Only a resolved issue's own objects are read, and only this user's: the
-// regression flag belongs to the hit that set it, and another reporter's
-// regression must not turn this user's row into one (F14). A name that is not
-// one this store writes is skipped, so a hostile entry changes nothing here.
+// The two questions are read from two listings, because only one of them may be
+// capped. The count walks the whole issue's prefix and stops at
+// mineOccurrenceCap; this user's own hits are listed under their own digest
+// instead, where a launcher's flood of names that sort below it cannot reach
+// them. One listing cannot do both: names sort by digest, so a flood under low
+// digests fills the cap before this user's first name comes up, and the user
+// would be left with no hit time and no regression — the one reporter's view a
+// flood must not be able to take away (F7, F24).
 func mineOccurrences(ctx context.Context, b storeReader, number int, digest string, readOwn bool) (mineOcc, error) {
-	out := mineOcc{digests: map[string]bool{}}
+	own, err := mineOwnOccurrences(ctx, b, number, digest, readOwn)
+	if err != nil {
+		return mineOcc{}, err
+	}
+	out := mineOcc{digests: map[string]bool{}, hitAt: own.hitAt, regression: own.regression}
 	iter := b.List(&blob.ListOptions{Prefix: occurrencePrefix(number)})
 	seen := 0
 	for {
@@ -223,7 +231,7 @@ func mineOccurrences(ctx context.Context, b storeReader, number int, digest stri
 		if obj.IsDir {
 			continue
 		}
-		who, at, ok := occurrenceFromKey(obj.Key, number)
+		who, _, ok := occurrenceFromKey(obj.Key, number)
 		if !ok {
 			continue
 		}
@@ -232,21 +240,67 @@ func mineOccurrences(ctx context.Context, b storeReader, number int, digest stri
 		}
 		seen++
 		out.digests[who] = true
-		if who != digest {
+	}
+	return out, nil
+}
+
+// mineOwn is what this user's own hits on one issue say: the earliest of them,
+// and whether any of them is flagged a regression.
+type mineOwn struct {
+	hitAt      *time.Time
+	regression bool
+}
+
+// mineOwnOccurrences lists this user's own hits on one issue and, on a resolved
+// issue, reads them for the regression flag (F14).
+//
+// The listing is of the user's own digest prefix, and it is capped for the same
+// reason the count's is: the prefix is writable by every launcher. The cap costs
+// the user nothing they can see — names under one digest sort by time, so the
+// ones it keeps are the earliest hits, which is the hit time — and a flood of
+// the user's own names can only push the flag past what is read, a view that is
+// already theirs alone.
+//
+// Only this user's objects are read: the regression flag belongs to the hit that
+// set it, and another reporter's regression must not turn this user's row into
+// one. A name that is not one this store writes is skipped, so a hostile entry
+// changes nothing here.
+func mineOwnOccurrences(ctx context.Context, b storeReader, number int, digest string, readOwn bool) (mineOwn, error) {
+	var out mineOwn
+	var keys []string
+	iter := b.List(&blob.ListOptions{Prefix: occurrenceDigestPrefix(number, digest)})
+	seen := 0
+	for {
+		obj, err := iter.Next(ctx)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return mineOwn{}, fmt.Errorf("issues: listing the occurrences of issue %d: %w", number, err)
+		}
+		if obj.IsDir {
 			continue
 		}
+		_, at, ok := occurrenceFromKey(obj.Key, number)
+		if !ok {
+			continue
+		}
+		if seen >= mineOccurrenceCap {
+			break
+		}
+		seen++
 		if out.hitAt == nil || at.Before(*out.hitAt) {
 			hit := at
 			out.hitAt = &hit
 		}
 		if readOwn {
-			out.ownKeys = append(out.ownKeys, obj.Key)
+			keys = append(keys, obj.Key)
 		}
 	}
 	if !readOwn {
 		return out, nil
 	}
-	for _, key := range out.ownKeys {
+	for _, key := range keys {
 		raw, _, err := b.ReadMax(ctx, key, blobx.MaxReadBytes)
 		if err != nil {
 			continue
