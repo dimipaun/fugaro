@@ -838,9 +838,10 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 }
 
 // chainLimitsAsk reports whether the task carries any of the four chain limits.
-// It is the fields' check and not the flags': a follow-up records the limits of
-// the run it continues without a flag of its own, and an image gate that read
-// the flags would launch it onto a runner that refuses the task.
+// It is the fields' check and not the flags': a launch that reuses a stored
+// task — --retry, or a repeated --run-id of one that never launched — carries
+// limits no flag of this call named, and an image gate that read the flags
+// would launch it onto a runner that refuses the task.
 func chainLimitsAsk(spec *task.Spec) bool {
 	o := spec.Overrides
 	return o.MaxUSD != nil || o.MaxTokens != nil || o.MaxTime != "" || o.MaxReviewRounds != nil

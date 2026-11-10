@@ -263,6 +263,43 @@ func TestRunTotalTimeoutAndMaxTimeComposeAsMin(t *testing.T) {
 	}
 }
 
+// TestRunPRRepeatCarriesTheChainLimits: repeating a --run-id is the documented
+// way to find out whether a launch went through, and a --pr follow-up carrying
+// a chain limit is no exception (followup.go's storedFollowUp). The stored task
+// holds the limits the launch wrote, so the repeat has to be compared against
+// those and not against the flags alone — and the clock makes the point twice
+// over, since it is the one field two flags write: a repeat of
+// `--total-timeout 6h --max-time 90m` finds the composed 1h30m0s stored, not
+// the 6h the caller typed.
+func TestRunPRRepeatCarriesTheChainLimits(t *testing.T) {
+	f := newCloudFixture(t)
+	limitsImage(t, f)
+	limitsCheckout(t)
+	seedRoot(t, f, rootID, time.Now().Add(-72*time.Hour))
+	args := []string{"run", "--repo", limitsRepo, "--pr", "7", "--run-id", fuID,
+		"--total-timeout", "6h", "--max-usd", "3", "--max-time", "90m"}
+	if _, _, err := execute(t, args...); err != nil {
+		t.Fatal(err)
+	}
+	o := readSpec(t, f, fuID).Overrides
+	if o.MaxUSD == nil || *o.MaxUSD != 3 || o.MaxTime != "1h30m0s" || o.TotalTimeout != "1h30m0s" {
+		t.Fatalf("overrides = %+v, want the chain's 3 dollars and the composed 1h30m0s clock", o)
+	}
+	if out, _, err := execute(t, args...); err != nil || !strings.Contains(out, "already launched") {
+		t.Fatalf("the repeat of a follow-up carrying limits: %v, output:\n%s", err, out)
+	}
+	if n := len(f.run.Executions()); n != 1 {
+		t.Fatalf("%d executions, want 1", n)
+	}
+	// The guard the comparison exists for is kept: a repeat whose figure is not
+	// the stored one is still a different task, and this one is no loosening
+	// either (4 is under the repository's 5), so the refusal is that check's.
+	if _, _, err := execute(t, "run", "--repo", limitsRepo, "--pr", "7", "--run-id", fuID,
+		"--total-timeout", "6h", "--max-usd", "4", "--max-time", "90m"); err == nil || !strings.Contains(err.Error(), "already holds a different task") {
+		t.Fatalf("err = %v, want a repeat naming another limit refused as a different task", err)
+	}
+}
+
 // limitsLaunch launches args under runID and answers the clock the backend was
 // asked for it.
 func limitsLaunch(t *testing.T, f *cloudFixture, runID string, args ...string) time.Duration {

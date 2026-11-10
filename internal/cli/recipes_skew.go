@@ -761,9 +761,10 @@ const launchLimitsSince = "0.23.0"
 const chainLimitsKnows = "the chain's limits its task carries (max_usd, max_tokens, max_time, max_review_rounds)"
 
 // chainLimitsSubject is what the gate says the launch carries: the four flags
-// that write the four fields. A follow-up (--pr) records the limits of the run
-// it continues without a flag of its own, which is why the subject names the
-// fields as well as the flags.
+// that write the four fields. A launch that reuses a stored task — --retry, or
+// a repeated --run-id of one that never launched — carries limits no flag of
+// this call named, which is why the subject names the fields as well as the
+// flags.
 const chainLimitsSubject = "a chain limit (--max-usd, --max-tokens, --max-time, --max-review-rounds)"
 
 // chainLimitsAlt is the gate's other cure: the launch can drop the limits,

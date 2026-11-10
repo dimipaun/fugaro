@@ -510,6 +510,57 @@ func prSpec(ctx context.Context, env *cloudEnv, o *runOptions, text string, tota
 	return slug, spec, false, err
 }
 
+// repeatOverrides is the overrides a repeat of this launch must find stored,
+// built the way the launch writes them rather than as an echo of the flags:
+// createTask compares the whole task, so every field the launcher derives has
+// to be derived here too.
+//
+// The four chain limits are the caller's own figures. A limit may only tighten
+// the policy a launch resolves, so the merged value is the caller's wherever
+// the launch was not refused (chainLimitGate), and the two no policy layer
+// under them sets — the wall time and the review rounds — are the caller's by
+// construction.
+//
+// The wall time is the one field two flags write: --max-time and
+// --total-timeout compose as the smaller of the two, and the clock they compose
+// with is the same launchClockOf the gate reads — the flag this call gives, else
+// the checkout's own workflows.<w>.timeouts.total — so repeating
+// `--total-timeout 6h --max-time 90m` finds the composed 1h30m0s and not the 6h
+// it typed. A launcher that can resolve no clock at all writes the chain's
+// figure alone, exactly as the gate does.
+func repeatOverrides(ctx context.Context, env *cloudEnv, have *task.Spec, o *runOptions, total time.Duration) task.Overrides {
+	var want task.Overrides
+	if o.limits.usd != nil {
+		want.MaxUSD = o.limits.usd
+	}
+	if o.limits.tokens != nil {
+		want.MaxTokens = o.limits.tokens
+	}
+	if o.limits.rounds != nil {
+		want.MaxReviewRounds = o.limits.rounds
+	}
+	if o.limits.time > 0 {
+		want.MaxTime = o.limits.time.String()
+		// The clock a first launch of this follow-up resolves: its own
+		// --total-timeout, else the checkout's workflow. The probe is the
+		// stored task with the overrides this call's flags claim, which is
+		// the state chainLimitGate composes the clock from.
+		probe := *have
+		probe.Overrides = task.Overrides{}
+		if total > 0 {
+			probe.Overrides.TotalTimeout = total.String()
+		}
+		if clock := launchClockOf(ctx, env, &probe); clock > 0 {
+			want.TotalTimeout = min(clock, o.limits.time).String()
+		}
+		return want
+	}
+	if total > 0 {
+		want.TotalTimeout = total.String()
+	}
+	return want
+}
+
 // storedFollowUp is the task a repeated --run-id already stored, when it is
 // this call's follow-up (the same PR, text, batch and overrides): it is
 // reused as it is, its previous_run and requested_by included. Any other
@@ -522,10 +573,7 @@ func storedFollowUp(ctx context.Context, env *cloudEnv, slug string, o *runOptio
 	if err != nil {
 		return nil, err
 	}
-	var want task.Overrides
-	if total > 0 {
-		want.TotalTimeout = total.String()
-	}
+	want := repeatOverrides(ctx, env, have, o, total)
 	a, err1 := json.Marshal(have.Overrides)
 	b, err2 := json.Marshal(want)
 	if err := errors.Join(err1, err2); err != nil {
