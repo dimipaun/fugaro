@@ -563,6 +563,30 @@ func TestRunRefusesToStartWithoutTheTwoFolders(t *testing.T) {
 	}
 }
 
+// TestRunRefusesAFolderWithoutPrintingItsEscape: the two folders come from the
+// caller and the refusal is read on the person's terminal, so a path holding an
+// escape sequence has to be printed with safetext's marker rather than obeyed —
+// a folder name that reached the terminal as typed would act on it instead of
+// saying which folder is wrong. The path is otherwise a plain missing
+// directory, so what this case is about is the message and not the refusal.
+func TestRunRefusesAFolderWithoutPrintingItsEscape(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "gone\x1b[2J")
+	req := Request{
+		Handle: runHandle(t, runValue(t, "folders")), Prompt: "prompt", Nonce: NewNonce(),
+		SourceDir: missing, EvidenceDir: t.TempDir(),
+	}
+	_, err := Run(context.Background(), req)
+	if err == nil {
+		t.Fatal("Run started a child on a source tree that is not there")
+	}
+	if strings.ContainsFunc(err.Error(), isTerminalControl) {
+		t.Errorf("the refusal reaches the terminal with a control sequence in it: %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "gone") {
+		t.Errorf("the refusal has to name the folder it cannot read, so a person can see which one is wrong: %v", err)
+	}
+}
+
 // TestRunDeniesTheReadsItsPayloadNames: the log asks the agent to read a file
 // its --settings payload names, and the child refuses it — the file is outside
 // both folders, so what stopped the read is the rule and not where the file
@@ -866,6 +890,12 @@ func runReadRules(t *testing.T, args []string) []string {
 // runRule is a path as the payload spells an absolute one.
 func runRule(path string) string { return "//" + strings.TrimPrefix(filepath.ToSlash(path), "/") }
 
+// isTerminalControl is a character a terminal obeys instead of printing: the
+// C0 range including ESC, DEL, and the C1 range safetext marks too.
+func isTerminalControl(r rune) bool {
+	return r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f)
+}
+
 // TestRunRefusesAStoreNoRuleCanName: a store a variable has moved to a path no
 // rule can name ends the diagnosis instead of leaving the payload one rule
 // short. Leaving it out would be silent in the worst way: the default rules
@@ -878,10 +908,14 @@ func runRule(path string) string { return "//" + strings.TrimPrefix(filepath.ToS
 // carry. The fake child records itself in a file, so "the child never started"
 // is a fact here and not an inference from the error's text.
 func TestRunRefusesAStoreNoRuleCanName(t *testing.T) {
-	for _, tc := range []struct{ name, env, value string }{
-		{"a share a roaming profile moved to", "APPDATA", "//server/share/profiles/ada/AppData/Roaming"},
-		{"a reserved character", "GNUPGHOME", "/home/ada (keys)/gnupg"},
-		{"a control character", "DOCKER_CONFIG", "/home/ada/\x07docker"},
+	// printed is the value as the message has to show it: the refusal is read
+	// on a terminal, so the one case whose value holds a control character is
+	// printed with safetext's marker rather than as typed — a store named with
+	// an escape sequence in it must not act on the terminal it is reported on.
+	for _, tc := range []struct{ name, env, value, printed string }{
+		{"a share a roaming profile moved to", "APPDATA", "//server/share/profiles/ada/AppData/Roaming", "//server/share/profiles/ada/AppData/Roaming"},
+		{"a reserved character", "GNUPGHOME", "/home/ada (keys)/gnupg", "/home/ada (keys)/gnupg"},
+		{"a control character", "DOCKER_CONFIG", "/home/ada/\x07docker", "/home/ada/?docker"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := newRunSetup(t)
@@ -891,8 +925,11 @@ func TestRunRefusesAStoreNoRuleCanName(t *testing.T) {
 			if err == nil {
 				t.Fatalf("%s names %s, which no rule can name, and the diagnosis ran: the payload is a store short, and the child reads a log that holds real paths", tc.env, tc.value)
 			}
-			if !strings.Contains(err.Error(), tc.env) || !strings.Contains(err.Error(), tc.value) {
-				t.Errorf("the refusal has to name the variable and the path it cannot deny (%s, %s), so a person can move the store or unset the variable: %v", tc.env, tc.value, err)
+			if !strings.Contains(err.Error(), tc.env) || !strings.Contains(err.Error(), tc.printed) {
+				t.Errorf("the refusal has to name the variable and the path it cannot deny (%s, %s), so a person can move the store or unset the variable: %v", tc.env, tc.printed, err)
+			}
+			if strings.ContainsFunc(err.Error(), isTerminalControl) {
+				t.Errorf("the refusal reaches the terminal with a control character in it: %q", err.Error())
 			}
 			// The command line is refused too: a caller that builds its own
 			// argv must not be handed a payload that is a rule short.
@@ -919,36 +956,54 @@ func TestRunRefusesAStoreNoRuleCanName(t *testing.T) {
 // all, and the diagnosis refused rather than run a store short
 // (TestRunRefusesAStoreNoRuleCanName).
 //
-// The Windows spellings here are the ones the caller on Windows produces
-// (filepath.ToSlash), which is what makes the drive rule testable from a
-// Linux checkout, the way internal/cli's gcloud rule takes its goos as a
-// parameter for the same reason.
+// The Windows spellings here are the paths a Windows environment variable
+// carries, backslashes and all, and the function reads them for the platform
+// the case names (childRulePathOn's second parameter, localcfg.UserDir's
+// reason): a Linux run has to be able to answer the Windows question, because
+// the one that matters is whether a diagnosis can run there at all — a rule
+// path that is refused for every absolute path Windows has ends every
+// diagnosis on that machine, since APPDATA is always set there.
+//
+// What this table cannot ask is which cleaner normalised the slashes, and the
+// gap is the platform that runs it: on Unix filepath.Clean and path.Clean are
+// one function, so a run here cannot tell them apart — and on Windows the
+// first of them puts the backslashes straight back, which is the breakage this
+// table models by cleaning and then replacing "/" with "\" (that mutation
+// fails here, the swap of one cleaner for the other does not). Which cleaner
+// this function is allowed to use is therefore argued where it is used, in
+// childRulePathOn, rather than pinned here.
 func TestRunRulePathsAreSpelledTheWayTheClientReadsThem(t *testing.T) {
 	for _, tc := range []struct {
 		in, want string
+		goos     string
 		ok       bool
 	}{
-		{in: "/proc", want: "//proc", ok: true},
-		{in: "/proc/", want: "//proc", ok: true},
-		{in: "/home/ada/.config/gh", want: "//home/ada/.config/gh", ok: true},
-		{in: "/home/ada/AppData/Roaming/GitHub CLI", want: "//home/ada/AppData/Roaming/GitHub CLI", ok: true},
-		{in: "C:/Users/ada/AppData/Roaming", want: "//c/Users/ada/AppData/Roaming", ok: true},
-		{in: "c:/Users/ada", want: "//c/Users/ada", ok: true},
-		{in: "~/ada", ok: false},
-		{in: "ada/git", ok: false},
-		{in: "", ok: false},
-		{in: "//server/share/ada", ok: false},
-		{in: "C:ada", ok: false},
-		{in: "/home/ada(b)/x", ok: false},
-		{in: "/home/ada/*/x", ok: false},
-		{in: "/home/ada/[0-9]/x", ok: false},
-		{in: "/home/ada/{a,b}/x", ok: false},
-		{in: "/home/ada\\b/x", ok: false},
-		{in: "/home/ada/\x07x", ok: false},
+		{in: "/proc", goos: "linux", want: "//proc", ok: true},
+		{in: "/proc/", goos: "linux", want: "//proc", ok: true},
+		{in: "/home/ada/.config/gh", goos: "linux", want: "//home/ada/.config/gh", ok: true},
+		{in: "/home/ada/AppData/Roaming/GitHub CLI", goos: "linux", want: "//home/ada/AppData/Roaming/GitHub CLI", ok: true},
+		{in: `C:\Users\ada\AppData\Roaming`, goos: "windows", want: "//c/Users/ada/AppData/Roaming", ok: true},
+		{in: `c:\Users\ada`, goos: "windows", want: "//c/Users/ada", ok: true},
+		{in: `C:\Program Files\Git\config`, goos: "windows", want: "//c/Program Files/Git/config", ok: true},
+		{in: "C:/Users/ada", goos: "windows", want: "//c/Users/ada", ok: true},
+		{in: "~/ada", goos: "linux", ok: false},
+		{in: "ada/git", goos: "linux", ok: false},
+		{in: "", goos: "linux", ok: false},
+		{in: "//server/share/ada", goos: "linux", ok: false},
+		{in: `\\server\share\ada`, goos: "windows", ok: false},
+		{in: `C:ada`, goos: "windows", ok: false},
+		{in: "/home/ada(b)/x", goos: "linux", ok: false},
+		{in: "/home/ada/*/x", goos: "linux", ok: false},
+		{in: "/home/ada/[0-9]/x", goos: "linux", ok: false},
+		{in: "/home/ada/{a,b}/x", goos: "linux", ok: false},
+		{in: "/home/ada\\b/x", goos: "linux", ok: false},
+		{in: `C:\Users\ada(b)\git`, goos: "windows", ok: false},
+		{in: "C:\\Users\\ada\\AppData\\Roaming\\fugaro\x07", goos: "windows", ok: false},
+		{in: "/home/ada/\x07x", goos: "linux", ok: false},
 	} {
-		got, ok := childRulePath(tc.in)
+		got, ok := childRulePathOn(tc.in, tc.goos)
 		if ok != tc.ok || got != tc.want {
-			t.Errorf("childRulePath(%q) = %q, %v; want %q, %v", tc.in, got, ok, tc.want, tc.ok)
+			t.Errorf("childRulePathOn(%q, %q) = %q, %v; want %q, %v", tc.in, tc.goos, got, ok, tc.want, tc.ok)
 		}
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -122,9 +123,12 @@ func (s *syncWriter) do(f func()) {
 // They are the line, and not a second one behind the working directory: the
 // client does not confine its file tools to the working directory and the
 // --add-dir folders unless that confinement is asked for, and this argv does
-// not ask for it (U2). What is closed is therefore closed by name, and a path
-// not named here is a path the child can read — which is why the test pins
-// this list whole rather than sampling it.
+// not ask for it (U2). The decline is a decision and not an omission, and the
+// reason is recorded with the answer (docs/diagnose-agent/reconciliation.md,
+// §4): this list is the half of the confinement a test here can pin, and it
+// names stores by path that no flag knows. What is closed is therefore closed
+// by name, and a path not named here is a path the child can read — which is
+// why the test pins this list whole rather than sampling it.
 //
 // Every rule is home-relative, which is what lets one list cover both
 // platforms: a store that sits somewhere else on Windows is named where it
@@ -263,15 +267,37 @@ var childStoresByVar = []childStore{
 }
 
 // childRulePath is the rule spelling of a path, as the client's permission
-// syntax takes it (U2, F16). A rule path is a glob whose first characters say
-// where it starts, and only a double slash means the filesystem root: the
-// client's own parser turns "//x" into the absolute /x and a single leading
-// slash into a path beside the settings file, and its own built-in rule for
-// /proc is written Read(//proc/**). A home-relative path is the one exception
-// and is spelled "~/..." (childReadDeny), which reaches the child's own home
-// on either platform. A Windows path is spelled the way the client spells one
-// in a rule — C:\Users\ada as //c/Users/ada — which is also how it spells the
-// path it matches the rule against.
+// syntax takes it (U2, F16), for the platform this binary was built for.
+func childRulePath(path string) (string, bool) {
+	return childRulePathOn(path, runtime.GOOS)
+}
+
+// childRulePathOn is that spelling for a path the platform goos wrote — the
+// platform of the environment variable the path came out of. goos is a
+// parameter for localcfg.UserDir's reason: the Windows spelling has to be
+// answerable from a Linux checkout, and the conversion below is the one step a
+// Linux run cannot make for itself.
+//
+// A rule path is a glob whose first characters say where it starts, and only a
+// double slash means the filesystem root: the client's own parser turns "//x"
+// into the absolute /x and a single leading slash into a path beside the
+// settings file, and its own built-in rule for /proc is written Read(//proc/**).
+// A home-relative path is the one exception and is spelled "~/..." (childReadDeny),
+// which reaches the child's own home on either platform. A Windows path is
+// spelled the way the client spells one in a rule — C:\Users\ada as
+// //c/Users/ada — which is also how it spells the path it matches the rule
+// against.
+//
+// The cleaning is path.Clean and not filepath.Clean, and that is load-bearing
+// rather than a matter of taste: filepath.Clean ends in FromSlash on Windows,
+// so it would put the backslashes back into a path that is already in the
+// client's own spelling. The drive letter below would then go unmatched, the
+// path would not read as absolute, and the reserved-character guard would
+// refuse it for its backslashes — every absolute path on Windows, where
+// APPDATA is always set, so a diagnosis could not run there at all. Nothing
+// after the conversion is a platform's: the spelling the client parses is the
+// slash spelling, and it is reached here without going through the platform's
+// own path functions.
 //
 // ok is false for a path no rule can name: a UNC share, which the client's
 // rule syntax has no form for, or one holding a character the glob syntax
@@ -280,12 +306,21 @@ var childStoresByVar = []childStore{
 // it, so the caller writes no such rule — and because the default rules name
 // where a store sits on a machine that did not move it, it refuses the whole
 // diagnosis rather than run one with that store open (childDenyRules).
-func childRulePath(path string) (string, bool) {
-	p := filepath.ToSlash(path)
+func childRulePathOn(value, goos string) (string, bool) {
+	p := value
+	if goos == "windows" {
+		// What filepath.ToSlash does on Windows: the path is read in the
+		// client's own spelling from here on, and taking it from the platform
+		// this binary runs on would answer the Linux question for a Windows
+		// path — a backslash kept, and a store on a drive refused.
+		p = strings.ReplaceAll(p, `\`, "/")
+	}
 	if strings.HasPrefix(p, "//") {
+		// Before the cleaning, which collapses a share's leading "//" into one
+		// slash and would leave a path this machine reads as its own.
 		return "", false
 	}
-	p = filepath.Clean(p)
+	p = path.Clean(p)
 	if len(p) >= 3 && p[1] == ':' && p[2] == '/' && (p[0] >= 'a' && p[0] <= 'z' || p[0] >= 'A' && p[0] <= 'Z') {
 		p = "/" + strings.ToLower(p[:1]) + p[2:]
 	}
@@ -403,8 +438,15 @@ func childDenyRules(parent []string) ([]string, error) {
 
 // childNoRule is the refusal for a store at a path no rule can name: the
 // diagnosis ends rather than run with that store readable.
+//
+// The path is printed with safetext, as every other foreign value in this
+// neighbourhood is: a person reads this on a terminal, and the value came out
+// of the environment — one of the shapes this function refuses is a path
+// holding a control character, which is a name that would act on the terminal
+// it is reported on rather than say which store is open. The variable's name
+// is this file's own literal and is printed as it stands.
 func childNoRule(source, path string) error {
-	return fmt.Errorf("%s names %s, and no deny rule can name that path: a rule is a glob over the filesystem, and the client's syntax has no form for a UNC share or for a path holding a character it reserves. This diagnosis is refused rather than run with that store open, because the rules name only where such a store sits on a machine that did not move it, and the log this child reads carries real paths", source, path)
+	return fmt.Errorf("%s names %s, and no deny rule can name that path: a rule is a glob over the filesystem, and the client's syntax has no form for a UNC share or for a path holding a character it reserves. This diagnosis is refused rather than run with that store open, because the rules name only where such a store sits on a machine that did not move it, and the log this child reads carries real paths", source, safetext.OneLine(path))
 }
 
 // childSettingsJSON is childSettings rendered for one diagnosis, from the
@@ -723,10 +765,16 @@ func (r Request) validate() error {
 		}
 		info, err := os.Stat(dir.path)
 		if err != nil {
-			return fmt.Errorf("%s is not readable at %s: %w", dir.what, dir.path, err)
+			// The path is printed with safetext, as childNoRule's is: it is the
+			// caller's value and a person reads this on a terminal. The reason
+			// is text rather than a wrapped error for the same reason — os.Stat
+			// names the path a second time exactly as it was given, escapes
+			// included, so %w here would put back every character this line
+			// takes out.
+			return fmt.Errorf("%s is not readable at %s: %s", dir.what, safetext.OneLine(dir.path), safetext.OneLine(err.Error()))
 		}
 		if !info.IsDir() {
-			return fmt.Errorf("%s is %s, which is not a directory", dir.what, dir.path)
+			return fmt.Errorf("%s is %s, which is not a directory", dir.what, safetext.OneLine(dir.path))
 		}
 	}
 	return nil
