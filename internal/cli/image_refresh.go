@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -71,10 +70,10 @@ type refreshOptions struct {
 	// in is the reader the calling run already reads stdin through, when a run
 	// drives this refresh rather than the fugaro image refresh command: the
 	// checkout stage of the converge (init_checkout_upgrade.go). A second
-	// bufio.Reader over the same stdin would lose whatever the first one has
-	// buffered — an interactive run's typed-ahead input, which is exactly what
-	// a build's confirmation reads. Nil for the command, which makes its own.
-	in *bufio.Reader
+	// reader over the same stdin would lose whatever the first one has
+	// buffered — an interactive run's typed-ahead input. Nil for the command,
+	// which makes its own.
+	in io.Reader
 	// out is the writer the calling run already prints through, when one drives
 	// this refresh: the checkout stage passes its own run's writer
 	// (init_checkout_upgrade.go). The refresh is a run of its own here
@@ -363,7 +362,7 @@ func (p *refreshPlan) print(w io.Writer) {
 		fmt.Fprintf(w, "  2. base %s: this release's base image is resolved at its -pinned tag, its signature is verified, and base_images.%s is pinned to the digest the remote repository serves (nothing is copied; step 2 prints the reference and confirms it)\n", k, k)
 	}
 	fmt.Fprintln(w, "  3. the daily image check job: its image and FUGARO_CHECK_SPEC's base images follow the local config's, through the Cloud Run Admin API after its own confirmation (no Terraform; No changes when current)")
-	how := "confirmed by typing the project's name"
+	how := "confirmed at your own terminal (nothing is typed)"
 	if p.yes {
 		how = "confirmed by --yes (no prompt)"
 	}
@@ -461,7 +460,7 @@ func refuseRefreshHere(cmd *cobra.Command, yes bool, g *refreshManaged) error {
 		return nil
 	}
 	if !stdinIsTerminal(cmd.InOrStdin()) {
-		return userErr("fugaro image refresh asks for the project's name at each step and before each billable build, so it needs a real terminal: %s", initflow.NoTerminalAdvice)
+		return userErr("fugaro image refresh confirms every step with the person at the terminal who runs it — nothing is typed at a confirmation any more — so it needs a real terminal: %s", initflow.NoTerminalAdvice)
 	}
 	return nil
 }

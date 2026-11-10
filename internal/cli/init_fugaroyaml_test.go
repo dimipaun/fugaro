@@ -211,9 +211,13 @@ func TestRepoStageAnchorYesWrites(t *testing.T) {
 	}
 }
 
-func TestRepoStageAnchorInteractiveYes(t *testing.T) {
+// A person at the terminal reads the diff and the line is written: nothing is
+// typed for it (T7, docs/no-prompt-policy), so the y/N the step used to ask for
+// is gone and the stdin below answers nothing.
+func TestRepoStageAnchorInteractiveAtTheTerminal(t *testing.T) {
 	yaml := anchorYAML()
 	s, out, dir := anchorRig(t, anchorLC(), yaml, "y\n")
+	fakeTerminal(t)
 	putRecord(t, "0.4.0")
 	if _, err := s.Apply(t.Context(), initflow.Env{Interactive: true}); err != nil {
 		t.Fatal(err)
@@ -222,21 +226,24 @@ func TestRepoStageAnchorInteractiveYes(t *testing.T) {
 	if got := readYAML(t, dir); got != withAnchor(yaml) {
 		t.Errorf("file:\n%s", got)
 	}
-	want := diffText(path) + "Write this to " + path + "? [y/N]: " + updatedText(path)
+	want := diffText(path) + updatedText(path)
 	if out.String() != want {
 		t.Errorf("output:\n%s\nwant:\n%s", out, want)
 	}
 }
 
-func TestRepoStageAnchorInteractiveNoLeavesTheFile(t *testing.T) {
+// An interactive run with no terminal is nobody a confirmation can come from:
+// the file is left as it is and the line to add is printed.
+func TestRepoStageAnchorInteractiveWithNoTerminalLeavesTheFile(t *testing.T) {
 	yaml := anchorYAML()
 	s, out, dir := anchorRig(t, anchorLC(), yaml, "n\n")
+	noTerminal(t)
 	putRecord(t, "0.4.0")
 	if _, err := s.Apply(t.Context(), initflow.Env{Interactive: true}); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(s.tg.root, "fugaro.yaml")
-	want := diffText(path) + "Write this to " + path + "? [y/N]: " + addLineText(path)
+	want := diffText(path) + addLineText(path)
 	if got := readYAML(t, dir); got != yaml || out.String() != want {
 		t.Errorf("file:\n%s\noutput:\n%s\nwant:\n%s", got, out, want)
 	}
@@ -281,9 +288,10 @@ func TestRepoStageAnchorPlanWritesNothing(t *testing.T) {
 	}
 }
 
-// A repository the project does not list yet: its typed authorization
-// comes first, and the line still has its own single prompt.
-func TestRepoStageAnchorNewRepoKeepsOnePromptForTheLine(t *testing.T) {
+// A repository the project does not list yet: its own authorization comes
+// first, and the line is written under it with nothing typed at either step
+// (T7: the [y/N] the line kept for itself is gone too).
+func TestRepoStageAnchorNewRepoWritesTheLineWithNothingTyped(t *testing.T) {
 	yaml := anchorYAML()
 	lc := anchorLC()
 	lc.Repos = nil
@@ -304,8 +312,11 @@ func TestRepoStageAnchorNewRepoKeepsOnePromptForTheLine(t *testing.T) {
 	if got := readYAML(t, dir); got != withAnchor(yaml) {
 		t.Errorf("file:\n%s\noutput:\n%s", got, out)
 	}
-	if n := strings.Count(out.String(), "[y/N]"); n != 1 {
-		t.Errorf("%d line prompts:\n%s", n, out)
+	if !strings.Contains(out.String(), "this checkout's repository is not one of the project's yet") {
+		t.Errorf("the line was written without the repository's own authorization:\n%s", out)
+	}
+	if n := strings.Count(out.String(), "[y/N]"); n != 0 {
+		t.Errorf("%d typed prompts, and nothing is typed at a confirmation any more:\n%s", n, out)
 	}
 }
 

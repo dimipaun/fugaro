@@ -100,6 +100,10 @@ var Scopes = []ScopeRow{
 	{Key: "agent.levels.l3.none", In: InProject | InRepo},
 	{Key: "agent.levels.l3.focus", In: InProject | InRepo},
 	{Key: "agent.adversarial_rounds", In: InProject | InRepo},
+	// The stop rule's time half (the owner's ruling of 2026-11-08) is a share
+	// of the run's budget, so it belongs where the timeouts do: a project sets
+	// it for the workflows whose budget it knows, and a repository replaces it.
+	{Key: "agent.review_stop_fraction", In: InProject | InRepo},
 	{Key: "agent.recipe", In: InProject | InRepo | InOverride},
 	{Key: "agent.oauth_token", In: InRepo | InOverride, Why: "it names a credential identity that only the repository's own, PR-reviewed fugaro.yaml may choose among names the local config (never the project layer) allow-lists"},
 	{Key: "agent.compression", In: InRepo | InOverride, Why: "it changes what the model sees on every call; the project layer and a profile are the same launcher-writable bucket object agent.oauth_token already distrusts for the identical reason"},
@@ -160,6 +164,11 @@ var Scopes = []ScopeRow{
 	// union, not a replacement (D20c).
 	{Key: "rigor.default", In: InProject | InRepo},
 	{Key: "rigor.areas", In: InProject | InRepo},
+	// The planning pass (docs/contract-first-decoupling, D1813): a project
+	// turns it off for every repository of it, and a repository decides for
+	// itself — the key is a preference, so the narrower layer replaces the
+	// wider one rather than only tightening it.
+	{Key: "planning.decoupling", In: InProject | InRepo},
 	// Both layers write the security list (D1501), and the project's rows are
 	// first in the union (D1506): the project layer says what every repository
 	// of the project has to treat as security-sensitive, and a repository adds

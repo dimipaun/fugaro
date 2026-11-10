@@ -401,6 +401,18 @@
         "revision": { "type": "string", "maxLength": 120, "description": "The revision of the configuration the mode was read from, origin/<base branch> (D25), so a run whose other keys came from the checked-out ref can be told apart from the mode it ran under (F35's 'two answers' made visible). Absent when the run could not name it." }
       }
     },
+    "security": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["at", "pattern", "category"],
+      "description": "The security escalation the run took (docs/security-classification/implementation-plan.md SC6, D1507, D1509): the run's own diff matched a row of the list in force, so the runner turned review level 3 on for it. It is the run's account of why its review got harder — the levels and the plan a reader can see say that level 3 ran, never what asked for it. A row that matched and whose level the runner could not put on is the same member with refused set, so a run whose diff met the floor is never indistinguishable from one whose diff met nothing. Absent for a run that escalated nothing: a diff that matched no row, a run whose own review_levels block already carried level 3, and every record written before this field existed, so an old reader sees the record it always saw and version stays 1 (the field is additive).",
+      "properties": {
+        "at": { "enum": ["implement", "fix", "finalize"], "description": "The moment the escalation was decided at: the post-implement window, or the post-fix seam beside the rigor mode's own round moment, which a fix round that added a path the implement round did not touch reaches. It is the first moment the run had anything to say: the escalation is raise-only, so a later moment that matches again escalates nothing and leaves this as it was, and a refusal is never overwritten by a second one. finalize is always a refusal — the last reading of the run's whole diff, after the leftover commit that makes work the agent never committed this run's, with no review round left to turn a level on for (runner's escalateSecurityAtFinalize)." },
+        "pattern": { "type": "string", "minLength": 1, "maxLength": 40, "description": "The matched row's name, as its layer wrote it (internal/orchestrator/sensitivity's Pattern.Validate) — what the record prints when it says which rule decided the level." },
+        "category": { "enum": ["credentials", "guards", "targets", "infrastructure", "prompts", "CI", "artifacts"], "description": "The matched row's category, the word printed beside the name (sensitivity.Categories, D1500). It is carried on the record rather than looked up in the list again, because the list is read from the base branch and the record has to explain itself without it." },
+        "refused": { "const": true, "description": "The diff matched the row above and the escalation did not happen: the forced resolution refused level 3, the plan would not hold it (runner's escalateSecurity), or the run's whole diff met the row for the first time at finalize, after the last review round (runner's escalateSecurityAtFinalize). The run still goes on — a refusal never fails it (F9) — and finalize keeps it out of ready, with reason 'the run's diff matched a security pattern, but its required review level was refused' and failure_class unclassified. Absent (never false) for the escalation that ran, which is what an old reader of this member already assumed." }
+      }
+    },
     "tier": {
       "type": "object",
       "additionalProperties": false,
@@ -443,6 +455,37 @@
           }
         },
         "total": { "type": "integer", "minimum": 0, "description": "How many findings the mode tolerated, so a record whose list was capped still says how many were let through. Never less than the length of findings." }
+      }
+    },
+    "accepted": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["findings", "total", "mode", "round", "at"],
+      "description": "The findings the run accepted at its stop, in the reviewer's own order: what its resolved mode let through because the stop rule — the mode's review rounds spent, or the configured share of the run's time budget elapsed — left no review round to spend on them, so the run finalized ready where it would otherwise have ended a draft (the owner's ruling of 2026-11-08; runstore.AcceptedFindings). A block of its own and never a replacement for `tolerated`: that one is what the mode decided not to fix, this one is what it never got the chance to, and a run can carry both. A catastrophic finding is never accepted, so it never appears here. Bounded and redacted exactly as `tolerated` is: at most 100 findings (runstore.MaxTolerated), each a score, two vocabulary values and a title of at most 200 runes. Absent — never an empty block — for a run that accepted nothing, which is every record written before this field existed; the field is additive, so an old reader sees the record it always saw and `version` stays 1 (F21).",
+      "properties": {
+        "findings": {
+          "type": "array",
+          "maxItems": 100,
+          "description": "One entry per accepted finding, in the reviewer's order. Never empty: a run that accepted nothing carries no block at all. Shorter than total only when the stop accepted more than 100 findings, which the cap makes a record of the first 100 rather than of the whole set.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["title", "label", "mode", "likelihood", "impact", "fix_cost", "class"],
+            "properties": {
+              "title": { "type": "string", "minLength": 1, "maxLength": 200, "description": "The reviewer's own summary of the finding, clipped to 200 runes (runstore.MaxToleratedTitle) and redacted by the runner. It is the one piece of the finding's text the record carries; the whole summary stays in the transcript." },
+              "label": { "enum": ["blocker", "high", "medium", "low", "nit"], "description": "The word a person reads for the score (internal/rigor's label vocabulary). It is derived from the score and never an input to a decision (D2), so a reader takes the word from the axes beside it rather than trusting this one." },
+              "mode": { "enum": ["poc", "startup", "pro", "critical", "hotfix"], "description": "The mode that accepted the finding (internal/rigor's vocabulary): the run's resolved mode, which is one value (D22)." },
+              "likelihood": { "type": "integer", "minimum": 1, "maximum": 5, "description": "How often the finding's condition will occur, on the anchored 1-5 scale (D1)." },
+              "impact": { "type": "integer", "minimum": 1, "maximum": 5, "description": "How bad it is when it does (D1)." },
+              "fix_cost": { "type": "integer", "minimum": 1, "maximum": 5, "description": "The effort to address it (D1). Only the modes whose sentence weighs it read it." },
+              "class": { "enum": ["correctness", "performance", "security", "data_loss", "maintainability", "cosmetic"], "description": "What kind of issue it is (D3, internal/rigor's vocabulary): the class is what the spec's severity override turned on." }
+            }
+          }
+        },
+        "total": { "type": "integer", "minimum": 0, "description": "How many findings the stop accepted, so a record whose list was capped still says how many were let through. Never less than the length of findings." },
+        "mode": { "enum": ["poc", "startup", "pro", "critical", "hotfix"], "description": "The mode the run resolved, which is the mode whose stop row accepted them (D9, D22)." },
+        "round": { "type": "integer", "minimum": 1, "description": "The review round whose findings were accepted: the deciding level's last round, which is the round readiness read." },
+        "at": { "enum": ["rounds spent", "time threshold"], "description": "Which half of the stop rule ended the run's rounds (runstore.StopRoundsSpent, runstore.StopTimeThreshold): the mode's own rounds were spent, or the configured share of the run's time budget elapsed before another round. It is the same vocabulary the run's `reason` states." }
       }
     },
     "owner_decisions": {

@@ -1254,8 +1254,11 @@ repository). **Commit:** none until E6 is answered; the release does not wait fo
   (`FailuresTable`, the summary block), `patterns.go` (the two rules and their constants),
   `digest_test.go`, `patterns_test.go`, `internal/digest/testdata`. **Not `internal/digest/store.go`**
   — see §P4.
-- **Interfaces:** `FailuresTable`, the summary's `failures` block, and `failure_class_high` and
-  `failure_class_new` with their constants. **Three decisions land here and none adds a rule:** the
+- **Interfaces:** `FailuresTable`, the summary's `failures` block, and the two rules with their
+  constants: `failure_class_high` — one class's runs above a quarter of a week's runs, two weeks
+  running, against the week's runs and not its failures, the shape `halts_high` already has — and
+  `failure_class_new` — a class this week's block names that no block of the last four weeks does.
+  **Three decisions land here and none adds a rule:** the
   thresholds are one constants block in `internal/digest`, read by a stored series and a committed
   one alike (**D1446**); a class this build does not know prints as `unclassified`, the closed-cell
   rule FC5's reader already applies (**D1435**); and the table is a total by construction — a period

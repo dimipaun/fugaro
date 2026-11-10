@@ -5,6 +5,7 @@ import (
 	"go/parser"
 	"go/token"
 	"maps"
+	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -18,8 +19,9 @@ import (
 // package asks a person with cannot be added unnoticed. The rule is about the
 // SHAPE of a read rather than about a list of callers, and the walk covers
 // every declaration of the package — functions, methods, and the function
-// literals a package-level var is bound to (pair.go's pairTerminal is the shape
-// of that plumbing, so a read written inside one is the same read).
+// literals a package-level var is bound to (a `var ask = func(cmd
+// *cobra.Command) {…}` is the shape of that plumbing, so a read written inside
+// one is the same read).
 //
 // What it matches are the SHAPES a stream is read with here, and a shape is not
 // a verdict: no syntax says whether a stream is stdin, since a reader that
@@ -222,8 +224,8 @@ func readsIn(root ast.Node, imports map[string]string, file, fn string) []decisi
 }
 
 // valueName is the name a package-level value's read is reported under: the
-// name that value is bound to, so `var pairTerminal = func(…) io.Reader {…}`
-// belongs to pairTerminal. A value with one name and several values — or, as a
+// name that value is bound to, so `var askLater = func(…) {…}` belongs to
+// askLater. A value with one name and several values — or, as a
 // var without names cannot have values, the reverse — takes the name at the
 // value's own position where there is one, which is where the read is written.
 func valueName(vs *ast.ValueSpec, value int) string {
@@ -516,10 +518,10 @@ func TestLintCatchesAnAliasedStdinReader(t *testing.T) {
 // TestLintWalksEveryDeclaration is the other half of "a reader added later
 // cannot pass unnoticed": the walk covers the declarations a read can hide in
 // and not only the functions, so a read written inside a package-level func
-// literal — pair.go:59 keeps its stdin plumbing that way — is a site like any
-// other, reported under the name the literal is bound to. The last row is that
-// plumbing itself, which hands stdin on and reads nothing: plumbing is not a
-// read, and the lint must not start reporting a door as the room behind it.
+// literal is a site like any other, reported under the name the literal is
+// bound to. The last row is plumbing of that kind, which hands stdin on and
+// reads nothing: plumbing is not a read, and the lint must not start reporting
+// a door as the room behind it.
 func TestLintWalksEveryDeclaration(t *testing.T) {
 	rows := []struct {
 		name string
@@ -546,8 +548,8 @@ func TestLintWalksEveryDeclaration(t *testing.T) {
 			[]string{"bufio.NewReader", "ReadString"},
 		},
 		{
-			"pair.go's own plumbing, which reads nothing",
-			"var pairTerminal = func(cmd *cobra.Command) io.Reader { return cmd.InOrStdin() }",
+			"a package-level literal that hands stdin on and reads nothing",
+			"var stdinLine = func(cmd *cobra.Command) io.Reader { return cmd.InOrStdin() }",
 			"",
 			nil,
 		},
@@ -670,13 +672,37 @@ func TestNoDecisionReadOutsideTheTwoHelpers(t *testing.T) {
 	}
 }
 
+// TestT7sStagesAskNothingTyped is the half of the entry above that the four
+// lists cannot hold. The plan gives T7 the two stage files below, and each of
+// them used to confirm its write with confirmRemoval — the typed project name,
+// which the policy leaves to a deletion or a widening (D846). Both take
+// confirmStageWrite now, but the read the lint watches is the helper's own site
+// in a file T6 owns, and T5's and T15's callers keep it alive, so removing the
+// callers cannot show up as a stale entry. The removal is pinned here instead:
+// a helper that asks a person to type cannot come back into either file without
+// this failing, and the D846 widening T7 does keep typed (confirmTypedStrict,
+// for a policy node that loosens) is not one of the shapes named.
+func TestT7sStagesAskNothingTyped(t *testing.T) {
+	for _, name := range []string{"init_layer_stage.go", "init_policy_migrate.go"} {
+		src, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, call := range []string{"confirmRemoval(", "confirmTyped(", "askTyped("} {
+			if strings.Contains(string(src), call) {
+				t.Errorf("%s calls %s again: the stage T7 took has a typed confirmation back", name, strings.TrimSuffix(call, "("))
+			}
+		}
+	}
+}
+
 // sanctionedSites is what the policy keeps, and why: the owner's one
 // sanctioned confirmation and the value-entry helper with the hidden read it
 // drives. Each is asserted to be found, so the lint says out loud that it is
 // allowing a read rather than having lost one.
 var sanctionedSites = map[string]string{
 	"managed_ask.go:askConfirm":    "the --ask helper, the owner's single sanctioned exemption (D1544, T1)",
-	"valueentry.go:readValue":      "the value-entry helper: a value is not a confirmation and cannot be defaulted (D1540)",
+	"valueentry.go:readValueIn":    "the value-entry helper: a value is not a confirmation and cannot be defaulted (D1540)",
 	"restore.go:readConfirmLine":   "the line read both sanctioned helpers read through: a value's line is read here, and T6 deletes restore's confirmations, not this",
 	"secrets.go:readHiddenLine":    "the hidden read of the value entry's hidden path, readValue to readHidden to here (D1540; T7 changes its door, not its hiding)",
 	"initsecrets.go:readHiddenPEM": "the multi-line shape of the same value entry: a PEM cannot be typed on one line, and the one-line helper cannot take it (D1540 keeps value entry; T12 owns this file)",
@@ -695,14 +721,15 @@ var dataReadSites = map[string]string{
 }
 
 // notADecisionSites is a read of one of the shapes above that is not a read of
-// a person, and the reason it is not: a response body, a file, a buffer. The
-// shape cannot say which stream it is — a reader over a body and a reader over
-// stdin are built and read identically — so the answer is written here by a
-// person, and the entry is asserted to be FOUND, like a sanctioned site, so it
-// cannot outlive the read it explains. It is empty today: every shape the
-// package reads is either sanctioned or a confirmation the policy still owes a
-// removal for. A prompt does not belong here: it belongs nowhere.
-var notADecisionSites = map[string]string{}
+// a person, and the reason it is not: a response body, a file, a buffer, a line
+// a caller hands the command. The shape cannot say which stream it is — a
+// reader over a body and a reader over stdin are built and read identically —
+// so the answer is written here by a person, and the entry is asserted to be
+// FOUND, like a sanctioned site, so it cannot outlive the read it explains. A
+// prompt does not belong here: it belongs nowhere.
+var notADecisionSites = map[string]string{
+	"pair.go:pairReadCode": "the --json caller's own line: a console asks the operator for the code and hands the command the answer on stdin (§4.1, \"the typed code is read as one stdin line\"), so what arrives is data a caller delivered rather than a question the CLI put to a person; the interactive half reads the same value through readValue and is not this shape",
+}
 
 // pendingSites is every decision read the package still makes and the task of
 // docs/no-prompt-policy/implementation-plan.md that removes it. It is the
@@ -714,31 +741,24 @@ var notADecisionSites = map[string]string{}
 // `confirmTypedStrict` and `askTyped`, so their entries are the helpers' own
 // sites in `budget.go` and `init.go` — the read is what the lint holds.
 var pendingSites = map[string]string{
-	"accounts.go:accountsClear":        "T5",
-	"billing_prompt.go:billingAPIOff":  "T7",
-	"budget.go:confirmTyped":           "T3",
-	"budget.go:confirmTypedStrict":     "T3",
-	"image.go:confirmBuild":            "T4",
-	"init.go:Read":                     "T7",
-	"init.go:confirmResumedMark":       "T7",
-	"init.go:newInitRun":               "T7",
-	"init.go:typed":                    "T7",
-	"init_firebase.go:confirmLocation": "T7",
-	"init_fugaroyaml.go:writeAnchor":   "T7",
-	"init_inputs.go:promptChoice":      "T7",
-	"init_plugin_stage.go:Apply":       "T7",
-	"init_project.go:typed":            "T7",
-	"init_repo_gate.go:confirmRepo":    "T7",
-	"managed_apply.go:managedAsk":      "T9",
-	"pair.go:pairReadCode":             "T7",
-	// T6 removed every read of this command family it could remove. This one
-	// stays because its callers do not: confirmRemoval is defined in a file T6
-	// owns, but upgrade.go (T5), init_layer_stage.go and init_policy_migrate.go
-	// (T7) and update_workspace.go (T15) still call it, so the entry outlives T6
-	// and belongs to the task that removes the last caller. Deleting it here
-	// would not compile.
-	"project_cmd.go:confirmRemoval":          "T6's file, whose callers T5, T7 and T15 remove",
-	"settings_write.go:confirmSettingsWrite": "T5",
+	"budget.go:confirmTyped":       "T3",
+	"budget.go:confirmTypedStrict": "T3",
+	"image.go:confirmBuild":        "T4",
+	"managed_apply.go:managedAsk":  "T9",
+	// T6 removed every read of this command family it could remove, and T7
+	// removed the two callers the plan gave it (init_layer_stage.go,
+	// init_policy_migrate.go: their writes take confirmStageWrite now, which
+	// asks nothing of a person and reads no line). This one stays because its
+	// callers do not: confirmRemoval is defined in a file T6 owns, and
+	// project_enroll.go (T6) and update_workspace.go (T15) still call it —
+	// upgrade.go's own caller went with T5 — so the entry outlives T6 and
+	// belongs to the task that removes the last caller. Deleting it here would
+	// not compile. The deletions that keep it in the same family —
+	// project_cmd.go's `policy publish --delete` and project_enroll.go's
+	// allow-list removal — are data loss, which the ruling of 2026-11-06 leaves
+	// typed where --yes does not stand in, so no task of the plan removes them
+	// and this entry is not theirs.
+	"project_cmd.go:confirmRemoval": "T6's file, whose callers T6 and T15 remove",
 }
 
 // forms is the shapes found at one site, in a stable order, for a failure's

@@ -203,6 +203,41 @@ export interface FugaroSource {
    * `close()` stops every feed this source started, live or not.
    */
   subscribeLive(args: ValidatedArguments): LiveFeed
+  /**
+   * subscribeGraph is the graph's own streaming read (`graph --watch --json`,
+   * the graph plan's CG9b; contract §6.22 and §10), and it is
+   * `subscribeLive`'s contract word for word: a call with the same arguments
+   * while a feed for them is live returns that same feed rather than a second
+   * one, and a feed that has ended is not live, so the next call starts a fresh
+   * child.
+   *
+   * Two things are its own, and both are about the document rather than about
+   * the transport. **The stream is a document at a time, and this side keeps the
+   * latest one per `stream_id`**: a frame whose `seq` is lower than the last one
+   * seen for the same `stream_id` is not an answer, and a new `stream_id` is a
+   * new snapshot whatever numbers the two carry (H4 -- the identity is drawn
+   * once per child, so a restarted child's `seq` starts again at one). And **its
+   * child is long-lived**: a subscription here is counted with the live feeds
+   * against `MAX_LIVE_FEEDS`, and a screen that has stopped looking at the graph
+   * stops it with `stopGraphWatch` rather than leaving it to the ceiling (H6).
+   *
+   * The scope is the same closed value the read above takes, and the same
+   * admission rule applies: a scope no previous answer of this installation
+   * listed is refused before any child runs (`NO_GRAPH_SCOPE`, F21).
+   */
+  subscribeGraph(args: ValidatedArguments): LiveFeed
+  /**
+   * stopGraphWatch stops the graph feed these arguments name and forgets it, so
+   * the next `subscribeGraph` for the same arguments starts a fresh child rather
+   * than handing back a stopped one. It is what a screen reaches when the graph
+   * leaves the screen (H6): the child is sent `SIGTERM` and then `SIGKILL`, the
+   * shutdown every other long-lived child of this console gets.
+   *
+   * It is idempotent and never a refusal: stopping a feed that is not there --
+   * the same arguments twice, or a feed the ceiling already evicted -- is the
+   * state the caller wanted.
+   */
+  stopGraphWatch(args: ValidatedArguments): Promise<void>
   showBudget(args: ValidatedArguments): Promise<Snapshot>
   runReport(args: ValidatedArguments): Promise<Snapshot>
   listRuns(args: ValidatedArguments): Promise<Snapshot>
@@ -634,6 +669,22 @@ export function handlersFor(
     'runs.summary': (args) => source.summaryRuns(args),
     'plan.status': (args) => source.planStatus(args),
     'graph.read': (args) => source.graphRead(args),
+    // The graph's live feed (CG9b). A `visible: false` argument is a stop and
+    // not a poll: the renderer sends it when the Graph tab is left or the window
+    // is hidden, and what it asks for is that the child be taken down (H6), so
+    // no read of the feed is made and the answer is that nothing was drawn. A
+    // caller that says nothing of the kind is asking for the frame the feed has,
+    // which is `live.watch`'s own answer path -- including its first-frame
+    // budget, so a child that says nothing is a refusal rather than a screen
+    // that waits.
+    'graph.watch': async (args) => {
+      if (args['visible'] === false) {
+        await source.stopGraphWatch(args)
+        return null
+      }
+      const feed = source.subscribeGraph(args)
+      return await feed.current()
+    },
     'coordinator.status': (args) => source.coordinatorStatus(args),
     'coordinator.show': (args) => source.coordinatorShow(args),
     'coordinator.intents': (args) => source.coordinatorIntents(args),
@@ -685,7 +736,7 @@ export function handlersFor(
 }
 
 /**
- * CliBackedHandlers is the whole surface **minus the four operations that are
+ * CliBackedHandlers is the whole surface **minus the six operations that are
  * not reads of the CLI**: `startup.compatibility` (desktop-console plan Task
  * 3.3), whose answer is the handshake `src/main/index.ts` ran before it built
  * any window, `run.launch` (V2.5.1a, design section 5.1 rule 11), which is the
@@ -695,18 +746,22 @@ export function handlersFor(
  * than a `CliSource` -- `settings.edit` (the settings-edit plan's C3, rule 12),
  * which is the console's **second write** and the same shape: the window is
  * `src/main/confirm.ts`'s, the flow is `src/main/settingsedit.ts`'s, and what
- * this module answers is the two phases that flow spawns -- and
- * `link.openPullRequest` (K2a, D815), which reads no
- * CLI either: it builds a URL from three of its own arguments and hands it to
- * the console's one call to `shell.openExternal`. All four are joined in at the
- * entry point, as
+ * this module answers is the two phases that flow spawns --
+ * `link.openPullRequest` (K2a, D815), which reads no CLI either: it builds a URL
+ * from three of its own arguments and hands it to the console's one call to
+ * `shell.openExternal` -- and the licence section's two (the subscriptions
+ * plan's S2.7), which read the console's own store rather than any binary:
+ * `licence.read` answers the active installation's state and claims, and
+ * `licence.save` verifies a pasted key and writes it into that store. All six
+ * are joined in at the entry point, as
  * `{ ...handlersFor(source, deps), 'startup.compatibility': … , 'run.launch': … ,
- * 'settings.edit': … , 'link.openPullRequest': … }` with `startupCompatibility`
- * and `openPullRequestHandler` from `src/main/ipc.ts`, the launcher from
- * `src/main/launch.ts` and the editor from `src/main/settingsedit.ts`. **Nothing
- * registers the handlers until that task lands**: today `main()` serves the
- * bundle and starts the lifecycle, and no window has a preload to reach a
- * channel with.
+ * 'settings.edit': … , 'link.openPullRequest': … , 'licence.read': … ,
+ * 'licence.save': … }` with `startupCompatibility` and `openPullRequestHandler`
+ * from `src/main/ipc.ts`, the launcher from `src/main/launch.ts`, the editor
+ * from `src/main/settingsedit.ts` and the two licence handlers from
+ * `src/main/index.ts`. **Nothing registers the handlers until that task lands**:
+ * today `main()` serves the bundle and starts the lifecycle, and no window has
+ * a preload to reach a channel with.
  *
  * The `Omit` is still a *closed* type: a key typed here that is not an operation
  * is an excess property, and an operation deleted from `CONSOLE_OPERATIONS`
@@ -717,5 +772,10 @@ export function handlersFor(
  */
 export type CliBackedHandlers = Omit<
   ConsoleHandlers,
-  'startup.compatibility' | 'run.launch' | 'settings.edit' | 'link.openPullRequest'
+  | 'startup.compatibility'
+  | 'run.launch'
+  | 'settings.edit'
+  | 'link.openPullRequest'
+  | 'licence.read'
+  | 'licence.save'
 >

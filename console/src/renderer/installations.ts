@@ -24,7 +24,13 @@
 //      is the only thing here that makes the console run a `doctor`;
 //   3. the two onboarding screens (`src/main/onboarding.ts` holds their copy),
 //      and one link, which this process does not name -- the `openExternal`
-//      operation takes no arguments, so the URL is the main process's constant.
+//      operation takes no arguments, so the URL is the main process's constant;
+//   4. the WSL distributions **this machine** has (Part G, T-G3): a read-only
+//      list of the names `wsl.exe` reports, which is the one thing in this
+//      window that is not this console's record of anything -- see
+//      `DISTROS_TITLE`. It is the one part of this window that is **drawn on
+//      Windows alone**: `wsl.exe` is a Windows program, so off Windows there is
+//      nothing to ask and the section is not drawn (`isWindowsPlatform`).
 //
 // `mountPicker` is the whole behaviour: it is handed the document and the bridge
 // and returns a `refresh`, so every step below is a unit test's to drive.
@@ -82,6 +88,29 @@ export interface InstallationsListAnswer {
   readonly refusal?: string
   readonly path: string
 }
+
+/** DistroRow is one distribution `wsl.exe` listed, and whether `--status` named
+ * it the default. */
+export interface DistroRow {
+  readonly name: string
+  readonly isDefault: boolean
+}
+
+/**
+ * DistrosAnswer is `wslDistributions`' answer (`src/main/wsl.ts`, T-C4) as this
+ * view draws it, mirrored here the way `OnboardingState` is: the sandboxed
+ * renderer cannot import the module that spawns `wsl.exe`.
+ *
+ * The three outcomes are the module's own and they are drawn as three different
+ * things: `listed` with names, `listed` with **none** (an answer, and the whole
+ * of what a machine with WSL and no distribution says), and `absent` -- WSL not
+ * installed, or `wsl.exe` unable to answer at all -- with the sentence that says
+ * which. A view that drew an empty list for `absent` would tell an operator to
+ * add a distribution to a machine where WSL itself is missing.
+ */
+export type DistrosAnswer =
+  | { readonly kind: 'listed'; readonly distributions: readonly DistroRow[] }
+  | { readonly kind: 'absent'; readonly reason: string }
 
 /** InstallationView is what the document shows: the status line, the rows, the
  * CLI's own warning lines, and the onboarding screen (or none). */
@@ -151,6 +180,29 @@ function drawnScreen(
   return undefined
 }
 
+/**
+ * UNREADABLE_DISTROS is the section's own sentence for an answer whose `kind`
+ * this build does not know. It is the rule `drawnScreen` follows -- a shape from
+ * a newer main process is drawn as **no** screen rather than as half of one --
+ * in the one place that cannot be "nothing at all": the section is a container
+ * the document declares, and a blank one is indistinguishable from the empty
+ * machine above it. Bundled together as the two processes are, this is
+ * unreachable in a shipped console and is what a test's stub proves.
+ */
+const UNREADABLE_DISTROS = 'the console could not read this machine’s distributions'
+
+/** distroViewOf turns one reply into the section's state, checking the shape the
+ * way `drawnScreen` checks the onboarding screen's. */
+function distroViewOf(reply: InstallationReply): DistrosAnswer {
+  // A refusal from the main process is a sentence already written for a person,
+  // and it is drawn through the door below like `wsl.exe`'s own.
+  if (!reply.ok) return { kind: 'absent', reason: reply.reason }
+  const answer = reply.data as DistrosAnswer | undefined
+  if (answer?.kind === 'absent') return { kind: 'absent', reason: answer.reason }
+  if (answer?.kind === 'listed') return { kind: 'listed', distributions: answer.distributions ?? [] }
+  return { kind: 'absent', reason: UNREADABLE_DISTROS }
+}
+
 export function viewOf(reply: InstallationReply): InstallationView {
   if (!reply.ok) {
     return { status: reply.reason, rows: [], warnings: [], onboard: NO_ONBOARD }
@@ -186,6 +238,36 @@ export function viewOf(reply: InstallationReply): InstallationView {
   // send: a stub's, or a test's. It still gets the honest sentence.
   return { status: rows.length === 0 ? NO_INSTALLATION_STATUS : NO_CHOICE_STATUS, rows, warnings, onboard }
 }
+
+/**
+ * DISTROS_TITLE, and the three constants beside it, are the distro section's own
+ * words: this console's vocabulary, drawn without the sanitizer because they are
+ * not anybody's document (design section 5.1 rule 7 is about the strings that
+ * are).
+ *
+ * The section exists because this window is where an installation's WSL side is
+ * shown (Part G, T-G3): the list is `wsl.exe`'s answer for **this machine**, so
+ * an operator whose installation names a distribution that is not there -- a
+ * rename, a removal -- can see the names that are. It is read-only and contains
+ * no control, which is what makes it a list rather than the file dialog the old
+ * binary picker offered (F10).
+ */
+export const DISTROS_TITLE = 'WSL distributions on this machine'
+
+/** DISTROS_READING is what the section carries until the answer lands: the read
+ * is a child process, and a blank section would be indistinguishable from the
+ * empty machine below it -- which is an answer and not a wait. */
+export const DISTROS_READING = 'Reading this machine’s WSL distributions…'
+
+/** NO_DISTROS is the machine that has WSL and no distribution: `listed` with no
+ * names, which is an answer about the machine and not a missing one. */
+export const NO_DISTROS = 'No distribution is installed.'
+
+/** DISTRO_DEFAULT_MARK is the word beside the one `wsl.exe --status` named the
+ * default, in the same shape `rowText` marks the installation this console is
+ * showing: it is a fact of the machine (D2(a)) and it is never inferred from the
+ * first row `--list --quiet` printed. */
+export const DISTRO_DEFAULT_MARK = ' · default'
 
 /** UNDRAWABLE is what this view draws where the sanitizer refuses a string. It
  * is the console's own sentence about the *class* -- a value this console will
@@ -317,7 +399,7 @@ export interface PickerDocument {
   createElement(tag: string): PickerElement
 }
 
-/** PickerBridge is the view's whole capability: the picker's six operations,
+/** PickerBridge is the view's whole capability: the picker's seven operations,
  * and nothing else. It is an interface rather than the preload's own type so a
  * test can hand in a fake without pretending to be Electron.
  *
@@ -335,6 +417,10 @@ export interface PickerBridge {
    * `explorerPath` for that record (T-D3). */
   reveal(args: Readonly<Record<string, string>>): Promise<InstallationReply>
   openExternal(): Promise<InstallationReply>
+  /** `distros` is the machine's distributions, which the main process asks
+   * `wsl.exe` for (Part G, T-G3). It takes **no arguments**: the section below
+   * is this machine's answer and not something the document asked about. */
+  distros(): Promise<InstallationReply>
 }
 
 /** PickerMount is the mounted view. `refresh` re-reads the list, which is what
@@ -342,6 +428,40 @@ export interface PickerBridge {
  * stored, so the view never guesses what a choose or a remove did to it. */
 export interface PickerMount {
   refresh(): Promise<void>
+}
+
+/**
+ * isWindowsPlatform answers whether this window is on Windows, which is the
+ * whole of what the distro section needs to know about the machine.
+ *
+ * **It gates the section, and not the reading of its answer.** `wsl.exe` is a
+ * Windows program at a Windows path, so a console on macOS or Linux that asked
+ * would be answered by a spawn failure -- "spawn C:\Windows\System32\wsl.exe
+ * ENOENT" -- and would draw it under a heading that claims to be about this
+ * machine: a false statement, and one that costs a child process to make. Off
+ * Windows the section is not drawn and `distros()` is never sent (the main
+ * process refuses the row as well, because a frame is not this view).
+ *
+ * It is read exactly the way `isMacPlatform` is (`src/renderer/entry.ts`), for
+ * the same reasons: the modern spelling is `navigator.userAgentData.platform`,
+ * whose value can be an **empty string** where the hints are unavailable or
+ * reduced, so the deprecated `navigator.platform` -- answering `Win32` on
+ * Windows -- is read when the modern one is missing *or blank*, and a scope with
+ * no navigator at all (a `vm` realm, a unit test) answers `false`. `false` is
+ * the safe half here as it is there: a window that could not tell would draw no
+ * section rather than a Windows read failure.
+ */
+export function isWindowsPlatform(navigator: unknown): boolean {
+  const scope = navigator as
+    | {
+        readonly userAgentData?: { readonly platform?: unknown }
+        readonly platform?: unknown
+      }
+    | null
+    | undefined
+  const spelled = (value: unknown): string => (typeof value === 'string' ? value : '')
+  const name = spelled(scope?.userAgentData?.platform) || spelled(scope?.platform)
+  return /^win/i.test(name)
 }
 
 /**
@@ -362,12 +482,24 @@ export interface PickerMount {
  *     takes no arguments, so the address the operating system opens is the main
  *     process's own constant (`GETTING_STARTED_URL`), checked against its host
  *     allow-list on the way out.
+ *
+ * `windows` is the host, and it is what the distro section is gated on: a
+ * section about this machine's `wsl.exe` is drawn on the machine that has one,
+ * and the safe half of not knowing is drawing none (`isWindowsPlatform`).
  */
-export function mountPicker(document: PickerDocument, bridge: PickerBridge): PickerMount {
+export function mountPicker(document: PickerDocument, bridge: PickerBridge, windows: boolean): PickerMount {
   const status = document.getElementById('picker-status')
   const list = document.getElementById('picker-list')
   const warnings = document.getElementById('picker-warnings')
   const onboarding = document.getElementById('picker-onboarding')
+  // The distro section is this machine's, and this machine is the one the
+  // window is running on: off Windows there is no `wsl.exe` to ask, so the
+  // section is not looked up at all -- the document's container stays empty and
+  // `refreshDistros` below returns before it sends anything. `windows` is a
+  // parameter rather than a read here for the reason `shortcutRow`'s `mac` is:
+  // `isWindowsPlatform` is the one place the platform is asked about, and the
+  // mount stays a wiring a unit test can drive both ways.
+  const distros = windows ? document.getElementById('picker-distros') : null
 
   const say = (sentence: string): void => {
     // Every sentence here is the main process's, and it is drawn through the
@@ -403,6 +535,48 @@ export function mountPicker(document: PickerDocument, bridge: PickerBridge): Pic
     const element = document.createElement(tag)
     element.textContent = drawn(text, field)
     return element
+  }
+
+  /** own is a node holding one of this console's own words. `label` is the door
+   * for strings a document wrote -- a row's project, the CLI's warning line --
+   * and these are not: `DISTROS_TITLE` and its neighbours are this file's own
+   * vocabulary, so they are written as written (design section 5.1 rule 7 is
+   * about the strings that are somebody else's). */
+  const own = (tag: string, text: string): PickerElement => {
+    const element = document.createElement(tag)
+    element.textContent = text
+    return element
+  }
+
+  /** distroNodes is the distro section: its heading, and then the answer --
+   * the machine's distributions, the machine's none, or the sentence that says
+   * why there is no answer at all.
+   *
+   * The heading says **on this machine** because that is the whole distinction
+   * between this list and the one above it: the rows are installations this
+   * console has recorded, and these are the distributions `wsl.exe` reports. The
+   * names are `wsl.exe`'s strings and go through `drawn`; the mark beside the
+   * default is this console's own word, and the default is the one `--status`
+   * named and never the first row (D2(a)). */
+  const distroNodes = (answer: DistrosAnswer): PickerElement[] => {
+    const nodes: PickerElement[] = [own('h2', DISTROS_TITLE)]
+    if (answer.kind === 'absent') {
+      // The module's own sentence, or `wsl.exe`'s stderr behind it, drawn
+      // through the door like every other string this window did not author.
+      nodes.push(label('p', answer.reason, 'the distro read’s refusal'))
+      return nodes
+    }
+    if (answer.distributions.length === 0) {
+      nodes.push(own('p', NO_DISTROS))
+      return nodes
+    }
+    const items = document.createElement('ul')
+    for (const distro of answer.distributions) {
+      const name = drawn(distro.name, 'the distribution’s name')
+      items.appendChild(own('li', distro.isDefault ? `${name}${DISTRO_DEFAULT_MARK}` : name))
+    }
+    nodes.push(items)
+    return nodes
   }
 
   const button = (text: string, onClick: () => Promise<void>): PickerElement => {
@@ -464,7 +638,7 @@ export function mountPicker(document: PickerDocument, bridge: PickerBridge): Pic
     item.appendChild(
       button(row.active ? 'Chosen' : 'Choose', async () => {
         const reply = await bridge.choose(project)
-        await refresh()
+        await reRead()
         if (!reply.ok) say(reply.reason)
       }),
     )
@@ -478,7 +652,7 @@ export function mountPicker(document: PickerDocument, bridge: PickerBridge): Pic
       item.appendChild(
         button(`Use ${drawn(checkout, 'the row’s checkout')}`, async () => {
           const reply = await bridge.checkout({ ...project, checkout })
-          await refresh()
+          await reRead()
           if (!reply.ok) say(reply.reason)
         }),
       )
@@ -487,7 +661,7 @@ export function mountPicker(document: PickerDocument, bridge: PickerBridge): Pic
       item.appendChild(
         button('Stop using this checkout', async () => {
           const reply = await bridge.checkout(project)
-          await refresh()
+          await reRead()
           if (!reply.ok) say(reply.reason)
         }),
       )
@@ -513,7 +687,7 @@ export function mountPicker(document: PickerDocument, bridge: PickerBridge): Pic
       item.appendChild(
         button('Remove', async () => {
           const reply = await bridge.remove(project)
-          await refresh()
+          await reRead()
           if (!reply.ok) say(reply.reason)
         }),
       )
@@ -538,14 +712,76 @@ export function mountPicker(document: PickerDocument, bridge: PickerBridge): Pic
     settle()
   }
 
-  const refresh = async (): Promise<void> => {
+  const refreshList = async (): Promise<void> => {
     render(viewOf(await bridge.list()))
   }
 
-  /** act sends one mutation and re-reads, with every control disabled until both
-   * are done. A refusal is shown **after** the re-read, so the operator sees the
-   * sentence over the list as it actually is rather than over a list the failed
-   * action did not change. */
+  /** refreshDistros re-reads the machine's distributions. It is the window's
+   * second, independent read: the section carries its own busy line and its own
+   * refusal, so a `wsl.exe` that cannot answer never takes the installation list
+   * down with it -- and it is redrawn on every refresh for the reason the list
+   * is, that a distribution added or renamed outside this console is a fact this
+   * window should not hold a stale copy of.
+   *
+   * A `distros` of `null` is the host that is not Windows, and the early return
+   * is where that machine's **no read at all** is kept: nothing is sent, so
+   * nothing can be answered with a Windows read failure, and the section this
+   * document declares is left empty rather than drawn with a heading over it.
+   *
+   * The section keeps **the latest read's answer**: `distroRead` is the sequence
+   * token of the owner's rule of 2026-10-31 (item 4), and two reads can be out at
+   * once here -- `reRead` starts one without waiting for it, so a mutation's read
+   * runs over the first paint's, or over the previous mutation's. Without the
+   * token the slower answer would win, and a slow `wsl.exe` that never answered
+   * would draw its refusal over a machine a later read had just listed. Only the
+   * answer is the token's business: the busy line belongs to the read that
+   * started last, which is the one that put it there. */
+  let distroRead = 0
+
+  const refreshDistros = async (): Promise<void> => {
+    if (distros === null) return
+    distroRead += 1
+    const mine = distroRead
+    distros.replaceChildren(own('h2', DISTROS_TITLE), own('p', DISTROS_READING))
+    const answer = distroViewOf(await bridge.distros())
+    if (mine !== distroRead) return
+    distros.replaceChildren(...distroNodes(answer))
+  }
+
+  /** refresh starts the two reads **together** and settles when both have drawn:
+   * the rows are this console's own record and the distro list is the machine's,
+   * and neither is a reason to hold the other back (the owner's rule of
+   * 2026-10-31, and what the console's sections are built on).
+   *
+   * This is the window's **first paint** and its one kind of read that waits for
+   * both. What a mutation ends with is `reRead`, which does not. */
+  const refresh = (): Promise<void> => Promise.all([refreshList(), refreshDistros()]).then(() => undefined)
+
+  /** reRead is what every mutation ends with, and the two halves are deliberately
+   * not waited for alike.
+   *
+   * The **list is awaited**: the click is applied by the main process, and what
+   * the list says afterwards is the thing the operator's click was about -- the
+   * controls come back when the page tells the truth about what happened.
+   *
+   * The **distributions are started and not awaited**: that read is two `wsl.exe`
+   * queries with a timeout of their own (`src/main/wsl.ts`), so a cold or a hung
+   * WSL is up to half a minute, and a control the operator has already used must
+   * not stay disabled for it. The section carries its own busy line and draws
+   * itself when its answer lands -- which is what the console's sections are for
+   * (the owner's rule of 2026-10-31) -- and no `busy` here is about it.
+   *
+   * The promise cannot reject, which is what makes not awaiting it safe: a bridge
+   * answers a refusal rather than throwing (`src/preload/installations.ts`). */
+  const reRead = async (): Promise<void> => {
+    await refreshList()
+    void refreshDistros()
+  }
+
+  /** act sends one mutation and re-reads, with every control disabled until the
+   * list has drawn. A refusal is shown **after** the re-read, so the operator sees
+   * the sentence over the list as it actually is rather than over a list the
+   * failed action did not change. */
   const act = (send: () => Promise<void>): Promise<void> => exclusively(send)
 
   return { refresh }
@@ -561,7 +797,11 @@ export function mountPicker(document: PickerDocument, bridge: PickerBridge): Pic
  * the DOM it uses, so it reads `globalThis` through its own interface rather
  * than through `lib.dom`'s.
  */
-const scope = globalThis as { readonly document?: unknown; readonly fugaroInstallations?: unknown }
+const scope = globalThis as {
+  readonly document?: unknown
+  readonly fugaroInstallations?: unknown
+  readonly navigator?: unknown
+}
 
 if (scope.document !== undefined && scope.fugaroInstallations !== undefined) {
   // The two assertions are where the declared slice meets the real page: this
@@ -570,5 +810,9 @@ if (scope.document !== undefined && scope.fugaroInstallations !== undefined) {
   // the scope rather than `PickerDocument`/`PickerBridge` is what keeps the cast
   // honest -- `lib.dom`'s `Document` is not this interface, and a cast that
   // claimed it was would be the compiler agreeing with a lie.
-  void mountPicker(scope.document as PickerDocument, scope.fugaroInstallations as PickerBridge).refresh()
+  void mountPicker(
+    scope.document as PickerDocument,
+    scope.fugaroInstallations as PickerBridge,
+    isWindowsPlatform(scope.navigator),
+  ).refresh()
 }

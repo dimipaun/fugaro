@@ -14,6 +14,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/verify"
 )
 
@@ -400,7 +401,7 @@ func (r *run) earlyPRText() (string, string) {
 	title, body := r.rawPRText()
 	title = scrubDescription(title)
 	if title == "" {
-		title = "Fugaro run " + inlineText(r.rec.RunID) // the agent title was only markers
+		title = "Fugaro run " + inlineText(task.ShortRun(r.rec.RunID)) // the agent title was only markers
 	}
 	body = scrubDescription(body)
 	if runes := []rune(title); len(runes) > maxTitleRunes {
@@ -518,11 +519,27 @@ func verifyPart(records []verify.Record) string {
 // (T3.3). The line ends with what reviewed the round — its model, its effort
 // and the commit it read (reviewFactsPart, CLI 0.16.0) — so a reader of the
 // pull request can tell which model shipped which head.
+//
+// The round the line reports is the policy's where the policy names one, and
+// the last review the record holds only where it names none (the running
+// section, which asks with the zero policy). The two are not the same round:
+// after a bounce the cheap loop's rounds are the last ones written while the
+// round readiness read is the outer one behind them, and the policy is that
+// round's split — so a line built from the record's last entry asks
+// toleratedPart about a round the split was never made from, and the count it
+// compares is the wrong round's. Where the two are equal in number, which the
+// levels' own numbering makes possible, the line would file the outer round's
+// acceptance as the cheap round's.
 func reviewsPart(rs []runstore.ReviewSummary, pol FindingsPolicy) string {
 	if len(rs) == 0 {
 		return ""
 	}
 	last := rs[len(rs)-1]
+	if pol.Round > 0 {
+		if d := decidingRound(rs, pol.Round); d != nil {
+			last = *d
+		}
+	}
 	who := ""
 	switch last.Tier {
 	case runstore.TierFirst:
@@ -643,22 +660,48 @@ func (r *run) levelsPart() string {
 // (rigor.Split), and the mode that let them through — the words Decide's own
 // reason uses, so the body and the record can be diffed (D18, T3.3).
 //
+// A round the stop rule ended the run's review on reads "accepted at <mode>
+// (<half>)": the same list, and the two facts Decide's own reason states for it
+// (FindingsPolicy.AtStop, the owner's ruling of 2026-11-08) — which half of the
+// stop left the findings, so a reader of the body can tell a run that merged at
+// its time threshold from one whose review rounds ran out. The words are still
+// the policy's, so the body and the record cannot disagree.
+//
 // "" for every other round, including a round the mode only partly tolerated:
 // what was let through is the whole round or nothing, and a line naming the
 // findings a mode would have tolerated in a round it blocked would be
 // claiming an answer Decide never gave (D7, F4). A first-line review never
-// decides (seniorReview), so it tolerates nothing whatever its counts say. A
+// decides (seniorReview), so it tolerates nothing whatever its counts say —
+// with the stop's own exception, which is the one moment readiness reads a
+// cheap round: where the loop stopped before an outer level could start, that
+// round is the deciding one (firstLineStop, item 6b), the policy is its split,
+// and the ruling files its findings on the body exactly as it files a senior
+// round's. The tier alone cannot tell the two apart, which is why the
+// exception is asked for by the stop (acceptsAtStop) and not by the tier. A
 // run that never reaches Decide tolerates nothing either, which is why the
 // running section asks with the zero policy.
 func toleratedPart(pol FindingsPolicy, last runstore.ReviewSummary) string {
-	if last.Tier == runstore.TierFirst || !pol.tolerates(&last) {
+	if !pol.tolerates(&last) || (last.Tier == runstore.TierFirst && !pol.acceptsAtStop(&last)) {
 		return ""
 	}
 	labels := make([]string, 0, len(pol.Tolerated))
 	for _, s := range pol.Tolerated {
 		labels = append(labels, string(s.Label()))
 	}
-	return ", tolerated at " + inlineText(string(pol.Mode)) + " (" + inlineText(strings.Join(labels, ", ")) + ")"
+	part := ", tolerated at " + inlineText(string(pol.Mode))
+	if pol.AtStop != "" {
+		// The stop's own words only where the stop is what decided the run: a
+		// round it would have taken and did not — one whose commit is not the
+		// one the run publishes (UnreadFix), or one a level under the decider
+		// left a finding the stop does not take (StopBlocking) — is a draft, and
+		// a body that filed the acceptance anyway would claim a merge the record
+		// has no block for (acceptsAtStop).
+		if !pol.acceptsAtStop(&last) {
+			return ""
+		}
+		part = ", accepted at " + inlineText(string(pol.Mode)) + " (" + inlineText(pol.AtStop) + ")"
+	}
+	return part + " (" + inlineText(strings.Join(labels, ", ")) + ")"
 }
 
 // checkpointReportPart is the section's checkpoint report, written when a
@@ -779,13 +822,19 @@ func (r *run) sectionLines(head string, parts ...string) string {
 		}
 	}
 	line := strings.Join(kept, " · ")
-	id := inlineText(r.rec.RunID)
+	// The section names the run by its short ID, the form spec.md §1 settles on
+	// (D1701). The command it tells a reader to paste names the run exactly:
+	// the CLI resolves an ending only once a lookup accepts one (resolveRun,
+	// wired at SR14), and a hint that refuses its own argument is worse than a
+	// longer line -- a full run ID is what every version of the CLI takes.
+	id := inlineText(task.ShortRun(r.rec.RunID))
 	out := line + "\n"
 	out += r.ownerPart()
 	if r.rec.DraftFallback {
 		out += "This host has no draft pull requests: this is a normal pull request marked [DRAFT], so reviews may already have been requested.\n"
 	}
-	return out + fmt.Sprintf("Run `%s` (a stale time here means the run died: `fugaro diagnose %s`)", id, id)
+	return out + fmt.Sprintf("Run `%s` (a stale time here means the run died: `fugaro diagnose %s`)",
+		id, inlineText(r.rec.RunID))
 }
 
 // ownerWaiting reports whether the run ended waiting on the owner's decisions

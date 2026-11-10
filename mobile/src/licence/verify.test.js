@@ -752,7 +752,7 @@ test('the primitive imports nothing at all, so it reaches no network, no clock a
   }
 });
 
-test('the door names one package and one file, and the package is the Ed25519 dependency', () => {
+test('the door names one package and its own two files, and the package is the Ed25519 dependency', () => {
   const specifiers = importSpecifiers(INDEX_SOURCE);
   assert.ok(specifiers.length > 0, 'the scan found no imports: it no longer reads the file');
 
@@ -761,7 +761,14 @@ test('the door names one package and one file, and the package is the Ed25519 de
   // The suite never loads this file, so nothing here is a claim a test can make
   // by running it -- the scan is the claim.
   assert.deepEqual(specifiers.filter((specifier) => !specifier.startsWith('.')), ['@noble/curves/ed25519.js']);
-  assert.deepEqual(specifiers.filter((specifier) => specifier.startsWith('.')), ['./verify.js']);
+  // The two files the door is the door TO: the verifier (S2.5) and the store
+  // (S2.8), and each is named where it belongs -- the store once for the factory
+  // and once for the names it re-exports. The set is exact on purpose -- a third
+  // module reached through the door is a decision, and this is where it is made.
+  assert.deepEqual(
+    [...new Set(specifiers.filter((specifier) => specifier.startsWith('.')))].sort(),
+    ['./store.js', './verify.js'],
+  );
   assert.deepEqual(specifiers.filter((specifier) => NETWORK_MODULES.includes(specifier)), []);
   assert.equal(/\bprocess\.env\b/.test(INDEX_SOURCE), false, 'the door reads no environment either');
 
@@ -786,4 +793,30 @@ test('the door names one package and one file, and the package is the Ed25519 de
     ),
     ['node:https', 'node:net'],
   );
+});
+
+test('the door hands out a store bound to this build’s verifier, and not the class', () => {
+  // The door withholds two constructors, and for one reason: `verify.js`'s
+  // factory takes a keyring and `store.js`'s class takes a verifier, so either
+  // one handed out is a caller choosing the keys this app trusts. The store is
+  // therefore reached as a factory over the port, with the verifier the door
+  // holds -- asserted as the two lines that make that true, because the suite
+  // cannot load this file (no `node_modules`) and because a later export of the
+  // class would read as convenient rather than as the hole it is.
+  assert.ok(
+    INDEX_SOURCE.includes('export function createLicenceStore(port)'),
+    'the door exports a store built over the port alone',
+  );
+  assert.ok(
+    INDEX_SOURCE.includes('new LicenceStore({ port, verifier: LICENCE_VERIFIER })'),
+    'and that factory is where this build’s verifier is bound',
+  );
+
+  // The scan catches a re-export of the class, so a green run above means
+  // something. The pattern is anchored to an export statement: the door's prose
+  // names `LicenceStore` on purpose, to say why it is not exported.
+  const exportsTheClass = (text) => /(?:export\s*\{[^}]*\bLicenceStore\b[^}]*\}|export\s+class\s+LicenceStore\b)/.test(text);
+  assert.equal(exportsTheClass("export { LICENCE_KEYS_MAX, LicenceStore } from './store.js';"), true, 'the scan must catch a re-export');
+  assert.equal(exportsTheClass('export class LicenceStore {}'), true, 'and a class declared here');
+  assert.equal(exportsTheClass(INDEX_SOURCE), false, 'the door exports no class that takes a verifier');
 });

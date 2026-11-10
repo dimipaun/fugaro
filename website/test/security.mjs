@@ -181,11 +181,17 @@ const REPORTING_ID = 'reporting-a-vulnerability'
  *
  * Re-derived 2026-11-08: #1831's `What is not on by default` bullet, which states that
  * `fugaro update` deploys the credentials service while a repository's jobs keep their model
- * credentials until its own root is re-applied, took the section from 220 words to 244. The
- * ceiling is the section's own count with a few words of room, and the section still renders
- * as six bullets, which is what the brief's "at most about 8 short bullets" is about.
+ * credentials until its own root is re-applied, took the section from 220 words to 244.
+ *
+ * Re-derived 2026-11-09: B1.10's `What a proxied Bitbucket run reaches` bullet, which states
+ * what the Bitbucket git proxy narrows (one repository, the run's own branch and pull requests,
+ * the run's life), that the agent can act as the run at it, and what the run still holds (the
+ * job's mounted token until the flip, the build account's own copy until S4), took the section
+ * from 244 words to 303. The ceiling is the section's own count with a few words of room, and
+ * the section still renders as seven bullets, which is what the brief's "at most about 8 short
+ * bullets" is about.
  */
-const MAX_SUMMARY_WORDS = 250
+const MAX_SUMMARY_WORDS = 310
 
 /**
  * The words the pointer to the document may spend around its link: "The full policy is … in

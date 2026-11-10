@@ -104,6 +104,110 @@ func TestAccountsRmRemovesTheDeclarationAndTheProfileEntry(t *testing.T) {
 	}
 }
 
+// accountsRmTypedLocal is the account's typed entry already named by the rest
+// of the config: a craft served by it and a pool whose members list it. Both
+// are the state a removal of the entry must refuse under — the craft because
+// its access would resolve to nothing, the pool because a member that is not
+// defined is the file its own loader rejects.
+const accountsRmTypedLocal = addRigLocal + `
+credentials:
+  - name: team-a
+    type: claude-oauth
+crafts:
+  coder:
+    model: deepseek-v4-1
+    access: team-a
+pools:
+  - name: paid
+    members:
+      - team-a
+`
+
+// TestAccountsRmTakesTheTypedEntryWithTheAccount is the other end of `accounts
+// add --type`: the entry in the credentials block the account was declared with
+// goes in the same removal as the declaration, so the pair add-then-rm leaves
+// the file as it found it. An entry left behind is not inert — no profile, no
+// secret and no job back it, while a pool of this very file is still admitted
+// to name it — which is the state `accounts add --type`'s own refusal exists to
+// keep out of a file (accounts_add.go).
+func TestAccountsRmTakesTheTypedEntryWithTheAccount(t *testing.T) {
+	r := newAddRig(t)
+	r.add(t, "team-a", "--repos", "owner/repo-a", "--type", "claude-oauth")
+	lc := r.addLocal(t)
+	assertPoolMemberAdmitted(t, lc, "team-a", true)
+
+	out := r.rm(t, "team-a", "--profile", "standard")
+
+	if got := r.addLocal(t).Credentials; len(got) != 0 {
+		t.Errorf("credentials.team-a is still declared after the removal: %v", got)
+	}
+	if strings.Contains(readFileString(t, r.cfg), "credentials:") {
+		t.Errorf("the file keeps a credentials block no entry is left in:\n%s", readFileString(t, r.cfg))
+	}
+	if !strings.Contains(out, "remove credentials.team-a (the typed entry the account was declared with)") {
+		t.Errorf("the sentence does not name the typed entry it removed:\n%s", out)
+	}
+	if got := accountsAddRow(t, out, "account"); !strings.Contains(got, "credentials.team-a") {
+		t.Errorf("the block's account line reads %q, want the typed entry it removed named", got)
+	}
+	assertPoolMemberAdmitted(t, r.addLocal(t), "team-a", false)
+	// The file it left is the config its own reader loads, which is what the
+	// pool above is judged by: the loader refuses a member no block defines.
+	if _, err := localcfg.Load(r.cfg); err != nil {
+		t.Fatalf("the config this command wrote does not load: %v", err)
+	}
+}
+
+// TestAccountsRmRefusesWhileACredentialIsStillNamed is the same guard at the
+// other end: while a craft is served by the entry or a pool lists it, the
+// removal is refused rather than leaving either pointing at a credential that
+// is gone. The refusal names both fields, because both are what the owner has
+// to point elsewhere first, and nothing is written.
+func TestAccountsRmRefusesWhileACredentialIsStillNamed(t *testing.T) {
+	r := newAddRigWith(t, accountsRmTypedLocal)
+	r.add(t, "team-a", "--repos", "owner/repo-a")
+	before, err := os.ReadFile(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, rmErr := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard", "--yes")
+
+	after, err := os.ReadFile(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Errorf("the command wrote %s while a craft and a pool still named the credential:\n%s", r.cfg, after)
+	}
+	if rmErr == nil {
+		t.Fatalf("the account was removed while its typed entry was still named by crafts.coder.access and pools.paid.members")
+	}
+	for _, want := range []string{"credentials.team-a", "crafts.coder.access", "pools.paid.members", "nothing was written"} {
+		if !strings.Contains(rmErr.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, rmErr)
+		}
+	}
+	if got := r.sm.Deleted(); len(got) != 0 {
+		t.Errorf("the command deleted %v while it was refusing", got)
+	}
+	if _, err := localcfg.Load(r.cfg); err != nil {
+		t.Fatalf("the config that command left is one its own next load refuses: %v", err)
+	}
+}
+
+// assertPoolMemberAdmitted is whether a pool naming this credential is the
+// config's own rule's business: ValidatePools is what a load of this file
+// applies to its pools block, so a member it does not complain about is one a
+// `pool add` write of this file would be admitted to declare.
+func assertPoolMemberAdmitted(t *testing.T, lc *localcfg.Config, name string, want bool) {
+	t.Helper()
+	problems := config.ValidatePools([]config.Pool{{Name: "probe", Members: []string{name}}}, lc.Credentials)
+	if got := len(problems) == 0; got != want {
+		t.Errorf("ValidatePools admits a pool naming %s: %v, want %v (problems: %v)", name, got, want, problems)
+	}
+}
+
 // TestAccountsRmDeletesTheSecretAndConverges is spec §4 steps 2 and 3 for the
 // account that is fully removed: the secret's container takes the delete and
 // its value is gone, the published node no longer names the account, and the
@@ -330,39 +434,58 @@ repos:
 `
 
 // TestAccountsRmSaysTheTokenIsNotRevokedAtTheProvider is D866, and it is about
-// the confirmation rather than the run: the secret's ID is named before the
-// secret goes, and the block says plainly that deleting it does not revoke the
-// token at the provider. The run below is the one that never happens — no
-// terminal and no --yes — so what it prints is printed while the secret is
-// still there, which is the order the sentence is about.
+// the sentence rather than the run: the secret's ID is named before the secret
+// goes, and the block says plainly that deleting it does not revoke the token
+// at the provider. Nothing waits for an answer to that sentence any more
+// (D1540), so what makes the order true is where it is printed: above the
+// report of the removal, in the run that is about to make it — and this is the
+// run, no terminal and no --yes, that used to stop at the question.
 func TestAccountsRmSaysTheTokenIsNotRevokedAtTheProvider(t *testing.T) {
 	r := newAddRig(t)
 	r.add(t, "team-a", "--repos", "owner/repo-a")
-	before, err := os.ReadFile(r.cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
 	id := gcp.ProjectSecretID("aurora", config.ClaudeAccountSecret("team-a"))
 
-	out, _, rmErr := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard")
-	if rmErr == nil {
-		t.Fatalf("a run with no terminal and no --yes removed the account:\n%s", out)
+	out, _, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
 	}
+	assertNoPrompt(t, out)
 	if !strings.Contains(out, id) {
-		t.Errorf("the confirmation does not name the secret's ID %s, which is the credential it deletes:\n%s", id, out)
+		t.Errorf("the sentence does not name the secret's ID %s, which is the credential it deletes:\n%s", id, out)
 	}
 	if !strings.Contains(out, "does not revoke") || !strings.Contains(out, "Anthropic") {
-		t.Errorf("the confirmation does not say that deleting the secret leaves the token valid at the provider:\n%s", out)
+		t.Errorf("the sentence does not say that deleting the secret leaves the token valid at the provider:\n%s", out)
 	}
-	if got := r.sm.Deleted(); len(got) != 0 {
-		t.Errorf("the secret was deleted by a run that was not confirmed: %v", got)
+	if named, gone := strings.Index(out, "does not revoke"), strings.Index(out, "is gone from this installation"); named < 0 || gone < 0 || named > gone {
+		t.Errorf("the sentence naming the credential does not come before the run reports the removal (named at %d, reported at %d):\n%s", named, gone, out)
 	}
-	after, err := os.ReadFile(r.cfg)
+	if got := r.sm.Deleted(); !slices.Equal(got, []string{id}) {
+		t.Errorf("the secret deletes were %v, want %v", got, id)
+	}
+}
+
+// TestAccountsRmAsksNothing is the removal with nobody to ask (D1540): the
+// declaration, the profile entry and the secret are named in one sentence and
+// then removed, with neither --yes nor a terminal — the invocation below is
+// the one that used to be refused for want of an answer.
+func TestAccountsRmAsksNothing(t *testing.T) {
+	r := newAddRig(t)
+	r.add(t, "team-a", "--repos", "owner/repo-a")
+	id := gcp.ProjectSecretID("aurora", config.ClaudeAccountSecret("team-a"))
+
+	out, _, err := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard")
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("%v\n%s", err, out)
 	}
-	if !bytes.Equal(before, after) {
-		t.Errorf("the unconfirmed run wrote %s:\n%s", r.cfg, after)
+	assertNoPrompt(t, out)
+	if !strings.Contains(out, "remove claude_accounts.team-a") || !strings.Contains(out, "delete the secret "+id) {
+		t.Errorf("the sentence does not name both halves of the removal:\n%s", out)
+	}
+	if got := r.sm.Deleted(); !slices.Equal(got, []string{id}) {
+		t.Errorf("the secret deletes were %v, want %v", got, id)
+	}
+	if lc := r.addLocal(t); func() bool { _, ok := lc.ClaudeAccounts["team-a"]; return ok }() {
+		t.Errorf("claude_accounts.team-a is still declared after the removal")
 	}
 }
 
@@ -713,11 +836,11 @@ func TestAccountsRmManagedRefusesWhileARepositoryStillNamesIt(t *testing.T) {
 // D783's shape): the file belongs to a repository this command cannot write, so
 // the owner's own edit is not stopped by it — they are told which repository
 // breaks with the removal and what its next run does — and the removal they
-// confirmed goes through.
+// asked for goes through.
 //
-// The warning is printed BEFORE the confirmation and not after it, which is the
-// order this test pins: the break it names is one the removal makes, so the
-// moment it can still be declined is the moment it belongs in.
+// The warning is printed BEFORE the sentence that names what goes and not after
+// it, which is the order this test pins: the break it names is one the removal
+// makes, so it belongs above the write rather than below it.
 //
 // The checkout's working tree has the line deleted and its commit still has it:
 // the reference is the COMMIT — the file the repository's next run resolves its
@@ -737,8 +860,8 @@ func TestAccountsRmWarnsWhileARepositoryStillNamesIt(t *testing.T) {
 	if !strings.Contains(out, "stops at launch") || !strings.Contains(out, "fugaro accounts add ") {
 		t.Errorf("the warning does not say what that repository's next run does once the declaration is gone, and how to put the account back:\n%s", out)
 	}
-	if i, j := strings.Index(out, "warning:"), strings.Index(out, "CONFIRM"); i < 0 || j < 0 || i > j {
-		t.Errorf("the warning is not printed while the confirmation can still be declined (warning at %d, confirm at %d):\n%s", i, j, out)
+	if i, j := strings.Index(out, "warning:"), strings.Index(out, "does not revoke"); i < 0 || j < 0 || i > j {
+		t.Errorf("the warning is not printed above the sentence that names what the run removes (warning at %d, sentence at %d):\n%s", i, j, out)
 	}
 	// The warning is not a refusal: what the person confirmed is what ran.
 	if got := r.sm.Deleted(); !slices.Equal(got, []string{id}) {

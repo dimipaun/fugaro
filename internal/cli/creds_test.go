@@ -456,6 +456,51 @@ func TestCredsSetRefusesUnknownKeyAndOversizeDoc(t *testing.T) {
 	}
 }
 
+// The provider key's name is a key of the document (AK6b: the service reads it
+// as the third-party route's credential) and NOT one this command writes: its
+// value is a mapping of three fields, and this command's write builds a scalar
+// node for every name that is not the read consumer's, so the document it
+// would build is one the loader hands back.
+//
+// The refusal is at the door and not at the loader, and that placement is what
+// this test is for: the step between the two is the VALUE being read from the
+// operator — a hidden prompt or stdin — and that is the one step of this
+// command a refusal cannot take back. So nothing of a value piped in is read
+// at all, which the absence of the read's own "dropped the value's trailing
+// newline" line shows, and the cloud is not opened either.
+func TestCredsSetRefusesTheProviderKeyBeforeReadingIt(t *testing.T) {
+	f := credsFixtureFor(t)
+	f.seed(t, []byte(config.ClaudeOAuthToken+": "+credsValue(t, "existing")+"\n"))
+	before := f.value(t)
+	value := credsValue(t, "provider")
+
+	out, errOut, err := executeStdin(t, value+"\n", "creds", "set", config.ProviderKeySecret)
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("creds set %s = %v, want a user error", config.ProviderKeySecret, err)
+	}
+	if !strings.Contains(err.Error(), "Nothing was read and nothing was written") {
+		t.Errorf("the refusal does not say nothing happened: %v", err)
+	}
+	if strings.Contains(errOut, "trailing newline") || strings.Contains(out, value) {
+		t.Errorf("the value piped in was read: stdout %q, stderr %q", out, errOut)
+	}
+	if n := len(f.Requests()); n != 0 {
+		t.Fatalf("%d request(s) were made for a name this command does not write: the refusal is not before the cloud", n)
+	}
+	if n := f.writes(); n != 0 {
+		t.Fatalf("%d version(s) written, want none", n)
+	}
+	if got := f.value(t); got != before {
+		t.Errorf("the document changed: %q", got)
+	}
+	// And the name is not one the other door accepts either: --generate writes
+	// the review-signing family and refuses this name for its own reason, so
+	// the two refusals cannot drift into one.
+	if _, _, err := executeStdin(t, value+"\n", "creds", "set", config.ProviderKeySecret, "--generate"); err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("creds set %s --generate = %v, want a user error", config.ProviderKeySecret, err)
+	}
+}
+
 // The App key is a bundle credential, and it is the ONE entry whose value is
 // not one line: C2.1 made credsvc.CredentialKey answer KindGitHubApp for
 // github-app-key (the service signs its installation-token mints with it), and
@@ -1240,6 +1285,27 @@ func TestCredsSetBitbucketToken(t *testing.T) {
 		}
 		if n := len(f.Requests()); n != 0 {
 			t.Fatalf("%d request(s) were made from an agent's session", n)
+		}
+	})
+
+	// The help is what the operator reads at the step that writes this entry
+	// (docs/credentials-service/runbook.md §11), so it cannot say the proxy
+	// does not exist yet while SECURITY.md, docs/git-providers.md and the
+	// runbook document it as built. It says which repositories the entry
+	// serves, and keeps the half that is still true on this tree: the job of
+	// every other Bitbucket repository still mounts its own copy.
+	t.Run("the help names the proxy that issues it", func(t *testing.T) {
+		help := newCredsSetCmd().Long
+		if !strings.Contains(help, "the git proxy issues this entry for the repositories the published node admits with proxy: true") {
+			t.Errorf("`creds set` help does not say what the %s entry is for: %q", config.BitbucketSecret, help)
+		}
+		if !strings.Contains(help, "every other Bitbucket run's job still uses its own mounted copy until the flip") {
+			t.Errorf("`creds set` help does not keep the mount that is still there on this tree: %q", help)
+		}
+		for _, banned := range []string{"a later release adds", "still uses its own mounted token"} {
+			if strings.Contains(help, banned) {
+				t.Errorf("`creds set` help still says %q: the proxy is built and this command writes the entry it issues", banned)
+			}
 		}
 	})
 }

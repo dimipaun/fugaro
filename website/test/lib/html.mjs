@@ -478,6 +478,42 @@ export function deployedCSP(repo = REPO) {
 }
 
 /**
+ * Whether the deployed site serves `rel` (a path in `dist`, e.g. `keys/index.html`), read from
+ * `firebase.json`'s own `hosting.ignore` globs — the list that decides what a deploy uploads.
+ *
+ * A gate that holds something about *the site a reader reaches* needs this and not `dist/`
+ * alone: a page can be built (and read by every gate here) and not served, which is the state
+ * the key request page is in until S7.4 publishes it (S3.3). A pattern is matched the way the
+ * hosting CDN matches it — `*` within one path segment, `**` across segments, `?` one
+ * character — so a page is excluded only when the config really excludes it.
+ */
+export function deployExcludes(rel, repo = REPO) {
+  const config = JSON.parse(readFileSync(path.join(repo, 'firebase.json'), 'utf8'))
+  const globs = config.hosting.ignore ?? []
+  const rx = (glob) => {
+    let out = ''
+    for (let i = 0; i < glob.length; i++) {
+      const c = glob[i]
+      if (c === '*') {
+        if (glob[i + 1] === '*') {
+          // `**/` spans zero or more segments, so `**/keys/**` matches `keys/index.html` too.
+          if (glob[i + 2] === '/') {
+            out += '(?:[^/]+/)*'
+            i += 2
+          } else {
+            out += '.*'
+            i += 1
+          }
+        } else out += '[^/]*'
+      } else if (c === '?') out += '[^/]'
+      else out += c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    }
+    return new RegExp(`^${out}$`)
+  }
+  return globs.some((glob) => rx(glob).test(rel))
+}
+
+/**
  * The facts the gates need from site.yaml: `canonical_url` (and the host it names),
  * `allowed_hosts`, `analytics.enabled`, `analytics.measurement_id`, and the `marketing` block
  * the campaign pages' gate reads (G2.3). A strict reader of exactly those keys — the Go

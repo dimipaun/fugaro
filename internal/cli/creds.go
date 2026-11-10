@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
 	"google.golang.org/api/googleapi"
 	secretmanager "google.golang.org/api/secretmanager/v1"
 	"gopkg.in/yaml.v3"
@@ -146,7 +145,7 @@ NAME is a credential the service can issue, in the document's own spelling:
   ` + config.ClaudeOAuthTokenPrefix + `<account>       a named Claude account's OAuth token (tier A)
   ` + config.AnthropicSecret + `                the project's Anthropic API key (tier B)
   ` + config.GitHubAppKeySecret + `                  the GitHub App's private key (no tier: the mint signs with it)
-  ` + config.BitbucketSecret + `                   the upstream Bitbucket token (no tier: held for the git proxy a later release adds; a Bitbucket run's job still uses its own mounted token)
+  ` + config.BitbucketSecret + `                   the upstream Bitbucket token (no tier: the git proxy issues this entry for the repositories the published node admits with proxy: true, and every other Bitbucket run's job still uses its own mounted copy until the flip)
   ` + credsvc.BitbucketReadConsumerSecret + `             the Bitbucket read consumer (no tier: the service's read mint exchanges it for a read-scoped token): a YAML mapping of key, secret and workspace, one field per line, so redirect it from a file — the hidden prompt takes one line
   ` + config.ReviewSigningKeySecret(config.DefaultClaudeAccount) + `  the default account's review-signing key (no tier: the service's sign
                                      route computes a MAC with it; written by --generate below)
@@ -590,6 +589,18 @@ func credsSet(cmd *cobra.Command, o credsOptions, name string, generate bool) er
 	if generate && (!reviewSigning || previous) {
 		return credsGenerateNameRefusal()
 	}
+	// The provider key is a bundle entry this command has no value shape for:
+	// the service reads it as a mapping (credsvc's providerValue) and the write
+	// below builds a scalar for every name that is not the read consumer's, so
+	// the loader hands the document back once it has been built — which is
+	// AFTER the operator has been prompted for the key. That read is the one
+	// step of this command that cannot be taken back, so the refusal is placed
+	// before it, and before the project is opened. The write that teaches this
+	// command the mapping is AK10's, and it lands with the release that serves
+	// the entry.
+	if kind == credsvc.KindProvider {
+		return credsProviderNameRefusal()
+	}
 	_, lc, err := selectProject(ctx, o.cloud)
 	if err != nil {
 		return err
@@ -852,6 +863,23 @@ func credsNameRefusal() error {
 		config.ReviewSigningKeySecret(config.DefaultClaudeAccount), config.ClaudeOAuthTokenPrefix, config.ReviewSigningKeySuffix, readConsumerShape)
 }
 
+// credsProviderNameRefusal refuses the provider key's name, which IS a key of
+// the document and NOT one this command writes: the service reads its value as
+// a mapping of the key, the provider's base URL and how the key is sent
+// (credsvc's providerValue, AK6b), and every value this command reads is a
+// single line, except the read consumer's mapping. A write of a scalar under
+// this name is a document the loader refuses, and the refusal would come after
+// the value had been read from a terminal — so the name is refused at the door
+// instead, and that is why this is not credsNameRefusal: the name is one the
+// service accepts, and what is missing is this command's write for it.
+//
+// The name is the bundle's own constant and not operator text, so naming it
+// here echoes nothing that came in. Nothing was read and nothing was written.
+func credsProviderNameRefusal() error {
+	return userErr("%s is a bundle entry this command does not write. The credentials service reads its value as a mapping of the provider's key, the provider's base URL and how the key is sent, and a value read here as one line could only be handed back by the loader. The write for it ships with the release that lets a bundle hold it. Nothing was read and nothing was written",
+		config.ProviderKeySecret)
+}
+
 // credsGenerateNameRefusal refuses --generate for a NAME that is not an
 // account's review-signing key. The mode is refused rather than widened,
 // because every other credential of the bundle has an upstream somebody copies
@@ -919,7 +947,10 @@ func credsDocRefusal(id string, err error) error {
 // use.
 func readBundleValue(ctx context.Context, in io.Reader, prompt io.Writer, name string, kind credsvc.Kind) ([]byte, error) {
 	var raw []byte
-	if f, ok := in.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
+	// As readSecret's own (secrets.go): the hidden prompt needs the file to
+	// take the echo off, so a stream a terminal was reported for and that is
+	// not one is read to EOF like any pipe.
+	if f, ok := in.(*os.File); ok && stdinIsTerminal(in) {
 		// The refusals made before the prompt: these two values are many lines,
 		// the hidden prompt reads one, and a prompt that took a first line and
 		// then failed would have made the operator paste a private key, or a
@@ -932,7 +963,7 @@ func readBundleValue(ctx context.Context, in io.Reader, prompt io.Writer, name s
 		case credsvc.KindBitbucketReadConsumer:
 			return nil, userErr("%s is %s, which spans several lines and the hidden prompt can't take; redirect it from a file: fugaro creds set %s < PATH-TO-THE-FILE", name, readConsumerShape, name)
 		}
-		b, err := readHidden(ctx, f, prompt, name)
+		b, err := readValueIn(ctx, f, prompt, valueSpec{what: name, secret: true})
 		if err != nil {
 			return nil, err
 		}

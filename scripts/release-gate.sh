@@ -3,7 +3,9 @@
 # console-release.yml, mobile-release.yml): the tag is a strict vX.Y.Z -- or
 # the mobile app's strict mobile-vX.Y.Z, the one stream this repository's tags
 # carry a prefix on (docs/release.md, "Mobile releases") -- its commit is
-# reachable from origin/main, and every GitHub Actions check in `names` below
+# reachable from origin/main (or, for a patch release vX.Y.Z with Z of 1 or more,
+# from the maintenance branch release/X.Y, which must descend from the vX.Y.0
+# tag that is itself on main), and every GitHub Actions check in `names` below
 # succeeded on that commit.
 # Needs: a full-history checkout, GH_TOKEN (checks: read), GITHUB_SHA,
 # GITHUB_REPOSITORY. Usage: scripts/release-gate.sh vX.Y.Z|mobile-vX.Y.Z
@@ -32,9 +34,64 @@ if ! [[ $version =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; the
   exit 1
 fi
 retry_read git fetch --quiet origin main
-if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
-  echo "::error::$tag ($GITHUB_SHA) is not on main; tag a commit that is reachable from main" >&2
-  exit 1
+if ! git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main; then
+  # The one other place a release commit may be: a maintenance branch, for a
+  # patch release of a line that was itself released from main (a hotfix, docs/
+  # release.md "Hotfix releases"). It is narrow on purpose, every condition
+  # below must hold, and each is a refusal and never a skip:
+  #   - the tag is a CLI tag vX.Y.Z with Z of 1 or more (the app's mobile- tags
+  #     and a vX.Y.0 stay main-only: a minor's first release is cut from main),
+  #   - the branch is the line's own, release/X.Y, and the commit is on it,
+  #   - vX.Y.0 exists and is reachable from main, so the line was gated on main
+  #     once and the patch cannot be the first release of anything,
+  #   - the commit descends from that vX.Y.0, so the branch is the line's
+  #     history and not an unrelated one named like it,
+  #   - and main's own plugin version is the tag's or newer, so the patch
+  #     release's plugin bump landed on main too (docs/release.md "Hotfix
+  #     releases") and main never publishes a plugin older than a released tag.
+  # The required checks below are read from the commit itself, on any branch, so
+  # CI dispatched on the maintenance branch is what vouches for the commit.
+  maintenance_ok=""
+  if [[ $tag =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.([1-9][0-9]*)$ ]]; then
+    line="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
+    branch="release/$line"
+    # Fully qualified refs throughout: a tag named like a remote-tracking branch
+    # (`origin/release/1.2`) would otherwise be resolved first, and a commit that
+    # is not on the branch could pass for one that is.
+    if retry_read git fetch --quiet origin "refs/heads/$branch:refs/remotes/origin/$branch" \
+      && git merge-base --is-ancestor "$GITHUB_SHA" "refs/remotes/origin/$branch" \
+      && first=$(git rev-parse --quiet --verify "refs/tags/v$line.0^{commit}") \
+      && git merge-base --is-ancestor "$first" refs/remotes/origin/main \
+      && git merge-base --is-ancestor "$first" "$GITHUB_SHA"; then
+      # A patch of an older line would be published as the newest release (GitHub
+      # marks a newly published release latest and the Homebrew cask follows the
+      # tag), so only the newest line may be patched this way.
+      newest=$(git tag -l 'v*' | grep -E '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' | sort -V | tail -n1)
+      if [ "${newest%.*}" != "v$line" ]; then
+        echo "::error::$tag is a patch of the line v$line, but a newer line exists ($newest): a maintenance release would be published as the latest release; only the newest line may be patched from its maintenance branch" >&2
+        exit 1
+      fi
+      # The patch release's plugin bump must be on main as well (docs/release.md
+      # "Hotfix releases"): the branch is never merged back, so a plugin version
+      # main does not carry outlives the release, and a main behind a published
+      # tag is a marketplace that serves a plugin older than the binary that
+      # installed it (0.21.1, 2026-11-09). A version main already carries counts
+      # whatever the line: only never older is required.
+      main_plugin=$(git show refs/remotes/origin/main:plugin/.claude-plugin/plugin.json 2>/dev/null \
+        | sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)
+      if [[ ! $main_plugin =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] \
+        || [ "$(printf '%s\n%s\n' "$main_plugin" "${tag#v}" | sort -V | tail -n1)" != "$main_plugin" ]; then
+        echo "::error::main's plugin/.claude-plugin/plugin.json says '$main_plugin' and $tag is ${tag#v}: a patch release's plugin bump is made on main and cherry-picked onto release/$line, like the fix and the gate change (docs/release.md, \"Hotfix releases\"), so that main and the released tag never disagree about the plugin" >&2
+        exit 1
+      fi
+      maintenance_ok=1
+      echo "$tag ($GITHUB_SHA) is on the maintenance branch $branch, which descends from v$line.0 on main"
+    fi
+  fi
+  if [ -z "$maintenance_ok" ]; then
+    echo "::error::$tag ($GITHUB_SHA) is not on main; tag a commit that is reachable from main (a patch release vX.Y.Z may instead be tagged on release/X.Y when vX.Y.0 exists on main and the commit descends from it)" >&2
+    exit 1
+  fi
 fi
 wait_seconds=${GATE_WAIT_SECONDS:-0}
 poll_seconds=${GATE_POLL_SECONDS:-30}

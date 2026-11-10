@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -224,5 +225,49 @@ func TestPolicyLineKeepsAMergeDroppedStageTimeoutInTheLooseSentence(t *testing.T
 	want := loose + held
 	if got := policyLine(&runstore.PolicyRecord{Ignored: []runstore.PolicyIgnored{capped, clamped}}); got != want {
 		t.Errorf("one key with both shapes:\n%q\nwant %q", got, want)
+	}
+}
+
+// TestReportHeadingShortID: both of the runner's report renderers -- a run's
+// report and a review-mode run's -- open with the run named by its short ID
+// (spec.md §1).
+func TestReportHeadingShortID(t *testing.T) {
+	rec := &runstore.Record{
+		RunID:   "20261027-120000-3bb2",
+		Status:  runstore.StatusSucceeded,
+		Outcome: runstore.OutcomeReady,
+	}
+	for _, tc := range []struct {
+		name string
+		got  string
+	}{
+		{"a run's report", Report(rec, "loc/", nil)},
+		{"a review-mode run's report", reviewReport(rec, "loc/", nil)},
+	} {
+		if !strings.HasPrefix(tc.got, "### Fugaro run `3bb2`\n\n") {
+			t.Errorf("%s does not open with the short ID in its heading:\n%s", tc.name, tc.got)
+		}
+	}
+}
+
+// TestMarkerKeepsFullID: what a machine reads stays whole (D1705). Every
+// comment Fugaro posts ends with the marker naming the full run ID, and the
+// report names the run's own bucket path -- both are identifiers a follow-up
+// and `fugaro diagnose` read, not a surface a person reads.
+func TestMarkerKeepsFullID(t *testing.T) {
+	rec := &runstore.Record{
+		RunID:   "20261027-120000-3bb2",
+		Status:  runstore.StatusSucceeded,
+		Outcome: runstore.OutcomeReady,
+	}
+	got := Report(rec, "runs/acme-app/"+rec.RunID+"/", nil)
+	if !strings.Contains(got, gitprov.ReportMarker(rec.RunID)) {
+		t.Errorf("the report does not end with the marker naming the full run ID:\n%s", got)
+	}
+	if !strings.Contains(got, "runs/acme-app/"+rec.RunID+"/") {
+		t.Errorf("the report lost the run's own bucket path:\n%s", got)
+	}
+	if strings.Contains(got, "### Fugaro run `"+rec.RunID+"`") {
+		t.Errorf("the heading prints the full run ID:\n%s", got)
 	}
 }

@@ -2,6 +2,11 @@ package gcp
 
 import (
 	"encoding/base64"
+	"errors"
+	"os"
+	"os/exec"
+	"path"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -11,6 +16,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // catalogSlug is the repository whose build account runs the catalog builds
@@ -55,6 +61,20 @@ func catalogBuildSpec(t *testing.T) CatalogBuildSpec {
 	}
 }
 
+// catalogContextSpec is catalogBuildSpec with the entry's source naming a
+// build context: the directory the build runs on, the commit the copy and the
+// context were read at — the same commit, which is what makes the entry's
+// build one tree — and the digest of the context tree the copy staged beside
+// the Dockerfile (CB1's keys).
+func catalogContextSpec(t *testing.T) CatalogBuildSpec {
+	t.Helper()
+	s := catalogBuildSpec(t)
+	s.Context = "."
+	s.ContextCommit = s.Definition.SourceCommit
+	s.ContextSHA256 = strings.Repeat("c", 64)
+	return s
+}
+
 // stepIDs are the ids of b's steps, in order.
 func stepIDs(b *cloudbuild.Build) []string {
 	ids := make([]string, 0, len(b.Steps))
@@ -64,12 +84,13 @@ func stepIDs(b *cloudbuild.Build) []string {
 	return ids
 }
 
-// TestCatalogBuildReadsTheCopiedDockerfile: a catalog build has no checkout
-// and no render step, so it starts from the one object PIC3 copied —
-// builds/catalog/<entry>/Dockerfile — and its whole build context is that
-// file. The steps it does not need are not in the request at all: a catalog
-// build never clones a repository into the build, never reads a push
-// credential of its own and never gates on the workflow record.
+// TestCatalogBuildReadsTheCopiedDockerfile: a catalog build of an entry that
+// names no context has no checkout and no render step, so it starts from the
+// one object PIC3 copied — builds/catalog/<entry>/Dockerfile — and its whole
+// build context is that file. The steps it does not need are not in the
+// request at all: such a build never clones a repository into the build,
+// never reads a push credential of its own and never gates on the workflow
+// record.
 func TestCatalogBuildReadsTheCopiedDockerfile(t *testing.T) {
 	s := catalogBuildSpec(t)
 	b, err := CatalogBuildRequest("proj-1234", s)
@@ -91,11 +112,11 @@ func TestCatalogBuildReadsTheCopiedDockerfile(t *testing.T) {
 	if script := strings.Join(df.Args, "\n"); !strings.Contains(script, "/workspace/context/Dockerfile") {
 		t.Fatalf("the read step does not write the context: %q", script)
 	}
-	// The context the build step builds is the copy and nothing else: no step
-	// of the request clones a repository, and none reads the workflow's own
-	// source or record.
+	// The context the build step builds is the copied definition and nothing
+	// else: no step of the request clones a repository, and none reads the
+	// workflow's own source or record.
 	buildScript := strings.Join(step(t, b, "build").Args, "\n")
-	if !strings.Contains(buildScript, `--tag "$$candidate" /workspace/context`) {
+	if !strings.Contains(buildScript, "--file /workspace/context/Dockerfile") || !strings.Contains(buildScript, `--tag "$$candidate" "$$CONTEXT_DIR"`) {
 		t.Fatalf("the build step does not build the copied definition: %q", buildScript)
 	}
 	for _, st := range b.Steps {
@@ -212,6 +233,7 @@ func TestCatalogBuildWritesARecordTheCheckReads(t *testing.T) {
 		"BUCKET=" + s.Bucket, "KEY=" + key, "ENTRY=agent", "IMAGE=" + s.Image,
 		"GENERATION=" + strconv.FormatInt(s.Definition.Generation, 10),
 		"SHA256=" + s.Definition.SHA256, "COMMIT=" + s.Definition.SourceCommit,
+		"CONTEXT_COMMIT=", "CONTEXT_SHA256=",
 		"BASE=" + s.Base, "TAG=${_CATALOG_TAG}",
 	}
 	if env := rec.Env; !slices.Equal(env, want) {
@@ -221,7 +243,7 @@ func TestCatalogBuildWritesARecordTheCheckReads(t *testing.T) {
 	// Every field imagecheck.CatalogRecordState reads, and the two extra a
 	// human wants: the image, its content tag and the build that wrote it.
 	for _, field := range []string{
-		`"version":`, `"entry":"`, `"source_commit":"`, `"definition_generation":`,
+		`"version":`, `"entry":"`, `"source_commit":"`, `"context_commit":"`, `"context_sha256":"`, `"definition_generation":`,
 		`"definition_sha256":"`, `"base_ref":"`, `"base_digest":"`, `"image":"`,
 		`"content_tag":"`, `"image_digest":"`, `"build_id":"`, `"built_at":"`,
 	} {
@@ -556,4 +578,801 @@ func TestCatalogBuildSelftestIsTheSmokeSpec(t *testing.T) {
 	if _, ok := b.Substitutions["_WORKFLOW"]; ok {
 		t.Fatalf("the catalog build sends a substitution no step of it references: %v", b.Substitutions)
 	}
+}
+
+// TestCatalogBuildHasACheckoutStepForAContextEntry: an entry that names a
+// context gets one step the entries without one do not — a checkout of the
+// entry's repository at the commit the copy pinned, between the step that
+// reads the copied Dockerfile and the step that pins it (D1396). The
+// checkout is outside the Docker build, because Docker resolves COPY before
+// any RUN and a checkout inside the build is not a context at all, and it
+// clones by commit and never by branch: the branch head at build time is the
+// tree the copy pinned only by accident (D1394).
+func TestCatalogBuildHasACheckoutStepForAContextEntry(t *testing.T) {
+	s := catalogContextSpec(t)
+	b, err := CatalogBuildRequest("proj-1234", s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"prep", credentialStep, catalogDockerfileStepID, catalogContextStepID, catalogPinStepID,
+		"build", "smoke", "promote", catalogTagStepID, catalogRecordStepID, "untag",
+	}
+	if ids := stepIDs(b); !slices.Equal(ids, want) {
+		t.Fatalf("steps = %v, want %v", ids, want)
+	}
+	checkout := step(t, b, catalogContextStepID)
+	if checkout.Name != "gcr.io/cloud-builders/git" || checkout.Entrypoint != "bash" || len(checkout.SecretEnv) != 0 {
+		t.Fatalf("the checkout step = %+v", checkout)
+	}
+	// CONTEXT_DIR is the substitution the build step builds from, so the step
+	// resolves the directory docker will open and not a second reading of the
+	// entry's context — from BUILD_CWD, the directory of the build step that
+	// hands docker the value, because that is where docker resolves it.
+	if env := checkout.Env; !slices.Equal(env, []string{"REPO_URL=" + s.RepoURL, "COMMIT=" + s.ContextCommit, "CONTEXT_DIR=${_CONTEXT_DIR}", "BUILD_CWD=" + buildStepCwd(step(t, b, "build"))}) {
+		t.Fatalf("the checkout step's env = %v", env)
+	}
+	script := strings.Join(checkout.Args, "\n")
+	// The commit is the one the copy pinned, and the branch is not in the
+	// script at all: a branch here would put the image's tree and the
+	// Dockerfile it was built with at two different commits.
+	if !strings.Contains(script, `"$$COMMIT"`) || strings.Contains(script, "BASE_BRANCH") || strings.Contains(script, "--branch") {
+		t.Fatalf("the checkout step does not check out the pinned commit: %q", script)
+	}
+	// A shallow clone holds the branch tip and not an arbitrary commit, so
+	// the fetch by sha is load-bearing, it runs on the cat-file check's
+	// failure, and a commit the remote no longer has fails the build rather
+	// than building another tree (D1394).
+	cat := strings.Index(script, `git cat-file -e "$$COMMIT^{commit}"`)
+	fetch := strings.Index(script, `fetch --quiet origin "$$COMMIT"`)
+	if cat < 0 || fetch < cat {
+		t.Fatalf("the checkout step does not fall back from the cloned commit to a fetch by sha: %q", script)
+	}
+	if !strings.Contains(script[cat:fetch], "||") || !strings.Contains(script[fetch:], "exit 1") {
+		t.Fatalf("the checkout step does not fetch a commit the shallow clone lacks, or does not fail the build when the remote has lost it: %q", script)
+	}
+	if !strings.Contains(script, `git reset --quiet --hard "$$COMMIT"`) {
+		t.Fatalf("the checkout step does not check the tree out at the commit: %q", script)
+	}
+	// The credential is the repository's own, read from the file the
+	// credential step wrote into the volume — mounted into the steps that
+	// clone and into no other — and it is never part of the clone URL.
+	helper := "credential.helper='store --file=/creds/git-credentials'"
+	if !strings.Contains(script, helper) {
+		t.Fatalf("the checkout step does not clone with the credential file: %q", script)
+	}
+	// Both git invocations — the clone and the fetch by sha — take it as
+	// git's own -c, which is process config, and never as clone's own -c,
+	// which git writes into the new repository's config: a credential.helper
+	// in that config is copied into any image whose Dockerfile COPYs the
+	// context, and the smoke's checkout check fails it (A4, D1407).
+	if named, toGit := strings.Count(script, helper), strings.Count(script, "git -c "+helper); named != toGit || toGit != 2 {
+		t.Fatalf("the checkout step names the credential helper %d times and gives it to git %d times, want 2 and 2: since git writes clone's own -c into the checkout's config, both the clone and the fetch must pass it as git's own -c: %q", named, toGit, script)
+	}
+	if strings.Contains(script, "@$$REPO_URL") || strings.Contains(script, "$$REPO_URL:") {
+		t.Fatalf("the checkout step carries the credential in the clone URL: %q", script)
+	}
+	if len(checkout.Volumes) != 1 || checkout.Volumes[0].Name != "fugaro-creds" || checkout.Volumes[0].Path != "/creds" {
+		t.Fatalf("the checkout step's volumes = %+v", checkout.Volumes)
+	}
+	// It writes the checkout and nothing under /workspace/context: that
+	// directory holds the copied Dockerfile, which stays the file the build
+	// runs and the pin step verifies (D1404).
+	if !strings.Contains(script, "/workspace/src") || strings.Contains(script, "/workspace/context") {
+		t.Fatalf("the checkout step does not write the checkout and only the checkout: %q", script)
+	}
+	if strings.Contains(script, "${") {
+		t.Fatalf("the script holds a substitution the request would rewrite: %q", script)
+	}
+}
+
+// TestCatalogContextEntryBuildsTheCopiedDockerfile: the copy stays the
+// Dockerfile the build runs (D1404). The build step reads
+// /workspace/context/Dockerfile — the object catalog-pin verifies with
+// sha256sum — and its context argument is the checkout instead. A build
+// whose Dockerfile was the checkout's own, or whose pin named a file the
+// build never read, fails here.
+func TestCatalogContextEntryBuildsTheCopiedDockerfile(t *testing.T) {
+	s := catalogContextSpec(t)
+	b, err := CatalogBuildRequest("proj-1234", s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	build := step(t, b, "build")
+	script := strings.Join(build.Args, "\n")
+	if !strings.Contains(script, "--file /workspace/context/Dockerfile") {
+		t.Fatalf("the build step does not run the copied Dockerfile: %q", script)
+	}
+	if !strings.Contains(script, `--tag "$$candidate" "$$CONTEXT_DIR"`) {
+		t.Fatalf("the build step's context is not the checkout: %q", script)
+	}
+	if !slices.Contains(build.Env, "CONTEXT_DIR=${_CONTEXT_DIR}") {
+		t.Fatalf("the build step does not read the context root through its env: %v", build.Env)
+	}
+	if got := b.Substitutions["_CONTEXT_DIR"]; got != "/workspace/src" {
+		t.Fatalf("_CONTEXT_DIR = %q, want the checkout", got)
+	}
+	pin := strings.Join(step(t, b, catalogPinStepID).Args, "\n")
+	if !strings.Contains(pin, "sha256sum /workspace/context/Dockerfile") {
+		t.Fatalf("the pin step verifies a file the build does not read: %q", pin)
+	}
+	if checkout := step(t, b, catalogContextStepID); strings.Contains(strings.Join(checkout.Args, "\n"), "/workspace/context") {
+		t.Fatal("the checkout step writes into the directory the copied Dockerfile lives in")
+	}
+}
+
+// TestCatalogBuildHasNoCheckoutStepWithoutAContext: an entry that names no
+// context builds the steps it builds today, in the same order, from the
+// directory the derived path already builds — the regression CB1's grammar
+// promises, which is what makes this change additive (F23).
+func TestCatalogBuildHasNoCheckoutStepWithoutAContext(t *testing.T) {
+	s := catalogBuildSpec(t)
+	b, err := CatalogBuildRequest("proj-1234", s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"prep", credentialStep, catalogDockerfileStepID, catalogPinStepID,
+		"build", "smoke", "promote", catalogTagStepID, catalogRecordStepID, "untag",
+	}
+	if ids := stepIDs(b); !slices.Equal(ids, want) {
+		t.Fatalf("steps = %v, want %v", ids, want)
+	}
+	// The substitution the template's build step reads keeps its default, and
+	// the derived build — which runs the same template — states the same one.
+	if got := b.Substitutions["_CONTEXT_DIR"]; got != contextDirDefault {
+		t.Fatalf("_CONTEXT_DIR = %q, want %q", got, contextDirDefault)
+	}
+	derived, err := BuildRequest("proj-1234", buildSpec(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := derived.Substitutions["_CONTEXT_DIR"]; got != contextDirDefault {
+		t.Fatalf("the derived build's _CONTEXT_DIR = %q, want %q", got, contextDirDefault)
+	}
+	// The Dockerfile is the copied one either way, and it is the only thing
+	// in the context: nothing in this request names a checkout.
+	script := strings.Join(step(t, b, "build").Args, "\n")
+	if !strings.Contains(script, "--file /workspace/context/Dockerfile") || !strings.Contains(script, `--tag "$$candidate" "$$CONTEXT_DIR"`) {
+		t.Fatalf("the build step does not build the copied definition: %q", script)
+	}
+}
+
+// TestCatalogContextRootIsTheNamedSubdirectory: a context naming a
+// subdirectory makes that directory the context root (D1406), so a COPY of a
+// file under it resolves the way the Dockerfile wrote it, and `.` is the
+// checkout itself.
+func TestCatalogContextRootIsTheNamedSubdirectory(t *testing.T) {
+	for _, tc := range []struct{ context, dir string }{
+		{".", "/workspace/src"},
+		{"ci/", "/workspace/src/ci"},
+		{"ci", "/workspace/src/ci"},
+		{"ci/java", "/workspace/src/ci/java"},
+	} {
+		s := catalogContextSpec(t)
+		s.Context = tc.context
+		b, err := CatalogBuildRequest("proj-1234", s)
+		if err != nil {
+			t.Fatalf("context %q: %v", tc.context, err)
+		}
+		if got := b.Substitutions["_CONTEXT_DIR"]; got != tc.dir {
+			t.Errorf("context %q: _CONTEXT_DIR = %q, want %q", tc.context, got, tc.dir)
+		}
+		// The Dockerfile the build reads does not move with the context: it
+		// is the copy, whatever the context names.
+		if script := strings.Join(step(t, b, "build").Args, "\n"); !strings.Contains(script, "--file /workspace/context/Dockerfile") {
+			t.Errorf("context %q: the build step does not run the copied Dockerfile: %q", tc.context, script)
+		}
+	}
+}
+
+// TestCatalogBuildRefusesAContextOutsideTheCheckout: the context is joined
+// onto the checkout root and handed to the build step as its context
+// argument, so a spec whose context climbs out of the checkout with a `..`
+// segment, or that is absolute, is refused before the request is built. The
+// reason is not tidiness: the build step mounts the fugaro-creds volume at
+// /creds, and a context that resolved there would have a Dockerfile's
+// `COPY .` bake the repository's git credential into the image. The rule is
+// config's key rule; it is held here too, because a request is built from a
+// spec and not from a validated fugaro.yaml.
+func TestCatalogBuildRefusesAContextOutsideTheCheckout(t *testing.T) {
+	// An empty context is an entry with no context — the all-or-none check
+	// reads it before this one — and not an unclean path.
+	if msg := contextPathMessage(""); msg != "" {
+		t.Errorf("contextPathMessage(%q) = %q, want %q", "", msg, "")
+	}
+	for _, tc := range []struct {
+		context string
+		refused bool
+	}{
+		{".", false},
+		{"ci/", false},
+		{"ci/java", false},
+		// The credential volume is mounted at /creds in the build step, and
+		// /workspace/src/../../creds resolves to it.
+		{"../../creds", true},
+		{"../..", true},
+		{"..", true},
+		{"ci/../../creds", true},
+		{"a/../b", true},
+		{"/creds", true},
+		{"/", true},
+		{"ci//java", true},
+		{"ci/./java", true},
+		{"ci\n", true},
+	} {
+		s := catalogContextSpec(t)
+		s.Context = tc.context
+		b, err := CatalogBuildRequest("proj-1234", s)
+		switch {
+		case tc.refused && err == nil:
+			t.Errorf("the request accepts the context %q and builds from %q", tc.context, b.Substitutions["_CONTEXT_DIR"])
+		case tc.refused && !errors.Is(err, ErrBadBuildSpec):
+			t.Errorf("the context %q is refused with %v, which is not %v", tc.context, err, ErrBadBuildSpec)
+		case tc.refused && !strings.Contains(err.Error(), strconv.Quote(tc.context)):
+			t.Errorf("the refusal of the context %q does not name it: %v", tc.context, err)
+		case !tc.refused && err != nil:
+			t.Errorf("the request refuses the context %q: %v", tc.context, err)
+		case !tc.refused:
+			// The resolved directory, not the joined string: this is what
+			// docker is handed, and what it would read the context from.
+			dir := path.Clean(b.Substitutions["_CONTEXT_DIR"])
+			if dir != "/workspace/src" && !strings.HasPrefix(dir, "/workspace/src/") {
+				t.Errorf("the context %q builds from %q, which resolves outside the checkout", tc.context, dir)
+			}
+		}
+	}
+}
+
+// catalogGitStub is the git the context step runs against in the tests below:
+// the clone leaves a checkout holding whatever TREE writes, with the checkout
+// in "$CHECKOUT" and the workspace the script's /workspace names in
+// "$WORKSPACE", and every other subcommand the step runs (cat-file, fetch,
+// reset) succeeds.
+const catalogGitStub = `#!/bin/sh
+while [ $# -gt 0 ]; do
+  case "$1" in
+  clone)
+    for last; do :; done
+    rm -rf "$last"
+    mkdir -p "$last" || exit 1
+    CHECKOUT="$last" sh -c "$TREE" || exit 1
+    exit 0 ;;
+  esac
+  shift
+done
+exit 0
+`
+
+// runCatalogContextStep runs the step's script with the stub git and returns
+// its output: ws holds the workspace the script's /workspace names, with the
+// credential volume the step mounts and the /workspace/context directory the
+// read step copies the definition into, the checkout holds tree, and the
+// script's substitutions carry context — the _CONTEXT_DIR the build step hands
+// docker.
+func runCatalogContextStep(t *testing.T, st *cloudbuild.BuildStep, ws, tree, context string) ([]byte, error) {
+	t.Helper()
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("no bash")
+	}
+	for _, d := range []string{"creds", "context"} {
+		if err := os.MkdirAll(filepath.Join(ws, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	bin := filepath.Join(ws, "bin")
+	testutil.WriteFiles(t, bin, map[string]string{"git": catalogGitStub})
+	script := strings.ReplaceAll(strings.ReplaceAll(st.Args[1], "$$", "$"), "/workspace", ws)
+	context = strings.ReplaceAll(context, "${WS}", ws)
+	env := []string{"PATH=" + bin + ":" + os.Getenv("PATH"), "WORKSPACE=" + ws, "TREE=" + tree}
+	for _, kv := range st.Env {
+		env = append(env, strings.ReplaceAll(strings.ReplaceAll(kv, "${_CONTEXT_DIR}", context), "/workspace", ws))
+	}
+	cmd := exec.Command(bash, "-c", script)
+	cmd.Env = env
+	return cmd.CombinedOutput()
+}
+
+// checkCatalogContextStep asserts the step's verdict on one context: a refusal
+// says why, an acceptance runs the script to the end.
+func checkCatalogContextStep(t *testing.T, st *cloudbuild.BuildStep, context, tree string, refused bool) {
+	t.Helper()
+	out, err := runCatalogContextStep(t, st, t.TempDir(), tree, context)
+	switch {
+	case refused && err == nil:
+		t.Errorf("the step builds from the context %q:\n%s", context, out)
+	case refused && !strings.Contains(string(out), "outside the checkout"):
+		t.Errorf("the step refuses the context %q without saying why: %v\n%s", context, err, out)
+	case !refused && err != nil:
+		t.Errorf("the step refuses the context %q: %v\n%s", context, err, out)
+	}
+}
+
+// TestCatalogContextStepRefusesAContextThatLeavesTheCheckoutByALink: the
+// context reaches docker as the directory its path resolves to — the CLI tars
+// what a symlinked root points at, not the link — so a repository at the pinned
+// commit whose context is a link to the credential volume would hand the build
+// step's /creds to the entry's Dockerfile, and a Dockerfile that only says
+// `COPY .` would copy the repository's token into the shared catalog image.
+// The step resolves the context the way docker will (a cd follows the link, pwd
+// -P says where it landed) and builds only from a directory inside the
+// checkout. A link to a directory of the checkout is a context like any other.
+func TestCatalogContextStepRefusesAContextThatLeavesTheCheckoutByALink(t *testing.T) {
+	s := catalogContextSpec(t)
+	s.Context = "ci"
+	b, err := CatalogBuildRequest("proj-1234", s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := step(t, b, catalogContextStepID)
+	if len(st.Args) != 2 {
+		t.Fatalf("the checkout step's args = %q, want one script", st.Args)
+	}
+	for _, tc := range []struct {
+		name    string
+		tree    string
+		refused bool
+	}{
+		{
+			name: "a directory of the checkout",
+			tree: `mkdir -p "$CHECKOUT/ci" "$CHECKOUT/sub"`,
+		},
+		{
+			// The credential volume the step mounts, standing where the
+			// build mounts it.
+			name:    "a link to the credential volume",
+			tree:    `ln -s -- "$WORKSPACE/creds" "$CHECKOUT/ci"`,
+			refused: true,
+		},
+		{
+			name:    "a link above the checkout",
+			tree:    `ln -s -- "$WORKSPACE" "$CHECKOUT/ci"`,
+			refused: true,
+		},
+		{
+			name: "a link to a directory of the checkout",
+			tree: `mkdir -p "$CHECKOUT/sub"; ln -s -- "$CHECKOUT/sub" "$CHECKOUT/ci"`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// The context an entry's own build is handed: contextDir joins
+			// the value onto the checkout root.
+			checkCatalogContextStep(t, st, "${WS}/src/ci", tc.tree, tc.refused)
+		})
+	}
+}
+
+// TestCatalogContextStepResolvesTheContextAsTheBuildStepDoes: docker resolves
+// the context against the working directory of the step that hands it the
+// argument, so the guard must resolve the same value in that same directory.
+// Resolved from the checkout instead, a relative context is answered for a
+// directory docker never builds — and a link the checkout commits is enough to
+// make that reading land back on the checkout, so the guard accepts while
+// docker resolves the very same value to the worker's own directory, which
+// holds every other tree the build wrote. The request's rules cannot close it:
+// check refuses an entry's context whose text holds a ".." segment or a leading
+// "/", but this step is the template's and answers for the value any submitter
+// hands it, not only for the absolute path this CLI builds today.
+func TestCatalogContextStepResolvesTheContextAsTheBuildStepDoes(t *testing.T) {
+	s := catalogContextSpec(t)
+	s.Context = "ci"
+	b, err := CatalogBuildRequest("proj-1234", s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := step(t, b, catalogContextStepID)
+	// The cwd comes from the build step the template holds — the step that
+	// runs docker build — and not from a path this step assumes.
+	if build := step(t, b, "build"); !slices.Contains(st.Env, "BUILD_CWD="+buildStepCwd(build)) {
+		t.Fatalf("the checkout step's env does not carry the build step's own directory: %v", st.Env)
+	}
+	for _, tc := range []struct {
+		name    string
+		context string
+		tree    string
+		refused bool
+	}{
+		{
+			name:    "a relative context under the checkout",
+			context: "src/ci",
+			tree:    `mkdir -p "$CHECKOUT/ci"`,
+		},
+		{
+			name:    "a relative context beside the checkout",
+			context: "context",
+			tree:    `mkdir -p "$CHECKOUT/context"`,
+			refused: true,
+		},
+		{
+			name:    "a relative context a link in the checkout folds back onto the checkout",
+			context: "src/..",
+			tree:    `mkdir -p "$CHECKOUT/sub"; ln -s -- sub "$CHECKOUT/src"`,
+			refused: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			checkCatalogContextStep(t, st, tc.context, tc.tree, tc.refused)
+		})
+	}
+}
+
+// TestBuildStepCwd: the guard resolves the context where docker resolves it,
+// which is the directory of the build step in the template — its own dir:, or
+// the worker's default when it names none.
+func TestBuildStepCwd(t *testing.T) {
+	for _, tc := range []struct{ dir, want string }{
+		{"", "/workspace"},
+		{"src", "/workspace/src"},
+		{"/other", "/other"},
+	} {
+		if got := buildStepCwd(&cloudbuild.BuildStep{Dir: tc.dir}); got != tc.want {
+			t.Errorf("buildStepCwd(dir %q) = %q, want %q", tc.dir, got, tc.want)
+		}
+	}
+}
+
+// TestCatalogRecordCarriesTheContextCommitAndHash: the record carries the
+// context's own identity in two fields of its own — the commit it was
+// checked out at and the digest of its tree — under names of their own.
+// source_commit means the commit the copied Dockerfile was taken from, and
+// reusing that name for the context would draw a wrong figure in every
+// reader that knows the old one (F25, D1400).
+func TestCatalogRecordCarriesTheContextCommitAndHash(t *testing.T) {
+	s := catalogContextSpec(t)
+	b, err := CatalogBuildRequest("proj-1234", s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := step(t, b, catalogRecordStepID)
+	for _, env := range []string{"CONTEXT_COMMIT=" + s.ContextCommit, "CONTEXT_SHA256=" + s.ContextSHA256} {
+		if !slices.Contains(rec.Env, env) {
+			t.Fatalf("the record step's env does not carry %s: %v", env, rec.Env)
+		}
+	}
+	script := strings.Join(rec.Args, "\n")
+	// The record is one printf with one %s per argument, so a field pairs
+	// with its value by position: each key sits in the format, before the
+	// argument that fills it, and the three keys and the three values are
+	// listed in the same order.
+	for _, pair := range [][2]string{
+		{`"source_commit"`, `"$$COMMIT"`},
+		{`"context_commit"`, `"$$CONTEXT_COMMIT"`},
+		{`"context_sha256"`, `"$$CONTEXT_SHA256"`},
+	} {
+		field, value := strings.Index(script, pair[0]), strings.Index(script, pair[1])
+		if field < 0 || value < 0 || field > value {
+			t.Fatalf("the record does not pair the field %s with the value %s: %q", pair[0], pair[1], script)
+		}
+	}
+	// A context's values come together or not at all, and each is a shape
+	// this step may write into a JSON it composes without escaping.
+	for name, mod := range map[string]func(*CatalogBuildSpec){
+		"a context with no commit":  func(s *CatalogBuildSpec) { s.ContextCommit = "" },
+		"a context with no digest":  func(s *CatalogBuildSpec) { s.ContextSHA256 = "" },
+		"a commit with no context":  func(s *CatalogBuildSpec) { s.Context = "" },
+		"a digest with no context":  func(s *CatalogBuildSpec) { s.Context = ""; s.ContextCommit = "" },
+		"a commit that is a ref":    func(s *CatalogBuildSpec) { s.ContextCommit = "main" },
+		"a digest that is not hex":  func(s *CatalogBuildSpec) { s.ContextSHA256 = "sha256:" + strings.Repeat("c", 64) },
+		"a digest that is too long": func(s *CatalogBuildSpec) { s.ContextSHA256 = strings.Repeat("c", 65) },
+	} {
+		bad := s
+		mod(&bad)
+		if _, err := CatalogBuildRequest("proj-1234", bad); err == nil || !strings.Contains(err.Error(), "invalid Cloud Build request") {
+			t.Errorf("%s: err = %v", name, err)
+		}
+	}
+}
+
+// catalogPrebuiltSpec is one smoke-only run of the entry "agent", whose
+// source is a prebuilt image (F10/IS11): the request
+// internal/cli/image_build_catalog.go submits for such an entry. It names the
+// reference the entry's jobs start on and nothing a build has.
+func catalogPrebuiltSpec(t *testing.T) CatalogBuildSpec {
+	t.Helper()
+	slug := catalogSlug(t)
+	return CatalogBuildSpec{
+		Entry: "agent", Slug: slug,
+		Prebuilt:       "docker.io/library/node:22",
+		ServiceAccount: BuildServiceAccountID(slug) + "@proj-1234.iam.gserviceaccount.com",
+		MachineType:    "E2_HIGHCPU_8",
+		Bucket:         "gs://fugaro-runs-proj-1234",
+		Selftest:       []byte(`{"tools_only":true,"tools":"critical"}`),
+	}
+}
+
+// TestPrebuiltEntrySmoked: an entry whose source is a prebuilt image is
+// somebody else's image, used as it is, so there is nothing to build and no
+// Dockerfile, base or credential to read. Its whole Cloud Build run is the
+// smoke of the reference it names and the record of what that smoke resolved
+// (F10): before this, image_build_catalog.go passed such an entry over and
+// nothing ever asserted that the image a job starts on meets the runtime
+// contract, so a job — not a build — was the first thing to find out.
+//
+// The step the run is made of is run here, so this is a statement about what
+// the smoke does and not about what its script says.
+func TestPrebuiltEntrySmoked(t *testing.T) {
+	spec := catalogPrebuiltSpec(t)
+	req, err := CatalogBuildRequest("proj-1234", spec)
+	if err != nil {
+		t.Fatalf("a prebuilt entry's request: %v", err)
+	}
+	// Nothing of a build is in the run: no step clones, builds, pushes or
+	// tags, which is what the smoke and the record alone say.
+	if got, want := stepIDs(req), []string{catalogSmokeStepID, catalogRecordStepID}; !slices.Equal(got, want) {
+		t.Fatalf("the prebuilt run's steps are %v, want %v", got, want)
+	}
+	// The substitutions are only the ones those two steps reference: Cloud
+	// Build refuses a substitution the request does not reference.
+	want := map[string]string{
+		"_IMAGE":        spec.Prebuilt,
+		"_SELFTEST_B64": base64.StdEncoding.EncodeToString(spec.Selftest),
+		"_CATALOG_TAG":  "",
+	}
+	if len(req.Substitutions) != len(want) {
+		t.Errorf("the prebuilt run's substitutions are %v, want %v", req.Substitutions, want)
+	}
+	for k, v := range want {
+		if req.Substitutions[k] != v {
+			t.Errorf("the prebuilt run's %s is %q, want %q", k, req.Substitutions[k], v)
+		}
+	}
+	// It mounts no credential: no step of it reads a repository.
+	if req.AvailableSecrets != nil && len(req.AvailableSecrets.SecretManager) != 0 {
+		t.Errorf("the prebuilt run carries availableSecrets: %v", req.AvailableSecrets)
+	}
+	if got, want := req.ServiceAccount, "projects/proj-1234/serviceAccounts/"+spec.ServiceAccount; got != want {
+		t.Errorf("the prebuilt run's service account is %s, want %s", got, want)
+	}
+	if req.Timeout != "3600s" || req.QueueTtl != "3600s" {
+		t.Errorf("the prebuilt run's bounds are %s/%s, want 3600s/3600s", req.Timeout, req.QueueTtl)
+	}
+	if req.Options == nil || req.Options.MachineType != spec.MachineType || req.Options.Logging != "CLOUD_LOGGING_ONLY" {
+		t.Errorf("the prebuilt run's options are %+v, want %s and CLOUD_LOGGING_ONLY", req.Options, spec.MachineType)
+	}
+
+	smoke, record := req.Steps[0], req.Steps[1]
+	if smoke.Name != "gcr.io/cloud-builders/docker" || smoke.Entrypoint != "bash" {
+		t.Errorf("the smoke step is %s/%s, want the docker builder's bash", smoke.Name, smoke.Entrypoint)
+	}
+	if script := smoke.Args[len(smoke.Args)-1]; strings.Contains(script, "docker push") || strings.Contains(script, "candidate-") || strings.Contains(script, ":latest") {
+		t.Errorf("the smoke step pushes something: %q", script)
+	}
+	// The record step is the one a build's run writes, with the entry's own
+	// reference and the marker that tells the two apart: the same record, read
+	// by the same check and the same doctor, so what was smoked under a
+	// reference is readable afterwards.
+	if !slices.Contains(record.Env, "IMAGE="+spec.Prebuilt) {
+		t.Errorf("the record step's env does not carry the entry's reference: %v", record.Env)
+	}
+	if !slices.Contains(record.Env, "PREBUILT=1") {
+		t.Errorf("the record step's env carries no PREBUILT marker: %v", record.Env)
+	}
+	buildReq, err := CatalogBuildRequest("proj-1234", catalogBuildSpec(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, st := range buildReq.Steps {
+		if st.Id == catalogRecordStepID && slices.Contains(st.Env, "PREBUILT=1") {
+			t.Errorf("a build's record step carries the prebuilt marker: %v", st.Env)
+		}
+	}
+
+	t.Run("a reference a job can start on is smoked and recorded", func(t *testing.T) {
+		got, err := runCatalogSmoke(t, smoke, req.Substitutions, map[string]string{
+			"FAKE_DOCKER_INSPECT": spec.Prebuilt + "@" + catalogSmokeDigest,
+			"FAKE_DOCKER_REPORT":  `{"passed":true,"tools":[{"name":"fugaro","present":true}]}`,
+		})
+		if err != nil {
+			t.Fatalf("the smoke failed although the image passes it: %v\n%s", err, got.out)
+		}
+		// What the step smoked is bytes, not the tag: the selftest runs on the
+		// digest the reference resolved to, and that digest is what the record
+		// carries.
+		if call := got.call("run"); !strings.Contains(call, spec.Prebuilt+"@"+catalogSmokeDigest) {
+			t.Errorf("the selftest ran on %q, want the digest-pinned reference", call)
+		}
+		if call := got.call("run"); !strings.Contains(call, "--network none") {
+			t.Errorf("the selftest ran without --network none: %q", call)
+		}
+		if got.stdin != string(spec.Selftest) {
+			t.Errorf("the selftest read %q on stdin, want the spec's own bytes %q", got.stdin, spec.Selftest)
+		}
+		if got.digest != catalogSmokeDigest {
+			t.Errorf("the step wrote the digest %q to BUILDER_OUTPUT, want %q", got.digest, catalogSmokeDigest)
+		}
+		if !strings.Contains(got.out, "smoked "+spec.Prebuilt+"@"+catalogSmokeDigest) {
+			t.Errorf("the step did not report the reference it smoked:\n%s", got.out)
+		}
+	})
+
+	t.Run("an image with no digest fails the smoke", func(t *testing.T) {
+		// A tag the registry serves nothing pinned for: what a job would start
+		// on is not the bytes that were smoked, so this is not a smoke.
+		got, err := runCatalogSmoke(t, smoke, req.Substitutions, map[string]string{
+			"FAKE_DOCKER_INSPECT":      spec.Prebuilt,
+			"FAKE_DOCKER_INSPECT_EXIT": "1",
+			"FAKE_DOCKER_REPORT":       `{"passed":true}`,
+		})
+		if err == nil {
+			t.Fatalf("the smoke succeeded although the image carries no digest:\n%s", got.out)
+		}
+		if !strings.Contains(got.out, "carries no digest") {
+			t.Errorf("the failure is not the missing digest:\n%s", got.out)
+		}
+	})
+
+	t.Run("an inspect that answers no digest fails the smoke", func(t *testing.T) {
+		// The guard under the inspect: docker answered, and what it printed is
+		// not a digest-pinned reference. The image is then not pinned to the
+		// bytes that were pulled — the smoke would be of whatever the tag
+		// resolved to when the selftest runs — so the step refuses it here,
+		// which is the step that knows what it smoked; the record step's own
+		// sha256 guard would otherwise refuse the run later, with a message
+		// about the record and not about the image.
+		got, err := runCatalogSmoke(t, smoke, req.Substitutions, map[string]string{
+			"FAKE_DOCKER_INSPECT": spec.Prebuilt,
+			"FAKE_DOCKER_REPORT":  `{"passed":true}`,
+		})
+		if err == nil {
+			t.Fatalf("the smoke succeeded although inspect answered no digest:\n%s", got.out)
+		}
+		if !strings.Contains(got.out, "carries no digest") {
+			t.Errorf("the failure is not the missing digest:\n%s", got.out)
+		}
+		// The guard above it, whose message says the registry serves the
+		// reference by tag: this run's inspect succeeded and printed a value
+		// the step would not pin a smoke to.
+		if strings.Contains(got.out, "the registry serves it by tag") {
+			t.Errorf("the failure is the inspect's own, not the value it answered:\n%s", got.out)
+		}
+		if call := got.call("run"); call != "" {
+			t.Errorf("the step smoked a reference it could not pin: %q", call)
+		}
+	})
+
+	t.Run("a report that is not a pass fails the smoke", func(t *testing.T) {
+		got, err := runCatalogSmoke(t, smoke, req.Substitutions, map[string]string{
+			"FAKE_DOCKER_INSPECT": spec.Prebuilt + "@" + catalogSmokeDigest,
+			"FAKE_DOCKER_REPORT":  `{"passed":false,"tools":[{"name":"claude","present":false}]}`,
+		})
+		if err == nil {
+			t.Fatalf("the smoke succeeded although the image failed it:\n%s", got.out)
+		}
+		// The report is printed before the step fails, so the build's log says
+		// which row of the contract the image missed.
+		if !strings.Contains(got.out, `"name":"claude"`) {
+			t.Errorf("the failure does not carry the report:\n%s", got.out)
+		}
+	})
+
+	t.Run("a selftest that cannot run fails the smoke", func(t *testing.T) {
+		got, err := runCatalogSmoke(t, smoke, req.Substitutions, map[string]string{
+			"FAKE_DOCKER_INSPECT":  spec.Prebuilt + "@" + catalogSmokeDigest,
+			"FAKE_DOCKER_REPORT":   `{"passed":false}`,
+			"FAKE_DOCKER_RUN_EXIT": "1",
+		})
+		if err == nil {
+			t.Fatalf("the smoke succeeded although the selftest did not run:\n%s", got.out)
+		}
+		if !strings.Contains(got.out, "failed its smoke test") {
+			t.Errorf("the failure is not the selftest's:\n%s", got.out)
+		}
+	})
+
+	// What a build is, a smoke-only run refuses: a request that named any of
+	// it would be a build whose steps ignore it.
+	for name, mod := range map[string]func(*CatalogBuildSpec){
+		"a base": func(s *CatalogBuildSpec) {
+			s.Base = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-abc"
+		},
+		"a registry image":           func(s *CatalogBuildSpec) { s.Image = "us-east5-docker.pkg.dev/proj-1234/fugaro/agent:latest" },
+		"a context":                  func(s *CatalogBuildSpec) { s.Context = "." },
+		"a definition":               func(s *CatalogBuildSpec) { s.Definition = CatalogDefinition{SourceCommit: strings.Repeat("a", 40)} },
+		"workflow secrets":           func(s *CatalogBuildSpec) { s.WorkflowSecrets = []config.Secret{{Name: "npm-token", Env: "NPM_TOKEN"}} },
+		"a no-smoke run":             func(s *CatalogBuildSpec) { s.NoSmoke = true },
+		"a reference with a quote":   func(s *CatalogBuildSpec) { s.Prebuilt = `docker.io/library/node:22"x` },
+		"a bucket that is not gs://": func(s *CatalogBuildSpec) { s.Bucket = "fugaro-runs-proj-1234" },
+		"no entry":                   func(s *CatalogBuildSpec) { s.Entry = "" },
+		"no repository":              func(s *CatalogBuildSpec) { s.Slug = "" },
+		"no build account":           func(s *CatalogBuildSpec) { s.ServiceAccount = "" },
+		"a build account of another repository": func(s *CatalogBuildSpec) {
+			s.ServiceAccount = BuildServiceAccountID(catalogSlug(t)+"x") + "@proj-1234.iam.gserviceaccount.com"
+		},
+		"a smoke with no tools":    func(s *CatalogBuildSpec) { s.Selftest = []byte(`{"tools":"none"}`) },
+		"a smoke that is not JSON": func(s *CatalogBuildSpec) { s.Selftest = []byte("critical") },
+	} {
+		bad := spec
+		mod(&bad)
+		if _, err := CatalogBuildRequest("proj-1234", bad); err == nil || !strings.Contains(err.Error(), "invalid Cloud Build request") {
+			t.Errorf("%s: err = %v", name, err)
+		}
+	}
+}
+
+// catalogSmokeDigest is the digest the fake docker below answers a prebuilt
+// reference with.
+var catalogSmokeDigest = "sha256:" + strings.Repeat("a", 64)
+
+// catalogSmokeRun is one run of the smoke step's script: the docker calls the
+// step made, the spec its selftest read on stdin, the digest it wrote for the
+// record step and the CLI, and its combined output.
+type catalogSmokeRun struct {
+	calls  []string
+	stdin  string
+	digest string
+	out    string
+}
+
+// call returns the arguments of the step's first docker call whose
+// subcommand is sub, or "".
+func (r catalogSmokeRun) call(sub string) string {
+	for _, c := range r.calls {
+		if strings.HasPrefix(c, sub+" ") {
+			return c
+		}
+	}
+	return ""
+}
+
+// runCatalogSmoke runs the smoke step's script the way Cloud Build would: the
+// step's own env: with its substitution placeholders resolved, a docker faked
+// on PATH to answer what answers states, and a workspace and a BUILDER_OUTPUT
+// of the test's own. The script's $$ escapes are Cloud Build's, so they are
+// resolved here the way Cloud Build resolves them.
+func runCatalogSmoke(t *testing.T, st *cloudbuild.BuildStep, subs, answers map[string]string) (catalogSmokeRun, error) {
+	t.Helper()
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skipf("the smoke step runs bash, which this machine has not: %v", err)
+	}
+	dir := t.TempDir()
+	bin, out := filepath.Join(dir, "bin"), filepath.Join(dir, "out")
+	for _, d := range []string{bin, out} {
+		if err := os.Mkdir(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fake := `#!/bin/sh
+printf '%s\n' "$*" >> "$FAKE_DOCKER_CALLS"
+case "$1" in
+  pull) exit "${FAKE_DOCKER_PULL_EXIT:-0}" ;;
+  image) printf '%s\n' "$FAKE_DOCKER_INSPECT"; exit "${FAKE_DOCKER_INSPECT_EXIT:-0}" ;;
+  run) cat > "$FAKE_DOCKER_STDIN"; printf '%s\n' "$FAKE_DOCKER_REPORT"; exit "${FAKE_DOCKER_RUN_EXIT:-0}" ;;
+esac
+exit 0
+`
+	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte(fake), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	calls, stdin := filepath.Join(dir, "calls"), filepath.Join(dir, "stdin")
+	env := []string{
+		"PATH=" + bin + ":" + os.Getenv("PATH"),
+		"FAKE_DOCKER_CALLS=" + calls, "FAKE_DOCKER_STDIN=" + stdin,
+		"OUT=" + out, "BUILDER_OUTPUT=" + out, "BUILD_ID=8f3c1a2b-0000-4000-8000-000000000001",
+	}
+	for _, e := range st.Env {
+		if strings.HasPrefix(e, "OUT=") {
+			continue
+		}
+		env = append(env, os.Expand(e, func(k string) string { return subs[k] }))
+	}
+	for k, v := range answers {
+		env = append(env, k+"="+v)
+	}
+	script := strings.ReplaceAll(st.Args[len(st.Args)-1], "$$", "$")
+	cmd := exec.Command(bash, "-c", script)
+	cmd.Env = env
+	data, err := cmd.CombinedOutput()
+	run := catalogSmokeRun{out: string(data)}
+	if raw, err := os.ReadFile(calls); err == nil {
+		run.calls = strings.Split(strings.TrimSuffix(string(raw), "\n"), "\n")
+	}
+	if raw, err := os.ReadFile(stdin); err == nil {
+		run.stdin = string(raw)
+	}
+	if raw, err := os.ReadFile(filepath.Join(out, "image-digest")); err == nil {
+		run.digest = strings.TrimSpace(string(raw))
+	}
+	return run, err
 }

@@ -40,7 +40,7 @@ import {
   launchRepoArgument,
   recordedBaseBranch,
 } from './launchrules'
-import { launchSupported } from '../shared/version'
+import { launchSupported, licenceKeySupported } from '../shared/version'
 
 /**
  * LAUNCH_TIMEOUT_MS is this row's own deadline, and it is **not**
@@ -448,6 +448,11 @@ export interface LaunchDeps {
    * refuses or throws answers no; see `settle`. */
   readonly stillRecorded: (launch: FrozenLaunch) => Promise<boolean> | boolean
   readonly appEnv: Readonly<Record<string, string | undefined>>
+  /** licenceKey is the installation's key, read from the console's own store at
+   * the moment of the spawn (S2.7): a launch is the one child whose whole
+   * purpose needs the licence, and it is handed over in the environment and
+   * never in an argv. Absent when the installation has no key. */
+  readonly licenceKey?: ((project: string) => string | undefined) | undefined
   readonly spawner?: ChildSpawner
   readonly log?: SpawnLogWriter
   readonly timers?: Timers
@@ -882,11 +887,22 @@ export function createLaunchRunner(deps: LaunchDeps): LaunchRunner {
     // directory's* checkout is on, so a launch spawned in a checkout could take
     // its ref from whatever the operator happens to have checked out, invisibly.
     const cwd = privateWorkingDirectory({})
+    // **The key only to a child that takes it back out of its own environment**
+    // (`licenceKeySupported`), asked of the version the handshake read for this
+    // installation and asked before the store is read. The launch is the child
+    // whose whole purpose is the licence, so a launch on a CLI that does not
+    // remove the variable is the one that would put the key into the environment
+    // of `claude -p` and everything it starts; the floor's constant is unset
+    // until a release carries the removal, so no launch is handed a key today.
+    const licenceKey = licenceKeySupported(target.cliVersion)
+      ? deps.licenceKey?.(target.project)
+      : undefined
     const context = {
       target: { project: target.project, configPath: target.configPath },
       binaryPath: target.binaryPath,
       directory: cwd,
       appEnv: deps.appEnv,
+      ...(licenceKey === undefined ? {} : { licenceKey }),
       runId,
     }
     const args = {

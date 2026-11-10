@@ -513,3 +513,92 @@ func TestCatalogContextKeyRefusesANameOutsideTheGrammar(t *testing.T) {
 		}
 	}
 }
+
+// TestServicesClosedAllowlist: an entry's services are the script's own names
+// and nothing else (D1904, F12). The value reaches FUGARO_SERVICES, which
+// `fugaro-services` refuses an unknown name for ("unknown service 'mysql'"),
+// so a name outside the allowlist — a typo, another service a repository's
+// tests happen to use locally, or a name this release does not start — has to
+// be refused where it is written rather than at the run that hands it to the
+// script. A name listed twice is refused too: the list is written as one
+// space-separated environment value, and a name written twice reads as two
+// services there while a person reads the entry as providing one.
+func TestServicesClosedAllowlist(t *testing.T) {
+	c := catalogOf(t, `
+entries:
+  - name: backend
+    tags: [node]
+    source: { kind: inline, inline: "FROM node:24\n" }
+    services: [postgres, mysql]
+`)
+	ps := ValidateCatalog("image_catalog", c)
+	if !hasProblem(ps, "image_catalog.entries[0].services[1]", serviceNameMessage, 0) {
+		t.Fatalf("problems = %v, want one at image_catalog.entries[0].services[1]: %s", ps, serviceNameMessage)
+	}
+	c = catalogOf(t, `
+entries:
+  - name: backend
+    tags: [node]
+    source: { kind: inline, inline: "FROM node:24\n" }
+    services: [redis, redis]
+`)
+	if ps := ValidateCatalog("image_catalog", c); !hasProblem(ps, "image_catalog.entries[0].services[1]", "duplicates", 0) {
+		t.Fatalf("problems = %v, want the duplicate refused at image_catalog.entries[0].services[1]", ps)
+	}
+	// Every name the script starts is one an entry may declare, so the
+	// refusals above are about the names and nothing else.
+	c = catalogOf(t, `
+entries:
+  - name: backend
+    tags: [node]
+    source: { kind: inline, inline: "FROM node:24\n" }
+    services: [postgres, redis, firebase]
+`)
+	if ps := ValidateCatalog("image_catalog", c); len(ps) > 0 {
+		t.Fatalf("unexpected problems: %v", ps)
+	}
+}
+
+// TestServicesFromEntryOnly: the services an image provides are declared on
+// the catalog entry and nowhere else (D1904) — they are not a tag, not a
+// repository's `needs:`, and not something a repository's own file can add.
+// The test pins the two halves of that: a tag list that spells a service
+// declares nothing (an entry may carry the postgres tag and no service, or the
+// reverse), and the entry's own list is what ValidateCatalog checks.
+func TestServicesFromEntryOnly(t *testing.T) {
+	c := catalogOf(t, `
+entries:
+  - name: backend
+    tags: [node, postgres]
+    source: { kind: inline, inline: "FROM node:24\n" }
+  - name: worker
+    tags: [node]
+    source: { kind: inline, inline: "FROM node:24\n" }
+    services: [redis]
+`)
+	if ps := ValidateCatalog("image_catalog", c); len(ps) > 0 {
+		t.Fatalf("unexpected problems: %v", ps)
+	}
+	if len(c.Entries[0].Services) != 0 {
+		t.Errorf("the backend entry's services = %v, want none: a tag names what an image provides, and a service is declared by the services key alone", c.Entries[0].Services)
+	}
+	if got := strings.Join(c.Entries[1].Services, " "); got != "redis" {
+		t.Errorf("the worker entry's services = %q, want redis: the entry's own list is the only source", got)
+	}
+	// A key the catalog does not know is still refused on an entry, services
+	// beside them included: the member this release adds is `services`, and a
+	// misspelling of it is the error it is for every other key (the strict
+	// decode internal/localcfg applies to the whole file).
+	var out Catalog
+	dec := yaml.NewDecoder(strings.NewReader(`
+entries:
+  - name: backend
+    tags: [node]
+    source: { kind: inline, inline: "FROM node:24\n" }
+    service: [postgres]
+`))
+	dec.KnownFields(true)
+	if err := dec.Decode(&out); err == nil || !strings.Contains(err.Error(), "service") {
+		t.Fatalf("decoding an entry with `service:` = %v, want the unknown-member refusal: a member outside the documented spelling is an error and never a silently dropped service", err)
+	}
+}

@@ -69,6 +69,25 @@ func TestPublishWritesAndCopies(t *testing.T) {
 	}
 }
 
+// TestConfigPublishAsksNothing: the publish path is handed no confirmation at
+// all — the caller that has one is the layer stage, not this command — so the
+// write lands with no terminal and no --yes, and the sentence naming what was
+// published is the whole of what a person reads (D1540).
+func TestConfigPublishAsksNothing(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	publishedLayer(t, f, "")
+	noAgentSession(t)
+	out, _, err := execute(t, "config", "publish", "--executable-changes", layerFile(t, testProjectLayer))
+	if err != nil {
+		t.Fatalf("config publish: %v\n%s", err, out)
+	}
+	assertNoPrompt(t, out)
+	if bucketText(t, f, config.LayerKey) != testProjectLayer {
+		t.Error("the layer was not published")
+	}
+}
+
 // Review Focus 4, decision L7.
 func TestPublishRefusesExecutableChangeWithoutFlag(t *testing.T) {
 	f := newCloudFixture(t)

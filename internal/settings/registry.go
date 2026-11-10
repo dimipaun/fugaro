@@ -215,6 +215,10 @@ var yamlMeta = map[string]Row{
 	"agent.adversarial_rounds": {
 		Default: unset("the run's rigor mode decides (rigor.AdversarialDefault)"),
 	},
+	"agent.review_stop_fraction": {
+		Default: unset("0.8 (config.DefaultReviewStopFraction)"),
+	},
+
 	"agent.recipe":      {Owner: "models", Default: unset("the built-in recipe"), Doc: "docs/recipes.md"},
 	"agent.oauth_token": {Default: unset("the job's own credential")},
 	"agent.compression": {Default: unset("inherit")},
@@ -294,18 +298,24 @@ var yamlMeta = map[string]Row{
 	// to raise — and `fugaro config publish` is the command that carries the
 	// layer's half, which is what the row names.
 	"security.patterns": {Owner: "config", Merge: Union, Default: unset("the engine's floor alone")},
+
+	// The planning pass's switch (docs/contract-first-decoupling, D1813). It
+	// is a preference rather than a bound, so the ordinary rule decides it:
+	// the narrowest layer that sets it wins.
+	"planning.decoupling": {Default: value("true", "config.DefaultPlanningDecoupling")},
 }
 
 // buildRows is the table, assembled from the three documents' own sources: the
 // `fugaro.yaml` rows from config.Scopes (so the two cannot drift), the project
 // layer's from config.ProjectLayer, the local config's from localcfg.Config.
 func buildRows() []Row {
-	out := make([]Row, 0, len(config.Scopes)+len(layerRows)+len(localRows))
+	out := make([]Row, 0, len(config.Scopes)+len(layerRows)+len(localRows)+len(config.RunStages))
 	for _, s := range config.Scopes {
 		out = append(out, yamlRow(s))
 	}
 	out = append(out, layerRows...)
 	out = append(out, localRows...)
+	out = append(out, stageAccountRows()...)
 	for i := range out {
 		out[i].Sensitive = sensitiveKeys[out[i].Key]
 		if v, ok := defaultValues[out[i].Key]; ok {
@@ -526,11 +536,16 @@ var layerRows = []Row{
 	layerRow("defaults.agent.levels.l3.none", "the run's rigor mode and the recipe decide", "settings set", docLayer),
 	layerRow("defaults.agent.levels.l3.focus", "none", "settings set", docLayer),
 	layerRow("defaults.agent.adversarial_rounds", "the run's rigor mode decides (rigor.AdversarialDefault)", "settings set", docLayer),
+	layerRow("defaults.agent.review_stop_fraction", "0.8 (config.DefaultReviewStopFraction)", "settings set", docLayer),
 	layerRow("defaults.agent.recipe", "the built-in recipe", "models", docModels),
 	layerRow("defaults.rigor.default", "the built-in mode (pro)", "rigor", docRigor),
 	layerRow("defaults.rigor.areas.*.name", "none", "rigor", docRigor),
 	layerRow("defaults.rigor.areas.*.match", "none", "rigor", docRigor),
 	layerRow("defaults.rigor.areas.*.mode", "none", "rigor", docRigor),
+	// The planning pass's switch, read the way defaults.git.pr.early_draft
+	// above is: a layer that states nothing leaves it as the fugaro.yaml row
+	// says (docs/contract-first-decoupling, D1813).
+	layerRow("defaults.planning.decoupling", "true", "settings set", docLayer),
 
 	layerRow("profiles.*.description", "none", "settings set", docLayer),
 	layerRow("profiles.*.base", "none; the key was removed in 0.7.0", "settings set", config.MigrationDoc),
@@ -834,6 +849,32 @@ var localRows = []Row{
 	loc("image_catalog.entries.*.source.image", "none", "project", docImages),
 	loc("image_catalog.entries.*.description", "none", "project", docImages),
 	loc("image_catalog.entries.*.default", "false", "project", docImages),
+	// The services an entry's image provides are the same image policy one
+	// step further (D1904): the run starts them before its tests, and the
+	// entry's own list is the only source, so a person reading the row learns
+	// which list decided it. The owner is the `fugaro project` family, as the
+	// map's row below is `fugaro image map`'s: this leaf belongs to a catalog
+	// entry and its path carries a `*`, so the generic write refuses it twice
+	// over (settings_set.go) and the family is the command that writes it.
+	loc("image_catalog.entries.*.services", "none: the run starts no backing service", "project", docImages),
+	// The repo-to-image map is the catalog's counterpart one step down (D1906):
+	// which entry each of the project's repositories runs, so it is the image
+	// policy too and one row for the whole map because the map's keys are the
+	// project's repositories and its values the entries — a settings read names
+	// the leaf a value came from, and the leaf here is the map. `fugaro image
+	// map set` writes it, which is why the owner names that family: the generic
+	// path writes no image policy, and a person reading the row is sent to the
+	// command that does.
+	loc("image_map", "none: no repository is mapped, and the catalog's default entry decides the image", "image map", docImages),
+	// The bake switch is the setup wizard's question (D1901), answered yes when
+	// it is asked with nothing else, so an installation that never answers it is
+	// told how the absent key reads rather than what a value would be. IS7 asks
+	// it and writes the answer through the generic path — the same key is
+	// changed later with `fugaro settings set bake_repos false`, which is why the
+	// owner is that path rather than a family: there is no cross-key rule for a
+	// boolean whose only reader is the resolver, and a family for one key would
+	// be a command family that does nothing the generic write does not.
+	loc("bake_repos", "true: a repository the build can read is baked into the image its job runs", "settings set", docImages),
 
 	// The orchestrator daemon's own guardrails (D1239, D1234) are the owner's
 	// policy like the catalog above, and one row per member for the catalog's
@@ -903,6 +944,32 @@ var localRows = []Row{
 	// update_check's does, rather than from an "unset means" sentence.
 	{Key: "issues.nudge_after_days", Layers: []string{LayerLocal}, Merge: Replace, Owner: "config", Doc: docTroubleshoot},
 	{Key: "issues.nudge_recurrence", Layers: []string{LayerLocal}, Merge: Replace, Owner: "config", Doc: docTroubleshoot},
+}
+
+// stageAccountRows are the concrete spellings of the stages.*.claude_account
+// pattern above, one per stage the config accepts — config.RunStages, the
+// closed set config.CheckStageSegment refuses a segment outside of.
+//
+// The pattern row is the registry's own shape: the local config's stages: is a
+// map, so the walk TestRegistryCoversEveryConfigField makes of it yields
+// `stages.*.claude_account` and nothing else. A concrete row per stage is what
+// makes the key addressable as it is written: `fugaro settings get
+// stages.review.claude_account` answers the row the owner changed, and a bare
+// `fugaro settings` prints every stage's own account rather than one wildcard
+// row whose value is the account of whichever stage sorts first — the state the
+// read had before this, and one that hides a second stage's account.
+//
+// The set is derived and not written out beside the pattern, so a stage added to
+// config.RunStages lands here, in the schema's key list and in the write path's
+// allowlist together: TestSettingsSchema fails when the schema has not moved
+// with it, and internal/cli's TestSettingsWritesEveryRunStageAccountKey fails
+// when the allowlist has not.
+func stageAccountRows() []Row {
+	out := make([]Row, 0, len(config.RunStages))
+	for _, stage := range config.RunStages {
+		out = append(out, locLocal("stages."+stage+".claude_account", "the project's default account", "settings set", docModels))
+	}
+	return out
 }
 
 // defaultValues are the rows whose default is a value the loaders leave in

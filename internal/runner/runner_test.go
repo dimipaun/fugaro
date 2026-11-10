@@ -26,6 +26,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
 	"github.com/dimipaun/fugaro/internal/headroomproc"
+	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -246,10 +247,40 @@ func filterEnv(env []string, key string) []string {
 	return out
 }
 
+// run scripts the agent and runs the whole loop. The script ends with
+// escalationRound, which every fixture whose diff touches the security floor
+// reaches (below).
 func (h *harness) run(t *testing.T, steps ...step) (*runstore.Record, error) {
 	t.Helper()
-	h.agent.steps = steps
+	h.agent.steps = append(slices.Clone(steps), h.escalationRound())
 	return runner.Run(context.Background(), h.deps)
+}
+
+// escalationRound is the step every fixture's script ends with: the review
+// round the security escalation buys. A run whose diff touches a path the
+// floor in force lists — a workflow file, a recipe, an app icon, a CLAUDE.md —
+// has review level 3 turned on for it, and its plan ends with the adversarial
+// step (security.go, D1507). That round is not what any of those fixtures is
+// about, so it is scripted here rather than in each of them; a fixture whose
+// run touches nothing on the list never reaches it and leaves it unused.
+//
+// It answers the adversarial step alone, and only for a run that recorded the
+// escalation: a call the script did not name that is some other stage is the
+// unexpected call the scripted agent has always failed on, and an adversarial
+// stage a run reached without the escalation is a plan the escalation did not
+// rebuild — the two things a step answering every call would hide.
+func (h *harness) escalationRound() step {
+	return func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		rec, err := h.store.ReadRecord(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rec.Stage != string(recipe.StepAdversarial) || rec.Security == nil {
+			t.Fatalf("unexpected agent call: the run reached stage %q with the escalation %+v and no step scripted for it",
+				rec.Stage, rec.Security)
+		}
+		return review("ship", 0)(t, ctx, req)
+	}
 }
 
 func (h *harness) fails(t *testing.T, names string) {

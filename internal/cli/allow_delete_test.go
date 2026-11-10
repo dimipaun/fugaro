@@ -1,19 +1,20 @@
 package cli
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"cloud.google.com/go/storage"
 	"github.com/spf13/cobra"
@@ -92,106 +93,100 @@ var (
 	webApproval  = approval{"google_cloud_run_v2_job.web", "web-job"}
 )
 
-// TestAllowDeleteCommandAsksBeforeItDropsAnApproval: the write replaces the
+// TestAllowDeleteCommandDropsAnApprovalAndAsksNothing: the write replaces the
 // list, so an invocation that leaves an address out removes an approval the
 // owner gave — and a silently dropped approval is the fail-closed direction
 // only by accident: the owner believes it is still there. The command names
-// the entries it is about to remove and asks for the project's name before it
-// writes a list that drops any of them.
-func TestAllowDeleteCommandAsksBeforeItDropsAnApproval(t *testing.T) {
+// the entries it is about to remove and then writes, and it asks nothing
+// (D1540): the name typed under a question was the wrong way round for an
+// approval — what removes one is a person reading what goes, which the
+// sentence says — and this command registers no --ask either, so there is no
+// door that puts the question back. A run that reads the sentence and stops
+// can still write nothing, which is the direction an approval fails in.
+func TestAllowDeleteCommandDropsAnApprovalAndAsksNothing(t *testing.T) {
 	r := allowDeleteRig(t)
 	if _, _, err := execute(t, allowDeleteArgs(dataApproval, webApproval)...); err != nil {
 		t.Fatal(err)
 	}
-	before, ok := allowDeleteAt(t, r.gcs, initRunsBucket)
-	if !ok {
+	if _, ok := allowDeleteAt(t, r.gcs, initRunsBucket); !ok {
 		t.Fatal("the list was not written")
 	}
-	// No terminal: the removal is refused, and nothing is written.
+	// No terminal, and nothing asked: the shorter list is written, and the
+	// sentence says which approval it takes away.
 	out, _, err := execute(t, allowDeleteArgs(webApproval)...)
-	if err == nil {
-		t.Fatalf("the removal ran without a confirmation:\n%s", out)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
 	}
-	if ExitCode(err) != ExitUserError {
-		t.Errorf("exit %d, want %d", ExitCode(err), ExitUserError)
-	}
+	assertNoPrompt(t, out)
 	if !strings.Contains(out, dataApproval.arg()) {
-		t.Errorf("the command does not say which approval it would drop:\n%s", out)
-	}
-	// And the refusal names no flag this command lacks. It used to end "or
-	// pass --yes once you have read what it does", which fugaro allow-delete
-	// does not define (it registers the cloud flags and nothing else), so the
-	// owner was told to pass a flag that does not exist. Every --token the
-	// refusal prints is now checked against the command's own flags.
-	assertNamesNoFlagItLacks(t, newAllowDeleteCmd(), err)
-	if after, _ := allowDeleteAt(t, r.gcs, initRunsBucket); after != before {
-		t.Errorf("a refused removal changed the list: %s → %s", before, after)
-	}
-	// A terminal, but the wrong name typed: still nothing written.
-	terminal(t, true)
-	out, _, err = executeStdin(t, "not-the-name\n", allowDeleteArgs(webApproval)...)
-	if err == nil {
-		t.Fatalf("a mistyped confirmation wrote the list:\n%s", out)
-	}
-	if after, _ := allowDeleteAt(t, r.gcs, initRunsBucket); after != before {
-		t.Errorf("a mistyped confirmation changed the list: %s → %s", before, after)
-	}
-	// The project's name typed: the shorter list is written.
-	out, _, err = executeStdin(t, initProjectName+"\n", allowDeleteArgs(webApproval)...)
-	if err != nil {
-		t.Fatalf("%v\n%s", err, out)
-	}
-	got, ok := allowDeleteAt(t, r.gcs, initRunsBucket)
-	if !ok {
-		t.Fatal("the confirmed removal wrote nothing")
-	}
-	want := allowDeleteJSON("proj-1234", webApproval)
-	if got != want {
-		t.Errorf("gs://%s/%s = %s, want %s", initRunsBucket, managed.AllowDeleteObject, got, want)
-	}
-	// And a write that drops nothing asks nothing: the same list again is not
-	// a removal.
-	if _, _, err := execute(t, allowDeleteArgs(webApproval)...); err != nil {
-		t.Errorf("re-approving what is already approved asked for a confirmation: %v", err)
-	}
-}
-
-// TestAllowDeleteCommandAsksBeforeItReplacesAnUnreadableObject: an object at
-// the list's name that is not a list this command reads (hand-edited, from a
-// future version, or about another installation) held approvals nobody can
-// read, so replacing it is confirmed the way a removal is — and the question
-// tells the owner what it is: an unreadable object replaced, not "removing 0
-// address(es)", which said nothing was being lost.
-func TestAllowDeleteCommandAsksBeforeItReplacesAnUnreadableObject(t *testing.T) {
-	r := allowDeleteRig(t)
-	const unreadable = `{"version":99,"gcp_project":"proj-1234","entries":[{"address":"google_storage_bucket.data","before":"type=google_storage_bucket id=data-bucket"}]}`
-	r.gcs.Put(initRunsBucket, managed.AllowDeleteObject, []byte(unreadable))
-	// No terminal: refused, nothing written.
-	out, _, err := execute(t, allowDeleteArgs(webApproval)...)
-	if err == nil {
-		t.Fatalf("an unreadable list was replaced without a confirmation:\n%s", out)
-	}
-	if ExitCode(err) != ExitUserError {
-		t.Errorf("exit %d, want %d", ExitCode(err), ExitUserError)
-	}
-	if got, _ := allowDeleteAt(t, r.gcs, initRunsBucket); got != unreadable {
-		t.Errorf("a refused replacement changed the object: %s", got)
-	}
-	if strings.Contains(out, "removing 0") {
-		t.Errorf("the confirmation says nothing is removed while an unreadable object is replaced:\n%s", out)
-	}
-	if !strings.Contains(out, "nothing it held could be read") {
-		t.Errorf("the confirmation does not say what it held could not be read:\n%s", out)
-	}
-	// The project's name typed: the object is replaced by the list.
-	terminal(t, true)
-	out, _, err = executeStdin(t, initProjectName+"\n", allowDeleteArgs(webApproval)...)
-	if err != nil {
-		t.Fatalf("%v\n%s", err, out)
+		t.Errorf("the command does not say which approval it drops:\n%s", out)
 	}
 	want := allowDeleteJSON("proj-1234", webApproval)
 	if got, _ := allowDeleteAt(t, r.gcs, initRunsBucket); got != want {
 		t.Errorf("gs://%s/%s = %s, want %s", initRunsBucket, managed.AllowDeleteObject, got, want)
+	}
+	// The same at a terminal, with lines a question would have read: the
+	// terminal is not what the write waits for.
+	r.gcs.Put(initRunsBucket, managed.AllowDeleteObject, []byte(allowDeleteJSON("proj-1234", dataApproval)))
+	terminal(t, true)
+	out, _, err = executeStdin(t, "n\nno\n", allowDeleteArgs(webApproval)...)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	assertNoPrompt(t, out)
+	if got, _ := allowDeleteAt(t, r.gcs, initRunsBucket); got != want {
+		t.Errorf("at a terminal gs://%s/%s = %s, want %s", initRunsBucket, managed.AllowDeleteObject, got, want)
+	}
+	// And a write that drops nothing has nothing to say: the same list again is
+	// not a removal.
+	out, _, err = execute(t, allowDeleteArgs(webApproval)...)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	assertNoPrompt(t, out)
+	if strings.Contains(out, "removing 0") {
+		t.Errorf("a write that drops nothing announces a removal:\n%s", out)
+	}
+}
+
+// TestAllowDeleteCommandReplacesAnUnreadableObjectAndAsksNothing: an object at
+// the list's name that is not a list this command reads (hand-edited, from a
+// future version, or about another installation) held approvals nobody can
+// read, so replacing it is announced the way a removal is — and the sentence
+// tells the owner what it is: an unreadable object replaced, not "removing 0
+// address(es)", which said nothing was being lost. It asks nothing (D1540),
+// at a terminal and without one alike.
+func TestAllowDeleteCommandReplacesAnUnreadableObjectAndAsksNothing(t *testing.T) {
+	r := allowDeleteRig(t)
+	const unreadable = `{"version":99,"gcp_project":"proj-1234","entries":[{"address":"google_storage_bucket.data","before":"type=google_storage_bucket id=data-bucket"}]}`
+	r.gcs.Put(initRunsBucket, managed.AllowDeleteObject, []byte(unreadable))
+	// No terminal, and nothing asked: the object is replaced by the list, and
+	// the run says what it is replacing and what it held.
+	out, _, err := execute(t, allowDeleteArgs(webApproval)...)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	assertNoPrompt(t, out)
+	if strings.Contains(out, "removing 0") {
+		t.Errorf("the sentence says nothing is removed while an unreadable object is replaced:\n%s", out)
+	}
+	if !strings.Contains(out, "nothing it held could be read") {
+		t.Errorf("the sentence does not say what it held could not be read:\n%s", out)
+	}
+	want := allowDeleteJSON("proj-1234", webApproval)
+	if got, _ := allowDeleteAt(t, r.gcs, initRunsBucket); got != want {
+		t.Errorf("gs://%s/%s = %s, want %s", initRunsBucket, managed.AllowDeleteObject, got, want)
+	}
+	// The same at a terminal: the terminal is not what the write waits for.
+	r.gcs.Put(initRunsBucket, managed.AllowDeleteObject, []byte(unreadable))
+	terminal(t, true)
+	out, _, err = executeStdin(t, "", allowDeleteArgs(webApproval)...)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	assertNoPrompt(t, out)
+	if got, _ := allowDeleteAt(t, r.gcs, initRunsBucket); got != want {
+		t.Errorf("at a terminal gs://%s/%s = %s, want %s", initRunsBucket, managed.AllowDeleteObject, got, want)
 	}
 }
 
@@ -621,13 +616,19 @@ func TestAllowDeleteCommandRefusesAListThatChangedUnderIt(t *testing.T) {
 }
 
 // TestAllowDeleteCommandConditionsItsWriteOnWhatItRead: the command reads the
-// list, asks, and writes conditioned on the generation it read, so a writer
-// that replaces the object while the owner is at the prompt is not
-// overwritten — and its approvals are not dropped by a write that never saw
-// them. This is the compare-and-swap end to end: the test holds the command at
-// its confirmation, replaces the object behind it, and lets it proceed. The
-// write that follows must be refused (ErrChanged), and the object must still
-// be the other writer's.
+// list and writes conditioned on the generation it read, so a writer that
+// replaces the object before that write lands is not overwritten — and its
+// approvals are not dropped by a write that never saw them. This is the
+// compare-and-swap end to end: the runs bucket's storage endpoint is a proxy
+// of this test's, and the other writer's list is stored at the moment the
+// command's own write of that object arrives, one generation ahead of the one
+// it read. The write must then be refused (ErrChanged), and the object must
+// still be the other writer's.
+//
+// The window this pins is the write's own. It used to be the command's prompt,
+// which the test held open with a pipe; with the typed confirmation gone
+// (D1540) there is no longer a moment inside the command to hang another
+// writer on, and the write is where the race is met in the installation too.
 //
 // Before this test the ErrChanged path was reached only through
 // allowDeleteWriteErr, as a string formatter: nothing ran the command against
@@ -640,32 +641,12 @@ func TestAllowDeleteCommandConditionsItsWriteOnWhatItRead(t *testing.T) {
 	if _, _, err := execute(t, allowDeleteArgs(dataApproval, webApproval)...); err != nil {
 		t.Fatal(err)
 	}
-	terminal(t, true)
-	pr, pw := io.Pipe()
-	out := newPromptWriter()
-	cmd := NewRootCmd()
-	var errOut bytes.Buffer
-	cmd.SetIn(pr)
-	cmd.SetOut(out)
-	cmd.SetErr(&errOut)
-	// One address of the two: a removal, which is the branch that asks.
-	cmd.SetArgs(allowDeleteArgs(webApproval))
-	done := make(chan error, 1)
-	go func() { done <- cmd.Execute() }()
-	select {
-	case <-out.asked():
-	case <-time.After(30 * time.Second):
-		t.Fatalf("the command never asked for the confirmation:\n%s", out.String())
-	}
-	// While it waits for the name: another writer replaces the list.
 	other := []byte(allowDeleteJSON("proj-1234", approval{"google_compute_network.vpc", "vpc-network"}))
-	r.gcs.Put(initRunsBucket, managed.AllowDeleteObject, other)
-	if _, err := pw.Write([]byte(initProjectName + "\n")); err != nil {
-		t.Fatal(err)
-	}
-	err := <-done
+	otherWriterAtTheWrite(t, r, managed.AllowDeleteObject, other)
+
+	out, _, err := execute(t, allowDeleteArgs(webApproval)...)
 	if err == nil {
-		t.Fatalf("a list written over another writer's list was not refused:\n%s", out.String())
+		t.Fatalf("a list written over another writer's list was not refused:\n%s", out)
 	}
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "run the command again") {
 		t.Errorf("the refusal = %v (exit %d), want a user error that says to run the command again", err, ExitCode(err))
@@ -675,85 +656,52 @@ func TestAllowDeleteCommandConditionsItsWriteOnWhatItRead(t *testing.T) {
 	}
 }
 
-// promptWriter collects a command's output and lets a test act at the moment
-// the command is waiting for the owner: the write's own buffer is read from
-// the test's goroutine, so it is guarded, and the signal is sent once, when
-// the confirmation prompt appears.
-type promptWriter struct {
-	mu     sync.Mutex
-	buf    bytes.Buffer
-	signal chan struct{}
-	once   sync.Once
-}
-
-func newPromptWriter() *promptWriter { return &promptWriter{signal: make(chan struct{})} }
-
-func (w *promptWriter) Write(p []byte) (int, error) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	n, err := w.buf.Write(p)
-	if strings.Contains(w.buf.String(), "Type ") {
-		w.once.Do(func() { close(w.signal) })
-	}
-	return n, err
-}
-
-func (w *promptWriter) String() string {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.buf.String()
-}
-
-// asked is the signal that the confirmation prompt is on the page: the
-// command is blocked reading stdin, and the test owns the pipe.
-func (w *promptWriter) asked() <-chan struct{} { return w.signal }
-
-// TestAllowDeleteCommandAsksBeforeItReplacesAnObjectItCannotRead: an object
-// that is there but is not a list this command reads is replaced only on the
-// typed confirmation, because what it holds is unknown — the command cannot
-// say which approvals a write would drop. It says so, asks, and writes only
-// when the project's name is typed.
-func TestAllowDeleteCommandAsksBeforeItReplacesAnObjectItCannotRead(t *testing.T) {
-	r := allowDeleteRig(t)
-	// A body AllowDelete would not read: the object is there, and it holds
-	// no addresses this command could report.
-	foreign := []byte(`{"version":2,"gcp_project":"proj-1234"}`)
-	r.gcs.Put(initRunsBucket, managed.AllowDeleteObject, foreign)
-	// No terminal: nothing replaces an object whose contents are unknown.
-	out, _, err := execute(t, allowDeleteArgs(dataApproval)...)
-	if err == nil {
-		t.Fatalf("an unreadable list was replaced without a confirmation:\n%s", out)
-	}
-	if ExitCode(err) != ExitUserError {
-		t.Errorf("exit %d, want %d", ExitCode(err), ExitUserError)
-	}
-	if !strings.Contains(out, "is not a list this command reads") {
-		t.Errorf("the command does not say what it would replace:\n%s", out)
-	}
-	if got, ok := allowDeleteAt(t, r.gcs, initRunsBucket); !ok || got != string(foreign) {
-		t.Errorf("a refused run wrote gs://%s/%s = %q", initRunsBucket, managed.AllowDeleteObject, got)
-	}
-	// A terminal, but the wrong name: still nothing.
-	terminal(t, true)
-	if _, _, err := executeStdin(t, "not-the-name\n", allowDeleteArgs(dataApproval)...); err == nil {
-		t.Error("a mistyped confirmation replaced an unreadable list")
-	}
-	if got, ok := allowDeleteAt(t, r.gcs, initRunsBucket); !ok || got != string(foreign) {
-		t.Errorf("a mistyped confirmation wrote gs://%s/%s = %q", initRunsBucket, managed.AllowDeleteObject, got)
-	}
-	// The name typed: the object is replaced by the list, and the command
-	// says what it holds now.
-	out, _, err = executeStdin(t, initProjectName+"\n", allowDeleteArgs(dataApproval)...)
+// otherWriterAtTheWrite puts the runs bucket's storage endpoint behind a proxy
+// of this test's that stores other at bucket/name the first time a write of
+// that object arrives, and forwards the request only after it has: another
+// writer's list, one generation ahead of the one the command read, landing in
+// the window the conditional write is about.
+//
+// The endpoint is the proxy because the endpoint is the whole seam: the
+// command builds its storage client from this config's endpoints (init.go's
+// newInitClientsFor), and the fakes it talks to are reached through the same
+// URLs, so nothing else in the run changes.
+func otherWriterAtTheWrite(t *testing.T, r *initRig, name string, other []byte) {
+	t.Helper()
+	target, err := url.Parse(r.gcs.URL)
 	if err != nil {
-		t.Fatalf("%v\n%s", err, out)
+		t.Fatal(err)
 	}
-	got, ok := allowDeleteAt(t, r.gcs, initRunsBucket)
-	if !ok {
-		t.Fatal("the confirmed replacement wrote nothing")
+	direct := r.gcs.URL + "/storage/v1/"
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	inner := proxy.Director
+	var once sync.Once
+	proxy.Director = func(req *http.Request) {
+		// The write is an upload of the object: a multipart POST, or the POST
+		// that opens a resumable one. Either way what is stored is the same
+		// object, so the flip is safe under the once.
+		if req.Method == http.MethodPost && strings.Contains(req.URL.Path, "/b/"+initRunsBucket+"/o") {
+			once.Do(func() { r.gcs.Put(initRunsBucket, name, other) })
+		}
+		inner(req)
 	}
-	want := allowDeleteJSON("proj-1234", dataApproval)
-	if got != want {
-		t.Errorf("gs://%s/%s = %s, want %s", initRunsBucket, managed.AllowDeleteObject, got, want)
+	proxy.ErrorHandler = func(w http.ResponseWriter, req *http.Request, err error) {
+		t.Errorf("the runs bucket's proxy could not forward %s %s: %v", req.Method, req.URL.Path, err)
+		w.WriteHeader(http.StatusBadGateway)
+	}
+	srv := httptest.NewServer(proxy)
+	t.Cleanup(srv.Close)
+
+	cfg, err := os.ReadFile(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rewritten := strings.Replace(string(cfg), direct, srv.URL+"/storage/v1/", 1)
+	if rewritten == string(cfg) {
+		t.Fatalf("the config does not name the runs bucket's storage endpoint %s", direct)
+	}
+	if err := os.WriteFile(r.cfg, []byte(rewritten), 0o600); err != nil {
+		t.Fatal(err)
 	}
 }
 

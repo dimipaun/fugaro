@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"regexp"
 	"slices"
 	"strconv"
@@ -217,9 +218,31 @@ func jobPaused(l *ProjectLayer, job func(*Jobs) *JobState) bool {
 // default is the mode a repository that writes none takes, and areas are
 // rules that stay in effect beside the repository's own (D20c).
 type LayerDefaults struct {
-	Git   LayerGit   `yaml:"git"`
-	Agent LayerAgent `yaml:"agent"`
-	Rigor LayerRigor `yaml:"rigor"`
+	Git      LayerGit      `yaml:"git"`
+	Agent    LayerAgent    `yaml:"agent"`
+	Rigor    LayerRigor    `yaml:"rigor"`
+	Planning LayerPlanning `yaml:"planning"`
+}
+
+// LayerPlanning is defaults.planning (docs/contract-first-decoupling, D1813):
+// the same key a repository's own planning: block carries, because either
+// layer may set it.
+type LayerPlanning struct {
+	Decoupling *bool `yaml:"decoupling"`
+}
+
+// SetsPlanning reports whether the layer's text writes defaults.planning, at
+// any value: a runner before planningSince decodes the layer with KnownFields,
+// so the key alone is what it refuses, and LayerPlanning's zero value cannot
+// tell an absent block from one written with decoupling: true — and the skew
+// gate judges both files by the key, not by the value.
+func (l *ProjectLayer) SetsPlanning() bool {
+	if l == nil {
+		return false
+	}
+	d, _ := l.tree["defaults"].(map[string]any)
+	_, ok := d["planning"]
+	return ok
 }
 
 // SetsRigor reports whether the layer's text writes defaults.rigor, at any
@@ -291,6 +314,26 @@ func (l *ProjectLayer) SetsSecurity() bool {
 		return false
 	}
 	_, ok := l.tree["security"]
+	return ok
+}
+
+// SetsStopFraction reports whether the layer's text writes
+// defaults.agent.review_stop_fraction, at any value: a runner before
+// stopFractionSince (internal/cli) decodes the layer with KnownFields, so the
+// key alone is what it refuses, and SetsDefault cannot answer it — a layer that
+// writes the key as null writes it and asks for nothing, which is the one case
+// a resolved-value test would read as no key at all (SetsSecurity's own case:
+// "an explicit null, which decodes to no block at all, is refused exactly like
+// a full one"). It is what the gates judge the job images against, beside the
+// repository's half (setsStopFraction), and it is the layer's because that
+// refusal reaches every repository of the project.
+func (l *ProjectLayer) SetsStopFraction() bool {
+	if l == nil {
+		return false
+	}
+	d, _ := l.tree["defaults"].(map[string]any)
+	a, _ := d["agent"].(map[string]any)
+	_, ok := a["review_stop_fraction"]
 	return ok
 }
 
@@ -381,8 +424,17 @@ type LayerAgent struct {
 	Levels ReviewLevels `yaml:"levels"`
 	// AdversarialRounds is the project's review level 3 round count; a
 	// repository's own value replaces it.
-	AdversarialRounds int    `yaml:"adversarial_rounds"`
-	Recipe            string `yaml:"recipe"`
+	AdversarialRounds int `yaml:"adversarial_rounds"`
+	// ReviewStopFraction is the project's share of the run's time budget after
+	// which the review loop starts no further round (config.Agent.
+	// ReviewStopFraction, the owner's ruling of 2026-11-08); a repository's own
+	// value replaces it. The project layer is where a share that suits every
+	// repository of a project belongs, since it is the layer that knows the
+	// workflows' timeouts. Fugaro before 0.22.0 refuses the key (strict
+	// decoder), in every repository of the project, which is what the launch's
+	// own gate judges the job image on (internal/cli's stopFractionSince).
+	ReviewStopFraction float64 `yaml:"review_stop_fraction"`
+	Recipe             string  `yaml:"recipe"`
 	// Crafts sets each craft's model and access for every repository of the
 	// project (docs/model-crafts/spec.md §3). Only a craft's model may be set
 	// here: an access names a credential or a pool, and this layer file is
@@ -845,6 +897,16 @@ func validateLayer(l *ProjectLayer, a LayerAnchor) []Problem {
 	}
 	if ag.AdversarialRounds != 0 && (ag.AdversarialRounds < 1 || ag.AdversarialRounds > 10) {
 		add("defaults.agent.adversarial_rounds", "must be between 1 and 10")
+	}
+	// A layer has no "unset" for this key: it is a scalar that replaces whole
+	// (resolve.go), so a project layer's number is the base a repository's
+	// replaces, and there is no third state to admit beside 0 and the range.
+	// A not-a-number is refused here as the repository's half refuses it
+	// (validate.go): `.nan` compares false against both ends of the range, so
+	// a range test alone would admit it and the run would then read it as the
+	// default (Budget.stopAt), which is a mistake the author could not see.
+	if ag.ReviewStopFraction != 0 && (math.IsNaN(ag.ReviewStopFraction) || ag.ReviewStopFraction < 0 || ag.ReviewStopFraction > 1) {
+		add("defaults.agent.review_stop_fraction", "must be greater than 0 and at most 1")
 	}
 	ps = append(ps, levelProblems("defaults.agent.levels", &ag.Levels)...)
 	if ag.Recipe != "" && !recipe.NameRE.MatchString(ag.Recipe) {

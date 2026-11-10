@@ -17,6 +17,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/lock"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -638,7 +639,7 @@ func TestCancelAlreadyFinishedClearsItsOwnLiveLock(t *testing.T) {
 	if jerr := json.Unmarshal([]byte(out), &res); err != nil || jerr != nil || res.Status != cancelAlreadyFinished || res.LockHeld {
 		t.Fatalf("cancel --json = %+v (parse err %v), %v (%s)", res, jerr, err, out)
 	}
-	if !strings.Contains(errOut, "cleared") || !strings.Contains(errOut, id) {
+	if !strings.Contains(errOut, "cleared") || !strings.Contains(errOut, task.ShortRun(id)) {
 		t.Fatalf("stderr = %q, want a note that the lock was cleared", errOut)
 	}
 	path := filepath.Join(strings.TrimPrefix(f.bucket, "file://"), key)
@@ -962,5 +963,98 @@ func TestCancelDoesNotClaimAPullRequestForAnArtifactRun(t *testing.T) {
 	plain, _, err := execute(t, "cancel", id)
 	if err != nil || !strings.Contains(plain, "finalized; no pull request was needed") || strings.Contains(plain, "diagnose") {
 		t.Fatalf("cancel = %q, %v", plain, err)
+	}
+}
+
+// TestCancelEndingListsAndNeverActs: `cancel` acts only on a run named in
+// full (D1710). Given an ending it looks the ending up among the active runs
+// only, names each match as <slug>/<full run ID> beside its title in the
+// refusal so the run to cancel is one paste away, and cancels nothing —
+// whether the ending names one active run or several. With --json stdout is
+// the command's document and the ending never becomes one, so the list goes
+// into the error and the machine stream stays empty. Mutation caught:
+// resolving a unique ending to its active run and cancelling it, acting on an
+// ending at all, and printing the list on stdout where a --json reader would
+// take it for the document.
+func TestCancelEndingListsAndNeverActs(t *testing.T) {
+	for _, n := range []int{1, 2} {
+		t.Run(fmt.Sprintf("%d active match(es)", n), func(t *testing.T) {
+			f := newEndingFixture(t)
+			ids := make([]string, n)
+			for i := range ids {
+				ids[i] = recentRunID(t, time.Duration(i+1)*time.Minute, "3bb2")
+				title := fmt.Sprintf("title %d", i)
+				seedTitledRun(t, f.cloudFixture, ids[i], title)
+				f.db.Set(budget.PathAgent(appSlug, ids[i]), map[string]any{"run_id": ids[i], "title": title})
+			}
+			for _, args := range [][]string{{"cancel", "3bb2"}, {"cancel", "--json", "3bb2"}} {
+				out, _, err := execute(t, args...)
+				if ExitCode(err) != ExitUserError {
+					t.Fatalf("%v = %v, want a user error and nothing cancelled", args, err)
+				}
+				if out != "" {
+					t.Errorf("%v wrote %q on stdout, want nothing there: the ending's candidates belong to the refusal", args, out)
+				}
+				for i, id := range ids {
+					if want := appSlug + "/" + id; !strings.Contains(err.Error(), want) {
+						t.Errorf("the refusal does not print the full ID %s to paste:\n%v", want, err)
+					}
+					if want := fmt.Sprintf("title %d", i); !strings.Contains(err.Error(), want) {
+						t.Errorf("the refusal does not print %s:\n%v", want, err)
+					}
+					if cancelled(t, f.cloudFixture, id) {
+						t.Errorf("%v acted on the ending and cancelled %s", args, id)
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestCancelEndingIgnoresFinishedRuns: the ending is looked up among the
+// active runs alone (D1710), so a run that merely ran inside the seven-day
+// window is not one of them: the sentence is the active-only one and nothing
+// is cancelled.
+func TestCancelEndingIgnoresFinishedRuns(t *testing.T) {
+	f := newEndingFixture(t)
+	id := recentRunID(t, 2*time.Minute, "cafe")
+	seedTitledRun(t, f.cloudFixture, id, "the finished run")
+
+	_, _, err := execute(t, "cancel", "cafe")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "no active run ending") {
+		t.Fatalf("cancel cafe = %v, want the active-only refusal", err)
+	}
+	if cancelled(t, f.cloudFixture, id) {
+		t.Error("cancel cafe acted on a run that is not active")
+	}
+}
+
+// TestCancelFullIDStillCancels: the act is untouched — a full run ID is still
+// located and cancelled — while its human line names the run by the four
+// characters every surface shows and --json keeps the full ID (D1705). The
+// full ID is the point of D1710's refusal, not of the confirmation.
+func TestCancelFullIDStillCancels(t *testing.T) {
+	f := newCloudFixture(t)
+	const id = "20260927-100000-abcd"
+	exec := seedRun(t, f, id, "", "", true)
+	f.run.SetState(exec, backend.StateRunning)
+
+	js, _, err := execute(t, "cancel", "--json", "--grace", "30ms", "--grace-floor", "0", "--poll", "10ms", id)
+	var res cancelResult
+	_ = json.Unmarshal([]byte(js), &res)
+	if err != nil || res.Status != cancelCancelled || !res.Hard || !cancelled(t, f, id) {
+		t.Fatalf("cancel --json %s = %+v, %v", id, res, err)
+	}
+	if res.Run != appSlug+"/"+id {
+		t.Errorf("--json's run = %q, want the full ID", res.Run)
+	}
+
+	// The same run, now terminal: the human line names the short ID alone.
+	out, _, err := execute(t, "cancel", id)
+	if err != nil || !strings.Contains(out, task.ShortRun(id)+" has already finished") {
+		t.Fatalf("cancel %s = %q, %v, want the finished line naming the short ID", id, out, err)
+	}
+	if strings.Contains(out, id) {
+		t.Errorf("the human line still prints the full run ID: %q", out)
 	}
 }

@@ -61,11 +61,12 @@
     <main>
       <h1>Installations</h1>
       <!--
-        The status line, the list, the CLI's own warning lines, and the
-        onboarding screen. The four containers are all this document declares;
-        every child of them is built by `src/renderer/installations.ts`, so a
-        row's text, a warning line and an onboarding screen are values the view
-        wrote rather than markup this file carries.
+        The status line, the list, the CLI's own warning lines, the onboarding
+        screen, and the machine's WSL distributions. The five containers are all
+        this document declares; every child of them is built by
+        `src/renderer/installations.ts`, so a row's text, a warning line, an
+        onboarding screen and a distribution's name are values the view wrote
+        rather than markup this file carries.
 
         **There is no form here** (owner's ruling of 2026-10-20). The console
         asks the operator for no binary, no config and no project: the list is
@@ -74,13 +75,29 @@
         form's controls come back --
         `console/test/unit/installations-view.test.ts`, "the form is gone: the
         console asks the operator for no binary and no config" -- and the surface
-        itself is pinned at five operations in
+        itself is pinned at seven operations in
         `console/test/unit/installations-ipc.test.ts`.
       -->
       <p id="picker-status">Reading the installation list…</p>
       <section id="picker-onboarding"></section>
       <ul id="picker-list"></ul>
       <ul id="picker-warnings"></ul>
+      <!--
+        This machine's WSL distributions, read by the main process from
+        `wsl.exe` (`fugaro:installations/distros`, Part G, T-G3). It is a
+        **list** and not a file dialog (F10): read-only, no control, and every
+        name in it is `wsl.exe`'s own string, which is why the view draws them
+        through the display sanitizer like a row's. It is a section of its own
+        with its own read and its own line for a machine where `wsl.exe` cannot
+        answer at all -- that answer is not an empty list.
+
+        The container is declared on every host and **filled on Windows alone**:
+        `wsl.exe` is a Windows program, so a console elsewhere draws no distro
+        section and sends no distro read (`src/renderer/installations.ts`,
+        `isWindowsPlatform`). An empty container draws nothing -- this document
+        styles its `h2` and its `li` and not the section itself.
+      -->
+      <section id="picker-distros"></section>
     </main>
     <script src="./installations.js" defer></script>
   </body>

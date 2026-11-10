@@ -366,6 +366,27 @@ describe('the replaying source', () => {
     expect(source.subscribeLive({})).not.toBe(first)
   })
 
+  it('finds the graph replay through the stop a hidden tab sends, which names `visible`', async () => {
+    // The Graph tab's two calls differ by one argument: the poll names the
+    // scope, the stop adds `visible: false`, and that argument reaches no word
+    // of the child's argv -- so it is no part of the replay's identity either
+    // (`argsKey`, over `keyedArguments` in `src/main/spawn.ts`). Keyed on the
+    // whole object, the stop would find no replay, answer nothing, and leave a
+    // recording playing for a tab nobody is looking at.
+    const timers = new FakeTimers()
+    const source = sourceOver(theSource(), timers)
+    const feed = source.subscribeGraph({ source: 'all' })
+    const seen = collect(feed)
+    expect(source.subscribeGraph({ source: 'all', visible: true })).toBe(feed)
+    await source.stopGraphWatch({ source: 'all', visible: false })
+    expect(seen.ended).toEqual([{ reason: 'stopped', sentence: null, snapshots: 0 }])
+    // Nothing of the recording arrives after the stop, and the replay is
+    // forgotten: the tab coming back starts a fresh one.
+    timers.advanceTo(Number.MAX_SAFE_INTEGER)
+    expect(seen.snapshots).toHaveLength(0)
+    expect(source.subscribeGraph({ source: 'all' })).not.toBe(feed)
+  })
+
   it('stops a replay in the middle, and answers current() honestly', async () => {
     const timers = new FakeTimers()
     const source = sourceOver(theSource(), timers)

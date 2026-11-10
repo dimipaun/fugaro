@@ -79,6 +79,12 @@ type Config struct {
 	// pointer with no json name would write a null key into every file that
 	// writes none, moving the hash of a file that did not change.
 	Security *Security `yaml:"security,omitempty" json:"security,omitempty"`
+	// Planning is the repository's planning: block (docs/contract-first-decoupling,
+	// D1813). A file that writes none keeps it nil — what the pass defaults to
+	// is Planning.DecouplingOn's answer, not a block applyDefaults writes — so
+	// the json tag keeps an absent block out of the resolved config's hash the
+	// way Rigor's does, and names the block on the wire when one is written.
+	Planning *Planning `yaml:"planning,omitempty" json:"planning,omitempty"`
 
 	// Layer is the project layer Resolve resolved this config over, nil
 	// for none. It is never part of the file or of SHA256: a consumer that
@@ -135,7 +141,46 @@ type Config struct {
 	// reads the literal as a model ID. Like the fields above it is never part
 	// of the file or of SHA256.
 	RepoLevelsNoneModelSet bool `yaml:"-" json:"-"`
+	// RepoPlanningSet is whether the repository's own file wrote the
+	// planning: key at all, at any value, the question RepoRigorSet answers
+	// for rigor:. Planning cannot answer for an explicit null (`planning:`,
+	// which decodes to a nil block), and a runner older than planningSince
+	// refuses the key alone. Like the fields above it is never part of the
+	// file or of SHA256.
+	RepoPlanningSet bool `yaml:"-" json:"-"`
+	// RepoStopFractionSet is whether the repository's own file wrote the
+	// agent.review_stop_fraction key at all, at any value: the question
+	// RepoRigorSet answers for rigor:, and Agent.ReviewStopFraction cannot
+	// answer it — the key written 0 (`review_stop_fraction: 0`, which resolves
+	// to the default) decodes to the same field as the key being absent, and a
+	// runner older than stopFractionSince refuses the key itself, whatever it
+	// says (internal/cli). Like the fields above it is never part of the file
+	// or of SHA256.
+	RepoStopFractionSet bool `yaml:"-" json:"-"`
 }
+
+// Planning is fugaro.yaml's planning: block and the project layer's
+// defaults.planning (docs/contract-first-decoupling, D1813): what the
+// planning pass the user's own agent follows may do before a task graph is
+// launched. Both layers may set its keys, and the narrowest one that does
+// wins — these are preferences, not bounds.
+type Planning struct {
+	// Decoupling turns the dependency-breaking pass on or off. On, the
+	// planning skill asks of each dependency edge whether a contract task
+	// could break it and writes the contract, integration and change nodes
+	// into the graph artifact; off, it plans the edge as it always did. Unset
+	// means on (DecouplingOn, from DefaultPlanningDecoupling); the pass adds
+	// no spend path of its own — its
+	// tasks are ordinary tasks under the same caps and the same go-ahead rule
+	// (D1820) — so the switch is a preference and not a budget.
+	Decoupling *bool `yaml:"decoupling"`
+}
+
+// DecouplingOn reports whether the pass runs for this repository: true unless
+// a layer set planning.decoupling false. It is nil-safe in both hops, so a
+// caller holding no planning: block — and no config at all — reads the
+// default rather than a blank.
+func (p *Planning) DecouplingOn() bool { return p == nil || p.Decoupling == nil || *p.Decoupling }
 
 // Rigor is fugaro.yaml's rigor: block and the project layer's defaults.rigor
 // (D20): the mode a repository runs at when nothing narrower decides, and
@@ -497,6 +542,19 @@ type Agent struct {
 	// and FirstLineRounds: a written number replaces the mode's, up or down,
 	// inside the recipe's own bound of 10.
 	AdversarialRounds int `yaml:"adversarial_rounds"`
+	// ReviewStopFraction is the share of the run's total time budget after
+	// which the review loop starts no further review or fix round and goes to
+	// finalize (the owner's ruling of 2026-11-08): greater than 0 and at most
+	// 1, unset (0) meaning DefaultReviewStopFraction. It is the stop rule's
+	// time half — the other is the mode's rounds — and it is a fraction rather
+	// than a duration because the budget it is a share of is the workflow's
+	// own timeouts.total, which a project or a repository sets per workflow
+	// (docs/in-job-review/reconciliation.md finding 20). A value of 1 stops
+	// the loop only when the whole budget is spent, which is what a repository
+	// that wants the old behaviour writes. Binaries before 0.22.0 refuse the
+	// key (strict decoder), whatever it says, which is what the launch's own
+	// gate judges the job image on (internal/cli's stopFractionSince).
+	ReviewStopFraction float64 `yaml:"review_stop_fraction"`
 	// Recipe names the task loop that follows implement
 	// (docs/design/recipes.md): a recipe in .fugaro/recipes/, the project's,
 	// or the catalog's. "" is default. fugaro run --recipe wins over it.
@@ -540,6 +598,16 @@ const (
 
 // MaxFirstLineRounds is the most first-line review rounds a run may have.
 const MaxFirstLineRounds = 3
+
+// DefaultReviewStopFraction is the share of its time budget a run spends before
+// it starts no further review or fix round, for a repository that configures
+// none (config.Agent.ReviewStopFraction): four fifths, so the last fifth — the
+// finalize reserve included — is what writes the record, opens the pull request
+// and pushes it. It is a constant here and not in internal/rigor because it is
+// a property of the run's budget rather than of a mode: every mode stops
+// starting rounds at the same point, and only what each mode does with what is
+// left differs (rigor.BlocksAtStop).
+const DefaultReviewStopFraction = 0.8
 
 // FirstLineOn reports whether the run has a first-line review: on, or auto
 // with a coder a provider serves and a reviewer none does (an Anthropic

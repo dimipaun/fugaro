@@ -943,11 +943,11 @@ func TestCloudFollowUpOnePR(t *testing.T) {
 	if pr.Spec.Title != before.PRs[0].Spec.Title || pr.Spec.Body != before.PRs[0].Spec.Body || pr.Spec.Branch != "fugaro/"+first {
 		t.Fatalf("the follow-up changed the PR: %+v, was %+v", pr.Spec, before.PRs[0].Spec)
 	}
-	if len(pr.Comments) != 2 || !strings.Contains(pr.Comments[0], "### Fugaro run `"+first+"`") {
+	if len(pr.Comments) != 2 || !strings.Contains(pr.Comments[0], "### Fugaro run `"+task.ShortRun(first)+"`") {
 		t.Fatalf("Fugaro's comments = %q", pr.Comments)
 	}
 	report := pr.Comments[1]
-	for _, want := range []string{"### Fugaro run `" + second + "`", "#### Follow-up", "`" + first + "`", "`alice` (2)", "`mallory`", "untrusted author"} {
+	for _, want := range []string{"### Fugaro run `" + task.ShortRun(second) + "`", "#### Follow-up", "`" + task.ShortRun(first) + "`", "`alice` (2)", "`mallory`", "untrusted author"} {
 		if !strings.Contains(report, want) {
 			t.Errorf("the follow-up's report lacks %q:\n%s", want, report)
 		}
@@ -1036,8 +1036,8 @@ func TestCloudFollowUpOnePR(t *testing.T) {
 	if pr.Spec.Title != before.PRs[0].Spec.Title || pr.Spec.Body != before.PRs[0].Spec.Body || pr.Spec.Branch != "fugaro/"+first {
 		t.Fatalf("the second follow-up changed the PR: %+v, was %+v", pr.Spec, before.PRs[0].Spec)
 	}
-	if len(pr.Comments) != 3 || !strings.Contains(pr.Comments[2], "### Fugaro run `"+third+"`") ||
-		!strings.Contains(pr.Comments[2], "`"+second+"`") || strings.Count(pr.Comments[2], gitprov.ReportMarker(third)) != 1 {
+	if len(pr.Comments) != 3 || !strings.Contains(pr.Comments[2], "### Fugaro run `"+task.ShortRun(third)+"`") ||
+		!strings.Contains(pr.Comments[2], "`"+task.ShortRun(second)+"`") || strings.Count(pr.Comments[2], gitprov.ReportMarker(third)) != 1 {
 		t.Fatalf("Fugaro's comments after the second follow-up = %q", pr.Comments)
 	}
 	var snap3 followup.Snapshot

@@ -9,8 +9,7 @@ import (
 )
 
 var basePins = []string{"CLAUDE_CODE_VERSION", "GH_VERSION", "MISE_VERSION", "GCLOUD_VERSION", "DOCKER_CLI_VERSION",
-	"YQ_VERSION", "CODEX_VERSION", "OPENCODE_VERSION", "GOOSE_VERSION", "CRUSH_VERSION", "HARNESS_NODE_VERSION",
-	"UV_VERSION", "GRAPHIFY_VERSION"}
+	"YQ_VERSION", "UV_VERSION", "GRAPHIFY_VERSION"}
 
 // runSmokeBase runs smoke.sh against the base with a fake docker whose image
 // reports the Dockerfile's pins unless fakeEnv overrides one.
@@ -53,7 +52,6 @@ func TestSmokeBaseSucceedsAgainstAHealthyImage(t *testing.T) {
 
 func TestSmokeBaseChecksEveryPin(t *testing.T) {
 	for _, fake := range []string{"FAKE_MISE_VERSION", "FAKE_GCLOUD_VERSION", "FAKE_DOCKER_CLI_VERSION", "FAKE_YQ_VERSION",
-		"FAKE_CODEX_VERSION", "FAKE_OPENCODE_VERSION", "FAKE_GOOSE_VERSION", "FAKE_CRUSH_VERSION", "FAKE_HARNESS_NODE_VERSION",
 		"FAKE_UV_VERSION", "FAKE_GRAPHIFY_VERSION"} {
 		out, err := runSmokeBase(t, "", fake+"=0.0.1")
 		if err == nil || !strings.Contains(out, "not pinned") {
@@ -63,11 +61,12 @@ func TestSmokeBaseChecksEveryPin(t *testing.T) {
 }
 
 func TestSmokeBaseFailsWhenAToolIsMissing(t *testing.T) {
-	// codex is a harness-tier tool, yq a kit-tier tool (design base-image.md
-	// section 6); selftest-passed-false is a selftest that exits 0 but
-	// reports "passed":false, proving smoke.sh reads the report body and
-	// doesn't trust the exit code alone.
-	for _, missing := range []string{"mise", "gcloud", "selftest", "codex", "yq", "uv", "graphify", "selftest-passed-false"} {
+	// graphify is the harness tier's own tool now that the base carries no
+	// non-Claude harness, yq a kit-tier tool (design base-image.md section 6);
+	// selftest-passed-false is a selftest that exits 0 but reports
+	// "passed":false, proving smoke.sh reads the report body and doesn't
+	// trust the exit code alone.
+	for _, missing := range []string{"mise", "gcloud", "selftest", "graphify", "yq", "uv", "selftest-passed-false"} {
 		if out, err := runSmokeBase(t, missing); err == nil {
 			t.Errorf("passed with %s missing:\n%s", missing, out)
 		}
@@ -94,7 +93,7 @@ func TestSmokeBasePinsRequireExactVersionMatch(t *testing.T) {
 	}
 }
 
-// TestSmokeBaseChecksBaseJSONAgainstEveryPin: every one of base.json's 14
+// TestSmokeBaseChecksBaseJSONAgainstEveryPin: every one of base.json's 9
 // fields (images/base/Dockerfile) is checked against its own Dockerfile
 // pin, not just mise. FAKE_BASE_JSON_MISMATCH corrupts one field in the
 // image's reported /etc/fugaro/base.json without touching that tool's own
@@ -102,7 +101,7 @@ func TestSmokeBasePinsRequireExactVersionMatch(t *testing.T) {
 // actually reads base.json.
 func TestSmokeBaseChecksBaseJSONAgainstEveryPin(t *testing.T) {
 	for _, field := range []string{"debian", "mise", "claude_code", "gh", "yq", "gcloud",
-		"docker_cli", "harness_node", "codex", "opencode", "goose", "crush", "uv", "graphify"} {
+		"docker_cli", "uv", "graphify"} {
 		out, err := runSmokeBase(t, "", "FAKE_BASE_JSON_MISMATCH="+field)
 		if err == nil {
 			t.Errorf("a wrong %s in base.json passed:\n%s", field, out)

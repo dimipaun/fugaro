@@ -521,3 +521,137 @@ func TestSecurityMdNamesTheCredentialsServicesKnownLimits(t *testing.T) {
 		}
 	}
 }
+
+// TestSecurityMdStatesTheBitbucketGitProxy is task B1.10's headline: with the
+// Bitbucket proxy shipped (B1.5, B1.6, B1.7), SECURITY.md has to say what a
+// proxied run may do and what it no longer holds, in the document's own
+// "state the limit" voice. The claims pinned here are the ones the plan's
+// task B1.10 names: the agent can act as the run at the proxy (R3, O1), the
+// reach it is narrowed to (one repository, the run's branch and pull
+// requests, the run's life), D462's reach ending for a proxied repository and
+// the flip that has not landed on this tree, the build account's copy until
+// S4, D501's cold starts and no redundancy, D504's revocation and what a
+// cancel does not end, and O6's cross-repository fetch refusal.
+//
+// The section is read on its own (docSection), like the credentials service's
+// claims: a bullet in "In short" that points here must not satisfy a pin on
+// its own.
+//
+// Mutation (verified, run and restored): the R3 sentence removed from the
+// section -- "The agent can act as the run at the proxy (R3, O1)." -- fails
+// this on that pin and on the "one repository" sentence that follows it.
+//
+// Second mutation (verified, run and restored), from the review of B1.10: the
+// D504 paragraph put back as it was written first -- cancel "cancels the
+// execution" once the run has launched, and "a cancelled run still finishes
+// what it was launched to do" -- fails this on every cancel pin and on both
+// banned spellings of that claim, and on nothing else (internal/cli/cancel.go
+// writes the marker; a run stopped through Cloud Run after --grace or with
+// --now never reaches finalize).
+func TestSecurityMdStatesTheBitbucketGitProxy(t *testing.T) {
+	s := readDoc(t, "SECURITY.md")
+	const heading = "### The Bitbucket git proxy"
+	if !strings.Contains(s, "\n"+heading+"\n") {
+		t.Fatalf("SECURITY.md has no `%s` section: a proxied Bitbucket run changes what the agent can reach and what the job holds, and the section is where that is stated", heading)
+	}
+	section := flattenDoc(docSection(t, "SECURITY.md", s, heading))
+	for _, want := range []string{
+		// R3 and O1: the agent acts as the run, and the run is what the proxy
+		// narrows. No agent sandbox is planned, said rather than assumed.
+		"The agent can act as the run at the proxy",
+		"one repository",
+		"the run's own branch",
+		"the run's own pull requests",
+		"the run's life",
+		"There is no agent sandbox, and none is planned",
+		// The switch a repository is proxied by, and the one source of that
+		// fact (G15): the published node's block with `proxy: true`.
+		"bitbucket_token",
+		"proxy: true",
+		// The forwarder's shape (G5): loopback, the job's ID token, no
+		// credential of its own.
+		"loopback forwarder",
+		"no credential of its own",
+		// D462's reach ends for a proxied repository, and the flip that takes
+		// the mount is not on this tree -- the claim is "the job reads no
+		// token", not "the token is out of the job".
+		"config.ProxiedGitSecretNames",
+		"empty on this tree",
+		"reads no token at all",
+		"not that the token is out of the job",
+		// The build account's copy until S4.
+		"build account still holds the token",
+		"until S4",
+		// D501: cold starts on the critical path, and no redundancy.
+		"scales to zero",
+		"cold start",
+		"no redundancy",
+		// D504: what stops the proxy, and what a cancel does not end. A cancel
+		// writes the marker and the runner finalizes a **draft** through the
+		// proxy; only a run still in a stage after --grace (or one cancelled
+		// with --now) has its execution stopped, and such a run never reaches
+		// finalize -- internal/cli/cancel.go's own description.
+		"fugaro cancel",
+		"kill switch",
+		"writes the run's cancel marker",
+		"finalizes a **draft** pull request",
+		"still in a stage after `--grace`",
+		"`--now`",
+		"never reaches finalize and opens no pull request",
+		"a cancelled run does not finish its task",
+		"the forwarder is closed only after finalize",
+		"until the run's write-once outcome exists",
+		"at most the ID token's hour",
+		// O6: only this run's repository is fetched.
+		"fetches only its own repository",
+		"submodule",
+		// R2: names only, and what is actually recorded -- one line per act
+		// and nothing for a call refused before its identity verified, which
+		// is what internal/credsvc does (server.go's refuseIdentity answers
+		// through refuse, not refuseCall; forwardBitbucket writes its line
+		// once, after bitbucket.org answered).
+		"names only",
+		"one line per **act**",
+		"once the caller's identity is verified",
+		"not recorded",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("the `%s` section never says %q: a proxied run's reach and the credential it no longer reads are what this section is for", heading, want)
+		}
+	}
+	// The overclaims a rewrite drifts into: the proxy is not a sandbox, the
+	// token is not out of the job on this tree, the job is not tokenless,
+	// and the reach is not "no reach". Read out of the whole document,
+	// because a bullet that points here is as wrong as the section.
+	//
+	// Every one of them was written into this section once and is false
+	// while `config.ProxiedGitSecretNames` is empty: the mount stays, so the
+	// agent can read the token out of the runner's `/proc` and use the
+	// token's own reach, workspace-wide where the token is a workspace one.
+	// What the proxy narrows is the job's **own git traffic**, and the
+	// job-wide reach ends only once the flip lands.
+	for _, banned := range []string{
+		"the agent cannot reach Bitbucket at all",
+		"the Bitbucket token is out of the job",
+		"a proxied run is sandboxed",
+		"no real token in reach",
+		"instead of holding a token",
+		"that reach ends **for that repository**",
+		// The audit claim that was false on this tree: a call refused before
+		// its identity verified writes no line at all (server.go's
+		// refuseIdentity answers through refuse, not refuseCall), and a git
+		// command is several proxied requests.
+		"every refusal is audited with **names only**, one line per proxied request",
+		"one line per proxied request",
+		// The cancel wording that was false on this tree: cancel does not
+		// itself cancel the execution once the run has launched, and a stopped
+		// run reaches no finalize, so it opens no pull request at all
+		// (internal/cli/cancel.go:76-84, 235-321).
+		"once the run has launched, cancels the execution",
+		"a cancelled run still finishes what it was launched to do",
+	} {
+		if strings.Contains(flattenDoc(s), banned) {
+			t.Errorf("SECURITY.md says %q: the proxy narrows the run, and the flip that takes the mount has not landed on this tree", banned)
+		}
+	}
+}

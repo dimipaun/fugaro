@@ -444,6 +444,14 @@ type resolveRunOptions struct {
 	activeOnly bool
 }
 
+// resolveRunOpts is the lookup a command's own streams give it: the stdin a
+// person answers the pick list on, the stdout that list is written to, the
+// stderr the lookup's notes go to, and the command's --json, which is never
+// asked to choose whatever the streams are (D1700).
+func resolveRunOpts(cmd *cobra.Command, asJSON bool) resolveRunOptions {
+	return resolveRunOptions{in: cmd.InOrStdin(), out: cmd.OutOrStdout(), errOut: cmd.ErrOrStderr(), asJSON: asJSON}
+}
+
 // notes is where the lookup's notes go.
 func (o resolveRunOptions) notes() io.Writer {
 	if o.errOut != nil {
@@ -465,8 +473,11 @@ func (o resolveRunOptions) notes() io.Writer {
 // that cannot answer is handed a run it did not choose. An ending that names
 // none is D1709's refusal, whose way out is the full ID.
 //
-// Nothing calls it yet: the commands that accept an ending are wired to it at
-// SR14.
+// activeOnly is the option the one command that acts on the answer sets:
+// `cancel` takes it, so an ending is read against the active runs alone and
+// the answer is the list of them rather than a run. The one destructive
+// command is then only ever given a run a person named in full, and what an
+// ending gets back is the full IDs to paste (D1710).
 func resolveRun(ctx context.Context, env *cloudEnv, ref string, o resolveRunOptions) (slug, runID string, err error) {
 	// A full ID and <slug>/<run-id> are locateRun's, refusals included: this
 	// adds endings to what a command accepts and changes nothing about what it
@@ -506,8 +517,11 @@ func resolveRun(ctx context.Context, env *cloudEnv, ref string, o resolveRunOpti
 			return strings.Compare(b.Slug, a.Slug)
 		})
 		cands := env.runCandidates(ctx, matches)
-		fmt.Fprintf(o.out, "%q names %d active runs:\n%s", ref, len(cands), fullRows(cands))
-		return "", "", userErr("%q is an ending; pass one of the full run IDs above", ref)
+		// The list is part of the refusal and not a write to o.out: a
+		// command's stdout is its document when --json is set, so `cancel
+		// --json <ending>` must leave it empty. endingRefusal carries its
+		// own candidates the same way (D1700).
+		return "", "", userErr("%q names %d active runs:\n%spass one of the full run IDs above", ref, len(cands), fullRows(cands))
 	}
 
 	// The feed is read once per lookup and only for an ending: a full ID never
@@ -522,8 +536,24 @@ func resolveRun(ctx context.Context, env *cloudEnv, ref string, o resolveRunOpti
 	}
 	matches, err := runstore.ResolveEnding(ctx, env.bucket.Bucket, active, ref, since)
 	if feedErr != nil {
-		fmt.Fprintf(o.notes(), "warning: could not read the active runs (%s); looking among the runs of the last %d days only\n", oneLine(feedErr.Error()), lsDefaultDays)
+		fmt.Fprintf(o.notes(), "warning: could not read the active runs (%s); looking among the runs in the bucket only\n", oneLine(feedErr.Error()))
 		matches, err = runstore.ResolveEnding(ctx, env.bucket.Bucket, nil, ref, since)
+	}
+	if errors.Is(err, runstore.ErrNotFound) {
+		// The window is `runs ls`'s seven days; the bucket keeps a run for
+		// runs_days (90). An ending older than the window is still an ending
+		// of a run the bucket holds — and the short form is what every
+		// message that hands one over prints (`fugaro logs <ending>`, `fugaro
+		// artifacts ls <ending>`, `fugaro diagnose <ending>`), so a report or
+		// a PR from a month ago names its run again. One more listing, on the
+		// miss alone: D1702's own "widen on a miss: a second slower listing,
+		// one more rule", which leaves the lookup of a recent run as cheap as
+		// it was.
+		//
+		// The feed is not asked again: it was read above, and every run it
+		// confirmed is one this listing finds (a run ID with its task.json in
+		// the bucket), whether it is still active or not.
+		matches, err = runstore.ResolveEnding(ctx, env.bucket.Bucket, nil, ref, time.Time{})
 	}
 	switch {
 	case errors.Is(err, runstore.ErrTooShort):
@@ -532,7 +562,7 @@ func resolveRun(ctx context.Context, env *cloudEnv, ref string, o resolveRunOpti
 		// is still refused as the user error it is rather than as remote.
 		return "", "", userErr("%v", err)
 	case errors.Is(err, runstore.ErrNotFound):
-		return "", "", userErr("no run ending %q among the active runs and the last %d days; pass the full ID", ref, lsDefaultDays)
+		return "", "", userErr("no run ending %q among the active runs or the runs the bucket still holds; pass the full ID", ref)
 	case err != nil && !errors.Is(err, runstore.ErrAmbiguous):
 		return "", "", remote(err)
 	}
@@ -873,9 +903,49 @@ func refuseSharedCheckout(ctx context.Context, repo string) error {
 	return nil
 }
 
+// noCheckoutKey is the context key withoutCheckout installs.
+type noCheckoutKey struct{}
+
+// withoutCheckout is the resolution a caller has no checkout for: the
+// daemon's launches (orchestrator_launcher), which resolve a plan for an
+// item's repository while running in whatever directory its unit was started
+// in — the operator's own checkout of that repository, of something else, or
+// of nothing at all.
+//
+// It is installed once, by Launch, and it has to cover the whole launch: every
+// read of the working directory's checkout on that path goes through
+// checkoutRoot — the plan's ref and file (run_ref.go, run.go), the project
+// layer (run_layer.go), the gates, the job a clone workflow selects
+// (project_job.go), the docker tag's rule (catalogDockerAsk) and the
+// credentials-service pair (launchFileConfig) — so a switch around part of it
+// is a launch whose pieces disagree: gates that judged the repository with no
+// checkout, deciding on the job and the rules of the checkout the directory
+// happened to hold. Marked whole, the launch is the one `fugaro run` makes from
+// outside a checkout: the ref is the base branch the layers resolve, the
+// workflow and the recipe come from the local config and the catalog, and what
+// cannot be answered without a checkout is refused rather than guessed
+// (project_job.go's profiles refusal).
+//
+// What a daemon must never do is take the branch a person left checked out as
+// the ref of an approved item: that ref is not what the approval's digest
+// covers, and it moves under the daemon when the person switches branches.
+func withoutCheckout(ctx context.Context) context.Context {
+	return context.WithValue(ctx, noCheckoutKey{}, true)
+}
+
+// checkoutless reports whether ctx carries withoutCheckout.
+func checkoutless(ctx context.Context) bool {
+	on, _ := ctx.Value(noCheckoutKey{}).(bool)
+	return on
+}
+
 // checkoutRoot is the working directory's checkout root when its origin is
-// repo, and "" otherwise.
+// repo, and "" otherwise. It is "" for every resolution marked withoutCheckout
+// as well: such a caller has no checkout to read, whatever directory it is in.
 func checkoutRoot(ctx context.Context, repo string) string {
+	if checkoutless(ctx) {
+		return ""
+	}
 	origin, err := originRepo(ctx)
 	if err != nil {
 		return ""

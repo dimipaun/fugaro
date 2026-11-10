@@ -344,8 +344,14 @@
         "agent.review_rounds": {
           "default": "unset = the run's rigor mode decides (rigor.DefaultRounds)"
         },
+        "agent.review_stop_fraction": {
+          "default": "unset = 0.8 (config.DefaultReviewStopFraction)"
+        },
         "backend": {
           "default": "unset = cloud-run"
+        },
+        "bake_repos": {
+          "default": "unset = true: a repository the build can read is baked into the image its job runs"
         },
         "base_branch": {
           "default": "unset = none: each repository's own branch"
@@ -631,6 +637,12 @@
         "image_catalog.entries.*.default": {
           "default": "unset = false"
         },
+        "image_catalog.entries.*.services": {
+          "default": "unset = none: the run starts no backing service"
+        },
+        "image_map": {
+          "default": "unset = none: no repository is mapped, and the catalog's default entry decides the image"
+        },
         "image_source": {
           "default": "unset = none: no base pin has been recorded"
         },
@@ -777,6 +789,9 @@
         "layer.defaults.agent.review_rounds": {
           "default": "unset = the run's rigor mode decides (rigor.DefaultRounds)"
         },
+        "layer.defaults.agent.review_stop_fraction": {
+          "default": "unset = 0.8 (config.DefaultReviewStopFraction)"
+        },
         "layer.defaults.git.pr.checkpoints": {
           "default": "unset = inherit"
         },
@@ -800,6 +815,9 @@
         },
         "layer.defaults.rigor.default": {
           "default": "unset = the built-in mode (pro)"
+        },
+        "layer.defaults.planning.decoupling": {
+          "default": "unset = true"
         },
         "layer.gcp_project": {
           "default": "unset = the installation's GCP project"
@@ -1153,6 +1171,10 @@
         "repos.*.workflows": {
           "default": "unset = every workflow the repository defines"
         },
+        "planning.decoupling": {
+          "$comment": "config.DefaultPlanningDecoupling",
+          "default": "true"
+        },
         "review_floor": {
           "default": "unset = none: no floor is added"
         },
@@ -1187,6 +1209,24 @@
           "default": "unset = none: setup ran to the end"
         },
         "stages.*.claude_account": {
+          "default": "unset = the project's default account"
+        },
+        "stages.adversarial.claude_account": {
+          "default": "unset = the project's default account"
+        },
+        "stages.fix.claude_account": {
+          "default": "unset = the project's default account"
+        },
+        "stages.implement.claude_account": {
+          "default": "unset = the project's default account"
+        },
+        "stages.plan.claude_account": {
+          "default": "unset = the project's default account"
+        },
+        "stages.review.claude_account": {
+          "default": "unset = the project's default account"
+        },
+        "stages.review_first.claude_account": {
           "default": "unset = the project's default account"
         },
         "terraform.alert_email": {

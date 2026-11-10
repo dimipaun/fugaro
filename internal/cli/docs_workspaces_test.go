@@ -53,11 +53,10 @@ const (
 	wsPlan       = "docs/workspaces/implementation-plan.md"
 
 	// wsStatus is the line every file in this folder carries, word for word.
-	// It is the folder's whole claim about itself -- the design is answered,
-	// the plan is all there is, nothing is implemented and no task is approved
-	// -- and a file that dropped it would read as a design somebody may build
-	// from, which is the one thing this folder is not.
-	wsStatus = "Status: design answered by the owner 2026-11-04; plan only; nothing implemented; no task approved."
+	// It is the folder's whole claim about itself -- how much of the design is
+	// merged, and where the current table lives -- and a file that dropped it
+	// would read as a folder whose state nobody can place.
+	wsStatus = "**Status as of 2026-11-10: in progress, 6/10 merged; see [docs/status.md](../status.md) for the current table.**"
 )
 
 func wsDocs() []string { return []string{wsReadme, wsSpec, wsReconciled, wsPlan} }
@@ -69,7 +68,7 @@ func TestDocsWorkspacesIsWritten(t *testing.T) {
 	for _, path := range wsDocs() {
 		flat := flattenDoc(readDoc(t, path))
 		if !strings.Contains(flat, wsStatus) {
-			t.Errorf("%s does not carry the folder's status line %q: every file of an answered design folder says in one line that the design is answered, that nothing is implemented and that no task is approved, and a file that drops it reads as a design somebody may build from",
+			t.Errorf("%s does not carry the folder's status line %q: every file of the folder says in one line where the work stands and points at the current table, and a file that drops it reads as a folder whose state nobody can place",
 				path, wsStatus)
 		}
 	}

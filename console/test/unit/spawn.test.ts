@@ -57,6 +57,7 @@ import {
   DARWIN_LOCATIONS,
   FUGARO_BINARY_NAME,
   INSTALLATION_LIST_COMMAND,
+  LICENCE_KEY_VAR,
   LINUX_LOCATIONS,
   PLATFORM_LOCATIONS,
   SPAWN_COMMANDS,
@@ -77,6 +78,7 @@ import {
   isExecutableFile,
   decodeFeedLine,
   isSafeArgumentValue,
+  keyedArguments,
   locationsFor,
   nodeSpawner,
   parseVersionLine,
@@ -123,6 +125,8 @@ import type {
 } from '../../src/main/spawn'
 import { createSpawnLog, disabledSpawnLog } from '../../src/main/spawnlog'
 import type { SpawnLogWriter } from '../../src/main/spawnlog'
+import { PRODUCTION_KEYRING } from '../../src/main/licence'
+import { LICENCE_KEY_CLI_FLOOR, licenceKeySupported } from '../../src/shared/version'
 import { RUNS_LIST_MAX_LIMIT, validateArguments } from '../../src/main/ipc'
 import type { OperationName, ValidatedArguments } from '../../src/main/ipc'
 import { CliSource, LOG_WINDOW_MAX_ENTRIES, MAX_LIVE_FEEDS, createInstallationStore, parseLogEntries } from '../../src/source/cli'
@@ -160,7 +164,10 @@ const WINDOWS_PATH = 'C:\\Windows\\System32;C:\\Windows'
  * CG9a's `graph.read`, the twenty-first, and the managed screens' plan's CM4's
  * two reads, `managed.status` and `policy.show`, the twenty-second and
  * twenty-third (the Project tab's managed state and its published policy node,
- * the two commands the plan's CM3 put on `consoleReadPaths`). The
+ * the two commands the plan's CM3 put on `consoleReadPaths`), and the graph
+ * plan's feed, CG9b's `graph.watch`, the twenty-fourth -- the same `graph`
+ * command as CG9a's read above, exactly as `logs`'s and `settings`'s two rows
+ * are one command each. The
  * complement -- the commands
  * that take no
  * flag at all -- is the *module's* `COMMANDS_WITHOUT_PROJECT`, keyed by the
@@ -177,6 +184,7 @@ const COMMANDS_TAKING_PROJECT: readonly OperationName[] = [
   'runs.summary',
   'plan.status',
   'graph.read',
+  'graph.watch',
   'run.diagnose',
   'run.logs',
   'run.logLink',
@@ -449,6 +457,18 @@ async function waitFor(predicate: () => boolean, ms = 15_000): Promise<void> {
   }
 }
 
+/** CHILD_KEYS_WITHOUT_A_KEY is the environment a child receives when the
+ * console's store holds no licence key to hand over. `CHILD_ENV_KEYS` is the
+ * whole contract (`src/main/spawn.ts`), and `FUGARO_LICENCE_KEY` is written into
+ * a child's environment only when there is a key for it (S2.7), so an
+ * installation with none gives the child one key fewer -- and the WSL route
+ * carries no key on any installation, which is why its cases assert this list
+ * too. The hand-off itself, the key present, is asserted in
+ * `test/unit/licence-store.test.ts`. */
+const CHILD_KEYS_WITHOUT_A_KEY: readonly string[] = Object.freeze(
+  CHILD_ENV_KEYS.filter((key) => key !== LICENCE_KEY_VAR),
+)
+
 describe('the spawn table and the argv it builds', () => {
   it('has one row per command-bearing operation, and none for the link', () => {
     expect(() => {
@@ -491,7 +511,7 @@ describe('the spawn table and the argv it builds', () => {
     }).toThrow(/does not start with config list/)
   })
 
-  it('fixes the design allow-list exactly: twenty-five argvs, twenty-three commands, twenty-three of them with --project', () => {
+  it('fixes the design allow-list exactly: twenty-six argvs, twenty-four commands, twenty-four of them with --project', () => {
     // The design's §5.1 rule 6 table is the whole allow-list, argv for argv:
     // the rail's read (`config list --json`, the case above) used to be the
     // picker's own row in a second table until the owner's ruling of 2026-10-25,
@@ -533,6 +553,10 @@ describe('the spawn table and the argv it builds', () => {
       'runs summary --json',
       'plan status --json',
       'graph --json',
+      // The same command with one word more (the graph plan's CG9b): the feed a
+      // screen subscribes to while the Graph tab is on screen, whose `--watch`
+      // is a word of the command path rather than a flag a caller controls.
+      'graph --watch --json',
       'diagnose --json',
       'logs --json',
       'logs --url',
@@ -591,7 +615,7 @@ describe('the spawn table and the argv it builds', () => {
         'run',
       ]),
     )
-    expect(SPAWN_COMMANDS.filter((row) => row.takesProject)).toHaveLength(23)
+    expect(SPAWN_COMMANDS.filter((row) => row.takesProject)).toHaveLength(24)
     // ...and the table's own flags agree with the list the tests above use.
     for (const row of SPAWN_COMMANDS) {
       expect(row.takesProject, row.operation).toBe(COMMANDS_TAKING_PROJECT.includes(row.operation))
@@ -657,6 +681,30 @@ describe('the spawn table and the argv it builds', () => {
     expect(() => argvFor('graph.read', { watch: true } as never, safeContext())).toThrow(/does not declare/)
   })
 
+  it('keys a subscription on the arguments that reach a word, and no others', () => {
+    // The bound source and the fixture both name a live child by what it was
+    // spawned with, so the two calls a screen makes for one child must build one
+    // key. `graph.watch`'s calls differ by `visible`: the poll names the scope,
+    // the stop adds `visible: false` for the tab that went away, and the row
+    // declares that argument with no flag -- `argvFor` emits no word for it, so
+    // it is no part of the child's identity and `keyedArguments` drops it here.
+    expect(keyedArguments('graph.watch', { source: 'all' })).toEqual({ source: 'all' })
+    expect(keyedArguments('graph.watch', { source: 'all', visible: false })).toEqual({ source: 'all' })
+    // `visible: true` is dropped too: it is not a word either, and a screen that
+    // sent it would otherwise name a second child that never existed.
+    expect(keyedArguments('graph.watch', { source: 'all', visible: true })).toEqual({ source: 'all' })
+    // Every argument of the live feed does reach a word, so its key is the whole
+    // object and a per-repository subscription stays its own child.
+    expect(keyedArguments('live.watch', { repo: 'r-1a2b3c4d/r-5e6f7a8b' })).toEqual({ repo: 'r-1a2b3c4d/r-5e6f7a8b' })
+    // An undeclared key is kept rather than dropped: `argvFor` is where it is
+    // refused, by name, and a key merged away here would let a payload the row
+    // never saw answer an existing child of the same scope.
+    expect(keyedArguments('graph.watch', { source: 'all', watch: true } as never)).toEqual({
+      source: 'all',
+      watch: true,
+    })
+  })
+
   it('a source value outside the pattern is refused before any spawn', () => {
     // H1's closed set, checked where the renderer's payload is checked
     // (`src/main/ipc.ts`): `all`, `coordinator`, and an id-carrying scope whose
@@ -716,9 +764,12 @@ describe('the spawn table and the argv it builds', () => {
   it('the child env is exactly CHILD_ENV_KEYS', () => {
     // The graph read opens the project's database through the child's own
     // credential, and the child is what carries it: this process hands it the
-    // eleven keys and nothing else. The app's own environment -- an Anthropic
-    // key, an ADC path, an ambient project selection -- is not merged in, which
-    // is the rule `CHILD_ENV_KEYS` exists for. The app environment below is
+    // keys `CHILD_ENV_KEYS` names and nothing else -- one fewer than the list,
+    // because this installation holds no licence key for the store to hand over
+    // (S2.7), which is why the licence variable's planted value is asserted
+    // absent below. The app's own environment -- an Anthropic key, an ADC path,
+    // an ambient project selection -- is not merged in, which is the rule
+    // `CHILD_ENV_KEYS` exists for. The app environment below is
     // **saturated**: every key of the boundary is present in it (so a key the
     // module dropped would be a key missing from the answer rather than a key
     // nothing supplied) beside the four the console must never pass on.
@@ -735,7 +786,7 @@ describe('the spawn table and the argv it builds', () => {
       binaryPath: '/opt/homebrew/bin/fugaro',
       appEnv,
     })
-    expect(Object.keys(env).sort()).toEqual([...CHILD_ENV_KEYS].sort())
+    expect(Object.keys(env).sort()).toEqual([...CHILD_KEYS_WITHOUT_A_KEY].sort())
     // The one project fact the child gets is the chosen installation's, never
     // the app environment's.
     expect(env['FUGARO_PROJECT']).toBe(PROJECT)
@@ -747,6 +798,12 @@ describe('the spawn table and the argv it builds', () => {
     ]) {
       expect(env[forbidden], forbidden).toBeUndefined()
     }
+    // The app environment is saturated, so it holds a licence key of its own --
+    // and the store is the only source a child's key can come from: this call
+    // hands the child none, and the variable the app was started with is skipped
+    // exactly as `PATH` is (S2.7).
+    expect(appEnv[LICENCE_KEY_VAR]).toBeDefined()
+    expect(env[LICENCE_KEY_VAR]).toBeUndefined()
   })
 
 
@@ -2104,7 +2161,7 @@ describe('the child environment', () => {
       binaryPath: '/opt/homebrew/bin/fugaro',
       appEnv: fullAppEnv,
     })
-    expect(Object.keys(env).sort()).toEqual([...CHILD_ENV_KEYS].sort())
+    expect(Object.keys(env).sort()).toEqual([...CHILD_KEYS_WITHOUT_A_KEY].sort())
   })
 
   it('does not pass the app’s own credentials, profile or agent socket', () => {
@@ -2256,7 +2313,7 @@ describe('the child environment', () => {
       wsl: true,
     })
     expect(wsl[WSLENV_KEY]).toBe('')
-    expect(Object.keys(wsl).sort()).toEqual([...CHILD_ENV_KEYS, WSLENV_KEY].sort())
+    expect(Object.keys(wsl).sort()).toEqual([...CHILD_KEYS_WITHOUT_A_KEY, WSLENV_KEY].sort())
 
     // The host route does not carry the key at all: there is no `wsl.exe` between
     // the console and the CLI, so there is no share list to state.
@@ -2294,6 +2351,66 @@ describe('the child environment', () => {
     expect(Object.keys(query)).not.toContain(WSLENV_KEY)
   })
 
+  it('is the one route a licence key does not travel on', () => {
+    // S2.7's hand-off is the store's key in the child's environment, and the WSL
+    // route is the one place it stops: the share list above is empty, so a key
+    // written into `wsl.exe`'s environment would reach no process at all -- a
+    // credential handed over for no reader. The CLI inside the distribution
+    // reads its own key file instead (S2.3, `fugaro licence install`). This is
+    // asserted through `planFor` rather than through `childEnvironment`, because
+    // it is the route's plan that leaves the key out (`src/main/spawn.ts`).
+    const WSL_ROUTE = { distro: 'Ubuntu', directory: '/home/dimi/src' }
+    const KEY = 'the key the store holds'
+    const context = { ...safeContext({ project: PROJECT, wsl: WSL_ROUTE }), licenceKey: KEY }
+    const plan = planFor('budget.show', {}, context)
+    expect(plan.env[LICENCE_KEY_VAR]).toBeUndefined()
+    // The same context on the host route does hand it over, so this case is
+    // about the route and not about a key the planning dropped everywhere.
+    const hostContext = { ...safeContext({ project: PROJECT }), licenceKey: KEY }
+    const host = planFor('budget.show', {}, hostContext)
+    expect(host.env[LICENCE_KEY_VAR]).toBe(KEY)
+  })
+
+  it('hands a key to no source child while no release takes it back out', async () => {
+    // The gate at the call site that spawns every operation but the launch:
+    // `CliSource`'s `#plan` asks `licenceKeySupported` of the resolved binary's
+    // own version line **before** it reads the store, and the floor is unset
+    // until a release removes the variable from its own environment. The key
+    // below is one the store would hand over, and the child is the stub, whose
+    // report is its own account of the environment it was given.
+    const directory = freshDirectory()
+    const stub = installStub(directory, { commands: { version: { stdout: '1.4.2\n' }, doctor: { stdout: '{}\n' } } })
+    const source = await CliSource.create({
+      target: { project: PROJECT },
+      configuredBinaryPath: stub.binary,
+      appEnv: {},
+      licenceKey: () => 'the key the store would hand over',
+    })
+    await source.environmentReport({})
+    const report = stub.reports().at(-1)
+    expect(report?.envKeys).not.toContain(LICENCE_KEY_VAR)
+    expect(report?.env[LICENCE_KEY_VAR]).toBeUndefined()
+  })
+
+  it('keeps the keyring and the CLI floor that takes the key back moving together', () => {
+    // The coupling the gate exists for, held as a test rather than as an
+    // assertion in the code: a console that can **keep** a key
+    // (`PRODUCTION_KEYRING` with a key in it, which is S2.9's) while no CLI can
+    // take it back (`LICENCE_KEY_CLI_FLOOR` unset) is a console that hands a
+    // credential to a CLI which passes it on to every program it starts. Nothing
+    // is in that state today, and this case is what makes filling the keyring
+    // without naming the floor a red test rather than a shipped leak.
+    const canKeepAKey = Object.keys(PRODUCTION_KEYRING).length > 0
+    expect(
+      canKeepAKey && LICENCE_KEY_CLI_FLOOR === null,
+      'the keyring can keep a key and no CLI floor takes it back out',
+    ).toBe(false)
+    // And while the floor is unset, no version at all may be handed one.
+    if (LICENCE_KEY_CLI_FLOOR === null) {
+      expect(licenceKeySupported('99.99.99')).toBe(false)
+    }
+  })
+
   it('reaches the child as its real environment, not just as a plan', async () => {
     // The end-to-end half: the stub reports the keys of its own process.env, so
     // a merge with process.env anywhere in the console would show up here.
@@ -2311,7 +2428,7 @@ describe('the child environment', () => {
     // operating system itself adds to every process it starts. It is named
     // rather than waved through: any other addition still fails this test.
     const platformKeys = process.platform === 'darwin' ? ['__CF_USER_TEXT_ENCODING'] : []
-    expect(report?.envKeys.filter((key) => !platformKeys.includes(key))).toEqual([...CHILD_ENV_KEYS].sort())
+    expect(report?.envKeys.filter((key) => !platformKeys.includes(key))).toEqual([...CHILD_KEYS_WITHOUT_A_KEY].sort())
     expect(report?.env['FUGARO_CONFIG']).toBeUndefined()
     expect(report?.env['GOOGLE_APPLICATION_CREDENTIALS']).toBeUndefined()
     expect(report?.env['ANTHROPIC_API_KEY']).toBeUndefined()
@@ -3644,10 +3761,14 @@ describe('the WSL resolution path', () => {
   //
   // **The claim, in one sentence:** nothing the console's own environment holds
   // reaches the process inside the distribution except the eleven
-  // `CHILD_ENV_KEYS`, and the only keys beside them on the way to `wsl.exe` are
-  // the two words this console writes itself -- the empty `WSLENV` the route
-  // states (T-E2) and `WSL_UTF8=1` (T-F2). Neither is read from anywhere: they
-  // are constants, and `WSLENV` empty is what keeps them on the near side.
+  // `CHILD_ENV_KEYS` this route carries -- `CHILD_ENV_KEYS` is twelve, and
+  // `FUGARO_LICENCE_KEY` is the one this route never writes, whatever the
+  // installation holds, because the empty share list below would drop it anyway
+  // (S2.7; the CLI inside the distribution reads its own key file instead) --
+  // and the only keys beside them on the way to `wsl.exe` are the two words this
+  // console writes itself -- the empty `WSLENV` the route states (T-E2) and
+  // `WSL_UTF8=1` (T-F2). Neither is read from anywhere: they are constants, and
+  // `WSLENV` empty is what keeps them on the near side.
   //
   // **Why it is asserted here and not read off the plan.** A test that inspected
   // `plan.env` would be asserting that the console is self-consistent. The fake
@@ -3678,15 +3799,20 @@ describe('the WSL resolution path', () => {
       AWS_SECRET_ACCESS_KEY: 'planted-not-a-real-key',
       GITHUB_TOKEN: 'planted-not-a-real-token',
       GOOGLE_APPLICATION_CREDENTIALS: 'C:\\Users\\dimi\\.config\\gcloud\\planted.json',
+      // The console's own environment may hold a key (`FUGARO_LICENCE_KEY`), and
+      // the store -- not this variable -- is the only source a child's key can
+      // come from: the environment the app was started with is skipped exactly
+      // as `PATH` is (`src/main/spawn.ts`). On this route it is skipped twice
+      // over, because no key is written at all (S2.7).
+      [LICENCE_KEY_VAR]: 'planted-not-a-real-licence-key',
     }
     for (const [name, value] of Object.entries(PLANTED)) vi.stubEnv(name, value)
     vi.stubEnv('PATH', WINDOWS_PATH)
 
     // The environment the app hands the console: this process's own (the
-    // sentinels included) plus the eleven keys spelled as a Windows host would
-    // spell them. All eleven are present, so "exactly the eleven" is a literal
-    // claim here and not a claim about whichever keys this machine happens to
-    // have.
+    // sentinels included) plus the keys spelled as a Windows host would spell
+    // them. All of them are present, so "exactly these keys" is a literal claim
+    // here and not a claim about whichever keys this machine happens to have.
     const appEnv: Readonly<Record<string, string | undefined>> = {
       ...process.env,
       ...PLANTED,
@@ -3719,13 +3845,14 @@ describe('the WSL resolution path', () => {
     // through so any other addition still fails.
     const platformKeys = process.platform === 'darwin' ? ['__CF_USER_TEXT_ENCODING'] : []
 
-    // The near side: what `wsl.exe` was handed. The eleven, plus the two keys
-    // this route writes itself -- `WSLENV` empty (T-E2) and `WSL_UTF8=1` (T-F2,
-    // and on the CLI's own call since the review of `#981`) -- and nothing else,
-    // sentinels included.
+    // The near side: what `wsl.exe` was handed. The `CHILD_ENV_KEYS` this route
+    // carries -- the twelve less the licence key -- plus the two keys this route
+    // writes itself: `WSLENV` empty (T-E2) and `WSL_UTF8=1` (T-F2, and on the
+    // CLI's own call since the review of `#981`). And nothing else, sentinels
+    // included.
     const hop = only(arrangement.wsl.reports().filter((report) => report.kind === 'spawn'))
     expect(hop.envKeys.filter((key) => !platformKeys.includes(key)).sort()).toEqual(
-      [...CHILD_ENV_KEYS, WSLENV_KEY, WSL_UTF8_VAR].sort(),
+      [...CHILD_KEYS_WITHOUT_A_KEY, WSLENV_KEY, WSL_UTF8_VAR].sort(),
     )
     expect(hop.env[WSLENV_KEY]).toBe('')
     expect(hop.env[WSL_UTF8_VAR]).toBe(WSL_UTF8_VALUE)
@@ -3747,8 +3874,9 @@ describe('the WSL resolution path', () => {
     // inside the distribution receives, so the double does not hand it over.
     expect(Object.keys(hop.childEnv)).not.toContain(WSLENV_KEY)
 
-    // The far side: what the Linux process got. Exactly the eleven -- the
-    // distribution's own `PATH`, the allow-list's values, and nothing else.
+    // The far side: what the Linux process got. Exactly the eleven this route
+    // carries -- the distribution's own `PATH`, the allow-list's values, and
+    // nothing else.
     //
     // Part F carries the CLI in `sh -c` (T-F4), and a POSIX shell sets `PWD`
     // and `SHLVL` in the environment of what it `exec`s. Those two are the
@@ -3758,7 +3886,7 @@ describe('the WSL resolution path', () => {
     const child = only(arrangement.wsl.children())
     const shellKeys = ['PWD', 'SHLVL']
     const childKeys = child.envKeys.filter((key) => !platformKeys.includes(key) && !shellKeys.includes(key))
-    expect(childKeys.sort()).toEqual([...CHILD_ENV_KEYS].sort())
+    expect(childKeys.sort()).toEqual([...CHILD_KEYS_WITHOUT_A_KEY].sort())
     expect(child.env['PWD'] ?? '/').toMatch(/^\//)
     expect(child.env['SHLVL'] ?? '1').toMatch(/^[0-9]+$/)
     // The distribution's own `PATH`, with the double's stand-in for the

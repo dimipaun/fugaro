@@ -2166,3 +2166,366 @@ func TestRunIdentityRefusedOnReadRoute(t *testing.T) {
 		})
 	}
 }
+
+// ---------------------------------------------------------------------------
+// The launcher class (DS1.2, D1938, F5)
+// ---------------------------------------------------------------------------
+
+// testLauncherAccount is one of an installation's launchers: the address a
+// Google ID token's email claim carries for a member who may ask the service
+// for a slip (D1938). Like every identity in this file it is a name and not a
+// credential.
+const testLauncherAccount = "launcher-1@example.invalid"
+
+// testLauncherSub is the Google account id a launcher's token carries in its
+// sub claim, which launcherToken writes into every token below: the intake
+// builds a secret's prefix from this value (R1, R3), so the tests read it out
+// and change it rather than spelling a second one.
+//
+// It is spelled at the width a real account id has — 21 digits, above 2^53
+// (internal/infra/tf's identity handling records the same fact of a service
+// account's unique_id) — and deliberately not as a short round number: a class
+// whose bound on this claim was derived from a 64-bit number would refuse every
+// launcher there is, and a fixture of ten digits could not tell that from a
+// class that works.
+const testLauncherSub = "104329501182774832335"
+
+// launcherFixture is the fixture with the launcher class wired (D1938): the
+// addresses the class admits, which is the installation's roster as `update`
+// derives it. The person list is left as the fixture has it — empty — so a
+// test that wants both classes says so.
+func launcherFixture(t *testing.T, launchers ...string) *fixture {
+	t.Helper()
+	return newFixtureWith(t, func(cfg *AuthConfig) { cfg.LauncherAccounts = launchers })
+}
+
+// launcherToken is the Google ID token a launcher presents: the caller's-token
+// shape, with the launcher's address, the fixture's numeric sub, and the
+// audience a plain `gcloud auth print-identity-token` mints for a user account
+// (GcloudAudience) — the only audience a user account can mint at all, which
+// is why the class admits it beside the service's own URL.
+func (f *fixture) launcherToken(mutate ...func(map[string]any)) string {
+	return f.jobToken(append([]func(map[string]any){
+		func(c map[string]any) {
+			c["email"] = testLauncherAccount
+			c["aud"] = GcloudAudience
+			// The account id is the launcher's own: jobClaims' default is a job
+			// service account's, and this class answers the token's sub.
+			c["sub"] = testLauncherSub
+		},
+	}, mutate...)...)
+}
+
+// verifyLauncher is the class's own entry point, called the way the grant
+// route and the intake call it.
+func (f *fixture) verifyLauncher(tok string) (LauncherCaller, error) {
+	return f.auth.VerifyLauncher(context.Background(), tok)
+}
+
+// TestLauncherSubIsTheTokenSub: the launcher class's answer is the caller's
+// Google account id, and it is the TOKEN's sub claim and nothing else — not
+// the address, not a value the deployment configured. The intake derives the
+// secret prefix `fugaro_u_<id>_<name>` from exactly this value (R1, R3), so a
+// class that answered with anything else would write every secret of a
+// member's installation under a prefix that is not theirs.
+//
+// The refusals are the fail-closed half of the same rule: the grammar the
+// intake builds a name from is digits only (R1), so a token whose sub is
+// missing, is not a string, carries anything but digits or is wider than a
+// Google account id is, is refused rather than carried into a name. The
+// audience half is here too, because it is the one fact about the class that
+// is not its list: a user account can mint gcloud's own audience and this
+// service's URL, and nothing else (D1944 accepts the replay of the first).
+func TestLauncherSubIsTheTokenSub(t *testing.T) {
+	f := launcherFixture(t, testLauncherAccount)
+
+	ctx := context.Background()
+	// The account is answered in the configured spelling and the id is the
+	// claim's. The deployment is asked for the address in another case below,
+	// which is the fold every list of this package is matched by.
+	got, err := f.verifyLauncher(f.launcherToken())
+	if err != nil {
+		t.Fatalf("VerifyLauncher refused a configured launcher: %v", err)
+	}
+	if got.Account != testLauncherAccount {
+		t.Errorf("the launcher account = %q, want the configured spelling %q", got.Account, testLauncherAccount)
+	}
+	if got.Sub != testLauncherSub {
+		t.Errorf("the launcher sub = %q, want the token's sub claim %q", got.Sub, testLauncherSub)
+	}
+
+	// Another account id in the claim is what the class answers with: the sub
+	// is the token's and not a value read off the list or the address.
+	got, err = f.verifyLauncher(f.launcherToken(func(c map[string]any) { c["sub"] = "9876543210" }))
+	if err != nil {
+		t.Fatalf("VerifyLauncher refused a launcher whose token names another account id: %v", err)
+	}
+	if got.Sub != "9876543210" {
+		t.Errorf("the launcher sub = %q, want the token's own sub claim %q", got.Sub, "9876543210")
+	}
+
+	// The class's audience is gcloud's own client id and this service's URL,
+	// and no third one: the token a person's machine mints carries either.
+	for name, aud := range map[string]string{
+		"the service's own audience": testAudience,
+		"gcloud's own audience":      GcloudAudience,
+	} {
+		tok := f.launcherToken(func(c map[string]any) { c["aud"] = aud })
+		if _, err := f.verifyLauncher(tok); err != nil {
+			t.Errorf("VerifyLauncher refused a launcher whose token is for %s: %v", name, err)
+		}
+	}
+	if _, err := f.verifyLauncher(f.launcherToken(func(c map[string]any) { c["aud"] = "https://another-service.invalid" })); err == nil {
+		t.Error("VerifyLauncher admitted a launcher whose token is for another audience")
+	}
+
+	// A sub the prefix grammar could not be built from is refused: the class
+	// answers a whole identity or nothing, and never a partial one.
+	for name, sub := range map[string]any{
+		"absent":                    nil,
+		"not a string":              1234567890,
+		"empty":                     "",
+		"letters":                   "acct-1",
+		"a decimal point":           "1234567890.5",
+		"a minus sign":              "-1234567890",
+		"a leading space":           " 1234567890",
+		"wider than any account id": strings.Repeat("1", maxLauncherSubDigits+1),
+		"a trailing newline":        testLauncherSub + "\n",
+		"a zero-width space":        "1234567890​",
+		"an ideographic zero":       "０１",
+	} {
+		t.Run("a sub that is "+name, func(t *testing.T) {
+			_, err := f.verifyLauncher(f.launcherToken(func(c map[string]any) { c["sub"] = sub }))
+			if !errors.Is(err, ErrUnverifiedJob) {
+				t.Fatalf("a token whose sub is %s was answered %v, want ErrUnverifiedJob: no secret prefix can be derived from it", name, err)
+			}
+			if err != nil && strings.Contains(err.Error(), testLauncherSub) && sub != testLauncherSub {
+				t.Errorf("the refusal is %q, and it carries the account id it refused", err)
+			}
+		})
+	}
+
+	// The address is matched by the same ASCII fold every other list is read
+	// by, and the spelling the identity carries is the configured one.
+	tok := f.launcherToken(func(c map[string]any) { c["email"] = strings.ToUpper(testLauncherAccount) })
+	got, err = f.auth.VerifyLauncher(ctx, tok)
+	if err != nil {
+		t.Fatalf("VerifyLauncher refused a launcher whose claim is the same address in another case: %v", err)
+	}
+	if got.Account != testLauncherAccount {
+		t.Errorf("the launcher account = %q, want the CONFIGURED spelling %q", got.Account, testLauncherAccount)
+	}
+}
+
+// TestLauncherRefusedWithoutVerifiedEmail: the launcher class is keyed on the
+// verified address a Google ID token names (D1938), so a token that does not
+// carry a verified email is refused however well it is otherwise shaped. It is
+// the same check every caller class of this service is held to
+// (checkCallerToken), asked here because it is the class's own key: the grant
+// a slip records and the prefix the intake writes are the member's, and an
+// address an issuer did not verify is one no roster entry can be matched
+// against.
+func TestLauncherRefusedWithoutVerifiedEmail(t *testing.T) {
+	f := launcherFixture(t, testLauncherAccount)
+	for name, mutate := range map[string]func(map[string]any){
+		"the claim is false":         func(c map[string]any) { c["email_verified"] = false },
+		"the claim is absent":        func(c map[string]any) { delete(c, "email_verified") },
+		"the claim is not a boolean": func(c map[string]any) { c["email_verified"] = "true" },
+		"the claim is null":          func(c map[string]any) { c["email_verified"] = nil },
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := f.verifyLauncher(f.launcherToken(mutate))
+			if !errors.Is(err, ErrUnverifiedJob) {
+				t.Fatalf("err = %v, want ErrUnverifiedJob: a launcher whose email is not verified is not admitted", err)
+			}
+			if strings.Contains(err.Error(), testLauncherAccount) {
+				t.Errorf("the refusal is %q, and it carries the address it refused", err)
+			}
+		})
+	}
+
+	// The control: the same token with the claim set is admitted, so the four
+	// cases above are about the claim and not about the token.
+	if _, err := f.verifyLauncher(f.launcherToken()); err != nil {
+		t.Fatalf("VerifyLauncher refused a launcher whose email is verified: %v", err)
+	}
+}
+
+// TestLauncherClassRefusedOnRunAndReadRoutes: the launcher class is admitted
+// on the grant route and the intake ONLY (D1938, G13), and this is the whole
+// of that restriction read at the four entry points the other routes are
+// answered by: the shared parse (Verify — the mint, the sign route, the model
+// path and the Bitbucket proxy), the Bitbucket read mint (VerifyReadCaller),
+// the GitHub read mint (VerifyPersonCaller) and the verify route
+// (VerifyVerifier).
+//
+// The token is the strongest one the class admits: a configured launcher, for
+// this service's own audience, with a verified email and a numeric sub, so a
+// refusal below is the class's own and not an audience's or a claim's. Which
+// is what makes this a test of the classes and not of one route: a mutant that
+// added the launcher list to any of the four lookups turns exactly its own
+// case green-where-it-must-be-red.
+func TestLauncherClassRefusedOnRunAndReadRoutes(t *testing.T) {
+	f := launcherFixture(t, testLauncherAccount)
+	ctx := context.Background()
+	// The token every route below is presented: the service's own audience,
+	// which is what a launcher that mints for the service rather than through
+	// gcloud presents.
+	tok := f.launcherToken(func(c map[string]any) { c["aud"] = testAudience })
+
+	// The control: the class itself admits the very token the routes refuse.
+	if _, err := f.verifyLauncher(tok); err != nil {
+		t.Fatalf("VerifyLauncher refused the token the routes below are presented: %v", err)
+	}
+
+	for _, route := range []struct {
+		name string
+		call func() error
+	}{
+		{
+			name: "the run routes (the mint, the sign route, the model path, the Bitbucket proxy)",
+			call: func() error { _, err := f.verify(f.runToken(), tok, f.job); return err },
+		},
+		{
+			name: "the Bitbucket read mint",
+			call: func() error { _, err := f.auth.VerifyReadCaller(ctx, tok); return err },
+		},
+		{
+			name: "the GitHub read mint",
+			call: func() error { _, err := f.auth.VerifyPersonCaller(ctx, tok); return err },
+		},
+		{
+			name: "the verify route",
+			call: func() error { _, err := f.auth.VerifyVerifier(ctx, tok); return err },
+		},
+	} {
+		t.Run(route.name, func(t *testing.T) {
+			err := route.call()
+			if !errors.Is(err, ErrUnverifiedJob) {
+				t.Fatalf("err = %v, want ErrUnverifiedJob: a launcher is admitted on the grant route and the intake only", err)
+			}
+			if strings.Contains(err.Error(), testLauncherAccount) {
+				t.Errorf("the refusal is %q, and it carries the address it refused", err)
+			}
+		})
+	}
+}
+
+// TestPersonClassStillOperatorsOnly: the launcher class is a NEW list and the
+// person list is untouched (D1938), which is the decision's whole point —
+// "widen the person class" was the alternative, and it would have handed every
+// member the workspace-wide read mints the operators hold. So the two facts
+// are pinned together:
+//
+//   - the read mints stay operators-only: a launcher who is not one of the
+//     installation's people is refused by both, and by the GitHub read mint;
+//   - the two lists may hold the same address, because they are two classes of
+//     DIFFERENT routes and an installation whose operators launch runs has
+//     exactly that — the overlap rule NewAuthenticator holds the person list
+//     to is about one route's two classes;
+//   - and neither list widens into the other's class: an operator who is not a
+//     launcher is refused by the launcher class.
+func TestPersonClassStillOperatorsOnly(t *testing.T) {
+	const operator = "operator-1@example.invalid"
+	ctx := context.Background()
+
+	f := newFixtureWith(t, func(cfg *AuthConfig) {
+		cfg.LauncherAccounts = []string{testLauncherAccount, operator}
+		cfg.PersonAccounts = []string{operator}
+	})
+
+	// The operator is admitted by both routes' classes: both audiences, since
+	// the person class admits gcloud's own client id and so does the launcher
+	// class.
+	operatorToken := f.jobToken(func(c map[string]any) { c["email"] = operator })
+	if _, err := f.auth.VerifyReadCaller(ctx, operatorToken); err != nil {
+		t.Fatalf("the Bitbucket read mint refused an operator: %v", err)
+	}
+	if _, err := f.auth.VerifyPersonCaller(ctx, operatorToken); err != nil {
+		t.Fatalf("the GitHub read mint refused an operator: %v", err)
+	}
+	if got, err := f.verifyLauncher(operatorToken); err != nil || got.Account != operator {
+		t.Fatalf("the launcher class refused an operator who is on the launcher list: %v", err)
+	}
+
+	// A launcher who is not one of the installation's people reaches the
+	// launcher class and neither read mint.
+	launcherToken := f.launcherToken()
+	if _, err := f.verifyLauncher(launcherToken); err != nil {
+		t.Fatalf("the launcher class refused a configured launcher: %v", err)
+	}
+	if _, err := f.auth.VerifyReadCaller(ctx, launcherToken); !errors.Is(err, ErrUnverifiedJob) {
+		t.Errorf("the Bitbucket read mint answered a launcher who is not an operator with %v, want ErrUnverifiedJob: the read mints stay operators-only", err)
+	}
+	if _, err := f.auth.VerifyPersonCaller(ctx, launcherToken); !errors.Is(err, ErrUnverifiedJob) {
+		t.Errorf("the GitHub read mint answered a launcher who is not an operator with %v, want ErrUnverifiedJob: the read mints stay operators-only", err)
+	}
+
+	// The other direction: the person list does not widen into the launcher
+	// class either. This installation's launchers are the two above; an
+	// operator the roster does not list as one launches nothing.
+	g := newFixtureWith(t, func(cfg *AuthConfig) {
+		cfg.LauncherAccounts = []string{testLauncherAccount}
+		cfg.PersonAccounts = []string{operator}
+	})
+	if _, err := g.verifyLauncher(g.jobToken(func(c map[string]any) { c["email"] = operator })); !errors.Is(err, ErrUnverifiedJob) {
+		t.Errorf("the launcher class admitted a person who is not on the launcher list (%v), want ErrUnverifiedJob", err)
+	}
+	if _, err := g.verifyLauncher(g.launcherToken()); err != nil {
+		t.Errorf("the launcher class refused a configured launcher: %v", err)
+	}
+}
+
+// TestServiceAccountRefusedAtIntakeAuth: the launcher class is people, and a
+// service account is not one (D1938, G13 — "a person and a launcher on the
+// claim, a service account at the intake"). Both halves of that are here:
+//
+//   - a deployment cannot name one: an installation's launchers come from its
+//     roster, so an entry of the service-account shape is a deployment that
+//     disagrees with itself — the rule the person list is already held to —
+//     and it is refused by name, carrying no address;
+//   - and a service account's token is refused at the class, however
+//     perfectly it is otherwise shaped (the service's own audience, a verified
+//     email, a numeric sub): the class is keyed on the roster's addresses, and
+//     no service account is on it.
+func TestServiceAccountRefusedAtIntakeAuth(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		sa   string
+	}{
+		{"a job of this installation", testJobSA},
+		{"a shared project job's account", testSharedSA},
+		{"the credentials service's own shape, in another project", "some-machine@another-project.iam.gserviceaccount.com"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			_, err := NewAuthenticator(AuthConfig{
+				Project:          testProject,
+				FirebaseProject:  testFirebase,
+				Audience:         testAudience,
+				JobAccounts:      []string{testJobSA},
+				Keys:             f.keys,
+				JobKeys:          f.jobKeys,
+				Outcomes:         RTDBOutcomes{DB: f.db},
+				LauncherAccounts: []string{tc.sa},
+			})
+			if err == nil {
+				t.Fatalf("NewAuthenticator admitted %s as a launcher", tc.name)
+			}
+			if !strings.Contains(err.Error(), "launcher") || !strings.Contains(err.Error(), "service account address") {
+				t.Errorf("the configuration error is %q, want it to be about a launcher that is a service account address", err)
+			}
+			if strings.Contains(err.Error(), tc.sa) {
+				t.Errorf("the configuration error is %q, and it carries the address it refused", err)
+			}
+		})
+	}
+
+	// The token half: the service account's own Google ID token, shaped as
+	// well as a caller's token can be, is refused by the class.
+	f := launcherFixture(t, testLauncherAccount)
+	tok := f.jobToken(func(c map[string]any) { c["email"] = testJobSA })
+	if _, err := f.verifyLauncher(tok); !errors.Is(err, ErrUnverifiedJob) {
+		t.Fatalf("the launcher class answered a service account's token with %v, want ErrUnverifiedJob", err)
+	}
+}

@@ -303,10 +303,11 @@ resource "google_cloud_scheduler_job" "coordinator_sweep" {
 # private key, a Bitbucket read at the credentials service and
 # firebasedatabase.admin over the FP, and an identity holding any of those
 # behind a public endpoint would make spec.md §8's "there is no credential to
-# reach" false the day the front door is turned on. This one holds one grant —
-# the runs bucket's read, below — and nothing else in this tree or the Firebase
-# root grants it anything: no secret, no database, no actAs, which is the
-# narrowest account the design names for M4.
+# reach" false the day the front door is turned on. This one holds two grants —
+# the runs bucket's read, below, and the store's objects, in mcpauth_store.tf —
+# and nothing else in this tree or the Firebase root grants it anything: no
+# secret, no database, no actAs, which is the narrowest account the design names
+# for M4.
 #
 # It is created with the front door's own opt-in and not with the coordinator's:
 # an installation that opted into the coordinator for its read-only view
@@ -314,9 +315,12 @@ resource "google_cloud_scheduler_job" "coordinator_sweep" {
 # binding follow.
 #
 # The database half of what a front door needs is NOT here and deliberately so:
-# the store binding is D935, which the owner has not answered, and its account
-# is the only member that binding will name (#1760). Until then this account
-# reads run artefacts (D932) and can reach nothing else.
+# the store binding is D935, whose bucket and one binding live in
+# mcpauth_store.tf — beside the bucket they bind rather than in this file,
+# which names this account exactly twice (the runs bucket's read below, and the
+# service's own identity) and must keep doing so. What this account reaches is
+# therefore the runs bucket (D932) and the store's objects (D935), and nothing
+# else.
 resource "google_service_account" "mcp_server" {
   count = local.mcp_server_on ? 1 : 0
 
@@ -327,7 +331,8 @@ resource "google_service_account" "mcp_server" {
   depends_on = [google_project_service.this]
 }
 
-# The runs bucket, read-only, and the account's one grant: a run's recorded
+# The runs bucket, read-only, and one of the account's two grants: a run's
+# recorded
 # artefacts — its logs and its diff — are what the tools behind this port
 # answer with (D932), and the answer the owner did not choose (streaming Cloud
 # Logging live) is the reason it is the whole of the read: objectViewer on this
@@ -370,9 +375,10 @@ resource "google_storage_bucket_iam_member" "mcp_server_runs_reader" {
 # no credential-shaped environment name, which
 # coordinator_service_test.go's TestCoordinatorServiceIsPublicAndCarriesNoCredential
 # holds against this very block — and the identity behind the port is an
-# account whose whole reach is the runs bucket's read, so a stolen access token
-# reaches the tools its scopes name and nothing else (spec.md §8, "What a
-# stolen access token reaches": there is no credential to reach).
+# account whose whole reach is the runs bucket's read and the store it writes
+# its own records to, so a stolen access token reaches the tools its scopes
+# name and nothing else (spec.md §8, "What a stolen access token reaches":
+# there is no credential to reach).
 #
 # M9's launch grant is deliberately absent, and the absence is the design:
 # spawn_task is the one privilege this work adds, it belongs to M9's own
@@ -463,9 +469,12 @@ resource "google_cloud_run_v2_service" "coordinator_front_door" {
       # subtrees live in, and the runs bucket a run's artefacts (its logs and
       # its diff) are read from (D932). None of them is a credential, no entry
       # here has a value_source, and naming the database is not a grant on it:
-      # what this account may read there is D935's store binding, which does not
-      # exist yet, so a front door built from this file reaches the runs bucket
-      # and nothing else.
+      # what this account may read there is D935's store binding, which is the
+      # one binding mcpauth_store.tf writes, so the front door reaches the runs
+      # bucket and the store's own bucket and nothing else. The store's URL is
+      # deliberately not an entry yet: the process that opens it (M5) names the
+      # bucket it was handed, and the name it must be handed is the installation
+      # output mcpauth_store_bucket.
       env {
         name  = "FUGARO_PROJECT"
         value = var.fugaro_project

@@ -208,6 +208,14 @@ import {
   buildCredentialsService,
   fillCredentialsService,
 } from './screens/credentialsservice'
+import {
+  LICENCE_BUSY,
+  buildLicence,
+  fillLicence,
+  licenceSaveOutcomeOf,
+  renderLicenceOutcome,
+} from './screens/licence'
+import type { LicenceDrawn } from './screens/licence'
 import { MANAGED_BUSY, buildManagedModel, fillManaged } from './screens/managed'
 import { RETIREMENTS_BUSY, buildRetirementsModel, fillRetirements } from './screens/retirements'
 import type { OperationName } from '../main/ipc'
@@ -225,6 +233,7 @@ import {
   runRecordChildren,
 } from './screens/run'
 import { refusedState, renderUnavailable } from './screens/degraded'
+import { renderCredentialsSide } from './screens/environment'
 import { READING_STILL_MS, renderReading } from './screens/reading'
 import type { ReadingTab } from './screens/reading'
 import { noCheckoutActionKind, NO_CHECKOUT_SENTENCE, renderNoCheckout } from './screens/nocheckout'
@@ -483,7 +492,7 @@ function methodOf(fugaro: unknown, name: string): ((args: unknown) => unknown) |
 }
 
 /**
- * ReadBridge is the nineteen reads the screens make (Task 3.4c; console L5b
+ * ReadBridge is the twenty-one reads the screens make (Task 3.4c; console L5b
  * added `statsRuns`, Bitbucket credentials T1.2 added `coordinatorStatus`,
  * GV2.3b added `planStatus`, coordinator v2 K3 added `coordinatorShow`, K5 added
  * `coordinatorIntents`, console 0.119.0 added `summaryRuns` -- the
@@ -492,7 +501,11 @@ function methodOf(fugaro: unknown, name: string): ((args: unknown) => unknown) |
  * tab's settings panel, and the graph plan's CG9a added `graphRead`, the Graph
  * tab's read of the versioned graph document, and the managed-project screens
  * plan's CM4 added `managedStatus`, `policyShow` and `environmentReport` -- the
- * same tab's four later sections and its policy panel's own document), named one
+ * same tab's four later sections and its policy panel's own document, and the
+ * subscriptions plan's S2.7 added `readLicence`, the licence key's own section of
+ * the same tab -- **the one read here that spawns no child at all**, because the
+ * console keeps that key itself -- and the graph plan's CG9b added `graphWatch`,
+ * the same tab's live feed of the graph document), named one
  * by one for the reason `CompatibilityBridge` names one: this file should reach
  * for exactly the operations it draws, and a reader should be able to see which
  * those are without reading the preload.
@@ -519,12 +532,14 @@ export interface ReadBridge {
   runLogLink(args: Readonly<Record<string, unknown>>): Promise<unknown>
   planStatus(args: Readonly<Record<string, unknown>>): Promise<unknown>
   graphRead(args: Readonly<Record<string, unknown>>): Promise<unknown>
+  graphWatch(args: Readonly<Record<string, unknown>>): Promise<unknown>
   managedStatus(args: Readonly<Record<string, unknown>>): Promise<unknown>
   policyShow(args: Readonly<Record<string, unknown>>): Promise<unknown>
   environmentReport(args: Readonly<Record<string, unknown>>): Promise<unknown>
+  readLicence(args: Readonly<Record<string, unknown>>): Promise<unknown>
 }
 
-/** readBridgeFrom is the nineteen reads over the structural bridge. A missing
+/** readBridgeFrom is the twenty-one reads over the structural bridge. A missing
  * member answers `null` rather than rejecting, and so does a member that fails
  * to answer -- by throwing before it returns, or by returning a promise that
  * rejects, which is what `invoke` does on a channel with nothing behind it.
@@ -563,9 +578,11 @@ export function readBridgeFrom(fugaro: unknown): ReadBridge {
     runLogLink: (args) => ask('runLogLink', args),
     planStatus: (args) => ask('planStatus', args),
     graphRead: (args) => ask('graphRead', args),
+    graphWatch: (args) => ask('graphWatch', args),
     managedStatus: (args) => ask('managedStatus', args),
     policyShow: (args) => ask('policyShow', args),
     environmentReport: (args) => ask('environmentReport', args),
+    readLicence: (args) => ask('readLicence', args),
   }
 }
 
@@ -638,6 +655,36 @@ export interface SettingsBridge {
 export function settingsBridgeFrom(fugaro: unknown): SettingsBridge {
   const ask = (name: string, args: Readonly<Record<string, unknown>>): Promise<unknown> => askMember(fugaro, name, args)
   return { editSetting: (args) => ask('editSetting', args) }
+}
+
+/**
+ * LicenceBridge is the Project tab's second write: `licence.save`, the paste
+ * that keeps the licence key this installation runs under (the subscriptions
+ * plan's S2.7). It is a bridge of its own rather than a member of `ReadBridge`
+ * for `LaunchBridge`'s reason: that interface is the reads a screen is drawn
+ * from, and this one writes a credential to disk.
+ *
+ * **It carries the key and nothing else.** The object it is handed is the one
+ * argument the operation declares -- the pasted text, in this console's own
+ * `licenceKey` kind (`ipc.ts`), checked for length and for invisible characters
+ * before it is dispatched -- and never a path, a project or a flag: which
+ * installation's store the key lands in is the main process's own active
+ * installation (`main/index.ts`), so a renderer cannot name one the rail did not
+ * choose.
+ *
+ * It is answered the way the other bridges are: a member that is missing or
+ * fails to answer is `null`, and the press draws a sentence it could not read
+ * rather than claiming a write. A reply that arrived is the same licence state
+ * the read answers -- which carries no key text -- so nothing this bridge returns
+ * is the key that was pasted.
+ */
+export interface LicenceBridge {
+  saveLicence(args: Readonly<Record<string, unknown>>): Promise<unknown>
+}
+
+export function licenceBridgeFrom(fugaro: unknown): LicenceBridge {
+  const ask = (name: string, args: Readonly<Record<string, unknown>>): Promise<unknown> => askMember(fugaro, name, args)
+  return { saveLicence: (args) => ask('saveLicence', args) }
 }
 
 /** SETTINGS_EDIT_OUTCOME_KEYS is the whole key set of one `settings.edit`
@@ -934,6 +981,15 @@ function refusedScreen(
  *
  * Every string is the main process's, drawn through `sanitizeRefusal`; an
  * answer of any other shape is the console's own "could not read" sentence.
+ *
+ * **A WSL installation gains the credentials line** (T-G5): `renderCredentialsSide`
+ * appends the console's own statement of which side of the boundary the CLI's
+ * credentials are on, and it is called here rather than by a screen because this
+ * line is the only surface that receives the installation's `distro` -- the
+ * field `ActiveInstallation` carries exactly when the installation is a WSL one
+ * (`src/main/installations.ts`, T-D1). Nothing about the three lines above
+ * changes: the statement is added, and the host case draws exactly what it drew
+ * before.
  */
 export function drawInstallation(factory: SkewFactory, reply: unknown): SkewElement {
   const section = factory.create('section')
@@ -973,6 +1029,7 @@ export function drawInstallation(factory: SkewFactory, reply: unknown): SkewElem
     'installation-version',
     `${typeof version === 'string' ? textOf(version, 'the installation’s version') : 'version not read'} · ${mode}`,
   )
+  renderCredentialsSide(section, factory, reply)
   return section
 }
 
@@ -2838,6 +2895,7 @@ export async function bootDashboard(scope: DashboardScope): Promise<void> {
     railBridge,
     launchBridge: launchBridgeFrom(scope.fugaro),
     settingsBridge: settingsBridgeFrom(scope.fugaro),
+    licenceBridge: licenceBridgeFrom(scope.fugaro),
     linkBridge: linkBridgeFrom(scope.fugaro),
     rows,
     railListed: listedRows !== null,
@@ -2941,6 +2999,10 @@ interface DashboardDeps {
    * settings-edit plan's C3): the console's second write, and the one that
    * changes a file on disk rather than starting a run. */
   readonly settingsBridge: SettingsBridge
+  /** licenceBridge is the Project tab's licence key (`licence.save`, S2.7): the
+   * console's third write, and the one that keeps a credential the console hands
+   * to every child it spawns. */
+  readonly licenceBridge: LicenceBridge
   /** linkBridge is the Coordinator's numbers (`link.openPullRequest`, K2a): the
    * one operation that leaves this window, and the only one handed a triple
    * rather than a document's own field. */
@@ -2970,7 +3032,7 @@ interface DashboardDeps {
  * figures in it rather than at an empty panel that fills in later.
  */
 async function mountDashboard(deps: DashboardDeps): Promise<void> {
-  const { document, surface, gate, bridge, rail, railBridge, launchBridge, settingsBridge, linkBridge, wiring, navigator, header } =
+  const { document, surface, gate, bridge, rail, railBridge, launchBridge, settingsBridge, licenceBridge, linkBridge, wiring, navigator, header } =
     deps
   const factory = surface.factory
   const theme = CONSOLE_THEME
@@ -3108,9 +3170,16 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
    * a graph draws the same feed's stages (GV2.3b). The graph's *plan* is a
    * different read at a different cadence, and `maybeRefreshGraph` is where that
    * one is decided.
+   *
+   * **The graph's own feed is started and stopped here too** (`syncGraphWatch`),
+   * and not from `showGraph`: the two conditions are the same pair, and a tab
+   * switch, a hidden window and a re-entry are all the same question. It is
+   * called before the interval is settled so that a tab that has just come into
+   * view is not left holding no feed until the next tick.
    */
   const syncPolling = (): void => {
     const wanted = (currentView === 'live' || currentView === 'graph') && scopeVisible()
+    syncGraphWatch()
     if (wanted && live.timer === null) {
       live.timer = setInterval(() => {
         void pollLive()
@@ -3384,8 +3453,18 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       // the graph's: a node's stage is the frame's stage for the run the plan
       // joined it to (GV2.3b), so the graph takes the same rows rather than a
       // second `live.watch` of its own.
-      if (currentView === 'graph') await frameGraph(frame)
-      else drawLive(frame)
+      if (currentView === 'graph') {
+        await frameGraph(frame)
+        // **And the graph's own feed is polled here, beside it, and not awaited.**
+        // The two are independent reads of the same tab -- the frame moves the
+        // stages, the feed replaces the document -- so they are started together
+        // (the owner's rule of 2026-10-31); the feed's first call waits for the
+        // child's first document (the source's first-frame budget), and a tick
+        // held for that long would stop drawing the frames the stages move with.
+        // `graph.feedInFlight` is what keeps the next tick from starting a second
+        // poll of the feed.
+        void pollGraph()
+      } else drawLive(frame)
       // The rigor join is asked for **after** the frame is drawn, so a read that
       // refuses cannot keep a frame off the screen: what the poll is for is the
       // frame, and the join is one cell of a row that the next frame draws with.
@@ -3532,6 +3611,16 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
      * in-flight flag: the two are different reads of the same tab, and the
      * decoration must not hold up the plan's cadence. */
     decorating: boolean
+    /** watching is whether the console has a graph feed it must stop: it is set
+     * at the subscribe and cleared when the stop is sent, so a tab that is left
+     * does not send one stop per tick -- and, more to the point, so a feed that
+     * is wanted is never stopped by a second look at the same conditions
+     * (`startGraphWatch` / `stopGraphWatch`). */
+    watching: boolean
+    /** feedInFlight is whether a poll of the graph feed is outstanding. It is
+     * `decorating`'s rule for the feed: the tick must not start a second poll
+     * while the first is waiting for its document. */
+    feedInFlight: boolean
     /** scope is the scope the operator is looking at (CG10). It is the entry's
      * own memory of a **choice** and not the screen's drawing state: the screen
      * is put on a scope by the document it is handed (`load` and `loadScope`),
@@ -3568,6 +3657,8 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     queuedToken: null,
     runs: [],
     decorating: false,
+    watching: false,
+    feedInFlight: false,
     scope: GRAPH_SCOPE_PLAN,
     chosen: false,
     notice: null,
@@ -3598,9 +3689,140 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
   const graphRead = sectionRead({ factory, theme })
 
   /** leaveGraph ends the section's busy state when the operator moves to another
-   * tab: nothing is in flight for a screen nobody is looking at. */
+   * tab: nothing is in flight for a screen nobody is looking at. The graph's
+   * **feed** is not ended here, because this door is for the busy mark alone: the
+   * child's lifetime is `syncGraphWatch`'s, which the switch already ran. */
   leaveGraph = () => {
     graphRead.end()
+  }
+
+  /**
+   * startGraphWatch and stopGraphWatch are the two acts the feed's conditions
+   * decide between, and `watching` is what makes each of them once: a feed that
+   * is wanted is not subscribed twice, and the stop is sent for a child the
+   * console holds and never once per tick.
+   *
+   * **The poll is what starts the child**: the main process's `graph.watch`
+   * subscribes the feed and answers the document it holds, so the door that wants
+   * it makes one call now rather than waiting for the next tick of the interval
+   * -- and the first document is drawn rather than thrown away.
+   *
+   * **The stop names the scope the subscription was made with**, because that
+   * argv is the feed's key in the main process: a stop with a different `source`
+   * would name a feed that is not running and leave this one's child alive until
+   * quit. The reply is not awaited and not drawn -- the state the caller asked for
+   * is "no child", and `stopGraphWatch` never refuses.
+   */
+  const startGraphWatch = (): void => {
+    if (graph.watching) return
+    graph.watching = true
+    void pollGraph()
+  }
+
+  const stopGraphWatch = (): void => {
+    if (!graph.watching) return
+    graph.watching = false
+    void bridge.graphWatch({ source: GRAPH_SCOPE_ALL, visible: false })
+  }
+
+  /**
+   * syncGraphWatch decides whether the graph feed is wanted, and it is the one
+   * place that decides it: the Graph tab is the view on screen, the window is
+   * visible, and the scope in hand is the one the feed's document is about. **The
+   * tab is H6's condition**, and the cost it exists for is the CLI's own
+   * subscription on the project's scope subtree: a console whose operator is on
+   * another tab, or whose window is behind another window, must not be holding
+   * one. `close()` on the source would stop it anyway; what this buys is that it
+   * is never held in the first place.
+   *
+   * **The scope is the second one, and it is the document's own.** `graph --watch
+   * --json --source all` prints the union scope's document and there is no
+   * streaming form of the plan scope's -- a plan is `plan.status`, and the plan
+   * scope is the one the Graph opens on whenever a checkout is recorded -- so a
+   * console showing that scope would hold a child whose every document it throws
+   * away. That is the subscription H6's cost is about, held on the common path:
+   * it is not started at all, and what starts it is the scope becoming `all`
+   * (`chooseScope`, `readScope`).
+   *
+   * It is called from `syncPolling`, so the tab switch (`markCurrent`), the
+   * visibility change and the first read all go through it and cannot disagree --
+   * and from the doors that settle the scope in hand, because a scope is not a
+   * tab: a choice and the fallback of H9 both settle one while the tab stays
+   * where it is.
+   */
+  const syncGraphWatch = (): void => {
+    if (currentView === 'graph' && scopeVisible() && graph.scope === GRAPH_SCOPE_ALL) {
+      startGraphWatch()
+      return
+    }
+    stopGraphWatch()
+  }
+
+  /**
+   * pollGraph draws what the graph feed is holding.
+   *
+   * **It is a poll of a child that is already running, and never a read of its
+   * own**: `graph.watch` answers the feed's `current()`, so the call that starts a
+   * child waits for its first document and every later one answers at once. The
+   * screen's `loadScope` is what lays the document out, and a document that
+   * changed nothing lays out to the same picture.
+   *
+   * **At most one call in flight**, the rule every other read here keeps: the flag
+   * is set before the await and cleared in a `finally`, so a slow first document
+   * cannot be overtaken by the next tick. And a document that lands after the
+   * operator has moved on is dropped, twice over: this view is not the one on
+   * screen, or the scope in hand is not this feed's (`all`), which is the plan
+   * scope's drawing and not this document's to replace (CG10).
+   *
+   * **The scope is the feed's own condition and this is the door it is kept at**,
+   * because the poll is what starts the child: the tick asks this every second
+   * while the Graph is on screen, so a scope that moved without one of its own
+   * doors -- a scope read that refused, whose fallback is the plan scope -- is
+   * answered here too, and a child the console no longer has a use for is given up
+   * rather than kept for the rest of the visit. Nothing is subscribed for a scope
+   * the document does not belong to: it would be a child printing a document that
+   * is thrown away, which is the subscription H6's cost is about.
+   *
+   * **A refusal is not a drawing.** A child that died, or one the ceiling
+   * evicted, must leave the figures the operator is reading exactly where they
+   * are: `graph.read` is the read that answers a screen with a sentence about this
+   * scope (`readScope`, `refuseScope`), and it is still made on its own cadence
+   * (`maybeRefreshGraph`), so a feed that is not there costs the console the
+   * stream and not the picture. This is `frameGraph`'s own rule for the live
+   * frame, for the same reason.
+   */
+  const pollGraph = async (): Promise<void> => {
+    if (graph.feedInFlight) return
+    if (graph.scope !== GRAPH_SCOPE_ALL) {
+      stopGraphWatch()
+      return
+    }
+    // The poll subscribes, so it is the poll that records the child as held: a
+    // feed this call started is one a tab that is left still gives up.
+    graph.watching = true
+    graph.feedInFlight = true
+    try {
+      const reply = await bridge.graphWatch({ source: GRAPH_SCOPE_ALL })
+      if (currentView !== 'graph' || graph.scope !== GRAPH_SCOPE_ALL) return
+      const answer = replyData(reply)
+      if (!answer.ok) return
+      const envelope = answer.data as Record<string, unknown>
+      const decoded = decodeGraphDocument(envelope['document'], 'graph.watch')
+      if (!decoded.ok) return
+      const drawn = graphScreenNow().loadScope(decoded.value, null)
+      if (drawn === null) return
+      // The refusal a scope read left on screen goes with the document that
+      // answers it: this document **is** the coordinator scope's, so a sentence
+      // about a read of it is no longer true. The plan scope's notice is not
+      // this call's to clear, and the guard above has already turned it away.
+      graph.notice = null
+      redraw(drawn, stopNow())
+    } catch {
+      // `readBridgeFrom` answers `null` rather than rejecting, so this is a throw
+      // this file did not expect; the picture already on screen is the answer.
+    } finally {
+      graph.feedInFlight = false
+    }
   }
 
   /** graphSlot is the slot the current drawing's mark and stamp go into, or
@@ -3780,6 +4002,13 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       graph.notice = null
       graph.fellBack = false
       redraw(drawn, stopNow())
+      // **The scope is settled, so the feed is asked for in this turn.** This is
+      // the read the console's own fallback makes for an installation that
+      // records no checkout (H9), and it is the one door into this scope that is
+      // nobody's press: without this call the child would wait for the next tick
+      // of the interval, and the first document -- the drawing this scope opens
+      // with -- would be the one thrown away (`syncGraphWatch`).
+      syncGraphWatch()
     } catch {
       // As `readGraph`: `readBridgeFrom` answers `null` rather than rejecting, so
       // this is a throw this file did not expect, and the generation is checked
@@ -3861,6 +4090,12 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     graph.fellBack = false
     graph.scope = scope
     graph.notice = null
+    // **The feed goes with the scope, in this frame.** The choice of `all` is
+    // what starts the child and any other choice is what gives it up, and the
+    // operator's own door is not a second late: the tick would answer the same
+    // question on its next turn, which is a whole second of a subscription to a
+    // scope nobody is looking at (`syncGraphWatch`).
+    syncGraphWatch()
     const token = graphRead.start()
     if (scope === GRAPH_SCOPE_ALL) void readScope(claim(), token)
     else void readGraph(claim(), token)
@@ -5013,6 +5248,15 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
   const projectsAccountKeysRead = sectionRead({ factory, theme })
   const projectsCredentialsServiceRead = sectionRead({ factory, theme })
 
+  /** projectsLicenceRead is the tab's **eighth** section (the subscriptions
+   * plan's S2.7): the licence key this installation runs under, which the
+   * console keeps itself. It has a lifecycle of its own for the reason every
+   * section here has one, and it is the only one of the eight whose read spawns
+   * no child at all -- `licence.read` answers out of the console's own store
+   * (`src/main/licence-store.ts`), so it neither holds nor is held by a command
+   * line. */
+  const projectsLicenceRead = sectionRead({ factory, theme })
+
   /** leaveProjects ends those sections' busy state when the operator moves to
    * another tab: nothing is in flight for a screen nobody is looking at. */
   leaveProjects = () => {
@@ -5023,6 +5267,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     projectsRetirementsRead.end()
     projectsAccountKeysRead.end()
     projectsCredentialsServiceRead.end()
+    projectsLicenceRead.end()
   }
 
   /**
@@ -5183,6 +5428,23 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
      * makes (`settingsOut`/`settingsToken` are that read's). */
     let accountKeysOut = false
     let accountKeysToken = 0
+    /** licence, licenceSentence, licenceOut and licenceAttempt are the licence
+     * key's own read (`licence.read`, the subscriptions plan's S2.7): the state
+     * and claim set the verifier answered for this installation's key, the
+     * console's own sentence for a read it could not make, whether one is in
+     * flight and which attempt it was. The document is held **whole and
+     * unread**, for `buildAccountKeys`'s reason: the section reads its own reply.
+     */
+    let licence: unknown = null
+    let licenceSentence: string | null = null
+    let licenceOut = false
+    let licenceToken = 0
+    let licenceAttempt = 0
+    /** licenceDrawn is the panel the box is in, or null when the section holds
+     * no form -- a read that did not answer offers none, and an answer to a save
+     * is drawn only while the panel that sent it is still the one on screen
+     * (`settingsEditor`'s own rule, one section over). */
+    let licenceDrawn: LicenceDrawn | null = null
     /** bodyModel is the model the body is drawn from, or null when the body holds
      * something that is not one -- a refusal, or nothing yet. The policy and
      * doctor reads repaint the body **only** when it holds a model: a landing
@@ -5280,6 +5542,12 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
             drawn.credentialsServiceSlot,
             CREDENTIALS_SERVICE_BUSY,
           )
+        }
+        // The licence key (S2.7), the last host the frame mounts: its mark goes
+        // up on its own section like the seven above, and it is the one mark in
+        // this tab whose read is not a child process.
+        if (licenceOut) {
+          projectsLicenceRead.mark(licenceToken, drawn.licence, drawn.licenceSlot, LICENCE_BUSY)
         }
       }
       return drawn
@@ -5621,6 +5889,88 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       )
     }
 
+    /** paintLicence fills the eighth section from what `licence.read` answered.
+     * It is handed the document as it arrived, because the section reads its own
+     * reply (`buildLicence`'s note), and it keeps the handles the drawing
+     * answered so the paste's own event has box, control and outcome without
+     * walking the tree. */
+    const paintLicence = (): void => {
+      const drawn = mount(false)
+      clearSection(drawn.licence, drawn.licenceSlot)
+      const painted = fillLicence(
+        factory,
+        buildLicence({ raw: licence, because: licenceSentence }),
+        drawn.licence,
+      )
+      licenceDrawn = painted
+      wireLicence(painted)
+    }
+
+    /**
+     * wireLicence binds the paste: the one control of this section that writes
+     * anything.
+     *
+     * **The whole save is one press and one sentence.** The box's text goes to
+     * `licence.save` as it was pasted -- trimming and the shape checks belong to
+     * the surface's own argument check (`ipc.ts`'s `licenceKey` kind) and to the
+     * verifier, not to an event handler -- and what comes back is drawn in the
+     * form's outcome region. The key is never echoed into that region, into the
+     * log or into the panel: the answer carries a state, and a sentence when the
+     * save was refused.
+     *
+     * **A save that worked re-reads the section**, rather than drawing a second
+     * answer of its own: the state and the claim set the next read draws are the
+     * verifier's word on the key that was just kept, and the box is emptied --
+     * what it held is kept now, and a credential left in a text field is a
+     * credential on screen for as long as the tab is open.
+     */
+    const wireLicence = (painted: LicenceDrawn): void => {
+      const { box, submit, outcome } = painted
+      if (box === null || submit === null) return
+      let busy = false
+      /** busyNow says a save is in flight: the box and the control that sends it
+       * are disabled and the section says it is busy, so a double press cannot
+       * be two writes of one paste. */
+      const busyNow = (now: boolean): void => {
+        busy = now
+        ;(surface.nodeOf(box) as unknown as { disabled: boolean }).disabled = now
+        ;(surface.nodeOf(submit) as unknown as { disabled: boolean }).disabled = now
+        painted.root.setAttribute('aria-busy', now ? 'true' : 'false')
+      }
+      const send = async (): Promise<void> => {
+        if (busy) return
+        const key = valueOf(surface, box)
+        // An empty box is not a paste: the surface checks the same fact one
+        // layer down (`licenceKey` requires a string of at least one character),
+        // and a press that sent nothing would be answered with a sentence about
+        // an empty string.
+        if (key.trim() === '') return
+        busyNow(true)
+        let reply: unknown = null
+        try {
+          reply = await licenceBridge.saveLicence({ key })
+        } finally {
+          if (licenceDrawn === painted) busyNow(false)
+        }
+        // An answer that landed after the section was drawn again is an answer
+        // about a box that is gone (`settingsEditor`'s rule one section over).
+        if (licenceDrawn !== painted) return
+        const read = licenceSaveOutcomeOf(reply)
+        if (outcome !== null) {
+          surface
+            .nodeOf(outcome)
+            .replaceChildren(surface.nodeOf(renderLicenceOutcome(factory, read)))
+        }
+        if (read.saved) {
+          setValueOf(surface, box, '')
+          beginLicence()
+        }
+      }
+      surface.nodeOf(submit).addEventListener('click', () => {
+        void send()
+      })
+    }
+
     /** load makes the one read and draws it when it is still the latest. */
     const load = async (readToken: number): Promise<void> => {
       budgetOut = true
@@ -5784,6 +6134,41 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       repaintBody()
     }
 
+    /**
+     * loadLicence makes the licence key's read, `licence.read`, and draws the
+     * eighth section from it. The read spawns nothing -- the console's own store
+     * answers it (`src/main/licence-store.ts`) -- so it is the one read of this
+     * tab that cannot fail for want of a child, and the sentence it can be
+     * refused with is the console's own (a machine where the console may not
+     * keep records at all).
+     *
+     * A save re-reads through here as well (`wireLicence`), which is what makes
+     * the section's state after a paste the verifier's answer rather than the
+     * form's claim.
+     */
+    const loadLicence = async (attempt: number): Promise<void> => {
+      // `replyData` and not `documentOf`: these two operations spawn no child,
+      // so their `data` is the answer itself rather than a `Snapshot` wrapping a
+      // CLI document (`src/main/index.ts`'s handler map). What arrives is one
+      // `LicenceReply` -- a state word and a claim set, or a sentence -- and it
+      // is handed to the section unread, because the section reads its own
+      // reply.
+      const answer = replyData(await bridge.readLicence({}))
+      if (licenceAttempt !== attempt) return
+      if (stale(mine)) return
+      licenceOut = false
+      licence = null
+      licenceSentence = null
+      if (!answer.ok) licenceSentence = answer.sentence
+      else licence = answer.data
+      // The mark is taken down through the section helper rather than by the
+      // filler, for the models read's reason: `fillLicence` writes beside the
+      // slot, so nothing else would remove the claim from the host it was made
+      // on.
+      projectsLicenceRead.settle(licenceToken)
+      paintLicence()
+    }
+
     /** beginModels starts the second section's read and puts its mark up -- or,
      * below the floor, makes no read at all and draws the console's own sentence
      * naming the version this panel needs. It is called on every visit, the
@@ -5870,6 +6255,33 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       )
     }
 
+    /** markLicence puts the eighth section's mark up. */
+    const markLicence = (): void => {
+      if (!licenceOut || frame === null) return
+      projectsLicenceRead.mark(licenceToken, frame.licence, frame.licenceSlot, LICENCE_BUSY)
+    }
+
+    /**
+     * beginLicence starts the licence key's read and puts its mark up. It is
+     * called on every visit, the budget's own read or not, for `beginModels`'s
+     * reason: a cached budget view drawn before anything is awaited is not what
+     * keeps this section waiting.
+     *
+     * **It is also what a save re-reads through** (`wireLicence`): the section is
+     * the verifier's answer about the key this installation holds, so the one
+     * thing a paste has to do afterwards is ask the verifier again -- there is no
+     * second drawing of a save's answer, and the panel an operator is looking at
+     * becomes the state their paste produced.
+     */
+    const beginLicence = (): void => {
+      licenceAttempt += 1
+      licenceOut = true
+      licenceToken = projectsLicenceRead.start()
+      if (frame === null) mount(true)
+      else markLicence()
+      void loadLicence(licenceAttempt)
+    }
+
     /** beginSettings starts the third section's read and puts its mark up. It
      * is called on every visit, the budget's own read or not: a cached budget
      * view drawn before anything is awaited is not what keeps the settings panel
@@ -5915,6 +6327,11 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         markManaged()
         markCredentialsService()
       }
+      // The licence key's read is the fifth of them (S2.7): it is started after
+      // the frame's own marks for the reason every section's is -- it puts its
+      // own mark up, and the visit that begins the other reads begins this one
+      // too.
+      beginLicence()
       void loadManaged(managedAttempt)
       void loadPolicy(policyAttempt)
       void loadDoctor(doctorAttempt)
@@ -5948,6 +6365,13 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       doctorAttempt += 1
       doctorOut = true
       credentialsServiceToken = projectsCredentialsServiceRead.start()
+      // The licence key's read is taken with the rest (S2.7). It is started
+      // **before** the frame is mounted, so the shell's own mount puts its mark
+      // up with the others' -- the one difference being that it is the only read
+      // here that answers out of the console rather than out of a child.
+      licenceAttempt += 1
+      licenceOut = true
+      licenceToken = projectsLicenceRead.start()
       const fresh = frame === null
       const drawn = mount(true)
       if (!fresh) {
@@ -5957,6 +6381,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
         markAccountKeys()
         markManaged()
         markCredentialsService()
+        markLicence()
       }
       void load(token)
       if (modelsTooOld) paintModels()
@@ -5965,6 +6390,7 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
       void loadManaged(managedAttempt)
       void loadPolicy(policyAttempt)
       void loadDoctor(doctorAttempt)
+      void loadLicence(licenceAttempt)
     }
 
     // The view this screen opens on, if this session has already read it, is
@@ -7792,6 +8218,12 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
     graph.chosen = false
     graph.notice = null
     graph.fellBack = false
+    // The feed is the old installation's project, and the main process has
+    // already stopped it as part of the switch (`sourceFor`'s own `close`): what
+    // this clears is the entry's memory of holding one, so the next tab visit
+    // starts a child for the installation that is now open.
+    graph.watching = false
+    graph.feedInFlight = false
     // The plan and the run list the Graph cache holds are this installation's
     // own: a plan of the old one is never drawn under the new one's positions.
     graphViews.clear()

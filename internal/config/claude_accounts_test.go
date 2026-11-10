@@ -6,6 +6,40 @@ import (
 	"testing"
 )
 
+// nonAccountValues is the account axis's values that name no Claude account —
+// the sentinel for the project's own Anthropic API key, and AK6a's provider key
+// — with the sentence ValidateClaudeAccounts refuses each of them as a
+// claude_accounts KEY with. The tests below read both in one loop, because
+// every rule about one of them is a rule about the other: a third value added
+// to the axis must be judged by the same assertions without anyone remembering
+// to write a test for it, which is what AxisNonAccountValue exists for.
+var nonAccountValues = []struct {
+	name    string
+	message string
+}{
+	{AnthropicKeyAccount, anthropicKeyAccountNameMessage},
+	{ProviderKeyAccount, providerKeyAccountNameMessage},
+}
+
+// TestAxisNonAccountValue: the predicate every reader of the account axis asks
+// about the axis's two non-account values is true for exactly those two and for
+// nothing else — not for an ordinary account, not for the default account's
+// spelling, and not for another key's "--project"-shaped concatenation, which
+// is the drift a reader comparing against one value by hand would let through
+// (the launcher's gate, the deployer's mount and the task decoder all ask it).
+func TestAxisNonAccountValue(t *testing.T) {
+	for _, name := range []string{AnthropicKeyAccount, ProviderKeyAccount} {
+		if !AxisNonAccountValue(name) {
+			t.Errorf("AxisNonAccountValue(%q) = false, want true: the readers of the axis must answer both of its non-account values together", name)
+		}
+	}
+	for _, name := range []string{"", DefaultClaudeAccount, "acme-personal", AnthropicSecret, ProviderKeySecret, AnthropicSecret + "-key--project"} {
+		if AxisNonAccountValue(name) {
+			t.Errorf("AxisNonAccountValue(%q) = true, want false: only the axis's two values name no Claude account", name)
+		}
+	}
+}
+
 func TestClaudeAccountSecret(t *testing.T) {
 	for _, tc := range []struct{ name, want string }{
 		{"", "claude-oauth-token"},
@@ -485,126 +519,148 @@ func TestValidClaudeAccountRefRefusesTheReviewVariantSuffix(t *testing.T) {
 	}
 }
 
-// TestAnthropicKeyAccountIsAReferenceAndNotADefinition: the sentinel is the
-// account axis's value for the project's own Anthropic API key, so the two
-// halves of the name rule must part company about it — and they are the two
-// branches the change that introduced it rests on:
+// TestAnthropicKeyAccountIsAReferenceAndNotADefinition: each of the axis's
+// non-account values is a value of the account axis that names a credential
+// this installation does not derive — the sentinel this test is named after
+// (the project's own Anthropic API key) and the provider key AK6a added beside
+// it — so the two halves of the name rule must part company about both, and
+// they are the two branches the change that introduced each rests on:
 //
 //   - ValidClaudeAccountRef accepts it, which is what lets a profile and a
 //     published policy spell it at all;
 //   - ValidateClaudeAccounts refuses it as a claude_accounts KEY, with its own
 //     sentence: an entry under it would configure an account whose token does
-//     not exist (the credential is the platform's, held at tier B), and the
-//     message the operator reads must say so rather than fall through to the
-//     shape rule, which would report a legal value as a misspelling.
+//     not exist (the credential is the platform's, held at tier B, or the
+//     credentials service's), and the message the operator reads must say so
+//     rather than fall through to the shape rule, which would report a legal
+//     value as a misspelling.
 //
-// The mutations are the two removals: dropping the case from
-// ValidClaudeAccountRef makes the sentinel unspellable (red on the first
+// Both values are read in one loop because they share every rule here: a third
+// value added to the axis must be judged by these assertions without anyone
+// remembering to add a test, which is what AxisNonAccountValue exists for.
+//
+// The mutations are the two removals: dropping a case from
+// ValidClaudeAccountRef makes that value unspellable (red on the first
 // assertion), and dropping it from ValidateClaudeAccounts lets the entry
 // through (red on the second).
 func TestAnthropicKeyAccountIsAReferenceAndNotADefinition(t *testing.T) {
-	if msg := ValidClaudeAccountRef(AnthropicKeyAccount); msg != "" {
-		t.Fatalf("ValidClaudeAccountRef(%q) = %q, want the sentinel accepted where an account is referenced", AnthropicKeyAccount, msg)
-	}
-	// It is outside the name rule by construction, which is why it needs a
-	// case of its own: no installation can hold a Claude account of this name,
-	// so the value renames nothing (AnthropicKeyAccount's comment).
-	if ClaudeAccountNameRE.MatchString(AnthropicKeyAccount) {
-		t.Errorf("%q matches ClaudeAccountNameRE: a sentinel that is also an account name would make one spelling mean two credentials", AnthropicKeyAccount)
-	}
-	def := ValidateClaudeAccounts(map[string]ClaudeAccount{AnthropicKeyAccount: {AllowDataTo: []string{"acme/app"}}})
-	if len(def) != 1 {
-		t.Fatalf("a claude_accounts entry named %q = %+v, want one refusal", AnthropicKeyAccount, def)
-	}
-	if got, want := def[0].Path, "claude_accounts."+AnthropicKeyAccount; got != want {
-		t.Errorf("Problem.Path = %q, want %q", got, want)
-	}
-	if def[0].Message != anthropicKeyAccountNameMessage {
-		t.Errorf("the definition half answers the sentinel with %q, want its own sentence: a legal value reported by the shape rule reads as a misspelling, and the operator is not told what the value is for", def[0].Message)
-	}
-	if strings.Contains(def[0].Message, AnthropicKeyAccount) {
-		t.Errorf("the refusal echoes the name: %q", def[0].Message)
-	}
-	// The fix it names is a different name and not a profile entry: a profile
-	// entry under the sentinel is a reference the installation deploys (the job
-	// whose account segment is the sentinel, and its review variant), but an
-	// entry of this block would be an account whose token no bundle can hold —
-	// the credential under the name is the platform's own — so a sentence
-	// sending the operator there would describe a second way to ask for what
-	// this rule refuses.
-	//
-	// Mutation (run, restore): restore the "write it as a profile's
-	// claude_accounts entry" clause — red here.
-	if !strings.Contains(def[0].Message, "pick a different account name") || strings.Contains(def[0].Message, "claude_accounts") {
-		t.Errorf("the definition half answers the sentinel with %q: it must name the fix an installation can carry out (a different account name), not a profile entry, which is a reference this block may not define", def[0].Message)
-	}
-	// And the entry is refused whatever else it says: the config it is written
-	// in would otherwise be one whose accounts block holds a credential no
-	// bundle can carry.
-	if ps := ValidateClaudeAccounts(map[string]ClaudeAccount{AnthropicKeyAccount: {}}); len(ps) != 1 || ps[0].Message != anthropicKeyAccountNameMessage {
-		t.Errorf("an empty entry named the sentinel = %+v, want the same one refusal", ps)
+	for _, v := range nonAccountValues {
+		t.Run(v.name, func(t *testing.T) {
+			if msg := ValidClaudeAccountRef(v.name); msg != "" {
+				t.Fatalf("ValidClaudeAccountRef(%q) = %q, want it accepted where an account is referenced", v.name, msg)
+			}
+			// It is outside the name rule by construction, which is why it needs
+			// a case of its own: no installation can hold a Claude account of
+			// this name, so the value renames nothing (AnthropicKeyAccount's and
+			// ProviderKeyAccount's comments).
+			if ClaudeAccountNameRE.MatchString(v.name) {
+				t.Errorf("%q matches ClaudeAccountNameRE: an axis value that is also an account name would make one spelling mean two credentials", v.name)
+			}
+			def := ValidateClaudeAccounts(map[string]ClaudeAccount{v.name: {AllowDataTo: []string{"acme/app"}}})
+			if len(def) != 1 {
+				t.Fatalf("a claude_accounts entry named %q = %+v, want one refusal", v.name, def)
+			}
+			if got, want := def[0].Path, "claude_accounts."+v.name; got != want {
+				t.Errorf("Problem.Path = %q, want %q", got, want)
+			}
+			if def[0].Message != v.message {
+				t.Errorf("the definition half answers %q with %q, want its own sentence %q: a legal value reported by the shape rule reads as a misspelling, and the operator is not told what the value is for", v.name, def[0].Message, v.message)
+			}
+			if strings.Contains(def[0].Message, v.name) {
+				t.Errorf("the refusal echoes the name: %q", def[0].Message)
+			}
+			// The fix it names is a different name and not a profile entry: a
+			// profile entry under either value is a reference the installation
+			// deploys (the job whose account segment is the value, and its review
+			// variant), but an entry of this block would be an account whose token
+			// no bundle can hold — the credential under the name is the platform's
+			// own, or the service's — so a sentence sending the operator there
+			// would describe a second way to ask for what this rule refuses.
+			//
+			// Mutation (run, restore): restore the "write it as a profile's
+			// claude_accounts entry" clause — red here.
+			if !strings.Contains(def[0].Message, "pick a different account name") || strings.Contains(def[0].Message, "claude_accounts") {
+				t.Errorf("the definition half answers %q with %q: it must name the fix an installation can carry out (a different account name), not a profile entry, which is a reference this block may not define", v.name, def[0].Message)
+			}
+			// And the entry is refused whatever else it says: the config it is
+			// written in would otherwise be one whose accounts block holds a
+			// credential no bundle can carry.
+			if ps := ValidateClaudeAccounts(map[string]ClaudeAccount{v.name: {}}); len(ps) != 1 || ps[0].Message != v.message {
+				t.Errorf("an empty entry named %q = %+v, want the same one refusal", v.name, ps)
+			}
+		})
 	}
 }
 
 // TestProfileMayNameTheAnthropicKeyWithNothingDefinedForIt: a profile listing
-// the sentinel is publishable with no local config entry behind it at all —
-// neither a claude_accounts entry (refused above: there is no token to store)
-// nor a project_secrets one (the key is stored project-wide by D2's sweep, so
-// there is nothing for a profile to require). This is the third branch of
+// either of the axis's non-account values is publishable with no local config
+// entry behind it at all — neither a claude_accounts entry (refused above:
+// there is no token to store) nor a project_secrets one (each key is stored
+// project-wide rather than for a list of repositories, so there is nothing for
+// a profile to require). This is the third branch of
 // ValidateProfileClaudeAccounts, and the one a file's refusal would break: it
 // resolves an account reference against the two blocks an account can be
-// defined in, and the sentinel is not an account.
+// defined in, and neither value is an account.
 //
-// The mutation is dropping the sentinel's skip: the reference then resolves
-// against claude_accounts, finds no entry (there can be none) and refuses the
-// one shape the sentinel exists for — a review served by the project's own key
-// in an installation that holds no Claude account at all.
+// The mutation is dropping the AxisNonAccountValue skip: the reference then
+// resolves against claude_accounts, finds no entry (there can be none) and
+// refuses the one shape each value exists for — a review served by the
+// project's own key, or by the project's provider key, in an installation that
+// holds no Claude account at all.
 func TestProfileMayNameTheAnthropicKeyWithNothingDefinedForIt(t *testing.T) {
-	profiles := map[string]JobProfile{"standard": {AllowRepos: []string{"acme/app"}, ClaudeAccounts: []string{AnthropicKeyAccount}}}
-	if ps := ValidateProfileClaudeAccounts(profiles, nil, nil); len(ps) != 0 {
-		t.Fatalf("a profile naming the project's own key = %+v, want no refusal", ps)
-	}
-	// The rule it does not relax: the sentinel is still listed once.
-	twice := map[string]JobProfile{"standard": {ClaudeAccounts: []string{AnthropicKeyAccount, AnthropicKeyAccount}}}
-	ps := ValidateProfileClaudeAccounts(twice, nil, nil)
-	if len(ps) != 1 || !strings.Contains(ps[0].Message, "listed twice") {
-		t.Fatalf("the sentinel listed twice = %+v, want the one refusal every repeated entry draws", ps)
+	for _, v := range nonAccountValues {
+		t.Run(v.name, func(t *testing.T) {
+			profiles := map[string]JobProfile{"standard": {AllowRepos: []string{"acme/app"}, ClaudeAccounts: []string{v.name}}}
+			if ps := ValidateProfileClaudeAccounts(profiles, nil, nil); len(ps) != 0 {
+				t.Fatalf("a profile naming %q = %+v, want no refusal", v.name, ps)
+			}
+			// The rule it does not relax: the value is still listed once.
+			twice := map[string]JobProfile{"standard": {ClaudeAccounts: []string{v.name, v.name}}}
+			ps := ValidateProfileClaudeAccounts(twice, nil, nil)
+			if len(ps) != 1 || !strings.Contains(ps[0].Message, "listed twice") {
+				t.Fatalf("%q listed twice = %+v, want the one refusal every repeated entry draws", v.name, ps)
+			}
+		})
 	}
 	// And its neighbours are unaffected: an account this file does not define
-	// is still refused, so the skip is about this one value and not about the
+	// is still refused, so the skip is about these values and not about the
 	// resolution.
 	ghost := map[string]JobProfile{"standard": {ClaudeAccounts: []string{"ghost"}}}
-	ps = ValidateProfileClaudeAccounts(ghost, nil, nil)
+	ps := ValidateProfileClaudeAccounts(ghost, nil, nil)
 	if len(ps) != 1 || !strings.Contains(ps[0].Message, "is not defined here") {
 		t.Fatalf("an undefined account = %+v, want the resolution's own refusal", ps)
 	}
 }
 
-// TestAnthropicKeyAccountIsNoJobsToken: the sentinel is a job name and no
-// mount. A profile that lists it is deployable — internal/infra's ProjectJobs
-// deploys the job whose account segment is the sentinel, with its review
-// variant beside it (AnthropicKeyAccount's comment) — and every one of those
-// jobs is mounted with nothing at all, which is the answer
-// ProjectJobTokenAccount has to give: it is the one function both the
-// launcher's gate and the runner's re-check ask, so the sentinel resolves to no
-// token account, whatever the profile lists.
+// TestAnthropicKeyAccountIsNoJobsToken: each non-account value of the axis is a
+// job name and no mount. A profile that lists one is deployable —
+// internal/infra's ProjectJobs deploys the job whose account segment is the
+// value, with its review variant beside it — and every one of those jobs is
+// mounted with nothing at all, which is the answer ProjectJobTokenAccount has
+// to give: it is the one function both the launcher's gate and the runner's
+// re-check ask, so each value resolves to no token account, whatever the
+// profile lists.
 //
-// The mutation is dropping the sentinel's arm: the join answers with the axis
+// The mutation is dropping the value's arm: the join answers with the axis
 // value itself, claiming a job holds a token no secret exists for, which is
 // what the launcher's gate and doctor read.
 func TestAnthropicKeyAccountIsNoJobsToken(t *testing.T) {
-	pr := JobProfile{ClaudeAccounts: []string{AnthropicKeyAccount}}
-	if got, serves := ProjectJobTokenAccount(pr, AnthropicKeyAccount); got != "" || serves {
-		t.Errorf("ProjectJobTokenAccount(%v, %q) = (%q, %v), want no token account: the project's own key is held by the platform, and no job mounts it as a Claude token", pr.ClaudeAccounts, AnthropicKeyAccount, got, serves)
-	}
-	// It is still an entry of the job axis: a job set is computed from the
-	// profile's list, so the sentinel adds a job name and no mount.
-	if got := ProjectJobAccounts(pr); !slices.Contains(got, AnthropicKeyAccount) {
-		t.Errorf("ProjectJobAccounts(%v) = %v, want the sentinel among them: the axis value a profile states is a job of its own", pr.ClaudeAccounts, got)
-	}
-	// And a token-bearing entry beside it is unaffected.
-	both := JobProfile{ClaudeAccounts: []string{AnthropicKeyAccount, DefaultClaudeAccount}}
-	if got, serves := ProjectJobTokenAccount(both, ""); got != DefaultClaudeAccount || !serves {
-		t.Errorf("ProjectJobTokenAccount(%v, \"\") = (%q, %v), want the default account's token on the no-account job", both.ClaudeAccounts, got, serves)
+	for _, v := range nonAccountValues {
+		t.Run(v.name, func(t *testing.T) {
+			pr := JobProfile{ClaudeAccounts: []string{v.name}}
+			if got, serves := ProjectJobTokenAccount(pr, v.name); got != "" || serves {
+				t.Errorf("ProjectJobTokenAccount(%v, %q) = (%q, %v), want no token account: the credential under it is held by the platform or the credentials service, and no job mounts it as a Claude token", pr.ClaudeAccounts, v.name, got, serves)
+			}
+			// It is still an entry of the job axis: a job set is computed from
+			// the profile's list, so the value adds a job name and no mount.
+			if got := ProjectJobAccounts(pr); !slices.Contains(got, v.name) {
+				t.Errorf("ProjectJobAccounts(%v) = %v, want %q among them: the axis value a profile states is a job of its own", pr.ClaudeAccounts, got, v.name)
+			}
+			// And a token-bearing entry beside it is unaffected.
+			both := JobProfile{ClaudeAccounts: []string{v.name, DefaultClaudeAccount}}
+			if got, serves := ProjectJobTokenAccount(both, ""); got != DefaultClaudeAccount || !serves {
+				t.Errorf("ProjectJobTokenAccount(%v, \"\") = (%q, %v), want the default account's token on the no-account job", both.ClaudeAccounts, got, serves)
+			}
+		})
 	}
 }

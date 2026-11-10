@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
@@ -521,30 +523,36 @@ func TestInitRemovesRunsBucketViewers(t *testing.T) {
 	}
 }
 
-// Declining the viewers' removal is allowed; the run goes on and says so.
-func TestInitRunsBucketViewersDeclined(t *testing.T) {
+// The viewers' removal is a step nobody can confirm where stdin is not a
+// terminal: the run leaves it — an IAM call of its own is not made by a session
+// that cannot be asked about it — and says which read access is still there.
+// Nothing is typed at a confirmation any more (T7, docs/no-prompt-policy), so
+// the run does not read a line either: what this pins is the step that is left
+// and the sentence left about it, not a run that finished. The run stops later,
+// at the apply's own confirmation, which is why nothing is applied.
+func TestInitRunsBucketViewersNotConfirmed(t *testing.T) {
 	r := newInitRig(t)
 	r.stateBucket()
 	r.gcs.AddBucket(initRunsBucket, initProjectNumber, map[string]string{"fugaro": "managed"})
 	r.gcs.SetBucketPolicy(initRunsBucket, gcpfake.ConvenienceBindings(initProject))
-	fakeTerminal(t)
-	out, _, err := executeStdin(t, "no\n"+initProjectName+"\n", "setup")
-	if err != nil {
-		t.Fatal(err)
+	noTerminal(t)
+	out, _, err := executeStdin(t, "", "setup")
+	if err == nil {
+		t.Fatalf("a run nobody could confirm applied something:\n%s", out)
 	}
 	if len(policySets(r.gcs, initRunsBucket)) != 0 || !hasViewer(r.gcs.BucketPolicy(initRunsBucket)) {
-		t.Fatal("the viewers were removed although the user declined")
+		t.Fatal("the viewers were removed although nobody could confirm it")
 	}
 	if !strings.Contains(out, "project Viewers can still read gs://"+initRunsBucket) {
-		t.Errorf("the summary doesn't note the declined removal:\n%s", out)
+		t.Errorf("the summary doesn't note the removal that was left:\n%s", out)
 	}
-	if len(r.ran(t, "apply")) != 1 {
-		t.Fatal("the typed project name did not confirm the apply")
+	if n := len(r.ran(t, "apply")); n != 0 {
+		t.Fatalf("a plan nobody confirmed was applied (%d apply call(s))", n)
 	}
 }
 
-// fakeTerminal makes init treat stdin as a terminal, where the project name
-// is typed to confirm.
+// fakeTerminal makes init treat stdin as a terminal, where a person's being
+// there is what confirms a step (nothing is typed at it: T7).
 func fakeTerminal(t *testing.T) {
 	t.Helper()
 	old := stdinIsTerminal
@@ -561,6 +569,28 @@ func noTerminal(t *testing.T) {
 	old := stdinIsTerminal
 	stdinIsTerminal = func(io.Reader) bool { return false }
 	t.Cleanup(func() { stdinIsTerminal = old })
+}
+
+// executeOwnerStdin is executeStdin for a run that reads MORE THAN ONE line
+// from its input — a command whose confirmation and whose value are both typed
+// at the same terminal. The input is handed out one byte at a time, so a reader
+// that buffers (confirmTypedStrict's bufio.Reader, which reads ahead of the line
+// it returns) cannot swallow the value behind the answer.
+//
+// It is a property of the harness and not of the product: on a terminal, a read
+// returns the one line that has been typed and never what has not been typed
+// yet, so the two reads of one terminal cannot collide there. Over a string the
+// whole input is already available, and only a reader that rations it says so.
+func executeOwnerStdin(t *testing.T, stdin string, args ...string) (string, string, error) {
+	t.Helper()
+	cmd := NewRootCmd()
+	var out, errOut bytes.Buffer
+	cmd.SetIn(iotest.OneByteReader(strings.NewReader(stdin)))
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	cmd.SetArgs(NormalizeArgs(args))
+	err := cmd.Execute()
+	return out.String(), errOut.String(), err
 }
 
 // The two helpers above are what every terminal-dependent test says with, and
@@ -594,19 +624,9 @@ func typedThroughYes(t *testing.T) {
 	t.Cleanup(func() { canConfirmTyped = old })
 }
 
-// At a terminal, anything but the project name declines.
-func TestInitTypedConfirmation(t *testing.T) {
-	r := newInitRig(t)
-	r.stateBucket()
-	fakeTerminal(t)
-	_, _, err := executeStdin(t, "yes\n", "setup")
-	if ExitCode(err) != ExitUserError || len(r.ran(t, "apply")) != 0 {
-		t.Fatalf("exit %d, err %v, calls %q", ExitCode(err), err, r.calls(t))
-	}
-	if _, _, err := executeStdin(t, initProjectName+"\n", "setup"); err != nil || len(r.ran(t, "apply")) != 1 {
-		t.Fatalf("typed project name: %v, calls %q", err, r.calls(t))
-	}
-}
+// The typed confirmation fugaro setup used to take — the project's name, and
+// nothing else — is gone. What stands in its place is at the command level
+// too: TestInitAsksNoConfirmation.
 
 func TestInitRefusesForeignStateBucket(t *testing.T) {
 	for name, labels := range map[string]map[string]string{"other project": {"fugaro": "tfstate"}, "unmarked": nil} {
