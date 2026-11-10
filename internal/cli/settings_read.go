@@ -59,11 +59,16 @@ type setting struct {
 	State        string
 	// Sensitive rows carry the set/unset fact and never the value.
 	Sensitive bool
-	// Writable is whether the generic path writes the key, Owner is the
-	// command family that writes a key it does not (the empty string when no
-	// family owns it), and TargetLayer is the layer a write with no --layer
-	// lands in. They are the answer a consumer draws an edit from, and the
-	// write's own answer rather than a second list beside it (D1102).
+	// Writable is whether the generic path writes the key, Owner is the command
+	// that writes the key — `fugaro settings set` where the generic path writes
+	// it, and for a key it does not, the sentence naming the command that
+	// carries the file the key is stated in (settingsOwnerCommands, D1178) —
+	// and TargetLayer is the layer a write with no --layer lands in. The empty
+	// string is the case the refusal blanks: a row naming the default token
+	// whose write refuses it, so neither `settings set` nor a file carries it
+	// (the map spellings' literal `*`, the sensitive rows). They are the answer
+	// a consumer draws an edit from, and the write's own answer rather than a
+	// second list beside it (D1102).
 	Writable    bool
 	Owner       string
 	TargetLayer string
@@ -437,11 +442,11 @@ func (r *settingsRead) projectRow(row settings.Row) setting {
 	// `fugaro settings set` beside `writable: false` says in one breath that the
 	// command writes the key and that it does not, and the console draws exactly
 	// that pair as `written by fugaro settings set, not by the generic path`. A
-	// family's token and the file-carriers' (`config`, `config init`) are
-	// untouched by this: their rows are refused by the generic path and name the
-	// command that does write them. The rows left naming nothing are the map
-	// spellings, whose literal `*` the write refuses while it writes their
-	// concrete spellings (`layer.profiles.*.base` against
+	// family's token and the file-carriers' (`config`, `config init`,
+	// `config local`) are untouched by this: their rows are refused by the
+	// generic path and name the command that does write them. The rows left
+	// naming nothing are the map spellings, whose literal `*` the write refuses
+	// while it writes their concrete spellings (`layer.profiles.*.base` against
 	// `layer.profiles.java.base`), and the sensitive rows the generic path
 	// carries under another name.
 	owner := settingsOwnerCommands[row.Owner]

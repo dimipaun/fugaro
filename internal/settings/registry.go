@@ -83,7 +83,7 @@ type Row struct {
 	Merge     Merge
 	Default   Default
 	Sensitive bool   // the value is never printed (spec §2.3)
-	Owner     string // the command family that writes it
+	Owner     string // the token for what writes it: a command, or the file a key no command edits is stated in
 	Doc       string // the document that must state it
 	// TypedWhy is the sentence saying why turning this key ON is the widening
 	// direction rather than the ordinary write: the write prints it and the dry
