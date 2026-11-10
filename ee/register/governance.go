@@ -5,6 +5,7 @@ package register
 
 import (
 	"github.com/dimipaun/fugaro/ee/governance"
+	"github.com/dimipaun/fugaro/internal/digest"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/runner"
 )
@@ -27,6 +28,14 @@ func init() {
 		Timeout:  governance.Timeout,
 		TimedOut: governance.TimedOut,
 	}); err != nil {
+		panic("ee/register: " + err.Error())
+	}
+	// The tier calibration's way into the report (T8.3, design §5.4). It is
+	// not a half of the pair above: the digest's section slot is a report's
+	// own, and an untagged build printing a report without a calibration
+	// section is the whole of what it does with the governance it does not
+	// have.
+	if err := digest.SetSections(governance.Sections); err != nil {
 		panic("ee/register: " + err.Error())
 	}
 }
