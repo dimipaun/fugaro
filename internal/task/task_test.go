@@ -3,6 +3,7 @@ package task
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -1573,6 +1574,110 @@ func TestFollowUpOfRefusesAnEmptyRun(t *testing.T) {
 	} {
 		if _, err := Parse([]byte("{" + head + `,"follow_up_of":` + doc + "}")); err != nil {
 			t.Errorf("Parse refused %s: %v", doc, err)
+		}
+	}
+}
+
+// TestTaskDecodesTheLaunchLimits: the four per-launch chain limits ride
+// task.json's overrides (L2, D1041, D1056). They are additive inside
+// version 1 and every one of them is optional, so the two things that
+// matter are that a task carrying all four decodes and survives a round
+// trip — which is what a --retry of a stored chain launch does — and that
+// a task carrying none stays byte-identical to one written before the
+// members existed, because a chain begins only where a limit was set and
+// an older runner must keep reading every other task.
+//
+// Mutation (drop omitempty from one member): the second half fails, since
+// the document then carries a null or a zero the older runner refuses.
+func TestTaskDecodesTheLaunchLimits(t *testing.T) {
+	const head = `"version":1,"run_id":"20261108-120000-abcd","repo":"owner/repo-a","ref":"main","task":"do it"`
+	const doc = `"overrides":{"max_usd":12.5,"max_tokens":900000,"max_time":"3h","max_review_rounds":7}`
+	s, err := Parse([]byte("{" + head + "," + doc + "}"))
+	if err != nil {
+		t.Fatalf("Parse refused the launch limits: %v", err)
+	}
+	check := func(who string, o Overrides) {
+		t.Helper()
+		switch {
+		case o.MaxUSD == nil || *o.MaxUSD != 12.5:
+			t.Errorf("%s: overrides.max_usd = %s, want 12.5", who, limitString(o.MaxUSD))
+		case o.MaxTokens == nil || *o.MaxTokens != 900000:
+			t.Errorf("%s: overrides.max_tokens = %s, want 900000", who, limitString(o.MaxTokens))
+		case o.MaxTime != "3h":
+			t.Errorf("%s: overrides.max_time = %q, want 3h", who, o.MaxTime)
+		case o.MaxReviewRounds == nil || *o.MaxReviewRounds != 7:
+			t.Errorf("%s: overrides.max_review_rounds = %s, want 7", who, limitString(o.MaxReviewRounds))
+		}
+	}
+	check("decoded", s.Overrides)
+	data, err := s.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	back, err := Parse(data)
+	if err != nil {
+		t.Fatalf("Parse refused the round trip: %v", err)
+	}
+	check("round-tripped", back.Overrides)
+
+	plain, err := Parse([]byte("{" + head + "}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkEmpty := func(who string, o Overrides) {
+		t.Helper()
+		if o.MaxUSD != nil || o.MaxTokens != nil || o.MaxTime != "" || o.MaxReviewRounds != nil {
+			t.Errorf("%s: a task with no limits carries %+v", who, o)
+		}
+	}
+	checkEmpty("decoded", plain.Overrides)
+	data, err = json.Marshal(plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = `{"version":1,"run_id":"20261108-120000-abcd","repo":"owner/repo-a","ref":"main","task":"do it","overrides":{}}`
+	if string(data) != want {
+		t.Errorf("a task with no limits marshalled to %s, want %s", data, want)
+	}
+}
+
+// limitString prints an optional limit for a failure message without
+// dereferencing a nil.
+func limitString[T any](p *T) string {
+	if p == nil {
+		return "unset"
+	}
+	return fmt.Sprint(*p)
+}
+
+// TestTaskRejectsANegativeLimit: every one of the four is a cap, so the
+// value that is not a cap is the value refused — zero included, for the
+// reason the existing dollar and round members refuse it: zero would read
+// as "no limit" to a reader that has one meaning for absence (the member
+// is not there) and another for a number, and it would spend a chain's
+// whole budget on its first run (D1041). A wall time is refused for the
+// same reason a total_timeout is: a duration that parses but is not
+// positive names no clock.
+func TestTaskRejectsANegativeLimit(t *testing.T) {
+	head := `"version":1,"run_id":"20261108-120000-abcd","repo":"owner/repo-a","ref":"main","task":"do it"`
+	for _, tc := range []struct{ name, doc, want string }{
+		{"a negative dollar cap", `{"max_usd":-1}`, "overrides.max_usd"},
+		{"a zero dollar cap", `{"max_usd":0}`, "overrides.max_usd"},
+		{"a negative token cap", `{"max_tokens":-1}`, "overrides.max_tokens"},
+		{"a zero token cap", `{"max_tokens":0}`, "overrides.max_tokens"},
+		{"a negative wall time", `{"max_time":"-5m"}`, "overrides.max_time"},
+		{"a zero wall time", `{"max_time":"0s"}`, "overrides.max_time"},
+		{"a wall time that is not a duration", `{"max_time":"soon"}`, "overrides.max_time"},
+		{"a negative review-round cap", `{"max_review_rounds":-1}`, "overrides.max_review_rounds"},
+		{"a zero review-round cap", `{"max_review_rounds":0}`, "overrides.max_review_rounds"},
+	} {
+		_, err := Parse([]byte("{" + head + `,"overrides":` + tc.doc + "}"))
+		if err == nil {
+			t.Errorf("%s: Parse accepted the spec", tc.name)
+			continue
+		}
+		if !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: refusal %q does not mention %s", tc.name, err, tc.want)
 		}
 	}
 }
