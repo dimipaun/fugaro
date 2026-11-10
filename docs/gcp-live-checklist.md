@@ -11277,7 +11277,12 @@ read through the credential-carrying checks the drill makes:
 The service serves the **parsed** bundle for 30 seconds (`credsvc.BundleCacheTTL`), so every write
 is followed by a bounded wait before the mint is read: a mint read too soon after a write is the old
 document's answer, and a check that took it as the new one's would report a stop that had not
-happened. `CHECK148_MINT_WAIT` is that bound in seconds (default 90, 0 meaning one attempt).
+happened. The wait cuts both ways, and the served direction is the one a bound alone cannot settle:
+the document a write **replaced** answers a 200 too, so a reading taken while that document is still
+cacheable cannot tell the write being served from the write not having landed.
+`CHECK148_MINT_WAIT` is that bound in seconds (default 90, 0 meaning one attempt), and
+`CHECK148_CACHE_WAIT` is the lifetime a reading has to be taken after before it is read as the
+write's own document (default 40; the row says the wait it took).
 
 **What you type** (task T3.8's read half, beside T2.6):
 
