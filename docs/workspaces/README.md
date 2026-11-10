@@ -11,7 +11,12 @@ the service itself) and **D1301** (the cap is metered at the proxy, and the roll
 reconciliation alarm) — with **D1300** amended only as it depends on D1301. Those two amendments are
 the one place this folder deviates from what the reconciliation had recommended: **D1301's amendment
 is not the option [reconciliation.md](reconciliation.md) had put first**. No decision number moved
-and none was added; §5 of that file says so. **If the implementation happens,
+and none was added; §5 of that file says so. **Two further decisions this design's implementation
+raised were reported afterwards and the owner answered both on 2026-11-10, each as recommended** —
+the pairing §8's residual risk 7 names, and which task carries the region of a member's database —
+and [reconciliation.md](reconciliation.md) §9 is the record: **this release ships the shape and
+states both gaps, and the task that first gives the per-member table a writer takes them**. **If the
+implementation happens,
 [implementation-plan.md](implementation-plan.md) §5 recommends 0.21.0 or later, after the MCP
 server**: the design is large and security-heavy, and §5 says why.
 

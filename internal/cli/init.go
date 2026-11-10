@@ -113,6 +113,18 @@ type initOptions struct {
 	launchersChanged, operatorsChanged  bool
 	alertEmailChanged, baseImageChanged bool
 
+	// --bake-repos answers the wizard's bake question without a terminal (IS7
+	// of docs/image-setup-skill/implementation-plan.md; D1901): whether a
+	// repository the build can read is baked into the image its job runs. The
+	// switch is the project's, so the answer is written into the local config
+	// (writeConfig) and published from it by the same run. bakeReposChanged is
+	// the flag's own "it was passed", and it has to be separate: an absent key
+	// and a written true are one statement to every reader (localcfg's
+	// BakeRepos) and two different runs to the question, which is asked only
+	// where nobody has answered it.
+	bakeRepos        bool
+	bakeReposChanged bool
+
 	// --firebase-project names a separate Firebase project to build the budget
 	// backend in; empty means the installation's own GCP project, which is the
 	// default (firebaseProject, D7). --budget-mode seeds the mode and
@@ -361,6 +373,7 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 			o.launchersChanged, o.operatorsChanged = f.Changed("launcher"), f.Changed("operator")
 			o.alertEmailChanged, o.baseImageChanged = f.Changed("alert-email"), f.Changed("base-image")
 			o.budgetAdminsChanged = f.Changed("budget-admin")
+			o.bakeReposChanged = f.Changed("bake-repos")
 			r := newInitRun(cmd, o)
 			// A flag that belongs to the other door: refused here, by name,
 			// before anything is read, prompted for or applied, so a script
@@ -447,6 +460,11 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	f.StringVar(&o.imageSource, "image-source", "", "the registry and owner the release images come from: a base kind is resolved and signature-verified there and pinned through the installation's remote repository, a history image is copied from it (default ghcr.io/dimipaun; a fork names its own, such as ghcr.io/acme)")
 	f.StringArrayVar(&o.expectDigests, "expect-digest", nil, "pin the digest of a release image, KIND=sha256:<hex> (KIND is base or history; repeatable): the digest of the source tag's manifest (the index), obtained out of band such as from the release notes. A base kind is cross-checked against it: its digest is verified against the release's cosign signature either way, and the two must agree. For history it is the trust anchor: without it "+d.name+" trusts what the release tag in ghcr.io resolves to now, which is whoever can write that tag")
 	f.StringArrayVar(&o.replaceImages, "replace-image", nil, "KIND (history; repeatable): let the converge replace that image's tag in your registry when it names another image, a release tag or history:latest (never done otherwise, so a hand-pushed history:latest needs it once). A base kind is refused: it is pinned by digest through the remote repository, so nothing of it is ever copied over. It names the intent only: replacing is an ordinary covered step, so --yes covers it in either door and a person at a real terminal without --yes confirms it by being there (a pipe, --json, --non-interactive and a coding agent's session confirm nothing)")
+	// The bake switch (IS7, D1901). Its usage is read on both doors, so it
+	// names no door: what it says about where the question is asked is about
+	// the run that creates the installation, which is the one whose answer is
+	// a project's own.
+	f.BoolVar(&o.bakeRepos, "bake-repos", false, "answer the bake question without a terminal: whether a repository the build can read is baked into the image its job runs (the default is yes, and an absent key means the same). --bake-repos says yes, --bake-repos=false says no, and either one writes the value into the local config this run writes, which the same run publishes. Passing neither asks the question where it can be asked — on a run that creates the installation, and nowhere else: a run with a project config keeps the answer the project's own (the published policy's) and is never asked, which is the rule for a managed project. Either way the answer takes effect in the images built from then on: the build is what bakes a repository in, so the images already built keep what they have until they are rebuilt")
 	f.StringArrayVar(&o.launchers, "launcher", nil, "an IAM member who launches and watches runs (repeatable; default: the local config's, and for a new config you, the authenticated user)")
 	f.StringArrayVar(&o.operators, "operator", nil, "an IAM member who onboards repositories (repeatable; default: the local config's, and for a new config you, the authenticated user)")
 	f.Int64Var(&o.budget, "budget", 0, budgetFlagHelp(d))
@@ -973,7 +991,7 @@ func runInit(r *initRun) error {
 		// progress goes to its Stream — the log always, the terminal under
 		// --verbose. The log is closed here, on the run's way out, so its last
 		// partial line is written.
-		r.rep, r.repLog = reporterFor(cmd, o.doorName(), e.redaction())
+		r.rep, r.repLog = convergeReporter(cmd, o.doorName(), e.redaction())
 		if r.repLog != nil {
 			defer func() { _ = r.repLog.Close() }()
 		}
@@ -1386,6 +1404,35 @@ func (r *initRun) progress() io.Writer {
 		return r.rep.Stream()
 	}
 	return r.cmd.ErrOrStderr()
+}
+
+// planBlock prints a plan for the person who has to confirm it, and keeps the
+// whole of it for the run's own record: the counts and the changes they must
+// look at first, in Fugaro's words, on the terminal (tf.Brief), and Terraform's
+// own account of every change — its addresses and the attribute paths an
+// update moves — in the log and on the terminal under --verbose, which is the
+// reporter's Stream exactly (D1352).
+//
+// So no `module.` address, no attribute path and no resource type reaches the
+// terminal from a plan, in any state and refused or not: what a person reads
+// there names the thing ("the catalog check job's configuration changes"), and
+// the address they may need — --allow-delete takes one — is in the log beside
+// what refused it (the owner's feedback of 2026-11-09).
+//
+// A run with no log is a run with nowhere to keep Terraform's own account: it
+// could not open one (CL3's OpenLog: a state directory that is a link,
+// foreign-owned or read-only, G5), or it never had a reporter at all (an engine
+// a test drove by hand). There the whole plan goes to the terminal exactly as
+// it always did: it is the person's own plan, --allow-delete and
+// --allow-job-delete take the addresses it names, and a screen with nowhere
+// else to send them must not swallow them.
+func (r *initRun) planBlock(plan *tf.Plan) {
+	if r.rep == nil || r.repLog == nil {
+		fmt.Fprint(r.w, tf.Summary(plan))
+		return
+	}
+	fmt.Fprint(r.w, tf.Brief(plan))
+	fmt.Fprint(r.rep.Stream(), tf.Summary(plan))
 }
 
 // gcpOptions are the Google API options of lc's project and endpoints.
@@ -2773,7 +2820,7 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 		if err != nil {
 			return nil, remote(err)
 		}
-		fmt.Fprint(r.w, tf.Summary(plan))
+		r.planBlock(plan)
 		// The 0.7.0 bucket hardening deletes launchers' old objectAdmin
 		// grants; exactly those are allowed, and named (bucket-iam.md H7).
 		// A delete is never covered, so the step still asks its own name.
@@ -3065,6 +3112,31 @@ func (r *initRun) readOutputs(ctx context.Context, c *infra.Clients, t *tf.TF, w
 	return infra.DecodeOutputs(raw)
 }
 
+// carryBakeAnswer writes the answer this run was given about baking into the
+// local config it is about to write (IS7, D1901) — the wizard's question, or
+// --bake-repos — and returns whether there was an answer to carry.
+//
+// Two writers call it, and they have to agree. One is writeConfig, for a run
+// that reaches its installation. The other is init_project.go's pauseBecause,
+// which writes the local config of the first run that pauses for billing — and
+// that run never reaches writeConfig, because the Project stage is before
+// Installation (init_stages.go). An answer carried only by writeConfig would be
+// lost for good on that path: the rerun reads a config, so the wizard asks it
+// nothing, and an absent key means yes — a person who answered no would get
+// baking on, with no question ever again.
+//
+// It is written because only a written value can carry a no: the value is what
+// the same run's policy stage publishes (init_policy_publish.go reads the file
+// through lc, which writeConfig moves to next at its end).
+func (r *initRun) carryBakeAnswer(next *localcfg.Config) bool {
+	if !r.o.bakeReposChanged {
+		return false
+	}
+	answer := r.o.bakeRepos
+	next.BakeRepos = &answer
+	return true
+}
+
 // writeConfig writes the local config from the installation's outputs and
 // the flags, keeping everything else (repos, the legacy registry, the
 // endpoints) and dropping build.service_account. It shows the diff first,
@@ -3076,6 +3148,7 @@ func (r *initRun) writeConfig(ctx context.Context, lc *localcfg.Config, spec inf
 	}
 	r.res.Outputs = &outs
 	next := *lc
+	carried := r.carryBakeAnswer(&next)
 	if outs.RunsBucket != "" {
 		next.RunsBucket = outs.RunsBucket
 	}
@@ -3182,6 +3255,12 @@ func (r *initRun) writeConfig(ctx context.Context, lc *localcfg.Config, spec inf
 	}
 	if err := r.writeLocalConfig(&next, path, old, confirmed); err != nil {
 		return err
+	}
+	if carried {
+		// The switch answers what the next build does, not what the images
+		// that exist did: the reader of the answer is owed that
+		// (noteBakeRebuild, setup.go).
+		r.noteBakeRebuild()
 	}
 	// The engine's own view of the local config follows the file it just
 	// wrote, the way init_images.go's does after the pin: the stages that run
@@ -3593,7 +3672,7 @@ func (r *initRun) forget(ctx context.Context, c *infra.Clients, t *tf.TF, wd *in
 		if err != nil {
 			return remote(err)
 		}
-		fmt.Fprint(r.w, tf.Summary(plan))
+		r.planBlock(plan)
 		if err := infra.CheckForgetPlan(plan); err != nil {
 			return initErr(err)
 		}
@@ -3751,6 +3830,11 @@ func (o *initOptions) installationFlags() []string {
 		"--registry-cleanup": o.registryCleanup != "", "--runs-bucket": o.runsBucket != "", "--scheduler-region": o.schedulerRegion != "",
 		"--firebase-project": o.firebase != "", "--budget-mode": o.budgetMode != "", "--budget-admin": o.budgetAdminsChanged,
 		"--create-project": o.createProject, "--managed": o.managed, "--display-name": o.displayName != "", "--parent": o.parent != "", "--link-billing": o.linkBilling != "",
+		// The bake switch is a project-wide setting the local config carries
+		// (IS7, D1901), so a --repo run — which onboards a repository and
+		// writes no local config of its own shape — would drop a value it was
+		// handed. It is refused by name instead, like the flags above it.
+		"--bake-repos": o.bakeReposChanged,
 	}
 	var set []string
 	for _, f := range slices.Sorted(maps.Keys(installationOnly)) {
@@ -3907,6 +3991,12 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	// stopFractionSince, in either file: a launch from outside a checkout
 	// cannot judge the repository's own half, so the converge does.
 	if err := r.gateStopFraction(o, repo, lc, cfg); err != nil {
+		return err
+	}
+	// agent.triage is the same kind of break on triageSince, in the
+	// repository's own file alone: the key is InRepo, so no layer can carry
+	// it.
+	if err := r.gateTriage(o, repo, lc, cfg); err != nil {
 		return err
 	}
 	// The security: block, in either file, is the same kind of break, on
@@ -4447,6 +4537,28 @@ func (r *initRun) gateStopFraction(o *initOptions, repo string, lc *localcfg.Con
 	return refuseStopFractionSkew(repo, cfg.RepoStopFractionSet, cfg.Layer.SetsStopFraction(), lc.BaseImage(config.BaseKind), w)
 }
 
+// gateTriage is fugaro update --repo's gate for triageSince: refuseTriageSkew,
+// with gateRigor's escapes and for its reason. One file can write the key and
+// not two — agent.triage is repo-scope alone (config.Scopes), so there is no
+// layer half here the way gateStopFraction has one, and the layer's own loader
+// refuses the block before any image is judged.
+//
+// The half it asks is the key being written rather than the value it holds
+// (gateSecurity's own reading): RepoTriageSet, because a runner older than
+// triageSince is refused by the key whatever it says. The configuration goes
+// along because the value is what words the way out the refusal offers
+// (refuseTriageSkew's own reading of it).
+func (r *initRun) gateTriage(o *initOptions, repo string, lc *localcfg.Config, cfg *config.Config) error {
+	if o.forget || o.planOnly || cfg == nil {
+		return nil
+	}
+	w := r.w
+	if o.printVars {
+		w = r.cmd.ErrOrStderr()
+	}
+	return refuseTriageSkew(repo, cfg, lc.BaseImage(config.BaseKind), w)
+}
+
 // gateSecurity is fugaro update --repo's gate for securitySince:
 // refuseSecuritySkew, with gateRigor's escapes and for its reason. Each half is
 // the key being written rather than the rows it holds: a runner older than
@@ -4792,7 +4904,7 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 		if opts.AllowJobDelete {
 			fmt.Fprintln(r.w, "⚠ --allow-job-delete: this plan lowers the deletion protection of "+spec.Name+"'s jobs, for offboarding")
 		}
-		fmt.Fprint(r.w, tf.Summary(plan))
+		r.planBlock(plan)
 		fmt.Fprintln(r.w, im.Bindings.String())
 		counts := infra.CountPlan(plan)
 		// The managed gate first, and the guard and the confirmation only when it
@@ -4928,39 +5040,50 @@ var newCloudBuilder = func(ctx context.Context, lc *localcfg.Config) (cloudBuild
 // credential's ID the build's clone reads, which the caller decides: init's
 // first builds read it back out of the spec the apply just ran (B1), while a
 // standalone image refresh resolves it live and checks it against the build
-// account's own grant. It returns the build's ID, also when the wait fails after the submit.
-func (r *initRun) submitAndWait(ctx context.Context, b cloudBuilder, lc *localcfg.Config, cfg *config.Config, spec infra.RepoSpec, name, base, gitSecretID string) (string, error) {
+// account's own grant. It returns the build's ID, also when the wait fails
+// after the submit.
+//
+// ended says the build reached a terminal status — the wait really watched it
+// to its end, whatever that end was. It is false exactly when the build was
+// submitted and the watch was lost (a status read that failed, a cancelled
+// context), where the build may still be running: the caller's lease settles
+// the whole reservation for such a build rather than the time it watched
+// (image_refresh_steps.go, buildLease.settle).
+func (r *initRun) submitAndWait(ctx context.Context, b cloudBuilder, lc *localcfg.Config, cfg *config.Config, spec infra.RepoSpec, name, base, gitSecretID string) (string, bool, error) {
 	bs, err := cloudBuildSpec(spec, cfg, name, base, lc.Build.MachineType, lc.RecordBucketURL(), gitSecretID)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	if cfg.Layer != nil {
 		rb, err := openRecordBucket(ctx, lc.RecordBucketURL())
 		if err != nil {
-			return "", remote(err)
+			return "", false, remote(err)
 		}
 		defer rb.Close()
 		if bs.ProjectLayerSHA256, err = prepareLayerCopy(ctx, rb, spec.Slug, cfg.Layer, base); err != nil {
-			return "", err
+			return "", false, err
 		}
 	}
 	res, err := b.Submit(ctx, bs)
 	switch {
 	case errors.Is(err, gcp.ErrBadBuildSpec):
-		return "", userErr("%v", err)
+		return "", false, userErr("%v", err)
 	case err != nil:
-		return "", remote(err)
+		return "", false, remote(err)
 	}
 	fmt.Fprintf(r.w, "Cloud Build build %s of %s submitted; log: %s\n", oneLine(res.ID), oneLine(res.Image), oneLine(res.LogURL))
 	done, err := b.Wait(ctx, res.ID, 0)
 	if err != nil {
 		// The build was submitted and goes on without us: its ID comes back
-		// with the error.
-		return res.ID, remote(err)
+		// with the error, and so does whether the build really ended — a
+		// terminal status means it did, and its own failure is the whole
+		// story; anything else is a lost watch over one that may still be
+		// running.
+		return res.ID, gcp.TerminalStatus(done.Status), remote(err)
 	}
 	fmt.Fprintf(r.w, "built %s/%s (Cloud Build build %s)\n", spec.Name, name, oneLine(done.ID))
 	r.res.Builds = append(r.res.Builds, done.ID)
-	return done.ID, nil
+	return done.ID, true, nil
 }
 
 // buildImages offers the first image build of each workflow in names, and
@@ -4991,14 +5114,14 @@ func (r *initRun) buildImages(ctx context.Context, lc *localcfg.Config, cfg *con
 		}
 		if !reachable {
 			r.buildsLeft = append(r.buildsLeft, name)
-			r.warn(fmt.Sprintf("the first image build of %s/%s is billable and was not confirmed: it needs the person at a real terminal ("+neverConfirmsBuild(r.conditions().Agent != "")+"), so its job waits for it: in your own terminal window, run fugaro image build --repo %s --workflow %s (it asks for the project's name too), then "+r.o.doorProgram()+" --repo", spec.Name, name, spec.Name, name))
+			r.warn(fmt.Sprintf("the first image build of %s/%s is billable and was not confirmed: it needs the person at a real terminal ("+neverConfirmsBuild(r.conditions().Agent != "")+"), so its job waits for it: in your own terminal window, run fugaro image build --repo %s --workflow %s (it asks nothing), then "+r.o.doorProgram()+" --repo", spec.Name, name, spec.Name, name))
 			continue
 		}
 		if !ok {
-			r.warn(fmt.Sprintf("the first image build of %s/%s was not confirmed (the question was answered no), so its job waits for it: in your own terminal window, run fugaro image build --repo %s --workflow %s (it asks for the project's name too), then "+r.o.doorProgram()+" --repo", spec.Name, name, spec.Name, name))
+			r.warn(fmt.Sprintf("the first image build of %s/%s was not confirmed (the question was answered no), so its job waits for it: in your own terminal window, run fugaro image build --repo %s --workflow %s (it asks nothing), then "+r.o.doorProgram()+" --repo", spec.Name, name, spec.Name, name))
 			continue
 		}
-		if _, err := r.submitAndWait(ctx, b, lc, cfg, spec, name, base, appliedGitSecretID(spec)); err != nil {
+		if _, _, err := r.submitAndWait(ctx, b, lc, cfg, spec, name, base, appliedGitSecretID(spec)); err != nil {
 			return built, err
 		}
 		built++

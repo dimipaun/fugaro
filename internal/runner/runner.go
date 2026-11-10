@@ -2610,6 +2610,10 @@ func (r *run) bootstrap(ctx context.Context) error {
 	// own governance's, which resolvePolicy settles, and the tier acts on
 	// nothing yet.
 	r.recordTier()
+	// The scope the task expected the run to touch (tier.go, T8.3): the
+	// expectation envelope's other half, recorded beside the tier so the digest
+	// can flag a run that changed a path outside it.
+	r.recordExpectedScope()
 	// The plan is derived here, *after* the policy: the routing switch is
 	// applied inside resolvePolicy, and the levels it resolved with it are what
 	// decide which steps the plan carries (L2.1's O7). A plan derived before
@@ -3678,14 +3682,16 @@ func (r *run) levelFocus(level policy.Level) string {
 // as it reaches the stage: the level's own effort and EffortVars' variables for
 // the stage's route, the two answers a reader of it needs. The effort is "" and
 // the variables are nil for a stage that is not a review one, for a level with
-// no effort of its own, and for a provider route, whose calls run with thinking
-// off (G5, D725) -- an empty effort is then the same statement the stage's own
-// environment makes.
+// no effort of its own, and for a stage a provider serves
+// (stageServedByProvider), whose calls run with thinking off (G5, D725) -- an
+// empty effort is then the same statement the stage's own environment makes.
 //
 // It exists so the one rule is spelled once: reviewFacts records the effort that
 // reached the stage and applyStageEffort merges the variables into the stage's
 // pins, and both have to ask the same question of the level, the pins and the
-// route.
+// route. That question is stageServedByProvider, the one stagePins asks of the
+// same stage, so a stage cannot be given the route's variables and an effort
+// beside them.
 func (r *run) reviewEffort(stage string) (string, map[string]string, error) {
 	s, ok := reviewStageOf(stage)
 	if !ok {
@@ -3695,7 +3701,7 @@ func (r *run) reviewEffort(stage string) (string, map[string]string, error) {
 	if effort == "" {
 		return "", nil, nil
 	}
-	vars, err := agent.EffortVars(effort, r.stageOnProviderRoute(r.stageModel(stage), r.backgroundModel()))
+	vars, err := agent.EffortVars(effort, r.stageServedByProvider(r.stageModel(stage), r.backgroundModel()))
 	if err != nil || len(vars) == 0 {
 		return "", nil, err
 	}
@@ -3710,9 +3716,10 @@ func (r *run) reviewEffort(stage string) (string, map[string]string, error) {
 // the run's configuration.
 //
 // The effort is the value that reached the stage rather than the one a layer
-// asked for: EffortVars drops a provider route's, whose calls run with thinking
-// off (G5, D725), so an empty effort is the same statement the stage's own
-// environment makes. Nothing is answered for a stage that is not a review one.
+// asked for: EffortVars drops a provider-served stage's, whose calls run with
+// thinking off (G5, D725), so an empty effort is the same statement the stage's
+// own environment makes. Nothing is answered for a stage that is not a review
+// one.
 func (r *run) reviewFacts(stage string) (model, effort string) {
 	model = r.stageModel(stage)
 	effort, _, err := r.reviewEffort(stage)
@@ -3728,8 +3735,8 @@ func (r *run) reviewFacts(stage string) (model, effort string) {
 // beside them because the pins are what the stage's environment and its managed
 // settings both read, and one answer is what keeps a stage from running under
 // two (stagePins, agentenv.go). Nothing is merged for a stage that is not a
-// review, for a level with no effort, or for a provider route, whose calls run
-// with thinking off (G5, D725).
+// review, for a level with no effort, or for a stage a provider serves, whose
+// calls run with thinking off (G5, D725).
 func (r *run) applyStageEffort(stage string, pins map[string]string) (map[string]string, error) {
 	_, vars, err := r.reviewEffort(stage)
 	if err != nil {
@@ -5230,11 +5237,14 @@ func (r *run) finalize(ctx context.Context) error {
 	r.recordOwnerDecisions(halt)
 	pol := r.findingsPolicy()
 	decidedRound := r.decidingReview()
-	ready, reason, class := Decide(records, decided, decidedRound, pol, r.rec.OwnerDecisions)
+	dec := Decide(records, decided, decidedRound, pol, r.rec.OwnerDecisions)
 	r.rec.Tolerated = r.toleratedRecord(pol, decidedRound)
 	r.rec.Accepted = r.acceptedRecord(pol, decidedRound)
-	if committed && reason == ReasonNoVerifiedTest {
-		reason = "uncommitted changes were committed at finalize, after the last verified test run"
+	// The answer is replaced whole rather than having its sentence rewritten:
+	// the one reason this fires on is Decide's own, and the kind it came with is
+	// the one the replacement keeps (Decision, D995).
+	if committed && dec.Reason == ReasonNoVerifiedTest {
+		dec = blockedDecision("uncommitted changes were committed at finalize, after the last verified test run", dec.Class)
 	}
 	// A run whose diff matched a security row and whose escalation was refused
 	// is not ready, whatever Decide answered (D1509): the level the
@@ -5243,16 +5253,18 @@ func (r *run) finalize(ctx context.Context) error {
 	// both hold — a refusal found at finalize is found there because the run
 	// committed work nobody reviewed, and the member's own `at` says so — and
 	// the run's own failure still outranks it (the override below).
-	ready, reason, class = r.applySecurityRefusal(ready, reason, class)
-	// The class follows the reason, and it is chosen by this same three-way
-	// choice in the same place by the same lines (design §4.2): the run's own
-	// first failure outranks what Decide read, a halt outranks both, and each
-	// override hands over the class of the sentence it just wrote. That is
-	// what keeps the field describing the status the record carries —
-	// unverified_final_commit under a halt's reason would name a cause the
-	// record no longer holds.
+	dec = r.applySecurityRefusal(dec)
+	// The reason, the class and the kind follow each other, and they are chosen
+	// by this same three-way choice in the same place by the same lines (design
+	// §4.2): the run's own first failure outranks what Decide read, a halt
+	// outranks both, and each override hands over the sentence it just wrote
+	// with the class and the kind that sentence carries. That is what keeps the
+	// fields describing the status the record carries — unverified_final_commit
+	// under a halt's reason would name a cause the record no longer holds, and a
+	// run refused for a stage it never finished is `failed`, never the label a
+	// run no review answered carries, however few rounds it got to.
 	if fr := r.failure(); fr != "" {
-		ready, reason, class = false, fr, r.failureClass()
+		dec = blockedDecision(fr, r.failureClass())
 	}
 	if halt != nil {
 		// Never ready, and the reason is the halt's, whatever failed first. The
@@ -5263,13 +5275,13 @@ func (r *run) finalize(ctx context.Context) error {
 		// "halted: <reason>: <detail>" spelling of it (OD1). The class is the
 		// halt's own family either way: the sentence a reader sees changes with
 		// the reason, and what the run stopped for does not.
-		ready, class = false, haltClass(halt.Reason)
+		reason := (&HaltError{*halt}).Error()
 		if halt.Reason == runstore.HaltOwnerDecision {
 			reason = halt.Detail
-		} else {
-			reason = (&HaltError{*halt}).Error()
 		}
+		dec = blockedDecision(reason, haltClass(halt.Reason))
 	}
+	ready, reason, class := dec.Ready, dec.Reason, dec.Class
 	// Finalize's push must not outlive its token either; a short reserve
 	// still asks for at least what bootstrap's fetch does.
 	if err := r.refreshGitAuth(ctx, authValidity(max(r.wf.Timeouts.FinalizeReserve.Duration, bootstrapAuthMinValid))); err != nil {
@@ -5354,6 +5366,7 @@ func (r *run) finalize(ctx context.Context) error {
 			// ready, so this is recorded as a draft with a reason
 			// naming the failure.
 			ready, reason, class = false, r.redact(err.Error()), failure.GitProviderError
+			dec = blockedDecision(reason, class)
 		}
 	case err != nil:
 		if pr.Number != 0 && r.giveUpNoteAllowed(ctx) {
@@ -5391,6 +5404,15 @@ func (r *run) finalize(ctx context.Context) error {
 	// above hands one over — Decide names its own refusal, r.failure() names
 	// the class written with the run's first reason (unclassified where its
 	// site named none), and the forge's own failure names git_provider_error.
+	//
+	// The label a run no review answered carries is the one case of the
+	// default that is not a failure: Decide read a round that answered nothing,
+	// or no round at all, and nothing else in the run ended it (D994, D995).
+	// The kind is what says so — a sentence would not, which is why the
+	// decision carries one — and it is the *last* case, because every ending
+	// above it replaces the decision with a sentence of its own and the reason
+	// is the run's own: a run halted, cancelled or refused is not a run that
+	// merely went unread.
 	switch {
 	case ready:
 		r.recordEnd(runstore.StatusSucceeded, runstore.OutcomeReady, "", reason)
@@ -5399,6 +5421,8 @@ func (r *run) finalize(ctx context.Context) error {
 		r.recordEnd(runstore.StatusHalted, runstore.OutcomeDraft, haltClass(halt.Reason), reason)
 	case r.isCancelled():
 		r.recordEnd(runstore.StatusCancelled, runstore.OutcomeDraft, failure.Cancelled, reason)
+	case dec.Kind == KindUnreviewed:
+		r.recordEnd(runstore.StatusUnreviewed, runstore.OutcomeDraft, class, reason)
 	default:
 		r.recordEnd(runstore.StatusFailed, runstore.OutcomeDraft, class, reason)
 	}

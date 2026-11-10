@@ -524,6 +524,7 @@ func TestCredentialsServiceConfigBuildsFromAFullEnvironment(t *testing.T) {
 		{"Kills", cfg.Kills != nil},
 		{"DB", cfg.DB != nil},
 		{"Probes", cfg.Probes != nil},
+		{"Slips", cfg.Slips != nil},
 		{"Signs", cfg.Signs != nil},
 		{"AuditLog", cfg.AuditLog != nil},
 		{"Log", cfg.Log != nil},

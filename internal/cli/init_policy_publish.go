@@ -14,6 +14,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/policy"
@@ -143,6 +144,16 @@ func policyConfigDrift(lc *localcfg.Config, p *projectpolicy.Policy) []policyDri
 	if lc.BakeRepos != nil {
 		add("bake_repos", lc.BakeReposEffective(p.BakeRepos), p.BakeRepos, false)
 	}
+	// The triage switch reaches a run off this node too (D1854), so a config
+	// that states it where the node states the other answer is a difference a
+	// publish closes, and it is compared the bake switch's way: the node's value
+	// is handed to the publisher's keep rule, so a config that writes nothing is
+	// not reported as a difference — nil would read as one against a node that
+	// states either answer — while a written false against a node that says
+	// nothing (or true) is exactly the edit this stage exists to carry.
+	if lc.Triage != nil {
+		add("triage", lc.TriageEffective(p.Triage), p.Triage, false)
+	}
 	// The orchestrator block is compared by the publisher's own keep rule
 	// (D1239, D1234): a config that states a block that sets a key differs from
 	// a node carrying another — or none — so a guardrail-only edit reaches the
@@ -206,6 +217,14 @@ func policyConfigDrift(lc *localcfg.Config, p *projectpolicy.Policy) []policyDri
 	// node carries and the file does not is a stage the publish takes off the
 	// account, and comparing the file's own stages alone would leave the
 	// runner serving it there.
+	//
+	// A stage the release behind cannot read is not one of these members on the
+	// file's side (config.AccountStageHeldBack, the publisher's own rule): the entry
+	// stays in the local config and the publisher writes nothing for it, so
+	// reporting it here would be a difference no publish closes — the operator
+	// would be sent to a command that cannot close the gap it fired on. The
+	// node's side is compared as it is: a node that carries such an entry is
+	// still a difference, and the publish takes it off.
 	fileAccounts, nodeAccounts := configAccountValues(lc), policyAccountValues(p)
 	for _, member := range accountChoiceNames(fileAccounts, nodeAccounts) {
 		add(member, fileAccounts[member], nodeAccounts[member], false)
@@ -222,16 +241,20 @@ func stageAccountMember(stage string) string { return "claude_account_stages." +
 // way the published node spells them, with the keys it states nothing for left
 // out. The two are the keys `settings set` writes (internal/settings, the
 // claude_account entries), and the key names are what the diff and the widening
-// sentence show an operator.
+// sentence show an operator. A stage the release behind cannot read is left out
+// as well, because the publish states nothing for it either
+// (config.AccountStageHeldBack): the member this function reports is the one a
+// publish would write, and a stage held back is not.
 func configAccountValues(lc *localcfg.Config) map[string]string {
 	out := map[string]string{}
 	if lc.DefaultClaudeAccount != "" {
 		out["default_claude_account"] = lc.DefaultClaudeAccount
 	}
 	for stage, choice := range lc.ClaudeAccountStages {
-		if choice.ClaudeAccount != "" {
-			out[stageAccountMember(stage)] = choice.ClaudeAccount
+		if choice.ClaudeAccount == "" || config.AccountStageHeldBack(stage) {
+			continue
 		}
+		out[stageAccountMember(stage)] = choice.ClaudeAccount
 	}
 	return out
 }

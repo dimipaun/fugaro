@@ -33,6 +33,8 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/digest"
+	"github.com/dimipaun/fugaro/internal/installrec"
+	"github.com/dimipaun/fugaro/internal/issueresolve"
 	"github.com/dimipaun/fugaro/internal/issues"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -801,7 +803,7 @@ func seedDigestIssue(t *testing.T, f *cloudFixture, run, summary string, created
 		// One byte pair repeated, so no literal here is the hash of anything.
 		Fingerprint: strings.Repeat("ab", 32),
 		Summary:     summary, Diagnosis: "the review stage starts twice", Steps: "run it again",
-	})
+	}, issues.Identity{Address: "someone@example.test", Digest: issues.Digest("someone@example.test"), Source: issues.SourceVerified})
 	if err != nil {
 		t.Fatalf("seeding issue %s: %v", run, err)
 	}
@@ -1030,4 +1032,229 @@ func digestIndex(t *testing.T, dir string) []byte {
 		t.Fatalf("the command regenerated no index: %v", err)
 	}
 	return data
+}
+
+// digestInstalledRecord writes the installation record the report's window is
+// read from, as the update door writes it (T-RU2, F17): one object in the runs
+// bucket, beside the project marker.
+func digestInstalledRecord(t *testing.T, f *cloudFixture, release, previous string) {
+	t.Helper()
+	path := filepath.Join(f.dir, "runs", filepath.FromSlash(installrec.Object))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(installrec.Record{Format: installrec.Format, Release: release, PreviousRelease: previous})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// seedDigestFiledIssue uploads one issue and files it on GitHub, so a report's
+// retried pass has a record to ask about: `submitted`, linked to the GitHub
+// issue the pass builds its one request from (F28).
+func seedDigestFiledIssue(t *testing.T, f *cloudFixture, run, summary string, github int) issues.Uploaded {
+	t.Helper()
+	ctx := context.Background()
+	b, err := blobx.Open(ctx, f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = b.Close() })
+	at := time.Date(2026, 10, 19, 9, 0, 0, 0, time.UTC)
+	up, err := uploadAsReporter(ctx, b, issues.Issue{
+		Run: run, LocalID: "local-" + run,
+		Reporter: "ana@example.test", Created: at,
+		Class: issues.ClassFugaro, Status: issues.StatusPending,
+		OS: "linux", FugaroVersion: "0.21.1",
+		// One byte pair repeated, so no literal here is the hash of anything,
+		// and a pair of its own so this issue is not the occurrence of another.
+		Fingerprint: strings.Repeat("cd", 32),
+		Summary:     summary, Diagnosis: "the review stage starts twice", Steps: "run it again",
+	})
+	if err != nil {
+		t.Fatalf("seeding issue %s: %v", run, err)
+	}
+	claim, err := issues.Claim(ctx, b, up.Number, "user:ana@example.test", at)
+	if err != nil {
+		t.Fatalf("claiming issue %d: %v", up.Number, err)
+	}
+	url := fmt.Sprintf("https://github.com/dimipaun/fugaro/issues/%d", github)
+	if err := issues.RecordSubmitted(ctx, b, claim, url, at); err != nil {
+		t.Fatalf("filing issue %d: %v", up.Number, err)
+	}
+	return up
+}
+
+// digestSharedIssue is one issue as the project's shared store holds it, which
+// is what the section and every later command read.
+func digestSharedIssue(t *testing.T, f *cloudFixture, number int) issues.Issue {
+	t.Helper()
+	ctx := context.Background()
+	b, err := blobx.Open(ctx, f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = b.Close() })
+	rows, err := issues.ListShared(ctx, b)
+	if err != nil {
+		t.Fatalf("listing the shared store: %v", err)
+	}
+	for _, r := range rows {
+		if r.Number == number {
+			return r.Issue
+		}
+	}
+	t.Fatalf("the shared store holds no issue %d", number)
+	return issues.Issue{}
+}
+
+// digestAnswer is GitHub as the tests of this command say it is: one answer for
+// every issue a retried pass asks about, the numbers it asked about, and how
+// many times the pass was wired at all -- a pass that never ran is wired none.
+type digestAnswer struct {
+	state issueresolve.State
+	asked []int
+	built int
+}
+
+func (a *digestAnswer) Fetch(_ context.Context, number int) (issueresolve.State, error) {
+	a.asked = append(a.asked, number)
+	return a.state, nil
+}
+
+// digestGitHub answers the report's retried pass for GitHub, so a test reads
+// what a pass does without reaching the network.
+func digestGitHub(t *testing.T, state issueresolve.State) *digestAnswer {
+	t.Helper()
+	fake := &digestAnswer{state: state}
+	old := digestResolveDeps
+	digestResolveDeps = func(cmd *cobra.Command, env *cloudEnv) issues.ResolveDeps {
+		fake.built++
+		deps := old(cmd, env)
+		deps.Reader = fake
+		return deps
+	}
+	t.Cleanup(func() { digestResolveDeps = old })
+	return fake
+}
+
+// TestRunsDigestRetriesResolveOnTerminal is the report's half of the retry
+// (F19, D1754): where the section prints, the report runs the pass `fugaro
+// update` runs -- so a machine that updated while GitHub was unreachable, or
+// that has not updated at all, meets the fix here -- and the section then lists
+// what the installation fixed.
+func TestRunsDigestRetriesResolveOnTerminal(t *testing.T) {
+	digestCheckout(t)
+	f := newCloudFixture(t)
+	dir := t.TempDir()
+	digestClock(t, "2026-10-27")
+	releaseBuild(t, "0.22.0")
+	seedDigestRun(t, f, "20261025-120000-abcd", time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC), "acme/app")
+	up := seedDigestFiledIssue(t, f, "run-20261025120000-48213", "the review stage starts twice", 4242)
+	digestInstalledRecord(t, f, "0.22.0", "0.21.1")
+	github := digestGitHub(t, issueresolve.ClosedCompleted{Milestone: "0.22.0"})
+	bothTerminals(t)
+
+	out, errOut, err := execute(t, "runs", "digest", "--period", "day", "--date", "2026-10-25", "--dir", dir)
+	if err != nil {
+		t.Fatalf("runs digest: %v (%s)", err, errOut)
+	}
+	// The pass ran: the record the update would have marked is marked, with the
+	// release that shipped the fix and not the version that was installed.
+	got := digestSharedIssue(t, f, up.Number)
+	if got.Status != issues.StatusResolved || got.ResolvedIn != "0.22.0" {
+		t.Errorf("issue %d is %q in %q after the report, want resolved in 0.22.0", up.Number, got.Status, got.ResolvedIn)
+	}
+	// It asked GitHub about the issue the record links to, which is the number
+	// the request is built from (F28), and it asked no other.
+	if len(github.asked) != 1 || github.asked[0] != 4242 {
+		t.Errorf("the pass asked GitHub about %v, want the one issue of the record (4242)", github.asked)
+	}
+	for _, want := range []string{
+		"## Issues",
+		"Resolved since the last update:",
+		fmt.Sprintf("#%04d", up.Number),
+		"fixed in 0.22.0",
+		"hit by ana",
+		"the review stage starts twice",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the section does not carry %q:\n%s", want, out)
+		}
+	}
+}
+
+// TestRunsDigestAgentSessionDoesNotResolve: the section is the job's and a
+// person's terminal's, so a coding agent's session runs no pass and writes
+// nothing (F13, F16d): the record stays where it was and no section is printed.
+func TestRunsDigestAgentSessionDoesNotResolve(t *testing.T) {
+	digestCheckout(t)
+	f := newCloudFixture(t)
+	dir := t.TempDir()
+	digestClock(t, "2026-10-27")
+	releaseBuild(t, "0.22.0")
+	seedDigestRun(t, f, "20261025-120000-abcd", time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC), "acme/app")
+	up := seedDigestFiledIssue(t, f, "run-20261025120000-48213", "the review stage starts twice", 4242)
+	digestInstalledRecord(t, f, "0.22.0", "0.21.1")
+	// GitHub says the issue is fixed, so a pass that ran would mark it: the
+	// assertions below are about the pass not running and not about what it
+	// would have found.
+	github := digestGitHub(t, issueresolve.ClosedCompleted{Milestone: "0.22.0"})
+	bothTerminals(t)
+	t.Setenv("CLAUDECODE", "1")
+
+	out, errOut, err := execute(t, "runs", "digest", "--period", "day", "--date", "2026-10-25", "--dir", dir)
+	if err != nil {
+		t.Fatalf("runs digest in an agent session: %v (%s)", err, errOut)
+	}
+	if strings.Contains(out, "## Issues") {
+		t.Errorf("a coding agent's session printed the Issues section:\n%s", out)
+	}
+	if github.built != 0 || len(github.asked) != 0 {
+		t.Errorf("a coding agent's session wired the resolver %d times and asked %v", github.built, github.asked)
+	}
+	if got := digestSharedIssue(t, f, up.Number); got.Status != issues.StatusSubmitted {
+		t.Errorf("a coding agent's session left issue %d %q, want it still submitted", up.Number, got.Status)
+	}
+}
+
+// TestRunsDigestFileUnchangedWithResolved: the Resolved list is part of the
+// terminal section and of nothing else. A report and an index regenerated with
+// a fixed issue, its hit-by line and an installation record in the project are
+// byte for byte the ones the same run wrote before any of that was there (F13).
+func TestRunsDigestFileUnchangedWithResolved(t *testing.T) {
+	digestCheckout(t)
+	f := newCloudFixture(t)
+	dir := t.TempDir()
+	digestClock(t, "2026-10-27")
+	releaseBuild(t, "0.22.0")
+	seedDigestRun(t, f, "20261025-120000-abcd", time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC), "acme/app")
+	args := []string{"runs", "digest", "--period", "day", "--date", "2026-10-25", "--dir", dir}
+	if _, errOut, err := execute(t, args...); err != nil {
+		t.Fatalf("runs digest: %v (%s)", err, errOut)
+	}
+	report, index := digestReport(t, dir, "2026-10-25"), digestIndex(t, dir)
+
+	up := seedDigestFiledIssue(t, f, "run-20261025120000-48213", "the review stage starts twice", 4242)
+	digestInstalledRecord(t, f, "0.22.0", "0.21.1")
+	digestGitHub(t, issueresolve.ClosedCompleted{Milestone: "0.22.0"})
+	bothTerminals(t)
+	out, errOut, err := execute(t, args...)
+	if err != nil {
+		t.Fatalf("runs digest with a fixed issue: %v (%s)", err, errOut)
+	}
+	// The run really printed the list, so the comparisons below are about the
+	// section and nothing else.
+	if !strings.Contains(out, "## Issues") || !strings.Contains(out, fmt.Sprintf("#%04d", up.Number)) {
+		t.Fatalf("the run with a fixed issue printed no Resolved list, so this test proves nothing:\n%s", out)
+	}
+	if got := digestReport(t, dir, "2026-10-25"); got != report {
+		t.Errorf("a fixed issue changed the report:\n%s", got)
+	}
+	if got := digestIndex(t, dir); !bytes.Equal(got, index) {
+		t.Errorf("a fixed issue changed the index:\n%s", got)
+	}
 }

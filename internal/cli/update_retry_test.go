@@ -74,13 +74,23 @@ func retryFile(t *testing.T, s *issues.Store, number int, command string) issues
 	return i
 }
 
+// retryMember is the member string the credential of the machine that filed
+// this file's reports answers with, and retryIdentity is that credential as
+// Upload takes it: the reporter a shared record carries is the credential's
+// member string and never a value the record came with (F3).
+const retryMember = "ana@example.test"
+
+func retryIdentity() issues.Identity {
+	return issues.Identity{Address: retryMember, Digest: issues.Digest(retryMember), Source: issues.SourceVerified}
+}
+
 // retrySharedIssue is the shared store's copy of a report, as the spec that
 // fills resolved_in leaves it once a later release fixed the bug (F27, D1731):
 // this plan builds no writer of that field and reads it.
 func retrySharedIssue(run, resolvedIn string) issues.Issue {
 	return issues.Issue{
 		LocalID: "local-" + run, Run: run,
-		Reporter:      issues.Digest("ana@example.test"),
+		Reporter:      retryMember,
 		Created:       retryAt,
 		FailedCommand: "fugaro update",
 		Class:         issues.ClassFugaro,
@@ -137,7 +147,7 @@ func retryBucket(t *testing.T, resolvedIn string) (*blobx.Bucket, int) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = b.Close() })
-	up, err := issues.Upload(t.Context(), b, retrySharedIssue(retryRun, resolvedIn))
+	up, err := issues.Upload(t.Context(), b, retrySharedIssue(retryRun, resolvedIn), retryIdentity())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +176,7 @@ func retrySharedStore(t *testing.T, resolvedIn string) issues.Uploaded {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = b.Close() })
-	up, err := issues.Upload(t.Context(), b, retrySharedIssue("update-20261107183012-48213", resolvedIn))
+	up, err := issues.Upload(t.Context(), b, retrySharedIssue("update-20261107183012-48213", resolvedIn), retryIdentity())
 	if err != nil {
 		t.Fatalf("seeding the shared store: %v", err)
 	}
@@ -423,7 +433,7 @@ func TestUpdateRetryMakesNoCloudWrite(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = b.Close() })
-	up, err := issues.Upload(t.Context(), b, retrySharedIssue(retryRun, retryRelease))
+	up, err := issues.Upload(t.Context(), b, retrySharedIssue(retryRun, retryRelease), retryIdentity())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -578,7 +588,7 @@ func TestUpdateRetryReadsTheCheckoutsStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = b.Close() })
-	up, err := issues.Upload(t.Context(), b, retrySharedIssue(retryRun, retryRelease))
+	up, err := issues.Upload(t.Context(), b, retrySharedIssue(retryRun, retryRelease), retryIdentity())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -629,7 +639,7 @@ func TestUpdateRetrySelectsTheProjectTheRunNamed(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { _ = b.Close() })
-			up, err := issues.Upload(t.Context(), b, retrySharedIssue(retryRun, retryRelease))
+			up, err := issues.Upload(t.Context(), b, retrySharedIssue(retryRun, retryRelease), retryIdentity())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -640,6 +650,145 @@ func TestUpdateRetrySelectsTheProjectTheRunNamed(t *testing.T) {
 			updateRetryHint(cmd, o, nil)
 			if errOut.String() != tc.want {
 				t.Fatalf("fugaro update --name %s printed %q, want %q", tc.name, errOut.String(), tc.want)
+			}
+		})
+	}
+}
+
+// TestUpdateRetryPassesTheRunsBucketTheRunHad: the door the offer follows
+// selected its config with --runs-bucket, applied to it by loadInitConfig, so
+// the offer reads that bucket and not the one the config names on its own —
+// otherwise `fugaro update --runs-bucket … --yes` would miss the issue the run
+// just fixed, or read a bucket the run never converged against. A --repo run
+// never applied the flag (loadRepoConfig selects with the checkout's config
+// alone), so the offer repeats that too.
+func TestUpdateRetryPassesTheRunsBucketTheRunHad(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		repo bool
+		args []string
+		want retryProject
+	}{
+		{
+			// The installation door: the flag, which is applied to the
+			// selected config before it is converged.
+			name: "the installation door",
+			want: retryProject{runsBucket: "other"},
+		},
+		{
+			// --repo: the flag is not in loadRepoConfig's selection, so the
+			// offer does not apply it either.
+			name: "--repo",
+			repo: true,
+			args: []string{"/checkout"},
+			want: retryProject{dir: "/checkout"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			retryEnv(t)
+			retryFile(t, retryStore(t), 7, "fugaro update")
+			var got retryProject
+			b, _ := retryBucket(t, retryRelease)
+			stubRetryBucket(t, func(_ context.Context, _ cloudOptions, p retryProject) (*blobx.Bucket, error) {
+				got = p
+				return b, nil
+			})
+
+			cmd, o, _, _ := retryRig(t)
+			o.repo = tc.repo
+			o.runsBucket = "other"
+			updateRetryHint(cmd, o, tc.args)
+			if got != tc.want {
+				t.Errorf("the offer read the store with %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestUpdateRetryAppliesTheRunsBucket: the flag reaches the store the offer
+// opens, through the real seam and not only through the values it is handed.
+// The config names a bucket of its own, so the override contradicts it exactly
+// as it does in the converge (loadInitConfig) and the offer prints nothing,
+// while the same world without the flag prints the line — which is what makes
+// the first half of this table a test of the override rather than of a silence.
+// (Which bucket a config that names no bucket at all answers with is
+// TestUpdateRetryBucketURL's, since that one is a gs:// URL no test can open.)
+func TestUpdateRetryAppliesTheRunsBucket(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		runsBucket string
+		want       string
+	}{
+		{"the config's own bucket", "", "You can retry: fugaro update\n"},
+		{"the bucket the run passed", "other", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			retryEnv(t)
+			dir := t.TempDir()
+			retryProjectConfig(t, "aurora", "file://"+dir)
+			t.Chdir(gitCheckout(t, t.TempDir(), checkoutsProjectYAML("aurora")))
+			b, err := blobx.Open(t.Context(), "file://"+dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = b.Close() })
+			up, err := issues.Upload(t.Context(), b, retrySharedIssue(retryRun, retryRelease), retryIdentity())
+			if err != nil {
+				t.Fatal(err)
+			}
+			retryFile(t, retryStore(t), up.Number, "fugaro update")
+
+			cmd, o, _, errOut := retryRig(t)
+			o.runsBucket = tc.runsBucket
+			updateRetryHint(cmd, o, nil)
+			if errOut.String() != tc.want {
+				t.Fatalf("fugaro update --runs-bucket %q printed %q, want %q", tc.runsBucket, errOut.String(), tc.want)
+			}
+		})
+	}
+}
+
+// TestUpdateRetryBucketURL: retryBucketURL is the bucket the offer reads, and
+// the converge's own reading of --runs-bucket against the selected config
+// (loadInitConfig): the flag replaces a config that names no bucket_url, a
+// bucket_url that is not it is the refusal the converge makes — two answers to
+// one question — and without the flag nothing changes. It is a function of its
+// own because the seam it feeds opens a gs:// URL, which no hermetic test can
+// reach: the answer is what is checked, not the open.
+func TestUpdateRetryBucketURL(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		config     localcfg.Config
+		runsBucket string
+		want       string
+	}{
+		{"the config's own runs_bucket", localcfg.Config{RunsBucket: "fugaro-runs-old"}, "", "gs://fugaro-runs-old"},
+		{"the config's own bucket_url", localcfg.Config{Bucket: "gs://old"}, "", "gs://old"},
+		{"the flag, where the config names no bucket", localcfg.Config{}, "new", "gs://new"},
+		{"the flag, agreeing with the bucket_url", localcfg.Config{Bucket: "gs://new"}, "new", "gs://new"},
+		{"the flag over a runs_bucket", localcfg.Config{RunsBucket: "old"}, "new", "gs://new"},
+		{"the flag, contradicting a bucket_url", localcfg.Config{Bucket: "gs://old"}, "new", ""},
+		// Unreachable through a selection (localcfg refuses a config with
+		// neither), and the guard the seam had before it: one silence more.
+		{"no bucket anywhere", localcfg.Config{}, "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			lc := tc.config
+			got, err := retryBucketURL(&lc, tc.runsBucket)
+			if tc.want == "" {
+				// What the flag contradicts is a bucket_url the config does
+				// hold, and a config that names no bucket at all is the other
+				// silence: neither is an offer.
+				if err == nil {
+					t.Fatalf("retryBucketURL = %q, want an error", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("retryBucketURL: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("retryBucketURL = %q, want %q", got, tc.want)
 			}
 		})
 	}
@@ -674,4 +823,11 @@ func retryConfig(t *testing.T, url string) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+// uploadAsReporter uploads an issue under the verified identity of its own
+// reporter, the way a signed-in member's machine does (issues.Upload takes the
+// identity the reporter index is written under).
+func uploadAsReporter(ctx context.Context, b *blobx.Bucket, i issues.Issue) (issues.Uploaded, error) {
+	return issues.Upload(ctx, b, i, issues.Identity{Address: i.Reporter, Digest: issues.Digest(i.Reporter), Source: issues.SourceVerified})
 }

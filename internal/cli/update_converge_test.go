@@ -15,6 +15,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/imagebake"
+	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -80,7 +81,13 @@ func newConvergeRigYAML(t *testing.T, node map[string]any, yaml string) *converg
 	t.Helper()
 	fakeTerraform(t) // built with go, which upgradeEnv takes off PATH
 	upgradeEnv(t, convergeRelease)
+	// The checkout stage's cloud step builds the stale workflows, and a build
+	// leases its estimated cost before it is submitted (T4): its lease needs
+	// the caps below and the price of a build, which a hermetic test reads
+	// from its own book rather than the Cloud Billing catalog.
+	stubBuildPricer(t)
 	r := newImagesRig(t, convergeRelease)
+	buildBudgetCaps(r.db)
 	r.installationState(t)
 	// The installation is there and nothing about it has to change: the plan
 	// reads back empty, so the run is about the stale things alone.
@@ -127,16 +134,20 @@ func newConvergeRigYAML(t *testing.T, node map[string]any, yaml string) *converg
 	checkoutFile(t, filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), "plugins", "installed_plugins.json"),
 		`{"version":2,"plugins":{"fugaro@fugaro":[{"scope":"user","version":"`+convergePrev+`"}]}}`)
 
-	// The checkout stage's cloud step rebuilds the workflow images the records
-	// still show on the previous release's base: billable builds, and here the
-	// fake builder's, never a real submit.
+	// The builds this installation made at the release behind, in both places
+	// this rig reads a build record from (putWorkflowRecordBoth): the runs
+	// bucket the checkout's cloud step opens, and the installation's runs
+	// bucket as this rig's storage fake serves it, which is where the
+	// repository stage's own read looks for one. The checkout stage's cloud
+	// step rebuilds these two workflow images off those records: billable
+	// builds, and here the fake builder's, never a real submit.
 	builder := useFakeBuilder(t)
 	records = map[string]string{}
 	prev := openRecordBucket
 	openRecordBucket = openFakeRecords
 	t.Cleanup(func() { openRecordBucket = prev })
-	putWorkflowRecordFrom("app", convergePrev, pinnedRef("base", convergePrev))
-	putWorkflowRecordFrom("api", convergePrev, pinnedRef("base", convergePrev))
+	putWorkflowRecordBoth(t, r.initRig, "app", convergePrev, pinnedRef("base", convergePrev))
+	putWorkflowRecordBoth(t, r.initRig, "api", convergePrev, pinnedRef("base", convergePrev))
 
 	// The marketplace an installation one release old has on the machine is the
 	// unpinned one a previous fugaro declared, so the plugin step clears it and
@@ -169,6 +180,27 @@ func seedAppSecret(t *testing.T, r *initRig, logical string) {
 	r.sm.Seed(gcp.SecretID(slug, logical),
 		map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: label, gcp.LabelSecret: logical},
 		[]byte("stored-before-this-run"))
+}
+
+// putWorkflowRecordBoth stores one workflow's build record of the release
+// behind where BOTH of this rig's reads find it: the runs bucket the
+// checkout's cloud step opens its records through (openRecordBucket), and the
+// installation's runs bucket as the storage fake serves it, which is where
+// the repository stage's own read looks for one (infra.NeedsBuild: a workflow
+// WITH a record is not offered a first build, and one without is). They are
+// one bucket in a real installation, so a fixture that seeded only one of
+// them would have one of the two stages build an image the other read says is
+// already built — and the count at the end of converge would say nothing
+// about which of them did.
+func putWorkflowRecordBoth(t *testing.T, r *initRig, wf, version, base string) {
+	t.Helper()
+	putWorkflowRecordFrom(wf, version, base)
+	slug, err := task.Slug("github", "acme/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := imagecheck.RecordKey(slug, wf)
+	r.gcs.Put(initRunsBucket, key, []byte(records[key]))
 }
 
 // currentRelease is the update check's answer: this binary is the latest
@@ -221,21 +253,28 @@ func converge(t *testing.T, node map[string]any, stale []string) {
 	if got := upgradeRead(t, r.settings); !strings.Contains(got, `"ref": "v`+convergeRelease+`"`) {
 		t.Errorf("the plugin pin is still not this release's:\n%s", got)
 	}
-	// The checkout's cloud step is the third step of its stage, and this run
-	// onboarded the repository itself (it is the run the anchor writes
+	// This run onboarded the repository itself (it is the run the anchor writes
 	// fugaro.yaml's gcp_project: line in, which leaves the working tree
 	// different from the default branch): the job images are built here, from
-	// the repository this run converged, and a skipped cloud step would be a
-	// run refusing to build from a file it did onboard.
+	// the repository this run converged, and a run that built neither of them
+	// would be one refusing to build from a file it did onboard.
 	//
-	// Four builds reach Cloud Build: the repository stage's own first builds
-	// first (the first build of each workflow is billable, and it is confirmed
-	// as every other step of this --yes run is), and then the checkout's cloud
-	// step, which builds the same two because the record it reads is still the
-	// previous release's base -- this rig's, and the whole of what the count
-	// below is.
-	if n := len(r.builder.specs); n != 4 {
-		t.Errorf("%d job image(s) reached Cloud Build, want the checkout's two workflows, built by the repository stage and then by the checkout: the job images of a repository this run onboarded are refreshed here", n)
+	// Two builds reach Cloud Build, and both are the checkout stage's cloud
+	// step — not the repository stage's: that stage offers a first build only
+	// for a workflow with no build record (infra.NeedsBuild), and both of this
+	// rig's workflows carry one, the release behind's, built FROM that release's
+	// base image. What is behind is those two images, and the refresh is what
+	// rebuilds them off those records (refreshVerdict).
+	//
+	// The count is the whole point of the assertion: that gap is not one the
+	// repository stage covers, so a run whose checkout stage never applies
+	// builds nothing at all. The cloud step's own check reads fugaro.yaml and
+	// the local config and never a build record (upgrade_cloud.go's cloudCheck),
+	// and by the time the checkout stage runs the images stage has already
+	// pinned this release's base in that config — so the stage's own answer is
+	// not the verdict that check gives (init_checkout_upgrade.go's Check).
+	if n := len(r.builder.specs); n != 2 {
+		t.Errorf("%d job image(s) reached Cloud Build, want the two the checkout stage's cloud step rebuilds from the records of the release behind: the job images of a repository this run onboarded are refreshed here", n)
 	}
 }
 
@@ -492,9 +531,12 @@ func TestUpdateRefusesToRewindTheOrchestratorMarker(t *testing.T) {
 	if err == nil {
 		t.Fatalf("fugaro update deployed this binary's rules over a newer orchestrator generation:\n%s", out)
 	}
-	if !strings.Contains(out+errOut, rules.PathOrchestratorRulesMarker()) {
-		t.Errorf("the refusal does not name the marker it read (%s), so the owner cannot tell which generation refused:\n%s\n%s",
-			rules.PathOrchestratorRulesMarker(), out, errOut)
+	// The step's line is the first clause of its reason and the log the whole of
+	// it (report.Brief), so the marker the refusal read is read back from there.
+	whole := out + errOut + namedLog(t, out+errOut)
+	if !strings.Contains(whole, rules.PathOrchestratorRulesMarker()) {
+		t.Errorf("the refusal does not name the marker it read (%s), so the owner cannot tell which generation refused:\n%s",
+			rules.PathOrchestratorRulesMarker(), whole)
 	}
 	if got := r.db.Value(rules.PathOrchestratorRulesMarker()); fmt.Sprint(got) != fmt.Sprint(ahead) {
 		t.Errorf("the refusal wrote the marker: %s = %v, want the newer %d left alone", rules.PathOrchestratorRulesMarker(), got, ahead)
@@ -520,7 +562,7 @@ func generatedRules(t *testing.T) []byte {
 // command.
 func stoppedStage(out string) string {
 	for _, line := range strings.Split(out, "\n") {
-		if rest, ok := strings.CutPrefix(strings.TrimSpace(line), "[failed]"); ok {
+		if rest, ok := strings.CutPrefix(strings.TrimSpace(line), markFailed+" failed"); ok {
 			return strings.TrimSpace(rest)
 		}
 	}

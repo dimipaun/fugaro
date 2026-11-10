@@ -1292,7 +1292,7 @@ func TestSettingsSetConcreteWildcardKeyWrites(t *testing.T) {
 	}
 	settingsNoBackup(t, path)
 
-	if _, _, err := execute(t, "settings", "set", "workflows.web.commands.test", "go test -race ./...", "--layer", "repo", "--yes"); err != nil {
+	if _, _, err := execute(t, "settings", "set", "workflows.web.commands.test", "go test -race ./...", "--layer", "repo", "--yes", "--executable-changes"); err != nil {
 		t.Fatalf("writing a concrete spelling of a wildcard row was refused: %v", err)
 	}
 	cfg, ps := config.Parse([]byte(readFileString(t, path)))
@@ -1572,7 +1572,7 @@ func TestSettingsSetAddEntryMapMember(t *testing.T) {
 	}
 	settingsNoBackup(t, path)
 
-	out, _, err := execute(t, "settings", "set", "workflows.web.commands.rerun_failed", "--add-entry", "command=go test -race -run {id} ./...", "--layer", "repo", "--yes")
+	out, _, err := execute(t, "settings", "set", "workflows.web.commands.rerun_failed", "--add-entry", "command=go test -race -run {id} ./...", "--layer", "repo", "--yes", "--executable-changes")
 	if err != nil {
 		t.Fatalf("writing one member of a mapping was refused: %v\n%s", err, out)
 	}

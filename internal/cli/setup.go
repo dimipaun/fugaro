@@ -2,7 +2,9 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
@@ -56,16 +58,20 @@ first run it asks its questions once, in this order, each with a suggestion
 Enter takes, and writes the local config, so later runs ask nothing: the new
 GCP project's ID (--gcp-project; a project named after this one,
 fugaro-<name>, which Enter takes; never gcloud's default project), the region
-(--region; us-east5) and the project's name (--name; from the repository's
-owner, else this directory's). Every question has its flag, so only the
+(--region; us-east5), the project's name (--name; from the repository's
+owner, else this directory's) and whether a repository the build can read is
+baked into the image its job runs (--bake-repos; yes, which makes jobs start
+faster; asked only where it can be answered, so a run with a project config
+keeps that project's answer). Every question has its flag, so only the
 confirmations below need a terminal at all: without one, or with
 --non-interactive, --yes or --json, the run names every missing flag in one
-error. An ID that already exists is refused before anything is asked or
-changed ("Fugaro only starts fresh: <id> already exists; pick another id"),
-and so is one that already holds a Fugaro installation, with the command that
-uses that installation from this machine instead: fugaro update --gcp-project
-<id> --region <region>, which writes the local config from the installation
-and applies nothing. The one taken ID a first run goes on with is a project an
+error — the bake switch needs no flag there, because an absent key means the
+same as a written yes. An ID that already exists is refused before anything is
+asked or changed ("Fugaro only starts fresh: <id> already exists; pick
+another id"), and so is one that already holds a Fugaro installation, with the
+command that uses that installation from this machine instead: fugaro update
+--gcp-project <id> --region <region>, which writes the local config from the
+installation and applies nothing. The one taken ID a first run goes on with is a project an
 earlier run of fugaro setup created and did not finish (it carries the label
 fugaro_created=true from its creation): the rerun resumes it. The budget
 section of a local config written from an installation (rtdb_url,
@@ -392,6 +398,17 @@ var setupQuestions = []wizardQuestion{
 		flag:    "--name",
 		missing: "--name <name>",
 	},
+	{
+		// The bake switch (IS7 of docs/image-setup-skill/implementation-plan.md;
+		// D1901). Its missing is empty on purpose: a run that cannot ask takes
+		// this answer itself — an absent key means yes, which is the
+		// suggestion the question offers — so demanding the flag would refuse a
+		// run whose answer is already in hand (askBake).
+		what:    "whether a repository the build can read is baked into the image its job runs",
+		label:   "Bake your repos into the Docker images? This makes jobs start faster.",
+		flag:    "--bake-repos",
+		missing: "",
+	},
 }
 
 // questionFor is the table's row for a question's flag: the label the prompt
@@ -408,6 +425,77 @@ func questionFor(flag string) wizardQuestion {
 		}
 	}
 	return wizardQuestion{what: "the question " + flag + " answers", label: flag, flag: flag}
+}
+
+// askBake is the wizard's bake question (IS7 of
+// docs/image-setup-skill/implementation-plan.md; D1901): whether a repository
+// the build can read is baked into the image its job runs, asked once, with yes
+// as the suggestion.
+//
+// The answer goes onto --bake-repos's own fields, which is where a scripted run
+// answers the same question and where writeConfig reads it from: the run that
+// asked it writes bake_repos into the local config it writes, the policy stage
+// publishes it in the same run, and a later change goes through `fugaro
+// settings set bake_repos` and its own rebuild (noteBakeRebuild).
+//
+// It asks nothing where nobody can answer (canAsk: --yes, --json,
+// --non-interactive, a pipe) and nothing on a run that does not create the
+// installation — a run with a project config, `fugaro update` too — which is
+// the owner's rule for a managed project: there the value is the flag's or the
+// published node's, and a question nobody asked for would replace the project's
+// answer with this machine's. --create-project's field is what says the run
+// creates, and settleCreation above has already set it.
+//
+// The question is asked through the same helper as the three above it (prompt),
+// so an input that ends here stops the phase at this question like any other,
+// and a rerun resumes at it: the row's empty missing is not a licence to answer
+// on nobody's behalf, and this question has no second shape.
+func (s *wizardStage) askBake() error {
+	r, o := s.r, s.r.o
+	if o.bakeReposChanged || o.configOnly || !r.canAsk() || !o.createProject {
+		return nil
+	}
+	q := questionFor("--bake-repos")
+	s.a.asked = append(s.a.asked, q.label)
+	var yes bool
+	if _, err := r.prompt(valueSpec{what: q.label, flag: q.flag}, "yes", func(v string) error {
+		var verr error
+		yes, verr = bakeAnswer(v)
+		return verr
+	}); err != nil {
+		return err
+	}
+	o.bakeRepos, o.bakeReposChanged = yes, true
+	return nil
+}
+
+// bakeAnswer is the bake question's own reading of an answer: the two things it
+// has to say — yes and no, which is how the question is asked — and the
+// spellings the same switch is written in elsewhere, since --bake-repos and
+// `fugaro settings set bake_repos` both take true and false for it. The
+// suggestion arrives here as "yes": prompt put the empty answer's own word in
+// its place. Anything else is the error prompt prints before asking again.
+func bakeAnswer(v string) (bool, error) {
+	switch strings.ToLower(v) {
+	case "y", "yes", "true":
+		return true, nil
+	case "n", "no", "false":
+		return false, nil
+	}
+	return false, errors.New("answer yes or no")
+}
+
+// noteBakeRebuild is what a run says once it has written the bake switch: the
+// switch is read by the BUILD, so it changes nothing about the images that
+// already exist — each one keeps what it was built with until it is rebuilt
+// (the daily image check rebuilds one whose inputs changed, and `fugaro image
+// build <entry>` rebuilds one now). It is printed for either answer and on
+// either route to one — the question above, and --bake-repos on a scripted run
+// — because the reader of a switch that costs a rebuild is owed the rebuild,
+// and it names the settings route for the same reason: the later change is
+// `fugaro settings set bake_repos`, and it needs this same rebuild.
+func (r *initRun) noteBakeRebuild() {
+	fmt.Fprintf(r.w, "note: the bake switch is what the BUILD reads, so the images that exist keep what they were built with until they are rebuilt (the scheduled image check rebuilds one whose inputs changed, and fugaro image build <name> rebuilds one now); changing it later is fugaro settings set bake_repos <true|false> plus the same rebuild\n")
 }
 
 // wizardStages is the wizard's input phase: the stage list one initflow.Run is

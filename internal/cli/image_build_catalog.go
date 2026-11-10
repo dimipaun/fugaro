@@ -43,14 +43,11 @@ func runImageBuildCatalogOrDerived(cmd *cobra.Command, name string, o imageBuild
 	if err := refuseHTTP2Debug(os.Getenv); err != nil {
 		return err
 	}
-	// A Cloud Build is billable: the project's name typed at a real
-	// terminal, never --json, a pipe or a coding agent's session. A run that
-	// can't take it is refused first, before the local config, the bucket or
-	// anything else in the cloud is touched.
+	// What this session is, as the managed door reads it: the owner at their
+	// own terminal and a coding agent's session are the two the gate is read
+	// for, a pipe is not judged (openBuildManaged), and --json never reaches
+	// this far (runImageBuild refuses it for a Cloud Build).
 	conds := initflow.Conditions{Terminal: stdinIsTerminal(cmd.InOrStdin()), JSON: o.asJSON, Agent: agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin()))}
-	if !initflow.CanConfirm(initflow.Typed, conds) {
-		return catalogBuildNotConfirmable(conds, o, name)
-	}
 	env, err := openCloud(ctx, o.cloud)
 	if err != nil {
 		return err
@@ -78,24 +75,6 @@ func runImageBuildCatalogOrDerived(cmd *cobra.Command, name string, o imageBuild
 		return userErr("this project has no image catalog, so there is no entry %s to build: fugaro image add %s writes one and fugaro update publishes it, while fugaro image build --workflow builds a workflow's derived image", pluginwire.Printable(name), pluginwire.Printable(name))
 	}
 	return runImageBuildCloud(cmd, o)
-}
-
-// catalogBuildNotConfirmable is the refusal of a Cloud Build that cannot be
-// confirmed under conds, for the catalog arm: the same sentence the
-// per-workflow build refuses with, routing the operator at the entry they
-// named.
-func catalogBuildNotConfirmable(conds initflow.Conditions, o imageBuildOptions, name string) error {
-	if conds.Agent != "" {
-		return userErr("%s", initflow.AgentRefusal(conds.Agent))
-	}
-	cmd := "fugaro image build"
-	if o.repo != "" {
-		cmd += " --repo " + quoteWord(o.repo)
-	}
-	if name != "" {
-		cmd += " " + quoteWord(name)
-	}
-	return userErr("%s", buildNotConfirmableRoute(cmd))
 }
 
 // runImageBuildCatalog submits one Cloud Build per entry of cat (D1144):
@@ -318,9 +297,8 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 		}
 	}
 	// The plan this command is about, in one value: every entry this invocation
-	// builds is named in it, so what the person is shown (the typed name's own
-	// banner, or the note the gate prints) and what each build's document
-	// carries are one plan (image_build_managed.go).
+	// builds is named in it, so what the person is shown (the banner below) and
+	// what each build's document carries are one plan (image_build_managed.go).
 	entryNames := make([]string, len(entries))
 	for i, e := range entries {
 		entryNames[i] = e.Name
@@ -330,21 +308,16 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 		Account: rs.BuildServiceAccountEmail, Registry: registry, Machine: lc.Build.MachineType,
 		What: catalogBuildBanner(entries, lc.Build.MachineType, rs.BuildServiceAccountEmail, registry),
 	}
-	// The typed name, once, for every entry this command builds: it is what an
-	// unmanaged project is asked and what a session the gate does not stand in
-	// for has always been asked. A managed project's own terminal reads nothing
-	// here — each build is judged and noted on its own below, with D1013's
-	// bound and the kill switch re-read immediately before it.
+	// What this command is about to build, printed once for the whole
+	// invocation: the banner the typed confirmation used to show under it. What
+	// bounds the builds now is the lease taken per entry below, and in a managed
+	// project each entry is judged and recorded on its own (admitEntry), which
+	// is why the gate's own sentence is printed per entry rather than here.
+	fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: %s\n", plan.What)
 	m := openBuildManaged(ctx, env, conds)
-	if !m.standsIn(conds) {
-		if err := confirmBuild(cmd, lc.Name, lc.GCPProject, plan.What); err != nil {
-			return err
-		}
-	}
-	// The copies are written only now, after the confirmation (typed, or the
-	// gate's own in a managed project): like the layer copy the per-workflow
-	// path writes, a declined (or unconfirmable) build must leave no trace in
-	// the bucket.
+	// The copies are written only after each entry's lease is taken, below:
+	// like the layer copy the per-workflow path writes, a build no cap has room
+	// for must leave no trace in the bucket.
 	rb, err := env.recordBucket(ctx)
 	if err != nil {
 		return remote(err)
@@ -352,16 +325,13 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 	// The provider's credential comes from where it actually is -- the local
 	// config, the repository's github-app-key secret and the project's
 	// bitbucket-token secret -- rather than from the process environment,
-	// which holds none of it (catalogProviderEnv). It is read here, after the
-	// confirmation above and before the copies below: a build a person
-	// declined, or one no session can confirm at all, leaves the bucket and
-	// the secrets untouched. The gate's per-entry admission below is the one
-	// judgement that comes later than this read, so a managed project's entry
-	// the gate then refuses has had its credential read already: the copy
-	// that verdict is about is what needs one. The terminal fact is the
-	// command's own stdin, where the confirmation above was typed, so the
-	// helper's coding-agent refusal asks the question this command already
-	// answered.
+	// which holds none of it (catalogProviderEnv). It is read before the copies
+	// below. The gate's per-entry admission and the lease are the two
+	// judgements that come later than this read, so an entry either of them
+	// then refuses has had its credential read already: the copy that verdict
+	// is about is what needs one. The terminal fact is the command's own
+	// stdin, so the helper's coding-agent refusal asks the same question
+	// openBuildManaged asked above.
 	providerEnv, providerHint, err := catalogProviderEnv(ctx, cmd.ErrOrStderr(), lc, rs, entries, os.Getenv, stdinIsTerminal(cmd.InOrStdin()))
 	if builds && err != nil {
 		return err
@@ -375,13 +345,27 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 			return userErr("%v", err)
 		}
 	}
+	// One price lookup for the whole command: every entry's lease is priced
+	// from the same catalog read (buildPricerCache's own note).
+	pricers := &buildPricerCache{}
 	for _, e := range entries {
 		// The gate's own answer about THIS entry, read and judged here rather
-		// than once per command (D1013, D1024): the bound and the kill switch
-		// are read before this build, and the verdict is spent by the record
-		// this build writes after its submission. It comes before the copy so
-		// that an entry the gate refused leaves no trace in the bucket.
+		// than once per command (D1013, D1024): the kill switch is read before
+		// this build, and the verdict is spent by the record this build writes
+		// after its submission. It comes before the lease and the copy so that
+		// an entry the gate refused leaves no trace in the bucket.
 		if err := m.admitEntry(ctx, cmd, conds, cat, e, rs.Slug, plan); err != nil {
+			return err
+		}
+		// T8's lease, taken before anything of this build is written: the copy
+		// below is what the build reads, and a build no cap has room for is
+		// refused before the bucket learns there was one. What the lease
+		// reserved is settled after the build, and given back when the
+		// submission failed. It is charged to the checkout's own repository —
+		// the same rs.Slug the build is submitted under — because that is whose
+		// cap and whose day counter this build is counted against.
+		lease, err := openBuildLease(ctx, cmd.ErrOrStderr(), lc, rs.Name, rs.Slug, pricers)
+		if err != nil {
 			return err
 		}
 		// What the request is named from and what it carries is the same value
@@ -400,7 +384,7 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 		} else {
 			key, err := config.CatalogDockerfileKey(e.Name)
 			if err != nil {
-				return userErr("%v", err)
+				return withLease(userErr("%v", err), lease.release(ctx))
 			}
 			// The bake this entry's definition may carry, decided here where the
 			// entry's name is: the build's own repository, and only when this is
@@ -419,9 +403,9 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 				// failure carries it: providers.ErrNoCredential is only ever the
 				// missing token.
 				if providerHint != "" && errors.Is(err, providers.ErrNoCredential) {
-					return fmt.Errorf("%w%s", err, providerHint)
+					return withLease(fmt.Errorf("%w%s", err, providerHint), lease.release(ctx))
 				}
-				return err
+				return withLease(err, lease.release(ctx))
 			}
 			// What the build pins and records is the copy itself: its bytes and
 			// its object generation, read back from the one object the build
@@ -429,7 +413,7 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 			// this process resolved a moment earlier.
 			data, gen, err := rb.Read(ctx, key)
 			if err != nil {
-				return remote(err)
+				return withLease(remote(err), lease.release(ctx))
 			}
 			// The smoke reads the checkout where this image actually put it: a
 			// composed definition bakes at imagebake.Path, and a smoke still
@@ -446,7 +430,7 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 			sum := sha256.Sum256(data)
 			imageRef, err := gcp.SharedCatalogImage(region, lc.GCPProject, e.Name)
 			if err != nil {
-				return userErr("%v", err)
+				return withLease(userErr("%v", err), lease.release(ctx))
 			}
 			spec.GitProvider, spec.RepoURL, spec.BaseBranch = rs.Provider, rs.RepoURL, cmp.Or(rs.BaseBranch, "main")
 			spec.GitSecretID, spec.GitUser, spec.GitHubAppID = gitID, rs.GitUser, rs.GitHubAppID
@@ -457,17 +441,28 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 		res, err := b.SubmitCatalog(ctx, spec)
 		switch {
 		case errors.Is(err, gcp.ErrBadBuildSpec):
-			return userErr("%v", err)
+			return withLease(userErr("%v", err), lease.release(ctx))
 		case err != nil:
-			return remote(err)
+			return withLease(remote(err), lease.release(ctx))
 		}
 		// The submission IS the write this build's record is about: once it is
 		// out the build happened and keeps billing, so the record is written
 		// whatever the wait after it did (D1014 on a write that cannot leave a
-		// trail). The count moves with it, so the entry after this one is
-		// judged against the bound with this build in it.
+		// trail). A record that could not be written is the failure the person
+		// reads, and the day still counts what the build spent: the build is
+		// out and nothing here can take it back.
+		//
+		// Waited is false here and that is what this path's own sentence asks
+		// for: this return happens before the wait below, in both modes, so the
+		// whole reservation is what the day counts — the same figure a --no-wait
+		// build's settle records, and for the same reason (buildLease.settle).
+		// Settling it as a build this command watched would record the moment
+		// between the submission and this failure at the lease's minute rate and
+		// give the rest of the reservation back, which is money the build Cloud
+		// Build is running is spending and headroom under the caps for a loop of
+		// builds that fail here.
 		if err := m.recorded(ctx); err != nil {
-			return err
+			return withLease(err, lease.settle(ctx, false))
 		}
 		if !o.noWait {
 			fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: Cloud Build build %s of %s submitted; log: %s\n", oneLine(res.ID), oneLine(res.Image), oneLine(res.LogURL))
@@ -480,7 +475,12 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 			}
 			res = done
 			if waitErr != nil {
-				return remote(waitErr)
+				// Watched only when the build really ended: a wait that failed
+				// on a status read, or on a cancelled context, leaves a build
+				// that may still be running, and the whole reservation is what
+				// the day counts for one (buildLease.settle, and the same
+				// decision image.go makes for its own wait).
+				return withLease(remote(waitErr), lease.settle(ctx, gcp.TerminalStatus(done.Status)))
 			}
 		}
 		// A prebuilt entry is smoked and never built, and the sentence says so:
@@ -508,6 +508,12 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 			fmt.Fprintf(cmd.OutOrStdout(), "smoked %s@%s (Cloud Build build %s)\n", oneLine(res.Image), oneLine(res.Digest), oneLine(res.ID))
 		default:
 			fmt.Fprintf(cmd.OutOrStdout(), "built %s@%s (Cloud Build build %s)\n", oneLine(strings.TrimSuffix(res.Image, ":latest")), oneLine(res.Digest), oneLine(res.ID))
+		}
+		// The lease closes after the build's own report, never before it: what
+		// the day counts is money, and the report is what happened to the
+		// build. A settle that fails is still the command's exit.
+		if err := lease.settle(ctx, !o.noWait); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -653,11 +659,12 @@ func catalogBuildSecrets(cfg *config.Config) ([]config.Secret, error) {
 	return out, nil
 }
 
-// catalogBuildBanner is what a catalog build's confirmation says it does:
-// the entries it submits one Cloud Build per, the machine each runs on, the
-// account and the registry the builds push to. An entry a prebuilt image
-// answers is smoked and never built, so a set that holds one says what that
-// run is — the person confirming is being told what each submission does.
+// catalogBuildBanner is what a catalog build says it does: the entries it
+// submits one build per, the machine each runs on, the account and the registry
+// they push to. An entry a prebuilt image answers is smoked and never built, so
+// a set that holds one says what that run is. It is printed once for the whole
+// invocation, and the same sentence is the What of every entry's document
+// (admitEntry), so what the person read and what the gate judged are one plan.
 func catalogBuildBanner(entries []config.Entry, machineType, account, registry string) string {
 	names := make([]string, len(entries))
 	for i, e := range entries {

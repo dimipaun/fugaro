@@ -119,9 +119,18 @@ const (
 // own list of the services its image provides (D1904), and the leaf a person
 // sets with the generic path like every other catalog member, so it is one row
 // the registry carries and this list does not.
+//
+// The triage stage moved this figure twice: its two rows (docs/post-review-
+// triage, T-TR5) are the derived `stages.triage.claude_account`, which the
+// named list carries, and the `agent.triage` switch the `agent.` prefix
+// reaches, and the switch's own carrier in the local project config is the
+// third -- the top-level `triage` the publisher copies into the policy node
+// (D1854), whose owner is the `project` family because `fugaro project policy
+// publish` is what carries it. That last row is the one this paragraph adds:
+// the registry has one row more and the allowlist has not.
 const (
-	cfmRegistryRows   = 395
-	cfmAllowlistNamed = 95
+	cfmRegistryRows   = 398
+	cfmAllowlistNamed = 96
 )
 
 func TestDocsConfigManagementIsWritten(t *testing.T) {

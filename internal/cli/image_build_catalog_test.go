@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"os"
 	"slices"
 	"strings"
@@ -12,12 +13,14 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
 	"github.com/dimipaun/fugaro/internal/image"
 	"github.com/dimipaun/fugaro/internal/imagebake"
+	managedmode "github.com/dimipaun/fugaro/internal/managed"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -145,6 +148,10 @@ func catalogBuildCheckoutFor(t *testing.T, repo, catalog, provider, appID string
 	t.Cleanup(func() { openRecordBucket = prev })
 	f.appendConfig(t, catalog)
 	fb.AddRegistry("proj-1234", "us-east5", gcp.SharedRegistryRepoID())
+	// A catalog entry's build is billable and leases its cost before it is
+	// submitted (T4), so this checkout's installation has the budget database,
+	// the caps and the price lookup a submission needs.
+	buildBudgetWorld(t, f)
 	return fb, gcs, f
 }
 
@@ -478,25 +485,55 @@ func TestCatalogBuildNeverPutsASecretInALogOrAnError(t *testing.T) {
 	}
 }
 
-// TestCatalogBuildCopiesNothingWithoutConfirmation: the copies are written
-// after the typed confirmation, so a run that cannot give it — a pipe here,
-// with a name that only a catalog has — submits nothing and leaves the bucket
-// as it found it.
-func TestCatalogBuildCopiesNothingWithoutConfirmation(t *testing.T) {
-	fb, gcs, _ := catalogBuildCheckout(t, bitbucketYAML, catalogBuildYAML)
+// TestCatalogBuildCopiesNothingOverCap: the copies are written after the lease
+// the build takes (T4), so a build a cap refuses — here the repository's own
+// daily cap, with the entry's copy still to be written — submits nothing to
+// Cloud Build and leaves the bucket as it found it.
+//
+// Mutation (run, restore): move the copy of the entry's Dockerfile above
+// openBuildLease in runImageBuildCatalog, and this test fails: the copy lands
+// in the bucket for a build that was never submitted.
+func TestCatalogBuildCopiesNothingOverCap(t *testing.T) {
+	fb, gcs, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildYAML)
 	stubCatalogProvider(t, map[string]string{".fugaro/base.Dockerfile": catalogBuildFetched})
 	noTerminal(t)
+	f.db.Set(budget.PathCapsRepo(mustSlug("bitbucket", "acme/app")), map[string]any{"dailyMicros": usd1 / 2})
 
 	_, _, err := executeStdin(t, "aurora\n", "image", "build", "tools", "--base", "b:1")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "tools") || !strings.Contains(err.Error(), "terminal") {
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "fugaro budget set") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
 	if buildPosts(fb) != 0 {
-		t.Errorf("an unconfirmable build reached Cloud Build: %d posts", buildPosts(fb))
+		t.Errorf("a build over the repository's cap reached Cloud Build: %d posts", buildPosts(fb))
 	}
 	if !catalogCopyAbsent(t, gcs, "tools") {
-		t.Errorf("an unconfirmable build copied the entry's Dockerfile")
+		t.Errorf("a refused build copied the entry's Dockerfile")
 	}
+}
+
+// TestCatalogBuildCountsTheWholeReservationWhenTheWatchIsLost: an entry whose
+// build is submitted and whose watch then gives up — here the first status read
+// is refused, which Wait does not retry — goes on billing without this command,
+// so the day counts the whole reservation. The catalog arm settles with the same
+// rule as the per-workflow one (image.go, image_build_catalog.go: both settle
+// what gcp.TerminalStatus says of the result the wait returned).
+//
+// Mutation (run, restore): `lease.settle(ctx, gcp.TerminalStatus(done.Status))`
+// back to `lease.settle(ctx, true)` in runImageBuildCatalog: this test fails
+// with 15600 µ$ on the counters, the first minute of a build still running.
+func TestCatalogBuildCountsTheWholeReservationWhenTheWatchIsLost(t *testing.T) {
+	fb, _, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildYAML)
+	stubCatalogProvider(t, map[string]string{".fugaro/base.Dockerfile": catalogBuildFetched})
+	fb.FailGets, fb.FailGetCode = 1, http.StatusForbidden
+
+	_, stderr, err := executeBuild(t, "image", "build", "tools", "--base", "b:1")
+	if err == nil || ExitCode(err) != ExitRemoteError {
+		t.Fatalf("exit %d, err %v: want the lost watch's own error (%s)", ExitCode(err), err, stderr)
+	}
+	if buildPosts(fb) != 1 {
+		t.Fatalf("the entry's build was submitted %d times, want the one the lost watch is about", buildPosts(fb))
+	}
+	wholeReservationCounted(t, f.db, mustSlug("bitbucket", "acme/app"), "for a catalog build whose watch was lost")
 }
 
 // TestCatalogBuildMountsEveryWorkflowsSecrets: an entry is not a workflow
@@ -599,6 +636,81 @@ func TestCatalogBuildStopsAtTheEntryThatFails(t *testing.T) {
 	catalogCopy(t, gcs, "alpha")
 	if !catalogCopyAbsent(t, gcs, "gamma") {
 		t.Errorf("an entry after the failing one was copied: the build went on past the failure")
+	}
+}
+
+// TestCatalogBuildCountsTheWholeReservationWhenItsRecordCannotBeWritten: a
+// build the record's own failure leaves running is counted whole.
+//
+// The gate's record is written after the submission and before the wait, so a
+// record that cannot be written ends the command with a build already out and
+// billing — and nothing in that process watches this build for however long it
+// runs. What the day counts is therefore the whole reservation, exactly as it
+// counts a --no-wait build's (buildLease.settle's contract, image_build_lease.go):
+// settling it as a build whose wait this command measured records the moment
+// between the submission and the failed write at the lease's minute rate and
+// gives the rest of the reservation back, which is money a build that is still
+// running is spending and headroom under the day's and the project's caps for a
+// loop of such builds.
+//
+// Both invocations are held here, because the flag cannot be what decides it:
+// this path returns the command before any wait in either of them.
+func TestCatalogBuildCountsTheWholeReservationWhenItsRecordCannotBeWritten(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		flag []string
+	}{
+		{name: "a build this command would have waited for"},
+		{name: "--no-wait", flag: []string{"--no-wait"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fb, _, f := catalogBuildCheckout(t, bitbucketYAML, catalogBuildThreeYAML)
+			w := managedBuildWorld(t, f, managedBuildMarker(1))
+			stubCatalogProvider(t, map[string]string{".fugaro/base.Dockerfile": catalogBuildFetched})
+			noAgentSession(t)
+			// The gate's own record is the write that fails: by then the
+			// submission is out, and this failure is what the person reads.
+			w.gcs.DenyWrites(initRunsBucket, managedmode.AuditPrefix)
+
+			args := append([]string{"image", "build", "alpha", "--base", "b:1"}, tc.flag...)
+			_, stderr, err := executeBuild(t, args...)
+			if err == nil {
+				t.Fatalf("a build whose audit record could not be written succeeded:\n%s", stderr)
+			}
+			if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "audit record could not be written") {
+				t.Fatalf("exit %d, err %v: want the record failure the person reads", ExitCode(err), err)
+			}
+			if buildPosts(fb) != 1 {
+				t.Fatalf("the build was submitted %d times, want the one submission the record failure is about", buildPosts(fb))
+			}
+			// The whole reservation the lease took, read from the same book the
+			// fixture prices every build with rather than spelled out here.
+			rate, err := budget.BuildCost(pricedBook(), "E2_HIGHCPU_8", "us-east5")
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := rate.Estimate()
+			client, err := newBudgetClient(context.Background(), f.db.URL, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			read, err := budget.ReadBuildState(context.Background(), client, mustSlug("bitbucket", "acme/app"), today())
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, c := range []struct {
+				what string
+				got  budget.Micros
+			}{
+				{"the repository's day counter", read.State.Repo.Counted},
+				{"the project's day counter", read.State.Global.Counted},
+				{"the repository's day spend", read.State.Repo.Spent},
+			} {
+				if c.got != want {
+					t.Errorf("%s is %d µ$ for a build that is still running, want the whole %d µ$ reservation: an unwatched build's settle records all of it, and the first minute of it is what the other direction leaves", c.what, c.got, want)
+				}
+			}
+		})
 	}
 }
 
