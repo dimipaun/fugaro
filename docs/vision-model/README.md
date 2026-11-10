@@ -26,7 +26,7 @@ back on and the task or the repository names image files.
 | File | Role |
 | --- | --- |
 | [spec.md](spec.md) | The spec as received (verbatim): issue #1865's wanted behaviour |
-| [reconciliation.md](reconciliation.md) | Each claim against the code on `main`: what exists, what is missing, what conflicts (findings F1–F17), the decisions D2000–D2016, and the UNVERIFIED items. **Where it disagrees with `spec.md`, it wins** |
+| [reconciliation.md](reconciliation.md) | Each claim against the code on `main`: what exists, what is missing, what conflicts (findings F1–F18), the decisions D2000–D2016, and the UNVERIFIED items. **Where it disagrees with `spec.md`, it wins** |
 | [implementation-plan.md](implementation-plan.md) | Tasks V0–V8 (at most 12 files each), the levels, the critical path, the shared-files table and Checks 520–521. **Nothing in it is approved** |
 
 ## The disagreement a reader meets first
