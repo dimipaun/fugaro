@@ -189,6 +189,9 @@ printf 'fugaro %s\n' "$*" >>"$FAKE148_DIR/calls"
 case "${1:-}" in
 doctor)
   cat "$FAKE148_DIR/doctor.json"
+  # The real doctor prints its whole --json document and THEN exits non-zero
+  # whenever any ordinary check fails, so a case can ask for that by hand.
+  exit "${FAKE_DOCTOR_STATUS:-0}"
   ;;
 creds)
   case "${2:-}" in
@@ -753,6 +756,41 @@ test_the_bundle_cache_is_waited_out() {
   assert_no_secret "$dir" "bundle cache"
 }
 
+# doctor's exit code is not its answer: it prints the whole --json document and
+# exits non-zero whenever any ordinary check fails, and a sandbox installation
+# routinely carries one (a stale plugin pin, a secret not stored yet). A check
+# that read the status as "doctor did not answer" would stop before measuring
+# anything, on exactly the installation the drill is for -- so the document is
+# what is read, and the status is only a line.
+test_a_doctor_that_fails_but_answers_is_still_read() {
+  setup_case doctorfail
+  default_args
+  RUN148_ENV=(FAKE_DOCTOR_STATUS=1)
+  run148
+  expect_status "$status" 0 "doctor exits 1"
+  expect_contains "$out" "FACT installation: PASS — " "doctor exits 1: the installation row is read off the document"
+  expect_contains "$(cat "$dir/err")" "exited 1 and printed its document anyway" "doctor exits 1: the status is said out loud"
+  expect_contains "$out" "FACT stop: PASS — " "doctor exits 1: the drill measured anyway"
+  assert_no_secret "$dir" "doctor exits 1"
+}
+
+# The other half of the same rule: a status that is non-zero AND a document that
+# is not the document is a stop, and the reason names the status so the owner
+# knows which of the two they are looking at.
+test_a_doctor_that_answers_nothing_stops() {
+  setup_case doctorempty
+  default_args
+  : >"$dir/state/doctor.json"
+  RUN148_ENV=(FAKE_DOCTOR_STATUS=1)
+  run148
+  expect_status "$status" 2 "doctor answers nothing"
+  expect_contains "$out" "FACT aborted: FAIL — " "doctor answers nothing: the run is aborted"
+  expect_contains "$out" "did not answer with the document this check reads" "doctor answers nothing: the reason says what was missing"
+  expect_contains "$out" "fugaro exited 1" "doctor answers nothing: the reason names the status"
+  expect_no_bundle_write "$dir" "doctor answers nothing"
+  assert_no_secret "$dir" "doctor answers nothing"
+}
+
 # A rotation that leaves the replaced secret alive at Bitbucket. The write is
 # fine and the mint serves; what fails is the reading that says the old secret
 # is dead, which is the half of a rotation a bundle write cannot do.
@@ -1166,6 +1204,8 @@ t() {
 t test_happy_path
 t test_a_mint_that_outlives_the_stop_is_a_fail
 t test_the_bundle_cache_is_waited_out
+t test_a_doctor_that_fails_but_answers_is_still_read
+t test_a_doctor_that_answers_nothing_stops
 t test_a_rotation_that_leaves_the_old_secret_alive_is_a_fail
 t test_u13_that_ends_the_token_is_recorded_too
 t test_a_successor_that_is_the_same_consumer_stops

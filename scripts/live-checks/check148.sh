@@ -343,11 +343,20 @@ run_capture() {
 # holds it to the name that was typed. doctor is the only thing that reads the
 # config here, and its --json answer is the whole of what this step wants.
 step_installation() {
-  if ! run_capture "$SCRATCH/doctor.json" fugaro doctor --json; then
-    stop "fugaro doctor --json did not answer, so this run cannot tell which installation it is looking at. Run it yourself and fix what it reports: the check needs your own credentials and a local config for the installation"
-  fi
+  # doctor's exit code is not its answer. It prints the whole --json document
+  # and then exits non-zero whenever any ordinary check fails
+  # (internal/cli's emitDoctor), and a sandbox installation routinely carries
+  # one — a stale plugin pin, a secret not stored yet — while its config still
+  # answers with the project and the region this check needs. So the status is
+  # carried, never a stop: what stops the run is an answer that is not the
+  # document, or one that names no project.
+  local doctor_status=0
+  run_capture "$SCRATCH/doctor.json" fugaro doctor --json || doctor_status=$?
   local answer name project region
-  answer=$(reader doctor <"$SCRATCH/doctor.json") || stop "the answer to fugaro doctor --json is not the document this check reads (is this fugaro too old to print --json?)"
+  answer=$(reader doctor <"$SCRATCH/doctor.json") || stop "fugaro doctor --json did not answer with the document this check reads, so this run cannot tell which installation it is looking at (fugaro exited ${doctor_status}; is this fugaro too old to print --json, or is no local config readable?). Run fugaro doctor yourself and fix what it reports"
+  if [ "$doctor_status" != 0 ]; then
+    say "fugaro doctor --json exited $doctor_status and printed its document anyway: this check read the document, and what doctor reported is between you and it"
+  fi
   name=$(field_of name "$answer")
   project=$(field_of project "$answer")
   region=$(field_of region "$answer")
