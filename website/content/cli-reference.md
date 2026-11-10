@@ -2785,8 +2785,9 @@ List the issues saved on this machine, one row each.
 A row names the issue the way `show` and `dismiss` take it —
 its number once it has been uploaded, its local ID before — with the
 class the diagnosis gave it, where it stands, and its one-line summary.
-Nothing is uploaded and nothing is filed: the listing is this machine's
-own folder, read.
+A plain listing uploads nothing and files nothing: it is this
+machine's own folder, read. --mine writes, exactly as `mine` does:
+it uploads this machine's own pending issues before it lists them.
 
 --mine lists the issues this user reported to the project instead: the
 same rows `fugaro issue mine` prints, from the same read, so the two

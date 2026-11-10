@@ -18,8 +18,9 @@ func newIssueListCmd() *cobra.Command {
 			"A row names the issue the way `show` and `dismiss` take it —\n" +
 			"its number once it has been uploaded, its local ID before — with the\n" +
 			"class the diagnosis gave it, where it stands, and its one-line summary.\n" +
-			"Nothing is uploaded and nothing is filed: the listing is this machine's\n" +
-			"own folder, read.\n\n" +
+			"A plain listing uploads nothing and files nothing: it is this\n" +
+			"machine's own folder, read. --mine writes, exactly as `mine` does:\n" +
+			"it uploads this machine's own pending issues before it lists them.\n\n" +
 			"--mine lists the issues this user reported to the project instead: the\n" +
 			"same rows `fugaro issue mine` prints, from the same read, so the two\n" +
 			"commands answer with one listing (F12). --all goes with --mine and only\n" +

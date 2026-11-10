@@ -29,9 +29,13 @@ import (
 // is the release that fixed it, which the shared record carries, and the
 // version comparison against this machine's own — a `mine` that called
 // GitHub would be a `mine` that needs a token, and the record is the thing
-// the store already holds. The one write it makes anywhere but a terminal is
-// the offline snapshot and the identity cache, both of them this machine's
-// own files.
+// the store already holds.
+//
+// It is a listing and not a read-only command: it uploads this machine's own
+// pending issues through SyncPending, which is a write to the shared store
+// under the verified credential's name, and it files the offline snapshot and
+// the identity cache it read with. What it never does is write an issue's
+// *state*: no status, no dismissal, no resolved flag, no GitHub (D1784).
 //
 // The rules it follows are the plan's: the retry suggestion is this
 // machine's own command and never the shared record's (F8), other reporters
@@ -569,14 +573,18 @@ func mineCoverage(r issues.MineRow) string {
 	if r.Coverage == issues.CoverageNone {
 		return ""
 	}
-	fixes := "fixed in " + r.ResolvedIn
+	// The fixing release came out of a shared record or this machine's own
+	// file, so it is another party's bytes on a person's terminal and goes
+	// through the pass like every other stored value (F11); this build's own
+	// version goes with it, because one line of output is one rule.
+	fixes := "fixed in " + oneLine(r.ResolvedIn)
 	switch r.Coverage {
 	case issues.CoverageCovered:
 		return fixes
 	case issues.CoverageCLIOnly:
 		return fixes + "; installation not checked"
 	case issues.CoverageBehind:
-		return fmt.Sprintf("%s; you are on %s: run `fugaro update`", fixes, Version)
+		return fmt.Sprintf("%s; you are on %s: run `fugaro update`", fixes, oneLine(Version))
 	default:
 		// A comparison that cannot be made says which half is missing: a build
 		// that is not a release can never be updated to one (D1736), and a
