@@ -186,6 +186,25 @@ func TestFileAtRefusesA404WhereTheRefDoesNotResolve(t *testing.T) {
 	}
 }
 
+// TestFileAtConfirmsTheRepositoryAloneWhenNoRefIsNamed: a read that names no
+// ref is answered about the API's own default branch, which is one the
+// repository has, so there is no ref to confirm — and the fixture holds exactly
+// the two exchanges this read may make, so a second confirmation, or one sent
+// anywhere else, fails the replay instead of passing quietly. What the answer
+// still costs is the repository confirmation: `metadata: read` on its own.
+func TestFileAtConfirmsTheRepositoryAloneWhenNoRefIsNamed(t *testing.T) {
+	_, err := FileAt(ctx, fileReadOptions(t, "default_branch.json"), &fakePersonReadTokens{}, "acme/web", "", "fugaro.yaml")
+	if !errors.Is(err, ErrFileNotFound) {
+		t.Fatalf("a file the repository does not hold at its default branch: err = %v, want ErrFileNotFound", err)
+	}
+	if !strings.Contains(err.Error(), "the default branch") {
+		t.Fatalf("err = %v, want it to name the default branch rather than an empty ref", err)
+	}
+	if se := statusOf(t, err); se.Status != http.StatusNotFound {
+		t.Fatalf("the wrapped status is %d, want the read's own 404", se.Status)
+	}
+}
+
 // TestFileAtRefusesA404ItCannotRead: a 404 is one of the two typed answers
 // only when its own body says which — a bare "Not Found" for the path, "No
 // commit found …" for the ref — and anything else is Contents's own refusal.
