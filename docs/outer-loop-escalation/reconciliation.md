@@ -3,7 +3,7 @@
 **Checked against** `main` at `6a727d43b` (fetched 2026-11-10), by symbol and path, not line. Where this page disagrees
 with [spec.md](spec.md), this page wins. **Spec owner:** Dimi Paun. **Date:** 2026-11-10.
 
-**Numbers this work holds:** decisions **D2030-D2069** (D2030-D2040 used), checks **540-549** (540-541 used). The highest
+**Numbers this work holds:** decisions **D2030-D2069** (D2030-D2041 used), checks **540-549** (540-541 used). The highest
 numbers found were D2019 on `main` and D1961 in open pull requests; Check 522 on `main` and 481 in open pull requests.
 
 ## Headline: spec concept, what the repo already has
@@ -143,6 +143,18 @@ default needs no migration. A new orchestrator-state field must be optional and 
 (strict decoders). A new recipe ships in the catalog and is reached by `update`. The release's operator section is "run
 `fugaro update`". The plan pins this with a test that an installation at the previous state version converges.
 
+**F21 (Rule). Follow-ups are filed, never approved.** D1226 (stateless-orchestrator): the rule never approves a work item, and
+a task needs the owner's own go. The spec's "important follow-ups are prioritised above new work" therefore orders items that
+are already approved and sorts the pending ones for the person; it never approves one. Consequence: D2040's `importance` field
+sorts and notifies only.
+
+**F22 (Rule/Gap). The stalled PR is a draft, and D1245 merges only a ready PR.** A run that hits its cap ends a draft;
+readiness is the runner's and is not configurable (`docs/recipes.md`). Consequence: D2041 (answered, **not the recommendation**):
+the daemon may mark a draft ready (`gitprov` `ApplyReady`) and then merge, when the judge does not veto and the D1245 gate
+passes at the head SHA. This is a **new write authority for the daemon** and an amendment of D1245's "the PR is ready"
+condition (T3). The gate is evaluated against the exact head SHA that is readied and merged, and the merge call carries that
+SHA, so a push in between refuses it.
+
 ## Decisions
 
 Each answer below is the owner's, given in this conversation on 2026-11-10, and each was the recommendation unless said so.
@@ -157,6 +169,7 @@ Each answer below is the owner's, given in this conversation on 2026-11-10, and 
 | D2035 | Rung 0 mechanism (F10)? | A cloud run with a rebase-only recipe. Cost: minutes per attempt. Alternative: local git in the daemon (a new trust boundary). | **Cloud run with a rebase recipe**, 2026-11-10 (the recommendation) |
 | D2036 | Repeated same finding (F11)? | Rung 2 once, then D1246's split; new-minor churn straight to rung 3. Cost: D1246's first reaction is amended. Alternative: D1246 as ruled. | **Spec order, split as fallback**, 2026-11-10 (the recommendation). D1246 is amended by this. |
 | D2037 | Critical and non-Routine at the ceiling (F13)? | Reuse D1247's `waiting_on: person` with the judge's verdict attached. Cost: a Startup PR in a security path waits. Alternative: the mode alone decides (a credentials PR could merge itself). | **Reuse `waiting_on: person`**, 2026-11-10 (the recommendation) |
+| D2041 | What may the ladder do with a stalled DRAFT whose gate passes and whose judge does not veto (F22)? | Hand it to a person (`waiting_on: person`); readiness stays the runner's alone. Cost: the most common stalled case still needs one human action. Alternatives: the daemon readies and merges; only a rung 2 run may ready it. | **Daemon marks it ready, then merges**, 2026-11-10 (**not the recommendation**; the owner wants the stalled case closed without a person). Consequence followed through in F22 and T3. |
 | D2038 | Cost and time source (F7). | Resolution, one defensible answer: the run chain, not a new meter. | stated, no question |
 | D2039 | Grade keys and defaults (F8). | Resolution: `model_grades.strong|strongest` in the project layer; no built-in model; an unset grade makes the rung refuse and ask. | stated, no question |
 | D2040 | Follow-up importance (F12). | Resolution: one optional field `importance` on the follow-up block; a deterministic rule when no judge ran. | stated, no question |
@@ -186,6 +199,12 @@ D2038-D2040 are resolutions the owner may overturn at the plan's review; each ha
    this live. Confirm that a veto-only judge is acceptable on the stack's security tier.
 3. **O1: "regressions traced to merges" is a proxy (F14).** Confirm "a revert in 7 days" is enough.
 4. **O2: console dashboard** is out of this plan (a console plan of its own); confirm.
+5. **T3: D2041 against D1245 and `docs/recipes.md`.** D1245 merges a ready PR and readiness is "unchanged and not
+   configurable". D2041 gives the daemon the right to ready a draft. The two are reconciled by the head-SHA binding and the
+   unchanged gate (Routine paths, green CI, no critical finding, judge not vetoing), but D1245's text and the recipes page both
+   say readiness is the runner's. State which wins: the plan implements D2041, amends both pages in E0, and keeps the readying
+   behind a local switch `escalation.ready_drafts` (default **off**, so the owner turns authority on once, after Check 540).
+   Confirm the switch default; without it the ladder is built and inert for drafts.
 
 ## UNVERIFIED
 
