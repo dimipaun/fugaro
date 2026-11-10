@@ -342,62 +342,72 @@ func agentUpdateCheckout(t *testing.T) (string, *testutil.ClaudePluginFake, *[]s
 	checkoutFile(t, settings, wiredAt("v0.1.0"))
 	noClaudeOnPath(t)
 	f := testutil.NewClaudePluginFake(t, "[]", "[]")
+	f.On(t, "plugins", userInstall("0.2.0"), argsInstall...)
 	useFakeClaude(t, f)
 	ran := fakeSteps(t, "", nil)
 	t.Setenv("CLAUDECODE", "1")
 	return settings, f, ran
 }
 
-// TestUpdateAgentSessionStopsAtThePluginBeforeTheCheckout: the stage ORDER,
-// which is what makes the checkout's local steps a thing a session reaches only
-// when everything before them is done. The plugin stage runs BEFORE the
-// checkout stage on the same checkout and the same pin, it is not
-// LocalUnderAgent, so under a marker it is left for the user (`fugaro
-// update-skills`) and the loop stops there: the checkout stage is blocked and
-// its local writes never happen. One stage at a time cannot see that — the
-// checkout stage alone runs its local half, which is what the tests above pin —
-// so this one drives the whole converge the way `fugaro update` does and reads
-// the two stages' lines out of the result.
+// TestUpdateAgentSessionRunsThePluginBeforeTheCheckout: the stage ORDER,
+// through the whole converge the way `fugaro update` runs it. The plugin stage
+// runs BEFORE the repository stage and the checkout stage, on the same checkout
+// and the same pin, and it is LocalUnderAgent since U1 of
+// docs/plugin-user-scope/implementation-plan.md (D941): a coding agent's
+// session applies it — the pin and the plugin in Claude Code are this machine's
+// own writes, and the install is the step that clears the staleness line every
+// command prints — so the stages behind it are reached. Before U1 the plugin
+// stage was left whole for the user (`fugaro update-skills`), the loop stopped
+// there, and the checkout stage behind it was blocked with every local write
+// unmade; one stage at a time cannot see that, which is why this test drives the
+// whole converge and reads the stages' lines out of the result.
 //
-// It is the failure the `--yes` help used to promise the other way round ("the
-// writes on this machine's own files ... the plugin in Claude Code"): in a
-// session whose plugin is stale, an update writes nothing at all. The help says
-// what happens now; making the plugin stage run under the marker is a product
-// decision of its own, not a wording fix.
-func TestUpdateAgentSessionStopsAtThePluginBeforeTheCheckout(t *testing.T) {
+// The cloud half is still the step this session leaves for the user, which is
+// what the run's exit says (TestUpdateAgentSessionLeavesTheCloudStepForTheUser
+// is the same fact read off the checkout stage alone).
+func TestUpdateAgentSessionRunsThePluginBeforeTheCheckout(t *testing.T) {
 	settings, f, ran := agentUpdateCheckout(t)
 
 	out, errOut, err := executeStdin(t, "", "update", "--yes", "--json")
 	var res convergeJSON
-	if uerr := json.Unmarshal([]byte(out), &res); uerr != nil {
+	if uerr := json.Unmarshal([]byte(runJSONObject(t, out)), &res); uerr != nil {
 		t.Fatalf("%v:\n%s\n%s", uerr, out, errOut)
 	}
 	if err == nil {
-		t.Errorf("the run reported success with the plugin and the checkout both unmoved:\n%s", out)
+		t.Errorf("the run reported success with the checkout's cloud half parked:\n%s", out)
 	}
-	if got, want := res.state(initflow.Plugin), "needs-you"; got != want {
-		t.Errorf("the plugin stage is %q under the marker, want %q:\n%s", got, want, out)
+	if got, want := res.state(initflow.Plugin), "changed"; got != want {
+		t.Errorf("the plugin stage is %q under the marker, want %q: its writes are on this machine, which is what LocalUnderAgent is for\n%s", got, want, out)
 	}
-	leftPlugin := false
+	if r := pluginwire.Status(settings, "0.2.0", ""); r.Pin != pluginwire.OK {
+		t.Errorf("the pin was not moved in a coding agent's session: %+v\n%s", r, out)
+	}
+	if len(f.Changes(t)) == 0 {
+		t.Errorf("the plugin was not installed in Claude Code in a coding agent's session:\n%s", out)
+	}
+	// The plugin step is not handed back to the user: its own route is the
+	// command a session that left it would name.
 	for _, l := range res.Left {
-		if l["stage"] == initflow.Plugin && strings.Contains(l["text"], selfCommand()+" update-skills") {
-			leftPlugin = true
+		if l["stage"] == initflow.Plugin {
+			t.Errorf("the plugin step is left for the user (%q), want it applied in a coding agent's session\n%s", l["text"], out)
 		}
 	}
-	if !leftPlugin {
-		t.Errorf("the run does not leave the plugin wiring for the user:\n%s", out)
+	// The stage behind it is reached, and it is the checkout whose cloud half
+	// this session may not take: its own line is done with what this session
+	// may do, the images are not built, and the run is not done — the parked
+	// step is what the exit code and left_for_you say (the loop's applied: a
+	// stage that left a step for the user is done, not finished).
+	if got := res.state(initflow.Checkout); got != "done" {
+		t.Errorf("the checkout stage is %q, want %q: the plugin stage applied, so nothing before it stops the run\n%s", got, "done", out)
 	}
-	if got, want := res.state(initflow.Checkout), "blocked"; got != want {
-		t.Errorf("the checkout stage is %q, want %q:\n%s", got, want, out)
+	left := false
+	for _, l := range res.Left {
+		if l["stage"] == initflow.Checkout && strings.Contains(l["text"], "terminal window") {
+			left = true
+		}
 	}
-	if detail := res.stageDetail(t, initflow.Checkout); !strings.Contains(detail, "waits for "+initflow.Plugin) {
-		t.Errorf("the checkout stage does not say what it waits for: %q", detail)
-	}
-	if r := pluginwire.Status(settings, "0.5.1", ""); r.Pin == pluginwire.OK {
-		t.Errorf("the pin moved in a session whose plugin stage never ran: %+v\n%s", r, out)
-	}
-	if len(f.Changes(t)) != 0 {
-		t.Errorf("the plugin was installed in Claude Code in a session that stopped at the plugin stage:\n%s", out)
+	if !left {
+		t.Errorf("the checkout's parked cloud half is not left for the user:\n%s", out)
 	}
 	if len(*ran) != 0 {
 		t.Errorf("the session reached the cloud: steps %q\n%s", *ran, out)
@@ -418,7 +428,7 @@ func TestUpdateAgentSessionStopsAtThePluginBeforeTheCheckout(t *testing.T) {
 // reports the checkout changed with exit 0 — which is what the loop's
 // left-for-you accounting is here for. The two tests above fail with it too.
 func TestUpdateAgentSessionLeavesTheCloudStepForTheUser(t *testing.T) {
-	settings, f, ran := agentCheckout(t)
+	settings, _, ran := agentCheckout(t)
 	root := filepath.Dir(filepath.Dir(settings))
 
 	e, out := checkoutEngine(t, &initOptions{yes: true})
@@ -443,25 +453,14 @@ func TestUpdateAgentSessionLeavesTheCloudStepForTheUser(t *testing.T) {
 		t.Errorf("the left-for-you names %q, want %q (the parked step's own two commands, as its refusal words them)", l.Commands, want)
 	}
 
-	// The second run of the session: the pin is current, no cloud step is
-	// reached, and the step the session may not take is still left for the
-	// user. The stage's check says so (it does not read the parked step as
-	// done), the plan's line keeps naming it, and the JSON carries it.
-	//
-	// Claude Code's own record of the plugin is written here first, so that
-	// the parked step is the ONLY step of the second run's plan: with the
-	// plugin step undone too, an apply that reported the checkout unfinished
-	// for that reason would pass this test as well, and the arm it is here
-	// for (the stage's check reading a plan whose one step is parked) would
-	// never be reached.
-	checkoutFile(t, filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), "plugins", "installed_plugins.json"),
-		`{"version":2,"plugins":{"fugaro@fugaro":[{"scope":"user","version":"0.5.1"}]}}`)
-	// And what Claude Code answers the marketplace list with, which the fake
-	// only moves when the add call runs: the step reads that list before it
-	// decides, so a list that still lacks the marketplace — or holds it at
-	// another ref than this release's tag — is a change to make on every run.
-	// The first run left it pinned to this release, as the step does.
-	f.Write(t, "marketplaces.json", ourMarketAt("v0.5.1"))
+	// The second run of the session: nothing local is left to do — the pin and
+	// the plugin in Claude Code are the plugin stage's halves now (U1), and
+	// they are this release's, as a session that reached that stage leaves them
+	// — no cloud step is reached, and the step the session may not take is
+	// still left for the user. The stage's check says so (it does not read the
+	// parked step as done), the plan's line keeps naming it, and the JSON
+	// carries it.
+	checkoutFile(t, settings, wiredAt("v0.5.1"))
 	*ran = nil
 	e2, out2 := checkoutEngine(t, &initOptions{yes: true})
 	res2 := stageOutcome(t, e2, checkoutStageOf(t, e2))
@@ -470,12 +469,6 @@ func TestUpdateAgentSessionLeavesTheCloudStepForTheUser(t *testing.T) {
 	}
 	if len(*ran) != 0 {
 		t.Errorf("the second run reached the cloud: steps %q\n%s", *ran, out2)
-	}
-	if !strings.Contains(out2.String(), "pin: current") {
-		t.Errorf("the second run did not find the pin already moved:\n%s", out2)
-	}
-	if !strings.Contains(out2.String(), "plugin: current") {
-		t.Errorf("the second run's plugin step is not current, so the parked cloud step is not the only step its plan holds:\n%s", out2)
 	}
 	if !strings.Contains(out2.String(), "skipped here: cloud") {
 		t.Errorf("the second run no longer says which step it leaves:\n%s", out2)

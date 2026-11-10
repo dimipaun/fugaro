@@ -220,21 +220,30 @@ func converge(t *testing.T, node map[string]any, stale []string) {
 	if got := upgradeRead(t, r.settings); !strings.Contains(got, `"ref": "v`+convergeRelease+`"`) {
 		t.Errorf("the plugin pin is still not this release's:\n%s", got)
 	}
-	// The checkout's cloud step is the third step of its stage, and this run
-	// onboarded the repository itself (it is the run the anchor writes
+	// This run onboarded the repository itself (it is the run the anchor writes
 	// fugaro.yaml's gcp_project: line in, which leaves the working tree
 	// different from the default branch): the job images are built here, from
-	// the repository this run converged, and a skipped cloud step would be a
-	// run refusing to build from a file it did onboard.
+	// the repository this run converged, and a skipped repository stage would
+	// be a run refusing to build from a file it did onboard.
 	//
-	// Four builds reach Cloud Build: the repository stage's own first builds
-	// first (the first build of each workflow is billable, and it is confirmed
-	// as every other step of this --yes run is), and then the checkout's cloud
-	// step, which builds the same two because the record it reads is still the
-	// previous release's base -- this rig's, and the whole of what the count
-	// below is.
-	if n := len(r.builder.specs); n != 4 {
-		t.Errorf("%d job image(s) reached Cloud Build, want the checkout's two workflows, built by the repository stage and then by the checkout: the job images of a repository this run onboarded are refreshed here", n)
+	// Two builds reach Cloud Build: the repository stage's own first builds
+	// (the first build of each workflow is billable, and it is confirmed as
+	// every other step of this --yes run is). They are the checkout's two
+	// workflows, built from the record this rig seeded from the previous
+	// release.
+	//
+	// One of each, and not the pair twice: until U1 of
+	// docs/plugin-user-scope/implementation-plan.md the checkout stage's own
+	// check read its pinned plugin step as stale on this fixture and applied
+	// for that reason alone, and the same two images were built a second time
+	// by the cloud step (the stage's apply mode reads the build records, where
+	// its check mode reads only the local config: upgrade_cloud.go's
+	// cloudCheck). The plugin step is the plugin stage's now, the checkout
+	// stage is its cloud step alone, and its check reads that step current —
+	// the images stage pinned this release's base before it, and the records
+	// the repository stage just wrote are this release's.
+	if n := len(r.builder.specs); n != 2 {
+		t.Errorf("%d job image(s) reached Cloud Build, want the checkout's two workflows, built by the repository stage: the job images of a repository this run onboarded are refreshed here", n)
 	}
 }
 
