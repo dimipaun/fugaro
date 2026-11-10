@@ -3880,10 +3880,119 @@ Flags:
 
 Subcommands:
 
+- `fugaro project clone-url` -- The clone URL each of the project's repositories clones from
 - `fugaro project policy` -- The project's published policy (config/policy/shared)
 - `fugaro project repos` -- The project's allow-list: which repositories may run
 - `fugaro project show` -- Show the effective project: caps, policy, allow-list, repositories running now
 - `fugaro project sync` -- Offer the GitHub App's installed repositories that the allow-list does not admit
+
+## `fugaro project clone-url`
+
+The clone URL each of the project's repositories clones from
+
+Usage: `fugaro project clone-url`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for clone-url |
+
+Subcommands:
+
+- `fugaro project clone-url ls` -- List the clone URL of every repository the project gives one
+- `fugaro project clone-url rm` -- Take a repository's clone URL away
+- `fugaro project clone-url set` -- Give a repository the URL its runs clone from
+
+## `fugaro project clone-url ls`
+
+List the clone URL of every repository the project gives one
+
+List the project's clone_urls block: one line per repository, under the
+canonical name (<provider>/<owner>/<name>) the runner looks it up by, with
+the URL that repository's runs clone from.
+
+The block is this machine's project config file. `fugaro update` publishes
+it into the project's policy node, which is what a run reads, so a line here
+that no publish has carried yet is a change the next update makes.
+
+A project that gives no repository a URL lists nothing rather than printing
+an empty table: the node may still carry a block this file says nothing
+about, and `fugaro project policy show` prints that one.
+
+Usage: `fugaro project clone-url ls`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for ls |
+| `--json` | bool | `false` | no | print machine-readable output |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro project clone-url rm`
+
+Take a repository's clone URL away
+
+Remove one entry of the project's clone_urls block, in this machine's
+project config file. The other entries stand, and the block's key stays —
+written with no entry under it when the last one goes, which is how the
+project states that it gives no repository a URL.
+
+The key standing is not decoration: a file that says nothing about the block
+keeps the published node's (so a machine whose config predates the key does
+not take the project's clone URLs away), and a file that writes an empty
+block is the statement that there are none. Removing the last entry and
+leaving the key is therefore the only spelling that takes a published block
+away; the change reaches a run through `fugaro update`.
+
+Usage: `fugaro project clone-url rm <provider>/<owner>/<name>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for rm |
+| `--yes` | bool | `false` | no | confirm the write without a prompt |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro project clone-url set`
+
+Give a repository the URL its runs clone from
+
+Write one entry of the project's clone_urls block, in this machine's
+project config file.
+
+The repository is named canonically — <provider>/<owner>/<name>, the spelling
+the allow-list and the CLI use everywhere — and the URL must be an https URL
+without credentials that names exactly that repository on that provider's own
+host. A URL naming another repository, or another host, is refused before
+anything is written: the URL is where a run clones from, while its slug, its
+locks, its cache and its budget session all name the repository its own
+task.json does, and a run that cloned from elsewhere while doing this
+repository's work is the thing the node's own rule exists to refuse.
+
+The change reaches a run through `fugaro update`, which publishes the policy
+node the runner reads.
+
+Usage: `fugaro project clone-url set <provider>/<owner>/<name> <url>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for set |
+| `--yes` | bool | `false` | no | confirm the write without a prompt |
+
+Subcommands:
+
+This command has no subcommands.
 
 ## `fugaro project policy`
 
