@@ -145,6 +145,37 @@ func TestRunRequestsSlipWhenServiceServesIt(t *testing.T) {
 	}
 }
 
+// TestTheSlipIsAskedForTheExecutionsOwnTimeout: a task that names a total
+// timeout gets an execution the backend creates for that total PLUS
+// backend.TaskTimeoutSlack (backend.LaunchSpec.Timeout's own comment, and what
+// internal/backend/gcp and internal/backend/batch both do with it), so a slip
+// asked for the task's total alone would stop serving up to the slack before
+// the execution it was granted for ends — the run refused a credential while
+// it is still working, which is the state slipRunTime exists to keep out. The
+// launcher asks for the execution's own timeout, and the service clamps what
+// it will grant (R10), so a request above the platform's maximum is the most
+// there is rather than a refusal.
+//
+// Mutation (verified, run and restored): return launchTimeoutOf(spec) without
+// backend.TaskTimeoutSlack and this fails by exactly the slack.
+func TestTheSlipIsAskedForTheExecutionsOwnTimeout(t *testing.T) {
+	r := newSlipLaunchRig(t)
+	r.spec.Overrides.TotalTimeout = "45m"
+	plain := r.launch(t, func(req credsvc.SlipGrantRequest) (credsvc.SlipGrantResponse, error) {
+		return credsvc.SlipGrantResponse{Slip: fakeSlipID, MaxRuntimeSeconds: req.MaxRuntimeSeconds}, nil
+	})
+	if got, want := r.rec.timeout, 45*time.Minute; got != want {
+		t.Fatalf("the launch gave the execution the task timeout %s, want %s: this test is about the slip that execution is served under", got, want)
+	}
+	if got, want := r.req.MaxRuntimeSeconds, int64((r.rec.timeout+backend.TaskTimeoutSlack)/time.Second); got != want {
+		t.Errorf("the grant call asked to be served for %ds, want the execution's own timeout (%d): the slip ends when it ends, and one that ended %s short of the execution would refuse the run a credential while it is still working",
+			got, want, backend.TaskTimeoutSlack)
+	}
+	if want := []string{envCredentialsServiceURL + "=" + launchCredsURL, envSlip + "=" + fakeSlipID}; !slices.Equal(plain, want) {
+		t.Errorf("the launch handed the job %v, want %v", plain, want)
+	}
+}
+
 // TestRunFallsBackWithoutSlipRoute: an installation whose credentials service
 // is older than this CLI proceeds on the existing path — the launch spec it
 // built before the slip existed, and nothing said about it, because a service

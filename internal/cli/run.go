@@ -4875,16 +4875,27 @@ func slipCredentialNames(ctx context.Context, env *cloudEnv, spec *task.Spec) ([
 }
 
 // slipRunTime is how long this run asks to be served for: the run's own
-// ceiling, which is the task's total timeout and what the platform is given as
-// the execution's timeout, and the platform's maximum where the task names
-// none, since that is what the backend would run it for. Asking for the run's
-// own ceiling rather than a guess is what keeps the two from drifting apart: a
-// slip that ends before the run does is a run refused at its next call, and
-// the service clamps what it will grant to its own constant (R10).
+// ceiling, which is the execution's own timeout — the task's total plus the
+// slack the backend adds to it, so the slip and the execution end together —
+// and the platform's maximum where the task names no total, since that is what
+// the backend would run it for. Asking for the run's own ceiling rather than a
+// guess is what keeps the two from drifting apart: a slip that ends before the
+// run does is a run refused at its next call, and the service clamps what it
+// will grant to its own constant (R10).
 func slipRunTime(spec *task.Spec) time.Duration {
 	if d := launchTimeoutOf(spec); d > 0 {
-		return d
+		// The execution this slip is granted for is not the task's own total
+		// but that total plus the slack the backend adds to it
+		// (backend.LaunchSpec.Timeout), so the task's total alone buys the run
+		// a slip that ends while the execution it was granted for is still
+		// working. The service clamps what it will grant (R10), so asking for
+		// the whole of it is asking for the run's own ceiling and no more.
+		return d + backend.TaskTimeoutSlack
 	}
+	// A task that names no total runs for the job's own timeout, which is a
+	// platform read this launcher does not make; the platform's maximum is
+	// what it asks for instead, and that is also the most the service will
+	// grant, so there is no slack to add here that would buy the run anything.
 	return backend.MaxRunTime
 }
 
