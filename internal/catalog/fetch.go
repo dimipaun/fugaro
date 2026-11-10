@@ -297,8 +297,8 @@ var directiveRE = regexp.MustCompile(`^([a-zA-Z][a-zA-Z0-9]*)\s*=\s*(.+?)\s*$`)
 // naming a directive the parser knows ends the block. A blank line, a plain
 // comment and a comment naming anything else (# foo=bar) all end it, so an
 // `# escape=` written after one of them is a comment to a build and is not
-// followed here either. Only `syntax` and `check` carry the scan on. What may sit in
-// front of the '#' is the parser's own reading too: the first physical line of
+// followed here either. Only `syntax` and `check` carry the scan on. What may
+// sit in front of the '#' is the parser's own reading too: the first physical line of
 // a logical line is stripped of its leading whitespace before the directive is
 // matched, and every line here is a first line (a comment never continues one).
 func dockerfileEscape(data string) byte {
