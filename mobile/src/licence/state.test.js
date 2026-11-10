@@ -59,8 +59,10 @@ import {
   LAPSE_KEPT_WRITES,
   LICENCE_STATE_CODES,
   LICENCE_STATES,
+  UNENFORCED_LICENCE,
   WRITES,
   createLicenceState,
+  lapseRefusalAt,
   licenceSpeech,
   licenceState,
   lapseRefusal,
@@ -390,6 +392,43 @@ test('a store that will not answer reads as no key, and not as a lapse', async (
   const read = await port.at(at(ISSUED));
   assert.equal(read.state, LICENCE_STATES.NO_KEY);
   assert.equal(lapseRefusal(read.state, WRITES.LAUNCH), null, 'and so it refuses nothing');
+});
+
+test('the write path reads the port for the writes a lapse could refuse, and never for the ones it keeps', async () => {
+  const production = signer('prod-2026');
+  const port = createLicenceState({
+    store: new MemoryStore([mint(production, claimsFor())]),
+    verifier: verifier([production]),
+  });
+  const past = at(ISSUED + 400 * DAY);
+  const live = at(ISSUED + 10 * DAY);
+
+  // The verdicts, over a real store and a real key: the launch is refused once
+  // the key has lapsed and not before, and the kept set is kept at both.
+  assert.deepEqual(await lapseRefusalAt(port, { now: past, write: WRITES.LAUNCH }), refusedWrite());
+  assert.equal(await lapseRefusalAt(port, { now: live, write: WRITES.LAUNCH }), null, 'a live key refuses nothing');
+  assert.equal(await lapseRefusalAt(port, { now: past, write: WRITES.CANCEL }), null);
+
+  // **And the kept writes are not read at all.** A cancel, a message and the
+  // kill switch are kept at every state, so there is nothing to read for them:
+  // the phone does not open its licence store to send an ordinary message. The
+  // spy is the claim -- a port that answers a lapse and is never asked.
+  const asked = [];
+  const spy = { at: async (now) => { asked.push(now); return Object.freeze({ state: LICENCE_STATES.LAPSED, claims: null }); } };
+  for (const write of LAPSE_KEPT_WRITES) {
+    assert.equal(await lapseRefusalAt(spy, { now: past, write }), null, `${write} is kept, and needs no reading`);
+  }
+  assert.deepEqual(asked, [], 'a kept write never reads the store');
+  // A write the table cannot name is NOT kept (§4.2's closed set), so it is read
+  // and refused: the reading happens for everything the table cannot vouch for.
+  assert.deepEqual(await lapseRefusalAt(spy, { now: past, write: null }), refusedWrite());
+  assert.deepEqual(await lapseRefusalAt(spy, { now: past, write: 'a-write-nobody-named' }), refusedWrite());
+  assert.deepEqual(asked, [past, past], 'an unnameable write is read, and at the moment it was handed');
+
+  // The shipped default carries no reading and refuses nothing: D523's
+  // honour-based product, and the reason a release that has not wired a verifier
+  // yet does not refuse a launch.
+  assert.equal(await lapseRefusalAt(UNENFORCED_LICENCE, { now: past, write: WRITES.LAUNCH }), null);
 });
 
 test('a port built over something that cannot read a store is a wiring bug, and throws', () => {

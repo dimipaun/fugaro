@@ -293,6 +293,35 @@ export function lapseRefusal(state, write) {
 }
 
 /**
+ * The refusal one write gets, read from the port at one moment.
+ *
+ * It is the composition the write path needs -- classify, read, judge -- and it
+ * is here rather than in the client for one reason: **a kept write is never read
+ * at all.** Nothing has to be known about the state to know that a cancel or a
+ * message is kept (the kept set says so at every state), so the phone does not
+ * open the licence store to send an ordinary message. Splitting the two halves
+ * across the two files would put that rule -- "which writes need a reading" --
+ * somewhere other than beside the set it is about.
+ *
+ * The port is asked at a moment the caller supplies, as `verify.js` is, and its
+ * answer says `null` when there is no port worth asking (`UNENFORCED_LICENCE`):
+ * no port, no reading, no refusal, and the write goes on as it did before this
+ * module existed.
+ *
+ * @param {object} port a licence port: `at(now: Date)`
+ * @param {object} [utterance]
+ * @param {Date} [utterance.now] the moment to read the state at
+ * @param {string|null} [utterance.write] the class `writeOf` answered
+ * @returns {Promise<{ ok: false, code: string, field: string } | null>} frozen
+ */
+export async function lapseRefusalAt(port, { now, write } = {}) {
+  if (LAPSE_KEPT_WRITES.includes(write)) return null;
+  const reading = await port.at(now);
+  if (reading === null || reading === undefined) return null;
+  return lapseRefusal(reading.state, write);
+}
+
+/**
  * The app's licence state as the mailbox client's port: the store it reads the
  * keys from, and the verifier it reads them with.
  *

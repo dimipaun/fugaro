@@ -38,6 +38,7 @@ import { KIND, OUTCOME, REFUSAL, initialState, step } from '../../../shared/mail
 import { REFUSALS as SCHEMA_REFUSALS, validateHeartbeat, validateMessage } from '../../../shared/mailbox-schema/index.js';
 import { REASON, STATE, evaluatePresence } from '../../../shared/presence/index.js';
 import { MemorySecureStore, SecretStore, secret } from '../accounts/index.js';
+import { LICENCE_SPEECH, LICENCE_STATE_CODES, LICENCE_STATES, createLicenceState } from '../licence/state.js';
 import { CLIENT_CODES, MAILBOX_TTL_MS, PRESENCE_REASON, createMailboxClient, toPresenceHeartbeat } from './client.js';
 import { MemoryConnection } from './connection.js';
 import { GATE_CODES, OFFLINE_SPEECH } from './gate.js';
@@ -189,6 +190,10 @@ async function harness(options = {}) {
     secrets: options.secrets ?? SECRETS,
     heartbeatIntervalMs: options.heartbeatIntervalMs ?? INTERVAL_MS,
     ...(options.mailboxTtlMs === undefined ? {} : { mailboxTtlMs: options.mailboxTtlMs }),
+    // S6.3's port. It is NOT defaulted here: `null` and `{}` are wiring bugs the
+    // constructor must still catch, and a harness that quietly replaced them
+    // would be a harness no test could use to ask about them.
+    ...(options.licence === undefined ? {} : { licence: options.licence }),
   });
 
   // **The phone starts where the app's does: one poll already made.**
@@ -1558,10 +1563,33 @@ test('nothing in the module reads a clock, a random source, a file or a global',
   // `src/boundary.test.js` uses, and for the same reason: this file's own
   // header names the tokens it forbids). The positive control runs first, so a
   // scan that had stopped matching anything cannot pass silently.
-  const FORBIDDEN = [/\bDate\.now\b/, /\bMath\.random\b/, /\bnew Date\b/, /\bprocess\./, /\bglobalThis\b/, /\brequire\s*\(/];
-  const control = `const t = Date.now();`;
-  assert.equal(FORBIDDEN.some((pattern) => pattern.test(code(control))), true, 'the control is flagged');
+  //
+  // **`new Date` is the one token with two spellings that mean different
+  // things**, and the pattern is anchored to the one that reads a clock:
+  // `new Date()` asks the machine what time it is, while `new Date(at)` is a
+  // CONVERSION of the moment the client was handed -- D117's milliseconds into
+  // the `Date` the licence's verifier takes (S6.3; `verify.js` takes a `Date`,
+  // and `src/feed/reader.js` converts the same way for the same reason). The
+  // anchor is `( )` with nothing in it; the property the rule is about ("nothing
+  // here depends on the machine") is untouched by it, and the controls below
+  // prove both directions, as does the count of Date constructions at the end.
+  const FORBIDDEN = [
+    /\bDate\.now\b/,
+    /\bMath\.random\b/,
+    /\bnew Date\s*\(\s*\)/,
+    /\bprocess\./,
+    /\bglobalThis\b/,
+    /\brequire\s*\(/,
+  ];
+  for (const control of ['const t = Date.now();', 'const t = new Date();', 'const t = new Date ()']) {
+    assert.equal(FORBIDDEN.some((pattern) => pattern.test(code(control))), true, `${control} is flagged`);
+  }
   assert.equal(FORBIDDEN.some((pattern) => pattern.test(code(`// Date.now() is not read here`))), false, 'prose is not');
+  assert.equal(
+    FORBIDDEN.some((pattern) => pattern.test(code('const moment = new Date(at);'))),
+    false,
+    'and a conversion of the moment the client was handed is not a clock read',
+  );
 
   for (const name of [
     'client.js',
@@ -1579,6 +1607,14 @@ test('nothing in the module reads a clock, a random source, a file or a global',
       assert.equal(pattern.test(source), false, `${name}: ${pattern}`);
     }
   }
+
+  // ... and the count of Date constructions, which is what makes the anchor
+  // above exactly as strong as it should be: this module builds exactly ONE
+  // `Date`, over the moment it was handed (`send`'s `at`, D117's clock) and over
+  // nothing else. A second one over anything but `at` is a flagged change.
+  const built = [...code(readFileSync(new URL('client.js', import.meta.url), 'utf8'))
+    .matchAll(/\bnew Date\s*\(([^)]*)\)/g)].map((match) => match[1].trim());
+  assert.deepEqual(built, ['at'], 'the client builds one Date, from the clock it was given');
 });
 
 /**
@@ -1983,4 +2019,261 @@ test('a sentence comes from the gate alone, and every other refusal is bare', as
   // And it is still refused for its own reason: the bare shape is not one code.
   assert.equal(tooLong.code, CLIENT_CODES.TOO_LONG, 'and it is the refusal it says it is');
   assert.equal(whileOffline[0][1].code, GATE_CODES.NO_CONNECTION);
+});
+
+// ---------------------------------------------------------------------------
+// The lapse (S6.3; D436, T12; the design is docs/design/lapse-read-only.md §4)
+// ---------------------------------------------------------------------------
+//
+// The plan's test for this task is one sentence -- "after grace the mailbox
+// client refuses launch and config actions and allows cancel and the kill
+// switch", and "the no-key state behaves as S6.1 says" -- and the two halves of
+// it are the two halves below, in that order.
+//
+// **Why the check is in this client at all.** D113 makes `send` the app's one
+// write path: a launch, a settings change and a chat message all leave the
+// phone through this function, so a lapse enforced anywhere else would be a
+// lapse a caller could walk around. The design says it in one line (§4.3: "the
+// check runs in the mailbox client's `send`, beside the connection gate, before
+// anything is minted, signed or written"), and what these tests hold is exactly
+// that sentence: the refusal comes back with nothing written, no id minted and
+// no key read.
+//
+// **What the state module owns, and what this file owns.** Which state the app
+// is in and which writes a lapse keeps is `src/licence/state.js` and has its own
+// suite (`state.test.js`, over real Ed25519 keys); the port this file is handed
+// is that module's reading, and the tests here hand in stub ports, because what
+// is being tested is the CLIENT's use of one. The seam between the two -- the
+// port `createLicenceState` builds, read by this client with no adapter between
+// -- has a test of its own at the end.
+//
+// **The verb has to be handed in, and that is the one new thing `send` takes.**
+// D162's launch travels as an ordinary message: it is not one of D169's four
+// action verbs and it is not an app command, so at the write path a launch and
+// a question are the same bytes and this module cannot tell them apart. It
+// arrives as `options.verb`, classified by the caller (the screens, through
+// `shared/confirm`'s machine) because the classification is about what the owner
+// SAID and not about what this module writes.
+//
+// **The refusal is the gate's shape, and it is the second sentence in the app.**
+// A licence refusal carries `message` and `told` exactly as a gated one does
+// (§5.7: it is rendered the way the offline refusal is), and its sentence comes
+// from `licence/state.js`'s table rather than from `gate.js`'s -- the same
+// lookup, a different table, so the voice screen and the text screen need no
+// licence concept of their own. The case is named in the belief test at the end
+// of this file, which is where the README's claim about sentences lives.
+
+/** A licence port stuck in one state, with a log of when it was read. */
+function licenceIn(state) {
+  const read = [];
+  return {
+    /** Every moment the port was asked about, in order. */
+    read: () => Object.freeze([...read]),
+    port: Object.freeze({
+      at: async (now) => {
+        read.push(now);
+        return Object.freeze({ state, claims: null });
+      },
+    }),
+  };
+}
+
+/** The refusal a lapsed write comes back with: the gate's shape, the licence's
+ * sentence (D436, §5.7). */
+function lapsedRefusal() {
+  return {
+    ok: false,
+    code: LICENCE_STATE_CODES.LAPSED,
+    field: 'licence',
+    message: LICENCE_SPEECH[LICENCE_STATE_CODES.LAPSED],
+    told: true,
+  };
+}
+
+/** D169's merge record: a repository write, and the one action whose verb the
+ * schema demands a head SHA for (`shared/mailbox-schema/index.js`). */
+function mergeRecord(at) {
+  return {
+    id: 'a-2',
+    verb: 'merge',
+    target: { repo: 'acme/site', pr: 7 },
+    head_sha: 'a'.repeat(40),
+    confirmation: { id: 'c-2', at },
+  };
+}
+
+/** D169's confirmation of a merge: the same repository write, confirmed. */
+function confirmMergeRecord(at) {
+  return {
+    id: 'a-3',
+    verb: 'confirm',
+    target: { repo: 'acme/site', pr: 7 },
+    confirmation: { id: 'c-3', at },
+  };
+}
+
+test('after the grace a launch is refused, and nothing is minted, signed or written', async () => {
+  const lapse = licenceIn(LICENCE_STATES.LAPSED);
+  const h = await harness({ licence: lapse.port, keys: countingKeys(new SecretStore(new MemorySecureStore())) });
+  const askedOfTheConnection = h.connection.asked().length;
+
+  const refused = await h.client.send('launch the docs task', { verb: 'launch' });
+
+  assert.deepEqual(refused, lapsedRefusal(), 'the refusal is a code, a field, a sentence and a `told`');
+  assert.deepEqual(
+    h.speaker.spoken(),
+    [LICENCE_SPEECH[LICENCE_STATE_CODES.LAPSED]],
+    'the owner is told, in the licence’s own words',
+  );
+  assert.deepEqual(h.store.writes(), [], 'nothing was written');
+  assert.equal(h.minted(), 0, 'no id was minted');
+  assert.deepEqual(h.keys.asked(), [], 'and the pairing key was never touched');
+  // The licence is asked BEFORE the connection is, and that order is a decision:
+  // both are true of this utterance, and the licence is the one whose sentence
+  // can help (the key screen) -- "try again when you are online" would be advice
+  // that cannot work, to someone whose next launch is refused either way.
+  assert.equal(h.connection.asked().length, askedOfTheConnection, 'the connection was not even asked');
+  assert.deepEqual(lapse.read(), [new Date(T0)], 'the state was read at the client’s own clock, as a Date');
+  // D167's rule, unchanged by the second refuser: the utterance is kept as text
+  // the owner can resend after adding a key, and it is NOT in the outbox queue --
+  // `flush` never sends it, because delivering it hours later is what the rule
+  // is about. Resending it is a new utterance with a new id.
+  assert.deepEqual(h.client.unsent(), [
+    { text: 'launch the docs task', at: T0, code: LICENCE_STATE_CODES.LAPSED },
+  ]);
+  assert.deepEqual(h.client.pending(), []);
+});
+
+test('after the grace the configuration change is refused too', async () => {
+  // §4.2's second refused row. The app has no settings command yet (the class
+  // is named in `state.js` so that the day one lands it is a row rather than an
+  // oversight), and this is the client half of it: a caller that classifies an
+  // utterance as a configuration change is refused at a lapse whatever the
+  // command it would have become.
+  const h = await harness({ licence: licenceIn(LICENCE_STATES.LAPSED).port });
+  const refused = await h.client.send('make it quieter', { verb: 'config' });
+  assert.equal(refused.code, LICENCE_STATE_CODES.LAPSED);
+  assert.deepEqual(h.store.writes(), []);
+  assert.deepEqual(h.client.unsent().map((entry) => entry.text), ['make it quieter']);
+});
+
+test('after the grace a merge is refused, and a confirm of one, while a cancel is written', async () => {
+  const h = await harness({ licence: licenceIn(LICENCE_STATES.LAPSED).port });
+
+  // A repository write is not among the three things T12 keeps (§4.2's own
+  // call), whether it arrives as D169's `merge` or as a `confirm` naming a
+  // repository -- and the two records here are schema-VALID, so the refusal is
+  // the licence's and not the schema's.
+  assert.equal((await h.client.send('merge it', { action: mergeRecord(T0) })).code, LICENCE_STATE_CODES.LAPSED);
+  assert.equal(
+    (await h.client.send('yes, merge it', { action: confirmMergeRecord(T0) })).code,
+    LICENCE_STATE_CODES.LAPSED,
+  );
+  assert.deepEqual(h.store.writes(), [], 'nothing was written');
+  assert.deepEqual(h.client.unsent(), [], 'and a refused action is not kept as unsent text either (D167)');
+  assert.deepEqual(h.client.pending(), []);
+
+  // The cancel, by contrast, is kept: it is T12's own set, and a stopped job
+  // must stay stoppable however the subscription stands. The verb handed in
+  // beside the record is not consulted -- the record is what is being written.
+  const cancelled = await h.client.send('cancel the docs refactor', { action: actionRecord(T0), verb: 'launch' });
+  assert.deepEqual(cancelled, { ok: true, id: 'm-1', at: T0 });
+  assert.equal(h.store.writes()[0].value.kind, 'action', 'written as D169’s record, not as a message');
+  assert.deepEqual(h.store.writes()[0].value.action, actionRecord(T0));
+});
+
+test('after the grace a message and the kill switch are kept, and the lapse is not read for them', async () => {
+  const lapse = licenceIn(LICENCE_STATES.LAPSED);
+  const h = await harness({ licence: lapse.port });
+
+  // Ordinary chatter, and every read the app speaks, is a message like any
+  // other at a lapse (T12 keeps the reads; §4.2 keeps the message).
+  assert.deepEqual(await h.client.send('how is it going'), { ok: true, id: 'm-1', at: T0 });
+  // The kill switch is T12's third kept row. The app READS the kill state and
+  // draws it as a job field (§4.1) and `shared/confirm` refuses `kill` and
+  // `kill-switch` as verbs, so there is no kill action to send -- a verb
+  // classified as one is a message here, and it is the kept class that says so.
+  assert.deepEqual(await h.client.send('stop everything', { verb: 'kill-switch' }), { ok: true, id: 'm-2', at: T0 });
+
+  // **And the store is never opened for either of them.** A kept write is kept
+  // at every state, so there is nothing to read: the phone does not consult its
+  // licence store to send a message. That rule lives with the kept set in
+  // `state.js` (`lapseRefusalAt`), and this is the client end of it.
+  assert.deepEqual(lapse.read(), [], 'a kept write never reads the licence store');
+  assert.equal(h.store.writes().length, 2);
+});
+
+test('the no-key state, and every state but the lapse, refuses nothing at all (S6.1)', async () => {
+  // The plan's second half, and the one D523 makes load-bearing: the no-key
+  // state is what an installation upgraded into the enforcing release is in, and
+  // what a fresh install is in, so a refusal there would stop work for everyone
+  // who has not bought a licence yet. The unverified state reads as the no-key
+  // state too (§5.4), and the two states with a key that applies keep everything
+  // until the grace runs out (§5.1).
+  for (const state of [LICENCE_STATES.NO_KEY, LICENCE_STATES.VALID, LICENCE_STATES.GRACE, LICENCE_STATES.UNVERIFIED]) {
+    const h = await harness({ licence: licenceIn(state).port });
+    assert.deepEqual(
+      await h.client.send('launch the docs task', { verb: 'launch' }),
+      { ok: true, id: 'm-1', at: T0 },
+      `${state}: a launch goes out`,
+    );
+    assert.deepEqual(
+      await h.client.send('merge it', { action: mergeRecord(T0) }),
+      { ok: true, id: 'm-2', at: T0 },
+      `${state}: so does a merge`,
+    );
+    assert.equal(h.store.writes().length, 2, `${state}: both were written`);
+    assert.deepEqual(h.speaker.spoken(), [], `${state}: nothing is said about a licence`);
+  }
+});
+
+test('a client built with no licence port refuses nothing, which is the product D523 deferred', async () => {
+  // The default port is `UNENFORCED_LICENCE` and it is deliberate: there is
+  // nothing to enforce WITH until the app has a verifier and a key service
+  // (D523), and a release that had not wired one must not refuse a launch on a
+  // state it never read. This test is the shipped behaviour of `mobile/index.js`
+  // today, and it is the one that would fail if the default were ever flipped to
+  // a refusing port.
+  const h = await harness();
+  assert.deepEqual(await h.client.send('launch the docs task', { verb: 'launch' }), { ok: true, id: 'm-1', at: T0 });
+});
+
+test('the port the licence state module builds fits this client, with no adapter between', async () => {
+  // The seam, end to end and the reason the two modules are shaped as they are:
+  // `createLicenceState` takes the store and the verifier `licence/index.js`
+  // wires, `send` takes its port, and nothing sits between them. The verifier
+  // here is a stub FOR THE SEAM'S SAKE -- the real one, over real signatures, is
+  // `state.test.js`'s -- because what this test holds is the shape of the
+  // hand-off, not the arithmetic of a key.
+  const noKey = createLicenceState({
+    store: { keys: async () => Object.freeze({ ok: true, keys: [] }) },
+    verifier: { latest: () => null },
+  });
+  const fresh = await harness({ licence: noKey });
+  assert.deepEqual(
+    await fresh.client.send('launch the docs task', { verb: 'launch' }),
+    { ok: true, id: 'm-1', at: T0 },
+    'the store is empty: the no-key state, and nothing is refused',
+  );
+
+  const lapsed = createLicenceState({
+    store: { keys: async () => Object.freeze({ ok: true, keys: ['a-key-this-phone-installed'] }) },
+    verifier: { latest: () => Object.freeze({ state: 'expired', claims: Object.freeze({}) }) },
+  });
+  const expired = await harness({ licence: lapsed });
+  assert.deepEqual(
+    await expired.client.send('launch the docs task', { verb: 'launch' }),
+    lapsedRefusal(),
+    'the key expired past its grace: the launch is refused',
+  );
+  assert.deepEqual(expired.client.unsent().map((entry) => entry.code), [LICENCE_STATE_CODES.LAPSED]);
+});
+
+test('a licence port that cannot be asked is a wiring failure, like every other port', async () => {
+  // The constructor rule the connection already has, for the same reason: a
+  // half-wired port that quietly refused nothing would be a licence nobody
+  // enforces and nobody notices, which is worse than a crash at the wiring.
+  for (const licence of [{}, null, { at: 'not a function' }]) {
+    await assert.rejects(harness({ licence }), TypeError, `${JSON.stringify(licence)} is not a port`);
+  }
 });
