@@ -48,6 +48,7 @@ import type {
   ConsoleEventLike,
   ConsoleHandler,
   ConsoleHandlers,
+  ConsoleOperation,
   ConsoleReply,
   OperationName,
 } from '../../src/main/ipc'
@@ -94,6 +95,11 @@ const AT: Readonly<Record<string, LicenceReply>> = Object.freeze({
     reason: 'this build does not hold the key id the licence names',
   }) as LicenceReply,
 })
+
+/** OPERATIONS is the surface's table as `ConsoleOperation` rows: the literal
+ * table's rows do not each declare every optional column, so the column this
+ * file is about is read off the widened view. */
+const OPERATIONS: readonly ConsoleOperation[] = CONSOLE_OPERATIONS
 
 /** THE_REFUSED is the lapsed state's whole class, written out as a literal so
  * the column is checked against the design rather than against itself: T12 takes
@@ -234,9 +240,9 @@ describe('the five states a licence reply puts the console in', () => {
 
 describe('the refused class is the table\'s column', () => {
   it('marks exactly the two operations the design takes away, and no other row', () => {
-    const marked = CONSOLE_OPERATIONS.filter(
-      (operation) => operation.refusedAfterLapse === true,
-    ).map((operation) => operation.name)
+    const marked = OPERATIONS.filter((operation) => operation.refusedAfterLapse === true).map(
+      (operation) => operation.name,
+    )
     expect([...marked].sort()).toEqual([...THE_REFUSED].sort())
   })
 
@@ -247,13 +253,13 @@ describe('the refused class is the table\'s column', () => {
     // no command carries the column is refused at registration, so a lapse can
     // never make the way out unreachable.
     for (const name of ['licence.read', 'licence.save'] as const) {
-      const row = CONSOLE_OPERATIONS.find((operation) => operation.name === name)
+      const row = OPERATIONS.find((operation) => operation.name === name)
       expect(row?.refusedAfterLapse, name).toBeUndefined()
       expect(row?.command, name).toBeNull()
     }
     // And no `command: null` row anywhere carries it, which is the guard rather
     // than the two rows it was written for.
-    for (const operation of CONSOLE_OPERATIONS) {
+    for (const operation of OPERATIONS) {
       if (operation.command === null) {
         expect(operation.refusedAfterLapse, operation.name).toBeUndefined()
       }
@@ -377,7 +383,7 @@ describe('the lapse, at the handler', () => {
     expect(reached).toEqual(['run.launch'])
   })
 
-  it('wraps nothing else, and answers a frozen surface', () => {
+  it('wraps nothing else, and answers a frozen surface', async () => {
     // `reducedModeHandlers`' own shape, and its reason: a wrapper left over an
     // operation the lapse keeps is a second place a refusal could be added in
     // silence. `startup.compatibility` is among the rows asserted here, and it
@@ -392,9 +398,11 @@ describe('the lapse, at the handler', () => {
       expect(wrapped[name], name).not.toBe(source.handlers[name])
     }
     expect(Object.isFrozen(wrapped)).toBe(true)
-    // And a refused operation throws the one sentence the bridge answers, so the
-    // wrapper is the same gate however it is reached.
-    expect(() => wrapped['run.launch']({})).toThrow(LAPSE_REFUSAL)
+    // And a refused operation refuses with the one sentence, whether it is
+    // reached through the registrar or called directly: the wrapper refuses by
+    // rejecting with the sentence -- the throw `dispatch` turns into the reply --
+    // and it does so before the source, which is the whole of the gate.
+    await expect(wrapped['run.launch']({})).rejects.toThrow(LAPSE_REFUSAL)
     expect(source.reached).toEqual([])
   })
 })

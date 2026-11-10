@@ -36,8 +36,11 @@
 //     `registerConsoleHandlers`, or moving it after the channels are registered,
 //     fails "checks the surface before it registers anything"; dropping the
 //     allowed-flags half of that guard fails the test with a flag the never
-//     table does not list (`--mine`); and a payload wider than
-//     `MAX_PAYLOAD_WIDTH` fails the width test;
+//     table does not list (`--mine`); dropping the lapse's half of it -- the rule
+//     that the column marking an operation refused after a lapse stays off the
+//     rows that spawn no command -- fails the test with a console-owned row in
+//     the refused class; and a payload wider than `MAX_PAYLOAD_WIDTH` fails the
+//     width test;
 //   - a preload method that is not on `CONSOLE_OPERATIONS`, or an operation
 //     with no method, fails the two-way surface test; a method that lands on a
 //     channel other than `channelForOperation(name)` fails the routing test;
@@ -1331,6 +1334,52 @@ describe('the never-reachable table', () => {
         },
       ]),
     ).toThrow(/--check-github-app/)
+  })
+
+  it('refuses the lapse\'s column on a row that spawns nothing', () => {
+    // The lapse's refused class is a column of the row (`refusedAfterLapse`,
+    // subscriptions plan S6.2, design §3.2): the two operations a lapsed
+    // installation loses are the launch and the settings write, and both spawn a
+    // command. A row that spawns **nothing** answers out of this process, and
+    // those answers are the design's kept set -- the reads, the console's own
+    // surface, and the key screen, which §5.6 keeps ungated as the way out of
+    // the lapse -- so a table that refused one of them fails closed here, at
+    // registration, rather than at the operator.
+    const withheldScreen: readonly ConsoleOperation[] = [
+      ...CONSOLE_OPERATIONS,
+      {
+        name: 'licence.forget',
+        method: 'forgetLicence',
+        command: null,
+        flags: [],
+        summary: 'a console-owned write nobody ruled on, in the lapse\'s class',
+        args: [],
+        refusedAfterLapse: true,
+      },
+    ]
+    expect(() => assertReachableSurface(withheldScreen)).toThrow(/licence\.forget/)
+    expect(() => assertReachableSurface(withheldScreen)).toThrow(/spawns no command/)
+  })
+
+  it('admits the column on a row that does spawn a command', () => {
+    // The other half, and the one that keeps the check above from being a ban on
+    // the column: an operation that spawns a command and belongs to the refused
+    // class is admitted by the same guard. The command here is one the surface
+    // already drives, so what the case measures is the column and not the
+    // never-table.
+    const spawner: readonly ConsoleOperation[] = [
+      ...CONSOLE_OPERATIONS,
+      {
+        name: 'settings.retire',
+        method: 'retireSetting',
+        command: 'settings',
+        flags: [],
+        summary: 'a command-spawning operation a later ruling could refuse',
+        args: [],
+        refusedAfterLapse: true,
+      },
+    ]
+    expect(() => assertReachableSurface(spawner)).not.toThrow()
   })
 
   it('refuses a table with two operations of one name', () => {

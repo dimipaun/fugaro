@@ -81,6 +81,7 @@ import {
   startupCompatibility,
 } from './ipc'
 import type { ConsoleHandlers, ValidatedArguments } from './ipc'
+import { lapseHandlers } from './licence-state'
 import { handlersFor } from '../source/source'
 import { createBoundSource } from '../source/cli'
 import type { BoundInstallation } from '../source/cli'
@@ -93,7 +94,7 @@ import {
 import type { StoredInstallation } from './installations'
 import type { ActiveInstallation } from './installations'
 import { LICENCE_FILE_NAME, createLicenceStore, refusedLicenceStore } from './licence-store'
-import type { LicenceStore } from './licence-store'
+import type { LicenceReply, LicenceStore } from './licence-store'
 import type { CliCompatibility } from '../shared/version'
 import { NO_INSTALLATION_SURFACE } from '../source/source'
 import type { InstallationSurface } from '../source/source'
@@ -482,6 +483,29 @@ function activeLicenceProject(): string {
  * this reads the store's `read` and not its `keyFor`. */
 function licenceRead(): unknown {
   return licenceStore.read(activeLicenceProject(), new Date())
+}
+
+/**
+ * activeLicenceReply is the state the lapse gate reads (`lapseHandlers`,
+ * `src/main/licence-state.ts`, subscriptions plan S6.2): the store's answer about
+ * the active installation's key, as `licence.read` answers it.
+ *
+ * **It is tolerant where `licenceRead` throws, and that is the whole
+ * difference.** `licence.read` answers a *renderer* that asked about the console
+ * it is driving, so the console's own no-installation sentence
+ * (`NO_ACTIVE_INSTALLATION`, D13) is the right answer there. The gate is not a
+ * read: it decides whether an operation may run, and this process may be asked
+ * that before an installation is chosen -- the renderer's launch form is drawn
+ * from the rail, not from a binding. A wrapper that threw here would turn a
+ * launch into a refusal with `dispatch`'s own sentence about the installation,
+ * which is a refusal of the wrong thing; `{state: 'none'}` is the state that
+ * refuses nothing, and there is nothing to launch without a binding anyway
+ * (`activeBinding` is what the launch's own handler resolves against).
+ */
+function activeLicenceReply(): LicenceReply {
+  const binding = activeBinding()
+  if (binding === null) return { state: 'none' }
+  return licenceStore.read(binding.project, new Date())
 }
 
 /** licenceSave is `licence.save`'s handler, and the console's third write: the
@@ -971,11 +995,23 @@ let registered = false
  * The wrapper is `reducedModeHandlers`: the handshake's answer decides which
  * operations refuse before the source is reached, and it is read per call, so a
  * handler registered here can never answer for a mode the console is not in.
+ *
+ * **`lapseHandlers` is outermost.** The two gates refuse disjoint sets today --
+ * reduced mode withholds the spend, caps and kill views' *reads*, and the lapse
+ * takes the launch and the settings write, which reduced mode admits -- so the
+ * order is unobservable, and it is written down rather than left to chance: the
+ * lapse gate is outside because its state is the installation's own and it is
+ * read per call from the licence store, exactly as the handshake's is from the
+ * stored answer, so a renewal pasted during a session lifts the launch's refusal
+ * at the next call. A reduced console still launches; a lapsed one does not.
  */
 function registerHandlers(): void {
   if (registered) return
   registered = true
-  registerConsoleHandlers(ipcMain, reducedModeHandlers(gated, storedCompatibility))
+  registerConsoleHandlers(
+    ipcMain,
+    lapseHandlers(reducedModeHandlers(gated, storedCompatibility), activeLicenceReply),
+  )
 }
 
 /**
