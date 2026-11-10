@@ -105,7 +105,8 @@ func newImageBuildCmd() *cobra.Command {
 			"day counts and the one command that raises it (fugaro budget show says what\n" +
 			"the project holds). A CLI that died mid-build leaves its reservation open\n" +
 			"and the next build gives it back. Pricing an image comes from the Cloud\n" +
-			"Billing catalog, so a build whose price cannot be read is not submitted.\n" +
+			"Billing catalog, and a build whose price cannot be read is submitted\n" +
+			"uncounted, after one line that says so.\n" +
 			"An installation whose project config sets no budget.rtdb_url has no budget\n" +
 			"backend and no lease to take: its builds are submitted uncounted, and\n" +
 			"fugaro update --firebase-project in the checkout adds the backend.\n" +

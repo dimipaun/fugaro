@@ -531,6 +531,9 @@ func TestUpdateAgentSessionLeavesTheCloudStepForTheUser(t *testing.T) {
 			t.Errorf("the second run's plan holds a %s step, and a checkout has no local step any more:\n%s", gone, out2)
 		}
 	}
+	if !strings.Contains(out2.String(), "skipped here: cloud") {
+		t.Errorf("the second run no longer says which step it leaves:\n%s", out2)
+	}
 	// The plan view's row is one clause (report.Brief) and the reason is whole
 	// in the log, so what is read here is the run's own block under it: the
 	// step it leaves is the checkout's cloud half, named in words.
@@ -1016,9 +1019,15 @@ func TestUpdateBuildsTheStaleWorkflowsWhenNobodyIsAsked(t *testing.T) {
 
 			e, refreshOut := checkoutEngine(t, &initOptions{})
 			out := atTerminal(t, e, "")
-			res := stageOutcome(t, e, checkoutStageOf(t, e))
+			// The way `fugaro update` runs it: the plugin stage first, whose
+			// stale pin is what says this run is taking the checkout to this
+			// release, and the checkout stage behind it — the cloud half's own
+			// check reads the local config and a build record never, so the
+			// plugin stage is where the run's reach of the images is read
+			// (initEngine.checkoutBehind).
+			res := updateStages(t, e, initflow.Plugin, checkoutStageName)
 			if res.Failed != nil {
-				t.Fatalf("the checkout stopped with nothing typed: %+v\n%s%s", res, out, refreshOut)
+				t.Fatalf("the run stopped with nothing typed: %+v\n%s%s", res, out, refreshOut)
 			}
 			if len(fb.specs) != 2 {
 				t.Fatalf("built %+v, want both stale workflows", fb.specs)

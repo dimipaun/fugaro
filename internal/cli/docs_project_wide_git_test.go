@@ -260,8 +260,9 @@ func TestDocsSayTheInitPromptHasNoRepoFlagAndBitbucketIsPerRepository(t *testing
 // (F17, D476), that Bitbucket Data Center stays out of scope (D366, T2), the
 // single author every repository's pull requests then carry (F8, D472),
 // that no one has run the path with such a token yet (D468 = no, Check 180),
-// where the API-root lock stands: unchecked in 0.12.1, D474's in 0.13.0, and
-// what the D490 pointer says now that the proxy is built: the proxy keeps
+// where the API-root lock stands: unchecked in 0.12.1, D474's in 0.14.0 (D1983
+// corrected the page from 0.13.0), and the operator step it owes (D1984),
+// and what the D490 pointer says now that the proxy is built: the proxy keeps
 // the token out of the run's own git traffic, and the job's mount, with the
 // accessor behind it, leaves only with the flip the empty
 // `config.ProxiedGitSecretNames` has not filled (the 2026-10-27 amendment to
@@ -274,7 +275,9 @@ func TestDocsSayTheInitPromptHasNoRepoFlagAndBitbucketIsPerRepository(t *testing
 // no list yet" put back → FAIL, on both new pins — the claim was the reverse of
 // F7, since `providers.FromEnv` passes `FUGARO_BITBUCKET_API_URL` unchecked and
 // a launcher can override the job's environment; the "is 0.13.0's (D474,
-// T2.8)" clause deleted → FAIL; the D490 pointer sentence deleted → FAIL,
+// T2.8)" clause deleted → FAIL (and the clause now reads 0.14.0's, the D1983
+// correction of 2026-11-10, with the D1983 pins beside it); the D490 pointer
+// sentence deleted → FAIL,
 // which is the one that says the page describes a token in the job and the
 // built proxy is what keeps it out of the run's own git traffic while the
 // mount stays until the flip. The base floor's move into step 4
@@ -325,13 +328,32 @@ func TestDocsStateTheBitbucketProjectTokenReach(t *testing.T) {
 		"A hostile agent in one repository can open its own malicious pull request in another, and a later review-only run there trusts it.",
 		// Data Center (D366, T2).
 		"**Bitbucket Data Center is not supported**",
+		// The variables-table row is what an operator reads when they set the
+		// variable, and until D1983 (2026-11-10) it did not name the list the
+		// runner holds that value to (T2.3).
+		"Optional API root (default `https://api.bitbucket.org/2.0`). Any other root must also be listed in the installation's `bitbucket_api_roots`, published through the policy (`docs/project-layer.md`), or a cloud run is refused",
+		// The third D1983 correction: the 2026-10-15 ruling that Bitbucket
+		// stays on the per-repository path keeps its shared-job half, and the
+		// half the flip overtakes is amended by date rather than rewritten.
+		"**Amended 2026-11-10 (D1983): on a proxied repository the job loses its `bitbucket-token` with the flip.**",
+		// The sentence carries its cross-reference in the right direction: the
+		// section it names is below it on the page, as every other reference to
+		// it in this file says.
+		"whose list `config.ProxiedGitSecretNames` is still `[]string{}` on this tree, so \"keeps its own job and its own `bitbucket-token`\" describes the pre-flip state and every non-proxied repository — on a proxied one the run reads no token and the service puts the credential on the wire (\"What the agent gets\" below)",
 		// And the honest half of the API-root story in 0.12.1: the override is
 		// passed unchecked, a launcher can point it at a host of their own (F7),
-		// and the lock is 0.13.0's. The paragraph said the opposite until the
-		// review of this round, which is the direction a security page must not
-		// drift in.
+		// and the lock is 0.14.0's -- not 0.13.0's, which is what the sentence
+		// said until D1983 (2026-11-10) landed the three corrections BW-T2.8
+		// and B1.13 part one owed this page. The paragraph said the opposite
+		// until the review of this round, which is the direction a security page
+		// must not drift in.
 		"**In 0.12.1 there is no such list and no check: a launcher can override the job's environment on `jobs.run`, `FUGARO_BITBUCKET_API_URL` among it, and `providers.FromEnv` passes that value unchecked as the API root, so a launcher can have the run send the token to a host of their own (F7).**",
-		"The lock that refuses any root but `https://api.bitbucket.org/2.0` outside a local invocation, except one the owner allow-lists in the policy, is 0.13.0's (D474, T2.8).",
+		"The lock that refuses any root but `https://api.bitbucket.org/2.0` outside a local invocation, except one the owner allow-lists in the policy, is 0.14.0's (D474, BW-T2.8):",
+		// The operator's own step for that lock (D1984, plan task T2.11's step
+		// 5): an installation with a non-default root lists it and republishes
+		// before it upgrades its runners, and the refusal is named where a
+		// reader can find the code that makes it.
+		"an installation with a non-default root lists it in `bitbucket_api_roots` and republishes before it upgrades its runners (D1984, `docs/secrets-brokering/release-0.14.0-operators.md`)",
 		// One author on every repository (F8, D472).
 		"every enrolled repository's pull requests and comments carry the same author",
 		// The live check (D468 = no).

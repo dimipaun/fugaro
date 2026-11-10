@@ -599,26 +599,44 @@ func TestUpdateLeavesAMemberWithNoWorkspaceAlone(t *testing.T) {
 // the workspace's project at all (spec §5), so its `fugaro update` publishes
 // nothing there and reads nothing there. A stage that reached for it is the
 // defect this test names.
+//
+// The second case is the config that carries BOTH halves: a member's project
+// whose file also carries the owner's — the member table and the cap, which is
+// what `fugaro workspace member add` and `cap set --workspace <that project>`
+// leave behind. It is a member's project still: the member's half is the
+// narrower claim, so it publishes nothing and reads nothing, where the owner's
+// half read as its own would have it publish a record and hold a grant
+// (workspaceDeclared).
 func TestUpdateOnAMemberNeverWritesTheWorkspaceNode(t *testing.T) {
-	h := newWSUpdateHome(t, wsOwnerTable+wsOwnerCap)
-	h.add(t, "aurora", "aurora-gcp", wsPin)
-	h.selectProject(t, "aurora")
-	r := newWSUpdateRig(t, h)
-	if st := r.check(t); st.State != initflow.Skipped {
-		t.Errorf("check on a member = %v (%s), want skipped: a member's run converges the member's own installation and nothing of the workspace's", st.State, st.Detail)
-	}
-	oc, _, err := r.apply(t, true)
-	if err != nil {
-		t.Fatalf("apply on a member: %v", err)
-	}
-	if oc.Changed {
-		t.Errorf("a member's run reports a change: %s", oc.Detail)
-	}
-	if v := h.project(t, "workspace-alpha").db.Value(projectpolicy.PathWorkspaces()); v != nil {
-		t.Errorf("a member's run wrote the workspace's own node: %v", v)
-	}
-	if n := len(h.project(t, "aurora").db.Credentials()); n != 0 {
-		t.Errorf("a member's run made %d requests to its own database for a record it does not publish", n)
+	for _, c := range []struct {
+		name  string
+		extra string
+	}{
+		{"a member's project", wsPin},
+		{"a member's project that also declares the owner's half", wsPin + wsOwnerTable + wsOwnerCap},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			h := newWSUpdateHome(t, wsOwnerTable+wsOwnerCap)
+			h.add(t, "aurora", "aurora-gcp", c.extra)
+			h.selectProject(t, "aurora")
+			r := newWSUpdateRig(t, h)
+			if st := r.check(t); st.State != initflow.Skipped {
+				t.Errorf("check on a member = %v (%s), want skipped: a member's run converges the member's own installation and nothing of the workspace's", st.State, st.Detail)
+			}
+			oc, _, err := r.apply(t, true)
+			if err != nil {
+				t.Fatalf("apply on a member: %v", err)
+			}
+			if oc.Changed {
+				t.Errorf("a member's run reports a change: %s", oc.Detail)
+			}
+			if v := h.project(t, "workspace-alpha").db.Value(projectpolicy.PathWorkspaces()); v != nil {
+				t.Errorf("a member's run wrote the workspace's own node: %v", v)
+			}
+			if n := len(h.project(t, "aurora").db.Credentials()); n != 0 {
+				t.Errorf("a member's run made %d requests to its own database for a record it does not publish", n)
+			}
+		})
 	}
 }
 
@@ -1244,13 +1262,22 @@ func TestUpdateEscapesWhatTheRecordMigrationEchoes(t *testing.T) {
 // D1017 read, which is the FIRST thing after the record is built from the
 // config and the reason it is there rather than after the node read — this
 // stage's whole work (the read, the ETag and the conditional write) lands in the
-// workspace's database, and a config naming another Firebase project whose
-// database carries another installation's mark is a database this stage must not
-// touch. Disabling the predicate publishes this record into a stranger's
-// database, over whatever node it holds; the policy stage's version of this test
-// exercises its own call and not this one.
+// workspace's database, and a database carrying another installation's mark is a
+// database this stage must not touch, whatever this config calls it. Disabling
+// the predicate publishes this record into a stranger's database, over whatever
+// node it holds; the policy stage's version of this test exercises its own call
+// and not this one.
+//
+// The installation's own Firebase project is what this rig names
+// (`updateBudgetRigFor`), and not another one: a workspace's own installation
+// whose Firebase is ANOTHER project's is refused before this stage by the one
+// before it (workspace_create.go's workspaceSplitFirebase, and
+// TestWorkspaceProjectStageRefusesAWorkspaceWhoseFirebaseIsAnotherProject), so
+// the only shape in which a workspace's own config reaches this read is one
+// whose database is its own project's — with the mark a stranger's, which is
+// what this test seeds and what the D1017 read is for.
 func TestUpdateSkipsAWorkspaceDatabaseThisInstallationDoesNotOwn(t *testing.T) {
-	r, db := updateBudgetRigFor(t, "other-project")
+	r, db := updateBudgetRigFor(t, initProject)
 	// Another installation's database: its mark names a Fugaro project and a
 	// GCP project that are not this installation's.
 	db.Set(budget.PathMark, map[string]any{"managed_by": "fugaro", "project": "workspace-a", "gcp_project": "proj-9999", "version": 1})
