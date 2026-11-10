@@ -6,14 +6,19 @@
 package catalog
 
 import (
+	"cmp"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 )
@@ -25,11 +30,138 @@ import (
 // where it is resolved rather than carried.
 const MaxDockerfileBytes = gitprov.MaxContentsBytes
 
+// MaxContextBytes and MaxContextFiles bound a catalog entry's build context
+// (D1398): the bytes its tree may hold together and how many files it may
+// hold. Both are checked against the provider's own listing before a byte of
+// the context is fetched, so an entry whose context is over either is refused
+// where the copy resolves it — naming the entry, before a build is paid for —
+// rather than as a Cloud Build that ran out of workspace or timed out.
+//
+// The numbers are this package's, not a host's: a context is a repository's
+// source tree, which a Dockerfile copies and an image layer then carries, and
+// these are the ceilings past which that stops being a build context and
+// starts being a payload. A file count bounds the reads a copy makes — one
+// per file, so the count is also the copy's cost — and the byte total bounds
+// what a build uploads.
+const (
+	MaxContextBytes int64 = 64 << 20
+	MaxContextFiles       = 4000
+)
+
+// Source is what a copy stages for one catalog entry (D1394, D1395): the
+// Dockerfile bytes a build reads, the commit they were read at, and the digest
+// of the build context beside them.
+//
+// Commit is the commit the entry's branch resolved to, and the Dockerfile and
+// the context were both read at it, so the two are one read of one tree rather
+// than two reads that can disagree. It is "" for an inline entry, which has no
+// repository and no commit: an entry with no context keeps the commit its
+// submission recorded before this existed, which is the operator's own
+// checkout.
+//
+// ContextHash is the digest of the context tree (contextDigest), and "" for an
+// entry that names no context — the shape every entry had before the key
+// existed.
+type Source struct {
+	Dockerfile  []byte
+	Commit      string
+	ContextHash string
+}
+
+// Resolve is Fetch's sibling for a caller that stages what it reads: the
+// Dockerfile bytes, the commit the entry's branch resolved to, and the digest
+// of the context that commit holds (D1394, D1395, D1401).
+//
+// The ref is resolved once and both reads happen at the commit it answered, so
+// the Dockerfile a build reads and the context it builds on are one revision
+// of one repository: a read at the branch would answer whatever the branch is
+// at the moment of each read, and a copy whose two reads landed either side of
+// a push would stage a definition and a context that never existed together.
+//
+// Everything Fetch's own reads refuse, this refuses the same way and with the
+// same sentences: the validation of the repository, the path and the ref, the
+// credential, the definition that carries one, and the ceiling a definition
+// may be. What is added is the context's own read and the bound above.
+func Resolve(ctx context.Context, open gitprov.Opener, kind string, e config.Entry) (Source, error) {
+	switch e.Source.Kind {
+	case config.SourceInline:
+		data, err := definition(e, []byte(e.Source.Inline))
+		return Source{Dockerfile: data}, err
+	case config.SourceDockerfile:
+		data, commit, p, err := fetchDockerfileAt(ctx, open, kind, e)
+		if err != nil {
+			return Source{}, err
+		}
+		hash, err := contextHash(ctx, p, kind, e, commit)
+		if err != nil {
+			return Source{}, err
+		}
+		return Source{Dockerfile: data, Commit: commit, ContextHash: hash}, nil
+	case config.SourceImage:
+		return Source{}, fmt.Errorf("the catalog entry %s has no Dockerfile: its source is a prebuilt image, so there is nothing to build or copy", nameOf(e))
+	default:
+		return Source{}, fmt.Errorf("the catalog entry %s has no source kind this build knows (%s)", nameOf(e), strings.Join(config.SourceKinds, ", "))
+	}
+}
+
+// contextHash reads the context tree an entry names at the commit its
+// Dockerfile was read at, and answers with the digest that stands for it
+// (D1401). The digest is taken here, at copy time, because the nightly check
+// has no checkout and no credential: it compares the value staged beside the
+// Dockerfile, the way it compares the definition's own sha256 today.
+//
+// The read is bounded before it happens (MaxContextBytes, MaxContextFiles), so
+// an entry whose context is too large is refused by name rather than built, and
+// a context that holds no files at all is refused too: a tree read cannot tell
+// an empty directory from one that is not there, and an entry whose context is
+// either is an entry whose context is a mistake.
+func contextHash(ctx context.Context, p gitprov.Provider, kind string, e config.Entry, commit string) (string, error) {
+	if e.Source.Context == "" {
+		return "", nil
+	}
+	tr, ok := p.(gitprov.TreeReader)
+	if !ok {
+		return "", fmt.Errorf("the catalog entry %s: the %s provider cannot read a directory out of %s, so its context cannot be resolved; name a context on a repository whose provider can, or none",
+			nameOf(e), pluginwire.Printable(kind), pluginwire.Printable(e.Source.Repo))
+	}
+	files, err := tr.Tree(ctx, e.Source.Context, commit, gitprov.TreeLimit{MaxFiles: MaxContextFiles, MaxBytes: MaxContextBytes})
+	if err != nil {
+		return "", fmt.Errorf("the catalog entry %s: reading the context %s from %s: %w", nameOf(e), pluginwire.Printable(e.Source.Context), pluginwire.Printable(e.Source.Repo), err)
+	}
+	if len(files) == 0 {
+		return "", fmt.Errorf("the catalog entry %s: the context %s holds no files at %s, so there is nothing for a build to run on",
+			nameOf(e), pluginwire.Printable(e.Source.Context), pluginwire.Printable(e.Source.Repo))
+	}
+	return contextDigest(files), nil
+}
+
+// contextDigest is the identity of a context tree: a sha256 over the tree's
+// paths and the digest of each file's bytes, in path order (D1401). It is a
+// function of the tree alone — no clock, no machine, no git version, no order
+// the read happened to answer in — so a context that did not move digests to
+// the same value wherever the copy runs, and the read-compare-write beside the
+// Dockerfile leaves the staged object alone.
+//
+// The paths are sorted here rather than trusted to the read: a tree that came
+// back in another order would digest to another value, and the nightly check
+// would rebuild an entry nothing had changed.
+func contextDigest(files []gitprov.TreeFile) string {
+	ordered := slices.Clone(files)
+	slices.SortFunc(ordered, func(a, b gitprov.TreeFile) int { return strings.Compare(a.Path, b.Path) })
+	h := sha256.New()
+	for _, f := range ordered {
+		sum := sha256.Sum256(f.Data)
+		fmt.Fprintf(h, "%s\x00%x\n", f.Path, sum)
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
 // Fetch resolves e's source into the Dockerfile bytes a catalog build reads
-// (D1140, PIC3): a repo reference is read out of the named repository, at
-// the named branch, through the provider the opener returns — the project's
-// existing credentials, and no other access (F9) — and an inline definition
-// is taken from the entry itself, with no repository involved.
+// (D1140, PIC3): a repo reference is read out of the named repository, at the
+// commit the named branch resolves to, through the provider the opener
+// returns — the project's existing credentials, and no other access (F9) — and
+// an inline definition is taken from the entry itself, with no repository
+// involved.
 //
 // open and kind are the project's git provider opener and kind
 // (gitprov.KindGitHub or KindBitbucket, both of which read a file). A kind
@@ -43,12 +175,16 @@ const MaxDockerfileBytes = gitprov.MaxContentsBytes
 // reaches a log follows: the catalog's own validation is not this package's
 // to rely on, and a name or a repository that carried an escape sequence
 // would carry it into whatever reads the message.
+//
+// A caller that stages what it reads wants Resolve instead, which is this read
+// plus the commit it happened at and the context's own identity.
 func Fetch(ctx context.Context, open gitprov.Opener, kind string, e config.Entry) ([]byte, error) {
 	switch e.Source.Kind {
 	case config.SourceInline:
 		return definition(e, []byte(e.Source.Inline))
 	case config.SourceDockerfile:
-		return fetchDockerfile(ctx, open, kind, e)
+		data, _, _, err := fetchDockerfileAt(ctx, open, kind, e)
+		return data, err
 	case config.SourceImage:
 		return nil, fmt.Errorf("the catalog entry %s has no Dockerfile: its source is a prebuilt image, so there is nothing to build or copy", nameOf(e))
 	default:
@@ -56,7 +192,10 @@ func Fetch(ctx context.Context, open gitprov.Opener, kind string, e config.Entry
 	}
 }
 
-// fetchDockerfile reads a dockerfile source's file out of its repository.
+// fetchDockerfile reads a dockerfile source's file out of its repository, at
+// the commit its branch resolves to, and answers with that commit as well: it
+// is what the read happened at, so it is what a caller records and what the
+// context beside the file is read at.
 //
 // The repository, the path and the ref are checked before the provider is
 // opened, not only where the catalog is validated: this is where all three
@@ -66,37 +205,75 @@ func Fetch(ctx context.Context, open gitprov.Opener, kind string, e config.Entry
 // The ref is held to config.ValidBranchName, the rule the catalog's own
 // validation applies, so this guard tightens or loosens with that one
 // instead of being a second, weaker rule that reads like a safety net.
-func fetchDockerfile(ctx context.Context, open gitprov.Opener, kind string, e config.Entry) ([]byte, error) {
+//
+// The resolved commit is held to gitops.ValidCommitSHA for the same reason: it
+// reaches a build's `git fetch`, the revision label and the record, and each of
+// those reads a ref that is not a commit as something else.
+func fetchDockerfileAt(ctx context.Context, open gitprov.Opener, kind string, e config.Entry) ([]byte, string, gitprov.Provider, error) {
 	s := e.Source
 	if !validRepo(s.Repo) {
-		return nil, fmt.Errorf("the catalog entry %s: the source's repository is not the owner/name of a repository of this project", nameOf(e))
+		return nil, "", nil, fmt.Errorf("the catalog entry %s: the source's repository is not the owner/name of a repository of this project", nameOf(e))
 	}
 	if !gitprov.ValidRepoPath(s.Path) {
-		return nil, fmt.Errorf("the catalog entry %s: the source's path must be a relative path inside %s, with no .. segment", nameOf(e), pluginwire.Printable(s.Repo))
+		return nil, "", nil, fmt.Errorf("the catalog entry %s: the source's path must be a relative path inside %s, with no .. segment", nameOf(e), pluginwire.Printable(s.Repo))
 	}
 	if s.Branch != "" && !config.ValidBranchName(s.Branch) {
-		return nil, fmt.Errorf("the catalog entry %s: the source's branch must be a git branch name", nameOf(e))
+		return nil, "", nil, fmt.Errorf("the catalog entry %s: the source's branch must be a git branch name", nameOf(e))
 	}
 	if open == nil {
-		return nil, fmt.Errorf("the catalog entry %s: no git provider was given to read %s with", nameOf(e), pluginwire.Printable(s.Repo))
+		return nil, "", nil, fmt.Errorf("the catalog entry %s: no git provider was given to read %s with", nameOf(e), pluginwire.Printable(s.Repo))
 	}
 	p, _, err := open(ctx, kind, s.Repo)
 	if err != nil {
-		return nil, fmt.Errorf("the catalog entry %s: opening the provider of %s: %w", nameOf(e), pluginwire.Printable(s.Repo), err)
+		return nil, "", nil, fmt.Errorf("the catalog entry %s: opening the provider of %s: %w", nameOf(e), pluginwire.Printable(s.Repo), err)
 	}
 	r, ok := p.(gitprov.ContentsReader)
 	if !ok {
-		return nil, UnreadableRefusal(e, kind)
+		return nil, "", nil, UnreadableRefusal(e, kind)
 	}
-	data, err := r.Contents(ctx, s.Path, s.Branch)
+	commit, err := resolveRef(ctx, p, e)
+	if err != nil {
+		return nil, "", nil, err
+	}
+	data, err := r.Contents(ctx, s.Path, commit)
 	if err != nil {
 		// The path is printed through pluginwire.Printable like every other
 		// value that reaches a message here: gitprov.ValidRepoPath lets a
 		// formatting (bidi) character through, so the path a person reads
 		// back is escaped rather than taken at its word.
-		return nil, fmt.Errorf("the catalog entry %s: reading %s from %s: %w", nameOf(e), pluginwire.Printable(s.Path), pluginwire.Printable(s.Repo), err)
+		return nil, "", nil, fmt.Errorf("the catalog entry %s: reading %s from %s: %w", nameOf(e), pluginwire.Printable(s.Path), pluginwire.Printable(s.Repo), err)
 	}
-	return definition(e, data)
+	data, err = definition(e, data)
+	if err != nil {
+		return nil, "", nil, err
+	}
+	return data, commit, p, nil
+}
+
+// resolveRef is the commit a dockerfile source's branch names, read once
+// before the Dockerfile is (D1394). A branch is not a commit, and a build, a
+// record and a label all carry the value as one, so what comes back is checked
+// to be a full commit here rather than where it is used.
+//
+// A provider that cannot answer is refused with a sentence of its own: the
+// kinds that read a file are the kinds that resolve a ref, and a provider that
+// answers the first and not the second would otherwise fail later, as a
+// definition read at an empty ref — the branch's own bytes, from a copy that
+// believes it pinned a commit.
+func resolveRef(ctx context.Context, p gitprov.Provider, e config.Entry) (string, error) {
+	r, ok := p.(gitprov.CommitReader)
+	if !ok {
+		return "", fmt.Errorf("the catalog entry %s: the provider of %s cannot resolve %s to a commit, so its Dockerfile cannot be pinned to the commit it is read at",
+			nameOf(e), pluginwire.Printable(e.Source.Repo), pluginwire.Printable(cmp.Or(e.Source.Branch, "its default branch")))
+	}
+	commit, err := r.Commit(ctx, e.Source.Branch)
+	if err != nil {
+		return "", fmt.Errorf("the catalog entry %s: resolving %s in %s: %w", nameOf(e), pluginwire.Printable(cmp.Or(e.Source.Branch, "the default branch")), pluginwire.Printable(e.Source.Repo), err)
+	}
+	if !gitops.ValidCommitSHA(commit) {
+		return "", fmt.Errorf("the catalog entry %s: %s resolved to %s, which is not a full commit", nameOf(e), pluginwire.Printable(cmp.Or(e.Source.Branch, "the default branch")), pluginwire.Printable(commit))
+	}
+	return commit, nil
 }
 
 // definition is what both of Fetch's Dockerfile sources hand back: bytes

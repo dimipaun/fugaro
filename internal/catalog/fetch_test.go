@@ -40,11 +40,16 @@ func (o *fetchOpener) open(_ context.Context, kind, repo string) (gitprov.Provid
 // quietReader is a provider whose read fails without quoting the path back:
 // what a message then prints is the resolver's own, which is what the test
 // below is about (a provider's error carries the path it was given, as the
-// real adapters' do).
+// real adapters' do). It resolves a ref, because a dockerfile read resolves
+// one before it reads anything: the failure under test is the read's.
 type quietReader struct{ gitprov.Provider }
 
 func (quietReader) Contents(context.Context, string, string) ([]byte, error) {
 	return nil, errors.New("the read failed")
+}
+
+func (quietReader) Commit(context.Context, string) (string, error) {
+	return strings.Repeat("a", 40), nil
 }
 
 func dockerfileEntry(name, path, branch string) config.Entry {

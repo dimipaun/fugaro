@@ -381,6 +381,38 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 			spec.GitSecretID, spec.GitUser, spec.GitHubAppID = gitID, rs.GitUser, rs.GitHubAppID
 			spec.Base, spec.Image = base, imageRef
 			spec.Definition = gcp.CatalogDefinition{SourceCommit: commit, Generation: gen, SHA256: hex.EncodeToString(sum[:])}
+			// An entry that names a context carries the identity the copy
+			// staged beside the Dockerfile: the commit both were read at, and
+			// the digest of the tree the build runs on. The two are read back
+			// from the bucket, like the definition's own generation and bytes
+			// above, so the request states what the build will find rather than
+			// what this process resolved a moment earlier. The record's
+			// source_commit is that same commit and not the checkout's: the
+			// definition was read at it (D1395), and the two fields are one
+			// commit under two names so a reader can tell which is which
+			// (D1400). An entry with no context keeps the checkout's commit and
+			// stages no such object (F23).
+			if e.Source.Context != "" {
+				commitKey, err := config.CatalogContextCommitKey(e.Name)
+				if err != nil {
+					return withLease(userErr("%v", err), lease.release(ctx))
+				}
+				hashKey, err := config.CatalogContextHashKey(e.Name)
+				if err != nil {
+					return withLease(userErr("%v", err), lease.release(ctx))
+				}
+				stagedCommit, _, err := rb.Read(ctx, commitKey)
+				if err != nil {
+					return withLease(remote(err), lease.release(ctx))
+				}
+				stagedHash, _, err := rb.Read(ctx, hashKey)
+				if err != nil {
+					return withLease(remote(err), lease.release(ctx))
+				}
+				spec.Context = e.Source.Context
+				spec.ContextCommit, spec.ContextSHA256 = string(stagedCommit), string(stagedHash)
+				spec.Definition.SourceCommit = spec.ContextCommit
+			}
 			spec.WorkflowSecrets, spec.Selftest = secrets, selftestJSON
 		}
 		res, err := b.SubmitCatalog(ctx, spec)
