@@ -14,6 +14,7 @@ import (
 
 	"gocloud.dev/blob"
 
+	"github.com/dimipaun/fugaro/internal/agentenv"
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
@@ -2253,5 +2254,39 @@ func TestRunIDFlagKeepsFullID(t *testing.T) {
 	_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "3bb2", "Add a feature")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "must look like 20260926-221530-a1b2") {
 		t.Fatalf("run --run-id 3bb2 = %v, want the shape refusal", err)
+	}
+}
+
+// TestLaunchWithoutCheckoutInAnAgentSessionIsRefusedBeforeAnyRead is spec.md
+// §5 and D902: the token a source-3 read presents is the OPERATOR's own, so a
+// coding agent's session — where that value would be minted inside an agent's
+// process — is refused, and refused before anything is read: no identity is
+// minted, no service is called, no forge is asked. The refusal is the shared
+// one, in this command's own words, and the way out it names is the checkout:
+// from the repository's own checkout the document comes out of the objects and
+// no credential is involved at all.
+func TestLaunchWithoutCheckoutInAnAgentSessionIsRefusedBeforeAnyRead(t *testing.T) {
+	f := newProjectJobFixture(t)
+	s := newServiceReadFixture(t)
+	s.use(t, f.cloudFixture)
+	isolateCache(t)
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir())
+	t.Setenv(agentenv.AgentMarkers[0], "1")
+
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261110-130006-aaaa", "Add a feature")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a user error", err)
+	}
+	for _, want := range []string{"fugaro run", "coding agent's session", "fugaro.yaml"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if mints, reads := s.counts(); mints != 0 || reads != 0 {
+		t.Errorf("a launch refused in an agent's session made %d mint(s) and %d read(s), want none: the refusal comes before anything is read", mints, reads)
+	}
+	if calls := f.run.RunRequests(); len(calls) != 0 {
+		t.Errorf("the refused launch asked Cloud Run for %d job(s): %+v", len(calls), calls)
 	}
 }
