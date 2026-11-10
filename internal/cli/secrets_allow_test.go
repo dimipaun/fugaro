@@ -9,6 +9,7 @@ package cli
 // the ALLOWED column `secrets ls` prints from it.
 
 import (
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -260,5 +261,88 @@ func TestSecretsAllowRefusesInAnAgentSession(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// TestSecretsDenyReachesAFlowStyleEntry: the removal has the same second half
+// the addition has (secretsPolicyAddRepos's rewrite), because the two
+// directions of one field on one entry cannot come to answer differently. A
+// flow sequence is the one shape yamledit's item operations refuse — and it is
+// the shape docs/git-providers.md teaches the operator to write the Bitbucket
+// allow-list in — so the run that removes a member of one writes the entry in
+// the block style this program writes a list in and takes the member out there.
+// The entry keeps its place: an empty allow_data_to is a list that admits
+// nobody, not a removal of the entry (which is `secrets rm`).
+func TestSecretsDenyReachesAFlowStyleEntry(t *testing.T) {
+	for name, shape := range map[string]string{
+		"a flow entry": "project_secrets:\n  bitbucket-token: { allow_data_to: [\"acme/app\"] }\n",
+		"a flow list":  "project_secrets:\n  bitbucket-token:\n    allow_data_to: [acme/app]\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			secretsRmFugaro(t)
+			secretsFixture(t)
+			projectSecretFixture(t, shape)
+			path := os.Getenv("FUGARO_CONFIG")
+			noTerminal(t)
+
+			out, errOut, err := execute(t, "secrets", "deny", "bitbucket-token", "acme/app")
+			if err != nil {
+				t.Fatalf("secrets deny bitbucket-token acme/app on %s: %v\nstdout %s\nstderr %s", name, err, out, errOut)
+			}
+			if got := secretsPolicyEntry(t, path, "bitbucket-token").AllowDataTo; len(got) != 0 {
+				t.Errorf("allow_data_to = %v, want no repository left", got)
+			}
+			after := readFileString(t, path)
+			if strings.Contains(after, "[") {
+				t.Errorf("the list is still written in the flow style the removal cannot splice into:\n%s", after)
+			}
+			for _, want := range []string{"bitbucket-token", "allow_data_to"} {
+				if !strings.Contains(after, want) {
+					t.Errorf("the entry lost its %s: an empty list is not a removed entry\n%s", want, after)
+				}
+			}
+			if !strings.Contains(out, "next: fugaro update") {
+				t.Errorf("the run does not end on the line that says what is left:\n%s", out)
+			}
+
+			// The removal is the whole edit: a second run has nothing to take
+			// out and writes nothing, flow shape gone with the first one.
+			before := readFileString(t, path)
+			out, _, err = execute(t, "secrets", "deny", "bitbucket-token", "acme/app")
+			if err != nil {
+				t.Fatalf("the second run is not the no-op it is: %v", err)
+			}
+			if !strings.Contains(out, "no change") && readFileString(t, path) != before {
+				t.Errorf("a repository the entry no longer names was written again:\n%s", out)
+			}
+		})
+	}
+}
+
+// TestSecretsDenyRefusesTheShapeNoEditCanReach: an entry written as one flow
+// mapping inside a flow mapping — the whole-file shape docs/git-providers.md
+// teaches for the Bitbucket allow-list — is the one the editor cannot write at
+// all: it refuses a member of a flow mapping, for both directions. The run says
+// which shape it cannot write and what to write instead, rather than relaying
+// the editor's own sentence, and writes nothing.
+func TestSecretsDenyRefusesTheShapeNoEditCanReach(t *testing.T) {
+	secretsRmFugaro(t)
+	secretsFixture(t)
+	projectSecretFixture(t, "project_secrets: { bitbucket-token: { allow_data_to: [\"acme/app\"] } }\n")
+	path := os.Getenv("FUGARO_CONFIG")
+	noTerminal(t)
+	before := readFileString(t, path)
+
+	_, _, err := execute(t, "secrets", "deny", "bitbucket-token", "acme/app")
+	if err == nil {
+		t.Fatal("a member of a flow mapping was edited")
+	}
+	for _, want := range []string{"flow mapping", "block mapping", "nothing was written"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not carry %q:\n%v", want, err)
+		}
+	}
+	if after := readFileString(t, path); after != before {
+		t.Errorf("the refusal wrote the config:\n%s", after)
 	}
 }

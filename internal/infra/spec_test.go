@@ -4171,6 +4171,20 @@ func TestProjectSecretCandidateFromNode(t *testing.T) {
 		if _, ok := ProjectSecretCandidateFromNode(in.LC, "bitbucket-token", "acme/webapp", "github", node); ok {
 			t.Error("a GitHub repository was admitted by the Bitbucket token's allow-list")
 		}
+		// The allow_repos above is bitbucket-qualified, so that case is refused
+		// by the stamp and not by the provider guard: the guard is what answers
+		// for a node whose block spells the repository out under the very
+		// provider the caller asked about, which is the node a hand that writes
+		// the database can leave behind. Without the guard the admission below
+		// succeeds and a GitHub repository is handed the project's Bitbucket
+		// token.
+		byHand := &projectpolicy.Policy{
+			Version:        projectpolicy.Version,
+			BitbucketToken: &projectpolicy.BitbucketToken{AllowRepos: []string{"github/acme/webapp"}},
+		}
+		if _, ok := ProjectSecretCandidateFromNode(in.LC, "bitbucket-token", "acme/webapp", "github", byHand); ok {
+			t.Error("a GitHub repository was admitted by the Bitbucket token's block, on a node whose allow_repos spells it out under the GitHub stamp")
+		}
 	})
 	t.Run("a local entry decides", func(t *testing.T) {
 		// An entry is the owner's own decision and the local file is its source

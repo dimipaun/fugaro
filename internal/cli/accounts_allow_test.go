@@ -228,3 +228,67 @@ func TestAccountsLsShowsWhatAccountsAddAndAllowWrote(t *testing.T) {
 		t.Errorf("a repository no list holds is one the account may be chosen by:\n%s", other)
 	}
 }
+
+// TestAccountsAllowAndDenyReachAFlowStyleList: both directions have the second
+// half yamledit's item operations need, because a flow sequence is the one
+// shape AddListItem and RemoveListItem both refuse — an allow_data_to the
+// operator wrote as [owner/repo-a] is one, and this pair is what makes the
+// removal direction reachable at all. The list is written again in the block
+// style this program writes a list in, with the repositories the file holds, and
+// the edit is made there; the account's entry keeps its place either way.
+func TestAccountsAllowAndDenyReachAFlowStyleList(t *testing.T) {
+	_, path := settingsWriteHomeWith(t, "claude_accounts:\n  team-a: { allow_data_to: [owner/repo-a] }\n")
+
+	if _, _, err := execute(t, "accounts", "allow", "team-a", "owner/repo-b"); err != nil {
+		t.Fatalf("accounts allow team-a owner/repo-b on a flow list: %v", err)
+	}
+	if got := accountsAllowLoad(t, path).ClaudeAccounts["team-a"].AllowDataTo; !slices.Equal(got, []string{"owner/repo-a", "owner/repo-b"}) {
+		t.Errorf("claude_accounts.team-a.allow_data_to = %v, want the entry's own repository and the one the run named", got)
+	}
+	if after := string(accountsAllowBytes(t, path)); strings.Contains(after, "[") {
+		t.Errorf("the list is still written in the flow style the edit cannot splice into:\n%s", after)
+	}
+
+	if _, _, err := execute(t, "accounts", "deny", "team-a", "owner/repo-a", "owner/repo-b"); err != nil {
+		t.Fatalf("accounts deny team-a owner/repo-a owner/repo-b on a flow list: %v", err)
+	}
+	if got := accountsAllowLoad(t, path).ClaudeAccounts["team-a"].AllowDataTo; len(got) != 0 {
+		t.Errorf("claude_accounts.team-a.allow_data_to = %v, want no repository left", got)
+	}
+	after := string(accountsAllowBytes(t, path))
+	for _, want := range []string{"team-a", "allow_data_to"} {
+		if !strings.Contains(after, want) {
+			t.Errorf("the account lost its %s: an empty list is not a removed account (that is `accounts rm`)\n%s", want, after)
+		}
+	}
+}
+
+// TestAccountsAllowNoChangePrintsNoNextLine: the hand-off line is the promise
+// that the published policy's accounts block is now behind this list, so a run
+// that wrote nothing — the state it was asked for is the state the file is in —
+// prints the "no change" and not the line. Both directions are in the loop,
+// because the settings write path answers both the same way
+// (yamledit.Changed) and the two spellings of one rule cannot disagree.
+func TestAccountsAllowNoChangePrintsNoNextLine(t *testing.T) {
+	_, path := settingsWriteHomeWith(t, accountsAllowLocal)
+	before := accountsAllowBytes(t, path)
+
+	for _, args := range [][]string{
+		{"accounts", "allow", "team-a", "owner/repo-a"},
+		{"accounts", "deny", "team-a", "owner/repo-absent"},
+	} {
+		out, _, err := execute(t, args...)
+		if err != nil {
+			t.Fatalf("%s: %v", strings.Join(args, " "), err)
+		}
+		if !strings.Contains(out, "no change") {
+			t.Errorf("%s does not answer no change:\n%s", strings.Join(args, " "), out)
+		}
+		if strings.Contains(out, "next: fugaro update") {
+			t.Errorf("%s promises an update for a write that did not happen:\n%s", strings.Join(args, " "), out)
+		}
+	}
+	if after := accountsAllowBytes(t, path); string(after) != string(before) {
+		t.Errorf("a run with nothing to write wrote the config:\n%s", after)
+	}
+}

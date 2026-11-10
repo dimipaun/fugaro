@@ -1571,6 +1571,48 @@ func TestUpdateRepoReadsTheAllowListFromTheNode(t *testing.T) {
 		}
 	})
 
+	// The node covers the name and the project has no value stored for it:
+	// this machine cannot store the copy the stage's own decision picks.
+	// `secrets set` decides the scope from the local config alone, so with no
+	// entry of its own its --project-wide is refused and its bare form stores
+	// the repository's own copy -- the copy that then wins over the project's
+	// forever, which is exactly what find() refuses to prompt a covered name
+	// for. The line left is the run's own door, which asks at a terminal and
+	// stores the project's copy.
+	t.Run("a covered name with no project value leaves the run's own door", func(t *testing.T) {
+		r := newSecretsRig(t, bitbucketOrigin, strings.NewReader(""), func(o *initOptions) { o.door = updateDoor.name })
+		r.e.lc.ProjectSecrets = map[string]config.ProjectSecret{
+			"claude-oauth-token": {AllowDataTo: []string{"acme/app"}},
+		}
+		readNodeFrom(r, bitbucketTokenNode(t, "bitbucket/acme/app"))
+		r.stage.resolve(ctx)
+		if !r.stage.projectScope("bitbucket-token") || r.stage.projectScopeLocal("bitbucket-token") {
+			t.Fatal("the fixture is not the state this case is about: the node admits the repository and the local config does not")
+		}
+		r.store.seedProject(r.e.lc.Name, "claude-oauth-token", tokenValue)
+		res, err := r.run(t)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := stateOf(res, initflow.Secrets); got != initflow.NeedsYou {
+			t.Fatalf("state = %q, want needs-you (out %q, errOut %q)", got, r.out.String(), r.errOut.String())
+		}
+		var left []string
+		for _, l := range res.Left {
+			left = append(left, l.Commands...)
+		}
+		joined := strings.Join(left, "\n")
+		if strings.Contains(joined, "secrets set bitbucket-token") {
+			t.Fatalf("the machine was handed a command that stores the repository's own copy of a name the node makes project-wide:\n%s", joined)
+		}
+		if !strings.Contains(joined, "fugaro update") {
+			t.Fatalf("the run leaves no line that stores the project's copy:\n%s", joined)
+		}
+		if !strings.Contains(joined, "secrets set claude-oauth-token") {
+			t.Errorf("the name only this machine's local config covers lost its own command:\n%s", joined)
+		}
+	})
+
 	// No node read is not an empty policy: a run whose config names no
 	// database address, or whose read failed, keeps the answer it had before
 	// this change -- the token is this repository's own, and the stage asks
