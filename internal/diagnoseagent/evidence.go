@@ -282,7 +282,31 @@ func (o Options) doctorText(ctx context.Context) string {
 	}
 	dctx, cancel := context.WithTimeout(ctx, doctorTimeout)
 	defer cancel()
-	out, err := o.Doctor(dctx)
+	// The call runs on a goroutine of its own and the deadline is the select
+	// below, because F23's promise is this collector's to keep and not the
+	// doctor's: a doctor that never reads the context it was handed — a cloud
+	// client that hung, a subprocess nobody kills — is the state this whole
+	// diagnosis exists for, and waiting on such a call would hang the diagnosis
+	// over exactly the failure it was run about. The channel holds one answer,
+	// so a call that returns after it was abandoned leaves no goroutine waiting
+	// to be received.
+	type answer struct {
+		out []byte
+		err error
+	}
+	done := make(chan answer, 1)
+	go func() {
+		out, err := o.Doctor(dctx)
+		done <- answer{out: out, err: err}
+	}()
+	var out []byte
+	var err error
+	select {
+	case a := <-done:
+		out, err = a.out, a.err
+	case <-dctx.Done():
+		err = dctx.Err()
+	}
 	switch {
 	case errors.Is(err, context.DeadlineExceeded) || errors.Is(dctx.Err(), context.DeadlineExceeded):
 		return fmt.Sprintf("%s did not finish within %s and was abandoned: it makes cloud calls, and a cloud that does not answer is one of the things this diagnosis exists to explain. Nothing it printed is here.\n", what, doctorTimeout)

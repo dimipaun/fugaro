@@ -288,6 +288,42 @@ func TestEvidenceCollectNotesADoctorThatTimesOut(t *testing.T) {
 	}
 }
 
+// TestEvidenceCollectDoesNotWaitForADoctorThatIgnoresItsDeadline: the timeout is
+// the collector's own (F23), and it cannot rest on the doctor reading the
+// context it is handed. A doctor that ignores it — a cloud client that hung, a
+// subprocess nobody kills — is exactly the state this diagnosis exists for, so
+// the collection returns without the call and the note says it was abandoned.
+func TestEvidenceCollectDoesNotWaitForADoctorThatIgnoresItsDeadline(t *testing.T) {
+	was := doctorTimeout
+	doctorTimeout = 20 * time.Millisecond
+	t.Cleanup(func() { doctorTimeout = was })
+
+	getenv := evidenceEnv(t)
+	id := evidenceID()
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	ev, err := Collect(context.Background(), id, Options{
+		Version: "v0.5.2", Getenv: getenv, GOOS: "linux",
+		Open: func(cmdlog.ID) (io.ReadCloser, error) {
+			return io.NopCloser(strings.NewReader("Failed in 1.2s\n")), nil
+		},
+		Doctor: func(context.Context) ([]byte, error) {
+			<-release // the context handed to it decides nothing here
+			return []byte("the doctor answered too late\n"), nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("Collect: %v, want it to return without a doctor that never answers", err)
+	}
+	got := evidenceRead(t, ev.EvidenceDir)["doctor.txt"]
+	if !strings.Contains(got, "did not finish within") {
+		t.Errorf("doctor.txt = %q, want a note that doctor did not finish in time: the collection waited on a doctor that ignores its deadline", got)
+	}
+	if strings.Contains(got, "too late") {
+		t.Error("doctor.txt carries a doctor's answer to a call that was abandoned")
+	}
+}
+
 // TestEvidenceCollectKeepsTheEndOfAnOversizeLog: a log is unbounded, and a
 // command that streamed gigabytes would otherwise be read into memory whole.
 // What is kept is the end, because that is where a failed command writes why
