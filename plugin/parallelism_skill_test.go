@@ -20,6 +20,7 @@ package plugin_test
 
 import (
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -74,7 +75,10 @@ func TestParallelismSkillJobMaxExceptionNeedsTheOptIn(t *testing.T) {
 // TestParallelismSkillGraphExampleIsReadable: the document the skill shows a
 // planner is a document this build reads, and it exercises the fields the
 // skill's prose is about — a footprint that predicts paths, and an edge that
-// says why.
+// says why. The schema version the example is written in is the other test's
+// (TestParallelismSkillGraphExampleIsReadableAtV3), because a document is
+// readable at any version this build accepts and this one is about the shape
+// every version shares.
 func TestParallelismSkillGraphExampleIsReadable(t *testing.T) {
 	skill, err := os.ReadFile(parallelismSkillPath)
 	if err != nil {
@@ -85,21 +89,11 @@ func TestParallelismSkillGraphExampleIsReadable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the graph example in %s is not a document this build reads: %v", parallelismSkillPath, err)
 	}
-	// The example's version is asserted as the number the skill's text spells
-	// rather than checked as readable against the range this build accepts:
-	// Parse refuses a document outside that range before this test sees it, so
-	// a range check is an assertion that can never fail and nothing would move
-	// the example on the day the artifact's schema moves. This is that check —
-	// the schema change updates the skill's text and this line in one change
-	// (CD5 of docs/contract-first-decoupling does it for schema 3).
-	if doc.SchemaVersion != 2 {
-		t.Errorf("the example is schema version %d and the skill writes 2; a schema move updates the example in the same change", doc.SchemaVersion)
-	}
 	if doc.Plan == "" {
 		t.Error("the example names no plan")
 	}
-	if len(doc.Nodes) != 2 || len(doc.Edges) != 1 {
-		t.Fatalf("the example carries %d nodes and %d edges, want the two and the one it shows", len(doc.Nodes), len(doc.Edges))
+	if len(doc.Nodes) != 5 || len(doc.Edges) != 4 {
+		t.Fatalf("the example carries %d nodes and %d edges, want the five and the four it shows: the two tasks, the contract, the integration task and the change request, with the edges that join them", len(doc.Nodes), len(doc.Edges))
 	}
 	for _, n := range doc.Nodes {
 		if n.Title == "" {
@@ -115,6 +109,107 @@ func TestParallelismSkillGraphExampleIsReadable(t *testing.T) {
 	if reason := doc.Edges[0].Reason; reason == "" {
 		t.Error("the example's edge carries no reason")
 	}
+}
+
+// TestParallelismSkillGraphExampleIsReadableAtV3: the example is a schema-3
+// document — the version this build writes — and it uses the fields the third
+// schema adds, so a planner copying it writes a graph whose decoupling pass the
+// read can compute. The readable test above cannot say either: Parse reads every
+// version from 1 to 3, so the example it reads could be a v2 one carrying no
+// `kind`, no `stubs` and no record of the break, and that is exactly the state
+// this test fails in while the skill's text still writes schema 2.
+//
+// The fields are read off the parsed document rather than matched as text: the
+// parser is the thing that says which key is which, and a skill whose example
+// spells `stups` is one the read refuses rather than one a string search finds.
+func TestParallelismSkillGraphExampleIsReadableAtV3(t *testing.T) {
+	skill, err := os.ReadFile(parallelismSkillPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := plan.Parse(parallelismSkillPath, []byte(firstJSONBlock(t, string(skill))))
+	if err != nil {
+		t.Fatalf("the graph example in %s is not a document this build reads: %v", parallelismSkillPath, err)
+	}
+	if doc.SchemaVersion != plan.SchemaVersion {
+		t.Fatalf("the example is schema version %d and this build writes %d; the schema move updates the skill's example and this line in one change", doc.SchemaVersion, plan.SchemaVersion)
+	}
+
+	kinds := make(map[string]string, len(doc.Nodes))
+	for _, n := range doc.Nodes {
+		kinds[n.ID] = n.Kind
+	}
+	contract := graphNodeOfKind(t, doc, plan.KindContract)
+	if contract.Size == nil {
+		t.Errorf("the example's contract %q carries no size: a contract's weight against the pair it separates is one of the two numbers the gain is computed from", contract.ID)
+	}
+	if len(contract.Stubs) == 0 {
+		t.Errorf("the example's contract %q names no stub: the integration task deletes the files `stubs` lists, and an example that lists none shows neither half", contract.ID)
+	}
+	for _, stub := range contract.Stubs {
+		if !slices.Contains(contract.Footprint.Paths, stub) {
+			t.Errorf("the example's contract %q names the stub %q and its footprint does not name that file, which the read refuses: the example has to show the stub named in both places", contract.ID, stub)
+		}
+	}
+
+	if len(doc.Decoupling) == 0 {
+		t.Fatal("the example records no decoupling entry: `decoupling` is what says which edge the contract broke, and every other part of the pass is read from it")
+	}
+	for _, d := range doc.Decoupling {
+		if kinds[d.Contract] != plan.KindContract {
+			t.Errorf("the example records the contract %q, whose kind is %q", d.Contract, kinds[d.Contract])
+		}
+		if kinds[d.Integration] != plan.KindIntegration {
+			t.Errorf("the example records the integration node %q, whose kind is %q", d.Integration, kinds[d.Integration])
+		}
+		if graphCarriesEdge(doc, d.Was.Task, d.Was.Needs) {
+			t.Errorf("the example records the edge %s -> %s as broken and still carries it: an edge is broken or it is there, never both, and the read refuses a document that says both", d.Was.Task, d.Was.Needs)
+		}
+		if !graphCarriesEdge(doc, d.Integration, d.Was.Task) || !graphCarriesEdge(doc, d.Integration, d.Was.Needs) {
+			t.Errorf("the example's integration node %q does not depend on both sides of the edge %s -> %s it covers, which the read refuses", d.Integration, d.Was.Task, d.Was.Needs)
+		}
+	}
+
+	if len(doc.ContractChanges) == 0 {
+		t.Fatal("the example records no change request: `contract_changes` is where a change against a merged contract is recorded, and the skill teaches it")
+	}
+	for _, c := range doc.ContractChanges {
+		if kinds[c.Change] != plan.KindContractChange {
+			t.Errorf("the example records the change %q, whose kind is %q", c.Change, kinds[c.Change])
+		}
+		if kinds[c.Contract] != plan.KindContract {
+			t.Errorf("the example's change %q is against %q, whose kind is %q", c.Change, c.Contract, kinds[c.Contract])
+		}
+		if _, ok := kinds[c.RaisedBy]; !ok {
+			t.Errorf("the example's change %q is raised by %q, which is not one of its nodes", c.Change, c.RaisedBy)
+		}
+		if len(c.Affects) == 0 {
+			t.Errorf("the example's change %q affects no task: the tasks a change reaches are what an unlaunched dependent's edge and a launched one's follow-up are read from", c.Change)
+		}
+	}
+}
+
+// graphNodeOfKind returns the example's first node of kind, failing when it
+// carries none.
+func graphNodeOfKind(t *testing.T, doc plan.Document, kind string) plan.Node {
+	t.Helper()
+	for _, n := range doc.Nodes {
+		if n.Kind == kind {
+			return n
+		}
+	}
+	t.Fatalf("the example carries no node of kind %q: the skill's example is what a planner copies, so every kind its text teaches has to be in it", kind)
+	return plan.Node{}
+}
+
+// graphCarriesEdge reports whether the document carries task -> needs.
+func graphCarriesEdge(doc plan.Document, task, needs string) bool {
+	for _, e := range doc.Edges {
+		if e.Task == task && e.Needs == needs {
+			return true
+		}
+	}
+	return false
 }
 
 // TestParallelismSkillDefinesJobMax: job max is defined here, and the three
