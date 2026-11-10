@@ -1,10 +1,11 @@
 # Pending workflow changes
 
-**Two files are pending: `console-windows.yml`** (the console's Windows
-installer pack, 2026-10-20 — a release-time job, not a pull-request check; see
-`## console-windows.yml` below) **and `images.yml`** (the images workflow with
+**One file is pending: `images.yml`** (the images workflow with
 the nightly's republish of an unchanged base skipped, 2026-11-05, issue #1745;
-see `## images.yml` — staged again below).
+see `## images.yml` — staged again below). The console's Windows installer pack,
+`console-windows.yml`, was copied in on **2026-11-10** and its staged copy
+removed; it was a release-time job rather than a pull-request check (see
+`## console-windows.yml` below, which is the record of that change).
 **Four further files here are not workflows at all: `website-promote-comments.md`, `mobile-release-comments.md`, `console-release-comments.md` and `console-linux-comments.md`** — comment-only corrections. The first three were staged on **2026-11-07**, for three workflow files whose comments still say a reviewer approves a release; the fourth on **2026-11-09**, for a comment of `.github/workflows/console-linux.yml` whose count of pinned Electron hashes went stale when the `win32-x64` hash landed. They are `.md` on purpose: they are not pending workflows, they are not enumerated as such by the docs tests or by `website/test/readme.mjs`, and neither count above moves. See `## The comment-only fragments` below.
 **Two other files stay staged here by design: `console-tests.yml` and `console-release.yml`.** Both were copied into `.github/workflows/` by the owner, and unlike every other file here their staged copies are kept, because their tests assert the copy under `.github/workflows/` is byte-identical to the staged one (see their sections below). Nothing else is pending: the shared package's test job, `shared-tests.yml` (mobile plan Task P4.3), was copied into `.github/workflows/` by the owner on 2026-10-22 (its staged copy is removed; see `## shared-tests.yml` below); Dependabot's watch over `console/`'s npm dependencies, `dependabot-console.yml`, was copied over `.github/dependabot.yml` on the owner's approval of 2026-10-23 (its staged copy is removed; see `## dependabot-console.yml` below); the mobile app's release workflow, `mobile-release.yml`, was copied into `.github/workflows/` on the owner's approval of 2026-10-23 (its staged copy is removed; see `## mobile-release.yml` below); the website's two manual deploy workflows, `website-preview.yml` and `website-promote.yml` (#566), were copied into `.github/workflows/` by the owner (their staged copies are removed); `ci.yml` was copied in on 2026-10-17 (#504, staged copy removed in #508); and `images.yml` was copied in and its staged copy removed in `6b57ba9`, staged again by C1.14 for the credentials service's image leg, and that copy was applied and removed on 2026-10-30 (see `## images.yml` below). A future workflow change that a run needs is staged here as the real file plus the change, and the owner copies it in.
 
@@ -1313,11 +1314,14 @@ the directory in both directions, and the site's paragraph by
 
 ## `console-windows.yml`
 
-**Status: `console-windows.yml` is staged and pending.** Nothing has been copied
-in — `.github/workflows/console-windows.yml` does not exist — so the job has
-never run, and the copy-in below is what is left to do. Every `console/` edit
-the job's own header once waited on has landed (the three are named below); the
-header says so first. **This line is rewritten by the copy-in as well**:
+**Status: `console-windows.yml` is applied, not pending.** The copy-in below was
+run on **2026-11-10** and the staged copy removed, so
+`.github/workflows/console-windows.yml` is the file that runs and this section is
+its record. **The job has still never run**: no host has carried a `--win` pack
+to an artifact, which is why [docs/release.md](../release.md)'s "Before you tag"
+checklist tells the owner to dispatch it by hand before a tag. Every `console/`
+edit the job's own header once waited on has landed (the three are named below);
+the header says so first. **This line is rewritten by the copy-in as well**:
 `TestWindowsConsoleStagingTellsTheOwnerWhatToCopyWhere` reads it against the
 tree in both directions — `staged and pending` while the staged copy is here,
 `applied, not pending` once the copy-in has removed it — the way the two

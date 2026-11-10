@@ -639,7 +639,9 @@ func TestWindowsConsolePackIsNotInTheReleaseGate(t *testing.T) {
 // TestWindowsConsoleStagingTellsTheOwnerWhatToCopyWhere is what the staging
 // moves outside docs/console-windows/, held to the file it describes: the two
 // sentences -- the staging README's own section for the pack, and the site page
-// that names it among the pending workflows -- and the section's status line.
+// that names it, among the pending workflows while the staged copy is here and
+// as the file that runs once the copy-in has removed it -- and the section's
+// status line.
 // Those two both described a pull-request job before the D7 ruling, and both
 // would be a reader told the wrong thing about a job that runs once per release;
 // the status line is the half of "this file is still staged" that the copy-in
@@ -696,12 +698,20 @@ func TestWindowsConsoleStagingTellsTheOwnerWhatToCopyWhere(t *testing.T) {
 		t.Errorf("docs/pending-workflows/README.md's `console-windows.yml` section %s", problem)
 	}
 
-	// The site's page names it among the pending workflows and says when it
-	// runs. website/test/readme.mjs checks the set and the count word; this is
-	// the claim inside that sentence, which nothing else reads.
+	// The site's page names it and says when it runs -- among the pending
+	// workflows while the staged copy is here, and as the file that runs once
+	// the copy-in has removed it, because the page's list is held to the
+	// directory (website/test/readme.mjs, and
+	// TestConsoleLinuxStagingTellsTheOwnerWhatToCopyWhere for the other
+	// direction). This is the claim inside that sentence, which nothing else
+	// reads.
 	site := flattenDoc(readDoc(t, "website/README.md"))
+	named := "`" + windowsConsoleWorkflowPath + "`"
+	if !docExists(t, windowsConsoleWorkflowPath) {
+		named = "`" + appliedConsoleWindowsPath + "`"
+	}
 	for _, want := range []string{
-		"`docs/pending-workflows/console-windows.yml`",
+		named,
 		"release time",
 	} {
 		if !strings.Contains(site, want) {
