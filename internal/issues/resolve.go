@@ -110,9 +110,10 @@ type Fixed struct {
 	// URL is the GitHub issue the record was filed as.
 	URL string
 	// HitBy are the people who ran into the issue — the reporter that filed
-	// it, then everyone an occurrence names — each one once, through
-	// safetext, at most hitByMax of them. A caller that shows them as data
-	// uses this.
+	// it, then everyone an occurrence names — each one once, at most hitByMax
+	// of them, and each one as hitByLine prints it: an address is its local
+	// part (F10) and no name is longer than safetext.FieldMax runes. A caller
+	// that shows them as data uses this.
 	HitBy []string
 	// HitByLine is the same names as one line: `hit by Ana and Jack`, with
 	// `and N more` when there were more than hitByMax of them, and "" when
@@ -332,14 +333,24 @@ func skipNote(err error) string {
 }
 
 // hitByLine is the one place the `hit by Ana and Jack` line is built (F10):
-// the reporter that filed the issue and everyone an occurrence names, each
-// one through safetext — they are strings every launcher can write — each one
+// the reporter that filed the issue and everyone an occurrence names, each one
 // once, the first hitByMax named and the rest counted. The names come back
 // with the line, for a caller that shows them as data.
+//
+// A name is another machine's text: every launcher can write the store, and
+// nothing bounds a name but the size of a record, so each one goes through
+// safetext.Field — an address is printed as its local part and never whole
+// (F10), and a name too long for a line is cut to safetext.FieldMax rather
+// than carried, a megabyte of it, into the update's output and the document
+// the console reads.
+//
+// safetext.FieldList is not what builds the line: its cap is twenty entries
+// and its words are `and N more, not listed here`, where the line here names
+// five and counts the rest (F10), and the cap belongs in one place.
 func hitByLine(names []string) (hitBy []string, line string) {
 	seen := make(map[string]bool, len(names))
 	for _, name := range names {
-		name = safetext.OneLine(name)
+		name = safetext.Field(localPart(name))
 		if name == "" || seen[name] {
 			continue
 		}
@@ -361,6 +372,17 @@ func hitByLine(names []string) (hitBy []string, line string) {
 		line = "hit by " + joinNames(hitBy)
 	}
 	return hitBy, line
+}
+
+// localPart is a name as a person reads it: the reporter field holds the
+// member string the credential answered with, which is an address, and an
+// address is printed as its local part and never whole (F10). Anything with
+// no @ is already the name.
+func localPart(name string) string {
+	if at := strings.IndexByte(name, '@'); at >= 0 {
+		return name[:at]
+	}
+	return name
 }
 
 // joinNames joins names the way a sentence does: `Ana`, `Ana and Jack`,

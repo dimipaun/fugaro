@@ -9,10 +9,12 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/dimipaun/fugaro/internal/agentenv"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/issueresolve"
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 // resolveEnv is an environment whose cache lives in dir, so a pass under test
@@ -146,7 +148,7 @@ func TestResolveMarksClosedCompletedAtOrBelowInstalled(t *testing.T) {
 		t.Errorf("issue %d is reported as %q in %q, want 0.21.0 in %q",
 			below, res.Fixed[0].Release, res.Fixed[0].URL, belowURL)
 	}
-	if res.Fixed[0].HitByLine != "hit by ana@example.test" {
+	if res.Fixed[0].HitByLine != "hit by ana" {
 		t.Errorf("the reporter that filed issue %d is printed as %q", below, res.Fixed[0].HitByLine)
 	}
 	for number, release := range map[int]string{below: "0.21.0", equal: "0.22.0"} {
@@ -509,9 +511,12 @@ func TestResolveAlreadyResolvedByAnotherMachineIsNotAnError(t *testing.T) {
 }
 
 // Who hit an issue is the reporter that filed it plus everyone an occurrence
-// names (F10). The names are strings the whole team's launchers write, so they
-// go through safetext, each one once, and the line names the first five and
-// counts the rest.
+// names (F10). The names are strings the whole team's launchers write, so each
+// one is printed as its local part where it is an address, through safetext,
+// once, and the line names the first five and counts the rest. A name is
+// bounded only by the size of a record, so one longer than a line is cut
+// rather than printed: it reaches the update's output and the document the
+// console reads.
 func TestResolveHitByIsSafeAndCapped(t *testing.T) {
 	ctx := context.Background()
 	b := sharedBucket(t)
@@ -538,15 +543,41 @@ func TestResolveHitByIsSafeAndCapped(t *testing.T) {
 	if len(res.Fixed) != 1 {
 		t.Fatalf("the pass found %+v, want issue %d", res.Fixed, number)
 	}
-	want := []string{"ana@example.test", "evilname", "bo@example.test", "cy@example.test", "dee@example.test"}
+	want := []string{"ana", "evilname", "bo", "cy", "dee"}
 	if got := res.Fixed[0].HitBy; !slices.Equal(got, want) {
 		t.Errorf("the people who hit issue %d are %v, want %v", number, got, want)
 	}
-	if got, want := res.Fixed[0].HitByLine, "hit by ana@example.test, evilname, bo@example.test, cy@example.test, dee@example.test and 2 more"; got != want {
+	if got, want := res.Fixed[0].HitByLine, "hit by ana, evilname, bo, cy, dee and 2 more"; got != want {
 		t.Errorf("the hit-by line is %q, want %q", got, want)
 	}
 	if strings.ContainsAny(res.Fixed[0].HitByLine, "\x1b\x07") {
 		t.Error("an escape sequence reached the line a terminal prints")
+	}
+
+	// The store's own check on a name is the newline its header cannot hold
+	// (a launcher can write the record itself), so nothing but this bounds one.
+	long := sharedBucket(t)
+	longNumber, longGH, _ := filedAt(t, ctx, long, "79")
+	huge := strings.Repeat("a", 500_000)
+	upload(t, ctx, long, hit("update-20261107183210-48230", fingerprint("79"), huge, "0.22.0", sharedAt))
+	longReader := answering(map[int]issueresolve.State{longGH: issueresolve.ClosedCompleted{Milestone: "0.22.0"}})
+	longRes, err := Resolve(ctx, resolveDeps(t, long, longReader), "0.22.0")
+	if err != nil {
+		t.Fatalf("resolving: %v", err)
+	}
+	if len(longRes.Fixed) != 1 {
+		t.Fatalf("the pass found %+v, want issue %d", longRes.Fixed, longNumber)
+	}
+	names := longRes.Fixed[0].HitBy
+	if len(names) != 2 {
+		t.Fatalf("the people who hit issue %d are %d names, want 2", longNumber, len(names))
+	}
+	if got := names[1]; utf8.RuneCountInString(got) != safetext.FieldMax || !strings.HasSuffix(got, "…") {
+		t.Errorf("a name of %d runes came back as %d runes ending %q, want %d ending in an ellipsis",
+			utf8.RuneCountInString(huge), utf8.RuneCountInString(got), got[len(got)-3:], safetext.FieldMax)
+	}
+	if line := longRes.Fixed[0].HitByLine; utf8.RuneCountInString(line) > 2*safetext.FieldMax {
+		t.Errorf("the hit-by line is %d runes long, want it bounded by the names it prints", utf8.RuneCountInString(line))
 	}
 }
 
