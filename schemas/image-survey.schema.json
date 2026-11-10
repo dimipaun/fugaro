@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/image-survey.schema.json",
   "title": "Fugaro image survey",
-  "description": "The document `fugaro image survey --json` prints: one row per repository the project's configuration lists, with the image signals that repository carries (its lockfiles and version files, its Dockerfile and the base image it names, its CI file, and the services its compose or Testcontainers files name), and the setup the project has today — the catalog, the repository-to-image map and the bake setting. The read is read-only: each repository is read through the code host's own file API at a fixed list of paths, nothing is cloned and nothing is written, and every value here was bounded by the rule that took it out of a file before it reached this document. A repository the survey could not open is a row carrying unread and no signals, which is a different thing from a repository whose files name nothing. Members are only ever added within a version (D784), so a renamed or re-meant member is a new member under a new name and the old one is kept, and removing or retyping one bumps version. No object here is closed for that reason: additionalProperties is left true everywhere, because a consumer that refused a member this schema does not know would refuse a newer CLI's document, which D784 promises to keep readable under the same version.",
+  "description": "The document `fugaro image survey --json` prints: one row per repository the project's configuration lists, with the image signals that repository carries (its lockfiles and version files, its Dockerfile and the base image it names, its CI file, and the services its compose or Testcontainers files name), and the setup the project has today — the catalog, the repository-to-image map and the bake setting. The read is read-only: each repository is read through the code host's own file API at a fixed list of paths, nothing is cloned and nothing is written, and every value here was bounded by the rule that took it out of a file before it reached this document. A repository the survey could not open is a row carrying unread and no signals, which is a different thing from a repository whose files name nothing; the setup keeps the same distinction, where an unread member says that image_map and bake_repos are the survey's defaults rather than what the project published. Members are only ever added within a version (D784), so a renamed or re-meant member is a new member under a new name and the old one is kept, and removing or retyping one bumps version. No object here is closed for that reason: additionalProperties is left true everywhere, because a consumer that refused a member this schema does not know would refuse a newer CLI's document, which D784 promises to keep readable under the same version.",
   "type": "object",
   "required": [
     "version",
@@ -113,7 +113,7 @@
         },
         "image_map": {
           "type": "object",
-          "description": "The repository-to-image map the project's published policy node carries (D1906), as written: an owner-authored map from a repository's owner/name to the catalog entry it is served by. Empty when the project publishes none.",
+          "description": "The repository-to-image map the project's published policy node carries (D1906), as written: an owner-authored map from a repository's owner/name to the catalog entry it is served by. Empty when the project publishes none, and empty when this setup is unread — the two are told apart by unread, never by this member.",
           "additionalProperties": {
             "type": "string",
             "minLength": 1
@@ -121,7 +121,12 @@
         },
         "bake_repos": {
           "type": "boolean",
-          "description": "Whether the project bakes its repositories into its images (D1901). True when the published node sets it and when it sets nothing at all, which is the default the field is declared with."
+          "description": "Whether the project bakes its repositories into its images (D1901). True when the published node sets it and when it sets nothing at all, which is the default the field is declared with — and true on an unread setup, where it is the survey's default and not the project's setting."
+        },
+        "unread": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Why image_map and bake_repos are the survey's own defaults rather than what this project published: the project's policy database could not be reached, its published policy node could not be read, or the node is not a document the survey can decode. Absent on every setup that was read, including one whose project published neither key — that project genuinely has no map and genuinely bakes. A consumer must not read the two members as this project's setting while this is present."
         }
       }
     },
