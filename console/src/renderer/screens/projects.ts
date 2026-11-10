@@ -965,10 +965,14 @@ const SETTINGS_VERSION_WORD = 'settings --json is version '
 /** SETTINGS_OWNED_WORD introduces the command that writes a key the generic path
  * does not. The words after it are the document's own `owner`, which is the
  * read's own mapping of a registry row's owner to the command that writes it --
- * a family's name, or the sentence naming `fugaro setup` or `fugaro update` for
- * a key that is the installation's own (`settingsOwnerCommands`,
+ * a family's name, or the sentence naming the command that carries the key's own
+ * file: `fugaro setup` or `fugaro update` for the installation's own keys,
+ * `fugaro config publish` for a layer-file key and `fugaro config init` for one
+ * a checkout's `fugaro.yaml` is opened with (`settingsOwnerCommands`,
  * `internal/cli/settings_read.go`, D1178) -- so the console names no command of
- * its own and keeps no list to drift. */
+ * its own and keeps no list to drift. The member is drawn on a `writable: false`
+ * row only, and the CLI never spells the generic writer on one: a row that did
+ * would draw this sentence and its own second half as a contradiction. */
 const SETTINGS_OWNED_WORD = 'written by '
 
 /** SETTINGS_NOT_GENERIC_WORD is the rest of that sentence, S5's own phrase
@@ -1138,7 +1142,12 @@ function settingsRowsAt(raw: unknown): SettingsRowsRead {
  *     write to offer and the row is drawn without a pencil;
  *   - a row with `writable: false` is drawn with the command that *does* write it
  *     -- `owner`, in the document's own words: a family, or the sentence naming
- *     `fugaro setup` or `fugaro update` for a key that is the installation's own;
+ *     the command that carries the key's own file (`fugaro setup` and
+ *     `fugaro update` for the installation's, `fugaro config publish` and
+ *     `fugaro config init` for a file's). The CLI never names the generic writer
+ *     on one, so the sentence this draws is never its own contradiction; an
+ *     `owner` that is empty is a row no command writes -- the literal `*` of a
+ *     wildcard row -- and it draws no sentence at all;
  *   - **a member of the wrong type withholds the table** rather than being
  *     coerced (`settingsRowAt`), and so does a `settings` member that is not a
  *     list at all: the panel is the read's own unavailable state with the

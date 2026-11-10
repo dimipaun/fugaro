@@ -61,7 +61,7 @@ func TestSettingsReadNamesSetupForAnInstallationKey(t *testing.T) {
 		if !settingsOwnerNamesConverge(root, *row.Owner) {
 			t.Errorf("%s: owner = %q, and the installation's own keys name `fugaro setup` or `fugaro update` (D1178; spec §4)", key, *row.Owner)
 		}
-		if settingsOwnerCommandExists(root, *row.Owner) {
+		if settingsOwnerIsBareCommand(root, *row.Owner) {
 			t.Errorf("%s: owner = %q is a bare command, and the design asks for a sentence naming the command rather than a name a reader takes for the key's own editor (spec §4)", key, *row.Owner)
 		}
 	}
@@ -89,6 +89,61 @@ func TestSettingsOwnerStringsAreAClosedVocabulary(t *testing.T) {
 		}
 		t.Errorf("%s: owner = %q, and a non-writable key names a command that exists or a sentence naming `fugaro setup` / `fugaro update` (D1178; spec §4)", r.Key, owner)
 	}
+
+	// The token and the write have to agree, which is the half the words above
+	// cannot see: a concrete key the generic path refuses may not be the
+	// default owner's, because that token means "`settings set` writes it"
+	// (D1178). The `*` spellings are left out — no write lands on one, and the
+	// read prints no owner for it — and so are the sensitive rows, whose owner
+	// is the family that holds the secret rather than the generic path.
+	for _, r := range settings.Rows() {
+		if r.Sensitive || r.Owner != settingsOwnerDefaultToken || strings.Contains(r.Key, "*") {
+			continue
+		}
+		if _, err := settingsWriteRow(r.Key); err != nil {
+			t.Errorf("%s: the write refuses it (%v) and its row names the generic writer, which is a row saying a command writes a key it will not write (D1178, F13)", r.Key, err)
+		}
+	}
+}
+
+// TestSettingsRefusedRowsNameNoGenericWriter is the pair a reader cannot draw:
+// the console prints `written by <owner>, not by the generic path` on a
+// `writable: false` row, so a refused row that names the generic writer says in
+// one sentence that `settings set` writes the key and that it does not. The
+// write is what decides (D1102, D1178): every refused row names a command other
+// than the generic writer, or names none where no command writes the spelling —
+// the literal `*` of a wildcard row, whose concrete spellings are the generic
+// path's, and the sensitive rows no generic write carries. `budget.mode` is the
+// row that made the pair impossible to miss: it is a repository's own ceiling,
+// it prints as the generic writer's since D1179 put it in the allowlist, and
+// until then it read `writable: false` beside that same word.
+func TestSettingsRefusedRowsNameNoGenericWriter(t *testing.T) {
+	settingsWriteHome(t)
+	rows := readSettingsWritability(t)
+	generic := settingsOwnerCommands[settingsOwnerDefaultToken]
+	refused, named := 0, 0
+	for _, row := range rows {
+		if row.Writable == nil || *row.Writable {
+			continue
+		}
+		refused++
+		if row.Owner == nil {
+			t.Errorf("%s (%s): no owner member, and the read writes one on every row (D1178)", row.Key, row.Scope)
+			continue
+		}
+		if *row.Owner == generic {
+			t.Errorf("%s (%s): writable = false and owner = %q, and the console draws that as `written by %s, not by the generic path` (D1178)", row.Key, row.Scope, *row.Owner, generic)
+		}
+		if *row.Owner != "" {
+			named++
+		}
+	}
+	if refused == 0 {
+		t.Fatal("no row of the read is refused, and the document refuses the keys no command writes (D1178)")
+	}
+	if named == 0 {
+		t.Fatal("every refused row names no command, and the families' rows name theirs (D1178)")
+	}
 }
 
 // settingsOwnerChanges is the table the plan asks G12 to carry in its own test:
@@ -102,22 +157,41 @@ func TestSettingsOwnerStringsAreAClosedVocabulary(t *testing.T) {
 // None of D1179's four budget keys is here: `budget.mode`, `budget.per_day_usd`,
 // `budget.per_run_usd` and `budget.allowed_models` already name the default
 // owner and stay the generic writer's.
+// The second half of the table is the rows the rule moves the other way, and
+// they are the ones F13's shape hides: a key whose owner is the default while
+// the generic path refuses it says a command writes a key it will not write.
+// They name the command that writes the file they are stated in — `fugaro
+// config init` for the four a checkout's `fugaro.yaml` is opened with, `fugaro
+// config publish` (the `config` token, D1515) for the layer file's own header
+// and for the two files' shared `planning.decoupling`.
 var settingsOwnerChanges = []struct{ key, was, now string }{
 	{"base_branch", "config", "settings set"},
 	{"budget.max_run_tokens", "budget", "settings set"},
 	{"budget.unreachable_grace", "budget", "settings set"},
 	{"commit_email", "setup", "settings set"},
 	{"commit_name", "setup", "settings set"},
+	{"gcp_project", "settings set", "config init"},
+	{"layer.gcp_project", "settings set", "config"},
+	{"layer.project", "settings set", "config"},
+	{"layer.version", "settings set", "config"},
 	{"max_parallel", "config", "settings set"},
+	{"planning.decoupling", "settings set", "config"},
+	{"profile", "settings set", "config init"},
+	{"project", "settings set", "config init"},
 	{"update_check", "setup", "settings set"},
+	{"version", "settings set", "config init"},
 	{"watch.burn_alert_usd_per_hour", "budget", "settings set"},
 }
 
 // TestSettingsOwnerChangesAreTheOnesThePlanLists holds the fixture above to the
-// registry: each key's row now says the default owner, it did not before, and
-// no other row the rule moves is left out. The last half is what keeps the table
-// complete — a key the generic path writes whose row still names a family is a
-// row `settings set` would refuse to write while writing it (F13, D1179).
+// registry: each key's row says the owner the fixture records, it did not
+// before, and no other row the rule moves is left out. The last half is what
+// keeps the table complete, and it asks both directions of the rule (D1178): a
+// key the generic path writes whose row still names a family is a row `settings
+// set` would refuse while writing it (F13, D1179), and a key it refuses whose
+// row still names the default is a row naming a command that will not write it
+// (F13's shape again, which is why `settings set` and writability are one
+// question and not two).
 func TestSettingsOwnerChangesAreTheOnesThePlanLists(t *testing.T) {
 	listed := map[string]bool{}
 	for _, tc := range settingsOwnerChanges {
@@ -134,37 +208,66 @@ func TestSettingsOwnerChangesAreTheOnesThePlanLists(t *testing.T) {
 			t.Errorf("%s: the fixture records the same owner before and after, and a key whose owner does not move is not listed", tc.key)
 		}
 		if _, ok := settingsOwnerCommands[tc.now]; !ok {
-			t.Errorf("%s: the fixture's new owner %q is no owner token of the registry", tc.key, tc.now)
+			t.Errorf("%s: the fixture's new owner %q is no owner token of the read's table", tc.key, tc.now)
 		}
-		if _, err := settingsWriteRow(tc.key); err != nil {
-			t.Errorf("%s: the generic path refuses it (%v), and only a key the allowlist carries is `settings set`'s", tc.key, err)
+		_, err := settingsWriteRow(tc.key)
+		if tc.now == settingsOwnerDefaultToken {
+			if err != nil {
+				t.Errorf("%s: the generic path refuses it (%v), and only a key the allowlist carries is `settings set`'s", tc.key, err)
+			}
+			continue
+		}
+		if err == nil {
+			t.Errorf("%s: the generic path writes it, and its row now names %q: a key the allowlist carries is `settings set`'s and its row says so (D1178)", tc.key, tc.now)
 		}
 	}
 
 	for _, r := range settings.Rows() {
-		if r.Owner == "settings set" || r.Sensitive {
+		// A wildcard row's own spelling is no key a write lands on: its
+		// concrete spellings are the generic path's wherever the allowlist
+		// carries the row, and the read prints no owner for the literal `*`.
+		if r.Sensitive || strings.Contains(r.Key, "*") {
 			continue
 		}
-		if _, err := settingsWriteRow(r.Key); err != nil {
+		_, err := settingsWriteRow(r.Key)
+		subject := ""
+		switch {
+		case err == nil && r.Owner != settingsOwnerDefaultToken:
+			subject = "the generic path writes it and its row still names " + r.Owner
+		case err != nil && r.Owner == settingsOwnerDefaultToken:
+			subject = "the generic path refuses it and its row names the default owner"
+		default:
 			continue
 		}
 		if !listed[r.Key] {
-			t.Errorf("%s: the generic path writes it and its row still names %q, and the fixture lists no owner change for it (D1178: a key the allowlist carries is `settings set`'s and its row says so)", r.Key, r.Owner)
+			t.Errorf("%s: %s, and the fixture lists no owner change for it (D1178)", r.Key, subject)
 		}
 	}
 }
 
-// settingsOwnerCommandExists reports whether path names a command of this
-// binary's tree. It is the test for "a command that exists" in D1178's rule:
-// the owner word is resolved against the tree the CLI builds rather than against
-// a list of names beside it, so a command renamed or removed is red here.
+// settingsOwnerCommandExists reports whether the owner word begins with a
+// command of this binary's tree — the head of the sentence, the words before the
+// first comma (`fugaro setup, which writes ...` names `fugaro setup`). It is the
+// test for "a command that exists" in D1178's rule: the word is resolved against
+// the tree the CLI builds rather than against a list of names beside it, so a
+// command renamed or removed is red here.
 func settingsOwnerCommandExists(root *cobra.Command, path string) bool {
-	words := strings.Fields(strings.TrimPrefix(path, root.Name()+" "))
+	head, _, _ := strings.Cut(path, ",")
+	words := strings.Fields(strings.TrimPrefix(head, root.Name()+" "))
 	if len(words) == 0 {
 		return false
 	}
 	c, _, err := root.Find(words)
 	return err == nil && c != nil && c.Name() == words[len(words)-1]
+}
+
+// settingsOwnerIsBareCommand reports whether the owner word is nothing but a
+// command of the tree, no sentence around it. D1178 asks the keys no command
+// edits for a sentence, so a reader does not take the name for the key's own
+// editor (spec §4).
+func settingsOwnerIsBareCommand(root *cobra.Command, owner string) bool {
+	head, _, sentence := strings.Cut(owner, ",")
+	return !sentence && settingsOwnerCommandExists(root, head)
 }
 
 // settingsOwnerNamesConverge reports whether the owner word is the sentence the

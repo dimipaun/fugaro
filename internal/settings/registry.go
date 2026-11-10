@@ -145,10 +145,19 @@ func value(v, constant string) Default { return Default{Value: v, Const: constan
 // TestRegistryFugaroYAMLKeysMatchConfigScopes fails on a key that is in one and
 // not the other.
 var yamlMeta = map[string]Row{
-	"version":     {Default: unset("the file is refused (version: 1 is required)")},
-	"project":     {Default: unset("the file is refused (project: is required)")},
-	"gcp_project": {Default: unset("the installation's GCP project")},
-	"profile":     {Default: unset("the project layer's default_profile")},
+	// The four keys a checkout's `fugaro.yaml` is opened with. The command
+	// that writes them is `fugaro config init`, which writes exactly these
+	// lines and nothing else (minimalFugaroYAML, docs/project-layer.md §3);
+	// the generic path refuses all four, because its allowlist is the keys a
+	// repository is *edited* into and the file's header is written once, when
+	// the checkout has none. The default owner would say `settings set`
+	// writes four keys its own allowlist refuses — F13's shape, where D1178's
+	// rule is that a non-writable key names a command that exists and writes
+	// it.
+	"version":     {Owner: "config init", Default: unset("the file is refused (version: 1 is required)")},
+	"project":     {Owner: "config init", Default: unset("the file is refused (project: is required)")},
+	"gcp_project": {Owner: "config init", Default: unset("the installation's GCP project")},
+	"profile":     {Owner: "config init", Default: unset("the project layer's default_profile")},
 
 	"git.provider":    {Default: unset("the local config's repos.<owner/name>.provider")},
 	"git.base_branch": {Default: value(config.DefaultBaseBranch, "config.DefaultBaseBranch")},
@@ -308,8 +317,14 @@ var yamlMeta = map[string]Row{
 
 	// The planning pass's switch (docs/contract-first-decoupling, D1813). It
 	// is a preference rather than a bound, so the ordinary rule decides it:
-	// the narrowest layer that sets it wins.
-	"planning.decoupling": {Default: value("true", "config.DefaultPlanningDecoupling")},
+	// the narrowest layer that sets it wins. Owner `config` for
+	// security.patterns' reason (D1515): the key is stated in a file — a
+	// repository's `fugaro.yaml`, and the layer's `defaults:` — and the
+	// layer's half is what `fugaro config publish` carries. Its second half is
+	// `layer.defaults.planning.decoupling`, which the generic path does write,
+	// so a project sets the key through that row; the repository's own half is
+	// the file's, and the allowlist does not carry the bare spelling.
+	"planning.decoupling": {Owner: "config", Default: value("true", "config.DefaultPlanningDecoupling")},
 }
 
 // buildRows is the table, assembled from the three documents' own sources: the
@@ -504,9 +519,16 @@ func locLocal(key, def, owner, doc string) Row {
 // layer's `profiles.<n>` is a workflow profile and the local config's is a job
 // profile, and one key may not mean two things.
 var layerRows = []Row{
-	layerRow("version", "the file is refused (version: is required)", "settings set", docLayer),
-	layerRow("project", "the file is refused (project: is required)", "settings set", docLayer),
-	layerRow("gcp_project", "the installation's GCP project", "settings set", docLayer),
+	// The layer file's own header. Owner `config` for security.patterns'
+	// reason (D1515): the file is the editor and `fugaro config publish`
+	// carries it, while the generic path refuses all three — its allowlist
+	// carries the keys a person edits a published layer through, and a header
+	// is what a file is opened with rather than a key an edit lands on.
+	// `default_profile` beside them is the generic path's, which is the
+	// difference the owner column is for.
+	layerRow("version", "the file is refused (version: is required)", "config", docLayer),
+	layerRow("project", "the file is refused (project: is required)", "config", docLayer),
+	layerRow("gcp_project", "the installation's GCP project", "config", docLayer),
 	layerRow("default_profile", "the layer's own profile block is refused without one", "settings set", docLayer),
 	layerRow("claude_models", "every Claude model the project's accounts may serve", "models", docModels),
 

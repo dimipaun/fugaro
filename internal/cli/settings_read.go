@@ -381,6 +381,13 @@ func layerSelected(row settings.Row, want []string) bool {
 // entries carry the sentence the design asks for rather than a command name a
 // reader would take for the key's own editor and that would not write the key
 // (spec §4). It is display text and no rule reads it.
+//
+// An entry names a command of this binary's tree, and where that command is not
+// the key's own editor it says what it does with the key: `fugaro config
+// publish` carries the layer file a `config` key is stated in (D1515 — that
+// row's keys are edited in the file, which is why the read names this command
+// and not the converge that applies the file afterwards), and `fugaro config
+// init` writes the repository's own file a `config init` key is stated in.
 var settingsOwnerCommands = map[string]string{
 	"settings set": "fugaro settings set",
 	"models":       "fugaro models",
@@ -394,8 +401,13 @@ var settingsOwnerCommands = map[string]string{
 	"setup":        "fugaro setup, which writes the installation's own facts",
 	"update":       "fugaro update, which writes the installation's own generations",
 	"budget":       "fugaro setup, which writes the installation's own budget backend",
-	"config":       "fugaro update, which applies the file the key is stated in",
+	"config":       "fugaro config publish, which carries the layer file the key is stated in",
+	"config init":  "fugaro config init, which writes the repository's own file",
 }
+
+// settingsOwnerDefaultToken is the registry's owner for a key no family and no
+// file has claimed: the generic path's, when its allowlist carries the key.
+const settingsOwnerDefaultToken = "settings set"
 
 // projectRow is the key at the project scope: the layer file, the local config
 // or the environment, whichever decides.
@@ -408,6 +420,18 @@ func (r *settingsRead) projectRow(row settings.Row) setting {
 	// row with a varying segment is a map entry the write refuses whatever
 	// list carries it.
 	_, writeErr := settingsWriteRow(row.Key)
+	// The owner is asked of the write as well (D1178): a spelling the generic
+	// path refuses is no command's edit, so it names none rather than naming
+	// the writer that just refused it — a row reading `fugaro settings set`
+	// beside `writable: false` says a command writes a key it will not write.
+	// The rows that answer nothing are the map spellings, whose literal `*`
+	// the write refuses while it writes their concrete spellings
+	// (`layer.profiles.*.base` against `layer.profiles.java.base`), and the
+	// sensitive rows the generic path carries under another name.
+	owner := settingsOwnerCommands[row.Owner]
+	if writeErr != nil && row.Owner == settingsOwnerDefaultToken {
+		owner = ""
+	}
 	s := setting{
 		Key:          row.Key,
 		Scope:        "project",
@@ -419,7 +443,7 @@ func (r *settingsRead) projectRow(row settings.Row) setting {
 		State:        stateOK,
 		Sensitive:    row.Sensitive,
 		Writable:     writeErr == nil,
-		Owner:        settingsOwnerCommands[row.Owner],
+		Owner:        owner,
 		TargetLayer:  settingsDefaultLayer(row),
 	}
 	switch {

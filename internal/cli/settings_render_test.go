@@ -298,12 +298,13 @@ func TestSettingsJSONNamesTheFamilyThatOwnsTheOthers(t *testing.T) {
 }
 
 // TestSettingsJSONOwnerMatchesTheRefusalSettingsSetPrints is the anti-drift pin
-// (D1102, D1178): every row names a command, a row the generic path writes names
-// the generic writer, and a row it refuses — with a family's name beside it — is
-// refused by that family's own words. The read's table and the write's map are
-// two tables and both answer for the families, so this is what makes a rename in
-// one without the other red rather than a pencil that offers an edit the write
-// will not make, or a word naming a command that writes nothing.
+// (D1102, D1178): a row the generic path writes names the generic writer, and a
+// row it refuses either names a command other than that writer — with a family's
+// name beside it, refused by that family's own words — or names none where no
+// command writes the spelling. The read's table and the write's map are two
+// tables and both answer for the families, so this is what makes a rename in one
+// without the other red rather than a pencil that offers an edit the write will
+// not make, or a word naming a command that writes nothing.
 //
 // The families are the ones the write's map names, and they are the half that
 // can be compared word for word: the families whose keys are the converge's own
@@ -314,11 +315,20 @@ func TestSettingsJSONOwnerMatchesTheRefusalSettingsSetPrints(t *testing.T) {
 	settingsWriteHome(t)
 	rows := readSettingsWritability(t)
 	generic := settingsOwnerCommands["settings set"]
-	named, families := 0, 0
+	named, families, unnamed := 0, 0, 0
 	for _, r := range settings.Rows() {
 		row := writableRowOf(t, rows, r.Key, "project")
-		if row.Owner == nil || *row.Owner == "" {
-			t.Errorf("%s: the row names no command, and every row of the document names the one that writes it (D1178)", r.Key)
+		if row.Owner == nil {
+			t.Errorf("%s: no owner member, and the read writes one on every row (D1178)", r.Key)
+			continue
+		}
+		if *row.Owner == "" {
+			// A spelling no command writes: the literal `*` of a wildcard row,
+			// which the write refuses while it writes its concrete spellings,
+			// and the sensitive rows the generic path carries under no name.
+			// The other pin — TestSettingsRefusedRowsNameNoGenericWriter —
+			// holds every such row to being refused, so this is not a hole.
+			unnamed++
 			continue
 		}
 		named++
@@ -347,10 +357,13 @@ func TestSettingsJSONOwnerMatchesTheRefusalSettingsSetPrints(t *testing.T) {
 		}
 	}
 	if named == 0 {
-		t.Fatal("no row of the document names a command, and every row of the read does (D1178)")
+		t.Fatal("no row of the document names a command, and the families' rows name theirs (D1178)")
 	}
 	if families == 0 {
 		t.Fatal("no row of the document names a command family, and the registry has rows a family owns")
+	}
+	if unnamed == 0 {
+		t.Fatal("no row of the document names no command, and the registry has wildcard spellings no write lands on")
 	}
 }
 

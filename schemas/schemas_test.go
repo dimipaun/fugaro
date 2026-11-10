@@ -5432,13 +5432,18 @@ func TestSettingsConsoleFixture(t *testing.T) {
 		}
 		// `owner` is the word for the command that writes the row (D1178): the
 		// generic writer's name on a key the allowlist carries, a family's on a
-		// key it refuses, and the sentence naming `fugaro setup` or
-		// `fugaro update` on the installation's own. The registry answers the
-		// token and this package cannot map it -- the table that maps it is
+		// key it refuses, and, on a key no command edits, the sentence naming
+		// the command that carries its file -- `fugaro setup` and `fugaro
+		// update` for the installation's own, `fugaro config publish` and
+		// `fugaro config init` for a file's. A row the generic path refuses
+		// never spells the generic writer, and the empty word is a row no
+		// command writes, which no row of this fixture is. The registry answers
+		// the token and this package cannot map it -- the table that maps it is
 		// settingsOwnerCommands, internal/cli's -- so the one fact about the
-		// word this half can restate is that every row of the read carries one,
-		// and the guard beside the table (settings_console_fixture_test.go)
-		// holds the fixture to the word itself.
+		// word this half can restate is that every row of the read names one
+		// where a command writes it, and the guard beside the table
+		// (settings_console_fixture_test.go) holds the fixture to the word
+		// itself.
 		if row.Owner == "" {
 			t.Errorf("%s: the fixture names no owner, and every row of the read names the command that writes it (settingsOwnerCommands, D1178)", row.Key)
 		}

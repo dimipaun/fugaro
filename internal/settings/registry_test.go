@@ -213,6 +213,11 @@ func TestRegistryOwnerNamesACommand(t *testing.T) {
 	families := []string{
 		"settings set", "models", "rigor", "rigor floor", "accounts", "secrets",
 		"config", "budget", "project", "setup", "update", "workspace",
+		// The four keys a checkout's `fugaro.yaml` is opened with, which
+		// `fugaro config init` writes and no edit lands on (D1178): the token is
+		// this table's, and the read's own map is where it becomes the command's
+		// name (settingsOwnerCommands).
+		"config init",
 		// The image map's own family (D1906): the key is the project's image
 		// policy per repository and `fugaro image map set` is what writes it, so
 		// the row names that command rather than `fugaro project`, which writes
