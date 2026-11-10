@@ -936,17 +936,26 @@ var localRows = []Row{
 	// named by the constant that holds it — the effective cap is the person's
 	// own max_parallel, which is why the sentence names that key rather than a
 	// number.
-	locTighten("orchestrator.max_running", "the person's max_parallel", "config", docOrchestrator),
-	locTighten("orchestrator.batch_size", "10 (policy.DefaultBatchSize)", "config", docOrchestrator),
-	locTighten("orchestrator.spawn_per_minute", "2 (policy.DefaultSpawnPerMinute)", "config", docOrchestrator),
-	locTighten("orchestrator.spawn_per_hour", "12 (policy.DefaultSpawnPerHour)", "config", docOrchestrator),
-	locTighten("orchestrator.spawn_per_day", "60 (policy.DefaultSpawnPerDay)", "config", docOrchestrator),
+	//
+	// Owner `project` for triage's reason: the block is stated in the local
+	// config and `fugaro project policy publish` is what carries it to the
+	// node every run of the project is held to (buildProjectPolicy copies
+	// lc.Orchestrator into the node, and policyCeilingValues spells these six
+	// members back out of it). It was `config` until G12, whose read printed
+	// that token's sentence — the layer file `fugaro config publish` carries —
+	// beside a row whose own target_layer is `local`, a file the publish never
+	// reads.
+	locTighten("orchestrator.max_running", "the person's max_parallel", "project", docOrchestrator),
+	locTighten("orchestrator.batch_size", "10 (policy.DefaultBatchSize)", "project", docOrchestrator),
+	locTighten("orchestrator.spawn_per_minute", "2 (policy.DefaultSpawnPerMinute)", "project", docOrchestrator),
+	locTighten("orchestrator.spawn_per_hour", "12 (policy.DefaultSpawnPerHour)", "project", docOrchestrator),
+	locTighten("orchestrator.spawn_per_day", "60 (policy.DefaultSpawnPerDay)", "project", docOrchestrator),
 	// The one key of the block that is not a count: a class the map does not
 	// carry is at its floor, which is the bottom of the order for a routine
 	// decision and the top for a security-sensitive one (policy.ValidOrchestrator
 	// refuses a name outside the order and a model under the class's floor, so
 	// the classes' two ends are the two answers an absent key can take).
-	locTighten("orchestrator.decision_model_per_class", "each class's floor: haiku for a routine decision and opus for a sensitive one", "config", docOrchestrator),
+	locTighten("orchestrator.decision_model_per_class", "each class's floor: haiku for a routine decision and opus for a sensitive one", "project", docOrchestrator),
 
 	loc("repos.*.provider", "none", "project", docSetup),
 	loc("repos.*.base_branch", "the project's base_branch", "project", docSetup),
@@ -992,8 +1001,15 @@ var localRows = []Row{
 	// layer would name a store the key cannot have. Their defaults are values
 	// the loader leaves in place, so they come from defaultValues below, as
 	// update_check's does, rather than from an "unset means" sentence.
-	{Key: "issues.nudge_after_days", Layers: []string{LayerLocal}, Merge: Replace, Owner: "config", Doc: docTroubleshoot},
-	{Key: "issues.nudge_recurrence", Layers: []string{LayerLocal}, Merge: Replace, Owner: "config", Doc: docTroubleshoot},
+	//
+	// Owner `config local` (G12): the machine's own config is their only store,
+	// and no command edits them key by key — so the row names the file and the
+	// command that writes it, the way `config` names the layer file and
+	// `fugaro config publish`. It was `config` until G12, whose read printed
+	// that token's sentence — a file these two are not stated in — beside a row
+	// whose own target_layer is `local`.
+	{Key: "issues.nudge_after_days", Layers: []string{LayerLocal}, Merge: Replace, Owner: "config local", Doc: docTroubleshoot},
+	{Key: "issues.nudge_recurrence", Layers: []string{LayerLocal}, Merge: Replace, Owner: "config local", Doc: docTroubleshoot},
 }
 
 // stageAccountRows are the concrete spellings of the stages.*.claude_account

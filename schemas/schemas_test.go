@@ -5335,9 +5335,10 @@ func TestSettingsSchemaCoversPlanningKey(t *testing.T) {
 // package that holds it**: `target_layer` is settingsDefaultLayer's answer, and
 // `owner` and `writable` are settingsOwnerCommands' and settingsWriteRow's, all three set by projectRow
 // in internal/cli, so TestSettingsConsoleFixtureOwnerAndWritable
-// (internal/cli/settings_console_fixture_test.go) holds the fixture to those
-// three functions and a change to one of them is red there even where the
-// restatements here stay green.
+// (internal/cli/settings_console_fixture_test.go) holds the fixture to the read
+// that answers with them -- it runs `settings --json` and compares the row it
+// prints, which is the three together -- and a change to one of them is red
+// there even where the restatements here stay green.
 func TestSettingsConsoleFixture(t *testing.T) {
 	const file = "../console/test/fixtures/settings.json"
 	data, err := os.ReadFile(file)
@@ -5434,16 +5435,17 @@ func TestSettingsConsoleFixture(t *testing.T) {
 		// generic writer's name on a key the allowlist carries, a family's on a
 		// key it refuses, and, on a key no command edits, the sentence naming
 		// the command that carries its file -- `fugaro setup` and `fugaro
-		// update` for the installation's own, `fugaro config publish` and
-		// `fugaro config init` for a file's. A row the generic path refuses
-		// never spells the generic writer, and the empty word is a row no
-		// command writes, which no row of this fixture is. The registry answers
-		// the token and this package cannot map it -- the table that maps it is
-		// settingsOwnerCommands, internal/cli's -- so the one fact about the
-		// word this half can restate is that every row of the read names one
-		// where a command writes it, and the guard beside the table
-		// (settings_console_fixture_test.go) holds the fixture to the word
-		// itself.
+		// update` for the installation's own, `fugaro config publish`,
+		// `fugaro config init` and `fugaro update` for a file's. The registry
+		// answers the token and this package cannot map it -- the table that
+		// maps it is settingsOwnerCommands, internal/cli's, and so is the
+		// blanking rule beside it for a row the write refuses -- so the one
+		// fact about the word this half can restate is that every row of this
+		// fixture names one. Which word, and the pair it keeps with `writable`,
+		// is the guard's own (settings_console_fixture_test.go, which asks the
+		// read for all three members): a word compared here alone would accept
+		// the generic writer's name on a row the write refuses, which is a row
+		// the read prints none for.
 		if row.Owner == "" {
 			t.Errorf("%s: the fixture names no owner, and every row of the read names the command that writes it (settingsOwnerCommands, D1178)", row.Key)
 		}

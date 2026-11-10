@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -106,19 +107,31 @@ func TestSettingsOwnerStringsAreAClosedVocabulary(t *testing.T) {
 	}
 }
 
-// TestSettingsOwnerFileCarriersNameTheCommandThatCarriesTheFile closes the
-// blind spot the vocabulary test above has by construction, and which the
-// senior review of this task put a finding on: a sentence passes there as long
-// as its head is a command of the tree, so the `config` token could read
-// `fugaro update, which applies the file the key is stated in` — a command that
-// applies the file and never edits it — and every test stayed green. The two
-// file-carrier tokens name the command that writes the file the key is stated
-// in (D1515): `fugaro config publish` carries the project layer's half,
-// `fugaro config init` writes a checkout's own `fugaro.yaml`.
+// TestSettingsOwnerFileCarriersNameTheCommandThatCarriesTheFile closes the two
+// blind spots the vocabulary test above has by construction, and which the
+// senior review of this task put findings on.
+//
+// The first is the sentence's words: a sentence passes there as long as its head
+// is a command of the tree, so the `config` token could read `fugaro update,
+// which applies the file the key is stated in` — a command that applies the file
+// and never edits it — and every test stayed green. Each file-carrier token
+// names the command that writes the file the key is stated in (D1515):
+// `fugaro config publish` carries the project layer, `fugaro config init` writes
+// a checkout's own `fugaro.yaml`, and `fugaro update` writes the machine's own
+// config.
+//
+// The second is the rows the sentence is about: nothing held a token's rows to
+// the file its sentence names, so `config` carried six orchestrator ceilings and
+// the two nudge thresholds — keys of the machine's own config, which
+// `fugaro config publish` never reads — and the read printed the layer file's
+// sentence beside a row whose own target_layer is `local`. The registry answers
+// which file a row is stated in, as the layer that file is: the project layer,
+// the repository's own file, the machine's own.
 func TestSettingsOwnerFileCarriersNameTheCommandThatCarriesTheFile(t *testing.T) {
-	for _, tc := range []struct{ token, command string }{
-		{"config", "fugaro config publish"},
-		{"config init", "fugaro config init"},
+	for _, tc := range []struct{ token, command, layer string }{
+		{"config", "fugaro config publish", settings.LayerProject},
+		{"config init", "fugaro config init", settings.LayerRepo},
+		{"config local", "fugaro update", settings.LayerLocal},
 	} {
 		owner, ok := settingsOwnerCommands[tc.token]
 		if !ok {
@@ -128,6 +141,19 @@ func TestSettingsOwnerFileCarriersNameTheCommandThatCarriesTheFile(t *testing.T)
 		head, _, _ := strings.Cut(owner, ",")
 		if got := strings.TrimSpace(head); got != tc.command {
 			t.Errorf("%s: the owner reads %q, and the command that writes the file the key is stated in is %q (D1515)", tc.token, owner, tc.command)
+		}
+		rows := 0
+		for _, r := range settings.Rows() {
+			if r.Owner != tc.token {
+				continue
+			}
+			rows++
+			if !slices.Contains(r.Layers, tc.layer) {
+				t.Errorf("%s: the token's sentence names the file the layer %s is, and the row's layers are %v: the key is stated in no such file, so the read prints a sentence about a file it is not in (D1178, D1515)", r.Key, tc.layer, r.Layers)
+			}
+		}
+		if rows == 0 {
+			t.Errorf("%s: no registry row names the token, and an entry nothing prints is a sentence no reader reads", tc.token)
 		}
 	}
 }
@@ -174,11 +200,11 @@ func TestSettingsRefusedRowsNameNoGenericWriter(t *testing.T) {
 
 // settingsOwnerChanges is the table the plan asks G12 to carry in its own test:
 // every key whose registry owner string this task moves, key → old owner → new
-// owner, key → old owner → new owner, so the change is reviewable as a diff of
-// names and a later task cannot move one silently (D1178, spec §4). The rule
-// behind it is the design's: a key the allowlist carries is `settings set`'s and
-// its row says so, and every other key names a command that exists or a sentence
-// naming `fugaro setup` / `fugaro update`.
+// owner, so the change is reviewable as a diff of names and a later task cannot
+// move one silently (D1178, spec §4). The rule behind it is the design's: a key
+// the allowlist carries is `settings set`'s and its row says so, and every other
+// key names a command that exists or a sentence naming `fugaro setup` /
+// `fugaro update`.
 //
 // None of D1179's four budget keys is here: `budget.mode`, `budget.per_day_usd`,
 // `budget.per_run_usd` and `budget.allowed_models` already name the default
@@ -190,6 +216,13 @@ func TestSettingsRefusedRowsNameNoGenericWriter(t *testing.T) {
 // config init` for the four a checkout's `fugaro.yaml` is opened with, `fugaro
 // config publish` (the `config` token, D1515) for the layer file's own header
 // and for the two files' shared `planning.decoupling`.
+// The rest of the table is this task's own `config` token under review: a row of it
+// whose key is stated in the machine's own config rather than in the layer file
+// printed a sentence about a file it is not in. The six orchestrator ceilings
+// name `fugaro project`, which is what carries them to the published node
+// (`buildProjectPolicy` copies the local block into it), and the two nudge
+// thresholds name `config local`, the machine's own file, which `fugaro update`
+// writes — the same shape `config` and `config init` name for their files.
 var settingsOwnerChanges = []struct{ key, was, now string }{
 	{"base_branch", "config", "settings set"},
 	{"budget.max_run_tokens", "budget", "settings set"},
@@ -197,10 +230,18 @@ var settingsOwnerChanges = []struct{ key, was, now string }{
 	{"commit_email", "setup", "settings set"},
 	{"commit_name", "setup", "settings set"},
 	{"gcp_project", "settings set", "config init"},
+	{"issues.nudge_after_days", "config", "config local"},
+	{"issues.nudge_recurrence", "config", "config local"},
 	{"layer.gcp_project", "settings set", "config"},
 	{"layer.project", "settings set", "config"},
 	{"layer.version", "settings set", "config"},
 	{"max_parallel", "config", "settings set"},
+	{"orchestrator.batch_size", "config", "project"},
+	{"orchestrator.decision_model_per_class", "config", "project"},
+	{"orchestrator.max_running", "config", "project"},
+	{"orchestrator.spawn_per_day", "config", "project"},
+	{"orchestrator.spawn_per_hour", "config", "project"},
+	{"orchestrator.spawn_per_minute", "config", "project"},
 	{"planning.decoupling", "settings set", "config"},
 	{"profile", "settings set", "config init"},
 	{"project", "settings set", "config init"},

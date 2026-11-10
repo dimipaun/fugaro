@@ -366,14 +366,19 @@ func layerSelected(row settings.Row, want []string) bool {
 // settingsOwnerCommands is the read's own table (D1178): what the owner column
 // prints, one entry per owner token the registry uses. It is a second table
 // rather than settingsFamilyCommands because that map answers the *write*'s
-// refusal and points a refused key at its family (settings_set.go), and it
-// cannot be widened to answer this question: `config` owns `max_parallel` and
-// `setup` owns `update_check`, and both are keys the generic path writes, so an
-// entry for either family would refuse two keys `settings set` carries (F11).
-// The design's cost for the second table is the one thing to keep in step —
-// TestSettingsOwnerStringsAreAClosedVocabulary resolves every entry here
+// refusal and points a refused key at its family (settings_set.go): its words
+// are those families' bare names, and it carries no entry for the default owner
+// at all, so a read resolved through it printed nothing for every key the
+// generic path writes — the hole F11 was. Widening it is not the repair, and
+// what it is asked is why: a token added to that map for the read's sake is a
+// token a write is then refused for, and this table also owes words for tokens
+// the write answers nothing about. The two keys F11 was written about are
+// history — `config` owned `max_parallel` and `setup` owned `update_check` until
+// this task moved both to the default owner, which the generic path already
+// carried. The design's cost for the second table is the one thing to keep in
+// step: TestSettingsOwnerStringsAreAClosedVocabulary resolves every entry here
 // against the command tree and fails on a token the registry has and this table
-// does not, which is the hole F11 was.
+// does not.
 //
 // The default owner names the generic writer, and every family that has a
 // command names it. The families whose keys are the converge's own do not: what
@@ -383,11 +388,17 @@ func layerSelected(row settings.Row, want []string) bool {
 // (spec §4). It is display text and no rule reads it.
 //
 // An entry names a command of this binary's tree, and where that command is not
-// the key's own editor it says what it does with the key: `fugaro config
-// publish` carries the layer file a `config` key is stated in (D1515 — that
-// row's keys are edited in the file, which is why the read names this command
-// and not the converge that applies the file afterwards), and `fugaro config
-// init` writes the repository's own file a `config init` key is stated in.
+// the key's own editor the sentence says what it does with the file the key is
+// stated in. The three file tokens are the whole of that shape, one per file a
+// settings key lives in, and each names the command that carries the file rather
+// than the one that applies it afterwards: `fugaro config publish` carries the
+// project layer (D1515 — that row's keys are edited in the file), `fugaro config
+// init` writes the repository's own `fugaro.yaml`, and `fugaro update` writes the
+// machine's own config, where the `config local` rows are stated and which no
+// command edits key by key. One token may not span two files: its sentence would
+// be true of some of its rows, which is what `config`'s was for the six
+// orchestrator rows and the two nudge thresholds until this task moved them to
+// the owners that carry them.
 var settingsOwnerCommands = map[string]string{
 	"settings set": "fugaro settings set",
 	"models":       "fugaro models",
@@ -403,6 +414,7 @@ var settingsOwnerCommands = map[string]string{
 	"budget":       "fugaro setup, which writes the installation's own budget backend",
 	"config":       "fugaro config publish, which carries the layer file the key is stated in",
 	"config init":  "fugaro config init, which writes the repository's own file",
+	"config local": "fugaro update, which writes the machine's own config the key is stated in",
 }
 
 // settingsOwnerDefaultToken is the registry's owner for a key no family and no

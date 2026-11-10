@@ -218,6 +218,11 @@ func TestRegistryOwnerNamesACommand(t *testing.T) {
 		// this table's, and the read's own map is where it becomes the command's
 		// name (settingsOwnerCommands).
 		"config init",
+		// The keys of the machine's own config that no command edits — the
+		// Issues section's two nudge thresholds (G12): the token names the file
+		// they are stated in, as `config` and `config init` name theirs, and the
+		// read's map names `fugaro update`, which writes it.
+		"config local",
 		// The image map's own family (D1906): the key is the project's image
 		// policy per repository and `fugaro image map set` is what writes it, so
 		// the row names that command rather than `fugaro project`, which writes
