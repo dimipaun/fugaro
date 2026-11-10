@@ -462,6 +462,17 @@ func TestImageBuildManagedStopsAtTheRecordedBound(t *testing.T) {
 	if verdicts[managedmode.AuditAdmitted] != 1 || verdicts[managedmode.AuditRefused] != 1 {
 		t.Errorf("the day's verdicts are %v, want one admission and one refusal", verdicts)
 	}
+	// The account the run kept ends the way the command did (G3): this run exits
+	// non-zero, so its last line is the reporter's failure and the entry the
+	// bound refused is the step it failed on — alpha's tick and a closing line
+	// that read "Done in ..., 1 step" beside the refusal would call a stopped
+	// run finished, which is the one thing the three outcomes exist to prevent.
+	if lines := reportLines(out); !strings.HasPrefix(lines[len(lines)-1], "Failed in ") {
+		t.Errorf("the run's account ends %q, want the reporter's failure line:\n%s", lines[len(lines)-1], out)
+	}
+	if !strings.Contains(out, markFailed+" beta: ") {
+		t.Errorf("the entry the bound refused is not the run's failed step:\n%s", out)
+	}
 }
 
 // The gate re-reads the marks immediately before the write it is about to make

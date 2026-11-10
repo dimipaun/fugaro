@@ -359,7 +359,17 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 		// this build writes after its submission. It comes before the copy so
 		// that an entry the gate refused leaves no trace in the bucket.
 		if err := m.admitEntry(ctx, cmd, conds, cat, e, rs.Slug, plan); err != nil {
-			return err
+			if sr == nil {
+				// Nothing of this run has run yet, so there is no account to
+				// end: the refusal is the whole of what the command says
+				// (D1354).
+				return err
+			}
+			// An earlier entry of this run was built, so the account is open
+			// and its closing line is this run's verdict: a command that exits
+			// non-zero may not end on a "Done" (G3). The entry the gate refused
+			// is the step the run failed on.
+			return failStep(sr.rep, sr.rep.Step(e.Name), err)
 		}
 		if sr == nil {
 			sr = stepRunFor(cmd, "image-build", cmd.OutOrStdout())
