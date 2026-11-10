@@ -20,6 +20,7 @@ package mcpauth
 
 import (
 	"context"
+	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -303,6 +304,78 @@ func TestAPaddedSpellingOfASpentIDTokenIsRefused(t *testing.T) {
 	if rec := ts.pageAnswer(t, bindingA, "allow"); rec.Code != http.StatusFound {
 		t.Errorf("the flow the token's first spelling approved answered %d (%s); want the code redirect: the refusal above is about the token", rec.Code, strings.TrimSpace(rec.Body.String()))
 	}
+}
+
+// TestARespelledSignatureOfASpentIDTokenIsRefused is the other spelling the
+// spend has to survive: base64url writes one signature in more than one way —
+// the last character carries four bits of a 256-byte signature and two the
+// decoder is free to ignore — and a verifier that admits every spelling hands
+// the store a string it has never spent.
+//
+// The record is keyed on the token, so one token with two admitted spellings is
+// two tokens to the store, and a leaked sign-in would approve one flow per
+// spelling: that is the same hole as spending nothing, which is why the rule is
+// one token one spelling and the canonical one. The replay is put in a spelling
+// that differs only in bits the decoder may ignore, and the flow behind it is
+// watched for a code.
+func TestARespelledSignatureOfASpentIDTokenIsRefused(t *testing.T) {
+	ts := newTestServer(t)
+	clientID, _ := ts.register(t, "an editor", testClientRedirect)
+	token := approvalToken(t)
+	respelled := respellSignature(t, token)
+	if respelled == token {
+		t.Fatalf("the re-spelling left the token unchanged, so this test proves nothing about spellings")
+	}
+
+	bindingA, numberA := ts.startFlow(t, authorizeQuery(clientID, testClientRedirect))
+	if rec := ts.deviceApprove(t, bindingA, numberA, token); rec.Code != http.StatusOK {
+		t.Fatalf("the device's act answered %d (%s); want it to record the approval", rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+
+	bindingB, numberB := ts.startFlow(t, authorizeQuery(clientID, testClientRedirect))
+	if rec := ts.deviceApprove(t, bindingB, numberB, respelled); rec.Code == http.StatusOK {
+		t.Errorf("a re-spelled signature of an ID token that has already approved a flow approved a second one: the verifier admits one spelling of a signature, or one token buys as many approvals as base64url spells it in")
+	}
+	if rec := ts.consent(t, url.Values{"request_id": {bindingB}, "decision": {"allow"}}); rec.Code == http.StatusFound {
+		t.Errorf("the second flow minted a code on a re-spelled spelling of a spent ID token: no approved act stands behind that flow, so the page's answer has nothing to mint from")
+	}
+
+	// The first flow still completes, so what was refused above is the second
+	// use of one token and not the flow it was presented for.
+	if rec := ts.pageAnswer(t, bindingA, "allow"); rec.Code != http.StatusFound {
+		t.Errorf("the flow the token's canonical spelling approved answered %d (%s); want the code redirect: the refusal above is about the token", rec.Code, strings.TrimSpace(rec.Body.String()))
+	}
+}
+
+// respellSignature rewrites the last character of a compact JWT's signature
+// segment to the other character that carries the same signature: the bits a
+// non-strict base64url decoder ignores are set to one instead of zero.
+func respellSignature(t *testing.T, tok string) string {
+	t.Helper()
+	parts := strings.Split(tok, ".")
+	if len(parts) != 3 {
+		t.Fatalf("the token is not a compact JWT")
+	}
+	sig, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil {
+		t.Fatalf("the token's signature is not base64url: %v", err)
+	}
+	// Four bits of the final character are ignored when one byte is left over,
+	// two when two are, and none when the signature divides by three — and one
+	// spelling is the whole point of the rule, so such a signature cannot show
+	// what this test is about.
+	unused := (3 - len(sig)%3) * 2 % 6
+	if unused == 0 {
+		t.Fatalf("a signature of %d bytes has one spelling, so this key cannot show the rule", len(sig))
+	}
+	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+	last := parts[2][len(parts[2])-1]
+	v := strings.IndexByte(alphabet, last)
+	if v < 0 {
+		t.Fatalf("the signature ends in %q, which is not base64url", last)
+	}
+	parts[2] = parts[2][:len(parts[2])-1] + string(alphabet[v^((1<<unused)-1)])
+	return strings.Join(parts, ".")
 }
 
 // TestTheDeviceActIsNotAQueryString is M-a's second rule at the device's door:

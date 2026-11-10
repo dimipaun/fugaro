@@ -320,12 +320,20 @@ func decodeSegment(s string) (map[string]any, error) {
 }
 
 // verifyRS256 checks a compact JWT's RS256 signature against key.
+//
+// The decode is Strict, which is a rule the act's spend depends on and not a
+// decoding nicety: base64url writes one signature in more than one way (the
+// bits the final character has left over are the decoder's to ignore), and the
+// act's record is keyed on the token STRING, so a verifier that admits every
+// spelling hands the store a string it has never spent and one leaked sign-in
+// approves one flow per spelling. Strict admits the canonical spelling only, so
+// the token the store sees is the token that was verified.
 func verifyRS256(tok string, key *rsa.PublicKey) error {
 	parts := strings.Split(tok, ".")
 	if len(parts) != 3 {
 		return errors.New("mcpauth: not a compact JWT")
 	}
-	sig, err := base64.RawURLEncoding.DecodeString(parts[2])
+	sig, err := base64.RawURLEncoding.Strict().DecodeString(parts[2])
 	if err != nil {
 		return errors.New("mcpauth: the signature is not base64url")
 	}
