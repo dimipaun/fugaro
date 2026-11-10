@@ -452,11 +452,22 @@ def switch_state(ok, problem, repo):
     """The credentials-service switch for one repository, read out of doctor's
     `credentials-service-deployed` check (doctorCredentialsServiceDeployed).
 
-    It is ok with no problem when every job account of the installation may
-    invoke the service, which is the state a repository is on the switch in,
-    and one of its warnings names the accounts it does NOT admit (`grants no
-    roles/run.invoker to`) — exactly what a repository off the switch gets:
-    repoCredentialsService writes its root a nil service, and
+    Three of its arms are ok, and only two of them are a repository on the
+    switch: the one with no problem at all (every job account of the
+    installation may invoke the service) and the one whose verify route was
+    emptied (the service is deployed, every job account may invoke it and its
+    bundle holds a version; only the route that asks whether a verdict's
+    signature is this service's admits nobody). The third is the installation
+    that carries no service at all: its own sentence is what tells it apart, and
+    it is answered `noservice`. Any other ok
+    arm is one this reading does not know, and it answers `other`, never `on`:
+    doctor could have reworded the no-service sentence, and a reading that
+    answered `on` for it would pass the row and launch three real runs at an
+    installation whose service is not there at all.
+
+    The rest of its arms are warnings. One names the accounts the service does
+    NOT admit (`grants no roles/run.invoker to`) — exactly what a repository off
+    the switch gets: repoCredentialsService writes its root a nil service, and
     modules/workflow/sa.tf then grants its job account no invoker at all. Its
     other warnings are about something else — a service that is not deployed, a
     policy the read could not settle — so each is told apart and said, and a
@@ -473,7 +484,15 @@ def switch_state(ok, problem, repo):
     prints.
     """
     if ok:
-        return "noservice" if "has no credentials service" in problem else "on"
+        if "has no credentials service" in problem:
+            return "noservice"
+        # An ok arm whose problem nobody here knows is `other`: doctor could
+        # have reworded the no-service sentence, and a reading that answered
+        # `on` for it would pass the row and launch three real runs at an
+        # installation whose service is not there at all.
+        if not problem or "admits nobody on the verify route" in problem:
+            return "on"
+        return "other"
     if "grants no roles/run.invoker" in problem:
         return "off" if names_account(problem, repo) else "on"
     if "could not be read" in problem or "could not be checked" in problem:

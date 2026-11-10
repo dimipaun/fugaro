@@ -852,6 +852,43 @@ DOCTOR_EOF
   expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "a missing service: no run launched"
 }
 
+test_an_ok_arm_the_reading_does_not_know_is_unmeasured() {
+  local dir=$work/switchokother
+  prepare "$dir"
+  # Doctor's ok arm for a sentence this reading has not been taught: the two ok
+  # arms that mean "on" are the one with no problem at all and the one whose
+  # verify route was emptied, so anything else an ok row carries is one nobody
+  # here can settle. Answering `on` for it — which is what reading every ok arm
+  # but the no-service one as a switch that is on would do — passes `proxied`
+  # and launches three real runs at a state this check never read.
+  cat >"$dir/state/doctor.json" <<'DOCTOR_EOF'
+{"ok":true,"checks":[{"id":"credentials-service-deployed","ok":true,"severity":"info","problem":"the installation runs without one for now, and every run fetches its model credential the way it did before the service existed"}],"project":{"name":"fugaro","gcp_project":"fugaro-dev","region":"us-east5"}}
+DOCTOR_EOF
+  run_check "$dir" "$script"
+  expect_status "$status" 2 "an ok arm this reading does not know"
+  expect_contains "$out" "FACT proxied: FAIL" "an unknown ok arm: the row is a FAIL"
+  expect_contains "$out" "state: other" "an unknown ok arm: the row carries the state it read"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "an unknown ok arm: no run launched"
+}
+
+test_the_verify_route_being_empty_is_still_a_switch_that_is_on() {
+  local dir=$work/switchokverify
+  prepare "$dir"
+  # The one other ok arm that IS a repository on the switch: the service is
+  # deployed, every job account may invoke it and its bundle holds a version —
+  # only the route that asks whose verdict signature this is admits nobody, and
+  # that route answers nothing about a run's own push. Reading this arm as one
+  # it does not know would stop a check whose runs are served exactly as the row
+  # says.
+  cat >"$dir/state/doctor.json" <<'DOCTOR_EOF'
+{"ok":true,"checks":[{"id":"credentials-service-deployed","ok":true,"severity":"info","problem":"the credentials service fugaro-credentials is deployed and serving, and it admits nobody on the verify route: every job account may invoke it and its bundle holds a version, and the verifier list it is deployed with is empty (this checkout's config writes verifier_accounts: [])"}],"project":{"name":"fugaro","gcp_project":"fugaro-dev","region":"us-east5"}}
+DOCTOR_EOF
+  run_check "$dir" "$script"
+  expect_status "$status" 0 "the verify route empty"
+  expect_contains "$out" "FACT proxied: PASS" "the verify route empty: every job account may still invoke the service"
+  expect_contains "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "the verify route empty: the runs are launched"
+}
+
 test_happy_path() {
   local dir=$work/happy
   prepare "$dir"
@@ -1220,6 +1257,8 @@ t test_another_repositorys_missing_grant_is_not_this_repositorys_switch
 t test_a_switch_the_check_cannot_read_is_unmeasured
 t test_a_doctor_arm_the_reading_does_not_know_is_unmeasured
 t test_an_installation_with_no_credentials_service_is_a_failure
+t test_an_ok_arm_the_reading_does_not_know_is_unmeasured
+t test_the_verify_route_being_empty_is_still_a_switch_that_is_on
 t test_happy_path
 t test_a_run_that_did_not_succeed_is_a_failure
 t test_a_refusal_the_service_wrote_no_class_line_for_is_a_failure
