@@ -6,6 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io"
 	"maps"
 	"math"
@@ -2764,4 +2767,98 @@ func TestRunsLsJSONExistingFieldsUnchanged(t *testing.T) {
 			t.Errorf("field %q changed when the triage fields were added: %s, want %s", key, got, want)
 		}
 	}
+}
+
+// terminalStatusNames is every run status that is not running, as the two list
+// files below name it in runstore's package, and it is the set a list must
+// never ask about by negation: "the status is not one of the endings" reads a
+// new ending as a run still going. D994's label (runstore.StatusUnreviewed) is
+// the first value that made this matter — the run finished, pushed and opened
+// a draft, and nothing failed — and a reader that asks
+// `status != succeeded` would call it unfinished. The count check in the test
+// is what keeps this list honest: a status added to the vocabulary fails there
+// until it is named here, so the guard widens with the vocabulary instead of
+// silently going narrow.
+var terminalStatusNames = []string{
+	"runstore.StatusSucceeded", "runstore.StatusFailed",
+	"runstore.StatusUnreviewed", "runstore.StatusInfraError",
+	"runstore.StatusCancelled", "runstore.StatusHalted",
+}
+
+// TestRunsListsReadTheStatusWord guards the two list surfaces that read a
+// status without knowing the vocabulary: runs.go (the rows `runs ls` and
+// `runs watch` build, including the draft-in-progress row and the re-read of a
+// run whose execution ended) and watch_queued.go (the finished/unfinished
+// decision a watched run gets). Both ask whether a run is still going by an
+// EQUALITY with one value — `Status == runstore.StatusRunning` — and neither
+// needs a line for a new terminal value, which is the whole reason for asking
+// that way rather than by a negated list of endings.
+//
+// That property is invisible to a behaviour test that only uses today's
+// statuses, so this reads the two files as source: a status compared with !=
+// against an ending, or a negated read naming one, is what a rewrite to
+// `status != succeeded` looks like from here. Mutation (run, restored):
+// rewrite watch_queued.go's `r.Status == runstore.StatusRunning` as
+// `r.Status != runstore.StatusSucceeded`, and this names the file and the line.
+func TestRunsListsReadTheStatusWord(t *testing.T) {
+	if want := len(runstore.Statuses) - 1; len(terminalStatusNames) != want {
+		t.Fatalf("terminalStatusNames names %d statuses and runstore.Statuses holds %d besides running: name the new value here, so the guard covers it", len(terminalStatusNames), want)
+	}
+	for _, name := range []string{"runs.go", "watch_queued.go"} {
+		fset := token.NewFileSet()
+		file, err := parser.ParseFile(fset, name, nil, 0)
+		if err != nil {
+			t.Fatalf("parsing %s: %v", name, err)
+		}
+		equalities := 0
+		ast.Inspect(file, func(n ast.Node) bool {
+			switch e := n.(type) {
+			case *ast.BinaryExpr:
+				if e.Op != token.NEQ {
+					if e.Op == token.EQL && (len(statusNamesIn(e.X)) > 0 || len(statusNamesIn(e.Y)) > 0) {
+						equalities++
+					}
+					return true
+				}
+				for _, named := range append(statusNamesIn(e.X), statusNamesIn(e.Y)...) {
+					if slices.Contains(terminalStatusNames, named) {
+						t.Errorf("%s:%d: a status is compared against %s with !=: ask whether the run is still going by an equality with runstore.StatusRunning, so a new terminal value is not read as one still running", name, fset.Position(e.Pos()).Line, named)
+					}
+				}
+			case *ast.UnaryExpr:
+				if e.Op != token.NOT {
+					return true
+				}
+				for _, named := range statusNamesIn(e.X) {
+					if slices.Contains(terminalStatusNames, named) {
+						t.Errorf("%s:%d: a negated read names the terminal status %s: ask whether the run is still going by an equality with runstore.StatusRunning", name, fset.Position(e.Pos()).Line, named)
+					}
+				}
+			}
+			return true
+		})
+		if equalities == 0 {
+			t.Errorf("%s compares no status by equality: this file no longer reads the status word, and the guard above proves nothing", name)
+		}
+	}
+}
+
+// statusNamesIn is every runstore status constant named anywhere in e, spelled
+// "runstore.StatusX": the conversion `string(runstore.StatusX)` a row's status
+// is compared with is the same read as the constant itself.
+func statusNamesIn(e ast.Expr) []string {
+	var out []string
+	ast.Inspect(e, func(n ast.Node) bool {
+		sel, ok := n.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		pkg, ok := sel.X.(*ast.Ident)
+		if !ok || pkg.Name != "runstore" || !strings.HasPrefix(sel.Sel.Name, "Status") || sel.Sel.Name == "Status" {
+			return true
+		}
+		out = append(out, "runstore."+sel.Sel.Name)
+		return true
+	})
+	return out
 }

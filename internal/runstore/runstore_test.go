@@ -6,9 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -1052,5 +1056,65 @@ func TestCredentialForAuth(t *testing.T) {
 		if got := CredentialForAuth(tt.auth); got != tt.want {
 			t.Errorf("CredentialForAuth(%q) = %q, want %q", tt.auth, got, tt.want)
 		}
+	}
+}
+
+// statusConstants is the string value of every Status constant runstore.go
+// declares, in source order, read from the source rather than listed here: the
+// vocabulary has one spelling in this package, and a constant added without
+// Statuses is what the test below exists to catch.
+func statusConstants(t *testing.T) []Status {
+	t.Helper()
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "runstore.go", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []Status
+	for _, decl := range f.Decls {
+		gd, ok := decl.(*ast.GenDecl)
+		if !ok || gd.Tok != token.CONST {
+			continue
+		}
+		for _, spec := range gd.Specs {
+			vs, ok := spec.(*ast.ValueSpec)
+			if !ok {
+				continue
+			}
+			if id, ok := vs.Type.(*ast.Ident); !ok || id.Name != "Status" {
+				continue
+			}
+			for _, v := range vs.Values {
+				lit, ok := v.(*ast.BasicLit)
+				if !ok || lit.Kind != token.STRING {
+					t.Fatalf("runstore.go: a Status constant's value is %T, not a string literal", v)
+				}
+				s, err := strconv.Unquote(lit.Value)
+				if err != nil {
+					t.Fatal(err)
+				}
+				out = append(out, Status(s))
+			}
+		}
+	}
+	return out
+}
+
+// TestRunstoreStatusesAreTheWireVocabulary pins Statuses to the Status
+// constants this package declares, both directions and in order. Statuses is
+// the one spelling of the run status set: result.schema.json's status enum
+// (schemas/schemas_test.go) and internal/digest's closed set are read from it
+// instead of restating the words, so a value this package can write and
+// Statuses lacks would be a record those two readers render differently from
+// the run that wrote it. Mutation (run, restored): drop a name from Statuses,
+// or add a Status constant and leave it out, and this names the side that has
+// it.
+func TestRunstoreStatusesAreTheWireVocabulary(t *testing.T) {
+	declared := statusConstants(t)
+	if len(declared) == 0 {
+		t.Fatal("no Status constants found in runstore.go: this test proves nothing")
+	}
+	if !slices.Equal(Statuses, declared) {
+		t.Errorf("runstore.Statuses = %v, the Status constants runstore.go declares = %v", Statuses, declared)
 	}
 }

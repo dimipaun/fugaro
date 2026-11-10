@@ -35,11 +35,25 @@ const (
 	// refusing a pull request before checkout (no PR of its own ever
 	// exists): a policy decision the runner made correctly, not an
 	// infrastructure fault.
-	StatusFailed     Status = "failed"
+	StatusFailed Status = "failed"
+	// StatusUnreviewed is a run that finished its loop, pushed and opened
+	// (or updated) its pull request, and that no review verdict exists for:
+	// a senior review round that answered nothing after its retry, or a run
+	// whose review never produced a senior round at all. Nothing failed —
+	// its tests passed — and nothing read it either, which is the state the
+	// label names.
+	StatusUnreviewed Status = "unreviewed"
 	StatusInfraError Status = "infra_error"
 	StatusCancelled  Status = "cancelled"
 	StatusHalted     Status = "halted" // a budget or token limit stopped the run
 )
+
+// Statuses is the whole vocabulary, in source order. It is closed: a value
+// outside it is refused where it is written, never read as an unknown status
+// later. It is the one spelling of the set — result.schema.json's status enum
+// and internal/digest's closed set are both held to it, so a reader of a run
+// record and the run that wrote it cannot drift apart.
+var Statuses = []Status{StatusRunning, StatusSucceeded, StatusFailed, StatusUnreviewed, StatusInfraError, StatusCancelled, StatusHalted}
 
 // HaltReason says which limit halted a run.
 type HaltReason string
