@@ -60,6 +60,24 @@ const (
 	// job until C3.9 is decided there too, from the account and never from this
 	// header.
 	HeaderRunJob = "X-Fugaro-Run-Job"
+	// HeaderSlip names the slip a run's call is bound to: the id the grant
+	// answered (DS1.3), which the launcher passes to the job and the runner
+	// presents on the claim and on every call after it (DS1.6).
+	//
+	// It is a header of the RUN's calls and not of the grant's: the grant names
+	// its run in the body and holds no slip yet, which is why the two routes of
+	// D1937 read different halves of the contract. The id is not a secret
+	// (creds.Slip's own note): it travels in the job's environment where the
+	// agent can read it, and what admits a call is what the slip binds and the
+	// claim secret, never this value.
+	HeaderSlip = "X-Fugaro-Slip"
+	// HeaderSlipClaim carries the claim secret the claim answered, and it is
+	// the ONE value on these two routes that is a credential (D1941): the
+	// record keeps only its hash, it is presented on every call after the
+	// claim, and a call that presents none is the claim itself. It is why this
+	// header's value is registered with the call's scrub like the two identity
+	// tokens are, and why no line this service writes may carry it.
+	HeaderSlipClaim = "X-Fugaro-Slip-Claim"
 )
 
 // BitbucketProxyPrefix is the path prefix under which this service serves one
