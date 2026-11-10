@@ -4,14 +4,15 @@ package scripts_test
 // docs/contract-first-decoupling/implementation-plan.md's CD5. They live under
 // that directory rather than scripts/live-checks/ because the plan's Files line
 // puts them there, so they are not in liveCheckScripts and nothing else in this
-// repository runs them: without the two tests below, a script that can never
-// pass reads green everywhere.
+// repository runs them: without the tests below, a script that can never pass
+// reads green everywhere.
 //
 // What each one drives is the script against a fake `fugaro` on PATH, in a
 // repository built in a temp directory: no cloud, no batch, no run and no
 // account is touched, and no step of either check's live half happens here.
-// Both tests pin a failure the scripts shipped with and no other test could
-// see:
+//
+// Two of the tests pin failures the scripts shipped with and no other test
+// could see:
 //
 //   - Check 480 read the run id it launched out of the launch JSON's `run`,
 //     which is the qualified `slug/id`, and then matched the runs listing on
@@ -22,6 +23,15 @@ package scripts_test
 //     sequential batch that settled while the loop waited on the decoupled one
 //     read as "already over" and was left unmeasured — the faster shape, which
 //     is exactly the reading the comparison row exists for.
+//
+// The rest pin the refusals: Check 480 spends a run and pushes to a branch, so
+// the guards that stop it before either — a traced shell, a checkout that is
+// not the repository the plan describes, the owner's own installation, and
+// contract text that reached the instructions — are as much a part of what it
+// does as the rows it measures. The live-check family keeps the same cases in
+// its own suites (scripts/live-checks/check510_test.sh's
+// test_belong_is_refused_by_name and test_xtrace_refused), and a later edit
+// that drops one of them has to fail here.
 
 import (
 	"context"
@@ -43,69 +53,36 @@ import (
 // of failing this test by name.
 const contractCheckTimeout = 2 * time.Minute
 
+// check480Script and check481Script are the two checks under test.
+var (
+	check480Script = filepath.Join(testutil.ModuleRoot(), "docs", "contract-first-decoupling", "check-480.sh")
+	check481Script = filepath.Join(testutil.ModuleRoot(), "docs", "contract-first-decoupling", "check-481.sh")
+)
+
+// contractPath is the contract file the fixture's graph names — the document
+// the pass settles a shape in, which is the file a follow-up is told to conform
+// to. The three bodies below are that file as the plan has it, as the amendment
+// leaves it on the base, and with a sentence the check's own instructions also
+// carry, which is what the instructions guard refuses: instructions are trusted
+// text, so a contract's words in them are plan text the runner acts on as its
+// own (D1812).
+const (
+	contractPath    = "docs/contracts/record.md"
+	contractBefore  = "# The record\n\nThe record carries a name.\n"
+	contractAfter   = "# The record\n\nThe record carries a name and a kind.\n"
+	contractLeaking = "# The record\n\nthe code that uses the contract matches the contract as it is there\n"
+)
+
 // TestCheck480MeasuresItsOwnFollowUp drives the whole check: the plan read, the
 // dependent read out of the listing, the amendment, the one follow-up, and the
 // three rows measured on the branch afterwards. The fake's launch answer spells
 // both `run` and `run_id` the way the CLI does — the qualified one and the bare
 // one — because matching the wrong one is the bug this test exists for.
 func TestCheck480MeasuresItsOwnFollowUp(t *testing.T) {
-	for _, tool := range []string{"bash", "git", "jq"} {
-		if _, err := exec.LookPath(tool); err != nil {
-			t.Skipf("%s is not installed", tool)
-		}
-	}
+	requireTools(t, "bash", "git", "jq")
 
-	work := t.TempDir()
-	// The origin has to name a github.com repository: the check refuses to
-	// measure one it cannot place, and a bare temp path names none.
-	origin := filepath.Join(work, "gh", "github.com", "acme", "sandbox.git")
-	if err := os.MkdirAll(filepath.Dir(origin), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	gitRun(t, work, "init", "--quiet", "--bare", origin)
-
-	sim := filepath.Join(work, "sim")
-	if err := os.MkdirAll(filepath.Join(sim, "internal", "record"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(sim, "internal", "cli"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	writeFile(t, filepath.Join(sim, "internal", "record", "record.go"), "package record\n\ntype R struct{ Name string }\n")
-	writeFile(t, filepath.Join(sim, "internal", "cli", "read.go"), "package cli\n\nfunc Read() string { return \"\" }\n")
-	gitRun(t, sim, "init", "--quiet", "-b", "main")
-	gitRun(t, sim, "add", "-A")
-	gitRun(t, sim, "commit", "--quiet", "-m", "the plan's work")
-	gitRun(t, sim, "remote", "add", "origin", origin)
-	gitRun(t, sim, "push", "--quiet", "origin", "main")
-
-	// The dependent's branch, as a launched run leaves it: a commit of its own
-	// on the read, and the contract file as the plan had it.
-	gitRun(t, sim, "checkout", "--quiet", "-b", "fugaro/r1")
-	writeFile(t, filepath.Join(sim, "internal", "cli", "read.go"), "package cli\n\nfunc Read() string { return \"dep\" }\n")
-	gitRun(t, sim, "commit", "--quiet", "-am", "the dependent's own work")
-	gitRun(t, sim, "push", "--quiet", "-u", "origin", "fugaro/r1")
-	depHead := gitRun(t, sim, "rev-parse", "HEAD")
-
-	// The amendment the owner made on the base: without it the check stops
-	// before it spends a run, which is a different test.
-	gitRun(t, sim, "checkout", "--quiet", "main")
-	writeFile(t, filepath.Join(sim, "internal", "record", "record.go"), "package record\n\ntype R struct {\n\tName string\n\tKind string\n}\n")
-	gitRun(t, sim, "commit", "--quiet", "-am", "amend the contract")
-	gitRun(t, sim, "push", "--quiet", "origin", "main")
-
-	graph := filepath.Join(work, "graph.json")
-	writeFile(t, graph, contractCheck480Graph)
-	newHead := filepath.Join(work, "new-head")
-	bin := filepath.Join(work, "bin")
-	if err := os.MkdirAll(bin, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	writeExec(t, filepath.Join(bin, "fugaro"), fakeFugaro480(sim, origin, graph, depHead, newHead,
-		filepath.Join(work, "launched"), filepath.Join(work, "follow-up-id")))
-
-	out, code := runContractCheck(t, sim, bin, filepath.Join(testutil.ModuleRoot(), "docs", "contract-first-decoupling", "check-480.sh"),
-		"--pr", "7", "--poll", "1", "--run-seconds", "30")
+	f := buildCheck480Fixture(t, "gh/github.com/acme/sandbox.git", contractAfter, contractBefore)
+	out, code := runContractCheck(t, f.sim, f.bin, check480Script, "--pr", "7", "--poll", "1", "--run-seconds", "30")
 
 	// The row the bug killed first: without it the block ends with the polling
 	// timeout and the three rows below it say "not reached".
@@ -123,20 +100,91 @@ func TestCheck480MeasuresItsOwnFollowUp(t *testing.T) {
 	if code != 0 {
 		t.Errorf("check-480 exited %d, want 0:\n%s", code, out)
 	}
+	if calls := f.calls(t); !strings.Contains(calls, "run --pr 7") {
+		t.Errorf("check-480 never launched its follow-up; the calls it made were:\n%s", calls)
+	}
+}
+
+// TestCheck480RefusesTheOwnersOwnInstallations: the check sends a real run at
+// whatever repository it is pointed at, so the owner's own installation is
+// refused by name rather than measured. The three arms of that case are the
+// owner and the two repositories.
+func TestCheck480RefusesTheOwnersOwnInstallations(t *testing.T) {
+	requireTools(t, "bash", "git", "jq")
+
+	for _, origin := range []string{
+		"gh/github.com/belong/sandbox.git",
+		"gh/github.com/acme/edgeweb.git",
+		"gh/github.com/acme/edgeserver.git",
+	} {
+		t.Run(origin, func(t *testing.T) {
+			f := buildCheck480Fixture(t, origin, contractAfter, contractBefore)
+			out, code := runContractCheck(t, f.sim, f.bin, check480Script, "--pr", "7", "--poll", "1", "--run-seconds", "30")
+			assertRefused(t, f, out, code, "names the owner's own installation")
+		})
+	}
+}
+
+// TestCheck480RefusesATracedShell: a trace prints the rows and the branch this
+// check reads into the log the owner would then paste, so a shell started with
+// -x is refused before anything is read.
+func TestCheck480RefusesATracedShell(t *testing.T) {
+	requireTools(t, "bash", "git", "jq")
+
+	f := buildCheck480Fixture(t, "gh/github.com/acme/sandbox.git", contractAfter, contractBefore)
+	out, code := runContractCheckTracing(t, f.sim, f.bin, check480Script, "--pr", "7", "--poll", "1", "--run-seconds", "30")
+	assertRefused(t, f, out, code, "this shell is tracing (bash -x)")
+	if !strings.Contains(out, "FACT xtrace: FAIL") {
+		t.Errorf("check-480 did not record the xtrace row as FAIL:\n%s", out)
+	}
+}
+
+// TestCheck480RefusesAForeignOrigin: the repository comes from the checkout's
+// own origin, and one that names no github.com or bitbucket.org repository is
+// refused rather than matched by guesswork.
+func TestCheck480RefusesAForeignOrigin(t *testing.T) {
+	requireTools(t, "bash", "git", "jq")
+
+	f := buildCheck480Fixture(t, "not-a-forge/sandbox.git", contractAfter, contractBefore)
+	out, code := runContractCheck(t, f.sim, f.bin, check480Script, "--pr", "7", "--poll", "1", "--run-seconds", "30")
+	assertRefused(t, f, out, code, "names no github.com or bitbucket.org repository")
+}
+
+// TestCheck480RefusesContractTextInTheInstructions: the instructions name the
+// contract file and never paste its text. The fixture's contract carries a line
+// the instructions also use, so the guard has something to catch — and it has to
+// catch it before the launch, which is the run the check spends.
+func TestCheck480RefusesContractTextInTheInstructions(t *testing.T) {
+	requireTools(t, "bash", "git", "jq")
+
+	f := buildCheck480Fixture(t, "gh/github.com/acme/sandbox.git", contractLeaking, contractBefore)
+	out, code := runContractCheck(t, f.sim, f.bin, check480Script, "--pr", "7", "--poll", "1", "--run-seconds", "30")
+
+	if code != 2 {
+		t.Errorf("check-480 exited %d, want 2:\n%s", code, out)
+	}
+	if !strings.Contains(out, "FACT instructions: FAIL") {
+		t.Errorf("check-480 did not record the instructions row as FAIL:\n%s", out)
+	}
+	if !strings.Contains(out, "a line of the contract's own body is in the instructions this check would send") {
+		t.Errorf("check-480 stopped for some other reason:\n%s", out)
+	}
+	// The stop is the whole point: the launch comes after this guard, so a run
+	// that got this far would have been spent on instructions carrying the
+	// contract's own text.
+	if calls := f.calls(t); strings.Contains(calls, "run --pr 7") {
+		t.Errorf("check-480 launched the follow-up with the contract's own text in the instructions:\n%s", calls)
+	}
 }
 
 // TestCheck481MeasuresBothBatchesInOnePoll drives the two batches through one
-// fake `fugaro`: the sequential batch settles at its second poll and the
-// decoupled one at its third, so a loop that watched them one after the other
-// would find the sequential batch already over and leave its wall clock
-// unmeasured (exit 3). Both rows pass only if both are polled as they run, and
-// the clocks differ, so neither figure can be the other's.
+// fake `fugaro`: they run at the same time and settle on the clock, so a loop
+// that watched them one after the other would find the sequential batch already
+// over and leave its wall clock unmeasured (exit 3). Both rows pass only if both
+// are polled as they run, and the clocks differ, so neither figure can be the
+// other's.
 func TestCheck481MeasuresBothBatchesInOnePoll(t *testing.T) {
-	for _, tool := range []string{"bash", "jq"} {
-		if _, err := exec.LookPath(tool); err != nil {
-			t.Skipf("%s is not installed", tool)
-		}
-	}
+	requireTools(t, "bash", "jq")
 
 	work := t.TempDir()
 	graph := filepath.Join(work, "graph.json")
@@ -147,8 +195,7 @@ func TestCheck481MeasuresBothBatchesInOnePoll(t *testing.T) {
 	}
 	writeExec(t, filepath.Join(bin, "fugaro"), fakeFugaro481(graph, work))
 
-	out, code := runContractCheck(t, work, bin, filepath.Join(testutil.ModuleRoot(), "docs", "contract-first-decoupling", "check-481.sh"),
-		graph, "--poll", "1", "--wait", "30")
+	out, code := runContractCheck(t, work, bin, check481Script, graph, "--poll", "1", "--wait", "30")
 
 	for _, want := range []string{
 		"FACT decoupled-batch: PASS",
@@ -188,73 +235,121 @@ func batchWallClock(t *testing.T, out, key string) int {
 	return minutes*60 + seconds
 }
 
-// runContractCheck runs one script with the fake tools first on PATH and
-// returns its merged output and exit status.
-func runContractCheck(t *testing.T, dir, bin, script string, args ...string) (string, int) {
+// assertRefused holds a refusal to its shape: exit 2, the reason in the block,
+// and not one call to `fugaro` — a guard that stopped the check after reading
+// the plan would still have been reached too late to be a guard.
+func assertRefused(t *testing.T, f *check480Fixture, out string, code int, want string) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), contractCheckTimeout)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "bash", append([]string{script}, args...)...)
-	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	out, err := cmd.CombinedOutput()
-	if ctx.Err() != nil {
-		t.Fatalf("%s did not finish within %s:\n%s", filepath.Base(script), contractCheckTimeout, out)
+	if code != 2 {
+		t.Errorf("check-480 exited %d, want 2:\n%s", code, out)
 	}
-	code := 0
+	if !strings.Contains(out, want) {
+		t.Errorf("check-480 did not refuse with %q:\n%s", want, out)
+	}
+	if calls := f.calls(t); calls != "" {
+		t.Errorf("check-480 called fugaro before its refusal:\n%s", calls)
+	}
+}
+
+// check480Fixture is one temp repository for Check 480: its origin, the checkout
+// the check runs in, the graph the fake `fugaro` answers with, and the files the
+// fake writes as it works.
+type check480Fixture struct {
+	work       string
+	origin     string
+	sim        string
+	graph      string
+	bin        string
+	depHead    string
+	newHead    string
+	launched   string
+	followUpID string
+	callsFile  string
+}
+
+// buildCheck480Fixture builds the repository Check 480 measures. origin is the
+// bare repository's path under the temp directory, which is what decides whether
+// the check places it at all: one that does not name a forge, or that names the
+// owner's own installation, is refused. baseContract is the contract file as the
+// amendment leaves it on the base branch, branchContract as the dependent's
+// branch has it.
+func buildCheck480Fixture(t *testing.T, origin, baseContract, branchContract string) *check480Fixture {
+	t.Helper()
+	work := t.TempDir()
+	f := &check480Fixture{
+		work:       work,
+		origin:     filepath.Join(work, filepath.FromSlash(origin)),
+		sim:        filepath.Join(work, "sim"),
+		graph:      filepath.Join(work, "graph.json"),
+		bin:        filepath.Join(work, "bin"),
+		newHead:    filepath.Join(work, "new-head"),
+		launched:   filepath.Join(work, "launched"),
+		followUpID: filepath.Join(work, "follow-up-id"),
+		callsFile:  filepath.Join(work, "calls"),
+	}
+	if err := os.MkdirAll(filepath.Dir(f.origin), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(f.bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, work, "init", "--quiet", "--bare", f.origin)
+
+	// The dependent's branch, as a launched run leaves it: the contract as the
+	// plan had it, a commit of the read, and its own pull request.
+	writeFile(t, filepath.Join(f.sim, filepath.FromSlash(contractPath)), branchContract)
+	writeFile(t, filepath.Join(f.sim, "internal", "cli", "read.go"), "package cli\n\nfunc Read() string { return \"\" }\n")
+	gitRun(t, f.sim, "init", "--quiet", "-b", "main")
+	gitRun(t, f.sim, "add", "-A")
+	gitRun(t, f.sim, "commit", "--quiet", "-m", "the plan's work")
+	gitRun(t, f.sim, "remote", "add", "origin", f.origin)
+	gitRun(t, f.sim, "push", "--quiet", "origin", "main")
+	gitRun(t, f.sim, "checkout", "--quiet", "-b", "fugaro/r1")
+	writeFile(t, filepath.Join(f.sim, "internal", "cli", "read.go"), "package cli\n\nfunc Read() string { return \"dep\" }\n")
+	gitRun(t, f.sim, "commit", "--quiet", "-am", "the dependent's own work")
+	gitRun(t, f.sim, "push", "--quiet", "-u", "origin", "fugaro/r1")
+	f.depHead = gitRun(t, f.sim, "rev-parse", "HEAD")
+
+	// The amendment the owner made on the base: without it the check stops
+	// before it spends a run, which is a different test.
+	gitRun(t, f.sim, "checkout", "--quiet", "main")
+	writeFile(t, filepath.Join(f.sim, filepath.FromSlash(contractPath)), baseContract)
+	gitRun(t, f.sim, "commit", "--quiet", "-am", "amend the contract")
+	gitRun(t, f.sim, "push", "--quiet", "origin", "main")
+
+	writeFile(t, f.graph, contractCheck480Graph)
+	writeExec(t, filepath.Join(f.bin, "fugaro"), fakeFugaro480(f))
+	return f
+}
+
+// calls is every `fugaro` call the check made, one per line; empty when it made
+// none.
+func (f *check480Fixture) calls(t *testing.T) string {
+	t.Helper()
+	body, err := os.ReadFile(f.callsFile)
 	if err != nil {
-		exit, ok := err.(*exec.ExitError)
-		if !ok {
-			t.Fatalf("%s: %v\n%s", filepath.Base(script), err, out)
+		if os.IsNotExist(err) {
+			return ""
 		}
-		code = exit.ExitCode()
-	}
-	return string(out), code
-}
-
-func writeFile(t *testing.T, path, body string) {
-	t.Helper()
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	return string(body)
 }
 
-func writeExec(t *testing.T, path, body string) {
-	t.Helper()
-	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// gitRun runs one git command in dir with an identity of its own: the checkout
-// is a temp directory, and a commit there must not read the machine's config.
-func gitRun(t *testing.T, dir string, args ...string) string {
-	t.Helper()
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	cmd.Env = append(os.Environ(),
-		"GIT_AUTHOR_NAME=check", "GIT_AUTHOR_EMAIL=check@example.invalid",
-		"GIT_COMMITTER_NAME=check", "GIT_COMMITTER_EMAIL=check@example.invalid",
-		"GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_SYSTEM="+os.DevNull,
-	)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
-	}
-	return strings.TrimSpace(string(out))
-}
-
-// fakeFugaro480 is a `fugaro` that answers the four calls Check 480 makes. The
-// launch is the run's own work done for real against the temp repository: the
-// check reads the branch back from origin, so a fake that only claimed a push
-// would measure nothing.
-func fakeFugaro480(sim, origin, graph, depHead, newHead, launched, followUpID string) string {
+// fakeFugaro480 is a `fugaro` that answers the four calls Check 480 makes, and
+// logs every call it takes so a refusal can be shown to have happened before
+// any of them. The launch is the run's own work done for real against the temp
+// repository: the check reads the branch back from origin, so a fake that only
+// claimed a push would measure nothing.
+func fakeFugaro480(f *check480Fixture) string {
 	return strings.NewReplacer(
-		"@SIM@", sim, "@ORIGIN@", origin, "@GRAPH@", graph, "@FOLLOW_UP_ID@", followUpID,
-		"@DEP_HEAD@", depHead, "@NEW_HEAD@", newHead, "@LAUNCHED@", launched,
+		"@SIM@", f.sim, "@GRAPH@", f.graph, "@FOLLOW_UP_ID@", f.followUpID,
+		"@DEP_HEAD@", f.depHead, "@NEW_HEAD@", f.newHead, "@LAUNCHED@", f.launched,
+		"@CALLS@", f.callsFile,
 	).Replace(`#!/usr/bin/env bash
 set -euo pipefail
 SIM=@SIM@
+printf '%s\n' "$*" >>@CALLS@
 case "${1:-} ${2:-}" in
 "plan graph")
   cat @GRAPH@
@@ -337,6 +432,86 @@ esac
 `)
 }
 
+// runContractCheck runs one script with the fake tools first on PATH and
+// returns its merged output and exit status.
+func runContractCheck(t *testing.T, dir, bin, script string, args ...string) (string, int) {
+	t.Helper()
+	return runBash(t, dir, bin, append([]string{script}, args...))
+}
+
+// runContractCheckTracing runs one script under `bash -x`, which is the traced
+// shell the check's own stop message says a run must not be started from.
+func runContractCheckTracing(t *testing.T, dir, bin, script string, args ...string) (string, int) {
+	t.Helper()
+	return runBash(t, dir, bin, append([]string{"-x", script}, args...))
+}
+
+func runBash(t *testing.T, dir, bin string, argv []string) (string, int) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), contractCheckTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "bash", argv...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	out, err := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		t.Fatalf("%s did not finish within %s:\n%s", filepath.Base(argv[len(argv)-1]), contractCheckTimeout, out)
+	}
+	code := 0
+	if err != nil {
+		exit, ok := err.(*exec.ExitError)
+		if !ok {
+			t.Fatalf("%s: %v\n%s", filepath.Base(argv[len(argv)-1]), err, out)
+		}
+		code = exit.ExitCode()
+	}
+	return string(out), code
+}
+
+func requireTools(t *testing.T, tools ...string) {
+	t.Helper()
+	for _, tool := range tools {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skipf("%s is not installed", tool)
+		}
+	}
+}
+
+func writeFile(t *testing.T, path, body string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeExec(t *testing.T, path, body string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// gitRun runs one git command in dir with an identity of its own: the checkout
+// is a temp directory, and a commit there must not read the machine's config.
+func gitRun(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=check", "GIT_AUTHOR_EMAIL=check@example.invalid",
+		"GIT_COMMITTER_NAME=check", "GIT_COMMITTER_EMAIL=check@example.invalid",
+		"GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_SYSTEM="+os.DevNull,
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
 // contractCheck480Graph is one plan with one broken edge: the contract waits for
 // nothing, so the break is the one the pass writes, and the dependent node names
 // the run whose pull request the follow-up continues.
@@ -348,7 +523,7 @@ const contractCheck480Graph = `{
     {"id": "T1", "title": "the parser", "size": 3, "footprint": {"prediction": true, "paths": ["internal/record/**"]}},
     {"id": "T2", "title": "the read", "run": "dep-run", "size": 2, "footprint": {"prediction": true, "paths": ["internal/cli/read.go"]}},
     {"id": "C1", "title": "the record's shape", "kind": "contract", "stubs": ["internal/record/record_stub.go"], "size": 0.5,
-     "footprint": {"prediction": true, "paths": ["internal/record/record.go", "internal/record/record_stub.go"]}},
+     "footprint": {"prediction": true, "paths": ["docs/contracts/record.md", "internal/record/record_stub.go"]}},
     {"id": "I1", "title": "wire the record in", "kind": "integration", "size": 0.5,
      "footprint": {"prediction": true, "paths": ["internal/record/record_stub.go"]}}
   ],
