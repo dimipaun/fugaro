@@ -14,7 +14,7 @@
 - A development build of `fugaro` has no published base image, and says so. Run it again with `--base <image>` and an image the user built (`images/build-base.sh base` in the Fugaro repository).
 - The image bakes the committed `HEAD`. Your uncommitted `fugaro.yaml` is read from the working tree, but uncommitted changes to `package.json` or lockfiles are not in the image.
 - The first build on Apple Silicon runs under emulation, because Cloud Run is `linux/amd64`, and can take a long time; `--platform linux/arm64` builds natively instead, for iterating, with the cloud build as the amd64 test. Tell the user rather than giving up.
-- Without Docker locally, finish with validate and say the first cloud build is the test; the user runs `fugaro image build` in their own terminal window, not through the agent (it is billable and asks them to type the project's name) and reads a failure with `fugaro diagnose`.
+- Without Docker locally, finish with validate and say the first cloud build is the test; the user runs `fugaro image build` in their own terminal window, not through the agent — it is billable, it asks nothing in any session (its estimated cost is reserved against the project's budget caps before it is submitted, and a build no cap has room for is refused by name, with the cap and the command that raises it), and a failure is read with `fugaro diagnose`.
 - `Dockerfile`, `package.json` and `.yarnrc.yml` must be regular files, not symlinks, of at most 1 MiB: a symlinked one fails `validate` and the image render.
 
 When it fails, read the `error` and the end of the build log, then fix `fugaro.yaml` or the Dockerfile:
