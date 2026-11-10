@@ -351,30 +351,31 @@ func (e *cloudEnv) repoProvider(repo string, co *config.Config) string {
 // credentials service, the refusal a coding agent's session gets before
 // anything is read, then one read through the service.
 func (e *cloudEnv) repoConfigAtTheRef(ctx context.Context, spec *task.Spec) (*config.Config, error) {
-	// A coding agent's session is refused before anything is read, for the
-	// value this read is rather than for the App's key (D902, spec.md §5): the
-	// token the service mints is the operator's, and an agent's process is the
-	// one place it must never reach. The way out is the checkout — a launch
-	// from the repository's own checkout reads the file out of its objects and
-	// asks the service for nothing — so the refusal names the launch where the
-	// shared refusal names a flag (doctor_brokering.go's shape for the
-	// service's bundle).
+	// The order of the two refusals is the catalog's (catalogProviderEnv): a
+	// value is refused where it would actually be read, and an installation with
+	// no credentials service has no read to refuse — its own line is the honest
+	// one, and the checkout it names is a way out that works for an agent too.
+	if _, _, err := e.serviceReadTarget(spec.Repo); err != nil {
+		return nil, serviceReadRefusal(spec.Repo, spec.Ref, err)
+	}
+	// A coding agent's session is refused before anything is read, for the value
+	// this read is rather than for the App's key (D902, spec.md §5): the token
+	// the service mints is the operator's, and an agent's process is the one
+	// place it must never reach. The way out is the checkout — a launch from the
+	// repository's own checkout reads the file out of its objects and asks the
+	// service for nothing — so the refusal names the launch where the shared
+	// refusal names a flag (doctor_brokering.go's shape for the service's
+	// bundle).
 	if err := refuseKeyReadInAgent(os.Getenv, launchReadCommand, launchServiceReadWhat); err != nil {
 		return nil, err
 	}
 	data, err := readRepoConfigAtRef(ctx, e, spec.Repo, spec.Ref)
 	switch {
-	case errors.Is(err, errNoCredentialsService):
-		// spec.md §7's first row, and the cost of D902's answer: the service
-		// ships dormant, and an installation that has not opted in leaves the
-		// launcher nothing to read a repository's configuration with.
-		return nil, userErr("cannot read %s's fugaro.yaml at %s as yourself: this installation has no credentials service, so the read that decides the run's job cannot be made. Run it from %s's checkout", spec.Repo, oneLineCLI(spec.Ref), spec.Repo)
-	case errors.Is(err, errNoGitHubAppID):
-		// The read mint is signed as the repository's App, and the App ID is
-		// the project's own recorded value (localcfg.Repo.GitHubAppID): a
-		// launch that cannot name it cannot ask for a read at all.
-		return nil, userErr("cannot read %s's fugaro.yaml at %s as yourself: this installation's local config records no github_app_id for %s, and the read the credentials service mints is signed as that App, so the read that decides the run's job cannot be made. Run it from %s's checkout", spec.Repo, oneLineCLI(spec.Ref), spec.Repo, spec.Repo)
 	case errors.Is(err, github.ErrFileNotFound):
+		// The ref resolved and its tree carries no fugaro.yaml: a repository with
+		// no document selects no clone workflow and no profile, and the project
+		// layer is never resolved on its own, so the per-repository job is not a
+		// fallback but the answer (spec.md §7).
 		return nil, nil
 	case err != nil:
 		return nil, serviceReadRefusal(spec.Repo, spec.Ref, err)
@@ -412,6 +413,16 @@ const (
 func serviceReadRefusal(repo, ref string, cause error) error {
 	var se *httpjson.StatusError
 	switch {
+	case errors.Is(cause, errNoCredentialsService):
+		// spec.md §7's first row, and the cost of D902's answer: the service
+		// ships dormant, and an installation that has not opted in leaves the
+		// launcher nothing to read a repository's configuration with.
+		return userErr("cannot read %s's fugaro.yaml at %s as yourself: this installation has no credentials service, so the read that decides the run's job cannot be made. Run it from %s's checkout", repo, oneLineCLI(ref), repo)
+	case errors.Is(cause, errNoGitHubAppID):
+		// The read mint is signed as the repository's App, and the App ID is the
+		// project's own recorded value (localcfg.Repo.GitHubAppID): a launch that
+		// cannot name it cannot ask for a read at all.
+		return userErr("cannot read %s's fugaro.yaml at %s as yourself: this installation's local config records no github_app_id for %s, and the read the credentials service mints is signed as that App, so the read that decides the run's job cannot be made. Run it from %s's checkout", repo, oneLineCLI(ref), repo, repo)
 	case errors.Is(cause, github.ErrRefNotFound):
 		// The ref does not exist at the forge. A deleted, force-pushed or
 		// mistyped branch is not a reason to read another one (spec.md §3):
@@ -521,9 +532,13 @@ func serviceReadRepoConfigAtRef(ctx context.Context, e *cloudEnv, repo, ref stri
 	return data, err
 }
 
-// serviceReadAtTheForge is the read itself, once.
-func serviceReadAtTheForge(ctx context.Context, e *cloudEnv, repo, ref string) ([]byte, error) {
-	url, appID := "", ""
+// serviceReadTarget is the two things a read needs from the installation's own
+// records, and the only place either is looked up: the credentials service's
+// published address (localcfg.CredentialsService.URL) and the App ID the mint
+// is signed as (localcfg.Repo.GitHubAppID, which is not a secret). A missing one
+// is a sentinel rather than a message, so that the refusal's words stay with the
+// launch that cannot be decided (serviceReadRefusal).
+func (e *cloudEnv) serviceReadTarget(repo string) (url, appID string, err error) {
 	if e.lc.CredentialsService != nil {
 		url = e.lc.CredentialsService.URL
 	}
@@ -531,10 +546,19 @@ func serviceReadAtTheForge(ctx context.Context, e *cloudEnv, repo, ref string) (
 		appID = r.GitHubAppID
 	}
 	if url == "" {
-		return nil, errNoCredentialsService
+		return "", "", errNoCredentialsService
 	}
 	if appID == "" {
-		return nil, errNoGitHubAppID
+		return "", "", errNoGitHubAppID
+	}
+	return url, appID, nil
+}
+
+// serviceReadAtTheForge is the read itself, once.
+func serviceReadAtTheForge(ctx context.Context, e *cloudEnv, repo, ref string) ([]byte, error) {
+	url, appID, err := e.serviceReadTarget(repo)
+	if err != nil {
+		return nil, err
 	}
 	// The identity is minted for the service's own URL, which is the audience
 	// its person class admits (a user account's plain token is the other), and

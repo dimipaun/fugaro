@@ -2290,3 +2290,28 @@ func TestLaunchWithoutCheckoutInAnAgentSessionIsRefusedBeforeAnyRead(t *testing.
 		t.Errorf("the refused launch asked Cloud Run for %d job(s): %+v", len(calls), calls)
 	}
 }
+
+// TestLaunchWithoutCheckoutInAnAgentSessionWithoutAServiceNamesTheCheckout is
+// the order of the two refusals, and it is the catalog's (catalogProviderEnv): a
+// value is refused where it would actually be read. An installation with no
+// credentials service has no read to refuse, so an agent's session gets the
+// no-service line rather than the terminal-window one — and that line's way out,
+// the repository's own checkout, is one an agent can take.
+func TestLaunchWithoutCheckoutInAnAgentSessionWithoutAServiceNamesTheCheckout(t *testing.T) {
+	newProjectJobFixture(t)
+	isolateCache(t)
+	testutil.IsolateGit(t)
+	t.Chdir(t.TempDir())
+	t.Setenv(agentenv.AgentMarkers[0], "1")
+
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20261110-130007-bbbb", "Add a feature")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a user error", err)
+	}
+	if !strings.Contains(err.Error(), "this installation has no credentials service") {
+		t.Errorf("the refusal is not the no-service one: %v", err)
+	}
+	if strings.Contains(err.Error(), "coding agent's session") {
+		t.Errorf("an installation with no credentials service has no read to refuse, so the agent-session refusal is not the one to give: %v", err)
+	}
+}
