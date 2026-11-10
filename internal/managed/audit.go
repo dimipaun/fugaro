@@ -39,8 +39,8 @@ import (
 // installation would be a new data path for a property that is false there.
 //
 // Why the family is under the runs bucket's owner-only prefix. `runs/` objects
-// are deleted at 90 days and the bucket is unversioned, so an audit that has to
-// outlive a quarter cannot live there; `fugaro/` has no lifecycle rule and is
+// are deleted at 90 days, so an audit that has to outlive a quarter cannot live
+// there; `fugaro/` has no lifecycle rule and is
 // the area only an operator's own credentials reach — a run's job account has
 // no grant above the three prefixes it writes, which is also why the command
 // itself, and never the agent's job, writes this record.
@@ -53,18 +53,28 @@ import (
 // section exists to end.
 //
 // What this is NOT, said here rather than left for a reader to assume: it is
-// not a tamper-proof log. The object is written with the operator's own
-// credentials into a bucket that is unversioned and that any project-level
-// storage writer can rewrite, and the read below refuses a shape it does not
-// know rather than detecting a rewording of one it does. It is a record of what
-// a session through this program did.
+// not a tamper-proof log. The runs bucket has object versioning on (the
+// installation module's bucket.tf), so this path's own write cannot be
+// silently replaced in place — a rewrite leaves the version before it readable
+// — but versioning is not tamper-proofing: a project-level storage writer can
+// still write a new version, delete a version, or destroy the object and every
+// version on it, and the read below refuses a shape it does not know rather
+// than detecting a rewording of one it does. What versioning buys is that the
+// audit path is append-only by construction and its history is inspectable;
+// what it does not buy is a log nobody can lie to. It is a record of what a
+// session through this program did.
 
 // AuditVersion is the record's own version, and it is the marker's rule applied
 // to this object: a version this build does not know is refused rather than
 // guessed. It is 1 because this is the shape §6 asks for, field for field —
 // adding a field is a new version only where the object is read by something
 // that cannot be taught, and a record is read by this program's own doctor and
-// report.
+// report. The `warnings` field is one such addition, and it does not bump the
+// version for the same reason: a reader that predates the field refuses the
+// record outright rather than misreading it — the decode is strict, so an
+// unknown field is an error — and a reader that knows the field but not the
+// verdict refuses the "warned" one (Validate). Either way an older build reads
+// a warned record as one it cannot place, not as an admitted one.
 const AuditVersion = 1
 
 // AuditPrefix is the family's place in the runs bucket: one directory per UTC
@@ -87,15 +97,23 @@ const AuditDateLayout = "2006-01-02"
 const auditMaxBytes = 64 << 10
 
 // AuditVerdict is what the gate answered about the document the record is
-// about. It is the gate's own answer (Converge.Refuse) rather than a second
-// judgement made here, so a record cannot say "admitted" about a step the gate
-// refused — which is the one field of this object a reader acts on directly.
+// about. It is the gate's own answer (Converge.Refuse and Converge.Warned)
+// rather than a second judgement made here, so a record cannot say "admitted"
+// about a step the gate refused — which is the one field of this object a
+// reader acts on directly.
 type AuditVerdict string
 
 const (
 	// AuditAdmitted is the gate's verdict for a document every rule passed and
 	// whose step's class is one a plan gate judges.
 	AuditAdmitted AuditVerdict = "admitted"
+	// AuditWarned is the verdict for a step the gate RECORDED content findings
+	// about and applied anyway (D1545, Converge.Warned): not admitted — the
+	// rules did not all pass — and not refused, because the findings are the
+	// content ones D1545 takes with a warning. It is the verdict an owner reads
+	// when something left the cover tables, and the warnings are in the same
+	// record.
+	AuditWarned AuditVerdict = "warned"
 	// AuditRefused is the verdict for everything else, and it is the verdict an
 	// owner reads most: the rules that fired are in the same record.
 	AuditRefused AuditVerdict = "refused"
@@ -158,30 +176,47 @@ type AuditFacts struct {
 // meaning has to change gets a new name and a new version rather than a second
 // meaning under the old one.
 type AuditRecord struct {
-	Version              int          `json:"version"`
-	Command              string       `json:"command"`
-	Argv                 []string     `json:"argv,omitempty"`
-	Project              string       `json:"project"`
-	GCPProject           string       `json:"gcp_project"`
-	PlanDigest           string       `json:"plan_digest"`
-	Verdict              AuditVerdict `json:"verdict"`
-	Rules                []string     `json:"rules,omitempty"`
-	MarkerVersion        int          `json:"marker_version"`
-	MarkerGeneration     string       `json:"marker_generation"`
-	DeleteListGeneration string       `json:"delete_list_generation,omitempty"`
-	AgentMarker          string       `json:"agent_marker,omitempty"`
-	Identity             string       `json:"identity"`
-	At                   time.Time    `json:"at"`
+	Version    int          `json:"version"`
+	Command    string       `json:"command"`
+	Argv       []string     `json:"argv,omitempty"`
+	Project    string       `json:"project"`
+	GCPProject string       `json:"gcp_project"`
+	PlanDigest string       `json:"plan_digest"`
+	Verdict    AuditVerdict `json:"verdict"`
+	Rules      []string     `json:"rules,omitempty"`
+	// Warnings are the gate's content findings for a step it recorded and
+	// applied anyway (D1545, AuditWarned), and empty for every other verdict.
+	// The field is new and the version is not bumped (AuditVersion): a reader
+	// this build does not update refuses a "warned" verdict as one it cannot
+	// name rather than misplacing it (Validate), so the addition cannot be
+	// misread — and the console and history read this object through the same
+	// version this build writes.
+	Warnings             []string  `json:"warnings,omitempty"`
+	MarkerVersion        int       `json:"marker_version"`
+	MarkerGeneration     string    `json:"marker_generation"`
+	DeleteListGeneration string    `json:"delete_list_generation,omitempty"`
+	AgentMarker          string    `json:"agent_marker,omitempty"`
+	Identity             string    `json:"identity"`
+	At                   time.Time `json:"at"`
 }
 
 // AuditRecordFor is the one mapping from a command's facts and the gate's
 // verdict to the record: the verdict is read off the gate rather than passed
 // beside it, so a caller cannot record "admitted" about a Converge that
-// refuses, and the digest is the gate's own (D1022) rather than a second hash of
-// bytes the caller kept.
+// refuses — or about one that proceeds only with warnings — and the digest is
+// the gate's own (D1022) rather than a second hash of bytes the caller kept.
+//
+// The three answers are the gate's own three: a Converge that warns is
+// AuditWarned with its findings in the record (D1545), one that admits is
+// AuditAdmitted, and everything else is AuditRefused. Warned is asked first
+// because such a Converge also passes Refuse (it is applied), and recording it
+// as admitted would drop the reason it was applied anyway.
 func AuditRecordFor(f AuditFacts, c Converge) AuditRecord {
 	verdict := AuditRefused
-	if c.Refuse() == nil {
+	switch {
+	case c.Warned():
+		verdict = AuditWarned
+	case c.Refuse() == nil:
 		verdict = AuditAdmitted
 	}
 	return AuditRecord{
@@ -193,6 +228,7 @@ func AuditRecordFor(f AuditFacts, c Converge) AuditRecord {
 		PlanDigest:           c.Digest(),
 		Verdict:              verdict,
 		Rules:                c.Rules(),
+		Warnings:             c.Warnings(),
 		MarkerVersion:        f.MarkerVersion,
 		MarkerGeneration:     auditGeneration(f.MarkerGeneration),
 		DeleteListGeneration: auditGeneration(f.DeleteListGeneration),
@@ -226,7 +262,7 @@ var auditDigestRE = regexp.MustCompile(`^[0-9a-f]{64}$`)
 // parse is worth less than no object, because it looks like a trail. The rule
 // for each field is the one its reader acts on — a record with no command names
 // nothing, a record with no digest cannot be checked against the plan, a record
-// whose verdict is neither of the two is a third answer nothing handles — and
+// whose verdict is none of the three is an answer nothing handles — and
 // the two fields that may be empty (a marker or delete-list generation nothing
 // read, an agent marker outside a session) are the two the record itself says
 // may be.
@@ -243,9 +279,9 @@ func (r AuditRecord) Validate() error {
 		return fmt.Errorf("the audit record names no GCP project: %s", r.says())
 	case !auditDigestRE.MatchString(r.PlanDigest):
 		return fmt.Errorf("the audit record's plan_digest is not the sha256 of a judged document: %s", r.says())
-	case r.Verdict != AuditAdmitted && r.Verdict != AuditRefused:
-		return fmt.Errorf("the audit record's verdict is %q, which is neither %q nor %q: a third answer is one no reader handles (%s)",
-			safetext.Field(string(r.Verdict)), AuditAdmitted, AuditRefused, r.says())
+	case r.Verdict != AuditAdmitted && r.Verdict != AuditWarned && r.Verdict != AuditRefused:
+		return fmt.Errorf("the audit record's verdict is %q, which is none of %q, %q or %q: another answer is one no reader handles (%s)",
+			safetext.Field(string(r.Verdict)), AuditAdmitted, AuditWarned, AuditRefused, r.says())
 	case r.MarkerVersion < 1:
 		return fmt.Errorf("the audit record names no creation fact (marker_version %d): a record is written for a managed project, which has one (%s)", r.MarkerVersion, r.says())
 	case strings.TrimSpace(r.Identity) == "":
@@ -299,7 +335,9 @@ func (r AuditRecord) says() string {
 // are two objects rather than one overwriting the other. The write is
 // conditional on there being nothing there (D1014's object is append-only:
 // nothing in this program ever rewrites or deletes one), so the one way two
-// records could collide is refused rather than silently merged.
+// records could collide is refused rather than silently merged — and the
+// bucket's own versioning means that even a write from outside this program
+// leaves the record it replaced as a noncurrent version rather than erasing it.
 func WriteAudit(ctx context.Context, s *storage.Service, bucket string, r AuditRecord) (string, error) {
 	if s == nil {
 		return "", fmt.Errorf("%w: an audit record is written with the credentials of the account running the command", ErrNoAuditReader)

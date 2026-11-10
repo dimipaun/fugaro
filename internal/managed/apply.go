@@ -226,11 +226,20 @@ type Request struct {
 // Result is what an apply did, for the caller that prints it. Changed is false
 // when the plan was empty, in which case nothing was gated and nothing was
 // applied.
+//
+// Warning is why the apply gate opened without a recorded budget amount
+// (enable.go, D1545): the budget-evidence warning raised when the project is
+// managed but its creation fact records none. It sits beside Verdict rather
+// than inside it because it is not a finding about the plan — the verdict's own
+// Warnings are that — and a caller that needs to record or report it reads this
+// field. Empty for a gate opened on a recorded amount, and empty on the zero
+// Result.
 type Result struct {
 	Changed  bool
 	PlanPath string
 	PlanHash string
 	Verdict  Verdict
+	Warning  string
 }
 
 // RefusedError is the gate's refusal, carried out of Apply with the verdict
@@ -389,6 +398,16 @@ func Apply(ctx context.Context, r Request) (Result, error) {
 	if err := r.Enable.Refuse(); err != nil {
 		return Result{}, err
 	}
+	// The budget-evidence warning (D1545): the gate can open without a
+	// recorded amount (enable.go), and a gate that opened for a reason nobody
+	// is told about is the failure the warning exists to prevent — so the
+	// session reads it here, before anything is read or applied, and it is
+	// carried on the Result as well. The sentence names the owner's own command
+	// and no environment variable, and it is this program's own text (ApplyGate
+	// built it), so it is not bounded again here.
+	if w := r.Enable.Warning(); w != "" && r.Out != nil {
+		fmt.Fprintln(r.Out, w)
+	}
 	if len(r.Session) > 0 {
 		return Result{}, r.refuseSession()
 	}
@@ -454,8 +473,9 @@ func Apply(ctx context.Context, r Request) (Result, error) {
 		}
 		if !changed {
 			// Nothing to change: there is no plan to gate and none to apply,
-			// and an empty plan is not a verdict.
-			res = Result{Changed: false}
+			// and an empty plan is not a verdict. The gate's own warning is
+			// still carried, because it was told to the session above.
+			res = Result{Changed: false, Warning: r.Enable.Warning()}
 			return nil
 		}
 		res, run = r.gateAndApply(ctx, t, cred, planPath)
@@ -590,7 +610,7 @@ func (r Request) gateAndApply(ctx context.Context, t *tf.TF, cred Credential, pl
 		// zero Verdict it returns is not OK either.
 		return Result{}, fmt.Errorf("gating the plan of %s: %w", r.what(), safetext.FieldErr(err))
 	}
-	res := Result{Changed: true, PlanPath: planPath, PlanHash: before, Verdict: v}
+	res := Result{Changed: true, PlanPath: planPath, PlanHash: before, Verdict: v, Warning: r.Enable.Warning()}
 	if !v.OK {
 		// The refusal is a hard return: there is no "apply anyway" here, and
 		// the only action a false verdict permits is a confirmation, which in
@@ -600,10 +620,20 @@ func (r Request) gateAndApply(ctx context.Context, t *tf.TF, cred Credential, pl
 		// owner's object and not a flag of this command.
 		return res, &RefusedError{Verdict: v, Advice: r.advice(v)}
 	}
+	// D1545: the verdict can carry warnings — content findings the gate
+	// recorded and did not refuse on — and the session is told them before
+	// anything is asked or applied, so a plan that goes ahead with a finding
+	// against it is never one nobody was warned about. It names no flag and no
+	// environment variable.
+	if r.Out != nil && len(v.Warnings) > 0 {
+		printWarnings(r.Out, v.Warnings)
+	}
 	// The session's own leg of D55's rule, asked here because this is the one
 	// moment all three of its inputs exist: the fact was read before terraform
 	// ran, the verdict that admits the plan has just been read, and Conditions
-	// is what the session says about who is there.
+	// is what the session says about who is there. A verdict that is OK only
+	// because its refusals were content ones is still OK here (Admitted), which
+	// is D1545's ruling: the content findings do not keep a confirmation.
 	if err := r.confirm(v, before); err != nil {
 		return res, err
 	}
@@ -625,6 +655,32 @@ func (r Request) gateAndApply(ctx context.Context, t *tf.TF, cred Credential, pl
 		return res, safetext.FieldErr(err)
 	}
 	return res, nil
+}
+
+// printWarnings writes the gate's recorded content findings (D1545): a line in
+// this program's own words first, then one line per warning, each cut like a
+// refusal line (refusalWhy) and the listing capped (safetext.FieldListMax, the
+// rest counted in this program's own words) — a plan chooses how many changes
+// it carries, and a listing nobody can read to the end is a warning that hides
+// the line that matters. It names no flag and no environment variable: these
+// lines are read by the session the gate opened for, and a recipe for reaching
+// past a check has no business in them (DeleteAdvice's own rule).
+func printWarnings(w io.Writer, warnings []Refusal) {
+	fmt.Fprintf(w, "the managed gate recorded %d warning(s) about this plan, and applies it with them recorded (D1545):\n", len(warnings))
+	listed := warnings
+	if len(listed) > safetext.FieldListMax {
+		listed = listed[:safetext.FieldListMax]
+	}
+	for _, r := range listed {
+		fmt.Fprintf(w, "  %s: ", safetext.Field(r.Gate))
+		if r.Address != "" {
+			fmt.Fprintf(w, "%s: ", safetext.Field(r.Address))
+		}
+		fmt.Fprintln(w, refusalWhy(r.Why))
+	}
+	if n := len(warnings) - len(listed); n > 0 {
+		fmt.Fprintf(w, "  (%s)\n", safetext.FieldListNote(n))
+	}
 }
 
 // advice is the sentence a refusal ends with, when the mode has one: a
@@ -673,6 +729,13 @@ func (r Request) advice(v Verdict) string {
 // and what it changes: having a terminal is what makes a confirmation
 // possible, not a confirmation, and an apply in a project with no agent must
 // not run on a person's terminal without the person saying so.
+//
+// The question is the plan's own identity and nothing else, and that is the
+// point of asking it here rather than of the verdict: D1545's warnings (the
+// budget-evidence one and the verdict's own) are printed BEFORE this is
+// reached, each on its own line, so the person answers about the plan they
+// have been warned about rather than about a question that folded the warnings
+// into its own sentence.
 //
 // The refusal names what refused in the words initflow already produces: the
 // reason is decided in one place, and a caller that printed its own version of

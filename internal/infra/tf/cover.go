@@ -1175,11 +1175,58 @@ func APITargets() []string {
 // the workdir never adopts something discovery did not check. An import is
 // otherwise checked as any other change (an import and update included).
 func (c Cover) NotCovered(p *Plan, imports []ImportKey) []string {
+	all, _, _ := c.notCoveredSplit(p, imports)
+	return all
+}
+
+// NotCoveredSplit is NotCovered's answer in the two halves D1545 needs: the
+// reasons that REFUSE a plan (integrity, D1549) and the reasons that are
+// recorded and warned instead (content). The two together are NotCovered's
+// list, in its order and with its wording, so a reader that wants the whole
+// answer keeps calling NotCovered and one that judges a plan asks for the
+// halves.
+//
+// It exists on this cover and not only on tf.ManagedCover because this is the
+// cover `fugaro update`'s gate is handed (internal/cli's stepCover wraps it,
+// and it holds no delete list): a split the managed cover kept to itself left
+// every CONTENT refusal of the installation's own review looking like an
+// integrity one, which would have made D1545's whole point — record the two
+// cover tables and warn — inert for the command that applies the most.
+//
+// Which reasons are which is decided in notCoveredSplit below, on exactly
+// tf.ManagedCover's rule (managed_cover.go's coverFinding): the two tables that
+// judge WHAT a plan contains — the type table and the grant table — are content
+// while nothing is being removed, because D1545 leaves that judgement to
+// record-and-warn, and every other rule of the chain is D1549's and refuses.
+func (c Cover) NotCoveredSplit(p *Plan, imports []ImportKey) (integrity, content []string) {
+	_, integrity, content = c.notCoveredSplit(p, imports)
+	return integrity, content
+}
+
+// notCoveredSplit is the one walk both answers come from, so a plan cannot be
+// told two different things about one change depending on which half a caller
+// asked for.
+func (c Cover) notCoveredSplit(p *Plan, imports []ImportKey) (all, integrity, content []string) {
 	if p == nil {
-		return []string{"no plan"}
+		return []string{"no plan"}, []string{"no plan"}, nil
 	}
-	var out []string
-	add := func(rc ResourceChange, why string) { out = append(out, safetext.Field(rc.Address)+" ("+why+")") }
+	add := func(rc ResourceChange, why string) {
+		item := safetext.Field(rc.Address) + " (" + why + ")"
+		all = append(all, item)
+		integrity = append(integrity, item)
+	}
+	addContent := func(rc ResourceChange, why string) {
+		item := safetext.Field(rc.Address) + " (" + why + ")"
+		all = append(all, item)
+		content = append(content, item)
+	}
+	addFinding := func(rc ResourceChange, f coverFinding) {
+		if f.content {
+			addContent(rc, f.why)
+			return
+		}
+		add(rc, f.why)
+	}
 	creates := creates(p)
 	createdSAIDs, heldSAIDs := planAccounts(p)
 	creds := planCredentialsAccounts(p)
@@ -1191,6 +1238,10 @@ func (c Cover) NotCovered(p *Plan, imports []ImportKey) []string {
 			add(rc, "no actions")
 			continue
 		case !allOf(acts, "create", "update", "no-op", "read"):
+			if removalContent(rc) {
+				addContent(rc, "actions "+strings.Join(acts, ", "))
+				continue
+			}
 			add(rc, "actions "+strings.Join(acts, ", "))
 			continue
 		}
@@ -1204,7 +1255,7 @@ func (c Cover) NotCovered(p *Plan, imports []ImportKey) []string {
 		case t == "google_service_account_key":
 			add(rc, "a service account key")
 		case !allowedTypes[t]:
-			add(rc, "a resource type outside the installation's modules")
+			addFinding(rc, coverFinding{why: "a resource type outside the installation's modules", content: !removalRefuses(rc)})
 		case t == "google_project_iam_custom_role" && c.customRole(rc) != "":
 			add(rc, c.customRole(rc))
 		case rc.Change.Importing != nil && !c.importOK(rc.Change.Importing.ID):
@@ -1215,11 +1266,26 @@ func (c Cover) NotCovered(p *Plan, imports []ImportKey) []string {
 			add(rc, c.attributes(rc, creates, createdSAIDs, heldSAIDs, creds))
 		case strings.HasSuffix(t, "_iam_member"):
 			if why := c.grant(rc, creates, createdSAIDs, heldSAIDs, dep); why != "" {
-				add(rc, why)
+				addFinding(rc, coverFinding{why: why, content: !removalRefuses(rc)})
 			}
 		}
 	}
-	return out
+	return all, integrity, content
+}
+
+// removalContent is whether the arm this cover refuses a removal with — the one
+// it has instead of a delete list — is a CONTENT refusal D1545 records and
+// warns rather than an integrity one D1549 keeps. D1551's rule alone decides
+// it: a delete, or a replace in either of terraform's two orders, of a
+// data-bearing or unclassified type refuses for good (RefusesRemovalType), and
+// one of any other classified type is a removal the managed gate now takes with
+// a warning.
+//
+// A set terraform does not write, and forget, are not removals: nothing is
+// destroyed by them, and this cover reads them fail closed — integrity — as
+// tf.ManagedCover's managedActions reads the same sets (managed_cover.go).
+func removalContent(rc ResourceChange) bool {
+	return allOf(rc.Change.Actions, "create", "delete") && !RefusesRemovalType(rc.Type)
 }
 
 // creates is what a plan creates, by module and type: a computed member or

@@ -512,6 +512,29 @@ func (r *initRun) gateStep(ctx context.Context, t *tf.TF, imports []tf.ImportKey
 		return true, &initflow.GatedError{Reason: gateUnreadable, Err: err, Refusal: initflow.GateRefusedUnread}
 	}
 	class := gateClass()
+	// A plan that would retire a project job is refused whatever the verdict
+	// said, and this is the one rule of it that D1545's split does not reach:
+	// the module protects that job from deletion and nothing lifts it, so an
+	// apply removes the launchers' grants and then fails, leaving the job
+	// unlaunchable (infra.RefuseProjectJobDeletes, called beside the guard at
+	// init.go's own guard).
+	//
+	// It is asked HERE because the verdict is what decides whether that guard
+	// runs at all: a step the gate admits skips it (`if !gated`), and D1551
+	// classifies google_cloud_run_v2_job as not data-bearing, so the replace a
+	// profile's removal plans is a warning the gate now admits — the rule would
+	// otherwise be lost with the refusal that used to carry it. The plan is
+	// parsed from the same bytes the gate judged, so the two read one document.
+	//
+	// This is reported in the task's pull request: D1551 decides the delete
+	// rule by TYPE and no type tells the project module's job from any other
+	// Cloud Run job, while this rule reads the ADDRESS. Keeping it refused is
+	// this change's decision, taken because the alternative is an apply that
+	// always fails.
+	if retire := projectJobRefusal(doc); retire != "" {
+		verdict.OK = false
+		verdict.Refusals = append(verdict.Refusals, managedmode.Refusal{Gate: retireGate, Why: retire})
+	}
 	// The gate's three answers are built from the verdict and never beside it
 	// (managed.Converge's own rule): a rule that fired and did not refuse goes
 	// to the Converge's warnings, so the record say which rules they were and
@@ -853,6 +876,41 @@ func (r *initRun) applyAndRecord(ctx context.Context, t *tf.TF) error {
 // two judge a document the binary or the database holds, and the sentence a
 // session reads must not name a shape the step never had.
 const gateUnreadable = "the managed gate did not admit this step: the document it was to judge could not be produced, and a document nobody could read is never applied here (D1012)"
+
+// retireGate is the name the record gives the one rule asked beside the verdict
+// and never by it (retireRefusal): the record's rules are what an owner reads
+// back, and this one has to be told apart from the guard's and the cover's —
+// what it refuses is not a judgement about what the plan contains, and no
+// delete list and no cover table can clear it.
+const retireGate = "retire"
+
+// projectJobRefusal is infra's project-job rule as the gate asks it, "" when the
+// plan does not carry one: a plan that deletes or replaces the Cloud Run job of
+// a project module refuses, and it is D1549's kind of rule rather than D1545's.
+//
+// Why the gate asks it at all. The rule lives in the step's own guard
+// (init.go's guard, which asks it before tf.Guard), and a step the gate ADMITS
+// never reaches that guard — the admission is what replaces the step's decision
+// — so a rule nobody asked beside the verdict is a rule D1545 switched off
+// without meaning to: D1551 classifies google_cloud_run_v2_job as not
+// data-bearing, which makes the replace a removed profile plans a warning, and
+// a warning is not a refusal. Nothing about this rule is content: the plan
+// cannot be applied, so there is no question for the owner to answer.
+//
+// The bytes are the document the gate itself judged, and a document this
+// binary cannot parse is the gate's own failure rather than this one's: it
+// never reaches here (managed.Gate refuses it first), and answering "" keeps
+// this rule from claiming a verdict about bytes nobody read.
+func projectJobRefusal(doc []byte) string {
+	var plan tf.Plan
+	if err := json.Unmarshal(doc, &plan); err != nil {
+		return ""
+	}
+	if err := infra.RefuseProjectJobDeletes(&plan); err != nil {
+		return err.Error()
+	}
+	return ""
+}
 
 // gateRefused is the GatedError of a step this gate did not admit, from the
 // error M6's admit answered with, the plan's own bytes, the verdict they were

@@ -13,9 +13,12 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 	"unicode/utf8"
 
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
@@ -23,8 +26,10 @@ const (
 	project    = "aurora"
 	gcpProject = "proj-1234"
 	// planBucket is a resource the cover admits (a storage bucket with the
-	// module's own attributes) and planVM one it refuses (a type outside the
-	// installation's modules), so a test can aim each gate separately.
+	// module's own attributes) and planVM a CREATE of a type outside the
+	// installation's modules, which the review's own cover no longer refuses
+	// and now warns about (D1545: a judgement of a resource type is content),
+	// so a test can aim each gate separately.
 	planBucket = "module.managed.google_storage_bucket.data"
 	planVM     = "module.managed.google_compute_instance.vm"
 )
@@ -141,8 +146,10 @@ func bucket(addr string) map[string]any {
 		map[string]any{"public_access_prevention": "enforced", "uniform_bucket_level_access": true})
 }
 
-// vm is a resource type outside the installation's modules: the cover refuses
-// it, the guard does not.
+// vm is a CREATE of a resource type outside the installation's modules: the
+// guard admits it (nothing is removed) and the review's own cover now WARNS
+// about it rather than refusing it — D1545 makes the type table a content
+// judgement, so `fugaro update`'s plan is admitted with the finding recorded.
 func vm(addr string) map[string]any {
 	return change(addr, "google_compute_instance", []string{"create"}, map[string]any{})
 }
@@ -389,10 +396,14 @@ func TestGateReportsTheGuardRefusalEvenWhenTheCoverAdmits(t *testing.T) {
 }
 
 // And the other way: the cover refuses a plan the guard admits, with the real
-// cover and its own rule as the reason.
+// cover and its own rule as the reason. The refused change is one the cover's
+// integrity half takes and D1545 does not demote — an authoritative IAM
+// resource is not a judgement about a resource type — so the plan is refused
+// and not merely warned about.
 func TestGateReportsTheCoverRefusalWhenTheGuardAdmits(t *testing.T) {
+	const addr = "module.managed.google_project_iam_binding.runs"
 	r := newRig(t)
-	r.show(t, vm(planVM))
+	r.show(t, change(addr, "google_project_iam_binding", []string{"create"}, map[string]any{}))
 	v := gate(t, r, spec(t, r, cover()))
 	if v.OK {
 		t.Fatal("a plan the cover refuses was admitted")
@@ -401,16 +412,42 @@ func TestGateReportsTheCoverRefusalWhenTheGuardAdmits(t *testing.T) {
 		t.Fatalf("refusals %v, want the cover's one", v.Refusals)
 	}
 	got := v.Refusals[0]
-	if got.Gate != coverGate || got.Address != planVM || !strings.Contains(got.Why, "outside the installation's modules") {
-		t.Errorf("refusal %+v, want the cover's refusal of %s and its rule", got, planVM)
+	if got.Gate != coverGate || got.Address != addr || !strings.Contains(got.Why, "an authoritative IAM resource") {
+		t.Errorf("refusal %+v, want the cover's refusal of %s and its rule", got, addr)
+	}
+}
+
+// And the same cover's other half: a create of a type outside the
+// installation's modules is a content finding, and D1545 admits the plan with
+// the finding recorded rather than refusing it (the case `fugaro update`'s
+// stepCover is handed on every plan that carries a new resource).
+func TestGateWarnsTheReviewCoverFindingWhenTheGuardAdmits(t *testing.T) {
+	r := newRig(t)
+	r.show(t, vm(planVM))
+	v := gate(t, r, spec(t, r, cover()))
+	if !v.OK {
+		t.Fatalf("a content finding kept the plan from being admitted (D1545): %+v", v.Refusals)
+	}
+	if len(v.Refusals) != 0 {
+		t.Fatalf("refusals %v, want none: the type table is content", v.Refusals)
+	}
+	ref, ok := findRefusal(v.Warnings, coverGate, planVM)
+	if !ok {
+		t.Fatalf("warnings %+v, want the cover's finding of %s", v.Warnings, planVM)
+	}
+	if !strings.Contains(ref.Why, "outside the installation's modules") {
+		t.Errorf("the cover warning for %s carries %q, want its type rule", planVM, ref.Why)
 	}
 }
 
 // Both gates refusing carries both refusals: the verdict lists every refusal
-// rather than the first, which is the shape the guard itself already uses.
+// rather than the first, which is the shape the guard itself already uses. The
+// cover's refusal here is its integrity half (an authoritative IAM resource),
+// which D1545 does not demote.
 func TestGateReportsBothGatesRefusals(t *testing.T) {
+	const addr = "module.managed.google_project_iam_binding.runs"
 	r := newRig(t)
-	r.show(t, change(planBucket, "google_storage_bucket", []string{"delete"}, nil), vm(planVM))
+	r.show(t, change(planBucket, "google_storage_bucket", []string{"delete"}, nil), change(addr, "google_project_iam_binding", []string{"create"}, map[string]any{}))
 	v := gate(t, r, spec(t, r, cover()))
 	if v.OK {
 		t.Fatal("a plan both gates refuse was admitted")
@@ -420,12 +457,12 @@ func TestGateReportsBothGatesRefusals(t *testing.T) {
 		switch {
 		case ref.Gate == guardGate && ref.Address == planBucket:
 			guard++
-		case ref.Gate == coverGate && ref.Address == planVM:
+		case ref.Gate == coverGate && ref.Address == addr:
 			coverRefusals++
 		}
 	}
 	if guard != 1 || coverRefusals != 1 {
-		t.Fatalf("refusals %v, want the guard's for %s and the cover's for %s", v.Refusals, planBucket, planVM)
+		t.Fatalf("refusals %v, want the guard's for %s and the cover's for %s", v.Refusals, planBucket, addr)
 	}
 	// The guard's refusals come before the cover's, as Gate documents.
 	seenCover := false
@@ -515,12 +552,12 @@ func TestPlanRefusalsCarryTheAddressAndTheRule(t *testing.T) {
 	if len(got) != 1 || got[0] != want {
 		t.Errorf("refusals %+v, want %+v", got, want)
 	}
-	got = refusals(guardGate, guardLines("the plan would delete or replace 1 resource(s):\n  module.m.x (delete)"))
+	got = refusals(guardGate, []string{"module.m.x (delete)"})
 	want = Refusal{Gate: guardGate, Address: "module.m.x", Why: "delete"}
 	if len(got) != 1 || got[0] != want {
 		t.Errorf("refusals %+v, want the guard's address alone", got)
 	}
-	got = refusals(guardGate, guardLines("guard: no plan"))
+	got = refusals(guardGate, []string{"guard: no plan"})
 	want = Refusal{Gate: guardGate, Why: "guard: no plan"}
 	if len(got) != 1 || got[0] != want {
 		t.Errorf("refusals %+v, want the refusal whole", got)
@@ -544,7 +581,10 @@ func TestPlanRefusalsCarryTheAddressAndTheRule(t *testing.T) {
 // real plan here rather than spelled out, so this test cannot drift from the
 // rule it is about — and the premise it rests on (the content really carries a
 // "): ") is asserted, so a reason reworded without one fails this test loudly
-// instead of leaving it vacuous.
+// instead of leaving it vacuous. The plan is admitted with the item as a
+// WARNING (D1545: this is a content refusal the gate records), so the verdict
+// it is read out of is Warnings and not Refusals; what the test pins is how the
+// item's content is read, whatever half of the verdict it lands in.
 func TestPlanRefusalsReadACoverItemsContentWhole(t *testing.T) {
 	const addr = "module.managed.google_compute_router_nat.runs"
 	r := newRig(t)
@@ -553,11 +593,13 @@ func TestPlanRefusalsReadACoverItemsContentWhole(t *testing.T) {
 		map[string]any{"name": "managed-nat", "project": gcpProject}))
 
 	// The removal is one the owner's list approves, so the guard admits it and
-	// the refusal below is the cover's rule about the resource itself.
+	// the finding below is the cover's rule about the resource itself. It is a
+	// content finding D1545 records and warns about: the plan is admitted with
+	// the finding, not refused for it.
 	approved := r.approving(t, addr)
 	v := gate(t, r, spec(t, r, managedCover(), approved))
-	if v.OK {
-		t.Fatal("a type the managed list drops was admitted")
+	if !v.OK {
+		t.Fatalf("a content refusal kept the plan from being admitted (D1545): %+v", v.Refusals)
 	}
 
 	// The same cover the gate was handed, read for its own items.
@@ -578,12 +620,12 @@ func TestPlanRefusalsReadACoverItemsContentWhole(t *testing.T) {
 		t.Fatalf("this test is about a rule whose own words carry a \")): \" — a cover item with a parenthesis inside its content — and %s's reason no longer has one: %q", addr, content)
 	}
 
-	ref, ok := findRefusal(v.Refusals, coverGate, addr)
+	ref, ok := findRefusal(v.Warnings, coverGate, addr)
 	if !ok {
-		t.Fatalf("the cover refused %s with no refusal at its address: %+v", addr, v.Refusals)
+		t.Fatalf("the cover warned about %s with no warning at its address: %+v", addr, v.Warnings)
 	}
 	if ref.Why != content {
-		t.Errorf("the cover refusal for %s carries\n%q\nwant the item's whole content\n%q", addr, ref.Why, content)
+		t.Errorf("the cover warning for %s carries\n%q\nwant the item's whole content\n%q", addr, ref.Why, content)
 	}
 	if got := refusals(coverGate, []string{item}); len(got) != 1 || got[0].Why != content || got[0].Address != addr {
 		t.Errorf("refusals(%q) = %+v; want one refusal at %s carrying the content whole", item, got, addr)
@@ -826,16 +868,19 @@ func findRefusal(rs []Refusal, gate, address string) (Refusal, bool) {
 	return Refusal{}, false
 }
 
-// A guard that errs fails closed even when its message says nothing: OK is not
-// read off the refusals the message turns into.
+// A guard that refuses with nothing readable fails closed all the same: OK is
+// not read off the refusals the message turns into, but off the list the guard
+// returned, so a line with no words in it is still a refusal.
 func TestGateGuardErrorWithEmptyMessageIsNotOK(t *testing.T) {
 	for _, msg := range []string{"", "  \n "} {
-		old := guard
-		guard = func(*tf.Plan, []tf.DeleteEntry, []string) error { return errors.New(msg) }
+		old := guardManaged
+		guardManaged = func(*tf.Plan, []tf.DeleteEntry, []string) ([]string, []string) {
+			return []string{msg}, nil
+		}
 		r := newRig(t)
 		r.show(t, bucket(planBucket))
 		v := gate(t, r, spec(t, r, admitAll{}))
-		guard = old
+		guardManaged = old
 		if v.OK {
 			t.Errorf("a guard that refused with %q was admitted", msg)
 		}
@@ -903,12 +948,12 @@ func TestGateRefusesAListedReplaceTheCoverDoesNotJudge(t *testing.T) {
 // one of them was told and refused by the other's.
 func TestGateHandsTheCoverTheSameDeleteListAsTheGuard(t *testing.T) {
 	var covered, guarded []tf.DeleteEntry
-	old := guard
-	guard = func(_ *tf.Plan, allowDelete []tf.DeleteEntry, _ []string) error {
+	old := guardManaged
+	guardManaged = func(_ *tf.Plan, allowDelete []tf.DeleteEntry, _ []string) ([]string, []string) {
 		guarded = slices.Clone(allowDelete)
-		return nil
+		return nil, nil
 	}
-	t.Cleanup(func() { guard = old })
+	t.Cleanup(func() { guardManaged = old })
 	r := newRig(t)
 	r.show(t, removing(planBucket, "google_storage_bucket", []string{"delete"},
 		map[string]any{"name": "fugaro-runs-" + gcpProject, "id": "bucket-0001", "time_created": bucketCreated}, nil))
@@ -1087,22 +1132,31 @@ func TestGateAdmitsAListedAddressThePlanDoesNotCarry(t *testing.T) {
 // A list never authorizes a create: the delete list is read for the change that
 // removes something and for nothing else, so a create at an address on it is
 // judged by the allowlist exactly as one at an address that is not — the same
-// plan, admitted or refused by the resource alone.
+// plan, and since D1545 the same verdict either way: a type off the managed
+// allowlist is a content finding the gate records and warns about, and the list
+// neither adds it nor removes it. TestGateListNeverAuthorizesACreateThroughACoverThatJudgesNothing
+// takes the same rule through a cover that cannot be told the list.
 func TestGateListNeverAuthorizesACreate(t *testing.T) {
 	const gone = "module.managed.google_compute_instance.gone"
 	r := newRig(t)
 	r.managedShow(t, managedChange(gone, "google_compute_instance", []string{"create"}, nil, map[string]any{}))
-	v := gate(t, r, spec(t, r, managedCover(), r.approving(t, gone)))
-	if v.OK {
-		t.Fatal("a create at an address on the delete list was admitted although its type is not on the allowlist")
-	}
-	if len(v.Refusals) != 1 || v.Refusals[0].Gate != coverGate || !strings.Contains(v.Refusals[0].Why, "outside the managed project's allowlist") {
-		t.Errorf("refusals %v, want the cover's type refusal of %s", v.Refusals, gone)
-	}
-	// And the same plan without the address listed: the list changed nothing.
-	if v := gate(t, r, spec(t, r, managedCover())); len(v.Refusals) != 1 || v.Refusals[0].Why !=
-		"a resource type outside the managed project's allowlist" {
-		t.Errorf("refusals %v, want the same single refusal with no list at all", v.Refusals)
+	for _, tc := range []struct {
+		name string
+		spec Spec
+	}{
+		{"with the address listed", spec(t, r, managedCover(), r.approving(t, gone))},
+		{"with no list at all", spec(t, r, managedCover())},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			v := gate(t, r, tc.spec)
+			if !v.OK {
+				t.Fatalf("a create whose type is off the allowlist is a content finding, admitted with a warning (D1545): %+v", v.Refusals)
+			}
+			if len(v.Warnings) != 1 || v.Warnings[0].Gate != coverGate || v.Warnings[0].Address != gone ||
+				v.Warnings[0].Why != "a resource type outside the managed project's allowlist" {
+				t.Errorf("warnings %+v, want the cover's single type finding of %s, whatever the list holds", v.Warnings, gone)
+			}
+		})
 	}
 }
 
@@ -1191,23 +1245,33 @@ func TestGateImportsMustBeOnTheSpecList(t *testing.T) {
 
 // The cost list (Task 1.3) is enforced here, in the verdict, and nowhere else:
 // a plan the guard and the cover both admit but that states a blocked cost
-// attribute comes back not OK, with the cost gate's own refusal. Dropping the
-// wiring from Gate turns this red.
+// attribute is admitted WITH the block recorded as a warning. D1545 makes the
+// blocked attribute audit-only, exactly as it makes the cover's content
+// refusals audit-only, so this test pins the demotion rather than a refusal —
+// dropping the wiring from Gate still turns it red, because the warning
+// disappears with it.
+//
+// The name is kept although the block no longer refuses: reconciliation.md and
+// docs/plans cite TestGateRefusesABlockedCostAttribute by name, and the test
+// they mean is this one.
 func TestGateRefusesABlockedCostAttribute(t *testing.T) {
 	const svc = "module.managed.google_cloud_run_v2_service.api"
 	r := newRig(t)
 	r.show(t, change(svc, "google_cloud_run_v2_service", []string{"create"}, map[string]any{
 		"template": []any{map[string]any{"scaling": []any{map[string]any{"min_instance_count": 3}}}}}))
 	v := gate(t, r, spec(t, r, admitAll{}))
-	if v.OK {
-		t.Fatal("a plan with a blocked cost attribute was admitted")
+	if !v.OK {
+		t.Fatalf("a blocked cost attribute is a warning, not a refusal (D1545): %+v", v.Refusals)
 	}
-	if len(v.Refusals) != 1 {
-		t.Fatalf("refusals %v, want the cost gate's one", v.Refusals)
+	if len(v.Refusals) != 0 {
+		t.Fatalf("refusals %v, want none: the block is a warning", v.Refusals)
 	}
-	got := v.Refusals[0]
-	if got.Gate != costGate || got.Address != svc || !strings.Contains(got.Why, "cloud-run-min-instances") {
-		t.Errorf("refusal %+v, want the cost gate's refusal of %s with the entry's words", got, svc)
+	w, ok := findRefusal(v.Warnings, costGate, svc)
+	if !ok {
+		t.Fatalf("warnings %+v, want the cost gate's block of %s", v.Warnings, svc)
+	}
+	if !strings.Contains(w.Why, "cloud-run-min-instances") {
+		t.Errorf("the warning's why is %q, want the cost entry's own words", w.Why)
 	}
 	if applied := r.applied(t); len(applied) != 0 {
 		t.Errorf("the gate applied something: %v", applied)
@@ -1226,7 +1290,9 @@ func TestGateAdmitsAPlanBelowTheCostLines(t *testing.T) {
 }
 
 // A plan the guard refuses and that also states a blocked cost attribute
-// returns every refusal, the cost one included: the "every refusal" contract.
+// returns every finding: the guard's refusal in Refusals, and the cost block in
+// Warnings (D1545). The refusal contract is "every finding", and a plan that is
+// not OK still carries the warnings it earned.
 func TestGateReturnsTheCostRefusalAlongsideTheGuards(t *testing.T) {
 	const svc = "module.managed.google_cloud_run_v2_service.api"
 	r := newRig(t)
@@ -1235,13 +1301,15 @@ func TestGateReturnsTheCostRefusalAlongsideTheGuards(t *testing.T) {
 		change(svc, "google_cloud_run_v2_service", []string{"create"}, map[string]any{
 			"template": []any{map[string]any{"scaling": []any{map[string]any{"min_instance_count": 3}}}}}))
 	v := gate(t, r, spec(t, r, admitAll{}))
-	var guarded, costed bool
+	var guarded bool
 	for _, ref := range v.Refusals {
 		guarded = guarded || (ref.Gate == guardGate && ref.Address == planBucket)
-		costed = costed || (ref.Gate == costGate && ref.Address == svc)
 	}
-	if v.OK || !guarded || !costed {
-		t.Errorf("verdict %+v, want not OK with the guard's and the cost gate's refusals", v)
+	if v.OK || !guarded {
+		t.Errorf("verdict %+v, want not OK with the guard's refusal", v)
+	}
+	if _, ok := findRefusal(v.Warnings, costGate, svc); !ok {
+		t.Errorf("warnings %+v, want the cost gate's block of %s beside the guard's refusal", v.Warnings, svc)
 	}
 }
 
@@ -1272,15 +1340,18 @@ func TestGateCarriesAFlagOnlyFindingWithoutRefusing(t *testing.T) {
 // The guard Gate calls carries no advice of its own (Task 3.2's review,
 // finding 1): tf.Guard's sentence names the flag a managed apply refuses, and
 // the sentence a managed refusal ends with is the apply's, chosen from the
-// verdict. guardLines drops the header as well; this holds the source.
+// verdict. The guard Gate calls is tf.GuardManaged, which takes no advice
+// argument at all; this holds the source.
 func TestGateGuardCarriesNoAdviceOfItsOwn(t *testing.T) {
 	p := &tf.Plan{ResourceChanges: []tf.ResourceChange{{Address: planBucket, Change: tf.Change{Actions: []string{"delete"}}}}}
-	err := guard(p, nil, nil)
-	if err == nil {
+	refused, _ := guardManaged(p, nil, nil)
+	if len(refused) == 0 {
 		t.Fatal("the guard admitted an unlisted delete")
 	}
-	if strings.Contains(err.Error(), "allow-delete") || strings.Contains(err.Error(), tf.AllowDeleteAdvice) {
-		t.Errorf("the gate's guard carries tf.Guard's advice:\n%s", err)
+	for _, line := range refused {
+		if strings.Contains(line, "allow-delete") || strings.Contains(line, tf.AllowDeleteAdvice) {
+			t.Errorf("the gate's guard carries tf.Guard's advice:\n%s", line)
+		}
 	}
 }
 
@@ -1415,4 +1486,187 @@ func TestRefusedOnlyForRemovals(t *testing.T) {
 			}
 		})
 	}
+}
+
+// D1545's whole path for a finding the cover's grant table makes: the plan is
+// ADMITTED with the finding recorded in Warnings (OK true), a Converge built
+// from those warnings proceeds (Refuse nil) and reports Warned, and the audit
+// record's verdict is "warned" rather than "admitted" — so a step applied with
+// a finding against it leaves the finding in the trail and never reads as one
+// that passed. The fixture is a grant on a managed bucket to a member the
+// installation's own lists do not hold, which is the cover's grant table (a
+// content finding, coverFinding.content) reached as a create.
+func TestOutOfTableGrantAppliesAndIsRecorded(t *testing.T) {
+	const addr = "module.managed.google_storage_bucket_iam_member.runs_outsider"
+	r := newRig(t)
+	r.managedShow(t, managedChange(addr, "google_storage_bucket_iam_member", []string{"create"}, nil,
+		map[string]any{"bucket": "fmgd-b", "member": "user:outsider@example.invalid", "role": "roles/storage.objectViewer"}))
+	v := gate(t, r, spec(t, r, managedCover()))
+	if !v.OK {
+		t.Fatalf("an out-of-table grant is a content finding, admitted with a warning (D1545): %+v", v.Refusals)
+	}
+	if len(v.Refusals) != 0 {
+		t.Fatalf("refusals %v, want none: the grant is a warning", v.Refusals)
+	}
+	w, ok := findRefusal(v.Warnings, coverGate, addr)
+	if !ok {
+		t.Fatalf("warnings %+v, want the cover's grant finding of %s", v.Warnings, addr)
+	}
+	if !strings.Contains(w.Why, "on none of the lists") {
+		t.Errorf("the warning's why is %q, want the grant table's own words", w.Why)
+	}
+
+	// The step's own verdict: a Converge built from the gate's warnings proceeds
+	// and reports Warned, so no caller can read it as admitted.
+	doc := []byte("the judged plan")
+	warnings := make([]string, 0, len(v.Warnings))
+	for _, ref := range v.Warnings {
+		warnings = append(warnings, ref.Address+": "+ref.Why)
+	}
+	c := ConvergeWarned(doc, initflow.YesOrTyped, []string{"the plan was judged"}, warnings)
+	if err := c.Refuse(); err != nil {
+		t.Fatalf("a warned step was refused (D1545 lets it proceed): %v", err)
+	}
+	if !c.Warned() {
+		t.Error("a Converge built from the gate's warnings does not report Warned")
+	}
+
+	// And the record says so: the verdict is "warned", not "admitted", and the
+	// finding is carried in the same object.
+	rec := AuditRecordFor(AuditFacts{
+		Command: "fugaro managed apply", Project: project, GCPProject: gcpProject,
+		Identity: "user:operator@example.invalid", MarkerVersion: 2, At: time.Now(),
+	}, c)
+	if rec.Verdict != AuditWarned {
+		t.Errorf("the record's verdict is %q, want %q: a step applied with a warning is not an admitted one", rec.Verdict, AuditWarned)
+	}
+	if len(rec.Warnings) != 1 || !strings.Contains(rec.Warnings[0], "on none of the lists") {
+		t.Errorf("the record's warnings are %q, want the gate's own finding", rec.Warnings)
+	}
+	if err := rec.Validate(); err != nil {
+		t.Errorf("a warned record does not validate, so a warned step could not be recorded: %v", err)
+	}
+}
+
+// D1545 demoted only the CONTENT findings; the INTEGRITY refusals still refuse
+// (D1549), and this pins the gate's own set in one place so a later widening of
+// the demotion is caught here rather than assumed away. The cover's integrity
+// half is the managed configuration rule, a bare cover's own rule and the
+// missing cover; the guard's is a D1551 removal — a data-bearing type and a
+// type in neither classification table — beside the classified, non-data-bearing
+// removal D1545 takes as a warning, so the exception is told from the rule.
+//
+// The refusals that are not findings about the plan at all — a changed file
+// (ErrPlanChanged), a project the marker read did not say is managed
+// (ErrNotManaged), a provider setting in terraform's environment
+// (ErrProviderSetting) and an address the command line named
+// (ErrSessionAddresses) — refuse whatever the verdict says, and D1545 does not
+// reach them; each is pinned by its own test
+// (TestApplyRefusesASavedPlanThatChangedAfterTheGate,
+// TestApplyRefusesWhenTheCreationFactDoesNotSayManaged, the TerraformEnv tests,
+// and TestApplyRefusesAnAddressTheCommandLineNamed), and the pre-init block
+// refusals and the symlink and nesting bounds are preflight_test.go's.
+func TestIntegrityRefusalsStillRefuse(t *testing.T) {
+	t.Run("the cover's integrity half", func(t *testing.T) {
+		for _, tc := range []struct {
+			name  string
+			show  func(t *testing.T, r *rig)
+			cover func() Cover
+			want  string
+		}{
+			{
+				name:  "a plan with changes and no configuration",
+				show:  func(t *testing.T, r *rig) { r.show(t, bucket(planBucket)) },
+				cover: func() Cover { return managedCover() },
+				want:  "no configuration",
+			},
+			// A change under a provider the installation does not run. It is
+			// the managed cover's own integrity half and cannot move: the type
+			// table and the review's own tf.Cover answer questions of content
+			// (that is what D1545 demoted), but running a foreign provider is
+			// not a judgement about a resource type, so nothing the review
+			// gains can carry this item into the warned half.
+			{
+				name: "a change under a provider the installation does not run",
+				show: func(t *testing.T, r *rig) {
+					foreign := managedChange(planVM, "google_storage_bucket", []string{"create"}, nil, map[string]any{})
+					foreign["provider_name"] = "registry.terraform.io/hashicorp/aws"
+					r.managedShow(t, foreign)
+				},
+				cover: func() Cover { return managedCover() },
+				want:  "provider registry.terraform.io/hashicorp/aws",
+			},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				r := newRig(t)
+				tc.show(t, r)
+				s := spec(t, r, tc.cover())
+				integrity, content := s.notCoveredSplit(r.plan(t))
+				if !slices.ContainsFunc(integrity, func(i string) bool { return strings.Contains(i, tc.want) }) {
+					t.Fatalf("integrity %q does not carry %q, so the item was demoted from the refusing half", integrity, tc.want)
+				}
+				for _, c := range content {
+					if strings.Contains(c, tc.want) {
+						t.Fatalf("the %q item is in the content half %q, which D1545 would apply with a warning", tc.want, content)
+					}
+				}
+				if v := gate(t, r, s); v.OK {
+					t.Fatalf("an integrity refusal was admitted: %+v", v)
+				}
+			})
+		}
+		t.Run("no cover at all", func(t *testing.T) {
+			r := newRig(t)
+			r.show(t, bucket(planBucket))
+			s := spec(t, r, nil)
+			integrity, content := s.notCoveredSplit(r.plan(t))
+			if len(integrity) != 1 || !strings.Contains(integrity[0], "no cover") || len(content) != 0 {
+				t.Fatalf("integrity %q, content %q, want the missing cover's refusal in the integrity half alone", integrity, content)
+			}
+			if v := gate(t, r, s); v.OK {
+				t.Fatal("a plan with no cover was admitted")
+			}
+		})
+	})
+	t.Run("the apply's own refusals", func(t *testing.T) {
+		// None of these is a finding about the plan: they refuse whatever the
+		// verdict says, and D1545 does not reach them. Each has its own test
+		// (the names above); they are asked here together because the claim
+		// this test makes is that the demotion touched the content findings and
+		// nothing else.
+		t.Run("a changed file", func(t *testing.T) {
+			r := newApplyRig(t, plainRoot())
+			r.planWithChanges(t, bucket(planBucket))
+			show := r.script["show"].(map[string]any)
+			show["files"] = map[string]string{filepath.Join(r.wd.Root, infra.PlanFile): "another plan"}
+			if _, err := Apply(context.Background(), r.request(t)); !errors.Is(err, ErrPlanChanged) {
+				t.Fatalf("got %v, want the plan-changed refusal", err)
+			}
+		})
+		t.Run("a project the read did not say is managed", func(t *testing.T) {
+			r := newApplyRig(t, plainRoot())
+			r.planWithChanges(t, bucket(planBucket))
+			req := r.request(t)
+			req.Fact = Fact{Managed: false, Reason: "no creation fact"}
+			if _, err := Apply(context.Background(), req); !errors.Is(err, ErrNotManaged) {
+				t.Fatalf("got %v, want the marker read's refusal", err)
+			}
+		})
+		t.Run("an address the command line named", func(t *testing.T) {
+			r := newApplyRig(t, plainRoot())
+			r.planWithChanges(t, bucket(planBucket))
+			req := r.request(t)
+			req.Session = []string{planBucket}
+			if _, err := Apply(context.Background(), req); !errors.Is(err, ErrSessionAddresses) {
+				t.Fatalf("got %v, want the provenance refusal", err)
+			}
+		})
+		t.Run("a provider setting in terraform's environment", func(t *testing.T) {
+			dir := t.TempDir()
+			env, err := TerraformEnv([]string{"PATH=/bin", "XDG_CUSTOM_ENDPOINT=https://proxy.example.invalid"}, dir, filepath.Join(dir, "cache"))
+			if !errors.Is(err, ErrProviderSetting) {
+				t.Fatalf("got %v (env %v), want the provider-setting refusal", err, env)
+			}
+		})
+	})
 }
