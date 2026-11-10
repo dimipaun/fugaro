@@ -9,6 +9,10 @@ package budget_test
 // that carries them: Outstanding() is the held amount whether or not the run
 // settled (D1046), and a ledger that does not read is charged the run's full
 // per-run cap, never zero (D1049).
+//
+// Each test reads through kill_test.go's readKillClient: it is the same
+// *rtdb.Client over a fresh fake database, and a second copy of it here would
+// be a second thing to keep in step.
 
 import (
 	"context"
