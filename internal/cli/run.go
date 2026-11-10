@@ -3597,10 +3597,10 @@ func existingLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, spec 
 // backend, launched onto the other, would otherwise start and die on its
 // first docker command.
 //
-// Which jobs the catalog speaks for is catalog.Applies, the same predicate the
-// deploy-time spec builder uses: a workflow that keeps its own image
-// definition, or that runs the base or a shared layer, is not the catalog's,
-// and asking the rule on its behalf would refuse a launch for an entry the job
+// Which jobs the project's images speak for is the one resolver (catalog.
+// JobImage, D1900), asked exactly as the deploy-time spec builder asks it: a
+// workflow that runs the base image or a shared layer is not one of them, and
+// asking the rule on its behalf would refuse a launch for an entry the job
 // does not run.
 //
 // A catalog that no longer agrees with the deployed image — the entry the
@@ -3630,13 +3630,24 @@ func catalogDockerAsk(ctx context.Context, env *cloudEnv, slug string, spec *tas
 		return false, nil
 	}
 	var published *config.Catalog
+	var publishedMap map[string]string
 	if p, found, err := env.policy.read(ctx, env.lc); err != nil {
 		return false, remote(policyReadErr(err))
 	} else if found {
-		published = p.ImageCatalog
+		published, publishedMap = p.ImageCatalog, p.ImageMap
 	}
 	cat := env.lc.ImageCatalogEffective(published)
-	if cat == nil || !catalog.Applies(*cat, w) {
+	// The one resolver, asked the way the deploy-time arm asks it (F21): the
+	// project's images decide this job's entry, be it through the workflow's
+	// own reference, the project's map or the catalog's default.
+	sel, err := catalog.JobImage(catalog.ImageRequest{
+		Catalog:   cat,
+		ImageMap:  env.lc.ImageMapEffective(publishedMap),
+		Canonical: spec.Repo,
+		Workflow:  w,
+		Backend:   catalog.Backend(launchBackend(env.be)),
+	})
+	if err == nil && sel.Source != catalog.SourceCatalog {
 		return false, nil
 	}
 	// The job is the workflow's own: the catalog's jobs are per-repository
@@ -3670,11 +3681,14 @@ func catalogDockerAsk(ctx context.Context, env *cloudEnv, slug string, spec *tas
 	if !ok {
 		return false, catalogMovedErr(spec.Workflow, name, image)
 	}
-	// A pin is the repository's own claim about which entry its job runs, and
-	// it is a claim about the deployed image too (D1155): a repository that
-	// now names another entry has a job deployed with an image this catalog
-	// does not give it.
-	if w.ImageName != "" && w.ImageName != entry.Name {
+	// The entry the project's images give the job now, against the entry its
+	// deployed image is: a workflow that pins another entry, one the project's
+	// map has moved, and a needed set the rule answers differently all leave a
+	// job deployed with an image this catalog does not give it (D1155, D1906).
+	// A resolver that refused the configuration has no entry to compare, and
+	// the lookup above has already said that the deployed image is none of the
+	// catalog's.
+	if err == nil && sel.Entry.Name != entry.Name {
 		return false, catalogMovedErr(spec.Workflow, name, image)
 	}
 	// The tags the workflow needs, against the entry the job actually runs:

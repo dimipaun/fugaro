@@ -253,6 +253,29 @@ func publishedCatalog(ctx context.Context, env *cloudEnv) (*config.Catalog, erro
 	return p.ImageCatalog, nil
 }
 
+// effectiveImageMap is the repo-to-image map the project has: this machine's
+// project config when it states one, the published node's otherwise
+// (localcfg's keep rule, D1906), with the published node's read error. It is
+// effectiveCatalog's sibling, read the same way and for the same reason.
+func effectiveImageMap(ctx context.Context, env *cloudEnv) (map[string]string, error) {
+	published, err := publishedImageMap(ctx, env)
+	return env.lc.ImageMapEffective(published), err
+}
+
+// publishedImageMap is the map in the project's published policy node, nil
+// when nothing is published, with the error a node this machine cannot read
+// is.
+func publishedImageMap(ctx context.Context, env *cloudEnv) (map[string]string, error) {
+	p, found, err := env.policy.read(ctx, env.lc)
+	if err != nil {
+		return nil, err
+	}
+	if !found || p == nil {
+		return nil, nil
+	}
+	return p.ImageMap, nil
+}
+
 // catalogEntryDigest is the digest of the image the last build of entry
 // recorded, "" when nothing built it. The record is per repository
 // (gcp.CatalogRecordKey): a catalog build runs as the build account of the
@@ -529,7 +552,6 @@ func catalogConfig(ctx context.Context, o cloudOptions) (string, *localcfg.Confi
 // A job the rule already refuses is not one of them: it runs no image at all,
 // and a removal cannot leave it on a catalog entry it never had.
 func catalogPointedAt(ctx context.Context, lc *localcfg.Config, cat *config.Catalog, entry string) (string, []string, error) {
-	env := &cloudEnv{lc: lc}
 	var unasked []string
 	for _, repo := range slices.Sorted(maps.Keys(lc.Repos)) {
 		cfg := checkoutConfig(ctx, repo)
@@ -537,26 +559,20 @@ func catalogPointedAt(ctx context.Context, lc *localcfg.Config, cat *config.Cata
 			unasked = append(unasked, repo)
 			continue
 		}
-		slug := repo
-		if s, err := env.repoSlug(repo, func() *config.Config { return cfg }); err == nil {
-			slug = s
-		}
 		// The workflows are the checkout's, not the local config's list of
 		// names: the image_name: and needs: this asks about live in the
 		// checkout's fugaro.yaml, which is the file the deploy-time job spec
 		// is built from, so a stale list in the local config could not answer
 		// the question anyway.
 		for _, n := range slices.Sorted(maps.Keys(cfg.Workflows)) {
-			w := cfg.Workflows[n]
-			if !catalog.Applies(*cat, w) {
-				continue
-			}
-			choice, err := catalog.Choose(catalog.Job{
-				Catalog: *cat,
-				Repos:   []catalog.Repo{{Slug: slug, Pin: w.ImageName, Needs: w.Needs}},
-				Backend: catalog.Backend(lc.Backend()),
+			sel, err := catalog.JobImage(catalog.ImageRequest{
+				Catalog:   cat,
+				ImageMap:  lc.ImageMap,
+				Canonical: repo,
+				Workflow:  cfg.Workflows[n],
+				Backend:   catalog.Backend(lc.Backend()),
 			})
-			if err != nil || choice.Entry.Name != entry {
+			if err != nil || sel.Source != catalog.SourceCatalog || sel.Entry.Name != entry {
 				continue
 			}
 			return fmt.Sprintf("the workflow %s of %s", pluginwire.Printable(n), pluginwire.Printable(repo)), unasked, nil
