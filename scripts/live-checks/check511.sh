@@ -496,40 +496,66 @@ step_first() {
 # each read for two things: whether an INSTANCE answered it, and what it cost.
 # A request inside the window that pays a cold start is the instance having been
 # reaped despite the beat; a request that is refused is the front end having no
-# instance to send it to.
+# instance to send it to. A request that NEVER COMPLETED is neither: status 000
+# is curl's own --max-time or a connection that never came up, which says nothing
+# about an instance — so the rows here read as ones this run could NOT measure
+# rather than as U4 answered no, exactly as the same failure on the opening
+# request does in step_first.
 step_window() {
-  local i n=$WINDOW_REQUESTS first_bad="" answered=0 max=0 min=-1 slow="" ms total=0
+  local i n=$WINDOW_REQUESTS first_bad="" unfinished=0 unfinished_why="" answered=0 measured=0 max=0 min=-1 slow="" ms total=0
   for i in $(seq 1 "$n"); do
     sleep "$INTERVAL"
     probe "w$i"
-    answered=$((answered + 1))
     ms=$P_MS
-    total=$((total + ms))
-    if [ "$min" -lt 0 ] || [ "$ms" -lt "$min" ]; then min=$ms; fi
-    if [ "$ms" -gt "$max" ]; then max=$ms; fi
-    if [ "$P_STATUS" != 404 ] || ! container_answered; then
-      if [ -z "$first_bad" ]; then
+    if [ "$P_STATUS" = 000 ]; then
+      # Not an answer, and not a latency either: a request that timed out would
+      # otherwise put the whole timeout into the min/mean/max read below.
+      unfinished=$((unfinished + 1))
+      if [ -z "$unfinished_why" ]; then
+        unfinished_why="request ${i} of ${n} never completed (curl: $(last_line "$(cat "$SCRATCH/probe.w${i}.err" 2>/dev/null || true)"))"
+      fi
+    else
+      measured=$((measured + 1))
+      total=$((total + ms))
+      if [ "$min" -lt 0 ] || [ "$ms" -lt "$min" ]; then min=$ms; fi
+      if [ "$ms" -gt "$max" ]; then max=$ms; fi
+      if [ "$P_STATUS" = 404 ] && container_answered; then
+        answered=$((answered + 1))
+      elif [ -z "$first_bad" ]; then
         first_bad="request ${i} of ${n} answered ${P_STATUS} after ${ms}ms: $(body_head)"
       fi
-    fi
-    if [ "$ms" -gt "$WARM_MAX_MS" ] && [ -z "$slow" ]; then
-      slow="request ${i} of ${n} took ${ms}ms (over CHECK511_WARM_MAX_MS=${WARM_MAX_MS}), which is a cold start inside the window"
+      if [ "$ms" -gt "$WARM_MAX_MS" ] && [ -z "$slow" ]; then
+        slow="request ${i} of ${n} took ${ms}ms (over CHECK511_WARM_MAX_MS=${WARM_MAX_MS}), which is a cold start inside the window"
+      fi
     fi
     say "  beat ${i}/${n}: ${P_STATUS} in ${ms}ms"
   done
-  local mid
-  mid=$((total / n))
-
-  if [ -z "$first_bad" ]; then
-    fact heartbeat-answered PASS "${answered} requests, one every ${INTERVAL}s for $((n * INTERVAL))s, were each answered by the container itself (404 on the unserved route, with its own route list): the front end always had an instance to send them to, so nothing in the window was refused for lack of one"
-  else
-    fact heartbeat-answered FAIL "${first_bad}. A request inside the window that the container did not answer is the platform having no instance up for it: the beat did not keep one, which is U4 answered no at ${INTERVAL}s"
+  local mid=0
+  if [ "$measured" -gt 0 ]; then mid=$((total / measured)); fi
+  # The count the transport failure is reported with, and what it costs the rows
+  # below: a request that never completed is not one an instance answered.
+  local lost=""
+  if [ "$unfinished" -gt 0 ]; then
+    lost=" ${unfinished} of the window's ${n} requests never completed at all, which says nothing about an instance: read that as this run not having measured them, not as U4 answered no."
   fi
 
-  local warmth="the window's latencies were min ${min}ms, mean ${mid}ms, max ${max}ms, with a cold start read as anything over CHECK511_WARM_MAX_MS=${WARM_MAX_MS}"
+  if [ -n "$first_bad" ]; then
+    fact heartbeat-answered FAIL "${first_bad}.${lost} A request inside the window that the container did not answer is the platform having no instance up for it: the beat did not keep one, which is U4 answered no at ${INTERVAL}s"
+  elif [ "$unfinished" -gt 0 ]; then
+    unmeasured heartbeat-answered "${unfinished_why}.${lost} A request that never completes is either the platform having no instance to send it to — which IS U4's question — or this machine not reaching ${SERVICE_URL} at all, and this check cannot tell those apart from here: the ${answered} request(s) that did complete were each answered by the container itself. Rerun it (CHECK511_REQUEST_TIMEOUT_SECONDS=${REQUEST_TIMEOUT}, CHECK511_INTERVAL_SECONDS=${INTERVAL}, CHECK511_HOLD_SECONDS=${HOLD} are the knobs), or read the service's own request log for this run's stamp"
+  else
+    fact heartbeat-answered PASS "${answered} requests, one every ${INTERVAL}s for $((n * INTERVAL))s, were each answered by the container itself (404 on the unserved route, with its own route list): the front end always had an instance to send them to, so nothing in the window was refused for lack of one"
+  fi
+
+  local warmth="the window's latencies were min ${min}ms, mean ${mid}ms, max ${max}ms over the ${measured} of its ${n} requests that completed, with a cold start read as anything over CHECK511_WARM_MAX_MS=${WARM_MAX_MS}"
+  if [ "$measured" -eq 0 ]; then
+    warmth="not one of the window's ${n} requests completed, so there are no window latencies to read"
+  fi
   case "$MIN_INSTANCES" in
   0)
-    if [ -z "$slow" ]; then
+    if [ "$measured" -lt "$n" ]; then
+      unmeasured heartbeat-warm "${warmth}${lost} U4's claim is about the WHOLE window, and this run read ${measured} of its ${n} requests, so nothing here says an instance was up throughout it"
+    elif [ -z "$slow" ]; then
       fact heartbeat-warm PASS "${warmth}: every request in the window was answered WITHOUT a cold start, so a request every ${INTERVAL}s kept an instance up for the whole $((n * INTERVAL))s — U4's answer at this interval, which is the beat the runner's budget session already keeps (internal/budget/session.go's 15s). The opening request before the window took ${FIRST_MS}ms"
     else
       fact heartbeat-warm FAIL "${slow}; ${warmth}. The instance was reaped despite the beat, so a request every ${INTERVAL}s does NOT keep one up: DS1.5's interval is not enough and this returns to the owner before the heartbeat is written"

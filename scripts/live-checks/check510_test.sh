@@ -9,10 +9,12 @@
 # policy (member, role, condition title and expression), the containers, and the
 # throwaway service account; the fake `curl` reads that policy and answers each
 # Secret Manager call the way IAM would — the caller is the member the token was
-# minted for, a conditioned grant is evaluated against the secret's own name,
-# secrets.create is granted only without a condition (F30), and secrets.list only
-# without one. The modes below bend exactly one of those rules at a time, which
-# is what lets a case show that the check notices.
+# minted for, a conditioned grant is evaluated against the resource's REAL name
+# (project NUMBER and all, so a condition anchored at the project ID never
+# matches, which is the trap finding (a) is about), secrets.create is granted
+# only without a condition (F30), and secrets.list only without one. The modes
+# below bend exactly one of those rules at a time, which is what lets a case show
+# that the check notices.
 #
 # The role table is part of that model, and it is the reason the ORDER the check
 # asks its rows in is covered here too: no predefined Secret Manager role carries
@@ -382,6 +384,15 @@ secrets/*)
   ;;
 esac
 
+# The project the API answers with, and the one a condition is matched against:
+# a Secret Manager resource name carries the project NUMBER, never the ID that
+# stands in the URL, so the two are deliberately different here. Matching a
+# condition against `projects/<ID>/secrets/…` — the mistake finding (a) is about,
+# and the shape this check itself wrote before it was fixed — then matches
+# nothing, exactly as it does in the sandbox.
+number=$(cat "$state/project-number" 2>/dev/null || printf '%s' "$project")
+resource="projects/${number}/secrets/${name}"
+
 caller=""
 case "$auth" in
 "Bearer fake-token-for-"*) caller=${auth#Bearer fake-token-for-} ;;
@@ -418,13 +429,40 @@ role_grants() {
   return 1
 }
 
-# condition_allows_name EXPR NAME: whether the secret's own name is one the
-# condition's resource.name.startsWith clauses name. This is the reading U3 is
-# about, and the one DS2.2's expression has to survive.
+# condition_allows_name EXPR RESOURCE: whether a grant's condition admits the
+# resource IAM evaluates the permission on — the REAL resource name, project
+# number and all, never the ID the URL carries. This is the reading U3 is about,
+# and the one DS2.2's expression has to survive.
+#
+# The two clause shapes a name-prefix condition comes in are read apart, because
+# they do NOT mean the same thing:
+#   * resource.name.extract("/secrets/{secret}").startsWith("p") matches on the
+#     secret's own segment, wherever the name comes from;
+#   * resource.name.startsWith("projects/<what>/secrets/p") matches the whole
+#     string, so it matches only if <what> is the project NUMBER — a clause
+#     written with the project ID is a clause that names nothing.
 condition_allows_name() {
-  local expr=$1 want=$2 p
-  for p in $(printf '%s' "$expr" | grep -o 'secrets/[^"]*' | sed 's|^secrets/||'); do
-    case "$want" in "$p"*) return 0 ;; esac
+  local expr=$1 resource=$2 clause rest p
+  local segment=${resource#*/secrets/}
+  segment=${segment%%/*}
+  rest=$expr
+  while :; do
+    case "$rest" in
+    *' || '*) clause=${rest%% || *}; rest=${rest#* || } ;;
+    *) clause=$rest; rest="" ;;
+    esac
+    p=$(printf '%s' "$clause" | sed -n 's/.*startsWith("\([^"]*\)").*/\1/p')
+    if [ -n "$p" ]; then
+      case "$clause" in
+      *'extract("/secrets/{secret}")'*)
+        case "$segment" in "$p"*) return 0 ;; esac
+        ;;
+      *)
+        case "$resource" in "$p"*) return 0 ;; esac
+        ;;
+      esac
+    fi
+    [ -n "$rest" ] || break
   done
   return 1
 }
@@ -472,13 +510,15 @@ if [ -f "$state/bindings.tsv" ]; then
       fi
       ;;
     secretmanager.versions.add)
-      if [ "$mode" = condition-ignored-on-add ] || condition_allows_name "$bexpr" "$name"; then
+      # versions.add is evaluated on the SecretVersion, so the resource the
+      # condition is matched against carries the version segment too.
+      if [ "$mode" = condition-ignored-on-add ] || condition_allows_name "$bexpr" "$resource/versions/1"; then
         allowed=yes
         break
       fi
       ;;
     secretmanager.secrets.delete)
-      if [ "$mode" = condition-ignored-on-delete ] || condition_allows_name "$bexpr" "$name"; then
+      if [ "$mode" = condition-ignored-on-delete ] || condition_allows_name "$bexpr" "$resource"; then
         allowed=yes
         break
       fi
@@ -496,7 +536,7 @@ if [ "$allowed" != yes ]; then
     emit 500 '{"error":{"code":500,"message":"internal error while checking permission","status":"INTERNAL"}}'
     exit 0
   fi
-  denied 403 "Permission '$perm' denied on resource 'projects/$project/secrets/$name' (or it may not exist)"
+  denied 403 "Permission '$perm' denied on resource '$resource' (or it may not exist)"
 fi
 
 case "$perm" in
@@ -505,7 +545,7 @@ secretmanager.versions.add)
     emit 404 "{\"error\":{\"code\":404,\"message\":\"Secret [$name] not found\",\"status\":\"NOT_FOUND\"}}"
     exit 0
   fi
-  emit 200 "{\"name\":\"projects/$project/secrets/$name/versions/1\"}"
+  emit 200 "{\"name\":\"$resource/versions/1\"}"
   ;;
 secretmanager.secrets.delete)
   if [ ! -e "$state/secrets/$name" ]; then
@@ -520,23 +560,30 @@ secretmanager.secrets.delete)
   ;;
 secrets.create)
   max=${FAKE_MAX_ID_LENGTH:-255}
-  # The ID-length limit is applied to the bisection's own names — a leading `l`
-  # and then `a`s, the shape that mode is for. A limit that applied to every
-  # name would refuse the check's own probes, which are long because they carry
-  # the prefix; the sandbox's real limit is 255 and they fit inside it.
-  case "$name" in l*)
-    if [ "${#name}" -gt "$max" ]; then
-      emit 400 "{\"error\":{\"code\":400,\"message\":\"Secret ID must be no more than $max characters long\",\"status\":\"INVALID_ARGUMENT\"}}"
-      exit 0
-    fi
+  # The ID-length limit is applied to the bisection's own names, and to nothing
+  # else: every one of them grows out of one root, so a name that starts with it
+  # or is one of its own leading truncations belongs to that family. A limit that
+  # applied to every name would refuse the check's own probes, which are long
+  # because they carry the prefixes; the sandbox's real limit is 255 and they fit
+  # inside it.
+  length_family=chk510l-
+  in_family=no
+  case "$name" in
+  "$length_family"*) in_family=yes ;;
+  *)
+    case "$length_family" in "$name"*) in_family=yes ;; esac
     ;;
   esac
+  if [ "$in_family" = yes ] && [ "${#name}" -gt "$max" ]; then
+    emit 400 "{\"error\":{\"code\":400,\"message\":\"Secret ID must be no more than $max characters long\",\"status\":\"INVALID_ARGUMENT\"}}"
+    exit 0
+  fi
   if [ -e "$state/secrets/$name" ]; then
     emit 409 "{\"error\":{\"code\":409,\"message\":\"Secret [$name] already exists\",\"status\":\"ALREADY_EXISTS\"}}"
     exit 0
   fi
   : >"$state/secrets/$name"
-  emit 200 "{\"name\":\"projects/$project/secrets/$name\"}"
+  emit 200 "{\"name\":\"$resource\"}"
   ;;
 secrets.list)
   # The listing is the containers that exist, and it is written for every caller
@@ -552,7 +599,8 @@ secrets.list)
     for n in ${names:-}; do
       [ "$first" = yes ] || printf ','
       first=no
-      printf '{"name":"projects/%s/secrets/%s"}' "$project" "$n"
+      # The project NUMBER is what a real listing carries, too.
+      printf '{"name":"projects/%s/secrets/%s"}' "$number" "$n"
     done
     printf ']}'
   } >"$state/list.json"
@@ -611,6 +659,11 @@ prepare() { # dir
   mkdir -p "$1/home" "$1/tmp" "$1/state/secrets" "$1/state/sa" "$1/state/sa-bindings"
   : >"$1/state/bindings.tsv"
   printf 'check510-owner@example.com\n' >"$1/state/account"
+  # The project's NUMBER, which is what a Secret Manager resource name carries
+  # while the REST URL carries the ID: a condition anchored at the ID matches
+  # nothing at all. Deliberately unlike the ID, so a fake that matched them up
+  # would let an ID-form condition look like a working fence.
+  printf '100000000001\n' >"$1/state/project-number"
   write_fake_fugaro "$1"
   write_fake_gcloud "$1"
   write_fake_curl "$1"
@@ -753,10 +806,58 @@ test_the_bindings_are_removed_with_the_whole_condition() {
   run_check "$dir"
   expect_status "$status" 0 "the removal form"
   removes=$(grep 'projects remove-iam-policy-binding' "$dir/logs/gcloud.calls" || true)
-  expect_contains "$removes" "--role=roles/secretmanager.admin --condition=title=chk510-admin-${stamp},expression=resource.name.startsWith(" "the removal form: the conditioned admin grant's whole condition"
-  expect_contains "$removes" "--role=roles/secretmanager.viewer --condition=title=chk510-viewer-${stamp},expression=resource.name.startsWith(" "the removal form: the conditioned viewer grant's whole condition"
+  # The whole condition, and the whole of what makes it match: gcloud matches a
+  # removal on title AND expression, and the expression has to be the one the add
+  # wrote — the extraction anchor and not the project-ID form, which matches
+  # nothing (finding (a)).
+  expect_contains "$removes" "--role=roles/secretmanager.admin --condition=title=chk510-admin-${stamp},expression=resource.name.extract(\"/secrets/{secret}\").startsWith(\"${prefix_u}\")" "the removal form: the conditioned admin grant's whole condition"
+  expect_contains "$removes" "--role=roles/secretmanager.viewer --condition=title=chk510-viewer-${stamp},expression=resource.name.extract(\"/secrets/{secret}\").startsWith(\"${prefix_u}\")" "the removal form: the conditioned viewer grant's whole condition"
   expect_contains "$removes" "--role=roles/secretmanager.admin --condition=None" "the removal form: the unconditioned grant, named with None"
   [ "$(printf '%s\n' "$removes" | grep -c .)" = 3 ] || fail "the removal form: expected exactly three project removals, got: ${removes}"
+}
+
+# condition_with_the_project_id: a copy of the check whose condition is anchored
+# at the project ID — the form finding (a) is about, and the one this check wrote
+# before it was fixed. The copy is the whole script with ONE function redefined,
+# because a later definition wins: everything up to the script's own last line
+# (which runs main), the replacement, and then that line.
+condition_with_the_project_id() { # condition_with_the_project_id COPY
+  head -n -1 "$script" >"$1"
+  cat >>"$1" <<'ID_FORM_EOF'
+
+condition_expression() {
+  printf 'resource.name.startsWith("projects/%s/secrets/%s") || resource.name.startsWith("projects/%s/secrets/%s")' \
+    "$P" "$PREFIX_U" "$P" "$PREFIX_P"
+}
+ID_FORM_EOF
+  printf 'main "$@"\n' >>"$1"
+}
+
+test_a_condition_written_with_the_project_id_is_not_measured() {
+  # A condition anchored at projects/<project-ID>/secrets/… matches NOTHING: a
+  # secret's resource.name carries the project NUMBER (the same trap
+  # deploy/terraform/gcp/modules/installation/deployer.tf records). Written that
+  # way, every row the grant feeds times out — and the dangerous reading is the
+  # other one, that the condition does not apply to versions.add at all and U3 is
+  # answered no, which would send the owner back to DS2.2 with a live defect that
+  # is this check's own. So the run has to end as one that could NOT measure, with
+  # the number trap named and the expression it wrote printed, and never with the
+  # finding's own words.
+  local dir=$work/id-form copy=$work/id-form.sh saved=$script
+  prepare "$dir"
+  condition_with_the_project_id "$copy"
+  script=$copy
+  run_check "$dir"
+  script=$saved
+  expect_status "$status" 2 "a condition anchored at the project ID"
+  expect_contains "$out" "FACT condition-version-add-allow: FAIL" "a condition anchored at the project ID: the allow row"
+  expect_contains "$out" "never admitted versions.add" "a condition anchored at the project ID: the row says what happened"
+  expect_contains "$out" "carries the project NUMBER" "a condition anchored at the project ID: the trap is named"
+  expect_contains "$out" "projects/fugaro-dev/secrets/fugaro_u_" "a condition anchored at the project ID: the expression this run wrote is printed"
+  expect_contains "$out" "not measured: the conditioned allow row never showed the grant live" "a condition anchored at the project ID: the rows that depend on it"
+  expect_absent "$out" "DID NOT REFUSE" "a condition anchored at the project ID: U3's finding is not claimed"
+  expect_contains "$err" "could NOT measure" "a condition anchored at the project ID: the exit is a not-measured"
+  assert_clean "$dir" "a condition anchored at the project ID"
 }
 
 test_no_human_output_carries_the_token() {
@@ -932,32 +1033,75 @@ test_a_grant_that_never_propagates_is_not_measured() {
 }
 
 test_the_length_bisection_reads_the_limit() {
-  # The limit is measured rather than assumed: with the fake admitting five
-  # characters and refusing six, the row has to name five — and every container
-  # the bisection made has to be gone again.
+  # The limit is measured rather than assumed: with the fake admitting twenty
+  # characters and refusing twenty-one, the row has to name twenty — and every
+  # container the bisection made has to be gone again. The bisection starts at
+  # the stamped prefix's own length, so every probe it writes carries the stamp.
   local dir=$work/length line
   prepare "$dir"
-  run_check "$dir" FAKE_MAX_ID_LENGTH=5 CHECK510_LENGTH_MAX_PROBE=8
+  run_check "$dir" FAKE_MAX_ID_LENGTH=20 CHECK510_LENGTH_MAX_PROBE=32
   expect_status "$status" 0 "the length bisection"
   expect_contains "$out" "FACT secret-id-length: PASS" "the length bisection: the row"
-  expect_contains "$out" "the longest admitted secret ID is 5 characters and 6 was refused" "the length bisection: the limit it read"
+  expect_contains "$out" "the longest admitted secret ID is 20 characters and 21 was refused" "the length bisection: the limit it read"
   # The detail beside "was refused" is the REFUSAL's own body. The bisection's
   # last call is usually an admitted one, so a row that reads the body of the
   # last call puts a created container's name under a sentence claiming a
   # refusal — and this row is one the owner pastes into the register.
   line=$(printf '%s\n' "$out" | grep '^FACT secret-id-length:' | head -n 1)
-  expect_contains "$line" "Secret ID must be no more than 5 characters long" "the length bisection: the refusal's own message"
+  expect_contains "$line" "Secret ID must be no more than 20 characters long" "the length bisection: the refusal's own message"
   expect_absent "$line" '"name":"projects/' "the length bisection: no admitted create's body under the refusal"
+  # Every probe is the check's own stamped name: an unstamped `l`/`l…aaa` shape
+  # is a name a previous run could have left behind, whose 409 would then read as
+  # the limit.
+  expect_contains "$(cat "$dir/logs/curl.calls")" "secretId=chk510l-${stamp}-" "the length bisection: the probes carry this run's stamp"
   assert_clean "$dir" "the length bisection"
 }
 
 test_a_length_above_the_probe_is_unmeasured() {
   local dir=$work/length-high
   prepare "$dir"
-  run_check "$dir" FAKE_MAX_ID_LENGTH=1000 CHECK510_LENGTH_MAX_PROBE=8
+  run_check "$dir" FAKE_MAX_ID_LENGTH=1000 CHECK510_LENGTH_MAX_PROBE=32
   expect_status "$status" 2 "a limit above the probe"
-  expect_contains "$out" "the limit is above CHECK510_LENGTH_MAX_PROBE=8" "a limit above the probe: the row says what to raise"
+  expect_contains "$out" "the limit is above CHECK510_LENGTH_MAX_PROBE=32" "a limit above the probe: the row says what to raise"
   assert_clean "$dir" "a limit above the probe"
+}
+
+test_a_probe_of_no_more_than_the_checks_prefix_is_unmeasured() {
+  # CHECK510_LENGTH_MAX_PROBE is a knob, and one set at or below the length of
+  # the check's own stamped prefix leaves the bisection with no range at all:
+  # that is a not-measured, never a limit read off an empty search.
+  local dir=$work/length-low
+  prepare "$dir"
+  run_check "$dir" CHECK510_LENGTH_MAX_PROBE=8
+  expect_status "$status" 2 "a probe length below the check's prefix"
+  expect_contains "$out" "is not above the 16-character stamped probe" "a probe length below the check's prefix: the row says what to raise"
+  assert_clean "$dir" "a probe length below the check's prefix"
+}
+
+test_a_length_probe_refused_for_another_reason_is_not_measured() {
+  # Finding (b): a create refused for a reason that is NOT the length limit — the
+  # 409 for a name that already exists, which a midpoint probe can hit when an
+  # earlier run's restore failed — must not be read as the limit refusing, which
+  # would PASS the row with a limit nobody measured. The bisection between 16 and
+  # 64 characters asks for a 28-character name of its own, so a case can put a
+  # container under exactly that name and read what the row does with the 409.
+  local dir=$work/length-409
+  prepare "$dir"
+  : >"$dir/state/secrets/chk510l-${stamp}-aaaaaaaaaaaa"
+  run_check "$dir" FAKE_MAX_ID_LENGTH=30 CHECK510_LENGTH_MAX_PROBE=64
+  expect_status "$status" 2 "a length probe refused for another reason"
+  expect_contains "$out" "FACT secret-id-length: FAIL" "a length probe refused for another reason: the row"
+  expect_contains "$out" "answered 409 and not 200 or 400" "a length probe refused for another reason: the status it read"
+  expect_contains "$out" "is not the length limit" "a length probe refused for another reason: why it stopped"
+  expect_absent "$out" "FACT secret-id-length: PASS" "a length probe refused for another reason: no limit is claimed"
+  expect_contains "$err" "could NOT measure" "a length probe refused for another reason: the exit is a not-measured"
+  # The probes carry this run's own stamp: a name a previous run could have left
+  # behind is a name whose 409 would look like a limit.
+  expect_contains "$(cat "$dir/logs/curl.calls")" "secretId=chk510l-${stamp}-aaaaaaaaaaaaaaaa" "a length probe refused for another reason: the probes carry this run's stamp"
+  # The container the case put there is the case's, and the check's own admitted
+  # probe is gone: the row stopped the bisection, not the restore.
+  [ -e "$dir/state/secrets/chk510l-${stamp}-aaaaaaaaaaaa" ] || fail "a length probe refused for another reason: the check deleted the container that was already there"
+  expect_empty "$(cd "$dir/state/secrets" && ls -1 | grep -v "^chk510l-${stamp}-aaaaaaaaaaaa$" || true)" "a length probe refused for another reason: the check's admitted probe is gone"
 }
 
 test_a_container_the_restore_cannot_delete_is_a_failure() {
@@ -1020,6 +1164,7 @@ t test_dry_run
 t test_happy_path
 t test_the_roles_it_grants_are_a_closed_set_of_predefined_roles
 t test_the_bindings_are_removed_with_the_whole_condition
+t test_a_condition_written_with_the_project_id_is_not_measured
 t test_no_human_output_carries_the_token
 t test_xtrace_refused
 t test_a_foreign_installation_is_refused
@@ -1038,6 +1183,8 @@ t test_a_conditioned_list_that_admits_something_is_a_failure
 t test_a_grant_that_never_propagates_is_not_measured
 t test_the_length_bisection_reads_the_limit
 t test_a_length_above_the_probe_is_unmeasured
+t test_a_probe_of_no_more_than_the_checks_prefix_is_unmeasured
+t test_a_length_probe_refused_for_another_reason_is_not_measured
 t test_a_container_the_restore_cannot_delete_is_a_failure
 t test_a_binding_the_restore_cannot_remove_is_a_failure
 t test_an_account_that_cannot_be_created_is_not_measured

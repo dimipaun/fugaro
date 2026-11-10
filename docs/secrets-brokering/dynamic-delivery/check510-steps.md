@@ -24,7 +24,9 @@ restore deletes. Read the header before you start; this file is the commands.
   **project**, so a conditioned grant of either admits nothing, not even the prefix it names. The
   intake therefore holds both unconditioned, and an unconditioned create of a name **outside** the
   prefixes then succeeds: that is part of the reading, not a surprise.
-- The **maximum secret ID length** (R1), read by bisection rather than assumed.
+- The **maximum secret ID length** (R1), read by bisection rather than assumed. A probe refused for a
+  reason that is not the limit — a name already taken, say — is reported as a row the check could not
+  measure, never as the limit itself, because a limit read off the wrong refusal is worse than none.
 
 ## What you need
 

@@ -151,6 +151,8 @@ TOKEN=""
 API_STATUS=""
 API_BODY_FILE=""
 CONDITION_LIVE=no
+LENGTH_STATUS=""
+LENGTH_DETAIL=""
 
 scratch_up() {
   SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/chk510.XXXXXXXX") || die "Check 510 cannot make a scratch directory"
@@ -392,11 +394,23 @@ guard_names_free() {
 
 # ------------------------------------------------------------------ the steps
 # The condition DS2.2 will write, in the shape this check measures: one
-# expression, both prefixes, and the project spelled out (a condition naming
-# resource.name cannot be relative).
+# expression, and both prefixes named.
+#
+# It anchors with resource.name.extract("/secrets/{secret}") and NOT with
+# resource.name.startsWith("projects/<project>/secrets/…"): a secret's
+# resource.name carries the project NUMBER, never the ID a person types, so an
+# ID-form condition matches nothing at all — every row would come back unmeasured
+# and U3 would read as a no when the condition was simply written against the
+# wrong string. The extraction form is the one this repository already writes
+# (deploy/terraform/gcp/modules/installation/deployer.tf, whose comment records
+# the same trap), and it is also what makes ONE clause reach a SecretVersion
+# (projects/<number>/secrets/<id>/versions/<n>), the resource
+# secretmanager.versions.add is evaluated on: a clause carrying resource.type
+# would have to name both Secret and SecretVersion to do the same, so this one
+# names no type at all.
 condition_expression() {
-  printf 'resource.name.startsWith("projects/%s/secrets/%s") || resource.name.startsWith("projects/%s/secrets/%s")' \
-    "$P" "$PREFIX_U" "$P" "$PREFIX_P"
+  printf 'resource.name.extract("/secrets/{secret}").startsWith("%s") || resource.name.extract("/secrets/{secret}").startsWith("%s")' \
+    "$PREFIX_U" "$PREFIX_P"
 }
 
 add_binding() { # add_binding ROLE TITLE conditioned|unconditioned
@@ -482,7 +496,7 @@ wait_for_admission() {
     waited=$((waited + IAM_POLL_SECONDS))
     TOKEN=$(token_for_sa || true)
   done
-  unmeasured condition-version-add-allow "the conditioned grant never admitted versions.add on ${PROBE_U} within ${IAM_WAIT_SECONDS}s (last status ${API_STATUS}: $(api_detail)). Either the condition does not apply to versions.add — the finding U3 asks for, and DS2.2's fence would have to be redesigned — or the binding had not propagated: rerun with a longer CHECK510_IAM_WAIT_SECONDS and read this row again. The rows that follow are reported as not measured, because a refusal beside a grant nobody has shown to be live is not the condition refusing"
+  unmeasured condition-version-add-allow "the conditioned grant never admitted versions.add on ${PROBE_U} within ${IAM_WAIT_SECONDS}s (last status ${API_STATUS}: $(api_detail)). Three things look like this and only one of them is U3's finding: the binding had not propagated (rerun with a longer CHECK510_IAM_WAIT_SECONDS and read this row again); the condition names the secret in a form that cannot match — a secret's resource.name carries the project NUMBER, so a condition written with the project ID matches nothing, and the expression this run wrote is $(condition_expression); or the condition does not apply to versions.add at all, which IS the finding U3 asks for and would make DS2.2's fence something else. The rows that follow are reported as not measured, because a refusal beside a grant nobody has shown to be live is not the condition refusing"
 }
 
 # not_live: the rows that only measure something once the conditioned grant has
@@ -650,51 +664,108 @@ step_list() {
 
 # step_id_length: the largest secret ID Secret Manager admits, measured rather
 # than assumed (R1's limit sentence names it). A create is what measures it: the
-# ID is the caller's, its length is the only variable, and a refusal is the
-# limit's own INVALID_ARGUMENT. Every admitted name is recorded for the restore,
-# because each one is a real container.
+# ID is the caller's, its length is the only variable, and only a refusal the API
+# calls INVALID_ARGUMENT is the limit's. Every admitted name is recorded for the
+# restore, because each one is a real container.
 step_id_length() {
-  local lo=1 hi=$LENGTH_MAX_PROBE mid best refused refused_detail=""
-  create_secret "$(length_name 1)"
-  if [ "$API_STATUS" != 200 ]; then
-    unmeasured secret-id-length "a 1-character secret ID was refused (${API_STATUS}: $(api_detail)), so the bisection has no admitted end to start from"
+  local lo=${#LENGTH_PREFIX} hi=$LENGTH_MAX_PROBE mid best refused refused_detail="" answer
+  # The low end of the bisection is a probe the check can NAME: the stamped
+  # prefix itself, which the probe below shows to be admitted. Starting at one
+  # character would write a one-character container into the owner's project, and
+  # a name that short can only be a name somebody else already holds.
+  if [ "$hi" -le "$lo" ]; then
+    unmeasured secret-id-length "CHECK510_LENGTH_MAX_PROBE=${hi} is not above the ${lo}-character stamped probe this bisection starts from: raise it and run again"
     return 0
   fi
-  record_secret "$(length_name 1)"
-  create_secret "$(length_name "$hi")"
-  if [ "$API_STATUS" = 200 ]; then
+  answer=0
+  length_probe "$lo" || answer=$?
+  case "$answer" in
+  0) record_secret "$(length_name "$lo")" ;;
+  1)
+    unmeasured secret-id-length "the ${lo}-character stamped probe was REFUSED as INVALID_ARGUMENT (${LENGTH_DETAIL:-the refusal carried no message in its body}): the ID limit is below the length of the check's own prefix, so there is nothing here for a bisection to start from"
+    return 0
+    ;;
+  *)
+    unmeasured secret-id-length "the ${lo}-character stamped probe answered ${LENGTH_STATUS} and not 200 or 400: ${LENGTH_DETAIL:-no message in its body}. Only a 400 INVALID_ARGUMENT is the length limit refusing, so this row did not measure the limit"
+    return 0
+    ;;
+  esac
+  answer=0
+  length_probe "$hi" || answer=$?
+  case "$answer" in
+  0)
     record_secret "$(length_name "$hi")"
     unmeasured secret-id-length "a ${hi}-character secret ID was ADMITTED: the limit is above CHECK510_LENGTH_MAX_PROBE=${hi}. Raise it and run again"
     return 0
-  fi
-  refused=$hi
-  refused_detail=$(api_detail)
+    ;;
+  1)
+    refused=$hi
+    refused_detail=$LENGTH_DETAIL
+    ;;
+  *)
+    unmeasured secret-id-length "the ${hi}-character create answered ${LENGTH_STATUS} and not 200 or 400: ${LENGTH_DETAIL:-no message in its body}. Only a 400 is the limit refusing — a 409 is a container of that name already in the project, which is a leftover and not a limit — so the bisection was not started"
+    return 0
+    ;;
+  esac
   while [ $((hi - lo)) -gt 1 ]; do
     mid=$(((lo + hi) / 2))
-    create_secret "$(length_name "$mid")"
-    if [ "$API_STATUS" = 200 ]; then
+    answer=0
+    length_probe "$mid" || answer=$?
+    case "$answer" in
+    0)
       record_secret "$(length_name "$mid")"
       lo=$mid
-    else
+      ;;
+    1)
       refused=$mid
       # Read here, beside the call that was refused: api_detail reads the body
       # of the LAST call, and the loop's last call is usually an admitted one,
       # which would put a success body under a sentence saying "was refused".
-      refused_detail=$(api_detail)
+      refused_detail=$LENGTH_DETAIL
       hi=$mid
-    fi
+      ;;
+    *)
+      unmeasured secret-id-length "the ${mid}-character create answered ${LENGTH_STATUS} and not 200 or 400: ${LENGTH_DETAIL:-no message in its body}. A refusal that is not INVALID_ARGUMENT is not the length limit, so the bisection cannot go on: reading one as the limit would report a limit nobody measured"
+      return 0
+      ;;
+    esac
   done
   best=$lo
   fact secret-id-length PASS "the longest admitted secret ID is ${best} characters and ${refused} was refused: ${refused_detail:-the refusal carried no message in its body}. R1's limit sentence and DS0.1's length test name ${best}; a fugaro_u_<id>_<name> name spends 10 characters of prefix and 16 of Google account ID before the caller's own name"
 }
 
-# length_name L: a legal secret ID of exactly L characters, and nothing a real
-# container could be confused with.
+# length_probe L: creates the L-character probe and classifies the answer, which
+# is the whole reading this row turns on. 0 admitted, 1 the length limit's own
+# INVALID_ARGUMENT, 2 a refusal this row cannot read as a limit — with the status
+# and the body left in LENGTH_STATUS and LENGTH_DETAIL. Called as
+# `answer=0; length_probe L || answer=$?`, because a non-zero return would end
+# the script under `set -e` if it stood alone.
+length_probe() { # length_probe L
+  create_secret "$(length_name "$1")"
+  case "$API_STATUS" in
+  200) return 0 ;;
+  400)
+    LENGTH_DETAIL=$(api_detail)
+    return 1
+    ;;
+  *)
+    LENGTH_STATUS=$API_STATUS
+    LENGTH_DETAIL=$(api_detail)
+    return 2
+    ;;
+  esac
+}
+
+# length_name L: a legal secret ID of exactly L characters, growing out of the
+# stamped prefix — so the bisection never writes a name the project could already
+# hold (it asks for L >= the prefix's own length) — and the prefix's own leading
+# characters for an L below that, which nothing asks for today and which keeps the
+# function total rather than accidentally right only where it is called.
 length_name() {
   local l=$1 pad
-  if [ "$l" -le 1 ]; then printf 'l'; return 0; fi
-  pad=$(printf '%*s' "$((l - 1))" '' | tr ' ' 'a')
-  printf 'l%s' "$pad"
+  if [ "${#LENGTH_PREFIX}" -ge "$l" ]; then printf '%s' "${LENGTH_PREFIX:0:l}"; return 0; fi
+  pad=$(printf '%*s' "$((l - ${#LENGTH_PREFIX}))" '' | tr ' ' 'a')
+  printf '%s%s' "$LENGTH_PREFIX" "$pad"
 }
 
 create_secret() { api POST "$(api_url)/secrets?secretId=$1" '{"replication":{"automatic":{}}}'; }
@@ -804,6 +875,13 @@ PAYLOAD_B64=$(printf '%s' "$PROBE_PAYLOAD" | base64 | tr -d '\n')
 IAM_WAIT_SECONDS=${CHECK510_IAM_WAIT_SECONDS:-90}
 IAM_POLL_SECONDS=${CHECK510_IAM_POLL_SECONDS:-10}
 LENGTH_MAX_PROBE=${CHECK510_LENGTH_MAX_PROBE:-1024}
+# The bisection's names: a legal ID is [A-Za-z0-9_-]+, and every probe carries
+# the stamp. `guard_names_free` cannot list them — their lengths are computed from
+# the limit the row is measuring, and from CHECK510_LENGTH_MAX_PROBE — so the
+# stamp is what keeps a probe from colliding with anything the project already
+# holds, and a name that IS already taken is answered with a 409, which the row
+# reads as unmeasured rather than as the limit (see length_probe).
+LENGTH_PREFIX="chk510l-${STAMP}-"
 DRY_RUN=${CHECK510_DRY_RUN:-$DRY_RUN_CLI}
 KEEP_SCRATCH=${CHECK510_KEEP_SCRATCH:-}
 # The impersonation grant is written for the account gcloud itself is using,

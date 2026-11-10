@@ -72,7 +72,10 @@ above zero, the check says so and reads its own warmth as the **configuration's*
 refusing — an answer that is not that one stops the run rather than being read as an instance.
 `idle-cost` is that opening request's latency, a reading and not a criterion: on an installation nobody
 is using it is usually the one that pays a cold start. `heartbeat-answered` and `heartbeat-warm` are
-the window itself: every request answered by the container, and none of them paying a cold start.
+the window itself: every request answered by the container, and none of them paying a cold start. A
+request that never completed at all — curl's own failure, with no HTTP status — is neither of those:
+it says nothing about an instance, so both rows read as ones the run could **not** measure rather than
+as U4 answered no.
 `instance-ids` is the same window read from Cloud Logging — **one** instance id across the run's own
 entries is U4's reading rather than only its timing. `idle-gap` is the contrast, and it is not asked
 for by default (`CHECK511_IDLE_GAP_SECONDS=0`).
@@ -81,7 +84,7 @@ for by default (`CHECK511_IDLE_GAP_SECONDS=0`).
 a cold start inside the window, a request the container did not answer, or two instances named.
 `2`: the check could not measure — a tool is missing, the service or its logs could not be read, the
 token was refused, or a row has no reading (the log had not caught up, the entries carry no instance
-id). A key the run never reached reads `FAIL — not reached`.
+id, a request of the window never completed). A key the run never reached reads `FAIL — not reached`.
 
 ## What is left behind
 

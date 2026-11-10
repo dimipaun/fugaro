@@ -12624,8 +12624,9 @@ bash scripts/live-checks/check510.sh
 Progress goes to stderr and one `CHECK 510 RESULT` block goes to stdout at the end: paste that whole
 block here and nothing else. **Exit `0`** is every criterion that was measured holding; **`1`** is a
 measured criterion that did not hold; **`2`** is the check not being able to measure (a tool missing, a
-probe of its own that could not be set up, or a fresh binding that never became visible). A key the run
-never reached reads `FAIL — not reached`.
+probe of its own that could not be set up, a length probe refused for a reason that is not the ID
+limit — a name already taken, say, which must never be read as the limit itself — or a fresh binding
+that never became visible). A key the run never reached reads `FAIL — not reached`.
 
 **What waits on it.** **DS2.2** (the intake and the prefix-conditioned reader in Terraform): a failed
 510 stops it and returns to the owner as a decision, because the condition shape is that task's whole
@@ -12656,7 +12657,10 @@ instance up between runs.
   serve. The container itself answers 404 there, with its own route list — so an answer that is not
   that one is the front end refusing, not an instance serving, and the check stops rather than reading
   it as an instance. Every request is read for whether the **container** answered and for what it cost:
-  a cold start inside the window is the instance having been reaped **despite** the beat.
+  a cold start inside the window is the instance having been reaped **despite** the beat. A request
+  that never completed at all — curl's own failure, with no HTTP status — is neither: it says nothing
+  about an instance, so the window's rows read as ones the check could not measure rather than as U4
+  answered no.
 - **The instances.** The same window is read again from Cloud Logging, by the stamp the check's own
   requests carry: **one** instance id across those entries is U4's reading rather than only its timing,
   and several are the beat having measured nothing about a single instance. A log that has not caught

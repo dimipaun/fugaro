@@ -230,6 +230,11 @@ gap)
       body='{"error":{"code":503,"message":"the service is unavailable"}}'
     fi
     ;;
+  transport-fails-in-window)
+    # curl's own failure inside the window (a connection that never came up, or
+    # --max-time): a request that never completed, and not an answer at all.
+    if [ "$what" = "w2" ]; then exit 28; fi
+    ;;
   cold-in-window)
     if [ "$what" = "w1" ]; then seconds=2.500000; fi
     ;;
@@ -526,6 +531,28 @@ test_a_request_the_container_did_not_answer_is_a_failure() {
   expect_contains "$out" "U4 answered no" "a request the container did not answer: what it means"
 }
 
+test_a_window_request_that_never_completed_is_not_measured() {
+  # A request inside the window that never completed at all — curl's own failure,
+  # status 000 — is not the container failing to answer, which is U4 answered no
+  # and stops DS1.5: it is a run that could not measure, exactly like the same
+  # failure on the opening request. Read as a finding it would answer U4 no on a
+  # transport failure, and the owner would go looking for a reaped instance.
+  local dir=$work/transport-window
+  prepare "$dir"
+  run_check "$dir" FAKE_MODE=transport-fails-in-window
+  expect_status "$status" 2 "a window request that never completed"
+  expect_contains "$out" "FACT heartbeat-answered: FAIL" "a window request that never completed: the row"
+  expect_contains "$out" "request 2 of 2 never completed" "a window request that never completed: which request"
+  expect_contains "$out" "never completed" "a window request that never completed: what happened"
+  expect_contains "$out" "not as U4 answered no" "a window request that never completed: not the finding"
+  expect_absent "$out" "the beat did not keep one" "a window request that never completed: U4 is not answered no"
+  expect_contains "$out" "FACT heartbeat-warm: FAIL" "a window request that never completed: the warmth row too"
+  expect_contains "$err" "could NOT measure heartbeat-answered, heartbeat-warm" "a window request that never completed: the exit names both rows"
+  # The request that did complete was still read: the count is of the requests
+  # that completed, not of the loop's turns.
+  expect_contains "$out" "the 1 of its 2 requests that completed" "a window request that never completed: the count of what was read"
+}
+
 test_two_instances_answering_is_a_failure() {
   local dir=$work/two
   prepare "$dir"
@@ -635,6 +662,7 @@ t test_a_request_that_never_completed_is_not_measured
 t test_an_answer_that_is_not_the_containers_is_not_measured
 t test_a_cold_start_inside_the_window_is_a_failure
 t test_a_request_the_container_did_not_answer_is_a_failure
+t test_a_window_request_that_never_completed_is_not_measured
 t test_two_instances_answering_is_a_failure
 t test_a_log_that_has_not_caught_up_is_not_measured
 t test_a_log_listing_that_cannot_be_read_is_not_measured
