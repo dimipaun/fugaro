@@ -767,11 +767,13 @@ func TestDocsProjectWorkflowSecretsResidualNamesTheManagedExposure(t *testing.T)
 	// account's rows and refusals landed above it, and again when the workflow
 	// group's executable-key gate landed on both write paths, and again when the
 	// project layer's own entries joined the entry table and the write's
-	// refusals grew above it (G4). The read path's own
+	// refusals grew above it (G4), and again when the rigor floor's own fence
+	// did (settingsTypedWrite's floor class and the `internal/rigor` import).
+	// The read path's own
 	// refusal is a different line in a different file, and saying which is which
 	// is what makes the citation re-readable.
 	d1270 := subBody(t, rec, "D1270")
-	for _, want := range []string{"settings_set.go:504", "settings.go:170"} {
+	for _, want := range []string{"settings_set.go:505", "settings.go:170"} {
 		if !strings.Contains(d1270, want) {
 			t.Errorf("reconciliation.md D1270 does not cite %q: the registry answer has to name the line it comes from", want)
 		}

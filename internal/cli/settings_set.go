@@ -21,6 +21,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/policy"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/settings"
 	"github.com/dimipaun/fugaro/internal/yamledit"
@@ -1613,6 +1614,36 @@ func settingsListSubset(a, b string) bool {
 	return true
 }
 
+// settingsRigorFloorKey is the layer's own floor: the mode every run of the
+// project's branches starts from (defaults.rigor.default, D20c), read with or
+// without the `layer.` prefix the way settingsCeilingKey reads a ceiling key.
+//
+// A floor is the ceiling's mirror, and D846's fence holds both directions: a
+// floor lowered or removed takes the typed project name exactly as a cap raised
+// does (spec §5's two rows, D1026). It is the *lower* mode that is the widening
+// one here, which is why the comparison below is not settingsLoosens.
+//
+// The project layer reaches it through the entry pair and not through the leaf:
+// `layer.defaults.rigor.default` is the rigor family's row and is refused with
+// `fugaro rigor set`, so `layer.defaults.rigor --add-entry default=<mode>`,
+// classified as the member it wrote (settingsEntryLeafKey, D1165), is the
+// spelling that would otherwise lower a floor unasked — the class this test
+// exists for.
+func settingsRigorFloorKey(key string) bool {
+	return strings.TrimPrefix(key, "layer.") == "defaults.rigor.default"
+}
+
+// settingsLowersRigorFloor reports whether newValue leaves a weaker floor than
+// oldValue, by the order the run itself resolves modes with (rigor.Mode.Rank,
+// the comparison layerRigorRules makes over the same pair of values). A mode
+// this binary does not know ranks 0, below every real one, which is the
+// fail-closed reading: an edit nobody can prove raises the floor takes the
+// typed name. A block the file holds no floor in ranks 0 and any mode is above
+// it, so adding one is admitted — the direction layerRigorRules admits too.
+func settingsLowersRigorFloor(oldValue, newValue string) bool {
+	return rigor.Mode(newValue).Rank() < rigor.Mode(oldValue).Rank()
+}
+
 // settingsTypedWrite reports whether this write is one D846 reserves for the
 // owner's own hand, and the sentence saying what it widens: the write prints it
 // and the dry run carries it as `why`, and it no longer ends by naming a
@@ -1620,12 +1651,14 @@ func settingsListSubset(a, b string) bool {
 // mode is the edit being made: set, unset, add, remove, add-entry or
 // remove-entry. `remove` takes one member out of a list, which narrows it, so it
 // is never the typed form and has no case below; `unset` always is, for a
-// ceiling, because it hands the decision to a looser layer, and a map entry's
-// `remove-entry` is that same removal of the member the file holds. `add-entry`
-// on a map is SetScalar under another name, so a ceiling's own comparison is
-// the `set` one: the key it is asked about is the member's
-// (settingsEntryLeafKey), and the value the command line carried is the
-// member's value.
+// ceiling and for a rigor floor, because it hands the decision to a looser layer
+// or to a weaker mode, and a map entry's `remove-entry` is that same removal of
+// the member the file holds. `add-entry` on a map is SetScalar under another
+// name, so a ceiling's own comparison is the `set` one: the key it is asked
+// about is the member's (settingsEntryLeafKey), and the value the command line
+// carried is the member's value. A floor is the one class whose widening runs
+// the other way — the lower mode is the wider one — which is
+// settingsLowersRigorFloor's own comparison and not settingsLoosens'.
 func settingsTypedWrite(row settings.Row, oldValue, newValue, mode string) (bool, string) {
 	key := row.Key
 	ceilingWhy := "this raises a limit: the file it would edit decides the ceiling of every run this branch starts"
@@ -1640,6 +1673,16 @@ func settingsTypedWrite(row settings.Row, oldValue, newValue, mode string) (bool
 		case "set", "add-entry":
 			if settingsLoosens(key, oldValue, newValue) {
 				return true, ceilingWhy
+			}
+		}
+	}
+	if settingsRigorFloorKey(key) {
+		switch mode {
+		case "unset", "remove-entry":
+			return true, "removing a rigor floor hands the decision back to a weaker mode"
+		case "set", "add-entry":
+			if settingsLowersRigorFloor(oldValue, newValue) {
+				return true, "this lowers a rigor floor: the layer decides the mode every run the project's branches start from"
 			}
 		}
 	}
