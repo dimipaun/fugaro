@@ -232,16 +232,22 @@ const ReasonSecurityRefused = "the run's diff matched a security pattern, but it
 // applySecurityRefusal is finalize's readiness rule for a refused escalation:
 // the run is not ready, whatever the run's records answered, because the review
 // the record shows did not cover a diff the owner's list called sensitive
-// (D1509). It is a function of the record and the three answers beside it so
-// that the rule is testable where finalize is not — finalize is one long
-// sequence with no seam a test can call into, and this is the whole of what the
-// escalation adds to it.
+// (D1509). It is a function of the record and the answer beside it so that the
+// rule is testable where finalize is not — finalize is one long sequence with no
+// seam a test can call into, and this is the whole of what the escalation adds
+// to it.
 //
 // A member that is absent or carries the escalation is passed through
 // untouched: only Refused is a reason no run may be ready under.
-func (r *run) applySecurityRefusal(ready bool, reason string, class failure.Class) (bool, string, failure.Class) {
+//
+// The refusal is a Decision of its own (blocked), and not the record's own
+// `at`-style edit of the three fields: it hands over the kind with the sentence,
+// so a run refused here is `failed` whatever Decide answered — including the
+// answer a run no review round reached gets, which would otherwise file the
+// refusal as an unreviewed run (D994, D995).
+func (r *run) applySecurityRefusal(dec Decision) Decision {
 	if r.rec.Security == nil || !r.rec.Security.Refused {
-		return ready, reason, class
+		return dec
 	}
-	return false, ReasonSecurityRefused, failure.Unclassified
+	return blockedDecision(ReasonSecurityRefused, failure.Unclassified)
 }

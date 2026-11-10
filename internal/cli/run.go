@@ -646,6 +646,13 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 // already-leased state and print its notes once per attempt instead of once
 // per batch.
 func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string, spec *task.Spec, reused bool, warn io.Writer, skipBudget bool) (launchResult, error) {
+	// The repository's own document for this whole launch, resolved once
+	// before any of it: where the working tree cannot give a fugaro.yaml, the
+	// gates below and the job the launch runs on are judged by the document at
+	// the ref the run checks out (withLaunchDocument). Resolved here and not
+	// later because a reader that starts after this one is a reader that
+	// judged the launch on another file.
+	ctx = withLaunchDocument(ctx, spec.Repo, spec.Ref)
 	var layerData []byte
 	var err error
 	if o.retry == "" && !reused {
@@ -1642,19 +1649,6 @@ func resolveAttemptPlan(ctx context.Context, env *cloudEnv, o *runOptions, total
 	if err != nil {
 		return nil, err
 	}
-	workflow, err := resolveWorkflow(env, repo, o.workflow, checkout)
-	if err != nil {
-		return nil, err
-	}
-	var totalOverride string
-	if total > 0 {
-		if c := checkout(); c != nil {
-			if w, ok := c.Workflows[workflow]; ok && total <= w.Timeouts.FinalizeReserve.Duration {
-				return nil, userErr("--total-timeout %s must be longer than workflow %s's timeouts.finalize_reserve %s", total, workflow, w.Timeouts.FinalizeReserve.Duration)
-			}
-		}
-		totalOverride = total.String()
-	}
 	// The base branch is resolved before the ref. An explicit ref is the
 	// branch the run is cut from, not its base, and the file that decides a
 	// base under one is the file at that ref — which only the runner reads,
@@ -1667,6 +1661,35 @@ func resolveAttemptPlan(ctx context.Context, env *cloudEnv, o *runOptions, total
 		base, ref = resolvedBaseBranch(b, source), newRunRef(ctx, repo, b, warn)
 	} else {
 		base = specBaseBranch(env.layersBaseBranch(ctx, repo))
+	}
+	// The launch's own document, resolved here and before every reader of it,
+	// and not left to finishLaunch: the plan's readers below are the launch's —
+	// the workflow, the total-timeout check, the recipe — and a reader that
+	// judged the working tree while the launch judged the ref's file decides by
+	// a document the run never reads, which is what the runner resolves after
+	// cloning (the workflow and agent.recipe among it). Here, because the ref
+	// the read is made at is what the two lines above resolve. Idempotent, so
+	// finishLaunch's own call — the one a launch shape with no attempt plan
+	// behind it (a follow-up, a review, a retry, the daemon's) still needs —
+	// answers with this same document.
+	ctx = withLaunchDocument(ctx, repo, ref)
+	// The closure above is bound to the working tree and memoizes it, so it is
+	// built again over the ctx that carries the launch's document: every reader
+	// below is one of the launch's, and what they resolve is written into the
+	// task the runner applies at the ref.
+	checkout = checkoutOf(ctx, repo)
+	workflow, err := resolveWorkflow(env, repo, o.workflow, checkout)
+	if err != nil {
+		return nil, err
+	}
+	var totalOverride string
+	if total > 0 {
+		if c := checkout(); c != nil {
+			if w, ok := c.Workflows[workflow]; ok && total <= w.Timeouts.FinalizeReserve.Duration {
+				return nil, userErr("--total-timeout %s must be longer than workflow %s's timeouts.finalize_reserve %s", total, workflow, w.Timeouts.FinalizeReserve.Duration)
+			}
+		}
+		totalOverride = total.String()
 	}
 	me, err := env.lc.Me(ctx)
 	if err != nil {
@@ -1947,17 +1970,6 @@ func reviewSpec(ctx context.Context, env *cloudEnv, o *runOptions, rr *resolvedR
 	if err != nil {
 		return "", nil, err
 	}
-	workflow, err := resolveWorkflow(env, repo, o.workflow, checkout)
-	if err != nil {
-		return "", nil, err
-	}
-	if total > 0 {
-		if c := checkout(); c != nil {
-			if w, ok := c.Workflows[workflow]; ok && total <= w.Timeouts.FinalizeReserve.Duration {
-				return "", nil, userErr("--total-timeout %s must be longer than workflow %s's timeouts.finalize_reserve %s", total, workflow, w.Timeouts.FinalizeReserve.Duration)
-			}
-		}
-	}
 	// The layers, and the field, as a first run's (resolveAttemptPlan) with
 	// one case short: a review run reads its own configuration from the branch
 	// it is cut from — the runner's readBaseConfig refuses a file whose base
@@ -1969,6 +1981,23 @@ func reviewSpec(ctx context.Context, env *cloudEnv, o *runOptions, rr *resolvedR
 	if ref == "" {
 		b, source := launchBaseBranch(ctx, env, repo)
 		base, ref = resolvedBaseBranch(b, source), b
+	}
+	// As resolveAttemptPlan: the launch's own document before the readers
+	// below, which are the launch's too (the workflow and the total-timeout
+	// check), and the closure rebuilt over it — the one above is bound to the
+	// working tree and memoizes it.
+	ctx = withLaunchDocument(ctx, repo, ref)
+	checkout = checkoutOf(ctx, repo)
+	workflow, err := resolveWorkflow(env, repo, o.workflow, checkout)
+	if err != nil {
+		return "", nil, err
+	}
+	if total > 0 {
+		if c := checkout(); c != nil {
+			if w, ok := c.Workflows[workflow]; ok && total <= w.Timeouts.FinalizeReserve.Duration {
+				return "", nil, userErr("--total-timeout %s must be longer than workflow %s's timeouts.finalize_reserve %s", total, workflow, w.Timeouts.FinalizeReserve.Duration)
+			}
+		}
 	}
 	me, err := env.lc.Me(ctx)
 	if err != nil {
@@ -3329,6 +3358,10 @@ func retrySpec(ctx context.Context, env *cloudEnv, ref string) (string, *task.Sp
 	if spec.RunID != runID {
 		return "", nil, userErr("run %s/%s holds the task of run %s; it can't be retried", slug, runID, spec.RunID)
 	}
+	// A stored task this old may name no workflow at all, and the reader below
+	// is a reader of the launch's document like any other: the ref is this
+	// task's own, so the document is the one the retried run resolves.
+	ctx = withLaunchDocument(ctx, spec.Repo, spec.Ref)
 	checkout := checkoutOf(ctx, spec.Repo)
 	if spec.Workflow == "" {
 		if spec.Workflow, err = resolveWorkflow(env, spec.Repo, "", checkout); err != nil {
@@ -3695,11 +3728,19 @@ func catalogDockerAsk(ctx context.Context, env *cloudEnv, slug string, spec *tas
 // (`catalogDockerAsk` stays as the two composed for the callers that want the
 // answer alone, which is every reader of the tag rule.)
 func deployedCatalogEntry(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec) (config.Entry, bool, error) {
+	// The published node is read for its catalog alone, never as a decision
+	// about this launch (D10, R2-8(a)): a policy this CLI cannot read — a
+	// version ahead of it, a key it does not know — is refused by the launch
+	// gate above launchRun, in its own words, and by the run itself, in the
+	// runner's, and neither is here. A launcher that calls jobs.run directly
+	// must not be stopped by a read this makes to stamp the entry it starts
+	// on (TestPolicySinceGateIsNotOnTheRunnerPath), as project_job.go's own
+	// existence read states it. What a read that fails costs is the published
+	// catalog: this machine's own entry stands, exactly as it does on an
+	// installation that has published no policy.
 	var published *config.Catalog
 	var pol *projectpolicy.Policy
-	if p, found, err := env.policy.read(ctx, env.lc); err != nil {
-		return config.Entry{}, false, remote(policyReadErr(err))
-	} else if found {
+	if p, found, err := env.policy.read(ctx, env.lc); err == nil && found && p != nil {
 		pol, published = p, p.ImageCatalog
 	}
 	cat := env.lc.ImageCatalogEffective(published)

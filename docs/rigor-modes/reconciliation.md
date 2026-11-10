@@ -817,7 +817,11 @@ pin over `docs/dogfooding.md`'s own reports section, moved the table's row
 from 115 to 116: the folder the page names and the launch it schedules are read
 out of `internal/digest` and `internal/recipe`, so the page and the layout cannot
 drift apart.
-Amended 2026-11-10: `internal/cli/docs_dynamic_delivery_test.go`, the dynamic-delivery folder's pin (the register's Checks 510 and 511, their two steps files and the numbers the folder claims, DS0.2), moved the same row once more, from 116 to 117.) They
+Amended 2026-11-10: `internal/cli/docs_dynamic_delivery_test.go`, the dynamic-delivery folder's pin (the register's Checks 510 and 511, their two steps files and the numbers the folder claims, DS0.2), moved the same row once more, from 116 to 117.
+Amended 2026-11-10: `internal/cli/docs_run_without_checkout_test.go`,
+the run-without-checkout folder's pin over A0 having landed — the person read
+set its status lines name and the answer row it was raised by are read
+against — moved the table's row from 117 to 118.) They
 are named because the figure is a running total of other folders' guards: a folder
 that writes one moves this row in its own commit, and a reader who finds the row
 stale has found a merge that did not.
@@ -836,7 +840,7 @@ stale has found a merge that did not.
 | Files in `internal/runner` that mention `Severity` at all | 4 | `git grep -l 'Severity' -- internal/runner ':!*_test.go' \| wc -l` |
 | Image-skew `Since` constants | 33 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
 | Run outcomes | 4 | `git grep -ho 'Outcome[A-Za-z]* *= *"[a-z]*"' internal/runstore/runstore.go \| wc -l` |
-| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 117 | `ls internal/cli/docs_*_test.go \| wc -l` |
+| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 118 | `ls internal/cli/docs_*_test.go \| wc -l` |
 | Questions the in-job-review folder put to the owner, all answered | 17 | `git grep -hc '^\*\*Q[0-9]*\. ' docs/in-job-review/reconciliation.md` |
 | Published project-policy version | 4 | `sed -n 's/^const Version = //p' internal/projectpolicy/version.go` |
 | Blocks the project layer's `defaults:` may set whose value names a repository | 0 | `sed -n '/^type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -ci repo` |

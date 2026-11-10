@@ -587,6 +587,13 @@ func storedFollowUp(ctx context.Context, env *cloudEnv, slug string, o *runOptio
 // workflow; nothing else is inherited.
 func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo string, c *prChain, text string, total time.Duration, warn io.Writer) (*task.Spec, error) {
 	workflow := c.Workflow
+	// The launch's own document before the reader below, as resolveAttemptPlan
+	// and reviewSpec: the workflow this follow-up has to resolve when the run
+	// it continues names none is the one the ref's file names, and a follow-up
+	// whose working tree has no fugaro.yaml would otherwise be refused for a
+	// question the document answers. The chain's ref is what the run is cut
+	// from, so the read is made at it and not at the working tree.
+	ctx = withLaunchDocument(ctx, repo, c.Ref)
 	checkout := checkoutOf(ctx, repo)
 	if workflow == "" {
 		var err error

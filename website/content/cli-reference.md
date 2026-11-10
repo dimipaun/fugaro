@@ -1719,11 +1719,12 @@ sanitises it before it reaches a line or a cell.
 
 The read is the installation's: one read-only token for the repository,
 minted at the project's own published credentials service against the
-caller's own Google ID token and carrying the named read-only permission set
-— pull requests and metadata (Q3 answered (A)). This command holds no GitHub
-App key and no Bitbucket credential, and it reads no environment variable to
-find the service: a project that publishes none is one whose host read is
-refused (exit 1). No credential of the host's reaches the output.
+caller's own Google ID token and carrying the named read-only permission
+set — contents, pull requests and metadata, all read (Q3 answered (A)).
+This command holds no GitHub App key and no Bitbucket credential, and it
+reads no environment variable to find the service: a project that publishes
+none is one whose host read is refused (exit 1). No credential of the host's
+reaches the output.
 A repository on a host this read does not serve is refused the way the
 project-wide view refuses it (reconciliation Q12 (A), finding #30): a
 bitbucket repository is read through the same service, one repository's read
@@ -1782,9 +1783,10 @@ command today.
 
 Every repository is read through the installation's credentials service: one
 read-only token for that repository, minted there against the caller's own
-Google ID token and carrying a named read-only permission set — pull requests
-and metadata, the two reads this view makes (Q3 answered (A)) — and cached for
-the token's life, so a second read of the same repository mints nothing.
+Google ID token and carrying the service's person read permission set —
+contents, pull requests and metadata, all read (Q3 answered (A)) — and
+cached for the token's life, so a second read of the same repository mints
+nothing.
 The service's URL is the project's own published credentials_service block and
 never an environment variable, and this command holds no GitHub App key at
 all: an installation that publishes no service is one whose host read is
