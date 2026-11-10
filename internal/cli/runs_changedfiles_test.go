@@ -88,13 +88,16 @@ func TestRunsLSChangedFilesColumn(t *testing.T) {
 		}
 		return ""
 	}
-	if got := line("110000"); !strings.HasSuffix(got, " 2") {
+	// The RUN cell is the ending the three rows need to tell them apart: they
+	// share their last four characters, so each is extended through the dash
+	// until it does not (spec.md §3), and that cell is how a row is found.
+	if got := line("10000-abcd"); !strings.HasSuffix(got, " 2") {
 		t.Errorf("a two-path run's cell: %q", got)
 	}
-	if got := line("120000"); !strings.HasSuffix(got, " 1/40") {
+	if got := line("20000-abcd"); !strings.HasSuffix(got, " 1/40") {
 		t.Errorf("a truncated run's cell: %q, want it to say 1 of 40", got)
 	}
-	if got := line("100000"); !strings.HasSuffix(got, " -") {
+	if got := line("00000-abcd"); !strings.HasSuffix(got, " -") {
 		t.Errorf("a run that recorded none: %q, want -", got)
 	}
 }
