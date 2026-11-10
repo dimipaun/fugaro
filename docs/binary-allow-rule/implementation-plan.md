@@ -155,7 +155,10 @@ node only — nothing reads it yet — so it lands without waiting for anything.
   load — a misspelt pattern is a refusal, never a rule that quietly admits nothing),
   `internal/cli/sharedcfg.go` (`sharedForbidden`, `sharedcfg.go:216`, gains `binaries`),
   `internal/cli/project_cmd.go` (`buildProjectPolicy`, `project_cmd.go:765`, fills the member;
-  silence keeps the node's list, a written empty block clears it — `review_floor`'s rule, D987),
+  silence keeps the node's list, a written empty block clears it — `review_floor`'s rule, D987,
+  which for this key is a choice between the node's block and no block at all: an empty list is a
+  member the database keeps no value for, so the written-empty spelling is the file's and never the
+  node's),
   `internal/projectpolicy/migrate.go` (the version-4 → 5 step: the node keeps its shape and its
   version number moves, the shape-free step `migrateV3ToV4` is the precedent for), and the four test
   files `internal/localcfg/localcfg_test.go`, `internal/cli/project_policy_test.go`,
@@ -326,8 +329,16 @@ AR3–AR6 in one slot), and the publish last, in the same release.
 ## 5. Operator steps
 
 **One, and it is the existing one: `fugaro update`.** It republishes the project policy as version 5
-— the node that carries `binaries` — and refreshes the runner image in the same command, in the same
-confirmation, with nothing else to run and nothing to delete. A project that sets no `binaries`
+— the node that carries `binaries` — and refreshes the job images of the checkout it runs in, in the
+same command and behind that command's own per-build confirmations. Two repositories are not that
+checkout, and the release states both rather than leaving them to be found: a repository whose job
+image is a derived image of another checkout keeps the image it had until that checkout's `fugaro
+image refresh` runs, and the launcher refuses a launch of it onto an image older than 0.22.0 —
+rather than starting a run that halts at bootstrap — naming that command
+(`internal/cli`'s `policyImageGate`); and the reader accepts a node one shape-free step behind
+(`projectpolicy`'s `ReadsVersion`), which is the state an installation is in between the update's
+image stages and its policy stage, so the credentials service and the launcher refuse nothing in the
+window. A project that sets no `binaries`
 block is unchanged: the node gains a member it does not use, and the run that leaves a build product
 in the tree is refused exactly as it is today. **The version-4 → 5 convergence is AR1's red step**
 (`TestInstallationAtThePreviousVersionConvergesBinaries`), so the HARD RULE's "an installation at

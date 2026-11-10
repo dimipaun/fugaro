@@ -106,7 +106,12 @@ finalize: there is no fallback and no default pattern. **At publish time the thr
 answer, and §3 settles that** (D987): silent `allow` in the owner's local file keeps the list the
 node already carries, while a *written* empty block clears it. That difference is about what
 publishing does to the node; it never changes what an empty list on the node means, which is: admit
-nothing.
+nothing. **And the node cannot hold the empty spelling**: an RTDB list is an object with numeric
+keys, so the Realtime Database keeps no member for `[]` (the rule `internal/cli`'s `storesNoMember`
+and the fake's own `normalise` both apply), and a written empty block reaches the node as no member
+at all — the answer it was asking for, since an absent block admits nothing too. The two spellings
+are told apart in the publisher's own file, where silence is the absent key and the written block is
+D987's; on the node they are one write, and every reader of it reads the one answer.
 
 **2.2 `binaries.max_bytes` is one cap, project-wide.** An added file at an admitted path is admitted
 only while its size is at most the cap; above it, it is refused by name with the cap in the reason.
@@ -167,7 +172,9 @@ states what it leaves open.
 - **A publish that says nothing leaves the node's list alone.** An absent `binaries` key in the local
   file is not a request to remove the published one; taking a list away on purpose is a written
   empty block (`binaries: {allow: []}`), which is the strictest answer and not the same spelling as
-  silence. `review_floor`'s written-empty-object rule is exactly this, and a publish that lowered a
+  silence. The two are spellings of the *file*, not of the node: what such a publish writes is a
+  node without the block (§2.1), which is the same node a project that never set one has, and admits
+  nothing either way. `review_floor`'s written-empty-object rule is exactly this, and a publish that lowered a
   rule by accident is the class of surprise this whole folder exists to remove.
 - **The direction is one way, and the mechanism for it already exists.** `internal/policy.Merge`
   already knows how to tighten a list — *"the intersection of allow-lists"* (`internal/policy/merge.go:37`)
@@ -301,9 +308,19 @@ block is a member `buildProjectPolicy` fills like `review_floor`, so:
   `policyUnjudgedRefusal`. `binaries` stays unjudged on purpose (§3), so an agent's publish may not
   move the block at all — the tightening answer, and the one D986's "the owner's word alone" asks
   for.
-- **The runner and the node move together.** The image refresh is part of the same `fugaro update`
-  (behind its own confirmation), so a node that carries `binaries` and an image that reads it arrive
-  in one command.
+- **The runner and the node move together, per checkout.** `fugaro update` republishes the node and
+  refreshes the job images of the checkout it runs in (behind its own confirmations, one per build),
+  so that checkout's runs and the node arrive in one command. A repository of the project whose job
+  image is a derived image of *another* checkout keeps the image it had, and the launcher refuses a
+  launch onto an image older than the release that introduced the node's version (0.22.0 for version
+  5), naming `fugaro image refresh --repo … --workflow …` (`internal/cli`'s `policyImageGate`),
+  rather than starting a run that halts at bootstrap on a node it cannot read.
+- **The window between the two is not a refusal.** The credentials service is re-pinned to the
+  release before the policy stage migrates the node, so a reader that refused the node one
+  shape-free step behind would refuse every cascade and Bitbucket-proxied call for the length of the
+  image builds. The reader accepts it instead (`projectpolicy`'s `ReadsVersion`: the 4 → 5 step moves
+  the version member and nothing else), and what an old *job image* meets is the launcher's gate
+  above rather than a halt.
 - **The policy version moves 4 → 5** (§D990 — the recommendation; the owner did not rule on it),
   `VersionSince` gains its row (`5: "0.20.0"`, the slot of §4 of the plan), and
   `TestVersionSinceCoversEveryVersion` fails until it does. The convergence test the HARD RULE asks

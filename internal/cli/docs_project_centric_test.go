@@ -2237,7 +2237,7 @@ var chk49Citations = []chkCitation{
 	{"internal/runner/policy.go", "func (r *run) policyCeiling"},
 	{"internal/cli/project_cmd.go", "func requirePolicyRules"},
 	{"internal/cli/run.go", "taskText(cmd, o.tf, args, prSet)"},
-	{"internal/cli/run.go", "launchPolicyGates(ctx, env, slug, spec)"},
+	{"internal/cli/run.go", "launchPolicyGates(ctx, env, slug, spec, kind, clone, shared, warn)"},
 	{"internal/cli/run.go", "pass the task as TEXT or with --task-file (- for stdin)"},
 	// The ref's own fallback moved with the ruling that gave the base branch
 	// four layers: the launcher takes --ref as it is (a first run's spec is

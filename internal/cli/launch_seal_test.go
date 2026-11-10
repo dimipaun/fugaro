@@ -17,6 +17,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runner"
 )
 
@@ -24,6 +25,14 @@ import (
 // (sealSince): the budget fixtures' build record, so a launch that mints is
 // not refused by the seal's image gate.
 const releaseSeal = "ghcr.io/dimipaun/fugaro-base:" + sealSince
+
+// releasePolicy is a release base image whose runner reads the policy node this
+// release writes: projectpolicy.VersionSince[projectpolicy.Version] is the
+// release that introduced the node's current version, and the launcher judges
+// every job image against it when a policy is published (policyImageGate). It
+// is the newest of the fixtures' base images, so a fixture that publishes a
+// policy and then launches needs this one and not releaseSeal.
+var releasePolicy = "ghcr.io/dimipaun/fugaro-base:" + projectpolicy.VersionSince[projectpolicy.Version]
 
 // markerKey is the seal key a launch handed its execution: the marker's value,
 // strictly parsed. A launch that minted and handed anything else is a failure.

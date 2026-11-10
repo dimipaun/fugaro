@@ -597,9 +597,12 @@ func TestDocsProjectLayerSaysWhatTiesARepositoryToAProject(t *testing.T) {
 // reference described every key of the node but the one that release added, and
 // nothing read the table, so the gap was silent. `providers` is the precedent
 // the row has to follow — a key this release decodes, validates and accepts and
-// no run applies yet — and `binaries` is the one row whose *absence* of the
-// block is not an empty block, which the row has to state because a publisher
-// reading it is deciding whether to write `{"allow": []}` or nothing.
+// no run applies yet — and `binaries` is the one row whose *written block* is a
+// statement at publish time, which the row has to state because a publisher
+// reading it is deciding whether to write `{"allow": []}` or nothing — and
+// because the database keeps no member for an empty list, so the spelling a
+// publisher writes is one the node cannot hold (the review finding on AR0: the
+// row promised a difference at the node that exists only at the publish).
 //
 // The row set is pinned as a list rather than derived from the Policy struct:
 // the table groups the four `budget` members into one row and deliberately
@@ -610,7 +613,7 @@ func TestDocsProjectLayerSaysWhatTiesARepositoryToAProject(t *testing.T) {
 //
 // Mutation (verified, run and restored): delete the `binaries` row — this fails
 // naming it; put "decoded, validated and accepted, **not applied**" back as the
-// row's whole description without the written-empty half — it fails naming that.
+// row's whole description without the written-block half — it fails naming that.
 func TestDocsProjectLayerPolicyTableNamesEveryKeyItDescribes(t *testing.T) {
 	const header = "| Policy key | What the run does with it today |"
 	doc := readDoc(t, "docs/project-layer.md")
@@ -650,8 +653,9 @@ func TestDocsProjectLayerPolicyTableNamesEveryKeyItDescribes(t *testing.T) {
 		"| `binaries` | decoded, validated and accepted, **not applied**",
 		"the block is the owner's grant of the paths a run may add a binary at",
 		"no run reads it yet",
-		"the one key of this table whose *absence* is not the same as an empty block",
-		"`{\"allow\": []}` is a written grant that admits nothing, where no member at all is a project that set none",
+		"the one key of this table whose *written block* is a statement at publish time and not at admission time",
+		"the database keeps no member for an empty list, so the node never *holds* that spelling",
+		"an empty block and a write of nothing leave the same node, and both admit nothing",
 		"A version-4 reader lists the key as unknown and enforces no rule at all, which is why the node is version 5",
 	} {
 		if !strings.Contains(doc, want) {

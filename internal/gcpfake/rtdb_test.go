@@ -61,6 +61,44 @@ func TestRTDBFakeGetPutDelete(t *testing.T) {
 	}
 }
 
+// TestRTDBFakeStoresNoMemberForAnEmptyList: the database keeps no value for
+// three shapes — null, an empty object and an empty list — and an RTDB list is
+// an object with numeric keys, so an empty list is an empty object and is
+// pruned the same way (internal/cli's storesNoMember, which a publish's
+// sameNode comparison and the project's own policy model both rely on). The
+// fake kept the empty list until this test: a `{"binaries": {"allow": []}}`
+// written at a path stayed there and could be read back, so a test that
+// asserted the empty spelling survives a write was honest about the fake and
+// wrong about the database.
+func TestRTDBFakeStoresNoMemberForAnEmptyList(t *testing.T) {
+	f := NewRTDB(t)
+	if code, _, _ := rtdbDo(t, "PUT", f.URL+"/config/policy/shared.json",
+		`{"version":5,"binaries":{"allow":[],"max_bytes":1024}}`, nil); code != 200 {
+		t.Fatalf("put = %d", code)
+	}
+	got, ok := f.Value("config/policy/shared").(map[string]any)
+	if !ok {
+		t.Fatalf("the node reads %#v, want the object that was written", f.Value("config/policy/shared"))
+	}
+	b, ok := got["binaries"].(map[string]any)
+	if !ok {
+		t.Fatalf("binaries reads %#v, want the block the write left: the cap is a value the database keeps", got["binaries"])
+	}
+	if _, present := b["allow"]; present {
+		t.Errorf("the stored block reads %#v, and it carries allow: the database keeps no member for an empty list, so the write leaves none — a reader cannot tell it from a node that never carried one, which is what the whole written-empty-block spelling rests on", b)
+	}
+	if _, present := b["max_bytes"]; !present {
+		t.Errorf("the stored block reads %#v and lost max_bytes: the pruning is about empty members, not about the block", b)
+	}
+	// The empty object, the other shape a member can be stored as nothing in.
+	if code, _, _ := rtdbDo(t, "PUT", f.URL+"/o.json", `{"binaries":{}}`, nil); code != 200 {
+		t.Fatalf("put = %d", code)
+	}
+	if _, body, _ := rtdbDo(t, "GET", f.URL+"/o.json", "", nil); body != "null" {
+		t.Errorf("the empty object reads %s, want a node the write left nothing at: an empty object is a member the database stores no value for, as it was before this test", body)
+	}
+}
+
 func TestRTDBFakeETag(t *testing.T) {
 	f := NewRTDB(t)
 	_, _, h := rtdbDo(t, "GET", f.URL+"/c.json", "", map[string]string{"X-Firebase-ETag": "true"})

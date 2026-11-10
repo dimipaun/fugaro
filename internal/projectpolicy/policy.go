@@ -418,12 +418,24 @@ type Policy struct {
 	//
 	// It is a pointer because the member's *presence* is a statement: a
 	// written block is how an operator takes an admission away on purpose
-	// (`binaries: {allow: []}`), while a local file that says nothing keeps
-	// the list the node already carries (D987, review_floor's rule). So an
+	// (`binaries: {allow: []}`), while a file that says nothing keeps the
+	// list the node already carries (D987, review_floor's rule). So an
 	// absent member and a written empty block are the same answer at admission
 	// time — both admit nothing — and two different answers at publish time,
 	// and folding them together here would leave the publisher unable to tell
 	// "clear it" from "say nothing".
+	//
+	// The distinction is the publisher's, and the node holds no empty block for
+	// it to read: an RTDB list is an object with numeric keys, so a written
+	// `{"allow": []}` is a write that leaves no member at all (internal/cli's
+	// storesNoMember, the rule a publish's own node comparison converges on),
+	// and a node that spelling was written to reads back exactly like one
+	// nothing was written to. What tells the two apart is the file the publish
+	// reads — a pointer that is nil where the file says nothing — while the
+	// answer a written empty block asks for is reached by the member being
+	// absent: nothing is admitted. A block that carries a value member (an
+	// allow list with entries in it, a lowered cap) is a member the database
+	// keeps, and is read as the grant it is.
 	//
 	// The block's own rules are Binaries' decode (binaries.go): the pattern
 	// rule of §2.1, the cap's positivity and ceiling, and the strict member

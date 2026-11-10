@@ -1064,10 +1064,13 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		//
 		// The typed copy is what the diff reads (printPolicyDiff's kept line) and
 		// what the node is built from; the *bytes* are carried over on top of it
-		// (policyNodeBytes), the clone_urls way, because the block's own
-		// spellings are not all a re-encode keeps: a written empty list and the
-		// absent member are different statements (D987), and only the node's own
-		// bytes say which one it is.
+		// (policyNodeBytes), the clone_urls way, so a publish is never the thing
+		// that picks a spelling for a member the operator hand-wrote. The block's
+		// own spellings are the reason it is carried rather than re-encoded: a
+		// written empty list and the absent member are different statements to the
+		// publisher (D987), and while the database keeps no member for an empty
+		// list — so the empty spelling cannot be a node's answer — the carry is
+		// what keeps this binary from being the one that decides.
 		pol.Binaries = old.Binaries
 	}
 	return pol, keepRouting, nil
@@ -1258,15 +1261,19 @@ func policyNodeBytes(pol *projectpolicy.Policy, oldRaw []byte, exists, keepRouti
 			return nil, userErr("building the policy: %v", err)
 		}
 	}
-	// The binaries member is carried over byte for byte for the same reason and
-	// one of its own: `binaries.allow` is a list whose *empty* spelling is a
-	// statement — a written block that admits nothing, which D987 tells from the
-	// silence a local file that says nothing leaves alone — while an absent
-	// member is that silence. Re-encoding the decoded value writes
-	// `{"binaries": {}}` for it (both members carry omitempty), and an empty
-	// object is not a value the Realtime Database holds: the member would leave
-	// the node, and the publisher could no longer tell "clear it" from "say
-	// nothing" — the one thing Decode keeps the block's presence for.
+	// The binaries member is carried over byte for byte for the same reason: no
+	// command of this release writes it (D986 keeps it off the operator's
+	// config), so the node's block is the only one, and a publish that
+	// re-encoded it would be choosing a spelling for a member the operator
+	// hand-wrote. `binaries.allow` is a list, and its *empty* spelling is a
+	// statement to the publisher — a written block that admits nothing, which
+	// D987 tells from the silence a file that says nothing leaves alone — while
+	// an absent member is that silence. The node is not where the difference
+	// lives: the database keeps no member for an empty list, so the empty
+	// spelling is one the node cannot hold, and what a node carries is the
+	// block's value members (an allow list with entries in it, a lowered cap),
+	// which a re-encode would keep. Carrying the bytes is what keeps this
+	// function from answering a question that is the operator's.
 	if member, ok, err := jsonMember(oldRaw, "binaries"); err != nil {
 		return nil, userErr("%s cannot be read back as a document, so its binaries block cannot be kept: %v; fix it by hand, or remove it with 'fugaro project policy publish --delete'", projectpolicy.PathShared(), err)
 	} else if ok && !projectpolicy.IsNull(member) {
@@ -1983,10 +1990,13 @@ func credentialsText(c *projectpolicy.Credentials) string {
 }
 
 // binariesText is the binaries block as one line, member by member and only the
-// members the node writes: an absent max_bytes is the shipped bound and not a
+// members the block writes: an absent max_bytes is the shipped bound and not a
 // cap of zero (projectpolicy.BinariesMaxBytes), and this line is about what the
-// node says. A written empty block prints as the block it is — the spelling
-// that takes an admission away on purpose.
+// block says. A written empty block prints as the block it is — the spelling
+// that takes an admission away on purpose — which is a value a *document* holds
+// and not one the database keeps for an empty list (Policy's Binaries field
+// comment), so it is reachable from a hand-written node or from a value a test
+// hands this function, never from a node a publish wrote.
 func binariesText(b *projectpolicy.Binaries) string {
 	if b == nil {
 		return "none"

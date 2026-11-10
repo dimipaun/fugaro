@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"slices"
 	"strconv"
 	"strings"
@@ -77,11 +78,14 @@ func TestLaunchPolicyGatesRefusesASlugOfAnotherRepository(t *testing.T) {
 	// The allow-list admits every repository, so what refuses below is the
 	// binding and not the policy.
 	publishPolicy(t, f, `{"version":5,"allow_repos":["*"]}`)
-	env := memEnv(t, f.cloudFixture)
+	// fileEnv and not memEnv: the gate now judges the job image as well, from
+	// the fixture's record bucket, and a memory bucket has no build record in
+	// it — a launch would be refused as one onto an image nobody has built.
+	env := fileEnv(t, f.cloudFixture)
 	spec := &task.Spec{Version: 1, RunID: budgetRun, Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x"}
 
 	// The pair that agrees is admitted: the refusal below is about the slug.
-	if err := launchPolicyGates(context.Background(), env, appSlug, spec); err != nil {
+	if err := launchPolicyGates(context.Background(), env, appSlug, spec, "web", false, false, io.Discard); err != nil {
 		t.Fatalf("the repository's own slug was refused: %v", err)
 	}
 
@@ -89,7 +93,7 @@ func TestLaunchPolicyGatesRefusesASlugOfAnotherRepository(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = launchPolicyGates(context.Background(), env, other, spec)
+	err = launchPolicyGates(context.Background(), env, other, spec, "web", false, false, io.Discard)
 	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v (exit %d), want the binding's own refusal", err, ExitCode(err))
 	}
@@ -147,6 +151,125 @@ func TestRunRefusesBeforeLaunch(t *testing.T) {
 	}
 	if tok := readToken(t, f.cloudFixture, budgetRun); tok != "" {
 		t.Error("the refused launch left a budget token in the bucket")
+	}
+}
+
+// TestRunRefusesAJobImageThatCannotReadThePolicyNode: the policy node's
+// version is a lockstep like every other gate's (D990): a runner older than the
+// release that introduced the node's version refuses the whole node at
+// bootstrap, so a launch of a repository the node admits onto such a job image
+// is a run that dies on its first read — after an execution and a task exist and
+// after the attempt is spent. `fugaro update` migrates the node and rebuilds the
+// checkout's own job images, but a project has one node and many repositories,
+// and update rebuilds the derived images of the checkout it runs in alone, so
+// the launcher is the place the pair is judged: the node is read here anyway,
+// and the judge is the one every *Since gate uses (checkImageSince, whose
+// remedy is `fugaro image refresh --repo X --workflow Y`).
+//
+// The two directions of the same node are what the sub-tests pin apart: the
+// node this release writes needs an image at 0.22.0 or later, and the node one
+// shape-free step behind it (a version-4 node, which this binary reads as it
+// stands) needs only the release that introduced *that* version — so the
+// tolerance and the gate are one answer rather than two.
+func TestRunRefusesAJobImageThatCannotReadThePolicyNode(t *testing.T) {
+	oldImage := "ghcr.io/dimipaun/fugaro-base:" + shiftRelease(t, projectpolicy.VersionSince[projectpolicy.Version], -1)
+	for _, tc := range []struct {
+		name    string
+		version int
+		base    string
+		refused bool
+	}{
+		{"this release's node on an image that predates it", projectpolicy.Version, oldImage, true},
+		{"this release's node on the image that introduced it", projectpolicy.Version, "ghcr.io/dimipaun/fugaro-base:" + projectpolicy.VersionSince[projectpolicy.Version], false},
+		{"the node one shape-free step behind, read on the image that introduced that one", projectpolicy.Version - 1, "ghcr.io/dimipaun/fugaro-base:" + projectpolicy.VersionSince[projectpolicy.Version-1], false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newLaunchBudget(t, "enforce")
+			publishPolicy(t, f, fmt.Sprintf(`{"version":%d,"allow_repos":["github/acme/*"]}`, tc.version))
+			writeBuildRecord(t, f.cloudFixture, appSlug, "web", tc.base)
+			_, _, err := runBudget(t)
+			if !tc.refused {
+				if err != nil {
+					t.Fatalf("the launch was refused: %v", err)
+				}
+				return
+			}
+			if err == nil || ExitCode(err) != ExitUserError {
+				t.Fatalf("err = %v (exit %d), want a user error: the job image cannot read the node it would have to run under", err, ExitCode(err))
+			}
+			for _, want := range []string{
+				fmt.Sprintf("policy version %d", tc.version), "fugaro " + projectpolicy.VersionSince[projectpolicy.Version],
+				tc.base, "acme/app", "web", "fugaro image refresh --repo acme/app --workflow web",
+			} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal does not say %q: %v", want, err)
+				}
+			}
+			// The refusal is a gate and not a failed run: nothing of the launch
+			// exists. What the operator would otherwise pay for is an execution
+			// whose bootstrap halts, and the attempt is spent either way.
+			if n := len(f.run.Executions()); n != 0 {
+				t.Errorf("%d executions were created for a refused launch", n)
+			}
+			if storedTask(t, f.cloudFixture) {
+				t.Error("the refused launch stored a task")
+			}
+			if tok := readToken(t, f.cloudFixture, budgetRun); tok != "" {
+				t.Error("the refused launch left a budget token in the bucket")
+			}
+		})
+	}
+}
+
+// TestLaunchPolicyGatesRefusesASharedImageThatCannotReadThePolicyNode: the
+// policy node's lockstep on the third checkout mode, whose job image is a shared
+// dependency-layer image. Nothing about that mode's image is in a per-repository
+// build record — the repository's job runs a sibling's image, placed by the
+// refresh that built it — so the judge has to be the image lock, which is what
+// `checkSharedImageSince` reads and what the sharedSince gate already uses for
+// the same job. Judging it with the derived image's branch refuses it as a
+// workflow with no build record at all: the assertion below pins that the
+// refusal is the lockstep's and not that one, and the second half of the test
+// pins that the image which introduced the node's version passes, so the gate is
+// a lockstep and not a blanket refusal of shared launches.
+func TestLaunchPolicyGatesRefusesASharedImageThatCannotReadThePolicyNode(t *testing.T) {
+	f := newLaunchBudget(t, "off")
+	publishPolicy(t, f, `{"version":5,"allow_repos":["github/acme/*"]}`)
+	// fileEnv: the lock and the policy alike live in the fixture's bucket.
+	env := fileEnv(t, f.cloudFixture)
+	spec := &task.Spec{Version: 1, RunID: budgetRun, Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x"}
+	// The lock's own key: a value of the shape the lock holds, which no launch
+	// computes here (the key is the operator's machine's fact, §2.5).
+	const key = "9f2c1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7"
+	old := "ghcr.io/dimipaun/fugaro-base:" + shiftRelease(t, projectpolicy.VersionSince[projectpolicy.Version], -1)
+	lockWith(t, f.cloudFixture, key, old, "acme/app", appSlug, "web")
+
+	err := launchPolicyGates(context.Background(), env, appSlug, spec, "web", false, true, io.Discard)
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v (exit %d), want a user error: the shared image predates the release that introduced the node's version", err, ExitCode(err))
+	}
+	for _, want := range []string{
+		fmt.Sprintf("policy version %d", projectpolicy.Version),
+		"fugaro " + projectpolicy.VersionSince[projectpolicy.Version],
+		old, "acme/app workflow web", "fugaro update --base base",
+		"fugaro image refresh --repo acme/app --workflow web",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	// The derived image's judge reads a build record this repository never wrote,
+	// and its refusal is the one this branch must not print: "no build record" is
+	// not a lockstep and would refuse every shared launch, at any image.
+	if strings.Contains(err.Error(), "has no build record") {
+		t.Errorf("the shared launch was judged as a workflow with no build record, which is the derived image's judge: %v", err)
+	}
+
+	// The image built from the release that introduced the node's version runs
+	// it, and the launch is not refused.
+	lockWith(t, f.cloudFixture, key, "ghcr.io/dimipaun/fugaro-base:"+projectpolicy.VersionSince[projectpolicy.Version], "acme/app", appSlug, "web")
+	if err := launchPolicyGates(context.Background(), env, appSlug, spec, "web", false, true, io.Discard); err != nil {
+		t.Errorf("the shared image at the release that introduced the node's version was refused: %v", err)
 	}
 }
 

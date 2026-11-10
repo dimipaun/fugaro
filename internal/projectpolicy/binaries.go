@@ -138,10 +138,15 @@ func ValidBinariesMaxBytes(n int64) error {
 // A block that writes no member at all is kept as a written block and not
 // folded onto the absent member. That is deliberate and it is D987's whole
 // mechanism: `binaries: {allow: []}` is how an operator takes an admission
-// away on purpose, while a local file that says nothing leaves the published
-// list alone, and a reader that normalized the two to nil would leave the
-// publisher unable to tell "clear it" from "say nothing". At admission time
-// the two are one answer — nothing is admitted — and that is BinariesAllow's.
+// away on purpose, while a file that says nothing leaves the published list
+// alone, and a reader that normalized the two to nil would leave the publisher
+// unable to tell "clear it" from "say nothing". At admission time the two are
+// one answer — nothing is admitted — and that is BinariesAllow's.
+//
+// The empty block is reached here only from a document, never from the database
+// as an empty member: it stores no member for an empty list, so the two
+// spellings are one write where the node is concerned and this decode's job is
+// to read back whatever a document does hold (Policy's Binaries field comment).
 func decodeBinaries(raw json.RawMessage) (*Binaries, error) {
 	names, err := objectMemberNames(raw)
 	if err != nil {

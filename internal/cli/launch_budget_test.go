@@ -55,9 +55,12 @@ func newLaunchBudget(t *testing.T, mode string) *launchBudgetFixture {
 	f.db.Set("config/caps/global", map[string]any{"dailyMicros": 100 * usd1, "perRunMicros": 10 * usd1})
 	f.db.Set("config/caps/defaults", map[string]any{"repoDailyMicros": 50 * usd1, "repoPerRunMicros": 5 * usd1})
 	f.db.Set("config/limits", map[string]any{"maxReserveMicros": 5 * usd1})
-	// The job image's runner reads the sealed token: a launch that mints is
-	// judged against it (the seal gate, sealSince).
-	writeBuildRecord(t, f.cloudFixture, appSlug, "web", releaseSeal)
+	// The job image's runner is a current release's: a launch that mints is
+	// judged against it (the seal gate, sealSince), and a launch under a
+	// published policy is judged against it too (policyImageGate, releasePolicy)
+	// — a fixture that published this release's node onto an older image is a
+	// run that halts at bootstrap, which is the state that gate refuses.
+	writeBuildRecord(t, f.cloudFixture, appSlug, "web", releasePolicy)
 	return f
 }
 

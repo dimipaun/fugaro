@@ -264,7 +264,12 @@ happened to omit a block is the surprise this folder exists to remove. *Cost of 
 project's admissions on a machine whose local file was written before the key existed — the exact
 class of the HARD RULE in `CLAUDE.md` (a change `fugaro update` makes that nobody asked for).
 *Why:* a publish must never widen by omission, and a written empty block is the one way to say
-"take it away".
+"take it away". *Added 2026-11-10, on AR0's review:* the two spellings are the publisher's — an
+empty list is not a member the Realtime Database keeps (it stores an RTDB list as an object with
+numeric keys), so the node a written empty block leaves behind is the node a silent file leaves
+behind, and neither carries the block. The decision stands, and its mechanism for `binaries` when
+AR1 gives the file the key is the publish choosing between the node's block and none, never a
+member the database cannot hold.
 
 **D988 — where a refusal happens, and what it does.** **Answered 2026-11-04: as recommended** —
 both checks run in **finalize, before the pull request is settled**: an untracked stray is held out

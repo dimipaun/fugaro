@@ -3624,11 +3624,21 @@ func TestPublishKeepsTheBinariesListWhenTheLocalFileSaysNothing(t *testing.T) {
 		t.Errorf("the publish does not say the block was kept:\n%s", out)
 	}
 
-	// A written block whose list is empty is the spelling that takes an
-	// admission away on purpose (D987), and it is kept as what it is: no key of
-	// this release's config could clear the block, so the publisher must not
-	// invent one by folding it onto the absent member — the node would stop
-	// saying that the owner meant it.
+	// An empty list is not a member the node holds, and this is where the
+	// database's own rule is worth a test: an RTDB list is an object with
+	// numeric keys, so `{"allow": []}` is an empty object and a write leaves no
+	// member for it (internal/cli's storesNoMember, and the fake's normalise
+	// after the review finding on this change). A node hand-written with that
+	// spelling therefore reads back exactly like a node nothing was written to,
+	// and a publish over it has no block to keep — what it writes admits
+	// nothing either way, which is the answer the spelling was asking for.
+	//
+	// The empty block is D987's mechanism and it stays a publish-time one: it
+	// belongs to the file the *publisher* reads (which says nothing, or writes
+	// the block), not to the node, where the database keeps no such member.
+	// Nothing this release deletes or invents a member over it, and a node that
+	// carries a block with a value member in it is still carried over whole
+	// (the assertions above).
 	f.db.Set(projectpolicy.PathShared(), map[string]any{
 		"version":     projectpolicy.Version,
 		"allow_repos": []string{"github/acme/app"},
@@ -3638,18 +3648,14 @@ func TestPublishKeepsTheBinariesListWhenTheLocalFileSaysNothing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p := publishedPolicy(t, f); p.Binaries == nil {
-		t.Error("the publish dropped a written block whose list is empty: the node no longer says the owner took the admission away")
+	if p := publishedPolicy(t, f); p.Binaries != nil {
+		t.Errorf("the published node carries binaries %+v, and the write that spelled it was an empty list: the database keeps no member for one, so the node the publish read held no block to keep", p.Binaries)
 	}
-	// The member's own bytes, and not a re-encode of them: the empty list is
-	// what makes the block a statement, and `{"binaries": {}}` is not a value
-	// the node holds — the member would leave it and the two spellings would
-	// collapse into one.
-	if raw := nodeJSON(t, f, projectpolicy.PathShared()); !strings.Contains(raw, `"allow":[]`) {
-		t.Errorf("the node's written empty list did not survive the publish:\n%s", raw)
+	if raw := nodeJSON(t, f, projectpolicy.PathShared()); strings.Contains(raw, "binaries") {
+		t.Errorf("the published node carries a binaries member:\n%s", raw)
 	}
-	if !strings.Contains(out, "binaries kept: allow written empty: nothing admitted") {
-		t.Errorf("the publish does not say the written empty block was kept:\n%s", out)
+	if strings.Contains(out, "binaries") {
+		t.Errorf("the diff mentions a binaries block the node does not carry:\n%s", out)
 	}
 }
 

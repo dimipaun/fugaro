@@ -1222,8 +1222,14 @@ func checkCloneImageSince(lc *localcfg.Config, spec *task.Spec, since, subject, 
 // entry for is not judged: it has not migrated yet (§10), so its job is
 // still on a per-(repository, workflow) image whose runner this gate has
 // nothing to say about.
-func checkSharedImageSince(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, since string, warn io.Writer) error {
-	const subject, knows = "this checkout: shared workflow", "how to clone for a shared image (FUGARO_CHECKOUT)"
+//
+// subject and knows are the caller's, the way checkCloneImageSince's are: the
+// lock is the one record of which image a shared job runs, and more than one
+// key of this release is judged off it (sharedSince's own gate, and the
+// published policy node's version in run_allowlist.go's policyImageGate), so
+// the sentence names what the launch needs that image to know rather than what
+// this function guesses.
+func checkSharedImageSince(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, since, subject, knows string, warn io.Writer) error {
 	refuse := func(why string) error {
 		return userErr("%s needs a job image whose runner knows %s (fugaro %s or later), but the shared image of %s workflow %s %s. "+
 			"Run fugaro update --base base in your own terminal window to move the installation's base image to a current release, then fugaro image refresh --repo %s --workflow %s in its checkout to build the shared image the repository's new dependency key needs and place it on this job",

@@ -87,6 +87,30 @@ deploy over a marker above this binary's generation.
 carried with the task for the layer. The update's own write is ETag-conditional
 and preserves the values a migration moves.
 
+**A version bump is a shape question, and this release's is shape-free.** The
+update re-pins the credentials service to the release it applies in its
+installation stage, and migrates the node in its policy stage, which runs after
+the image stages: a version-4 → 5 bump in between would have made every cascade
+and Bitbucket-proxied call refuse the node for the length of the image builds.
+It does not, because the step moves the version member and nothing else and the
+readers accept a node one shape-free step behind (`projectpolicy`'s
+`ReadsVersion`, which `Decode` and the credentials service both go through) —
+while a version whose step carries a Note, like 3 → 4, stays refused in both
+directions and must not be bumped this way. A later bump that changes the shape
+has to solve the same window again: the reader can only be taught to accept a
+predecessor whose members it reads verbatim.
+
+**A job image older than the node is refused at the launch, not by the update.**
+The update rebuilds the derived images of the checkout it runs in and nothing
+else, so a repository of the project on another checkout's image keeps the image
+it had — and a run of that repository, started on it, would halt at bootstrap on
+a node its runner cannot read. The launcher refuses that launch before the
+execution exists, from the same `*Since` gates every image lockstep uses
+(`internal/cli`'s `policyImageGate`), naming the operator's own move
+(`fugaro image refresh …`, or `fugaro update --base base`). What the update never
+does is ask a run to stop or to wait for an image: the runs already in flight
+keep the memoized read above, and the refusal is about the next launch.
+
 **Job definitions and images.** A Cloud Run job execution runs the template it
 started with; a template update — Terraform's, or `fugaro image refresh`'s direct
 `jobs.patch` — reaches the next execution. The repository states this as a
