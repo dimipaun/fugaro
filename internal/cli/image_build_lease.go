@@ -68,6 +68,29 @@ var newBuildPricer = func(lc *localcfg.Config) buildPricer {
 	return budget.NewPricer(lc.GCPProject, budget.CatalogCreds{})
 }
 
+// buildPricerCache is one command's price lookups, and it exists because
+// budget.Pricer reads the catalog at most once per command while a command that
+// submits builds opens one lease per build: `fugaro image refresh` per workflow,
+// a catalog build per entry. Each of those leases handed the pricer it built
+// itself would read the catalog again, and every read is a fresh way for the
+// loop to stop mid-way on one that failed (D1550 refuses on a read that fails),
+// so the command holds one of these and every lease it opens draws from it.
+//
+// The pricer is built on the first lease that actually takes one, never for a
+// build that will not be leased at all. On an installation with no budget
+// backend the lookup must not run: that installation holds no permission on the
+// catalog (billing-price-spike.md §1.2, openBuildLease's own header).
+type buildPricerCache struct{ pricer buildPricer }
+
+// one is the command's pricer for a lease on lc, built on first use and reused
+// by every later lease of the same command.
+func (c *buildPricerCache) one(lc *localcfg.Config) buildPricer {
+	if c.pricer == nil {
+		c.pricer = newBuildPricer(lc)
+	}
+	return c.pricer
+}
+
 // buildLeaseIDGenerator is the id one build lease is taken under. It is
 // generated here rather than read from Cloud Build because Cloud Build's own
 // id exists only once the build is submitted, and the submission is what the
@@ -112,7 +135,12 @@ type buildLease struct {
 // database would be judged against a cap that bounds nothing here, and would
 // write its reservation and its counters there — spend that installation never
 // made, which its own runs are then refused for.
-func openBuildLease(ctx context.Context, w io.Writer, lc *localcfg.Config, repo, slug string) (*buildLease, error) {
+//
+// pricers is the command's own (buildPricerCache): the lease draws the price
+// lookup from it rather than building one, so every build the command submits
+// is priced from one catalog read — budget.Pricer's own rule, which a command
+// that opened a lease per build and built a pricer per lease would break.
+func openBuildLease(ctx context.Context, w io.Writer, lc *localcfg.Config, repo, slug string, pricers *buildPricerCache) (*buildLease, error) {
 	if lc.Budget == nil || lc.Budget.RTDBURL == "" {
 		// The backend's own door (budgetDBFor) refuses with a sentence for an
 		// operator; here the answer is not a refusal but a build that runs
@@ -140,7 +168,7 @@ func openBuildLease(ctx context.Context, w io.Writer, lc *localcfg.Config, repo,
 	if err != nil {
 		return nil, remote(err)
 	}
-	cost := newImageCost(lc, db, repo, slug, who, newBuildPricer(lc))
+	cost := newImageCost(lc, db, repo, slug, who, pricers.one(lc))
 	if n, err := cost.reclaim(ctx); err != nil {
 		return nil, err
 	} else if n > 0 {

@@ -311,6 +311,9 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 			return userErr("%v", err)
 		}
 	}
+	// One price lookup for the whole command: every entry's lease is priced
+	// from the same catalog read (buildPricerCache's own note).
+	pricers := &buildPricerCache{}
 	for _, e := range entries {
 		// The gate's own answer about THIS entry, read and judged here rather
 		// than once per command (D1013, D1024): the kill switch is read before
@@ -327,7 +330,7 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 		// submission failed. It is charged to the checkout's own repository —
 		// the same rs.Slug the build is submitted under — because that is whose
 		// cap and whose day counter this build is counted against.
-		lease, err := openBuildLease(ctx, cmd.ErrOrStderr(), lc, rs.Name, rs.Slug)
+		lease, err := openBuildLease(ctx, cmd.ErrOrStderr(), lc, rs.Name, rs.Slug, pricers)
 		if err != nil {
 			return err
 		}

@@ -334,7 +334,7 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 	// The lease is taken for THIS build: the repository it is charged to (repo,
 	// the name the refusal and `fugaro budget set` name) and the slug its cap
 	// and its day counter live under.
-	lease, err := openBuildLease(ctx, cmd.ErrOrStderr(), lc, repo, rs.Slug)
+	lease, err := openBuildLease(ctx, cmd.ErrOrStderr(), lc, repo, rs.Slug, &buildPricerCache{})
 	if err != nil {
 		return err
 	}

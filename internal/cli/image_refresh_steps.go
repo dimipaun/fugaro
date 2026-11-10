@@ -390,6 +390,9 @@ func (r *initRun) refreshBuilds(ctx context.Context, p *refreshPlan, t *refreshT
 	if err != nil {
 		return err
 	}
+	// One price lookup for the whole refresh: every workflow's lease is priced
+	// from the same catalog read (buildPricerCache's own note).
+	pricers := &buildPricerCache{}
 	var built []string
 	for _, wf := range todo {
 		// The gate's own answer about THIS build, re-read and judged here
@@ -414,7 +417,7 @@ func (r *initRun) refreshBuilds(ctx context.Context, p *refreshPlan, t *refreshT
 		// submitted uncounted, which is what keeps this step — step 4 of
 		// `fugaro update`'s checkout stage — from turning into an operator step
 		// (openBuildLease's own header).
-		lease, err := openBuildLease(ctx, r.w, t.lc, t.spec.Name, t.spec.Slug)
+		lease, err := openBuildLease(ctx, r.w, t.lc, t.spec.Name, t.spec.Slug, pricers)
 		if err != nil {
 			notes()
 			return builtSoFar(err, built)
