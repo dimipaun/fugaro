@@ -29,19 +29,20 @@ request that carries this ruling rather than dropped here.
 - **External dependency E1: `internal/yamledit`, the shared comment-preserving YAML editor.** The
   package, its generic operations and the rulings the two designs share are named **once**, in the
   [README](README.md) §"the joint order, and the rulings the rigor and settings designs share" —
-  this plan does not restate them. **One task owns it — the editor task — and it lands first in the
+  this plan does not restate them. **One task owns it — the editor task — and it landed first in the
   joint order**; rigor does not own it, does not fork it, and is not "the second caller that keeps a
   copy": **R2 was a thin caller** (`EditRigor`, spec §9) and **R4 and R5 called the shared write
   helper settings S5 lands** — the joint order's position 5 — **not** an
   `internal/cli/rigor_write.go` this plan does not have, and **R2, R4 and R5 are closed (2026-11-10)
   as duplicates of config-management's G0–G2 with G4 and of its G6**, so the callers are that plan's
-  and this one keeps none. **E1 has not landed**: there is no `internal/yamledit` on `main` today
-  (verified 2026-10-31), and the path this folder once proposed for the editor,
-  `internal/localcfg/edit.go`, does not exist either. The plan therefore names the **package and the
-  task that lands it**, never an existing file it cannot point at; the only precedent that exists is
-  `setGCPProjectLine` (`internal/cli/init_fugaroyaml.go`) — one scalar on one line, which the splice
-  generalises rather than repeats. **Not** a merge of the works' plans: they stay separate plans with
-  separate owners, and the README's joint order is what keeps them from colliding.
+  and this one keeps none. **E1 has landed**: `internal/yamledit` is on `main`, created 2026-11-01 by
+  **#1467** and extended by **#1501**, so the joint order's position 1 is done and the two winning
+  plans write through it. The path this folder once proposed for the editor,
+  `internal/localcfg/edit.go`, was never written. The plan therefore names the **package and the task
+  that landed it**, never a file of its own; the precedent the splice generalised is
+  `setGCPProjectLine` (`internal/cli/init_fugaroyaml.go`) — one scalar on one line. **Not** a merge
+  of the works' plans: they stay separate plans with separate owners, and the README's joint order
+  is what keeps them from colliding.
 - **External dependency E2 (the mode floors, `docs/rigor-modes` plan T1.5).** `show`'s floors
   section prints the review floor (F10) and one line saying the mode floors are not built (F9). The
   task that ships T1.5 adds the sensitive-path set to that section; until then no surface here may
@@ -52,11 +53,13 @@ request that carries this ruling rather than dropped here.
 - **The console's project view** (plan P6, not built) is not an external dependency of anything:
   D836 puts no console task in this plan.
 - **The `rigor` command group is not this plan's any more.** `internal/cli/rigor.go` — the group that
-  holds `show`, `set`, `unset` and (SD10) the `floor` subgroup — is created by config-management's
-  **G6** (`fugaro rigor set`, whose own files name it) and extended by the settings design's **S7**
-  (`fugaro rigor floor`). The sentence that made it "whichever of R3 and S7 lands first" is spent,
-  because **R3 is closed**; no task left in this plan touches the file, and **W** takes the wording of
-  its summary line from G6 rather than from a second sentence of its own.
+  holds `show`, `set`, `unset` and (SD10) the `floor` subgroup — is created by **whichever of
+  config-management's G6 (`fugaro rigor set`) and the settings design's S7 (`fugaro rigor floor`)
+  lands first**, and the other adds its own subcommand to it: the two winning folders state that one
+  sentence the same way, and which of the two creates the file is theirs to settle, not this plan's.
+  The version that made it "whichever of R3 and S7 lands first" is spent, because **R3 is closed**;
+  no task left in this plan touches the file, and **W** takes the wording of its summary line from G6
+  rather than from a second sentence of its own.
 - **Files other work owns:** registering the command in `internal/cli/root.go`, the generated
   `website/content/cli-reference.md`, `plugin/**` and `console/**` are each owned by another open
   work stream at the time of writing. R6 names them, and the task that touches them waits for the
@@ -81,7 +84,9 @@ this plan designed and the owner closed as duplicates on 2026-11-10 — and each
 above and from the order: the commands they designed are the winners', and their numbers are never
 reused — a later task here takes **R9**, and it re-reads this plan's `Needs` column rather than this
 sentence. Nothing else about the plan's order moves: R0 and R1 are the foundation the two winning
-plans also stand on, and R6, R7 and W keep the positions they had.
+plans also stand on, and R6, R7 and W keep the order they had among themselves — R6's documentation
+after the commands it documents, R7's question before W's wizard — at the levels the table above now
+gives them, which is higher than before only because the four closed tasks left the table.
 
 **R4 and R5 needed R1 among their code needs — and that one is what makes the HARD RULE hold
 mechanically rather than by promise.** The argument does not leave with them: the `set` they
@@ -106,7 +111,7 @@ publishes it has landed, and the table says so in the same column it says everyt
 **R7 and R8 are follow-ups this design found and does not fix** (reconciliation §4): the missing
 hotfix gate (F13) and the loader that accepts two area rules with one glob (F14). Neither blocks
 R0, R1 or R6; both target 0.15.0 with them. R7's first step is a question to the owner and it lands
-nothing before the answer, so its level is the last row of the table and not a gate on anything.
+nothing before the answer, so its row is not a gate on anything.
 **R8's refusal has since landed** (2026-10-31, **#1478**), so of the two only **R7** is still open.
 Whichever of R7 and R8 lands in the same release as R0, R1 and R6 has its user-visible half written
 into that release's notes by R6; a release that carries neither notes neither.
@@ -394,8 +399,9 @@ splice is a design, while two editors is a bug waiting for one of them to be fix
 **Considered and declined, and why.** `fugaro rigor show` was considered as the rigor family's read
 and declined because the settings design's read already is it: **S0–S2 and S4** print one row per
 (key, scope) over every layer, and the registry they print from is the one that carries the rigor
-keys — `rigor.default`, `rigor.areas.*.name/.match/.mode`, `defaults.rigor.default`,
-`defaults.rigor.areas.*.*` and `review_floor`, each owned by the `rigor` family — with the same
+keys — `rigor.default` and `rigor.areas` at repository scope, `defaults.rigor.default` and the
+per-entry `defaults.rigor.areas.*.name/.match/.mode` at layer scope, and `review_floor`, each owned
+by the `rigor` family — with the same
 `unpublished` state word, the same sha256 comparison against the published object and the same
 `unknown (no checkout on this machine)` sentence for a repository this machine has no checkout for
 (D839). What the winner resolves for the `rigor.default` row is `rigor.Resolve`'s answer, which is
