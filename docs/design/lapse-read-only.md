@@ -240,7 +240,7 @@ Two calls in that table are this document's own and are flagged in §8: `merge` 
 T12's kept set nor by the plan's test for S6.3, and it is refused here because the kept set is
 exactly what T12 kept — reads, cancel, the kill switch — and a repository write is none of them; and
 the confirmation of a kept action is kept because the client already knows which action is pending
-("one confirmation authorises exactly one action", `mobile/src/voice/dialogue.js:487`).
+("one confirmation authorises exactly one action", `mobile/src/voice/dialogue.js:500`).
 
 The app keeps reading everything it reads today: the feed, the jobs, the kill state, the heartbeat. A
 lapse removes no view — the app has no paid view to remove.
