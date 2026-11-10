@@ -63,6 +63,7 @@ var secretReaderExceptions = []struct {
 		id: "E7",
 		keys: []string{
 			"internal/credsvc/bundle.go",
+			"internal/credsvc/dynamicsecrets.go",
 			"internal/cli/credentials_serve.go",
 			"deploy/terraform/gcp/modules/installation/credentials.tf google_secret_manager_secret_iam_member.credentials_bundle",
 		},

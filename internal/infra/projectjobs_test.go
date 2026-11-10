@@ -1440,7 +1440,10 @@ profiles:
 // test keeps is that the read stays there: a read added on the deployer's or
 // the launcher's path — the path this package owns — is the failure it is for,
 // and `internal/credsvc/bundle.go` is on the list so that a second reader in
-// that package has to be added deliberately.
+// that package has to be added deliberately: `internal/credsvc/dynamicsecrets.go`
+// is that second reader, the per-secret containers a person rotated through the
+// intake (D1931), read by exact name and never by listing, with a read that
+// failed refusing the call rather than serving the bundle's older value (D143).
 //
 // The third is the same container again, read by the other end of the
 // credentials service: `fugaro creds set` is the bundle's only writer, and a
@@ -1469,10 +1472,11 @@ func TestNoSecretValueReadUnderInternal(t *testing.T) {
 // secretValueReadAllowed are the files allowed to name a secret-value read, and
 // what each one is.
 var secretValueReadAllowed = map[string]string{
-	"backend/gcp/secrets.go": "the Secret Manager client: Access is the GitHub App key pre-check's one read, Set writes values",
-	"cli/creds.go":           "C1.25's owner-run `fugaro creds set`/`creds ls` over the same ONE bundle container (Q6): set reads the document it is about to rewrite",
-	"cli/githubapp.go":       "the GitHub App key pre-check of init and doctor",
-	"credsvc/bundle.go":      "the credentials service's ONE bundle container (Q6): the service attaches the credential upstream, and it is the only Fugaro process that ever holds a model credential's value",
+	"backend/gcp/secrets.go":    "the Secret Manager client: Access is the GitHub App key pre-check's one read, Set writes values",
+	"cli/creds.go":              "C1.25's owner-run `fugaro creds set`/`creds ls` over the same ONE bundle container (Q6): set reads the document it is about to rewrite",
+	"cli/githubapp.go":          "the GitHub App key pre-check of init and doctor",
+	"credsvc/bundle.go":         "the credentials service's ONE bundle container (Q6): the service attaches the credential upstream, and it is the only Fugaro process that ever holds a model credential's value",
+	"credsvc/dynamicsecrets.go": "the per-secret containers of the dynamic-delivery grammar (D1931): a credential a person rotated is read ahead of the bundle's entry for it (R6), by exact name and never by listing, and a read that fails refuses the call rather than serving the bundle's older value (D143)",
 }
 
 // secretValueReadNames are the reads, by the API each one is spelled with: the

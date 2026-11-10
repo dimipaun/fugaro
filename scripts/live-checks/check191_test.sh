@@ -544,8 +544,13 @@ prepare() { # dir
   cat >"$1/state/project-policy.json" <<'POLICY_EOF'
 {"project":"fugaro","policy":{"bitbucket_token":{"allow_repos":["bitbucket/workspace-a/repo-a"],"proxy":true}}}
 POLICY_EOF
+  # `fugaro doctor --json`: the bitbucket-direct row the flip's step reads, and
+  # the credentials-service-deployed row the `proxied` step reads the switch
+  # from. This one is doctor's arm for an installation whose every job account
+  # may invoke the service — ok, and no problem line — which is the state the
+  # sandbox repository is on the switch in.
   cat >"$1/state/doctor.json" <<'DOCTOR_EOF'
-{"ok":true,"checks":[{"id":"bitbucket-direct","ok":true},{"id":"creds-service","ok":true}],"project":{"name":"fugaro","gcp_project":"fugaro-dev","region":"us-east5"}}
+{"ok":true,"checks":[{"id":"credentials-service-deployed","ok":true,"class":"measure"},{"id":"bitbucket-direct","ok":true},{"id":"creds-service","ok":true}],"project":{"name":"fugaro","gcp_project":"fugaro-dev","region":"us-east5"}}
 DOCTOR_EOF
   # The repository's jobs, as `gcloud run jobs list --format=json` answers them:
   # the v1 Job shape, whose service account and container env are at
@@ -713,6 +718,175 @@ test_the_fake_run_refuses_an_id_the_cli_would_refuse() {
   fi
   expect_contains "$(cat "$dir/err")" "not the shape a run id takes" "the fake refuses a run id the CLI would"
   if [ -s "$dir/state/runs" ]; then fail "the fake recorded a run it had refused"; fi
+}
+
+test_the_switch_being_off_stops_the_check() {
+  local dir=$work/switchoff
+  prepare "$dir"
+  # `fugaro doctor`'s arm for a repository the credentials service does not
+  # admit: the repository's own auth is not cascade, so its root wrote its job
+  # account no invoker grant, and the `proxy: true` the policy advertises is
+  # inert for it — its runs hold the token themselves. The check has to stop
+  # here rather than launch three real runs at the direct path.
+  cat >"$dir/state/doctor.json" <<'DOCTOR_EOF'
+{"ok":false,"checks":[{"id":"credentials-service-deployed","ok":false,"severity":"warning","class":"actionable","problem":"the credentials service fugaro-credentials is deployed and grants no roles/run.invoker to workspace-a/repo-a (web), workspace-a/plain (web): a run of workspace-a/repo-a (web), workspace-a/plain (web) that is on the switch would fail to fetch a model credential. The grant follows the switch, and the switch follows the repository's own agent.auth, so a repository of that list that does not run with agent.auth: cascade has the service held off for it: the published policy's proxy: true is inert there — it brokers nothing, and its runs hold their own Bitbucket token instead of being served one"}],"project":{"name":"fugaro","gcp_project":"fugaro-dev","region":"us-east5"}}
+DOCTOR_EOF
+  run_check "$dir" "$script"
+  expect_status "$status" 1 "the switch off"
+  expect_contains "$out" "FACT proxied: FAIL" "the switch off: the row does not pass"
+  expect_contains "$out" "the credentials-service switch is OFF for workspace-a/repo-a" "the switch off: the row says what is off"
+  expect_contains "$out" "agent.auth: cascade" "the switch off: the remedy names the auth"
+  expect_contains "$out" "fugaro update --repo" "the switch off: the remedy names the apply"
+  expect_contains "$out" "grants no roles/run.invoker to workspace-a/repo-a" "the switch off: doctor's own problem is carried into the detail"
+  # Every row below is read from a run that goes through the service, so none
+  # of them was reached and no run was launched to measure the direct path.
+  expect_contains "$out" "FACT run-launch: FAIL — not reached" "the switch off: the rows below are not reached"
+  expect_contains "$out" "FACT scratch-removed: PASS" "the switch off: the scratch directory is still restored"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "the switch off: no run launched"
+}
+
+test_a_switch_the_check_cannot_read_is_unmeasured() {
+  local dir=$work/switchunread
+  prepare "$dir"
+  # The document doctor answers without the row the switch is read from: the
+  # check could not settle whether the repository is served, so the row is one
+  # it could NOT measure (exit 2) rather than a PASS over a fact nobody read.
+  cat >"$dir/state/doctor.json" <<'DOCTOR_EOF'
+{"ok":true,"checks":[{"id":"bitbucket-direct","ok":true}],"project":{"name":"fugaro","gcp_project":"fugaro-dev","region":"us-east5"}}
+DOCTOR_EOF
+  run_check "$dir" "$script"
+  expect_status "$status" 2 "doctor's document with no credentials-service-deployed row"
+  expect_contains "$out" "FACT proxied: FAIL" "an unread switch: the row is a FAIL"
+  expect_contains "$err" "could NOT measure proxied" "an unread switch: the check says it could not measure"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "an unread switch: no run launched"
+  # The other shape: doctor's own arm for a grant it could not settle — a custom
+  # role on the service's or the project's policy that could not be read. It is
+  # not a switch that is off, so the row may not read as one.
+  cat >"$dir/state/doctor.json" <<'DOCTOR_EOF'
+{"ok":false,"checks":[{"id":"credentials-service-deployed","ok":false,"severity":"warning","problem":"the credentials service fugaro-credentials is deployed, and whether workspace-a/repo-a (web) may invoke it could not be checked: a custom role on its or the project's policy could not be read"}],"project":{"name":"fugaro","gcp_project":"fugaro-dev","region":"us-east5"}}
+DOCTOR_EOF
+  run_check "$dir" "$script"
+  expect_status "$status" 2 "doctor's arm for a grant it could not settle"
+  expect_contains "$out" "FACT proxied: FAIL" "an unsettled grant: the row is a FAIL"
+  expect_contains "$out" "state: unread" "an unsettled grant: the row carries the state this check read"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "an unsettled grant: no run launched"
+}
+
+test_the_switch_is_read_from_doctor_s_whole_sentence() {
+  local dir=$work/switchlong
+  prepare "$dir"
+  # Doctor's list of accounts grows with the installation, and the repository
+  # this check is about can be named far past the length a printed field is held
+  # to. The row must be read from doctor's whole sentence: a classification over
+  # a cut copy would answer "on" here, PASS `proxied`, and launch the three real
+  # runs at the direct path — the outcome this reading exists to prevent.
+  cat >"$dir/state/doctor.json" <<'DOCTOR_EOF'
+{"ok":false,"checks":[{"id":"credentials-service-deployed","ok":false,"severity":"warning","problem":"the credentials service fugaro-credentials is deployed and grants no roles/run.invoker to workspace-a/one (web), workspace-a/two (web), workspace-a/three (web), workspace-a/four (web), workspace-a/five (web), workspace-a/six (web), workspace-a/repo-a (web): a run of workspace-a/repo-a (web) that is on the switch would fail to fetch a model credential. The grant follows the switch, and the switch follows the repository's own agent.auth, so a repository of that list that does not run with agent.auth: cascade has the service held off for it: the published policy's proxy: true is inert there — it brokers nothing, and its runs hold their own Bitbucket token instead of being served one"}],"project":{"name":"fugaro","gcp_project":"fugaro-dev","region":"us-east5"}}
+DOCTOR_EOF
+  run_check "$dir" "$script"
+  expect_status "$status" 1 "a repository named past the printed cap"
+  expect_contains "$out" "FACT proxied: FAIL" "a repository past the cap: the row is a FAIL"
+  expect_contains "$out" "the credentials-service switch is OFF for workspace-a/repo-a" "a repository past the cap: the row says what is off"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "a repository past the cap: no run launched"
+}
+
+test_another_repositorys_missing_grant_is_not_this_repositorys_switch() {
+  local dir=$work/switchothers
+  prepare "$dir"
+  # Doctor names the accounts the service does not admit, and this one names two
+  # other repositories: the sandbox repository this check is about is admitted,
+  # so the switch is on for it and the check is not stopped by a neighbour's
+  # grant. The row must pass and the runs below must be launched.
+  cat >"$dir/state/doctor.json" <<'DOCTOR_EOF'
+{"ok":false,"checks":[{"id":"credentials-service-deployed","ok":false,"severity":"warning","problem":"the credentials service fugaro-credentials is deployed and grants no roles/run.invoker to workspace-a/repo-b (web), workspace-a/plain (web): a run of workspace-a/repo-b (web), workspace-a/plain (web) that is on the switch would fail to fetch a model credential"}],"project":{"name":"fugaro","gcp_project":"fugaro-dev","region":"us-east5"}}
+DOCTOR_EOF
+  run_check "$dir" "$script"
+  expect_status "$status" 0 "another repository's missing grant"
+  expect_contains "$out" "FACT proxied: PASS" "another repository's missing grant: this repository's row passes"
+  expect_contains "$out" "FACT run-outcome: PASS" "another repository's missing grant: the check went on and launched its runs"
+  expect_contains "$(cat "$dir/logs/fugaro.calls")" "--run-id $(rid_of "$dir" work)" "another repository's missing grant: the working run was launched"
+}
+
+test_a_doctor_arm_the_reading_does_not_know_is_unmeasured() {
+  local dir=$work/switchother
+  prepare "$dir"
+  # Doctor's arm for a service whose bundle holds nothing to serve: every job
+  # account may invoke it, and every model call of a run against it is refused.
+  # It is none of the arms this reading knows, and it may not be read as a
+  # switch that is on — a PASS there would launch three runs on a service that
+  # can serve none of them.
+  cat >"$dir/state/doctor.json" <<'DOCTOR_EOF'
+{"ok":false,"checks":[{"id":"credentials-service-deployed","ok":false,"severity":"warning","problem":"the credentials service fugaro-credentials is deployed and serving, and it admits nobody: every job account may invoke it, and the bundle it serves from (fugaro-project-fugaro-creds-bundle-3f1c2b4a5d6e7f80) holds no version, so the loader fails closed and every model call of a run against it is refused"}],"project":{"name":"fugaro","gcp_project":"fugaro-dev","region":"us-east5"}}
+DOCTOR_EOF
+  run_check "$dir" "$script"
+  expect_status "$status" 2 "doctor's empty-bundle arm"
+  expect_contains "$out" "FACT proxied: FAIL" "an arm this reading does not know: the row is a FAIL"
+  expect_contains "$out" "state: other" "an arm this reading does not know: the row carries the state it read"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "an arm this reading does not know: no run launched"
+}
+
+test_an_installation_with_no_credentials_service_is_a_failure() {
+  local dir=$work/switchoffinstall
+  prepare "$dir"
+  # DON1's own state, and the one an installation mid-opt-in is in: the block is
+  # not written (doctor's ok info arm) or Cloud Run has no service at all (its
+  # warning arm). Nothing is served either way, so `proxy: true` brokers nothing
+  # and the check may not pass `proxied` on the policy alone.
+  cat >"$dir/state/doctor.json" <<'DOCTOR_EOF'
+{"ok":true,"checks":[{"id":"credentials-service-deployed","ok":true,"severity":"info","problem":"the installation has no credentials service (fugaro-credentials): an ordinary fugaro update deploys one on every installation that can hold it — it needs the installation's Firebase backend and at least one repository job — and writes the block this check reads"}],"project":{"name":"fugaro","gcp_project":"fugaro-dev","region":"us-east5"}}
+DOCTOR_EOF
+  run_check "$dir" "$script"
+  expect_status "$status" 1 "an installation with no credentials service"
+  expect_contains "$out" "FACT proxied: FAIL" "no credentials service: the row is a FAIL"
+  expect_contains "$out" "the installation has no credentials service this check could read" "no credentials service: the row says what is off"
+  expect_contains "$out" "Run 'fugaro update'" "no credentials service: the remedy names the deploy"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "no credentials service: no run launched"
+  # The same state one apply along: the block is written and Cloud Run answers
+  # NOT_FOUND for the service.
+  cat >"$dir/state/doctor.json" <<'DOCTOR_EOF'
+{"ok":false,"checks":[{"id":"credentials-service-deployed","ok":false,"severity":"warning","problem":"the local config opted this installation into the credentials service (fugaro-credentials), and Cloud Run has no service fugaro-credentials in project fugaro-dev, region us-east5: every run of it would fail to fetch a model credential"}],"project":{"name":"fugaro","gcp_project":"fugaro-dev","region":"us-east5"}}
+DOCTOR_EOF
+  run_check "$dir" "$script"
+  expect_status "$status" 1 "a service that was never created"
+  expect_contains "$out" "FACT proxied: FAIL" "a missing service: the row is a FAIL"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "a missing service: no run launched"
+}
+
+test_an_ok_arm_the_reading_does_not_know_is_unmeasured() {
+  local dir=$work/switchokother
+  prepare "$dir"
+  # Doctor's ok arm for a sentence this reading has not been taught: the two ok
+  # arms that mean "on" are the one with no problem at all and the one whose
+  # verify route was emptied, so anything else an ok row carries is one nobody
+  # here can settle. Answering `on` for it — which is what reading every ok arm
+  # but the no-service one as a switch that is on would do — passes `proxied`
+  # and launches three real runs at a state this check never read.
+  cat >"$dir/state/doctor.json" <<'DOCTOR_EOF'
+{"ok":true,"checks":[{"id":"credentials-service-deployed","ok":true,"severity":"info","problem":"the installation runs without one for now, and every run fetches its model credential the way it did before the service existed"}],"project":{"name":"fugaro","gcp_project":"fugaro-dev","region":"us-east5"}}
+DOCTOR_EOF
+  run_check "$dir" "$script"
+  expect_status "$status" 2 "an ok arm this reading does not know"
+  expect_contains "$out" "FACT proxied: FAIL" "an unknown ok arm: the row is a FAIL"
+  expect_contains "$out" "state: other" "an unknown ok arm: the row carries the state it read"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "an unknown ok arm: no run launched"
+}
+
+test_the_verify_route_being_empty_is_still_a_switch_that_is_on() {
+  local dir=$work/switchokverify
+  prepare "$dir"
+  # The one other ok arm that IS a repository on the switch: the service is
+  # deployed, every job account may invoke it and its bundle holds a version —
+  # only the route that asks whose verdict signature this is admits nobody, and
+  # that route answers nothing about a run's own push. Reading this arm as one
+  # it does not know would stop a check whose runs are served exactly as the row
+  # says.
+  cat >"$dir/state/doctor.json" <<'DOCTOR_EOF'
+{"ok":true,"checks":[{"id":"credentials-service-deployed","ok":true,"severity":"info","problem":"the credentials service fugaro-credentials is deployed and serving, and it admits nobody on the verify route: every job account may invoke it and its bundle holds a version, and the verifier list it is deployed with is empty (this checkout's config writes verifier_accounts: [])"}],"project":{"name":"fugaro","gcp_project":"fugaro-dev","region":"us-east5"}}
+DOCTOR_EOF
+  run_check "$dir" "$script"
+  expect_status "$status" 0 "the verify route empty"
+  expect_contains "$out" "FACT proxied: PASS" "the verify route empty: every job account may still invoke the service"
+  expect_contains "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "the verify route empty: the runs are launched"
 }
 
 test_happy_path() {
@@ -1077,6 +1251,14 @@ t test_repo_guard
 t test_the_run_id_must_name_today
 t test_the_run_id_base_must_be_todays_date_and_a_time
 t test_the_fake_run_refuses_an_id_the_cli_would_refuse
+t test_the_switch_being_off_stops_the_check
+t test_the_switch_is_read_from_doctor_s_whole_sentence
+t test_another_repositorys_missing_grant_is_not_this_repositorys_switch
+t test_a_switch_the_check_cannot_read_is_unmeasured
+t test_a_doctor_arm_the_reading_does_not_know_is_unmeasured
+t test_an_installation_with_no_credentials_service_is_a_failure
+t test_an_ok_arm_the_reading_does_not_know_is_unmeasured
+t test_the_verify_route_being_empty_is_still_a_switch_that_is_on
 t test_happy_path
 t test_a_run_that_did_not_succeed_is_a_failure
 t test_a_refusal_the_service_wrote_no_class_line_for_is_a_failure
