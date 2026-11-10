@@ -41,10 +41,10 @@ const (
 	// the numeric Google account id from the caller's verified identity
 	// token (R1): never an email, and never what the request says about
 	// itself (R3).
-	UserPrefix = "fugaro-u-"
+	UserPrefix = "fugaro_u_"
 	// ProjectPrefix is the prefix of a credential the project shares. Only
 	// an admin on the derived admin list may write one (D1935, D1940).
-	ProjectPrefix = "fugaro-p-"
+	ProjectPrefix = "fugaro_p_"
 	// MaxIDLen is Secret Manager's own bound on a secret ID: at most 255
 	// characters of [A-Za-z0-9_-]
 	// (cloud.google.com/secret-manager/docs/reference/rest/v1/projects.secrets/create,
@@ -107,7 +107,7 @@ func User(id, name string) (string, error) {
 	if err := checkName(name); err != nil {
 		return "", err
 	}
-	return checkLen(UserPrefix + id + "-" + name)
+	return checkLen(UserPrefix + id + "_" + name)
 }
 
 // Project is User's project-shared half: the prefix only an admin may write.
@@ -181,9 +181,9 @@ func Parse(secretID string) (Name, error) {
 	if !ok {
 		return Name{}, fmt.Errorf("%s is neither a per-user nor a project-shared secret ID", secretID)
 	}
-	id, name, ok := strings.Cut(rest, "-")
+	id, name, ok := strings.Cut(rest, "_")
 	if !ok {
-		return Name{}, fmt.Errorf("%s is not a per-user secret ID: they are %s<id>-<name>", secretID, UserPrefix)
+		return Name{}, fmt.Errorf("%s is not a per-user secret ID: they are %s<id>_<name>", secretID, UserPrefix)
 	}
 	if err := checkID(id); err != nil {
 		return Name{}, err
