@@ -729,7 +729,7 @@ test_the_switch_being_off_stops_the_check() {
   # inert for it — its runs hold the token themselves. The check has to stop
   # here rather than launch three real runs at the direct path.
   cat >"$dir/state/doctor.json" <<'DOCTOR_EOF'
-{"ok":false,"checks":[{"id":"credentials-service-deployed","ok":false,"severity":"warning","class":"update","problem":"the credentials service fugaro-credentials is deployed and grants no roles/run.invoker to workspace-a/repo-a (web), workspace-a/plain (web): a run of workspace-a/repo-a (web), workspace-a/plain (web) would fail to fetch a model credential"}],"project":{"name":"fugaro","gcp_project":"fugaro-dev","region":"us-east5"}}
+{"ok":false,"checks":[{"id":"credentials-service-deployed","ok":false,"severity":"warning","class":"actionable","problem":"the credentials service fugaro-credentials is deployed and grants no roles/run.invoker to workspace-a/repo-a (web), workspace-a/plain (web): a run of workspace-a/repo-a (web), workspace-a/plain (web) that is on the switch would fail to fetch a model credential. The grant follows the switch, and the switch follows the repository's own agent.auth, so a repository of that list that does not run with agent.auth: cascade has the service held off for it: the published policy's proxy: true is inert there — it brokers nothing, and its runs hold their own Bitbucket token instead of being served one"}],"project":{"name":"fugaro","gcp_project":"fugaro-dev","region":"us-east5"}}
 DOCTOR_EOF
   run_check "$dir" "$script"
   expect_status "$status" 1 "the switch off"
