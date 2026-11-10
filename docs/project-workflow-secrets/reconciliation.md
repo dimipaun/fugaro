@@ -33,7 +33,7 @@ citations the `b3ed1842` paragraph records, because the project catalog check's 
 file: `ProjectSecretCandidate` `:1356` → **`:1374`** and `projectSecretCandidates` `:1323` →
 **`:1341`**. That merge is also where **the owner answered the whole block**: all eighteen decisions
 are closed, every section carries its own answer, and the build is written to them. Three corrections
-rode with it: **D1270** now cites the write path's unknown-key refusal at `settings_set.go:491` (the
+rode with it: **D1270** now cites the write path's unknown-key refusal at `settings_set.go:504` (the
 read path's is `settings.go:170`; the earlier `:410` was right before `fugaro settings set` grew the
 managed gate), **F15's `providerProblems` citation** moved to `validate.go:350`, and **§6** states the
 managed-mode exposure the allow-list does not close.
@@ -830,7 +830,7 @@ that writes it: `secrets`, as `project_secrets.*.allow_data_to`'s own row is (`r
 the key is not named in `settingsGenericKeys` (`settings_set.go:95`), which is the allowlist that
 decides what the generic path writes, so a row the family owns and the generic path does not carry is
 written by exactly one command. `settings set workflow_secrets.<name>.allow_data_to` today answers
-*"no setting has that name"* (`settings_set.go:491`, the write path's unknown-key refusal; the read
+*"no setting has that name"* (`settings_set.go:504`, the write path's unknown-key refusal; the read
 path's is `settings.go:170`); after W0 it answers as `project_secrets`' own
 row does, and `fugaro secrets set --allow-data-to` is what writes the entry (W3). **No new doctor
 check**: a check that the
