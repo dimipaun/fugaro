@@ -137,7 +137,7 @@ func retryBucket(t *testing.T, resolvedIn string) (*blobx.Bucket, int) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = b.Close() })
-	up, err := issues.Upload(t.Context(), b, retrySharedIssue(retryRun, resolvedIn))
+	up, err := uploadAsReporter(t.Context(), b, retrySharedIssue(retryRun, resolvedIn))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +166,7 @@ func retrySharedStore(t *testing.T, resolvedIn string) issues.Uploaded {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = b.Close() })
-	up, err := issues.Upload(t.Context(), b, retrySharedIssue("update-20261107183012-48213", resolvedIn))
+	up, err := uploadAsReporter(t.Context(), b, retrySharedIssue("update-20261107183012-48213", resolvedIn))
 	if err != nil {
 		t.Fatalf("seeding the shared store: %v", err)
 	}
@@ -423,7 +423,7 @@ func TestUpdateRetryMakesNoCloudWrite(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = b.Close() })
-	up, err := issues.Upload(t.Context(), b, retrySharedIssue(retryRun, retryRelease))
+	up, err := uploadAsReporter(t.Context(), b, retrySharedIssue(retryRun, retryRelease))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -578,7 +578,7 @@ func TestUpdateRetryReadsTheCheckoutsStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = b.Close() })
-	up, err := issues.Upload(t.Context(), b, retrySharedIssue(retryRun, retryRelease))
+	up, err := uploadAsReporter(t.Context(), b, retrySharedIssue(retryRun, retryRelease))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -629,7 +629,7 @@ func TestUpdateRetrySelectsTheProjectTheRunNamed(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { _ = b.Close() })
-			up, err := issues.Upload(t.Context(), b, retrySharedIssue(retryRun, retryRelease))
+			up, err := uploadAsReporter(t.Context(), b, retrySharedIssue(retryRun, retryRelease))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -722,7 +722,7 @@ func TestUpdateRetryAppliesTheRunsBucket(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { _ = b.Close() })
-			up, err := issues.Upload(t.Context(), b, retrySharedIssue(retryRun, retryRelease))
+			up, err := uploadAsReporter(t.Context(), b, retrySharedIssue(retryRun, retryRelease))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -813,4 +813,11 @@ func retryConfig(t *testing.T, url string) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+// uploadAsReporter uploads an issue under the verified identity of its own
+// reporter, the way a signed-in member's machine does (issues.Upload takes the
+// identity the reporter index is written under).
+func uploadAsReporter(ctx context.Context, b *blobx.Bucket, i issues.Issue) (issues.Uploaded, error) {
+	return issues.Upload(ctx, b, i, issues.Identity{Address: i.Reporter, Digest: issues.Digest(i.Reporter), Source: issues.SourceVerified})
 }

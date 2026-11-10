@@ -1064,7 +1064,7 @@ func seedDigestFiledIssue(t *testing.T, f *cloudFixture, run, summary string, gi
 	}
 	t.Cleanup(func() { _ = b.Close() })
 	at := time.Date(2026, 10, 19, 9, 0, 0, 0, time.UTC)
-	up, err := issues.Upload(ctx, b, issues.Issue{
+	up, err := uploadAsReporter(ctx, b, issues.Issue{
 		Run: run, LocalID: "local-" + run,
 		Reporter: "ana@example.test", Created: at,
 		Class: issues.ClassFugaro, Status: issues.StatusPending,
