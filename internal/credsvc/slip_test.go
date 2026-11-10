@@ -825,6 +825,49 @@ func TestAnotherRunCannotReadASlipBack(t *testing.T) {
 	})
 }
 
+// TestAnotherJobAccountCannotReadASlipBack: the reading form's third binding,
+// and the one DS1.6 leans on — the account the slip EXPECTS is a fact the grant
+// states and the reading checks, and it is what keeps the service from serving
+// one job of a run the slip of another.
+//
+// The sibling here is a job of the SAME run and repository — the shared pairing
+// accepts it exactly as it does at the claim (TestOtherJobAccountCannotClaim) —
+// and it presents the slip's OWN claim secret. So the run, the repository and
+// the secret all agree, and the only fact left for the reading to refuse it by
+// is the account: without the account clause of slipIsThisRuns this call is
+// served the slip's own reading.
+func TestAnotherJobAccountCannotReadASlipBack(t *testing.T) {
+	s := newSlips(t, testLauncherAccount)
+	granted := s.grantOK(t, grantBody(t, s.slug, s.run, testJobSA, 3600, testSlipCredential))
+	claimed := s.claimOK(t, granted.Slip, claimBody(t, ""))
+	if claimed.ClaimSecret == "" {
+		t.Fatal("the claim answered no claim secret")
+	}
+
+	sibling := s.jobToken(func(c map[string]any) { c["email"] = testSiblingSA })
+	resp, body := s.claimCall(t, granted.Slip, claimBody(t, ""),
+		withClaim(claimed.ClaimSecret),
+		func(r *http.Request) { r.Header.Set("Authorization", "Bearer "+sibling) })
+	if e := wantRefusal(t, resp, body, StatusUnverified, ErrorUnverifiedRunIdentity); e.Message != slipNotThisRuns {
+		t.Errorf("the refusal is answered %q, want the one sentence every refusal of the record gives (%q)", e.Message, slipNotThisRuns)
+	}
+
+	// The slip the account it names holds is untouched, and it still answers
+	// ITS runner: a reading call refused by another account is not a revocation.
+	kept := s.claimOK(t, granted.Slip, claimBody(t, ""), withClaim(claimed.ClaimSecret))
+	if !kept.ExpiresAt.Equal(claimed.ExpiresAt) {
+		t.Errorf("the reading answers the expiry %s, want the claim's own %s", kept.ExpiresAt, claimed.ExpiresAt)
+	}
+	lines := auditLines(t, s.audit)
+	if len(lines) != 1 {
+		t.Fatalf("the refused reading wrote %d audit lines, want exactly 1: %v", len(lines), lines)
+	}
+	wantSlipLine(t, lines[0], PurposeSlipClaim, ErrorUnverifiedRunIdentity, map[string]any{
+		"run": s.run, "repository": s.slug, "job": s.job, "caller": testSiblingSA,
+		"credential": "", "tier": "",
+	})
+}
+
 // TestAReadingCallAfterTheRuntimeIsRefused: the reading form's other half, and
 // R10's own point — a slip serves for the runtime it was granted and no longer.
 // The secret is the right one and the identity is the slip's own run; what has
