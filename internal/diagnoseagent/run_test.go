@@ -574,10 +574,17 @@ func TestRunRefusesToStartWithoutTheTwoFolders(t *testing.T) {
 // read, so a denial above means the rule denied and not that the fake refuses
 // everything.
 //
+// The file named here is the SSH store, and it is chosen for the mutation
+// below: a case whose stated mutation has to reproduce needs a path one rule
+// closes and no other, and ~/.ssh/** in childReadDeny is that rule.
+// ~/.config/fugaro, by contrast, is closed by that list's ~ rule *and* by the
+// config directory the resolver answers with (childConfigDirPaths), so
+// emptying the list would leave it denied and this case would prove nothing.
+//
 // Mutation (run and restored): empty childReadDeny -> the payload names
-// nothing, the child reads the file, and the value appears in its own record.
-// That is the case the structural pin cannot make: a payload that denies
-// nothing is still a well-formed --settings argument.
+// nothing else that reaches this file, the child reads it, and the value
+// appears in its own record. That is the case the structural pin cannot make:
+// a payload that denies nothing is still a well-formed --settings argument.
 func TestRunDeniesTheReadsItsPayloadNames(t *testing.T) {
 	// The home is this test's own, so the ~ of a rule expands inside the test
 	// and never to the machine's real profile. It is set before the setup,
@@ -585,7 +592,7 @@ func TestRunDeniesTheReadsItsPayloadNames(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	s := newRunSetup(t)
-	named := filepath.Join(home, ".config", "fugaro", "projects.yaml")
+	named := filepath.Join(home, ".ssh", "id_ed25519")
 	if err := os.MkdirAll(filepath.Dir(named), 0o700); err != nil {
 		t.Fatal(err)
 	}
