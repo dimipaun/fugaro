@@ -176,7 +176,9 @@ type evidenceFile struct {
 }
 
 // logText reads the log the run ID names and returns what goes into the
-// evidence file, redacted.
+// evidence file. The redaction is not here: writeFiles does it, once, over
+// every file (the note this one builds included), so a caller of logText holds
+// the log's own text and not something safe to publish.
 //
 // It is read through maxLogBytes, and a log past the cap is kept by its end:
 // the file holds the last maxLogBytes of the log, under a first line that says
