@@ -210,13 +210,19 @@ const servicesScript = "fugaro-services"
 // list read from somewhere other than the entry.
 //
 // It runs with the agent's own environment (r.env, agent.BuildEnv's), which
-// is the environment a stage's tests run in: the same PATH, the same HOME and
+// is the environment a stage's tests run in — the same PATH, the same HOME and
 // the same state directory the repository's own `fugaro-services start` sees,
-// and none of the run's credentials — starting a local PostgreSQL or Redis
-// has no business holding the model key or a git token. The list is appended
-// to that environment and not carried by it: config.ReservedEnv drops every
-// FUGARO_ name from the agent's environment, service stamp included, so the
-// one command that has to read it is handed it here.
+// and whatever else a stage's own commands are handed, the run's model
+// credential included when the route puts one there (agent.BuildEnv: the
+// user's API key under api-key with the gateway off, the OAuth token under
+// oauth). That is deliberate: a test command of this run's own stage starts
+// the services itself when it wants them, so the process started here must see
+// exactly what that one sees, and a service that came up under a scrubbed
+// environment would be a service nobody's tests agree with. Nothing is added
+// to that environment but the list itself, which is not carried by it:
+// config.ReservedEnv drops every FUGARO_ name from the agent's environment,
+// service stamp included, so the one command that has to read it is handed it
+// here.
 //
 // A failure ends bootstrap: the entry's own image declares these services, so
 // a service that does not come up is the image's contract broken, and every

@@ -17,11 +17,17 @@ import (
 // one, r.env — and with the entry's list, which is the only source the run
 // starts from (D1904).
 //
-// Both halves are the point. The job's environment (r.d.Env) is the
-// credentialed one: it holds the run's git token and the budget marker, and
-// nothing a local PostgreSQL or Redis has business with, so a start that ran
-// there would hand a backing service the run's credentials. And the stamp is
-// APPENDED to the agent's environment rather than read out of it, because
+// What is pinned is the environment the start runs WITH, not a claim that it
+// is credential-free: r.env is the agent's own, and what a stage's commands
+// are handed is exactly what is handed here — the run's model credential
+// among it, since agent.BuildEnv puts the user's key in the agent's
+// environment under api-key with the gateway off (provision.go's startServices
+// says why that is the right boundary). What must NOT be the base is the job
+// environment (r.d.Env): it is the runner's own, holding the git token and the
+// budget marker, and a service started there would be one none of the
+// repository's tests agrees with — and would wear the run's credentials too.
+// And the stamp is APPENDED to the agent's environment rather than read out of
+// it, because
 // config.ReservedEnv drops every FUGARO_ name from that environment — an
 // image's own ENV included, which is exactly the forgery the launch's
 // always-written stamp exists to beat (backend.ServicesEnv).
@@ -45,7 +51,7 @@ func TestServicesStartWithAgentEnv(t *testing.T) {
 	// script here at all and this test would fail on the start rather than on
 	// the environment it read.
 	agentPath := bin + ":" + os.Getenv("PATH")
-	agentEnv := []string{"PATH=" + agentPath, "HOME=" + work, ServicesEnv + "=postgres"}
+	agentEnv := []string{"PATH=" + agentPath, "HOME=" + work, "ANTHROPIC_API_KEY=model-secret", ServicesEnv + "=postgres"}
 
 	newRun := func(stamp string) *run {
 		return &run{
@@ -78,6 +84,11 @@ func TestServicesStartWithAgentEnv(t *testing.T) {
 		ServicesEnv + "=postgres redis",
 		"HOME=" + work,
 		"PATH=" + agentPath,
+		// The agent's environment reaches the process whole, the model
+		// credential included: this is the environment a stage's own test
+		// command starts the services under, so the two must be the same
+		// one.
+		"ANTHROPIC_API_KEY=model-secret",
 	} {
 		if !slices.Contains(strings.Split(got, "\n"), want) {
 			t.Errorf("the script's environment has no %q:\n%s", want, got)
