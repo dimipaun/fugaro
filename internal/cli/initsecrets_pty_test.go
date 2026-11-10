@@ -462,8 +462,11 @@ func TestSecretNeverInOutput(t *testing.T) {
 	initOnTTY(t, false)
 }
 
-// --json never prompts, on a terminal in every other way: the secrets stage
-// is needs-you with the one-line commands, nothing is read or stored.
+// --json never prompts and confirms no step at all, on a terminal in every
+// other way: the run stops at the first step that needs a word — the local
+// config write the installation would otherwise make — so the secrets stage,
+// whose value only a terminal can take, is never reached, and nothing is read
+// or stored.
 func TestJSONNeverPromptsThroughTheCommand(t *testing.T) {
 	initOnTTY(t, true)
 }
@@ -505,12 +508,14 @@ func initOnTTY(t *testing.T, asJSON bool) {
 	done := make(chan error, 1)
 	go func() { done <- cmd.Execute() }()
 	rig := &secretsRig{errOut: &errOut}
-	for deadline := time.Now().Add(10 * time.Second); !strings.Contains(errOut.String()+out.String(), "Type aurora to apply"); time.Sleep(5 * time.Millisecond) {
+	// The installation's local config write is the last confirmation before the
+	// secrets stage. Nothing is typed at it (T7): the person at the terminal is
+	// the whole answer, so this only waits for the run to reach it.
+	for deadline := time.Now().Add(10 * time.Second); !strings.Contains(errOut.String()+out.String(), "writes the local config"); time.Sleep(5 * time.Millisecond) {
 		if time.Now().After(deadline) {
-			t.Fatalf("no confirmation prompt: %q", errOut.String())
+			t.Fatalf("the run never reached the local config confirmation: %q", errOut.String())
 		}
 	}
-	_, _ = f.master.WriteString("aurora\n") // the engine's own typed confirmation (the config rewrite)
 	if asJSON {
 		_, _ = f.master.WriteString(val + "\n") // typed ahead: must stay unread
 		time.Sleep(100 * time.Millisecond)
@@ -524,18 +529,16 @@ func initOnTTY(t *testing.T, asJSON bool) {
 		if ExitCode(err) != ExitUserError {
 			t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, errOut.String())
 		}
-		var res convergeJSON
-		if jerr := json.Unmarshal([]byte(out.String()), &res); jerr != nil || res.state("secrets") != "needs-you" {
-			t.Fatalf("%v:\n%s", jerr, out.String())
+		// --json confirms no step at all, so the run stops at the first step it
+		// cannot confirm -- the local config write -- and every later stage,
+		// the secrets stage among them, is blocked: --json never prompts, and
+		// here it never gets as far as the hidden read.
+		if !strings.Contains(errOut.String(), "not confirmed (--json confirms no step") {
+			t.Fatalf("no --json refusal: %q", errOut.String())
 		}
-		last := res.Left[len(res.Left)-1]
-		// The whole command, not the name alone (code review, low): the bare
-		// `secrets set bitbucket-token` is a prefix of both scopes, so it
-		// passed whatever scope the line named -- and for this name the
-		// scope is the repository's own copy, which is what the assertion
-		// has to pin.
-		if last["stage"] != "secrets" || !strings.Contains(last["commands"], "secrets set bitbucket-token --repo acme/sandbox") {
-			t.Fatalf("left %v", res.Left)
+		var res convergeJSON
+		if jerr := json.Unmarshal([]byte(out.String()), &res); jerr != nil || res.state("installation") != "failed" || res.state("secrets") != "blocked" {
+			t.Fatalf("%v:\n%s", jerr, out.String())
 		}
 		if strings.Contains(errOut.String(), "hidden") || queued(t, f) != before || before == 0 {
 			t.Fatalf("a prompt was shown or the terminal read: %q", errOut.String())

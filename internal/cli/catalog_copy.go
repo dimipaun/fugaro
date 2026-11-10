@@ -25,6 +25,11 @@ const catalogDockerfileType = "text/plain; charset=utf-8"
 // writeLayerCopy uses, so republishing an unchanged definition does not
 // churn the object.
 //
+// The resolution is also where a definition that carries a credential is
+// refused (catalog.Fetch): the refusal happens before this call copies the
+// bytes into the bucket, and it is the one sentence the operator meets wherever
+// a definition is resolved rather than a rule this copy restates.
+//
 // builds/catalog/ is outside a launcher's write grant (docs/design/
 // bucket-iam.md), so a refused write is reported with the operator text
 // operatorWriteErr writes, and its lead says what did not happen.

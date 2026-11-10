@@ -1,6 +1,6 @@
 # No-prompt policy
 
-**Status: plan only; nothing is implemented; no task approved.**
+**Status as of 2026-11-10: in progress, 8/17 merged; see [docs/status.md](../status.md) for the current table.**
 
 **Spec owner:** the owner (Dimi Paun), 2026-11-07. **Numbers reserved:** D1540–D1559, Checks 380–389.
 D1560–D1579 and Checks 390–399 belong to the sibling spec `docs/composite-commands/`, which refers to this one.

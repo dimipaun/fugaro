@@ -1,7 +1,6 @@
 # Composite management commands: implementation plan
 
-Builds `spec.md` as amended by `reconciliation.md`. **Plan only: nothing is implemented and no task is
-approved; each task needs the owner's explicit go.** Answers that shaped it (2026-11-07): D1560 bare
+Builds `spec.md` as amended by `reconciliation.md`. **Status as of 2026-11-10: parked, 1/10 merged; see [docs/status.md](../status.md) for the current table.** Answers that shaped it (2026-11-07): D1560 bare
 `fugaro apply` (no rename needed, F1), D1561 one step registry over the initflow stage names (amended), D1562 local pending file, D1563 keep the
 change and mark pending on a failed step.
 

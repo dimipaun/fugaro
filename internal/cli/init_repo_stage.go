@@ -44,7 +44,7 @@ func newRepositoryStage(e *initEngine) *repositoryStage {
 			}
 			return e.r.repoEngine(ctx, ".", e.bin, true)
 		},
-		left: promptLeft(initflow.Repository, "in the checkout, type the project's name at each apply", e.r.o.doorName()),
+		left: promptLeft(initflow.Repository, "in the checkout, run the command below: it asks you nothing and each apply goes ahead", e.r.o.doorName()),
 	}
 	return s
 }
@@ -90,7 +90,7 @@ func (s *repositoryStage) Check(ctx context.Context) (initflow.Status, error) {
 	case err != nil:
 		return initflow.Status{}, err
 	case a == authAsk:
-		return initflow.Status{State: initflow.Todo, Detail: "onboards " + repo + ", which is not the project's yet: asks you to type its name first"}, nil
+		return initflow.Status{State: initflow.Todo, Detail: "onboards " + repo + ", which is not the project's yet: the gate confirms it with the person at the terminal"}, nil
 	case a == authNeeded && !s.e.r.o.enrolling():
 		// A door that does not enrol leaves one line naming the door that
 		// does, and never the typed question: there is nothing for this run to
@@ -138,7 +138,7 @@ func (s *repositoryStage) authorize(ctx context.Context, env initflow.Env) error
 		return &initflow.NeedsYouError{Left: initflow.Left{Stage: initflow.Repository, Kind: initflow.LeftCommand,
 			Text: selfCommand() + " " + e.r.o.doorName() + " --github-app-id <id>"}}
 	}
-	id, err := e.r.prompt("GitHub App ID for "+pluginwire.Printable(s.tg.repo)+" (a number, not a secret; on the App's settings page)", anyStoredAppID(e.lc), func(v string) error {
+	id, err := e.r.prompt(valueSpec{what: "the GitHub App ID for " + pluginwire.Printable(s.tg.repo) + " (a number, not a secret; on the App's settings page)", flag: "--github-app-id"}, anyStoredAppID(e.lc), func(v string) error {
 		if !appIDRE.MatchString(v) {
 			return errors.New("a GitHub App ID is 1 to 20 digits")
 		}

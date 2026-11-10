@@ -3,7 +3,6 @@
 package cli
 
 import (
-	"bufio"
 	"context"
 	"os"
 	"strings"
@@ -20,7 +19,7 @@ func ttyEngine(t *testing.T, o *initOptions) (*initEngine, *syncBuf, func(marker
 	f := newTTY(t)
 	e, out := stageEngine(t, "", o)
 	e.r.cmd.SetIn(f.tty)
-	e.r.in = bufio.NewReader(f.tty)
+	e.r.in = f.tty
 	typeAt := func(marker string, n int, input string) {
 		t.Helper()
 		for deadline := time.Now().Add(5 * time.Second); strings.Count(out.String(), marker) < n; time.Sleep(5 * time.Millisecond) {
@@ -45,10 +44,10 @@ func TestPtyFirstRunPrompts(t *testing.T) {
 	e, out, typeAt := ttyEngine(t, &initOptions{})
 	done := make(chan error, 1)
 	go func() { done <- e.r.gatherInputs(t.Context()) }()
-	typeAt("GCP project ID", 1, "my-proj-42\n")
-	typeAt("Region", 1, "\n")
-	typeAt("Fugaro project name", 1, "\n") // its default can come from an installation in that project
-	typeAt("Bake your repos", 1, "\n")     // the wizard's last question (IS7), and Enter is its suggestion
+	typeAt("Type the GCP project's ID", 1, "my-proj-42\n")
+	typeAt("Type the region the installation's jobs and the scheduler run in", 1, "\n")
+	typeAt("Type the Fugaro project's name", 1, "\n") // its default can come from an installation in that project
+	typeAt("Bake your repos", 1, "\n")                // the wizard's last question (IS7), and Enter is its suggestion
 	select {
 	case err := <-done:
 		if err != nil {
@@ -62,12 +61,12 @@ func TestPtyFirstRunPrompts(t *testing.T) {
 	}
 }
 
-// The plugin's [y/N] and the typed repository confirmation at a real
-// terminal: the repository's name is typed once, then the write is confirmed.
-func TestPtyPluginConfirmAndTypedRepo(t *testing.T) {
+// The plugin's write at a real terminal: the person's being there is the whole
+// of the confirmation — no name typed, no [y/N] — and the repository is wired.
+func TestPtyPluginConfirmationAtATerminal(t *testing.T) {
 	releaseBuild(t, "0.2.0")
 	settings := wiringCheckout(t, settingsWithOthers)
-	e, out, typeAt := ttyEngine(t, &initOptions{})
+	e, out, _ := ttyEngine(t, &initOptions{})
 	unknownRepo(e)
 	type result struct {
 		res *initflow.Result
@@ -78,8 +77,6 @@ func TestPtyPluginConfirmAndTypedRepo(t *testing.T) {
 		res, err := initflow.Run(t.Context(), []initflow.Stage{newPluginStage(e)}, e.options())
 		done <- result{res, err}
 	}()
-	typeAt("Type acme/app to onboard it", 1, "acme/app\n")
-	typeAt("[y/N]", 1, "y\n")
 	select {
 	case r := <-done:
 		if r.err != nil || stateOf(r.res, "plugin") != initflow.Changed {
@@ -91,14 +88,17 @@ func TestPtyPluginConfirmAndTypedRepo(t *testing.T) {
 	if data, _ := os.ReadFile(settings); !strings.Contains(string(data), `"fugaro@fugaro": true`) {
 		t.Errorf("not wired:\n%s", data)
 	}
+	if strings.Contains(out.String(), "Type acme/app to onboard it") || strings.Contains(out.String(), "[y/N]") {
+		t.Errorf("a confirmation was asked at the terminal:\n%s", out.String())
+	}
 }
 
-// The repository stage's own typed confirmation at a real terminal, then the
-// engine runs once.
-func TestPtyRepositoryTypedConfirmation(t *testing.T) {
+// The repository stage's own confirmation at a real terminal: the person is
+// there, so the engine runs once with nothing typed.
+func TestPtyRepositoryConfirmationAtATerminal(t *testing.T) {
 	dir := repoCheckout(t, githubOrigin, checkoutYAML("github", "oauth", "aurora", ""))
 	t.Chdir(dir)
-	e, out, typeAt := ttyEngine(t, &initOptions{githubAppID: "12345"})
+	e, out, _ := ttyEngine(t, &initOptions{githubAppID: "12345"})
 	unknownRepo(e)
 	runs := 0
 	rs := newRepositoryStage(e)
@@ -112,7 +112,6 @@ func TestPtyRepositoryTypedConfirmation(t *testing.T) {
 		res, err := initflow.Run(t.Context(), []initflow.Stage{rs}, e.options())
 		done <- result{res, err}
 	}()
-	typeAt("Type acme/app to onboard it", 1, "acme/app\n")
 	select {
 	case r := <-done:
 		if r.err != nil || runs != 1 || stateOf(r.res, "repository") != initflow.Done || !strings.Contains(out.String(), dir) {

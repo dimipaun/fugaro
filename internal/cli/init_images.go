@@ -202,7 +202,7 @@ func (s *imagesStage) Name() string                 { return initflow.Images }
 func (s *imagesStage) SelfConfirming()              {}
 func (s *imagesStage) Verify(context.Context) error { return nil }
 func (s *imagesStage) Left() initflow.Left {
-	return promptLeft(initflow.Images, "type the project's name to pin this release's base images and copy the release images", s.e.r.o.doorName())
+	return promptLeft(initflow.Images, "run the command below: it asks you nothing and pins this release's base images and copies the release images", s.e.r.o.doorName())
 }
 
 // baseSourceHost is the only host a base kind's source may be on: the
@@ -622,7 +622,7 @@ func (s *imagesStage) read(ctx context.Context, m *mirror.Mirror, items []imageI
 		// tool made from one an older CLI or a person made).
 		replace := slices.Contains(s.e.r.o.replaceImages, it.key())
 		if p.DestDigest != "" && !p.Present && !replace {
-			return nil, userErr("%s: %s is %s in your registry and the release's image is %s: it is never replaced silently; pass --replace-image %s to replace it, and type the project's name at a real terminal to confirm (a base kind can instead be pointed at your own image with --base-image KIND=IMAGE)", it.label, it.dst, p.DestDigest, p.Digest, it.key())
+			return nil, userErr("%s: %s is %s in your registry and the release's image is %s: it is never replaced silently; pass --replace-image %s to replace it, and confirm it at a real terminal (a base kind can instead be pointed at your own image with --base-image KIND=IMAGE)", it.label, it.dst, p.DestDigest, p.Digest, it.key())
 		}
 		p.AllowReplace = replace
 		out = append(out, planned{item: it, plan: p})
@@ -902,10 +902,10 @@ func (s *imagesStage) confirmReplace(pl []planned) error {
 			}
 			args = append(args, "--replace-image", quoteWord(k))
 		}
-		return &initflow.NeedsYouError{Left: promptLeft(initflow.Images, "type the project's name to confirm replacing "+strings.Join(kinds, ", ")+" when asked, after running", args...)}
+		return &initflow.NeedsYouError{Left: promptLeft(initflow.Images, "run the command below: it asks you nothing and replaces "+strings.Join(kinds, ", ")+" when the plan is applied", args...)}
 	}
 	if !ok {
-		return userErr("not confirmed (the project's name was not typed); nothing was copied and nothing was pinned")
+		return userErr("not confirmed (the question was answered no); nothing was copied and nothing was pinned")
 	}
 	return nil
 }

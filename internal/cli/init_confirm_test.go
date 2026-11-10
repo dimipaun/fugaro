@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -60,15 +61,116 @@ func (c condition) run(t *testing.T, stdin string) (*initRun, *readSpy, *strings
 	o := c.opts
 	o.firebase = "aurora-fp"
 	cmd := &cobra.Command{}
+	// The flags the two sanctioned readers look up on the command rather than
+	// on the options (askConfirm reads --ask, --yes, --json and
+	// --non-interactive there): a test's run must carry the same ones a real
+	// command does, or --ask answers from a command that never passed it.
+	cmd.Flags().Bool("ask", o.ask, "")
+	cmd.Flags().Bool("yes", o.yes, "")
+	cmd.Flags().Bool("json", o.asJSON, "")
+	cmd.Flags().Bool("non-interactive", o.nonInteractive, "")
 	cmd.SetIn(spy)
+	// One writer for the step's own lines and for --ask's question, as a real
+	// run has (newInitRun writes through the command's own output).
+	cmd.SetOut(out)
 	r := &initRun{cmd: cmd, o: &o, w: out, in: bufio.NewReader(spy), projectName: initProjectName, gcpProject: initProject}
+	if o.ask {
+		// A rig that passes --ask is the project whose marks answered
+		// "managed": that is the only project the flag has a confirmation to
+		// put back in (initRun.gateRestores, and initflow.AskDecision's first
+		// rule — in any other project it is the no-op line its own help
+		// describes). The read is the converge's own, made before the loop.
+		r.gate = &initGate{managed: true}
+	}
 	return r, spy, out
+}
+
+// TestInitAsksNoConfirmation is the no-prompt policy's own test at the point
+// every confirmation of the converge comes through (T7, docs/no-prompt-policy
+// and its spec: "any confirmation prompt in Fugaro is a bug"). What answers a
+// step is the session itself, and no arm of it types anything: --yes stands in
+// where the run has the flag, a person at their own terminal confirms the step
+// by being there, and a session nobody can answer — no terminal, --json,
+// --non-interactive, a coding agent's — leaves the step for the user rather
+// than reading a line nobody could end. The one arm that reads is --ask, and
+// it reads a y/N and not a name.
+func TestInitAsksNoConfirmation(t *testing.T) {
+	const question = "apply all of the steps above to GCP project " + initProject + "?"
+	for _, c := range conditions() {
+		t.Run(c.name, func(t *testing.T) {
+			r, spy, out := c.run(t, initProjectName+"\n")
+			ok, err := r.confirmNow(question)
+			if err == nil {
+				// What the session is decides, and nothing about it is typed:
+				// the flag stands in, and otherwise the person at the terminal
+				// is the whole of the answer (canType). A run that leaves the
+				// step says so by answering no, and the caller is the one that
+				// refuses with what that left undone.
+				want := c.opts.yes || (c.terminal && !c.opts.nonInteractive && !c.opts.asJSON)
+				if ok != want {
+					t.Fatalf("confirmed %v, want %v", ok, want)
+				}
+			} else {
+				var ag *initflow.AgentError
+				if ok || c.agent == "" || !errors.As(err, &ag) || ag.Marker != c.agent {
+					t.Fatalf("confirmed %v (err %v), want the agent refusal naming %s", ok, err, c.agent)
+				}
+			}
+			if spy.read {
+				t.Fatalf("stdin was read: no confirmation of this run is typed any more")
+			}
+			if line := out.String(); line != "" {
+				t.Fatalf("the step printed a prompt: %q", line)
+			}
+		})
+	}
+	t.Run("--ask puts the question back as a y/N", func(t *testing.T) {
+		c := condition{name: "--ask", opts: initOptions{ask: true}, terminal: true}
+		r, spy, out := c.run(t, "y\n")
+		ok, err := r.confirmNow(question)
+		if err != nil || !ok || !spy.read {
+			t.Fatalf("confirmed %v, err %v, read %v: --ask asks the step's own question", ok, err, spy.read)
+		}
+		if want := question + " [y/N]: "; !strings.Contains(out.String(), want) {
+			t.Fatalf("--ask printed %q, want %q", out.String(), want)
+		}
+	})
+	t.Run("--ask where nobody can answer refuses without reading", func(t *testing.T) {
+		for _, c := range []condition{
+			{name: "--ask, a pipe", opts: initOptions{ask: true}},
+			{name: "--ask --json at a terminal", opts: initOptions{ask: true, asJSON: true}, terminal: true},
+			{name: "--ask --non-interactive at a terminal", opts: initOptions{ask: true, nonInteractive: true}, terminal: true},
+		} {
+			t.Run(c.name, func(t *testing.T) {
+				r, spy, out := c.run(t, "y\n")
+				ok, err := r.confirmNow(question)
+				if ok || err == nil || spy.read || !strings.Contains(err.Error(), "asked for") || strings.Contains(out.String(), "[y/N]") {
+					t.Fatalf("confirmed %v, err %v, read %v, printed %q: --ask a confirmation nobody can answer is a refusal", ok, err, spy.read, out.String())
+				}
+			})
+		}
+		// A coding agent's marker is read before --ask's own question, so the
+		// agent's session gets the marker's refusal rather than the asked-for
+		// one: the marker is the whole of what keeps an agent out of a write,
+		// and it must not be answered by the flag either.
+		c := condition{name: "--ask in a coding agent's session", opts: initOptions{ask: true}, terminal: true, agent: "CLAUDECODE"}
+		r, spy, out := c.run(t, "y\n")
+		ok, err := r.confirmNow(question)
+		var ag *initflow.AgentError
+		if ok || err == nil || !errors.As(err, &ag) || ag.Marker != c.agent {
+			t.Fatalf("confirmed %v, err %v: --ask does not answer an agent's session", ok, err)
+		}
+		if spy.read || strings.Contains(out.String(), "[y/N]") {
+			t.Fatalf("read %v, printed %q: nothing is asked of an agent's session", spy.read, out.String())
+		}
+	})
 }
 
 // TestTypedOnlyFirestoreLocationMatrix: the Firestore location is permanent,
 // and it is the ONE step W5.1 changes in a single door (D12's answer of
-// 2026-10-20): `setup` keeps it Typed — only a person typing a real terminal's
-// answer confirms it there — and `update --yes` covers it, because a
+// 2026-10-20): `setup` keeps it Typed — where only a person at a real
+// terminal may confirm it, and since T7 their being there IS the
+// confirmation, with nothing typed — and `update --yes` covers it, because a
 // re-converge of a database that already exists is not a first-time decision.
 // The three steps the answer never relaxes, in either door, are creating the
 // project and linking the billing account (which `update` refuses by flag, so
@@ -91,8 +193,8 @@ func TestTypedOnlyFirestoreLocationMatrix(t *testing.T) {
 					if err != nil {
 						t.Fatalf("the location was not confirmed: %v", err)
 					}
-					if typed := !c.opts.yes; typed != spy.read {
-						t.Fatalf("typed %v, stdin read %v: not the route this condition has", typed, spy.read)
+					if spy.read {
+						t.Fatalf("stdin was read: nothing is typed at a confirmation any more (T7)")
 					}
 					if c.opts.yes && !strings.Contains(out.String(), "confirmed by --yes") {
 						t.Errorf("update --yes confirmed the location without saying so:\n%s", out)
@@ -148,9 +250,10 @@ func TestTypedOnlyImageBuildMatrix(t *testing.T) {
 			cfg := &config.Config{Workflows: map[string]config.Workflow{"app": {}}}
 			spec := infra.RepoSpec{Name: initProjectName, BuildServiceAccountEmail: "b@x.iam", RegistryPath: "r"}
 			built, err := r.buildImages(t.Context(), lc, cfg, spec, []string{"app"})
-			// YesOrTyped, exactly: --yes takes it, a real terminal types it
-			// with no --non-interactive and no --json, and a coding agent's
-			// environment takes it from neither.
+			// YesOrTyped, exactly: --yes takes it, a real terminal takes it
+			// with no --non-interactive and no --json (the person being there
+			// is the confirmation, since T7), and a coding agent's environment
+			// takes it from neither.
 			can := canConfirmStep(initflow.YesOrTyped, r.conditions())
 			for _, rq := range fb.Requests() {
 				if rq.Method == "POST" {
@@ -167,8 +270,8 @@ func TestTypedOnlyImageBuildMatrix(t *testing.T) {
 				if err == nil || !strings.Contains(err.Error(), "no workflow") {
 					t.Fatalf("err %v: the confirmation was not taken", err)
 				}
-				if typed, read := c.terminal && !c.opts.yes, spy.read; typed != read {
-					t.Fatalf("typed %v, stdin read %v", typed, read)
+				if spy.read {
+					t.Fatalf("stdin was read: nothing is typed at a confirmation any more (T7)")
 				}
 				if c.opts.yes && !strings.Contains(out.String(), "confirmed by --yes") {
 					t.Errorf("--yes confirmed the build without saying so:\n%s", out)
