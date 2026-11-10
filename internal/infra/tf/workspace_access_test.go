@@ -29,8 +29,10 @@ import (
 
 // wsModuleDir is the Firebase module, whose workspace_access.tf holds the
 // member's binding. The tf package cannot import internal/infra (which imports
-// it), so the Go side of the same grant is pinned by
-// TestWorkspaceAccessGoAndModuleAgree below rather than by a call into it.
+// it), so the Go side of the same grant — the role's permissions in
+// RolePermissions and its place in FugaroRoles — is held to the module's text
+// by TestMemberUpdateBindsNoWriteOnTheMembersDatabase below rather than by a
+// call into the wrapper that binds it.
 var wsModuleDir = filepath.Join("..", "..", "..", "deploy", "terraform", "gcp", "modules", "firebase")
 
 var (

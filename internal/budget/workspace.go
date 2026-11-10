@@ -37,7 +37,14 @@ import (
 // than the settler recomputing one.
 //
 // Money is integer micro-dollars, as everywhere in this package.
-const pathWorkspaceSpend = "workspace_spend"
+//
+// The subtree is the one the workspace's own database deploys its rules for
+// (internal/budget/rules.WorkspaceMeterPath, which owns that database's shape):
+// a second spelling of it would be a node the deployed document does not name.
+// The name is spelled out rather than read from that package because that
+// package's own tests import this one, so an import here is a cycle; the two
+// are held to each other by TestWorkspaceMeterLivesUnderTheSubtreeTheRulesDeny.
+const pathWorkspaceSpend = "meter"
 
 // The meter's retries under contention. Every reserve and every settle of a
 // workspace is a read-then-conditional-write of one month's node, so parallel
@@ -87,6 +94,11 @@ func MonthKey(t time.Time) string { return t.UTC().Format("2006-01") }
 // workspace's own database root and without a leading slash. The caller passes
 // the raw workspace name (validated long before a path is built, as
 // projectpolicy.PathWorkspace's is) and a month from MonthKey.
+//
+// The name is a segment of the path for the reason the record's own path
+// carries one (projectpolicy.PathWorkspace), and the rules the database runs
+// under deny the whole subtree rather than a node of a fixed depth, so a
+// writer below it is denied with the subtree (internal/budget/rules).
 func PathWorkspaceSpend(name, month string) string {
 	if !monthRE.MatchString(month) {
 		panic("budget: " + month + " is not a month from MonthKey")

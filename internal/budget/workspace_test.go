@@ -14,10 +14,12 @@ package budget_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/rtdb"
@@ -452,6 +454,26 @@ func TestWorkspaceCapGivesUpOnAContendedMeter(t *testing.T) {
 	}
 	if contended.attempts != budget.SetAttempts {
 		t.Fatalf("the meter wrote %d times, want the bounded %d", contended.attempts, budget.SetAttempts)
+	}
+}
+
+// The meter is written under the subtree the workspace's own rules document
+// denies (internal/budget/rules.WorkspaceMeterPath): the document and the
+// writer name ONE node, because a second spelling of it is a node the document
+// a database runs under does not name. The two packages cannot hold each other
+// to it in code — the rules package's own tests import this one, so an import
+// the other way is a cycle — so the agreement is pinned here.
+func TestWorkspaceMeterLivesUnderTheSubtreeTheRulesDeny(t *testing.T) {
+	path := budget.PathWorkspaceSpend(wsMeterName, budget.MonthKey(wsMeterNow))
+	subtree, rest, found := strings.Cut(path, "/")
+	if !found {
+		t.Fatalf("PathWorkspaceSpend(%q, %q) = %q, want a subtree and a node below it", wsMeterName, budget.MonthKey(wsMeterNow), path)
+	}
+	if subtree != rules.WorkspaceMeterPath {
+		t.Errorf("the meter is written under %q and the workspace's rules document denies %q: the writer and the document must name one node", subtree, rules.WorkspaceMeterPath)
+	}
+	if rest == "" {
+		t.Errorf("PathWorkspaceSpend(%q, %q) = %q names no node below the subtree", wsMeterName, budget.MonthKey(wsMeterNow), path)
 	}
 }
 
