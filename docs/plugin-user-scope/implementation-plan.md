@@ -75,7 +75,8 @@ a follow-up run will use if `main` changed `.github/workflows/` (`CLAUDE.md`).
 
 **What it is.** The one claim in this design that could ship as a bug if it is wrong: a coding agent's
 session, in a repository whose repository stage returns needs-you, still reaches the plugin step
-(F13). U0 writes that test and nothing else, and it **fails** at the end of the task.
+(F13). U0 writes that test and nothing else: it lands **skipped**, behind the `FUTURE` guard described
+below, and it is red the moment that guard is removed — the red U1 runs into first.
 
 **Files.** A new `internal/cli/init_plugin_stage_agent_test.go`, holding
 `TestInitPluginStageMovesInAgentSessionAheadOfARepositoryStop` (chosen over a case in
@@ -96,8 +97,10 @@ recorded in U1's own section below, not only in the skip string.
 returns needs-you — `internal/cli/init_test.go`'s `fakeTerraform` shape, and `localcfg` in `t.TempDir()`.
 It asserts: the plugin step is *applied* (not `left_for_you`), and the cloud step is still parked.
 
-**Red step.** It fails today, for the honest reason: the plugin step lives in the checkout stage, which the
-run never reaches, so the step is never applied. The failure message names that, not a missing symbol.
+**Red step.** Un-skipped it fails, for the honest reason: the plugin step lives in the checkout stage, which
+the run never reaches, so the step is never applied. The failure message names that, not a missing symbol —
+and the comment above the guard carries that message, so this task can state the red it hands U1 without
+shipping it.
 
 **Docs, release notes.** None. This task ships a test.
 
@@ -114,7 +117,7 @@ project keeps skipping, with its wording corrected (F15).
 step), `internal/cli/upgrade.go` (`fugaroCheckout`), `internal/initflow/stage.go` if the marker's
 documentation names the stage; tests `internal/cli/{init_checkout_upgrade_test.go,
 init_plugin_stage_test.go,init_plugin_stage_agent_test.go,checkouts_test.go,cascade_test.go,
-left_commands_test.go}` (the last test file only for the un-skip above).
+left_commands_test.go}` — of these, `init_plugin_stage_agent_test.go` only for the un-skip above.
 
 **Interface.** The step lines the converge prints do not change their names (`plugin:`), only which stage
 emits them; `left_for_you` is no longer the plugin's answer in an agent session; the checkout stage's
