@@ -23,21 +23,24 @@ import (
 // command only when the allow-list covers it, and it reads its own --settings
 // payload and reads no file that payload names.
 //
-// There is one model of the client here, and it is run.go's: its file tools
-// are not confined to the working directory and the --add-dir folders, so the
-// deny payload is the whole of what closes a path (F16). U2 asked whether the
-// pinned client confines them, and reading that client answered no: --restricted
-// is what asks for that confinement and this argv does not pass it
-// (docs/diagnose-agent/reconciliation.md). The fake therefore models no
-// confinement the argv does not ask for: it refuses a read because the payload
-// names it, and for no other reason. Reading a binary is not a test, so nothing
+// The confinement the child runs under has two layers, and the fake models
+// both because the argv asks for both: --restricted confines its file tools to
+// the working directory and the --add-dir folders (the pinned client's own
+// --help: confined to the working directories, --add-dir included, with
+// --settings still applying), and the deny payload names the stores to refuse
+// inside and outside them (F16). Reading a binary is not a test, so nothing
 // here pins the client's own behaviour — what these cases pin is the payload
-// and the argv this package builds. What the argv does say about the two
-// folders is pinned where it belongs — the contract case counts the --add-dir
-// values and TestRunStartsTheChildInTheSourceTree pins the working directory.
-// Either way a mutation is behavioural rather than structural: add Bash to the
-// allow-list, or empty the deny payload, and the fake child *does the thing* —
-// the sentinel appears, or the file nobody may read is read.
+// and the argv this package builds, and the fake distinguishes the two layers
+// so a case can say which one refused: "denied" is a path a rule of the payload
+// carries, "denied-outside" is a path no rule names and only the confinement
+// can cover. What the argv says about the two folders is pinned where it
+// belongs — the contract case counts the --add-dir values and
+// TestRunStartsTheChildInTheSourceTree pins the working directory. The
+// mutations are behavioural rather than structural: add Bash to the
+// allow-list, or drop --restricted, and the fake child *does the thing* — the
+// sentinel appears, or the file nobody may read is read — while emptying the
+// deny payload moves the record from "denied" to "denied-outside", which is
+// how the rule cases read the payload's own layer.
 
 func TestMain(m *testing.M) {
 	cleanup, err := testutil.PrepareFakeCommands()
@@ -99,6 +102,10 @@ func runFolders(t *testing.T) (source, evidence string) {
 //     given — and it refuses nothing at all when --dangerously-skip-permissions
 //     is present, which is what that flag means for a permission check of any
 //     kind;
+//   - it reads --restricted and, when it is there, refuses a read under neither
+//     the working directory nor any of its --add-dir folders: that is the
+//     confinement the flag asks for, and the layer that covers a path no rule
+//     of the payload names;
 //   - it ends the way the client ends when a cap stopped the run.
 //
 // The prompt is a line-oriented script so that one child covers every case:
@@ -119,14 +126,19 @@ func runFolders(t *testing.T) (source, evidence string) {
 func runChildScript(record string) string {
 	return `
 prompt=$(cat)
-tools=""; settings=""; bypass=""
+tools=""; settings=""; bypass=""; restricted=""; adddirs=""
 prev=""
 for a in "$@"; do
   case "$prev" in
     --tools) tools="$a" ;;
     --settings) settings="$a" ;;
+    --add-dir) adddirs="$adddirs$a
+" ;;
   esac
-  case "$a" in --dangerously-skip-permissions) bypass=1 ;; esac
+  case "$a" in
+    --dangerously-skip-permissions) bypass=1 ;;
+    --restricted) restricted=1 ;;
+  esac
   prev="$a"
 done
 did="none"
@@ -161,11 +173,27 @@ if [ -n "$want" ]; then
     esac
     case "$want" in $rule) denied=1 ;; esac
   done
+  # --restricted is the client's own confinement, and the argv asks for it: the
+  # file tools are confined to the working directories, the --add-dir folders
+  # included (its own --help), so a path under neither of the two is refused
+  # whatever the payload says. The two layers stack, and this child records which one
+  # refused, because a case here is about one of them: "denied" is a path a rule
+  # of the payload carries, and "denied-outside" is a path no rule names — which
+  # is the one thing no list of rules can cover.
+  outside=0
+  if [ "$restricted" = "1" ]; then
+    outside=1
+    for d in "$(pwd -P)" $adddirs; do
+      case "$want" in "$d"/*|"$d") outside=0 ;; esac
+    done
+  fi
   IFS=$oldifs
   set +f
-  [ "$bypass" = "1" ] && denied=0
+  if [ "$bypass" = "1" ]; then denied=0; outside=0; fi
   if [ "$denied" = "1" ]; then
     did="denied $want"
+  elif [ "$outside" = "1" ]; then
+    did="denied-outside $want"
   else
     did="read:$(cat "$want" 2>/dev/null)"
   fi
@@ -342,6 +370,17 @@ func TestRunArgsIsTheReadOnlyContract(t *testing.T) {
 	// belongs in no store on the person's disk.
 	if !slices.Contains(args, "--no-session-persistence") {
 		t.Error("the child is started without --no-session-persistence: the client would write its session file, holding what the agent read, under the person's home")
+	}
+	// The first of the two layers of the read confinement, and the one that
+	// covers what no list can: --restricted confines the file tools to the
+	// working directory and the --add-dir folders, so a path outside the two
+	// roots is refused whether or not a rule names it. The payload below is
+	// the second layer, and the two stack rather than replace each other.
+	// Mutation (run and restored): drop --restricted from argsFor in run.go ->
+	// red in TestRunDeniesTheReadsOutsideTheTwoFolders, which reads a path no
+	// rule names and gets its contents.
+	if !slices.Contains(args, "--restricted") {
+		t.Error("the child is started without --restricted: nothing confines its file tools to the two folders, so every path outside them that no deny rule names is a path a steered read reaches")
 	}
 	// The settings payload carries the two things no flag expresses: hooks off,
 	// and the places a diagnosis never has a reason to read, named.
@@ -588,27 +627,32 @@ func TestRunRefusesAFolderWithoutPrintingItsEscape(t *testing.T) {
 }
 
 // TestRunDeniesTheReadsItsPayloadNames: the log asks the agent to read a file
-// its --settings payload names, and the child refuses it — the file is outside
-// both folders, so what stopped the read is the rule and not where the file
-// sits, which is the confinement run.go is written against (F16): the payload
-// is the line, and the two folders are the roots the argv names rather than a
-// boundary the client draws.
+// its --settings payload names, and the child refuses it *by that rule* — the
+// record says "denied" and not "denied-outside", which is the difference
+// between the payload and the confinement the argv asks for beside it (F16) —
+// and the file's contents stay out of the record.
 //
 // The control is the reading that no rule names, in the evidence folder: it is
-// read, so a denial above means the rule denied and not that the fake refuses
-// everything.
+// read, so a denial above means a rule denied and not that the fake refuses
+// everything — and that folder is an --add-dir folder rather than the working
+// directory, so the control is also what says the confinement keeps the
+// directories the argv names and not its working directory alone.
 //
 // The file named here is the SSH store, and it is chosen for the mutation
 // below: a case whose stated mutation has to reproduce needs a path one rule
 // closes and no other, and ~/.ssh/** in childReadDeny is that rule.
 // ~/.config/fugaro, by contrast, is closed by that list's ~ rule *and* by the
 // config directory the resolver answers with (childConfigDirPaths), so
-// emptying the list would leave it denied and this case would prove nothing.
+// emptying the list would leave it denied by a rule either way and this case
+// would prove nothing.
 //
-// Mutation (run and restored): empty childReadDeny -> the payload names
-// nothing else that reaches this file, the child reads it, and the value
-// appears in its own record. That is the case the structural pin cannot make:
-// a payload that denies nothing is still a well-formed --settings argument.
+// Mutation (run and restored): empty childReadDeny -> the payload names nothing
+// that reaches this file, the child's record changes from "denied <path>" to
+// "denied-outside <path>", and the read is refused by the confinement alone.
+// What this case pins is therefore the rule, not the refusal: the store is
+// closed by name, and the record says which of the two layers closed it. That
+// is the case the structural pin cannot make, because a payload that denies
+// nothing is still a well-formed --settings argument.
 func TestRunDeniesTheReadsItsPayloadNames(t *testing.T) {
 	// The home is this test's own, so the ~ of a rule expands inside the test
 	// and never to the machine's real profile. It is set before the setup,
@@ -634,11 +678,67 @@ func TestRunDeniesTheReadsItsPayloadNames(t *testing.T) {
 		t.Fatal(err)
 	}
 	did := s.did(t)
+	// A rule of the payload is what says "denied"; "denied-outside" is the
+	// confinement beside it, so a record that reads that way means the payload
+	// named nothing that reaches this file.
 	if !strings.Contains(did, "denied "+named) {
-		t.Errorf("the child read a file its payload names, so the payload confines nothing: %q", did)
+		t.Errorf("the child was not refused a file its payload names by a rule of that payload: %q", did)
 	}
 	if strings.Contains(did, s.value) {
 		t.Errorf("the child read a file the payload names: %q", did)
+	}
+}
+
+// TestRunDeniesTheReadsOutsideTheTwoFolders: a log names paths nobody wrote a
+// rule for — a store this list does not know, a file in another checkout, the
+// person's own notes — and what refuses those is the confinement the argv asks
+// for with --restricted: the file tools are confined to the working
+// directories, --add-dir included, so the two folders are a boundary rather
+// than the roots of a list of names (F16, U2).
+//
+// The file is the ~/.azure store, which no rule in childReadDeny names, and
+// the reason the record has to carry is "denied-outside" rather than "denied":
+// that is what says this case is about the confinement and not about a rule
+// that happens to cover the same path, and it is the one thing no list of
+// rules can produce.
+//
+// Mutation (run and restored): drop --restricted from argsFor in run.go -> the
+// child reads the file and its contents reach the record, which is the read a
+// steered log asks for: no list of rules closes a path nobody wrote down.
+func TestRunDeniesTheReadsOutsideTheTwoFolders(t *testing.T) {
+	// The home is this test's own, so the fixture sits under a home no rule
+	// names rather than under the machine's real profile. It is set before the
+	// setup, which reads the environment the diagnosis is composed from once.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	s := newRunSetup(t)
+	unlisted := filepath.Join(home, ".azure", "accessTokens.json")
+	if err := os.MkdirAll(filepath.Dir(unlisted), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(unlisted, []byte(s.value), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	block := answer(t, fence(s.nonce, "outcome: bug\nsignature: update config invalid\nbody"))
+	// The control is the evidence folder: it is not the working directory, so
+	// it is readable only because --add-dir names it a working directory — a
+	// confinement that ignored those would refuse this read as well, and the
+	// refusal below would then say nothing about the path it is about.
+	if _, err := s.run(t, "READ: "+filepath.Join(s.req.EvidenceDir, "log.txt"), block); err != nil {
+		t.Fatal(err)
+	}
+	if did := s.did(t); !strings.Contains(did, "read:a step failed") {
+		t.Errorf("the child could not read a folder --add-dir names as a working directory, so the denial below proves nothing: %q", did)
+	}
+	if _, err := s.run(t, "READ: "+unlisted, block); err != nil {
+		t.Fatal(err)
+	}
+	did := s.did(t)
+	if !strings.Contains(did, "denied-outside "+unlisted) {
+		t.Errorf("the child was not refused a path outside the two folders that no rule names: %q", did)
+	}
+	if strings.Contains(did, s.value) {
+		t.Errorf("the child read a path outside the working directories a diagnosis gives it: %q", did)
 	}
 }
 
@@ -676,9 +776,11 @@ func TestRunStartsTheChildInTheSourceTree(t *testing.T) {
 
 // TestRunDeniesAStoreTheEnvironmentMoved: the payload names the stores where
 // this machine keeps them, and most of them are not under the home. The
-// environment here moves each store somewhere outside HOME, so a rule that
-// only ever resolved ~ would leave every one of these files readable — and the
-// fake child refuses them, which says the rule it matched was the resolved one.
+// environment here moves each store somewhere outside HOME, and the fake child
+// refuses each one by a *rule* of the payload: it records "denied" for a path
+// the payload names and "denied-outside" for a path only the confinement
+// covers, so a row here says the rule that matched was the moved path's own —
+// the one rule a payload that assumed the default location would not carry.
 //
 // A row's name is part of its own temporary directory, and the runner refuses
 // to write a rule for a path no rule can carry, so a row named with a
@@ -715,6 +817,12 @@ func TestRunDeniesAStoreTheEnvironmentMoved(t *testing.T) {
 		// gcloud reads no XDG variable at all (internal/cli/adcpath.go, F29),
 		// which is why its own variable is the one resolved for it.
 		{"$CLOUDSDK_CONFIG", "CLOUDSDK_CONFIG", "application_default_credentials.json", false, false, false},
+		// The first source of that same path, and the one the config file is
+		// reached through when it is set: adcFilePath reads
+		// GOOGLE_APPLICATION_CREDENTIALS before the directory above, so a
+		// service-account key named there is a store the ~/.config/gcloud rule
+		// never touches — it names a file, which is why this row is whole.
+		{"$GOOGLE_APPLICATION_CREDENTIALS", "GOOGLE_APPLICATION_CREDENTIALS", "adc-key.json", true, false, false},
 		// The stores whose own variable moves them: the client's own
 		// configuration, Docker's, GnuPG's home, and the files an
 		// infrastructure or package tool keeps a token in.
@@ -753,6 +861,15 @@ func TestRunDeniesAStoreTheEnvironmentMoved(t *testing.T) {
 				t.Setenv(tc.env, value)
 				s.req.ParentEnv = nil
 			} else {
+				// Set and not appended: this fixture's own environment already
+				// names one of these variables, and the runner reads a
+				// variable's first entry — appending would leave the fixture's
+				// value deciding where the store is, and the row would pass
+				// while testing nothing it meant to.
+				s.req.ParentEnv = slices.DeleteFunc(s.req.ParentEnv, func(kv string) bool {
+					k, _, _ := strings.Cut(kv, "=")
+					return k == tc.env
+				})
 				s.req.ParentEnv = append(s.req.ParentEnv, tc.env+"="+value)
 			}
 			for _, m := range moved {
@@ -775,8 +892,11 @@ func TestRunDeniesAStoreTheEnvironmentMoved(t *testing.T) {
 					t.Fatal(err)
 				}
 				did := s.did(t)
+				// Only a rule of the payload reads as "denied"; a path the
+				// confinement covers instead reads as "denied-outside", which
+				// is the payload naming the default location alone.
 				if !strings.Contains(did, "denied "+m) {
-					t.Errorf("%s moved the store to %s and the child read it: the payload names the default location alone", tc.env, m)
+					t.Errorf("%s moved the store to %s and no rule of the payload names that path: %q", tc.env, m, did)
 				}
 				if strings.Contains(did, s.value) {
 					t.Errorf("the child read a store %s moved: %q", tc.env, did)

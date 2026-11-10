@@ -29,14 +29,23 @@ import (
 // own credential in its environment. So the child is built to be unable to act
 // on anything the log says: it has three read tools and no fourth, no setting
 // source of the machine's own, no MCP server, a working directory and one
-// folder beside it as the roots it is given, and a cap that ends it.
+// folder beside it as the working directories its file tools are confined to,
+// and a cap that ends it.
 //
-// Those two are the roots it is *given* and not the whole of what it can
-// reach: the client does not confine its file tools to them (F16, U2), so what
-// closes a path is the deny payload below, which names the places a diagnosis
-// never has a reason to read. A path that is in neither the roots nor that
-// list is a path this child can read, and the list is therefore the file's own
-// account of the reads it stops.
+// Its reads are confined by two layers in the same argv, and they stack
+// (F16, U2). --restricted is the client's own confinement, and the pinned
+// client's --help states it in as many words: the file tools are confined to
+// the working directories, --add-dir included, the built-in tools that run
+// commands or code and WebFetch go away unless --tools names them, and
+// bypassPermissions is refused — while managed settings and --settings still
+// apply. The deny payload below is Fugaro's own half: the places a diagnosis
+// never has a reason to read, named by the paths they resolve to, and closed by
+// rule wherever the flag's confinement would let the read through — a store
+// inside a working directory, or one in any directory a managed settings file
+// adds, since managed settings still apply beside the flag and the set of
+// working directories is not this argv's alone to fix. The flag is what closes
+// a path no list can name; the payload is what closes a store by name. A read
+// is refused when either layer refuses it, and neither layer is the other.
 //
 // What replaces the run's local internal/gateway, which F16 asks this task to
 // weigh: the gateway is the runner's answer to "the child must not hold the
@@ -120,15 +129,20 @@ func (s *syncWriter) do(f func()) {
 
 // childReadDeny are the places a diagnosis never has a reason to read.
 //
-// They are the line, and not a second one behind the working directory: the
-// client does not confine its file tools to the working directory and the
-// --add-dir folders unless that confinement is asked for, and this argv does
-// not ask for it (U2). The decline is a decision and not an omission, and the
-// reason is recorded with the answer (docs/diagnose-agent/reconciliation.md,
-// §4): this list is the half of the confinement a test here can pin, and it
-// names stores by path that no flag knows. What is closed is therefore closed
-// by name, and a path not named here is a path the child can read — which is
-// why the test pins this list whole rather than sampling it.
+// They are one of the confinement's two layers, and not a substitute for the
+// other: the argv also asks for --restricted, which confines the file tools to
+// the working directories (--add-dir included) and so closes a path no rule can
+// name. This list is the layer Fugaro states itself, and it names the stores a
+// diagnosis never reads by the paths they resolve to — where a store sits, and
+// not only where this file expects it (childStoresByVar). What it adds over the
+// flag is what the flag cannot know: a store that sits inside a working
+// directory, and a store whose path the environment moved and the log
+// therefore names (childStoresByVar). The flag's own help is why both are in
+// the argv rather than the flag alone — managed settings and --settings still
+// apply beside it, so the working directories are not this argv's alone to fix
+// — and the test pins this list whole rather than sampling it, because a path
+// silently dropped from it is a store silently opened wherever the confinement
+// does not reach.
 //
 // Every rule is home-relative, which is what lets one list cover both
 // platforms: a store that sits somewhere else on Windows is named where it
@@ -252,6 +266,14 @@ var childStoresByVar = []childStore{
 	{"APPDATA", "rclone", true, false},
 	{"GH_CONFIG_DIR", "", true, false},
 	{"CLOUDSDK_CONFIG", "", true, false},
+	// GOOGLE_APPLICATION_CREDENTIALS names a service-account key file rather
+	// than a directory holding one, and it is the *first* source of the CLI's
+	// own path to the application default credentials
+	// (internal/cli/adcpath.go's adcFilePath), so a key reached through it is
+	// nowhere near the ~/.config/gcloud rule above: it can be any path at all,
+	// and the value is what Terraform and gcloud print in the error the log
+	// being diagnosed holds.
+	{"GOOGLE_APPLICATION_CREDENTIALS", "", false, false},
 	{"CLAUDE_CONFIG_DIR", "", true, false},
 	{"DOCKER_CONFIG", "", true, false},
 	{"GNUPGHOME", "", true, false},
@@ -622,6 +644,14 @@ func argsFor(req Request, parent []string) ([]string, error) {
 		"--no-session-persistence",
 		"--settings", settings,
 		"--add-dir", req.EvidenceDir,
+		// The client's own confinement, and the layer that closes what no rule
+		// can name: its help says the file tools are confined to the working
+		// directories, --add-dir included, that the tools which run commands or
+		// code and WebFetch go away unless --tools names them, and that
+		// bypassPermissions is refused — beside --tools and the payload above
+		// rather than instead of them, because managed settings and --settings
+		// still apply with it.
+		"--restricted",
 	}
 	if req.Model != "" {
 		args = append(args, "--model", req.Model)
