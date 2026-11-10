@@ -351,7 +351,9 @@ func TestImageBuildCloud(t *testing.T) {
 	}
 	slug := mustSlug("bitbucket", "acme/app")
 	image := gcp.ImageName("us-east5-docker.pkg.dev/proj-1234/"+gcp.RegistryRepoID(slug), slug, "app")
-	if !strings.HasPrefix(out, "built "+image+"@sha256:") {
+	// The sentence is the step's own line now (CL6), so it is one line of the
+	// account rather than the whole of stdout.
+	if !strings.Contains(out, "built "+image+"@sha256:") {
 		t.Fatalf("output = %q", out)
 	}
 	subs, _ := fb.Last()["substitutions"].(map[string]any)
@@ -394,9 +396,16 @@ func TestImageBuildCloudRepoMustBeTheCheckout(t *testing.T) {
 func TestImageBuildCloudFailureIsRemote(t *testing.T) {
 	fb, _ := cloudBuildCheckout(t, false)
 	fb.Outcome = "FAILURE"
-	_, errOut, err := executeBuild(t, "image", "build", "--base", "b:1")
-	if ExitCode(err) != ExitRemoteError || !strings.Contains(errOut, "log: ") {
-		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, errOut)
+	out, _, err := executeBuild(t, "image", "build", "--base", "b:1")
+	// The submission's own "log:" line is the run's output now — the log's, and
+	// the terminal's under --verbose — so what a failed build shows is the
+	// reporter's block: the step that failed, the error naming the build, and
+	// the path the run's full output is in, which holds that line (G8, D1352).
+	if ExitCode(err) != ExitRemoteError || !strings.Contains(out, markFailed+" app: ") || !strings.Contains(out, "full output: ") {
+		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
+	}
+	if log := writesALog(t, "image-build"); !strings.Contains(log, "submitted; log: ") {
+		t.Errorf("the run's full output does not hold the build's own submitted line:\n%s", log)
 	}
 }
 

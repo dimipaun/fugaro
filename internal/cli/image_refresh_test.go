@@ -600,7 +600,11 @@ func TestRefreshStopsSayWhatFinished(t *testing.T) {
 				if strings.Contains(out, "is done") || strings.Contains(out, "next: run fugaro update --anchor") {
 					t.Errorf("a stopped run ended like a finished one:\n%s", out)
 				}
-				if !strings.Contains(out, "4. builds:") || strings.Index(out, "fugaro image refresh of acme/app") > strings.Index(out, "step 2, base:") {
+				// The plan is the review screen, printed whole before any step
+				// runs: its last row comes before the first step line — a tick
+				// for a step that ended and a cross for the one that failed on
+				// the row below.
+				if i, j := strings.Index(out, "  5. then, if this checkout's"), strings.Index(out, stepLineOf(reportLines(out), "base")); !strings.Contains(out, "4. builds:") || i < 0 || j < 0 || i > j {
 					t.Errorf("the plan is not printed first:\n%s", out)
 				}
 				if calls := r.calls(t); len(calls) != 0 {
@@ -786,8 +790,11 @@ func TestRefreshConfirmationsNeedTheOwnerAndNoFlag(t *testing.T) {
 			if n := len(r.run.Patches()); n != 1 {
 				t.Fatalf("%d patches, want 1 (the check job moved):\n%s", n, out)
 			}
-			if !strings.Contains(out, "updated the daily image check job") {
-				t.Errorf("the check job was not updated:\n%s", out)
+			// The stage's own line is the run's output now (CL6): the screen's
+			// account of step 3 is one step line, and what the stage reports is
+			// in the run's log.
+			if log := writesALog(t, "image-refresh"); !strings.Contains(log, "updated the daily image check job") {
+				t.Errorf("the check job was not updated:\n%s", log)
 			}
 		})
 	}
@@ -835,9 +842,10 @@ func TestRefreshEndsWithTheAnchorNote(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%v\n%s", err, out)
 		}
-		if strings.Join(*ran, ",") != "base,check job,builds" || !strings.Contains(out, "fugaro image refresh of acme/app is done") {
+		if strings.Join(*ran, ",") != "base,check job,builds" {
 			t.Fatalf("ran %v\n%s", *ran, out)
 		}
+		reported(t, out, "base", "check job", "builds")
 		if got := strings.Contains(out, "next: run fugaro update --anchor in this checkout"); got != tc.note {
 			t.Errorf("anchor note %v, want %v:\n%s", got, tc.note, out)
 		}
@@ -848,7 +856,7 @@ func TestRefreshEndsWithTheAnchorNote(t *testing.T) {
 // 2026-10-08 decision: --yes runs the whole command end to end with no
 // terminal at all (a closed stdin, as executeStdin's strings.Reader always
 // is): the plan is printed first, the options every step gets carry yes, and
-// the run ends "is done" with no prompt anywhere.
+// the run ends with the reporter's closing line (CL6) and no prompt anywhere.
 // Mutation (run, restore): drop `if yes { return nil }` from
 // refuseRefreshHere, and this test fails (it is refused for lacking a
 // terminal, same as without --yes).
@@ -875,10 +883,8 @@ func TestRefreshYesRunsEndToEndNoTerminal(t *testing.T) {
 	if seen == nil || !seen.yes {
 		t.Fatalf("the steps did not get yes=true: %+v", seen)
 	}
-	if !strings.Contains(out, "fugaro image refresh of acme/app is done") {
-		t.Errorf("did not finish:\n%s", out)
-	}
-	if i, j := strings.Index(out, "fugaro image refresh of acme/app ("), strings.Index(out, "step 2, base:"); i < 0 || j < 0 || i > j {
+	reported(t, out, "base", "check job", "builds")
+	if i, j := strings.Index(out, "  5. then, if this checkout's"), strings.Index(out, stepLineOf(reportLines(out), "base")); i < 0 || j < 0 || i > j {
 		t.Errorf("the plan is not printed first:\n%s", out)
 	}
 }
@@ -902,7 +908,7 @@ func TestRefreshFinalSummaryRepeatsMissingCheckJob(t *testing.T) {
 				return &refreshTarget{lc: p.lc, cfg: p.cfg}, nil
 			},
 			checkJob: func(_ context.Context, t *refreshTarget) error {
-				fmt.Fprintln(r.w, "  the daily image check job was not found, though this repository's spec has one: run fugaro update --repo in the checkout to deploy it (nothing was updated)")
+				fmt.Fprintln(r.stageDetail(), "  the daily image check job was not found, though this repository's spec has one: run fugaro update --repo in the checkout to deploy it (nothing was updated)")
 				t.checkJobMissing = true
 				return nil
 			},
@@ -914,10 +920,17 @@ func TestRefreshFinalSummaryRepeatsMissingCheckJob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if n := strings.Count(out, "was not found"); n < 2 {
-		t.Fatalf("the missing check job is mentioned %d time(s), want at least twice (step 3, and the final summary):\n%s", n, out)
+	// Step 3's own line is the run's output now and the repeated note is on the
+	// screen, where a person reads it (CL6): both are in the run's full output,
+	// and the note still comes before the line the run ends on.
+	log := writesALog(t, "image-refresh")
+	if n := strings.Count(log, "was not found"); n < 2 {
+		t.Fatalf("the run's full output mentions the missing check job %d time(s), want the step's own line and the repeated note:\n%s", n, log)
 	}
-	if i, j := strings.Index(out, "is done"), strings.LastIndex(out, "was not found"); i < 0 || j < 0 || j > i {
-		t.Errorf("the repeated note does not come before the done line:\n%s", out)
+	if !strings.Contains(out, "was not found") {
+		t.Fatalf("the screen no longer repeats that the check job is missing, where the step's own line is the log's alone:\n%s", out)
+	}
+	if i, j := strings.Index(out, "Done in "), strings.LastIndex(out, "was not found"); i < 0 || j < 0 || j > i {
+		t.Errorf("the repeated note does not come before the closing line:\n%s", out)
 	}
 }

@@ -341,6 +341,17 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 			return userErr("%v", err)
 		}
 	}
+	// This command's run (D1352, D1354): one step per entry built, and one log
+	// under this command's own name, both opened at the first entry that
+	// proceeds — after the confirmation above, the credential read and this
+	// entry's own judgement by the gate — so a run refused before that point
+	// keeps no log, not even an empty one.
+	var sr *stepRun
+	defer func() {
+		if sr != nil {
+			sr.close()
+		}
+	}()
 	for _, e := range entries {
 		// The gate's own answer about THIS entry, read and judged here rather
 		// than once per command (D1013, D1024): the bound and the kill switch
@@ -350,6 +361,16 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 		if err := m.admitEntry(ctx, cmd, conds, cat, e, rs.Slug, plan); err != nil {
 			return err
 		}
+		if sr == nil {
+			sr = stepRunFor(cmd, "image-build", cmd.OutOrStdout())
+		}
+		step := sr.rep.Step(e.Name)
+		// The build's own progress is the run's output and the log's, and the
+		// sentence this command has always printed on stdout is the step's own
+		// line now: one line per entry on the default view, the detail in the
+		// log (D1352, D1354). A run whose log could not be opened keeps printing
+		// its progress where it always did (G5, G8).
+		w := streamOut(sr.rep, sr.log, cmd.ErrOrStderr())
 		// What the request is named from and what it carries is the same value
 		// either way; the two arms differ in everything a build adds to it. A
 		// prebuilt entry's run is the smoke of the reference the entry names
@@ -366,7 +387,7 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 		} else {
 			key, err := config.CatalogDockerfileKey(e.Name)
 			if err != nil {
-				return userErr("%v", err)
+				return failStep(sr.rep, step, userErr("%v", err))
 			}
 			if err := writeCatalogDockerfile(ctx, rb, opener, env.repoProvider(e.Source.Repo, cfg), e); err != nil {
 				// A provider opened without the credential its environment did
@@ -376,9 +397,9 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 				// failure carries it: providers.ErrNoCredential is only ever the
 				// missing token.
 				if providerHint != "" && errors.Is(err, providers.ErrNoCredential) {
-					return fmt.Errorf("%w%s", err, providerHint)
+					return failStep(sr.rep, step, fmt.Errorf("%w%s", err, providerHint))
 				}
-				return err
+				return failStep(sr.rep, step, err)
 			}
 			// What the build pins and records is the copy itself: its bytes and
 			// its object generation, read back from the one object the build
@@ -386,12 +407,12 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 			// this process resolved a moment earlier.
 			data, gen, err := rb.Read(ctx, key)
 			if err != nil {
-				return remote(err)
+				return failStep(sr.rep, step, remote(err))
 			}
 			sum := sha256.Sum256(data)
 			imageRef, err := gcp.SharedCatalogImage(region, lc.GCPProject, e.Name)
 			if err != nil {
-				return userErr("%v", err)
+				return failStep(sr.rep, step, userErr("%v", err))
 			}
 			spec.GitProvider, spec.RepoURL, spec.BaseBranch = rs.Provider, rs.RepoURL, cmp.Or(rs.BaseBranch, "main")
 			spec.GitSecretID, spec.GitUser, spec.GitHubAppID = gitID, rs.GitUser, rs.GitHubAppID
@@ -402,9 +423,9 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 		res, err := b.SubmitCatalog(ctx, spec)
 		switch {
 		case errors.Is(err, gcp.ErrBadBuildSpec):
-			return userErr("%v", err)
+			return failStep(sr.rep, step, userErr("%v", err))
 		case err != nil:
-			return remote(err)
+			return failStep(sr.rep, step, remote(err))
 		}
 		// The submission IS the write this build's record is about: once it is
 		// out the build happened and keeps billing, so the record is written
@@ -412,10 +433,10 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 		// trail). The count moves with it, so the entry after this one is
 		// judged against the bound with this build in it.
 		if err := m.recorded(ctx); err != nil {
-			return err
+			return failStep(sr.rep, step, err)
 		}
 		if !o.noWait {
-			fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: Cloud Build build %s of %s submitted; log: %s\n", oneLine(res.ID), oneLine(res.Image), oneLine(res.LogURL))
+			fmt.Fprintf(w, "fugaro: Cloud Build build %s of %s submitted; log: %s\n", oneLine(res.ID), oneLine(res.Image), oneLine(res.LogURL))
 			done, waitErr := b.Wait(ctx, res.ID, 0)
 			if done.Image == "" {
 				done.Image = res.Image
@@ -425,7 +446,7 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 			}
 			res = done
 			if waitErr != nil {
-				return remote(waitErr)
+				return failStep(sr.rep, step, remote(waitErr))
 			}
 		}
 		// A prebuilt entry is smoked and never built, and the sentence says so:
@@ -440,19 +461,19 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 			if prebuilt {
 				what = "smoking"
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "submitted Cloud Build build %s %s %s; log: %s\n", oneLine(res.ID), what, oneLine(res.Image), oneLine(res.LogURL))
+			step.Done(fmt.Sprintf("submitted Cloud Build build %s %s %s; log: %s", oneLine(res.ID), what, oneLine(res.Image), oneLine(res.LogURL)))
 		case res.Digest == "":
 			// SUCCESS covers the promotion, so the content tag and latest
 			// are there; only the digest report is missing.
 			if prebuilt {
-				fmt.Fprintf(cmd.OutOrStdout(), "smoked %s, digest unknown: Cloud Build reported no digest for the reference (Cloud Build build %s)\n", oneLine(res.Image), oneLine(res.ID))
+				step.Done(fmt.Sprintf("smoked %s, digest unknown: Cloud Build reported no digest for the reference (Cloud Build build %s)", oneLine(res.Image), oneLine(res.ID)))
 			} else {
-				fmt.Fprintf(cmd.OutOrStdout(), "built %s, digest unknown: Cloud Build reported no pushed image (Cloud Build build %s)\n", oneLine(res.Image), oneLine(res.ID))
+				step.Done(fmt.Sprintf("built %s, digest unknown: Cloud Build reported no pushed image (Cloud Build build %s)", oneLine(res.Image), oneLine(res.ID)))
 			}
 		case prebuilt:
-			fmt.Fprintf(cmd.OutOrStdout(), "smoked %s@%s (Cloud Build build %s)\n", oneLine(res.Image), oneLine(res.Digest), oneLine(res.ID))
+			step.Done(fmt.Sprintf("smoked %s@%s (Cloud Build build %s)", oneLine(res.Image), oneLine(res.Digest), oneLine(res.ID)))
 		default:
-			fmt.Fprintf(cmd.OutOrStdout(), "built %s@%s (Cloud Build build %s)\n", oneLine(strings.TrimSuffix(res.Image, ":latest")), oneLine(res.Digest), oneLine(res.ID))
+			step.Done(fmt.Sprintf("built %s@%s (Cloud Build build %s)", oneLine(strings.TrimSuffix(res.Image, ":latest")), oneLine(res.Digest), oneLine(res.ID)))
 		}
 	}
 	return nil

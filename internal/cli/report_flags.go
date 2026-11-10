@@ -91,6 +91,20 @@ func loggedOut(w io.Writer, sink report.Sink) io.Writer {
 	return io.MultiWriter(w, sink)
 }
 
+// streamOut is where a command's own progress goes once it has a reporter: the
+// reporter's Stream — the log always, the terminal under --verbose — so the
+// default view stays one line per step (D1354) and the full output is kept
+// (D1352). w is where those lines went before the reporter, and is what a run
+// whose log could not be opened at all (a state directory that is read-only or
+// a link, G5) still writes them to: the output that explains a failure is the
+// last thing a run may swallow (G8).
+func streamOut(rep *report.Reporter, sink report.Sink, w io.Writer) io.Writer {
+	if sink == nil {
+		return w
+	}
+	return rep.Stream()
+}
+
 // failStep ends a step in failure and closes the run, so a command's failure
 // path is one line and still returns its own error: the step is the run's
 // verdict, the summary is the line under it, and both have to be written

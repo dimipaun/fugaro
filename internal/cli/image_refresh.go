@@ -18,6 +18,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/preflight"
+	"github.com/dimipaun/fugaro/internal/report"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -493,6 +494,53 @@ func refreshStopped(step int, done []string, o refreshOptions, err error) error 
 		err, step, refreshStepNames[step-1], finished, o.rerunLine(), where)}
 }
 
+// refreshStepLines are steps 2 to 4 as they are printed: the name the reporter
+// gives the step, and the header line this command printed for it before it
+// had a reporter. The two live together so a caller-driven refresh's header
+// and this command's step line cannot drift apart, and so the number in the
+// stop sentence (refreshStepNames) stays the same step.
+var refreshStepLines = []struct{ name, header string }{
+	{"base", "step 2, base:"},
+	{"check job", "step 3, the daily image check job:"},
+	{"builds", "step 4, builds:"},
+}
+
+// refreshStep is one of steps 2 to 4 as one run prints it. A refresh this
+// command owns (refreshOptions.out is nil) prints the reporter's step: one
+// line, at the step's end, and nothing else on the default view (D1354). A
+// refresh a caller drives — the converge's checkout stage, fugaro upgrade's
+// cloud step — prints the header line it has always printed: that run owns the
+// screen and has an account of its own, this refresh is one stage of it, and
+// its reporter is the caller's (CL5b), so no second account is opened beside
+// it.
+type refreshStep struct {
+	r      *initRun
+	name   string
+	header string
+	step   *report.Step
+}
+
+func (s *refreshStep) open() {
+	if s.r.rep == nil {
+		fmt.Fprintln(s.r.w, s.header)
+		return
+	}
+	s.step = s.r.rep.Step(s.name)
+}
+
+// end ends the step with the stage's error, and prints nothing at all for a
+// caller-driven run: its steps are the caller's own.
+func (s *refreshStep) end(err error) {
+	if s.step == nil {
+		return
+	}
+	if err != nil {
+		s.step.Failed(err, nil)
+		return
+	}
+	s.step.Done("")
+}
+
 // refreshSteps are steps 2 to 4; tests replace newRefreshSteps so the
 // command's own order and stop-message logic can be tested without the
 // cloud.
@@ -584,31 +632,61 @@ func runImageRefresh(cmd *cobra.Command, o refreshOptions) error {
 	// images stage) records the new base, and to step 3's reload, which
 	// reads it back: p.lcPath, both times.
 	e := &initEngine{r: r, lc: p.lc, spec: spec, path: p.lcPath, old: p.lcOld}
+	// This command's account and log (D1352, D1354), opened here where its work
+	// starts: a run stopped above — a session that would make Go print the
+	// operator's requests, --ask's refusal, the gate's, preflight's, a local
+	// config this step cannot use — files no log, not even an empty one, and
+	// prints no step line. The plan below is the review screen and not part of
+	// the run's own output, so it reaches the log with nothing either way.
+	if o.out == nil {
+		sr := stepRunFor(cmd, "image-refresh", cmd.OutOrStdout())
+		defer sr.close()
+		r.rep, r.repLog = sr.rep, sr.log
+	}
 	p.print(r.w)
 	s := newRefreshSteps(r, e, p)
+	step := func(i int) *refreshStep {
+		return &refreshStep{r: r, name: refreshStepLines[i].name, header: refreshStepLines[i].header}
+	}
+	base, checkJob, builds := step(0), step(1), step(2)
 	done := []string{"preflight"}
-	fmt.Fprintln(r.w, "step 2, base:")
+	base.open()
 	if err := s.base(ctx); err != nil {
+		base.end(err)
 		return refreshStopped(2, done, o, err)
 	}
+	base.end(nil)
 	done = append(done, "base")
-	fmt.Fprintln(r.w, "step 3, the daily image check job:")
+	checkJob.open()
 	t, err := s.reload(ctx)
 	if err == nil {
 		err = s.checkJob(ctx, t)
 	}
 	if err != nil {
+		checkJob.end(err)
 		return refreshStopped(3, done, o, err)
 	}
+	checkJob.end(nil)
 	done = append(done, "check job")
-	fmt.Fprintln(r.w, "step 4, builds:")
+	builds.open()
 	if err := s.builds(ctx, t); err != nil {
+		builds.end(err)
 		return refreshStopped(4, done, o, err)
 	}
+	builds.end(nil)
+	// The two notes stay on the screen — one repeats a fact the default view no
+	// longer shows, the other is the next command for this checkout — and go
+	// into the run's log beside it, which is the run's full output (D1352).
+	note := sayThrough(r.rep, r.w)
 	if t.checkJobMissing {
-		fmt.Fprintf(r.w, "note: step 3 found that the daily image check job was not found, though this repository's spec has one; run fugaro update --repo in %s to deploy it\n", o.checkoutName(p.root))
+		fmt.Fprintf(note, "note: step 3 found that the daily image check job was not found, though this repository's spec has one; run fugaro update --repo in %s to deploy it\n", o.checkoutName(p.root))
 	}
-	refreshAnchorNote(ctx, r.w, p.root, o.checkoutName(p.root), t.lc)
-	fmt.Fprintf(r.w, "fugaro image refresh of %s is done\n", p.repo)
+	refreshAnchorNote(ctx, note, p.root, o.checkoutName(p.root), t.lc)
+	if r.rep == nil {
+		// A refresh a caller drives is one stage of that run: its own line says
+		// this refresh is done, where the reporter's closing line says it for
+		// this command.
+		fmt.Fprintf(r.w, "fugaro image refresh of %s is done\n", p.repo)
+	}
 	return nil
 }

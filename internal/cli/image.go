@@ -335,6 +335,19 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 	if err := confirmBuild(cmd, lc.Name, lc.GCPProject, cloudBuildBanner(repo, name, lc.Build.MachineType, rs.BuildServiceAccountEmail, rs.RegistryPath)); err != nil {
 		return err
 	}
+	// This command's run: the reporter, its log under this command's own name
+	// (D1352), and the one step this build is. All of it opens after the
+	// confirmation above, so a build nobody can confirm — an agent's session, a
+	// pipe, --json — and one the person declined keeps no log, not even an
+	// empty one (D1354), and no frame is ever drawn over the typed name (G1).
+	sr := stepRunFor(cmd, "image-build", cmd.OutOrStdout())
+	defer sr.close()
+	step := sr.rep.Step(name)
+	// The build's own progress is the run's output (D1352, D1354): the log
+	// always and the terminal under --verbose, so the default view is the step
+	// line alone; a run whose log could not be opened keeps printing it where
+	// it always did (G5, G8).
+	w := streamOut(sr.rep, sr.log, cmd.ErrOrStderr())
 	// Writes the repository's copy of the project layer only now, after the
 	// typed confirmation above: like the converge's own buildImages/
 	// submitAndWait, a declined (or unconfirmable) build must leave no
@@ -342,21 +355,21 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 	if cfg.Layer != nil {
 		rb, err := env.recordBucket(ctx)
 		if err != nil {
-			return remote(err)
+			return failStep(sr.rep, step, remote(err))
 		}
 		if spec.ProjectLayerSHA256, err = prepareLayerCopy(ctx, rb, rs.Slug, cfg.Layer, base); err != nil {
-			return err
+			return failStep(sr.rep, step, err)
 		}
 	}
 	res, err := b.Submit(ctx, spec)
 	switch {
 	case errors.Is(err, gcp.ErrBadBuildSpec):
-		return userErr("%v", err)
+		return failStep(sr.rep, step, userErr("%v", err))
 	case err != nil:
-		return remote(err)
+		return failStep(sr.rep, step, remote(err))
 	}
 	if !o.noWait {
-		fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: Cloud Build build %s of %s submitted; log: %s\n", oneLine(res.ID), oneLine(res.Image), oneLine(res.LogURL))
+		fmt.Fprintf(w, "fugaro: Cloud Build build %s of %s submitted; log: %s\n", oneLine(res.ID), oneLine(res.Image), oneLine(res.LogURL))
 		done, waitErr := b.Wait(ctx, res.ID, 0)
 		if done.Image == "" {
 			done.Image = res.Image
@@ -366,25 +379,27 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 		}
 		res = done
 		if waitErr != nil {
-			return remote(waitErr)
+			return failStep(sr.rep, step, remote(waitErr))
 		}
 	}
+	// The sentence this command has always printed on stdout is the step's own
+	// line now: one line per step, on the screen and in the log.
 	if o.noWait {
-		fmt.Fprintf(cmd.OutOrStdout(), "submitted Cloud Build build %s of %s; log: %s\n", oneLine(res.ID), oneLine(res.Image), oneLine(res.LogURL))
+		step.Done(fmt.Sprintf("submitted Cloud Build build %s of %s; log: %s", oneLine(res.ID), oneLine(res.Image), oneLine(res.LogURL)))
 		return nil
 	}
 	if res.Digest == "" {
 		// SUCCESS covers the promotion, so the tag is there; only the
 		// digest report is missing.
-		fmt.Fprintf(cmd.OutOrStdout(), "built %s, digest unknown: Cloud Build reported no pushed image (Cloud Build build %s)\n", oneLine(res.Image), oneLine(res.ID))
+		step.Done(fmt.Sprintf("built %s, digest unknown: Cloud Build reported no pushed image (Cloud Build build %s)", oneLine(res.Image), oneLine(res.ID)))
 		return nil
 	}
 	if res.Superseded {
-		fmt.Fprintf(cmd.OutOrStdout(), "built %s@%s (Cloud Build build %s), but a newer build is already recorded, so latest and the record stay as they were\n",
-			oneLine(res.Image), oneLine(res.Digest), oneLine(res.ID))
+		step.Done(fmt.Sprintf("built %s@%s (Cloud Build build %s), but a newer build is already recorded, so latest and the record stay as they were",
+			oneLine(res.Image), oneLine(res.Digest), oneLine(res.ID)))
 		return nil
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "built %s@%s (Cloud Build build %s)\n", oneLine(strings.TrimSuffix(res.Image, ":latest")), oneLine(res.Digest), oneLine(res.ID))
+	step.Done(fmt.Sprintf("built %s@%s (Cloud Build build %s)", oneLine(strings.TrimSuffix(res.Image, ":latest")), oneLine(res.Digest), oneLine(res.ID)))
 	return nil
 }
 

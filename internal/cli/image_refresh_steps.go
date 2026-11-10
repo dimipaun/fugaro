@@ -48,14 +48,14 @@ func (r *initRun) refreshBase(ctx context.Context, e *initEngine, kinds []string
 		return err
 	}
 	if st.State == initflow.Skipped {
-		fmt.Fprintf(r.w, "  %s\n", st.Detail)
+		fmt.Fprintf(r.stageDetail(), "  %s\n", st.Detail)
 		return nil
 	}
 	out, err := s.Apply(ctx, initflow.Env{Yes: r.o.yes, Interactive: true})
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(r.w, "  base: %s\n", out.Detail)
+	fmt.Fprintf(r.stageDetail(), "  base: %s\n", out.Detail)
 	return nil
 }
 
@@ -108,6 +108,11 @@ func refreshReload(ctx context.Context, p *refreshPlan) (*refreshTarget, error) 
 // (ErrCheckJobShape), and a read that fails for any other reason is a
 // remote error, never treated as "no job" or "current".
 func (r *initRun) refreshCheckJob(ctx context.Context, t *refreshTarget) error {
+	// The stage's own result lines (stageDetail) and the block the person reads
+	// before the typed name (r.w) go to different writers: what the run reports
+	// is its own output, and the diff above the confirmation is the review
+	// screen (G1, CL5a).
+	w := r.stageDetail()
 	c, err := newInitClients(ctx, t.lc)
 	if err != nil {
 		return err
@@ -121,13 +126,13 @@ func (r *initRun) refreshCheckJob(ctx context.Context, t *refreshTarget) error {
 		return remote(err)
 	case u == nil && t.spec.Check != nil:
 		t.checkJobMissing = true
-		fmt.Fprintf(r.w, "  the daily image check job %s was not found, though this repository's spec has one: run fugaro update --repo in the checkout to deploy it (nothing was updated)\n", pluginwire.Printable(gcp.CheckJobName(t.spec.Slug)))
+		fmt.Fprintf(w, "  the daily image check job %s was not found, though this repository's spec has one: run fugaro update --repo in the checkout to deploy it (nothing was updated)\n", pluginwire.Printable(gcp.CheckJobName(t.spec.Slug)))
 		return nil
 	case u == nil:
-		fmt.Fprintln(r.w, "  no daily image check job (every workflow has rebuild.check: off): nothing to update")
+		fmt.Fprintln(w, "  no daily image check job (every workflow has rebuild.check: off): nothing to update")
 		return nil
 	case !u.Changes():
-		fmt.Fprintf(r.w, "  No changes: the daily image check job already runs from %s\n", pluginwire.Printable(u.NewImage()))
+		fmt.Fprintf(w, "  No changes: the daily image check job already runs from %s\n", pluginwire.Printable(u.NewImage()))
 		return nil
 	}
 	diff, err := checkSpecDiff(u, t.kinds)
@@ -143,7 +148,7 @@ func (r *initRun) refreshCheckJob(ctx context.Context, t *refreshTarget) error {
 	if err := infra.ApplyCheckJob(ctx, c, u); err != nil {
 		return remote(err)
 	}
-	fmt.Fprintln(r.w, "  updated the daily image check job")
+	fmt.Fprintln(w, "  updated the daily image check job")
 	return nil
 }
 
@@ -269,6 +274,7 @@ func (r *initRun) askBuild(what string, g initflow.Managed) (confirmed, reachabl
 // (same as a declined clone confirmation already does not, see
 // TestRefreshDeclinedCloneJobDoesNotBlockBakedRebuilds).
 func (r *initRun) refreshCloneJobs(ctx context.Context, p *refreshPlan, t *refreshTarget) error {
+	w := r.stageDetail()
 	var clones []string
 	for _, wf := range p.workflows {
 		if t.cfg.Workflows[wf].Checkout == config.CheckoutClone {
@@ -314,10 +320,10 @@ func (r *initRun) refreshCloneJobs(ctx context.Context, p *refreshPlan, t *refre
 		case err != nil:
 			return remote(err)
 		case u == nil:
-			fmt.Fprintf(r.w, "  %s: the job %s was not found: run fugaro update --repo in the checkout to deploy it (nothing was updated)\n", wf, pluginwire.Printable(ws.Job))
+			fmt.Fprintf(w, "  %s: the job %s was not found: run fugaro update --repo in the checkout to deploy it (nothing was updated)\n", wf, pluginwire.Printable(ws.Job))
 			continue
 		case !u.Changes():
-			fmt.Fprintf(r.w, "  %s: No changes: the job already runs from %s\n", wf, pluginwire.Printable(u.NewImage()))
+			fmt.Fprintf(w, "  %s: No changes: the job already runs from %s\n", wf, pluginwire.Printable(u.NewImage()))
 			continue
 		}
 		fmt.Fprintf(r.w, "  %s: image %s -> %s\n", wf, pluginwire.Printable(u.OldImage()), pluginwire.Printable(u.NewImage()))
@@ -328,7 +334,7 @@ func (r *initRun) refreshCloneJobs(ctx context.Context, p *refreshPlan, t *refre
 		if err := infra.ApplyWorkflowJob(ctx, c, u); err != nil {
 			return remote(err)
 		}
-		fmt.Fprintf(r.w, "  updated %s's job\n", wf)
+		fmt.Fprintf(w, "  updated %s's job\n", wf)
 	}
 	return nil
 }
@@ -350,6 +356,7 @@ func (r *initRun) refreshCloneJobs(ctx context.Context, p *refreshPlan, t *refre
 // had its own chance to run; a baked-side error, which already carries its
 // own "built so far" detail, takes precedence over it.
 func (r *initRun) refreshBuilds(ctx context.Context, p *refreshPlan, t *refreshTarget) error {
+	w := r.stageDetail()
 	cloneErr := r.refreshCloneJobs(ctx, p, t)
 	host, err := infra.RegistryHost(t.lc)
 	if err != nil {
@@ -370,7 +377,7 @@ func (r *initRun) refreshBuilds(ctx context.Context, p *refreshPlan, t *refreshT
 			return err
 		}
 		build, why := refreshVerdict(rec, want, p.ver, host, kind, baseOwner(t.lc))
-		fmt.Fprintf(r.w, "  %s: %s\n", wf, why)
+		fmt.Fprintf(w, "  %s: %s\n", wf, why)
 		if build {
 			todo = append(todo, wf)
 		}
@@ -379,7 +386,7 @@ func (r *initRun) refreshBuilds(ctx context.Context, p *refreshPlan, t *refreshT
 		}
 	}
 	if len(todo) == 0 {
-		fmt.Fprintln(r.w, "  No changes: every selected image is built from its current base")
+		fmt.Fprintln(w, "  No changes: every selected image is built from its current base")
 		return cloneErr
 	}
 	b, err := newCloudBuilder(ctx, t.lc)
@@ -388,7 +395,7 @@ func (r *initRun) refreshBuilds(ctx context.Context, p *refreshPlan, t *refreshT
 	}
 	notes := func() {
 		for _, wf := range unrecorded {
-			fmt.Fprintf(r.w, "note: %s had no build record; if its job is not deployed yet, fugaro update --repo in this checkout deploys it\n", wf)
+			fmt.Fprintf(w, "note: %s had no build record; if its job is not deployed yet, fugaro update --repo in this checkout deploys it\n", wf)
 		}
 	}
 	// The provider credential's ID the rebuilds' clones read: a refresh has
