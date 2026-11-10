@@ -371,6 +371,46 @@ func TestDocsCheck96IsWrittenAndSaysWhatIsNotYetTrue(t *testing.T) {
 		t.Errorf("scripts/live-checks/check96.sh's `cmd_config` no longer takes the `repos` mapping's indentation from the block's first key (%q): localcfg.Config.Marshal is yaml.Marshal at yaml.v3's four-space indent, and a reader that assumed two finds no repository in the installation's own config", strings.TrimSpace(body))
 	}
 
+	// The installation is the sandbox one by NAME, not by its project alone. The
+	// project is what the calls go to, but the Firebase project, the token signer
+	// and the restricted web API key this check mints its run identities with are
+	// read out of whichever installation the config in force describes — so a
+	// second installation on fugaro-dev would be read as this one and minted
+	// against, while the register's row says the check runs on installation
+	// `fugaro` and no other. The section says the guard is by name and why, and
+	// `step_installation` is held to the name it accepts.
+	// Mutation (run and restored): the NAME case neutered (`*) ;;`) →
+	// test_another_installation_on_fugaro_dev_stops FAILs with every row PASS
+	// under a `scratch-install` doctor, which is the review's own probe.
+	if !strings.Contains(check, "the installation is read by **name**, not by its project alone") {
+		t.Errorf("docs/gcp-live-checklist.md's Check 96 no longer says the installation is read by name rather than by its project alone: the register's row promises the check runs on installation `fugaro` and no other, and the Firebase project, the signer and the web API key all come out of that one config")
+	}
+	if body := check96ShellFunc(t, readRepoFile(t, check96Script), "step_installation() {"); !strings.Contains(body, `case "$NAME" in`) || !strings.Contains(body, `"$NAME_WANTED") ;;`) {
+		t.Errorf("scripts/live-checks/check96.sh's `step_installation` no longer refuses an installation that is not `$NAME_WANTED` (%q): a guard on the GCP project alone passes a second installation on fugaro-dev, and everything this check mints is minted with that installation's Firebase project, token signer and web API key", strings.TrimSpace(body))
+	}
+
+	// And `job` falls back to the shared project job for NO job of the
+	// repository's own — never for several. A repository whose fugaro.yaml has
+	// more than one workflow has one job per workflow, and the job a run lands on
+	// is a question the launch itself refuses to answer without `--workflow`
+	// (internal/cli/run.go's resolveWorkflow), so reading one of them (or the
+	// shared project job) would judge `job-env`, `mint` and `pairing` against an
+	// account and an environment that are not the repository's. The section says
+	// which of the two it is, the shell stops on several, and the reader reports
+	// the count it found rather than collapsing a several into a none.
+	// Mutation (run and restored): the several-jobs stop folded back into the
+	// `0` branch → test_a_repository_with_several_jobs_of_its_own_is_not_read_as_none
+	// FAILs with the false `the sandbox repository acme/sandbox has NO job of its own`.
+	if !strings.Contains(check, "A repository with **several** jobs of its own") {
+		t.Errorf("docs/gcp-live-checklist.md's Check 96 no longer says a repository with several jobs of its own is neither read nor fallen back from: one job per workflow, and the row that reports one of them would report an account, an environment and a mint that are not the repository's")
+	}
+	if body := check96ShellFunc(t, readRepoFile(t, check96Script), "step_job() {"); !strings.Contains(body, `0)`) || !strings.Contains(body, `answer=$(reader projectjob`) || !strings.Contains(body, `stop "the sandbox repository $REPO has $found jobs of its own in $P/$REGION`) {
+		t.Errorf("scripts/live-checks/check96.sh's `step_job` no longer tells no job of the repository's own from several (%q): the fallback to the installation's shared project job is for none, and a repository with several jobs has one per workflow, so falling back there reads the wrong account, the wrong environment and the wrong mint", strings.TrimSpace(body))
+	}
+	if body := check96PythonFunc(t, readRepoFile(t, check96Script), "def cmd_jobs():"); !strings.Contains(body, `print("found=%d" % len(found))`) {
+		t.Errorf("scripts/live-checks/check96.sh's `cmd_jobs` no longer reports how many jobs of its own the repository has (%q): without the count the shell cannot tell a repository with none from one with several, and the two are the fallback and the stop", strings.TrimSpace(body))
+	}
+
 	// The wiring, held to the code as well: the keyless provider is opened only
 	// when the job's environment names the service, and the launch is what puts
 	// that name on a repository job — so the check's expected answers are read

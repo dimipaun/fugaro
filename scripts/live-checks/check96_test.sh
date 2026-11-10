@@ -430,11 +430,13 @@ write_config() { # dir
 
 # write_job dir — the sandbox repository's own job. JOB_URL=no takes the service
 # URL off it, JOB_APP_KEY=no takes the App key's environment entry and mount
-# off it, JOB_PROFILE=yes makes it a shared project job, and JOB_SA overrides
-# the account it runs as.
+# off it, JOB_PROFILE=yes makes it a shared project job, JOB_SECOND=yes gives the
+# repository a second job of its own (one per workflow, which is the shape the
+# check refuses to choose in), and JOB_SA overrides the account it runs as.
 write_job() { # dir
   local dir=$1
   JOB_URL="${JOB_URL-yes}" JOB_APP_KEY="${JOB_APP_KEY-yes}" JOB_PROFILE="${JOB_PROFILE:-no}" \
+    JOB_SECOND="${JOB_SECOND:-no}" \
     JOB_NAME="${JOB_NAME:-$JOB}" JOB_SA="${JOB_SA:-$JOBSA}" python3 - "$dir/state/job.json" "$dir/state/jobs.json" <<'PY'
 import json, os, sys
 
@@ -459,8 +461,14 @@ check = {"metadata": {"name": os.environ["JOB_NAME"] + "-check",
                       "labels": {"fugaro_repo": os.environ["FAKE96_LABEL"], "fugaro_role": "check"}},
          "spec": {"template": {"spec": {"serviceAccountName": os.environ["JOB_SA"],
                                         "containers": [{"env": []}]}}}}
+jobs = [job, check]
+if os.environ.get("JOB_SECOND") == "yes":
+    second = json.loads(json.dumps(job))
+    second["metadata"]["name"] = os.environ["JOB_NAME"] + "-second"
+    second["metadata"]["labels"]["fugaro_workflow"] = "second"
+    jobs.insert(0, second)
 open(sys.argv[1], "w", encoding="utf-8").write(json.dumps(job))
-open(sys.argv[2], "w", encoding="utf-8").write(json.dumps([job, check]))
+open(sys.argv[2], "w", encoding="utf-8").write(json.dumps(jobs))
 PY
 }
 
@@ -760,13 +768,51 @@ test_a_config_that_is_not_fugaro_dev_stops() {
   expect_absent "$(cat "$dir/state/calls")" "curl " "another project: a call before the guard"
 }
 
+test_another_installation_on_fugaro_dev_stops() {
+  setup_case otherinstallation
+  # The GCP project is not the installation: everything this check reads out of
+  # the config in force — the Firebase project, the token signer and the
+  # restricted web API key — belongs to whichever installation that config names,
+  # so a second installation on fugaro-dev would be read as this one and minted
+  # against. The register's row says Check 96 runs on installation fugaro.
+  write_doctor "$dir" "$PROJECT" scratch-install
+  run96
+  expect_status "$status" 2 "another installation"
+  expect_contains "$out" "describes the installation 'scratch-install'" "another installation: the name it read"
+  expect_contains "$out" "runs on the 'fugaro' installation of $PROJECT only" "another installation: the guard says which"
+  expect_contains "$out" "FACT installation: FAIL — not reached" "another installation: no claim was measured"
+  expect_absent "$(cat "$dir/state/calls")" "curl " "another installation: a call before the guard"
+  expect_absent "$(cat "$dir/state/calls")" "budget" "another installation: a read of its own state"
+}
+
 test_a_repository_with_one_job_too_few_stops() {
   setup_case nojob
   printf '[]\n' >"$dir/state/jobs.json"
   run96
   expect_status "$status" 2 "no job"
-  expect_contains "$out" "no single job of its own" "no job: the message"
+  expect_contains "$out" "has no job of its own" "no job: the message"
+  expect_contains "$out" "no single shared project job" "no job: the fallback is named too"
   expect_contains "$out" "fugaro setup --repo" "no job: the command that makes one"
+}
+
+test_a_repository_with_several_jobs_of_its_own_is_not_read_as_none() {
+  setup_case twojobs
+  # One job per workflow of the repository's fugaro.yaml. This check reads the
+  # job a run lands on, and which workflow a run uses is a question the launch
+  # itself refuses without --workflow (internal/cli/run.go's resolveWorkflow), so
+  # the check stops rather than read one of them. Falling back to the shared
+  # project job is how two jobs used to be read as none: the account, the
+  # environment and the mint were then judged against the wrong job.
+  JOB_SECOND=yes write_job "$dir"
+  run96
+  expect_status "$status" 2 "two jobs of its own"
+  expect_contains "$out" "has 2 jobs of its own" "two jobs of its own: the count"
+  expect_contains "$out" "$JOB workflow=default" "two jobs of its own: the one it found is named with its workflow"
+  expect_contains "$out" "$JOB-second workflow=second" "two jobs of its own: the other one too"
+  expect_absent "$out" "has NO job of its own" "two jobs of its own: it is not read as none"
+  expect_absent "$out" "FACT job: PASS" "two jobs of its own: no job was read"
+  expect_contains "$out" "FACT job: FAIL — not reached" "two jobs of its own: the row says it was never measured"
+  expect_absent "$(cat "$dir/state/calls")" "curl " "two jobs of its own: a call before the stop"
 }
 
 test_the_shared_project_job_with_the_url_is_a_fail() {
@@ -1142,7 +1188,9 @@ t test_a_repository_argument_that_is_not_owner_name_is_refused
 t test_a_derivation_among_several_repositories_is_refused
 t test_a_repository_that_is_not_one_with_state_is_refused
 t test_a_config_that_is_not_fugaro_dev_stops
+t test_another_installation_on_fugaro_dev_stops
 t test_a_repository_with_one_job_too_few_stops
+t test_a_repository_with_several_jobs_of_its_own_is_not_read_as_none
 t test_the_shared_project_job_with_the_url_is_a_fail
 t test_a_job_that_has_no_service_url_while_the_config_records_one_is_a_fail
 t test_the_drop_landed_is_a_pass

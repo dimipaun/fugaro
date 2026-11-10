@@ -372,9 +372,20 @@ step_installation() {
   REGION=$(field_of region "$answer")
   [ -n "$REGION" ] || stop "fugaro doctor --json named no region, so this check cannot address the job: the local config has to carry one"
   [ "$PROJECT" = "$P" ] || stop "the config in force is the $PROJECT installation, and Check 96 runs on $P only (never belong): set FUGARO_CONFIG to the fugaro-dev installation's own config, or run it from a machine whose config names that project"
+  # And the installation is the sandbox one by NAME, not only by project: the GCP
+  # project is what the calls are made against, but everything this check reads
+  # out of the config — the Firebase project, the token signer and the restricted
+  # web API key — belongs to whichever installation the config in force
+  # describes, and a second installation on fugaro-dev would otherwise be read as
+  # this one and minted against. The register's row says the check runs on
+  # installation fugaro on project fugaro-dev, and this is that half.
   case "$NAME" in
+  "$NAME_WANTED") ;;
   belong | belong-*)
-    stop "the config in force describes the installation '$NAME', which is the owner's own one: Check 96 mints GitHub installation tokens and creates Firebase users, and it is a sandbox check"
+    stop "the config in force describes the installation '$NAME', which is the owner's own one: Check 96 mints GitHub installation tokens and creates Firebase users, and it is a sandbox check on the '$NAME_WANTED' installation"
+    ;;
+  *)
+    stop "the config in force describes the installation '$NAME', and Check 96 runs on the '$NAME_WANTED' installation of $P only: it mints a real GitHub installation token and creates Firebase users with the token signer and the web API key of whichever installation the config names, so another installation on $P is not this check's. Set FUGARO_CONFIG to the '$NAME_WANTED' installation's own config"
     ;;
   esac
 
@@ -478,8 +489,12 @@ step_job() {
     --filter="metadata.labels.fugaro_repo=$LABEL" --format=json; then
     stop "gcloud run jobs list did not answer for $P/$REGION: the check needs an account that may read Cloud Run there"
   fi
-  local answer
-  if ! answer=$(reader jobs <"$SCRATCH/jobs.json"); then
+  local answer found
+  answer=$(reader jobs <"$SCRATCH/jobs.json") || stop "the project's job list is not the document this check reads (gcloud run jobs list --format=json)"
+  found=$(field_of found "$answer")
+  case "$found" in
+  "" | *[!0-9]*) stop "the project's job list did not say how many jobs the sandbox repository has, so this check cannot tell whether $REPO has a job of its own" ;;
+  0)
     # No job of the repository's own. That is a finding about the launch (the
     # address goes on a repository's own job) rather than a reason to stop --
     # unless the installation has no shared project job either, which is the one
@@ -491,8 +506,22 @@ step_job() {
       stop "gcloud run jobs list did not answer for $P/$REGION: the check needs an account that may read Cloud Run there"
     fi
     answer=$(reader projectjob <"$SCRATCH/projectjobs.json") \
-      || stop "the sandbox repository $REPO ($REPO_COUNT of this installation's repositories have state) has no single job of its own in $P/$REGION: the job carries the label fugaro_repo=$LABEL, and its repositories are set up ('fugaro setup --repo $REPO' in a checkout of it) and applied ('fugaro update --repo') first"
-  fi
+      || stop "the sandbox repository $REPO ($REPO_COUNT of this installation's repositories have state) has no job of its own in $P/$REGION and this installation has no single shared project job either: a repository's jobs carry the label fugaro_repo=$LABEL and a shared project job carries fugaro_profile, and its repositories are set up ('fugaro setup --repo $REPO' in a checkout of it) and applied ('fugaro update --repo') first"
+    ;;
+  1) ;;
+  *)
+    # Several jobs of its own, one per workflow of the repository's fugaro.yaml
+    # -- and this check reads the job a run lands on. Which workflow a run uses
+    # is a question the launch itself refuses to answer without being told
+    # (internal/cli/run.go's resolveWorkflow: --workflow, else a config with
+    # exactly one), and this check is not told either, so it stops rather than
+    # read one job and report its account, its environment and its mint as the
+    # repository's. Reading the shared project job here instead is what this
+    # branch used to do, and it judged a repository with two jobs as a repository
+    # with none.
+    stop "the sandbox repository $REPO has $found jobs of its own in $P/$REGION, one per workflow of its fugaro.yaml ($(printf '%s\n' "$answer" | sed -n 's/^own=//p' | tr '\n' ' ')), and this check reads the job a run lands on: a run on a repository with several workflows is told which one with --workflow (internal/cli/run.go's resolveWorkflow) and this check is not told, so it stops rather than read one of them and report its account, its environment and its mint as the repository's. Name a sandbox repository whose fugaro.yaml has one workflow"
+    ;;
+  esac
   JOB=$(field_of job "$answer")
   JOB_KIND=$(field_of kind "$answer")
   [ -n "$JOB" ] || stop "the sandbox repository's job could not be named from the project's job list"
@@ -1334,20 +1363,31 @@ def cmd_svc():
 def cmd_jobs():
     """The repository's OWN jobs: those carrying its fugaro_repo label and no
     fugaro_role. A support job (a repository's image check) wears the role
-    instead of the workflow label, so it is not a job a run lands on; a
-    repository's jobs are one per workflow in its fugaro.yaml, and this check
-    refuses to pick between two."""
+    instead of the workflow label, so it is not a job a run lands on.
+
+    The count is printed as its own key and this does not fail on it: the caller
+    has to tell "this repository has no job of its own" from "it has several".
+    The first falls back to the installation's shared project job; the second is
+    a question this check will not answer by picking one, and a reader that
+    failed for both left the caller unable to tell them apart -- it read two jobs
+    as no job and judged a faultless installation against the shared project job.
+    Every job found is named with its workflow label, so the caller can print
+    what it refused to choose between."""
     found = []
     for job in load():
         labels = (job.get("metadata") or {}).get("labels") or {}
         if labels.get("fugaro_repo") and not labels.get("fugaro_role"):
             found.append(job)
-    if len(found) != 1:
-        fail("the repository has %d jobs of its own" % len(found))
-    labels = (found[0].get("metadata") or {}).get("labels") or {}
-    print("job=%s" % ((found[0].get("metadata") or {}).get("name") or ""))
-    print("kind=%s" % ("project" if labels.get("fugaro_profile") else "repository"))
-    print("workflow=%s" % (labels.get("fugaro_workflow") or ""))
+    print("found=%d" % len(found))
+    for job in found:
+        labels = (job.get("metadata") or {}).get("labels") or {}
+        print("own=%s workflow=%s" % ((job.get("metadata") or {}).get("name") or "",
+                                      labels.get("fugaro_workflow") or ""))
+    if len(found) == 1:
+        labels = (found[0].get("metadata") or {}).get("labels") or {}
+        print("job=%s" % ((found[0].get("metadata") or {}).get("name") or ""))
+        print("kind=%s" % ("project" if labels.get("fugaro_profile") else "repository"))
+        print("workflow=%s" % (labels.get("fugaro_workflow") or ""))
 
 
 def cmd_projectjob():
@@ -1615,8 +1655,10 @@ on_signal() {
 }
 # The installation this check runs on, and the one path it ever posts to:
 # hard-coded, and the guard above refuses a config that describes any other
-# project. The mint path is credsvc.MintPath (internal/credsvc/github.go).
+# installation or any other project. The mint path is credsvc.MintPath
+# (internal/credsvc/github.go).
 P=fugaro-dev
+NAME_WANTED=fugaro
 MINT=/v1/github/installation-token
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 
