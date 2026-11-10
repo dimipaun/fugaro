@@ -739,6 +739,29 @@ func TestMineDoesNotSetNotifiedFlag(t *testing.T) {
 	}
 }
 
+func TestIssueHelpDoesNotDenyTheUploadMineMakes(t *testing.T) {
+	// The parent's help is what a reader sees before typing any subcommand,
+	// and this family now holds one that writes to the project's store: a help
+	// that promises nothing here is uploaded denies the write `mine` and
+	// `list --mine` make (F12, T-IM6).
+	out, _, err := execute(t, "issue", "--help")
+	if err != nil {
+		t.Fatalf("issue --help: %v\n%s", err, out)
+	}
+	flat := strings.Join(strings.Fields(out), " ")
+	if strings.Contains(flat, "Nothing here is uploaded") {
+		t.Errorf("issue --help promises the family uploads nothing, and mine does:\n%s", out)
+	}
+	for _, want := range []string{
+		"uploads this machine's own pending records to the project's store",
+		"list --mine",
+	} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("issue --help does not say %q:\n%s", want, out)
+		}
+	}
+}
+
 // mineSchema compiles schemas/issue-mine.schema.json: the contract a reader
 // outside this binary validates `mine --json` against.
 func mineSchema(t *testing.T) *jsonschema.Schema {
