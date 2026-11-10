@@ -775,7 +775,10 @@ counts of the tree before it, so they move with the tree: the top-level keys fro
 one block the project layer's `defaults:` may set and one image-skew `Since`
 constant (`planningSince`), so the same four rows move once more: the top-level
 keys from 13 to 14, the scope rows from 102 to 103, the layer's `defaults:` blocks
-from 3 to 4 and the image-skew constants from 31 to 32.) They
+from 3 to 4 and the image-skew constants from 31 to 32. Amended 2026-11-10:
+`internal/cli/docs_dynamic_delivery_test.go`, the dynamic-delivery folder's pin
+(the register's Checks 510 and 511, their two steps files and the numbers the
+folder claims, DS0.2), moved the table's row from 114 to 115.) They
 are named because the figure is a running total of other folders' guards: a folder
 that writes one moves this row in its own commit, and a reader who finds the row
 stale has found a merge that did not.

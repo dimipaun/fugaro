@@ -43,8 +43,10 @@ above zero, the check says so and reads its own warmth as the **configuration's*
 
 ## The steps
 
-1. **The dry run first.** It reads nothing from the network and sends nothing: it runs the guards and
-   prints the calls and rows a real run would make.
+1. **The dry run first.** It sends nothing to the service and writes nothing: it runs the guards — and
+   `fugaro doctor --project fugaro --all` is a network **read** of the installation (its config, policy
+   and billing, and the update check), so a dry run offline stops at the guard rather than printing a
+   plan — then prints the calls and rows a real run would make.
 
    ```sh
    bash scripts/live-checks/check511.sh --dry-run

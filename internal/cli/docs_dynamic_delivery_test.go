@@ -259,6 +259,15 @@ func TestDynamicDeliveryDocsPinned(t *testing.T) {
 			t.Errorf("%s's DS0.2 section does not name %q: the task's Files, Tests and Commit are what a reviewer of it holds the work to", dynamicDeliveryPlan, want)
 		}
 	}
+
+	// 8. The rigor-modes census counts the pins the tree holds, and its own rule
+	// is that the folder which moves its row is named in it: this folder's pin
+	// moved that row, so the census carries the sentence naming it. A row that
+	// moved without one is the merge the census's own text calls the one that
+	// did not.
+	if !strings.Contains(flattenDoc(readDoc(t, rigorModesRecon)), "Amended 2026-11-10: `internal/cli/docs_dynamic_delivery_test.go`, the dynamic-delivery folder's pin") {
+		t.Errorf("%s does not name this folder's pin as the amendment that moved its pin count: the row's own rule is that a folder which writes a pin moves the row in its own commit and says so", rigorModesRecon)
+	}
 }
 
 // checkRow returns the register's summary row for a check number, or "" when

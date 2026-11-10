@@ -612,7 +612,7 @@ step_instance_ids() {
 plan() {
   local key n=$WINDOW_REQUESTS
   say "CHECK 511 plan (dry run: nothing below is run, and no row in the block was measured)"
-  say "  [no network] the guards: fugaro doctor --project fugaro --all and fugaro version"
+  say "  [network, read] the guards: fugaro doctor --project fugaro --all (it reads the installation's config, policy and billing, and the update check, so this is the dry run's one network read) and fugaro version"
   say "  [network, read] gcloud run services describe ${SERVICE} --project ${P} --region ${L} --format=json — the url, the minimum instance count and the latest ready revision"
   say "  [network, read] gcloud auth print-identity-token --audiences=<the service's url> — minted, never printed"
   say "  [network] $((n + 1)) requests to <url>/chk511/health?stamp=${STAMP} — one to open the window and then one every ${INTERVAL}s for $((n * INTERVAL))s; the service does not serve the route, so its container answers 404 itself, no credential is read and no model is called"

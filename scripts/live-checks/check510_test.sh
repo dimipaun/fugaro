@@ -841,12 +841,19 @@ test_the_length_bisection_reads_the_limit() {
   # The limit is measured rather than assumed: with the fake admitting five
   # characters and refusing six, the row has to name five — and every container
   # the bisection made has to be gone again.
-  local dir=$work/length
+  local dir=$work/length line
   prepare "$dir"
   run_check "$dir" FAKE_MAX_ID_LENGTH=5 CHECK510_LENGTH_MAX_PROBE=8
   expect_status "$status" 0 "the length bisection"
   expect_contains "$out" "FACT secret-id-length: PASS" "the length bisection: the row"
   expect_contains "$out" "the longest admitted secret ID is 5 characters and 6 was refused" "the length bisection: the limit it read"
+  # The detail beside "was refused" is the REFUSAL's own body. The bisection's
+  # last call is usually an admitted one, so a row that reads the body of the
+  # last call puts a created container's name under a sentence claiming a
+  # refusal — and this row is one the owner pastes into the register.
+  line=$(printf '%s\n' "$out" | grep '^FACT secret-id-length:' | head -n 1)
+  expect_contains "$line" "Secret ID must be no more than 5 characters long" "the length bisection: the refusal's own message"
+  expect_absent "$line" '"name":"projects/' "the length bisection: no admitted create's body under the refusal"
   assert_clean "$dir" "the length bisection"
 }
 

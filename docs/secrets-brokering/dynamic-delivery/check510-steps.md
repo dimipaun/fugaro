@@ -41,8 +41,10 @@ restore deletes. Read the header before you start; this file is the commands.
 
 ## The steps
 
-1. **The dry run first.** It reads nothing from the network and writes nothing: it runs the guards and
-   prints every call a real run would make and every row the block would carry.
+1. **The dry run first.** It writes nothing and calls nothing in the project: it runs the guards — and
+   `fugaro doctor --project fugaro --all` is a network **read** of the installation (its config, policy
+   and billing, and the update check), so a dry run offline stops at the guard rather than printing a
+   plan — then prints every call a real run would make and every row the block would carry.
 
    ```sh
    bash scripts/live-checks/check510.sh --dry-run

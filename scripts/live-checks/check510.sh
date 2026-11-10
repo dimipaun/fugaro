@@ -607,7 +607,7 @@ step_list() {
 # limit's own INVALID_ARGUMENT. Every admitted name is recorded for the restore,
 # because each one is a real container.
 step_id_length() {
-  local lo=1 hi=$LENGTH_MAX_PROBE mid best refused
+  local lo=1 hi=$LENGTH_MAX_PROBE mid best refused refused_detail=""
   create_secret "$(length_name 1)"
   if [ "$API_STATUS" != 200 ]; then
     unmeasured secret-id-length "a 1-character secret ID was refused (${API_STATUS}: $(api_detail)), so the bisection has no admitted end to start from"
@@ -621,6 +621,7 @@ step_id_length() {
     return 0
   fi
   refused=$hi
+  refused_detail=$(api_detail)
   while [ $((hi - lo)) -gt 1 ]; do
     mid=$(((lo + hi) / 2))
     create_secret "$(length_name "$mid")"
@@ -629,11 +630,15 @@ step_id_length() {
       lo=$mid
     else
       refused=$mid
+      # Read here, beside the call that was refused: api_detail reads the body
+      # of the LAST call, and the loop's last call is usually an admitted one,
+      # which would put a success body under a sentence saying "was refused".
+      refused_detail=$(api_detail)
       hi=$mid
     fi
   done
   best=$lo
-  fact secret-id-length PASS "the longest admitted secret ID is ${best} characters and ${refused} was refused: $(api_detail). R1's limit sentence and DS0.1's length test name ${best}; a fugaro_u_<id>_<name> name spends 10 characters of prefix and 16 of Google account ID before the caller's own name"
+  fact secret-id-length PASS "the longest admitted secret ID is ${best} characters and ${refused} was refused: ${refused_detail:-the refusal carried no message in its body}. R1's limit sentence and DS0.1's length test name ${best}; a fugaro_u_<id>_<name> name spends 10 characters of prefix and 16 of Google account ID before the caller's own name"
 }
 
 # length_name L: a legal secret ID of exactly L characters, and nothing a real
@@ -653,7 +658,7 @@ delete_secret() { api DELETE "$(api_url)/secrets/$1"; }
 plan() {
   local key
   say "CHECK 510 plan (dry run: nothing below is run, and no row in the block was measured)"
-  say "  [no network] the guards: fugaro doctor --project fugaro --all and fugaro version"
+  say "  [network, read] the guards: fugaro doctor --project fugaro --all (it reads the installation's config, policy and billing, and the update check, so this is the dry run's one network read) and fugaro version"
   say "  [network, write] gcloud iam service-accounts create ${SA_NAME} (throwaway), then roles/iam.serviceAccountTokenCreator for $ACCOUNT on it"
   say "  [network, write] gcloud secrets create for five probes: ${PROBE_U}, ${PROBE_P}, ${PROBE_N}, ${PROBE_U2}, ${PROBE_N2}"
   say "  [network, write] gcloud projects add-iam-policy-binding ${P} --role=roles/secretmanager.admin|viewer|creator, the first two under the condition: $(condition_expression)"
