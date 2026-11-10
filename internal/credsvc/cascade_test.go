@@ -730,6 +730,88 @@ func providerReviewSvc(t *testing.T) *svc {
 	})
 }
 
+// providerNameAccountReviewSvc is the review fixture whose pairing names the
+// provider key's account-axis value against a bundle that holds NO provider
+// entry and DOES hold an account named after the credential
+// (claude-oauth-token-provider-key): the one document where the provider arm's
+// two halves — the name and the tier — come apart. Both policies admit that
+// account to the fixture's repository, so a rule that matched the name alone
+// would not merely offer it: it would serve the call from it.
+func providerNameAccountReviewSvc(t *testing.T) *svc {
+	t.Helper()
+	return newReviewSvcSpelled(t, testReviewSA, testReviewSA, func(s *svc, cfg *Config) {
+		s.src.docs = [][]byte{append(bundleDoc(t),
+			[]byte(config.ClaudeAccountSecret(config.ProviderKeySecret)+": "+fakeCred(t, "account")+"\n")...)}
+		cfg.ReviewAccounts = []ReviewJobAccount{{Email: testReviewSA, Account: config.ProviderKeyAccount}}
+		s.policy.shared = decodeTestPolicy(t, testPolicyDocAccounts("auto",
+			`"default": {"allow_repos": ["`+testRepo+`"]},
+				"`+testAccount+`": {"allow_repos": ["`+testRepo+`"]},
+				"`+config.ProviderKeyAccount+`": {"allow_repos": ["`+testRepo+`"]},
+				"`+config.ProviderKeySecret+`": {"allow_repos": ["`+testRepo+`"]}`))
+		s.policy.admissions[s.slug] = decodeTestChild(t, testChildDoc(config.ProviderKeyAccount, config.ProviderKeySecret))
+	})
+}
+
+// TestProviderKeyPairingIsRefusedWhenOnlyAnAccountGoesByName is the second half
+// of offeredToReview's provider arm: the name is not the credential. The arm
+// matches the name AND the tier, and a bundle may hold an account named
+// "provider-key" — the sentinel carries a doubled dash, so a single one is a
+// legal account name — so a rule that matched the name alone would serve a
+// caller paired with config.ProviderKeyAccount from that account's tier-A OAuth
+// token, under the credential name "provider-key". That is the substitution the
+// rule exists to prevent, and the account is admitted to the fixture's
+// repository on both policy levels so that the wrong answer is a served call
+// rather than only an offer.
+//
+// The document holds the account and no provider entry, which is the state an
+// installation is in before its bundle carries the entry (and any installation
+// that never adds one): the pairing has nothing to be served by, so the call is
+// refused before a byte leaves the service.
+func TestProviderKeyPairingIsRefusedWhenOnlyAnAccountGoesByName(t *testing.T) {
+	s := providerNameAccountReviewSvc(t)
+
+	b, err := s.server.cfg.Bundles.Load(context.Background())
+	if err != nil {
+		t.Fatalf("loading the fixture's own bundle: %v", err)
+	}
+	if e, ok := b.ProviderKey(); ok {
+		t.Fatalf("the fixture's document holds a provider entry (%+v), so this is not the document this test means to be about", e)
+	}
+	if e, ok := b.Lookup(config.ProviderKeySecret); !ok || e.Tier != creds.TierA {
+		t.Fatalf("the fixture's document does not hold the account named %q: %+v, %v", config.ProviderKeySecret, e, ok)
+	}
+
+	all := reviewOfferings(b)
+	offered, skipped := reviewCandidates(all, config.ProviderKeyAccount)
+	if len(offered) != 0 {
+		t.Errorf("a caller paired with %q was offered %v, and the document holds no provider entry: the arm matches the tier as well as the name", config.ProviderKeyAccount, offered)
+	}
+	got, ok := reportedNotAdmitted(t, skipped)[config.ProviderKeySecret]
+	switch {
+	case !ok:
+		// Not a Fatalf: the call below is the half that shows what the wrong
+		// answer costs, and it has to run whatever the list says.
+		t.Errorf("the account named %q was neither offered nor reported as not admitted", config.ProviderKeySecret)
+	case got.Reason != ReasonNotAdmitted || got.Tier != wireTier(creds.TierA):
+		t.Errorf("the account named %q was reported as %+v, want %q at tier %s: it is a model credential this pairing is not served by",
+			config.ProviderKeySecret, got, ReasonNotAdmitted, wireTier(creds.TierA))
+	}
+
+	resp, body := s.callTokens(t, callBody("review-provider-name-only"), s.reviewRunToken(), s.reviewJobToken(), s.job)
+	if resp.StatusCode != StatusUnavailable {
+		t.Fatalf("a review caller paired with %q was answered %d, want %d: %s", config.ProviderKeyAccount, resp.StatusCode, StatusUnavailable, body)
+	}
+	if e := refusal(t, resp.StatusCode, body); e.Error != ErrorStateUnavailable {
+		t.Errorf("the refusal is %+v, want %q", e, ErrorStateUnavailable)
+	}
+	if got := resp.Header.Get(HeaderCredential); got != "" {
+		t.Errorf("%s = %q, want none: no credential answered this call", HeaderCredential, got)
+	}
+	if n := s.up.Count(); n != 0 {
+		t.Fatalf("the upstream saw %d requests, want none: the pairing has nothing to be served by", n)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Which entry a selected candidate resolves to (AK6b)
 // ---------------------------------------------------------------------------
