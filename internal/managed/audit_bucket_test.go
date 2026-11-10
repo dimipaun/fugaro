@@ -44,7 +44,7 @@ func TestAuditRecordBucketIsVersioned(t *testing.T) {
 		}
 	}
 	if !versioned {
-		t.Fatalf("%s carries no `versioning { enabled = true }` block, so a managed audit record is erasable in place and the record the D1545 ruling rests on (reconciliation F15) is not the append-only one audit.go's WriteAudit claims: the writer and the eraser would be the same identity", auditBucketTF)
+		t.Fatalf("%s carries no `versioning { enabled = true }` block, so a managed audit record is erasable in place by whoever applied it: the versioning T2's ruling of 2026-11-07 rests on (reconciliation F15) is gone", auditBucketTF)
 	}
 
 	// Every rule that purges noncurrent versions, and which prefixes it reaches.

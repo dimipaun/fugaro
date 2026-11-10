@@ -3,15 +3,15 @@
 #
 # It is VERSIONED, and versioning is the managed audit record's own control
 # (docs/no-prompt-policy/reconciliation.md, F15 and T2's ruling of 2026-11-07):
-# under D1545 the record of a managed apply is what stands in for the person who
-# would have read the plan, and an unversioned bucket made it erasable by
-# whoever applied — the record's writer and its eraser were the same identity.
-# A versioned bucket turns a deletion into a noncurrent version that only an
-# operator holding the object's generation can remove for good, which is the
-# hardening D1545 chose (choice (a)). The lifecycle rules below delete noncurrent
-# versions under every prefix the rules above empty — runs/, cache/, locks/,
-# tokens/ and issues/ — so the bucket does not grow without bound, while fugaro/
-# and builds/ have none: that is the half the record depends on.
+# under D1545 the record stands in for the person who would have read the plan,
+# and an unversioned bucket let whoever applied erase it in place. Versioning
+# turns a deletion into a noncurrent version — the hardening D1545 chose, choice
+# (a) — but it does not separate the writer from the eraser: the apply runs as
+# the operator, who holds objectAdmin here and can delete every generation. What
+# it buys is that erasure needs that role. The lifecycle rules below delete
+# noncurrent versions under every prefix the rules above empty — runs/, cache/,
+# locks/, tokens/ and issues/ — so the bucket does not grow without bound, while
+# fugaro/ and builds/ have none: that is the half the record depends on.
 resource "google_storage_bucket" "runs" {
   project  = var.project
   name     = var.runs_bucket

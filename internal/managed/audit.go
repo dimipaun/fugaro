@@ -53,16 +53,19 @@ import (
 // section exists to end.
 //
 // What this is NOT, said here rather than left for a reader to assume: it is
-// not a tamper-proof log. The runs bucket has object versioning on (the
-// installation module's bucket.tf), so this path's own write cannot be
-// silently replaced in place — a rewrite leaves the version before it readable
-// — but versioning is not tamper-proofing: a project-level storage writer can
-// still write a new version, delete a version, or destroy the object and every
-// version on it, and the read below refuses a shape it does not know rather
-// than detecting a rewording of one it does. What versioning buys is that the
-// audit path is append-only by construction and its history is inspectable;
-// what it does not buy is a log nobody can lie to. It is a record of what a
-// session through this program did.
+// not a tamper-proof log, and the versioning it rests on (the installation
+// module's bucket.tf) does not make it one. A rewrite of this path's own write
+// leaves the version before it readable rather than replacing it silently, but
+// versioning does not separate the record's writer from its eraser: the apply
+// runs as the operator, and the operator's own credentials hold objectAdmin on
+// this bucket — they can list, overwrite and delete every generation of every
+// object in it, so an identity that can write this record can also empty it,
+// and the read below refuses a shape it does not know rather than detecting a
+// rewording of one it does. What versioning buys is that erasure needs that
+// role: an identity with less than the operator's cannot remove the record for
+// good, and its history stays inspectable in the meantime. What it does not buy
+// is a log nobody can lie to. It is a record of what a session through this
+// program did.
 
 // AuditVersion is the record's own version, and it is the marker's rule applied
 // to this object: a version this build does not know is refused rather than
