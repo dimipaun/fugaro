@@ -19,6 +19,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backlog"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // isolateState points the state directory -- where a run's log is filed
@@ -48,7 +49,8 @@ func closingLine(t *testing.T, out string, n int) {
 // TestRunDefaultIsShort: `fugaro run`'s default view is the launch as one
 // step, the branch it cut and the run's own cloud log under it, and the
 // closing line (D1352, D1354). The launch's own words are unchanged: the same
-// slug, the same follow-up note, the same branch and logs lines.
+// follow-up note, the same branch and logs lines, and the run named in its
+// short form (D1705).
 func TestRunDefaultIsShort(t *testing.T) {
 	newCloudFixture(t)
 	out, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20260927-100000-abcd", "Add a feature")
@@ -56,7 +58,7 @@ func TestRunDefaultIsShort(t *testing.T) {
 		t.Fatal(err)
 	}
 	lines := reportLines(out)
-	if got, want := lines[0], markDone+" launch "+appSlug+"/20260927-100000-abcd"; got != want {
+	if got, want := lines[0], markDone+" launch "+task.ShortRun("20260927-100000-abcd"); got != want {
 		t.Errorf("the launch's first line is %q, want the step %q:\n%s", got, want, out)
 	}
 	for _, want := range []string{
@@ -111,7 +113,7 @@ func TestRunJSONIsUntouched(t *testing.T) {
 	if strings.ContainsRune(out, 0x1b) || len(stepNames(out)) != 0 {
 		t.Errorf("--json stdout carries a human line or an escape byte:\n%s", out)
 	}
-	if !strings.Contains(errOut, markDone+" launch "+appSlug+"/20260927-100000-abcd") {
+	if !strings.Contains(errOut, markDone+" launch "+task.ShortRun("20260927-100000-abcd")) {
 		t.Errorf("the launch's step is not on stderr:\n%s", errOut)
 	}
 }
@@ -128,9 +130,9 @@ func TestCancelDefaultIsShort(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	step := markDone + " cancel " + appSlug + "/20260927-100000-abcd"
+	step := markDone + " cancel " + task.ShortRun("20260927-100000-abcd")
 	result := "cancelled the execution."
-	for _, want := range []string{"cancel requested for " + appSlug + "/20260927-100000-abcd", step, result} {
+	for _, want := range []string{"cancel requested for " + task.ShortRun("20260927-100000-abcd"), step, result} {
 		if !strings.Contains(out, want) {
 			t.Errorf("cancel printed %q, want it to say %q", out, want)
 		}
@@ -261,7 +263,8 @@ func TestCancelWritesALog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ref := appSlug + "/20260927-100000-abcd"
+	// The human lines name the run in its short form (D1705).
+	ref := task.ShortRun("20260927-100000-abcd")
 	_, log := onlyLog(t, "cancel")
 	for _, want := range []string{"cancel requested for " + ref, "cancelled the execution."} {
 		if !strings.Contains(log, want) || !strings.Contains(out, want) {

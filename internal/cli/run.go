@@ -315,7 +315,7 @@ func newRunCmd() *cobra.Command {
 	f.StringVar(&o.title, "title", "", "the run's title, one line: what fugaro watch and runs ls list the run by, and the pull request's title unless the agent wrote its own pr.md (default: the task's first line); a follow-up (--pr) keeps its run's title unless this is given")
 	f.StringVar(&o.planTask, "plan-task", "", "record the plan task this run works on, as <plan>/<task> (for example setup-wizard/W1.3): the id the console's graph joins this run to a node by; it changes nothing about what the run does, and a follow-up (--pr) records one only when given")
 	f.StringVar(&o.tf, "task-file", "", "read the task from this file, or - for stdin")
-	f.StringVar(&o.retry, "retry", "", "launch the stored task of RUN (<repo-slug>/<run-id> or a run ID) that never started")
+	f.StringVar(&o.retry, "retry", "", "launch the stored task of RUN (a full run ID, or <repo-slug>/<run-id>) that never started: a run an ending names is never launched, since the bucket cannot vouch for which run an ending means")
 	f.StringVar(&o.totalTimeout, "total-timeout", "", "override the workflow's timeouts.total for this run, such as 45m")
 	f.IntSliceVar(&o.pr, "pr", nil, "continue Fugaro PR N: act on its trusted review comments (TEXT adds instructions); with a mode: review --recipe, review PR N instead (repeatable, 1 to 4, any open PR)")
 	f.StringVar(&o.recipe, "recipe", "", "the recipe (task loop) to run: .fugaro/recipes/NAME.yaml, the project's, or the catalog's ("+strings.Join(recipe.CatalogNames(), ", ")+"); default: agent.recipe in fugaro.yaml, else default; a follow-up (--pr) keeps its previous run's")
@@ -894,6 +894,11 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 			if err := checkCloneSecurityImage(ctx, env, spec, warn); err != nil {
 				return launchResult{}, err
 			}
+			// The planning: block, the same shape and the same reason again:
+			// see checkPlanningImage.
+			if err := checkClonePlanningImage(ctx, env, spec, warn); err != nil {
+				return launchResult{}, err
+			}
 			// The run's own rigor request, gated on the field the same way:
 			// a runner older than rigorRequestSince refuses a task carrying
 			// rigor or paths outright (task.Parse decodes with
@@ -1016,6 +1021,11 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 			// The security: block, the same shape as the rigor: gate above and
 			// for the same reason: see checkSecurityImage.
 			if err := checkSecurityImage(ctx, env, slug, spec, kind, warn); err != nil {
+				return launchResult{}, err
+			}
+			// The planning: block, the same shape and the same reason again:
+			// see checkPlanningImage.
+			if err := checkPlanningImage(ctx, env, slug, spec, kind, warn); err != nil {
 				return launchResult{}, err
 			}
 			// The same gate as the clone branch's above, and for the same
@@ -1201,7 +1211,8 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 	}
 	if o.retry != "" && res.Status == "already-launched" {
 		fmt.Fprintf(warn, "%s launched already; --retry only starts a run that never launched. "+
-			"To see how it went, run fugaro diagnose %s; to redo it, start a new run.\n", res.Run, res.Run)
+			"To see how it went, run fugaro diagnose %s; to redo it, start a new run.\n",
+			task.ShortRun(oneLine(res.Run)), task.ShortRun(oneLine(res.Run)))
 	}
 	res.Project = env.lc.Name
 	res.Recipe = launchRecipeOf(spec, chooses)
@@ -1810,7 +1821,7 @@ func runAttempts(cmd *cobra.Command, env *cloudEnv, o *runOptions, text string, 
 			// only be some other process's run reusing the id — too
 			// improbable to recover from; the batch must not silently count
 			// a run it did not itself start.
-			err := fmt.Errorf("run %s was already launched, not by this batch", oneLine(res.Run))
+			err := fmt.Errorf("run %s was already launched, not by this batch", task.ShortRun(oneLine(res.Run)))
 			failStep(rep, step, err)
 			return reportBatchFailure(cmd, o.batch, n, o.asJSON, results, i, err)
 		}
@@ -1869,7 +1880,7 @@ func reportBatchFailure(cmd *cobra.Command, batch string, n int, asJSON bool, re
 	}
 	ids := make([]string, len(results))
 	for j, r := range results {
-		ids[j] = r.RunID
+		ids[j] = task.ShortRun(r.RunID)
 	}
 	return fmt.Errorf("attempt %d of %d: %w; launched %d (batch %s): %s", i+1, n, err, len(results), batch, strings.Join(ids, ", "))
 }
@@ -2159,31 +2170,32 @@ func claudeAccountFor(ctx context.Context, env *cloudEnv, repo, flag, stage, ref
 	// sentinel here is config.DefaultClaudeAccount — the spelling a repeated
 	// launch's stored task uses for "no account chosen", which is not a name of
 	// the run's own, so it leaves the mix's account standing; the account
-	// axis's other non-account value, config.AnthropicKeyAccount, is not this
-	// case and must not be: it is what names the review class's own pairing
-	// (D1417, D1422), so the mix never takes its place, and the test below is
-	// exactly why — the sentinel is neither "" nor the default. Any other name
+	// axis's non-account values (config.AnthropicKeyAccount,
+	// config.ProviderKeyAccount) are not this case and must not be: they are
+	// what name the review class's own pairing (D1417, D1422), so the mix never
+	// takes their place, and the test below is exactly why — neither is "" nor
+	// the default. Any other name
 	// is left to the walk below, which refuses it unless it is the mix's own. A
 	// *stage* asked for is not this resolution: it has its own chain above, and
 	// the mix serves the two stages of the allow-list and no other.
 	//
-	// The sentinel and a declared mix are the one pair here that neither of
-	// those answers covers: the name is no account, so it is refused below only
-	// where the pair cannot be judged at all (claudeAccountAllowed admits it for
-	// api-key, which is the auth a mix is declared under), while the runner
-	// serves the run's review and adversarial stages out of the mix whatever the
-	// launch's own account is. Such a launch would start on the sentinel's job —
-	// the one whose account segment it is — which mounts no Claude token, and
-	// its review stages would halt for one. It is refused here instead, where
-	// the mix is known.
+	// A non-account value and a declared mix are the one pair here that neither
+	// of those answers covers: the name is no account, so it is refused below
+	// only where the pair cannot be judged at all (claudeAccountAllowed admits
+	// it for api-key, which is the auth a mix is declared under), while the
+	// runner serves the run's review and adversarial stages out of the mix
+	// whatever the launch's own account is. Such a launch would start on the
+	// value's job — the one whose account segment it is — which mounts no Claude
+	// token, and its review stages would halt for one. It is refused here
+	// instead, where the mix is known.
 	if stage == "" {
 		mix, err := mixedRunAccount(ctx, env, repo, auth, co)
 		if err != nil {
 			return "", err
 		}
-		if mix != "" && name == config.AnthropicKeyAccount {
-			return "", userErr("this launch names the project's own Anthropic API key (%s) as the run's own account, and this run declares a mix: %s serves its %s stages, and those stages read the account's token out of the runner's environment, which only the account's own job mounts — the mix is the one Claude account an api-key run may hold, and the key is not an account, so the launch would start on the key's job, whose review stages have no token to run on. Nothing was launched: no claim was taken, no budget token was minted and Cloud Run was not called. Launch without --token, which is where a mixed run starts — the mix is the run's own account — or remove the account this mix names for the %s stages",
-				config.AnthropicKeyAccount, mix, strings.Join(config.MixedAccountStages, " and "), strings.Join(config.MixedAccountStages, " and "))
+		if mix != "" && config.AxisNonAccountValue(name) {
+			return "", userErr("this launch names %s (%s) as the run's own account, and this run declares a mix: %s serves its %s stages, and those stages read the account's token out of the runner's environment, which only the account's own job mounts — the mix is the one Claude account an api-key run may hold, and this value is not an account, so the launch would start on its job, whose review stages have no token to run on. Nothing was launched: no claim was taken, no budget token was minted and Cloud Run was not called. Launch without --token, which is where a mixed run starts — the mix is the run's own account — or remove the account this mix names for the %s stages",
+				nonAccountPhrase(name), name, mix, strings.Join(config.MixedAccountStages, " and "), strings.Join(config.MixedAccountStages, " and "))
 		}
 		if mix != "" && (name == "" || name == config.DefaultClaudeAccount) {
 			name = mix
@@ -2588,10 +2600,11 @@ func checkoutAgentAuth(co *config.Config) string {
 // pre-check callers (a follow-up's inherited account, --retry's stored task)
 // depend on.
 //
-// The account axis's one non-account value is the exception, and it is the
-// membership half it is excepted from: config.AnthropicKeyAccount names the
-// project's own Anthropic API key, which no claude_accounts entry may define
-// and which the launch is judged against the profile's own list for (the arm
+// The account axis's non-account values are the exception, and it is the
+// membership half they are excepted from: config.AnthropicKeyAccount names the
+// project's own Anthropic API key and config.ProviderKeyAccount the project's
+// provider key, neither of which a claude_accounts entry may define and both of
+// which the launch is judged against the profile's own list for (the arm
 // below says the whole of it).
 func claudeAccountAllowed(env *cloudEnv, repo, name, auth string) error {
 	if name == config.DefaultClaudeAccount {
@@ -2614,30 +2627,31 @@ func claudeAccountAllowed(env *cloudEnv, repo, name, auth string) error {
 		return userErr("named Claude account %s cannot be judged against %s's agent.auth, which is %s — not a value this Fugaro knows (agent.auth is one of %s)",
 			pluginwire.Printable(name), repo, pluginwire.Printable(auth), strings.Join(config.AgentAuths, ", "))
 	}
-	// The axis's one non-account value (config.AnthropicKeyAccount) is admitted
-	// here and judged where it can be: the profile's own claude_accounts list is
-	// what deploys the job it names and its review-only variant
-	// (internal/infra's ProjectJobs and ProjectReviewJobs), and the first thing
-	// the launch does with this name is ask that list (project_job.go's
-	// projectJobAccountFor). It cannot be judged HERE, by the allow-list: the
-	// sentinel is not a Claude account and config.ValidateClaudeAccounts refuses
-	// to define it in claude_accounts, so config.AllowedClaudeAccounts — the
-	// list this function's membership half reads — can never hold it, and a
-	// refusal here would name a claude_accounts entry the operator may not write.
+	// The axis's non-account values (config.AnthropicKeyAccount,
+	// config.ProviderKeyAccount) are admitted here and judged where they can be:
+	// the profile's own claude_accounts list is what deploys the job each one
+	// names and its review-only variant (internal/infra's ProjectJobs and
+	// ProjectReviewJobs), and the first thing the launch does with such a name is
+	// ask that list (project_job.go's projectJobAccountFor). They cannot be
+	// judged HERE, by the allow-list: neither is a Claude account and
+	// config.ValidateClaudeAccounts refuses to define either in claude_accounts,
+	// so config.AllowedClaudeAccounts — the list this function's membership half
+	// reads — can never hold them, and a refusal here would name a
+	// claude_accounts entry the operator may not write.
 	//
-	// api-key is the auth it is admitted for, and "" beside it: D1417 pairs the
-	// key with a repository whose own agent.auth is api-key (the launch names the
-	// pairing with --token), which is the one auth the class serves the key
-	// under, and the pre-check callers — a follow-up's inherited account and
-	// --retry's stored task, resolved with no document to read an auth from —
-	// are held to the same rule at the launch that can read one
+	// api-key is the auth they are admitted for, and "" beside it: D1417 pairs
+	// each credential with a repository whose own agent.auth is api-key (the
+	// launch names the pairing with --token), which is the one auth the class
+	// serves it under, and the pre-check callers — a follow-up's inherited
+	// account and --retry's stored task, resolved with no document to read an
+	// auth from — are held to the same rule at the launch that can read one
 	// (projectJobAccountFor, and the runner's own checkProjectJobAccount after
 	// it). Every other auth keeps the answer it already had: an OAuth run's
-	// credential is a Claude account and this is not one, and vertex and cascade
-	// are refused by the class path itself (internal/runner's
-	// checkReviewClassModelPath), so admitting the sentinel for them would write
-	// a task the run then halts on.
-	if name == config.AnthropicKeyAccount && (auth == "api-key" || auth == "") {
+	// credential is a Claude account and neither value is one, and vertex and
+	// cascade are refused by the class path itself (internal/runner's
+	// checkReviewClassModelPath), so admitting them for those would write a task
+	// the run then halts on.
+	if config.AxisNonAccountValue(name) && (auth == "api-key" || auth == "") {
 		return nil
 	}
 	if auth != "" && auth != "oauth" {
@@ -3482,10 +3496,14 @@ func printLaunch(w io.Writer, res launchResult, asJSON bool) error {
 // request it continues. It is the tail of the line a launch prints, whether
 // that line is the command's own ("launched <what>") or the reporter's step
 // for a migrated launch ("launch <what>", CL7c).
+//
+// The runs are named in their short form: the line a person reads is where a
+// short run ID belongs, and the full one is one command away (D1705). The
+// JSON above keeps them whole.
 func launchWhat(res launchResult) string {
-	what := oneLine(res.Run)
+	what := task.ShortRun(oneLine(res.Run))
 	if res.PR > 0 {
-		what += fmt.Sprintf(" (follow-up of PR #%d, after %s)", res.PR, oneLine(res.PreviousRun))
+		what += fmt.Sprintf(" (follow-up of PR #%d, after %s)", res.PR, task.ShortRun(oneLine(res.PreviousRun)))
 	}
 	return what
 }
@@ -3775,7 +3793,7 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 	if cancelled, err := s.CancelRequested(ctx); err != nil {
 		return res, remote(err)
 	} else if cancelled {
-		return res, userErr("run %s was cancelled; start a new one", res.Run)
+		return res, userErr("run %s was cancelled; start a new one", task.ShortRun(oneLine(res.Run)))
 	}
 	// The job this launch runs on (project_job.go): the shared project job of
 	// the profile the workflow selects, or nil for the per-repository job this
@@ -3798,19 +3816,19 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 			return res, err
 		}
 	}
-	// The project's own Anthropic API key, named as the run's own account
-	// (claudeAccountAllowed's arm), is placed on the shared project job whose
-	// account segment is the sentinel — and on the review-only variant of it,
-	// which is the one job a review served by the key runs on (D1417, D1422).
-	// A launch the shared path resolved can be on either; a per-repository
-	// launch derives its job's name from the account segment
+	// An account-axis value that is no account, named as the run's own
+	// credential (claudeAccountAllowed's arm), is placed on the shared project
+	// job whose account segment is that value — and on the review-only variant
+	// of it, which is the one job a review served by that credential runs on
+	// (D1417, D1422, AK6a). A launch the shared path resolved can be on either;
+	// a per-repository launch derives its job's name from the account segment
 	// (gcp.WorkflowVariant), and no installation deploys a job of its own under
 	// this one. Starting it would be Cloud Run's 404 for a job this
 	// installation was never asked for; the launch stops here instead, before
 	// the claim, as the account gate's refusals do.
-	if job == nil && spec.OAuthToken == config.AnthropicKeyAccount {
-		return res, userErr("this launch names the project's own Anthropic API key (%s) as the run's own account, and this repository runs on a job of its own: the key is not a Claude account and no per-repository job holds it, so the job this launch derived from the name is one no installation was ever asked for. The key's jobs are the shared project job of a profile that lists it and that job's review-only variant, and a repository reaches them from a workflow whose checkout is clone. Nothing was launched: no claim was taken, no budget token was minted and Cloud Run was not called. Run this repository from a clone workflow, or launch without --token",
-			config.AnthropicKeyAccount)
+	if job == nil && config.AxisNonAccountValue(spec.OAuthToken) {
+		return res, userErr("this launch names %s (%s) as the run's own account, and this repository runs on a job of its own: the value is not a Claude account and no per-repository job holds it, so the job this launch derived from the name is one no installation was ever asked for. The jobs it names are the shared project job of a profile that lists it and that job's review-only variant, and a repository reaches them from a workflow whose checkout is clone. Nothing was launched: no claim was taken, no budget token was minted and Cloud Run was not called. Run this repository from a clone workflow, or launch without --token",
+			nonAccountPhrase(spec.OAuthToken), spec.OAuthToken)
 	}
 	hook(launchHooks.beforeClaim)
 	holder := claimHolder()
@@ -3829,7 +3847,7 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 			if round < claimRounds-1 {
 				continue
 			}
-			return res, userErr("the launch claim of %s keeps being released by other launches that were refused; fugaro run --retry %s tries again", res.Run, res.Run)
+			return res, userErr("the launch claim of %s keeps being released by other launches that were refused; fugaro run --retry %s tries again", task.ShortRun(oneLine(res.Run)), oneLine(res.Run))
 		}
 		if err != nil {
 			return res, err
@@ -3856,7 +3874,7 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		rctx, rcancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		releaseClaim(rctx, env, s, holder)
 		rcancel()
-		return res, userErr("run %s was cancelled; start a new one", res.Run)
+		return res, userErr("run %s was cancelled; start a new one", task.ShortRun(oneLine(res.Run)))
 	}
 	// The docker tag's rule, before anything of this launch is written or
 	// reported (D1149): a run whose DEPLOYED job image carries the docker tag
@@ -3990,7 +4008,7 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 			rcancel()
 			// A GCP API error is a remote failure (exit 2); %w keeps
 			// ErrRejected and ErrNotFound visible to errors.Is.
-			return res, remote(fmt.Errorf("the launch of %s was refused, so nothing started; fix the cause, then fugaro run --retry %s: %w", res.Run, res.Run, err))
+			return res, remote(fmt.Errorf("the launch of %s was refused, so nothing started; fix the cause, then fugaro run --retry %s: %w", task.ShortRun(oneLine(res.Run)), oneLine(res.Run), err))
 		}
 		// Ambiguous (timeout, 5xx, dropped connection, unreadable reply): the
 		// execution may exist. Keep the claim, and the token object: an

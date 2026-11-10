@@ -148,8 +148,8 @@ func runModelsAdd(cmd *cobra.Command, id string, o *modelsAddOptions) error {
 }
 
 // modelsAddNote is one sentence a write produces: the full text the owner
-// reads, and the short half the confirmation names, so a long explanation is
-// printed beside the write rather than pasted into the confirmation line.
+// reads, and the short half the sentence names, so a long explanation is
+// printed beside the write rather than pasted into the sentence itself.
 type modelsAddNote struct {
 	full    string
 	summary string
@@ -365,8 +365,8 @@ func modelsAddAllow(path string, lc *localcfg.Config, id string, next *[]byte) (
 // modelsAddTypedWhy is the sentence the write prints for the wideness of the
 // edit at hand: the claim is where code may go, the allow-list entry is what a
 // run of this project may use, and an add that is both names both. It ends
-// there and names no confirmation, because a widening asks for none: it is the
-// owner's own step, and the coding agent's session is what refuses it (D1552).
+// there and asks for nothing, because a widening is the owner's own step and a
+// coding agent's session is what refuses it (D1552).
 func modelsAddTypedWhy(claim, allow bool) string {
 	var widens string
 	switch {
@@ -380,7 +380,7 @@ func modelsAddTypedWhy(claim, allow bool) string {
 	return widens
 }
 
-// modelsAddWhat is the confirmation's own line: the short half of each step, so
+// modelsAddWhat is the sentence's own line: the short half of each step, so
 // the long explanations are printed beside the write and not pasted into it.
 func modelsAddWhat(id, route string, notes ...modelsAddNote) string {
 	parts := []string{"add " + id + " to the project config, on route " + route}

@@ -556,13 +556,15 @@ func policyStep(ctx context.Context, u *upgradeCtx) stepResult {
 	}
 	// No gate is passed: `fugaro upgrade` is not one of the managed set's
 	// commands, so this step keeps every confirmation it always had — the
-	// in-flight guard included, which is a note only for a managed project and
-	// this door reads no mark (policyMigrationConfirm).
+	// in-flight refusal included, which the update door alone answers with
+	// silence (inflightAnswer; the owner's ruling of 2026-11-09 is about
+	// `fugaro update`, which is the whole upgrade, and this door is a step of a
+	// project's own work).
 	// The conditions this door hands it are the two facts its own agent refusal
 	// was made from (u.agent, read the same way at the top of runUpgrade): it
 	// has no initRun, and managed false makes the rest of the reading moot.
 	c := initflow.Conditions{Agent: u.agent, Terminal: stdinIsTerminal(u.cmd.InOrStdin())}
-	if err := policyMigrationConfirm(ctx, u.cmd, m, u.o.yes, u.w, false, false, c); err != nil {
+	if err := policyMigrationConfirm(ctx, u.cmd, m, u.o.yes, u.w, false, false, c, inflightAsk); err != nil {
 		return stepResult{state: stepFailed, code: ExitUserError, reason: oneLine(err.Error())}
 	}
 	// The line is the write's own (doneDetail): this step migrates an older node,
@@ -578,7 +580,7 @@ func policyStep(ctx context.Context, u *upgradeCtx) stepResult {
 // database has deployed is a fact of that database and of nothing in the
 // checkout, and reading it there is the cloud call the flag promises not to
 // make.
-const checkRulesCaveat = "fugaro upgrade --check makes no cloud call, so it cannot tell which generation of the security rules the project's database has deployed; run fugaro upgrade (or fugaro update) without --check to deploy the generation this Fugaro reads a project policy under, after the plan and the typed confirmation"
+const checkRulesCaveat = "fugaro upgrade --check makes no cloud call, so it cannot tell which generation of the security rules the project's database has deployed; run fugaro upgrade (or fugaro update) without --check to deploy the generation this Fugaro reads a project policy under, after the plan"
 
 // rulesStep deploys the security rules generation this binary carries, the
 // deploy `fugaro update`'s rules stage makes and with its classification, its
@@ -653,9 +655,11 @@ func rulesStep(ctx context.Context, u *upgradeCtx) stepResult {
 		return stepResult{state: stepCurrent, reason: oneLine(detail)}
 	}
 	rulesShow(u.w, lc.Budget.FirebaseProject, acts)
-	if err := confirmRemoval(u.cmd, lc, u.o.yes, "this deploys the security rules listed, as you (project owner, editor or budget admin), and records which generation is deployed: they are what every project policy is read under, and a project policy written under rules that predate it is a policy nothing reads"); err != nil {
-		return stepResult{state: stepFailed, code: ExitUserError, reason: oneLine(err.Error())}
-	}
+	// The typed name this step used to ask for is gone (D1540): what a person
+	// reads is the plan above and this sentence, which is the whole of what the
+	// confirmation showed minus the prompt. `fugaro upgrade` registers no --ask
+	// either, so there is no door that puts the question back.
+	fmt.Fprintln(u.w, "this deploys the security rules listed, as you (project owner, editor or budget admin), and records which generation is deployed: they are what every project policy is read under, and a project policy written under rules that predate it is a policy nothing reads")
 	if err := db.Apply(ctx); err != nil {
 		return stepResult{state: stepFailed, code: ExitUserError, reason: oneLine(err.Error())}
 	}

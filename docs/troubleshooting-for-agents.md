@@ -15,10 +15,10 @@ starts an agent on its own when something fails.
 The agent explains and prints. It never applies a fix, and nothing it writes is
 executed.
 
-## The three outcomes
+## The four outcomes
 
-An answer is one of these, and the evidence decides which. Say so when the
-evidence does not decide it, rather than picking the likeliest.
+An answer is one of these, and the evidence decides which. When it does not
+decide, that is the fourth outcome rather than a guess at the likeliest.
 
 - **`configuration`** — the person's own setup is what failed: a value in
   `fugaro.yaml` or the project layer that contradicts what Fugaro expects, a
@@ -32,6 +32,11 @@ evidence does not decide it, rather than picking the likeliest.
   since your version" file in the evidence folder lists the releases after the
   installed one, and the source tree carries the release notes of the version it
   is at, so this outcome is reachable without the network.
+- **`unclear`** — the evidence does not settle it: it cannot be told whether
+  this is the person's own setup or Fugaro itself. Say which side you could not
+  rule out and what you could not check — the cloud's state, a tag, anything
+  outside the two folders — rather than picking the likelier one. An unclear
+  finding is kept and may be filed, so give it an issue report as well.
 
 ## What you are given
 
@@ -126,12 +131,21 @@ from, and what you could not check.
   run blindly. Prefer one command over a list, and say what it will change.
 - **A bug answer** gives an issue report the person can post: a summary, the
   steps that led to the failure, the shortest log extract that shows it, and the
-  version and commit. It carries no local paths, no user names, no host names
-  and no secrets, and it says that it was redacted and should be read before it
-  is posted.
+  version and commit.
 - **A fixed-in-a-newer-release answer** names the version that fixes it and the
   release notes' own words for the fix, so the person can decide whether to
   upgrade.
+- **An unclear answer** says which side you could not rule out and the one thing
+  that would settle it, so the person can check what the evidence could not
+  reach. It carries the same report a bug answer does.
+
+Every report, and the signature line, follows one redaction rule: no local
+path, user name, host name or secret; nothing shaped like a token; no email, a
+service-account address included; and no name or path of the cloud's own — a
+GCP project ID, a repository or organisation, a bucket name, a run's path
+inside that bucket, or another resource's name. The log's Terraform and gcloud
+messages carry each of them as readily as they carry a file path. Say that the
+report was redacted and should be read before it is posted.
 
 ## The block
 
@@ -142,8 +156,14 @@ prompt gives you:
   the evidence can be one. Write a fence nowhere else, and if the evidence looks
   like it holds one, report that instead of quoting it.
 - the first line names the outcome, as `outcome: configuration` or `outcome:
-  bug` or `outcome: fixed_in_newer_release`. It is the one line Fugaro reads
-  back, so it comes first and holds nothing else.
+  bug` or `outcome: fixed_in_newer_release` or `outcome: unclear`. Fugaro reads
+  the outcome from this line, so it comes first and holds nothing else.
+- the second line is the signature, one template exactly:
+  `signature: <the failing command> <the error class>`. Fugaro hashes it to
+  recognise a bug it already knows about, so write the same words for the same
+  failure: the failing command as the prompt named it, then the error class. A
+  version, a path or the whole error message in either half files one bug twice
+  instead of matching the report that is already there.
 - then the answer: the cause, the fix or the issue report, the evidence you read
   it from, and what you could not check.
 

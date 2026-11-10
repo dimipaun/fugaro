@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -50,6 +51,13 @@ var settingsFamilyCommands = map[string]string{
 	"secrets":     "fugaro secrets",
 	"project":     "fugaro project",
 	"workspace":   "fugaro workspace",
+	// The image map is a family of one command (D1906): the map is the project's
+	// image policy keyed by repository, and `fugaro image map set` is where the
+	// two are written together — the key it lands on and the entry it names are
+	// checked against each other there, which a generic scalar write could not
+	// do. Its refusal names that command rather than `fugaro project`, which
+	// writes the project's other policy keys and not this one.
+	"image map": "fugaro image map",
 }
 
 // settingsGenericKeys is the allowlist of spec §4.4: the exact keys `settings
@@ -80,7 +88,10 @@ var settingsFamilyCommands = map[string]string{
 // and the diff carry. Nothing enumerates a wildcard block's concrete spellings,
 // which is what lets one written key create a block the file does not hold —
 // D1161's stated cost, and the reason the layer a write lands in is still the
-// row's own Layers.
+// row's own Layers. The stage account's block is the one exception and is
+// described at its own entries below: its segment is a closed vocabulary rather
+// than a name the file invents, so the registry carries the row and this list
+// names it.
 var settingsGenericKeys = map[string]bool{
 	"budget.per_run_usd":       true,
 	"budget.max_run_tokens":    true,
@@ -88,18 +99,36 @@ var settingsGenericKeys = map[string]bool{
 	"budget.unreachable_grace": true,
 	"budget.mode":              true,
 	"budget.per_day_usd":       true,
-	"base_branch":              true,
-	"max_parallel":             true,
-	"update_check":             true,
-	"commit_name":              true,
-	"commit_email":             true,
-	"layer.default_profile":    true,
+	// The bake switch (D1901) is here by IS7's own interface: the setup wizard
+	// asks the question and writes the answer through this path, and changing it
+	// afterwards is the same write followed by a rebuild notice — the key has no
+	// cross-key rule (the resolver reads the boolean and nothing beside it), so
+	// a family for it would be a command that does what this one does.
+	"bake_repos":            true,
+	"base_branch":           true,
+	"max_parallel":          true,
+	"update_check":          true,
+	"commit_name":           true,
+	"commit_email":          true,
+	"layer.default_profile": true,
 	// D873's account choice (spec §11.1). They are here by name because they
 	// are not §4.4's list: §4.4 predates them, and a registry row no list
 	// carries is a key nobody can write.
 	"default_claude_account":  true,
 	"claude_account_auto":     true,
 	"stages.*.claude_account": true,
+	// The pattern above is the registry's shape and this is every stage of the
+	// closed set beside it, one spelling per config.RunStages name: the registry
+	// carries a row for each (internal/settings' stageAccountRows), and a row no
+	// list here names is a key the read offers an edit for and this path
+	// refuses. TestSettingsWritesEveryRunStageAccountKey is what fails when a
+	// stage lands in config.RunStages and not here.
+	"stages.adversarial.claude_account":  true,
+	"stages.fix.claude_account":          true,
+	"stages.implement.claude_account":    true,
+	"stages.plan.claude_account":         true,
+	"stages.review.claude_account":       true,
+	"stages.review_first.claude_account": true,
 	// A repository's workflows.* (37 rows) and the project layer's profiles.*
 	// (36), in the registry's own order.
 	"workflows.*.profile":                            true,
@@ -223,8 +252,8 @@ type settingsWriteOptions struct {
 	yes     bool
 	// ask is --ask, the symmetric half of --yes (the owner's rule of
 	// 2026-11-04): in a project whose marks say it is managed, where this
-	// command would ask nothing, it asks the write's own confirmation —
-	// ordinary or typed — instead. Unmanaged, it says so and changes nothing;
+	// command would ask nothing, it asks the write's own question instead — and
+	// never one for a widening. Unmanaged, it says so and changes nothing;
 	// with no terminal, in a managed project, it refuses rather than proceeds
 	// (managed_ask.go is the whole of it). It is refused beside --yes.
 	ask    bool
@@ -315,6 +344,18 @@ map the file already holds, and a map the loader wants whole cannot be built
 one member at a time. A list emptied by --remove or --remove-entry is refused:
 an absent key and an empty list mean different things to the loader, so use
 unset to remove the key.
+
+A stage's Claude account is a key of its own — ` + "`stages.<stage>.claude_account`" + `, one
+per stage name this binary runs (plan, implement, review_first, review,
+adversarial, fix) — and it is how a stage is repointed from one account to
+another without editing the local config by hand. Its value is a name the local
+config's claude_accounts declares, or ` + "`default`" + ` for the unsuffixed account: an
+undeclared name is refused naming the declared ones, and an account whose
+allow_data_to does not cover every repository this project onboards is refused
+naming the repositories it misses — a stage's account is chosen for the
+repository a run is for, so an account that covers less has every run on the
+rest refused at the launch. ` + "`unset stages.<stage>.claude_account`" + ` puts the key
+back to the project's default account.
 
 Loosening a ceiling key (budget.*, governance.*, the agent caps
 agent.max_budget_usd and agent.max_run_tokens with the layer's own spellings),
@@ -430,7 +471,7 @@ func settingsWriteRowHinted(key string, list bool) (settings.Row, error) {
 		return settings.Row{}, userErr("%s is a sensitive setting, and the generic path never writes one: its value would be printed in the diff this command shows (spec §2.3)", key)
 	}
 	if family, ok := settingsFamilyCommands[row.Owner]; ok {
-		return settings.Row{}, userErr("%s is written by %s, not by the generic path: settings set writes no route, price, rigor mode, floor, account, job profile, credential, clone URL or workspace key", key, family)
+		return settings.Row{}, userErr("%s is written by %s, not by the generic path: settings set writes no route, price, rigor mode, floor, account, job profile, credential, clone URL, image map or workspace key", key, family)
 	}
 	if strings.Contains(key, "*") {
 		return settings.Row{}, userErr("%s varies with a name this command does not take: a key with a * is a map entry, and a map has no generic form", key)
@@ -496,6 +537,83 @@ func settingsPatternMatch(pattern, key string) bool {
 		}
 	}
 	return true
+}
+
+// settingsStageAccountPattern is the registry pattern every stage's account key
+// is a spelling of: `stages.<stage>.claude_account` (internal/settings' row, and
+// the concrete row per config.RunStages name beside it).
+const settingsStageAccountPattern = "stages.*.claude_account"
+
+// settingsStageAccountRule is what a value written to a stage's account key owes
+// beyond the loader's own rule: the name must be one this project declares, and
+// its allow_data_to must already cover every repository the project onboards.
+//
+// The loader refuses a name nothing defines (localcfg's choiceRefProblem) and
+// this path re-reads the edited document through it, so a refusal here would be
+// second help on a name the file would reject a moment later — what it adds is
+// what the loader cannot say. The loader holds no repository: whether an account
+// is admitted for a repository is decided at launch against the account's own
+// allow_data_to, where the repository is known (config.AllowedClaudeAccounts),
+// and a stage key that names an account covering less than the project's
+// repositories is a key whose every run on the missed ones stops at the launch.
+// Refusing it here is the one place the miss can be reported before it is a run
+// that failed: the owner's own act is the command, and the sentence names the
+// repositories to widen it with.
+//
+// It asks the same question the launch asks, through the same predicate: whether
+// repo may choose the account is config.ClaudeAccount.AllowsData, which a run's
+// own check reads (claudeAccountMembership). A name the account covers less with
+// is a name whose write is refused rather than a name the file may hold.
+//
+// The two values valid here besides a declared account are "default"
+// (config.DefaultClaudeAccount, the unsuffixed account, which every repository
+// may choose) and nothing else: the account axis's non-account values
+// (config.AnthropicKeyAccount and config.ProviderKeyAccount) are refused with
+// the loader's own sentence for them (config.NonAccountChoiceMessage), because
+// each names a credential the credentials service holds rather than any account
+// of a run's. The sentence is the loader's and not this file's, and it must be:
+// config.ValidClaudeAccountRef admits both (a profile may list either), so
+// without this arm each fell through to the declared-account lookup below and
+// was answered with a sentence prescribing `fugaro accounts add <value>`, which
+// config.ValidateClaudeAccounts refuses — a remedy the owner cannot carry out.
+func settingsStageAccountRule(key, value string, lc *localcfg.Config) error {
+	if value == "" || !settingsPatternMatch(settingsStageAccountPattern, key) {
+		return nil
+	}
+	stage := strings.SplitN(key, ".", 3)[1]
+	if value == config.DefaultClaudeAccount {
+		return nil
+	}
+	if msg := config.ValidClaudeAccountRef(value); msg != "" {
+		return userErr("%s: %s", key, msg)
+	}
+	if config.AxisNonAccountValue(value) {
+		return userErr("%s: %s", key, config.NonAccountChoiceMessage(value))
+	}
+	account, declared := lc.ClaudeAccounts[value]
+	if !declared {
+		// The declared names, in the order every other sentence here lists
+		// them: a refusal that names only the offending value sends the owner
+		// to the file to find out what they could have written instead.
+		names := slices.Sorted(maps.Keys(lc.ClaudeAccounts))
+		instead := "this project declares no account yet"
+		if len(names) > 0 {
+			instead = "this project declares " + strings.Join(names, ", ")
+		}
+		return userErr("stages.%s.claude_account: the account %q is not defined here — %s. A stage's account is a name of this file's claude_accounts block, where the account's own allow_data_to decides which repositories may use its token, or %q for the unsuffixed default account: declare it with `fugaro accounts add %s --repos owner/name`, or name one of the declared accounts; nothing was written",
+			stage, value, instead, config.DefaultClaudeAccount, value)
+	}
+	missing := []string{}
+	for _, repo := range slices.Sorted(maps.Keys(lc.Repos)) {
+		if !account.AllowsData(repo) {
+			missing = append(missing, repo)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return userErr("stages.%s.claude_account: the account %s does not cover every repository this project onboards: claude_accounts.%s.allow_data_to misses %s. The account a stage runs on is chosen for the repository a run is for, so a run on %s would be refused at the launch — widen the account with `fugaro accounts add %s --repos %s`, or name an account that covers every repository above; nothing was written",
+		stage, value, value, strings.Join(missing, ", "), strings.Join(missing, ", "), value, strings.Join(missing, ","))
 }
 
 // settingsHintRow reports whether a write's hint may name row: the rows
@@ -1318,7 +1436,7 @@ func settingsListSubset(a, b string) bool {
 // settingsTypedWrite reports whether this write is one D846 reserves for the
 // owner's own hand, and the sentence saying what it widens: the write prints it
 // and the dry run carries it as `why`, and it no longer ends by naming a
-// confirmation, because a widening asks for none (settings_write.go, D1552).
+// question, because a widening asks none (settings_write.go, D1552).
 // mode is the edit being made: set, unset, add or remove. `remove` takes one
 // member out of a list, which narrows it, so it is never the typed form and has
 // no case below; `unset` always is, for a ceiling, because it hands the
@@ -1470,6 +1588,13 @@ func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) e
 	if err != nil {
 		return err
 	}
+	// The stage account's own rule, before the target is resolved and before a
+	// byte is read: a name this project does not declare, or one whose
+	// allow_data_to covers fewer repositories than the project onboards, is
+	// refused here with nothing attempted (settingsStageAccountRule).
+	if err := settingsStageAccountRule(key, value, lc); err != nil {
+		return err
+	}
 	target, err := settingsResolveTarget(cmd.Context(), row, o, lc, sel)
 	if err != nil {
 		return err
@@ -1589,8 +1714,14 @@ func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) e
 	// place: the flag has to speak about the marks — a refusal in a managed
 	// project's session with no terminal, a sentence anywhere else — so the
 	// read it needs is made even where the edit itself would have asked
-	// nothing (--yes, or no terminal at all).
-	managed, gate, err := settingsManagedStep(cmd.Context(), lc, sel.Path, target, key, typed, why, old, newData, "settings set", settingsAsk(cmd, o.yes) || o.ask)
+	// nothing (--yes, or no terminal at all). A widening is the one class the
+	// read is skipped for at the owner's own terminal: the gate refuses every
+	// one of them (settingsOwnerOnlyRule, D1026), and a session is refused at
+	// the fence whatever --yes says, so reading the marks there would take away
+	// the one door a widening has and leave every ceiling of a managed project
+	// unwidenable. --ask still reads them: the flag puts a question back
+	// (D1544), and a question is what the read stands in for.
+	managed, gate, err := settingsManagedStep(cmd.Context(), lc, sel.Path, target, key, typed, why, old, newData, "settings set", settingsGateReads(cmd, o.yes, o.ask, typed))
 	if err != nil {
 		return err
 	}
@@ -1687,8 +1818,8 @@ func runSettingsUnset(cmd *cobra.Command, args []string, o settingsWriteOptions)
 		edit.DryRun = &settingsDryRun{key: key, layer: target.layer, oldValue: oldValue, newValue: settingsValueIn(newData, target.keyPath), jsonOut: o.jsonOut}
 	}
 	// The read and the flag's own sentence: the same pair, in the same order,
-	// as the set path above.
-	managed, gate, err := settingsManagedStep(cmd.Context(), lc, sel.Path, target, key, typed, why, old, newData, "settings unset", settingsAsk(cmd, o.yes) || o.ask)
+	// as the set path above (settingsGateReads is the condition both pass).
+	managed, gate, err := settingsManagedStep(cmd.Context(), lc, sel.Path, target, key, typed, why, old, newData, "settings unset", settingsGateReads(cmd, o.yes, o.ask, typed))
 	if err != nil {
 		return err
 	}

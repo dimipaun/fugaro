@@ -454,8 +454,9 @@ reason) and `connection.js` with `connection.test.js` (the double's constructor
 is no more generous than the gate). The store's SDK-queue guard is the one
 mutation proved **twice** -- against `store.test.js` and against
 `client.test.js` -- because "the SDK queue would have noticed" is the control
-the client's own claim rests on. It finds a working node rather than assuming one (this
-repository's base image keeps node off PATH), runs a positive control (the
+the client's own claim rests on. It finds a working node rather than assuming
+one (the base carries no node: it comes from PATH or mise), runs a positive
+control (the
 pristine suite passes, over tests that ran) and a negative control (a `refuse()`
 that always succeeds must be caught) before any verdict is trusted, and asserts
 each pattern matched exactly once so a stale script is `APPLY-FAILED` rather

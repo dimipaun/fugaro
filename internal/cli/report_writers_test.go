@@ -20,6 +20,7 @@ import (
 
 	"golang.org/x/oauth2"
 
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/infra/managed"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
@@ -715,6 +716,24 @@ func TestBudgetKillWritesALog(t *testing.T) {
 	if _, _, err := execute(t, "budget", "kill", "--all", "--yes"); err != nil {
 		t.Fatal(err)
 	}
+	writesALog(t, "budget-kill")
+}
+
+// TestBudgetKillWorkspaceWritesALog: the workspace scope is a scope of the
+// same command, not a command of its own, so it files under the same name
+// (budgetKillLogName) and reports the same step: a stop written through
+// --workspace is what a person reads back — and what the failure path sends
+// them to — exactly as a stop written through --all is (D1352). The scope
+// resolves its own project instead of selecting one, so it opens the reporter
+// itself, and this holds that to the answer the --all test above reads.
+func TestBudgetKillWorkspaceWritesALog(t *testing.T) {
+	h := newWSUpdateHome(t, wsOwnerTable)
+	h.project(t, "workspace-alpha").db.Set(budget.PathProject, "workspace-alpha")
+	out, _, err := execute(t, "budget", "kill", "--workspace", "workspace-alpha", "--reason", "runaway spend")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	reported(t, out, "workspace")
 	writesALog(t, "budget-kill")
 }
 

@@ -2175,3 +2175,109 @@ func TestPolicyPublishRefusesACatalogContextMember(t *testing.T) {
 		t.Fatalf("the same catalog with no context member was refused: %v", err)
 	}
 }
+
+// TestPolicyConfigDriftSeesTheImageMapAndTheBakeSwitch is the comparison the
+// two new members get (D1901, D1906): a config that states a mapping or an
+// answer the node does not carry is exactly the gap `fugaro update` exists to
+// close, and a config silent about either keeps the node's.
+//
+// The map's equal case is the one worth stating: what is compared is the JSON
+// the node is written with, and the node's own spelling of a repository key is
+// the escaped one (ImageMap), so a comparison done in the config's spelling
+// would report a difference the operator cannot act on and republish the whole
+// node on every run.
+func TestPolicyConfigDriftSeesTheImageMapAndTheBakeSwitch(t *testing.T) {
+	file := func(mut func(*localcfg.Config)) *localcfg.Config {
+		lc := &localcfg.Config{Budget: &localcfg.Budget{Mode: "enforce", PerRunUSD: 5}}
+		if mut != nil {
+			mut(lc)
+		}
+		return lc
+	}
+	node := func(mut func(*projectpolicy.Policy)) *projectpolicy.Policy {
+		p := &projectpolicy.Policy{Version: projectpolicy.Version, Budget: projectpolicy.Budget{Mode: "enforce", PerRunUSD: 5}}
+		if mut != nil {
+			mut(p)
+		}
+		return p
+	}
+	yes, no := true, false
+	cases := []struct {
+		name string
+		file *localcfg.Config
+		node *projectpolicy.Policy
+		want []string
+	}{
+		{
+			"the config maps a repository the node does not",
+			file(func(lc *localcfg.Config) { lc.ImageMap = map[string]string{"acme/app": "tools"} }),
+			node(nil),
+			[]string{"image_map"},
+		},
+		{
+			"the config's map is the node's",
+			file(func(lc *localcfg.Config) { lc.ImageMap = map[string]string{"acme/app": "tools"} }),
+			node(func(p *projectpolicy.Policy) { p.ImageMap = projectpolicy.ImageMap{"acme/app": "tools"} }),
+			nil,
+		},
+		{
+			"the config maps a repository onto another entry",
+			file(func(lc *localcfg.Config) { lc.ImageMap = map[string]string{"acme/app": "tools"} }),
+			node(func(p *projectpolicy.Policy) { p.ImageMap = projectpolicy.ImageMap{"acme/app": "base"} }),
+			[]string{"image_map"},
+		},
+		{
+			"the config is silent about the map and the node carries one",
+			file(nil),
+			node(func(p *projectpolicy.Policy) { p.ImageMap = projectpolicy.ImageMap{"acme/app": "tools"} }),
+			nil,
+		},
+		{
+			"the config unmaps what the node maps",
+			file(func(lc *localcfg.Config) { lc.ImageMap = map[string]string{} }),
+			node(func(p *projectpolicy.Policy) { p.ImageMap = projectpolicy.ImageMap{"acme/app": "tools"} }),
+			[]string{"image_map"},
+		},
+		{
+			"the config answers no where the node answers nothing",
+			file(func(lc *localcfg.Config) { lc.BakeRepos = &no }),
+			node(nil),
+			[]string{"bake_repos"},
+		},
+		{
+			"the config answers no where the node answers yes",
+			file(func(lc *localcfg.Config) { lc.BakeRepos = &no }),
+			node(func(p *projectpolicy.Policy) { p.BakeRepos = &yes }),
+			[]string{"bake_repos"},
+		},
+		{
+			"the config's answer is the node's",
+			file(func(lc *localcfg.Config) { lc.BakeRepos = &no }),
+			node(func(p *projectpolicy.Policy) { p.BakeRepos = &no }),
+			nil,
+		},
+		{
+			"the config answers yes where the node answers no",
+			file(func(lc *localcfg.Config) { lc.BakeRepos = &yes }),
+			node(func(p *projectpolicy.Policy) { p.BakeRepos = &no }),
+			[]string{"bake_repos"},
+		},
+		{
+			"the config is silent about the switch and the node answers no",
+			file(nil),
+			node(func(p *projectpolicy.Policy) { p.BakeRepos = &no }),
+			nil,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var got []string
+			for _, d := range policyConfigDrift(tc.file, tc.node) {
+				got = append(got, d.Member)
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("policyConfigDrift = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

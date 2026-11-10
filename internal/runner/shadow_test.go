@@ -739,6 +739,88 @@ func TestUntaggedRunnerABKeysCapabilityLine(t *testing.T) {
 	}
 }
 
+// armRefusedCfg is armCfg with level 3 named the challenger's own family and an
+// effort, and armRefusedTask the task that turns the level off. The task's
+// switch answers first, so the run starts with level 3 off and the block below
+// is never checked; the escalation's forced resolution clears that switch
+// (raise-only, D1517) and the block comes back into force — a model the route
+// armGW wires serves, at an effort a provider stage cannot send, which the
+// forced resolution refuses rather than bootstrap (D725).
+func armRefusedCfg(t *testing.T) string {
+	t.Helper()
+	cfg := armCfg(t)
+	out := strings.Replace(cfg, "  review_rounds: 2\n",
+		"  review_rounds: 2\n  levels: { l3: { model: "+challengerModel+", effort: high } }\n", 1)
+	if out == cfg {
+		t.Fatal("the fixture has no review_rounds line to put the level-3 block beside")
+	}
+	return out
+}
+
+// armRefusedTask is a challenger arm's task whose own review_levels turns
+// level 3 off.
+func armRefusedTask() *task.Spec {
+	spec := armTask(challengerModel)
+	spec.ReviewLevels = &config.ReviewLevels{L3: &config.LevelSetting{Off: true}}
+	return spec
+}
+
+// TestShadowRefusalMatchesTheChampion: the arm's record is the champion's own,
+// and a refused escalation is not one of the two ways they differ (D554, D555).
+// Both arms run the same loop, take the escalation's readings at the same two
+// moments and apply the same readiness rule, so an arm reading succeeded beside
+// a champion reading failed would be a pair two scorers read as two different
+// runs of the same work (D559). The arm's own records make it not ready in both
+// cases below, so what these pin is what it is not ready *for*: the refusal's
+// own sentence, which is the champion's.
+func TestShadowRefusalMatchesTheChampion(t *testing.T) {
+	// The seam's refusal, on an arm that would otherwise end ready
+	// (TestRunRefusedEscalationKeepsAnOtherwiseReadyRunOutOfReady is the
+	// champion's own case).
+	t.Run("a refused escalation at a seam", func(t *testing.T) {
+		g, _ := armGWSpec(t, armRefusedCfg(t), "50", armRefusedTask(), armLayer)
+		rec, err := g.run(t, implementOnAListedPath, review("ship", 0))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := rec.Security; got == nil || !got.Refused || got.At != runstore.SecurityAtImplement {
+			t.Fatalf("the escalation was not refused at the seam, so this case never reaches the rule it pins: %+v", got)
+		}
+		if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeNone {
+			t.Fatalf("record = %s/%s (reason %q), want the arm failed with nothing published", rec.Status, rec.Outcome, rec.Reason)
+		}
+		if rec.Reason != runner.ReasonSecurityRefused {
+			t.Fatalf("reason = %q, want the sentence the champion's record carries for the same refusal", rec.Reason)
+		}
+		if len(publishes(g.harness)) != 0 {
+			t.Fatalf("the refused arm published something: %v", publishes(g.harness))
+		}
+	})
+
+	// The refusal only finalize's own reading can leave, on work the agent
+	// never committed (TestRunRecordsTheRefusalOnlyFinalizeCanSee is the
+	// champion's own case): the arm's member has to carry the same moment.
+	t.Run("a refusal finalize's reading leaves", func(t *testing.T) {
+		g, _ := armGWSpec(t, armCfg(t), "50", armTask(challengerModel), armLayer)
+		rec, err := g.run(t, implementLeaving(listedLeftoverPath, listedLeftover), review("ship", 0))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := rec.Security; got == nil || !got.Refused || got.At != runstore.SecurityAtFinalize {
+			t.Fatalf("the record's escalation = %+v, want the credentials row refused at the finalize reading", got)
+		}
+		if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeNone {
+			t.Fatalf("record = %s/%s (reason %q), want the arm failed with nothing published", rec.Status, rec.Outcome, rec.Reason)
+		}
+		if rec.Reason != runner.ReasonSecurityRefused {
+			t.Fatalf("reason = %q, want the sentence the champion's record carries for the same refusal", rec.Reason)
+		}
+		if len(publishes(g.harness)) != 0 {
+			t.Fatalf("the refused arm published something: %v", publishes(g.harness))
+		}
+	})
+}
+
 // TestShadowUploadsPatch: a challenger arm's patch object is the run's own
 // tree diff, from the commit it started at to its final head, with no commit
 // metadata in it — the pair's material, and the only thing a challenger

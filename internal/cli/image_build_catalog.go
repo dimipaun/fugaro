@@ -150,10 +150,16 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 	} else if a != b {
 		return userErr("--repo %s is not this checkout's origin (%s); run from %s's checkout", repo, origin, repo)
 	}
-	entries, err := catalogBuildEntries(cmd, cat, name, repo)
+	entries, err := catalogBuildEntries(cmd, cat, name, repo, o.noSmoke)
 	if err != nil {
 		return err
 	}
+	// Whether this command builds anything at all: an entry a prebuilt image
+	// answers is only smoked, and a command that submits nothing but smokes
+	// reads no credential, opens no provider, copies no Dockerfile and pushes
+	// nothing. What is read only for a build is read only when one is in the
+	// set, so a smoke is not refused over a build's own inputs.
+	builds := slices.ContainsFunc(entries, func(e config.Entry) bool { return e.Source.Kind != config.SourceImage })
 	repoURL, err := originURL(ctx)
 	if err != nil {
 		return err
@@ -213,10 +219,6 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 	if note := buildRecordNote(lc); note != "" {
 		fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: warning: %s\n", note)
 	}
-	gitID, err := gitSecretID(ctx, lc, rs, "the catalog build of "+rs.Name)
-	if err != nil {
-		return err
-	}
 	// The commit every entry's build is pinned to: the checkout's own HEAD.
 	// A build reads one object and resolves no ref of its own (PIC3's copy
 	// answers with bytes and no commit), so the operator's commit is what
@@ -226,17 +228,33 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 	if err != nil {
 		return userErr("reading the checkout's commit: %v", err)
 	}
-	selftest, err := image.SpecForCloud(cfg, workflow, commit, repoURL)
+	// The smoke a prebuilt entry runs is the tools tier alone: the checkout's
+	// own spec (SpecForCloud) is about a container this command built — it
+	// checks the repository's checkout, the hardening and the versions the
+	// build stamped — and none of it holds for a reference somebody else
+	// published. What such a reference can be asked is whether the critical
+	// tools are there, which is the whole of a smoke-only run.
+	prebuiltSelftest, err := json.Marshal(image.SelftestSpec{ToolsOnly: true, Tools: "critical"})
 	if err != nil {
 		return userErr("%v", err)
 	}
-	selftestJSON, err := json.Marshal(selftest)
-	if err != nil {
-		return userErr("%v", err)
-	}
-	secrets, err := catalogBuildSecrets(cfg)
-	if err != nil {
-		return err
+	gitID, selftestJSON := "", []byte(nil)
+	var secrets []config.Secret
+	if builds {
+		gitID, err = gitSecretID(ctx, lc, rs, "the catalog build of "+rs.Name)
+		if err != nil {
+			return err
+		}
+		selftest, err := image.SpecForCloud(cfg, workflow, commit, repoURL)
+		if err != nil {
+			return userErr("%v", err)
+		}
+		if selftestJSON, err = json.Marshal(selftest); err != nil {
+			return userErr("%v", err)
+		}
+		if secrets, err = catalogBuildSecrets(cfg); err != nil {
+			return err
+		}
 	}
 	// The image is spelled from the host the installation's registries are
 	// under and not from a region of this command's own, so a build pushes
@@ -251,13 +269,19 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 	if err != nil {
 		return remote(err)
 	}
-	switch exists, err := b.RegistryExists(ctx, registry); {
-	case errors.Is(err, gcp.ErrRegistryUnchecked):
-		fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: warning: could not check that the shared image registry %s exists (%s); submitting the build anyway: if the registry is missing, the build fails when it pushes\n", registry, oneLine(err.Error()))
-	case err != nil:
-		return remote(err)
-	case !exists:
-		return userErr("project %s has no shared image registry %s, where a catalog image is pushed. fugaro update creates it: run that from this checkout first", lc.GCPProject, registry)
+	// A smoke-only run pushes nothing, so the registry it never touches is not
+	// read for it: a project whose shared registry is missing can still smoke
+	// a prebuilt reference, and refusing that over a registry it does not use
+	// would make the smoke the one thing a broken installation cannot check.
+	if builds {
+		switch exists, err := b.RegistryExists(ctx, registry); {
+		case errors.Is(err, gcp.ErrRegistryUnchecked):
+			fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: warning: could not check that the shared image registry %s exists (%s); submitting the build anyway: if the registry is missing, the build fails when it pushes\n", registry, oneLine(err.Error()))
+		case err != nil:
+			return remote(err)
+		case !exists:
+			return userErr("project %s has no shared image registry %s, where a catalog image is pushed. fugaro update creates it: run that from this checkout first", lc.GCPProject, registry)
+		}
 	}
 	// The plan this command is about, in one value: every entry this invocation
 	// builds is named in it, so what the person is shown (the typed name's own
@@ -305,14 +329,17 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 	// helper's coding-agent refusal asks the question this command already
 	// answered.
 	providerEnv, providerHint, err := catalogProviderEnv(ctx, cmd.ErrOrStderr(), lc, rs, entries, os.Getenv, stdinIsTerminal(cmd.InOrStdin()))
-	if err != nil {
+	if builds && err != nil {
 		return err
 	}
-	_, opener, err := openCatalogProvider(providerEnv, func(w string) {
-		fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: warning: %s\n", w)
-	})
-	if err != nil {
-		return userErr("%v", err)
+	var opener gitprov.Opener
+	if builds {
+		_, opener, err = openCatalogProvider(providerEnv, func(w string) {
+			fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: warning: %s\n", w)
+		})
+		if err != nil {
+			return userErr("%v", err)
+		}
 	}
 	for _, e := range entries {
 		// The gate's own answer about THIS entry, read and judged here rather
@@ -323,45 +350,56 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 		if err := m.admitEntry(ctx, cmd, conds, cat, e, rs.Slug, plan); err != nil {
 			return err
 		}
-		key, err := config.CatalogDockerfileKey(e.Name)
-		if err != nil {
-			return userErr("%v", err)
-		}
-		if err := writeCatalogDockerfile(ctx, rb, opener, env.repoProvider(e.Source.Repo, cfg), e); err != nil {
-			// A provider opened without the credential its environment did
-			// not carry fails here with its own sentence, which is left
-			// exactly as it is; the hint says where the token actually is
-			// and what reading it needs (catalogProviderEnv). No other
-			// failure carries it: providers.ErrNoCredential is only ever the
-			// missing token.
-			if providerHint != "" && errors.Is(err, providers.ErrNoCredential) {
-				return fmt.Errorf("%w%s", err, providerHint)
-			}
-			return err
-		}
-		// What the build pins and records is the copy itself: its bytes and
-		// its object generation, read back from the one object the build
-		// reads, so the request states what the bucket holds and not what
-		// this process resolved a moment earlier.
-		data, gen, err := rb.Read(ctx, key)
-		if err != nil {
-			return remote(err)
-		}
-		sum := sha256.Sum256(data)
-		imageRef, err := gcp.SharedCatalogImage(region, lc.GCPProject, e.Name)
-		if err != nil {
-			return userErr("%v", err)
-		}
-		res, err := b.SubmitCatalog(ctx, gcp.CatalogBuildSpec{
+		// What the request is named from and what it carries is the same value
+		// either way; the two arms differ in everything a build adds to it. A
+		// prebuilt entry's run is the smoke of the reference the entry names
+		// (F10/IS11): nothing is copied, nothing is built, nothing is pushed,
+		// and the request is submitted with none of a build's own inputs,
+		// which CatalogBuildSpec.checkPrebuilt refuses one by one.
+		spec := gcp.CatalogBuildSpec{
 			Entry: e.Name, Slug: rs.Slug,
-			GitProvider: rs.Provider, RepoURL: rs.RepoURL, BaseBranch: cmp.Or(rs.BaseBranch, "main"),
-			GitSecretID: gitID, GitUser: rs.GitUser, GitHubAppID: rs.GitHubAppID,
-			Base: base, Image: imageRef,
-			Definition:     gcp.CatalogDefinition{SourceCommit: commit, Generation: gen, SHA256: hex.EncodeToString(sum[:])},
 			ServiceAccount: rs.BuildServiceAccountEmail, MachineType: lc.Build.MachineType,
-			WorkflowSecrets: secrets,
-			Bucket:          lc.RecordBucketURL(), Selftest: selftestJSON, NoSmoke: o.noSmoke,
-		})
+			Bucket: lc.RecordBucketURL(), NoSmoke: o.noSmoke,
+		}
+		if e.Source.Kind == config.SourceImage {
+			spec.Prebuilt, spec.Selftest = e.Source.Image, prebuiltSelftest
+		} else {
+			key, err := config.CatalogDockerfileKey(e.Name)
+			if err != nil {
+				return userErr("%v", err)
+			}
+			if err := writeCatalogDockerfile(ctx, rb, opener, env.repoProvider(e.Source.Repo, cfg), e); err != nil {
+				// A provider opened without the credential its environment did
+				// not carry fails here with its own sentence, which is left
+				// exactly as it is; the hint says where the token actually is
+				// and what reading it needs (catalogProviderEnv). No other
+				// failure carries it: providers.ErrNoCredential is only ever the
+				// missing token.
+				if providerHint != "" && errors.Is(err, providers.ErrNoCredential) {
+					return fmt.Errorf("%w%s", err, providerHint)
+				}
+				return err
+			}
+			// What the build pins and records is the copy itself: its bytes and
+			// its object generation, read back from the one object the build
+			// reads, so the request states what the bucket holds and not what
+			// this process resolved a moment earlier.
+			data, gen, err := rb.Read(ctx, key)
+			if err != nil {
+				return remote(err)
+			}
+			sum := sha256.Sum256(data)
+			imageRef, err := gcp.SharedCatalogImage(region, lc.GCPProject, e.Name)
+			if err != nil {
+				return userErr("%v", err)
+			}
+			spec.GitProvider, spec.RepoURL, spec.BaseBranch = rs.Provider, rs.RepoURL, cmp.Or(rs.BaseBranch, "main")
+			spec.GitSecretID, spec.GitUser, spec.GitHubAppID = gitID, rs.GitUser, rs.GitHubAppID
+			spec.Base, spec.Image = base, imageRef
+			spec.Definition = gcp.CatalogDefinition{SourceCommit: commit, Generation: gen, SHA256: hex.EncodeToString(sum[:])}
+			spec.WorkflowSecrets, spec.Selftest = secrets, selftestJSON
+		}
+		res, err := b.SubmitCatalog(ctx, spec)
 		switch {
 		case errors.Is(err, gcp.ErrBadBuildSpec):
 			return userErr("%v", err)
@@ -390,13 +428,29 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 				return remote(waitErr)
 			}
 		}
+		// A prebuilt entry is smoked and never built, and the sentence says so:
+		// what the run produced is the digest of the reference the entry names,
+		// which is what its record then carries and what the doctor check reads
+		// back (doctor_layer.go). The reference is spelled as the entry spells
+		// it — there is no ":latest" of this command's own to trim.
+		prebuilt := e.Source.Kind == config.SourceImage
 		switch {
 		case o.noWait:
-			fmt.Fprintf(cmd.OutOrStdout(), "submitted Cloud Build build %s of %s; log: %s\n", oneLine(res.ID), oneLine(res.Image), oneLine(res.LogURL))
+			what := "of"
+			if prebuilt {
+				what = "smoking"
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "submitted Cloud Build build %s %s %s; log: %s\n", oneLine(res.ID), what, oneLine(res.Image), oneLine(res.LogURL))
 		case res.Digest == "":
 			// SUCCESS covers the promotion, so the content tag and latest
 			// are there; only the digest report is missing.
-			fmt.Fprintf(cmd.OutOrStdout(), "built %s, digest unknown: Cloud Build reported no pushed image (Cloud Build build %s)\n", oneLine(res.Image), oneLine(res.ID))
+			if prebuilt {
+				fmt.Fprintf(cmd.OutOrStdout(), "smoked %s, digest unknown: Cloud Build reported no digest for the reference (Cloud Build build %s)\n", oneLine(res.Image), oneLine(res.ID))
+			} else {
+				fmt.Fprintf(cmd.OutOrStdout(), "built %s, digest unknown: Cloud Build reported no pushed image (Cloud Build build %s)\n", oneLine(res.Image), oneLine(res.ID))
+			}
+		case prebuilt:
+			fmt.Fprintf(cmd.OutOrStdout(), "smoked %s@%s (Cloud Build build %s)\n", oneLine(res.Image), oneLine(res.Digest), oneLine(res.ID))
 		default:
 			fmt.Fprintf(cmd.OutOrStdout(), "built %s@%s (Cloud Build build %s)\n", oneLine(strings.TrimSuffix(res.Image, ":latest")), oneLine(res.Digest), oneLine(res.ID))
 		}
@@ -404,19 +458,23 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 	return nil
 }
 
-// catalogBuildEntries is the entries one command builds: the one the
-// operator named, or every entry that has a Dockerfile to build. An entry a
-// prebuilt image answers is named and passed over, and one whose Dockerfile
-// lives in another repository is passed over too (see
-// runImageBuildCatalog): a name asks for it and is told where to run, while
-// a whole-catalog build goes on with the rest.
-func catalogBuildEntries(cmd *cobra.Command, cat *config.Catalog, name, repo string) ([]config.Entry, error) {
+// catalogBuildEntries is the entries one command submits: the one the
+// operator named, or every entry the catalog has. An entry a prebuilt image
+// answers has nothing to build but is not passed over either — its run is the
+// smoke of that reference against the runtime contract (F10/IS11) — so a name
+// asks for the smoke. --no-smoke asks for a build without its smoke, and a
+// prebuilt entry has nothing else: one named with it is refused, and a
+// whole-catalog pass passes it over rather than submitting an empty run. An
+// entry whose Dockerfile lives in another repository is passed over too (see
+// runImageBuildCatalog): a name asks for it and is told where to run, while a
+// whole-catalog build goes on with the rest.
+func catalogBuildEntries(cmd *cobra.Command, cat *config.Catalog, name, repo string, noSmoke bool) ([]config.Entry, error) {
 	if name != "" {
 		e, ok := catalogEntryNamed(cat, name)
 		if !ok {
 			return nil, userErr("this project's image catalog has no entry %s: fugaro image ls lists the entries it has", pluginwire.Printable(name))
 		}
-		if err := catalogBuildEntryGuard(e, repo); err != nil {
+		if err := catalogBuildEntryGuard(e, repo, noSmoke); err != nil {
 			return nil, err
 		}
 		return []config.Entry{e}, nil
@@ -424,8 +482,8 @@ func catalogBuildEntries(cmd *cobra.Command, cat *config.Catalog, name, repo str
 	buildable := make([]config.Entry, 0, len(cat.Entries))
 	for _, e := range cat.Entries {
 		switch {
-		case e.Source.Kind == config.SourceImage:
-			fmt.Fprintf(cmd.ErrOrStderr(), "note: the catalog entry %s is the prebuilt image %s, so it has nothing to build; passing it over\n",
+		case e.Source.Kind == config.SourceImage && noSmoke:
+			fmt.Fprintf(cmd.ErrOrStderr(), "note: the catalog entry %s is the prebuilt image %s, and --no-smoke leaves a smoke-only entry nothing to submit; passing it over\n",
 				pluginwire.Printable(e.Name), pluginwire.Printable(e.Source.Image))
 		case e.Source.Kind == config.SourceDockerfile && !sameRepo(e.Source.Repo, repo):
 			fmt.Fprintf(cmd.ErrOrStderr(), "note: the catalog entry %s is built from %s's Dockerfile; passing it over, since its build runs as that repository's build account. Run this from %s's checkout to build it\n",
@@ -435,19 +493,24 @@ func catalogBuildEntries(cmd *cobra.Command, cat *config.Catalog, name, repo str
 		}
 	}
 	if len(buildable) == 0 {
-		return nil, userErr("every entry of this project's image catalog either is a prebuilt image or is built from another repository's Dockerfile: fugaro image ls lists them, and a build runs from the checkout of the repository a Dockerfile is in")
+		why := "every entry of this project's image catalog is built from another repository's Dockerfile, and a build runs from the checkout the Dockerfile is in"
+		if noSmoke {
+			why = "every entry of this project's image catalog is built from another repository's Dockerfile or is a prebuilt image, and --no-smoke leaves a prebuilt entry nothing to submit"
+		}
+		return nil, userErr("%s: fugaro image ls lists the entries this project has", why)
 	}
 	return buildable, nil
 }
 
-// catalogEntryGuardKind is the one rule both paths that build a catalog entry
+// catalogEntryGuardKind is the one rule both paths that submit a catalog entry
 // answer to, as a value rather than a sentence: an entry a prebuilt image
-// answers has nothing to build, and an entry whose Dockerfile is another
-// repository's is built by that repository's build account or not at all. The
-// rule is one function so the scheduled path cannot drift from the manual one;
-// the two answer it with different routes, because the person reading is in a
-// different place — a checkout, where running from the other repository's
-// checkout is the fix, or the nightly job's log, where fugaro update is.
+// answers has nothing to build (its run is the smoke of that reference), and
+// an entry whose Dockerfile is another repository's is built by that
+// repository's build account or not at all. The rule is one function so the
+// scheduled path cannot drift from the manual one; the two answer it with
+// different routes, because the person reading is in a different place — a
+// checkout, where running from the other repository's checkout is the fix, or
+// the nightly job's log, where fugaro update is.
 type catalogEntryGuardKind int
 
 const (
@@ -466,12 +529,17 @@ func catalogEntryGuardOf(e config.Entry, repo string) catalogEntryGuardKind {
 	return catalogEntryBuildable
 }
 
-// catalogBuildEntryGuard is the manual path's refusal: the operator is at a
-// checkout, so the route it names is the other repository's.
-func catalogBuildEntryGuard(e config.Entry, repo string) error {
+// catalogBuildEntryGuard is the manual path's refusal, for the entries a
+// submission can leave out: the operator is at a checkout, so the route it
+// names for another repository's entry is the other repository's. A prebuilt
+// entry is admitted — its run is the smoke — unless --no-smoke asks for it,
+// which would leave a run with nothing in it.
+func catalogBuildEntryGuard(e config.Entry, repo string, noSmoke bool) error {
 	switch catalogEntryGuardOf(e, repo) {
 	case catalogEntryPrebuilt:
-		return userErr("the catalog entry %s is the prebuilt image %s: there is nothing to build", pluginwire.Printable(e.Name), pluginwire.Printable(e.Source.Image))
+		if noSmoke {
+			return userErr("the catalog entry %s is the prebuilt image %s, and the smoke of that reference is the whole of its run: --no-smoke would submit nothing", pluginwire.Printable(e.Name), pluginwire.Printable(e.Source.Image))
+		}
 	case catalogEntryOtherRepo:
 		return catalogBuildWrongRepo(e, repo)
 	}
@@ -531,8 +599,10 @@ func catalogBuildSecrets(cfg *config.Config) ([]config.Secret, error) {
 }
 
 // catalogBuildBanner is what a catalog build's confirmation says it does:
-// the entries it submits one build per, the machine each runs on, the
-// account and the registry they push to.
+// the entries it submits one Cloud Build per, the machine each runs on, the
+// account and the registry the builds push to. An entry a prebuilt image
+// answers is smoked and never built, so a set that holds one says what that
+// run is — the person confirming is being told what each submission does.
 func catalogBuildBanner(entries []config.Entry, machineType, account, registry string) string {
 	names := make([]string, len(entries))
 	for i, e := range entries {
@@ -542,6 +612,15 @@ func catalogBuildBanner(entries []config.Entry, machineType, account, registry s
 	if len(names) > 1 {
 		what = fmt.Sprintf("%d catalog entries (%s)", len(names), strings.Join(names, ", "))
 	}
-	return fmt.Sprintf("submits a Cloud Build for %s on %s, as %s: each build reads the Dockerfile copied into the project's bucket, smoke-tests the candidate and promotes the image into %s and records it",
-		what, machineType, account, registry)
+	head := fmt.Sprintf("submits a Cloud Build for %s on %s, as %s: ", what, machineType, account)
+	builds := slices.ContainsFunc(entries, func(e config.Entry) bool { return e.Source.Kind != config.SourceImage })
+	prebuilt := slices.ContainsFunc(entries, func(e config.Entry) bool { return e.Source.Kind == config.SourceImage })
+	switch {
+	case !builds:
+		return head + "each run smoke-tests the prebuilt image its entry names against the runtime contract, records the digest it smoked, and builds and pushes nothing"
+	case !prebuilt:
+		return head + "each build reads the Dockerfile copied into the project's bucket, smoke-tests the candidate and promotes the image into " + registry + " and records it"
+	default:
+		return head + "each Dockerfile entry's build reads the Dockerfile copied into the project's bucket, smoke-tests the candidate and promotes the image into " + registry + " and records it, and each prebuilt entry is smoke-tested against the runtime contract alone"
+	}
 }

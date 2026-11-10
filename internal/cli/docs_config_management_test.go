@@ -87,7 +87,7 @@ const (
 )
 
 // The audit's two figures (F1): the registry's rows, and the rows the generic
-// write path's allowlist carries -- eighty-eight by name and the rest through
+// write path's allowlist carries -- ninety-four by name and the rest through
 // the nine prefixes. They are re-counted below rather than trusted, because the
 // whole of §1's argument is that the rows no writer carries are the defect.
 //
@@ -100,9 +100,22 @@ const (
 // added to the registry and not to the allowlist widens the gap the audit is
 // about rather than narrowing it, and with CB1 of docs/catalog-build-context/,
 // whose image_catalog.entries.*.source.context row is the image catalog's own.
+// This moved it to 390 with the six concrete spellings of
+// stages.*.claude_account, one per config.RunStages name (settings_stages_test.go),
+// which were the whole of the growth then: planning.decoupling's two rows
+// (registry.go:301, and the layer row at :543) are already on main.
+//
+// This branch moved both figures with the image setup skill's two rows: the
+// bake switch, which IS7 asks through the setup wizard and writes through this
+// path, is a named key and takes the named count with it; the repo-to-image map
+// is one row too, and its owner is the `image map` family -- `fugaro image map
+// set` is the command that writes it (D1906) -- so it widens the registry and
+// not the allowlist, exactly as a key the registry carries and this list does
+// not. The two rows are visible in internal/settings/registry.go, and the
+// document's own sentence names the split.
 const (
-	cfmRegistryRows   = 384
-	cfmAllowlistNamed = 88
+	cfmRegistryRows   = 394
+	cfmAllowlistNamed = 95
 )
 
 func TestDocsConfigManagementIsWritten(t *testing.T) {
@@ -333,7 +346,7 @@ func TestDocsConfigManagementRelativeCitationsResolve(t *testing.T) {
 // and the generic write path's allowlist carries eighty-eight of them by name
 // plus the rows its nine prefixes reach; the documents state the registry's
 // count and the allowlist's, and a row added to either -- which moves the gap
-// between the two -- fails here rather than leaving §1's "218 rows have no
+// between the two -- fails here rather than leaving §1's "219 rows have no
 // generic writer" reading as checked when it is not.
 //
 // The count moved with G0, which gained the allowlist the wildcard blocks
@@ -351,7 +364,10 @@ func TestDocsConfigManagementRelativeCitationsResolve(t *testing.T) {
 // `fugaro config publish`'s, not `fugaro settings set`'s.
 // CB1 of docs/catalog-build-context/ moved it once more: its
 // image_catalog.entries.*.source.context row is the image catalog's own, and no
-// writer carries it.
+// writer carries it. This branch's planning.decoupling is the last mover: the
+// planning pass's own preference is two rows the merged tree adds --
+// internal/settings/registry.go:301, and its layer row for defaults.planning at
+// :542.
 //
 // It counts through the same predicate the write path uses, so the test and the
 // command cannot disagree about what "the allowlist carries" means: the three

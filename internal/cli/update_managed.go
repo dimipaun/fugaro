@@ -738,6 +738,33 @@ func (r *initRun) gateApplied(ctx context.Context) error {
 	return nil
 }
 
+// applyAndRecord applies the saved plan the step was judged for and records
+// the admission — the same record gateApplied writes after a successful apply,
+// written for a failed one as well.
+//
+// A failed apply is not an apply that applied nothing, and the failure the
+// retry absorbs is the clearest case of it: a propagation error means terraform
+// created the resource the refused grant names before it stopped, so the plan
+// the gate admitted has landed in the project whether or not the command
+// returned zero. The retry then plans and judges a NEW document, and the
+// admission of the old one would be replaced before anything recorded it: the
+// trail D1014 requires would carry the digest of a plan that did not land, and
+// none of the plan that did. A record that cannot be written is the command's
+// own failure here too, and it stops the retry with it: the trail is what the
+// retry must not carry on without.
+//
+// A step the gate did not admit has nothing to record, which is what
+// recorded() answers with no document.
+func (r *initRun) applyAndRecord(ctx context.Context, t *tf.TF) error {
+	if err := t.Apply(ctx, infra.PlanFile); err != nil {
+		if rerr := r.gateApplied(ctx); rerr != nil {
+			return rerr
+		}
+		return remote(err)
+	}
+	return r.gateApplied(ctx)
+}
+
 // gateUnreadable is the sentence a step reads when the document the gate was
 // to judge could not be produced or read at all: terraform's own error follows
 // it, and what it must not do is read as "nothing was refused". It names no

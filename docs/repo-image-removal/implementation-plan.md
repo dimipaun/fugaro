@@ -1,6 +1,7 @@
 # Implementation plan: removing the per-repository derived images
 
-**Status: plan only; nothing is implemented; no task approved.** Eleven tasks, **R0–R10**, each with its
+**Status: a plan. R0 and R1 are built; R2–R10 are parked by the image setup skill (D1900), and no task
+of theirs is approved.** Eleven tasks, **R0–R10**, each with its
 files, its interface, its **red step**, its named tests and its **SEC** flag. Every task is written
 against the tree of 2026-11-04 (`777b902d`, the merge of `main` this round read) and every citation in
 it was resolved while writing. **The owner answered the decisions in
@@ -9,7 +10,22 @@ them waits on a question; what is still owed is the owner's **approval of the pl
 question its residual raises — whether the removal's release may ship the per-repository `--retire` as
 an operator step ([reconciliation.md](reconciliation.md) §5). **No task lands before that is picked**,
 because the answer decides whether the removal release needs the retirement folded into `update`'s own
-converge, and that is a change to a task rather than a detail inside it.
+converge, and that is a change to a task rather than a detail inside it. *This paragraph is the status
+as first written, kept: R0 and R1 landed without the approval it asks for, and the note below parks
+R2–R10 rather than scheduling them.*
+
+**Amended 2026-11-09: R0 and R1 have shipped, and R2–R10 are parked**, as [README.md](README.md) states
+it in full. **R0** (#1693) is the dogfood repository's catalog entry and its pin — `images/catalog/go/Dockerfile`,
+`image_name: go` on the `go` workflow of `./fugaro.yaml`, held by `TestDogfoodWorkflowPinsTheCatalogEntry`
+— and **R1** (#1698) is `checkout: baked` keeping both its values, with a prebuilt entry refused on one
+(`TestBakedWorkflowRefusesAPrebuiltCatalogEntry`). **The order of §2 has therefore run through R1 and
+stops there**: the catalog shipped, R0 landed, D1148's two tasks landed, R1 landed, and **R2 is the next
+task the plan names and the first one D1900 parks.** D1900 keeps this plan's ruling first half and
+reverses its second, so the disabling the plan described as removal is delivered by
+[docs/image-setup-skill/implementation-plan.md](../image-setup-skill/implementation-plan.md)'s IS1 and
+IS2 with **the code kept and nothing deleted**: every task from R2 down keeps its number, its files and
+its red step for whenever the owner unparkes it, nothing lands before then, and the residual the
+approval above turns on is parked with it — so no release carries the operator step it asks about.
 
 ## 1. What this plan does not own
 
@@ -114,7 +130,7 @@ adds its edit only after that task has merged**, and never re-derives what the o
 | `deploy/terraform/gcp/modules/installation/` and `deploy/terraform/gcp/roots/installation/` | **D1148 (ii)** (#1683), R4 | #1683 adds the Scheduler, its target, the root's wiring and their `terraform test` fixtures and goldens; R4 touches the shared registry's grants only. **#1683 merges first**, and R4 regenerates the goldens #1683 just regenerated |
 | `internal/imagecheck/` (`internal/imagecheck/catalog.go:20`, the per-repository check) | **D1148's driver**, R6 | D1148's driver calls `CheckCatalog` over every buildable entry; R6 removes the per-repository triggers' readers (`rebuild.*`) and `checkedWorkflows` (`internal/cli/imagecheck.go:241`). **D1148 first** |
 | `internal/settings/registry.go` | **G0/G1**, R2 | The configuration-management plan's G0 and G1 add rows and widen the generic writer's allowlist; R2 removes the twenty-one rows of the removed keys (`internal/settings/registry.go:229`, `:454`, `:477`). **One row, one owner**: R2 touches only the removed keys' rows and never the writer |
-| `schemas/settings.schema.json` | **G2**, **G8**, **G9**, R2 | They add member rows for the writes they add; R2 removes the members of the keys it removes (`schemas/settings.schema.json:1130`, `:1181`). **R2 does not move the document's version** — the rule G2 states |
+| `schemas/settings.schema.json` | **G2**, **G8**, **G9**, R2 | They add member rows for the writes they add; R2 removes the members of the keys it removes (`schemas/settings.schema.json:1136`, `:1187`). **R2 does not move the document's version** — the rule G2 states |
 | `internal/cli/image_refresh*.go` | **M-series** (`image_refresh_steps.go`, `image_refresh_rules.go`), R6 | The managed build's M-series changes what `image refresh` converges; R6 removes its derived-image arm. **The M-series lands first**, or R6 rewrites lines it is about to be handed back |
 | `internal/cli/init.go`, `internal/cli/update.go` | **M-series** (`update.go`, `init.go`), R7 | R7 changes `setup`'s first-build offer (`offerBuilds`, `internal/cli/init.go:3415`) and the retirement door is left alone (`:444`); the M-series adds the converge stages. **Different functions, one file, M-series first** |
 | `docs/rigor-modes/reconciliation.md` | the design's own commit, **R2** | The design's commit moves the **pins** row (93 → 94, with its amendment sentence). **R2 moves `Config scope rows` (93 → 82)**, which is the eleven rows of spec §1.1 leaving `internal/config/scope.go`, and `TestDocsRigorModesCensusStatesItsCommands` re-runs that row's own command — so the row and the removal land together or the removal fails a test no task names. The rows R2 does **not** move, checked rather than assumed: the two top-level-key rows (a **workflow** key is not a top-level property), the skew-constant row (no `Since` constant leaves with the removal) and the pins row (no pin is deleted, one is rewritten) |
@@ -189,7 +205,7 @@ readiness branches that decide between them.
 
 - **Interface.** A Dockerfile **in this repository** — `images/catalog/go/Dockerfile` — that takes
   `FROM $FUGARO_BASE`, clones `$REPO_URL` at `$FUGARO_COMMIT` with the `git-credentials` secret the build
-  mounts (`images/derived/cloudbuild.yaml:178`), runs today's `image.setup` verbatim
+  mounts (`images/derived/cloudbuild.yaml:190`), runs today's `image.setup` verbatim
   (`go mod download && go build ./...`), and **ends with** `finalize-checkout`
   (`images/derived/Dockerfile.tmpl:130`). A catalog entry in the project layer whose source is that
   Dockerfile at that path, published and **built by the owner before the pin lands**: `fugaro image add
@@ -236,7 +252,7 @@ readiness branches that decide between them.
   removed keys (`:113`, `:131`, `:135`, `:179`, `:189`), `internal/settings/registry.go:229` its
   twenty-one (`:454`, `:477`), and the three schemas their members
   (`schemas/fugaro.schema.json:358`, `:396`, `:511`; `schemas/project-layer.schema.json:265`, `:338`;
-  `schemas/settings.schema.json:1130`, `:1181`).
+  `schemas/settings.schema.json:1136`, `:1187`).
   `image_name`, `needs` and `image_catalog.*` keep every member they have, and no version moves.
   **The two tombstones stay**: `internal/config/scope.go:106` and `:107` are `image.node` and
   `image.jdk`, the 0.7.0 keys the removal keeps refusing, so they are **not** among the eleven and its

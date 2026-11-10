@@ -150,7 +150,7 @@ place" is already that decision; only the spec's extra guardrails are new (F12).
 | Spend, project and token caps | **Exists**: RTDB caps and `config/mode`, `Precheck`, rules-enforced; MCP tokens carry limits (M1) |
 | Kill switch | **Exists**: `budget.SetKill` over `config/kill/global` and per scope. The spec's "admin command" is the existing command |
 | Idempotency key on every spawn | **Exists for runs**: the launch claim makes one launch one run; `ClaimTTL` 10 min bounds it. Per-action keys are new (D1231) |
-| Concurrency per project and per agent | **Gap**: `max_parallel` is the CLI's per-person limit (referenced in `internal/backend/backend.go:40` and `internal/backend/batch/reap.go`); no per-project running cap found. `projectpolicy.ConcurrencyPerToken` (`internal/projectpolicy/policy.go:534`) counts runs sharing a *credential*, a different thing |
+| Concurrency per project and per agent | **Gap**: `max_parallel` is the CLI's per-person limit (referenced in `internal/backend/backend.go:40` and `internal/backend/batch/reap.go`); no per-project running cap found. `projectpolicy.ConcurrencyPerToken` (`internal/projectpolicy/policy.go:574`) counts runs sharing a *credential*, a different thing |
 | Max spawns per cycle / per minute | **Gap** |
 | Batch approval (default 50) | **Gap**; the repo's governance work (`docs/task-governance`) is the nearest and lives in `ee/` |
 

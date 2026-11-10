@@ -438,9 +438,9 @@ against an uncommitted module.
 otherwise it is a claim about a command that may never have run:
 
 - it **finds a working runner or stops**: a working `node` and `npm` on PATH, else one
-  lent by `mise` (`node@22`, the line `package.json`'s `engines` declares — this
-  repository's base image keeps node off PATH, so the path to one is mise's to own, not
-  this script's to hardcode), else exit 2 with a message instead of a count;
+  lent by `mise` (`node@22`, the line `package.json`'s `engines` declares — the
+  base carries no node of its own, so the path to one is mise's to own, not this
+  script's to hardcode), else exit 2 with a message instead of a count;
 - the **positive control**: the suite must pass on the pristine module *with at least
   one test run*, which is what catches the empty-glob trap `node --test` sets — a
   missing test file exits 0 having run nothing, and would otherwise look exactly like a
