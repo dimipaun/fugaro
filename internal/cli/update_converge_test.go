@@ -412,11 +412,13 @@ func TestUpdateConvergesNoCatalogDefault(t *testing.T) {
 			t.Errorf("after one fugaro update, the published entry %s is the default, want none: the project's config named no entry for its workflows", e.Name)
 		}
 	}
-	// Each of the checkout's two workflows is built twice: by the repository
-	// stage's first builds and then by the checkout's cloud step, as in the
-	// onboarding test above.
-	if n := len(r.builder.specs); n != 4 {
-		t.Fatalf("%d job image(s) reached Cloud Build, want the checkout's two workflows built twice: with no catalog default every workflow keeps its own image", n)
+	// Two builds reach Cloud Build, one per workflow, and both are the checkout
+	// stage's cloud step's — as in the converge rig's own count above: each of
+	// the two workflows carries a build record of the release behind, so the
+	// repository stage offers no first build (infra.NeedsBuild), and what the
+	// cloud step rebuilds off those records is each workflow's own job image.
+	if n := len(r.builder.specs); n != 2 {
+		t.Fatalf("%d job image(s) reached Cloud Build, want one per workflow, the cloud step's: with no catalog default every workflow keeps its own image", n)
 	}
 	// The pin the fixture records carries a digest the fake source registry
 	// answers differently, so what is compared is the repo:tag the pin names.
