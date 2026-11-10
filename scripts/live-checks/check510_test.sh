@@ -14,6 +14,13 @@
 # without one. The modes below bend exactly one of those rules at a time, which
 # is what lets a case show that the check notices.
 #
+# The role table is part of that model, and it is the reason the ORDER the check
+# asks its rows in is covered here too: no predefined Secret Manager role carries
+# secrets.create without secrets.list, so the unconditioned create grant the
+# check writes also admits a listing — an admitted list whose body was empty
+# would hide that, so the fake answers an admitted list with the names that
+# exist, exactly as a real one does.
+#
 # Usage: bash scripts/live-checks/check510_test.sh
 set -euo pipefail
 
@@ -357,16 +364,22 @@ denied() { # denied STATUS DETAIL
   exit 0
 }
 
-# role_grants ROLE PERMISSION: the sandbox project's own coarse roles, as the
-# permissions this check's rows are about sit in them.
+# role_grants ROLE PERMISSION: the project's own predefined roles, as the
+# permissions this check's rows are about sit in them. The table is faithful to
+# the two things the check's own reads depend on: every role that carries
+# secrets.create also carries secrets.list (there is no create-only Secret
+# Manager role — roles/secretmanager.admin and roles/secretmanager.editor are the
+# two that carry create, and both carry list), and secretmanager.versions.add and
+# secrets.delete sit in admin and in secretVersionAdder, the two roles the check
+# conditions on.
 role_grants() {
   case "$1/$2" in
   roles/secretmanager.admin/secretmanager.versions.add | \
     roles/secretmanager.admin/secretmanager.secrets.delete | \
     roles/secretmanager.admin/secrets.create | \
+    roles/secretmanager.admin/secrets.list | \
     roles/secretmanager.secrets.versionAdder/secretmanager.versions.add | \
     roles/secretmanager.secrets.versionAdder/secretmanager.secrets.delete | \
-    roles/secretmanager.creator/secrets.create | \
     roles/secretmanager.viewer/secrets.list) return 0 ;;
   esac
   return 1
@@ -440,7 +453,7 @@ if [ -f "$state/bindings.tsv" ]; then
     esac
   done <"$state/bindings.tsv"
 fi
-# A create under an UNCONDITIONED creator that the mode refuses: the row for it
+# A create under an UNCONDITIONED create-bearing grant that the mode refuses: the row for it
 # then reads a refusal where an admission is expected, which is a not-measured.
 if [ "$perm" = secrets.create ] && [ "$mode" = create-not-unconditioned ]; then
   allowed=no
@@ -493,6 +506,12 @@ secrets.create)
   emit 200 "{\"name\":\"projects/$project/secrets/$name\"}"
   ;;
 secrets.list)
+  # The listing is the containers that exist, and it is written for every caller
+  # this fake has ADMITTED: a real service returns the names to whoever the
+  # policy admits, and the row's reading depends on that. It is what makes the
+  # check's own ordering observable — every role carrying secrets.create also
+  # carries secrets.list, so a list row asked AFTER the unconditioned create
+  # grant is admitted and reads these names.
   names=$(cd "$state/secrets" && ls -1 2>/dev/null || true)
   first=yes
   {
@@ -504,12 +523,7 @@ secrets.list)
     done
     printf ']}'
   } >"$state/list.json"
-  if [ "$mode" = list-admits-some ]; then
-    if [ -n "$out" ]; then cp "$state/list.json" "$out"; fi
-    printf '200'
-    exit 0
-  fi
-  if [ -n "$out" ]; then printf '{}' >"$out"; fi
+  if [ -n "$out" ]; then cp "$state/list.json" "$out"; fi
   printf '200'
   ;;
 esac
@@ -663,6 +677,32 @@ test_happy_path() {
   # The block carries no credential: the impersonated token is never printed.
   expect_absent "$out" "fake-token-for-" "happy path: no token in the block"
   expect_absent "$err" "fake-token-for-" "happy path: no token on stderr"
+}
+
+test_the_roles_it_grants_are_a_closed_set_of_predefined_roles() {
+  # A fake cannot tell a real role from a fictional one: gcloud is the only
+  # oracle for whether a role exists, and this is hermetic. What this pins is
+  # that the roles the check grants are a closed set, named here, so a fourth one
+  # is an edit in two places rather than a name the fake quietly accepts — as
+  # `roles/secretmanager.creator` was. Secret Manager has six predefined roles
+  # and none of them carries secrets.create on its own.
+  local dir=$work/roles
+  prepare "$dir"
+  run_check "$dir"
+  expect_status "$status" 0 "the roles it grants"
+  local roles distinct
+  roles=$(grep -o 'role=[^ ]*' "$dir/logs/gcloud.calls" | sort -u | tr '\n' ' ')
+  expect_contains "$roles" "role=roles/secretmanager.admin" "the roles it grants: the conditioned grant and the unconditioned create grant"
+  expect_contains "$roles" "role=roles/secretmanager.viewer" "the roles it grants: the listing control"
+  expect_contains "$roles" "role=roles/iam.serviceAccountTokenCreator" "the roles it grants: the impersonation grant"
+  distinct=$(grep -o 'role=[^ ]*' "$dir/logs/gcloud.calls" | sort -u | grep -c . || true)
+  [ "$distinct" = 3 ] || fail "the roles it grants: expected exactly three roles, got (${distinct}): ${roles}"
+  # F30's unconditioned half: exactly one binding, roles/secretmanager.admin,
+  # and no condition on it.
+  local unconditioned
+  unconditioned=$(grep 'projects add-iam-policy-binding' "$dir/logs/gcloud.calls" | grep -v -- '--condition=' || true)
+  expect_contains "$unconditioned" "--role=roles/secretmanager.admin" "the unconditioned grant: roles/secretmanager.admin"
+  [ "$(printf '%s\n' "$unconditioned" | grep -c .)" = 1 ] || fail "the unconditioned grant: expected exactly one binding carrying no condition, got: ${unconditioned}"
 }
 
 test_no_human_output_carries_the_token() {
@@ -924,6 +964,7 @@ t() {
 t test_help
 t test_dry_run
 t test_happy_path
+t test_the_roles_it_grants_are_a_closed_set_of_predefined_roles
 t test_no_human_output_carries_the_token
 t test_xtrace_refused
 t test_a_foreign_installation_is_refused

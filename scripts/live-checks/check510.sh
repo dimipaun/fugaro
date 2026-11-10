@@ -38,9 +38,12 @@
 # Where:      the fugaro-dev installation ONLY, and the project and region are
 #             hard-coded in this file (never `gcloud config get-value project`).
 #             A project, region or account naming belong is refused by name.
-# Creates:    ONE throwaway service account (chk510-<stamp>), the IAM bindings
-#             this check's own condition needs on the project, and the probe
-#             containers its rows are measured on: five under the fugaro_u_,
+# Creates:    ONE throwaway service account (chk510-<stamp>), the project IAM
+#             bindings its rows need — the two the condition is measured under,
+#             and ONE written with no condition (roles/secretmanager.admin — the
+#             same role, because Secret Manager has no create-only role), which
+#             is what the unconditioned create row is measured on — and the probe
+#             containers the rest of its rows are read on: five under the fugaro_u_,
 #             fugaro_p_ and fugaro-<slug>-... shapes, plus the containers the
 #             length bisection creates (about a dozen). Every one of them is
 #             deleted again by the restore, which reads its own writing back:
@@ -211,7 +214,17 @@ restore() {
     args=(--member="$member" --role="$role")
     if [ "$conditioned" = conditioned ]; then args+=(--condition="title=$title"); fi
     gcloud_admin projects remove-iam-policy-binding "$P" "${args[@]}" >/dev/null 2>&1 || true
-    if title_present "$title"; then leftover="$leftover binding($member,$role,$title)"; fi
+    if [ "$conditioned" = conditioned ]; then
+      if title_present "$title"; then leftover="$leftover binding($member,$role,$title)"; fi
+    else
+      # An unconditioned binding carries no condition, so there is no title in
+      # the policy to look for and the read-back is the member itself: the
+      # project naming it at all means a binding this run wrote is still there.
+      # Every other binding recorded for this member was written earlier (in
+      # step_bindings, before step_create's own) and is removed above before this
+      # one is read.
+      if member_present "$member"; then leftover="$leftover binding($member,$role,no condition)"; fi
+    fi
   done < <(each_binding)
   while read -r name; do
     [ -n "$name" ] || continue
@@ -225,7 +238,7 @@ restore() {
   fi
   if [ -n "$leftover" ]; then
     RESTORE_VERDICT=FAIL
-    RESTORE_NOTE="this check could not confirm what it deleted:$leftover — delete them yourself: gcloud secrets delete <name> --project $P; gcloud iam service-accounts delete <email> --project $P; gcloud projects remove-iam-policy-binding $P --member=<member> --role=<role> --condition=title=<title>"
+    RESTORE_NOTE="this check could not confirm what it deleted:$leftover — delete them yourself: gcloud secrets delete <name> --project $P; gcloud iam service-accounts delete <email> --project $P; gcloud projects remove-iam-policy-binding $P --member=<member> --role=<role> (add --condition=title=<title> for the one written under a condition; one this run wrote with no condition is removed by naming none)"
     return 0
   fi
   RESTORE_VERDICT=PASS
@@ -386,7 +399,7 @@ add_binding() { # add_binding ROLE TITLE conditioned|unconditioned
     args+=(--condition="title=$title,expression=$(condition_expression)")
   fi
   if ! gcloud_admin projects add-iam-policy-binding "$P" "${args[@]}" >/dev/null 2>&1; then
-    die "could not grant ${role} to ${SA_EMAIL}${how} on ${P}: adding a project binding needs resourcemanager.projects.setIamPolicy, which a project Owner has. Nothing else was written"
+    die "could not grant ${role} to ${SA_EMAIL}${how} on ${P}: adding a project binding needs resourcemanager.projects.setIamPolicy, which a project Owner has, and the role has to be one this project can bind — a name that is not a role of the project is refused here the same way. Run 'gcloud projects add-iam-policy-binding $P --member=serviceAccount:$SA_EMAIL --role=$role' here yourself to read the error. Nothing else was written"
   fi
   BINDINGS_MADE+=("serviceAccount:$SA_EMAIL|$role|$title|$conditioned")
 }
@@ -541,23 +554,31 @@ step_create() {
   # Then the unconditioned grant, which is what the intake will hold: F30 says
   # the create check is made on the project, so there is no name to condition
   # against and the intake holds the permission project-wide. It is added AFTER
-  # the row above, so that row measured the conditioned grant alone.
-  add_binding roles/secretmanager.creator "chk510-creator-${STAMP}" unconditioned
+  # the row above, so that row measured the conditioned grant alone — and the
+  # SAME role is used, which is what makes the pair a reading: the one call
+  # answered 403 under the condition and 200 without it, so the condition is the
+  # only thing that differs between the two rows.
+  #
+  # roles/secretmanager.admin rather than a role of its own because it has to be
+  # a role that exists — Secret Manager has six predefined roles and none of them
+  # is a create-only one, so create cannot be granted without also granting list
+  # (see step_list's own note, which is why that step runs before this one).
+  add_binding roles/secretmanager.admin "chk510-admin-unconditioned-${STAMP}" unconditioned
   name="fugaro-chk510-${STAMP}-made"
-  wait_for_creator "$name"
+  wait_for_unconditioned_create "$name"
 }
 
-# wait_for_creator NAME: the unconditioned create, retried until it is seen. The
-# same call is the row, so there is nothing to read twice: a 200 is an
-# unconditioned create of a name OUTSIDE both prefixes being admitted, which is
-# F30's other half and the power DS2.2 grants the intake.
-wait_for_creator() {
+# wait_for_unconditioned_create NAME: the unconditioned create, retried until it
+# is seen. The same call is the row, so there is nothing to read twice: a 200 is
+# an unconditioned create of a name OUTSIDE both prefixes being admitted, which
+# is F30's other half and the power DS2.2 grants the intake.
+wait_for_unconditioned_create() {
   local name=$1 waited=0
   while :; do
     create_secret "$name"
     if [ "$API_STATUS" = 200 ]; then
       record_secret "$name"
-      fact create-unconditioned PASS "with roles/secretmanager.creator and NO condition, secretmanager.secrets.create was ADMITTED for ${name} — a name outside both prefixes — after ${waited}s: an unconditioned create is project-wide, which is the power the intake holds and the reason its fence is the code that derives the prefix from the verified sub (R3)"
+      fact create-unconditioned PASS "with roles/secretmanager.admin and NO condition — the same role the create-conditioned row was REFUSED under — secretmanager.secrets.create was ADMITTED for ${name} — a name outside both prefixes — after ${waited}s: an unconditioned create is project-wide, which is the power the intake holds and the reason its fence is the code that derives the prefix from the verified sub (R3)"
       return 0
     fi
     [ "$waited" -lt "$IAM_WAIT_SECONDS" ] || break
@@ -565,11 +586,20 @@ wait_for_creator() {
     waited=$((waited + IAM_POLL_SECONDS))
     TOKEN=$(token_for_sa || true)
   done
-  unmeasured create-unconditioned "secretmanager.secrets.create answered ${API_STATUS} on every attempt for ${IAM_WAIT_SECONDS}s under an UNCONDITIONED roles/secretmanager.creator grant: $(api_detail). Either the grant had not propagated — rerun with a longer CHECK510_IAM_WAIT_SECONDS — or create is not admitted unconditioned, which would leave the intake unable to create anything and returns to the owner before DS2.2"
+  unmeasured create-unconditioned "secretmanager.secrets.create answered ${API_STATUS} on every attempt for ${IAM_WAIT_SECONDS}s under an UNCONDITIONED roles/secretmanager.admin grant: $(api_detail). Either the grant had not propagated — rerun with a longer CHECK510_IAM_WAIT_SECONDS — or create is not admitted unconditioned, which would leave the intake unable to create anything and returns to the owner before DS2.2"
 }
 
 record_secret() { if secret_exists "$1"; then MADE_SECRETS+=("$1"); fi; }
 
+# step_list runs BEFORE step_create, and that order is the row: this measures
+# what the CONDITIONED grants admit, and the grants it has to measure against are
+# the two step_bindings wrote. It cannot run after step_create, because no
+# predefined Secret Manager role carries secrets.create without secrets.list —
+# roles/secretmanager.admin and roles/secretmanager.editor both carry both — so
+# the unconditioned create grant this check writes (F30's other half, a role that
+# exists) would also admit this listing, which would then read this check's own
+# containers and fail the row on an artifact of the check's own grants rather
+# than on anything about IAM.
 step_list() {
   local seen_owner seen_conditioned
   # F30's list half: secrets.list is checked on the project, so the same
@@ -661,7 +691,7 @@ plan() {
   say "  [network, read] the guards: fugaro doctor --project fugaro --all (it reads the installation's config, policy and billing, and the update check, so this is the dry run's one network read) and fugaro version"
   say "  [network, write] gcloud iam service-accounts create ${SA_NAME} (throwaway), then roles/iam.serviceAccountTokenCreator for $ACCOUNT on it"
   say "  [network, write] gcloud secrets create for five probes: ${PROBE_U}, ${PROBE_P}, ${PROBE_N}, ${PROBE_U2}, ${PROBE_N2}"
-  say "  [network, write] gcloud projects add-iam-policy-binding ${P} --role=roles/secretmanager.admin|viewer|creator, the first two under the condition: $(condition_expression)"
+  say "  [network, write] gcloud projects add-iam-policy-binding ${P} --role=roles/secretmanager.admin|viewer under the condition: $(condition_expression), then roles/secretmanager.admin again with NO condition (the create row's grant: Secret Manager has no create-only role)"
   say "  [network, read] POST .../secrets/<name>:addVersion, DELETE .../secrets/<name>, POST .../secrets?secretId=<name>, GET .../secrets — as ${SA_NAME}, one call per row"
   say "  [network, write] the length bisection's creates (up to ${LENGTH_MAX_PROBE} characters, about 11 calls)"
   say "  [network, write] the restore: the bindings, the account and every container this check made, deleted and read back"
@@ -785,8 +815,11 @@ main() {
   step_bindings
   step_version_add
   step_delete
-  step_create
+  # step_list before step_create: see step_list's own note — the unconditioned
+  # create grant carries secrets.list too, so the list row has to be measured
+  # while the conditioned grants are still the only ones written.
   step_list
+  step_create
   step_id_length
 }
 
