@@ -22,7 +22,7 @@ see `## images.yml` — staged again below).
 - **`dependabot-console.yml`** — **applied on 2026-10-23, not pending** (copied over `.github/dependabot.yml` and its staged copy removed; what follows is the record). **Dependabot's watch over the console's npm dependencies**, staged on 2026-10-23 on the owner's ruling of 2026-10-22. It is **not a workflow and not a file of its own**: it is the whole of `.github/dependabot.yml` as it should read once the console is watched -- the `github-actions` entry that runs today, unchanged, plus one `npm` entry for `/console`, weekly and **grouped** so that minor and patch bumps arrive as one pull request a week (a major, Electron's included, stays outside the group and arrives on its own for a deliberate look). **A staging file is not strictly forced here** -- `.github/dependabot.yml` is not under `.github/workflows/`, so an agent run may write it -- which is exactly why this plan stages it: `docs/plans/2026-10-15-desktop-console.md`'s open item 5 reserved the decision for the owner, and the ruling of 2026-10-22 is "stage it, with the copy-in step, and let them apply it". See `## dependabot-console.yml` below for the copy-in commands and for the two sentences that copy-in has to update.
 - **`images.yml` — applied on 2026-10-30, not pending** (copied into `.github/workflows/` and its staged copy removed; what follows is the record). The staged copy was the running `.github/workflows/images.yml` plus the credentials service's image leg (credentials-service plan, task **C1.14**): the `credentials` job that builds `images/credentials/Dockerfile`, smoke-tests it, holds it to a size budget and secret-scans it on every run, the `credentials` kind in the `version` job's list, the `publish-credentials` job that publishes it and gives it the same signed `<version>-pinned` tag the base has (which `fugaro update`'s credentials stage resolves and verifies), and the `credentials` image in `verify-public`'s pull-back loop. Staged by a Fugaro run that cannot push a `.github/workflows/**` change; see `## images.yml` below for the diff, the one command that applies it and the steps that have to go with it. **The two earlier `images.yml` changes are records, not requests:** the signing of the pushed base image by its OCI digest (cosign, keyless) and the nightly-immune `<version>-pinned` tag (plan Task 1 of `docs/plans/2026-10-13-retire-image-mirror.md`) was copied in and `git rm`'d from here in `6b57ba9`, and the 0.7.0 hard cut (`838e0b0`) before it.
 
-**`console-tests.yml`** — the desktop console's own tests in CI, staged by Task 1.4 of `docs/plans/2026-10-15-desktop-console.md` and applied by the owner as Task 1.5. **It holds no secret of any kind**, it runs unconditionally on every pull request and every push to `main`, and unlike `images.yml` **its staged copy is kept after the copy-in** (`TestConsoleTestsWorkflowIsStagedAndPinned` asserts the two files are byte-identical from then on): see `## console-tests.yml` below.
+**`console-tests.yml`** — the desktop console's own tests in CI, staged by Task 1.4 of `docs/plans/2026-10-15-desktop-console.md` and applied by the owner as Task 1.5. **It holds no secret of any kind**, its only trigger is `workflow_dispatch` — it ran on every pull request and every push to `main` until the owner's ruling of 2026-11-07 moved every workflow that ran on push to a hand dispatch (`e5d6ba7c`, #1960) — and unlike `images.yml` **its staged copy is kept after the copy-in** (`TestConsoleTestsWorkflowIsStagedAndPinned` asserts the two files are byte-identical from then on): see `## console-tests.yml` below.
 
 **`console-release.yml`** — the desktop console's signing, notarisation and stapling pipeline, staged by Task 4.2 of the same plan and applied by the owner as Task 4.5, together with the protected GitHub environment its secrets live in. **It is a separate file from the tests workflow on purpose, and the split is a security boundary rather than tidiness**: this job reads the Apple signing certificate and the App Store Connect key, and a branch of this repository can open a pull request, so a job holding that material must never sit in a file that runs on every pull request. Its staged copy is kept after the copy-in too: see `## console-release.yml` below.
 
@@ -249,8 +249,11 @@ the end-to-end pass under `xvfb-run`: `actions/setup-node` with the version read
 from `console/package.json`'s `engines.node`, `npm ci --ignore-scripts
 --no-audit --no-fund`, `npm run test:unit` and `npm run test:e2e` (which builds
 the app first and passes on a tree with no spec). **It holds no secret at all**,
-and its triggers are `pull_request` and `push` to `main` **with no `paths:`
-filter and no job-level `if:`** — and that is a correctness requirement rather
+and its only trigger is `workflow_dispatch` — it ran on every pull request and
+every push to `main` until the owner's ruling of 2026-11-07 moved the workflows
+that ran on push to a hand dispatch (`e5d6ba7c`, #1960; the `pull_request`
+trigger went with the push one) — **with no `paths:` filter and no job-level
+`if:`** — and that is a correctness requirement rather
 than taste. **Task 4.6 (#600) added the job's two matrix legs to
 `scripts/release-gate.sh`'s `names` array** — `console (ubuntu-latest)` and
 `console (macos-latest)`, the names GitHub gives each leg's check run — so the
@@ -260,8 +263,8 @@ skipped is not a success**, so a `console` job filtered to `console/**` would
 then refuse **every** release tag in this repository, including the releases that
 never touch the console (plan Task 4.6, design section 9.4). The signing,
 notarising and stapling job and the Apple material it reads are Task 4.2's
-**separate** `console-release.yml`, precisely so that this file — which runs on
-every pull request from any branch — never sits next to them.
+**separate** `console-release.yml`, precisely so that this file — which anyone
+with write access can dispatch — never sits next to them.
 
 The owner applies it with one command, from the repository root:
 
@@ -1350,8 +1353,9 @@ has. The job's artifact is kept for **90 days** rather than `console-linux.yml`'
 seven, so that it is still there for the release it was dispatched for.
 
 **It is not build-only, and that is why it is worth a runner at all.**
-`console-linux.yml` proves the packaging path on every pull request; this job's
-subject is that the console has never *run* on Windows, so it typechecks and runs
+`console-linux.yml` proves the packaging path on a dispatch, without running the
+console's own tests; this job's subject is that the console has never *run* on
+Windows, so it typechecks and runs
 the unit suite before it packs — **and with the pack moved to release time, this
 is the only place that suite ever runs on Windows**, which is what makes the
 POSIX repairs below worth doing. The e2e suite is not run here — it drives the
@@ -1407,8 +1411,11 @@ it reports plus `test`, `terraform` and `rules` — and `deriveConsoleCheckNames
 **refuses a workflow with more than one job** ("this test cannot tell which of
 several jobs that is"). A second job there would therefore not be a packaging
 change at all: it would change which checks gate a release tag. The release-time
-trigger is a second, independent reason: a job that must not run on a pull
-request does not belong in the file that runs on every one.
+trigger is a separate thing rather than a second reason: this job must never run
+on a pull request (D7(c)), and that is a property of the pack job rather than a
+difference from `console-tests.yml`, whose own only trigger is `workflow_dispatch`
+today (the owner's ruling of 2026-11-07 moved every workflow that ran on push to
+a hand dispatch).
 
 **This job is deliberately NOT in the gate**, and that is a recorded decision
 rather than an oversight: a red Windows pack is information, not a blocked
