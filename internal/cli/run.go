@@ -2129,7 +2129,7 @@ func claudeAccountFor(ctx context.Context, env *cloudEnv, repo, flag, stage, ref
 	// therefore does the checking:
 	//
 	//   - api-key: the mix is the only way the default reaches a stage, so
-	//     mixedStageAccount holds it there (the two stages it may serve, and no
+	//     mixedStageAccount holds it there (the stages it may serve, and no
 	//     other), and a run whose reviews are not Claude's checks nothing;
 	//   - oauth: the walk below ends in claudeAccountAllowed, which checks the
 	//     default whenever it is what the run picked as its own credential,
@@ -2211,13 +2211,14 @@ func claudeAccountFor(ctx context.Context, env *cloudEnv, repo, flag, stage, ref
 	// the default. Any other name
 	// is left to the walk below, which refuses it unless it is the mix's own. A
 	// *stage* asked for is not this resolution: it has its own chain above, and
-	// the mix serves the two stages of the allow-list and no other.
+	// the mix serves the stages of the allow-list and no other.
 	//
 	// A non-account value and a declared mix are the one pair here that neither
 	// of those answers covers: the name is no account, so it is refused below
 	// only where the pair cannot be judged at all (claudeAccountAllowed admits
 	// it for api-key, which is the auth a mix is declared under), while the
-	// runner serves the run's review and adversarial stages out of the mix
+	// runner serves the run's mixed stages (review, adversarial and triage)
+	// out of the mix
 	// whatever the launch's own account is. Such a launch would start on the
 	// value's job — the one whose account segment it is — which mounts no Claude
 	// token, and its review stages would halt for one. It is refused here
@@ -2309,7 +2310,8 @@ func stageAccountsOf(lc *localcfg.Config) map[string]string {
 // stageAccountOf is the account the stage's own key names, for the auths that
 // may have one: oauth, where the accounts design's rung 2 gives a stage an
 // account of its own, and api-key, where the B0 ruling's one account serves the
-// senior review and the adversarial review. Every other auth is "" — vertex and
+// mix's stages: the senior review, the adversarial review and the triage that
+// weighs their findings. Every other auth is "" — vertex and
 // cascade are refused outright by CheckStageAccountMix, and an auth the launch
 // cannot resolve yet is not judged on a guess.
 func stageAccountOf(lc *localcfg.Config, auth, stage string) string {
@@ -2450,9 +2452,11 @@ func mixedStageAccount(ctx context.Context, env *cloudEnv, repo, stage, auth str
 }
 
 // mixedStageModel is the model a review stage runs, for the mix's
-// Anthropic-model condition: level 2's own model for review and level 3's for
-// adversarial — the levels the two stages are (config.ResolveLevels' own
-// defaults) — and the reviewer role's model when the level names none. Level
+// Anthropic-model condition: level 2's own model for review and for the triage
+// that weighs its findings, and level 3's for adversarial — the levels those
+// stages are (config.ResolveLevels' own defaults; triage's is the senior
+// reviewer's, D1848) — and the reviewer role's model when the level names
+// none. Level
 // models are read here because a level's model is a pin of its own: it runs in
 // place of the role slot the level sits in, so a Claude reviewer with a
 // DeepSeek level 2 is a stage the account has nothing to do on.
