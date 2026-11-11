@@ -316,16 +316,20 @@ func convergeOn(t *testing.T, r *convergeRig, stale []string) string {
 	}
 
 	after := doctorChecks(t, r.root)
-	// plugin-pin is deliberately not asserted here (U2, D949): the pin a
-	// checkout carries is a leftover no run writes or moves any more, so what
-	// it reports — the old entry this fixture carries, or "not wired" where
-	// the checkout has no pin at all — is not this run's to converge. U5's
-	// migration is what takes it out, and this fixture is asserted on it
-	// before the run above all the same.
 	for _, id := range []string{"cli-version", "base-image", "policy-vs-jobs", "policy-older-than-binary", "policy-rules-skew"} {
 		if c, ok := doctorCheckByID(after.Checks, id); ok && !c.OK {
 			t.Errorf("after fugaro update, doctor's %s check still fires: %s (fix: %s)", id, c.Problem, c.Fix)
 		}
+	}
+	// plugin-pin is asserted the other way round, and the assertion is not an
+	// omission: the pin this fixture carries is a leftover no run writes or
+	// moves any more (U2, D949), so what this run must NOT do is report it
+	// converged — a pass here would be the merge's write coming back. The
+	// fixture is asserted stale above, with every other id, and still stale
+	// here. U5's migration is what takes the entry out, inside this same
+	// `fugaro update`, and this is the assertion it flips.
+	if c, ok := doctorCheckByID(after.Checks, "plugin-pin"); !ok || c.OK {
+		t.Errorf("after fugaro update, doctor's plugin-pin check reads %+v: the fixture still carries the previous release's pin and nothing in this tree moves one, so the check must still fire (U5's migration is what removes the entry)", c)
 	}
 	for _, c := range after.Checks {
 		// The per-workflow settings comparison, which is the update's own
