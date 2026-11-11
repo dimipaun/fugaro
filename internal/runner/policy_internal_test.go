@@ -501,6 +501,61 @@ func TestPolicyChainRemainingCannotLoosen(t *testing.T) {
 	}
 }
 
+// chainGapped writes a chain whose link the bucket no longer holds: the run
+// this one continues has a record, and that record names a run the bucket has
+// nothing for — the shape a chain older than the window the bucket keeps
+// leaves, and the one failed read a caller may answer for rather than refuse
+// (runstore.ErrChainGap). The run's own task carries the figures the launcher
+// resolved, which are then the only bound there is (D1052).
+func chainGapped(t *testing.T, bucket *blob.Bucket) *run {
+	t.Helper()
+	ctx := context.Background()
+	const prev, gone = "20261020-120000-abcd", "20261010-120000-abcd"
+	rs := runstore.Open(bucket, svcSlug, prev)
+	if err := rs.WriteRecord(ctx, &runstore.Record{Version: 1, RunID: prev, Repo: "acme/app", Status: runstore.StatusHalted,
+		FollowUp: &runstore.FollowUp{PR: 1, PreviousRun: gone},
+		Reviews:  []runstore.ReviewSummary{{Round: 1}},
+		Stages:   []runstore.StageTiming{{Name: "implement", DurationS: 600}}}); err != nil {
+		t.Fatal(err)
+	}
+	spec := &task.Spec{Version: 1, RunID: svcRunID, Repo: "acme/app", Ref: "main", Workflow: "app", Task: "Carry on",
+		Branch: "fugaro/" + prev, PR: 1, PreviousRun: prev,
+		Overrides: task.Overrides{MaxReviewRounds: ref(4), MaxTime: "2h", MaxTokens: ref(int64(1000))}}
+	r := &run{cfg: &config.Config{}, spec: spec, rec: &runstore.Record{},
+		d: Deps{Store: runstore.Open(bucket, svcSlug, svcRunID), Log: slog.New(slog.DiscardHandler), Now: time.Now}}
+	r.projPolicy = policyRead{done: true}
+	return r
+}
+
+// TestChainGapKeepsTheTasksOwnFigures: a chain read that stops at a link the
+// bucket no longer holds leaves the figures this run's task carries as the
+// bound it runs under (D1052, ErrChainGap). They are what the launcher
+// resolved — the previous run's own remaining, or this launch's limit where it
+// began the chain — so dropping the layer on a gap would run the launch with
+// no chain limit at all, which is the hole the gap arm exists to close.
+func TestChainGapKeepsTheTasksOwnFigures(t *testing.T) {
+	bucket := memblob.OpenBucket(nil)
+	defer bucket.Close()
+	r := chainGapped(t, bucket)
+	if err := r.resolvePolicy(context.Background(), r.cfg); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.policy.MaxReviewRounds; got != 4 {
+		t.Errorf("max_review_rounds = %d, want the 4 the task carries: a gap leaves no chain figure to tighten it with, and none to drop it for", got)
+	}
+	if got := r.policy.MaxRunTime; got != 2*time.Hour {
+		t.Errorf("max_run_time = %v, want the 2h the task carries", got)
+	}
+	if got := r.policy.MaxRunTokens; got != 1000 {
+		t.Errorf("max_run_tokens = %d, want the 1000 the task carries", got)
+	}
+	for _, key := range []string{policy.KeyMaxReviewRounds, policy.KeyMaxRunTime, policy.KeyMaxRunTokens} {
+		if got := r.policy.Sources[key]; got != policy.SourceChain {
+			t.Errorf("sources[%s] = %q, want %q: the figure is the chain's, read from the task that carries it", key, got, policy.SourceChain)
+		}
+	}
+}
+
 // TestChainRecordsAreReadByNameNotListed: the chain is followed one record at
 // a time, by name (F21): the job's account holds storage.objects.get on its
 // own prefix and no list, so a bucket that answers every listing with 403
