@@ -28,11 +28,16 @@
 //   3. `crashlytics().log(` -- the crash path's breadcrumb. §7.3 makes a
 //      breadcrumb a constant from the module's own list, or a value that has
 //      been through `shared/digest`'s redactor first, so a call site may pass
-//      exactly two things: a literal named in `BREADCRUMBS`, and a call to the
-//      module's own `breadcrumb(`. Those two are what the rule accepts, which
-//      is also what keeps §7.3's redaction reachable: a fence that refused every
+//      exactly two things: a literal named in `BREADCRUMBS`, and a call to
+//      **`breadcrumb` imported from the telemetry module by the file that calls
+//      it** -- not merely a function of that name. Both must be the WHOLE
+//      argument: `'screen_mailbox' + message.text` and
+//      `breadcrumb(text, secrets).trim()` are refused, because either would put
+//      a runtime value beside a constant the list reviewed. Those two shapes are
+//      what keeps §7.3's redaction reachable as well: a fence that refused every
 //      argument but a constant would leave `breadcrumb` a function nothing may
-//      pass to the only door a breadcrumb has.
+//      pass to the only door a breadcrumb has, and a fence that took the name on
+//      trust would let a local helper of that name send the text unredacted.
 //   4. `setAnalyticsCollectionEnabled(` and `setCrashlyticsCollectionEnabled(`
 //      -- refused at any call site. D255's answer is always-on: a call that sets
 //      collection state IS the switch the plan says the app does not have,
@@ -53,7 +58,7 @@
 
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
-import { join, relative, sep } from 'node:path';
+import { dirname, join, relative, sep } from 'node:path';
 import test from 'node:test';
 
 import { BREADCRUMBS } from './breadcrumbs.js';
@@ -88,9 +93,11 @@ function code(text) {
 
 /**
  * The first argument a call site passes, as the scan can read it: a quoted
- * literal, or the name of the function the argument is a call to. Everything
- * else -- a template literal, a member expression, a concatenation, no argument
- * at all -- is a shape every rule refuses.
+ * literal, or the name of the function the argument is a call to -- and either
+ * only when it is the **whole** argument, so `'a' + b` and `f(x).trim()` are
+ * read as the shapes they are rather than as the literal or the call they open
+ * with. Everything else -- a template literal, a member expression, a
+ * concatenation, no argument at all -- is a shape every rule refuses.
  */
 function firstArgument(body, at) {
   let i = at;
@@ -99,11 +106,70 @@ function firstArgument(body, at) {
   const quote = body[i];
   if (quote === "'" || quote === '"') {
     const end = body.indexOf(quote, i + 1);
-    if (end !== -1) return { kind: 'literal', value: body.slice(i + 1, end) };
+    if (end !== -1 && endsArgument(body, end + 1)) return { kind: 'literal', value: body.slice(i + 1, end) };
+    return { kind: 'other' };
   }
   const call = /^([A-Za-z_$][\w$]*)\s*\(/.exec(body.slice(i));
-  if (call !== null) return { kind: 'call', callee: call[1] };
+  if (call !== null) {
+    const close = callEnd(body, i + call[0].length - 1);
+    if (close !== -1 && endsArgument(body, close + 1)) return { kind: 'call', callee: call[1] };
+  }
   return { kind: 'other' };
+}
+
+/** Whether what follows `at` ends the argument rather than continuing it. */
+function endsArgument(body, at) {
+  let i = at;
+  while (i < body.length && /\s/.test(body[i])) i += 1;
+  return body[i] === ',' || body[i] === ')';
+}
+
+/** The index of the `)` that closes the `(` at `open`, or -1 when the text
+ * holds none -- which is a shape the scan refuses rather than one it guesses at.
+ */
+function callEnd(body, open) {
+  let depth = 0;
+  for (let i = open; i < body.length; i += 1) {
+    const character = body[i];
+    if (character === "'" || character === '"') {
+      const end = body.indexOf(character, i + 1);
+      if (end === -1) return -1;
+      i = end;
+      continue;
+    }
+    if (character === '(') depth += 1;
+    if (character === ')') {
+      depth -= 1;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+
+/** The telemetry module a breadcrumb call has to come from. */
+const BREADCRUMBS_MODULE = 'src/telemetry/breadcrumbs.js';
+
+/** The specifier `file` reaches `BREADCRUMBS_MODULE` through. */
+function breadcrumbSpecifier(file) {
+  const path = relative(dirname(file), BREADCRUMBS_MODULE).split(sep).join('/');
+  return path.startsWith('.') ? path : `./${path}`;
+}
+
+/**
+ * Whether the `breadcrumb` a file calls is the module's own: a named import of
+ * it from a specifier that file's own directory resolves to
+ * `BREADCRUMBS_MODULE`. A file that wrote its own `breadcrumb` -- or imported
+ * one from somewhere else -- is not the app's one redaction rule, and where the
+ * import is present the local definition cannot also be: ESM refuses the
+ * duplicate binding.
+ */
+function importsBreadcrumb(body, file) {
+  const specifier = breadcrumbSpecifier(file);
+  const wanted = new Set([specifier, specifier.replace(/\.js$/, '')]);
+  for (const match of body.matchAll(/\bimport\s+([^;]*?)\s+from\s*['"]([^'"]+)['"]/g)) {
+    if (wanted.has(match[2]) && /\bbreadcrumb\b/.test(match[1])) return true;
+  }
+  return false;
 }
 
 /**
@@ -111,7 +177,14 @@ function firstArgument(body, at) {
  * files are always allowed (a fake must be able to call the method it stands in
  * for) and so is this file. `argument` marks the rules that read the first
  * argument of each call site instead of only finding the token; it is given what
- * `firstArgument` read and answers whether that shape is allowed.
+ * `firstArgument` read, the file's code (a rule may have to read more of it than
+ * the call) and the file's path (a rule may have to resolve an import against
+ * it), and answers whether that shape is allowed.
+ *
+ * A `controls` entry is the offending line on its own, planted in a file that
+ * imports nothing, or a `{ file, source }` pair when the offence is only an
+ * offence in a particular file. An `accepted` entry is always a pair, because
+ * what makes a call acceptable is sometimes what the file above it says.
  */
 const RULES = [
   {
@@ -124,7 +197,9 @@ const RULES = [
       'analytics().logEvent(`screen_${screen}`, {});',
       'analytics().logEvent();',
     ],
-    accepted: ["analytics().logEvent('app_launch', { first: true });"],
+    accepted: [
+      { file: 'src/telemetry/allowed.js', source: "analytics().logEvent('app_launch', { first: true });" },
+    ],
     why: 'D256: §7.2 is a closed allow-list of seven names, and a name the app invents is one nobody reviewed',
   },
   {
@@ -142,21 +217,47 @@ const RULES = [
   {
     name: 'a crash log names a breadcrumb from the module’s list, or comes from the redactor',
     pattern: /crashlytics\s*\(\s*\)\s*\.\s*log\s*\(/g,
-    argument: (read) =>
+    argument: (read, body, file) =>
       (read.kind === 'literal' && BREADCRUMBS.includes(read.value)) ||
-      (read.kind === 'call' && read.callee === 'breadcrumb'),
+      (read.kind === 'call' && read.callee === 'breadcrumb' && importsBreadcrumb(body, file)),
     controls: [
       "crashlytics().log(`opened ${message.text}`);",
       "crashlytics().log(text);",
       "crashlytics().log('opened the mailbox');",
+      // A literal the list names, with something appended to it: the reader
+      // takes the WHOLE argument, so this is not the constant it opens with.
+      "crashlytics().log('screen_mailbox' + message.text);",
       // A call, but not the module's own redactor: a screen's own wrapper is
       // not the app's one redaction rule, and §7.3 says there is exactly one.
       "crashlytics().log(buildBreadcrumb(message.text));",
+      // The module's own name, but not the module's own function: a file that
+      // imports nothing has whatever `breadcrumb` of its own it likes.
+      "crashlytics().log(breadcrumb(message.text, secrets));",
+      // ... and even the module's own redactor is refused when the call is not
+      // the whole argument, which is the half the import cannot decide.
+      {
+        file: 'src/app/offender.js',
+        source:
+          "import { breadcrumb } from '../telemetry/breadcrumbs.js';\n" +
+          'crashlytics().log(breadcrumb(message.text, secrets).trim());',
+      },
       "crashlytics().log();",
     ],
     accepted: [
-      "crashlytics().log('screen_mailbox');",
-      "crashlytics().log(breadcrumb(message.text, secrets));",
+      { file: 'src/app/allowed.js', source: "crashlytics().log('screen_mailbox');" },
+      {
+        file: 'src/app/allowed.js',
+        source:
+          "import { breadcrumb } from '../telemetry/breadcrumbs.js';\n" +
+          'crashlytics().log(breadcrumb(message.text, secrets));',
+      },
+      // The extension is Metro's to leave off, so both spellings are the import.
+      {
+        file: 'src/telemetry/allowed.js',
+        source:
+          "import { breadcrumb } from './breadcrumbs';\n" +
+          'crashlytics().log(breadcrumb(message.text, secrets));',
+      },
     ],
     why: 'D256, §7.3: a breadcrumb is a constant from the module’s list, or the module’s own redactor, and nothing else',
   },
@@ -187,13 +288,23 @@ function offences(rule, files) {
       continue;
     }
     for (const match of body.matchAll(rule.pattern)) {
-      if (!rule.argument(firstArgument(body, match.index + match[0].length))) {
+      if (!rule.argument(firstArgument(body, match.index + match[0].length), body, file)) {
         found.push(file);
         break;
       }
     }
   }
   return found.sort();
+}
+
+/** A control as a file to plant it in and the code to plant: a bare line goes
+ * into a file that imports nothing, which is the file most of the offences are
+ * an offence in.
+ */
+function plant(control) {
+  return typeof control === 'string'
+    ? { file: 'src/app/offender.js', source: `function offence() { ${control} }\n` }
+    : { file: control.file, source: `${control.source}\n` };
 }
 
 /** The tree, read once per test. */
@@ -224,19 +335,25 @@ for (const rule of RULES) {
     // below would mean nothing. A rule may carry several, because the same
     // offence has more than one spelling that resolves to the same call.
     for (const control of rule.controls) {
-      const example = new Map([['src/app/offender.js', `function offence() { ${control} }\n`]]);
-      assert.deepEqual(offences(rule, example), ['src/app/offender.js'], control);
+      const { file, source } = plant(control);
+      assert.deepEqual(offences(rule, new Map([[file, source]])), [file], JSON.stringify(control));
       // The planted line is not flagged when it is only prose.
-      const prose = new Map([['src/app/prose.js', `// ${control}\n`]]);
-      assert.deepEqual(offences(rule, prose), [], control);
+      const prose = source
+        .split('\n')
+        .map((line) => `// ${line}`)
+        .join('\n');
+      assert.deepEqual(offences(rule, new Map([['src/app/prose.js', prose]])), [], JSON.stringify(control));
     }
 
     // ... and the calls the rule is FOR are not flagged, which is the half a
     // scan made only of offences could not tell from a pattern that matched
     // everything.
     for (const control of rule.accepted) {
-      const example = new Map([['src/telemetry/allowed.js', `function allowed() { ${control} }\n`]]);
-      assert.deepEqual(offences(rule, example), [], control);
+      assert.deepEqual(
+        offences(rule, new Map([[control.file, `${control.source}\n`]])),
+        [],
+        JSON.stringify(control),
+      );
     }
 
     // ... and then the tree itself.
