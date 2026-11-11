@@ -262,11 +262,11 @@ func runRigorSet(cmd *cobra.Command, name string, o rigorOptions) error {
 	// their own literal text.
 	baseline := rigorResolved(prev, o.area)
 	after := rigorResolved(edited, o.area)
-	typed, why := false, ""
+	typed, lowered, why := false, "", ""
 	switch {
 	case after.Rank() < baseline.Rank():
 		typed = true
-		why = fmt.Sprintf("this lowers the project's rigor mode from %s to %s", baseline, after)
+		lowered = fmt.Sprintf("the project's rigor mode from %s to %s", baseline, after)
 	case o.area != "" && rigorAreaLowered(prev, o.area, mode):
 		// The resolution above reads the glob as a PATH, so a glob that does not
 		// match its own text — `docs/{a,b}/**`, `docs/[ab]*` — resolves to the
@@ -275,16 +275,15 @@ func runRigorSet(cmd *cobra.Command, name string, o rigorOptions) error {
 		// baseline, and dropping its own mode is the lowering whatever the
 		// resolution over the glob's literal text says.
 		typed = true
-		why = fmt.Sprintf("this lowers the rigor mode of the rule %s", safetext.Field(o.area))
+		lowered = fmt.Sprintf("the rigor mode of the rule %s", safetext.Field(o.area))
 	}
 	if typed {
+		why = "this lowers " + lowered + ": the mode a run resolves decides how much review every run of this project's branches gets, and this layer is where it starts from"
 		// The sentence is the publish door's own where the two documents name
 		// the rule it lowers (layerRigorRules, D1026): the same layer reaching
 		// runs by two doors says one thing about what left it.
 		if rules := layerRigorRules(prev, edited); len(rules) > 0 {
 			why = rules[0]
-		} else {
-			why += ": the mode a run resolves decides how much review every run of this project's branches gets, and this layer is where it starts from"
 		}
 	}
 	// The review floor is outside every layer, so this command cannot lower it
