@@ -166,8 +166,9 @@ func (s *Service) adminSurface(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch {
-	// A HEAD comes with the page's GET: a mux pattern of "GET /admin" answered
-	// it too, and asking for the headers of a page is not a stranger's question.
+	// A HEAD comes with the page's GET, the way a mux pattern of "GET /admin"
+	// answered one too: it is the same read, and dropping it here would be a
+	// change to the surface nobody asked for.
 	case (r.Method == http.MethodGet || r.Method == http.MethodHead) && r.URL.Path == RouteAdmin:
 		s.adminPage(w, r)
 	case r.Method == http.MethodPost && r.URL.Path == RouteAdminMint:

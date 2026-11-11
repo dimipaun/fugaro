@@ -315,9 +315,10 @@ func New(cfg Config, deps Deps) (*Service, error) {
 	}, nil
 }
 
-// Handler serves the intake. The methods are part of the routes: the three
+// Handler serves the intake. The methods are part of its routes: the three
 // forms are POSTs because an application carries an address, and the
-// verification link is a GET because it is a link in a mail.
+// verification link is a GET because it is a link in a mail. The page below is
+// the one surface whose routes carry none.
 func (s *Service) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST "+RouteFreeSeat, s.freeSeatForm)
