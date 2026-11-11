@@ -222,6 +222,41 @@ func TestRunRefusesAContinuesItCannotConfirm(t *testing.T) {
 	})
 }
 
+// TestRunRefusesAContinuesOfARunInAPRChain: --continues is the link of a chain
+// with no pull request — a halted run that opened nothing (D1045, spec §3) —
+// and a chain that has a pull request is continued by naming the pull request,
+// because that is the link that puts the launch *in* the chain. A launch that
+// named the run instead inherits what is left of the chain without joining it:
+// the PR's own runs are found through the PR and link back through follow_up,
+// so a launcher reading the chain from the PR would not pass through this run
+// and would not count what it spends — the next run of the pull request would
+// be handed the same remaining, which is the split T4 closes.
+func TestRunRefusesAContinuesOfARunInAPRChain(t *testing.T) {
+	t.Run("a run that opened the pull request", func(t *testing.T) {
+		f := chainRig(t)
+		usd := chainUSD
+		seedChainPRRoot(t, f, chainRun, chainSpent, task.Overrides{MaxUSD: &usd})
+		wantRefused(t, f, "that run is part of PR #7's chain",
+			"run", "--repo", limitsRepo, "--continues", chainRun, "--run-id", chainFu, "A task")
+	})
+	t.Run("a run that continues one", func(t *testing.T) {
+		f := chainRig(t)
+		usd := chainUSD
+		seedChainPRRoot(t, f, chainRun, chainSpent, task.Overrides{MaxUSD: &usd})
+		// A run in the chain that opened nothing itself: the link is the record's
+		// follow_up, which the runner writes at bootstrap, where pr is written at
+		// finalize once the pull request exists — so a chain read for the pull
+		// request a --continues named sees this run through the follow-up alone.
+		seedSpec(t, f, followUpSpec(chainFu, chainRun, chainRun, 7), false)
+		rec := prRecord(chainFu, "", 7, chainSpent)
+		rec.Branch, rec.StartedAt, rec.PR = "fugaro/"+chainRun, time.Now().Add(-24*time.Hour), nil
+		rec.FollowUp = &runstore.FollowUp{PR: 7, PreviousRun: chainRun}
+		writeRecord(t, f, chainFu, rec)
+		wantRefused(t, f, "that run is part of PR #7's chain",
+			"run", "--repo", limitsRepo, "--continues", chainFu, "--run-id", wallRunIDAt(0, "140000", "d4d4"), "A task")
+	})
+}
+
 // TestRunContinuesWithAnUnreadableLedgerChargedTheCap: a chain's ledger that
 // cannot be read is never charged zero — a missing read as free restores the
 // whole chain's budget, which is cheaper than forging a ledger (F14) — so the
@@ -389,6 +424,51 @@ func TestRunContinuesARepeatIsIdempotent(t *testing.T) {
 	// figure is a different task, as a repeated --pr follow-up's is.
 	if _, _, err := execute(t, "run", "--repo", limitsRepo, "--continues", chainRun, "--run-id", chainFu, "--max-usd", "2", "A task"); err == nil || !strings.Contains(err.Error(), "already holds a different task") {
 		t.Fatalf("err = %v, want a repeat naming another limit refused as a different task", err)
+	}
+	// A --used-* figure is the one flag that guard cannot read: the stored task
+	// holds the remaining the charge went into (chainRemaining), so a repeat that
+	// states a figure has nothing to be compared against — and the four --max-*
+	// are compared exactly because a caller who typed a number has to be told it
+	// did not take effect rather than find a looser task (D1043). Dropped in
+	// silence, the same repeat reports the run as already launched while the
+	// figure never applied, which is the failure the launch that wrote the task
+	// refuses for a dimension the chain does not limit (D1048).
+	_, _, err := execute(t, "run", "--repo", limitsRepo, "--continues", chainRun, "--run-id", chainFu, "--used-usd", "4", "A task")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a repeat that states what the chain has used refused", err)
+	}
+	for _, want := range []string{"already holds a task, and a repeat cannot state what the chain has used", "run ID that has not launched"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("err = %v, want it to name %q", err, want)
+		}
+	}
+	if o := chainTask(t, f, chainFu).Overrides; o.MaxUSD == nil || *o.MaxUSD != chainUSD-chainSpent {
+		t.Fatalf("overrides = %+v after the refusal, want the stored remaining untouched", o)
+	}
+	if n := len(f.run.Executions()); n != 1 {
+		t.Fatalf("%d executions, want the one the first launch started", n)
+	}
+}
+
+// TestRunRefusesARepeatOfAUsedFigureOnAFollowUp: the same rule on the --pr
+// path, which is the other launch shape a repeat answers from the stored task
+// (storedFollowUp). The figure is not the task's to hold there either, so a
+// repeat that states one is refused rather than answered as the launch it
+// repeats — the run the pull request is waiting on would be reported launched
+// with a charge nobody applied.
+func TestRunRefusesARepeatOfAUsedFigureOnAFollowUp(t *testing.T) {
+	f := chainRig(t)
+	usd := chainUSD
+	seedChainPRRoot(t, f, chainRun, chainSpent, task.Overrides{MaxUSD: &usd})
+	if _, _, err := execute(t, "run", "--repo", limitsRepo, "--pr", "7", "--run-id", chainFu, "A task"); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := execute(t, "run", "--repo", limitsRepo, "--pr", "7", "--run-id", chainFu, "--used-usd", "4", "A task")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "a repeat cannot state what the chain has used") {
+		t.Fatalf("err = %v, want a follow-up's repeat that states a --used-* figure refused", err)
+	}
+	if n := len(f.run.Executions()); n != 1 {
+		t.Fatalf("%d executions, want 1", n)
 	}
 }
 
@@ -567,6 +647,39 @@ func TestRunRefusesAChainItCannotRead(t *testing.T) {
 	}
 	if n := len(f.run.Executions()); n != 0 {
 		t.Fatalf("%d executions, want none", n)
+	}
+}
+
+// TestReviewJobRepeatNamesItsOwnPullRequest: the review PRs are the one
+// identity of a review launch that the flag comparison cannot see — a review
+// task keeps them in review_prs and carries no pr of its own, while the field
+// a repeat is held to (pr) is 0 for every one of them (storedRepeat). A repeat
+// that tried to reuse PR 7's stored review against `--pr 8` would be answered
+// with that task: the review of a pull request this call never named, reported
+// as the launch it asked for, and — where that task was written but never
+// launched — started as PR 7's review. The list is this call's own or the
+// repeat is a different task.
+func TestReviewJobRepeatNamesItsOwnPullRequest(t *testing.T) {
+	f := chainRig(t)
+	usd := chainUSD
+	seedChainPRRoot(t, f, chainRun, chainSpent, task.Overrides{MaxUSD: &usd})
+	if _, _, err := execute(t, "run", "--repo", limitsRepo, "--pr", "7", "--recipe", "review-only", "--run-id", chainFu); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := execute(t, "run", "--repo", limitsRepo, "--pr", "8", "--recipe", "review-only", "--run-id", chainFu)
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "already holds a different task") {
+		t.Fatalf("err = %v, want a repeat naming another pull request refused as a different task", err)
+	}
+	if spec := chainTask(t, f, chainFu); len(spec.ReviewPRs) != 1 || spec.ReviewPRs[0] != 7 {
+		t.Fatalf("review_prs = %v, want the stored review of PR 7 untouched", spec.ReviewPRs)
+	}
+	if n := len(f.run.Executions()); n != 1 {
+		t.Fatalf("%d executions, want 1", n)
+	}
+	// The repeat of the call that wrote the task is still that task: the check
+	// above is the pull request's, not a refusal of the review path's reuse.
+	if out, _, err := execute(t, "run", "--repo", limitsRepo, "--pr", "7", "--recipe", "review-only", "--run-id", chainFu); err != nil || !strings.Contains(out, "already launched") {
+		t.Fatalf("the repeat of the review launch: %v, output:\n%s", err, out)
 	}
 }
 

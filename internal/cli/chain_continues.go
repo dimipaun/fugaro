@@ -245,6 +245,23 @@ func chainFrom(ctx context.Context, env *cloudEnv, slug string, o *runOptions, s
 		if other != slug {
 			return "", userErr("--continues %s: that run is in repository %s, and this launch is for %s; a chain is one repository's runs, so name a run of this one", o.continues, other, slug)
 		}
+		// A run that is part of a pull request's chain is continued by naming the
+		// pull request: --pr is the link that puts this launch in that chain, and
+		// one that named the run instead would inherit the chain's remaining
+		// *without being in it* — the PR's own runs link through follow_up, and a
+		// launcher that reads the chain from the PR would not pass through this
+		// run, so what it spends would not count against the limit the next one
+		// reads. That is the split T4 closes, and it is the one the flag's own
+		// text names: the run --continues is for a chain with no pull request, a
+		// halted run that opened nothing.
+		pr, err := continuesPRChain(ctx, env, slug, id)
+		if err != nil {
+			return "", err
+		}
+		if pr != 0 {
+			return "", userErr("--continues %s: that run is part of PR #%d's chain, and a chain with a pull request is continued by naming the pull request — this launch would inherit what is left of that chain without being in it, so the next run of PR #%d would not count what this one spends. Continue the pull request instead: --pr %d",
+				task.ShortRun(o.continues), pr, pr, pr)
+		}
 		return id, nil
 	case spec.PreviousRun != "":
 		return spec.PreviousRun, nil
@@ -252,6 +269,30 @@ func chainFrom(ctx context.Context, env *cloudEnv, slug string, o *runOptions, s
 		return reviewChainFrom(ctx, env, slug, spec.ReviewPRs[0], warn)
 	}
 	return "", nil
+}
+
+// continuesPRChain is the pull request the run --continues names is part of: the
+// one it opened (Record.PR, the runner's own write at finalize) or the one it
+// continues (Record.FollowUp.PR, a --pr follow-up's link), and 0 for a run that
+// is in no pull request's chain — the chain --continues is for. A run the
+// bucket holds no record for never started, so it opened nothing and follows
+// nothing: it reads as 0, which is the run a chain with no pull request is
+// continued from (D1045).
+func continuesPRChain(ctx context.Context, env *cloudEnv, slug, id string) (int, error) {
+	rec, err := runstore.Open(env.bucket.Bucket, slug, id).ReadRecord(ctx)
+	switch {
+	case errors.Is(err, runstore.ErrNotFound):
+		return 0, nil
+	case err != nil:
+		return 0, remote(err)
+	}
+	if rec.PR != nil && rec.PR.Number != 0 {
+		return rec.PR.Number, nil
+	}
+	if rec.FollowUp != nil && rec.FollowUp.PR != 0 {
+		return rec.FollowUp.PR, nil
+	}
+	return 0, nil
 }
 
 // reviewChainFrom is the run a review job's chain is read from (D1058): the

@@ -593,6 +593,19 @@ func storedRepeat(ctx context.Context, env *cloudEnv, slug string, o *runOptions
 	if err != nil {
 		return nil, err
 	}
+	// A --used-* figure is the one flag a repeat cannot be held to the stored
+	// task by (D1048): the stored task holds the chain's remaining as the launch
+	// that wrote it resolved it, and the charge that launch was given is inside
+	// that figure rather than beside it (chainRemaining), so the same figure and
+	// a different one are the same task here. Left there it would be dropped in
+	// silence — the failure a fresh launch refuses for a dimension the chain does
+	// not limit, where the figure is "refused rather than accepted and forgotten"
+	// — and it is the worse half: the caller is told the run is already launched
+	// while the figure they stated was never applied. Refused, and the message
+	// names the two ways to state it: without the flags, or on a new run ID.
+	if o.used.set() {
+		return nil, userErr("run ID %s already holds a task, and a repeat cannot state what the chain has used: the figures it holds are the chain's remaining as its own launch resolved them, which a --used-* figure cannot be checked against. Repeat without --used-*, or state it on a run ID that has not launched", o.runID)
+	}
 	want := repeatOverrides(have, o, total)
 	a, err1 := json.Marshal(have.Overrides)
 	b, err2 := json.Marshal(want)
@@ -668,6 +681,17 @@ func reuseStored(ctx context.Context, env *cloudEnv, slug string, o *runOptions,
 	}
 	if have == nil {
 		return spec, false, nil
+	}
+	// The pull requests a review job reviews are the one identity storedRepeat
+	// cannot compare: a review task keeps them in review_prs and carries no pr
+	// of its own, so the figure the pr argument is held to is 0 for every one of
+	// them, and a repeat of `--pr 8 --recipe review-only` over a run ID holding
+	// PR 7's review would be answered with that stored task — the review of a
+	// pull request this call never named, reported as the launch it asked for.
+	// The task that was written is the task a repeat answers with, so the list
+	// has to be this call's own.
+	if !slices.Equal(have.ReviewPRs, spec.ReviewPRs) {
+		return nil, false, userErr("run ID %s already holds a different task", o.runID)
 	}
 	return have, true, nil
 }
