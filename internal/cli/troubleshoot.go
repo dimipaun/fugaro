@@ -171,6 +171,18 @@ func runTroubleshoot(cmd *cobra.Command, o *troubleshootOptions, ref string) err
 	// The configuration is read before anything else is collected: it is both
 	// one of the four evidence files and where D1607's model comes from.
 	res := readTroubleshootResolution(ctx)
+	// The credential is resolved before the evidence is collected, and not
+	// because collecting needs one: whatever credential the diagnosis may use
+	// has to be in the redaction list the evidence files are written through
+	// (F4, spec.md), and the project account's token is in the log's own
+	// machine as readily as the person's own. Its failure is reported later,
+	// where it was reported before: after the source fetch, so that D1608's
+	// answer about the machine is the one the person reads.
+	handle, credErr := troubleshootCredential(ctx, res)
+	secrets := cliSecrets(getenvOS)
+	if credErr == nil {
+		secrets = append(secrets, handle.Secret())
+	}
 	ev, err := diagnoseagent.Collect(ctx, id, diagnoseagent.Options{
 		Version: Version,
 		Commit:  Commit,
@@ -178,12 +190,7 @@ func runTroubleshoot(cmd *cobra.Command, o *troubleshootOptions, ref string) err
 		GOOS:    runtime.GOOS,
 		Doctor:  troubleshootDoctor,
 		Config:  func(context.Context) ([]byte, error) { return res.text() },
-		// The values the redaction pass knows besides the shapes it carries on
-		// its own: this machine's own credentials, and the project account's
-		// token once it is read below (D1601). The own ones are named here
-		// because the log may hold them and the read of the account happens
-		// later.
-		Secrets: cliSecrets(getenvOS),
+		Secrets: secrets,
 	})
 	if err != nil {
 		return userErr("%v", err)
@@ -193,9 +200,9 @@ func runTroubleshoot(cmd *cobra.Command, o *troubleshootOptions, ref string) err
 		EvidenceDir: ev.EvidenceDir, Guide: diagnoseagent.GuidePath(),
 		Model: res.model(),
 	}
-	// The source tree is fetched before the credential is resolved: it makes
-	// no call that needs one, and D1608's path is the answer when the machine
-	// cannot reach it.
+	// The source tree is fetched next: it makes no call that needs the
+	// credential, and D1608's path is the answer when the machine cannot
+	// reach it.
 	dir, rec, err := troubleshootSource(ctx, srctree.Options{Version: Version, Commit: Commit, Getenv: getenvOS, GOOS: runtime.GOOS})
 	if err != nil {
 		return troubleshootOffline(cmd, o, ev, d, fmt.Errorf("the Fugaro source at %s could not be fetched, so there is nothing for the agent to read the code against: %w", Version, err))
@@ -212,9 +219,8 @@ func runTroubleshoot(cmd *cobra.Command, o *troubleshootOptions, ref string) err
 		fmt.Fprintf(cmd.ErrOrStderr(), "note: the changes since your version were not written: %v\n", oneLine(err.Error()))
 	}
 
-	handle, err := troubleshootCredential(ctx, res)
-	if err != nil {
-		return troubleshootOffline(cmd, o, ev, d, err)
+	if credErr != nil {
+		return troubleshootOffline(cmd, o, ev, d, credErr)
 	}
 	ev.Nonce = diagnoseagent.NewNonce()
 	troubleshootEgress(cmd, o, d.Model, handle)
@@ -582,20 +588,38 @@ var troubleshootDoctor = func(ctx context.Context) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// troubleshootShellSyntax is the characters that make a word more than an
+// argument of the command it stands beside. A line Fugaro vouches for is one
+// command with the arguments that command takes: `;`, `&&` and `|` chain a
+// second command onto it, a redirect writes a file, and a substitution, a
+// quote or a backslash hides what the rest of the line runs. The words come
+// from the log as readily as from the model — a Terraform body, an API
+// response or a file name can put them there (F5) — and the label is what a
+// person reads before pasting, so a line carrying any of them is one Fugaro
+// cannot vouch for. The skill lint splits its lines on these same operators
+// before it resolves a command; here the line is refused instead, because the
+// whole line is what gets printed.
+const troubleshootShellSyntax = ";|&$()`<>\\\"'"
+
 // troubleshootChecker is D1614's check against the command tree this binary
-// was built with. Only a `fugaro` command whose subcommand path exists, and
-// whose flags are that command's flags, comes back checked; everything else is
-// shown as text marked as unchecked.
+// was built with. Only a `fugaro` command whose subcommand path exists, whose
+// flags are that command's flags, and that is one command line rather than
+// several, comes back checked; everything else is shown as text marked as
+// unchecked.
 //
-// The walk is the skill lint's, for the same reason and in the same shape: a
-// word is a subcommand when the command so far has one by that name, and a flag
-// belongs to the command the path has reached. It is deliberately one
-// direction — a command it does not understand is not checked, never silently
-// accepted.
+// The walk is the skill lint's, for the same reason: a word is a subcommand
+// when the command so far has one by that name, and a flag belongs to the
+// command the path has reached. It is deliberately one direction — a command
+// it does not understand is not checked, never silently accepted.
 func troubleshootChecker(root *cobra.Command) diagnoseagent.Checker {
 	return func(argv []string) error {
 		if len(argv) == 0 || argv[0] != "fugaro" {
 			return errors.New("it is not a fugaro command")
+		}
+		for _, w := range argv[1:] {
+			if i := strings.IndexAny(w, troubleshootShellSyntax); i >= 0 {
+				return fmt.Errorf("it carries %q, so it is not one command with the arguments that command takes", string(w[i]))
+			}
 		}
 		cmd := root
 		i, path := 1, 0
@@ -616,6 +640,14 @@ func troubleshootChecker(root *cobra.Command) diagnoseagent.Checker {
 			sub := commandByName(cmd, w)
 			if sub == nil {
 				break
+			}
+			// A hidden command is in the tree without being one Fugaro offers
+			// a person: the service's own entry point is the one such command
+			// in the CLI. The skill lint refuses a line that names one, and
+			// the label here says Fugaro endorses the line, so it is refused
+			// the same way.
+			if sub.Hidden {
+				return fmt.Errorf("%s is not a command Fugaro offers a person", sub.CommandPath())
 			}
 			cmd, path, i = sub, path+1, i+1
 		}
