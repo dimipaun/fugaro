@@ -725,22 +725,23 @@ func doctorBatchRunAccounts(ctx context.Context, lc *localcfg.Config, c *crm.Ser
 // one the project itself can answer (the account's display name is the marker
 // the repository roots write).
 func doctorBatchAccountMembership(lc *localcfg.Config, id string, accounts []string) doctorCheck {
-	want := "serviceAccount:" + lc.Batch.ServiceAccount
-	if lc.Batch.ServiceAccount == "" || slices.Contains(accounts, want) {
-		// An empty one is refused by the job-definition check, and no account
-		// at all is the finding below.
-		if lc.Batch.ServiceAccount != "" || len(accounts) > 0 {
-			return doctorCheck{ID: id, OK: true}
-		}
-	}
-	if lc.Batch.ServiceAccount != "" {
+	// No run account at all is its own finding and is tested first: the
+	// membership below would otherwise report a project that never created one,
+	// naming an account that does not exist, as a block that named the wrong
+	// identity -- a different fault with a different fix.
+	if len(accounts) == 0 {
 		return batchProblem(lc, id,
-			fmt.Sprintf("the batch block names %s as the account a run's VMs run as, and it is not one of this installation's run accounts (%s): a published block is written to the runs bucket, so a machine that reads it could otherwise name the reaper's account, the deployer's or the installation's history account as the identity of its own run -- a confused deputy on an installation whose launcher holds actAs on that account (design compute-backend.md §3.2, §3.7)", lc.Batch.ServiceAccount, nameListOrNone(accounts)),
-			fmt.Sprintf("set batch.service_account to one of this installation's run accounts (fugaro update writes the block from the project's own accounts), or create the account and run fugaro update in %s", lc.GCPProject))
+			"this installation's project has no Fugaro run account at all: the accounts a Batch job's VM runs as are the run-class accounts the repository roots created, and with none of them every job this installation launched would be one whose VM cannot report its state (design compute-backend.md §3.2). The accounts are found by the display name the repository roots write (infra.JobRunAccounts)",
+			fmt.Sprintf("apply the repository roots for this installation's workflows (fugaro update in %s), then rerun fugaro doctor", lc.GCPProject))
+	}
+	// An empty service_account is the job-definition check's finding, not this
+	// one's (batch.CheckOptions refuses it where the block is read).
+	if lc.Batch.ServiceAccount == "" || slices.Contains(accounts, "serviceAccount:"+lc.Batch.ServiceAccount) {
+		return doctorCheck{ID: id, OK: true}
 	}
 	return batchProblem(lc, id,
-		fmt.Sprintf("this installation's project has no Fugaro run account at all: the accounts a Batch job's VM runs as are the run-class accounts the repository roots created, and with none of them every job this installation launched would be one whose VM cannot report its state (design compute-backend.md §3.2). The accounts are found by the display name the repository roots write (infra.JobRunAccounts)"),
-		fmt.Sprintf("apply the repository roots for this installation's workflows (fugaro update in %s), then rerun fugaro doctor", lc.GCPProject))
+		fmt.Sprintf("the batch block names %s as the account a run's VMs run as, and it is not one of this installation's run accounts (%s): a published block is written to the runs bucket, so a machine that reads it could otherwise name the reaper's account, the deployer's or the installation's history account as the identity of its own run -- a confused deputy on an installation whose launcher holds actAs on that account (design compute-backend.md §3.2, §3.7)", lc.Batch.ServiceAccount, nameListOrNone(accounts)),
+		fmt.Sprintf("set batch.service_account to one of this installation's run accounts (fugaro update writes the block from the project's own accounts), or create the account and run fugaro update in %s", lc.GCPProject))
 }
 
 // nameListOrNone renders a list of accounts for a sentence, and says "none"
