@@ -202,6 +202,12 @@ type run struct {
 	// model call and no implement stage (digest.go, T3.2). Set once at
 	// bootstrap, from the recipe the run resolved.
 	digest bool
+	// rebase is whether the resolved recipe's one step is the rebase step
+	// (recipe.UsesRebase, E5): the run puts its branch on its base, resolves
+	// the conflicts, runs the workflow's tests again and pushes — with no
+	// coder pass and no review (rebase.go). Set once at bootstrap, from the
+	// recipe the run resolved.
+	rebase bool
 	// review is whether this run is mode: review (reviewmode.go, Task 12
 	// of the generic-tool plan): set from spec.ReviewPRs at bootstrap,
 	// before the recipe is resolved, the same way follow is set from
@@ -2458,6 +2464,17 @@ func (r *run) bootstrap(ctx context.Context) error {
 	// gate refuses a digest launch against a release image that predates the
 	// step (digestSince, internal/cli/recipes_skew.go).
 	r.digest = recipe.UsesDigest(rcp)
+	// The rebase step is the runner's own work plus one model stage for the
+	// conflicts (rebase.go, E5): its run's step is the whole plan, it reviews
+	// nothing and it opens no pull request — what it delivers is a branch put
+	// back on its base, and the head it leaves is reviewed by a run of its own
+	// (G13, D2043). Marked here, right after the recipe is resolved, and
+	// dispatched in agentLoop in place of implement for the same reason the
+	// digest step is: the loop below walks review levels, and this run has
+	// none. The launcher's image gate refuses a rebase launch against a
+	// release image that predates the step (rebaseSince, internal/cli/
+	// recipes_skew.go).
+	r.rebase = recipe.UsesRebase(rcp)
 	// A follow-up cannot run one whatever this image executes: a report run
 	// is launched on its own, because it lists the records it may read and
 	// refuses while another report run of the repository is going
@@ -2469,6 +2486,16 @@ func (r *run) bootstrap(ctx context.Context) error {
 	// (refuseFollowUpReportMode, internal/cli/recipes_resolve.go).
 	if r.follow != nil && recipe.UsesDigest(rcp) {
 		return fmt.Errorf("recipe %s holds the digest step, which writes this repository's run reports; this task continues pull request #%d, and a report run is launched on its own — it lists the records it may read and refuses while another report run of the repository is going — so it cannot continue one", rrec.Name, spec.PR)
+	}
+	// A rebase recipe puts an existing branch back on its base (E5): a first
+	// run has none — it cuts its own branch from the task's ref, whose base
+	// is the commit it came from — so the step would rebase nothing, re-run
+	// the tests for a branch nobody asked about and then find no branch on
+	// origin to push to, which reads as a branch someone deleted rather than
+	// as the launch that was wrong. Rung 0 is launched on the pull request
+	// whose branch it rebases (--pr N, E10a).
+	if r.follow == nil && recipe.UsesRebase(rcp) {
+		return fmt.Errorf("recipe %s puts the branch of an existing pull request back on its base, and this task continues no pull request, so there is no branch to rebase: launch it on the pull request it rebases (--pr N)", rrec.Name)
 	}
 	switch {
 	case r.review && rcp.Mode != recipe.ModeReview:
@@ -3144,6 +3171,13 @@ func (r *run) systemPromptData() PromptData {
 }
 
 func (r *run) agentLoop(ctx context.Context) {
+	// A rebase run's whole work is one step, and it is not a step of this
+	// loop: no implement stage, no review level, no plan walk (rebase.go,
+	// E5). It ends the run itself, either way it goes.
+	if r.rebase {
+		r.rebaseStep(ctx)
+		return
+	}
 	sys := SystemPrompt(r.systemPromptData(), r.instructions)
 	req := agent.Request{Prompt: r.spec.Task, SessionID: agent.NewSessionID(), AppendSystemPrompt: sys}
 	var opts stageOpts
@@ -3495,6 +3529,20 @@ func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, s
 		if v.Verdict != "ship" && allOwner(v.Findings) {
 			r.ownerStop(ctx, v.Findings)
 			return false
+		}
+		// hand_over: this review is where the run ends (recipe.Step.HandOver,
+		// E5). The round's verdict and findings are recorded above and nothing
+		// follows them — no fix, and no further round — which is what the
+		// escalation's escalate recipe asks for: one coder pass and one review,
+		// with what the review found left for whoever reads the verdict rather
+		// than handed back to the coder. The plan has nothing after this step
+		// (recipe.Parse refuses an adversarial step after a hand_over review),
+		// so the loop's answer only decides that it walks no step it does not
+		// have; finalize then decides readiness on the round the run recorded,
+		// exactly as it does for any other run whose last review asked for
+		// changes.
+		if st.HandOver {
+			return true
 		}
 		if v.Verdict == "ship" || round >= r.reviewRounds(st) {
 			if v.Verdict != "ship" && r.endsThePlan(st.Kind) {

@@ -353,3 +353,29 @@ func TestRecipeFollowUpOversizeBaseFileFails(t *testing.T) {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
 	}
 }
+
+// TestRecipeHandOverSkipsFix is E5's red step: a review step with hand_over
+// ends the run at that review. The recipe pins no rounds of its own, so the
+// configured agent.review_rounds (3) would buy three reviews and the fixes
+// between them; the run buys one review, keeps its verdict and its findings
+// on the record and stops — no fix, no second review — which is what the
+// escalation's escalate recipe asks for: one coder pass, one review, and the
+// verdict left for whoever reads it.
+//
+// Mutation (drop the `if st.HandOver { return true }` arm from seniorLoop):
+// the run dispatches a fix round this test never scripts, and the stages come
+// back implement, review, fix.
+func TestRecipeHandOverSkipsFix(t *testing.T) {
+	const handOver = "version: 1\nname: hand-over\nsteps:\n  - review: { hand_over: true }\n"
+	h := newHarness(t, firstLineCfg(t, 3, "  first_line_review: off\n"), recipeSpec(embeddedTask("hand-over", handOver)))
+	rec, err := h.run(t, implement("feature"), review("changes", 2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stageNames(rec); !eq(got, "implement", "review") {
+		t.Fatalf("stages = %v, want the implement stage and the one review", got)
+	}
+	if len(rec.Reviews) != 1 || rec.Reviews[0].Verdict != "changes" || rec.Reviews[0].Findings != 2 {
+		t.Fatalf("reviews = %+v, want the one round's verdict and findings recorded", rec.Reviews)
+	}
+}
