@@ -356,6 +356,60 @@ func TestCheckTriggersOnACatalogDefinitionChange(t *testing.T) {
 	}
 }
 
+// catalogContextInputs is catalogInputs for an entry that names a build
+// context: the digest the copy staged and the one the entry's last build
+// recorded are the same value, so nothing about the context has moved.
+func catalogContextInputs(now time.Time) CatalogInputs {
+	in := catalogInputs(now)
+	in.ContextSHA256 = strings.Repeat("e", 64)
+	in.Record.ContextCommit, in.Record.ContextSHA256 = "c2", in.ContextSHA256
+	return in
+}
+
+// TestDecideCatalogFiresOnAContextChange: a catalog entry whose build context
+// moved is rebuilt. The digest is the one the copy staged beside the
+// Dockerfile, read from the bucket and never from the repository (D1401), so
+// the check learns the context moved without a credential. The context is its
+// own reason and not the definition's (D1402): a night when both moved records
+// both, in the order they are evaluated, so an operator can tell a Dockerfile
+// edit from a repository edit.
+func TestDecideCatalogFiresOnAContextChange(t *testing.T) {
+	now := time.Date(2026, 11, 3, 5, 30, 0, 0, time.UTC)
+	in := catalogContextInputs(now)
+	in.ContextSHA256 = strings.Repeat("f", 64)
+	if got := DecideCatalog(in); got.Decision != Rebuild || !slices.Equal(got.Reasons, []string{ReasonCatalogContext}) {
+		t.Fatalf("a moved context: %s %v", got.Decision, got.Reasons)
+	}
+	in = catalogContextInputs(now)
+	in.DefinitionSHA256 = strings.Repeat("b", 64)
+	in.ContextSHA256 = strings.Repeat("f", 64)
+	if got := DecideCatalog(in); got.Decision != Rebuild || !slices.Equal(got.Reasons, []string{ReasonCatalogDefinition, ReasonCatalogContext}) {
+		t.Fatalf("a changed definition and a moved context: %s %v", got.Decision, got.Reasons)
+	}
+}
+
+// TestDecideCatalogDoesNotFireOnAnUnchangedContext: a staged digest the last
+// build recorded is no change, and the back-off's fingerprint carries it, so
+// the decision of a night when nothing moved is a skip and two runs of the
+// same inputs are the same build — a context that moved and moved back is one
+// rebuild and not two.
+func TestDecideCatalogDoesNotFireOnAnUnchangedContext(t *testing.T) {
+	now := time.Date(2026, 11, 3, 5, 30, 0, 0, time.UTC)
+	in := catalogContextInputs(now)
+	got := DecideCatalog(in)
+	if got.Decision != Skip || len(got.Reasons) != 0 {
+		t.Fatalf("an unchanged context: %s %v", got.Decision, got.Reasons)
+	}
+	if !got.Inputs.Equal(DecideCatalog(in).Inputs) {
+		t.Fatalf("two runs of one unchanged context fingerprint differently: %+v", got.Inputs)
+	}
+	moved := in
+	moved.ContextSHA256 = strings.Repeat("f", 64)
+	if got.Inputs.Equal(DecideCatalog(moved).Inputs) {
+		t.Fatalf("a moved context fingerprints as the unchanged one (%+v), so the back-off would count it as the same build", got.Inputs)
+	}
+}
+
 // TestCheckRebuildsACatalogImageOnABaseChange: an entry reuses the base and
 // max-age triggers per entry. A base the entry would now be built from is a
 // rebuild even when its definition did not move (that is the security
