@@ -6,7 +6,9 @@ package cli
 // the same validator and the same caps as `patch`, an oversize dump is refused
 // rather than cut, and no dump approves work — approving a work item, setting
 // the goal and closing a person's decision are the person's own word at a
-// terminal, so a dump carrying one is refused whole rather than applied.
+// terminal, so a dump carrying one is refused whole rather than applied, and a
+// decision a dump raises itself is judged with the rest of what it carries, not
+// against the state it found.
 
 import (
 	"fmt"
@@ -48,7 +50,7 @@ func TestImportNeverMarksAnItemApproved(t *testing.T) {
 	if err == nil {
 		t.Fatalf("a dump that approves a work item was imported:\n%s", out)
 	}
-	for _, want := range []string{"work_item_approve", "only a person may land"} {
+	for _, want := range []string{"may not approve a work item", "nothing was written"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not say %q: %v", want, err)
 		}
@@ -73,6 +75,74 @@ func TestImportNeverMarksAnItemApproved(t *testing.T) {
 	}
 	if !strings.Contains(out, "1 work item the dump declares arrived unapproved") {
 		t.Errorf("the import does not say the item it declared is unapproved:\n%s", out)
+	}
+}
+
+// TestImportRefusesADecisionItRaisesAndCloses: the same document, not the same
+// node. A dump whose first op raises a decision waiting on a person and whose
+// next op answers it is refused whole, because the fence is the state model's
+// own — the dump is folded as a session folds it, so the decision is in the
+// state by the time its resolve is judged. Judging a resolve against the state
+// read before the dump, and then writing the dump as a person, would see no
+// decision at all, let the resolve through and land a person's decision closed
+// with the person nowhere near a terminal — and the how-to, the release note and
+// this command's own help all promise that document is refused.
+//
+// The class is the line, not the op: a decision waiting on a session is the
+// session's to close, so the same shape waiting on a session lands, closed and
+// recorded as the session's answer.
+func TestImportRefusesADecisionItRaisesAndCloses(t *testing.T) {
+	f := newOrchestratorFixture(t)
+	asPerson(t)
+	s := emptyOrchestratorState()
+	add := personDecision("pick-a-repo")
+	resolve := orchestrator.Op{Op: orchestrator.OpDecisionResolve,
+		Resolve: &orchestrator.ResolveOp{ID: "pick-a-repo", Answer: "the web one"}}
+
+	out, _, err := runOrchestrator(t, "", "orchestrator", "import", "-f", patchFile(t, patchDoc(t, s.Rev, add, resolve)))
+	if err == nil {
+		t.Fatalf("a dump that raises a person's decision and closes it in the same document landed:\n%s", out)
+	}
+	for _, want := range []string{"nothing was written", "waits on a person"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if v := f.db.Value(orchestratorPath(t, orchestrator.StateNode)); v != nil {
+		t.Fatal("the refused dump wrote the state node: the decision is raised by an op the same dump carries, and neither it nor the resolve lands")
+	}
+
+	// The same dump with the resolve dropped: the decision lands, open, waiting
+	// on the person the import left it to.
+	if _, _, err := runOrchestrator(t, "", "orchestrator", "import", "-f", patchFile(t, patchDoc(t, s.Rev, add))); err != nil {
+		t.Fatalf("%v", err)
+	}
+	d, ok := storedOrchestratorState(t, f).Decision("pick-a-repo")
+	if !ok {
+		t.Fatal("the import wrote no decision")
+	}
+	if d.Resolved() {
+		t.Errorf("the decision arrived closed by %q, and a dump cannot close the person's question", d.By)
+	}
+	if d.WaitingOn != orchestrator.OnPerson {
+		t.Errorf("the decision waits on %q, and the dump said a person", d.WaitingOn)
+	}
+
+	// A decision waiting on the session is the session's own, so the same
+	// document shape lands it closed: the class is the line, not the op. It is
+	// recorded as the person's answer, because the dump lands as whoever ran it.
+	mine := orchestrator.Op{Op: orchestrator.OpDecisionAdd, Decision: &orchestrator.DecisionOp{
+		ID: "which-branch", Question: "which branch does the sweep watch?", WaitingOn: orchestrator.OnSession,
+	}}
+	answer := orchestrator.Op{Op: orchestrator.OpDecisionResolve,
+		Resolve: &orchestrator.ResolveOp{ID: "which-branch", Answer: "the sessions branch"}}
+	path := patchFile(t, patchDoc(t, storedOrchestratorState(t, f).Rev, mine, answer))
+	if _, _, err := runOrchestrator(t, "", "orchestrator", "import", "-f", path); err != nil {
+		t.Fatalf("a dump that closes the session's own decision was refused: %v", err)
+	}
+	d, ok = storedOrchestratorState(t, f).Decision("which-branch")
+	if !ok || !d.Resolved() || d.By != orchestrator.Person {
+		t.Errorf("the session's own decision did not land closed: %+v", d)
 	}
 }
 

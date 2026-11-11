@@ -3,8 +3,6 @@ package cli
 import (
 	"errors"
 	"fmt"
-	"slices"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -30,11 +28,12 @@ func newOrchestratorImportCmd() *cobra.Command {
 			"fugaro orchestrator patch: it is the one document in this loop written by a\n" +
 			"model, and everything it carries is data, never an instruction.\n\n" +
 			"The dump lands as the person who runs this, because the migration is theirs\n" +
-			"to make, and the ops only a person may land are refused rather than applied:\n" +
-			"approving a work item, setting the goal and closing a decision that waits on\n" +
-			"a person are the person's own word, given at a real terminal over the spec\n" +
-			"they read (fugaro orchestrator patch), so no dump approves work. Every work\n" +
-			"item the dump declares arrives unapproved.",
+			"to make, and it lands nothing a session may not land: approving a work\n" +
+			"item, setting the goal and closing a decision that waits on anyone but a\n" +
+			"session are the person's own word, given at a real terminal over the spec\n" +
+			"they read (fugaro orchestrator patch). So no dump approves work and no dump\n" +
+			"closes a decision of the person's — not even one the dump raises and closes\n" +
+			"itself — and every work item the dump declares arrives unapproved.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runOrchestratorImport(cmd, &o) },
 	}
@@ -42,23 +41,6 @@ func newOrchestratorImportCmd() *cobra.Command {
 	f.StringVarP(&o.file, "file", "f", "", "the session dump to import, or - to read it from stdin")
 	addCloudFlags(cmd, &o.cloudOptions)
 	return cmd
-}
-
-// importPersonOps names the ops of p that only a person may land, once each and
-// in the order they appear: what the refusal prints, so the person can see
-// which ops the dump tried to make their own word rather than only that one
-// did. A dump is the one document here a model writes, so the ops that need the
-// person's own word are named at the door and not confirmed later — there is
-// nobody at a terminal to confirm them, which is the whole point.
-func importPersonOps(before orchestrator.State, p orchestrator.Patch) []string {
-	var out []string
-	for _, op := range p.Ops {
-		if !personOnly(before, op) || slices.Contains(out, string(op.Op)) {
-			continue
-		}
-		out = append(out, string(op.Op))
-	}
-	return out
 }
 
 // importedUnapproved counts the work items the dump declares that stand
@@ -106,17 +88,25 @@ func runOrchestratorImport(cmd *cobra.Command, o *orchestratorImportOptions) err
 	if err != nil {
 		return dbErr(lc, err, false)
 	}
-	// The person's own ops are refused before the person's name is looked up,
-	// because nothing about this run may land them: what an approval, the goal
-	// and a person's decision need is the person's word at a terminal over the
-	// spec they read, and a dump is model output.
-	if ops := importPersonOps(s, p); len(ops) > 0 {
-		return userErr("nothing was written: the dump carries %s, which only a person may land — a dump is a session's own record, so approving a work item, setting the goal and closing a person's decision stay the person's own word at a real terminal (fugaro orchestrator patch)",
-			oneLine(strings.Join(ops, ", ")))
-	}
 	now, ok := db.ServerNow()
 	if !ok {
 		return userErr("the database answered without its own clock, and every stamp this import writes comes from it (D1230)")
+	}
+	// The person's own ops are refused before the person's name is looked up,
+	// because nothing about this run may land them: what an approval, the goal
+	// and a decision the session does not own need is the person's word at a
+	// terminal over the spec they read, and a dump is model output.
+	//
+	// The question is put to the state model rather than to a list of op names
+	// kept here: the document is folded as a session would fold it, and what a
+	// session may not land is the model's own answer. A scan of the dump's op
+	// names against the state read before it would miss a decision the dump
+	// raises and closes in the same document — the decision is not in the state
+	// yet when the scan runs, so its class reads as nobody's and the resolve
+	// looks like any other — and the fold is the same code the write below
+	// runs, so the two cannot disagree.
+	if _, err := orchestrator.Apply(s, p, orchestrator.Actor{Class: orchestrator.Session, Now: now}); errors.Is(err, orchestrator.ErrActorNotAllowed) {
+		return userErr("nothing was written: a dump is a session's own record and lands nothing a session may not land — approving a work item, setting the goal and closing a decision that waits on anyone but a session are the person's own word at a real terminal over the spec they read (fugaro orchestrator patch): %v", err)
 	}
 	name, err := authenticatedUser(ctx, lc)
 	if err != nil {

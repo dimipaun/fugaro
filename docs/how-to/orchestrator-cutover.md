@@ -19,9 +19,11 @@ The dump is read by `fugaro orchestrator patch`'s own validator and bounded by
 its own caps, because it is the one document in this loop a model wrote. It
 lands as you, and no dump approves work: approving a work item, setting the goal
 and closing a decision that waits on a person are your own word at a real
-terminal, so a dump carrying one is refused whole. Every work item it declares
-arrives unapproved, and the daemon launches approved work only, so approve what
-should run before you start it, with `fugaro orchestrator patch -f approved.json`.
+terminal, so a dump carrying one is refused whole, whether the decision was
+already in the node or the dump raised it itself in the same document. Every
+work item it declares arrives unapproved, and the daemon launches approved work
+only, so approve what should run before you start it, with
+`fugaro orchestrator patch -f approved.json`.
 
 ## 2. Stop the scripts launching (**per installation**)
 

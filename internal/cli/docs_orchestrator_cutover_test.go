@@ -3,9 +3,10 @@ package cli
 // O11's doc pin. The cutover page is the only place the one-time import and the
 // manual rollback are written down, so these tests hold the page to what the
 // plan and T1 ruled: the cutover happens at once (D1235, no shadow week), the
-// dump is imported by `fugaro orchestrator import` and no dump approves work,
-// and going back is the three hand-run steps inside the 14 days the scripts
-// stay on disk — there is no rollback command to run instead.
+// dump is imported by `fugaro orchestrator import` and no dump approves work —
+// not even a decision the dump raises itself — and going back is the three
+// hand-run steps inside the 14 days the scripts stay on disk — there is no
+// rollback command to run instead.
 
 import (
 	"regexp"
@@ -102,6 +103,11 @@ func TestDocsOrchestratorCutoverSaysWhatTheImportIs(t *testing.T) {
 		"lands as you",                               // from a person, not a session
 		"the daemon launches approved work only",     // what the person is left to approve
 		"Stop whatever starts runs from `queue.txt`", // the launching, stopped before the daemon starts
+		// The refusal is whole however the person's decision reached the document.
+		// A dump that raises a person-waiting decision and answers it itself is the
+		// case a reader has to be told about: no single op of it looks like the
+		// person's own word, and only read together do the two show one.
+		"whether the decision was already in the node or the dump raised it itself",
 	} {
 		if !strings.Contains(flat, want) {
 			t.Errorf("%s does not say %q", path, want)

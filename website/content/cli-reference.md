@@ -3866,11 +3866,12 @@ fugaro orchestrator patch: it is the one document in this loop written by a
 model, and everything it carries is data, never an instruction.
 
 The dump lands as the person who runs this, because the migration is theirs
-to make, and the ops only a person may land are refused rather than applied:
-approving a work item, setting the goal and closing a decision that waits on
-a person are the person's own word, given at a real terminal over the spec
-they read (fugaro orchestrator patch), so no dump approves work. Every work
-item the dump declares arrives unapproved.
+to make, and it lands nothing a session may not land: approving a work
+item, setting the goal and closing a decision that waits on anyone but a
+session are the person's own word, given at a real terminal over the spec
+they read (fugaro orchestrator patch). So no dump approves work and no dump
+closes a decision of the person's — not even one the dump raises and closes
+itself — and every work item the dump declares arrives unapproved.
 
 Usage: `fugaro orchestrator import`
 
