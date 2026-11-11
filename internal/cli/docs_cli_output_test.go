@@ -24,11 +24,15 @@ package cli
 //     CL3 opens lands in it. Move the state directory (D1351) and the document
 //     fails here rather than describing a directory nothing writes to.
 //
-// Mutation (run and restored): change the document's retention to "14 days, or
-// the newest 500 files" -> TestDocsCliOutputStatesTheContract fails, naming
-// the sentence; set XDG_STATE_HOME's rule aside and resolve the state
-// directory from HOME alone -> TestDocsCliOutputLogPathMatchesTheDirectoryRule
-// fails on the sink's own path, before the document is read.
+// Mutation (each run and restored): change the document's retention to "the
+// newest 500 files" -> TestDocsCliOutputStatesTheContract fails, naming the
+// sentence; move the POSIX fallback the state directory is read from
+// (localcfg.platformDirs) to `.local/state2` ->
+// TestDocsCliOutputLogPathMatchesTheDirectoryRule fails, naming the path the
+// document should have given instead; and take `XDG_STATE_HOME` out of that
+// directory's variables, so it is resolved from HOME alone -> the same test
+// fails first on the sink it opens, which is then refused a directory to keep
+// the run's log in at all.
 
 import (
 	"path/filepath"
