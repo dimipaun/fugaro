@@ -2712,6 +2712,16 @@ func reviewSpec(ctx context.Context, env *cloudEnv, o *runOptions, rr *resolvedR
 // is available here, so --repo X --token N outside any checkout is held to the
 // same rule a checkout's own resolution would be.
 //
+// Every name this function reads out of the local config — the flag, the
+// stage key of rung 2 and the project default of rung 4 — resolves through the
+// file's aliases first (localcfg.Config.ResolveAccount, D2091, D2092), and
+// before any rule is asked of it: the account the run is given is the account
+// the alias stands for, the allow-list is asked about that account and never
+// the alias (F6), and the task carries the account rather than the name the key
+// holds (F4). A repo's own committed fugaro.yaml names an account and never an
+// alias — an alias lives in the owner's local config alone (D2090) — so rung 3
+// has nothing to resolve.
+//
 // The mix rule is judged first, for every call and whatever stage was asked
 // for (config.CheckStageAccountMix): an api-key run may name one Claude
 // account, for the senior review and the adversarial review and no other stage
@@ -2828,7 +2838,15 @@ func claudeAccountFor(ctx context.Context, env *cloudEnv, repo, flag, stage, ref
 	// repository whose own committed fugaro.yaml carries the value is exactly
 	// the launch that has to fail closed, so the default is checked here, where
 	// nothing else will.
-	if def := env.lc.DefaultClaudeAccount; def != "" && def != config.DefaultClaudeAccount {
+	//
+	// The default resolves once, here, and the three readers below take the
+	// resolved name: this check, the budget clause and rung 4. A key may name an
+	// alias (D2091, D2092), and every one of them is asking about the account
+	// the run holds — an alias handed to any of them would be judged as a name
+	// no account answers to, which is the state F6 exists to keep out of the
+	// launch (the allow-list is asked about the account, never the alias).
+	def, _ := env.lc.ResolveAccount(env.lc.DefaultClaudeAccount)
+	if def != "" && def != config.DefaultClaudeAccount {
 		switch auth {
 		case "api-key":
 			// The account it returns is the stage's resolution and not this
@@ -2862,11 +2880,15 @@ func claudeAccountFor(ctx context.Context, env *cloudEnv, repo, flag, stage, ref
 	// oauth launch must not spend a local default-branch git read (mixMode) and
 	// a route resolution (mixRoutes) on a clause that cannot apply to it.
 	if auth == "api-key" {
-		if ps := config.CheckMixBudget(auth, mixMode(ctx, env, repo, co), mixCoder(co), env.lc.DefaultClaudeAccount, declared, mixRoutes(env, repo, co), "budget.mode"); len(ps) > 0 {
+		if ps := config.CheckMixBudget(auth, mixMode(ctx, env, repo, co), mixCoder(co), def, declared, mixRoutes(env, repo, co), "budget.mode"); len(ps) > 0 {
 			return "", userErr("%s: %s", ps[0].Path, ps[0].Message)
 		}
 	}
-	name := flag
+	// The flag is a name a person wrote (--token, or the account a follow-up
+	// inherits from its previous run), so it may name an alias exactly as a key
+	// does: it resolves before every check below, which is the same step and the
+	// same order the keys take above.
+	name, _ := env.lc.ResolveAccount(flag)
 	if name == "" && stage != "" {
 		if account := stageAccountOf(env.lc, auth, stage); account != "" {
 			return account, nil
@@ -2931,7 +2953,10 @@ func claudeAccountFor(ctx context.Context, env *cloudEnv, repo, flag, stage, ref
 		}
 	}
 	if name == "" && auth == "oauth" {
-		name = env.lc.DefaultClaudeAccount
+		// Rung 4, and the same resolved name the default was checked under
+		// above: one read of the key, so the account the allow-list admitted
+		// and the account the run is given cannot be two different names.
+		name = def
 	}
 	if name == "" {
 		name = config.DefaultClaudeAccount
@@ -2979,15 +3004,24 @@ func mixedRunAccount(ctx context.Context, env *cloudEnv, repo, auth string, co *
 }
 
 // stageAccountsOf is the local config's stage accounts as the rules read them:
-// the stage name to the account it names, empty values dropped.
+// the stage name to the account it names, empty values dropped, each name
+// resolved through the file's aliases (D2091, D2092).
+//
+// Resolution belongs here rather than at each caller because every one of them
+// is asking the same question — which account does this stage run on — and the
+// answers are the mix rules (CheckStageAccountMix), the launch's own allow-list
+// check and `fugaro validate`'s report (stageAccountProblems). A key left as
+// written would make an alias a stage account no account answers to: the mix
+// rules would judge a stage that names one as a stage that names nothing, and
+// validate would refuse a file the run accepts.
 func stageAccountsOf(lc *localcfg.Config) map[string]string {
 	if lc == nil || len(lc.ClaudeAccountStages) == 0 {
 		return nil
 	}
 	out := make(map[string]string, len(lc.ClaudeAccountStages))
 	for stage, choice := range lc.ClaudeAccountStages {
-		if choice.ClaudeAccount != "" {
-			out[stage] = choice.ClaudeAccount
+		if account, _ := lc.ResolveAccount(choice.ClaudeAccount); account != "" {
+			out[stage] = account
 		}
 	}
 	return out
@@ -3000,11 +3034,17 @@ func stageAccountsOf(lc *localcfg.Config) map[string]string {
 // weighs their findings. Every other auth is "" — vertex and
 // cascade are refused outright by CheckStageAccountMix, and an auth the launch
 // cannot resolve yet is not judged on a guess.
+//
+// The key resolves here (D2091, D2092): rung 2's answer is the account the
+// stage runs on, whatever name the key holds, and both callers compare it with
+// another account — claudeAccountFor with the mix's, mixedStageAccount with the
+// project default — so a name left as written would read as a second account.
 func stageAccountOf(lc *localcfg.Config, auth, stage string) string {
 	if lc == nil || (auth != "oauth" && auth != "api-key") {
 		return ""
 	}
-	return lc.ClaudeAccountStages[stage].ClaudeAccount
+	account, _ := lc.ResolveAccount(lc.ClaudeAccountStages[stage].ClaudeAccount)
+	return account
 }
 
 // mixRoutes is the provider routes this repository may use, as the run resolves
@@ -3095,7 +3135,13 @@ func mixedStageAccount(ctx context.Context, env *cloudEnv, repo, stage, auth str
 	if co == nil {
 		return "", nil
 	}
-	def := env.lc.DefaultClaudeAccount
+	// The default resolves before anything is judged of it (D2091, D2092): the
+	// mix's account is the account the key stands for, and the comparisons
+	// below — with the other mixed stage's key and with the allow-list — are
+	// all about accounts. An alias left as written would look like a name the
+	// allow-list does not hold and like a second credential beside a stage key
+	// naming its target.
+	def, _ := env.lc.ResolveAccount(env.lc.DefaultClaudeAccount)
 	// "" and the unsuffixed-default sentinel (config.DefaultClaudeAccount,
 	// "default") are the same answer here: a local config may spell the key
 	// either way (localcfg's choiceRefProblem admits the sentinel), and neither
@@ -3103,7 +3149,9 @@ func mixedStageAccount(ctx context.Context, env *cloudEnv, repo, stage, auth str
 	// for the default account, which is exactly what spec.OAuthToken's own rule
 	// says (a run whose account is the sentinel sets no token at all). So the
 	// key declares no mix, and reading it as one would invent the second
-	// credential this rule refuses below.
+	// credential this rule refuses below. An alias whose target is the sentinel
+	// resolves into this same answer, which is the ruling's own case: it names
+	// no account of its own either.
 	if def == "" || def == config.DefaultClaudeAccount {
 		return "", nil
 	}
