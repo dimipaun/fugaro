@@ -127,6 +127,9 @@ func TestStepHookRunsRegisteredStep(t *testing.T) {
 	if seen.RunID != rec.RunID || seen.Slug != g.store.Slug() || seen.Prefix != g.store.Prefix() || seen.AB {
 		t.Fatalf("the step was handed %+v", seen)
 	}
+	if seen.Answer != "ok" {
+		t.Fatalf("the step's call answered %q, want the upstream's own text", seen.Answer)
+	}
 	// Its call went through the run's own gateway: the fake upstream is
 	// reachable only through it, and the gateway's own figure for the stage is
 	// what the record carries.
