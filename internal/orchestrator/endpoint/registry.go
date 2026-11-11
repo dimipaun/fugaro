@@ -254,15 +254,24 @@ func (r Registry) validate(id string) error {
 }
 
 // read is Probe's file half: everything between the path and a document this
-// release would have written. The file is looked at before the directory it
-// sits in, so a machine with no run directory at all reports a missing file
-// rather than a missing directory.
+// release would have written. Everything decided about the file -- that it is a
+// regular file, its mode, its bytes -- is decided from one open description
+// made with O_NOFOLLOW, so a path that is looked at and then read again is not
+// a path something can change in between, and a link planted where the file
+// belongs is refused rather than followed. The file is opened before the
+// directory it sits in is judged, so a machine with no run directory at all
+// reports a missing file rather than a missing directory.
 func read(path, id string) (Registry, error) {
-	info, err := os.Lstat(path)
+	f, err := os.OpenFile(path, os.O_RDONLY|openNoFollow, 0)
 	if err != nil {
 		return Registry{}, err
 	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	if err != nil {
+		return Registry{}, fmt.Errorf("reading the endpoint's registry at %s: %w", path, err)
+	}
+	if !info.Mode().IsRegular() {
 		return Registry{}, fmt.Errorf("the endpoint's registry at %s is not a regular file", path)
 	}
 	if got := info.Mode().Perm(); got != registryMode {
@@ -271,7 +280,7 @@ func read(path, id string) (Registry, error) {
 	if err := checkRunDir(filepath.Dir(path)); err != nil {
 		return Registry{}, err
 	}
-	raw, err := os.ReadFile(path)
+	raw, err := io.ReadAll(f)
 	if err != nil {
 		return Registry{}, fmt.Errorf("reading the endpoint's registry at %s: %w", path, err)
 	}

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/orchestrator/endpoint"
@@ -108,6 +109,65 @@ func TestRunServesAndRemovesItsRegistryOnTheWayOut(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "the local endpoint answers on") {
 		t.Errorf("the daemon never said it serves an endpoint: %q", out.String())
+	}
+}
+
+// TestTheEndpointsRefusalsReachTheDaemonsStream: the endpoint reports a request
+// it refused from that connection's own goroutine, and the daemon's warning
+// stream is one stream. The refused requests overlap on purpose: the daemon's
+// own writer is what it lends the endpoint, and the serialisation it wraps the
+// two in is what `-race` holds here (CG13b).
+func TestTheEndpointsRefusalsReachTheDaemonsStream(t *testing.T) {
+	f := newDaemonFixture(t)
+	d, out := f.daemon(t, "")
+	getenv, dir := endpointState(t)
+	d.registryGetenv, d.registryGOOS = getenv, "linux"
+	path := filepath.Join(dir, "aurora.json")
+
+	var refused error
+	d.wake = func(ctx context.Context) error {
+		defer f.cancel()
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			refused = fmt.Errorf("the daemon wrote no registry file at %s: %w", path, err)
+			return context.Canceled
+		}
+		var reg endpoint.Registry
+		if err := json.Unmarshal(raw, &reg); err != nil {
+			refused = fmt.Errorf("the registry file at %s is not a document this release writes: %w", path, err)
+			return context.Canceled
+		}
+		// The token in the query string is the refusal that reaches the log,
+		// and it is the one the endpoint makes before it has read the token: the
+		// file's own token is therefore never presented.
+		var wg sync.WaitGroup
+		for i := 0; i < 8; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+reg.Addr+"/state?token="+reg.Token, nil)
+				if err != nil {
+					return
+				}
+				if resp, err := http.DefaultClient.Do(req); err == nil {
+					_ = resp.Body.Close()
+				}
+			}()
+		}
+		wg.Wait()
+		return context.Canceled
+	}
+
+	if err := d.start(f.ctx); err != nil {
+		t.Fatalf("the daemon's start-up: %v", err)
+	}
+	if refused != nil {
+		t.Fatalf("%v", refused)
+	}
+	// Read once the daemon has stopped serving: the endpoint's connections are
+	// closed by then, and the log line is written after the refusal's answer.
+	if !strings.Contains(out.String(), "a query string was refused") {
+		t.Errorf("the endpoint's refusal never reached the daemon's own output: %q", out.String())
 	}
 }
 

@@ -176,6 +176,9 @@ type orchestratorDaemon struct {
 	launched *launchInFlight
 	out      io.Writer
 	warn     io.Writer
+	// outputLock is what keeps the two a single stream once the local endpoint
+	// is up: see sealOutput.
+	outputLock *sync.Mutex
 	// endpoint is the local endpoint this daemon serves and the registry file
 	// that tells a reader on this machine where it is, nil while none is
 	// running: the daemon is the process that starts and stops it (CG13b).
@@ -199,9 +202,43 @@ type orchestratorDaemon struct {
 	wake func(context.Context) error
 }
 
+// sealOutput gives the daemon's two streams one lock, once, for the daemon's
+// life.
+//
+// From the moment the local endpoint is served the warning stream has a second
+// writer: the endpoint reports a request it refused from that connection's own
+// goroutine, while this daemon writes its lines from its loop (CG13b). An
+// io.Writer promises nothing about two goroutines at once, and a test's own
+// buffer promises even less. The streams are wrapped here rather than where the
+// endpoint is started because the run view and the launcher capture these two
+// writers when the first tick is built, before any endpoint exists, and a line
+// they write must be serialised against the endpoint's as well.
+func (d *orchestratorDaemon) sealOutput() {
+	if d.outputLock != nil {
+		return
+	}
+	d.outputLock = new(sync.Mutex)
+	d.out = syncWriter{mu: d.outputLock, w: d.out}
+	d.warn = syncWriter{mu: d.outputLock, w: d.warn}
+}
+
+// syncWriter serialises writes to w, so the daemon's loop and the endpoint's
+// connection goroutines can share one stream.
+type syncWriter struct {
+	mu *sync.Mutex
+	w  io.Writer
+}
+
+func (s syncWriter) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.w.Write(p)
+}
+
 // start is the whole life of the daemon: converge nothing, learn whether an
 // update is due, take the lease, and then tick until something stops it.
 func (d *orchestratorDaemon) start(ctx context.Context) error {
+	d.sealOutput()
 	if due, err := d.updateDue(ctx); err != nil {
 		return err
 	} else if due {
