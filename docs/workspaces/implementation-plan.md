@@ -570,7 +570,12 @@ service pays for is made, is not one of the eleven, and nothing in that file res
 settles on the response's usage, refuses a call whose settle failed or writes the headroom header. So
 a release that merged W7 alone would carry the cap's whole machinery and enforce none of it: every
 shared-credential call is served unmetered, no member is told what room is left, and the ceiling
-refuses nothing. The wiring is the interface stated above and **no task of this plan owns it** — not
+refuses nothing. **The read grants before anything reads through it**: `workspace_access.tf` binds the
+workspace's account to the member's **entire** database (Realtime Database IAM has no path scope) and
+the member's own `fugaro update` applies it for real at the member's owner's terminal, so the grant is
+live from the day the member joins, while its only consumer is the reconciliation alarm — whose
+`budget.ReconcileWorkspace` has no non-test caller either, its schedule among the wiring below. The
+wiring is the interface stated above and **no task of this plan owns it** — not
 W6 (the workspace's second deployment and its identity), not W8 (the stop and `fugaro workspace cap`),
 not W9 (the docs) — so it needs **a task of its own** before the cap binds anything, and the W7 pull
 request reports it rather than half-landing it: the reservation's worst case per call, the member a

@@ -6,7 +6,11 @@
 # The workspace's credentials service meters every call it pays for and
 # enforces the workspace's cap against the figure it keeps in its OWN database.
 # What it needs from a member is the member's own ledger, read once per
-# reconciliation run to compare the two figures — a READ, and nothing else.
+# reconciliation run to compare the two figures — a READ, and nothing else. The
+# read is live before its consumer is: the alarm that would perform it has no
+# caller yet (budget.ReconcileWorkspace is uncalled outside its tests), so a
+# member's account is granted this read from the day the member pins one while
+# nothing reads through it (the plan's W7 paragraph states it).
 # Realtime Database IAM has no path-level scope: a binding is per instance and
 # reaches the whole database (the reasoning credentials.tf spells out at
 # length), so the narrowest grant that can do it is the instance's read

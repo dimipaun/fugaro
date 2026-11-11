@@ -634,8 +634,11 @@ func TestFirebaseModuleGrantsNothingToSignerOrJobs(t *testing.T) {
 					// the history and coordinator accounts (the FP's own
 					// sweeper and its writer) and the member's pinned
 					// workspace account (workspace_access.tf, W7), which is
-					// the one principal from outside this installation.
-					if strings.Contains(blk.body, bad) && !(bad == "serviceAccount:" && (strings.Contains(blk.name, "history_") || strings.Contains(blk.name, "coordinator_") || strings.Contains(blk.name, "workspace_"))) {
+					// the one principal from outside this installation. The
+					// workspace's exception is its exact address and not a
+					// name prefix, so no later block whose name merely
+					// contains workspace_ can borrow it.
+					if strings.Contains(blk.body, bad) && !(bad == "serviceAccount:" && (strings.Contains(blk.name, "history_") || strings.Contains(blk.name, "coordinator_") || blk.name == "google_project_iam_member.workspace_read")) {
 						t.Errorf("%s: %s mentions %s", path, blk.name, bad)
 					}
 				}
