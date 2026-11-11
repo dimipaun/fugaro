@@ -426,9 +426,10 @@ func limitTask(t *testing.T, h *harness, o task.Overrides) {
 // bootstrap and merges what is left of it as the last layer (D1044, D1047).
 // The task carries the launch's own token limit of 1000 — the figure a
 // hand-written task, or one an older CLI wrote, holds instead of a remaining
-// — and the run's ledger says it already holds 400 of them, so the cap the
-// run halts at is 600. A merge that does not consult the chain would halt at
-// the task's 1000, which is the hole D1052 closes.
+// — and the run's ledger says it already holds 400 of them, so the figure the
+// resolved policy carries is 600, it comes from the chain, and a run that
+// then spends past it halts there. A merge that does not consult the chain
+// would resolve the task's 1000, which is the hole D1052 closes.
 func TestPolicyMergesTheChainRemaining(t *testing.T) {
 	b := newBK(t, gwConfig(t, ""), "observe", "")
 	limitTask(t, b.harness, task.Overrides{MaxTokens: ref(int64(1000))})
@@ -437,6 +438,24 @@ func TestPolicyMergesTheChainRemaining(t *testing.T) {
 	if rec.Policy == nil || rec.Policy.Sources[policy.KeyMaxRunTokens] != policy.SourceChain {
 		t.Fatalf("the run's token cap is not the chain's remaining: policy = %+v", rec.Policy)
 	}
+	if got := rec.Policy.Effective.MaxRunTokens; got != 600 {
+		t.Fatalf("the resolved policy carries %d tokens, want the chain's 600 (its 1000 less the 400 held)", got)
+	}
+	tokenHalt(t, rec, err, "run used 700 tokens of 600")
+}
+
+// TestTokenCapIsTheRemaining: the token cap the run is held to is what the
+// chain has left, not what any layer above the merge allows (D1047, D1059).
+// The run's own fugaro.yaml allows 2000 tokens and the task asks for 1000,
+// while the chain holds 400 of them already — so the run halts at 600, a
+// figure below both. A run held to either of the other two would not halt at
+// all: this is the comparison halt.go's capReached makes, against the figure
+// the resolved policy yields.
+func TestTokenCapIsTheRemaining(t *testing.T) {
+	b := newBK(t, gwConfig(t, "  max_run_tokens: 2000\n"), "observe", "")
+	limitTask(t, b.harness, task.Overrides{MaxTokens: ref(int64(1000))})
+	b.db.Set(budget.PathRun(repoSlug, runID), budget.RunLedger{Tokens: 400})
+	rec, err := b.run(t, big(implement("feature"), 700), review("ship", 0))
 	tokenHalt(t, rec, err, "run used 700 tokens of 600")
 }
 
