@@ -60,6 +60,19 @@ func TestBundleCarriesNoIdentifier(t *testing.T) {
 		// Another run's ID is not this pair's, and it still tells the judge a
 		// run wrote this: the shape alone is refused.
 		{"another run's ID in a path", champPatch("+// see runs/acme-app/20260303-030303-cafe/report.md\n" + diffBody), challPatch(diffBody), champRunID},
+		// Spelling it in capitals names the same run, to a reader and to a
+		// lookup: a scan that folds nothing hands the judge this diff.
+		{"the champion's run ID in capitals", champPatch("+// run " + strings.ToUpper(champRunID) + "\n" + diffBody), challPatch(diffBody), champRunID},
+		{"the champion's branch in capitals", champPatch("+// " + strings.ToUpper(champBranch) + " is the branch\n" + diffBody), challPatch(diffBody), champRunID},
+		// An ID is not always alone between separators: a diff glues it to a
+		// hash it is part of and to the word after it, and cutting on token
+		// boundaries misses the ID inside the longer run of the same
+		// characters.
+		{"another run's ID inside a hash", champPatch("+// blob 9f20260303-030303-cafec0ffee\n" + diffBody), challPatch(diffBody), champRunID},
+		// This one is the shape scan and the redaction meeting: no token here
+		// is a run ID, and the redaction then exposes one by cutting "claude"
+		// out of the middle of it.
+		{"another run's ID glued to a model word", champPatch("+// ported from 20260303-030303-cafeclaude\n" + diffBody), challPatch(diffBody), champRunID},
 		// The pair ID is the champion's run ID in practice (D557 samples on
 		// the run ID, D559 joins the two records by the pair), and it is an
 		// identifier whatever it spells.
@@ -238,5 +251,63 @@ func TestBundleRedactsModelIDInBothArms(t *testing.T) {
 	}
 	if one.A != one.B {
 		t.Fatalf("the arms are still told apart by the model they name: %q and %q", one.A, one.B)
+	}
+}
+
+// TestBundleRedactsTheArmsOwnModel pins the vocabulary's other half: the model
+// each arm was run with (Patch.Model) is redacted whether or not the build's
+// price table carries it. An arm's diff is where its own model is most likely
+// to appear — a frozen model ID, a pin, a changelog — and a challenger may be a
+// model only the owner's model_prices prices (D556), so the table alone would
+// leave exactly the two models whose naming unblinds the pair in the diff the
+// judge reads.
+func TestBundleRedactsTheArmsOwnModel(t *testing.T) {
+	// Off the build's tables on purpose: no Claude row, no catalog row, and a
+	// vendor word ("acme") the family fold of this ID alone knows.
+	const (
+		champModel = "acme/atlas-9"
+		challModel = "acme/atlas-9-pro"
+	)
+	arm := func(patch Patch, model string) Patch {
+		patch.Model = model
+		return patch
+	}
+
+	champDiff := "+agent.models.coder: " + champModel + "\n"
+	challDiff := "+agent.models.coder: " + challModel + "\n"
+	in, _, err := Bundle(arm(champPatch(champDiff), champModel), arm(challPatch(challDiff), challModel), champRunID)
+	if err != nil {
+		t.Fatalf("a pair whose diffs pin the models it was run with: %v", err)
+	}
+	want := "+agent.models.coder: " + modelPlaceholder + "\n"
+	if in.A != want || in.B != want {
+		t.Fatalf("judge input = (%q, %q), want (%q, %q): the arms' own models are still in it", in.A, in.B, want, want)
+	}
+
+	// The vocabulary is the pair's, not the diff's own arm's: each diff here
+	// names the *other* arm's model — a config file that pins both, a
+	// changelog — and both come out redacted, so naming a model cannot split a
+	// pair into the arm whose model it is and the other one.
+	crossed, _, err := Bundle(
+		arm(champPatch("+coder: "+challModel+"\n"), champModel),
+		arm(challPatch("+coder: "+champModel+"\n"), challModel),
+		champRunID,
+	)
+	if err != nil {
+		t.Fatalf("Bundle with each diff naming the other arm's model: %v", err)
+	}
+	if crossed.A != "+coder: "+modelPlaceholder+"\n" || crossed.A != crossed.B {
+		t.Fatalf("the arms are told apart by the model they name: %q and %q", crossed.A, crossed.B)
+	}
+
+	// The build's tables alone do not carry either ID, which is why the field
+	// exists: a bundle that stopped at the table would hand the judge this
+	// diff whole.
+	bare, _, err := Bundle(champPatch(champDiff), challPatch(challDiff), champRunID)
+	if err != nil {
+		t.Fatalf("Bundle without the arms' models: %v", err)
+	}
+	if !strings.Contains(bare.A, champModel) && !strings.Contains(bare.B, champModel) {
+		t.Fatalf("the build's price table redacted %q, so Patch.Model is no longer what covers an unpriced pair: %q", champModel, bare.A)
 	}
 }

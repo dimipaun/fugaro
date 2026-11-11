@@ -16,9 +16,9 @@
 package ab
 
 import (
+	"crypto/sha256"
 	"errors"
 	"fmt"
-	"hash/fnv"
 	"maps"
 	"regexp"
 	"slices"
@@ -52,6 +52,18 @@ type Patch struct {
 	// refused.
 	RunID  string
 	Branch string
+	// Model is the model that wrote the diff: the one the arms differ in
+	// (D555), which is the challenger's model for the challenger's run and the
+	// champion's for the champion's. It joins the redaction vocabulary below,
+	// because the arms differ in this and nothing else, so a diff naming its
+	// own arm's model tells the judge which arm it is reading.
+	//
+	// It is not optional decoration and "" is not the same pair: a challenger
+	// may be a model this build's price table does not carry (an owner prices
+	// it under model_prices, D556), and that is the challenger whose own diff
+	// would otherwise name it. A reader that has the record has this field on
+	// it; one that does not leaves it "" and gets the table's words alone.
+	Model string
 }
 
 // JudgeInput is what one pass of the judge's call sees: the pair's two diffs
@@ -112,7 +124,7 @@ func Bundle(champion, challenger Patch, pairID string) (JudgeInput, bool, error)
 			return JudgeInput{}, false, fmt.Errorf("%w: %s's diff carries %s, and the record it leads to names the model that wrote the arm", ErrIdentified, side.name, what)
 		}
 	}
-	words, err := modelWords()
+	words, err := modelWords(champion.Model, challenger.Model)
 	if err != nil {
 		return JudgeInput{}, false, err
 	}
@@ -124,15 +136,20 @@ func Bundle(champion, challenger Patch, pairID string) (JudgeInput, bool, error)
 	return JudgeInput{A: champ, B: chall}, false, nil
 }
 
-// swapFor is the seeded swap (D552, F10): the pair ID's hash folded to one
-// bit decides which arm is labelled A. It is a property of the pair and of
-// nothing else — not of the caller, not of the diffs — so a judge run cannot
-// choose the labelling, and a run ID cannot steer it (D558 excludes a chosen
-// --run-id from sampling for the same reason).
+// swapFor is the seeded swap (D552, F10): the pair ID's hash folded to one bit
+// decides which arm is labelled A. It is a property of the pair and of nothing
+// else — not of the caller, not of the diffs — so a judge run cannot choose the
+// labelling, and a run ID cannot steer it (D558 excludes a chosen --run-id from
+// sampling for the same reason).
+//
+// The seed is SHA-256 rather than a multiplicative hash, whose low bit is an
+// exclusive-or of the input's low bits: a pair ID chosen to set that bit would
+// fix which arm the judge sees first, and the exclusion D558 rests on is a
+// property of sampling rather than of this call. A digest exposes no such
+// lever, so a pair ID steers nothing here whatever chose it.
 func swapFor(pairID string) bool {
-	h := fnv.New64a()
-	h.Write([]byte(pairID))
-	return h.Sum64()&1 == 1
+	sum := sha256.Sum256([]byte(pairID))
+	return sum[0]&1 == 1
 }
 
 // identifierIn names what in the diff gives a run away, or "" when the diff is
@@ -141,19 +158,33 @@ func swapFor(pairID string) bool {
 // and names the pair either way — and then by shape: a run ID spelled any
 // other way, another run's or one quoted inside a path, still tells the judge
 // that a harness wrote this and which runs it belongs to.
+//
+// Both checks fold case, because folding is what a diff does to a quoted ID as
+// easily as a person does: "FUGARO/20260101-120000-ABCD" is the same run, and
+// task.ValidRunID is lowercase-only, so an unfolded check would hand the judge
+// exactly what it refuses to hand it. For the same reason the shape check runs
+// over text rather than over tokens: a diff glues an ID to what surrounds it
+// (a hash, a word, "…-cafeclaude"), and a token boundary misses the ID inside.
+//
+// It reads the diff as stored, before the redaction. That is the complete
+// check, not a cheaper one: a replacement is modelPlaceholder, whose characters
+// are not in a run ID's alphabet, so it can neither hide an ID (all twenty of a
+// redacted ID's characters come from the stored text, contiguously) nor join
+// two fragments into one that was not there.
 func identifierIn(diff, pairID string, arms ...Patch) string {
 	if diff == "" {
 		return ""
 	}
+	folded := strings.ToLower(diff)
 	for _, arm := range arms {
 		switch {
-		case arm.RunID != "" && strings.Contains(diff, arm.RunID):
+		case arm.RunID != "" && strings.Contains(folded, strings.ToLower(arm.RunID)):
 			return "the run ID " + arm.RunID
-		case arm.Branch != "" && strings.Contains(diff, arm.Branch):
+		case arm.Branch != "" && strings.Contains(folded, strings.ToLower(arm.Branch)):
 			return "the branch " + arm.Branch
 		}
 	}
-	if pairID != "" && strings.Contains(diff, pairID) {
+	if pairID != "" && strings.Contains(folded, strings.ToLower(pairID)) {
 		return "the pair ID " + pairID
 	}
 	if id := runIDLike(diff); id != "" {
@@ -162,24 +193,29 @@ func identifierIn(diff, pairID string, arms ...Patch) string {
 	return ""
 }
 
-// runIDLike is the first token of text that has a run ID's shape, or "". The
-// scan splits on everything a run ID cannot contain — its alphabet is digits,
-// "-" and hex (task.ValidRunID) — so an ID inside a path, a URL or a quoted
-// fixture is found, and the shape is asked of task.ValidRunID rather than
-// spelled again here.
+// runIDGuess is a run ID's shape as an unanchored, case-insensitive search.
+// Every match is confirmed by task.ValidRunID — lowercased first, since the
+// launcher mints lowercase but a diff may spell an ID any way — so task stays
+// the authority on what a run ID is, and this is only what finds the candidates
+// to ask about.
+//
+// The guess is deliberately looser than that authority (it may match text that
+// is not a run ID, which costs one call and decides nothing) and it must never
+// be tighter: a shape ValidRunID accepts and this misses is another run's ID
+// reaching the judge, while the pair's own runs are caught by their exact
+// spelling whatever shape a run ID grows into. task's own pattern is unexported,
+// so it is spelled out here; this finds the candidates and ValidRunID decides.
+var runIDGuess = regexp.MustCompile(`(?i)[0-9]{8}-[0-9]{6}-[0-9a-f]{4}`)
+
+// runIDLike is a run ID the text carries anywhere, or "" — another run's ID,
+// or one glued to its neighbours.
 func runIDLike(text string) string {
-	for _, tok := range strings.FieldsFunc(text, func(r rune) bool { return !isRunIDChar(r) }) {
-		if task.ValidRunID(tok) {
-			return tok
+	for _, m := range runIDGuess.FindAllString(text, -1) {
+		if task.ValidRunID(strings.ToLower(m)) {
+			return m
 		}
 	}
 	return ""
-}
-
-// isRunIDChar is task's run ID alphabet, which is what makes a token from
-// FieldsFunc a candidate for runIDLike.
-func isRunIDChar(r rune) bool {
-	return r == '-' || ('0' <= r && r <= '9') || ('a' <= r && r <= 'f')
 }
 
 // modelRedactor is the pass Bundle applies to one diff: every word that names
@@ -198,20 +234,27 @@ func modelRedactor(words []string) func(string) string {
 	return func(diff string) string { return re.ReplaceAllString(diff, modelPlaceholder) }
 }
 
-// modelWords is every word of the price table that a diff must not carry,
-// longest first: each model's ID and its aliases, the name it is served under,
-// the vendor family it belongs to (config.ModelFamily: a Claude ID is
-// "anthropic", a provider ID its vendor prefix, D553) and the words its name
-// is built from before its version.
+// modelWords is every word a diff must not carry, longest first: for each
+// model, its ID and its aliases, the name it is served under, the vendor family
+// it belongs to (config.ModelFamily: a Claude ID is "anthropic", a provider ID
+// its vendor prefix, D553) and the words its name is built from before its
+// version. An arm's own model comes first — that is the one whose naming
+// unblinds the pair — and then the build's price table: the embedded Claude rows
+// and the embedded provider catalog.
 //
-// The table is the build's own: the embedded Claude rows and the embedded
-// provider catalog. That is what a judge run prices from, whatever repository
-// the pair came from — the judge is Fugaro's run, not the repository's. A
-// model an owner prices under model_prices that this build does not carry is
-// therefore only partly covered, through the family word its ID starts with,
-// and no caller can widen the vocabulary: Bundle takes no word list, so a
-// caller cannot hand the judge a diff redacted its own way.
-func modelWords() ([]string, error) {
+// The table is the build's own because the judge run is Fugaro's, whatever
+// repository the pair came from: it is what a judge could look a name up in.
+// The two arm models are what it does not carry — an owner prices a challenger
+// under model_prices (D556) that this build's table has no row for — so they
+// are handed in rather than looked up, and the pair's own arms are covered
+// whatever prices them.
+//
+// A third model an owner prices and the build's table does not name stays in
+// the diff that names it: this function sees the pair's two arms and the
+// build's own table, and the repository's effective table is a record rather
+// than a patch. The arms are the ones whose naming unblinds the pair, and the
+// rest is the gap named above rather than one this function can close.
+func modelWords(armModels ...string) ([]string, error) {
 	words := map[string]bool{}
 	add := func(id string) {
 		id = strings.TrimSpace(id)
@@ -233,6 +276,9 @@ func modelWords() ([]string, error) {
 			}
 			words[strings.ToLower(w)] = true
 		}
+	}
+	for _, model := range armModels {
+		add(model)
 	}
 	for _, m := range pricing.Embedded().Models {
 		add(m.ID)
