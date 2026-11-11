@@ -619,6 +619,16 @@ func TestGraphReadsTheOrchestratorAndLocalScopes(t *testing.T) {
 	} else if !strings.Contains(err.Error(), "fugaro orchestrator ls") {
 		t.Errorf("the refusal is %q, want it to say where the ids this installation has are listed", err)
 	}
+
+	// And the cache is the local scope's fallback alone: the same id asked for
+	// as an orchestrator scope is the project's node read through the caller's
+	// credential, so a brief this machine happens to hold beside it does not
+	// answer that scope (D1358).
+	if _, _, err := execute(t, "graph", "--source", "orchestrator:o2", "--json"); err == nil {
+		t.Error("an orchestrator scope was answered from this machine's cached brief, want the refusal: only a local scope falls back to the cache")
+	} else if !strings.Contains(err.Error(), "fugaro orchestrator ls") {
+		t.Errorf("the refusal is %q, want it to say where the ids this installation has are listed", err)
+	}
 }
 
 // TestGraphRefusedOrchestratorReadIsTerminal: a read the database *refuses* is
